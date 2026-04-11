@@ -1,0 +1,21 @@
+# Binaries
+/spine
+/spine-linux-amd64
+/spine-linux-arm64
+*.exe
+
+# Build output
+/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

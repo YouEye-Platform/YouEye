@@ -1,0 +1,7 @@
+{
+  "domain": "default",
+  "branding_title": "YouEye Auth",
+  "branding_logo": "/static/dist/assets/icons/icon_left_brand.svg",
+  "branding_favicon": "/static/dist/assets/icons/icon.png",
+  "default": true
+}

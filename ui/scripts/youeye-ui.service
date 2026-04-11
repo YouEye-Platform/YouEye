@@ -1,0 +1,25 @@
+[Unit]
+Description=YouEye UI
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/app
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOSTNAME=0.0.0.0
+Environment=UI_EXTERNAL_URL=http://192.168.31.190:3001
+Environment=AUTHENTIK_URL=http://192.168.31.190:9000
+Environment=AUTHENTIK_INTERNAL_URL=http://10.117.96.54:9000
+Environment=AUTHENTIK_CLIENT_ID=youeye-ui
+Environment=AUTHENTIK_CLIENT_SECRET=4HGnZrb76AotwRXQm6O1UALma4HbnHfKHMzkOjc2lU1YkRARqTII3jjlOxnPq7Poyqqo2076y56tAtnkv00zAHjzQgOou98HwZNX5ohfdEIa0MSO0z9pgor4BKmNCNUE
+Environment=JWT_SECRET=YeUiJwtSecret2025VeryLongStringForSecurity1234567890abcdef
+Environment=DATABASE_URL=postgresql://youeye:youeye_ui_2025@10.117.96.115:5432/youeye
+Environment=SECURE_COOKIES=false
+ExecStart=/usr/bin/node /opt/app/server.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

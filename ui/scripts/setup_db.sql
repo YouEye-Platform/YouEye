@@ -1,0 +1,2 @@
+ALTER ROLE youeye WITH PASSWORD 'youeye_ui_2025';
+GRANT ALL PRIVILEGES ON DATABASE youeye TO youeye;

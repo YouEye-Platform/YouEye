@@ -1,0 +1,20 @@
+# Node
+node_modules/
+.next/
+*.tar
+
+# Go
+spine/spine-linux-*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
