@@ -25,6 +25,7 @@ const PUBLIC_ROUTES = [
   '/api/host-ip/migrate',
   '/api/ping',
   '/api/market/image',
+  '/api/mail/send',       // SMTP proxy — auth via X-App-Slug / X-UI-Bridge-Token
   '/setup-complete',
 ];
 
