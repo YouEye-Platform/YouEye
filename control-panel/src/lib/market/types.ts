@@ -17,6 +17,9 @@ import type {
   SSOStepSchema,
   BackupSchema,
   UninstallSchema,
+  UpdateSchema,
+  MigrationSchema,
+  MigrationStepSchema,
   HealthCheckSchema,
   CatalogSchema,
   CatalogEntrySchema,
@@ -43,6 +46,9 @@ export type SSOStep = z.infer<typeof SSOStepSchema>;
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;
 export type BackupSpec = z.infer<typeof BackupSchema>;
 export type UninstallSpec = z.infer<typeof UninstallSchema>;
+export type UpdateSpec = z.infer<typeof UpdateSchema>;
+export type MigrationSpec = z.infer<typeof MigrationSchema>;
+export type MigrationStep = z.infer<typeof MigrationStepSchema>;
 export type HealthCheckSpec = z.infer<typeof HealthCheckSchema>;
 export type NativeConfig = z.infer<typeof NativeConfigSchema>;
 export type Catalog = z.infer<typeof CatalogSchema>;
@@ -125,6 +131,7 @@ export interface VariableContext {
   sso: { clientId: string; clientSecret: string };
   authentik: { externalUrl: string; internalUrl: string; name: string };
   smtp?: { host: string; port: string; username: string; password: string; from: string; tls: string; configured: string };
+  platform?: { version: string; domain: string; siteName: string; timezone: string; locale: string };
 }
 
 // ─── Catalog App (UI display) ──────────────────────────────

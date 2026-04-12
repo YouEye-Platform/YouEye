@@ -38,11 +38,11 @@ import { addRoute } from '../caddy/client';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
 import {
   isAuthentikAvailable,
-  getAuthentikExternalUrl,
   createAuthentikOAuth2App,
   executeSSOSteps,
 } from './sso-engine';
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
+import { buildVariableContext } from './platform-env';
 
 // ─── Container Naming ──────────────────────────────────────
 
@@ -176,42 +176,15 @@ export async function installApp(
   const totalSteps = countSteps(manifest, ssoEnabled);
   let step = 0;
 
-  // Build initial variable context (secrets get added after generation)
-  const ctx: Partial<VariableContext> = {
-    app: { id: appId },
-    install: {
-      url: `https://${config.subdomain}.${config.domain}`,
-      subdomain: config.subdomain,
-      domain: config.domain,
-    },
-    secrets: {},
-    container: { ip: '', port: 0 },
-    sso: { clientId: '', clientSecret: '' },
-    authentik: { externalUrl: '', internalUrl: '', name: '' },
-  };
-
-  // Populate SMTP context if the app declares smtp capability
-  if (manifest.capabilities?.smtp) {
-    try {
-      const { settingsService } = await import('../settings');
-      const { readSmtpPassword } = await import('../smtp/secrets');
-      const settings = await settingsService.getAll();
-      const smtpPassword = await readSmtpPassword();
-      const smtpConfigured = !!(settings.smtpHost && smtpPassword);
-
-      ctx.smtp = {
-        host: settings.smtpHost || '',
-        port: String(settings.smtpPort || 587),
-        username: settings.smtpUsername || '',
-        password: smtpPassword,
-        from: settings.smtpFrom || '',
-        tls: String(settings.smtpRequireTls ?? true),
-        configured: String(smtpConfigured),
-      };
-    } catch {
-      // SMTP not configured — leave ctx.smtp undefined
-    }
-  }
+  // Build variable context from unified platform-env builder.
+  // Includes platform.*, authentik.*, smtp.* (if capability declared), etc.
+  // Secrets, container IP, and SSO credentials are populated later in the flow.
+  const ctx = await buildVariableContext(
+    { appId, subdomain: config.subdomain, domain: config.domain },
+    manifest
+  );
+  // Ensure secrets map exists for population below
+  if (!ctx.secrets) ctx.secrets = {};
 
   /** Throw if cancellation was requested */
   function checkCancelled() {
@@ -346,25 +319,7 @@ export async function installApp(
       ctx.container = { ip: primaryIP, port: primaryPort };
     }
 
-    // Get Authentik URLs
-    const authentikExternalUrl = await getAuthentikExternalUrl();
-    const authentikIP = await getIncusContainerIP('youeye-authentik');
-    const authentikInternalUrl = authentikIP ? `http://${authentikIP}:9000` : authentikExternalUrl || '';
-
-    // Read authentik_name from config for the variable resolver
-    let authentikDisplayName = '';
-    try {
-      const platformConfig = await getSystemConfig();
-      authentikDisplayName = String(platformConfig.authentik_name || '') || `${String(platformConfig.site_name || 'YouEye')} ID`;
-    } catch {
-      authentikDisplayName = '';
-    }
-
-    ctx.authentik = {
-      externalUrl: authentikExternalUrl || '',
-      internalUrl: authentikInternalUrl,
-      name: authentikDisplayName,
-    };
+    // authentik.* already populated by buildVariableContext — no need to re-fetch
 
     // Create Authentik OAuth2 app
     step++;
@@ -539,70 +494,13 @@ function getGenerator(type: string, length: number): () => string {
 }
 
 /**
- * Read the system config from youeye.yaml via Spine API.
- * Returns parsed config object. Falls back to empty object.
- */
-async function getSystemConfig(): Promise<Record<string, unknown>> {
-  try {
-    const http = await import('http');
-    return await new Promise<Record<string, unknown>>((resolve) => {
-      const req = http.request(
-        {
-          socketPath: '/var/run/spine/spine.sock',
-          path: '/api/config',
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
-        },
-        (res) => {
-          let data = '';
-          res.on('data', (chunk: Buffer) => (data += chunk));
-          res.on('end', () => {
-            try {
-              resolve(JSON.parse(data));
-            } catch {
-              resolve({});
-            }
-          });
-        }
-      );
-      req.on('error', () => resolve({}));
-      req.setTimeout(5000, () => {
-        req.destroy();
-        resolve({});
-      });
-      req.end();
-    });
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Read the system language from youeye.yaml via Spine API.
+ * Read the system language via the platform context cache.
  * Falls back to "en" if unavailable.
  */
 async function getSystemLanguageForApps(): Promise<string> {
-  const config = await getSystemConfig();
-  return (config.language as string) || 'en';
-}
-
-/**
- * Convert a language code to the format expected by the app.
- * - "iso639": returns as-is (e.g. "en", "ru", "es")
- * - "full": returns the full English name (e.g. "english", "russian")
- */
-function formatLanguageValue(lang: string, format: string): string {
-  if (format === 'full') {
-    const langNames: Record<string, string> = {
-      en: 'english',
-      ru: 'russian',
-      es: 'spanish',
-      de: 'german',
-      fr: 'french',
-    };
-    return langNames[lang] || 'english';
-  }
-  return lang;
+  const { getPlatformContext } = await import('./platform-env');
+  const platform = await getPlatformContext();
+  return platform.locale || 'en';
 }
 
 /**
