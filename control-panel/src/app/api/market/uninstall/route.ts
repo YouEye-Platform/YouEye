@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { uninstallApp } from '@/lib/market/uninstaller';
+import { emitEvent } from '@/lib/events/emitter';
 
 export async function POST(request: NextRequest) {
   let body: { appId?: string; keepData?: boolean };
@@ -44,6 +45,7 @@ export async function POST(request: NextRequest) {
       dropSharedDatabase,
       keepData,
     });
+    emitEvent('app.uninstalled', { appId: body.appId, keepData });
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json(

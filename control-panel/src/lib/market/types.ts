@@ -132,6 +132,8 @@ export interface VariableContext {
   authentik: { externalUrl: string; internalUrl: string; name: string };
   smtp?: { host: string; port: string; username: string; password: string; from: string; tls: string; configured: string };
   platform?: { version: string; domain: string; siteName: string; timezone: string; locale: string };
+  mail?: { url: string; appId: string };
+  notifications?: { url: string; appId: string };
 }
 
 // ─── Catalog App (UI display) ──────────────────────────────

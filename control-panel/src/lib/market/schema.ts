@@ -144,9 +144,14 @@ export const SSOSchema = z.object({
 // ─── Capabilities ────────────────────────────────────────
 
 export const CapabilitiesSchema = z.object({
-  notifications: z.literal('push').optional(),
+  /** App can send notifications to the YouEye notification center */
+  notifications: z.boolean().optional(),
+  /** App can send email via the platform SMTP proxy */
   smtp: z.boolean().optional(),
+  /** App can use the platform AI API passthrough (future) */
   ai_api: z.boolean().optional(),
+  /** Platform events this app wants to receive (webhook delivery) */
+  events: z.array(z.string()).optional(),
 }).optional();
 
 // ─── Language ─────────────────────────────────────────────

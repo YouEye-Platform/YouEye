@@ -173,7 +173,14 @@ export async function buildPlatformEnv(
   }
 
   // ── SMTP (capability-conditional) ───────────────────────
+  // Instead of injecting raw SMTP credentials (which go stale when settings
+  // change), inject the platform mail proxy URL. Apps POST to the proxy;
+  // the CP sends the email using current SMTP settings at send time.
   if (manifest?.capabilities?.smtp) {
+    env.YOUEYE_MAIL_URL = 'http://youeye-control.incus:3000/api/mail/send';
+    env.YOUEYE_MAIL_APP_ID = config.appId;
+    // Also inject raw SMTP vars for external apps that use built-in mailers
+    // (e.g., Memos). These are best-effort — may go stale until propagation runs.
     try {
       const settings = await settingsService.getAll();
       const smtpPassword = await readSmtpPassword();
@@ -189,6 +196,13 @@ export async function buildPlatformEnv(
     } catch {
       // SMTP not configured — skip
     }
+  }
+
+  // ── Notifications (capability-conditional) ─────────────
+  if (manifest?.capabilities?.notifications) {
+    env.YOUEYE_NOTIFICATIONS_URL = 'http://youeye-ui.incus:3000/api/v1/notifications';
+    env.YOUEYE_NOTIFICATIONS_APP_ID = config.appId;
+    // App authenticates via X-App-Slug header using the appId
   }
 
   // ── Extra app-specific vars ─────────────────────────────
@@ -271,6 +285,22 @@ export async function buildVariableContext(
     } catch {
       // SMTP not configured
     }
+  }
+
+  // Populate mail proxy context if SMTP capability declared
+  if (manifest?.capabilities?.smtp) {
+    ctx.mail = {
+      url: 'http://youeye-control.incus:3000/api/mail/send',
+      appId: config.appId,
+    };
+  }
+
+  // Populate notification context if capability declared
+  if (manifest?.capabilities?.notifications) {
+    ctx.notifications = {
+      url: 'http://youeye-ui.incus:3000/api/v1/notifications',
+      appId: config.appId,
+    };
   }
 
   return ctx;

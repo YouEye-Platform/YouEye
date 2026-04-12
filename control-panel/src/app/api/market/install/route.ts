@@ -12,6 +12,7 @@ import { installApp } from '@/lib/market/engine';
 import { installNativeApp } from '@/lib/native-apps/installer';
 import { startTracking, trackEvent, finishTracking } from '@/lib/market/install-tracker';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
+import { emitEvent } from '@/lib/events/emitter';
 import type { InstallConfig, InstallEvent } from '@/lib/market/types';
 
 export const dynamic = 'force-dynamic';
@@ -87,6 +88,7 @@ export async function POST(request: NextRequest) {
 
         // Install succeeded
         finishTracking(config.appId);
+        emitEvent('app.installed', { appId: config.appId, appName, subdomain: config.subdomain });
         await sendNotificationToUI({
           title: `${appName} installed`,
           message: `${appName} has been installed successfully and is ready to use`,
