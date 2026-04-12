@@ -15,6 +15,8 @@ import { validateBridgeToken } from '@/lib/ui-bridge/auth';
 import { listBrands, updateBrand, updateFlow } from '@/lib/authentik/client';
 import { execShell } from '@/lib/incus/server';
 import { generateWordArtSVG } from '@/lib/authentik/wordart-svg';
+import { readFileSync, readdirSync, existsSync } from 'fs';
+import { join } from 'path';
 
 /** Flow slugs whose title should reflect the site name */
 const AUTH_FLOW_SLUGS = [
@@ -30,10 +32,11 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { css, siteName, siteNameStyle } = body as {
+    const { css, siteName, siteNameStyle, fontSlug } = body as {
       css?: string;
       siteName?: string;
       siteNameStyle?: Record<string, unknown>;
+      fontSlug?: string;
     };
 
     if (!css) {
@@ -91,6 +94,49 @@ export async function POST(request: Request) {
       }
     } else {
       updateData.branding_logo = '/static/dist/assets/icons/icon.png';
+    }
+
+    // Copy font files into Authentik so @font-face src: url() paths resolve.
+    // Inter fonts are always needed; the branding font is copied when fontSlug is set.
+    const fontsToSync = ['inter'];
+    if (fontSlug && fontSlug !== 'inter') fontsToSync.push(fontSlug);
+
+    for (const slug of fontsToSync) {
+      try {
+        const srcDir = join(process.cwd(), 'public', 'fonts', slug);
+        if (!existsSync(srcDir)) continue;
+        const destDir = `/web/dist/assets/fonts/${slug}`;
+        await execShell('youeye-authentik', `mkdir -p ${destDir}`);
+        const files = readdirSync(srcDir).filter(f => /\.(ttf|woff2?|otf)$/.test(f));
+        for (const file of files) {
+          const data = readFileSync(join(srcDir, file));
+          const b64 = data.toString('base64');
+          // Large fonts (>64KB) need chunked writes to avoid shell arg limits
+          const CHUNK = 65536; // 64KB chunks
+          if (b64.length > CHUNK) {
+            await execShell('youeye-authentik', `rm -f ${destDir}/${file}`);
+            for (let off = 0; off < b64.length; off += CHUNK) {
+              const chunk = b64.slice(off, off + CHUNK);
+              await execShell(
+                'youeye-authentik',
+                `printf '%s' '${chunk}' >> ${destDir}/${file}.b64`
+              );
+            }
+            await execShell(
+              'youeye-authentik',
+              `base64 -d ${destDir}/${file}.b64 > ${destDir}/${file} && rm ${destDir}/${file}.b64`
+            );
+          } else {
+            await execShell(
+              'youeye-authentik',
+              `printf '%s' '${b64}' | base64 -d > ${destDir}/${file}`
+            );
+          }
+        }
+        console.log(`[authentik-branding] Copied ${files.length} font files for ${slug}`);
+      } catch (fontErr) {
+        console.warn(`[authentik-branding] Non-fatal: font copy failed for ${slug}:`, fontErr);
+      }
     }
 
     // Update the brand

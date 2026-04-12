@@ -246,13 +246,6 @@ export class SpineClient {
   }
 
   /**
-   * Update YouEye UI
-   */
-  async updateUI(): Promise<SpineUpdateResponse> {
-    return this.request('/api/update/ui', 'POST');
-  }
-
-  /**
    * Update an OCI app container (rebuild with latest image)
    */
   async updateApp(appName: string): Promise<SpineUpdateResponse> {

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { spineClient } from '@/lib/spine/client';
 import { getSession, verifyCSRFToken } from '@/lib/auth/session';
 import { startUpdate, writeStatus, completeUpdate, failUpdate } from '@/lib/updates/state';
+import { getAppDefinition } from '@/lib/apps/definitions';
+import { updateLXDApp } from '@/lib/apps/lxd-updater';
 
 // POST /api/updates/[component] - Trigger update for a component
 export async function POST(
@@ -37,10 +39,22 @@ export async function POST(
   const { component } = await params;
 
   try {
-    // Write initial status to DB (Spine-managed components also get written
-    // so the DB has a record — Spine's own status file is source of truth
-    // for spine/control/ui, but we track the intent here)
     await startUpdate(component, '').catch(() => {});
+
+    // UI is an LXD app updated by the Control Panel directly
+    if (component === 'ui') {
+      const appDef = getAppDefinition('ui');
+      if (!appDef) {
+        return NextResponse.json({ error: 'UI app definition not found' }, { status: 500 });
+      }
+      let lastEvent: { message?: string } = {};
+      await updateLXDApp(appDef, (event) => { lastEvent = event; });
+      await completeUpdate(component, '', '').catch(() => {});
+      return NextResponse.json({
+        status: 'success',
+        message: lastEvent.message || 'UI updated',
+      });
+    }
 
     let result;
 
@@ -51,9 +65,6 @@ export async function POST(
       case 'control':
         result = await spineClient.updateControl();
         break;
-      case 'ui':
-        result = await spineClient.updateUI();
-        break;
       case 'incus':
         await writeStatus(component, 'installing', 50, 'Updating Incus...').catch(() => {});
         result = await spineClient.updateIncus();
@@ -63,14 +74,13 @@ export async function POST(
         result = await spineClient.updateSystem();
         break;
       default:
-        // Treat unknown components as app names (e.g., "caddy", "pihole")
         await writeStatus(component, 'installing', 50, `Updating ${component}...`).catch(() => {});
         result = await spineClient.updateApp(component);
         break;
     }
 
-    // For non-Spine-managed updates (incus, system, apps), mark completed in DB
-    if (!['spine', 'control', 'ui'].includes(component)) {
+    // For non-Spine-managed updates, mark completed in DB
+    if (!['spine', 'control'].includes(component)) {
       const newVer = result.new_version || '';
       await completeUpdate(component, '', newVer).catch(() => {});
     }

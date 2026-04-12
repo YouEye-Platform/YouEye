@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect, useMemo, CSSProperties } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { useState, useEffect, useRef, useMemo, CSSProperties } from 'react';
 import type { SiteNameStyle } from '@/lib/db/queries/branding';
 import {
   FONT_PRESETS, EFFECT_PRESETS, COLOUR_PRESETS, SHAPE_PRESETS,
-  composeStyle,
+  ALL_SHAPE_PRESETS, CHARACTER_SHAPE_PRESETS,
+  composeStyle, isCharacterShape,
+  type AnyShapePreset, type CharacterShapePreset,
 } from '@/lib/wordart-presets';
 
 const FONT_CSS_MAP: Record<string, string> = {
@@ -19,6 +20,15 @@ const FONT_CSS_MAP: Record<string, string> = {
   'Pacifico': '/fonts/pacifico.css', 'Bungee': '/fonts/bungee.css',
   'Russo One': '/fonts/russo-one.css', 'Fredoka': '/fonts/fredoka.css',
   'Satisfy': '/fonts/satisfy.css', 'Righteous': '/fonts/righteous.css',
+  // New fonts
+  'Bangers': '/fonts/bangers.css', 'Bebas Neue': '/fonts/bebas-neue.css',
+  'Dancing Script': '/fonts/dancing-script.css', 'Comfortaa': '/fonts/comfortaa.css',
+  'Oswald': '/fonts/oswald.css', 'Titan One': '/fonts/titan-one.css',
+  'Black Ops One': '/fonts/black-ops-one.css', 'Creepster': '/fonts/creepster.css',
+  'Monoton': '/fonts/monoton.css', 'Press Start 2P': '/fonts/press-start-2p.css',
+  'Audiowide': '/fonts/audiowide.css', 'Cinzel': '/fonts/cinzel.css',
+  'Great Vibes': '/fonts/great-vibes.css', 'Quicksand': '/fonts/quicksand.css',
+  'Archivo Black': '/fonts/archivo-black.css',
 };
 
 function usePreloadFonts() {
@@ -33,34 +43,80 @@ function usePreloadFonts() {
   }, []);
 }
 
-function PickerRow<T extends { id: string; name: string }>({
-  label, items, selectedIndex, onSelect, renderItem,
-}: { label: string; items: T[]; selectedIndex: number; onSelect: (i: number) => void; renderItem: (item: T, sel: boolean) => React.ReactNode }) {
-  const goPrev = () => onSelect(selectedIndex === 0 ? items.length - 1 : selectedIndex - 1);
-  const goNext = () => onSelect(selectedIndex === items.length - 1 ? 0 : selectedIndex + 1);
+function ExpandableSection<T extends { id: string; name: string }>({
+  label, items, selectedIndex, onSelect, renderItem, previewCount = 6,
+}: {
+  label: string; items: T[]; selectedIndex: number; onSelect: (i: number) => void;
+  renderItem: (item: T, sel: boolean) => React.ReactNode; previewCount?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const overflow = Math.max(0, items.length - previewCount);
+
+  // Collapsed: always show the first N items (stable — no swapping)
+  const previewIndices = useMemo(() => {
+    const count = Math.min(previewCount, items.length);
+    const indices: number[] = [];
+    for (let i = 0; i < count; i++) indices.push(i);
+    return indices;
+  }, [previewCount, items.length]);
+
+  const extraIndices = useMemo(() => {
+    const shown = new Set(previewIndices);
+    return items.map((_, i) => i).filter(i => !shown.has(i));
+  }, [previewIndices, items.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between px-1">
+    <div>
+      <div className="flex items-center justify-between px-1 mb-1.5">
         <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">{label}</span>
         <span className="text-[10px] text-muted-foreground">{items[selectedIndex].name}</span>
       </div>
-      <div className="flex items-center gap-1">
-        <button onClick={goPrev} type="button" className="w-7 h-7 rounded-full border hover:bg-muted flex items-center justify-center shrink-0">
-          <ChevronLeft className="h-3.5 w-3.5" />
-        </button>
-        <div className="flex-1 min-w-0 overflow-hidden">
-          <div className="flex flex-nowrap gap-1 py-0.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
-            {items.map((item, i) => (
-              <button key={item.id} onClick={() => onSelect(i)} type="button" className="shrink-0">
-                {renderItem(item, i === selectedIndex)}
-              </button>
-            ))}
+      <div className="flex items-center gap-1.5">
+        {previewIndices.map(i => (
+          <button key={items[i].id} onClick={() => onSelect(i)} type="button" className="shrink-0">
+            {renderItem(items[i], i === selectedIndex)}
+          </button>
+        ))}
+        {overflow > 0 && (() => {
+          const selInOverflow = selectedIndex >= previewCount;
+          return (
+            <button type="button" onClick={() => setOpen(!open)}
+              className={`shrink-0 h-8 px-2.5 rounded-md text-[10px] font-medium transition-all duration-200 ${
+                open
+                  ? 'bg-primary/10 text-primary border border-primary/20'
+                  : selInOverflow
+                    ? 'bg-primary/10 text-primary border border-primary/30'
+                    : 'border border-dashed border-muted-foreground/25 text-muted-foreground/60 hover:text-muted-foreground hover:border-muted-foreground/40'
+              }`}>
+              {open ? 'Less' : selInOverflow ? `✓ +${overflow}` : `+${overflow}`}
+            </button>
+          );
+        })()}
+      </div>
+      {overflow > 0 && (
+        <div style={{
+          display: 'grid',
+          gridTemplateRows: open ? '1fr' : '0fr',
+          transition: 'grid-template-rows 250ms cubic-bezier(0.4, 0, 0.2, 1)',
+        }}>
+          <div style={{ overflow: 'hidden' }}>
+            <div className="flex flex-wrap gap-1.5 pt-2">
+              {extraIndices.map((i, arrIdx) => (
+                <button key={items[i].id}
+                  onClick={() => onSelect(i)}
+                  type="button" className="shrink-0"
+                  style={{
+                    opacity: open ? 1 : 0,
+                    transform: open ? 'scale(1)' : 'scale(0.92)',
+                    transition: `opacity 200ms ease ${Math.min(arrIdx * 12, 150)}ms, transform 200ms ease ${Math.min(arrIdx * 12, 150)}ms`,
+                  }}>
+                  {renderItem(items[i], i === selectedIndex)}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-        <button onClick={goNext} type="button" className="w-7 h-7 rounded-full border hover:bg-muted flex items-center justify-center shrink-0">
-          <ChevronRight className="h-3.5 w-3.5" />
-        </button>
-      </div>
+      )}
     </div>
   );
 }
@@ -78,22 +134,53 @@ function IntensitySlider({ label, value, onChange }: { label: string; value: num
 }
 
 function Preview({ name, style }: { name: string; style: SiteNameStyle }) {
-  const cssStyle = useMemo((): CSSProperties => {
+  const charShape = style.charShapeId
+    ? CHARACTER_SHAPE_PRESETS.find(s => s.id === style.charShapeId) ?? null
+    : null;
+  const text = name || 'YouEye';
+
+  const baseStyle = useMemo((): CSSProperties => {
     const base: CSSProperties = {
       fontFamily: `"${style.fontFamily}", sans-serif`, fontSize: '2rem',
       fontWeight: style.fontWeight, letterSpacing: style.letterSpacing,
       textTransform: style.textTransform as CSSProperties['textTransform'],
       textShadow: style.textShadow === 'none' ? undefined : style.textShadow,
-      lineHeight: 1.2, WebkitTextStroke: style.textStroke || undefined,
-      transform: style.transform || undefined, display: 'inline-block',
+      lineHeight: 1.2, WebkitTextStroke: style.textStroke || 'unset',
+      transform: charShape ? undefined : (style.transform || undefined),
+      display: 'inline-block',
+      backfaceVisibility: 'hidden',
     };
     if (style.gradient?.enabled) {
-      return { ...base, background: `linear-gradient(${style.gradient.direction}, ${style.gradient.from}, ${style.gradient.to})`,
+      return { ...base, color: 'transparent',
+        backgroundImage: `linear-gradient(${style.gradient.direction}, ${style.gradient.from}, ${style.gradient.to})`,
         WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' };
     }
-    return { ...base, color: style.color };
-  }, [style]);
-  return <span style={cssStyle}>{name || 'YouEye'}</span>;
+    return { ...base, color: style.color, backgroundImage: 'none',
+      WebkitBackgroundClip: 'initial', WebkitTextFillColor: style.color, backgroundClip: 'initial' };
+  }, [style, charShape]);
+
+  const spanRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const el = spanRef.current;
+    if (el && style.gradient?.enabled) {
+      el.style.backgroundClip = 'text';
+      el.style.setProperty('-webkit-background-clip', 'text');
+    }
+  });
+
+  if (charShape) {
+    const intensity = style.charShapeIntensity ?? 1;
+    return (
+      <span ref={spanRef} style={{ ...baseStyle, display: 'inline-flex', alignItems: 'baseline' }}>
+        {text.split('').map((ch, i) => (
+          <span key={i} style={{ display: 'inline-block', transform: charShape.charTransform(i, text.length, intensity) }}>
+            {ch === ' ' ? '\u00A0' : ch}
+          </span>
+        ))}
+      </span>
+    );
+  }
+  return <span ref={spanRef} style={baseStyle}>{text}</span>;
 }
 
 interface Props {
@@ -128,11 +215,16 @@ function findInitialIndices(s: SiteNameStyle | null | undefined) {
     return i >= 0 ? i : -1;
   })();
   const shape = (() => {
+    // Check for per-character shape first
+    if (s.charShapeId) {
+      const i = ALL_SHAPE_PRESETS.findIndex(p => p.id === s.charShapeId);
+      if (i >= 0) return i;
+    }
     if (!s.transform) return 0;
     // Match by transform function type (skewX, scaleX, perspective, etc.)
     const fnType = (t: string) => t.replace(/\([^)]*\)/g, '()').replace(/\s+/g, ' ');
     const target = fnType(s.transform);
-    const i = SHAPE_PRESETS.findIndex(p => p.transform !== 'none' && fnType(p.transform) === target);
+    const i = ALL_SHAPE_PRESETS.findIndex(p => !isCharacterShape(p) && (p as any).transform !== 'none' && fnType((p as any).transform) === target);
     return i >= 0 ? i : 0;
   })();
   return { font: Math.max(font, 0), effect: Math.max(effect, 0), colour: Math.max(colour, 0), shape: Math.max(shape, 0) };
@@ -140,33 +232,24 @@ function findInitialIndices(s: SiteNameStyle | null | undefined) {
 
 export default function WordArtPicker({ siteName, initialStyle, onChange, compact = false }: Props) {
   usePreloadFonts();
-  const [fontIndex, setFontIndex] = useState(0);
-  const [effectIndex, setEffectIndex] = useState(0);
-  const [colourIndex, setColourIndex] = useState(0);
-  const [shapeIndex, setShapeIndex] = useState(0);
+  const initIndices = useMemo(() => findInitialIndices(initialStyle), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [fontIndex, setFontIndex] = useState(initIndices.font);
+  const [effectIndex, setEffectIndex] = useState(initIndices.effect);
+  const [colourIndex, setColourIndex] = useState(initIndices.colour);
+  const [shapeIndex, setShapeIndex] = useState(initIndices.shape);
   const [effectIntensity, setEffectIntensity] = useState(1);
   const [shapeIntensity, setShapeIntensity] = useState(1);
-  const [userInteracted, setUserInteracted] = useState(false);
-
-  // Sync indices when initialStyle arrives or changes (e.g. from async API fetch).
-  // Only sync if the user hasn't manually picked a preset yet.
-  const styleFingerprint = initialStyle ? `${initialStyle.fontFamily}|${initialStyle.color}|${initialStyle.gradient?.from}|${initialStyle.textShadow}|${initialStyle.transform}` : '';
-  useEffect(() => {
-    if (userInteracted || !initialStyle?.fontFamily) return;
-    const indices = findInitialIndices(initialStyle);
-    setFontIndex(indices.font);
-    setEffectIndex(indices.effect);
-    setColourIndex(indices.colour);
-    setShapeIndex(indices.shape);
-  }, [styleFingerprint]); // eslint-disable-line react-hooks/exhaustive-deps
+  const mountedRef = useRef(false);
 
   useEffect(() => {
-    const s = composeStyle(FONT_PRESETS[fontIndex], EFFECT_PRESETS[effectIndex], COLOUR_PRESETS[colourIndex], SHAPE_PRESETS[shapeIndex], effectIntensity, shapeIntensity);
+    // Skip the very first render — indices already match initialStyle
+    if (!mountedRef.current) { mountedRef.current = true; return; }
+    const s = composeStyle(FONT_PRESETS[fontIndex], EFFECT_PRESETS[effectIndex], COLOUR_PRESETS[colourIndex], ALL_SHAPE_PRESETS[shapeIndex], effectIntensity, shapeIntensity);
     onChange(s);
   }, [fontIndex, effectIndex, colourIndex, shapeIndex, effectIntensity, shapeIntensity, onChange]);
 
   const previewStyle = useMemo(() => ({
-    ...composeStyle(FONT_PRESETS[fontIndex], EFFECT_PRESETS[effectIndex], COLOUR_PRESETS[colourIndex], SHAPE_PRESETS[shapeIndex], effectIntensity, shapeIntensity),
+    ...composeStyle(FONT_PRESETS[fontIndex], EFFECT_PRESETS[effectIndex], COLOUR_PRESETS[colourIndex], ALL_SHAPE_PRESETS[shapeIndex], effectIntensity, shapeIntensity),
     fontSize: compact ? '2rem' : '2.4rem',
   }), [fontIndex, effectIndex, colourIndex, shapeIndex, effectIntensity, shapeIntensity, compact]);
 
@@ -175,30 +258,42 @@ export default function WordArtPicker({ siteName, initialStyle, onChange, compac
       <div className="rounded-xl bg-gray-950 flex items-center justify-center min-h-[80px] py-6 px-4 overflow-hidden">
         <Preview name={siteName} style={previewStyle} />
       </div>
-      <PickerRow label="Font" items={FONT_PRESETS} selectedIndex={fontIndex} onSelect={i => { setUserInteracted(true); setFontIndex(i); }}
+      <ExpandableSection label="Font" items={FONT_PRESETS} selectedIndex={fontIndex} previewCount={6}
+        onSelect={i => { setFontIndex(i); }}
         renderItem={(item, sel) => (
           <div className={`w-12 h-8 flex items-center justify-center rounded border text-[10px] transition-all ${sel ? 'border-primary bg-primary/5 shadow-sm' : 'border-border hover:border-muted-foreground/40'}`}
             style={{ fontFamily: `"${item.fontFamily}", sans-serif`, fontWeight: item.fontWeight }}>Aa</div>
         )} />
       <div className="space-y-1">
-        <PickerRow label="Effect" items={EFFECT_PRESETS} selectedIndex={effectIndex} onSelect={i => { setUserInteracted(true); setEffectIndex(i); }}
+        <ExpandableSection label="Effect" items={EFFECT_PRESETS} selectedIndex={effectIndex} previewCount={6}
+          onSelect={i => { setEffectIndex(i); }}
           renderItem={(item, sel) => (
             <div className={`w-12 h-8 flex items-center justify-center rounded text-[10px] font-bold text-white transition-all ${sel ? 'ring-2 ring-primary ring-offset-1' : ''}`}
               style={{ backgroundColor: '#111', textShadow: item.textShadow === 'none' ? undefined : item.textShadow.replace(/currentColor/g, '#fff'),
                 WebkitTextStroke: item.textStroke?.replace('currentColor', '#fff'), color: item.id === 'outline' ? 'transparent' : '#fff' }}>Aa</div>
           )} />
-        {EFFECT_PRESETS[effectIndex].scalable && <IntensitySlider label="Intensity" value={effectIntensity} onChange={v => { setUserInteracted(true); setEffectIntensity(v); }} />}
+        {EFFECT_PRESETS[effectIndex].scalable && <IntensitySlider label="Intensity" value={effectIntensity} onChange={v => { setEffectIntensity(v); }} />}
       </div>
       <div className="space-y-1">
-        <PickerRow label="Shape" items={SHAPE_PRESETS} selectedIndex={shapeIndex} onSelect={i => { setUserInteracted(true); setShapeIndex(i); }}
+        <ExpandableSection label="Shape" items={ALL_SHAPE_PRESETS} selectedIndex={shapeIndex} previewCount={6}
+          onSelect={i => { setShapeIndex(i); }}
           renderItem={(item, sel) => (
             <div className={`w-12 h-8 flex items-center justify-center rounded border text-[10px] font-bold transition-all ${sel ? 'border-primary bg-primary/5 shadow-sm' : 'border-border hover:border-muted-foreground/40'}`}>
-              <span style={{ display: 'inline-block', transform: item.transform !== 'none' ? item.transform : undefined }}>Aa</span>
+              {isCharacterShape(item) ? (
+                <span style={{ display: 'inline-flex', alignItems: 'baseline', fontSize: '8px' }}>
+                  {'Aa'.split('').map((ch, i) => (
+                    <span key={i} style={{ display: 'inline-block', transform: item.charTransform(i, 2, 1) }}>{ch}</span>
+                  ))}
+                </span>
+              ) : (
+                <span style={{ display: 'inline-block', transform: item.transform !== 'none' ? item.transform : undefined }}>Aa</span>
+              )}
             </div>
           )} />
-        {SHAPE_PRESETS[shapeIndex].scalable && <IntensitySlider label="Intensity" value={shapeIntensity} onChange={v => { setUserInteracted(true); setShapeIntensity(v); }} />}
+        {ALL_SHAPE_PRESETS[shapeIndex].scalable && <IntensitySlider label="Intensity" value={shapeIntensity} onChange={v => { setShapeIntensity(v); }} />}
       </div>
-      <PickerRow label="Colour" items={COLOUR_PRESETS} selectedIndex={colourIndex} onSelect={i => { setUserInteracted(true); setColourIndex(i); }}
+      <ExpandableSection label="Colour" items={COLOUR_PRESETS} selectedIndex={colourIndex} previewCount={8}
+        onSelect={i => { setColourIndex(i); }}
         renderItem={(item, sel) => (
           <div className={`w-7 h-7 rounded-full transition-colors ${sel ? 'outline outline-2 outline-primary outline-offset-1' : ''}`}
             style={{ background: item.gradient?.enabled ? `linear-gradient(${item.gradient.direction}, ${item.gradient.from}, ${item.gradient.to})` : item.color,

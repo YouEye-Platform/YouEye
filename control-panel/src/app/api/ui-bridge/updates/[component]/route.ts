@@ -3,14 +3,17 @@
  *
  * POST /api/ui-bridge/updates/[component]
  *
- * Triggers an update for a specific component via Spine.
- * Also writes status to DB for persistence.
+ * Triggers an update for a specific component.
+ * UI updates are handled directly by the Control Panel via lxd-updater.
+ * Spine-managed components (spine, control, incus, system) go through Spine API.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { validateBridgeToken } from '@/lib/ui-bridge/auth';
 import { spineClient } from '@/lib/spine/client';
 import { startUpdate, writeStatus, completeUpdate, failUpdate } from '@/lib/updates/state';
+import { getAppDefinition } from '@/lib/apps/definitions';
+import { updateLXDApp } from '@/lib/apps/lxd-updater';
 
 export async function POST(
   request: NextRequest,
@@ -24,6 +27,21 @@ export async function POST(
   try {
     await startUpdate(component, '').catch(() => {});
 
+    // UI is an LXD app updated by the Control Panel directly
+    if (component === 'ui') {
+      const appDef = getAppDefinition('ui');
+      if (!appDef) {
+        return NextResponse.json({ error: 'UI app definition not found' }, { status: 500 });
+      }
+      let lastEvent: { message?: string } = {};
+      await updateLXDApp(appDef, (event) => { lastEvent = event; });
+      await completeUpdate(component, '', '').catch(() => {});
+      return NextResponse.json({
+        status: 'success',
+        message: lastEvent.message || 'UI updated',
+      });
+    }
+
     let result;
 
     switch (component) {
@@ -32,9 +50,6 @@ export async function POST(
         break;
       case 'control':
         result = await spineClient.updateControl();
-        break;
-      case 'ui':
-        result = await spineClient.updateUI();
         break;
       case 'incus':
         await writeStatus(component, 'installing', 50, 'Updating Incus...').catch(() => {});
@@ -50,7 +65,7 @@ export async function POST(
         break;
     }
 
-    if (!['spine', 'control', 'ui'].includes(component)) {
+    if (!['spine', 'control'].includes(component)) {
       const newVer = result.new_version || '';
       await completeUpdate(component, '', newVer).catch(() => {});
     }

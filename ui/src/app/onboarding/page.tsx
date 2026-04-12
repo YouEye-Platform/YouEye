@@ -6,6 +6,8 @@ import { Loader2, ArrowRight, CheckCircle2, Shield } from 'lucide-react';
 import { PINPrompt } from '@/components/timeline/pin-prompt';
 import { useTranslations } from 'next-intl';
 
+import { CHARACTER_SHAPE_PRESETS } from '@/lib/wordart-presets';
+
 interface SiteNameStyle {
   fontFamily: string;
   fontSize: string;
@@ -21,6 +23,8 @@ interface SiteNameStyle {
   textShadow: string;
   textTransform: string;
   textStroke?: string;
+  charShapeId?: string;
+  charShapeIntensity?: number;
   reflection?: {
     enabled: boolean;
     opacity: number;
@@ -35,16 +39,39 @@ interface BrandingConfig {
 // Step: 0=welcome, 1=pin, 2=done
 type OnboardingStep = 0 | 1 | 2;
 
-/** Load Google Font dynamically */
+const FONT_CSS_MAP: Record<string, string> = {
+  'Montserrat': '/fonts/montserrat.css', 'Playfair Display': '/fonts/playfair-display.css',
+  'Inter': '/fonts/inter.css', 'Poppins': '/fonts/poppins.css',
+  'Space Grotesk': '/fonts/space-grotesk.css', 'JetBrains Mono': '/fonts/jetbrains-mono.css',
+  'Raleway': '/fonts/raleway.css', 'Caveat': '/fonts/caveat.css',
+  'Outfit': '/fonts/outfit.css', 'Plus Jakarta Sans': '/fonts/plus-jakarta-sans.css',
+  'Lobster': '/fonts/lobster.css', 'Permanent Marker': '/fonts/permanent-marker.css',
+  'Orbitron': '/fonts/orbitron.css', 'Abril Fatface': '/fonts/abril-fatface.css',
+  'Pacifico': '/fonts/pacifico.css', 'Bungee': '/fonts/bungee.css',
+  'Russo One': '/fonts/russo-one.css', 'Fredoka': '/fonts/fredoka.css',
+  'Satisfy': '/fonts/satisfy.css', 'Righteous': '/fonts/righteous.css',
+  'Bangers': '/fonts/bangers.css', 'Bebas Neue': '/fonts/bebas-neue.css',
+  'Dancing Script': '/fonts/dancing-script.css', 'Comfortaa': '/fonts/comfortaa.css',
+  'Oswald': '/fonts/oswald.css', 'Titan One': '/fonts/titan-one.css',
+  'Black Ops One': '/fonts/black-ops-one.css', 'Creepster': '/fonts/creepster.css',
+  'Monoton': '/fonts/monoton.css', 'Press Start 2P': '/fonts/press-start-2p.css',
+  'Audiowide': '/fonts/audiowide.css', 'Cinzel': '/fonts/cinzel.css',
+  'Great Vibes': '/fonts/great-vibes.css', 'Quicksand': '/fonts/quicksand.css',
+  'Archivo Black': '/fonts/archivo-black.css',
+};
+
+/** Load font dynamically via local self-hosted CSS */
 function useGoogleFont(fontFamily: string | undefined) {
   useEffect(() => {
     if (!fontFamily) return;
     const id = `gf-${fontFamily.replace(/\s+/g, '-')}`;
     if (document.getElementById(id)) return;
+    const cssPath = FONT_CSS_MAP[fontFamily];
+    if (!cssPath) return;
     const link = document.createElement('link');
     link.id = id;
     link.rel = 'stylesheet';
-    link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(fontFamily)}:wght@300;400;500;600;700;800;900&display=swap`;
+    link.href = cssPath;
     document.head.appendChild(link);
   }, [fontFamily]);
 }
@@ -67,13 +94,15 @@ function WordArtDisplay({ name, style }: { name: string; style: SiteNameStyle })
     if (style.gradient?.enabled) {
       return {
         ...base,
-        background: `linear-gradient(${style.gradient.direction}, ${style.gradient.from}, ${style.gradient.to})`,
+        color: 'transparent',
+        backgroundImage: `linear-gradient(${style.gradient.direction}, ${style.gradient.from}, ${style.gradient.to})`,
         WebkitBackgroundClip: 'text',
         WebkitTextFillColor: 'transparent',
         backgroundClip: 'text',
       };
     }
-    return { ...base, color: style.color };
+    return { ...base, color: style.color, backgroundImage: 'none',
+      WebkitBackgroundClip: 'initial', WebkitTextFillColor: style.color, backgroundClip: 'initial' };
   }, [style]);
 
   const reflectionStyle = useMemo((): CSSProperties => ({
@@ -88,12 +117,31 @@ function WordArtDisplay({ name, style }: { name: string; style: SiteNameStyle })
     userSelect: 'none',
   }), [cssStyle, style.reflection?.opacity]);
 
+  const charShape = style.charShapeId
+    ? CHARACTER_SHAPE_PRESETS.find(p => p.id === style.charShapeId) ?? null
+    : null;
+
+  const renderText = () => {
+    if (charShape) {
+      const intensity = style.charShapeIntensity ?? 1;
+      return name.split('').map((ch, i) => (
+        <span key={i} style={{ display: 'inline-block', transform: charShape.charTransform(i, name.length, intensity) }}>
+          {ch === ' ' ? '\u00A0' : ch}
+        </span>
+      ));
+    }
+    return name;
+  };
+
   return (
     <div className="flex flex-col items-center">
-      <span style={cssStyle}>{name}</span>
+      <span key={style.gradient?.enabled ? `g-${style.gradient.from}-${style.gradient.to}` : 's'}
+        style={{ ...cssStyle, ...(charShape ? { display: 'inline-flex', alignItems: 'baseline' } : {}) }}>
+        {renderText()}
+      </span>
       {style.reflection?.enabled && (
         <div style={reflectionStyle} aria-hidden="true">
-          {name}
+          {renderText()}
         </div>
       )}
     </div>

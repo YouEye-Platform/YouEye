@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, useEffect, CSSProperties } from 'react';
+import { useMemo, useEffect, useRef, CSSProperties } from 'react';
 import type { SiteNameStyle } from '@/lib/wordart-presets';
+import { CHARACTER_SHAPE_PRESETS } from '@/lib/wordart-presets';
 
 /** Font family → local CSS file mapping */
 const FONT_CSS_MAP: Record<string, string> = {
@@ -25,6 +26,15 @@ const FONT_CSS_MAP: Record<string, string> = {
   'Fredoka': '/fonts/fredoka.css',
   'Satisfy': '/fonts/satisfy.css',
   'Righteous': '/fonts/righteous.css',
+  // New fonts
+  'Bangers': '/fonts/bangers.css', 'Bebas Neue': '/fonts/bebas-neue.css',
+  'Dancing Script': '/fonts/dancing-script.css', 'Comfortaa': '/fonts/comfortaa.css',
+  'Oswald': '/fonts/oswald.css', 'Titan One': '/fonts/titan-one.css',
+  'Black Ops One': '/fonts/black-ops-one.css', 'Creepster': '/fonts/creepster.css',
+  'Monoton': '/fonts/monoton.css', 'Press Start 2P': '/fonts/press-start-2p.css',
+  'Audiowide': '/fonts/audiowide.css', 'Cinzel': '/fonts/cinzel.css',
+  'Great Vibes': '/fonts/great-vibes.css', 'Quicksand': '/fonts/quicksand.css',
+  'Archivo Black': '/fonts/archivo-black.css',
 };
 
 /** Load a font via local self-hosted CSS (idempotent) */
@@ -77,25 +87,71 @@ export default function WordArtPreview({ name, style, sizeOverride, className = 
       textTransform: style.textTransform as CSSProperties['textTransform'],
       textShadow: style.textShadow === 'none' ? undefined : style.textShadow,
       lineHeight: 1.2,
-      WebkitTextStroke: style.textStroke || undefined,
+      WebkitTextStroke: style.textStroke || 'unset',
       transform: style.transform || undefined,
       display: 'inline-block', // needed for transform to apply
+      backfaceVisibility: 'hidden', // force compositor layer for reliable background-clip
     };
+    // Use backgroundImage (not background shorthand) to avoid resetting background-clip.
+    // The background shorthand resets all sub-properties including background-clip;
+    // when React skips re-applying backgroundClip (because its value didn't change),
+    // the clip gets lost and the gradient renders as a box instead of clipped to text.
     if (style.gradient?.enabled) {
       return {
         ...base,
-        background: `linear-gradient(${style.gradient.direction}, ${style.gradient.from}, ${style.gradient.to})`,
+        color: 'transparent',
+        backgroundImage: `linear-gradient(${style.gradient.direction}, ${style.gradient.from}, ${style.gradient.to})`,
         WebkitBackgroundClip: 'text',
         WebkitTextFillColor: 'transparent',
         backgroundClip: 'text',
       };
     }
-    return { ...base, color: style.color };
+    return {
+      ...base,
+      color: style.color,
+      backgroundImage: 'none',
+      WebkitBackgroundClip: 'initial',
+      WebkitTextFillColor: style.color,
+      backgroundClip: 'initial',
+    };
   }, [style, sizeOverride]);
+
+  // Imperatively enforce background-clip after every render.
+  // React's style reconciliation skips re-applying backgroundClip when its value
+  // hasn't changed ('text' → 'text'), but the browser resets it when the background
+  // shorthand is updated internally. This useEffect guarantees the clip is correct.
+  const spanRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const el = spanRef.current;
+    if (el && style.gradient?.enabled) {
+      el.style.backgroundClip = 'text';
+      el.style.setProperty('-webkit-background-clip', 'text');
+    }
+  });
+
+  const charShape = style.charShapeId
+    ? CHARACTER_SHAPE_PRESETS.find(p => p.id === style.charShapeId) ?? null
+    : null;
+  const text = name || 'YouEye';
+
+  if (charShape) {
+    const intensity = style.charShapeIntensity ?? 1;
+    return (
+      <div className={`flex flex-col items-center ${className}`}>
+        <span ref={spanRef} style={{ ...cssStyle, display: 'inline-flex', alignItems: 'baseline' }}>
+          {text.split('').map((ch, i) => (
+            <span key={i} style={{ display: 'inline-block', transform: charShape.charTransform(i, text.length, intensity) }}>
+              {ch === ' ' ? '\u00A0' : ch}
+            </span>
+          ))}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className={`flex flex-col items-center ${className}`}>
-      <span style={cssStyle}>{name || 'YouEye'}</span>
+      <span ref={spanRef} style={cssStyle}>{text}</span>
     </div>
   );
 }

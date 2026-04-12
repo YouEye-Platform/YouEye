@@ -161,7 +161,7 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     lxdConfig: {
       giteaRepo: 'YouEye',
       tagPrefix: 'ui',
-      appDir: '/opt/app',
+      appDir: '/opt/youeye-ui',
       serviceName: 'youeye-ui',
       healthEndpoint: '/api/health',
     },

@@ -139,6 +139,10 @@ export interface AuthentikBrandingConfig {
   fontUrl?: string;
   /** Site name to render via ::after pseudo-element (replaces SVG logo) */
   siteName?: string;
+  /** Font file format for the branding font ('woff2' or 'truetype'). Defaults to 'truetype'. */
+  fontFileFormat?: 'woff2' | 'truetype';
+  /** List of font filenames for the branding font (e.g. ['font-0.woff2', 'font-1.woff2']) */
+  fontFiles?: string[];
 }
 
 interface SiteNameStyle {
@@ -157,6 +161,8 @@ interface SiteNameStyle {
   textTransform: string;
   textStroke?: string;
   transform?: string;
+  charShapeId?: string;
+  charShapeIntensity?: number;
 }
 
 /**
@@ -174,20 +180,27 @@ export function generateAuthentikCSS(
   const fontFamily = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
   // Inline @font-face declarations directly in the CSS.
-  // @import doesn't work reliably across shadow DOM boundaries, so we
-  // embed the font-face with absolute URLs to the Authentik-hosted font files.
+  // Font files must be copied into Authentik's /web/dist/assets/fonts/ directory
+  // by the bridge endpoint — see ui-bridge/authentik/branding/route.ts.
   const fontFaces: string[] = [];
 
-  // Always include Inter
+  // Always include Inter (ships as .ttf)
   const interWeights = [400, 500, 600, 700];
   for (const w of interWeights) {
     fontFaces.push(`@font-face { font-family: 'Inter'; font-style: normal; font-weight: ${w}; font-display: swap; src: url(/static/dist/assets/fonts/inter/inter-${interWeights.indexOf(w)}.ttf) format('truetype'); }`);
   }
 
-  // Include the branding font if different from Inter
+  // Include the branding font if different from Inter.
+  // Each woff2 file covers a specific unicode range, so we load ALL files
+  // to ensure the font works for any character set (latin, cyrillic, etc.).
   if (s?.fontFamily && s.fontFamily !== 'Inter') {
     const slug = s.fontFamily.toLowerCase().replace(/\s+/g, '-');
-    fontFaces.push(`@font-face { font-family: '${s.fontFamily}'; font-style: normal; font-weight: ${s.fontWeight || 400}; font-display: swap; src: url(/static/dist/assets/fonts/${slug}/${slug}-0.ttf) format('truetype'); }`);
+    const fmt = branding?.fontFileFormat || 'truetype';
+    const files = branding?.fontFiles ?? [`${slug}-0.${fmt === 'woff2' ? 'woff2' : 'ttf'}`];
+    for (const file of files) {
+      const fileFmt = file.endsWith('.woff2') ? 'woff2' : 'truetype';
+      fontFaces.push(`@font-face { font-family: '${s.fontFamily}'; font-style: normal; font-weight: ${s.fontWeight || 400}; font-display: swap; src: url(/static/dist/assets/fonts/${slug}/${file}) format('${fileFmt}'); }`);
+    }
   }
 
   const imports = fontFaces;

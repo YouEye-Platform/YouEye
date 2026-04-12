@@ -135,26 +135,30 @@ export function generateSetupAuthentikCSS(
   siteNameStyle?: SiteNameStyle | null,
   domain?: string,
   siteName?: string,
+  fontFileFormat?: 'woff2' | 'truetype',
+  fontFiles?: string[],
 ): string {
   const c = DEFAULTS;
   const fontFamily = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
-  // Use self-hosted fonts from the UI domain. Fonts are served at /fonts/ on
-  // both CP and UI. Authentik loads CSS in the browser, so the URL must be
-  // reachable from the user's device.
+  // Inline @font-face declarations pointing to Authentik's static directory.
+  // Font files must be copied into Authentik by the setup route.
   const fontSlug = (name: string) => name.toLowerCase().replace(/\s+/g, '-');
-  const fontBase = domain ? `https://${domain}/fonts` : 'https://fonts.googleapis.com/css2';
   const imports: string[] = [];
 
-  if (domain) {
-    imports.push(`@import url('${fontBase}/${fontSlug('Inter')}.css');`);
-    if (siteNameStyle?.fontFamily && siteNameStyle.fontFamily !== 'Inter') {
-      imports.push(`@import url('${fontBase}/${fontSlug(siteNameStyle.fontFamily)}.css');`);
-    }
-  } else {
-    imports.push(`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');`);
-    if (siteNameStyle?.fontFamily && siteNameStyle.fontFamily !== 'Inter') {
-      imports.push(`@import url('https://fonts.googleapis.com/css2?family=${encodeURIComponent(siteNameStyle.fontFamily)}:wght@${siteNameStyle.fontWeight}&display=swap');`);
+  // Always include Inter (ships as .ttf)
+  const interWeights = [400, 500, 600, 700];
+  for (const w of interWeights) {
+    imports.push(`@font-face { font-family: 'Inter'; font-style: normal; font-weight: ${w}; font-display: swap; src: url(/static/dist/assets/fonts/inter/inter-${interWeights.indexOf(w)}.ttf) format('truetype'); }`);
+  }
+
+  if (siteNameStyle?.fontFamily && siteNameStyle.fontFamily !== 'Inter') {
+    const slug = fontSlug(siteNameStyle.fontFamily);
+    const fmt = fontFileFormat || 'truetype';
+    const allFiles = fontFiles ?? [`${slug}-0.${fmt === 'woff2' ? 'woff2' : 'ttf'}`];
+    for (const file of allFiles) {
+      const fileFmt = file.endsWith('.woff2') ? 'woff2' : 'truetype';
+      imports.push(`@font-face { font-family: '${siteNameStyle.fontFamily}'; font-style: normal; font-weight: ${siteNameStyle.fontWeight || 400}; font-display: swap; src: url(/static/dist/assets/fonts/${slug}/${file}) format('${fileFmt}'); }`);
     }
   }
 
