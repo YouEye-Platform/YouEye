@@ -255,24 +255,24 @@ export default function WordArtPicker({ siteName, initialStyle, onChange, compac
         <Preview name={siteName} style={previewStyle} />
       </div>
       <ExpandableSection label="Font" items={FONT_PRESETS} selectedIndex={fontIndex} previewCount={6}
-        onSelect={i => { setUserInteracted(true); setFontIndex(i); }}
+        onSelect={i => { setFontIndex(i); }}
         renderItem={(item, sel) => (
           <div className={`w-12 h-8 flex items-center justify-center rounded border text-[10px] transition-all ${sel ? 'border-primary bg-primary/5 shadow-sm' : 'border-border hover:border-muted-foreground/40'}`}
             style={{ fontFamily: `"${item.fontFamily}", sans-serif`, fontWeight: item.fontWeight }}>Aa</div>
         )} />
       <div className="space-y-1">
         <ExpandableSection label="Effect" items={EFFECT_PRESETS} selectedIndex={effectIndex} previewCount={6}
-          onSelect={i => { setUserInteracted(true); setEffectIndex(i); }}
+          onSelect={i => { setEffectIndex(i); }}
           renderItem={(item, sel) => (
             <div className={`w-12 h-8 flex items-center justify-center rounded text-[10px] font-bold text-white transition-all ${sel ? 'ring-2 ring-primary ring-offset-1' : ''}`}
               style={{ backgroundColor: '#111', textShadow: item.textShadow === 'none' ? undefined : item.textShadow.replace(/currentColor/g, '#fff'),
                 WebkitTextStroke: item.textStroke?.replace('currentColor', '#fff'), color: item.id === 'outline' ? 'transparent' : '#fff' }}>Aa</div>
           )} />
-        {EFFECT_PRESETS[effectIndex].scalable && <IntensitySlider label="Intensity" value={effectIntensity} onChange={v => { setUserInteracted(true); setEffectIntensity(v); }} />}
+        {EFFECT_PRESETS[effectIndex].scalable && <IntensitySlider label="Intensity" value={effectIntensity} onChange={v => { setEffectIntensity(v); }} />}
       </div>
       <div className="space-y-1">
         <ExpandableSection label="Shape" items={ALL_SHAPE_PRESETS} selectedIndex={shapeIndex} previewCount={6}
-          onSelect={i => { setUserInteracted(true); setShapeIndex(i); }}
+          onSelect={i => { setShapeIndex(i); }}
           renderItem={(item, sel) => (
             <div className={`w-12 h-8 flex items-center justify-center rounded border text-[10px] font-bold transition-all ${sel ? 'border-primary bg-primary/5 shadow-sm' : 'border-border hover:border-muted-foreground/40'}`}>
               {isCharacterShape(item) ? (
@@ -286,10 +286,10 @@ export default function WordArtPicker({ siteName, initialStyle, onChange, compac
               )}
             </div>
           )} />
-        {ALL_SHAPE_PRESETS[shapeIndex].scalable && <IntensitySlider label="Intensity" value={shapeIntensity} onChange={v => { setUserInteracted(true); setShapeIntensity(v); }} />}
+        {ALL_SHAPE_PRESETS[shapeIndex].scalable && <IntensitySlider label="Intensity" value={shapeIntensity} onChange={v => { setShapeIntensity(v); }} />}
       </div>
       <ExpandableSection label="Colour" items={COLOUR_PRESETS} selectedIndex={colourIndex} previewCount={8}
-        onSelect={i => { setUserInteracted(true); setColourIndex(i); }}
+        onSelect={i => { setColourIndex(i); }}
         renderItem={(item, sel) => (
           <div className={`w-7 h-7 rounded-full transition-colors ${sel ? 'outline outline-2 outline-primary outline-offset-1' : ''}`}
             style={{ background: item.gradient?.enabled ? `linear-gradient(${item.gradient.direction}, ${item.gradient.from}, ${item.gradient.to})` : item.color,
