@@ -1,3 +1,29 @@
+## v0.2.21.9 — vanya — 2026-04-12
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix Authentik login WordArt font loading + picker selection UX
+
+### Changes
+- `ui/src/lib/themes/css-generator.ts` — Generate `@font-face` rules for ALL font files (woff2 split by unicode range), accept fontFiles and fontFileFormat from branding config
+- `ui/src/app/api/admin/authentik/branding/route.ts` — Detect font file format and enumerate font files from public/fonts/ dir, pass fontSlug to bridge for font copying
+- `control-panel/src/app/api/ui-bridge/authentik/branding/route.ts` — Copy font files from CP to Authentik container via chunked base64 transfer (64KB chunks for large TTF files)
+- `control-panel/src/lib/authentik/setup-css.ts` — Multi-file @font-face generation matching css-generator.ts approach
+- `control-panel/src/app/api/setup/run/route.ts` — Font file copy + format detection during initial setup
+- `ui/src/components/wordart/WordArtPicker.tsx` — Remove item swap in ExpandableSection (top row now stable); +N button shows ✓ when selection is in overflow
+- `control-panel/src/components/setup/WordArtPickerInline.tsx` — Same ExpandableSection fix
+- `control-panel/src/components/setup/SetupWordArt.tsx` — Same ExpandableSection fix
+
+### Test Results
+- Playwright: Login page verified with Press Start 2P font + Fire gradient rendering correctly
+- Picker: Expanded section selection no longer swaps items; ✓ indicator shows on +N button
+- Font files confirmed in Authentik at /web/dist/assets/fonts/ (Inter .ttf + Press Start 2P .woff2)
+
+### Notes for Iris
+- Authentik font copy runs on every branding save — fonts persist until Authentik container is recreated
+- Setup wizard also copies fonts during initial setup
+- Multiple @font-face rules without unicode-range is intentional (browser loads needed subset)
+
 ## v0.2.21.6 — vanya — 2026-04-12
 **Branch:** vanya
 **VM:** ye-vanya
