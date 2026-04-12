@@ -61,6 +61,13 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Allow app-slug auth requests (native + marketplace apps on Incus internal network).
+  // Auth validated at route level via validateAppSlugAuth() in the notifications endpoint.
+  const appSlug = request.headers.get("x-app-slug");
+  if (appSlug && pathname.startsWith("/api/")) {
+    return NextResponse.next();
+  }
+
   // Check session cookie
   const sessionCookie = request.cookies.get("ye-ui-session");
 
