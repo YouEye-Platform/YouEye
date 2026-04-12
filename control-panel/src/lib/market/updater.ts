@@ -374,12 +374,18 @@ export async function updateMarketplaceApp(
     }
 
     // ── Step 5: Rebuild containers with new images ───────
+    // Incus rebuild requires no snapshots on the instance. We delete the
+    // pre-update snapshot right before rebuild. If rebuild fails, the
+    // container is still intact (stopped, with old image) — just not
+    // rollback-able to the exact snapshot state. Data volumes survive
+    // rebuild because Incus preserves them.
 
     for (let i = 0; i < containerSpecs.length; i++) {
       const spec = containerSpecs[i];
       const name = containerNames[i];
       step++;
       emit(onEvent, step, totalSteps, 'running', `Rebuilding ${name} with ${spec.image}...`);
+      await deleteSnapshot(name, SNAPSHOT_PREFIX);
       await rebuildContainer(name, spec.image);
       emit(onEvent, step, totalSteps, 'success', `${name} rebuilt`);
     }
@@ -458,11 +464,19 @@ export async function updateMarketplaceApp(
     const errMsg = error instanceof Error ? error.message : String(error);
 
     // ── Rollback ─────────────────────────────────────────
+    // Snapshots may have been deleted (required for rebuild), so rollback
+    // attempts snapshot restore first, falls back to just starting the
+    // container (which preserves whatever state it was in).
     emit(onEvent, step, totalSteps, 'error', `Update failed, rolling back: ${errMsg}`);
 
     for (const name of containerNames) {
       try {
+        // Try snapshot restore (works if failure was before rebuild)
         await restoreSnapshot(name, SNAPSHOT_PREFIX);
+      } catch {
+        // Snapshot was already deleted — container is in stopped state
+      }
+      try {
         await startContainer(name);
       } catch (rollbackErr) {
         console.error(`[market-updater] Rollback failed for ${name}:`, rollbackErr);
