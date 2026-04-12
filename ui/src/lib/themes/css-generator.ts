@@ -141,6 +141,8 @@ export interface AuthentikBrandingConfig {
   siteName?: string;
   /** Font file format for the branding font ('woff2' or 'truetype'). Defaults to 'truetype'. */
   fontFileFormat?: 'woff2' | 'truetype';
+  /** List of font filenames for the branding font (e.g. ['font-0.woff2', 'font-1.woff2']) */
+  fontFiles?: string[];
 }
 
 interface SiteNameStyle {
@@ -189,12 +191,16 @@ export function generateAuthentikCSS(
   }
 
   // Include the branding font if different from Inter.
-  // Font file format varies per font (woff2 or ttf) — passed via branding config.
+  // Each woff2 file covers a specific unicode range, so we load ALL files
+  // to ensure the font works for any character set (latin, cyrillic, etc.).
   if (s?.fontFamily && s.fontFamily !== 'Inter') {
     const slug = s.fontFamily.toLowerCase().replace(/\s+/g, '-');
     const fmt = branding?.fontFileFormat || 'truetype';
-    const ext = fmt === 'woff2' ? 'woff2' : 'ttf';
-    fontFaces.push(`@font-face { font-family: '${s.fontFamily}'; font-style: normal; font-weight: ${s.fontWeight || 400}; font-display: swap; src: url(/static/dist/assets/fonts/${slug}/${slug}-0.${ext}) format('${fmt}'); }`);
+    const files = branding?.fontFiles ?? [`${slug}-0.${fmt === 'woff2' ? 'woff2' : 'ttf'}`];
+    for (const file of files) {
+      const fileFmt = file.endsWith('.woff2') ? 'woff2' : 'truetype';
+      fontFaces.push(`@font-face { font-family: '${s.fontFamily}'; font-style: normal; font-weight: ${s.fontWeight || 400}; font-display: swap; src: url(/static/dist/assets/fonts/${slug}/${file}) format('${fileFmt}'); }`);
+    }
   }
 
   const imports = fontFaces;

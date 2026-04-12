@@ -136,6 +136,7 @@ export function generateSetupAuthentikCSS(
   domain?: string,
   siteName?: string,
   fontFileFormat?: 'woff2' | 'truetype',
+  fontFiles?: string[],
 ): string {
   const c = DEFAULTS;
   const fontFamily = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
@@ -154,8 +155,11 @@ export function generateSetupAuthentikCSS(
   if (siteNameStyle?.fontFamily && siteNameStyle.fontFamily !== 'Inter') {
     const slug = fontSlug(siteNameStyle.fontFamily);
     const fmt = fontFileFormat || 'truetype';
-    const ext = fmt === 'woff2' ? 'woff2' : 'ttf';
-    imports.push(`@font-face { font-family: '${siteNameStyle.fontFamily}'; font-style: normal; font-weight: ${siteNameStyle.fontWeight || 400}; font-display: swap; src: url(/static/dist/assets/fonts/${slug}/${slug}-0.${ext}) format('${fmt}'); }`);
+    const allFiles = fontFiles ?? [`${slug}-0.${fmt === 'woff2' ? 'woff2' : 'ttf'}`];
+    for (const file of allFiles) {
+      const fileFmt = file.endsWith('.woff2') ? 'woff2' : 'truetype';
+      imports.push(`@font-face { font-family: '${siteNameStyle.fontFamily}'; font-style: normal; font-weight: ${siteNameStyle.fontWeight || 400}; font-display: swap; src: url(/static/dist/assets/fonts/${slug}/${file}) format('${fileFmt}'); }`);
+    }
   }
 
   const brandingAfterCSS = buildBrandingAfterCSS(siteNameStyle, siteName);

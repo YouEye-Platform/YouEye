@@ -55,16 +55,18 @@ export async function POST(request: Request) {
     const siteNameStyle = branding.site_name_style ?? undefined;
     const fontSlug = (name: string) => name.toLowerCase().replace(/\s+/g, '-');
 
-    // Detect font file format (woff2 vs ttf) from the public/fonts directory
+    // Detect font files and format from the public/fonts directory
     let fontFileFormat: 'woff2' | 'truetype' = 'truetype';
     let fontSlugStr: string | undefined;
+    let fontFiles: string[] | undefined;
     if (siteNameStyle?.fontFamily && siteNameStyle.fontFamily !== "Inter") {
       fontSlugStr = fontSlug(siteNameStyle.fontFamily);
       const fontDir = join(process.cwd(), 'public', 'fonts', fontSlugStr);
       if (existsSync(fontDir)) {
         try {
-          const files = await readdir(fontDir);
-          const hasWoff2 = files.some(f => f.endsWith('.woff2'));
+          const allFiles = await readdir(fontDir);
+          fontFiles = allFiles.filter(f => /\.(ttf|woff2?|otf)$/.test(f));
+          const hasWoff2 = fontFiles.some(f => f.endsWith('.woff2'));
           fontFileFormat = hasWoff2 ? 'woff2' : 'truetype';
         } catch { /* fallback to truetype */ }
       }
@@ -75,6 +77,7 @@ export async function POST(request: Request) {
     const css = generateAuthentikCSS(colors, {
       siteNameStyle,
       fontFileFormat,
+      fontFiles,
       siteName: branding.site_name,
     });
 

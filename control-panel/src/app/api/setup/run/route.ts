@@ -829,6 +829,7 @@ export async function POST(request: NextRequest) {
             // Copy font files into Authentik and detect format
             const fontSlugFn = (name: string) => name.toLowerCase().replace(/\s+/g, '-');
             let setupFontFormat: 'woff2' | 'truetype' = 'truetype';
+            let setupFontFiles: string[] | undefined;
             const fontsToSync = ['inter'];
             if ((siteNameStyle as Record<string, unknown>)?.fontFamily && (siteNameStyle as Record<string, unknown>)?.fontFamily !== 'Inter') {
               const slug = fontSlugFn((siteNameStyle as Record<string, unknown>).fontFamily as string);
@@ -841,8 +842,11 @@ export async function POST(request: NextRequest) {
                 const destDir = `/web/dist/assets/fonts/${slug}`;
                 await execShell('youeye-authentik', `mkdir -p ${destDir}`);
                 const files = readdirSync(srcDir).filter(f => /\.(ttf|woff2?|otf)$/.test(f));
-                if (slug !== 'inter' && files.some(f => f.endsWith('.woff2'))) {
-                  setupFontFormat = 'woff2';
+                if (slug !== 'inter') {
+                  setupFontFiles = files;
+                  if (files.some(f => f.endsWith('.woff2'))) {
+                    setupFontFormat = 'woff2';
+                  }
                 }
                 for (const file of files) {
                   const data = readFileSync(join(srcDir, file));
@@ -865,7 +869,7 @@ export async function POST(request: NextRequest) {
               }
             }
 
-            const brandingCSS = generateSetupAuthentikCSS(siteNameStyle ?? null, body.domain, rawName, setupFontFormat);
+            const brandingCSS = generateSetupAuthentikCSS(siteNameStyle ?? null, body.domain, rawName, setupFontFormat, setupFontFiles);
 
             // Generate WordArt SVG for branding_logo (used in dashboard header).
             // Login flow uses CSS ::part(branding)::after for pixel-perfect matching.
