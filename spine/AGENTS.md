@@ -1,3 +1,22 @@
+## v0.2.21.1 — alisa — 2026-04-12
+**Branch:** alisa
+**VM:** ye-alisa
+**Agent:** Alisa
+**Task:** Fix three spine cleanup bugs that cause deploy failures after cleanup→deploy cycle
+
+### Changes
+- `spine/internal/cmd/cleanup.go` — `destroyZFSPools()`: unmount and destroy all child ZFS datasets in reverse order before `zpool destroy`, preventing stale pool from blocking ZFS init on redeploy and ghost container datasets causing "already running" errors (Pi-Hole)
+- `spine/internal/cmd/cleanup.go` — step 11: save/restore `/var/lib/youeye/config/youeye.yaml` across `RemoveAll("/var/lib/youeye")` so release branch config survives cleanup (BUG-014)
+- `spine/internal/cmd/cleanup.go` — new `removeResidualFiles()` function: removes `/etc/dnsmasq.d/incus`, cleans apt cache, removes dpkg systemd-helper tracker files (BUG-015/016/017)
+
+### Test Results
+- Pending user testing (cleanup→deploy cycle on ye-alisa)
+
+### Notes for Iris
+- Pure cleanup.go changes, no deploy-side modifications
+- Should resolve BUG-014 and BUG-015 from known_bugs in current-state.yaml
+- No database migrations or container changes
+
 ## v0.2.18.10 — sebastian — 2026-04-07
 **Branch:** sebastian
 **VM:** ye-sebastian (10.10.10.28)
