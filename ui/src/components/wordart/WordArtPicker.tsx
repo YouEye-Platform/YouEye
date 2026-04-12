@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, CSSProperties } from 'react';
+import { useState, useEffect, useRef, useMemo, CSSProperties } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { SiteNameStyle } from '@/lib/db/queries/branding';
 import {
@@ -84,16 +84,30 @@ function Preview({ name, style }: { name: string; style: SiteNameStyle }) {
       fontWeight: style.fontWeight, letterSpacing: style.letterSpacing,
       textTransform: style.textTransform as CSSProperties['textTransform'],
       textShadow: style.textShadow === 'none' ? undefined : style.textShadow,
-      lineHeight: 1.2, WebkitTextStroke: style.textStroke || undefined,
+      lineHeight: 1.2, WebkitTextStroke: style.textStroke || 'unset',
       transform: style.transform || undefined, display: 'inline-block',
+      backfaceVisibility: 'hidden',
     };
     if (style.gradient?.enabled) {
-      return { ...base, background: `linear-gradient(${style.gradient.direction}, ${style.gradient.from}, ${style.gradient.to})`,
+      return { ...base, color: 'transparent',
+        backgroundImage: `linear-gradient(${style.gradient.direction}, ${style.gradient.from}, ${style.gradient.to})`,
         WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' };
     }
-    return { ...base, color: style.color };
+    return { ...base, color: style.color, backgroundImage: 'none',
+      WebkitBackgroundClip: 'initial', WebkitTextFillColor: style.color, backgroundClip: 'initial' };
   }, [style]);
-  return <span style={cssStyle}>{name || 'YouEye'}</span>;
+  // Imperatively enforce background-clip after every render — React's style reconciliation
+  // skips re-applying backgroundClip when switching between gradient colours because the
+  // value doesn't change ('text' → 'text'), but the browser resets it internally.
+  const spanRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const el = spanRef.current;
+    if (el && style.gradient?.enabled) {
+      el.style.backgroundClip = 'text';
+      el.style.setProperty('-webkit-background-clip', 'text');
+    }
+  });
+  return <span ref={spanRef} style={cssStyle}>{name || 'YouEye'}</span>;
 }
 
 interface Props {

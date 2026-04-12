@@ -83,7 +83,18 @@ export function scaleEffect(effect: EffectPreset, factor: number, colour: string
   let textStroke = effect.textStroke?.replace('currentColor', colour);
   if (textStroke) { const px = parseInt(textStroke); textStroke = `${Math.round(px * factor)}px ${colour}`; }
   let shadow = effect.textShadow.replace(/currentColor/g, colour);
-  shadow = shadow.replace(/(-?\d+(?:\.\d+)?)(px)?/g, (_, num) => `${Math.round(parseFloat(num) * factor)}px`);
+  shadow = shadow.split(/,(?![^(]*\))/).map(layer => {
+    return layer.trim().replace(
+      /^(-?\d+(?:\.\d+)?)(px)?\s+(-?\d+(?:\.\d+)?)(px)?\s+(?:(-?\d+(?:\.\d+)?)(px)?(?:\s+(-?\d+(?:\.\d+)?)(px)?)?)?/,
+      (match, h, _hu, v, _vu, blur, _bu, spread, _su) => {
+        const sh = Math.round(parseFloat(h) * factor);
+        const sv = Math.round(parseFloat(v) * factor);
+        let result = `${sh}px ${sv}px`;
+        if (blur !== undefined) { result += ` ${Math.round(parseFloat(blur) * factor)}px`; if (spread !== undefined) { result += ` ${Math.round(parseFloat(spread) * factor)}px`; } }
+        return result;
+      }
+    );
+  }).join(', ');
   return { textShadow: shadow, textStroke };
 }
 

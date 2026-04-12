@@ -75,22 +75,30 @@ export function SiteName({ name, style, className, as: Tag = "span" }: SiteNameP
     letterSpacing: s.letterSpacing,
     textTransform: s.textTransform as React.CSSProperties["textTransform"],
     textShadow: s.textShadow !== "none" ? s.textShadow : undefined,
-    WebkitTextStroke: s.textStroke || undefined,
+    WebkitTextStroke: s.textStroke || "unset",
     transform: s.transform || undefined,
     display: s.transform ? "inline-block" : undefined,
+    backfaceVisibility: "hidden",
   };
 
   if (s.gradient?.enabled) {
-    cssProps.background = `linear-gradient(${s.gradient.direction}, ${s.gradient.from}, ${s.gradient.to})`;
+    cssProps.color = "transparent";
+    cssProps.backgroundImage = `linear-gradient(${s.gradient.direction}, ${s.gradient.from}, ${s.gradient.to})`;
     cssProps.WebkitBackgroundClip = "text";
     cssProps.WebkitTextFillColor = "transparent";
     cssProps.backgroundClip = "text";
   } else {
     cssProps.color = s.color;
+    cssProps.backgroundImage = "none";
+    cssProps.WebkitBackgroundClip = "initial";
+    cssProps.WebkitTextFillColor = s.color;
+    cssProps.backgroundClip = "initial";
   }
 
+  const gKey = s.gradient?.enabled ? `g-${s.gradient.from}-${s.gradient.to}` : 's';
+
   return (
-    <Tag className={className} style={cssProps}>
+    <Tag key={gKey} className={className} style={cssProps}>
       {name}
     </Tag>
   );

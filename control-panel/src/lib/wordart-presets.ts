@@ -97,11 +97,29 @@ export function scaleEffect(effect: EffectPreset, factor: number, colour: string
     textStroke = `${Math.round(px * factor)}px ${colour}`;
   }
 
-  // Scale shadow offsets and blur
+  // Scale shadow offsets and blur — only match standalone numeric values with px units
+  // or bare numbers that are shadow offsets/blur (not inside hex colours or rgba values)
   let shadow = effect.textShadow.replace(/currentColor/g, colour);
-  shadow = shadow.replace(/(-?\d+(?:\.\d+)?)(px)?/g, (_, num) => {
-    return `${Math.round(parseFloat(num) * factor)}px`;
-  });
+  // Split on commas that separate shadow layers, scale each layer's offset/blur values
+  shadow = shadow.split(/,(?![^(]*\))/).map(layer => {
+    // Match the leading offset/blur values (up to 4 numbers: h-offset v-offset blur spread)
+    // but not numbers inside color functions like rgba() or hex codes like #FFF
+    return layer.trim().replace(
+      /^(-?\d+(?:\.\d+)?)(px)?\s+(-?\d+(?:\.\d+)?)(px)?\s+(?:(-?\d+(?:\.\d+)?)(px)?(?:\s+(-?\d+(?:\.\d+)?)(px)?)?)?/,
+      (match, h, _hu, v, _vu, blur, _bu, spread, _su) => {
+        const sh = Math.round(parseFloat(h) * factor);
+        const sv = Math.round(parseFloat(v) * factor);
+        let result = `${sh}px ${sv}px`;
+        if (blur !== undefined) {
+          result += ` ${Math.round(parseFloat(blur) * factor)}px`;
+          if (spread !== undefined) {
+            result += ` ${Math.round(parseFloat(spread) * factor)}px`;
+          }
+        }
+        return result;
+      }
+    );
+  }).join(', ');
 
   return { textShadow: shadow, textStroke };
 }

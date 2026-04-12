@@ -88,16 +88,19 @@ function SiteNamePreview({ name, style }: { name: string; style: SiteNameStyle }
     if (style.gradient?.enabled) {
       return {
         ...base,
-        background: `linear-gradient(${style.gradient.direction}, ${style.gradient.from}, ${style.gradient.to})`,
+        color: 'transparent',
+        backgroundImage: `linear-gradient(${style.gradient.direction}, ${style.gradient.from}, ${style.gradient.to})`,
         WebkitBackgroundClip: 'text',
         WebkitTextFillColor: 'transparent',
         backgroundClip: 'text',
       };
     }
-    return { ...base, color: style.color };
+    return { ...base, color: style.color, backgroundImage: 'none',
+      WebkitBackgroundClip: 'initial', WebkitTextFillColor: style.color, backgroundClip: 'initial' };
   }, [style]);
 
-  return <span style={cssStyle}>{name || 'YouEye'}</span>;
+  const gKey = style.gradient?.enabled ? `g-${style.gradient.from}-${style.gradient.to}` : 's';
+  return <span key={gKey} style={cssStyle}>{name || 'YouEye'}</span>;
 }
 
 function useGoogleFont(fontFamily: string) {

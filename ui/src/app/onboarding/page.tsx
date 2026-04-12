@@ -67,13 +67,15 @@ function WordArtDisplay({ name, style }: { name: string; style: SiteNameStyle })
     if (style.gradient?.enabled) {
       return {
         ...base,
-        background: `linear-gradient(${style.gradient.direction}, ${style.gradient.from}, ${style.gradient.to})`,
+        color: 'transparent',
+        backgroundImage: `linear-gradient(${style.gradient.direction}, ${style.gradient.from}, ${style.gradient.to})`,
         WebkitBackgroundClip: 'text',
         WebkitTextFillColor: 'transparent',
         backgroundClip: 'text',
       };
     }
-    return { ...base, color: style.color };
+    return { ...base, color: style.color, backgroundImage: 'none',
+      WebkitBackgroundClip: 'initial', WebkitTextFillColor: style.color, backgroundClip: 'initial' };
   }, [style]);
 
   const reflectionStyle = useMemo((): CSSProperties => ({
@@ -90,7 +92,7 @@ function WordArtDisplay({ name, style }: { name: string; style: SiteNameStyle })
 
   return (
     <div className="flex flex-col items-center">
-      <span style={cssStyle}>{name}</span>
+      <span key={style.gradient?.enabled ? `g-${style.gradient.from}-${style.gradient.to}` : 's'} style={cssStyle}>{name}</span>
       {style.reflection?.enabled && (
         <div style={reflectionStyle} aria-hidden="true">
           {name}
