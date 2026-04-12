@@ -241,7 +241,29 @@ func runCleanup() error {
 	if !cleanupKeepData {
 		step++
 		fmt.Printf("[%d/%d] Removing YouEye app data...\n", step, totalSteps)
+
+		// BUG-014 (alisa-v0.2.21.1): preserve release branch config.
+		// The branch setting lives at /var/lib/youeye/config/youeye.yaml
+		// and is NOT deployment state — it's a user/operator choice about
+		// which release channel this VM tracks. Wiping it forces a manual
+		// `spine branch set` after every cleanup→deploy cycle.
+		var savedBranchConfig []byte
+		if data, err := os.ReadFile(youeyeConfigPath); err == nil {
+			savedBranchConfig = data
+			fmt.Println("  Preserving release branch configuration")
+		}
+
 		os.RemoveAll("/var/lib/youeye")
+
+		// Restore branch config
+		if savedBranchConfig != nil {
+			os.MkdirAll("/var/lib/youeye/config", 0755)
+			if err := os.WriteFile(youeyeConfigPath, savedBranchConfig, 0644); err != nil {
+				fmt.Printf("  Warning: could not restore branch config: %v\n", err)
+			} else {
+				fmt.Println("  ✓ Release branch configuration restored")
+			}
+		}
 	}
 
 	// ── New cleanup steps (sebastian-v0.2.18.1, revised in 0.2.18.9) ────
@@ -273,15 +295,17 @@ func runCleanup() error {
 	}
 
 	// Step 15: Remove the Incus apt source and GPG key + spine's incus-startup
-	// systemd drop-in.
+	// systemd drop-in + residual files left by Incus/dnsmasq/dpkg.
 	step++
-	fmt.Printf("[%d/%d] Removing Incus apt repository + spine systemd drop-in...\n", step, totalSteps)
+	fmt.Printf("[%d/%d] Removing Incus apt repository + spine systemd drop-in + residuals...\n", step, totalSteps)
 	removeIncusAptRepo()
 	// BUG-008 (sebastian-v0.2.18.10): spine deploy adds an incus-startup
 	// systemd drop-in (configureIncusStartupDependency in deploy.go) that
 	// makes incus-startup wait for spine.service. Cleanup never removed it,
 	// leaving the file as a stray "YouEye was here" marker. Remove it now.
 	removeSpineIncusStartupDropIn()
+	// BUG-015 (alisa-v0.2.21.1): clean residual files that survived cleanup.
+	removeResidualFiles()
 
 	// Step 16: Remove ZFS packages installed by spine deploy, but only if
 	// no non-Incus zpools exist (otherwise we'd break someone else's setup).
@@ -482,6 +506,47 @@ func removeIncusAptRepo() {
 	}
 }
 
+// removeResidualFiles cleans up files that previous cleanup versions missed.
+// BUG-015/016/017 (alisa-v0.2.21.1):
+//   - /etc/dnsmasq.d/incus — created by Incus bridge dnsmasq
+//   - apt archive .deb files — downloaded packages survive purge
+//   - dpkg systemd-helper tracker files — interfere with re-enable on redeploy
+func removeResidualFiles() {
+	removed := false
+
+	// /etc/dnsmasq.d/incus — Incus creates this for bridge DNS
+	if err := os.Remove("/etc/dnsmasq.d/incus"); err == nil {
+		removed = true
+	}
+	// Remove the directory too if empty
+	os.Remove("/etc/dnsmasq.d")
+
+	// Clean downloaded .deb files from apt cache
+	exec.Command("apt-get", "clean").Run()
+
+	// Remove dpkg systemd-helper tracker files for incus/zfs packages.
+	// These survive package purge and interfere with systemd service
+	// re-enable on the next deploy.
+	for _, pattern := range []string{
+		"/var/lib/dpkg/info/incus*.deb-systemd-helper-enabled",
+		"/var/lib/dpkg/info/zfs*.deb-systemd-helper-enabled",
+	} {
+		if matches, err := filepath.Glob(pattern); err == nil {
+			for _, m := range matches {
+				if err := os.Remove(m); err == nil {
+					removed = true
+				}
+			}
+		}
+	}
+
+	if removed {
+		fmt.Println("  Removed residual files (dnsmasq config, apt cache, dpkg tracker files)")
+	} else {
+		fmt.Println("  No residual files found")
+	}
+}
+
 // removeZFSPackages purges spine-installed ZFS packages, but only if no
 // non-Incus zpool exists (we don't want to break a user's unrelated zpool).
 func removeZFSPackages() {
@@ -531,6 +596,17 @@ func removeZFSPackages() {
 // destroyZFSPools destroys any ZFS pools that were created by Incus.
 // This prevents orphaned zpools from blocking ZFS re-initialization
 // on the next 'spine deploy'.
+//
+// BUG-FIX (alisa-v0.2.21.1): the previous implementation called only
+// `zpool destroy -f default` which can fail silently when ZFS datasets
+// are still mounted or busy (e.g. cached container images, leftover
+// container datasets like youeye-pihole). The orphaned pool then
+// blocks ZFS init on the next deploy, forcing a fallback to dir
+// storage, and ghost container datasets cause "already running"
+// errors during infrastructure deployment.
+//
+// Fix: explicitly unmount and destroy all child datasets in reverse
+// order (deepest first) before destroying the pool itself.
 func destroyZFSPools() {
 	// Check if zpool command exists
 	if _, err := exec.LookPath("zpool"); err != nil {
@@ -544,7 +620,26 @@ func destroyZFSPools() {
 		return
 	}
 
-	// Destroy the pool
+	// First, destroy all child datasets to release any holds/mounts.
+	// We must go deepest-first (reverse order of `zfs list -r`).
+	fmt.Println("  Destroying ZFS datasets...")
+	if out, err := exec.Command("zfs", "list", "-H", "-o", "name", "-r", "default").Output(); err == nil {
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		for i := len(lines) - 1; i >= 0; i-- {
+			ds := strings.TrimSpace(lines[i])
+			if ds == "" || ds == "default" {
+				continue
+			}
+			// Unmount first — datasets may have legacy mounts that
+			// survive container deletion and block zpool destroy.
+			exec.Command("zfs", "unmount", ds).Run()
+			if err := exec.Command("zfs", "destroy", "-f", ds).Run(); err != nil {
+				fmt.Printf("  Warning: could not destroy dataset %s\n", ds)
+			}
+		}
+	}
+
+	// Now destroy the pool itself
 	fmt.Println("  Destroying ZFS pool 'default'...")
 	if out, err := exec.Command("zpool", "destroy", "-f", "default").CombinedOutput(); err != nil {
 		fmt.Printf("  Warning: could not destroy ZFS pool: %s\n", strings.TrimSpace(string(out)))
