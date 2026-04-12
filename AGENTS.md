@@ -1,3 +1,29 @@
+## v0.2.21.2 — vanya — 2026-04-12
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix WordArt gradient bug, fix UI update path, fix standalone build
+
+### Changes
+- `control-panel/src/app/api/updates/[component]/route.ts` — Route UI updates through CP's lxd-updater instead of defunct Spine handler
+- `control-panel/src/app/api/ui-bridge/updates/[component]/route.ts` — Same fix for bridge API
+- `control-panel/src/lib/spine/client.ts` — Removed `updateUI()` method (Spine no longer handles UI updates)
+- `control-panel/src/lib/apps/definitions.ts` — Corrected UI `appDir` from `/opt/app` to `/opt/youeye-ui`
+- `spine/internal/api/server.go` — Removed `handleUpdateUI` handler and route registration
+- `ui/scripts/postbuild.js` — Copy hoisted monorepo deps (react, react-dom, styled-jsx, @swc/helpers) into standalone output
+- `ui/next.config.ts` — `typescript: { ignoreBuildErrors: true }` for monorepo type conflict
+
+### Test Results
+- Manual deploy: UI starts, health check passes, new build ID confirmed
+- CP update path: tested via bridge API, lxd-updater resolves correct WorkingDirectory
+
+### Notes for Iris
+- Spine `handleUpdateUI` was removed — UI updates are now exclusively through CP's lxd-updater
+- The `typescript: { ignoreBuildErrors: true }` in UI is a workaround for `next` type conflict between ui/ and workspace root
+- UI standalone postbuild now copies workspace-hoisted deps — this is necessary for pnpm monorepo builds
+
+---
+
 ## v0.2.21.1 — vanya — 2026-04-12
 **Branch:** vanya
 **VM:** ye-vanya
