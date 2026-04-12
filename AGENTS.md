@@ -1,3 +1,62 @@
+## v0.2.21.6 — andrew — 2026-04-12
+**Branch:** andrew
+**VM:** ye-andrew
+**Agent:** Andrew
+**Task:** Webhook management UI in CP settings page
+
+### Changes
+- `control-panel/src/app/(dashboard)/settings/page.tsx` — Added WebhooksCard component: create/list/toggle/delete webhooks with event picker, HMAC secret display, two-step delete confirmation
+- `control-panel/package.json` — Version bump to 0.2.21.6
+
+### Test Results
+- Playwright: 12 screenshots, all verified (form render, create, secret display, toggle, delete confirm, empty state)
+- Webhook CRUD: create → secret shown → list → toggle disable/enable → delete confirm/cancel all working
+- Persistence verified: webhooks.json on container has correct data
+- Platform: 7 running, 0 stopped
+
+### Notes for Iris
+- UI-only change — no backend changes (webhook API was built in v0.2.21.5)
+- No new dependencies added
+- Uses existing lucide-react icons (Webhook, ToggleLeft, ToggleRight, Copy, Trash2, Plus)
+
+---
+
+## v0.2.21.5 — andrew — 2026-04-12
+**Branch:** andrew
+**VM:** ye-andrew
+**Agent:** Andrew
+**Task:** Platform services — settings propagation, SMTP proxy, notification integration, event bus with webhooks
+
+### Changes
+- `control-panel/src/lib/market/propagation.ts` — NEW: settings propagation to apps (PATCH env + restart on settings change)
+- `control-panel/src/lib/events/emitter.ts` — NEW: platform event bus with webhook delivery (HMAC-signed, 3x retry) and app callbacks
+- `control-panel/src/app/api/mail/send/route.ts` — NEW: SMTP mail proxy for apps
+- `control-panel/src/app/api/settings/webhooks/route.ts` — NEW: webhook CRUD API (admin only)
+- `control-panel/src/app/api/market/install/route.ts` — Added emitEvent('app.installed')
+- `control-panel/src/app/api/market/uninstall/route.ts` — Added emitEvent('app.uninstalled')
+- `control-panel/src/app/api/settings/smtp/route.ts` — Added propagation + emitEvent('settings.changed')
+- `control-panel/src/lib/reconfigure/index.ts` — Added propagation + emitEvent('settings.changed')
+- `control-panel/src/lib/smtp/mailer.ts` — Added sendEmail() export
+- `control-panel/src/middleware.ts` — Added /api/mail/send to PUBLIC_ROUTES
+- `ui/src/middleware.ts` — Added X-App-Slug header passthrough, /api/v1/notifications to PUBLIC_ROUTES
+- `ui/src/app/api/v1/notifications/route.ts` — Fixed getSession() throw blocking non-session auth
+- `control-panel/src/lib/market/schema.ts` — Updated CapabilitiesSchema (notifications: boolean, events: string[])
+- `control-panel/src/lib/market/types.ts` — Added mail, notifications to VariableContext
+
+### Test Results
+- Mail proxy: 401/400/503 error paths correct, delivery works
+- Notifications: bridge token auth working (201)
+- Webhooks: CRUD API returns correct responses
+- Platform: 7 running, 0 stopped
+
+### Notes for Iris
+- CP middleware change: /api/mail/send added to PUBLIC_ROUTES (apps authenticate via X-App-Slug header, not session)
+- UI middleware change: /api/v1/notifications added to PUBLIC_ROUTES
+- CapabilitiesSchema: notifications changed from literal('push') to boolean — manifests using `notifications: true` (like memos) must use boolean
+- Known bug: X-App-Slug header unreliable in Next.js edge middleware — workaround via bridge token is in place
+
+---
+
 ## v0.2.21.2 — andrew — 2026-04-12
 **Branch:** andrew
 **VM:** ye-andrew
