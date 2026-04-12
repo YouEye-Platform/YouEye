@@ -127,24 +127,31 @@ console.log('Done resolving symlinks');
 
 // Step 5: Copy hoisted monorepo dependencies that standalone misses
 // In a pnpm monorepo, some deps are hoisted to the workspace root and
-// not included in the standalone output. Copy them from the workspace root.
+// not included in the standalone output. Copy them using -L (dereference)
+// to follow pnpm symlinks properly.
 const workspaceRoot = path.join(rootDir, '..');
 const workspaceModules = path.join(workspaceRoot, 'node_modules');
-if (fs.existsSync(workspaceModules)) {
-  // Packages that Next.js standalone needs at runtime but doesn't bundle.
-  // Only copy lightweight helpers, NOT native binaries (@swc/core-* are huge).
-  const needed = ['@swc/helpers', '@swc/counter', 'styled-jsx', 'client-only', 'react', 'react-dom'];
-  for (const pkg of needed) {
-    const src = path.join(workspaceModules, pkg);
-    const dest = path.join(nodeModulesPath, pkg);
-    if (fs.existsSync(src) && !fs.existsSync(dest)) {
-      console.log(`  Copying ${pkg} from workspace root...`);
+const localModules = path.join(rootDir, 'node_modules');
+
+// Packages that Next.js standalone needs at runtime but doesn't bundle.
+const needed = ['next', 'react', 'react-dom', '@swc/helpers', '@swc/counter', 'styled-jsx', 'client-only'];
+for (const pkg of needed) {
+  const dest = path.join(nodeModulesPath, pkg);
+  // Skip if already properly present (has package.json)
+  if (fs.existsSync(path.join(dest, 'package.json'))) continue;
+  // Try local node_modules first (pnpm resolves symlinks here), then workspace root
+  const candidates = [path.join(localModules, pkg), path.join(workspaceModules, pkg)];
+  for (const src of candidates) {
+    if (fs.existsSync(path.join(src, 'package.json'))) {
+      console.log(`  Copying ${pkg} from ${path.dirname(src) === localModules ? 'local' : 'workspace'} node_modules...`);
       if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true });
-      copyRecursive(src, dest, true);
+      // Use cp -rL to properly follow pnpm symlinks
+      require('child_process').execSync(`cp -rL "${src}" "${dest}"`);
+      break;
     }
   }
-  console.log('Done copying workspace dependencies');
 }
+console.log('Done copying workspace dependencies');
 
 // Step 6: Ensure styled-jsx is present (required by Next.js at runtime)
 const styledJsxDest = path.join(nodeModulesPath, 'styled-jsx');
