@@ -78,7 +78,7 @@ function ExpandableSection<T extends { id: string; name: string }>({
             <div className="flex flex-wrap gap-1.5 pt-2">
               {extraIndices.map((i, arrIdx) => (
                 <button key={items[i].id}
-                  onClick={() => { onSelect(i); setOpen(false); }}
+                  onClick={() => onSelect(i)}
                   type="button" className="shrink-0"
                   style={{
                     opacity: open ? 1 : 0,

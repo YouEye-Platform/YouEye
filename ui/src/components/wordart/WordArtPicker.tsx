@@ -99,7 +99,7 @@ function ExpandableSection<T extends { id: string; name: string }>({
             <div className="flex flex-wrap gap-1.5 pt-2">
               {extraIndices.map((i, arrIdx) => (
                 <button key={items[i].id}
-                  onClick={() => { onSelect(i); setOpen(false); }}
+                  onClick={() => onSelect(i)}
                   type="button" className="shrink-0"
                   style={{
                     opacity: open ? 1 : 0,
@@ -228,27 +228,18 @@ function findInitialIndices(s: SiteNameStyle | null | undefined) {
 
 export default function WordArtPicker({ siteName, initialStyle, onChange, compact = false }: Props) {
   usePreloadFonts();
-  const [fontIndex, setFontIndex] = useState(0);
-  const [effectIndex, setEffectIndex] = useState(0);
-  const [colourIndex, setColourIndex] = useState(0);
-  const [shapeIndex, setShapeIndex] = useState(0);
+  const initIndices = useMemo(() => findInitialIndices(initialStyle), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [fontIndex, setFontIndex] = useState(initIndices.font);
+  const [effectIndex, setEffectIndex] = useState(initIndices.effect);
+  const [colourIndex, setColourIndex] = useState(initIndices.colour);
+  const [shapeIndex, setShapeIndex] = useState(initIndices.shape);
   const [effectIntensity, setEffectIntensity] = useState(1);
   const [shapeIntensity, setShapeIntensity] = useState(1);
-  const [userInteracted, setUserInteracted] = useState(false);
-
-  // Sync indices when initialStyle arrives or changes (e.g. from async API fetch).
-  // Only sync if the user hasn't manually picked a preset yet.
-  const styleFingerprint = initialStyle ? `${initialStyle.fontFamily}|${initialStyle.color}|${initialStyle.gradient?.from}|${initialStyle.textShadow}|${initialStyle.transform}` : '';
-  useEffect(() => {
-    if (userInteracted || !initialStyle?.fontFamily) return;
-    const indices = findInitialIndices(initialStyle);
-    setFontIndex(indices.font);
-    setEffectIndex(indices.effect);
-    setColourIndex(indices.colour);
-    setShapeIndex(indices.shape);
-  }, [styleFingerprint]); // eslint-disable-line react-hooks/exhaustive-deps
+  const mountedRef = useRef(false);
 
   useEffect(() => {
+    // Skip the very first render — indices already match initialStyle
+    if (!mountedRef.current) { mountedRef.current = true; return; }
     const s = composeStyle(FONT_PRESETS[fontIndex], EFFECT_PRESETS[effectIndex], COLOUR_PRESETS[colourIndex], ALL_SHAPE_PRESETS[shapeIndex], effectIntensity, shapeIntensity);
     onChange(s);
   }, [fontIndex, effectIndex, colourIndex, shapeIndex, effectIntensity, shapeIntensity, onChange]);
