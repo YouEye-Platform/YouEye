@@ -76,7 +76,8 @@ function countSteps(manifest: AppManifest, ssoEnabled: boolean): number {
   // Health checks for containers that have them
   steps += manifest.containers.filter((c) => c.healthCheck).length;
   steps++; // Add Caddy route
-  if (ssoEnabled && manifest.features.supportsSSO) steps += 2; // Create Authentik app + configure SSO
+  if (ssoEnabled && manifest.features.supportsSSO) steps++; // Create Authentik app (pre-deploy)
+  if (ssoEnabled && manifest.features.supportsSSO && manifest.sso?.configure?.type !== 'none' && (manifest.sso?.configure?.steps?.length ?? 0) > 0) steps++; // Configure SSO (post-deploy)
   steps++; // Save metadata
   steps++; // Register with UI dashboard
   return steps;
@@ -244,7 +245,48 @@ export async function installApp(
     applyLanguageToContainers(manifest, systemLang);
   }
 
-  // ── Step 4: Deploy containers in order ────────────────────
+  // ── Step 4a: Pre-deploy SSO — create Authentik app early ──
+  // Apps that configure SSO via env vars (Vaultwarden, Paperless, etc.)
+  // need ${sso.clientId} and ${sso.clientSecret} resolved at container
+  // deploy time. Create the Authentik OAuth2 app now so those variables
+  // are available. The SSO *configure* steps (HTTP API calls to the app
+  // itself) still run after containers are healthy.
+
+  let ssoSlug: string | undefined;
+  let ssoClientId: string | undefined;
+
+  if (ssoEnabled && manifest.sso) {
+    checkCancelled();
+    step++;
+    emit(onEvent, step, totalSteps, 'running', 'Creating Authentik SSO application...');
+    try {
+      ssoSlug = resolveVariables(manifest.sso.authentikSlug, ctx);
+      const appUrl = `https://${config.subdomain}.${config.domain}`;
+
+      const redirectUris = manifest.sso.redirectUris.map((r) => ({
+        matching_mode: 'strict' as const,
+        url: resolveVariables(r.url, ctx),
+      }));
+
+      const ssoResult = await createAuthentikOAuth2App({
+        slug: ssoSlug,
+        name: manifest.metadata.name,
+        redirectUris,
+        launchUrl: appUrl,
+        implicitConsent: true,
+      });
+
+      ssoClientId = ssoResult.clientId;
+      ctx.sso = { clientId: ssoResult.clientId, clientSecret: ssoResult.clientSecret };
+
+      emit(onEvent, step, totalSteps, 'success', 'Authentik SSO application created');
+    } catch (err) {
+      emit(onEvent, step, totalSteps, 'error', 'Failed to create SSO application', String(err));
+      throw err;
+    }
+  }
+
+  // ── Step 4b: Deploy containers in order ───────────────────
 
   const containerNames: string[] = [];
   let primaryContainerName = '';
@@ -306,12 +348,11 @@ export async function installApp(
     }
   }
 
-  // ── Step 5: SSO Setup ─────────────────────────────────────
+  // ── Step 5: SSO Configure Steps ───────────────────────────
+  // Authentik app was already created in Step 4a. Now run the app-side
+  // SSO configuration (HTTP API calls to the running container).
 
-  let ssoSlug: string | undefined;
-  let ssoClientId: string | undefined;
-
-  if (ssoEnabled && manifest.sso) {
+  if (ssoEnabled && manifest.sso && manifest.sso.configure.type !== 'none' && manifest.sso.configure.steps.length > 0) {
     checkCancelled();
     // Get primary container IP for SSO configuration
     const primaryIP = await getContainerIP(primaryContainerName);
@@ -319,39 +360,6 @@ export async function installApp(
       ctx.container = { ip: primaryIP, port: primaryPort };
     }
 
-    // authentik.* already populated by buildVariableContext — no need to re-fetch
-
-    // Create Authentik OAuth2 app
-    step++;
-    emit(onEvent, step, totalSteps, 'running', 'Creating Authentik SSO application...');
-    try {
-      ssoSlug = resolveVariables(manifest.sso.authentikSlug, ctx);
-      const appUrl = `https://${config.subdomain}.${config.domain}`;
-
-      const redirectUris = manifest.sso.redirectUris.map((r) => ({
-        matching_mode: 'strict' as const,
-        url: resolveVariables(r.url, ctx),
-      }));
-
-      const ssoResult = await createAuthentikOAuth2App({
-        slug: ssoSlug,
-        name: manifest.metadata.name,
-        redirectUris,
-        launchUrl: appUrl,
-        // Use implicit consent to avoid BUG-004 consent screen friction
-        implicitConsent: true,
-      });
-
-      ssoClientId = ssoResult.clientId;
-      ctx.sso = { clientId: ssoResult.clientId, clientSecret: ssoResult.clientSecret };
-
-      emit(onEvent, step, totalSteps, 'success', 'Authentik SSO application created');
-    } catch (err) {
-      emit(onEvent, step, totalSteps, 'error', 'Failed to create SSO application', String(err));
-      throw err;
-    }
-
-    // Configure app SSO via HTTP API steps
     step++;
     emit(onEvent, step, totalSteps, 'running', `Configuring ${manifest.metadata.name} SSO...`);
     try {
