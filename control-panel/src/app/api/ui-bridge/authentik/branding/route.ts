@@ -111,10 +111,27 @@ export async function POST(request: Request) {
         for (const file of files) {
           const data = readFileSync(join(srcDir, file));
           const b64 = data.toString('base64');
-          await execShell(
-            'youeye-authentik',
-            `printf '%s' '${b64}' | base64 -d > ${destDir}/${file}`
-          );
+          // Large fonts (>64KB) need chunked writes to avoid shell arg limits
+          const CHUNK = 65536; // 64KB chunks
+          if (b64.length > CHUNK) {
+            await execShell('youeye-authentik', `rm -f ${destDir}/${file}`);
+            for (let off = 0; off < b64.length; off += CHUNK) {
+              const chunk = b64.slice(off, off + CHUNK);
+              await execShell(
+                'youeye-authentik',
+                `printf '%s' '${chunk}' >> ${destDir}/${file}.b64`
+              );
+            }
+            await execShell(
+              'youeye-authentik',
+              `base64 -d ${destDir}/${file}.b64 > ${destDir}/${file} && rm ${destDir}/${file}.b64`
+            );
+          } else {
+            await execShell(
+              'youeye-authentik',
+              `printf '%s' '${b64}' | base64 -d > ${destDir}/${file}`
+            );
+          }
         }
         console.log(`[authentik-branding] Copied ${files.length} font files for ${slug}`);
       } catch (fontErr) {
