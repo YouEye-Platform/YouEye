@@ -10,7 +10,11 @@
 - `spine/internal/cmd/cleanup.go` — new `removeResidualFiles()` function: removes `/etc/dnsmasq.d/incus`, cleans apt cache, removes dpkg systemd-helper tracker files (BUG-015/016/017)
 
 ### Test Results
-- Pending user testing (cleanup→deploy cycle on ye-alisa)
+- User-verified cleanup→deploy cycle on ye-alisa (2026-04-12):
+  - ZFS pool destroyed cleanly, fresh pool created on deploy — all 7 containers on ZFS
+  - Pi-Hole deployed without "already running" error
+  - Branch config (`alisa`) preserved across cleanup→deploy
+  - All residual files removed (dnsmasq, dpkg trackers, apt cache)
 
 ### Notes for Iris
 - Pure cleanup.go changes, no deploy-side modifications
