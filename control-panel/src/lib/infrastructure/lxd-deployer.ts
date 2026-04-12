@@ -312,19 +312,8 @@ else:
   `;
   await execShell(cn, downloadScript, { timeout: 300_000 });
 
-  // Install styled-jsx (required by Next.js standalone)
-  // Fetch directly from npm registry API — avoids slow npm install in pnpm node_modules
-  const styledJsxScript = `
-    mkdir -p ${spec.appDir}/node_modules/styled-jsx
-    TARBALL=$(curl -sSL https://registry.npmjs.org/styled-jsx/latest | grep -o '"tarball":"[^"]*"' | head -1 | cut -d'"' -f4)
-    if [ -n "$TARBALL" ]; then
-      curl -sSL "$TARBALL" | tar -xzf - -C ${spec.appDir}/node_modules/styled-jsx --strip-components=1
-      echo "styled-jsx installed from $TARBALL"
-    else
-      echo "WARNING: Could not resolve styled-jsx tarball URL"
-    fi
-  `;
-  await execShell(cn, styledJsxScript, { timeout: 30_000 });
+  // Next.js runtime peer deps (styled-jsx, @swc/helpers, @next/env, client-only)
+  // are now bundled into standalone.tar by Canvas SDK postbuild.mjs — no npm fetch needed.
 
   // Create systemd service file using base64 (more reliable than heredoc over exec API)
   const serviceName = spec.containerName;
