@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, ArrowRight, ArrowLeft } from 'lucide-react';
+import { ArrowRight, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   type SiteNameStyle,
@@ -23,47 +23,75 @@ interface Props {
   onBack: () => void;
 }
 
-function PickerRow<T extends { id: string; name: string }>({
-  label,
-  items,
-  selectedIndex,
-  onSelect,
-  renderItem,
+function ExpandableSection<T extends { id: string; name: string }>({
+  label, items, selectedIndex, onSelect, renderItem, previewCount = 6,
 }: {
-  label: string;
-  items: T[];
-  selectedIndex: number;
-  onSelect: (index: number) => void;
-  renderItem: (item: T, selected: boolean) => React.ReactNode;
+  label: string; items: T[]; selectedIndex: number; onSelect: (i: number) => void;
+  renderItem: (item: T, sel: boolean) => React.ReactNode; previewCount?: number;
 }) {
-  const goPrev = () => onSelect(selectedIndex === 0 ? items.length - 1 : selectedIndex - 1);
-  const goNext = () => onSelect(selectedIndex === items.length - 1 ? 0 : selectedIndex + 1);
+  const [open, setOpen] = useState(false);
+  const overflow = Math.max(0, items.length - previewCount);
+
+  const previewIndices = useMemo(() => {
+    const count = Math.min(previewCount, items.length);
+    const indices: number[] = [];
+    for (let i = 0; i < count; i++) indices.push(i);
+    if (selectedIndex >= count) indices[count - 1] = selectedIndex;
+    return indices;
+  }, [selectedIndex, previewCount, items.length]);
+
+  const extraIndices = useMemo(() => {
+    const shown = new Set(previewIndices);
+    return items.map((_, i) => i).filter(i => !shown.has(i));
+  }, [previewIndices, items.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between px-1">
+    <div>
+      <div className="flex items-center justify-between px-1 mb-1.5">
         <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">{label}</span>
         <span className="text-[10px] text-muted-foreground">{items[selectedIndex].name}</span>
       </div>
-      <div className="flex items-center gap-1">
-        <button onClick={goPrev} type="button"
-          className="w-7 h-7 rounded-full border hover:bg-muted flex items-center justify-center shrink-0">
-          <ChevronLeft className="h-3.5 w-3.5" />
-        </button>
-        <div className="flex-1 min-w-0 overflow-hidden">
-          <div className="flex flex-nowrap gap-1 py-0.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
-            {items.map((item, i) => (
-              <button key={item.id} onClick={() => onSelect(i)} type="button" className="shrink-0">
-                {renderItem(item, i === selectedIndex)}
-              </button>
-            ))}
+      <div className="flex items-center gap-1.5">
+        {previewIndices.map(i => (
+          <button key={items[i].id} onClick={() => onSelect(i)} type="button" className="shrink-0">
+            {renderItem(items[i], i === selectedIndex)}
+          </button>
+        ))}
+        {overflow > 0 && (
+          <button type="button" onClick={() => setOpen(!open)}
+            className={`shrink-0 h-8 px-2.5 rounded-md text-[10px] font-medium transition-all duration-200 ${
+              open
+                ? 'bg-primary/10 text-primary border border-primary/20'
+                : 'border border-dashed border-muted-foreground/25 text-muted-foreground/60 hover:text-muted-foreground hover:border-muted-foreground/40'
+            }`}>
+            {open ? 'Less' : `+${overflow}`}
+          </button>
+        )}
+      </div>
+      {overflow > 0 && (
+        <div style={{
+          display: 'grid',
+          gridTemplateRows: open ? '1fr' : '0fr',
+          transition: 'grid-template-rows 250ms cubic-bezier(0.4, 0, 0.2, 1)',
+        }}>
+          <div style={{ overflow: 'hidden' }}>
+            <div className="flex flex-wrap gap-1.5 pt-2">
+              {extraIndices.map((i, arrIdx) => (
+                <button key={items[i].id}
+                  onClick={() => { onSelect(i); setOpen(false); }}
+                  type="button" className="shrink-0"
+                  style={{
+                    opacity: open ? 1 : 0,
+                    transform: open ? 'scale(1)' : 'scale(0.92)',
+                    transition: `opacity 200ms ease ${Math.min(arrIdx * 12, 150)}ms, transform 200ms ease ${Math.min(arrIdx * 12, 150)}ms`,
+                  }}>
+                  {renderItem(items[i], i === selectedIndex)}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-        <button onClick={goNext} type="button"
-          className="w-7 h-7 rounded-full border hover:bg-muted flex items-center justify-center shrink-0">
-          <ChevronRight className="h-3.5 w-3.5" />
-        </button>
-      </div>
+      )}
     </div>
   );
 }
@@ -123,7 +151,8 @@ export default function SetupWordArt({ siteName, style, setStyle, onNext, onBack
       </div>
 
       {/* Font */}
-      <PickerRow label={t('fontLabel')} items={FONT_PRESETS} selectedIndex={fontIndex} onSelect={setFontIndex}
+      <ExpandableSection label={t('fontLabel')} items={FONT_PRESETS} selectedIndex={fontIndex} previewCount={6}
+        onSelect={setFontIndex}
         renderItem={(item, sel) => (
           <div className={`w-12 h-8 flex items-center justify-center rounded border text-[10px] transition-all ${
             sel ? 'border-primary bg-primary/5 shadow-sm' : 'border-border hover:border-muted-foreground/40'
@@ -135,7 +164,8 @@ export default function SetupWordArt({ siteName, style, setStyle, onNext, onBack
 
       {/* Effect + intensity */}
       <div className="space-y-1">
-        <PickerRow label={t('effectLabel')} items={EFFECT_PRESETS} selectedIndex={effectIndex} onSelect={setEffectIndex}
+        <ExpandableSection label={t('effectLabel')} items={EFFECT_PRESETS} selectedIndex={effectIndex} previewCount={6}
+          onSelect={setEffectIndex}
           renderItem={(item, sel) => (
             <div className={`w-12 h-8 flex items-center justify-center rounded text-[10px] font-bold text-white transition-all ${
               sel ? 'ring-2 ring-primary ring-offset-1' : ''
@@ -154,7 +184,8 @@ export default function SetupWordArt({ siteName, style, setStyle, onNext, onBack
 
       {/* Shape + intensity */}
       <div className="space-y-1">
-        <PickerRow label={t('shapeLabel')} items={ALL_SHAPE_PRESETS} selectedIndex={shapeIndex} onSelect={setShapeIndex}
+        <ExpandableSection label={t('shapeLabel')} items={ALL_SHAPE_PRESETS} selectedIndex={shapeIndex} previewCount={6}
+          onSelect={setShapeIndex}
           renderItem={(item, sel) => (
             <div className={`w-12 h-8 flex items-center justify-center rounded border text-[10px] font-bold transition-all ${
               sel ? 'border-primary bg-primary/5 shadow-sm' : 'border-border hover:border-muted-foreground/40'
@@ -177,7 +208,8 @@ export default function SetupWordArt({ siteName, style, setStyle, onNext, onBack
       </div>
 
       {/* Colour */}
-      <PickerRow label={t('colourLabel')} items={COLOUR_PRESETS} selectedIndex={colourIndex} onSelect={setColourIndex}
+      <ExpandableSection label={t('colourLabel')} items={COLOUR_PRESETS} selectedIndex={colourIndex} previewCount={8}
+        onSelect={setColourIndex}
         renderItem={(item, sel) => (
           <div className={`w-7 h-7 rounded-full transition-colors ${
             sel ? 'outline outline-2 outline-primary outline-offset-1' : ''
