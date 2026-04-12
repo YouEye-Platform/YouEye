@@ -25,6 +25,7 @@ const PUBLIC_ROUTES = [
   '/api/host-ip/migrate',
   '/api/ping',
   '/api/market/image',
+  '/api/connectors',
   '/setup-complete',
 ];
 

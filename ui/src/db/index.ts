@@ -252,6 +252,37 @@ export async function ensureSchema() {
         updated_at TIMESTAMP DEFAULT NOW()
       )`;
 
+    await queryClient`
+      CREATE TABLE IF NOT EXISTS user_connectors (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        connector_id TEXT NOT NULL,
+        capability TEXT NOT NULL,
+        consumer_app TEXT,
+        priority INTEGER DEFAULT 0,
+        enabled BOOLEAN DEFAULT TRUE,
+        config JSONB DEFAULT '{}',
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(user_id, connector_id, consumer_app)
+      )`;
+
+    await queryClient`
+      CREATE INDEX IF NOT EXISTS idx_user_connectors_capability
+        ON user_connectors(user_id, capability)`;
+
+    await queryClient`
+      CREATE TABLE IF NOT EXISTS user_connector_secrets (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        connector_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        encrypted_value TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(user_id, connector_id, key)
+      )`;
+
     // Seed preset themes if the themes table is empty
     await seedPresetThemes();
 

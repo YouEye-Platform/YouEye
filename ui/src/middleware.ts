@@ -22,6 +22,7 @@ const PUBLIC_ROUTES = [
   "/api/v1/apps/info-card",
   "/api/market-image",
   "/api/v1/onboarding",
+  "/api/v1/connectors",
 ];
 
 /** Static resource patterns to skip */
