@@ -1,3 +1,27 @@
+## v0.2.21.6 — vanya — 2026-04-12
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix branding WordArt picker flicker + keep expanded sections open on select
+
+### Changes
+- `ui/src/components/wordart/WordArtPicker.tsx` — Initialize picker indices from `initialStyle` at mount (was `useState(0)` causing flicker to defaults); skip first `onChange` emission via `mountedRef`; removed stale `userInteracted` state + `setUserInteracted` calls that broke all clicks in v0.2.21.5; removed `setOpen(false)` from expanded grid item click handler
+- `control-panel/src/components/setup/WordArtPickerInline.tsx` — Removed `setOpen(false)` from expanded grid click handler
+- `control-panel/src/components/setup/SetupWordArt.tsx` — Removed `setOpen(false)` from expanded grid click handler
+- `ui/package.json` — version 0.2.21.6
+- `control-panel/package.json` — version 0.2.21.6
+
+### Test Results
+- Playwright FIFO: branding page loads with saved orange gradient style, no flicker
+- Font expand/select: section stays open after clicking, preview updates correctly
+- Colour expand/select: section stays open, all 31 colours accessible
+- All picker buttons responsive (font, effect, shape, colour)
+- Screenshots: /tmp/shots/branding-v6.png, font-click-v6.png, expand-select-v6.png
+
+### Notes for Iris
+- v0.2.21.5 was a broken intermediate release (stale `setUserInteracted` calls crashed all clicks) — skip it, use v0.2.21.6
+- CP changes are expand-behavior only (no flicker fix needed — CP pickers don't have `initialStyle`)
+
 ## v0.2.21.3 — vanya — 2026-04-12
 **Branch:** vanya
 **VM:** ye-vanya
