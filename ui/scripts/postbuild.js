@@ -134,7 +134,7 @@ const workspaceModules = path.join(workspaceRoot, 'node_modules');
 const localModules = path.join(rootDir, 'node_modules');
 
 // Packages that Next.js standalone needs at runtime but doesn't bundle.
-const needed = ['next', 'react', 'react-dom', '@swc/helpers', '@swc/counter', 'styled-jsx', 'client-only'];
+const needed = ['next', 'react', 'react-dom', '@swc/helpers', '@swc/counter', '@next/env', 'styled-jsx', 'client-only'];
 for (const pkg of needed) {
   const dest = path.join(nodeModulesPath, pkg);
   // Skip if already properly present (has package.json)
