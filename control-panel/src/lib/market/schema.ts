@@ -144,9 +144,14 @@ export const SSOSchema = z.object({
 // ─── Capabilities ────────────────────────────────────────
 
 export const CapabilitiesSchema = z.object({
-  notifications: z.literal('push').optional(),
+  /** App can send notifications to the YouEye notification center */
+  notifications: z.boolean().optional(),
+  /** App can send email via the platform SMTP proxy */
   smtp: z.boolean().optional(),
+  /** App can use the platform AI API passthrough (future) */
   ai_api: z.boolean().optional(),
+  /** Platform events this app wants to receive (webhook delivery) */
+  events: z.array(z.string()).optional(),
 }).optional();
 
 // ─── Language ─────────────────────────────────────────────
@@ -177,6 +182,35 @@ export const BackupSchema = z.object({
 export const UninstallSchema = z.object({
   dropSharedDatabase: z.boolean().optional().default(false),
   preDeleteCommands: z.array(z.string()).optional().default([]),
+});
+
+// ─── Update / Migration ──────────────────────────────────
+
+export const MigrationStepSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('exec'),
+    container: z.string().min(1),
+    command: z.string().min(1),
+    timeout: z.number().int().positive().default(60_000),
+  }),
+  z.object({
+    type: z.literal('sql'),
+    database: z.string().min(1),
+    command: z.string().min(1),
+  }),
+]);
+
+export const MigrationSchema = z.object({
+  fromVersion: z.string().min(1),
+  toVersion: z.string().min(1),
+  steps: z.array(MigrationStepSchema).min(1),
+});
+
+export const UpdateSchema = z.object({
+  strategy: z.enum(['replace', 'migrate']).default('replace'),
+  preserveData: z.boolean().default(true),
+  preserveSecrets: z.boolean().default(true),
+  migrations: z.array(MigrationSchema).optional().default([]),
 });
 
 // ─── Native App Config ────────────────────────────────────
@@ -233,6 +267,7 @@ export const AppManifestSchema = z
     sso: SSOSchema.optional(),
     backup: BackupSchema.optional(),
     uninstall: UninstallSchema.optional(),
+    update: UpdateSchema.optional(),
     detail: DetailSchema.optional(),
   })
   .refine(
@@ -284,6 +319,8 @@ export const CatalogEntrySchema = z.object({
   file: z.string().min(1),
   latestVersion: z.string().optional(),
   type: z.enum(['native', 'marketplace']).optional().default('marketplace'),
+  minPlatformVersion: z.string().optional(),
+  manifestVersion: z.number().int().positive().optional().default(1),
 });
 
 export const NativeCatalogEntrySchema = z.object({

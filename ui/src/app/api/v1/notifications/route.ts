@@ -86,8 +86,14 @@ function validateAppSlugAuth(request: NextRequest): string | null {
 }
 
 export async function POST(request: NextRequest) {
-  // Support session auth, bridge token auth (CP→UI), or app-slug auth (native apps)
-  const session = await getSession();
+  // Support session auth, bridge token auth (CP→UI), or app-slug auth (native/marketplace apps)
+  let session: Awaited<ReturnType<typeof getSession>> = null;
+  try {
+    session = await getSession();
+  } catch {
+    // getSession() throws if JWT_SECRET is not configured — that's fine for
+    // non-session auth paths (bridge token, app-slug)
+  }
   const isBridgeAuth = validateBridgeAuth(request);
   const appSlug = validateAppSlugAuth(request);
 

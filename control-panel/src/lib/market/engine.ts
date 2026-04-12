@@ -38,11 +38,11 @@ import { addRoute } from '../caddy/client';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
 import {
   isAuthentikAvailable,
-  getAuthentikExternalUrl,
   createAuthentikOAuth2App,
   executeSSOSteps,
 } from './sso-engine';
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
+import { buildVariableContext } from './platform-env';
 
 // ─── Container Naming ──────────────────────────────────────
 
@@ -76,7 +76,8 @@ function countSteps(manifest: AppManifest, ssoEnabled: boolean): number {
   // Health checks for containers that have them
   steps += manifest.containers.filter((c) => c.healthCheck).length;
   steps++; // Add Caddy route
-  if (ssoEnabled && manifest.features.supportsSSO) steps += 2; // Create Authentik app + configure SSO
+  if (ssoEnabled && manifest.features.supportsSSO) steps++; // Create Authentik app (pre-deploy)
+  if (ssoEnabled && manifest.features.supportsSSO && manifest.sso?.configure?.type !== 'none' && (manifest.sso?.configure?.steps?.length ?? 0) > 0) steps++; // Configure SSO (post-deploy)
   steps++; // Save metadata
   steps++; // Register with UI dashboard
   return steps;
@@ -176,42 +177,15 @@ export async function installApp(
   const totalSteps = countSteps(manifest, ssoEnabled);
   let step = 0;
 
-  // Build initial variable context (secrets get added after generation)
-  const ctx: Partial<VariableContext> = {
-    app: { id: appId },
-    install: {
-      url: `https://${config.subdomain}.${config.domain}`,
-      subdomain: config.subdomain,
-      domain: config.domain,
-    },
-    secrets: {},
-    container: { ip: '', port: 0 },
-    sso: { clientId: '', clientSecret: '' },
-    authentik: { externalUrl: '', internalUrl: '', name: '' },
-  };
-
-  // Populate SMTP context if the app declares smtp capability
-  if (manifest.capabilities?.smtp) {
-    try {
-      const { settingsService } = await import('../settings');
-      const { readSmtpPassword } = await import('../smtp/secrets');
-      const settings = await settingsService.getAll();
-      const smtpPassword = await readSmtpPassword();
-      const smtpConfigured = !!(settings.smtpHost && smtpPassword);
-
-      ctx.smtp = {
-        host: settings.smtpHost || '',
-        port: String(settings.smtpPort || 587),
-        username: settings.smtpUsername || '',
-        password: smtpPassword,
-        from: settings.smtpFrom || '',
-        tls: String(settings.smtpRequireTls ?? true),
-        configured: String(smtpConfigured),
-      };
-    } catch {
-      // SMTP not configured — leave ctx.smtp undefined
-    }
-  }
+  // Build variable context from unified platform-env builder.
+  // Includes platform.*, authentik.*, smtp.* (if capability declared), etc.
+  // Secrets, container IP, and SSO credentials are populated later in the flow.
+  const ctx = await buildVariableContext(
+    { appId, subdomain: config.subdomain, domain: config.domain },
+    manifest
+  );
+  // Ensure secrets map exists for population below
+  if (!ctx.secrets) ctx.secrets = {};
 
   /** Throw if cancellation was requested */
   function checkCancelled() {
@@ -271,7 +245,48 @@ export async function installApp(
     applyLanguageToContainers(manifest, systemLang);
   }
 
-  // ── Step 4: Deploy containers in order ────────────────────
+  // ── Step 4a: Pre-deploy SSO — create Authentik app early ──
+  // Apps that configure SSO via env vars (Vaultwarden, Paperless, etc.)
+  // need ${sso.clientId} and ${sso.clientSecret} resolved at container
+  // deploy time. Create the Authentik OAuth2 app now so those variables
+  // are available. The SSO *configure* steps (HTTP API calls to the app
+  // itself) still run after containers are healthy.
+
+  let ssoSlug: string | undefined;
+  let ssoClientId: string | undefined;
+
+  if (ssoEnabled && manifest.sso) {
+    checkCancelled();
+    step++;
+    emit(onEvent, step, totalSteps, 'running', 'Creating Authentik SSO application...');
+    try {
+      ssoSlug = resolveVariables(manifest.sso.authentikSlug, ctx);
+      const appUrl = `https://${config.subdomain}.${config.domain}`;
+
+      const redirectUris = manifest.sso.redirectUris.map((r) => ({
+        matching_mode: 'strict' as const,
+        url: resolveVariables(r.url, ctx),
+      }));
+
+      const ssoResult = await createAuthentikOAuth2App({
+        slug: ssoSlug,
+        name: manifest.metadata.name,
+        redirectUris,
+        launchUrl: appUrl,
+        implicitConsent: true,
+      });
+
+      ssoClientId = ssoResult.clientId;
+      ctx.sso = { clientId: ssoResult.clientId, clientSecret: ssoResult.clientSecret };
+
+      emit(onEvent, step, totalSteps, 'success', 'Authentik SSO application created');
+    } catch (err) {
+      emit(onEvent, step, totalSteps, 'error', 'Failed to create SSO application', String(err));
+      throw err;
+    }
+  }
+
+  // ── Step 4b: Deploy containers in order ───────────────────
 
   const containerNames: string[] = [];
   let primaryContainerName = '';
@@ -333,12 +348,11 @@ export async function installApp(
     }
   }
 
-  // ── Step 5: SSO Setup ─────────────────────────────────────
+  // ── Step 5: SSO Configure Steps ───────────────────────────
+  // Authentik app was already created in Step 4a. Now run the app-side
+  // SSO configuration (HTTP API calls to the running container).
 
-  let ssoSlug: string | undefined;
-  let ssoClientId: string | undefined;
-
-  if (ssoEnabled && manifest.sso) {
+  if (ssoEnabled && manifest.sso && manifest.sso.configure.type !== 'none' && manifest.sso.configure.steps.length > 0) {
     checkCancelled();
     // Get primary container IP for SSO configuration
     const primaryIP = await getContainerIP(primaryContainerName);
@@ -346,57 +360,6 @@ export async function installApp(
       ctx.container = { ip: primaryIP, port: primaryPort };
     }
 
-    // Get Authentik URLs
-    const authentikExternalUrl = await getAuthentikExternalUrl();
-    const authentikIP = await getIncusContainerIP('youeye-authentik');
-    const authentikInternalUrl = authentikIP ? `http://${authentikIP}:9000` : authentikExternalUrl || '';
-
-    // Read authentik_name from config for the variable resolver
-    let authentikDisplayName = '';
-    try {
-      const platformConfig = await getSystemConfig();
-      authentikDisplayName = String(platformConfig.authentik_name || '') || `${String(platformConfig.site_name || 'YouEye')} ID`;
-    } catch {
-      authentikDisplayName = '';
-    }
-
-    ctx.authentik = {
-      externalUrl: authentikExternalUrl || '',
-      internalUrl: authentikInternalUrl,
-      name: authentikDisplayName,
-    };
-
-    // Create Authentik OAuth2 app
-    step++;
-    emit(onEvent, step, totalSteps, 'running', 'Creating Authentik SSO application...');
-    try {
-      ssoSlug = resolveVariables(manifest.sso.authentikSlug, ctx);
-      const appUrl = `https://${config.subdomain}.${config.domain}`;
-
-      const redirectUris = manifest.sso.redirectUris.map((r) => ({
-        matching_mode: 'strict' as const,
-        url: resolveVariables(r.url, ctx),
-      }));
-
-      const ssoResult = await createAuthentikOAuth2App({
-        slug: ssoSlug,
-        name: manifest.metadata.name,
-        redirectUris,
-        launchUrl: appUrl,
-        // Use implicit consent to avoid BUG-004 consent screen friction
-        implicitConsent: true,
-      });
-
-      ssoClientId = ssoResult.clientId;
-      ctx.sso = { clientId: ssoResult.clientId, clientSecret: ssoResult.clientSecret };
-
-      emit(onEvent, step, totalSteps, 'success', 'Authentik SSO application created');
-    } catch (err) {
-      emit(onEvent, step, totalSteps, 'error', 'Failed to create SSO application', String(err));
-      throw err;
-    }
-
-    // Configure app SSO via HTTP API steps
     step++;
     emit(onEvent, step, totalSteps, 'running', `Configuring ${manifest.metadata.name} SSO...`);
     try {
@@ -539,70 +502,13 @@ function getGenerator(type: string, length: number): () => string {
 }
 
 /**
- * Read the system config from youeye.yaml via Spine API.
- * Returns parsed config object. Falls back to empty object.
- */
-async function getSystemConfig(): Promise<Record<string, unknown>> {
-  try {
-    const http = await import('http');
-    return await new Promise<Record<string, unknown>>((resolve) => {
-      const req = http.request(
-        {
-          socketPath: '/var/run/spine/spine.sock',
-          path: '/api/config',
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
-        },
-        (res) => {
-          let data = '';
-          res.on('data', (chunk: Buffer) => (data += chunk));
-          res.on('end', () => {
-            try {
-              resolve(JSON.parse(data));
-            } catch {
-              resolve({});
-            }
-          });
-        }
-      );
-      req.on('error', () => resolve({}));
-      req.setTimeout(5000, () => {
-        req.destroy();
-        resolve({});
-      });
-      req.end();
-    });
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Read the system language from youeye.yaml via Spine API.
+ * Read the system language via the platform context cache.
  * Falls back to "en" if unavailable.
  */
 async function getSystemLanguageForApps(): Promise<string> {
-  const config = await getSystemConfig();
-  return (config.language as string) || 'en';
-}
-
-/**
- * Convert a language code to the format expected by the app.
- * - "iso639": returns as-is (e.g. "en", "ru", "es")
- * - "full": returns the full English name (e.g. "english", "russian")
- */
-function formatLanguageValue(lang: string, format: string): string {
-  if (format === 'full') {
-    const langNames: Record<string, string> = {
-      en: 'english',
-      ru: 'russian',
-      es: 'spanish',
-      de: 'german',
-      fr: 'french',
-    };
-    return langNames[lang] || 'english';
-  }
-  return lang;
+  const { getPlatformContext } = await import('./platform-env');
+  const platform = await getPlatformContext();
+  return platform.locale || 'en';
 }
 
 /**

@@ -29,6 +29,8 @@ import type { InstallEvent, InstallEventCallback, InstallMetadata } from '@/lib/
 import { saveInstallMetadata, readInstallMetadata } from '@/lib/market/metadata';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
 import { nativeContainerName, nativeGiteaRepo } from './catalog';
+import { buildPlatformEnv, envToString } from '@/lib/market/platform-env';
+import type { PlatformEnvConfig } from '@/lib/market/platform-env';
 
 const GITEA_BASE = 'https://git.byka.wtf';
 const GITEA_ORG = 'potemsla';
@@ -247,6 +249,42 @@ export async function getNativeAppStatus(
   }
 }
 
+// ─── Unified Env File Writer ─────────────────────────────
+
+/**
+ * Build and write the env file for a native app container using the
+ * unified platform-env builder. All standard platform variables are
+ * injected automatically; callers only need to supply app-specific extras.
+ */
+async function writeNativeEnvFile(
+  containerName: string,
+  config: NativeInstallConfig,
+  sso: { clientId: string; clientSecret: string },
+  jwtSecret: string,
+  extra?: Record<string, string>
+): Promise<void> {
+  const envConfig: PlatformEnvConfig = {
+    appId: config.appId.replace(/^ye-/, ''),
+    subdomain: config.subdomain,
+    domain: config.domain,
+    port: 3000,
+    sso,
+    jwtSecret,
+    extra,
+  };
+
+  const env = await buildPlatformEnv(envConfig);
+  const content = envToString(env);
+
+  // Write via base64 to avoid shell quoting issues with special characters in secrets
+  const b64 = Buffer.from(content).toString('base64');
+  await execShell(
+    containerName,
+    `echo '${b64}' | base64 -d > /etc/${containerName}.env`,
+    { timeout: 10_000 }
+  );
+}
+
 // ─── Main Install Entry Point ──────────────────────────────
 
 export async function installNativeApp(
@@ -356,39 +394,7 @@ async function installWiki(
       throw new Error('Could not determine Authentik external URL from Caddy config. Ensure Authentik is running and has a Caddy route configured.');
     }
     const authUrl = authExternalUrl;
-    const authentikIP = await getContainerIP('youeye-authentik');
-    const authentikInternalUrl = authentikIP
-      ? `http://${authentikIP}:9000`
-      : 'http://youeye-authentik.incus:9000';
-
-    // Derive UI base URL from domain (root domain = UI)
-    const uiBaseUrl = `https://${config.domain}`;
-
-    const envContent = [
-      'NODE_ENV=production',
-      'PORT=3000',
-      'HOSTNAME=0.0.0.0',
-      `AUTHENTIK_URL=${authUrl}`,
-      `AUTHENTIK_INTERNAL_URL=${authentikInternalUrl}`,
-      `AUTHENTIK_CLIENT_ID=${clientId}`,
-      `AUTHENTIK_CLIENT_SECRET=${clientSecret}`,
-      `JWT_SECRET=${jwtSecret}`,
-      `WIKI_EXTERNAL_URL=${appUrl}`,
-      `NEXT_PUBLIC_APP_URL=${appUrl}`,
-      'YOUEYE_API_URL=http://youeye-ui.incus:3000/api/v1',
-      `YOUEYE_UI_URL=${uiBaseUrl}`,
-      'SECURE_COOKIES=false',
-    ].join('\n') + '\n'; // BUG-023: Ensure trailing newline
-
-    // Write via base64 to avoid shell quoting issues with special characters in secrets
-    const b64 = Buffer.from(envContent).toString('base64');
-    await execShell(
-      containerName,
-      `echo '${b64}' | base64 -d > /etc/${containerName}.env`,
-      { timeout: 10_000 }
-    );
-
-    // Restart service to pick up the new env vars
+    await writeNativeEnvFile(containerName, config, { clientId, clientSecret }, jwtSecret);
     await execShell(containerName, `systemctl restart ${containerName}`, { timeout: 20_000 });
     emit(onEvent, 4, TOTAL_STEPS, 'success', 'Configuration written and service restarted');
   } catch (err) {
@@ -562,43 +568,10 @@ async function installSearch(
   // ── Step 5: Write env file (with search engine config) ────
   emit(onEvent, 5, TOTAL_STEPS, 'running', 'Writing configuration...');
   try {
-    const authExternalUrl = await getAuthentikExternalUrl();
-    if (!authExternalUrl) {
-      throw new Error('Could not determine Authentik external URL from Caddy config. Ensure Authentik is running and has a Caddy route configured.');
-    }
-    const authUrl = authExternalUrl;
-    const authentikIP = await getContainerIP('youeye-authentik');
-    const authentikInternalUrl = authentikIP
-      ? `http://${authentikIP}:9000`
-      : 'http://youeye-authentik.incus:9000';
-
-    const uiBaseUrl = `https://${config.domain}`;
-
-    const envContent = [
-      'NODE_ENV=production',
-      'PORT=3000',
-      'HOSTNAME=0.0.0.0',
-      `AUTHENTIK_URL=${authUrl}`,
-      `AUTHENTIK_INTERNAL_URL=${authentikInternalUrl}`,
-      `AUTHENTIK_CLIENT_ID=${clientId}`,
-      `AUTHENTIK_CLIENT_SECRET=${clientSecret}`,
-      `JWT_SECRET=${jwtSecret}`,
-      `SEARCH_EXTERNAL_URL=${appUrl}`,
-      `NEXT_PUBLIC_APP_URL=${appUrl}`,
-      'YOUEYE_API_URL=http://youeye-ui.incus:3000/api/v1',
-      `YOUEYE_UI_URL=${uiBaseUrl}`,
-      'SECURE_COOKIES=false',
-      `SEARCH_ENGINE_TYPE=${engine.type}`,
-      `SEARCH_ENGINE_URL=${engine.url}`,
-    ].join('\n') + '\n'; // BUG-023: Ensure trailing newline
-
-    const b64 = Buffer.from(envContent).toString('base64');
-    await execShell(
-      containerName,
-      `echo '${b64}' | base64 -d > /etc/${containerName}.env`,
-      { timeout: 10_000 }
-    );
-
+    await writeNativeEnvFile(containerName, config, { clientId, clientSecret }, jwtSecret, {
+      SEARCH_ENGINE_TYPE: engine.type,
+      SEARCH_ENGINE_URL: engine.url,
+    });
     await execShell(containerName, `systemctl restart ${containerName}`, { timeout: 20_000 });
     emit(onEvent, 5, TOTAL_STEPS, 'success', `Configuration written — using ${engine.type} at ${engine.containerName}`);
   } catch (err) {
@@ -797,44 +770,12 @@ async function installNotes(
   // ── Step 5: Write env file ────────────────────────────────
   emit(onEvent, 5, TOTAL_STEPS, 'running', 'Writing configuration...');
   try {
-    const authExternalUrl = await getAuthentikExternalUrl();
-    if (!authExternalUrl) {
-      throw new Error('Could not determine Authentik external URL from Caddy config. Ensure Authentik is running and has a Caddy route configured.');
-    }
-    const authUrl = authExternalUrl;
-    const authentikIP = await getContainerIP('youeye-authentik');
-    const authentikInternalUrl = authentikIP
-      ? `http://${authentikIP}:9000`
-      : 'http://youeye-authentik.incus:9000';
     const postgresIP = await getContainerIP('youeye-postgres');
     const postgresHost = postgresIP || 'youeye-postgres.incus';
 
-    const uiBaseUrl = `https://${config.domain}`;
-
-    const envContent = [
-      'NODE_ENV=production',
-      'PORT=3000',
-      'HOSTNAME=0.0.0.0',
-      `AUTHENTIK_URL=${authUrl}`,
-      `AUTHENTIK_INTERNAL_URL=${authentikInternalUrl}`,
-      `AUTHENTIK_CLIENT_ID=${clientId}`,
-      `AUTHENTIK_CLIENT_SECRET=${clientSecret}`,
-      `JWT_SECRET=${jwtSecret}`,
-      `NOTES_EXTERNAL_URL=${appUrl}`,
-      `NEXT_PUBLIC_APP_URL=${appUrl}`,
-      'YOUEYE_API_URL=http://youeye-ui.incus:3000/api/v1',
-      `YOUEYE_UI_URL=${uiBaseUrl}`,
-      'SECURE_COOKIES=false',
-      `DATABASE_URL=postgresql://ye_notes:${dbPassword}@${postgresHost}:5432/ye_notes?sslmode=disable`,
-    ].join('\n') + '\n'; // BUG-023: Ensure trailing newline
-
-    const b64 = Buffer.from(envContent).toString('base64');
-    await execShell(
-      containerName,
-      `echo '${b64}' | base64 -d > /etc/${containerName}.env`,
-      { timeout: 10_000 }
-    );
-
+    await writeNativeEnvFile(containerName, config, { clientId, clientSecret }, jwtSecret, {
+      DATABASE_URL: `postgresql://ye_notes:${dbPassword}@${postgresHost}:5432/ye_notes?sslmode=disable`,
+    });
     await execShell(containerName, `systemctl restart ${containerName}`, { timeout: 20_000 });
     emit(onEvent, 5, TOTAL_STEPS, 'success', 'Configuration written and service restarted');
   } catch (err) {
@@ -1033,15 +974,6 @@ async function installCinema(
   // ── Step 5: Write env file ────────────────────────────────
   emit(onEvent, 5, TOTAL_STEPS, 'running', 'Writing configuration...');
   try {
-    const authExternalUrl = await getAuthentikExternalUrl();
-    if (!authExternalUrl) {
-      throw new Error('Could not determine Authentik external URL from Caddy config. Ensure Authentik is running and has a Caddy route configured.');
-    }
-    const authUrl = authExternalUrl;
-    const authentikIP = await getContainerIP('youeye-authentik');
-    const authentikInternalUrl = authentikIP
-      ? `http://${authentikIP}:9000`
-      : 'http://youeye-authentik.incus:9000';
     const postgresIP = await getContainerIP('youeye-postgres');
     const postgresHost = postgresIP || 'youeye-postgres.incus';
 
@@ -1051,33 +983,10 @@ async function installCinema(
       emit(onEvent, 5, TOTAL_STEPS, 'running', 'Warning: TMDB_API_KEY not provided — content will not load until configured');
     }
 
-    const uiBaseUrl = `https://${config.domain}`;
-
-    const envContent = [
-      'NODE_ENV=production',
-      'PORT=3000',
-      'HOSTNAME=0.0.0.0',
-      `AUTHENTIK_URL=${authUrl}`,
-      `AUTHENTIK_INTERNAL_URL=${authentikInternalUrl}`,
-      `AUTHENTIK_CLIENT_ID=${clientId}`,
-      `AUTHENTIK_CLIENT_SECRET=${clientSecret}`,
-      `JWT_SECRET=${jwtSecret}`,
-      `CINEMA_EXTERNAL_URL=${appUrl}`,
-      `NEXT_PUBLIC_APP_URL=${appUrl}`,
-      'YOUEYE_API_URL=http://youeye-ui.incus:3000/api/v1',
-      `YOUEYE_UI_URL=${uiBaseUrl}`,
-      'SECURE_COOKIES=false',
-      `DATABASE_URL=postgresql://ye_cinema:${dbPassword}@${postgresHost}:5432/ye_cinema?sslmode=disable`,
-      `TMDB_API_KEY=${tmdbApiKey}`,
-    ].join('\n') + '\n'; // BUG-023: Ensure trailing newline
-
-    const b64 = Buffer.from(envContent).toString('base64');
-    await execShell(
-      containerName,
-      `echo '${b64}' | base64 -d > /etc/${containerName}.env`,
-      { timeout: 10_000 }
-    );
-
+    await writeNativeEnvFile(containerName, config, { clientId, clientSecret }, jwtSecret, {
+      DATABASE_URL: `postgresql://ye_cinema:${dbPassword}@${postgresHost}:5432/ye_cinema?sslmode=disable`,
+      TMDB_API_KEY: tmdbApiKey,
+    });
     await execShell(containerName, `systemctl restart ${containerName}`, { timeout: 20_000 });
     emit(onEvent, 5, TOTAL_STEPS, 'success', 'Configuration written and service restarted');
   } catch (err) {
@@ -1274,47 +1183,12 @@ async function installWeather(
   // ── Step 5: Write env file ────────────────────────────────
   emit(onEvent, 5, TOTAL_STEPS, 'running', 'Writing configuration...');
   try {
-    const authExternalUrl = await getAuthentikExternalUrl();
-    if (!authExternalUrl) {
-      throw new Error('Could not determine Authentik external URL from Caddy config. Ensure Authentik is running and has a Caddy route configured.');
-    }
-    const authUrl = authExternalUrl;
-    const authentikIP = await getContainerIP('youeye-authentik');
-    const authentikInternalUrl = authentikIP
-      ? `http://${authentikIP}:9000`
-      : 'http://youeye-authentik.incus:9000';
     const postgresIP = await getContainerIP('youeye-postgres');
     const postgresHost = postgresIP || 'youeye-postgres.incus';
 
-    const uiBaseUrl = `https://${config.domain}`;
-
-    const envContent = [
-      'NODE_ENV=production',
-      'PORT=3000',
-      'HOSTNAME=0.0.0.0',
-      // NOTE: NODE_OPTIONS=--dns-result-order=ipv4first is intentionally omitted.
-      // It only affects dns.lookup() and has NO effect on undici/fetch (Node.js v22
-      // global fetch uses its own DNS resolver, independent of --dns-result-order).
-      // The authoritative fix is disabling IPv6 at the sysctl level (done below).
-      `AUTHENTIK_URL=${authUrl}`,
-      `AUTHENTIK_INTERNAL_URL=${authentikInternalUrl}`,
-      `AUTHENTIK_CLIENT_ID=${clientId}`,
-      `AUTHENTIK_CLIENT_SECRET=${clientSecret}`,
-      `JWT_SECRET=${jwtSecret}`,
-      `WEATHER_EXTERNAL_URL=${appUrl}`,
-      `NEXT_PUBLIC_APP_URL=${appUrl}`,
-      'YOUEYE_API_URL=http://youeye-ui.incus:3000/api/v1',
-      `YOUEYE_UI_URL=${uiBaseUrl}`,
-      'SECURE_COOKIES=false',
-      `DATABASE_URL=postgresql://ye_weather:${dbPassword}@${postgresHost}:5432/ye_weather?sslmode=disable`,
-    ].join('\n') + '\n'; // Ensure trailing newline (BUG-023 fix)
-
-    const b64 = Buffer.from(envContent).toString('base64');
-    await execShell(
-      containerName,
-      `echo '${b64}' | base64 -d > /etc/${containerName}.env`,
-      { timeout: 10_000 }
-    );
+    await writeNativeEnvFile(containerName, config, { clientId, clientSecret }, jwtSecret, {
+      DATABASE_URL: `postgresql://ye_weather:${dbPassword}@${postgresHost}:5432/ye_weather?sslmode=disable`,
+    });
 
     // Disable IPv6 on ALL interfaces in the container (BUG-LISA-001).
     //
@@ -1545,44 +1419,12 @@ async function installTranslate(
   // ── Step 5: Write env file ────────────────────────────────
   emit(onEvent, 5, TOTAL_STEPS, 'running', 'Writing configuration...');
   try {
-    const authExternalUrl = await getAuthentikExternalUrl();
-    if (!authExternalUrl) {
-      throw new Error('Could not determine Authentik external URL from Caddy config. Ensure Authentik is running and has a Caddy route configured.');
-    }
-    const authUrl = authExternalUrl;
-    const authentikIP = await getContainerIP('youeye-authentik');
-    const authentikInternalUrl = authentikIP
-      ? `http://${authentikIP}:9000`
-      : 'http://youeye-authentik.incus:9000';
     const postgresIP = await getContainerIP('youeye-postgres');
     const postgresHost = postgresIP || 'youeye-postgres.incus';
 
-    const uiBaseUrl = `https://${config.domain}`;
-
-    const envContent = [
-      'NODE_ENV=production',
-      'PORT=3000',
-      'HOSTNAME=0.0.0.0',
-      `AUTHENTIK_URL=${authUrl}`,
-      `AUTHENTIK_INTERNAL_URL=${authentikInternalUrl}`,
-      `AUTHENTIK_CLIENT_ID=${clientId}`,
-      `AUTHENTIK_CLIENT_SECRET=${clientSecret}`,
-      `JWT_SECRET=${jwtSecret}`,
-      `TRANSLATE_EXTERNAL_URL=${appUrl}`,
-      `NEXT_PUBLIC_APP_URL=${appUrl}`,
-      'YOUEYE_API_URL=http://youeye-ui.incus:3000/api/v1',
-      `YOUEYE_UI_URL=${uiBaseUrl}`,
-      'SECURE_COOKIES=false',
-      `DATABASE_URL=postgresql://ye_translate:${dbPassword}@${postgresHost}:5432/ye_translate?sslmode=disable`,
-    ].join('\n') + '\n'; // BUG-023: Ensure trailing newline
-
-    const b64 = Buffer.from(envContent).toString('base64');
-    await execShell(
-      containerName,
-      `echo '${b64}' | base64 -d > /etc/${containerName}.env`,
-      { timeout: 10_000 }
-    );
-
+    await writeNativeEnvFile(containerName, config, { clientId, clientSecret }, jwtSecret, {
+      DATABASE_URL: `postgresql://ye_translate:${dbPassword}@${postgresHost}:5432/ye_translate?sslmode=disable`,
+    });
     await execShell(containerName, `systemctl restart ${containerName}`, { timeout: 20_000 });
     emit(onEvent, 5, TOTAL_STEPS, 'success', 'Configuration written and service restarted');
   } catch (err) {

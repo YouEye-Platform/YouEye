@@ -22,6 +22,7 @@ const PUBLIC_ROUTES = [
   "/api/v1/apps/info-card",
   "/api/market-image",
   "/api/v1/onboarding",
+  "/api/v1/notifications",  // Auth handled at route level (session, bridge token, app-slug)
 ];
 
 /** Static resource patterns to skip */
@@ -58,6 +59,13 @@ export async function middleware(request: NextRequest) {
   // Token is validated at the route level via getBridgeToken().
   const bridgeToken = request.headers.get("x-ui-bridge-token");
   if (bridgeToken && pathname.startsWith("/api/")) {
+    return NextResponse.next();
+  }
+
+  // Allow app-slug auth requests (native + marketplace apps on Incus internal network).
+  // Auth validated at route level via validateAppSlugAuth() in the notifications endpoint.
+  const appSlug = request.headers.get("x-app-slug");
+  if (appSlug && pathname.startsWith("/api/")) {
     return NextResponse.next();
   }
 

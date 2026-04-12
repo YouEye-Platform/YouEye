@@ -22,6 +22,11 @@
  *   ${smtp.from}              - SMTP from address
  *   ${smtp.tls}               - Whether TLS is required ("true"/"false")
  *   ${smtp.configured}        - Whether SMTP is configured ("true"/"false")
+ *   ${platform.version}       - YouEye platform version (e.g. "0.2.21")
+ *   ${platform.domain}        - Platform root domain
+ *   ${platform.siteName}      - Platform display name (white-label)
+ *   ${platform.timezone}      - System timezone (e.g. "Australia/Sydney")
+ *   ${platform.locale}        - System language code (e.g. "en")
  */
 
 import type { VariableContext } from './types';
@@ -109,6 +114,8 @@ function resolvePath(path: string, ctx: Partial<VariableContext>): string | unde
       return getNestedValue(ctx.authentik, key);
     case 'smtp':
       return getNestedValue(ctx.smtp, key);
+    case 'platform':
+      return getNestedValue(ctx.platform, key);
     default:
       return undefined;
   }

@@ -663,6 +663,28 @@ export async function reconfigure(
     }
   }
 
+  // 11c. Propagate platform env vars (site name, timezone, locale) to all installed apps
+  // This ensures YOUEYE_SITE_NAME etc. are always current after reconfigure.
+  if (installedApps.length > 0) {
+    try {
+      const { propagateSettingsToApps } = await import('@/lib/market/propagation');
+      await propagateSettingsToApps();
+    } catch {
+      // Platform env propagation is best-effort
+    }
+  }
+
+  // 11d. Emit settings.changed event
+  try {
+    const { emitEvent } = await import('@/lib/events/emitter');
+    emitEvent('settings.changed', {
+      siteName: newSiteName,
+      domain: newDomain,
+      domainChanged,
+      subdomainsChanged,
+    });
+  } catch { /* best-effort */ }
+
   // 12. Update CP SSO env vars — LAST STEP because setControlSSO triggers a 2s delayed restart.
   // Everything else must be done before this point.
   if (domainChanged || subdomainsChanged) {

@@ -10,6 +10,8 @@ import { getSession } from '@/lib/auth/session';
 import { settingsService } from '@/lib/settings';
 import { readSmtpPassword, writeSmtpPassword } from '@/lib/smtp/secrets';
 import { configureAuthentikSmtp } from '@/lib/smtp/authentik-sync';
+import { propagateSmtpToApps } from '@/lib/market/propagation';
+import { emitEvent } from '@/lib/events/emitter';
 
 export async function GET() {
   const session = await getSession();
@@ -83,6 +85,14 @@ export async function POST(request: NextRequest) {
     } catch (err) {
       console.error('[SMTP] Authentik sync failed (non-blocking):', err);
     }
+
+    // Emit settings change event
+    emitEvent('settings.changed', { setting: 'smtp', host, port, username, from });
+
+    // Propagate updated SMTP env vars to all installed apps (best-effort, non-blocking)
+    propagateSmtpToApps().catch((err) => {
+      console.error('[SMTP] App propagation failed (non-blocking):', err);
+    });
 
     return NextResponse.json({
       success: true,
