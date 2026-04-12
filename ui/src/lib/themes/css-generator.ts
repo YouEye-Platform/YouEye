@@ -139,6 +139,8 @@ export interface AuthentikBrandingConfig {
   fontUrl?: string;
   /** Site name to render via ::after pseudo-element (replaces SVG logo) */
   siteName?: string;
+  /** Font file format for the branding font ('woff2' or 'truetype'). Defaults to 'truetype'. */
+  fontFileFormat?: 'woff2' | 'truetype';
 }
 
 interface SiteNameStyle {
@@ -176,20 +178,23 @@ export function generateAuthentikCSS(
   const fontFamily = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
   // Inline @font-face declarations directly in the CSS.
-  // @import doesn't work reliably across shadow DOM boundaries, so we
-  // embed the font-face with absolute URLs to the Authentik-hosted font files.
+  // Font files must be copied into Authentik's /web/dist/assets/fonts/ directory
+  // by the bridge endpoint — see ui-bridge/authentik/branding/route.ts.
   const fontFaces: string[] = [];
 
-  // Always include Inter
+  // Always include Inter (ships as .ttf)
   const interWeights = [400, 500, 600, 700];
   for (const w of interWeights) {
     fontFaces.push(`@font-face { font-family: 'Inter'; font-style: normal; font-weight: ${w}; font-display: swap; src: url(/static/dist/assets/fonts/inter/inter-${interWeights.indexOf(w)}.ttf) format('truetype'); }`);
   }
 
-  // Include the branding font if different from Inter
+  // Include the branding font if different from Inter.
+  // Font file format varies per font (woff2 or ttf) — passed via branding config.
   if (s?.fontFamily && s.fontFamily !== 'Inter') {
     const slug = s.fontFamily.toLowerCase().replace(/\s+/g, '-');
-    fontFaces.push(`@font-face { font-family: '${s.fontFamily}'; font-style: normal; font-weight: ${s.fontWeight || 400}; font-display: swap; src: url(/static/dist/assets/fonts/${slug}/${slug}-0.ttf) format('truetype'); }`);
+    const fmt = branding?.fontFileFormat || 'truetype';
+    const ext = fmt === 'woff2' ? 'woff2' : 'ttf';
+    fontFaces.push(`@font-face { font-family: '${s.fontFamily}'; font-style: normal; font-weight: ${s.fontWeight || 400}; font-display: swap; src: url(/static/dist/assets/fonts/${slug}/${slug}-0.${ext}) format('${fmt}'); }`);
   }
 
   const imports = fontFaces;

@@ -16,6 +16,9 @@ import { generateAuthentikCSS } from "@/lib/themes/css-generator";
 import { getBranding } from "@/lib/db/queries/branding";
 import { getUserActiveTheme, getDefaultTheme } from "@/lib/db/queries/themes";
 import type { ThemeColors } from "@/db/schema";
+import { existsSync } from "fs";
+import { readdir } from "fs/promises";
+import { join } from "path";
 
 export async function POST(request: Request) {
   const session = await getSession();
@@ -50,29 +53,40 @@ export async function POST(request: Request) {
     // Fetch branding config for WordArt / site name
     const branding = await getBranding();
     const siteNameStyle = branding.site_name_style ?? undefined;
-    // Use self-hosted font URLs from the UI domain (reachable from browser)
     const fontSlug = (name: string) => name.toLowerCase().replace(/\s+/g, '-');
-    const uiDomain = process.env.UI_EXTERNAL_URL || 'https://devvm.test';
-    const fontUrl =
-      siteNameStyle?.fontFamily && siteNameStyle.fontFamily !== "Inter"
-        ? `${uiDomain}/fonts/${fontSlug(siteNameStyle.fontFamily)}.css`
-        : undefined;
+
+    // Detect font file format (woff2 vs ttf) from the public/fonts directory
+    let fontFileFormat: 'woff2' | 'truetype' = 'truetype';
+    let fontSlugStr: string | undefined;
+    if (siteNameStyle?.fontFamily && siteNameStyle.fontFamily !== "Inter") {
+      fontSlugStr = fontSlug(siteNameStyle.fontFamily);
+      const fontDir = join(process.cwd(), 'public', 'fonts', fontSlugStr);
+      if (existsSync(fontDir)) {
+        try {
+          const files = await readdir(fontDir);
+          const hasWoff2 = files.some(f => f.endsWith('.woff2'));
+          fontFileFormat = hasWoff2 ? 'woff2' : 'truetype';
+        } catch { /* fallback to truetype */ }
+      }
+    }
 
     // Generate Authentik CSS with correct Shadow DOM selectors.
     // siteName is passed so ::part(branding)::after can render it via CSS content.
     const css = generateAuthentikCSS(colors, {
       siteNameStyle,
-      fontUrl,
+      fontFileFormat,
       siteName: branding.site_name,
     });
 
     // Push to CP bridge — include WordArt style for SVG logo generation
+    // Also pass fontSlug so the bridge can copy font files into Authentik
     const bridgeRes = await bridgeRequest("authentik/branding", {
       method: "POST",
       body: JSON.stringify({
         css,
         siteName: `${branding.site_name} ID`,
         siteNameStyle: siteNameStyle ?? null,
+        fontSlug: fontSlugStr ?? null,
       }),
     });
 

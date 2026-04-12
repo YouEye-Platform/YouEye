@@ -22,6 +22,8 @@ import { setDomainDNS } from '@/lib/apps/pihole-api';
 import { generateSetupAuthentikCSS } from '@/lib/authentik/setup-css';
 import { generateWordArtSVG } from '@/lib/authentik/wordart-svg';
 import { execShell } from '@/lib/incus/server';
+import { readFileSync, readdirSync, existsSync } from 'fs';
+import { join } from 'path';
 
 interface SetupRequest {
   site_name: string;
@@ -823,7 +825,37 @@ export async function POST(request: NextRequest) {
             const rawName = body.site_name || 'YouEye';
             const brandingTitle = `${rawName} ID`;
             const siteNameStyle = body.site_name_style as Record<string, unknown> | undefined;
-            const brandingCSS = generateSetupAuthentikCSS(siteNameStyle ?? null, body.domain, rawName);
+
+            // Copy font files into Authentik and detect format
+            const fontSlugFn = (name: string) => name.toLowerCase().replace(/\s+/g, '-');
+            let setupFontFormat: 'woff2' | 'truetype' = 'truetype';
+            const fontsToSync = ['inter'];
+            if ((siteNameStyle as Record<string, unknown>)?.fontFamily && (siteNameStyle as Record<string, unknown>)?.fontFamily !== 'Inter') {
+              const slug = fontSlugFn((siteNameStyle as Record<string, unknown>).fontFamily as string);
+              fontsToSync.push(slug);
+            }
+            for (const slug of fontsToSync) {
+              try {
+                const srcDir = join(process.cwd(), 'public', 'fonts', slug);
+                if (!existsSync(srcDir)) continue;
+                const destDir = `/web/dist/assets/fonts/${slug}`;
+                await execShell('youeye-authentik', `mkdir -p ${destDir}`);
+                const files = readdirSync(srcDir).filter(f => /\.(ttf|woff2?|otf)$/.test(f));
+                if (slug !== 'inter' && files.some(f => f.endsWith('.woff2'))) {
+                  setupFontFormat = 'woff2';
+                }
+                for (const file of files) {
+                  const data = readFileSync(join(srcDir, file));
+                  const b64 = data.toString('base64');
+                  await execShell('youeye-authentik', `printf '%s' '${b64}' | base64 -d > ${destDir}/${file}`);
+                }
+                console.log(`[setup] Copied ${files.length} font files for ${slug} to Authentik`);
+              } catch (fontErr) {
+                console.warn(`[setup] Non-fatal: font copy failed for ${slug}:`, fontErr);
+              }
+            }
+
+            const brandingCSS = generateSetupAuthentikCSS(siteNameStyle ?? null, body.domain, rawName, setupFontFormat);
 
             // Generate WordArt SVG for branding_logo (used in dashboard header).
             // Login flow uses CSS ::part(branding)::after for pixel-perfect matching.

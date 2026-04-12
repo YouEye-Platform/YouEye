@@ -52,14 +52,13 @@ function ExpandableSection<T extends { id: string; name: string }>({
   const [open, setOpen] = useState(false);
   const overflow = Math.max(0, items.length - previewCount);
 
-  // Collapsed: show first N items, but always include the selected one
+  // Collapsed: always show the first N items (stable — no swapping)
   const previewIndices = useMemo(() => {
     const count = Math.min(previewCount, items.length);
     const indices: number[] = [];
     for (let i = 0; i < count; i++) indices.push(i);
-    if (selectedIndex >= count) indices[count - 1] = selectedIndex;
     return indices;
-  }, [selectedIndex, previewCount, items.length]);
+  }, [previewCount, items.length]);
 
   const extraIndices = useMemo(() => {
     const shown = new Set(previewIndices);
@@ -78,16 +77,21 @@ function ExpandableSection<T extends { id: string; name: string }>({
             {renderItem(items[i], i === selectedIndex)}
           </button>
         ))}
-        {overflow > 0 && (
-          <button type="button" onClick={() => setOpen(!open)}
-            className={`shrink-0 h-8 px-2.5 rounded-md text-[10px] font-medium transition-all duration-200 ${
-              open
-                ? 'bg-primary/10 text-primary border border-primary/20'
-                : 'border border-dashed border-muted-foreground/25 text-muted-foreground/60 hover:text-muted-foreground hover:border-muted-foreground/40'
-            }`}>
-            {open ? 'Less' : `+${overflow}`}
-          </button>
-        )}
+        {overflow > 0 && (() => {
+          const selInOverflow = selectedIndex >= previewCount;
+          return (
+            <button type="button" onClick={() => setOpen(!open)}
+              className={`shrink-0 h-8 px-2.5 rounded-md text-[10px] font-medium transition-all duration-200 ${
+                open
+                  ? 'bg-primary/10 text-primary border border-primary/20'
+                  : selInOverflow
+                    ? 'bg-primary/10 text-primary border border-primary/30'
+                    : 'border border-dashed border-muted-foreground/25 text-muted-foreground/60 hover:text-muted-foreground hover:border-muted-foreground/40'
+              }`}>
+              {open ? 'Less' : selInOverflow ? `✓ +${overflow}` : `+${overflow}`}
+            </button>
+          );
+        })()}
       </div>
       {overflow > 0 && (
         <div style={{
