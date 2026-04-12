@@ -202,7 +202,14 @@ export async function buildPlatformEnv(
   if (manifest?.capabilities?.notifications) {
     env.YOUEYE_NOTIFICATIONS_URL = 'http://youeye-ui.incus:3000/api/v1/notifications';
     env.YOUEYE_NOTIFICATIONS_APP_ID = config.appId;
-    // App authenticates via X-App-Slug header using the appId
+    // Apps authenticate via X-UI-Bridge-Token (bridge auth — proven reliable)
+    try {
+      const { readFile } = await import('fs/promises');
+      const bridgeToken = (await readFile('/etc/youeye/ui-bridge-token', 'utf-8')).trim();
+      env.YOUEYE_NOTIFICATIONS_TOKEN = bridgeToken;
+    } catch {
+      // Bridge token not available — app will need to use X-App-Slug
+    }
   }
 
   // ── Extra app-specific vars ─────────────────────────────
