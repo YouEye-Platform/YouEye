@@ -111,4 +111,51 @@ function resolveSymlinksInDir(dir) {
 resolveSymlinksInDir(nodeModulesPath);
 console.log('Done resolving symlinks');
 
+// Step 5: Copy hoisted monorepo dependencies that standalone misses
+// In a pnpm monorepo, some deps are hoisted to the workspace root and
+// not included in the standalone output. Copy them from the workspace root.
+const workspaceRoot = path.join(rootDir, '..');
+const workspaceModules = path.join(workspaceRoot, 'node_modules');
+if (fs.existsSync(workspaceModules)) {
+  // Packages that Next.js standalone needs at runtime but doesn't bundle.
+  // Only copy lightweight helpers, NOT native binaries (@swc/core-* are huge).
+  const needed = ['@swc/helpers', '@swc/counter', 'styled-jsx', 'client-only', 'react', 'react-dom'];
+  for (const pkg of needed) {
+    const src = path.join(workspaceModules, pkg);
+    const dest = path.join(nodeModulesPath, pkg);
+    if (fs.existsSync(src) && !fs.existsSync(dest)) {
+      console.log(`  Copying ${pkg} from workspace root...`);
+      if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true });
+      copyRecursive(src, dest, true);
+    }
+  }
+  console.log('Done copying workspace dependencies');
+}
+
+// Step 6: Ensure styled-jsx is present (required by Next.js at runtime)
+const styledJsxDest = path.join(nodeModulesPath, 'styled-jsx');
+if (!fs.existsSync(path.join(styledJsxDest, 'package.json'))) {
+  // In a pnpm monorepo, styled-jsx may be hoisted to the workspace root
+  const candidates = [
+    path.join(rootDir, 'node_modules', 'styled-jsx'),
+    path.join(rootDir, '..', 'node_modules', 'styled-jsx'),
+  ];
+  let found = false;
+  for (const src of candidates) {
+    if (fs.existsSync(path.join(src, 'package.json'))) {
+      console.log(`Copying styled-jsx from ${src}...`);
+      if (fs.existsSync(styledJsxDest)) fs.rmSync(styledJsxDest, { recursive: true });
+      copyRecursive(src, styledJsxDest, true);
+      console.log('Done copying styled-jsx');
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    console.log('WARNING: styled-jsx not found — UI may fail at runtime');
+  }
+} else {
+  console.log('styled-jsx already present in standalone');
+}
+
 console.log('\nPostbuild complete!');
