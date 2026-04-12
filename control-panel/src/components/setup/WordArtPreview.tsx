@@ -2,6 +2,7 @@
 
 import { useMemo, useEffect, useRef, CSSProperties } from 'react';
 import type { SiteNameStyle } from '@/lib/wordart-presets';
+import { CHARACTER_SHAPE_PRESETS } from '@/lib/wordart-presets';
 
 /** Font family → local CSS file mapping */
 const FONT_CSS_MAP: Record<string, string> = {
@@ -25,6 +26,15 @@ const FONT_CSS_MAP: Record<string, string> = {
   'Fredoka': '/fonts/fredoka.css',
   'Satisfy': '/fonts/satisfy.css',
   'Righteous': '/fonts/righteous.css',
+  // New fonts
+  'Bangers': '/fonts/bangers.css', 'Bebas Neue': '/fonts/bebas-neue.css',
+  'Dancing Script': '/fonts/dancing-script.css', 'Comfortaa': '/fonts/comfortaa.css',
+  'Oswald': '/fonts/oswald.css', 'Titan One': '/fonts/titan-one.css',
+  'Black Ops One': '/fonts/black-ops-one.css', 'Creepster': '/fonts/creepster.css',
+  'Monoton': '/fonts/monoton.css', 'Press Start 2P': '/fonts/press-start-2p.css',
+  'Audiowide': '/fonts/audiowide.css', 'Cinzel': '/fonts/cinzel.css',
+  'Great Vibes': '/fonts/great-vibes.css', 'Quicksand': '/fonts/quicksand.css',
+  'Archivo Black': '/fonts/archivo-black.css',
 };
 
 /** Load a font via local self-hosted CSS (idempotent) */
@@ -119,9 +129,29 @@ export default function WordArtPreview({ name, style, sizeOverride, className = 
     }
   });
 
+  const charShape = style.charShapeId
+    ? CHARACTER_SHAPE_PRESETS.find(p => p.id === style.charShapeId) ?? null
+    : null;
+  const text = name || 'YouEye';
+
+  if (charShape) {
+    const intensity = style.charShapeIntensity ?? 1;
+    return (
+      <div className={`flex flex-col items-center ${className}`}>
+        <span ref={spanRef} style={{ ...cssStyle, display: 'inline-flex', alignItems: 'baseline' }}>
+          {text.split('').map((ch, i) => (
+            <span key={i} style={{ display: 'inline-block', transform: charShape.charTransform(i, text.length, intensity) }}>
+              {ch === ' ' ? '\u00A0' : ch}
+            </span>
+          ))}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div className={`flex flex-col items-center ${className}`}>
-      <span ref={spanRef} style={cssStyle}>{name || 'YouEye'}</span>
+      <span ref={spanRef} style={cssStyle}>{text}</span>
     </div>
   );
 }

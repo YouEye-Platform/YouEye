@@ -157,6 +157,8 @@ interface SiteNameStyle {
   textTransform: string;
   textStroke?: string;
   transform?: string;
+  charShapeId?: string;
+  charShapeIntensity?: number;
 }
 
 /**

@@ -25,6 +25,10 @@ export interface SiteNameStyle {
   textTransform: string;
   textStroke?: string;
   transform?: string;
+  /** ID of a per-character shape preset (e.g. 'char-wave') */
+  charShapeId?: string;
+  /** Intensity for per-character shape (0-2, default 1) */
+  charShapeIntensity?: number;
 }
 
 export interface BrandingConfig {

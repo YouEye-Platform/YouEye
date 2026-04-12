@@ -8,7 +8,8 @@ import {
   FONT_PRESETS,
   EFFECT_PRESETS,
   COLOUR_PRESETS,
-  SHAPE_PRESETS,
+  ALL_SHAPE_PRESETS,
+  isCharacterShape,
   composeStyle,
 } from '@/lib/wordart-presets';
 import WordArtPreview, { usePreloadAllFonts } from './WordArtPreview';
@@ -100,7 +101,7 @@ export default function SetupWordArt({ siteName, style, setStyle, onNext, onBack
       FONT_PRESETS[fontIndex],
       EFFECT_PRESETS[effectIndex],
       COLOUR_PRESETS[colourIndex],
-      SHAPE_PRESETS[shapeIndex],
+      ALL_SHAPE_PRESETS[shapeIndex],
       effectIntensity,
       shapeIntensity,
     );
@@ -153,16 +154,24 @@ export default function SetupWordArt({ siteName, style, setStyle, onNext, onBack
 
       {/* Shape + intensity */}
       <div className="space-y-1">
-        <PickerRow label={t('shapeLabel')} items={SHAPE_PRESETS} selectedIndex={shapeIndex} onSelect={setShapeIndex}
+        <PickerRow label={t('shapeLabel')} items={ALL_SHAPE_PRESETS} selectedIndex={shapeIndex} onSelect={setShapeIndex}
           renderItem={(item, sel) => (
             <div className={`w-12 h-8 flex items-center justify-center rounded border text-[10px] font-bold transition-all ${
               sel ? 'border-primary bg-primary/5 shadow-sm' : 'border-border hover:border-muted-foreground/40'
             }`}>
-              <span style={{ display: 'inline-block', transform: item.transform !== 'none' ? item.transform : undefined }}>Aa</span>
+              {isCharacterShape(item) ? (
+                <span style={{ display: 'inline-flex', alignItems: 'baseline', fontSize: '8px' }}>
+                  {'Aa'.split('').map((ch, i) => (
+                    <span key={i} style={{ display: 'inline-block', transform: item.charTransform(i, 2, 1) }}>{ch}</span>
+                  ))}
+                </span>
+              ) : (
+                <span style={{ display: 'inline-block', transform: item.transform !== 'none' ? item.transform : undefined }}>Aa</span>
+              )}
             </div>
           )}
         />
-        {SHAPE_PRESETS[shapeIndex].scalable && (
+        {ALL_SHAPE_PRESETS[shapeIndex].scalable && (
           <IntensitySlider label={t('intensity')} value={shapeIntensity} onChange={setShapeIntensity} />
         )}
       </div>

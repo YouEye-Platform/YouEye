@@ -5,7 +5,9 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { SiteNameStyle } from '@/lib/db/queries/branding';
 import {
   FONT_PRESETS, EFFECT_PRESETS, COLOUR_PRESETS, SHAPE_PRESETS,
-  composeStyle,
+  ALL_SHAPE_PRESETS, CHARACTER_SHAPE_PRESETS,
+  composeStyle, isCharacterShape,
+  type AnyShapePreset, type CharacterShapePreset,
 } from '@/lib/wordart-presets';
 
 const FONT_CSS_MAP: Record<string, string> = {
@@ -19,6 +21,15 @@ const FONT_CSS_MAP: Record<string, string> = {
   'Pacifico': '/fonts/pacifico.css', 'Bungee': '/fonts/bungee.css',
   'Russo One': '/fonts/russo-one.css', 'Fredoka': '/fonts/fredoka.css',
   'Satisfy': '/fonts/satisfy.css', 'Righteous': '/fonts/righteous.css',
+  // New fonts
+  'Bangers': '/fonts/bangers.css', 'Bebas Neue': '/fonts/bebas-neue.css',
+  'Dancing Script': '/fonts/dancing-script.css', 'Comfortaa': '/fonts/comfortaa.css',
+  'Oswald': '/fonts/oswald.css', 'Titan One': '/fonts/titan-one.css',
+  'Black Ops One': '/fonts/black-ops-one.css', 'Creepster': '/fonts/creepster.css',
+  'Monoton': '/fonts/monoton.css', 'Press Start 2P': '/fonts/press-start-2p.css',
+  'Audiowide': '/fonts/audiowide.css', 'Cinzel': '/fonts/cinzel.css',
+  'Great Vibes': '/fonts/great-vibes.css', 'Quicksand': '/fonts/quicksand.css',
+  'Archivo Black': '/fonts/archivo-black.css',
 };
 
 function usePreloadFonts() {
@@ -78,14 +89,20 @@ function IntensitySlider({ label, value, onChange }: { label: string; value: num
 }
 
 function Preview({ name, style }: { name: string; style: SiteNameStyle }) {
-  const cssStyle = useMemo((): CSSProperties => {
+  const charShape = style.charShapeId
+    ? CHARACTER_SHAPE_PRESETS.find(s => s.id === style.charShapeId) ?? null
+    : null;
+  const text = name || 'YouEye';
+
+  const baseStyle = useMemo((): CSSProperties => {
     const base: CSSProperties = {
       fontFamily: `"${style.fontFamily}", sans-serif`, fontSize: '2rem',
       fontWeight: style.fontWeight, letterSpacing: style.letterSpacing,
       textTransform: style.textTransform as CSSProperties['textTransform'],
       textShadow: style.textShadow === 'none' ? undefined : style.textShadow,
       lineHeight: 1.2, WebkitTextStroke: style.textStroke || 'unset',
-      transform: style.transform || undefined, display: 'inline-block',
+      transform: charShape ? undefined : (style.transform || undefined),
+      display: 'inline-block',
       backfaceVisibility: 'hidden',
     };
     if (style.gradient?.enabled) {
@@ -95,10 +112,8 @@ function Preview({ name, style }: { name: string; style: SiteNameStyle }) {
     }
     return { ...base, color: style.color, backgroundImage: 'none',
       WebkitBackgroundClip: 'initial', WebkitTextFillColor: style.color, backgroundClip: 'initial' };
-  }, [style]);
-  // Imperatively enforce background-clip after every render — React's style reconciliation
-  // skips re-applying backgroundClip when switching between gradient colours because the
-  // value doesn't change ('text' → 'text'), but the browser resets it internally.
+  }, [style, charShape]);
+
   const spanRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     const el = spanRef.current;
@@ -107,7 +122,20 @@ function Preview({ name, style }: { name: string; style: SiteNameStyle }) {
       el.style.setProperty('-webkit-background-clip', 'text');
     }
   });
-  return <span ref={spanRef} style={cssStyle}>{name || 'YouEye'}</span>;
+
+  if (charShape) {
+    const intensity = style.charShapeIntensity ?? 1;
+    return (
+      <span ref={spanRef} style={{ ...baseStyle, display: 'inline-flex', alignItems: 'baseline' }}>
+        {text.split('').map((ch, i) => (
+          <span key={i} style={{ display: 'inline-block', transform: charShape.charTransform(i, text.length, intensity) }}>
+            {ch === ' ' ? '\u00A0' : ch}
+          </span>
+        ))}
+      </span>
+    );
+  }
+  return <span ref={spanRef} style={baseStyle}>{text}</span>;
 }
 
 interface Props {
@@ -142,11 +170,16 @@ function findInitialIndices(s: SiteNameStyle | null | undefined) {
     return i >= 0 ? i : -1;
   })();
   const shape = (() => {
+    // Check for per-character shape first
+    if (s.charShapeId) {
+      const i = ALL_SHAPE_PRESETS.findIndex(p => p.id === s.charShapeId);
+      if (i >= 0) return i;
+    }
     if (!s.transform) return 0;
     // Match by transform function type (skewX, scaleX, perspective, etc.)
     const fnType = (t: string) => t.replace(/\([^)]*\)/g, '()').replace(/\s+/g, ' ');
     const target = fnType(s.transform);
-    const i = SHAPE_PRESETS.findIndex(p => p.transform !== 'none' && fnType(p.transform) === target);
+    const i = ALL_SHAPE_PRESETS.findIndex(p => !isCharacterShape(p) && (p as any).transform !== 'none' && fnType((p as any).transform) === target);
     return i >= 0 ? i : 0;
   })();
   return { font: Math.max(font, 0), effect: Math.max(effect, 0), colour: Math.max(colour, 0), shape: Math.max(shape, 0) };
@@ -175,12 +208,12 @@ export default function WordArtPicker({ siteName, initialStyle, onChange, compac
   }, [styleFingerprint]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const s = composeStyle(FONT_PRESETS[fontIndex], EFFECT_PRESETS[effectIndex], COLOUR_PRESETS[colourIndex], SHAPE_PRESETS[shapeIndex], effectIntensity, shapeIntensity);
+    const s = composeStyle(FONT_PRESETS[fontIndex], EFFECT_PRESETS[effectIndex], COLOUR_PRESETS[colourIndex], ALL_SHAPE_PRESETS[shapeIndex], effectIntensity, shapeIntensity);
     onChange(s);
   }, [fontIndex, effectIndex, colourIndex, shapeIndex, effectIntensity, shapeIntensity, onChange]);
 
   const previewStyle = useMemo(() => ({
-    ...composeStyle(FONT_PRESETS[fontIndex], EFFECT_PRESETS[effectIndex], COLOUR_PRESETS[colourIndex], SHAPE_PRESETS[shapeIndex], effectIntensity, shapeIntensity),
+    ...composeStyle(FONT_PRESETS[fontIndex], EFFECT_PRESETS[effectIndex], COLOUR_PRESETS[colourIndex], ALL_SHAPE_PRESETS[shapeIndex], effectIntensity, shapeIntensity),
     fontSize: compact ? '2rem' : '2.4rem',
   }), [fontIndex, effectIndex, colourIndex, shapeIndex, effectIntensity, shapeIntensity, compact]);
 
@@ -204,13 +237,21 @@ export default function WordArtPicker({ siteName, initialStyle, onChange, compac
         {EFFECT_PRESETS[effectIndex].scalable && <IntensitySlider label="Intensity" value={effectIntensity} onChange={v => { setUserInteracted(true); setEffectIntensity(v); }} />}
       </div>
       <div className="space-y-1">
-        <PickerRow label="Shape" items={SHAPE_PRESETS} selectedIndex={shapeIndex} onSelect={i => { setUserInteracted(true); setShapeIndex(i); }}
+        <PickerRow label="Shape" items={ALL_SHAPE_PRESETS} selectedIndex={shapeIndex} onSelect={i => { setUserInteracted(true); setShapeIndex(i); }}
           renderItem={(item, sel) => (
             <div className={`w-12 h-8 flex items-center justify-center rounded border text-[10px] font-bold transition-all ${sel ? 'border-primary bg-primary/5 shadow-sm' : 'border-border hover:border-muted-foreground/40'}`}>
-              <span style={{ display: 'inline-block', transform: item.transform !== 'none' ? item.transform : undefined }}>Aa</span>
+              {isCharacterShape(item) ? (
+                <span style={{ display: 'inline-flex', alignItems: 'baseline', fontSize: '8px' }}>
+                  {'Aa'.split('').map((ch, i) => (
+                    <span key={i} style={{ display: 'inline-block', transform: item.charTransform(i, 2, 1) }}>{ch}</span>
+                  ))}
+                </span>
+              ) : (
+                <span style={{ display: 'inline-block', transform: item.transform !== 'none' ? item.transform : undefined }}>Aa</span>
+              )}
             </div>
           )} />
-        {SHAPE_PRESETS[shapeIndex].scalable && <IntensitySlider label="Intensity" value={shapeIntensity} onChange={v => { setUserInteracted(true); setShapeIntensity(v); }} />}
+        {ALL_SHAPE_PRESETS[shapeIndex].scalable && <IntensitySlider label="Intensity" value={shapeIntensity} onChange={v => { setUserInteracted(true); setShapeIntensity(v); }} />}
       </div>
       <PickerRow label="Colour" items={COLOUR_PRESETS} selectedIndex={colourIndex} onSelect={i => { setUserInteracted(true); setColourIndex(i); }}
         renderItem={(item, sel) => (

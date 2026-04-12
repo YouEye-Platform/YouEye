@@ -24,6 +24,7 @@ export function BrandingSettings() {
   const [saved, setSaved] = useState(false);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [faviconUrl, setFaviconUrl] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
   const loadBranding = useCallback(async () => {
     try {
@@ -36,6 +37,7 @@ export function BrandingSettings() {
       setFaviconUrl(data.favicon_url);
       if (data.site_name_style) setStyle(data.site_name_style);
     } catch { /* defaults */ }
+    setLoaded(true);
   }, []);
 
   useEffect(() => { loadBranding(); }, [loadBranding]);
@@ -96,7 +98,13 @@ export function BrandingSettings() {
       {/* WordArt Picker */}
       <div className="space-y-2">
         <label className="text-sm font-medium">Site Name Style</label>
-        <WordArtPicker siteName={siteName} initialStyle={style} onChange={handleStyleChange} compact />
+        {loaded ? (
+          <WordArtPicker siteName={siteName} initialStyle={style} onChange={handleStyleChange} compact />
+        ) : (
+          <div className="flex items-center justify-center h-32 rounded-md border border-dashed">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        )}
       </div>
 
       {/* Accent Color */}

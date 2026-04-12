@@ -9,7 +9,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   type SiteNameStyle,
-  FONT_PRESETS, EFFECT_PRESETS, COLOUR_PRESETS, SHAPE_PRESETS,
+  FONT_PRESETS, EFFECT_PRESETS, COLOUR_PRESETS,
+  ALL_SHAPE_PRESETS, isCharacterShape,
   composeStyle,
 } from '@/lib/wordart-presets';
 import WordArtPreview, { usePreloadAllFonts } from './WordArtPreview';
@@ -74,7 +75,7 @@ export default function WordArtPickerInline({ siteName, style, setStyle }: Props
   const [shapeInt, setShapeInt] = useState(1);
 
   useEffect(() => {
-    setStyle(composeStyle(FONT_PRESETS[fontIdx], EFFECT_PRESETS[effectIdx], COLOUR_PRESETS[colourIdx], SHAPE_PRESETS[shapeIdx], effectInt, shapeInt));
+    setStyle(composeStyle(FONT_PRESETS[fontIdx], EFFECT_PRESETS[effectIdx], COLOUR_PRESETS[colourIdx], ALL_SHAPE_PRESETS[shapeIdx], effectInt, shapeInt));
   }, [fontIdx, effectIdx, colourIdx, shapeIdx, effectInt, shapeInt, setStyle]);
 
   const preview = useMemo(() => ({ ...style, fontSize: '2rem' }), [style]);
@@ -99,13 +100,21 @@ export default function WordArtPickerInline({ siteName, style, setStyle }: Props
         {EFFECT_PRESETS[effectIdx].scalable && <IntensitySlider value={effectInt} onChange={setEffectInt} />}
       </div>
       <div className="space-y-1">
-        <PickerRow label="Shape" items={SHAPE_PRESETS} selectedIndex={shapeIdx} onSelect={setShapeIdx}
+        <PickerRow label="Shape" items={ALL_SHAPE_PRESETS} selectedIndex={shapeIdx} onSelect={setShapeIdx}
           renderItem={(item, sel) => (
             <div className={`w-10 h-7 flex items-center justify-center rounded border text-[9px] font-bold transition-all ${sel ? 'border-primary bg-primary/5' : 'border-border'}`}>
-              <span style={{ display: 'inline-block', transform: item.transform !== 'none' ? item.transform : undefined }}>Aa</span>
+              {isCharacterShape(item) ? (
+                <span style={{ display: 'inline-flex', alignItems: 'baseline', fontSize: '7px' }}>
+                  {'Aa'.split('').map((ch, i) => (
+                    <span key={i} style={{ display: 'inline-block', transform: item.charTransform(i, 2, 1) }}>{ch}</span>
+                  ))}
+                </span>
+              ) : (
+                <span style={{ display: 'inline-block', transform: item.transform !== 'none' ? item.transform : undefined }}>Aa</span>
+              )}
             </div>
           )} />
-        {SHAPE_PRESETS[shapeIdx].scalable && <IntensitySlider value={shapeInt} onChange={setShapeInt} />}
+        {ALL_SHAPE_PRESETS[shapeIdx].scalable && <IntensitySlider value={shapeInt} onChange={setShapeInt} />}
       </div>
       <PickerRow label="Colour" items={COLOUR_PRESETS} selectedIndex={colourIdx} onSelect={setColourIdx}
         renderItem={(item, sel) => (
