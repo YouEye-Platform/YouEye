@@ -46,13 +46,27 @@ function copyRecursive(src, dest, resolveSymlinks = false) {
   }
 }
 
-// Step 1: Copy static assets
-console.log('Copying .next/static to standalone...');
-if (fs.existsSync(staticDest)) {
-  fs.rmSync(staticDest, { recursive: true });
+// Step 1: Merge static assets (fonts, build manifests) WITHOUT overwriting existing files.
+// Next.js standalone already generates a correct .next/static with matching chunk hashes.
+// Overwriting it with the build .next/static breaks the server's internal file allowlist.
+console.log('Merging .next/static into standalone (preserving existing files)...');
+function mergeDir(src, dest) {
+  if (!fs.existsSync(src)) return;
+  fs.mkdirSync(dest, { recursive: true });
+  const items = fs.readdirSync(src);
+  for (const item of items) {
+    const srcPath = path.join(src, item);
+    const destPath = path.join(dest, item);
+    const stat = fs.lstatSync(srcPath);
+    if (stat.isDirectory()) {
+      mergeDir(srcPath, destPath);
+    } else if (!fs.existsSync(destPath)) {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
 }
-copyRecursive(staticSrc, staticDest);
-console.log('Done copying static assets');
+mergeDir(staticSrc, staticDest);
+console.log('Done merging static assets');
 
 // Step 2: Copy public folder
 console.log('Copying public/ to standalone...');
