@@ -26,6 +26,7 @@ const PUBLIC_ROUTES = [
   '/api/ping',
   '/api/market/image',
   '/api/mail/send',       // SMTP proxy — auth via X-App-Slug / X-UI-Bridge-Token
+  '/api/connectors',
   '/setup-complete',
 ];
 

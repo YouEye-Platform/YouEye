@@ -8,4 +8,5 @@ const nextConfig: NextConfig = {
   typescript: { ignoreBuildErrors: true },
 };
 
+// @ts-expect-error next-intl returns types from monorepo root next package
 export default withNextIntl(nextConfig);
