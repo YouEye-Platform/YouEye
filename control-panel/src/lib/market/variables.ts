@@ -116,6 +116,8 @@ function resolvePath(path: string, ctx: Partial<VariableContext>): string | unde
       return getNestedValue(ctx.smtp, key);
     case 'platform':
       return getNestedValue(ctx.platform, key);
+    case 'installParams':
+      return ctx.installParams?.[key];
     default:
       return undefined;
   }

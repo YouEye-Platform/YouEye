@@ -1,15 +1,15 @@
 /**
  * Unified App Market install API — SSE endpoint.
- * Handles both marketplace (OCI) and native (LXD) app installation.
+ * Handles both marketplace (OCI) and native (LXD) app installation
+ * through the single manifest-driven engine.
  *
  * POST /api/market/install
- * Body: { appId, subdomain, domain }
+ * Body: { appId, subdomain, domain, installParams?, customName?, customIcon? }
  */
 
 import { NextRequest } from 'next/server';
 import { fetchManifest } from '@/lib/market/catalog';
 import { installApp } from '@/lib/market/engine';
-import { installNativeApp } from '@/lib/native-apps/installer';
 import { startTracking, trackEvent, finishTracking } from '@/lib/market/install-tracker';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
 import { emitEvent } from '@/lib/events/emitter';
@@ -46,7 +46,6 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const isNative = manifest.type === 'native';
   const appName = manifest.metadata?.name || config.appId;
 
   // Start tracking this install for reconnection support (returns AbortController)
@@ -67,24 +66,8 @@ export async function POST(request: NextRequest) {
       };
 
       try {
-        if (isNative) {
-          // Native app: use LXD deployer, driven by manifest metadata
-          const nativeAppId = resolveNativeAppId(config.appId, manifest.native?.containerName);
-          await installNativeApp(
-            {
-              appId: nativeAppId,
-              subdomain: config.subdomain,
-              domain: config.domain,
-              installParams: config.installParams,
-              customName: config.customName,
-              customIcon: config.customIcon,
-            },
-            onEvent
-          );
-        } else {
-          // Marketplace app: use OCI engine
-          await installApp(manifest, config, onEvent, abortController.signal);
-        }
+        // Unified install path — engine handles both native (LXD) and marketplace (OCI)
+        await installApp(manifest, config, onEvent, abortController.signal);
 
         // Install succeeded
         finishTracking(config.appId);
@@ -140,20 +123,4 @@ export async function POST(request: NextRequest) {
       Connection: 'keep-alive',
     },
   });
-}
-
-/**
- * Map unified manifest app IDs to the native installer's expected IDs.
- * Manifest uses "wiki"/"search", native installer expects "ye-wiki"/"ye-search".
- */
-function resolveNativeAppId(manifestId: string, containerName?: string): string {
-  // If the manifest already uses ye- prefix, use it as-is
-  if (manifestId.startsWith('ye-')) return manifestId;
-  // Map based on known native apps
-  const mapping: Record<string, string> = {
-    wiki: 'ye-wiki',
-    search: 'ye-search',
-    notes: 'ye-notes',
-  };
-  return mapping[manifestId] ?? `ye-${manifestId}`;
 }

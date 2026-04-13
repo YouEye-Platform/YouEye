@@ -22,12 +22,15 @@ import type {
   InstallEventCallback,
   InstallMetadata,
   VariableContext,
+  NativeConfig,
 } from './types';
 import { resolveVariables, resolveEnvironment } from './variables';
 import { writeAllConfigFiles, applyLanguageToContainers } from './config-writer';
 import { saveInstallMetadata } from './metadata';
 import { upsertInstalledApp } from './installed-apps';
 import { deployOCIContainer, getContainerIP } from '../infrastructure/oci-deployer';
+import { deployLXDContainer } from '../infrastructure/lxd-deployer';
+import { execShell } from '../incus/server';
 import {
   getOrCreateSecret,
   generatePassword,
@@ -42,7 +45,8 @@ import {
   executeSSOSteps,
 } from './sso-engine';
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
-import { buildVariableContext } from './platform-env';
+import { buildVariableContext, buildPlatformEnv, envToString } from './platform-env';
+import { resolveConnectors } from './engine-connectors';
 
 // ─── Container Naming ──────────────────────────────────────
 
@@ -72,9 +76,19 @@ function countSteps(manifest: AppManifest, ssoEnabled: boolean): number {
   steps++; // Generate secrets
   if (manifest.features.requiresSharedPostgres) steps++; // Setup shared postgres
   if (manifest.configFiles.length > 0) steps++; // Write config files
-  steps += manifest.containers.length; // Deploy each container
-  // Health checks for containers that have them
-  steps += manifest.containers.filter((c) => c.healthCheck).length;
+
+  if (manifest.native) {
+    // Native LXD path
+    steps++; // Deploy LXD container
+    steps++; // Write env file + restart service
+    if (manifest.native.healthCheck) steps++; // Health check
+    if ((manifest.native.postDeploy?.length ?? 0) > 0) steps++; // Post-deploy commands
+  } else {
+    // OCI marketplace path
+    steps += manifest.containers.length; // Deploy each container
+    steps += manifest.containers.filter((c) => c.healthCheck).length; // Health checks
+  }
+
   steps++; // Add Caddy route
   if (ssoEnabled && manifest.features.supportsSSO) steps++; // Create Authentik app (pre-deploy)
   if (ssoEnabled && manifest.features.supportsSSO && manifest.sso?.configure?.type !== 'none' && (manifest.sso?.configure?.steps?.length ?? 0) > 0) steps++; // Configure SSO (post-deploy)
@@ -158,6 +172,166 @@ async function registerAppWithUI(
   }
 }
 
+// ─── Native LXD Deployment ────────────────────────────────
+
+const GITEA_BASE = 'https://git.byka.wtf';
+const GITEA_ORG = 'potemsla';
+
+/**
+ * Resolve the Gitea repo name from the native config repo field.
+ * The repo field is "potemsla/YE-App-Wiki" format — extract the repo name.
+ */
+function giteaRepoFromNative(repo: string): string {
+  const parts = repo.split('/');
+  return parts[parts.length - 1];
+}
+
+/**
+ * Write an env file to a native LXD container via base64-encoded exec.
+ */
+async function writeEnvToContainer(
+  containerName: string,
+  env: Record<string, string>,
+): Promise<void> {
+  const content = envToString(env);
+  const b64 = Buffer.from(content).toString('base64');
+  await execShell(
+    containerName,
+    `echo '${b64}' | base64 -d > /etc/${containerName}.env`,
+    { timeout: 10_000 }
+  );
+}
+
+/**
+ * Deploy a native LXD container from manifest config.
+ * Wraps lxd-deployer.ts with manifest-driven parameters.
+ */
+async function deployNativeLXDContainer(
+  native: NativeConfig,
+  manifest: AppManifest,
+  config: InstallConfig,
+  ctx: Partial<VariableContext>,
+  onEvent: InstallEventCallback,
+  currentStep: number,
+  totalSteps: number,
+): Promise<{ containerName: string; port: number; step: number }> {
+  let step = currentStep;
+  const containerName = native.containerName;
+
+  // ── Deploy LXD container ──────────────────────────────
+  step++;
+  emit(onEvent, step, totalSteps, 'running', `Deploying ${containerName} (this takes several minutes)...`);
+  try {
+    await deployLXDContainer(
+      {
+        name: manifest.metadata.id,
+        displayName: manifest.metadata.name,
+        containerName,
+        image: native.image,
+        imageServer: native.imageServer || 'https://images.linuxcontainers.org',
+        imageProtocol: 'simplestreams',
+        nodeVersion: native.nodeVersion || '22.x',
+        appDir: native.appDir || '/opt/app',
+        port: native.port,
+      },
+      {
+        spineSocketPath: '/var/run/spine/spine.sock',
+        giteaBaseURL: GITEA_BASE,
+        giteaOrg: GITEA_ORG,
+        giteaRepo: giteaRepoFromNative(native.repo),
+      }
+    );
+    emit(onEvent, step, totalSteps, 'success', `${containerName} deployed`);
+  } catch (err) {
+    emit(onEvent, step, totalSteps, 'error', `Failed to deploy ${containerName}`, String(err));
+    throw err;
+  }
+
+  // ── Write env file + restart service ──────────────────
+  step++;
+  emit(onEvent, step, totalSteps, 'running', 'Writing configuration...');
+  try {
+    // Build platform env using unified builder
+    const appId = manifest.metadata.id;
+    const platformEnv = await buildPlatformEnv(
+      {
+        appId,
+        subdomain: config.subdomain,
+        domain: config.domain,
+        port: native.port,
+        sso: ctx.sso?.clientId ? { clientId: ctx.sso.clientId, clientSecret: ctx.sso.clientSecret } : undefined,
+        jwtSecret: ctx.secrets?.jwt_secret,
+      },
+      manifest
+    );
+
+    // Resolve manifest-declared environment variables (DATABASE_URL, etc.)
+    const manifestEnv = resolveEnvironment(native.environment ?? {}, ctx);
+
+    // Resolve connector requirements (e.g., SEARCH_ENGINE_URL)
+    const connectorEnv = await resolveConnectors(manifest);
+
+    // Resolve installParams (e.g., TMDB_API_KEY for Cinema)
+    // installParams are already in ctx.installParams and resolved via ${installParams.x} in manifestEnv
+
+    // Merge: platform base + manifest-declared + connector-resolved
+    const fullEnv = { ...platformEnv, ...manifestEnv, ...connectorEnv };
+
+    await writeEnvToContainer(containerName, fullEnv);
+
+    // Restart service to pick up new env
+    await execShell(containerName, `systemctl restart ${containerName}`, { timeout: 15_000 });
+
+    emit(onEvent, step, totalSteps, 'success', 'Configuration written');
+  } catch (err) {
+    emit(onEvent, step, totalSteps, 'error', 'Failed to write configuration', String(err));
+    throw err;
+  }
+
+  // ── Post-deploy commands (if any) ─────────────────────
+  if (native.postDeploy && native.postDeploy.length > 0) {
+    step++;
+    emit(onEvent, step, totalSteps, 'running', 'Running post-deploy commands...');
+    try {
+      for (const cmd of native.postDeploy) {
+        await execShell(containerName, cmd.exec, { timeout: cmd.timeout });
+      }
+      emit(onEvent, step, totalSteps, 'success', 'Post-deploy commands completed');
+    } catch (err) {
+      emit(onEvent, step, totalSteps, 'error', 'Post-deploy command failed', String(err));
+      throw err;
+    }
+  }
+
+  // ── Health check ──────────────────────────────────────
+  if (native.healthCheck) {
+    step++;
+    emit(onEvent, step, totalSteps, 'running', `Waiting for ${containerName} to be healthy...`);
+    let healthy = false;
+    if (native.healthCheck.type === 'http') {
+      healthy = await waitForAppHealth(
+        containerName,
+        native.port,
+        native.healthCheck.path,
+        native.healthCheck.timeout
+      );
+    } else if (native.healthCheck.type === 'postgres') {
+      healthy = await waitForPostgresHealth(
+        containerName,
+        native.healthCheck.user,
+        native.healthCheck.timeout
+      );
+    }
+    emit(
+      onEvent, step, totalSteps,
+      healthy ? 'success' : 'error',
+      healthy ? `${containerName} is healthy` : `${containerName} health check timed out`
+    );
+  }
+
+  return { containerName, port: native.port, step };
+}
+
 // ─── Main Install Function ─────────────────────────────────
 
 /**
@@ -186,6 +360,11 @@ export async function installApp(
   );
   // Ensure secrets map exists for population below
   if (!ctx.secrets) ctx.secrets = {};
+
+  // Populate installParams in context for ${installParams.x} variable resolution
+  if (config.installParams) {
+    ctx.installParams = config.installParams;
+  }
 
   /** Throw if cancellation was requested */
   function checkCancelled() {
@@ -286,65 +465,78 @@ export async function installApp(
     }
   }
 
-  // ── Step 4b: Deploy containers in order ───────────────────
+  // ── Step 4b: Deploy containers ─────────────────────────────
 
   const containerNames: string[] = [];
   let primaryContainerName = '';
   let primaryPort = 0;
 
-  for (const containerSpec of manifest.containers) {
-    const containerName = getContainerName(appId, containerSpec.name, manifest.containers.length);
-    containerNames.push(containerName);
-
-    const isPrimary =
-      containerSpec.primary || (manifest.containers.length === 1);
-
-    if (isPrimary) {
-      primaryContainerName = containerName;
-      primaryPort = containerSpec.port || 0;
-    }
-
-    // Deploy container
+  if (manifest.native) {
+    // ── Native LXD deployment path ──────────────────────────
     checkCancelled();
-    step++;
-    emit(onEvent, step, totalSteps, 'running', `Deploying ${containerName}...`);
-    try {
-      const ociManifest = buildOCIManifest(containerSpec, containerName, appId, ctx);
-      await deployOCIContainer(ociManifest, '');
-      emit(onEvent, step, totalSteps, 'success', `${containerName} created`);
-    } catch (err) {
-      emit(onEvent, step, totalSteps, 'error', `Failed to deploy ${containerName}`, String(err));
-      throw err;
-    }
+    const result = await deployNativeLXDContainer(
+      manifest.native, manifest, config, ctx, onEvent, step, totalSteps,
+    );
+    primaryContainerName = result.containerName;
+    primaryPort = result.port;
+    containerNames.push(result.containerName);
+    step = result.step;
+  } else {
+    // ── OCI marketplace deployment path ─────────────────────
+    for (const containerSpec of manifest.containers) {
+      const containerName = getContainerName(appId, containerSpec.name, manifest.containers.length);
+      containerNames.push(containerName);
 
-    // Health check (if defined)
-    if (containerSpec.healthCheck) {
-      step++;
-      emit(onEvent, step, totalSteps, 'running', `Waiting for ${containerName} to be healthy...`);
+      const isPrimary =
+        containerSpec.primary || (manifest.containers.length === 1);
 
-      let healthy = false;
-      if (containerSpec.healthCheck.type === 'http') {
-        healthy = await waitForAppHealth(
-          containerName,
-          containerSpec.port || 80,
-          containerSpec.healthCheck.path,
-          containerSpec.healthCheck.timeout
-        );
-      } else if (containerSpec.healthCheck.type === 'postgres') {
-        healthy = await waitForPostgresHealth(
-          containerName,
-          containerSpec.healthCheck.user,
-          containerSpec.healthCheck.timeout
-        );
+      if (isPrimary) {
+        primaryContainerName = containerName;
+        primaryPort = containerSpec.port || 0;
       }
 
-      emit(
-        onEvent,
-        step,
-        totalSteps,
-        healthy ? 'success' : 'error',
-        healthy ? `${containerName} is healthy` : `${containerName} health check timed out`
-      );
+      // Deploy container
+      checkCancelled();
+      step++;
+      emit(onEvent, step, totalSteps, 'running', `Deploying ${containerName}...`);
+      try {
+        const ociManifest = buildOCIManifest(containerSpec, containerName, appId, ctx);
+        await deployOCIContainer(ociManifest, '');
+        emit(onEvent, step, totalSteps, 'success', `${containerName} created`);
+      } catch (err) {
+        emit(onEvent, step, totalSteps, 'error', `Failed to deploy ${containerName}`, String(err));
+        throw err;
+      }
+
+      // Health check (if defined)
+      if (containerSpec.healthCheck) {
+        step++;
+        emit(onEvent, step, totalSteps, 'running', `Waiting for ${containerName} to be healthy...`);
+
+        let healthy = false;
+        if (containerSpec.healthCheck.type === 'http') {
+          healthy = await waitForAppHealth(
+            containerName,
+            containerSpec.port || 80,
+            containerSpec.healthCheck.path,
+            containerSpec.healthCheck.timeout
+          );
+        } else if (containerSpec.healthCheck.type === 'postgres') {
+          healthy = await waitForPostgresHealth(
+            containerName,
+            containerSpec.healthCheck.user,
+            containerSpec.healthCheck.timeout
+          );
+        }
+
+        emit(
+          onEvent,
+          step,
+          totalSteps,
+          healthy ? 'success' : 'error',
+          healthy ? `${containerName} is healthy` : `${containerName} health check timed out`
+        );
+      }
     }
   }
 
@@ -478,10 +670,10 @@ function buildOCIManifest(
     ports: [], // Market apps don't use host port proxies — they use Caddy
     environment,
     volumes,
-    limits: {
+    limits: spec.limits ? {
       memory: spec.limits.memory,
       cpu: spec.limits.cpu,
-    },
+    } : undefined,
   };
 }
 

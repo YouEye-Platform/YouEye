@@ -1,3 +1,28 @@
+## Phase-A — iris — 2026-04-13
+**Branch:** dev
+**VM:** ye-iris (IrisVM 430)
+**Agent:** Iris
+**Task:** Converge native apps onto manifest-driven engine (Phase A of unified-app-engine plan)
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — Added ResourcesSchema, PostDeployStepSchema, ConnectorsSchema; extended NativeConfigSchema with postDeploy; made container limits optional
+- `control-panel/src/lib/market/engine.ts` — Added LXD deployment path (deployNativeLXDContainer, writeEnvToContainer); unified installApp() handles both native and OCI
+- `control-panel/src/lib/market/engine-connectors.ts` — New: connector resolution (search engine detection)
+- `control-panel/src/lib/market/types.ts` — Added ResourcesSpec, ConnectorsSpec, PostDeployStep; installParams in VariableContext
+- `control-panel/src/lib/market/variables.ts` — Added installParams namespace
+- `control-panel/src/app/api/market/install/route.ts` — Removed native branch; unified path
+- `control-panel/src/app/api/ui-bridge/market/route.ts` — Removed installNativeApp import and branch
+- `control-panel/src/lib/infrastructure/types.ts` — OCIManifest.limits now optional
+- `control-panel/src/lib/infrastructure/oci-deployer.ts` — Optional chaining for limits
+- **Deleted:** `control-panel/src/lib/native-apps/installer.ts` (1656 lines), `control-panel/src/lib/native-apps/catalog.ts` (46 lines)
+
+### Notes for Iris
+- Breaking change: requires `spine cleanup -y && spine deploy` before testing
+- All 6 native app manifests updated in their respective repos (resources, backup, uninstall sections)
+- Phase B (resource scheduling) and Phase C (backup/restore) build on top of this
+
+---
+
 ## v0.2.21.9 — vanya — 2026-04-12
 **Branch:** vanya
 **VM:** ye-vanya

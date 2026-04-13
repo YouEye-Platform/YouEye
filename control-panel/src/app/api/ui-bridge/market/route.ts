@@ -18,7 +18,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { validateBridgeToken } from '@/lib/ui-bridge/auth';
 import { fetchAvailableApps, fetchManifest, clearCatalogCache } from '@/lib/market/catalog';
 import { installApp } from '@/lib/market/engine';
-import { installNativeApp } from '@/lib/native-apps/installer';
 import { uninstallApp } from '@/lib/market/uninstaller';
 import { listInstalledApps, readInstallMetadata } from '@/lib/market/metadata';
 import { getAllInstalledApps, getAppsWithUpdatesAvailable } from '@/lib/market/installed-apps';
@@ -233,24 +232,8 @@ export async function POST(request: NextRequest) {
       };
 
       try {
-        if (manifest.type === 'native') {
-          // Native app: use LXD deployer
-          const nativeAppId = config.appId.startsWith('ye-')
-            ? config.appId
-            : `ye-${config.appId}`;
-          await installNativeApp(
-            {
-              appId: nativeAppId,
-              subdomain: config.subdomain,
-              domain: config.domain,
-              installParams: config.installParams,
-            },
-            onEvent
-          );
-        } else {
-          // Marketplace app: use OCI engine
-          await installApp(manifest, config, onEvent, abortController.signal);
-        }
+        // Unified install path — engine handles both native (LXD) and marketplace (OCI)
+        await installApp(manifest, config, onEvent, abortController.signal);
         finishTrack(config.appId);
       } catch (err) {
         finishTrack(config.appId, String(err));

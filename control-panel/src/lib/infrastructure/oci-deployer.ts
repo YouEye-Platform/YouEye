@@ -112,8 +112,8 @@ export async function deployOCIContainer(
   for (const [key, value] of Object.entries(manifest.environment)) {
     config[`environment.${key}`] = value;
   }
-  if (manifest.limits.memory) config['limits.memory'] = manifest.limits.memory;
-  if (manifest.limits.cpu) config['limits.cpu'] = manifest.limits.cpu;
+  if (manifest.limits?.memory) config['limits.memory'] = manifest.limits.memory;
+  if (manifest.limits?.cpu) config['limits.cpu'] = manifest.limits.cpu;
   if (manifest.command) config['oci.entrypoint'] = manifest.command;
 
   // Build devices (port proxies + volume mounts)

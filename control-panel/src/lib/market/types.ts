@@ -30,6 +30,9 @@ import type {
   DetailScreenshotSchema,
   AppRefSchema,
   InstallParamSchema,
+  ResourcesSchema,
+  ConnectorsSchema,
+  PostDeployStepSchema,
 } from './schema';
 
 // ─── Manifest Types (from Zod) ─────────────────────────────
@@ -59,6 +62,9 @@ export type AppDetail = z.infer<typeof DetailSchema>;
 export type DetailScreenshot = z.infer<typeof DetailScreenshotSchema>;
 export type AppRef = z.infer<typeof AppRefSchema>;
 export type InstallParam = z.infer<typeof InstallParamSchema>;
+export type ResourcesSpec = z.infer<typeof ResourcesSchema>;
+export type ConnectorsSpec = z.infer<typeof ConnectorsSchema>;
+export type PostDeployStep = z.infer<typeof PostDeployStepSchema>;
 
 // ─── Install Config ────────────────────────────────────────
 
@@ -134,6 +140,7 @@ export interface VariableContext {
   platform?: { version: string; domain: string; siteName: string; timezone: string; locale: string };
   mail?: { url: string; appId: string };
   notifications?: { url: string; appId: string };
+  installParams?: Record<string, string>;
 }
 
 // ─── Catalog App (UI display) ──────────────────────────────

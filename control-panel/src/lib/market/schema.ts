@@ -60,6 +60,39 @@ export const LimitsSchema = z.object({
   cpu: z.string().min(1),
 });
 
+// ─── Dynamic Resources ────────────────────────────────────
+
+export const ResourcesSchema = z.object({
+  priority: z.enum(['critical', 'high', 'normal', 'low']).default('normal'),
+  memoryCeiling: z.string().optional(),
+  minimumMemory: z.string().optional(),
+  minimumCPU: z.number().optional(),
+});
+
+// ─── Post-Deploy Step ─────────────────────────────────────
+
+export const PostDeployStepSchema = z.object({
+  exec: z.string().min(1),
+  timeout: z.number().int().positive().default(30_000),
+});
+
+// ─── Connector ────────────────────────────────────────────
+
+export const ConnectorRequirementSchema = z.object({
+  capability: z.string().min(1),
+});
+
+export const ConnectorProvisionSchema = z.object({
+  id: z.string().min(1),
+  capability: z.string().min(1),
+  description: z.string().optional(),
+});
+
+export const ConnectorsSchema = z.object({
+  requires: z.array(ConnectorRequirementSchema).default([]),
+  provides: z.array(ConnectorProvisionSchema).default([]),
+});
+
 // ─── Container ─────────────────────────────────────────────
 
 export const ContainerSchema = z.object({
@@ -68,7 +101,7 @@ export const ContainerSchema = z.object({
   image: z.string().min(1),
   port: z.number().int().positive().optional(),
   command: z.string().optional(),
-  limits: LimitsSchema,
+  limits: LimitsSchema.optional(),
   environment: z.record(z.string(), z.string()).default({}),
   volumes: z.array(VolumeSchema).default([]),
   healthCheck: HealthCheckSchema.optional(),
@@ -233,6 +266,7 @@ export const NativeConfigSchema = z.object({
   healthCheck: HealthCheckSchema.optional(),
   environment: z.record(z.string(), z.string()).default({}),
   installParams: z.array(InstallParamSchema).optional().default([]),
+  postDeploy: z.array(PostDeployStepSchema).optional().default([]),
 });
 
 // ─── Detail (app detail page) ─────────────────────────────
@@ -264,6 +298,8 @@ export const AppManifestSchema = z
     configFiles: z.array(ConfigFileSchema).optional().default([]),
     language: LanguageConfigSchema.optional(),
     capabilities: CapabilitiesSchema,
+    resources: ResourcesSchema.optional(),
+    connectors: ConnectorsSchema.optional(),
     sso: SSOSchema.optional(),
     backup: BackupSchema.optional(),
     uninstall: UninstallSchema.optional(),

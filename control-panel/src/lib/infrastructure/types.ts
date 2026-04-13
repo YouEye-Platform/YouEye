@@ -13,7 +13,7 @@ export interface OCIManifest {
   ports: PortMapping[];
   environment: Record<string, string>;
   volumes: VolumeMapping[];
-  limits: ResourceLimits;
+  limits?: ResourceLimits;
   // boot.autostart override. Default is true (Incus auto-starts on boot).
   // Set to false for containers that have a host-IP-bound proxy device:
   // Spine becomes responsible for starting them at boot, AFTER it has
