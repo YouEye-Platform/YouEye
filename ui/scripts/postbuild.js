@@ -144,7 +144,8 @@ for (const pkg of needed) {
   for (const src of candidates) {
     if (fs.existsSync(path.join(src, 'package.json'))) {
       console.log(`  Copying ${pkg} from ${path.dirname(src) === localModules ? 'local' : 'workspace'} node_modules...`);
-      if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true });
+      // Remove existing entry — use lstatSync to detect symlinks (existsSync follows them and misses broken links)
+      try { const st = fs.lstatSync(dest); fs.rmSync(dest, { recursive: true }); } catch {}
       // Use cp -rL to properly follow pnpm symlinks
       require('child_process').execSync(`cp -rL "${src}" "${dest}"`);
       break;
