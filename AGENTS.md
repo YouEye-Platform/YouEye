@@ -1,3 +1,24 @@
+## v0.2.21.5 — iris — 2026-04-14
+**Branch:** dev
+**VM:** ye-iris (IrisVM 430)
+**Agent:** Iris
+**Task:** Fix 6 Phase B resource management bugs found during live testing
+
+### Changes
+- `control-panel/src/lib/infrastructure/resource-policy.ts` — replaced broken raw.lxc OOM with execShell /proc/1/oom_score_adj write; values 0 (infra) / 500 (apps)
+- `control-panel/src/lib/health/monitor.ts` — added ye-app-* prefix to watchdog and throttle filters; read /host/proc/meminfo for accurate host memory
+- `control-panel/src/lib/market/engine.ts` — added rollbackContainers() for failed OCI installs; wrapped deploy loop in try/catch
+- `spine/internal/container/control.go` — added addHostMeminfo() binding host /proc/meminfo to /host/proc/meminfo in CP container
+
+### Test Results
+- All bugs discovered and verified via live hot-patching on IrisVM
+- 250 concurrent requests stress test passed (<70ms across 5 apps)
+- Watchdog verified: detected + restarted app-searxng-main in ~45s
+
+### Notes for Iris
+- Needs fresh deploy to verify host-meminfo device mounts correctly
+- Wikiless image tag also fixed in YE-AppMarket (separate commit)
+
 ## Phase-A — iris — 2026-04-13
 **Branch:** dev
 **VM:** ye-iris (IrisVM 430)
