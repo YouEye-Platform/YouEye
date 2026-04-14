@@ -9,6 +9,7 @@
 
 import { checkForUpdates, migrateFromInstallJson, type InstalledApp } from './installed-apps';
 import { clearCatalogCache } from './catalog';
+import { refreshAllUpdates } from '@/lib/apps/update-cache';
 
 /** Whether a check is currently running */
 let isChecking = false;
@@ -56,9 +57,16 @@ export async function refreshVersionCheck(): Promise<InstalledApp[]> {
     // Clear catalog cache to get fresh data
     clearCatalogCache();
 
+    // Check marketplace + native apps via catalog
     const appsWithUpdates = await checkForUpdates();
     lastResults = appsWithUpdates;
     lastCheckedAt = new Date().toISOString();
+
+    // Also trigger infrastructure (OCI + LXD) update checks
+    refreshAllUpdates().catch((err) => {
+      console.error('[version-checker] Infrastructure check failed:', err);
+    });
+
     return appsWithUpdates;
   } catch (err) {
     console.error('[version-checker] Check failed:', err);

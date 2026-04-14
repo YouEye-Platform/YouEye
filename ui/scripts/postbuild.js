@@ -146,6 +146,8 @@ for (const pkg of needed) {
       console.log(`  Copying ${pkg} from ${path.dirname(src) === localModules ? 'local' : 'workspace'} node_modules...`);
       // Remove existing entry — use lstatSync to detect symlinks (existsSync follows them and misses broken links)
       try { const st = fs.lstatSync(dest); fs.rmSync(dest, { recursive: true }); } catch {}
+      // Ensure parent directory exists (for scoped packages like @swc/helpers)
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
       // Use cp -rL to properly follow pnpm symlinks
       require('child_process').execSync(`cp -rL "${src}" "${dest}"`);
       break;

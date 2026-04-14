@@ -202,6 +202,74 @@ export const APP_DEFINITIONS: AppDefinition[] = [
       healthEndpoint: '/api/health',
     },
   },
+  {
+    id: 'ye-notes',
+    displayName: 'Notes',
+    description: 'Personal note-taking app',
+    icon: 'StickyNote',
+    category: 'user',
+    type: 'lxd',
+    containers: [{ name: 'ye-app-notes', canControl: true }],
+    updatedBy: 'control-panel',
+    webPort: 3000,
+    lxdConfig: {
+      giteaRepo: 'YE-App-Notes',
+      appDir: '/opt/app',
+      serviceName: 'ye-app-notes',
+      healthEndpoint: '/api/health',
+    },
+  },
+  {
+    id: 'ye-cinema',
+    displayName: 'Cinema',
+    description: 'Movie and TV show discovery',
+    icon: 'Film',
+    category: 'user',
+    type: 'lxd',
+    containers: [{ name: 'ye-app-cinema', canControl: true }],
+    updatedBy: 'control-panel',
+    webPort: 3000,
+    lxdConfig: {
+      giteaRepo: 'YE-App-Cinema',
+      appDir: '/opt/app',
+      serviceName: 'ye-app-cinema',
+      healthEndpoint: '/api/health',
+    },
+  },
+  {
+    id: 'ye-weather',
+    displayName: 'Weather',
+    description: 'Weather forecasts and conditions',
+    icon: 'CloudSun',
+    category: 'user',
+    type: 'lxd',
+    containers: [{ name: 'ye-app-weather', canControl: true }],
+    updatedBy: 'control-panel',
+    webPort: 3000,
+    lxdConfig: {
+      giteaRepo: 'YE-App-Weather',
+      appDir: '/opt/app',
+      serviceName: 'ye-app-weather',
+      healthEndpoint: '/api/health',
+    },
+  },
+  {
+    id: 'ye-translate',
+    displayName: 'Translate',
+    description: 'Text translation service',
+    icon: 'Languages',
+    category: 'user',
+    type: 'lxd',
+    containers: [{ name: 'ye-app-translate', canControl: true }],
+    updatedBy: 'control-panel',
+    webPort: 3000,
+    lxdConfig: {
+      giteaRepo: 'YE-App-Translate',
+      appDir: '/opt/app',
+      serviceName: 'ye-app-translate',
+      healthEndpoint: '/api/health',
+    },
+  },
 ];
 
 /** Look up an app definition by ID */
@@ -214,6 +282,61 @@ export function getAppByContainer(containerName: string): AppDefinition | undefi
   return APP_DEFINITIONS.find((a) =>
     a.containers.some((c) => c.name === containerName)
   );
+}
+
+/**
+ * Generate an AppDefinition from a marketplace/native app manifest.
+ * Used for dynamically-installed apps that aren't in the static APP_DEFINITIONS list.
+ */
+export function appDefinitionFromManifest(
+  manifest: { metadata: { id: string; name: string; description: string; icon: string };
+    native?: { repo: string; containerName: string; port: number; appDir?: string; healthCheck?: { type: string; path?: string } };
+    containers?: Array<{ name: string; primary?: boolean; image?: string; port?: number; healthCheck?: unknown }>;
+    type?: string },
+  installMeta?: { subdomain?: string }
+): AppDefinition {
+  const isNative = !!manifest.native;
+  const appId = manifest.metadata.id;
+
+  if (isNative) {
+    const n = manifest.native!;
+    const repoName = n.repo.includes('/') ? n.repo.split('/').pop()! : n.repo;
+    return {
+      id: appId,
+      displayName: manifest.metadata.name,
+      description: manifest.metadata.description,
+      icon: manifest.metadata.icon,
+      category: 'user',
+      type: 'lxd',
+      containers: [{ name: n.containerName, canControl: true }],
+      updatedBy: 'control-panel',
+      webPort: n.port,
+      lxdConfig: {
+        giteaRepo: repoName,
+        appDir: n.appDir || '/opt/app',
+        serviceName: n.containerName,
+        healthEndpoint: n.healthCheck?.type === 'http' ? (n.healthCheck.path || '/api/health') : '/api/health',
+      },
+    };
+  }
+
+  // OCI marketplace app
+  const containers = manifest.containers || [];
+  return {
+    id: appId,
+    displayName: manifest.metadata.name,
+    description: manifest.metadata.description,
+    icon: manifest.metadata.icon,
+    category: 'user',
+    type: containers.length > 1 ? 'oci-multi' : 'oci-single',
+    containers: containers.map((c) => ({
+      name: containers.length === 1 ? `app-${appId}` : `app-${appId}-${c.name}`,
+      canControl: true,
+    })),
+    imageRef: containers.find((c) => c.primary)?.image || containers[0]?.image,
+    updatedBy: 'control-panel',
+    webPort: containers.find((c) => c.primary)?.port || containers[0]?.port,
+  };
 }
 
 /**
