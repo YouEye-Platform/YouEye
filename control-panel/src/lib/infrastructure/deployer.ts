@@ -368,7 +368,9 @@ export async function reconcileInfrastructure(
       const workerManifest = authentikWorkerManifest(
         postgresIP,
         authentikSecrets.dbPassword,
-        authentikSecrets.secretKey
+        authentikSecrets.secretKey,
+        authentikSecrets.bootstrapPassword,
+        authentikSecrets.bootstrapToken
       );
       await deployOCIContainer(workerManifest, '');
       await applyResourcePolicy('youeye-authentik-worker', 'critical');
