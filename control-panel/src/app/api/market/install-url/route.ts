@@ -15,6 +15,7 @@ import { NextRequest } from 'next/server';
 import { parse as parseYAML } from 'yaml';
 import { AppManifestSchema } from '@/lib/market/schema';
 import { installApp } from '@/lib/market/engine';
+import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import { startTracking, trackEvent, finishTracking } from '@/lib/market/install-tracker';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
 import type { InstallConfig, InstallEvent } from '@/lib/market/types';
@@ -37,6 +38,7 @@ function isPrivateHostname(hostname: string): boolean {
     hostname === 'localhost' ||
     hostname.endsWith('.local') ||
     hostname.endsWith('.internal') ||
+    hostname.endsWith(`.${CONTAINER_DOMAIN}`) ||
     hostname.endsWith('.incus') ||
     hostname.endsWith('.test')
   );

@@ -18,7 +18,7 @@ export interface RouteMatch {
  * Reverse proxy upstream
  */
 export interface Upstream {
-  dial: string; // e.g., "youeye-control.incus:3000"
+  dial: string; // e.g., "youeye-control.youeye:3000"
 }
 
 /**

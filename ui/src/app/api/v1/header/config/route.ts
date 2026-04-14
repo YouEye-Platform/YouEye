@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
   }));
 
   // Derive base domain for subdomain app URLs.
-  // Service-to-service calls arrive on the internal Incus hostname (e.g. youeye-ui.incus:3000),
+  // Service-to-service calls arrive on the internal Incus hostname (e.g. youeye-ui.youeye:3000),
   // so use the configured external URL instead when the request comes from a native app.
   const uiExternalUrl = process.env.UI_EXTERNAL_URL || process.env.BASE_URL || process.env.NEXTAUTH_URL || "";
   const isServiceCall = !!request.headers.get("x-youeye-app");

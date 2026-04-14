@@ -5,7 +5,7 @@
 
 import { NextResponse } from "next/server";
 
-const CP_API_URL = process.env.CP_API_URL ?? "http://youeye-control.incus:3000/api";
+const CP_API_URL = process.env.CP_API_URL ?? "http://youeye-control.youeye:3000/api";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);

@@ -18,6 +18,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parse as parseYAML } from 'yaml';
 import { AppManifestSchema } from '@/lib/market/schema';
+import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import type { AppManifest, MarketApp } from '@/lib/market/types';
 
 export const dynamic = 'force-dynamic';
@@ -57,6 +58,7 @@ function isPrivateHostname(hostname: string): boolean {
     hostname === 'localhost' ||
     hostname.endsWith('.local') ||
     hostname.endsWith('.internal') ||
+    hostname.endsWith(`.${CONTAINER_DOMAIN}`) ||
     hostname.endsWith('.incus') ||
     hostname.endsWith('.test')
   ) {

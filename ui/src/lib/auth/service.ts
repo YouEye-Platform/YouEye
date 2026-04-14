@@ -33,10 +33,14 @@ interface ServiceUser {
 export async function resolveServiceAuth(
   request: NextRequest
 ): Promise<ServiceUser | null> {
-  const appId = request.headers.get("x-youeye-app");
+  const rawAppId = request.headers.get("x-youeye-app");
   const userId = request.headers.get("x-youeye-user");
 
-  if (!appId || !userId) return null;
+  if (!rawAppId || !userId) return null;
+
+  // Native apps may send "ye-wiki" but the apps table stores "wiki".
+  // Accept both forms: try as-is first, then strip the "ye-" prefix.
+  const appId = rawAppId.replace(/^ye-/, "");
 
   const UUID_RE =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -45,11 +49,20 @@ export async function resolveServiceAuth(
     await ensureSchema();
 
     // Verify the app is registered in the apps table (dynamic — no hardcoded list)
-    const appRows = await db
+    let appRows = await db
       .select({ id: apps.id })
       .from(apps)
       .where(eq(apps.id, appId))
       .limit(1);
+
+    // If stripped ID didn't match, try the raw ID (in case an app is registered with "ye-" prefix)
+    if (appRows.length === 0 && appId !== rawAppId) {
+      appRows = await db
+        .select({ id: apps.id })
+        .from(apps)
+        .where(eq(apps.id, rawAppId))
+        .limit(1);
+    }
 
     if (appRows.length === 0) return null;
 

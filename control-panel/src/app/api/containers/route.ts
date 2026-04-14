@@ -11,6 +11,7 @@ import { incusRequest } from '@/lib/incus/server';
 import { getAppManifests } from '@/lib/apps/manifest';
 import type { AppManifest } from '@/lib/apps/manifest';
 import { getRoutes } from '@/lib/caddy/client';
+import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 
 /**
  * Routable container info for the UI
@@ -115,7 +116,7 @@ export async function GET() {
           // Filter out auxiliary routes (/_next/*, /favicon.ico) that are added for Next.js support
           const existingRoute = existingRoutes.find(r => {
             const isThisContainer = r.upstream === sysContainer.name || 
-              r.upstream === `${sysContainer.name}.incus`;
+              r.upstream === `${sysContainer.name}.${CONTAINER_DOMAIN}`;
             if (!isThisContainer) return false;
             
             // Skip auxiliary routes
@@ -175,7 +176,7 @@ export async function GET() {
           // Filter out auxiliary routes (/_next/*, /favicon.ico) that are added for Next.js support
           const existingRoute = existingRoutes.find(r => {
             const isThisContainer = r.upstream === manifest.containerName || 
-              r.upstream === `${manifest.containerName}.incus`;
+              r.upstream === `${manifest.containerName}.${CONTAINER_DOMAIN}`;
             if (!isThisContainer) return false;
             
             // Skip auxiliary routes

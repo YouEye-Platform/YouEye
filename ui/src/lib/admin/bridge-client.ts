@@ -9,7 +9,7 @@
 import { readFileSync } from "fs";
 
 /** Control Panel base URL via Incus internal network */
-const CP_BASE_URL = "http://youeye-control.incus:3000/api/ui-bridge";
+const CP_BASE_URL = "http://youeye-control.youeye:3000/api/ui-bridge";
 
 /** Request timeout in milliseconds (default: 15s, SSE: 5 min) */
 const BRIDGE_TIMEOUT = 15_000;

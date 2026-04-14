@@ -28,7 +28,7 @@ async function getSystemLanguage(): Promise<string> {
   try {
     // Read bridge token and CP URL from environment
     const bridgeToken = process.env.UI_BRIDGE_TOKEN || "";
-    const cpUrl = process.env.CP_INTERNAL_URL || "http://youeye-control.incus:3000";
+    const cpUrl = process.env.CP_INTERNAL_URL || "http://youeye-control.youeye:3000";
 
     if (!bridgeToken) {
       return defaultLocale;

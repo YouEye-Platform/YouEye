@@ -5,6 +5,7 @@
  */
 
 import type { DeploymentEvent } from './types';
+import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import {
   caddyManifest,
   piholeManifest,
@@ -159,7 +160,7 @@ export async function deployInfrastructure(
           '        origins *',
           '    }',
           '    on_demand_tls {',
-          '        ask http://youeye-control.incus:3000/api/setup/config',
+          `        ask http://youeye-control.${CONTAINER_DOMAIN}:3000/api/setup/config`,
           '    }',
           '}',
           '',
@@ -168,7 +169,7 @@ export async function deployInfrastructure(
           '        on_demand',
           '        issuer internal',
           '    }',
-          '    reverse_proxy youeye-control.incus:3000',
+          `    reverse_proxy youeye-control.${CONTAINER_DOMAIN}:3000`,
           '}',
           '',
         ].join('\n');
@@ -381,7 +382,7 @@ export async function reconcileInfrastructure(
             '        origins *',
             '    }',
             '    on_demand_tls {',
-            '        ask http://youeye-control.incus:3000/api/setup/config',
+            `        ask http://youeye-control.${CONTAINER_DOMAIN}:3000/api/setup/config`,
             '    }',
             '}',
             '',
@@ -393,7 +394,7 @@ export async function reconcileInfrastructure(
             '        on_demand',
             '        issuer internal',
             '    }',
-            '    reverse_proxy youeye-control.incus:3000',
+            `    reverse_proxy youeye-control.${CONTAINER_DOMAIN}:3000`,
             '}',
             '',
           ].join('\n');

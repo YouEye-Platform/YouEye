@@ -211,6 +211,7 @@ networks:
 - config:
     ipv4.address: auto
     ipv6.address: none
+    dns.domain: youeye
   description: ""
   name: incusbr0
   type: ""
@@ -356,11 +357,11 @@ func initializeManually(preseedErr error, zfsAvailable bool) error {
 	}
 	time.Sleep(1 * time.Second)
 	
-	if out, err := util.RunCmdCapture("incus", "network", "create", "incusbr0", "ipv4.address=auto", "ipv6.address=none"); err != nil {
+	if out, err := util.RunCmdCapture("incus", "network", "create", "incusbr0", "ipv4.address=auto", "ipv6.address=none", "dns.domain=youeye"); err != nil {
 		util.LogError(fmt.Sprintf("Failed to create network: %s", strings.TrimSpace(out)))
 		return fmt.Errorf("failed to create network: %w", err)
 	}
-	util.LogSuccess("Network 'incusbr0' created")
+	util.LogSuccess("Network 'incusbr0' created (dns.domain=youeye)")
 	
 	// Configure default profile
 	util.LogSubStep("Configuring default profile...")

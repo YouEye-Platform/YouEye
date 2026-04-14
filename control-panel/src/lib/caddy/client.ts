@@ -18,12 +18,13 @@ import type {
 } from './types';
 
 import http from 'http';
+import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 
 /**
  * Default Caddy admin API URL
  * Uses the container's internal DNS name (only accessible from Incus network)
  */
-const DEFAULT_CADDY_URL = 'http://youeye-caddy.incus:2019';
+const DEFAULT_CADDY_URL = `http://youeye-caddy.${CONTAINER_DOMAIN}:2019`;
 
 /**
  * Connection timeout for Caddy API requests (ms)
@@ -192,26 +193,31 @@ function isIPAddress(str: string): boolean {
 
 /**
  * Normalize upstream address for Incus DNS resolution
- * Container names need .incus suffix for inter-container communication
+ * Container names need the bridge DNS suffix for inter-container communication
  */
 function normalizeUpstream(upstream: string): string {
-  // If it's already a FQDN with .incus, return as-is
-  if (upstream.endsWith('.incus')) {
+  // If it's already a FQDN with the container domain, return as-is
+  if (upstream.endsWith(`.${CONTAINER_DOMAIN}`)) {
     return upstream;
   }
-  
+
+  // Also accept legacy .incus suffix
+  if (upstream.endsWith('.incus')) {
+    return upstream.replace(/\.incus$/, `.${CONTAINER_DOMAIN}`);
+  }
+
   // If it's an IP address, return as-is
   if (isIPAddress(upstream)) {
     return upstream;
   }
-  
+
   // If it contains a dot (other domain), return as-is
   if (upstream.includes('.')) {
     return upstream;
   }
-  
-  // Container name without suffix - add .incus for Incus DNS
-  return `${upstream}.incus`;
+
+  // Container name without suffix — add container domain for DNS
+  return `${upstream}.${CONTAINER_DOMAIN}`;
 }
 
 /**
@@ -333,12 +339,14 @@ export function routeToProxyRoute(route: CaddyRoute): ProxyRoute | null {
   const upstream = proxyHandler.upstreams?.[0];
   if (!upstream?.dial) return null;
 
-  // Parse dial address (e.g., "host:port" or "host.incus:port")
+  // Parse dial address (e.g., "host:port" or "host.youeye:port")
   const [host, portStr] = upstream.dial.split(':');
   const port = parseInt(portStr, 10) || 80;
-  
-  // Strip .incus suffix for display (user enters container name, we add .incus internally)
-  const displayHost = host.endsWith('.incus') ? host.slice(0, -6) : host;
+
+  // Strip container domain suffix for display (user enters container name, we add suffix internally)
+  const domainSuffix = `.${CONTAINER_DOMAIN}`;
+  const displayHost = host.endsWith(domainSuffix) ? host.slice(0, -domainSuffix.length)
+    : host.endsWith('.incus') ? host.slice(0, -6) : host;
 
   // Clean up path for display (remove trailing /* or *)
   let path = route.match?.[0]?.path?.[0] || '/*';
@@ -794,7 +802,7 @@ export async function setContainerRoute(
     const existingRoutes = await getRoutes();
     for (const route of existingRoutes) {
       if (route.id === 'default-catchall') continue; // preserve setup catch-all
-      if (route.upstream === containerName || route.upstream === `${containerName}.incus`) {
+      if (route.upstream === containerName || route.upstream === `${containerName}.${CONTAINER_DOMAIN}` || route.upstream === `${containerName}.incus`) {
         await removeRoute(route.id);
       }
     }
@@ -1043,7 +1051,7 @@ export async function setDefaultRoute(containerName: string, port: number): Prom
   }
 
   await setConfig(config);
-  console.log(`[Caddy] Default catch-all route set -> ${containerName}.incus:${port}`);
+  console.log(`[Caddy] Default catch-all route set -> ${containerName}.${CONTAINER_DOMAIN}:${port}`);
 }
 
 /**
@@ -1099,7 +1107,7 @@ export async function ensurePingRoute(containerName: string = 'youeye-control', 
   config.apps.http.servers[serverName].routes = filtered;
 
   await setConfig(config);
-  console.log('[Caddy] /api/ping route ensured at position 0 -> youeye-control.incus:3000');
+  console.log(`[Caddy] /api/ping route ensured at position 0 -> youeye-control.${CONTAINER_DOMAIN}:3000`);
 }
 
 /**
@@ -1171,7 +1179,7 @@ export async function setDomain(domain: string): Promise<void> {
     config.apps.tls.automation.on_demand = {
       permission: {
         module: 'http',
-        endpoint: 'http://youeye-control.incus:3000/api/setup/config',
+        endpoint: `http://youeye-control.${CONTAINER_DOMAIN}:3000/api/setup/config`,
       },
     };
   }

@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { validateBridgeToken } from "@/lib/ui-bridge/auth";
 import { settingsService } from "@/lib/settings";
 import { readFileSync } from "fs";
+import { CONTAINER_DOMAIN } from "@/lib/market/constants";
 
 const SUPPORTED_LOCALES = ["en", "ru", "es", "de", "fr"];
 
@@ -71,7 +72,7 @@ async function getUserLanguage(userId: string): Promise<string | null> {
     const token = getBridgeToken();
     if (!token) return null;
 
-    const uiUrl = process.env.UI_INTERNAL_URL || "http://youeye-ui.incus:3000";
+    const uiUrl = process.env.UI_INTERNAL_URL || `http://youeye-ui.${CONTAINER_DOMAIN}:3000`;
     const res = await fetch(
       `${uiUrl}/api/ui-bridge/user-language?userId=${encodeURIComponent(userId)}`,
       {

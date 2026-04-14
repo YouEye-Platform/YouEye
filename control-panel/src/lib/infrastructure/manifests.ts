@@ -19,11 +19,11 @@ export function caddyManifest(): OCIManifest {
     ports: [
       { host: 80, container: 80, protocol: 'tcp' },
       { host: 443, container: 443, protocol: 'tcp' },
-      // Admin API (2019) NOT exposed to host — CP accesses via Incus network
+      // Admin API (2019) NOT exposed to host — CP accesses via container network
     ],
     environment: {
       // Bind admin API to all interfaces inside container so CP
-      // can reach it via Incus network (youeye-caddy.incus:2019)
+      // can reach it via container network (youeye-caddy.youeye:2019)
       CADDY_ADMIN: '0.0.0.0:2019',
     },
     volumes: [

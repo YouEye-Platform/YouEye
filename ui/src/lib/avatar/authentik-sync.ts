@@ -6,7 +6,7 @@
  */
 
 const BRIDGE_TOKEN_PATH = "/etc/youeye/ui-bridge-token";
-const CP_INTERNAL_URL = process.env.CP_INTERNAL_URL || "http://youeye-control.incus:3000";
+const CP_INTERNAL_URL = process.env.CP_INTERNAL_URL || "http://youeye-control.youeye:3000";
 
 /**
  * Sync avatar to Authentik via the Control Panel bridge.

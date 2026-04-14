@@ -17,6 +17,7 @@ import { readSmtpPassword } from '@/lib/smtp/secrets';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import { getAuthentikExternalUrl } from './authentik';
 import { spineClient } from '@/lib/spine/client';
+import { CONTAINER_DOMAIN } from './constants';
 import type { AppManifest, VariableContext } from './types';
 
 // ─── Types ────────────────────────────────────────────────
@@ -136,9 +137,9 @@ export async function buildPlatformEnv(
   env.NEXT_PUBLIC_APP_URL = appUrl;
 
   // ── Platform integration ────────────────────────────────
-  env.YOUEYE_API_URL = 'http://youeye-ui.incus:3000/api/v1';
+  env.YOUEYE_API_URL = `http://youeye-ui.${CONTAINER_DOMAIN}:3000/api/v1`;
   env.YOUEYE_UI_URL = uiBaseUrl;
-  env.CP_API_URL = 'http://youeye-control.incus:3000/api';
+  env.CP_API_URL = `http://youeye-control.${CONTAINER_DOMAIN}:3000/api`;
   env.YOUEYE_PLATFORM_VERSION = platform.version;
   env.YOUEYE_DOMAIN = platform.domain || config.domain;
   env.YOUEYE_SITE_NAME = platform.siteName;
@@ -154,7 +155,7 @@ export async function buildPlatformEnv(
     const authentikIP = await getContainerIP('youeye-authentik');
     const authentikInternalUrl = authentikIP
       ? `http://${authentikIP}:9000`
-      : 'http://youeye-authentik.incus:9000';
+      : `http://youeye-authentik.${CONTAINER_DOMAIN}:9000`;
 
     env.AUTHENTIK_URL = authentikExternalUrl || '';
     env.AUTHENTIK_INTERNAL_URL = authentikInternalUrl;
@@ -177,7 +178,7 @@ export async function buildPlatformEnv(
   // change), inject the platform mail proxy URL. Apps POST to the proxy;
   // the CP sends the email using current SMTP settings at send time.
   if (manifest?.capabilities?.smtp) {
-    env.YOUEYE_MAIL_URL = 'http://youeye-control.incus:3000/api/mail/send';
+    env.YOUEYE_MAIL_URL = `http://youeye-control.${CONTAINER_DOMAIN}:3000/api/mail/send`;
     env.YOUEYE_MAIL_APP_ID = config.appId;
     // Also inject raw SMTP vars for external apps that use built-in mailers
     // (e.g., Memos). These are best-effort — may go stale until propagation runs.
@@ -200,7 +201,7 @@ export async function buildPlatformEnv(
 
   // ── Notifications (capability-conditional) ─────────────
   if (manifest?.capabilities?.notifications) {
-    env.YOUEYE_NOTIFICATIONS_URL = 'http://youeye-ui.incus:3000/api/v1/notifications';
+    env.YOUEYE_NOTIFICATIONS_URL = `http://youeye-ui.${CONTAINER_DOMAIN}:3000/api/v1/notifications`;
     env.YOUEYE_NOTIFICATIONS_APP_ID = config.appId;
     // Apps authenticate via X-UI-Bridge-Token (bridge auth — proven reliable)
     try {
@@ -235,7 +236,7 @@ export async function buildVariableContext(
   const authentikIP = await getContainerIP('youeye-authentik');
   const authentikInternalUrl = authentikIP
     ? `http://${authentikIP}:9000`
-    : 'http://youeye-authentik.incus:9000';
+    : `http://youeye-authentik.${CONTAINER_DOMAIN}:9000`;
 
   // Read authentik display name
   let authentikDisplayName = '';
@@ -297,7 +298,7 @@ export async function buildVariableContext(
   // Populate mail proxy context if SMTP capability declared
   if (manifest?.capabilities?.smtp) {
     ctx.mail = {
-      url: 'http://youeye-control.incus:3000/api/mail/send',
+      url: `http://youeye-control.${CONTAINER_DOMAIN}:3000/api/mail/send`,
       appId: config.appId,
     };
   }
@@ -305,7 +306,7 @@ export async function buildVariableContext(
   // Populate notification context if capability declared
   if (manifest?.capabilities?.notifications) {
     ctx.notifications = {
-      url: 'http://youeye-ui.incus:3000/api/v1/notifications',
+      url: `http://youeye-ui.${CONTAINER_DOMAIN}:3000/api/v1/notifications`,
       appId: config.appId,
     };
   }

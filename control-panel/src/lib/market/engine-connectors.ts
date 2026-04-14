@@ -1,70 +1,77 @@
 /**
  * Connector resolution for the app install engine.
- * Resolves connector requirements declared in app manifests by checking
- * what's already installed on the platform.
  *
- * Example: Search app declares `connectors.requires: [{ capability: "search-engine" }]`.
- * This module detects if Whoogle or SearXNG is installed and provides the URL.
+ * Resolves connector requirements declared in app manifests by looking up
+ * the connector registry (YE-AppMarket/connectors/*.yaml) and checking
+ * whether the providing app is actually installed (via install.json).
+ *
+ * This is generic — adding a new connector only requires a YAML manifest
+ * in YE-AppMarket and an install.json for the providing app. No code
+ * changes needed here.
  */
 
-import { getAllInstalledApps } from './installed-apps';
+import { CONTAINER_DOMAIN } from './constants';
 import { readInstallMetadata } from './metadata';
-import { containerExists } from '../infrastructure/oci-deployer';
+import { findConnectorByCapability, fetchConnectorManifest } from '../connectors/registry';
 import type { AppManifest } from './types';
 
-interface DetectedSearchEngine {
-  type: 'whoogle' | 'searxng';
-  containerName: string;
-  port: number;
-  url: string;
-}
+/** Map from connector metadata.id prefix to the appId in installed_apps */
+const CONNECTOR_APP_MAP: Record<string, string> = {
+  'searxng': 'searxng',
+  'whoogle': 'whoogle',
+  'wikipedia': '_external_', // Wikipedia is internet-based, always available
+};
 
 /**
- * Detect an installed search engine (Whoogle or SearXNG).
- * Checks installed_apps DB, install.json metadata, and Incus containers.
+ * Given a connector manifest, find the installed app that provides it
+ * and return the primary container's internal URL.
  */
-async function detectSearchEngine(): Promise<DetectedSearchEngine | null> {
-  // Check installed_apps DB table first
+async function resolveConnectorUrl(
+  connectorId: string,
+): Promise<{ url: string; type: string } | null> {
+  // Derive the appId from the connector ID (e.g. "searxng-search" → "searxng")
+  const appId = Object.keys(CONNECTOR_APP_MAP).find((key) => connectorId.startsWith(key));
+  if (!appId) return null;
+
+  const mappedAppId = CONNECTOR_APP_MAP[appId];
+
+  // External connectors (Wikipedia) don't need an installed app
+  if (mappedAppId === '_external_') return null;
+
+  // Check if the providing app is actually installed
+  const meta = await readInstallMetadata(mappedAppId);
+  if (!meta) return null;
+
+  // Read the connector manifest for the authoritative endpoint URL
   try {
-    const installedApps = await getAllInstalledApps();
-    for (const app of installedApps) {
-      if (app.appId === 'whoogle') {
-        return { type: 'whoogle', containerName: 'app-whoogle', port: 5000, url: 'http://app-whoogle.incus:5000' };
-      }
-      if (app.appId === 'searxng') {
-        return { type: 'searxng', containerName: 'app-searxng', port: 8080, url: 'http://app-searxng.incus:8080' };
+    const connectorManifest = await fetchConnectorManifest(connectorId);
+    // The connector manifest has the correct container name in its API endpoints.
+    // Extract the base URL from the first endpoint definition.
+    const firstEndpoint = Object.values(connectorManifest.api?.endpoints ?? {})[0];
+    if (firstEndpoint?.url) {
+      const urlMatch = firstEndpoint.url.match(/^(https?:\/\/[^/]+)/);
+      if (urlMatch) {
+        // Replace .incus with current domain suffix in case manifest hasn't been updated
+        const url = urlMatch[1].replace(/\.incus([:/])/g, `.${CONTAINER_DOMAIN}$1`)
+                                .replace(/\.incus$/, `.${CONTAINER_DOMAIN}`);
+        return { url, type: appId };
       }
     }
   } catch {
-    // DB not available — fall through
+    // Connector manifest not fetchable — fall back to install metadata
   }
 
-  // Check install.json metadata as fallback
-  const whoogleMeta = await readInstallMetadata('whoogle');
-  if (whoogleMeta) {
-    const cn = whoogleMeta.containers?.[0] ?? 'app-whoogle';
-    return { type: 'whoogle', containerName: cn, port: 5000, url: `http://${cn}.incus:5000` };
-  }
+  // Fallback: build URL from install.json container names
+  // For multi-container apps, find the primary (usually the one with "main" in the name)
+  const containers = meta.containers ?? [];
+  const primary = containers.find((c: string) => c.includes('main')) ?? containers[0];
+  if (!primary) return null;
 
-  const searxngMeta = await readInstallMetadata('searxng');
-  if (searxngMeta) {
-    const cn = searxngMeta.containers?.[0] ?? 'app-searxng';
-    return { type: 'searxng', containerName: cn, port: 8080, url: `http://${cn}.incus:8080` };
-  }
+  // Use well-known ports per app type
+  const portMap: Record<string, number> = { searxng: 8080, whoogle: 5000 };
+  const port = portMap[mappedAppId] ?? 3000;
 
-  // Last resort: probe Incus directly
-  for (const name of ['app-whoogle', 'app-whoogle-main']) {
-    if (await containerExists(name)) {
-      return { type: 'whoogle', containerName: name, port: 5000, url: `http://${name}.incus:5000` };
-    }
-  }
-  for (const name of ['app-searxng', 'app-searxng-main']) {
-    if (await containerExists(name)) {
-      return { type: 'searxng', containerName: name, port: 8080, url: `http://${name}.incus:8080` };
-    }
-  }
-
-  return null;
+  return { url: `http://${primary}.${CONTAINER_DOMAIN}:${port}`, type: appId };
 }
 
 /**
@@ -77,13 +84,19 @@ export async function resolveConnectors(
   const env: Record<string, string> = {};
 
   for (const req of manifest.connectors?.requires ?? []) {
+    // Find a connector that provides this capability
+    const connector = await findConnectorByCapability(req.capability);
+    if (!connector) continue;
+
+    const resolved = await resolveConnectorUrl(connector.metadata.id);
+    if (!resolved) continue;
+
+    // Inject env vars based on capability type
     if (req.capability === 'search-engine') {
-      const engine = await detectSearchEngine();
-      if (engine) {
-        env.SEARCH_ENGINE_URL = engine.url;
-        env.SEARCH_ENGINE_TYPE = engine.type;
-      }
+      env.SEARCH_ENGINE_URL = resolved.url;
+      env.SEARCH_ENGINE_TYPE = resolved.type;
     }
+    // Future capabilities (media-server, cloud-storage, etc.) add cases here
   }
 
   return env;

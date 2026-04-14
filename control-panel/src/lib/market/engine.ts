@@ -47,6 +47,7 @@ import {
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
 import { buildVariableContext, buildPlatformEnv, envToString } from './platform-env';
 import { resolveConnectors } from './engine-connectors';
+import { CONTAINER_DOMAIN } from './constants';
 
 // ─── Container Naming ──────────────────────────────────────
 
@@ -149,7 +150,7 @@ async function registerAppWithUI(
   if (!uiIP) return;
 
   const bridgeToken = await readBridgeToken();
-  const containerUrl = port ? `http://${containerName}.incus:${port}` : `http://${containerName}.incus`;
+  const containerUrl = port ? `http://${containerName}.${CONTAINER_DOMAIN}:${port}` : `http://${containerName}.${CONTAINER_DOMAIN}`;
 
   const res = await fetch(`http://${uiIP}:3000/api/v1/apps/register`, {
     method: 'POST',

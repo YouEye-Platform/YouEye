@@ -14,6 +14,7 @@
 import { getRequestConfig } from "next-intl/server";
 import { cookies } from "next/headers";
 import { resolveLocale, defaultLocale } from "./config";
+import { CONTAINER_DOMAIN } from "@/lib/market/constants";
 
 /** Cached system language with TTL */
 let cachedSystemLang: { locale: string; expiresAt: number } | null = null;
@@ -93,7 +94,7 @@ async function getUserLanguage(authentikSub: string): Promise<string | null> {
     }
     if (!token) return null;
 
-    const uiUrl = process.env.UI_INTERNAL_URL || "http://youeye-ui.incus:3000";
+    const uiUrl = process.env.UI_INTERNAL_URL || `http://youeye-ui.${CONTAINER_DOMAIN}:3000`;
     const res = await fetch(
       `${uiUrl}/api/ui-bridge/user-language?userId=${encodeURIComponent(authentikSub)}`,
       {

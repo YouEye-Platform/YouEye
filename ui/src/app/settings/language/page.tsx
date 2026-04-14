@@ -16,7 +16,7 @@ async function getSystemLanguage(): Promise<string | null> {
     const token = getBridgeToken();
     if (!token) return null;
 
-    const cpUrl = process.env.CP_INTERNAL_URL || "http://youeye-control.incus:3000";
+    const cpUrl = process.env.CP_INTERNAL_URL || "http://youeye-control.youeye:3000";
     const res = await fetch(`${cpUrl}/api/ui-bridge/language`, {
       headers: { "X-UI-Bridge-Token": token },
       signal: AbortSignal.timeout(5000),

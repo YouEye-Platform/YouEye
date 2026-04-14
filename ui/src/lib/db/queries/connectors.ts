@@ -10,7 +10,7 @@ import { db, ensureSchema } from "@/db";
 import { userConnectors, userConnectorSecrets, appPermissions } from "@/db/schema";
 import { eq, and, asc, isNull } from "drizzle-orm";
 
-const CP_API_URL = process.env.CP_API_URL ?? "http://youeye-control.incus:3000/api";
+const CP_API_URL = process.env.CP_API_URL ?? "http://youeye-control.youeye:3000/api";
 
 /**
  * Resolve which connector a user should use for a given capability.
