@@ -77,3 +77,68 @@ export interface SpineBackupStatus {
   started_at?: string;
   updated_at: string;
 }
+
+// ─── Phase C: Per-app & core backup/restore types ────────
+
+/** Per-app backup configuration */
+export interface AppBackupConfig {
+  appId: string;
+  targetPath: string;
+  passphrase: string;
+}
+
+/** Core platform backup configuration */
+export interface CoreBackupConfig {
+  targetPath: string;
+  passphrase: string;
+  hostname?: string;
+}
+
+/** Restore configuration for a single app */
+export interface AppRestoreConfig {
+  appId: string;
+  archivePath: string;
+  passphrase: string;
+}
+
+/** Full platform restore configuration */
+export interface FullRestoreConfig {
+  backupPath: string;  // root of backup dir (contains youeye/)
+  passphrase: string;
+}
+
+/** Backup schedule configuration */
+export interface BackupScheduleConfig {
+  enabled: boolean;
+  targetPath: string;
+  schedule: {
+    core: {
+      frequency: 'daily' | 'weekly' | 'monthly';
+      retention: number;
+      time: string;  // HH:MM format
+    };
+    defaultApp: {
+      frequency: 'daily' | 'weekly' | 'monthly' | 'never';
+      retention: number;
+    };
+    overrides: Record<string, {
+      frequency: 'daily' | 'weekly' | 'monthly' | 'never';
+      retention: number;
+    }>;
+  };
+}
+
+/** Entry in the backup index */
+export interface BackupIndexEntry {
+  timestamp: string;
+  archivePath: string;
+  archiveSize: number;
+  version: string;
+}
+
+/** Full backup index */
+export interface BackupIndex {
+  lastUpdated: string;
+  core: BackupIndexEntry[];
+  apps: Record<string, BackupIndexEntry[]>;
+}

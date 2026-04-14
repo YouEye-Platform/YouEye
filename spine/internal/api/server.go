@@ -158,6 +158,12 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/registry/digest", s.handleRegistryDigest)
 	s.mux.HandleFunc("/api/backup/run", s.handleBackupRun)
 	s.mux.HandleFunc("/api/backup/status", s.handleBackupStatus)
+	s.mux.HandleFunc("/api/backup/volumes", s.handleBackupVolumes)
+	s.mux.HandleFunc("/api/backup/storage-driver", s.handleStorageDriver)
+	s.mux.HandleFunc("/api/backup/list", s.handleBackupList)
+	s.mux.HandleFunc("/api/backup/config", s.handleBackupConfig)
+	s.mux.HandleFunc("/api/backup/restore", s.handleBackupRestore)
+	s.mux.HandleFunc("/api/backup/prune", s.handleBackupPrune)
 }
 
 func (s *Server) ListenAndServe() error {
@@ -185,6 +191,9 @@ func (s *Server) ListenAndServe() error {
 			s.authLimiter.cleanup()
 		}
 	}()
+
+	// Start backup scheduler
+	backup.StartScheduler("")
 
 	fmt.Printf("API server listening on %s\n", s.socketPath)
 
@@ -2095,4 +2104,203 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, backup.ReadStatus())
+}
+
+// handleBackupVolumes runs a live volume backup (freeze/snapshot instead of stop).
+// POST /api/backup/volumes
+func (s *Server) handleBackupVolumes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var cfg backup.BackupConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		errorResponse(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if cfg.TargetPath == "" {
+		errorResponse(w, "target_path is required", http.StatusBadRequest)
+		return
+	}
+	if cfg.Passphrase == "" {
+		errorResponse(w, "passphrase is required", http.StatusBadRequest)
+		return
+	}
+	if cfg.StagingDir == "" {
+		errorResponse(w, "staging_dir is required", http.StatusBadRequest)
+		return
+	}
+
+	// Force live mode for this endpoint
+	cfg.Mode = "live"
+
+	backupID, err := backup.Run(cfg)
+	if err != nil {
+		errorResponse(w, fmt.Sprintf("Failed to start live backup: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, map[string]string{
+		"status":    "started",
+		"backup_id": backupID,
+		"mode":      "live",
+	})
+}
+
+// handleStorageDriver returns the detected Incus storage driver.
+// GET /api/backup/storage-driver
+func (s *Server) handleStorageDriver(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	driver := backup.DetectStorageDriver()
+	jsonResponse(w, map[string]string{
+		"driver": driver,
+	})
+}
+
+// handleBackupList returns backup entries from the index.
+// GET /api/backup/list?type=core&app_id=immich&target_path=/mnt/backup
+func (s *Server) handleBackupList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	targetPath := r.URL.Query().Get("target_path")
+	if targetPath == "" {
+		errorResponse(w, "target_path query param required", http.StatusBadRequest)
+		return
+	}
+
+	backupType := r.URL.Query().Get("type")
+	appID := r.URL.Query().Get("app_id")
+
+	entries, err := backup.ListEntries(targetPath, backupType, appID)
+	if err != nil {
+		errorResponse(w, fmt.Sprintf("Failed to list backups: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, map[string]interface{}{
+		"entries": entries,
+		"type":    backupType,
+		"app_id":  appID,
+	})
+}
+
+// handleBackupConfig handles GET/POST for backup schedule configuration.
+// GET /api/backup/config — read current backup schedule
+// POST /api/backup/config — update backup schedule
+func (s *Server) handleBackupConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		cfg, err := backup.ReadBackupConfig()
+		if err != nil {
+			errorResponse(w, fmt.Sprintf("Failed to read backup config: %v", err), http.StatusInternalServerError)
+			return
+		}
+		if cfg == nil {
+			jsonResponse(w, map[string]interface{}{
+				"enabled": false,
+			})
+			return
+		}
+		jsonResponse(w, cfg)
+
+	case "POST":
+		var cfg backup.ScheduleConfig
+		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+			errorResponse(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := backup.SaveBackupConfig(&cfg); err != nil {
+			errorResponse(w, fmt.Sprintf("Failed to save backup config: %v", err), http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]string{
+			"status": "saved",
+		})
+
+	default:
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleBackupRestore decrypts and extracts a backup archive.
+// POST /api/backup/restore
+func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var cfg backup.RestoreConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		errorResponse(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if cfg.ArchivePath == "" {
+		errorResponse(w, "archive_path is required", http.StatusBadRequest)
+		return
+	}
+	if cfg.Passphrase == "" {
+		errorResponse(w, "passphrase is required", http.StatusBadRequest)
+		return
+	}
+	if cfg.StagingDir == "" {
+		errorResponse(w, "staging_dir is required", http.StatusBadRequest)
+		return
+	}
+
+	result, err := backup.RestoreArchive(cfg)
+	if err != nil {
+		errorResponse(w, fmt.Sprintf("Restore failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, result)
+}
+
+// handleBackupPrune runs retention cleanup for backup entries.
+// POST /api/backup/prune
+func (s *Server) handleBackupPrune(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		TargetPath string `json:"target_path"`
+		BackupType string `json:"backup_type"`
+		AppID      string `json:"app_id"`
+		Retention  int    `json:"retention"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.TargetPath == "" {
+		errorResponse(w, "target_path is required", http.StatusBadRequest)
+		return
+	}
+	if req.Retention <= 0 {
+		errorResponse(w, "retention must be > 0", http.StatusBadRequest)
+		return
+	}
+
+	if err := backup.PruneEntries(req.TargetPath, req.BackupType, req.AppID, req.Retention); err != nil {
+		errorResponse(w, fmt.Sprintf("Prune failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, map[string]string{
+		"status": "pruned",
+	})
 }

@@ -10,6 +10,8 @@ import {
 } from '@/lib/wordart-presets';
 
 import SetupLanguage from '@/components/setup/SetupLanguage';
+import SetupChoice from '@/components/setup/SetupChoice';
+import SetupRestore from '@/components/setup/SetupRestore';
 import SetupServerName from '@/components/setup/SetupServerName';
 import SetupWordArt from '@/components/setup/SetupWordArt';
 import SetupAdminAccount from '@/components/setup/SetupAdminAccount';
@@ -34,15 +36,16 @@ interface SetupStep {
   message?: string;
 }
 
-// Steps: -1=language, 0=serverName, 1=wordart, 2=admin, 3=provisioning, 4=dns
-type WizardStep = -1 | 0 | 1 | 2 | 3 | 4;
+// Steps: -2=language, -1=choice(new/restore), 0=serverName, 1=wordart, 2=admin, 3=provisioning, 4=dns
+// Restore flow: -2=language → -1=choice → 'restore'
+type WizardStep = -2 | -1 | 0 | 1 | 2 | 3 | 4 | 'restore';
 
 // ─── Main Component ──────────────────────────────────────────
 
 export default function SetupPage() {
   const t = useTranslations('setup');
   const router = useRouter();
-  const [step, setStep] = useState<WizardStep>(-1);
+  const [step, setStep] = useState<WizardStep>(-2);
   const [loading, setLoading] = useState(true);
   const [languageChecked, setLanguageChecked] = useState(false);
 
@@ -85,7 +88,7 @@ export default function SetupPage() {
     if (hasLanguageCookie) {
       const match = document.cookie.match(/ye-setup-language=(\w+)/);
       if (match) setSelectedLanguage(match[1]);
-      setStep(0);
+      setStep(-1);
     }
     setLanguageChecked(true);
   }, []);
@@ -143,7 +146,7 @@ export default function SetupPage() {
       });
       window.location.reload();
     } catch {
-      goToStep(0);
+      goToStep(-1);
     }
   }, [goToStep]);
 
@@ -266,8 +269,8 @@ export default function SetupPage() {
     return 'opacity-100 translate-x-0 transition-all duration-300';
   };
 
-  // Step indicator dots (only for steps 0-2)
-  const showDots = step >= 0 && step <= 2;
+  // Step indicator dots (only for steps 0-2, not during restore flow)
+  const showDots = typeof step === 'number' && step >= 0 && step <= 2;
   const stepLabels = [t('serverSetup'), t('style'), t('adminAccount')];
 
   return (
@@ -293,8 +296,24 @@ export default function SetupPage() {
 
       {/* Step content */}
       <div className={getContentClass()}>
-        {step === -1 && (
+        {step === -2 && (
           <SetupLanguage onSelect={handleLanguageSelect} />
+        )}
+
+        {step === -1 && (
+          <SetupChoice
+            onNewSetup={() => goToStep(0)}
+            onRestore={() => goToStep('restore')}
+          />
+        )}
+
+        {step === 'restore' && (
+          <SetupRestore
+            onComplete={() => {
+              router.replace('/');
+            }}
+            onBack={() => goToStep(-1, 'back')}
+          />
         )}
 
         {step === 0 && (

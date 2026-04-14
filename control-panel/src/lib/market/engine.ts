@@ -23,7 +23,9 @@ import type {
   InstallMetadata,
   VariableContext,
   NativeConfig,
+  RestoreOptions,
 } from './types';
+import { readFile } from 'fs/promises';
 import { resolveVariables, resolveEnvironment } from './variables';
 import { writeAllConfigFiles, applyLanguageToContainers } from './config-writer';
 import { saveInstallMetadata } from './metadata';
@@ -408,7 +410,8 @@ export async function installApp(
   manifest: AppManifest,
   config: InstallConfig,
   onEvent: InstallEventCallback,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  restoreOptions?: RestoreOptions
 ): Promise<void> {
   const appId = manifest.metadata.id;
   const secretsPath = getSecretsPath(appId);
@@ -442,26 +445,39 @@ export async function installApp(
 
   checkCancelled();
   step++;
-  emit(onEvent, step, totalSteps, 'running', 'Generating secrets...');
-  for (const secret of manifest.secrets) {
-    const generator = getGenerator(secret.generator, secret.length);
-    const value = await getOrCreateSecret(secretsPath, secret.file, generator);
-    ctx.secrets![secret.name] = value;
+  if (restoreOptions?.skipSecrets) {
+    emit(onEvent, step, totalSteps, 'running', 'Reading restored secrets...');
+    for (const secret of manifest.secrets) {
+      const secretValue = await readFile(`/var/lib/youeye/app-${appId}/${secret.file}`, 'utf-8');
+      ctx.secrets![secret.name] = secretValue.trim();
+    }
+    emit(onEvent, step, totalSteps, 'success', 'Secrets read from backup');
+  } else {
+    emit(onEvent, step, totalSteps, 'running', 'Generating secrets...');
+    for (const secret of manifest.secrets) {
+      const generator = getGenerator(secret.generator, secret.length);
+      const value = await getOrCreateSecret(secretsPath, secret.file, generator);
+      ctx.secrets![secret.name] = value;
+    }
+    emit(onEvent, step, totalSteps, 'success', 'Secrets generated');
   }
-  emit(onEvent, step, totalSteps, 'success', 'Secrets generated');
 
   // ── Step 2: Setup shared PostgreSQL (if needed) ───────────
 
   if (manifest.features.requiresSharedPostgres && manifest.sharedPostgres) {
     checkCancelled();
     step++;
-    emit(onEvent, step, totalSteps, 'running', 'Setting up shared database...');
-    try {
-      await setupSharedPostgres(manifest.sharedPostgres, ctx);
-      emit(onEvent, step, totalSteps, 'success', 'Database ready');
-    } catch (err) {
-      emit(onEvent, step, totalSteps, 'error', 'Failed to setup database', String(err));
-      throw err;
+    if (restoreOptions?.skipDatabase) {
+      emit(onEvent, step, totalSteps, 'skipped', 'Database setup skipped (restored from backup)');
+    } else {
+      emit(onEvent, step, totalSteps, 'running', 'Setting up shared database...');
+      try {
+        await setupSharedPostgres(manifest.sharedPostgres, ctx);
+        emit(onEvent, step, totalSteps, 'success', 'Database ready');
+      } catch (err) {
+        emit(onEvent, step, totalSteps, 'error', 'Failed to setup database', String(err));
+        throw err;
+      }
     }
   }
 
@@ -470,13 +486,17 @@ export async function installApp(
   if (manifest.configFiles.length > 0) {
     checkCancelled();
     step++;
-    emit(onEvent, step, totalSteps, 'running', 'Writing configuration files...');
-    try {
-      await writeAllConfigFiles(manifest.configFiles, ctx);
-      emit(onEvent, step, totalSteps, 'success', 'Configuration files written');
-    } catch (err) {
-      emit(onEvent, step, totalSteps, 'error', 'Failed to write config files', String(err));
-      throw err;
+    if (restoreOptions?.skipConfigFiles) {
+      emit(onEvent, step, totalSteps, 'skipped', 'Config files skipped (restored from backup)');
+    } else {
+      emit(onEvent, step, totalSteps, 'running', 'Writing configuration files...');
+      try {
+        await writeAllConfigFiles(manifest.configFiles, ctx);
+        emit(onEvent, step, totalSteps, 'success', 'Configuration files written');
+      } catch (err) {
+        emit(onEvent, step, totalSteps, 'error', 'Failed to write config files', String(err));
+        throw err;
+      }
     }
   }
 

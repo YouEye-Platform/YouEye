@@ -406,6 +406,58 @@ export class SpineClient {
   async getBackupStatus(): Promise<SpineBackupStatus> {
     return this.request('/api/backup/status');
   }
+
+  /**
+   * Get the storage driver used by Incus (dir, zfs, btrfs, etc.)
+   */
+  async getStorageDriver(): Promise<{ driver: string }> {
+    return this.request('/api/backup/storage-driver');
+  }
+
+  /**
+   * Decrypt and extract a backup archive to a staging directory.
+   * Used during restore operations.
+   */
+  async restoreArchive(params: {
+    archive_path: string;
+    passphrase: string;
+    staging_dir: string;
+  }): Promise<{ status: string }> {
+    return this.request('/api/backup/restore', 'POST', params);
+  }
+
+  /**
+   * Get backup schedule configuration.
+   */
+  async getBackupConfig(): Promise<import('@/lib/backup/types').BackupScheduleConfig> {
+    return this.request('/api/backup/config');
+  }
+
+  /**
+   * Set backup schedule configuration.
+   */
+  async setBackupConfig(config: import('@/lib/backup/types').BackupScheduleConfig): Promise<{ status: string }> {
+    return this.request('/api/backup/config', 'POST', config as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * Get the backup index (list of available backups).
+   * Optionally filter by type (core/app) and appId.
+   */
+  async getBackupList(type?: string, appId?: string): Promise<import('@/lib/backup/types').BackupIndex> {
+    const params = new URLSearchParams();
+    if (type) params.set('type', type);
+    if (appId) params.set('app_id', appId);
+    const query = params.toString();
+    return this.request(`/api/backup/list${query ? `?${query}` : ''}`);
+  }
+
+  /**
+   * Prune old backups based on retention policy.
+   */
+  async pruneBackups(type: string, appId: string, retention: number): Promise<{ deleted: number }> {
+    return this.request('/api/backup/prune', 'POST', { type, app_id: appId, retention });
+  }
 }
 
 interface SpineBackupStatus {

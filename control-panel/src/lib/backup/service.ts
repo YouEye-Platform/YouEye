@@ -27,6 +27,12 @@ import type {
   ManifestBackupSection,
 } from './types';
 
+// Re-export Phase C per-app and core backup/restore functions
+export { backupApp } from './app-backup';
+export { backupCore } from './core-backup';
+export { restoreApp } from './app-restore';
+export { fullRestore } from './full-restore';
+
 const STAGING_BASE = '/tmp/youeye-backup';
 const YOUEYE_CONFIG_DIR = '/etc/youeye';
 const YOUEYE_DATA_DIR = '/var/lib/youeye';

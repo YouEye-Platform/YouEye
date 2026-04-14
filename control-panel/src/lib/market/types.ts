@@ -165,6 +165,14 @@ export interface MarketApp {
   installParams?: { name: string; label: string; required: boolean; description?: string }[];
 }
 
+// ─── Restore Options ─────────────────────────────────────
+
+export interface RestoreOptions {
+  skipSecrets: boolean;     // Don't regenerate secrets (restored from backup)
+  skipDatabase: boolean;    // Don't create DB (already restored from dump)
+  skipConfigFiles: boolean; // Don't write config templates (will restore from backup)
+}
+
 // ─── Uninstall Options ────────────────────────────────────
 
 export interface UninstallOptions {

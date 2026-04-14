@@ -30,6 +30,7 @@ import {
   ArrowLeftRight,
   ExternalLink,
   PackageOpen,
+  HardDrive,
 } from "lucide-react";
 
 /** Section definitions use labelKey to look up translations at render time */
@@ -49,6 +50,7 @@ const ADMIN_SECTIONS = [
   { id: "containers", labelKey: "containers" as const, icon: Box, href: "/settings/containers" },
   { id: "dns", labelKey: "dns" as const, icon: Globe, href: "/settings/dns" },
   { id: "proxy", labelKey: "proxy" as const, icon: ArrowLeftRight, href: "/settings/proxy" },
+  { id: "backup", labelKey: "backup" as const, icon: HardDrive, href: "/settings/backup" },
   { id: "apps-list", labelKey: "apps" as const, icon: PackageOpen, href: "/settings/apps-list" },
   { id: "market", labelKey: "appMarket" as const, icon: Store, href: "/app-store" },
 ];

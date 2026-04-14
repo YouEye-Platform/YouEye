@@ -1,3 +1,49 @@
+## v0.2.21.6 — iris — 2026-04-14
+**Branch:** dev
+**VM:** ye-iris (IrisVM 430)
+**Agent:** Iris
+**Task:** Phase C — Backup & Restore (per-app, core, full server)
+
+### Changes
+- `spine/internal/backup/runner.go` — added live backup mode (ZFS snapshot or Incus freeze/unfreeze), BackupType/AppID/Mode fields
+- `spine/internal/backup/index.go` — NEW: backup index management (ReadIndex/WriteIndex/AddEntry/PruneEntries)
+- `spine/internal/backup/scheduler.go` — NEW: reads youeye.yaml backup config, triggers CP on schedule
+- `spine/internal/backup/restore.go` — NEW: decrypt + extract archive to staging dir
+- `spine/internal/backup/passphrase.go` — NEW: store/read passphrase encrypted with deploy secret
+- `spine/internal/api/server.go` — new endpoints: /api/backup/volumes, storage-driver, list, config, restore, prune
+- `control-panel/src/lib/backup/types.ts` — added AppBackupConfig, CoreBackupConfig, BackupScheduleConfig, BackupIndex types
+- `control-panel/src/lib/backup/app-backup.ts` — NEW: per-app backup (pg_dump live, Caddy routes, secrets, call Spine live backup)
+- `control-panel/src/lib/backup/core-backup.ts` — NEW: core backup (Authentik+youeye DBs, configs, secrets, Caddy, Pi-Hole)
+- `control-panel/src/lib/backup/app-restore.ts` — NEW: per-app restore (decrypt, uninstall existing, restore secrets/DB, installApp restoreMode)
+- `control-panel/src/lib/backup/full-restore.ts` — NEW: full server restore (core + iterate per-app restores)
+- `control-panel/src/lib/spine/client.ts` — added getStorageDriver(), restoreArchive(), getBackupConfig/List(), pruneBackups()
+- `control-panel/src/lib/market/engine.ts` — added RestoreOptions to installApp() (skipSecrets, skipDatabase, skipConfigFiles)
+- `control-panel/src/lib/market/types.ts` — added RestoreOptions interface, appId to InstallConfig
+- `control-panel/src/app/(dashboard)/backup/page.tsx` — REWRITTEN: 3-tab interface (Schedule/History/Manual)
+- `control-panel/src/app/api/backup/` — NEW: app, core, config, list, scheduled API routes
+- `control-panel/src/app/api/restore/` — NEW: app and full restore SSE endpoints
+- `control-panel/src/app/api/ui-bridge/backup/` — NEW: bridge endpoint for UI backup data
+- `control-panel/src/app/api/setup/restore/` — NEW: setup wizard restore SSE endpoint
+- `control-panel/src/app/setup/page.tsx` — added "Restore from backup" choice after language selection
+- `control-panel/src/components/setup/SetupChoice.tsx` — NEW: setup vs restore chooser
+- `control-panel/src/components/setup/SetupRestore.tsx` — NEW: restore progress UI for setup wizard
+- `ui/src/app/settings/backup/page.tsx` — NEW: admin backup settings page
+- `ui/src/components/settings/admin/backup-settings.tsx` — NEW: backup overview, schedule summary, history
+- `ui/src/components/settings/settings-shell.tsx` — added Backup to admin navigation
+- `ui/messages/en.json` — added backup translation
+- `ui/messages/ru.json` — added backup translation (Резервное копирование)
+
+### Test Results
+- Spine: `go build ./...` — compiles clean
+- UI: `tsc --noEmit` — compiles clean
+- CP: `tsc --noEmit` — 1 pre-existing test type error (not from this change)
+
+### Notes for Iris
+- Phase C is feature-complete but needs live testing on a dev VM with actual backup target
+- Incremental backups deferred to future work
+- Passphrase stored encrypted with deploy_secret at /var/lib/youeye/backup/.passphrase
+- Restore via setup wizard requires `spine deploy` first, then "Restore from backup" path
+
 ## v0.2.21.5 — iris — 2026-04-14
 **Branch:** dev
 **VM:** ye-iris (IrisVM 430)
