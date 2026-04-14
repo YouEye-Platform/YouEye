@@ -133,7 +133,9 @@ export function authentikServerManifest(
 export function authentikWorkerManifest(
   postgresIP: string,
   dbPassword: string,
-  secretKey: string
+  secretKey: string,
+  bootstrapPassword: string,
+  bootstrapToken: string
 ): OCIManifest {
   return {
     name: 'authentik-worker',
@@ -149,6 +151,9 @@ export function authentikWorkerManifest(
       AUTHENTIK_POSTGRESQL__PASSWORD: dbPassword,
       AUTHENTIK_POSTGRESQL__NAME: 'authentik',
       AUTHENTIK_SECRET_KEY: secretKey,
+      AUTHENTIK_BOOTSTRAP_PASSWORD: bootstrapPassword,
+      AUTHENTIK_BOOTSTRAP_TOKEN: bootstrapToken,
+      AUTHENTIK_BOOTSTRAP_EMAIL: 'admin@youeye.local',
       AUTHENTIK_LOG_LEVEL: 'info',
       AUTHENTIK_DISABLE_UPDATE_CHECK: 'true',
       'AUTHENTIK_ERROR_REPORTING__ENABLED': 'false',

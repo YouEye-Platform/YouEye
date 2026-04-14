@@ -119,14 +119,18 @@ export async function deployInfrastructure(
     const workerManifest = authentikWorkerManifest(
       postgresIP,
       authentikSecrets.dbPassword,
-      authentikSecrets.secretKey
+      authentikSecrets.secretKey,
+      authentikSecrets.bootstrapPassword,
+      authentikSecrets.bootstrapToken
     );
     await deployOCIContainer(workerManifest, '');
     await applyResourcePolicy('youeye-authentik-worker', 'critical');
     emit(onEvent, 4, 'success', 'Authentik worker deployed');
   } catch (err) {
-    // Worker failure is non-fatal — server still works
-    emit(onEvent, 4, 'error', 'Authentik worker deployment failed', String(err));
+    // Worker failure is critical — without it, akadmin user and bootstrap token
+    // are never created, and the setup wizard cannot configure Authentik
+    emit(onEvent, 4, 'error', 'Authentik worker deployment failed — setup will not complete', String(err));
+    return;
   }
 
   // ─── Step 5: Authentik API token ──────────────────────────
