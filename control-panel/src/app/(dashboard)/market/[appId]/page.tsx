@@ -17,8 +17,6 @@ import {
   StickyNote,
   Camera,
   BellRing,
-  Cpu,
-  MemoryStick,
   Globe,
   Tag,
   CheckCircle2,
@@ -408,32 +406,6 @@ export default function AppDetailPage() {
           Details
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {/* Memory */}
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-gray-50">
-              <MemoryStick className="h-4 w-4 text-gray-500" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-400">Memory</p>
-              <p className="text-sm font-medium text-gray-700">
-                {app.estimatedMemory}
-              </p>
-            </div>
-          </div>
-
-          {/* CPU */}
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-gray-50">
-              <Cpu className="h-4 w-4 text-gray-500" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-400">CPU</p>
-              <p className="text-sm font-medium text-gray-700">
-                {app.estimatedCPU}
-              </p>
-            </div>
-          </div>
-
           {/* SSO */}
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-gray-50">

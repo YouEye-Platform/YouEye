@@ -22,6 +22,7 @@ import { setupAuthentikDatabase } from './postgres-setup';
 import { createAuthentikAPIToken, setupCaddyAuthentikRoute } from './authentik-setup';
 import { setDefaultRoute, ensurePingRoute } from '../caddy/client';
 import { execShell } from '../incus/server';
+import { applyResourcePolicy } from './resource-policy';
 
 const TOTAL_STEPS = 8;
 const PIHOLE_CONTAINER = 'youeye-pihole';
@@ -59,7 +60,8 @@ export async function deployInfrastructure(
     const pgPassword = await getOrCreateSecret('postgres', '.pg_password', () => generatePassword(32));
     const manifest = postgresManifest(pgPassword);
     await deployOCIContainer(manifest, '');
-    
+    await applyResourcePolicy('youeye-postgres', 'critical');
+
     const healthy = await waitForPostgres();
     if (!healthy) {
       emit(onEvent, 1, 'error', 'PostgreSQL health check failed', 'Container deployed but not accepting connections');
@@ -96,6 +98,7 @@ export async function deployInfrastructure(
       authentikSecrets.bootstrapToken
     );
     await deployOCIContainer(serverManifest, '');
+    await applyResourcePolicy('youeye-authentik', 'critical');
 
     const healthy = await waitForAuthentik();
     emit(onEvent, 3, healthy ? 'success' : 'error',
@@ -119,6 +122,7 @@ export async function deployInfrastructure(
       authentikSecrets.secretKey
     );
     await deployOCIContainer(workerManifest, '');
+    await applyResourcePolicy('youeye-authentik-worker', 'critical');
     emit(onEvent, 4, 'success', 'Authentik worker deployed');
   } catch (err) {
     // Worker failure is non-fatal — server still works
@@ -139,6 +143,7 @@ export async function deployInfrastructure(
   try {
     const manifest = caddyManifest();
     await deployOCIContainer(manifest, hostIP);
+    await applyResourcePolicy('youeye-caddy', 'critical');
 
     const healthy = await waitForCaddy();
     if (healthy) {
@@ -221,6 +226,7 @@ export async function deployInfrastructure(
     const webPassword = await getOrCreateSecret('pihole', '.web_password', () => generatePassword(24));
     const manifest = piholeManifest(hostIP);
     await deployOCIContainer(manifest, hostIP);
+    await applyResourcePolicy('youeye-pihole', 'critical');
 
     const healthy = await waitForPiHole();
     if (healthy) {
@@ -247,6 +253,7 @@ export async function deployInfrastructure(
       giteaRepo: 'YouEye',
       tagPrefix: 'ui',
     });
+    await applyResourcePolicy('youeye-ui', 'critical');
     emit(onEvent, 8, 'success', 'YouEye UI container deployed');
   } catch (err) {
     emit(onEvent, 8, 'error', 'UI container deployment failed', String(err));
@@ -303,6 +310,7 @@ export async function reconcileInfrastructure(
       const pgPassword = await getOrCreateSecret('postgres', '.pg_password', () => generatePassword(32));
       const manifest = postgresManifest(pgPassword);
       await deployOCIContainer(manifest, '');
+      await applyResourcePolicy('youeye-postgres', 'critical');
       const healthy = await waitForPostgres();
       if (!healthy) {
         remit(1, 'error', 'PostgreSQL health check failed');
@@ -334,6 +342,7 @@ export async function reconcileInfrastructure(
         authentikSecrets.bootstrapToken
       );
       await deployOCIContainer(serverManifest, '');
+      await applyResourcePolicy('youeye-authentik', 'critical');
       const healthy = await waitForAuthentik();
       remit(2, healthy ? 'success' : 'error',
         healthy ? 'Authentik server deployed' : 'Authentik deployed but health check timed out');
@@ -358,6 +367,7 @@ export async function reconcileInfrastructure(
         authentikSecrets.secretKey
       );
       await deployOCIContainer(workerManifest, '');
+      await applyResourcePolicy('youeye-authentik-worker', 'critical');
       remit(3, 'success', 'Authentik worker deployed');
     } catch (err) {
       remit(3, 'error', 'Authentik worker deployment failed', String(err));
@@ -372,6 +382,7 @@ export async function reconcileInfrastructure(
     try {
       const manifest = caddyManifest();
       await deployOCIContainer(manifest, hostIP);
+      await applyResourcePolicy('youeye-caddy', 'critical');
       const healthy = await waitForCaddy();
       if (healthy) {
         // Configure Caddy admin API origins
@@ -436,6 +447,7 @@ export async function reconcileInfrastructure(
       const webPassword = await getOrCreateSecret('pihole', '.web_password', () => generatePassword(24));
       const manifest = piholeManifest(hostIP);
       await deployOCIContainer(manifest, hostIP);
+      await applyResourcePolicy('youeye-pihole', 'critical');
       const healthy = await waitForPiHole();
       if (healthy) {
         await setPiholePasswordViaExec(webPassword);
@@ -461,6 +473,7 @@ export async function reconcileInfrastructure(
         giteaRepo: 'YouEye',
         tagPrefix: 'ui',
       });
+      await applyResourcePolicy('youeye-ui', 'critical');
       remit(6, 'success', 'YouEye UI container deployed');
     } catch (err) {
       remit(6, 'error', 'UI container deployment failed', String(err));

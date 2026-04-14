@@ -13,7 +13,6 @@ export interface OCIManifest {
   ports: PortMapping[];
   environment: Record<string, string>;
   volumes: VolumeMapping[];
-  limits?: ResourceLimits;
   // boot.autostart override. Default is true (Incus auto-starts on boot).
   // Set to false for containers that have a host-IP-bound proxy device:
   // Spine becomes responsible for starting them at boot, AFTER it has
@@ -36,12 +35,6 @@ export interface PortMapping {
 export interface VolumeMapping {
   host: string;
   container: string;
-}
-
-/** Container resource constraints */
-export interface ResourceLimits {
-  memory: string;
-  cpu: string;
 }
 
 /** LXD container spec — full OS containers (Debian) with manual app setup */

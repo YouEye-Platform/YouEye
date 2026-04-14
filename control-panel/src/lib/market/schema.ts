@@ -20,8 +20,6 @@ export const MetadataSchema = z.object({
   website: z.string().url(),
   tags: z.array(z.string()).default([]),
   defaultSubdomain: z.string().min(1),
-  estimatedMemory: z.string().min(1),
-  estimatedCPU: z.string().min(1),
 });
 
 // ─── Features ──────────────────────────────────────────────
@@ -51,22 +49,6 @@ export const HealthCheckSchema = z.discriminatedUnion('type', [
 export const VolumeSchema = z.object({
   host: z.string().min(1),
   container: z.string().min(1),
-});
-
-// ─── Resource Limits ───────────────────────────────────────
-
-export const LimitsSchema = z.object({
-  memory: z.string().min(1),
-  cpu: z.string().min(1),
-});
-
-// ─── Dynamic Resources ────────────────────────────────────
-
-export const ResourcesSchema = z.object({
-  priority: z.enum(['critical', 'high', 'normal', 'low']).default('normal'),
-  memoryCeiling: z.string().optional(),
-  minimumMemory: z.string().optional(),
-  minimumCPU: z.number().optional(),
 });
 
 // ─── Post-Deploy Step ─────────────────────────────────────
@@ -101,7 +83,6 @@ export const ContainerSchema = z.object({
   image: z.string().min(1),
   port: z.number().int().positive().optional(),
   command: z.string().optional(),
-  limits: LimitsSchema.optional(),
   environment: z.record(z.string(), z.string()).default({}),
   volumes: z.array(VolumeSchema).default([]),
   healthCheck: HealthCheckSchema.optional(),
@@ -298,7 +279,6 @@ export const AppManifestSchema = z
     configFiles: z.array(ConfigFileSchema).optional().default([]),
     language: LanguageConfigSchema.optional(),
     capabilities: CapabilitiesSchema,
-    resources: ResourcesSchema.optional(),
     connectors: ConnectorsSchema.optional(),
     sso: SSOSchema.optional(),
     backup: BackupSchema.optional(),

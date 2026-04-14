@@ -30,6 +30,7 @@ import { saveInstallMetadata } from './metadata';
 import { upsertInstalledApp } from './installed-apps';
 import { deployOCIContainer, getContainerIP } from '../infrastructure/oci-deployer';
 import { deployLXDContainer } from '../infrastructure/lxd-deployer';
+import { applyResourcePolicy } from '../infrastructure/resource-policy';
 import { execShell } from '../incus/server';
 import {
   getOrCreateSecret,
@@ -482,6 +483,7 @@ export async function installApp(
     primaryPort = result.port;
     containerNames.push(result.containerName);
     step = result.step;
+    await applyResourcePolicy(result.containerName, 'normal');
   } else {
     // ── OCI marketplace deployment path ─────────────────────
     for (const containerSpec of manifest.containers) {
@@ -503,6 +505,7 @@ export async function installApp(
       try {
         const ociManifest = buildOCIManifest(containerSpec, containerName, appId, ctx);
         await deployOCIContainer(ociManifest, '');
+        await applyResourcePolicy(containerName, 'normal');
         emit(onEvent, step, totalSteps, 'success', `${containerName} created`);
       } catch (err) {
         emit(onEvent, step, totalSteps, 'error', `Failed to deploy ${containerName}`, String(err));
@@ -671,10 +674,6 @@ function buildOCIManifest(
     ports: [], // Market apps don't use host port proxies — they use Caddy
     environment,
     volumes,
-    limits: spec.limits ? {
-      memory: spec.limits.memory,
-      cpu: spec.limits.cpu,
-    } : undefined,
   };
 }
 

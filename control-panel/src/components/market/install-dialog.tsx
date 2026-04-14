@@ -129,17 +129,6 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
             </p>
           </div>
 
-          {/* Resource summary */}
-          <div className="rounded-lg bg-gray-50 dark:bg-gray-800 p-3 space-y-1">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-              {t('resources')}
-            </p>
-            <div className="text-sm text-gray-700 dark:text-gray-300 flex gap-6">
-              <span>{t('memory')}: {app.estimatedMemory}</span>
-              <span>{t('cpu')}: {app.estimatedCPU}</span>
-            </div>
-          </div>
-
           {/* App-specific install parameters */}
           {app.installParams?.map(param => (
             <div key={param.name} className="space-y-2">

@@ -15,8 +15,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  Loader2, ExternalLink, AlertCircle, Shield, Globe, Cpu, HardDrive,
-  CheckCircle2, X, Lock, MemoryStick, Tag, ChevronLeft, ChevronRight,
+  Loader2, ExternalLink, AlertCircle, Shield, Globe, HardDrive,
+  CheckCircle2, X, Lock, Tag, ChevronLeft, ChevronRight,
   Package,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -337,28 +337,6 @@ export function InstallFromUrlDialog({
                   Details
                 </h4>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {/* Memory */}
-                  <div className="flex items-center gap-2">
-                    <div className="p-1.5 rounded-lg bg-gray-50">
-                      <MemoryStick className="h-3.5 w-3.5 text-gray-500" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-400">Memory</p>
-                      <p className="text-sm font-medium text-gray-700">{preview.estimatedMemory}</p>
-                    </div>
-                  </div>
-
-                  {/* CPU */}
-                  <div className="flex items-center gap-2">
-                    <div className="p-1.5 rounded-lg bg-gray-50">
-                      <Cpu className="h-3.5 w-3.5 text-gray-500" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-400">CPU</p>
-                      <p className="text-sm font-medium text-gray-700">{preview.estimatedCPU}</p>
-                    </div>
-                  </div>
-
                   {/* SSO */}
                   <div className="flex items-center gap-2">
                     <div className="p-1.5 rounded-lg bg-gray-50">

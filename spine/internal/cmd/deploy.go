@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -142,6 +143,9 @@ func runDeploy() error {
 	}
 	fmt.Println("✓ API server started")
 	fmt.Println("")
+
+	// Ensure swap exists as a safety net for memory pressure
+	ensureSwapFile()
 
 	// Step 3: Deploy Control Panel container
 	fmt.Println("[3/4] Deploying Control Panel...")
@@ -514,4 +518,104 @@ func createDataDirectories() {
 		}
 	}
 	fmt.Println("✓ Data directories created at /var/lib/youeye/")
+}
+
+// ensureSwapFile creates a swap file if none exists.
+// Swap converts memory pressure from "app gets killed" into "app slows down".
+// Skipped inside LXC containers (swap is managed by the host/Proxmox).
+func ensureSwapFile() {
+	const swapPath = "/var/lib/youeye/swapfile"
+
+	// Check if swap already exists
+	out, _ := exec.Command("swapon", "--show", "--noheadings").Output()
+	if len(strings.TrimSpace(string(out))) > 0 {
+		return // swap already active
+	}
+
+	// Detect LXC environment — can't create swap inside a container
+	if err := exec.Command("systemd-detect-virt", "-c").Run(); err == nil {
+		fmt.Println("Running inside a container — skipping swap creation")
+		return
+	}
+
+	// Read total RAM in MB
+	meminfo, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		fmt.Printf("Warning: could not read /proc/meminfo: %v\n", err)
+		return
+	}
+	totalRAM := 0
+	for _, line := range strings.Split(string(meminfo), "\n") {
+		if strings.HasPrefix(line, "MemTotal:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				kb, _ := strconv.Atoi(fields[1])
+				totalRAM = kb / 1024 // convert to MB
+			}
+			break
+		}
+	}
+	if totalRAM == 0 {
+		return
+	}
+
+	// Read available disk space in MB
+	dfOut, err := exec.Command("df", "/", "--output=avail", "-BM").Output()
+	if err != nil {
+		fmt.Printf("Warning: could not check disk space: %v\n", err)
+		return
+	}
+	dfLines := strings.Split(strings.TrimSpace(string(dfOut)), "\n")
+	diskFreeMB := 0
+	if len(dfLines) >= 2 {
+		diskFreeMB, _ = strconv.Atoi(strings.TrimRight(strings.TrimSpace(dfLines[len(dfLines)-1]), "M"))
+	}
+	if diskFreeMB == 0 {
+		return
+	}
+
+	// Calculate: min(RAM, 10% of disk, 8GB cap), floor 512MB
+	swapMB := totalRAM
+	disk10pct := diskFreeMB / 10
+	if disk10pct < swapMB {
+		swapMB = disk10pct
+	}
+	if swapMB > 8192 {
+		swapMB = 8192
+	}
+	if swapMB < 512 {
+		swapMB = 512
+	}
+
+	fmt.Printf("Creating %d MB swap file at %s...\n", swapMB, swapPath)
+
+	if err := exec.Command("fallocate", "-l", fmt.Sprintf("%dM", swapMB), swapPath).Run(); err != nil {
+		fmt.Printf("Warning: fallocate failed: %v\n", err)
+		return
+	}
+	if err := os.Chmod(swapPath, 0600); err != nil {
+		fmt.Printf("Warning: chmod failed: %v\n", err)
+		return
+	}
+	if err := exec.Command("mkswap", swapPath).Run(); err != nil {
+		fmt.Printf("Warning: mkswap failed: %v\n", err)
+		return
+	}
+	if err := exec.Command("swapon", swapPath).Run(); err != nil {
+		fmt.Printf("Warning: swapon failed: %v\n", err)
+		return
+	}
+
+	// Add to fstab for persistence across reboots
+	fstabLine := swapPath + " swap swap defaults 0 0\n"
+	fstab, _ := os.ReadFile("/etc/fstab")
+	if !strings.Contains(string(fstab), swapPath) {
+		f, err := os.OpenFile("/etc/fstab", os.O_APPEND|os.O_WRONLY, 0644)
+		if err == nil {
+			f.WriteString(fstabLine)
+			f.Close()
+		}
+	}
+
+	fmt.Printf("✓ Swap file created (%d MB)\n", swapMB)
 }

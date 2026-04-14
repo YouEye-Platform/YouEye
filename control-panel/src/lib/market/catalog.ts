@@ -271,8 +271,6 @@ function manifestToMarketApp(manifest: AppManifest): MarketApp {
     version: manifest.version,
     defaultSubdomain: manifest.metadata.defaultSubdomain,
     supportsSSO: manifest.features.supportsSSO,
-    estimatedMemory: manifest.metadata.estimatedMemory,
-    estimatedCPU: manifest.metadata.estimatedCPU,
     website: manifest.metadata.website,
     tags: manifest.metadata.tags,
     detail: manifest.detail ? {

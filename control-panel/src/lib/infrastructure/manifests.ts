@@ -34,7 +34,6 @@ export function caddyManifest(): OCIManifest {
       // to the default Caddyfile (:80 file_server), breaking HTTPS.
       { host: '/var/lib/youeye/caddy/config', container: '/config' },
     ],
-    limits: { memory: '256MiB', cpu: '1' },
   };
 }
 
@@ -65,7 +64,6 @@ export function piholeManifest(hostIP: string): OCIManifest {
       { host: '/var/lib/youeye/pihole/etc', container: '/etc/pihole' },
       { host: '/var/lib/youeye/pihole/dnsmasq', container: '/etc/dnsmasq.d' },
     ],
-    limits: { memory: '512MiB', cpu: '1' },
     // CRITICAL: pihole's port-53 proxy device is bound to the host's primary
     // LAN IP (see oci-deployer.ts:125-127). If the host's IP changes between
     // boots and Incus tries to autostart this container with the stale listen
@@ -94,7 +92,6 @@ export function postgresManifest(password: string): OCIManifest {
     volumes: [
       { host: '/var/lib/youeye/postgres/data', container: '/var/lib/postgresql/data' },
     ],
-    limits: { memory: '512MiB', cpu: '2' },
   };
 }
 
@@ -130,7 +127,6 @@ export function authentikServerManifest(
       { host: '/var/lib/youeye/authentik/media', container: '/media' },
       { host: '/var/lib/youeye/authentik/templates', container: '/templates' },
     ],
-    limits: { memory: '1GiB', cpu: '2' },
   };
 }
 
@@ -161,7 +157,6 @@ export function authentikWorkerManifest(
       { host: '/var/lib/youeye/authentik/media', container: '/media' },
       { host: '/var/lib/youeye/authentik/templates', container: '/templates' },
     ],
-    limits: { memory: '512MiB', cpu: '1' },
   };
 }
 

@@ -7,8 +7,10 @@
  *
  * Monitors:
  * - Container service health (Authentik, Pi-Hole, Caddy, PostgreSQL, Spine)
+ * - Container watchdog — auto-restarts crashed containers, detects crash loops
  * - Disk space (every 5 minutes via Spine API)
  * - Memory pressure (via Spine API)
+ * - Swap-aware memory throttling — applies soft limits under pressure
  * - TLS certificate expiry (every 6 hours)
  * - App updates available (from version checker)
  *
@@ -18,6 +20,7 @@
 import { getAllServicesHealth, type ServiceHealth, type ServiceStatus } from './service';
 import { sendNotificationToUI } from './notification-bridge';
 import { spineClient } from '@/lib/spine/client';
+import { readFileSync } from 'fs';
 
 // ─── State Tracking ───────────────────────────────────────────
 
@@ -52,6 +55,34 @@ const SERVICE_CHECK_INTERVAL_MS = 60_000;  // 60 seconds
 const DISK_CHECK_INTERVAL_TICKS = 5;       // Every 5 minutes
 const CERT_CHECK_INTERVAL_TICKS = 360;     // Every 6 hours
 const MEMORY_CONSECUTIVE_THRESHOLD = 3;    // 3 consecutive low readings
+
+// ─── Container Watchdog State ────────────────────────────────
+
+interface ContainerWatchState {
+  previousStatus: string;
+  restarts: number[];      // timestamps of recent restarts
+  crashLoopDetected: boolean;
+}
+
+const watchStates = new Map<string, ContainerWatchState>();
+let watchdogFirstTick = true;
+
+/** Containers excluded from auto-restart */
+const WATCHDOG_EXCLUDE = new Set(['youeye-pihole', 'youeye-control']);
+
+const CRASH_LOOP_THRESHOLD = 3;           // restarts within window
+const CRASH_LOOP_WINDOW_MS = 5 * 60_000;  // 5 minutes
+const CRASH_LOOP_CLEAR_MS = 10 * 60_000;  // 10 minutes of stability
+
+// ─── Memory Throttle State ───────────────────────────────────
+
+let isThrottled = false;
+const throttledContainers = new Set<string>();
+let throttleCheckRunning = false;
+
+const THROTTLE_ENTER_KB = 1_048_576;  // 1 GB in KB
+const THROTTLE_EXIT_KB = 2_097_152;   // 2 GB in KB
+const THROTTLE_INTERVAL_MS = 15_000;  // 15 seconds
 
 // ─── Notification Helpers ─────────────────────────────────────
 
@@ -124,6 +155,123 @@ async function checkServiceHealth(): Promise<void> {
       status: currentStatus,
       lastAlertedAt: prevStatus !== currentStatus ? new Date().toISOString() : (prev?.lastAlertedAt ?? null),
     });
+  }
+}
+
+// ─── Container Watchdog ──────────────────────────────────────
+
+async function checkContainerWatchdog(): Promise<void> {
+  try {
+    const { incusRequest } = await import('@/lib/incus/server');
+    const { applyResourcePolicy } = await import('@/lib/infrastructure/resource-policy');
+
+    // List all containers with their state
+    const resp = await incusRequest<any[]>('GET', '/1.0/instances?recursion=1');
+    if (!resp.metadata) return;
+
+    const now = Date.now();
+
+    for (const instance of resp.metadata) {
+      const name: string = instance.name;
+      const status: string = instance.status; // "Running", "Stopped", etc.
+
+      // Only watch app containers and infrastructure (except excluded)
+      const isApp = name.startsWith('app-');
+      const isInfra = name.startsWith('youeye-');
+      if (!isApp && !isInfra) continue;
+      if (WATCHDOG_EXCLUDE.has(name)) continue;
+
+      const state = watchStates.get(name);
+
+      if (!state) {
+        // First time seeing this container — record state, don't act
+        watchStates.set(name, {
+          previousStatus: status,
+          restarts: [],
+          crashLoopDetected: false,
+        });
+        continue;
+      }
+
+      // On first tick after startup, just record states
+      if (watchdogFirstTick) {
+        state.previousStatus = status;
+        continue;
+      }
+
+      // Clear crash loop flag after stability period
+      if (state.crashLoopDetected && state.restarts.length > 0) {
+        const lastRestart = state.restarts[state.restarts.length - 1];
+        if (now - lastRestart > CRASH_LOOP_CLEAR_MS) {
+          state.crashLoopDetected = false;
+          state.restarts = [];
+          console.log(`[watchdog] ${name} — crash loop cleared after stability period`);
+        }
+      }
+
+      // Detect running → stopped transition
+      if (state.previousStatus === 'Running' && status === 'Stopped') {
+        if (state.crashLoopDetected) {
+          // Already in crash loop — don't restart
+          state.previousStatus = status;
+          continue;
+        }
+
+        // Restart the container
+        console.log(`[watchdog] ${name} stopped unexpectedly — restarting`);
+        try {
+          await incusRequest('PUT', `/1.0/instances/${name}/state`, {
+            action: 'start',
+            timeout: 30,
+          });
+
+          // Re-apply resource policy
+          const priority = isInfra ? 'critical' as const : 'normal' as const;
+          await applyResourcePolicy(name, priority);
+
+          // Track restart
+          state.restarts.push(now);
+          // Prune old restart timestamps
+          state.restarts = state.restarts.filter(t => now - t < CRASH_LOOP_WINDOW_MS);
+
+          // Check for crash loop
+          if (state.restarts.length >= CRASH_LOOP_THRESHOLD) {
+            state.crashLoopDetected = true;
+            console.error(`[watchdog] ${name} — crash loop detected (${state.restarts.length} restarts in 5 min)`);
+            await notify(
+              `${name} keeps crashing`,
+              `${name} has restarted ${state.restarts.length} times in the last 5 minutes. Auto-restart stopped. Your server may not have enough resources for all installed apps.`,
+              'error',
+              '/health'
+            );
+          } else {
+            // Notify about the restart
+            const notifType = isInfra ? 'warning' as const : 'info' as const;
+            const suffix = isInfra ? ' — monitor the Health Dashboard' : '';
+            await notify(
+              `${name} was restarted automatically`,
+              `${name} stopped unexpectedly and was restarted by the watchdog${suffix}.`,
+              notifType,
+              '/health'
+            );
+          }
+        } catch (err) {
+          console.error(`[watchdog] Failed to restart ${name}:`, err);
+        }
+      }
+
+      state.previousStatus = status;
+    }
+
+    // Clean up watch states for containers that no longer exist
+    const currentNames = new Set(resp.metadata.map((i: any) => i.name));
+    for (const name of watchStates.keys()) {
+      if (!currentNames.has(name)) watchStates.delete(name);
+    }
+
+    watchdogFirstTick = false;
+  } catch (err) {
+    console.error('[watchdog] Check failed:', err);
   }
 }
 
@@ -232,6 +380,109 @@ async function checkMemory(): Promise<void> {
   }
 }
 
+// ─── Swap-Aware Memory Throttling ────────────────────────────
+
+function parseMemInfoValue(meminfo: string, key: string): number {
+  const match = meminfo.match(new RegExp(`^${key}:\\s+(\\d+)`, 'm'));
+  return match ? parseInt(match[1], 10) : 0;
+}
+
+async function checkMemoryThrottle(): Promise<void> {
+  if (throttleCheckRunning) return;
+  throttleCheckRunning = true;
+
+  try {
+    // Read /proc/meminfo — near-zero cost procfs read.
+    // Inside an LXC container this shows cgroup-limited memory (correct).
+    let meminfo: string;
+    try {
+      meminfo = readFileSync('/proc/meminfo', 'utf-8');
+    } catch {
+      return; // procfs not available
+    }
+
+    const memAvailableKB = parseMemInfoValue(meminfo, 'MemAvailable');
+    const swapFreeKB = parseMemInfoValue(meminfo, 'SwapFree');
+    const totalAvailableKB = memAvailableKB + swapFreeKB;
+
+    if (totalAvailableKB < THROTTLE_ENTER_KB && !isThrottled) {
+      // Enter throttle mode — apply soft memory limits to app containers
+      isThrottled = true;
+      console.log(`[throttle] Entering throttle mode — available: ${Math.round(totalAvailableKB / 1024)} MB`);
+
+      const { incusRequest } = await import('@/lib/incus/server');
+      const resp = await incusRequest<any[]>('GET', '/1.0/instances?recursion=1');
+      if (!resp.metadata) return;
+
+      for (const instance of resp.metadata) {
+        const name: string = instance.name;
+        if (!name.startsWith('app-')) continue; // Only throttle app containers
+        if (instance.status !== 'Running') continue;
+
+        try {
+          // Read current memory usage
+          const stateResp = await incusRequest<any>('GET', `/1.0/instances/${name}/state`);
+          const currentUsageBytes = stateResp.metadata?.memory?.usage ?? 0;
+          if (currentUsageBytes === 0) continue;
+
+          // Set soft limit to current usage
+          const limitMB = Math.max(64, Math.ceil(currentUsageBytes / (1024 * 1024)));
+          await incusRequest('PATCH', `/1.0/instances/${name}`, {
+            config: {
+              'limits.memory': `${limitMB}MiB`,
+              'limits.memory.enforce': 'soft',
+            },
+          });
+          throttledContainers.add(name);
+        } catch (err) {
+          console.error(`[throttle] Failed to throttle ${name}:`, err);
+        }
+      }
+
+      if (throttledContainers.size > 0) {
+        await notify(
+          'Server memory is low',
+          'Apps are running slower to stay stable. Consider closing unused apps or adding more RAM.',
+          'warning',
+          '/health'
+        );
+      }
+    } else if (totalAvailableKB > THROTTLE_EXIT_KB && isThrottled) {
+      // Exit throttle mode — remove soft limits
+      isThrottled = false;
+      console.log(`[throttle] Exiting throttle mode — available: ${Math.round(totalAvailableKB / 1024)} MB`);
+
+      const { incusRequest } = await import('@/lib/incus/server');
+
+      for (const name of throttledContainers) {
+        try {
+          await incusRequest('PATCH', `/1.0/instances/${name}`, {
+            config: {
+              'limits.memory': '',
+              'limits.memory.enforce': '',
+            },
+          });
+        } catch (err) {
+          console.error(`[throttle] Failed to unthrottle ${name}:`, err);
+        }
+      }
+
+      throttledContainers.clear();
+
+      await notify(
+        'Memory recovered',
+        'All apps running at full speed again.',
+        'info',
+        '/health'
+      );
+    }
+  } catch (err) {
+    console.error('[throttle] Check failed:', err);
+  } finally {
+    throttleCheckRunning = false;
+  }
+}
+
 // ─── Certificate Expiry ───────────────────────────────────────
 
 async function checkCertExpiry(): Promise<void> {
@@ -332,8 +583,9 @@ async function runHealthChecks(): Promise<void> {
   try {
     tickCount++;
 
-    // Every tick: service health
+    // Every tick: service health + container watchdog
     await checkServiceHealth();
+    await checkContainerWatchdog();
 
     // Every 5 ticks: disk + memory
     if (tickCount % DISK_CHECK_INTERVAL_TICKS === 0) {
@@ -360,6 +612,7 @@ async function runHealthChecks(): Promise<void> {
 // ─── Background Timer ─────────────────────────────────────────
 
 let monitorTimer: ReturnType<typeof setInterval> | null = null;
+let throttleTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Start the health monitor background job.
@@ -380,7 +633,14 @@ export function startHealthMonitor(): void {
     });
   }, SERVICE_CHECK_INTERVAL_MS);
 
-  console.log('[health-monitor] Started — checking every 60s');
+  // Memory throttle check runs on a faster 15-second interval
+  throttleTimer = setInterval(() => {
+    checkMemoryThrottle().catch((err) => {
+      console.error('[health-monitor] Throttle check failed:', err);
+    });
+  }, THROTTLE_INTERVAL_MS);
+
+  console.log('[health-monitor] Started — health every 60s, throttle every 15s');
 }
 
 /**
@@ -390,6 +650,10 @@ export function stopHealthMonitor(): void {
   if (monitorTimer) {
     clearInterval(monitorTimer);
     monitorTimer = null;
+  }
+  if (throttleTimer) {
+    clearInterval(throttleTimer);
+    throttleTimer = null;
   }
 }
 
