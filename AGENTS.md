@@ -1,3 +1,24 @@
+## v0.2.21.7 — iris — 2026-04-14
+**Branch:** dev
+**VM:** ye-iris (IrisVM 430)
+**Agent:** Iris
+**Task:** Phase D1 — Unified native app update engine (LXD + OCI support)
+
+### Changes
+- `control-panel/src/lib/incus/snapshot.ts` — NEW: shared Incus operations module (snapshot CRUD, container lifecycle, OCI rebuild, apt upgrade, health checks)
+- `control-panel/src/lib/market/updater.ts` — Rewritten: unified updater for both OCI rebuild and LXD tarball update paths with migrations
+- `control-panel/src/lib/apps/updater.ts` — Refactored to use shared incus/snapshot.ts, fixed Incus rebuild (delete snapshot first)
+- `control-panel/src/lib/apps/lxd-updater.ts` — Refactored to use shared module, added apt upgrade for base OS currency
+- `control-panel/src/lib/apps/definitions.ts` — Added 4 missing native apps + appDefinitionFromManifest() for dynamic definitions
+- `control-panel/src/lib/market/version-checker.ts` — Unified marketplace + infrastructure update checking
+- `control-panel/src/app/api/apps/[name]/update/route.ts` — Added marketplace app fallback routing
+- `ui/scripts/postbuild.js` — Fixed scoped package parent dir creation in postbuild
+
+### Notes for Iris
+- No migration needed — all changes are backwards-compatible
+- Native app manifests (6 repos) got `update:` section added to youeye-app.yaml
+- Pre-existing TS error in tests/ui-bridge.spec.ts:25 is unchanged
+
 ## v0.2.21.6 — iris — 2026-04-14
 **Branch:** dev
 **VM:** ye-iris (IrisVM 430)
