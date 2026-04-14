@@ -28,8 +28,9 @@ import { resolveVariables, resolveEnvironment } from './variables';
 import { writeAllConfigFiles, applyLanguageToContainers } from './config-writer';
 import { saveInstallMetadata } from './metadata';
 import { upsertInstalledApp } from './installed-apps';
-import { deployOCIContainer, getContainerIP } from '../infrastructure/oci-deployer';
+import { deployOCIContainer, getContainerIP, containerExists } from '../infrastructure/oci-deployer';
 import { deployLXDContainer } from '../infrastructure/lxd-deployer';
+import { incusRequest } from '../incus/server';
 import { applyResourcePolicy } from '../infrastructure/resource-policy';
 import { execShell } from '../incus/server';
 import {
@@ -49,6 +50,68 @@ import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
 import { buildVariableContext, buildPlatformEnv, envToString } from './platform-env';
 import { resolveConnectors } from './engine-connectors';
 import { CONTAINER_DOMAIN } from './constants';
+
+// ─── Install Rollback ─────────────────────────────────────
+
+/**
+ * Clean up containers deployed during a failed install attempt.
+ * Best-effort: collects errors but does not throw.
+ */
+async function rollbackContainers(
+  containerNames: string[],
+  onEvent: InstallEventCallback,
+  totalSteps: number
+): Promise<void> {
+  if (containerNames.length === 0) return;
+
+  onEvent({
+    step: 0,
+    totalSteps,
+    status: 'running',
+    message: `Rolling back ${containerNames.length} container(s)...`,
+  });
+
+  for (const name of containerNames) {
+    try {
+      if (!(await containerExists(name))) continue;
+
+      // Force stop
+      try {
+        await incusRequest('PUT', `/1.0/instances/${name}/state`, {
+          action: 'stop',
+          force: true,
+          timeout: 10,
+        });
+        await new Promise((r) => setTimeout(r, 2000));
+      } catch {
+        // May already be stopped
+      }
+
+      // Delete
+      const result = await incusRequest('DELETE', `/1.0/instances/${name}`);
+      if (result.type === 'async' && result.operation) {
+        try {
+          await incusRequest('GET', `${result.operation}/wait?timeout=30`, undefined, {
+            timeout: 40_000,
+          });
+        } catch {
+          // Timeout on wait is non-fatal
+        }
+      }
+
+      console.log(`[engine] Rolled back container: ${name}`);
+    } catch (err) {
+      console.error(`[engine] Failed to roll back container ${name}:`, err);
+    }
+  }
+
+  onEvent({
+    step: 0,
+    totalSteps,
+    status: 'running',
+    message: 'Rollback complete — cleaned up deployed containers',
+  });
+}
 
 // ─── Container Naming ──────────────────────────────────────
 
@@ -486,61 +549,68 @@ export async function installApp(
     await applyResourcePolicy(result.containerName, 'normal');
   } else {
     // ── OCI marketplace deployment path ─────────────────────
-    for (const containerSpec of manifest.containers) {
-      const containerName = getContainerName(appId, containerSpec.name, manifest.containers.length);
-      containerNames.push(containerName);
+    // Wrapped in try/catch to roll back already-deployed containers on failure.
+    try {
+      for (const containerSpec of manifest.containers) {
+        const containerName = getContainerName(appId, containerSpec.name, manifest.containers.length);
+        containerNames.push(containerName);
 
-      const isPrimary =
-        containerSpec.primary || (manifest.containers.length === 1);
+        const isPrimary =
+          containerSpec.primary || (manifest.containers.length === 1);
 
-      if (isPrimary) {
-        primaryContainerName = containerName;
-        primaryPort = containerSpec.port || 0;
-      }
-
-      // Deploy container
-      checkCancelled();
-      step++;
-      emit(onEvent, step, totalSteps, 'running', `Deploying ${containerName}...`);
-      try {
-        const ociManifest = buildOCIManifest(containerSpec, containerName, appId, ctx);
-        await deployOCIContainer(ociManifest, '');
-        await applyResourcePolicy(containerName, 'normal');
-        emit(onEvent, step, totalSteps, 'success', `${containerName} created`);
-      } catch (err) {
-        emit(onEvent, step, totalSteps, 'error', `Failed to deploy ${containerName}`, String(err));
-        throw err;
-      }
-
-      // Health check (if defined)
-      if (containerSpec.healthCheck) {
-        step++;
-        emit(onEvent, step, totalSteps, 'running', `Waiting for ${containerName} to be healthy...`);
-
-        let healthy = false;
-        if (containerSpec.healthCheck.type === 'http') {
-          healthy = await waitForAppHealth(
-            containerName,
-            containerSpec.port || 80,
-            containerSpec.healthCheck.path,
-            containerSpec.healthCheck.timeout
-          );
-        } else if (containerSpec.healthCheck.type === 'postgres') {
-          healthy = await waitForPostgresHealth(
-            containerName,
-            containerSpec.healthCheck.user,
-            containerSpec.healthCheck.timeout
-          );
+        if (isPrimary) {
+          primaryContainerName = containerName;
+          primaryPort = containerSpec.port || 0;
         }
 
-        emit(
-          onEvent,
-          step,
-          totalSteps,
-          healthy ? 'success' : 'error',
-          healthy ? `${containerName} is healthy` : `${containerName} health check timed out`
-        );
+        // Deploy container
+        checkCancelled();
+        step++;
+        emit(onEvent, step, totalSteps, 'running', `Deploying ${containerName}...`);
+        try {
+          const ociManifest = buildOCIManifest(containerSpec, containerName, appId, ctx);
+          await deployOCIContainer(ociManifest, '');
+          await applyResourcePolicy(containerName, 'normal');
+          emit(onEvent, step, totalSteps, 'success', `${containerName} created`);
+        } catch (err) {
+          emit(onEvent, step, totalSteps, 'error', `Failed to deploy ${containerName}`, String(err));
+          throw err;
+        }
+
+        // Health check (if defined)
+        if (containerSpec.healthCheck) {
+          step++;
+          emit(onEvent, step, totalSteps, 'running', `Waiting for ${containerName} to be healthy...`);
+
+          let healthy = false;
+          if (containerSpec.healthCheck.type === 'http') {
+            healthy = await waitForAppHealth(
+              containerName,
+              containerSpec.port || 80,
+              containerSpec.healthCheck.path,
+              containerSpec.healthCheck.timeout
+            );
+          } else if (containerSpec.healthCheck.type === 'postgres') {
+            healthy = await waitForPostgresHealth(
+              containerName,
+              containerSpec.healthCheck.user,
+              containerSpec.healthCheck.timeout
+            );
+          }
+
+          emit(
+            onEvent,
+            step,
+            totalSteps,
+            healthy ? 'success' : 'error',
+            healthy ? `${containerName} is healthy` : `${containerName} health check timed out`
+          );
+        }
       }
+    } catch (err) {
+      // Roll back all containers deployed so far before re-throwing
+      await rollbackContainers(containerNames, onEvent, totalSteps);
+      throw err;
     }
   }
 

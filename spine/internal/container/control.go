@@ -67,6 +67,13 @@ func DeployControlPanel(cfg *config.Config) error {
 		util.LogError(fmt.Sprintf("Warning: could not add data volume mount: %v", err))
 	}
 
+	// Mount host /proc/meminfo so the CP can read real host memory stats.
+	// Without this, /proc/meminfo inside the container shows cgroup-limited
+	// values (~8 GB) regardless of actual host memory pressure.
+	if err := addHostMeminfo(containerName); err != nil {
+		util.LogError(fmt.Sprintf("Warning: could not add host meminfo mount: %v", err))
+	}
+
 	// Deploy application
 	if err := DeployControlPanelApp(cfg); err != nil {
 		util.LogError(fmt.Sprintf("Could not deploy Control Panel app: %v", err))
@@ -447,6 +454,23 @@ func GetInstalledVersion(containerName, appDir string) string {
 		return pkg.Version
 	}
 	return "unknown"
+}
+
+// addHostMeminfo mounts the host's /proc/meminfo read-only into the CP container
+// at /host/proc/meminfo. The health monitor reads this to get accurate host memory
+// stats for memory throttling and low-memory alerts.
+func addHostMeminfo(containerName string) error {
+	util.LogSubStep("Adding host /proc/meminfo mount...")
+
+	if cmdOut, err := util.RunCmdCapture("incus", "config", "device", "add", containerName, "host-meminfo", "disk",
+		"source=/proc/meminfo",
+		"path=/host/proc/meminfo"); err != nil {
+		util.LogDebug(fmt.Sprintf("Host meminfo mount warning: %s", strings.TrimSpace(cmdOut)))
+		return err
+	}
+
+	util.LogSuccess("Host /proc/meminfo mounted at /host/proc/meminfo")
+	return nil
 }
 
 // addDataVolumeMount adds a disk device that mounts /var/lib/youeye from the host

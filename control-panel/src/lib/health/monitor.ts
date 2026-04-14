@@ -176,7 +176,7 @@ async function checkContainerWatchdog(): Promise<void> {
       const status: string = instance.status; // "Running", "Stopped", etc.
 
       // Only watch app containers and infrastructure (except excluded)
-      const isApp = name.startsWith('app-');
+      const isApp = name.startsWith('app-') || name.startsWith('ye-app-');
       const isInfra = name.startsWith('youeye-');
       if (!isApp && !isInfra) continue;
       if (WATCHDOG_EXCLUDE.has(name)) continue;
@@ -341,17 +341,19 @@ async function checkDiskSpace(): Promise<void> {
 
 async function checkMemory(): Promise<void> {
   try {
-    const { execShell } = await import('@/lib/incus/server');
-    const result = await execShell(
-      'youeye-control',
-      "free -m | grep '^Mem:' | awk '{print $7}'",
-      { timeout: 5_000 }
-    );
+    // Read host memory from bind-mounted /host/proc/meminfo (same source as throttle).
+    // Previously used `free -m` inside the CP container, which showed cgroup values.
+    let meminfo: string;
+    try {
+      meminfo = readFileSync('/host/proc/meminfo', 'utf-8');
+    } catch {
+      return; // Host meminfo not mounted yet
+    }
 
-    if (result.exitCode !== 0) return;
+    const memAvailableKB = parseMemInfoValue(meminfo, 'MemAvailable');
+    if (memAvailableKB === 0) return;
 
-    const availableMB = parseInt(result.stdout.trim(), 10);
-    if (isNaN(availableMB)) return;
+    const availableMB = Math.floor(memAvailableKB / 1024);
 
     if (availableMB < 512) {
       lowMemoryCount++;
@@ -392,11 +394,13 @@ async function checkMemoryThrottle(): Promise<void> {
   throttleCheckRunning = true;
 
   try {
-    // Read /proc/meminfo — near-zero cost procfs read.
-    // Inside an LXC container this shows cgroup-limited memory (correct).
+    // Read host /proc/meminfo mounted at /host/proc/meminfo.
+    // The CP container's own /proc/meminfo shows cgroup-limited values (~8 GB)
+    // regardless of actual host memory state. The host meminfo is bind-mounted
+    // by Spine during CP deployment.
     let meminfo: string;
     try {
-      meminfo = readFileSync('/proc/meminfo', 'utf-8');
+      meminfo = readFileSync('/host/proc/meminfo', 'utf-8');
     } catch {
       return; // procfs not available
     }
@@ -416,7 +420,7 @@ async function checkMemoryThrottle(): Promise<void> {
 
       for (const instance of resp.metadata) {
         const name: string = instance.name;
-        if (!name.startsWith('app-')) continue; // Only throttle app containers
+        if (!name.startsWith('app-') && !name.startsWith('ye-app-')) continue; // Only throttle app containers
         if (instance.status !== 'Running') continue;
 
         try {
