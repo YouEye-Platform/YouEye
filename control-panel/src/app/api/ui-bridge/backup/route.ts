@@ -13,10 +13,8 @@ import { spineClient } from '@/lib/spine/client';
 import { listInstalledApps } from '@/lib/market/metadata';
 
 export async function GET(request: NextRequest) {
-  const valid = await validateBridgeToken(request);
-  if (!valid) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authError = await validateBridgeToken(request);
+  if (authError) return authError;
 
   try {
     // Fetch backup config from Spine
@@ -70,10 +68,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const valid = await validateBridgeToken(request);
-  if (!valid) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authError = await validateBridgeToken(request);
+  if (authError) return authError;
 
   try {
     const body = await request.json();

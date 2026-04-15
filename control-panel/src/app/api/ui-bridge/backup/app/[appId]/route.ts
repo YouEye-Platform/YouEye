@@ -16,10 +16,8 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ appId: string }> }
 ) {
-  const valid = await validateBridgeToken(request);
-  if (!valid) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authError = await validateBridgeToken(request);
+  if (authError) return authError;
 
   const { appId } = await params;
 
@@ -61,10 +59,8 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appId: string }> }
 ) {
-  const valid = await validateBridgeToken(request);
-  if (!valid) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authError = await validateBridgeToken(request);
+  if (authError) return authError;
 
   const { appId } = await params;
 

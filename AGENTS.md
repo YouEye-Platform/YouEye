@@ -1,3 +1,24 @@
+## v0.2.21.9 — iris — 2026-04-15
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris
+**Task:** Fix backup page — inverted bridge token auth + missing schedule defaults
+
+### Changes
+- `control-panel/src/app/api/ui-bridge/backup/route.ts` — Fixed inverted `validateBridgeToken()` check: was `if (!valid)` (rejects valid tokens), now `if (authError) return authError` matching all other bridge routes
+- `control-panel/src/app/api/ui-bridge/backup/app/[appId]/route.ts` — Same inverted auth fix in both GET and POST handlers
+- `ui/src/components/settings/admin/backup-settings.tsx` — Added fallback defaults for `config.schedule` when Spine returns partial config (`{enabled:false}` without schedule), preventing `Cannot read properties of undefined (reading 'core')` crash
+
+### Test Results
+- Backup page renders correctly with schedule defaults
+- Bridge API returns 200 with valid token (was returning 401)
+- Bridge API correctly rejects requests without token (was accepting them)
+- All other admin pages (Branding, Users, System, Containers, DNS, Proxy, Apps, App Market) unaffected
+
+### Notes for Iris
+- Only CP and UI changed — Spine not bumped (no changes)
+- The `validateBridgeToken()` returns null on success, NextResponse on failure — watch for this pattern in future bridge routes
+
 ## v0.2.21.7 — iris — 2026-04-14
 **Branch:** dev
 **VM:** ye-iris (IrisVM 430)

@@ -134,7 +134,16 @@ export function BackupSettings() {
 
   if (!data) return null;
 
-  const { config, index, apps } = data;
+  const { config: rawConfig, index, apps } = data;
+  // Ensure schedule has defaults (Spine may return partial config)
+  const config = {
+    ...rawConfig,
+    schedule: rawConfig.schedule ?? {
+      core: { frequency: "daily", retention: 7, time: "03:00" },
+      default_app: { frequency: "daily", retention: 7 },
+      overrides: {},
+    },
+  };
   const totalBackups =
     (index?.core?.length ?? 0) +
     Object.values(index?.apps ?? {}).reduce((sum, arr) => sum + arr.length, 0);
