@@ -114,10 +114,15 @@ export async function backupApp(
         ? `${installMeta.subdomain}.${installMeta.domain}`
         : undefined;
 
+      // Get container names from metadata (v2 format: objects, v1: strings)
+      const containerNames = installMeta.containers.map((c: any) =>
+        typeof c === 'string' ? c : c.containerName
+      );
+
       const appRoutes = allRoutes.filter(route => {
         if (hostname && route.hostname === hostname) return true;
         // Also match by upstream container name
-        return installMeta.containers.some(c => route.upstream === c);
+        return containerNames.some((c: string) => route.upstream === c);
       });
 
       if (appRoutes.length > 0) {
@@ -220,7 +225,7 @@ export async function backupApp(
         appVersion: manifestVersion,
         platformVersion,
         timestamp: new Date().toISOString(),
-        containers: installMeta.containers,
+        containers: containerNames,
         subdomain: installMeta.subdomain,
         domain: installMeta.domain,
       }, null, 2)
@@ -229,8 +234,26 @@ export async function backupApp(
     // ── Step 5: Call Spine for live volume backup ───────────
     emit('spine-backup', `Starting live volume backup for ${appId}...`);
 
-    // Collect volume paths
+    // Collect volume paths (skip cache volumes from manifest)
     const volumePaths: string[] = [];
+    const cacheVolumePaths = new Set<string>();
+    if (manifest) {
+      const manifestContainers = (manifest as Record<string, unknown>).containers as Array<Record<string, unknown>> | undefined;
+      if (manifestContainers) {
+        for (const mc of manifestContainers) {
+          const volumes = mc.volumes as Array<Record<string, unknown>> | undefined;
+          if (!volumes) continue;
+          for (const vol of volumes) {
+            if (vol.type === 'cache') {
+              const hostPath = (vol.host as string || '')
+                .replace(/\$\{app\.id\}/g, appId)
+                .replace(/\$\{app\.name\}/g, appId);
+              if (hostPath) cacheVolumePaths.add(hostPath);
+            }
+          }
+        }
+      }
+    }
 
     // Secrets directory
     const secretsPath = path.join(YOUEYE_DATA_DIR, `app-${appId}`);
@@ -244,15 +267,20 @@ export async function backupApp(
       volumePaths.push(appDataPath);
     }
 
+    // Get container names from metadata (v2 format: objects, v1: strings)
+    const containerNames = installMeta.containers.map((c: any) =>
+      typeof c === 'string' ? c : c.containerName
+    );
+
     // Per-container volume paths for multi-container apps
-    for (const containerName of installMeta.containers) {
+    for (const containerName of containerNames) {
       const containerPath = path.join(YOUEYE_DATA_DIR, `app-${appId}-${containerName}`);
-      if (existsSync(containerPath)) {
+      if (existsSync(containerPath) && !cacheVolumePaths.has(containerPath)) {
         volumePaths.push(containerPath);
       }
       // Also check the bare container path
       const barePath = path.join(YOUEYE_DATA_DIR, containerName);
-      if (existsSync(barePath)) {
+      if (existsSync(barePath) && !cacheVolumePaths.has(barePath)) {
         volumePaths.push(barePath);
       }
     }
@@ -261,7 +289,7 @@ export async function backupApp(
     const spineResult = await spineClient.startBackup({
       target_path: config.targetPath,
       passphrase: config.passphrase,
-      containers: installMeta.containers,
+      containers: containerNames,
       volume_paths: volumePaths,
       staging_dir: stagingDir,
       hostname: `app-${appId}`,

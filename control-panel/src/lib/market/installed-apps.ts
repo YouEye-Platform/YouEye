@@ -23,7 +23,7 @@ const POSTGRES_CONTAINER = 'youeye-postgres';
 export interface InstalledApp {
   id: number;
   appId: string;
-  type: 'native' | 'marketplace';
+  type: 'native' | 'basic' | 'marketplace'; // v2: native|basic; legacy: marketplace
   installedVersion: string;
   catalogVersion: string | null;
   updateAvailable: boolean;
@@ -82,7 +82,7 @@ function parseRows(raw: string): InstalledApp[] {
     return {
       id: parseInt(id, 10),
       appId,
-      type: type as 'native' | 'marketplace',
+      type: type as 'native' | 'basic' | 'marketplace',
       installedVersion,
       catalogVersion: catalogVersion || null,
       updateAvailable: updateAvailable === 't',
@@ -110,7 +110,7 @@ export async function getInstalledApp(appId: string): Promise<InstalledApp | nul
 
 export async function upsertInstalledApp(data: {
   appId: string;
-  type: 'native' | 'marketplace';
+  type: string; // 'native' | 'basic' | 'marketplace' (v2 uses native/basic)
   installedVersion: string;
   subdomain: string;
   ssoSlug?: string | null;
@@ -182,7 +182,7 @@ export async function migrateFromInstallJson(): Promise<number> {
 
     await upsertInstalledApp({
       appId: meta.appId,
-      type: meta.type ?? 'marketplace',
+      type: meta.integration || meta.type || 'basic',
       installedVersion: meta.installedVersion ?? '',
       subdomain: meta.subdomain,
       ssoSlug: meta.ssoSlug,
@@ -199,29 +199,41 @@ export async function migrateFromInstallJson(): Promise<number> {
 // ─── Update Detection ─────────────────────────────────────────
 
 /**
- * Fetch the latest version for a native app by reading youeye-app.yaml
- * from the native app's own repo (resolved via the app-ref pointer in AppMarket).
- *
- * Returns the version string, or null if the repo is unreachable or the
- * manifest doesn't contain a version field.
+ * Fetch the latest version for an app by reading its manifest from its repo.
+ * v2: repo is e.g. "potemsla/YE-App-Wiki", manifest is "youeye-app.yaml".
  */
 async function fetchNativeAppVersion(
-  nativeRefFile: string,
-  branch: string
+  repo: string,
+  manifestFile: string,
+  branch: string,
 ): Promise<string | null> {
   try {
-    // Step 1: Fetch the app-ref pointer from the AppMarket catalog
+    const [owner, repoName] = repo.split('/');
+    const manifestYaml = await fetchRepoFile(owner, repoName, manifestFile, branch);
+    const parsed = parseYAML(manifestYaml);
+    return parsed?.version ?? null;
+  } catch (err) {
+    console.warn('[installed-apps] Failed to fetch app version from repo:', err);
+    return null;
+  }
+}
+
+/**
+ * Legacy v1: fetch version via app-ref indirection.
+ */
+async function fetchNativeAppVersionLegacy(
+  nativeRefFile: string,
+  branch: string,
+): Promise<string | null> {
+  try {
     const refYaml = await fetchFile(nativeRefFile, branch);
     const ref = parseAppRef(refYaml);
-
-    // Step 2: Fetch youeye-app.yaml from the native app's own repo
     const [owner, repoName] = ref.repo.split('/');
     const manifestYaml = await fetchRepoFile(owner, repoName, ref.manifest, branch);
     const parsed = parseYAML(manifestYaml);
-
     return parsed?.version ?? null;
   } catch (err) {
-    console.warn('[installed-apps] Failed to fetch native app version from repo:', err);
+    console.warn('[installed-apps] Failed to fetch native app version (legacy):', err);
     return null;
   }
 }
@@ -252,22 +264,42 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
   const installed = await getAllInstalledApps();
   const appsWithUpdates: InstalledApp[] = [];
 
-  // Build lookup maps for native and external entries
-  const nativeEntryMap = new Map(catalog.native.map((e) => [e.id, e]));
-  const externalEntryMap = new Map(catalog.external.map((e) => [e.id, e]));
+  // Build lookup maps — support both v1 and v2 catalog formats
+  const entryMap = new Map<string, { file?: string; repo?: string; manifest?: string; latestVersion?: string; integration?: string }>();
+
+  // v2 flat list
+  if (catalog.apps && catalog.apps.length > 0) {
+    for (const e of catalog.apps) {
+      entryMap.set(e.id, e);
+    }
+  }
+
+  // v1 legacy: native + external
+  if (catalog.native) {
+    for (const e of catalog.native) {
+      entryMap.set(e.id, { file: e.file, integration: 'native' });
+    }
+  }
+  if (catalog.external) {
+    for (const e of catalog.external) {
+      entryMap.set(e.id, e);
+    }
+  }
 
   for (const app of installed) {
     let catalogVersion: string | null = null;
 
-    const nativeEntry = nativeEntryMap.get(app.appId);
-    const externalEntry = externalEntryMap.get(app.appId);
+    const entry = entryMap.get(app.appId);
 
-    if (nativeEntry) {
-      // Native app: fetch version from the app's own repo
-      catalogVersion = await fetchNativeAppVersion(nativeEntry.file, branch);
-    } else if (externalEntry) {
-      // External/marketplace app: use latestVersion from catalog
-      catalogVersion = externalEntry.latestVersion ?? null;
+    if (entry?.repo) {
+      // App with repo reference: fetch version from manifest in repo
+      catalogVersion = await fetchNativeAppVersion(entry.repo, entry.manifest || 'youeye-app.yaml', branch);
+    } else if (entry?.file && entry.integration === 'native') {
+      // Legacy v1 native app-ref
+      catalogVersion = await fetchNativeAppVersionLegacy(entry.file, branch);
+    } else if (entry?.latestVersion) {
+      // Catalog-specified version
+      catalogVersion = entry.latestVersion;
     }
 
     let hasUpdate = false;

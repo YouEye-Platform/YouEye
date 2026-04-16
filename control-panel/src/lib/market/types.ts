@@ -1,5 +1,5 @@
 /**
- * Market engine types.
+ * Market engine types (v2).
  * Inferred from Zod schemas + runtime types for install flow.
  */
 
@@ -7,55 +7,58 @@ import type { z } from 'zod/v4';
 import type {
   AppManifestSchema,
   MetadataSchema,
-  FeaturesSchema,
   ContainerSchema,
+  ContainerSourceSchema,
   SecretSchema,
-  SharedPostgresSchema,
+  DatabaseSchema,
   ConfigFileSchema,
   CapabilitiesSchema,
   SSOSchema,
   SSOStepSchema,
+  SSOSetupSchema,
+  SSOCliStepSchema,
   BackupSchema,
   UninstallSchema,
   UpdateSchema,
+  UpdateHookStepSchema,
   MigrationSchema,
   MigrationStepSchema,
   HealthCheckSchema,
   CatalogSchema,
   CatalogEntrySchema,
-  NativeCatalogEntrySchema,
   SystemCatalogEntrySchema,
-  NativeConfigSchema,
   DetailSchema,
   DetailScreenshotSchema,
   AppRefSchema,
   InstallParamSchema,
   ConnectorsSchema,
   PostDeployStepSchema,
+  VolumeSchema,
 } from './schema';
 
 // ─── Manifest Types (from Zod) ─────────────────────────────
 
 export type AppManifest = z.infer<typeof AppManifestSchema>;
 export type AppMetadata = z.infer<typeof MetadataSchema>;
-export type AppFeatures = z.infer<typeof FeaturesSchema>;
 export type ContainerSpec = z.infer<typeof ContainerSchema>;
+export type ContainerSource = z.infer<typeof ContainerSourceSchema>;
 export type SecretSpec = z.infer<typeof SecretSchema>;
-export type SharedPostgresSpec = z.infer<typeof SharedPostgresSchema>;
+export type DatabaseSpec = z.infer<typeof DatabaseSchema>;
 export type ConfigFileSpec = z.infer<typeof ConfigFileSchema>;
 export type SSOConfig = z.infer<typeof SSOSchema>;
 export type SSOStep = z.infer<typeof SSOStepSchema>;
+export type SSOSetup = z.infer<typeof SSOSetupSchema>;
+export type SSOCliStep = z.infer<typeof SSOCliStepSchema>;
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;
 export type BackupSpec = z.infer<typeof BackupSchema>;
 export type UninstallSpec = z.infer<typeof UninstallSchema>;
 export type UpdateSpec = z.infer<typeof UpdateSchema>;
+export type UpdateHookStep = z.infer<typeof UpdateHookStepSchema>;
 export type MigrationSpec = z.infer<typeof MigrationSchema>;
 export type MigrationStep = z.infer<typeof MigrationStepSchema>;
 export type HealthCheckSpec = z.infer<typeof HealthCheckSchema>;
-export type NativeConfig = z.infer<typeof NativeConfigSchema>;
 export type Catalog = z.infer<typeof CatalogSchema>;
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
-export type NativeCatalogEntry = z.infer<typeof NativeCatalogEntrySchema>;
 export type SystemCatalogEntry = z.infer<typeof SystemCatalogEntrySchema>;
 export type AppDetail = z.infer<typeof DetailSchema>;
 export type DetailScreenshot = z.infer<typeof DetailScreenshotSchema>;
@@ -63,6 +66,13 @@ export type AppRef = z.infer<typeof AppRefSchema>;
 export type InstallParam = z.infer<typeof InstallParamSchema>;
 export type ConnectorsSpec = z.infer<typeof ConnectorsSchema>;
 export type PostDeployStep = z.infer<typeof PostDeployStepSchema>;
+export type VolumeSpec = z.infer<typeof VolumeSchema>;
+
+// Legacy type aliases (kept for files that import them during migration)
+export type AppFeatures = { supportsSSO: boolean; requiresSharedPostgres: boolean };
+export type NativeConfig = NonNullable<AppManifest['native']>;
+export type NativeCatalogEntry = { id: string; file: string; type: 'native' };
+export type SharedPostgresSpec = { database: string; user: string; password: string };
 
 // ─── Install Config ────────────────────────────────────────
 
@@ -70,27 +80,41 @@ export interface InstallConfig {
   appId: string;
   subdomain: string;
   domain: string;
-  /** Optional app-specific install parameters (e.g. { tmdbApiKey: '...' } for Cinema) */
+  /** Optional app-specific install parameters */
   installParams?: Record<string, string>;
-  /** Custom display name chosen by user at install time (defaults to manifest name) */
+  /** Custom display name chosen by user at install time */
   customName?: string;
-  /** Custom icon chosen by user at install time (emoji:X, lucide name, or uploaded URL) */
+  /** Custom icon chosen by user at install time */
   customIcon?: string;
+  /** Repo URL for custom (non-catalog) installs */
+  repoUrl?: string;
+  /** Branch/tag for repo-based installs */
+  repoBranch?: string;
 }
 
-// ─── Install Metadata (persisted) ──────────────────────────
+// ─── Install Metadata (persisted to install.json) ──────────
+
+export interface ContainerMeta {
+  name: string;
+  containerName: string;
+  type: 'lxd' | 'oci';
+}
 
 export interface InstallMetadata {
   appId: string;
-  type?: 'marketplace' | 'native';
+  integration: 'native' | 'basic';
   subdomain: string;
   domain: string;
   enableSSO: boolean;
   installedAt: string;
   installedVersion?: string;
-  containers: string[];
+  containers: ContainerMeta[];
   ssoSlug?: string;
   ssoClientId?: string;
+  manifestSource?: string;
+
+  // Legacy v1 field — kept for reading old install.json files
+  type?: 'marketplace' | 'native';
 }
 
 // ─── Install Events (SSE) ──────────────────────────────────
@@ -125,20 +149,66 @@ export interface ContainerStatusInfo {
   ip?: string;
 }
 
-// ─── Variable Context ──────────────────────────────────────
+// ─── Variable Context (v2: canonical) ──────────────────────
 
 export interface VariableContext {
-  app: { id: string };
-  install: { url: string; subdomain: string; domain: string };
+  platform: {
+    domain: string;
+    version: string;
+    locale: string;
+    locale_full: string;
+    timezone: string;
+    site_name: string;
+    proxy_ip: string;
+  };
+  app: {
+    id: string;
+    name: string;
+    subdomain: string;
+    fqdn: string;
+    url: string;
+    internal_url: string;
+  };
+  integration: {
+    gateway_url: string;
+    app_token: string;
+  };
+  containers: Record<string, {
+    internal_host: string;
+    internal_url: string;
+  }>;
+  database: {
+    url: string;
+    dsn: string;
+    host: string;
+    port: string;
+    name: string;
+    user: string;
+    password: string;
+  };
+  sso: {
+    issuer: string;
+    discovery_url: string;
+    client_id: string;
+    client_secret: string;
+    callback_url: string;
+    logout_url: string;
+  };
+  smtp: {
+    host: string;
+    port: string;
+    user: string;
+    password: string;
+    from: string;
+    security: string;
+  };
   secrets: Record<string, string>;
-  container: { ip: string; port: number };
-  sso: { clientId: string; clientSecret: string };
+  installParams: Record<string, string>;
+
+  // Legacy aliases — kept for SSO step compat (v1 manifests reference these)
+  install: { url: string; subdomain: string; domain: string };
   authentik: { externalUrl: string; internalUrl: string; name: string };
-  smtp?: { host: string; port: string; username: string; password: string; from: string; tls: string; configured: string };
-  platform?: { version: string; domain: string; siteName: string; timezone: string; locale: string };
-  mail?: { url: string; appId: string };
-  notifications?: { url: string; appId: string };
-  installParams?: Record<string, string>;
+  container: { ip: string; port: number };
 }
 
 // ─── Catalog App (UI display) ──────────────────────────────
@@ -150,27 +220,34 @@ export interface MarketApp {
   icon: string;
   iconUrl?: string;
   category: string;
-  type: 'marketplace' | 'native';
+  integration: 'native' | 'basic';
   version?: string;
   defaultSubdomain: string;
   supportsSSO: boolean;
-  website: string;
+  website?: string;
   tags: string[];
-  // Detail page fields
   detail?: {
     longDescription: string;
     screenshots: { url: string; caption?: string }[];
   };
-  // Install params (for apps like Cinema that need user input)
   installParams?: { name: string; label: string; required: boolean; description?: string }[];
+  capabilities?: {
+    widgets?: boolean;
+    notifications?: boolean | 'push';
+    smtp?: boolean;
+    connectors?: { provides?: string[]; consumes?: string[] };
+  };
+
+  // Legacy field — UI may still reference this
+  type?: 'marketplace' | 'native';
 }
 
 // ─── Restore Options ─────────────────────────────────────
 
 export interface RestoreOptions {
-  skipSecrets: boolean;     // Don't regenerate secrets (restored from backup)
-  skipDatabase: boolean;    // Don't create DB (already restored from dump)
-  skipConfigFiles: boolean; // Don't write config templates (will restore from backup)
+  skipSecrets: boolean;
+  skipDatabase: boolean;
+  skipConfigFiles: boolean;
 }
 
 // ─── Uninstall Options ────────────────────────────────────

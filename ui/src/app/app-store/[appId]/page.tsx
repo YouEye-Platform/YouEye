@@ -53,6 +53,7 @@ interface MarketApp {
   iconUrl?: string;
   category: string;
   type?: "native" | "marketplace";
+  integration?: "native" | "basic";
   defaultSubdomain: string;
   supportsSSO: boolean;
   estimatedMemory: string;
@@ -477,7 +478,7 @@ export default function AppDetailPage() {
               {CATEGORY_NAMES[app.category] || app.category}
             </Badge>
             <span className="text-sm text-muted-foreground">
-              {app.type === "native" ? "Native App" : "Marketplace"}
+              {(app.integration === "native" || app.type === "native") ? "Native Integration" : "Community App"}
             </span>
           </div>
           <p className="text-muted-foreground mt-2">{app.description}</p>

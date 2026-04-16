@@ -78,10 +78,15 @@ async function buildBackupPlan(): Promise<{
       // Manifest not available — use defaults
     }
 
+    // Get container names from metadata (v2 format: objects, v1: strings)
+    const containerNames = (meta.containers || []).map((c: any) =>
+      typeof c === 'string' ? c : c.containerName
+    );
+
     const plan: AppBackupPlan = {
       appId: meta.appId,
       appName: meta.appId,
-      containerNames: meta.containers || [],
+      containerNames,
       stopOrder: [],
       startOrder: [],
       useSharedPostgres: false,
@@ -110,18 +115,30 @@ async function buildBackupPlan(): Promise<{
       }
     } else {
       // Default strategy: stop all containers, export all volumes
-      plan.stopOrder = [...meta.containers]; // stop all
-      plan.startOrder = [...meta.containers].reverse(); // start in reverse
-      plan.volumePaths = getDefaultVolumePaths(meta.appId, meta.containers);
+      plan.stopOrder = [...containerNames]; // stop all
+      plan.startOrder = [...containerNames].reverse(); // start in reverse
+      plan.volumePaths = getDefaultVolumePaths(meta.appId, containerNames);
     }
 
     // Check if app uses shared PostgreSQL
     if (manifest) {
-      const features = (manifest as Record<string, unknown>).features as Record<string, unknown> | undefined;
-      if (features?.requiresSharedPostgres) {
+      const manifestObj = manifest as Record<string, unknown>;
+      const database = manifestObj.database as Record<string, unknown> | undefined;
+      const features = manifestObj.features as Record<string, unknown> | undefined;
+
+      // v2: manifest.database.mode === 'shared', v1: features.requiresSharedPostgres
+      if (database?.mode === 'shared' || features?.requiresSharedPostgres) {
         plan.useSharedPostgres = true;
         plan.sharedDbName = meta.appId;
         sharedDbNames.push(meta.appId);
+      }
+
+      // v2: own-DB apps declare manifest.database.container
+      if (database?.mode === 'own' && database?.container) {
+        plan.ownPostgres = {
+          container: database.container as string,
+          database: (database.name as string) || meta.appId,
+        };
       }
     }
 
@@ -153,6 +170,9 @@ function resolveHostVolumePaths(
     if (!volumes) continue;
 
     for (const vol of volumes) {
+      // Skip cache volumes — they don't need to be backed up
+      if ((vol as Record<string, unknown>).type === 'cache') continue;
+
       // Check if this container path is in the declared volumes list
       if (declaredVolumes.some(dv => vol.container.endsWith(dv) || vol.container === dv)) {
         // Resolve the host path with variable substitution

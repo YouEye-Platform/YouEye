@@ -1,32 +1,32 @@
 /**
- * Variable resolution engine for youeye-file.yaml templates.
+ * Variable resolution engine for youeye-app.yaml templates (v2).
  * Replaces ${variable.path} references with resolved values.
  *
- * Supported variable namespaces:
- *   ${app.id}                 - App identifier
- *   ${install.url}            - Full URL (https://subdomain.domain)
- *   ${install.subdomain}      - User-chosen subdomain
- *   ${install.domain}         - Domain from install config
- *   ${secrets.NAME}           - Generated secret by name
- *   ${container.ip}           - Primary container's IP
- *   ${container.port}         - Primary container's port
- *   ${sso.clientId}           - Authentik OAuth2 client ID
- *   ${sso.clientSecret}       - Authentik OAuth2 client secret
- *   ${authentik.externalUrl}  - Browser-facing Authentik URL
- *   ${authentik.internalUrl}  - Internal Authentik URL
- *   ${authentik.name}         - Identity provider display name (e.g., "HomeCloud ID")
- *   ${smtp.host}              - SMTP server hostname
- *   ${smtp.port}              - SMTP server port
- *   ${smtp.username}          - SMTP username
- *   ${smtp.password}          - SMTP password (from secrets)
- *   ${smtp.from}              - SMTP from address
- *   ${smtp.tls}               - Whether TLS is required ("true"/"false")
- *   ${smtp.configured}        - Whether SMTP is configured ("true"/"false")
- *   ${platform.version}       - YouEye platform version (e.g. "0.2.21")
- *   ${platform.domain}        - Platform root domain
- *   ${platform.siteName}      - Platform display name (white-label)
- *   ${platform.timezone}      - System timezone (e.g. "Australia/Sydney")
- *   ${platform.locale}        - System language code (e.g. "en")
+ * v2 adds these namespaces on top of v1:
+ *   ${platform.locale_full}     - Full language name (e.g. "english")
+ *   ${platform.site_name}       - Site display name
+ *   ${platform.proxy_ip}        - Caddy container IP
+ *   ${database.url}             - Full PostgreSQL connection URL
+ *   ${database.dsn}             - DSN format connection string
+ *   ${database.host}            - Database hostname
+ *   ${database.port}            - Database port
+ *   ${database.name}            - Database name
+ *   ${database.user}            - Database user
+ *   ${database.password}        - Database password
+ *   ${integration.gateway_url}  - App gateway API URL
+ *   ${integration.app_token}    - Per-app identity token
+ *   ${containers.NAME.internal_host}  - Container DNS name
+ *   ${containers.NAME.internal_url}   - Container URL with port
+ *   ${sso.issuer}               - OIDC issuer URL
+ *   ${sso.discovery_url}        - OIDC discovery endpoint
+ *   ${sso.client_id}            - OAuth2 client ID
+ *   ${sso.client_secret}        - OAuth2 client secret
+ *   ${sso.callback_url}         - OAuth2 callback URL
+ *   ${sso.logout_url}           - OIDC logout URL
+ *
+ * Legacy namespaces still supported:
+ *   ${app.id}, ${install.*}, ${secrets.*}, ${container.*},
+ *   ${authentik.*}, ${smtp.*}, ${platform.*}, ${installParams.*}
  */
 
 import type { VariableContext } from './types';
@@ -91,47 +91,14 @@ export function hasVariables(str: string): boolean {
 
 /**
  * Resolve a dotted path against the variable context.
+ * Supports arbitrary nesting — walks the context object tree.
  */
 function resolvePath(path: string, ctx: Partial<VariableContext>): string | undefined {
   const parts = path.split('.');
   if (parts.length < 2) return undefined;
 
-  const namespace = parts[0];
-  const key = parts.slice(1).join('.');
-
-  switch (namespace) {
-    case 'app':
-      return getNestedValue(ctx.app, key);
-    case 'install':
-      return getNestedValue(ctx.install, key);
-    case 'secrets':
-      return ctx.secrets?.[key];
-    case 'container':
-      return getNestedValue(ctx.container, key);
-    case 'sso':
-      return getNestedValue(ctx.sso, key);
-    case 'authentik':
-      return getNestedValue(ctx.authentik, key);
-    case 'smtp':
-      return getNestedValue(ctx.smtp, key);
-    case 'platform':
-      return getNestedValue(ctx.platform, key);
-    case 'installParams':
-      return ctx.installParams?.[key];
-    default:
-      return undefined;
-  }
-}
-
-/**
- * Get a nested value from an object by dot-separated key.
- */
-function getNestedValue(obj: unknown, key: string): string | undefined {
-  if (obj === null || obj === undefined) return undefined;
-
-  const parts = key.split('.');
-  let current: unknown = obj;
-
+  // Walk the full context object using dot-separated path parts
+  let current: unknown = ctx;
   for (const part of parts) {
     if (current === null || current === undefined || typeof current !== 'object') {
       return undefined;
@@ -140,5 +107,6 @@ function getNestedValue(obj: unknown, key: string): string | undefined {
   }
 
   if (current === undefined || current === null) return undefined;
+  if (typeof current === 'object') return undefined; // Don't stringify objects
   return String(current);
 }

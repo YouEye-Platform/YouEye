@@ -8,7 +8,7 @@
  */
 
 import { NextRequest } from 'next/server';
-import { fetchManifest } from '@/lib/market/catalog';
+import { fetchManifest, fetchManifestFromRepo } from '@/lib/market/catalog';
 import { installApp } from '@/lib/market/engine';
 import { startTracking, trackEvent, finishTracking } from '@/lib/market/install-tracker';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
@@ -35,10 +35,18 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Fetch manifest to determine app type
+  // Fetch manifest — from repo URL (custom install) or catalog
   let manifest;
   try {
-    manifest = await fetchManifest(config.appId);
+    if (config.repoUrl) {
+      manifest = await fetchManifestFromRepo(config.repoUrl, 'youeye-app.yaml', config.repoBranch);
+      // Override appId from manifest if not explicitly set
+      if (!config.appId || config.appId === 'custom') {
+        config.appId = manifest.metadata.id;
+      }
+    } else {
+      manifest = await fetchManifest(config.appId);
+    }
   } catch (err) {
     return new Response(
       JSON.stringify({ error: `Failed to fetch manifest: ${err}` }),

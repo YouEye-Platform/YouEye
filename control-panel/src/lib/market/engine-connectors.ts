@@ -62,16 +62,27 @@ async function resolveConnectorUrl(
   }
 
   // Fallback: build URL from install.json container names
-  // For multi-container apps, find the primary (usually the one with "main" in the name)
+  // v2: containers are objects { name, containerName, type }, v1: strings
   const containers = meta.containers ?? [];
-  const primary = containers.find((c: string) => c.includes('main')) ?? containers[0];
-  if (!primary) return null;
+  let primaryName: string | null = null;
 
-  // Use well-known ports per app type
+  if (containers.length > 0) {
+    const first = containers[0];
+    if (typeof first === 'string') {
+      // v1 format: string array
+      primaryName = (containers as string[]).find((c) => c.includes('main')) ?? (containers[0] as string);
+    } else {
+      // v2 format: object array
+      const objs = containers as Array<{ name: string; containerName: string; type: string }>;
+      primaryName = (objs.find((c) => c.name === 'main') ?? objs[0])?.containerName ?? null;
+    }
+  }
+  if (!primaryName) return null;
+
   const portMap: Record<string, number> = { searxng: 8080, whoogle: 5000 };
   const port = portMap[mappedAppId] ?? 3000;
 
-  return { url: `http://${primary}.${CONTAINER_DOMAIN}:${port}`, type: appId };
+  return { url: `http://${primaryName}.${CONTAINER_DOMAIN}:${port}`, type: appId };
 }
 
 /**

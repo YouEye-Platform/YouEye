@@ -1,9 +1,15 @@
 /**
- * Zod schemas for youeye-file.yaml manifest validation.
- * Validates app manifests fetched from the YE-AppMarket catalog.
+ * Zod schemas for youeye-app.yaml manifest validation (v2).
+ * Validates app manifests fetched from the YE-AppMarket catalog or from repo URLs.
  *
- * Based on: youeye-file.md specification (v1)
- * Container naming: app-{appId} (single) or app-{appId}-{name} (multi)
+ * v2 changes:
+ *   - `integration: native|basic` replaces `type: native|marketplace`
+ *   - Every container has explicit `type: lxd|oci`
+ *   - `env_mapping` replaces hardcoded buildPlatformEnv()
+ *   - `database.mode: shared|own|none` replaces requiresSharedPostgres
+ *   - `sso.setup.method: env|api|cli` replaces sso.configure.type
+ *   - Volume types: config|data|media|cache
+ *   - Container naming: app-{appId} (single) or app-{appId}-{name} (multi)
  */
 
 import { z } from 'zod/v4';
@@ -17,16 +23,11 @@ export const MetadataSchema = z.object({
   icon: z.string().min(1),
   iconUrl: z.string().optional(),
   category: z.enum(['search', 'social', 'productivity', 'media', 'utilities', 'infrastructure']),
-  website: z.string().url(),
+  website: z.string().url().optional(),
   tags: z.array(z.string()).default([]),
   defaultSubdomain: z.string().min(1),
-});
-
-// ─── Features ──────────────────────────────────────────────
-
-export const FeaturesSchema = z.object({
-  supportsSSO: z.boolean().default(false),
-  requiresSharedPostgres: z.boolean().default(false),
+  estimatedMemory: z.string().optional(),
+  estimatedCPU: z.string().optional(),
 });
 
 // ─── Health Check ──────────────────────────────────────────
@@ -44,11 +45,15 @@ export const HealthCheckSchema = z.discriminatedUnion('type', [
   }),
 ]);
 
-// ─── Volume ────────────────────────────────────────────────
+// ─── Volume (v2: typed volumes) ───────────────────────────
 
 export const VolumeSchema = z.object({
+  name: z.string().optional(),
   host: z.string().min(1),
   container: z.string().min(1),
+  type: z.enum(['config', 'data', 'media', 'cache']).default('data'),
+  containers: z.array(z.string()).optional(),
+  read_only: z.boolean().default(false),
 });
 
 // ─── Post-Deploy Step ─────────────────────────────────────
@@ -75,10 +80,20 @@ export const ConnectorsSchema = z.object({
   provides: z.array(ConnectorProvisionSchema).default([]),
 });
 
-// ─── Container ─────────────────────────────────────────────
+// ─── Container Source (LXD-only: Gitea repo deploy) ───────
+
+export const ContainerSourceSchema = z.object({
+  repo: z.string().min(1),
+  nodeVersion: z.string().optional(),
+  appDir: z.string().default('/opt/app'),
+  tagPrefix: z.string().optional(),
+});
+
+// ─── Container (v2: explicit type) ────────────────────────
 
 export const ContainerSchema = z.object({
   name: z.string().regex(/^[a-z0-9-]+$/, 'Container name must be lowercase alphanumeric with dashes'),
+  type: z.enum(['lxd', 'oci']),
   primary: z.boolean().optional().default(false),
   image: z.string().min(1),
   port: z.number().int().positive().optional(),
@@ -86,6 +101,8 @@ export const ContainerSchema = z.object({
   environment: z.record(z.string(), z.string()).default({}),
   volumes: z.array(VolumeSchema).default([]),
   healthCheck: HealthCheckSchema.optional(),
+  source: ContainerSourceSchema.optional(),
+  postDeploy: z.array(PostDeployStepSchema).optional().default([]),
 });
 
 // ─── Secrets ───────────────────────────────────────────────
@@ -97,13 +114,21 @@ export const SecretSchema = z.object({
   length: z.number().int().positive().default(32),
 });
 
-// ─── Shared Postgres ───────────────────────────────────────
+// ─── Database (v2: replaces requiresSharedPostgres) ───────
 
-export const SharedPostgresSchema = z.object({
-  database: z.string().min(1),
-  user: z.string().min(1),
-  password: z.string().min(1), // variable reference like ${secrets.db_password}
-});
+export const DatabaseSchema = z.object({
+  mode: z.enum(['shared', 'own', 'none']),
+  name: z.string().optional(),
+  user: z.string().optional(),
+  container: z.string().optional(),
+}).refine(
+  (data) => {
+    if (data.mode === 'shared') return !!data.name && !!data.user;
+    if (data.mode === 'own') return !!data.container;
+    return true;
+  },
+  { message: 'shared requires name+user; own requires container' }
+);
 
 // ─── Config Files ──────────────────────────────────────────
 
@@ -114,7 +139,7 @@ export const ConfigFileSchema = z.object({
   template: z.string().min(1),
 });
 
-// ─── SSO Configuration Steps ───────────────────────────────
+// ─── SSO (v2: setup methods) ──────────────────────────────
 
 export const SSOStepSchema = z.object({
   method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']),
@@ -140,9 +165,15 @@ export const SSOStepSchema = z.object({
     .optional(),
 });
 
-export const SSOConfigureSchema = z.object({
-  type: z.enum(['http-api', 'exec', 'none']),
-  steps: z.array(SSOStepSchema).default([]),
+export const SSOCliStepSchema = z.object({
+  exec: z.string().min(1),
+  timeout: z.number().int().positive().default(30_000),
+});
+
+export const SSOSetupSchema = z.object({
+  method: z.enum(['env', 'api', 'cli', 'none']),
+  api: z.object({ steps: z.array(SSOStepSchema).default([]) }).optional(),
+  cli: z.object({ steps: z.array(SSOCliStepSchema).default([]) }).optional(),
 });
 
 export const RedirectUriSchema = z.object({
@@ -150,29 +181,43 @@ export const RedirectUriSchema = z.object({
 });
 
 export const SSOSchema = z.object({
-  authentikSlug: z.string().min(1),
-  redirectUris: z.array(RedirectUriSchema).min(1),
-  configure: SSOConfigureSchema,
+  type: z.enum(['oauth2', 'ldap']).default('oauth2'),
+  callback_path: z.string().min(1),
+  additional_callbacks: z.array(z.string()).default([]),
+  // Legacy fields (kept for backward compat during migration)
+  authentikSlug: z.string().optional(),
+  redirectUris: z.array(RedirectUriSchema).optional(),
+  configure: z.object({
+    type: z.enum(['http-api', 'exec', 'none']),
+    steps: z.array(SSOStepSchema).default([]),
+  }).optional(),
+  // v2 setup
+  setup: SSOSetupSchema.optional(),
 });
 
-// ─── Capabilities ────────────────────────────────────────
+// ─── Capabilities (v2: extended) ─────────────────────────
 
 export const CapabilitiesSchema = z.object({
-  /** App can send notifications to the YouEye notification center */
-  notifications: z.boolean().optional(),
-  /** App can send email via the platform SMTP proxy */
+  notifications: z.union([z.boolean(), z.literal('push')]).optional(),
   smtp: z.boolean().optional(),
-  /** App can use the platform AI API passthrough (future) */
   ai_api: z.boolean().optional(),
-  /** Platform events this app wants to receive (webhook delivery) */
   events: z.array(z.string()).optional(),
+  widgets: z.boolean().optional(),
+  info_cards: z.boolean().optional(),
+  settings_panel: z.boolean().optional(),
+  connectors: z.object({
+    provides: z.array(z.string()).default([]),
+    consumes: z.array(z.string()).default([]),
+  }).optional(),
 }).optional();
 
-// ─── Language ─────────────────────────────────────────────
+// ─── Install Parameters ───────────────────────────────────
 
-export const LanguageConfigSchema = z.object({
-  env_var: z.string().min(1),
-  format: z.enum(['iso639', 'full']).default('iso639'),
+export const InstallParamSchema = z.object({
+  name: z.string().min(1),
+  label: z.string().min(1),
+  required: z.boolean().default(false),
+  description: z.string().optional(),
 });
 
 // ─── Backup ───────────────────────────────────────────────
@@ -198,7 +243,7 @@ export const UninstallSchema = z.object({
   preDeleteCommands: z.array(z.string()).optional().default([]),
 });
 
-// ─── Update / Migration ──────────────────────────────────
+// ─── Update / Migration (v2: pre/post hooks, version constraint) ──
 
 export const MigrationStepSchema = z.discriminatedUnion('type', [
   z.object({
@@ -220,34 +265,20 @@ export const MigrationSchema = z.object({
   steps: z.array(MigrationStepSchema).min(1),
 });
 
+export const UpdateHookStepSchema = z.object({
+  exec_in: z.string().min(1),
+  run: z.string().min(1),
+  timeout: z.number().int().positive().default(30_000),
+});
+
 export const UpdateSchema = z.object({
   strategy: z.enum(['replace', 'migrate']).default('replace'),
   preserveData: z.boolean().default(true),
   preserveSecrets: z.boolean().default(true),
+  version_constraint: z.enum(['any', 'major-sequential']).default('any'),
+  pre_update: z.array(UpdateHookStepSchema).optional().default([]),
+  post_update: z.array(UpdateHookStepSchema).optional().default([]),
   migrations: z.array(MigrationSchema).optional().default([]),
-});
-
-// ─── Native App Config ────────────────────────────────────
-
-export const InstallParamSchema = z.object({
-  name: z.string().min(1),
-  label: z.string().min(1),
-  required: z.boolean().default(false),
-  description: z.string().optional(),
-});
-
-export const NativeConfigSchema = z.object({
-  repo: z.string().min(1),
-  containerName: z.string().min(1),
-  port: z.number().int().positive(),
-  image: z.string().min(1),
-  imageServer: z.string().url().optional(),
-  nodeVersion: z.string().optional(),
-  appDir: z.string().optional(),
-  healthCheck: HealthCheckSchema.optional(),
-  environment: z.record(z.string(), z.string()).default({}),
-  installParams: z.array(InstallParamSchema).optional().default([]),
-  postDeploy: z.array(PostDeployStepSchema).optional().default([]),
 });
 
 // ─── Detail (app detail page) ─────────────────────────────
@@ -262,87 +293,107 @@ export const DetailSchema = z.object({
   screenshots: z.array(DetailScreenshotSchema).default([]),
 });
 
-// ─── Root Manifest ─────────────────────────────────────────
+// ─── Root Manifest (v2) ───────────────────────────────────
 
 export const AppManifestSchema = z
   .object({
-    apiVersion: z.literal('v1'),
+    apiVersion: z.enum(['v1', 'v2']),
     kind: z.literal('app'),
-    type: z.enum(['marketplace', 'native']).optional().default('marketplace'),
+    integration: z.enum(['native', 'basic']).default('basic'),
     version: z.string().min(1).optional(),
+
+    // Legacy v1 field — mapped to integration at parse time
+    type: z.enum(['marketplace', 'native']).optional(),
+
     metadata: MetadataSchema,
-    features: FeaturesSchema,
-    containers: z.array(ContainerSchema).optional().default([]),
-    native: NativeConfigSchema.optional(),
+
+    // v2: database section replaces features.requiresSharedPostgres
+    database: DatabaseSchema.optional(),
+
+    // v2: env_mapping replaces buildPlatformEnv() hardcoded injection
+    env_mapping: z.record(z.string(), z.string()).optional().default({}),
+
+    containers: z.array(ContainerSchema).default([]),
+
+    // Legacy v1 fields
+    features: z.object({
+      supportsSSO: z.boolean().default(false),
+      requiresSharedPostgres: z.boolean().default(false),
+    }).optional(),
+    native: z.object({
+      repo: z.string().min(1),
+      containerName: z.string().min(1),
+      port: z.number().int().positive(),
+      image: z.string().min(1),
+      imageServer: z.string().url().optional(),
+      nodeVersion: z.string().optional(),
+      appDir: z.string().optional(),
+      healthCheck: HealthCheckSchema.optional(),
+      environment: z.record(z.string(), z.string()).default({}),
+      installParams: z.array(InstallParamSchema).optional().default([]),
+      postDeploy: z.array(PostDeployStepSchema).optional().default([]),
+    }).optional(),
+    sharedPostgres: z.object({
+      database: z.string().min(1),
+      user: z.string().min(1),
+      password: z.string().min(1),
+    }).optional(),
+
     secrets: z.array(SecretSchema).optional().default([]),
-    sharedPostgres: SharedPostgresSchema.optional(),
     configFiles: z.array(ConfigFileSchema).optional().default([]),
-    language: LanguageConfigSchema.optional(),
     capabilities: CapabilitiesSchema,
     connectors: ConnectorsSchema.optional(),
+    installParams: z.array(InstallParamSchema).optional().default([]),
     sso: SSOSchema.optional(),
     backup: BackupSchema.optional(),
     uninstall: UninstallSchema.optional(),
     update: UpdateSchema.optional(),
     detail: DetailSchema.optional(),
+
+    // Legacy v1 language (use env_mapping with ${platform.locale} instead)
+    language: z.object({
+      env_var: z.string().min(1),
+      format: z.enum(['iso639', 'full']).default('iso639'),
+    }).optional(),
   })
   .refine(
     (data) => {
-      // Native apps don't use container specs
-      if (data.type === 'native') return true;
-      // Marketplace apps must have at least one container
+      // v1 native manifests pass through (legacy compat during migration)
+      if (data.apiVersion === 'v1') return true;
+      // v2 apps must have at least one container
       if (data.containers.length === 0) return false;
-      // Exactly one container must be marked as primary, or if only one container, it's implicitly primary
+      // Single-container apps: OK
       if (data.containers.length === 1) return true;
+      // Multi-container: exactly one primary
       const primaries = data.containers.filter((c) => c.primary);
       return primaries.length === 1;
     },
-    { message: 'Marketplace apps must have containers; multi-container apps must have exactly one primary' }
+    { message: 'v2 apps must have containers; multi-container apps must have exactly one primary' }
   )
   .refine(
     (data) => {
-      // Native apps must have native config
-      if (data.type === 'native' && !data.native) return false;
-      return true;
-    },
-    { message: 'Native apps must have a native config block' }
-  )
-  .refine(
-    (data) => {
-      // If requiresSharedPostgres is true, sharedPostgres config must be provided
-      if (data.features.requiresSharedPostgres && !data.sharedPostgres) {
-        return false;
+      if (data.apiVersion === 'v1') return true;
+      // LXD containers with source must have repo
+      for (const c of data.containers) {
+        if (c.type === 'lxd' && c.source && !c.source.repo) return false;
       }
       return true;
     },
-    { message: 'sharedPostgres config is required when features.requiresSharedPostgres is true' }
-  )
-  .refine(
-    (data) => {
-      // If supportsSSO is true, sso config must be provided
-      if (data.features.supportsSSO && !data.sso) {
-        return false;
-      }
-      return true;
-    },
-    { message: 'sso config is required when features.supportsSSO is true' }
+    { message: 'LXD containers with source must specify a repo' }
   );
 
-// ─── Catalog Schema ────────────────────────────────────────
+// ─── Catalog Schema (v2: flat list) ───────────────────────
 
 export const CatalogEntrySchema = z.object({
   id: z.string().min(1),
-  file: z.string().min(1),
+  // For apps with manifest in AppMarket (third-party)
+  file: z.string().optional(),
+  // For apps with manifest in their own repo
+  repo: z.string().optional(),
+  manifest: z.string().optional().default('youeye-app.yaml'),
+  integration: z.enum(['native', 'basic']).default('basic'),
   latestVersion: z.string().optional(),
-  type: z.enum(['native', 'marketplace']).optional().default('marketplace'),
   minPlatformVersion: z.string().optional(),
-  manifestVersion: z.number().int().positive().optional().default(1),
-});
-
-export const NativeCatalogEntrySchema = z.object({
-  id: z.string().min(1),
-  file: z.string().min(1),
-  type: z.literal('native').default('native'),
 });
 
 export const SystemCatalogEntrySchema = z.object({
@@ -352,14 +403,21 @@ export const SystemCatalogEntrySchema = z.object({
 });
 
 export const CatalogSchema = z.object({
-  apiVersion: z.literal('v1'),
+  apiVersion: z.enum(['v1', 'v2']),
   kind: z.literal('catalog'),
-  native: z.array(NativeCatalogEntrySchema).default([]),
-  external: z.array(CatalogEntrySchema).default([]),
+  // v2: flat list
+  apps: z.array(CatalogEntrySchema).default([]),
   system: z.array(SystemCatalogEntrySchema).default([]),
+  // Legacy v1 fields
+  native: z.array(z.object({
+    id: z.string().min(1),
+    file: z.string().min(1),
+    type: z.literal('native').default('native'),
+  })).default([]),
+  external: z.array(CatalogEntrySchema).default([]),
 });
 
-// ─── App Ref (native app pointer) ──────────────────────────
+// ─── App Ref (legacy v1: native app pointer) ──────────────
 
 export const AppRefSchema = z.object({
   apiVersion: z.literal('v1'),

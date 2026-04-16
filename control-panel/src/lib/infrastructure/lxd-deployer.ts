@@ -1,6 +1,10 @@
 /**
- * LXD container deployment via Incus REST API.
- * Used for full-OS containers (Debian) that run Node.js apps (e.g. YouEye UI).
+ * LXD container deployment via Incus REST API (v2).
+ * Used for full-OS containers (Debian) that run Node.js apps.
+ *
+ * v2 changes:
+ *   - Socket proxies (Incus + Spine) REMOVED — apps no longer get infrastructure access
+ *   - security.nesting removed (not needed without sockets)
  */
 
 import { incusRequest, execShell } from '../incus/server';
@@ -35,7 +39,6 @@ export async function deployLXDContainer(
     },
     config: {
       'security.privileged': 'false',
-      'security.nesting': 'true',
     },
   };
 
@@ -92,8 +95,7 @@ export async function deployLXDContainer(
     // Non-fatal: sysctl may be restricted in some container setups.
   }
 
-  // Add socket proxies (Incus + Spine)
-  await addSocketProxies(spec.containerName, cfg.spineSocketPath);
+  // v2: Socket proxies removed — apps no longer get Incus/Spine access
 
   // Add port proxy for the app (skip if port conflicts)
   if (spec.port) {
@@ -132,44 +134,6 @@ async function waitForContainerReady(containerName: string): Promise<void> {
     await new Promise((r) => setTimeout(r, 1000));
   }
   throw new Error(`Container ${containerName} did not become ready in 30s`);
-}
-
-/** Add Incus and Spine socket proxies to the container via PATCH. */
-async function addSocketProxies(containerName: string, spineSocketPath: string): Promise<void> {
-  // Get current config
-  const current = await incusRequest<Record<string, unknown>>('GET', `/1.0/instances/${containerName}`);
-  const metadata = current.metadata as Record<string, unknown>;
-  const existingDevices = (metadata.devices as Record<string, Record<string, string>>) || {};
-
-  // Create directories inside container
-  await execShell(containerName, 'mkdir -p /var/lib/incus /var/run/spine', { timeout: 10000 });
-
-  // Create tmpfiles.d config so /var/run/spine survives reboots
-  await execShell(containerName, "echo 'd /var/run/spine 0755 root root -' > /etc/tmpfiles.d/spine.conf", { timeout: 10000 });
-
-  const newDevices = {
-    ...existingDevices,
-    'incus-socket': {
-      type: 'proxy',
-      bind: 'container',
-      connect: 'unix:/var/lib/incus/unix.socket',
-      listen: 'unix:/var/lib/incus/unix.socket',
-      uid: '0',
-      gid: '0',
-      mode: '0666',
-    },
-    'spine-socket': {
-      type: 'proxy',
-      bind: 'container',
-      connect: `unix:${spineSocketPath}`,
-      listen: `unix:${spineSocketPath}`,
-      uid: '0',
-      gid: '0',
-      mode: '0666',
-    },
-  };
-
-  await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices: newDevices });
 }
 
 /** Add a port proxy device. */

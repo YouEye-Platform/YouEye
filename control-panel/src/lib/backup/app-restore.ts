@@ -163,11 +163,12 @@ export async function restoreApp(
     // Build install config from backed-up metadata
     const subdomain = (backedUpInstallMeta?.subdomain as string) || appId;
     const domain = (backedUpInstallMeta?.domain as string) || '';
+    const integration = (backedUpInstallMeta?.integration as string) || (backedUpInstallMeta?.type as string) || undefined;
 
     // Run the install engine — it handles container creation, config files, etc.
     await installApp(
       manifest,
-      { appId, subdomain, domain },
+      { appId, subdomain, domain, ...(integration ? { integration } : {}) },
       (event) => {
         // Relay install events as restore sub-events
         onEvent({
@@ -218,7 +219,10 @@ export async function restoreApp(
     // ── Step 8: Restart containers ─────────────────────────
     emit('restart', `Restarting ${appId} containers...`);
 
-    const containers = backupMeta.containers as string[] || [];
+    // Get container names from metadata (v2 format: objects, v1: strings)
+    const containers = (backupMeta.containers || []).map((c: any) =>
+      typeof c === 'string' ? c : c.containerName
+    );
     for (const containerName of containers) {
       try {
         await incusRequest('PUT', `/1.0/instances/${containerName}/state`, {

@@ -1,7 +1,7 @@
 /**
- * Unified app uninstaller for the App Market.
+ * Unified app uninstaller for the App Market (v2 app engine).
  * Handles all uninstall patterns driven by manifest + metadata.
- * Supports both marketplace (OCI) and native (LXD) apps.
+ * Supports both OCI and LXD containers (determined by container.type).
  *
  * Cleanup includes: containers, Caddy routes, Authentik SSO,
  * Pi-Hole DNS, shared databases, and volume data.
@@ -16,6 +16,34 @@ import { removeAuthentikOAuth2App } from './sso-engine';
 import type { UninstallOptions, UninstallVerification } from './types';
 
 const POSTGRES_CONTAINER = 'youeye-postgres';
+const CONTAINER_DOMAIN = '.youeye';
+
+// ─── Container Metadata Helpers ──────────────────────────
+
+interface ContainerMeta {
+  name: string;
+  containerName: string;
+  type: string;
+}
+
+/**
+ * Normalize metadata.containers to the v2 object format.
+ * Handles legacy format where containers was a string array.
+ */
+function normalizeContainerMeta(
+  containers: Array<ContainerMeta | string>
+): ContainerMeta[] {
+  if (!containers || containers.length === 0) return [];
+  // Legacy format: string[]
+  if (typeof containers[0] === 'string') {
+    return (containers as string[]).map((name) => ({
+      name,
+      containerName: name,
+      type: 'oci',
+    }));
+  }
+  return containers as ContainerMeta[];
+}
 
 // ─── Unified Uninstall ────────────────────────────────────
 
@@ -50,12 +78,16 @@ export async function uninstallApp(
   const keepData = options.keepData ?? true;
   const dropDb = options.dropSharedDatabase ?? false;
 
+  // Normalize containers to v2 object format (handles legacy string[] format)
+  const containers = normalizeContainerMeta(metadata.containers);
+  const containerNames = containers.map((c) => c.containerName);
+
   // 1. Stop and delete all containers
-  for (const name of metadata.containers) {
+  for (const c of containers) {
     try {
-      await stopAndDeleteContainer(name);
+      await stopAndDeleteContainer(c.containerName);
     } catch (err) {
-      errors.push(`Failed to remove container ${name}: ${err}`);
+      errors.push(`Failed to remove container ${c.containerName}: ${err}`);
     }
   }
 
@@ -72,10 +104,10 @@ export async function uninstallApp(
         }
       }
       if (!caddyRemoved) {
-        // Also check by upstream container name (native apps use this)
-        for (const containerName of metadata.containers) {
+        // Also check by upstream container name
+        for (const c of containers) {
           for (const route of routes) {
-            if (route.upstream === containerName) {
+            if (route.upstream === c.containerName) {
               await removeRoute(route.id);
               caddyRemoved = true;
             }
@@ -164,7 +196,7 @@ export async function uninstallApp(
   // 8. Post-uninstall verification
   const verification = await verifyUninstall(
     appId,
-    metadata.containers,
+    containerNames,
     metadata.subdomain,
     metadata.domain,
     ssoSlug,

@@ -64,6 +64,7 @@ interface MarketApp {
   iconUrl?: string;
   category: string;
   type?: "native" | "marketplace";
+  integration?: "native" | "basic";
   defaultSubdomain: string;
   supportsSSO: boolean;
   estimatedMemory: string;
@@ -247,8 +248,8 @@ export function AppMarket() {
 
   // Split apps into native and external, grouped by category
   const { nativeGroups, externalGroups, nativeCount, externalCount } = useMemo(() => {
-    const native = apps.filter((a) => a.type === "native");
-    const external = apps.filter((a) => a.type !== "native");
+    const native = apps.filter((a) => a.integration === "native" || a.type === "native");
+    const external = apps.filter((a) => a.integration === "basic" || a.type === "marketplace" || (!a.integration && !a.type));
     return {
       nativeGroups: groupByCategory(native),
       externalGroups: groupByCategory(external),
@@ -542,7 +543,7 @@ export function AppMarket() {
       ) : (
         <div className="space-y-8">
           {renderSection("Native Apps", nativeCount, nativeGroups)}
-          {renderSection("External Apps", externalCount, externalGroups)}
+          {renderSection("Community Apps", externalCount, externalGroups)}
         </div>
       )}
 

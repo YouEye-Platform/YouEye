@@ -1,13 +1,14 @@
 /**
- * Unified App Updater — Handles both OCI (marketplace) and LXD (native) apps.
+ * Unified App Updater — v2 app engine.
  *
- * Supports three update paths:
- *   - OCI: Stop containers → pull new images → rebuild → start → health check
- *   - LXD tarball: apt upgrade → stop service → download tarball → start → health check
- *   - OCI transition: Native app moved to OCI — signals fresh install required
+ * Supports two update paths based on container.type:
+ *   - LXD (container.type === 'lxd'): fetch tarball from Gitea, extract, restart service
+ *   - OCI (container.type === 'oci'): stop → rebuild with new image → start
  *
  * Both paths support:
  *   - Migration steps (exec commands, SQL) before container rebuild/replace
+ *   - Pre/post update hooks (exec commands in specified containers)
+ *   - Version constraint checking (e.g. major-sequential)
  *   - Snapshot-based rollback on failure
  *   - SSE event emission for real-time progress
  *   - Version tracking in installed_apps DB
@@ -36,6 +37,7 @@ import {
 import { fetchManifest, clearCatalogCache } from './catalog';
 import { readInstallMetadata } from './metadata';
 import { getInstalledApp, updateInstalledVersion } from './installed-apps';
+import { getContainerName } from './engine-helpers';
 import { resolveVariables, resolveEnvironment } from './variables';
 import { buildVariableContext } from './platform-env';
 import { getOrCreateSecret } from '../infrastructure/secrets';
@@ -79,20 +81,64 @@ function emit(
   cb({ step, totalSteps, status, message, detail });
 }
 
-// ─── Container Naming ─────────────────────────────────────
+// ─── Constants ───────────────────────────────────────────
 
-function getContainerName(appId: string, containerName: string, totalContainers: number): string {
-  return totalContainers === 1 ? `app-${appId}` : `app-${appId}-${containerName}`;
+const CONTAINER_DOMAIN = '.youeye';
+
+// ─── Version Constraint Helpers ──────────────────────────
+
+function parseMajorVersion(version: string): number {
+  const parts = version.replace(/^v/, '').split('.');
+  return parseInt(parts[0], 10) || 0;
 }
 
-// ─── Image Type Detection ─────────────────────────────────
+function checkVersionConstraint(
+  constraint: string | undefined,
+  fromVersion: string,
+  toVersion: string
+): string | null {
+  if (!constraint) return null;
+  if (constraint === 'major-sequential') {
+    const fromMajor = parseMajorVersion(fromVersion);
+    const toMajor = parseMajorVersion(toVersion);
+    if (toMajor - fromMajor > 1) {
+      return `Version constraint 'major-sequential' violated: cannot jump from major ${fromMajor} to ${toMajor}. Update one major version at a time.`;
+    }
+  }
+  return null;
+}
 
-/**
- * Returns true if the image string is an LXD image (e.g. "debian/12", "ubuntu/24.04").
- * OCI images contain dots in the registry part (e.g. "docker.io/...", "ghcr.io/...").
- */
-function isLXDImage(image: string): boolean {
-  return /^[a-z]+\/[\d.]+$/.test(image);
+// ─── Update Hook Helpers ─────────────────────────────────
+
+interface UpdateHookStep {
+  exec_in: string;
+  run: string;
+  timeout: number;
+}
+
+async function runUpdateHooks(
+  hooks: UpdateHookStep[] | undefined,
+  appId: string,
+  containerSpecs: Array<{ name: string; type: string }>,
+  onEvent: InstallEventCallback,
+  step: number,
+  totalSteps: number,
+  label: string
+): Promise<number> {
+  if (!hooks || hooks.length === 0) return step;
+  for (const hook of hooks) {
+    step++;
+    const containerName = getContainerName(appId, hook.exec_in, containerSpecs.length);
+    emit(onEvent, step, totalSteps, 'running', `${label}: ${hook.run.slice(0, 80)}...`);
+    const result = await execShell(containerName, hook.run, {
+      timeout: hook.timeout || 60_000,
+    });
+    if (result.exitCode !== 0) {
+      throw new Error(`${label} hook failed in ${containerName}: ${result.stderr || result.stdout}`);
+    }
+    emit(onEvent, step, totalSteps, 'success', `${label} step complete`);
+  }
+  return step;
 }
 
 // ─── Migration Helpers ────────────────────────────────────
@@ -117,17 +163,16 @@ function findApplicableMigrations(
 
 /**
  * Execute a single migration step.
- * For native apps, the container field maps directly to native.containerName.
+ * Container name is derived from the container spec name via getContainerName.
  */
 async function executeMigrationStep(
   step: MigrationStep,
   appId: string,
   totalContainers: number,
   ctx: Partial<VariableContext>,
-  nativeContainerName?: string
 ): Promise<void> {
   if (step.type === 'exec') {
-    const containerName = nativeContainerName || getContainerName(appId, step.container, totalContainers);
+    const containerName = getContainerName(appId, step.container, totalContainers);
     const command = resolveVariables(step.command, ctx);
     const result = await execShell(containerName, command, {
       timeout: step.timeout || 60_000,
@@ -419,34 +464,35 @@ export async function updateMarketplaceApp(
 
   const installedVersion = installedApp.installedVersion || '0.0.0';
   const targetVersion = manifest.version || '0.0.0';
-  const isNativeApp = !!manifest.native;
+  const containerSpecs = manifest.containers || [];
 
   if (!config.force && !isNewer(targetVersion, installedVersion)) {
     emit(onEvent, 1, 1, 'success', `${appId} is already up to date (v${installedVersion})`);
     return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0 };
   }
 
-  // ── OCI transition detection ────────────────────────────
-  // If a native app's manifest now uses an OCI image, it needs a fresh install
-  if (isNativeApp && !isLXDImage(manifest.native!.image)) {
-    emit(onEvent, 1, 1, 'error',
-      `${appId} has been converted to OCI packaging. Please uninstall and reinstall for the new format.`);
+  // ── Version constraint check ───────────────────────────
+  const constraintError = checkVersionConstraint(
+    manifest.update?.version_constraint,
+    installedVersion,
+    targetVersion
+  );
+  if (constraintError && !config.force) {
+    emit(onEvent, 1, 1, 'error', constraintError);
     return {
       success: false, previousVersion: installedVersion, newVersion: targetVersion,
-      migrationsRun: 0, error: 'OCI conversion requires fresh install',
+      migrationsRun: 0, error: constraintError,
     };
   }
 
   // ── Determine update path ──────────────────────────────
 
   const strategy = manifest.update?.strategy || 'replace';
-  const containerSpecs = manifest.containers || [];
 
-  // For native apps, the container name comes from manifest.native
-  const nativeContainerName = isNativeApp ? manifest.native!.containerName : undefined;
-  const containerNames = isNativeApp
-    ? [nativeContainerName!]
-    : containerSpecs.map((c) => getContainerName(appId, c.name, containerSpecs.length));
+  // v2: each container has an explicit type ('lxd' | 'oci')
+  const containerNames = containerSpecs.map((c) => getContainerName(appId, c.name, containerSpecs.length));
+  const lxdContainers = containerSpecs.filter((c) => c.type === 'lxd');
+  const ociContainers = containerSpecs.filter((c) => c.type === 'oci');
 
   // ── Count total steps ──────────────────────────────────
 
@@ -455,27 +501,32 @@ export async function updateMarketplaceApp(
     : [];
   const migrationStepCount = migrations.reduce((sum, m) => sum + m.steps.length, 0);
 
+  const preUpdateHooks = manifest.update?.pre_update as UpdateHookStep[] | undefined;
+  const postUpdateHooks = manifest.update?.post_update as UpdateHookStep[] | undefined;
+
   let totalSteps = 1; // preflight
   totalSteps += containerNames.length; // snapshots
+  totalSteps += (preUpdateHooks?.length || 0); // pre-update hooks
   totalSteps += migrationStepCount; // migration steps
 
-  if (isNativeApp) {
-    // LXD path: fetch release + apt upgrade + stop service + download + extract + start + health
-    totalSteps += 7;
-  } else {
-    // OCI path: stop + rebuild + start + health per container
-    totalSteps += containerNames.length * 3; // stop + rebuild + start
-    totalSteps += containerSpecs.filter((c) => c.healthCheck).length; // health checks
-  }
+  // LXD containers: fetch release + apt upgrade + stop service + download + extract + start + health each
+  totalSteps += lxdContainers.length * 7;
+  // OCI containers: stop + rebuild + start per container
+  totalSteps += ociContainers.length * 3;
+  // Health checks for OCI containers that have them
+  totalSteps += ociContainers.filter((c) => c.healthCheck).length;
+
+  totalSteps += (postUpdateHooks?.length || 0); // post-update hooks
   totalSteps += 2; // save metadata + cleanup
 
   let step = 0;
 
   // ── Step 1: Preflight ──────────────────────────────────
 
+  const containerTypes = containerSpecs.map((c) => c.type).join(', ');
   step++;
   emit(onEvent, step, totalSteps, 'running',
-    `Updating ${appId} from v${installedVersion} to v${targetVersion} (${isNativeApp ? 'LXD' : 'OCI'}, strategy: ${strategy})`);
+    `Updating ${appId} from v${installedVersion} to v${targetVersion} (containers: ${containerTypes}, strategy: ${strategy})`);
 
   // Build variable context — preserves existing secrets
   const ctx = await buildVariableContext(
@@ -504,7 +555,11 @@ export async function updateMarketplaceApp(
       emit(onEvent, step, totalSteps, 'success', `Snapshot created for ${name}`);
     }
 
-    // ── Step 3: Run migrations (if strategy=migrate) ─────
+    // ── Step 3: Pre-update hooks ─────────────────────────
+
+    step = await runUpdateHooks(preUpdateHooks, appId, containerSpecs, onEvent, step, totalSteps, 'Pre-update');
+
+    // ── Step 4: Run migrations (if strategy=migrate) ─────
 
     if (strategy === 'migrate' && migrations.length > 0) {
       for (const migration of migrations) {
@@ -514,84 +569,75 @@ export async function updateMarketplaceApp(
             ? `Running migration in ${migrationStep.container}`
             : `Running SQL migration on ${migrationStep.database}`;
           emit(onEvent, step, totalSteps, 'running', stepDesc);
-          await executeMigrationStep(migrationStep, appId, containerSpecs.length, ctx, nativeContainerName);
+          await executeMigrationStep(migrationStep, appId, containerSpecs.length, ctx);
           emit(onEvent, step, totalSteps, 'success', stepDesc);
         }
       }
     }
 
-    // ── Step 4/5: Update path (OCI or LXD) ───────────────
+    // ── Step 5: Update containers by type ────────────────
 
-    if (isNativeApp) {
-      // ── LXD path ──────────────────────────────────────
-      const native = manifest.native!;
-      const giteaRepo = native.repo.includes('/') ? native.repo.split('/').pop()! : native.repo;
-      const appDir = native.appDir || '/opt/app';
-      const healthEndpoint = native.healthCheck?.type === 'http'
-        ? (native.healthCheck.path || '/api/health')
-        : '/api/health';
-      const port = native.port || 3000;
+    for (let i = 0; i < containerSpecs.length; i++) {
+      const spec = containerSpecs[i];
+      const name = containerNames[i];
 
-      // Derive tag prefix from repo structure (monorepo components use prefixes)
-      const tagPrefix = undefined; // standalone repos don't use tag prefixes
+      if (spec.type === 'lxd' && spec.source) {
+        // ── LXD path: fetch tarball from Gitea, extract, restart service ──
+        const giteaRepo = spec.source.repo?.includes('/')
+          ? spec.source.repo.split('/').pop()!
+          : (spec.source.repo || spec.name);
+        const appDir = spec.source.appDir || '/opt/app';
+        const healthEndpoint = spec.healthCheck?.type === 'http'
+          ? (spec.healthCheck.path || '/api/health')
+          : '/api/health';
+        const port = spec.port || 3000;
+        const tagPrefix = spec.source.tagPrefix;
 
-      const result = await updateLXDContainer(
-        nativeContainerName!, giteaRepo, appDir, nativeContainerName!,
-        port, healthEndpoint, tagPrefix, onEvent, step, totalSteps
-      );
-      step = result.step;
-    } else {
-      // ── OCI path ──────────────────────────────────────
-
-      // Stop all containers
-      for (const name of containerNames) {
+        const result = await updateLXDContainer(
+          name, giteaRepo, appDir, spec.source.serviceName || name,
+          port, healthEndpoint, tagPrefix, onEvent, step, totalSteps
+        );
+        step = result.step;
+      } else {
+        // ── OCI path: stop → rebuild with new image → start ──
         step++;
         emit(onEvent, step, totalSteps, 'running', `Stopping ${name}...`);
         await stopContainer(name);
         emit(onEvent, step, totalSteps, 'success', `${name} stopped`);
-      }
 
-      // Rebuild containers with new images
-      // Incus rebuild requires no snapshots — delete before rebuild
-      for (let i = 0; i < containerSpecs.length; i++) {
-        const spec = containerSpecs[i];
-        const name = containerNames[i];
         step++;
         emit(onEvent, step, totalSteps, 'running', `Rebuilding ${name} with ${spec.image}...`);
         await deleteSnapshot(name, SNAPSHOT_PREFIX);
         await rebuildContainer(name, spec.image);
         emit(onEvent, step, totalSteps, 'success', `${name} rebuilt`);
-      }
 
-      // Start all containers
-      for (const name of containerNames) {
         step++;
         emit(onEvent, step, totalSteps, 'running', `Starting ${name}...`);
         await startContainer(name);
         emit(onEvent, step, totalSteps, 'success', `${name} started`);
-      }
 
-      // Health checks
-      for (let i = 0; i < containerSpecs.length; i++) {
-        const spec = containerSpecs[i];
-        const name = containerNames[i];
-        if (!spec.healthCheck) continue;
+        // Health check for OCI container
+        if (spec.healthCheck) {
+          step++;
+          emit(onEvent, step, totalSteps, 'running', `Waiting for ${name} to be healthy...`);
 
-        step++;
-        emit(onEvent, step, totalSteps, 'running', `Waiting for ${name} to be healthy...`);
+          let healthy = false;
+          if (spec.healthCheck.type === 'http') {
+            healthy = await waitForAppHealth(name, spec.port || 80, spec.healthCheck.path, spec.healthCheck.timeout);
+          } else if (spec.healthCheck.type === 'postgres') {
+            healthy = await waitForPostgresHealth(name, spec.healthCheck.user, spec.healthCheck.timeout);
+          }
 
-        let healthy = false;
-        if (spec.healthCheck.type === 'http') {
-          healthy = await waitForAppHealth(name, spec.port || 80, spec.healthCheck.path, spec.healthCheck.timeout);
-        } else if (spec.healthCheck.type === 'postgres') {
-          healthy = await waitForPostgresHealth(name, spec.healthCheck.user, spec.healthCheck.timeout);
+          emit(onEvent, step, totalSteps, healthy ? 'success' : 'error',
+            healthy ? `${name} is healthy` : `${name} health check timed out`);
+          if (!healthy) throw new Error(`Health check failed for ${name}`);
         }
-
-        emit(onEvent, step, totalSteps, healthy ? 'success' : 'error',
-          healthy ? `${name} is healthy` : `${name} health check timed out`);
-        if (!healthy) throw new Error(`Health check failed for ${name}`);
       }
     }
+
+    // ── Step 6: Post-update hooks ────────────────────────
+
+    step = await runUpdateHooks(postUpdateHooks, appId, containerSpecs, onEvent, step, totalSteps, 'Post-update');
 
     // ── Step N-1: Update version in DB ───────────────────
 
@@ -623,14 +669,16 @@ export async function updateMarketplaceApp(
     emit(onEvent, step, totalSteps, 'error', `Update failed, rolling back: ${errMsg}`);
 
     // ── Rollback ─────────────────────────────────────────
-    for (const name of containerNames) {
+    for (let i = 0; i < containerNames.length; i++) {
+      const name = containerNames[i];
+      const spec = containerSpecs[i];
       try {
         await restoreSnapshot(name, SNAPSHOT_PREFIX);
       } catch {
         // Snapshot may have been deleted (OCI rebuild requires it)
       }
       try {
-        if (isNativeApp) {
+        if (spec?.type === 'lxd') {
           // For LXD, container is still running — wait for exec readiness after restore
           await waitForContainerExec(name, 30);
         } else {

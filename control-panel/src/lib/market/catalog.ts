@@ -1,13 +1,18 @@
 /**
- * Catalog fetcher — pulls app manifests from the YE-AppMarket Gitea repo.
- * Fetches catalog.yaml to discover available apps, then individual manifests on demand.
+ * Catalog fetcher (v2) — pulls app manifests from AppMarket, app repos, or URLs.
+ *
+ * v2 changes:
+ *   - Flat catalog: `apps[]` instead of `native[]`/`external[]`
+ *   - Catalog entries can have `repo` (manifest in app's own repo) or `file` (manifest in AppMarket)
+ *   - New: install from repo URL (any repo with youeye-app.yaml)
+ *   - Supports both v1 and v2 catalog formats
  */
 
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { parseCatalog, parseManifest, parseAppRef } from './parser';
-import type { AppManifest, Catalog, MarketApp } from './types';
+import type { AppManifest, Catalog, CatalogEntry, MarketApp } from './types';
 import { settingsService } from '@/lib/settings';
 
 const CATALOG_CACHE_DIR = '/var/lib/youeye';
@@ -18,10 +23,8 @@ const REPO_OWNER = 'potemsla';
 const REPO_NAME = 'YE-AppMarket';
 const DEFAULT_BRANCH = 'main';
 
-/**
- * Get the configured release branch from Spine config.
- * Falls back to 'main' if not set or on error.
- */
+// ─── Branch Resolution ────────────────────────────────────
+
 export async function getEffectiveBranch(): Promise<string> {
   try {
     const config = await settingsService.getRaw();
@@ -31,76 +34,51 @@ export async function getEffectiveBranch(): Promise<string> {
   }
 }
 
-/**
- * Build a raw file URL for a file in the AppMarket repo.
- * Uses the configured release branch (git branch, not tag prefix).
- */
+// ─── File Fetching ────────────────────────────────────────
+
 function rawUrl(filePath: string, branch: string): string {
   return `${GITEA_BASE}/${REPO_OWNER}/${REPO_NAME}/raw/branch/${branch}/${filePath}`;
 }
 
-/**
- * Fetch a text file from the AppMarket repo.
- * Tries the configured branch first, falls back to main if that branch doesn't exist.
- */
 export async function fetchFile(filePath: string, branch?: string): Promise<string> {
   const effectiveBranch = branch || DEFAULT_BRANCH;
   const url = rawUrl(filePath, effectiveBranch);
   const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
 
   if (!res.ok && effectiveBranch !== DEFAULT_BRANCH) {
-    // Fallback to main branch if the configured branch doesn't exist
     const fallbackUrl = rawUrl(filePath, DEFAULT_BRANCH);
     const fallbackRes = await fetch(fallbackUrl, { signal: AbortSignal.timeout(15_000) });
-    if (!fallbackRes.ok) {
-      throw new Error(`Failed to fetch ${filePath}: ${fallbackRes.status} ${fallbackRes.statusText}`);
-    }
+    if (!fallbackRes.ok) throw new Error(`Failed to fetch ${filePath}: ${fallbackRes.status}`);
     return fallbackRes.text();
   }
 
-  if (!res.ok) {
-    throw new Error(`Failed to fetch ${filePath}: ${res.status} ${res.statusText}`);
-  }
+  if (!res.ok) throw new Error(`Failed to fetch ${filePath}: ${res.status}`);
   return res.text();
 }
 
-/**
- * Fetch a text file from any Gitea repo (not just AppMarket).
- * Used for fetching manifests from native app repos.
- */
 export async function fetchRepoFile(owner: string, repo: string, filePath: string, branch: string): Promise<string> {
   const url = `${GITEA_BASE}/${owner}/${repo}/raw/branch/${branch}/${filePath}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
 
   if (!res.ok && branch !== DEFAULT_BRANCH) {
-    // Fallback to main branch
     const fallbackUrl = `${GITEA_BASE}/${owner}/${repo}/raw/branch/${DEFAULT_BRANCH}/${filePath}`;
     const fallbackRes = await fetch(fallbackUrl, { signal: AbortSignal.timeout(15_000) });
-    if (!fallbackRes.ok) {
-      throw new Error(`Failed to fetch ${owner}/${repo}/${filePath}: ${fallbackRes.status}`);
-    }
+    if (!fallbackRes.ok) throw new Error(`Failed to fetch ${owner}/${repo}/${filePath}: ${fallbackRes.status}`);
     return fallbackRes.text();
   }
 
-  if (!res.ok) {
-    throw new Error(`Failed to fetch ${owner}/${repo}/${filePath}: ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`Failed to fetch ${owner}/${repo}/${filePath}: ${res.status}`);
   return res.text();
 }
 
-// ─── In-memory cache ───────────────────────────────────────
+// ─── Cache ────────────────────────────────────────────────
 
 let catalogCache: Catalog | null = null;
 let catalogCacheTime = 0;
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL = 5 * 60 * 1000;
 
 const manifestCache = new Map<string, { manifest: AppManifest; fetchedAt: number }>();
 
-/**
- * Fetch the app catalog. Cached for 5 minutes in memory.
- * On successful fetch, also saves to disk for resilience.
- * On failure, falls back to the disk cache.
- */
 export async function fetchCatalog(): Promise<Catalog> {
   if (catalogCache && Date.now() - catalogCacheTime < CACHE_TTL) {
     return catalogCache;
@@ -111,15 +89,9 @@ export async function fetchCatalog(): Promise<Catalog> {
     const yamlText = await fetchFile('catalog.yaml', branch);
     catalogCache = parseCatalog(yamlText);
     catalogCacheTime = Date.now();
-
-    // Persist to disk for offline resilience
-    saveCatalogToFile(catalogCache).catch(() => {
-      /* best effort */
-    });
-
+    saveCatalogToFile(catalogCache).catch(() => {});
     return catalogCache;
   } catch (err) {
-    // Try loading from disk cache
     const cached = await loadCatalogFromFile();
     if (cached) {
       catalogCache = cached.catalog;
@@ -130,13 +102,50 @@ export async function fetchCatalog(): Promise<Catalog> {
   }
 }
 
+// ─── Catalog Entry Resolution ─────────────────────────────
+
 /**
- * Fetch a single app manifest by ID.
- * For native apps: fetches the app-ref pointer from AppMarket, then the actual manifest from the native app's repo.
- * For external apps: fetches the manifest directly from AppMarket.
+ * Get all catalog entries as a flat list (supports v1 and v2 formats).
+ */
+function getAllEntries(catalog: Catalog): CatalogEntry[] {
+  const entries: CatalogEntry[] = [];
+
+  // v2 flat list
+  if (catalog.apps && catalog.apps.length > 0) {
+    entries.push(...catalog.apps);
+  }
+
+  // v1 legacy: convert native + external to flat entries
+  if (catalog.native) {
+    for (const n of catalog.native) {
+      // Only add if not already in v2 apps list
+      if (!entries.find(e => e.id === n.id)) {
+        entries.push({
+          id: n.id,
+          file: n.file,
+          integration: 'native',
+        });
+      }
+    }
+  }
+  if (catalog.external) {
+    for (const e of catalog.external) {
+      if (!entries.find(x => x.id === e.id)) {
+        entries.push(e);
+      }
+    }
+  }
+
+  return entries;
+}
+
+// ─── Manifest Fetching ────────────────────────────────────
+
+/**
+ * Fetch a manifest by app ID from the catalog.
+ * Supports v2 (repo reference or inline file) and v1 (app-ref indirection).
  */
 export async function fetchManifest(appId: string): Promise<AppManifest> {
-  // Check cache
   const cached = manifestCache.get(appId);
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
     return cached.manifest;
@@ -144,80 +153,102 @@ export async function fetchManifest(appId: string): Promise<AppManifest> {
 
   const catalog = await fetchCatalog();
   const branch = await getEffectiveBranch();
+  const entries = getAllEntries(catalog);
+  const entry = entries.find(e => e.id === appId);
 
-  // Check native entries first
-  const nativeEntry = catalog.native.find((e) => e.id === appId);
-  if (nativeEntry) {
-    // Fetch the app-ref pointer from AppMarket
-    const refYaml = await fetchFile(nativeEntry.file, branch);
-    const ref = parseAppRef(refYaml);
+  if (!entry) throw new Error(`App "${appId}" not found in catalog`);
 
-    // Fetch the actual manifest from the native app's repo
-    const [owner, repoName] = ref.repo.split('/');
-    const manifestYaml = await fetchRepoFile(owner, repoName, ref.manifest, branch);
-    const manifest = parseManifest(manifestYaml);
+  let manifest: AppManifest;
+  let resolveOwner = REPO_OWNER;
+  let resolveRepo = REPO_NAME;
 
-    // Resolve relative paths against the native app's repo
-    resolveManifestPaths(manifest, owner, repoName, branch);
+  if (entry.repo) {
+    // v2: manifest lives in app's own repo
+    const [owner, repoName] = entry.repo.split('/');
+    resolveOwner = owner;
+    resolveRepo = repoName;
+    const manifestFile = entry.manifest || 'youeye-app.yaml';
+    const yamlText = await fetchRepoFile(owner, repoName, manifestFile, branch);
+    manifest = parseManifest(yamlText);
+  } else if (entry.file) {
+    // Check if it's an app-ref pointer (v1 native)
+    const yamlText = await fetchFile(entry.file, branch);
 
-    manifestCache.set(appId, { manifest, fetchedAt: Date.now() });
-    return manifest;
-  }
-
-  // Check external entries
-  const externalEntry = catalog.external.find((e) => e.id === appId);
-  if (externalEntry) {
-    const yamlText = await fetchFile(externalEntry.file, branch);
-    const manifest = parseManifest(yamlText);
-
-    // Verify manifest ID matches catalog entry
-    if (manifest.metadata.id !== appId) {
-      throw new Error(`Manifest ID "${manifest.metadata.id}" doesn't match catalog entry "${appId}"`);
+    // Try to parse as app-ref first
+    try {
+      const ref = parseAppRef(yamlText);
+      // It's an app-ref — fetch the actual manifest from the referenced repo
+      const [owner, repoName] = ref.repo.split('/');
+      resolveOwner = owner;
+      resolveRepo = repoName;
+      const manifestYaml = await fetchRepoFile(owner, repoName, ref.manifest, branch);
+      manifest = parseManifest(manifestYaml);
+    } catch {
+      // Not an app-ref — it's a direct manifest file
+      manifest = parseManifest(yamlText);
     }
-
-    // Resolve relative paths against AppMarket repo
-    resolveManifestPaths(manifest, REPO_OWNER, REPO_NAME, branch);
-
-    manifestCache.set(appId, { manifest, fetchedAt: Date.now() });
-    return manifest;
+  } else {
+    throw new Error(`Catalog entry for "${appId}" has neither repo nor file`);
   }
 
-  throw new Error(`App "${appId}" not found in catalog`);
+  resolveManifestPaths(manifest, resolveOwner, resolveRepo, branch);
+  manifestCache.set(appId, { manifest, fetchedAt: Date.now() });
+  return manifest;
 }
 
 /**
- * Wrap an external image URL with the CP image proxy.
- * The proxy fetches the image server-side, bypassing CORS/TLS issues
- * (e.g. self-signed certs on git.byka.wtf).
+ * Fetch a manifest from a repo URL (for custom/non-catalog installs).
+ * Expects youeye-app.yaml at the repo root (or specified filename).
  */
+export async function fetchManifestFromRepo(
+  repoUrl: string,
+  manifestFile = 'youeye-app.yaml',
+  branch?: string,
+): Promise<AppManifest> {
+  // Parse repo URL — accept "owner/repo" or full URL
+  let owner: string;
+  let repo: string;
+
+  if (repoUrl.includes('/') && !repoUrl.includes('://')) {
+    // Format: "potemsla/YE-App-Wiki"
+    [owner, repo] = repoUrl.split('/');
+  } else {
+    // Full URL: extract owner/repo
+    const match = repoUrl.match(/git\.byka\.wtf\/([^/]+)\/([^/]+)/);
+    if (!match) throw new Error(`Cannot parse repo URL: ${repoUrl}`);
+    owner = match[1];
+    repo = match[2].replace(/\.git$/, '');
+  }
+
+  const effectiveBranch = branch || await getEffectiveBranch();
+  const yamlText = await fetchRepoFile(owner, repo, manifestFile, effectiveBranch);
+  const manifest = parseManifest(yamlText);
+  resolveManifestPaths(manifest, owner, repo, effectiveBranch);
+  return manifest;
+}
+
+// ─── Image Proxy ──────────────────────────────────────────
+
 function proxyImageUrl(url: string): string {
   if (!url) return url;
   return `/api/market/image?url=${encodeURIComponent(url)}`;
 }
 
-/**
- * Resolve relative paths in a manifest to absolute Gitea raw URLs,
- * then wrap them with the image proxy so the browser can load them.
- */
 function resolveManifestPaths(manifest: AppManifest, owner: string, repo: string, branch: string): void {
   const baseUrl = `${GITEA_BASE}/${owner}/${repo}/raw/branch/${branch}`;
 
-  // Resolve iconUrl if it's a relative path
   if (manifest.metadata.iconUrl && !manifest.metadata.iconUrl.startsWith('http')) {
     manifest.metadata.iconUrl = `${baseUrl}/${manifest.metadata.iconUrl}`;
   }
-  // Proxy the icon URL so the browser doesn't hit self-signed certs
   if (manifest.metadata.iconUrl) {
     manifest.metadata.iconUrl = proxyImageUrl(manifest.metadata.iconUrl);
   }
 
-  // Resolve screenshot paths
   if (manifest.detail?.screenshots) {
     for (const screenshot of manifest.detail.screenshots) {
       if (screenshot.path && !screenshot.path.startsWith('http')) {
         screenshot.path = `${baseUrl}/${screenshot.path}`;
       }
-      // Proxy the screenshot URL
       if (screenshot.path) {
         screenshot.path = proxyImageUrl(screenshot.path);
       }
@@ -225,24 +256,66 @@ function resolveManifestPaths(manifest: AppManifest, owner: string, repo: string
   }
 }
 
-/**
- * Get all available apps as simplified MarketApp objects for UI display.
- * Iterates over both native and external catalog entries (skips system for now).
- */
+// ─── MarketApp Conversion ─────────────────────────────────
+
+function manifestToMarketApp(manifest: AppManifest): MarketApp {
+  // Determine integration level
+  const integration = manifest.integration || (manifest.type === 'native' ? 'native' : 'basic');
+
+  // Determine SSO support
+  const supportsSSO = !!manifest.sso || manifest.features?.supportsSSO || false;
+
+  // Collect install params from root level or native block
+  const installParams = manifest.installParams?.length
+    ? manifest.installParams
+    : manifest.native?.installParams;
+
+  return {
+    id: manifest.metadata.id,
+    name: manifest.metadata.name,
+    description: manifest.metadata.description,
+    icon: manifest.metadata.icon,
+    iconUrl: manifest.metadata.iconUrl,
+    category: manifest.metadata.category,
+    integration: integration as 'native' | 'basic',
+    type: manifest.type ?? (integration === 'native' ? 'native' : 'marketplace'), // Legacy compat
+    version: manifest.version,
+    defaultSubdomain: manifest.metadata.defaultSubdomain,
+    supportsSSO,
+    website: manifest.metadata.website,
+    tags: manifest.metadata.tags,
+    detail: manifest.detail ? {
+      longDescription: manifest.detail.longDescription,
+      screenshots: manifest.detail.screenshots.map((s) => ({
+        url: s.path,
+        caption: s.caption,
+      })),
+    } : undefined,
+    installParams: installParams?.map((p) => ({
+      name: p.name,
+      label: p.label,
+      required: p.required,
+      description: p.description,
+    })),
+    capabilities: manifest.capabilities ? {
+      widgets: manifest.capabilities.widgets,
+      notifications: manifest.capabilities.notifications,
+      smtp: manifest.capabilities.smtp,
+      connectors: manifest.capabilities.connectors,
+    } : undefined,
+  };
+}
+
+// ─── Public API ───────────────────────────────────────────
+
 export async function fetchAvailableApps(): Promise<MarketApp[]> {
   const catalog = await fetchCatalog();
+  const entries = getAllEntries(catalog);
   const apps: MarketApp[] = [];
 
-  // Collect all entry IDs from native + external
-  const allEntries = [
-    ...catalog.native.map((e) => e.id),
-    ...catalog.external.map((e) => e.id),
-  ];
-
-  // Fetch all manifests in parallel
   const results = await Promise.allSettled(
-    allEntries.map(async (id) => {
-      const manifest = await fetchManifest(id);
+    entries.map(async (entry) => {
+      const manifest = await fetchManifest(entry.id);
       return manifestToMarketApp(manifest);
     })
   );
@@ -256,91 +329,41 @@ export async function fetchAvailableApps(): Promise<MarketApp[]> {
   return apps;
 }
 
-/**
- * Convert an AppManifest to a MarketApp for UI display.
- */
-function manifestToMarketApp(manifest: AppManifest): MarketApp {
-  return {
-    id: manifest.metadata.id,
-    name: manifest.metadata.name,
-    description: manifest.metadata.description,
-    icon: manifest.metadata.icon,
-    iconUrl: manifest.metadata.iconUrl,
-    category: manifest.metadata.category,
-    type: manifest.type ?? 'marketplace',
-    version: manifest.version,
-    defaultSubdomain: manifest.metadata.defaultSubdomain,
-    supportsSSO: manifest.features.supportsSSO,
-    website: manifest.metadata.website,
-    tags: manifest.metadata.tags,
-    detail: manifest.detail ? {
-      longDescription: manifest.detail.longDescription,
-      screenshots: manifest.detail.screenshots.map((s) => ({
-        url: s.path, // already resolved to absolute URL
-        caption: s.caption,
-      })),
-    } : undefined,
-    installParams: manifest.native?.installParams?.map((p) => ({
-      name: p.name,
-      label: p.label,
-      required: p.required,
-      description: p.description,
-    })),
-  };
-}
-
-/**
- * Clear the catalog and manifest caches. Used after catalog updates.
- */
 export function clearCatalogCache(): void {
   catalogCache = null;
   catalogCacheTime = 0;
   manifestCache.clear();
 }
 
-// ─── Catalog Cache Persistence ──────────────────────────────
-
-interface CatalogCacheFile {
-  catalog: Catalog;
-  savedAt: string;
+export async function refreshCatalog(): Promise<Catalog> {
+  clearCatalogCache();
+  return fetchCatalog();
 }
 
-/**
- * Save the catalog to a local cache file for resilience.
- * If Gitea is unreachable on next fetch, the cached version is used.
- */
-async function saveCatalogToFile(catalog: Catalog): Promise<void> {
+export async function getNativeApps(): Promise<MarketApp[]> {
+  let catalog: Catalog;
   try {
-    if (!existsSync(CATALOG_CACHE_DIR)) {
-      await mkdir(CATALOG_CACHE_DIR, { recursive: true });
-    }
-    const cacheData: CatalogCacheFile = {
-      catalog,
-      savedAt: new Date().toISOString(),
-    };
-    await writeFile(CATALOG_CACHE_PATH, JSON.stringify(cacheData, null, 2));
+    catalog = await fetchCatalog();
   } catch {
-    // Best effort — failing to cache is not fatal
+    const cached = await loadCatalogFromFile();
+    if (!cached) return [];
+    catalog = cached.catalog;
   }
+
+  const entries = getAllEntries(catalog);
+  const nativeEntries = entries.filter(e => e.integration === 'native');
+  const nativeApps: MarketApp[] = [];
+
+  for (const entry of nativeEntries) {
+    try {
+      const manifest = await fetchManifest(entry.id);
+      nativeApps.push(manifestToMarketApp(manifest));
+    } catch {}
+  }
+
+  return nativeApps;
 }
 
-/**
- * Load catalog from the local cache file.
- * Returns null if cache doesn't exist or is corrupted.
- */
-async function loadCatalogFromFile(): Promise<CatalogCacheFile | null> {
-  try {
-    if (!existsSync(CATALOG_CACHE_PATH)) return null;
-    const raw = await readFile(CATALOG_CACHE_PATH, 'utf-8');
-    return JSON.parse(raw) as CatalogCacheFile;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Get the age of the catalog cache in human-readable format.
- */
 export async function getCatalogCacheAge(): Promise<string | null> {
   const cache = await loadCatalogFromFile();
   if (!cache) return null;
@@ -349,48 +372,29 @@ export async function getCatalogCacheAge(): Promise<string | null> {
   if (minutes < 60) return `${minutes} minutes ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} hours ago`;
-  const days = Math.floor(hours / 24);
-  return `${days} days ago`;
+  return `${Math.floor(hours / 24)} days ago`;
 }
 
-// ─── Native App Discovery ───────────────────────────────────
+// ─── Catalog Cache Persistence ────────────────────────────
 
-/**
- * Get all native apps from the AppMarket catalog.
- * Uses the catalog.native array directly.
- *
- * Falls back to cached catalog if live fetch fails.
- */
-export async function getNativeApps(): Promise<MarketApp[]> {
-  let catalog: Catalog;
+interface CatalogCacheFile {
+  catalog: Catalog;
+  savedAt: string;
+}
+
+async function saveCatalogToFile(catalog: Catalog): Promise<void> {
   try {
-    catalog = await fetchCatalog();
-  } catch {
-    // Fallback to cached catalog
-    const cached = await loadCatalogFromFile();
-    if (!cached) return [];
-    catalog = cached.catalog;
-  }
-
-  const nativeApps: MarketApp[] = [];
-
-  for (const entry of catalog.native) {
-    try {
-      const manifest = await fetchManifest(entry.id);
-      nativeApps.push(manifestToMarketApp(manifest));
-    } catch {
-      // Skip apps that can't be fetched
-    }
-  }
-
-  return nativeApps;
+    if (!existsSync(CATALOG_CACHE_DIR)) await mkdir(CATALOG_CACHE_DIR, { recursive: true });
+    await writeFile(CATALOG_CACHE_PATH, JSON.stringify({ catalog, savedAt: new Date().toISOString() }, null, 2));
+  } catch {}
 }
 
-/**
- * Force refresh the catalog cache from remote.
- * Called by the "Refresh catalog" button in the App Market UI.
- */
-export async function refreshCatalog(): Promise<Catalog> {
-  clearCatalogCache();
-  return fetchCatalog();
+async function loadCatalogFromFile(): Promise<CatalogCacheFile | null> {
+  try {
+    if (!existsSync(CATALOG_CACHE_PATH)) return null;
+    const raw = await readFile(CATALOG_CACHE_PATH, 'utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }

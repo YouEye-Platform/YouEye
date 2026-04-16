@@ -65,6 +65,7 @@ interface AppInfo {
   icon: string;
   category: string;
   type: string;
+  integration?: "native" | "basic";
   containers: Array<{ name: string; status: string; ip?: string }>;
   version?: string;
   status: string;
@@ -328,7 +329,7 @@ export function AppsListSettings() {
                   <span className="text-xs text-muted-foreground">v{app.version}</span>
                 )}
                 <Badge variant="outline" className="text-xs">
-                  {app.type}
+                  {app.integration === "native" || app.type === "native" ? "native" : app.integration === "basic" ? "community" : app.type || "community"}
                 </Badge>
               </div>
               <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">

@@ -35,6 +35,7 @@ interface MarketApp {
   iconUrl?: string;
   category: string;
   type?: "native" | "marketplace";
+  integration?: "native" | "basic";
   defaultSubdomain: string;
   supportsSSO: boolean;
   estimatedMemory: string;
@@ -269,8 +270,8 @@ export default function AppStorePage() {
 
   // Split into native / external
   const { nativeGroups, externalGroups } = useMemo(() => {
-    const native = filteredApps.filter((a) => a.type === "native");
-    const external = filteredApps.filter((a) => a.type !== "native");
+    const native = filteredApps.filter((a) => a.integration === "native" || a.type === "native");
+    const external = filteredApps.filter((a) => a.integration === "basic" || a.type === "marketplace" || (!a.integration && !a.type));
     return {
       nativeGroups: groupByCategory(native),
       externalGroups: groupByCategory(external),
@@ -409,7 +410,7 @@ export default function AppStorePage() {
               <section>
                 <h2 className="text-xl font-semibold mb-5 flex items-center gap-2">
                   <span className="text-2xl">{"\u{1F4E6}"}</span>
-                  Marketplace Apps
+                  Community Apps
                 </h2>
                 {externalGroups.map(([category, categoryApps]) => (
                   <div key={category} className="mb-6">
