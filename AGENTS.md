@@ -1,3 +1,23 @@
+## v0.2.21.11 — iris — 2026-04-16
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris
+**Task:** Fix SSO env mapping for all native apps + comprehensive install rollback
+
+### Changes
+- `control-panel/src/lib/market/engine.ts` — Replaced `rollbackContainers()` with `rollbackInstall()` that cleans containers, shared DB, Authentik SSO app, Caddy routes, metadata, and secrets on failure at any install step (was only cleaning containers)
+- All 6 native app manifests (`youeye-app.yaml`) — Fixed `AUTHENTIK_URL` mapping from `${sso.issuer}` (OIDC issuer with slug path) to `${authentik.externalUrl}` (base URL). Added `AUTHENTIK_INTERNAL_URL` and `{APP}_EXTERNAL_URL` env vars.
+
+### Test Results
+- Fresh deploy: Notes SSO login verified working after env fix
+- Memos failed install orphan cleanup verified (container, DB, user, SSO app, secrets all removed)
+
+### Notes for Iris
+- All native apps need reinstall to pick up new env mapping (existing installs have old env baked in)
+- IrisClean fresh deploy test still needed before main promotion
+
+---
+
 ## v0.2.21.10 — iris — 2026-04-16
 **Branch:** dev
 **VM:** ye-iris
