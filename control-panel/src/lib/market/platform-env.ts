@@ -92,15 +92,14 @@ let _gatewaySecret: string | null = null;
 async function getGatewaySecret(): Promise<string> {
   if (_gatewaySecret) return _gatewaySecret;
   try {
-    const { readFileSync } = await import('fs');
-    _gatewaySecret = readFileSync('/var/lib/youeye/config/gateway-secret', 'utf-8').trim();
+    const fs = await import('fs');
+    _gatewaySecret = fs.readFileSync('/var/lib/youeye/config/gateway-secret', 'utf-8').trim();
   } catch {
     // Generate and persist if not found
-    const { randomBytes, writeFileSync, mkdirSync } = await import('fs').then(m => ({ ...m, randomBytes: (await import('crypto')).randomBytes, writeFileSync: m.writeFileSync, mkdirSync: m.mkdirSync }));
     const crypto = await import('crypto');
+    const fs = await import('fs');
     _gatewaySecret = crypto.randomBytes(32).toString('hex');
     try {
-      const fs = await import('fs');
       fs.mkdirSync('/var/lib/youeye/config', { recursive: true });
       fs.writeFileSync('/var/lib/youeye/config/gateway-secret', _gatewaySecret, { mode: 0o600 });
     } catch {}
