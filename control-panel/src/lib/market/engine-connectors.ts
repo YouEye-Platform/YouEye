@@ -70,7 +70,7 @@ async function resolveConnectorUrl(
     const first = containers[0];
     if (typeof first === 'string') {
       // v1 format: string array
-      primaryName = (containers as string[]).find((c) => c.includes('main')) ?? (containers[0] as string);
+      primaryName = (containers as unknown as string[]).find((c) => c.includes('main')) ?? (containers[0] as unknown as string);
     } else {
       // v2 format: object array
       const objs = containers as Array<{ name: string; containerName: string; type: string }>;
