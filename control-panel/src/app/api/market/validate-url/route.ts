@@ -110,7 +110,7 @@ function manifestToPreview(manifest: AppManifest): MarketApp {
     type: manifest.type ?? 'marketplace',
     version: manifest.version,
     defaultSubdomain: manifest.metadata.defaultSubdomain,
-    supportsSSO: manifest.features.supportsSSO,
+    supportsSSO: (!!(manifest.sso) || manifest.features?.supportsSSO || false),
     website: manifest.metadata.website,
     tags: manifest.metadata.tags,
     detail: manifest.detail ? {
@@ -249,8 +249,8 @@ export async function POST(request: NextRequest) {
     valid: true,
     manifest: preview,
     capabilities: {
-      sso: manifest.features.supportsSSO,
-      sharedPostgres: manifest.features.requiresSharedPostgres,
+      sso: (!!(manifest.sso) || manifest.features?.supportsSSO || false),
+      sharedPostgres: (manifest.database?.mode === "shared" || manifest.features?.requiresSharedPostgres || false),
       containers: manifest.containers.length,
       language: !!manifest.language,
       notifications: manifest.capabilities?.notifications,

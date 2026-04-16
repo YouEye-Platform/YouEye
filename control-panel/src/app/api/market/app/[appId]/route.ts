@@ -41,9 +41,10 @@ export async function GET(
         iconUrl: manifest.metadata.iconUrl,
         category: manifest.metadata.category,
         type: manifest.type ?? 'marketplace',
+        integration: manifest.integration || (manifest.type === 'native' ? 'native' : 'basic'),
         version: manifest.version,
         defaultSubdomain: manifest.metadata.defaultSubdomain,
-        supportsSSO: manifest.features.supportsSSO,
+        supportsSSO: !!manifest.sso || manifest.features?.supportsSSO || false,
         website: manifest.metadata.website,
         tags: manifest.metadata.tags,
         detail: manifest.detail
