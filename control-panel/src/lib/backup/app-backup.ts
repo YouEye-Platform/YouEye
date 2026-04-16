@@ -267,13 +267,13 @@ export async function backupApp(
       volumePaths.push(appDataPath);
     }
 
-    // Get container names from metadata (v2 format: objects, v1: strings)
-    const containerNames = installMeta.containers.map((c: any) =>
+    // Get container names for volume paths (v2 format: objects, v1: strings)
+    const volumeContainerNames = installMeta.containers.map((c: any) =>
       typeof c === 'string' ? c : c.containerName
     );
 
     // Per-container volume paths for multi-container apps
-    for (const containerName of containerNames) {
+    for (const containerName of volumeContainerNames) {
       const containerPath = path.join(YOUEYE_DATA_DIR, `app-${appId}-${containerName}`);
       if (existsSync(containerPath) && !cacheVolumePaths.has(containerPath)) {
         volumePaths.push(containerPath);
