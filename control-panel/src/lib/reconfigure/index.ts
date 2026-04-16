@@ -326,7 +326,7 @@ async function updateInstalledApp(
 
     // Wait for the primary container to be ready before running SSO steps
     if (meta.enableSSO) {
-      const primaryContainer = meta.containers[0];
+      const primaryContainer = typeof meta.containers[0] === 'string' ? meta.containers[0] : (meta.containers[0] as any)?.containerName;
       const primaryPort = (rawManifest as { containers?: Array<{ primary?: boolean; port?: number }> })
         .containers?.find((c) => c.primary)?.port || 0;
       if (primaryPort > 0) {
@@ -392,7 +392,7 @@ async function updateInstalledApp(
       const ssoConfig = (rawManifest as { sso?: { configure?: { steps?: Array<Record<string, unknown>> } } }).sso;
       if (ssoConfig?.configure?.steps) {
         try {
-          const primaryContainer = meta.containers[0];
+          const primaryContainer = typeof meta.containers[0] === 'string' ? meta.containers[0] : (meta.containers[0] as any)?.containerName;
           const primaryIP = await getContainerIP(primaryContainer);
           const primaryPort = (rawManifest as { containers?: Array<{ primary?: boolean; port?: number }> })
             .containers?.find((c) => c.primary)?.port || 0;
