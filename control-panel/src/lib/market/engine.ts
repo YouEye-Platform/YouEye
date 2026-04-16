@@ -32,8 +32,8 @@ import type {
 import { readFile } from 'fs/promises';
 import { resolveVariables, resolveEnvironment } from './variables';
 import { writeAllConfigFiles } from './config-writer';
-import { saveInstallMetadata } from './metadata';
-import { upsertInstalledApp } from './installed-apps';
+import { saveInstallMetadata, removeInstallMetadata } from './metadata';
+import { upsertInstalledApp, removeInstalledApp } from './installed-apps';
 import { deployOCIContainer, getContainerIP, containerExists } from '../infrastructure/oci-deployer';
 import { deployLXDContainer } from '../infrastructure/lxd-deployer';
 import { incusRequest } from '../incus/server';
@@ -45,11 +45,12 @@ import {
   generateSecretKey,
   generateHexToken,
 } from '../infrastructure/secrets';
-import { addRoute } from '../caddy/client';
+import { addRoute, getRoutes, removeRoute } from '../caddy/client';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
 import {
   isAuthentikAvailable,
   createAuthentikOAuth2App,
+  removeAuthentikOAuth2App,
   executeSSOSteps,
 } from './sso-engine';
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
@@ -65,16 +66,25 @@ import { CONTAINER_DOMAIN } from './constants';
 
 // ─── Install Rollback ─────────────────────────────────────
 
-async function rollbackContainers(
-  containerNames: string[],
+interface RollbackContext {
+  containerNames: string[];
+  appId: string;
+  ssoSlug?: string;
+  subdomain?: string;
+  domain?: string;
+  dbName?: string;
+  dbUser?: string;
+}
+
+async function rollbackInstall(
+  ctx: RollbackContext,
   onEvent: InstallEventCallback,
   totalSteps: number
 ): Promise<void> {
-  if (containerNames.length === 0) return;
+  onEvent({ step: 0, totalSteps, status: 'running', message: 'Rolling back failed install...' });
 
-  onEvent({ step: 0, totalSteps, status: 'running', message: `Rolling back ${containerNames.length} container(s)...` });
-
-  for (const name of containerNames) {
+  // 1. Remove containers
+  for (const name of ctx.containerNames) {
     try {
       if (!(await containerExists(name))) continue;
       try {
@@ -86,11 +96,52 @@ async function rollbackContainers(
         try { await incusRequest('GET', `${result.operation}/wait?timeout=30`, undefined, { timeout: 40_000 }); } catch {}
       }
     } catch (err) {
-      console.error(`[engine] Failed to roll back container ${name}:`, err);
+      console.error(`[engine] Rollback: failed to remove container ${name}:`, err);
     }
   }
 
-  onEvent({ step: 0, totalSteps, status: 'running', message: 'Rollback complete' });
+  // 2. Remove Caddy route
+  if (ctx.subdomain && ctx.domain) {
+    try {
+      const hostname = `${ctx.subdomain}.${ctx.domain}`;
+      const routes = await getRoutes();
+      for (const route of routes) {
+        if (route.hostname === hostname) {
+          await removeRoute(route.id);
+        }
+      }
+    } catch (err) {
+      console.error('[engine] Rollback: failed to remove Caddy route:', err);
+    }
+  }
+
+  // 3. Remove Authentik SSO app
+  if (ctx.ssoSlug) {
+    try {
+      await removeAuthentikOAuth2App(ctx.ssoSlug);
+    } catch (err) {
+      console.error('[engine] Rollback: failed to remove SSO app:', err);
+    }
+  }
+
+  // 4. Drop shared database
+  if (ctx.dbName && ctx.dbUser) {
+    try {
+      await execShell('youeye-postgres',
+        `psql -U youeye -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${ctx.dbName}' AND pid <> pg_backend_pid();"`,
+        { timeout: 10_000 });
+      await execShell('youeye-postgres', `psql -U youeye -c "DROP DATABASE IF EXISTS ${ctx.dbName}"`, { timeout: 10_000 });
+      await execShell('youeye-postgres', `psql -U youeye -c "DROP USER IF EXISTS ${ctx.dbUser}"`, { timeout: 10_000 });
+    } catch (err) {
+      console.error('[engine] Rollback: failed to drop database:', err);
+    }
+  }
+
+  // 5. Remove metadata and secrets
+  try { await removeInstallMetadata(ctx.appId); } catch {}
+  try { await removeInstalledApp(ctx.appId); } catch {}
+
+  onEvent({ step: 0, totalSteps, status: 'running', message: 'Rollback complete — all resources cleaned up' });
 }
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -301,6 +352,16 @@ export async function installApp(
   const dbName = manifest.database?.name || manifest.sharedPostgres?.database || '';
   const dbUser = manifest.database?.user || manifest.sharedPostgres?.user || '';
 
+  // Rollback context — tracks resources created so far for cleanup on failure
+  const rollbackCtx: RollbackContext = {
+    containerNames: [],
+    appId,
+    subdomain: config.subdomain,
+    domain: config.domain,
+    dbName: (dbMode === 'shared' && dbName) ? dbName : undefined,
+    dbUser: (dbMode === 'shared' && dbUser) ? dbUser : undefined,
+  };
+
   function checkCancelled() {
     if (signal?.aborted) throw new Error('Installation cancelled by user');
   }
@@ -414,10 +475,12 @@ export async function installApp(
 
       ssoClientId = result.clientId;
       ssoResult = { clientId: result.clientId, clientSecret: result.clientSecret, slug: ssoSlug };
+      rollbackCtx.ssoSlug = ssoSlug;
 
       emit(onEvent, step, totalSteps, 'success', 'Authentik SSO application created');
     } catch (err) {
       emit(onEvent, step, totalSteps, 'error', 'Failed to create SSO application', String(err));
+      await rollbackInstall(rollbackCtx, onEvent, totalSteps);
       throw err;
     }
   }
@@ -459,6 +522,7 @@ export async function installApp(
     for (const containerSpec of manifest.containers) {
       const containerName = getContainerName(appId, containerSpec.name, manifest.containers.length);
       containerNames.push(containerName);
+      rollbackCtx.containerNames.push(containerName);
 
       const isPrimary = containerSpec.primary || manifest.containers.length === 1;
       if (isPrimary) {
@@ -559,9 +623,14 @@ export async function installApp(
       }
     }
   } catch (err) {
-    await rollbackContainers(containerNames, onEvent, totalSteps);
+    await rollbackInstall(rollbackCtx, onEvent, totalSteps);
     throw err;
   }
+
+  // ── Steps 7-10: Post-deploy (SSO configure, Caddy, metadata, dashboard)
+  // All wrapped in try/catch for comprehensive rollback on failure.
+
+  try {
 
   // ── Step 7: SSO Configure Steps ─────────────────────────
 
@@ -667,6 +736,12 @@ export async function installApp(
     emit(onEvent, step, totalSteps, 'success', 'Registered with dashboard');
   } catch (err) {
     emit(onEvent, step, totalSteps, 'success', `Dashboard registration skipped: ${err}`);
+  }
+
+  } catch (err) {
+    // Comprehensive rollback: clean up containers, DB, SSO, Caddy, metadata
+    await rollbackInstall(rollbackCtx, onEvent, totalSteps);
+    throw err;
   }
 
   emit(onEvent, step, totalSteps, 'success', `${manifest.metadata.name} installed successfully!`);
