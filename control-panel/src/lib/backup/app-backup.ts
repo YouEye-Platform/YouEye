@@ -225,7 +225,7 @@ export async function backupApp(
         appVersion: manifestVersion,
         platformVersion,
         timestamp: new Date().toISOString(),
-        containers: containerNames,
+        containers: installMeta.containers.map((c: any) => typeof c === 'string' ? c : c.containerName),
         subdomain: installMeta.subdomain,
         domain: installMeta.domain,
       }, null, 2)
