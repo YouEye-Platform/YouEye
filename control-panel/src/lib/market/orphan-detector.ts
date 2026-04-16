@@ -31,7 +31,9 @@ export async function detectOrphans(): Promise<OrphanResource[]> {
   const orphans: OrphanResource[] = [];
   const installed = await listInstalledApps();
   const installedAppIds = new Set(installed.map((m) => m.appId));
-  const installedContainers = new Set(installed.flatMap((m) => m.containers));
+  const installedContainers = new Set(installed.flatMap((m) =>
+    m.containers.map((c: any) => typeof c === 'string' ? c : c.containerName)
+  ));
   const installedSubdomains = new Set(
     installed
       .filter((m) => m.subdomain && m.domain)
