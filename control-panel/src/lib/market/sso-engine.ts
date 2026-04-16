@@ -37,7 +37,7 @@ export async function executeSSOSteps(
   sso: SSOConfig,
   baseCtx: Partial<VariableContext>
 ): Promise<void> {
-  if (sso.configure.type === 'none' || sso.configure.steps.length === 0) {
+  if (!sso.configure || sso.configure.type === 'none' || sso.configure.steps.length === 0) {
     return;
   }
 
