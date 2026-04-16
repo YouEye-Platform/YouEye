@@ -39,17 +39,17 @@ Each component is built and released independently using **component-prefixed ta
 
 | Component | Main tag | Dev tag | Agent tag |
 |-----------|----------|---------|-----------|
-| Spine | `spine-v0.2.21` | `spine-dev-v0.2.21.1` | `spine-sebastian-v0.2.21.1` |
-| Control Panel | `cp-v0.2.21` | `cp-dev-v0.2.21.1` | `cp-sebastian-v0.2.21.1` |
-| UI | `ui-v0.2.21` | `ui-dev-v0.2.21.1` | `ui-sebastian-v0.2.21.1` |
+| Spine | `spine-v0.2.22` | `spine-dev-v0.2.22.1` | `spine-sebastian-v0.2.22.1` |
+| Control Panel | `cp-v0.2.22` | `cp-dev-v0.2.22.1` | `cp-sebastian-v0.2.22.1` |
+| UI | `ui-v0.2.22` | `ui-dev-v0.2.22.1` | `ui-sebastian-v0.2.22.1` |
 
 ## Current Versions
 
 | Component | Main | Dev |
 |-----------|------|-----|
-| Spine | 0.2.21 | 0.2.21.11 |
-| Control Panel | 0.2.21 | 0.2.21.11 |
-| UI | 0.2.21 | 0.2.21.11 |
+| Spine | 0.2.22 | 0.2.21.11 |
+| Control Panel | 0.2.22 | 0.2.21.11 |
+| UI | 0.2.22 | 0.2.21.11 |
 
 ## Related Repos
 
