@@ -58,7 +58,9 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
   const metadata = await readInstallMetadata(appId);
 
   if (metadata) {
-    const containers = await Promise.all(metadata.containers.map(getContainerStatus));
+    // Handle both v1 (string[]) and v2 (ContainerMeta[]) formats
+    const containerNames = metadata.containers.map((c: any) => typeof c === 'string' ? c : c.containerName);
+    const containers = await Promise.all(containerNames.map(getContainerStatus));
     const status = deriveAppStatus(containers);
     return {
       appId,

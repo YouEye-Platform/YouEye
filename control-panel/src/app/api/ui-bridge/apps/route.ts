@@ -199,7 +199,8 @@ export async function GET(request: NextRequest) {
         icon: 'Package',
         category: 'user' as const,
         type: 'docker-lxd',
-        containers: meta.containers.map((name) => {
+        containers: meta.containers.map((c: any) => {
+          const name = typeof c === 'string' ? c : c.containerName;
           const state = containerStateMap.get(name);
           return { name, status: state?.status ?? 'not-found', ip: state?.ip };
         }),
