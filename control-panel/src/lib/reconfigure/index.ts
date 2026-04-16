@@ -431,7 +431,7 @@ async function updateInstalledApp(
             }
 
             const { executeSSOSteps } = await import('@/lib/market/sso-engine');
-            await executeSSOSteps(ssoConfig as Parameters<typeof executeSSOSteps>[0], ctx);
+            await executeSSOSteps(ssoConfig as Parameters<typeof executeSSOSteps>[0], ctx as any);
           }
         } catch (err) {
           console.error(`[Reconfigure] Failed to re-run SSO steps for ${appId}:`, err);
