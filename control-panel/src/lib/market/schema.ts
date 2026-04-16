@@ -390,7 +390,7 @@ export const CatalogEntrySchema = z.object({
   file: z.string().optional(),
   // For apps with manifest in their own repo
   repo: z.string().optional(),
-  manifest: z.string().optional().default('youeye-app.yaml'),
+  manifest: z.string().default('youeye-app.yaml'),
   integration: z.enum(['native', 'basic']).default('basic'),
   latestVersion: z.string().optional(),
   minPlatformVersion: z.string().optional(),

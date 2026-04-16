@@ -123,6 +123,7 @@ function getAllEntries(catalog: Catalog): CatalogEntry[] {
         entries.push({
           id: n.id,
           file: n.file,
+          manifest: 'youeye-app.yaml',
           integration: 'native',
         });
       }
