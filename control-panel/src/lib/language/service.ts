@@ -123,7 +123,7 @@ async function getAppsWithLanguageSupport(): Promise<Array<{
         if (manifest?.language) {
           result.push({
             appId: app.appId,
-            containers: app.containers,
+            containers: app.containers.map((c: any) => typeof c === 'string' ? c : c.containerName),
             envVar: manifest.language.env_var,
             format: manifest.language.format || 'iso639',
           });
