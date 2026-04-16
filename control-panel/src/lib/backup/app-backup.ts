@@ -289,7 +289,7 @@ export async function backupApp(
     const spineResult = await spineClient.startBackup({
       target_path: config.targetPath,
       passphrase: config.passphrase,
-      containers: containerNames,
+      containers: volumeContainerNames,
       volume_paths: volumePaths,
       staging_dir: stagingDir,
       hostname: `app-${appId}`,
