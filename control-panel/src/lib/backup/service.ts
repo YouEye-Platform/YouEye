@@ -111,7 +111,7 @@ async function buildBackupPlan(): Promise<{
         plan.volumePaths = resolveHostVolumePaths(meta.appId, manifest, backupSection.volumes);
       } else {
         // Default: all volumes for this app
-        plan.volumePaths = getDefaultVolumePaths(meta.appId, meta.containers);
+        plan.volumePaths = getDefaultVolumePaths(meta.appId, containerNames);
       }
     } else {
       // Default strategy: stop all containers, export all volumes
