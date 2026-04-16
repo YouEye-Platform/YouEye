@@ -594,7 +594,7 @@ export async function updateMarketplaceApp(
         const tagPrefix = spec.source.tagPrefix;
 
         const result = await updateLXDContainer(
-          name, giteaRepo, appDir, spec.source.serviceName || name,
+          name, giteaRepo, appDir, name,
           port, healthEndpoint, tagPrefix, onEvent, step, totalSteps
         );
         step = result.step;
