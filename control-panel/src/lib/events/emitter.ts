@@ -184,8 +184,9 @@ async function deliverToApps(event: PlatformEvent): Promise<void> {
       if (!subscribedEvents || !subscribedEvents.includes(event.event)) continue;
 
       // Find the primary container's IP
-      const primaryContainer = app.containers?.[0];
-      if (!primaryContainer) continue;
+      const firstContainer = app.containers?.[0];
+      if (!firstContainer) continue;
+      const primaryContainer = typeof firstContainer === 'string' ? firstContainer : (firstContainer as any).containerName;
 
       const ip = await getContainerIP(primaryContainer);
       if (!ip) continue;
