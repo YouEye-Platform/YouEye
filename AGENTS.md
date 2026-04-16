@@ -1,3 +1,34 @@
+## v0.2.21.10 — iris — 2026-04-16
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris
+**Task:** Unified App Engine v2 — declarative env_mapping, gateway API, security hardening
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — REWRITTEN: v2 manifest schema (integration, database, env_mapping, container types, SSO setup methods)
+- `control-panel/src/lib/market/types.ts` — REWRITTEN: canonical VariableContext, ContainerMeta, new InstallMetadata
+- `control-panel/src/lib/market/platform-env.ts` — REWRITTEN: buildCanonicalContext() + resolveEnvMapping() + generateAppToken()
+- `control-panel/src/lib/market/engine.ts` — MAJOR REFACTOR: universal container loop, no native/OCI branching
+- `control-panel/src/lib/market/catalog.ts` — REFACTORED: flat catalog, repo URL install support
+- `control-panel/src/lib/market/variables.ts` — UPDATED: generic dot-path resolution for all context namespaces
+- `control-panel/src/lib/market/updater.ts` — REFACTORED: container.type-based, pre/post hooks
+- `control-panel/src/lib/market/uninstaller.ts` — UPDATED: ContainerMeta[] handling
+- `control-panel/src/lib/infrastructure/lxd-deployer.ts` — Removed socket proxies + security.nesting
+- `control-panel/src/lib/backup/*` — UPDATED: ContainerMeta format, volume type cache skip
+- `control-panel/src/lib/apps/gateway-token.ts` — NEW: token re-exports
+- `control-panel/src/app/api/apps/v1/platform/route.ts` — NEW: gateway platform endpoint
+- `control-panel/src/app/api/apps/v1/widgets/sync/route.ts` — NEW: gateway widget sync
+- `control-panel/src/app/api/market/install/route.ts` — UPDATED: repo URL install
+- Various type fixes across reconfigure, events, language, orphan-detector, sso-engine
+- `ui/src/app/app-store/*` — Updated type labels (Native/Community)
+- `ui/src/components/settings/*` — Same
+
+### Notes for Iris (next session)
+- Fresh deploy test on IrisClean required before promoting to main
+- UI next-intl type error worked around with ignoreBuildErrors — needs proper fix
+- Network ACLs deferred to Plans/Queue/network-acls.md
+- BUG-033 likely not real — verify on fresh deploy
+
 ## v0.2.21.9 — iris — 2026-04-15
 **Branch:** dev
 **VM:** ye-iris
