@@ -407,7 +407,7 @@ export async function buildVariableContext(
       apiVersion: 'v2',
       kind: 'app',
       integration: 'basic',
-      metadata: { id: config.appId, name: config.appId, description: '', icon: '', category: 'utilities', defaultSubdomain: config.subdomain },
+      metadata: { id: config.appId, name: config.appId, description: '', icon: '', category: 'utilities', defaultSubdomain: config.subdomain, tags: [] },
       containers: [],
       env_mapping: {},
       secrets: [],
