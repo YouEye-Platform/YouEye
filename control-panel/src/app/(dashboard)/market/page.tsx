@@ -152,8 +152,8 @@ export default function MarketPage() {
   }
 
   // Separate native and marketplace, then split installed/available
-  const nativeApps = apps.filter((a) => a.type === 'native');
-  const marketplaceApps = apps.filter((a) => a.type !== 'native');
+  const nativeApps = apps.filter((a) => a.integration === 'native' || a.type === 'native');
+  const marketplaceApps = apps.filter((a) => a.integration !== 'native' && a.type !== 'native');
 
   const installedApps = marketplaceApps.filter(
     (a) => statuses[a.id]?.status && statuses[a.id]?.status !== 'not-installed'

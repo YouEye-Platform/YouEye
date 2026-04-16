@@ -107,6 +107,7 @@ function manifestToPreview(manifest: AppManifest): MarketApp {
     icon: manifest.metadata.icon,
     iconUrl: manifest.metadata.iconUrl,
     category: manifest.metadata.category,
+    integration: manifest.integration || (manifest.type === 'native' ? 'native' : 'basic'),
     type: manifest.type ?? 'marketplace',
     version: manifest.version,
     defaultSubdomain: manifest.metadata.defaultSubdomain,
