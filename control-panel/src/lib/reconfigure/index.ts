@@ -256,8 +256,8 @@ async function updateInstalledApp(
       }
     }
 
-    const ctx = {
-      app: { id: appId },
+    const ctx: Record<string, unknown> = {
+      app: { id: appId, name: '', subdomain: meta.subdomain, fqdn: `${meta.subdomain}.${newDomain}`, url: newUrl, internal_url: '' },
       install: {
         url: newUrl,
         subdomain: meta.subdomain,
