@@ -1,3 +1,41 @@
+## v0.2.22.5 — sebastian — 2026-04-17
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Session 3: C5 — Settings > Connectors UI, Connection Flow, Credential Management
+
+### Changes
+- `ui/src/app/settings/connectors/page.tsx` — NEW: Connectors settings page (replaces old Apps settings)
+- `ui/src/app/settings/connectors/[appId]/page.tsx` — NEW: Per-app connector management page
+- `ui/src/app/connectors/setup/page.tsx` — NEW: Setup redirect page with redirect URI validation
+- `ui/src/components/settings/connector-app-list.tsx` — NEW: App list with connector status summary
+- `ui/src/components/settings/connector-detail.tsx` — NEW: Capability management, source picker, credential entry
+- `ui/src/components/settings/connector-setup.tsx` — NEW: Full-page source selection with identity indicator
+- `ui/src/app/api/settings/connectors/route.ts` — NEW: List apps with connector status
+- `ui/src/app/api/settings/connectors/[appId]/route.ts` — NEW: Per-app capabilities + connect/disconnect
+- `ui/src/app/api/settings/connectors/credentials/route.ts` — NEW: Credential storage (AES-256-GCM)
+- `ui/src/app/api/v1/connectors/resolve/route.ts` — Returns not-connected status with setupUrl instead of 404
+- `ui/src/app/api/v1/connectors/proxy/route.ts` — Added boundHost enforcement for credential forwarding
+- `ui/src/db/schema.ts` — Added `persistent` to userConnectors, `boundHost` to userConnectorSecrets
+- `ui/src/db/index.ts` — Auto-migration for new columns
+- `ui/src/components/settings/settings-shell.tsx` — Renamed Apps → Connectors in sidebar
+- `ui/src/app/settings/apps/page.tsx` — Redirects to /settings/connectors
+- `ui/src/app/settings/apps/[appId]/page.tsx` — Redirects to /settings/connectors/[appId]
+- `ui/messages/en.json` — Added connectorSettings translation namespace
+
+### Test Results
+- Settings > Connectors page renders with app list (Wiki, Notes, Translate, Search, Weather)
+- Per-app detail page renders with capabilities and direct access section
+- Setup redirect page renders with source selection and identity indicator
+- Sidebar correctly shows "Connectors" with plug icon
+- All other settings pages unaffected
+
+### Notes for Iris
+- Old `/settings/apps` routes redirect to `/settings/connectors` — no broken links
+- `connectorSettings` i18n namespace added to en.json — other locales need translation
+- boundHost enforcement in proxy route prevents credential forwarding to wrong API hosts
+- Admin bridge iframe in detail page returns 404 (CP endpoint doesn't exist yet) — non-blocking
+
 ## v0.2.22.3 — sebastian — 2026-04-17
 **Branch:** sebastian
 **VM:** ye-sebastian
