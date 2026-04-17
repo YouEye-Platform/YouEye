@@ -152,13 +152,9 @@ export function ConnectorAppList() {
                   >
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center">
-                        {app.icon ? (
-                          <DynamicIcon name={app.icon} className="w-4 h-4 text-primary" />
-                        ) : (
-                          <span className="text-xs font-bold text-primary">
-                            {app.name.charAt(0).toUpperCase()}
-                          </span>
-                        )}
+                        <span className="text-xs font-bold text-primary">
+                        {app.name.charAt(0).toUpperCase()}
+                      </span>
                       </div>
                       <div>
                         <div className="text-sm font-medium">{app.name}</div>
