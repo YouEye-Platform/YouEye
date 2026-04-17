@@ -2,8 +2,8 @@
  * Incus Network ACL Management
  *
  * Creates and manages network ACLs for app isolation.
- * Default-deny: no app can reach CP, DB, other apps, or system containers
- * unless explicitly bridged. Apps can only reach YE-UI (gateway).
+ * Apps can reach the internal bridge subnet (system + other containers)
+ * but cannot reach the internet. Bridges add per-pair connectivity.
  */
 
 import { incusRequest } from './server';
@@ -38,6 +38,17 @@ async function aclExists(name: string): Promise<boolean> {
   }
 }
 
+async function getBridgeSubnet(): Promise<string> {
+  try {
+    const res = await incusRequest<{
+      config: Record<string, string>;
+    }>('GET', '/1.0/networks/incusbr0');
+    const addr = res.metadata?.config?.['ipv4.address'];
+    if (addr) return addr;
+  } catch {}
+  return '10.27.59.0/24';
+}
+
 const SYSTEM_CONTAINERS = [
   'youeye-control', 'youeye-ui', 'youeye-caddy',
   'youeye-postgres', 'youeye-authentik', 'youeye-authentik-worker',
@@ -49,45 +60,31 @@ let _aclsInitialized = false;
 export async function ensureNetworkAcls(): Promise<void> {
   if (_aclsInitialized) return;
 
+  const subnet = await getBridgeSubnet();
+  const cidr = subnet.replace(/\.\d+\//, '.0/');
   let created = false;
 
-  // ACL for system containers (used as a tag for matching)
   if (!(await aclExists(ACL_SYSTEM))) {
     await incusRequest('POST', '/1.0/network-acls', {
       name: ACL_SYSTEM,
-      description: 'System containers — allows inbound from isolated apps',
-      ingress: [
-        {
-          action: 'allow',
-          state: 'enabled',
-          source: `@${ACL_APP}`,
-          description: 'Allow app containers to reach system services',
-        },
-      ],
+      description: 'System containers tag',
+      ingress: [],
       egress: [],
     } as AclConfig);
     created = true;
   }
 
-  // ACL for app containers — restrictive
   if (!(await aclExists(ACL_APP))) {
     await incusRequest('POST', '/1.0/network-acls', {
       name: ACL_APP,
-      description: 'App containers — isolated, can only reach system services',
-      ingress: [
-        {
-          action: 'allow',
-          state: 'enabled',
-          source: `@${ACL_SYSTEM}`,
-          description: 'Allow system containers to reach apps (health checks, proxying)',
-        },
-      ],
+      description: 'App containers — allow internal subnet, block internet',
+      ingress: [],
       egress: [
         {
           action: 'allow',
           state: 'enabled',
-          destination: `@${ACL_SYSTEM}`,
-          description: 'Allow reaching YE-UI and system services',
+          destination: cidr,
+          description: 'Allow traffic to internal bridge subnet',
         },
         {
           action: 'allow',
@@ -103,12 +100,16 @@ export async function ensureNetworkAcls(): Promise<void> {
           destination_port: '53',
           description: 'Allow DNS resolution (TCP)',
         },
+        {
+          action: 'reject',
+          state: 'enabled',
+          description: 'Block all other egress (internet)',
+        },
       ],
     } as AclConfig);
     created = true;
   }
 
-  // Apply system ACL to all system containers (idempotent)
   if (created) {
     for (const name of SYSTEM_CONTAINERS) {
       await applySystemAcl(name);
@@ -132,6 +133,8 @@ export async function applySystemAcl(containerName: string): Promise<void> {
       devices.eth0 = { name: 'eth0', network: 'incusbr0', type: 'nic' };
     }
     devices.eth0['security.acls'] = ACL_SYSTEM;
+    devices.eth0['security.acls.default.egress.action'] = 'allow';
+    devices.eth0['security.acls.default.ingress.action'] = 'allow';
 
     await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices });
   } catch (err) {
@@ -151,8 +154,8 @@ export async function applyAppAcl(containerName: string): Promise<void> {
       devices.eth0 = { name: 'eth0', network: 'incusbr0', type: 'nic' };
     }
     devices.eth0['security.acls'] = ACL_APP;
-    devices.eth0['security.acls.default.egress.action'] = 'drop';
-    devices.eth0['security.acls.default.ingress.action'] = 'drop';
+    devices.eth0['security.acls.default.egress.action'] = 'reject';
+    devices.eth0['security.acls.default.ingress.action'] = 'allow';
 
     await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices });
   } catch (err) {
