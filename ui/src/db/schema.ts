@@ -120,6 +120,8 @@ export const apps = pgTable("apps", {
   manifest: jsonb("manifest").$type<Record<string, unknown>>().default({}),
   /** Display order in app drawer */
   displayOrder: integer("display_order").default(0),
+  /** SHA-256 hash of the app's gateway token (for app-to-UI API auth) */
+  tokenHash: text("token_hash"),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
 });

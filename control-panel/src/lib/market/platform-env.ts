@@ -151,12 +151,14 @@ export async function buildCanonicalContext(
   const primaryPort = primaryContainer?.port || 3000;
 
   // Build containers map
-  const containers: Record<string, { internal_host: string; internal_url: string }> = {};
+  const containers: Record<string, { internal_host: string; internal_url: string; url: string }> = {};
   for (const c of manifest.containers) {
     const cn = getContainerName(config.appId, c.name, manifest.containers.length);
+    const isPrimary = c.primary || manifest.containers.length === 1;
     containers[c.name] = {
       internal_host: `${cn}.${CONTAINER_DOMAIN}`,
       internal_url: c.port ? `http://${cn}.${CONTAINER_DOMAIN}:${c.port}` : `http://${cn}.${CONTAINER_DOMAIN}`,
+      url: isPrimary ? `https://${config.subdomain}.${domain}` : '',
     };
   }
 
@@ -198,7 +200,7 @@ export async function buildCanonicalContext(
       internal_url: `http://${primaryContainerName}.${CONTAINER_DOMAIN}:${primaryPort}`,
     },
     integration: {
-      gateway_url: `http://youeye-control.${CONTAINER_DOMAIN}:3000/api/apps/v1`,
+      gateway_url: `http://youeye-ui.${CONTAINER_DOMAIN}:3000/api/apps/v1`,
       app_token: appToken || '',
     },
     containers,

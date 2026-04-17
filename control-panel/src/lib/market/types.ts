@@ -176,6 +176,7 @@ export interface VariableContext {
   containers: Record<string, {
     internal_host: string;
     internal_url: string;
+    url: string;
   }>;
   database: {
     url: string;

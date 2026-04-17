@@ -81,6 +81,9 @@ export async function ensureSchema() {
         updated_at TIMESTAMP DEFAULT NOW()
       )`;
 
+    // C1: App gateway migration — token hash for app-to-UI auth
+    await queryClient`ALTER TABLE apps ADD COLUMN IF NOT EXISTS token_hash TEXT`;
+
     await queryClient`
       CREATE TABLE IF NOT EXISTS user_settings (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
