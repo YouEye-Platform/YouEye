@@ -1,3 +1,38 @@
+## v0.2.22.2 — sebastian — 2026-04-17
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** C1+C2 — App Gateway Migration + Network Isolation + App Bridges
+
+### Changes
+- `control-panel/src/lib/market/engine.ts` — Token hash forwarding to YE-UI on app registration, ACL application after container deploy, bridge dependency detection and auto-activation
+- `control-panel/src/lib/market/platform-env.ts` — Gateway URL redirected from CP to YE-UI (`http://youeye-ui.youeye:3000/api/apps/v1`), added `url` field to containers map (`https://{subdomain}.{domain}`)
+- `control-panel/src/lib/market/types.ts` — Added `url: string` to containers record in VariableContext
+- `control-panel/src/lib/incus/network-acl.ts` — NEW: Incus network ACL management (subnet-based rules, Incus 6.23 compatible)
+- `control-panel/src/lib/bridges/store.ts` — NEW: Bridge CRUD with JSON file storage at `/var/lib/youeye/bridges/bridges.json`
+- `control-panel/src/lib/bridges/manager.ts` — NEW: Bridge lifecycle (detect deps from env_mapping, create, activate with env injection, deactivate, pending bridge auto-activation)
+- `control-panel/src/app/api/bridges/` — NEW: Bridge REST API (list, create, get, update, delete)
+- `control-panel/src/app/embed/` — NEW: Chromeless embed layout + bridge management UI page
+- `ui/src/db/schema.ts` — Added `tokenHash` column to apps table
+- `ui/src/lib/auth/app-token.ts` — NEW: SHA-256 token hash validation for app gateway
+- `ui/src/app/api/apps/v1/platform/route.ts` — NEW: App gateway platform endpoint (migrated from CP)
+- `ui/src/app/api/apps/v1/widgets/sync/route.ts` — NEW: App gateway widget sync endpoint (migrated from CP)
+- `ui/src/app/settings/apps/[appId]/page.tsx` — NEW: Per-app settings page with bridge embed
+- `ui/src/components/settings/bridge-embed.tsx` — NEW: Bridge management iframe component
+
+### Test Results
+- Network isolation verified: apps reach internal subnet, blocked from internet
+- Dashboard, Wiki app confirmed working under ACLs
+- Gateway endpoint returns 401 for unauthenticated requests (correct)
+
+### Notes for Iris
+- `@acl-name` syntax not supported in Incus 6.23 — using subnet-based ACL rules instead
+- System container ACLs need `default.egress.action=allow` and `default.ingress.action=allow`
+- App container ACLs need `default.egress.action=reject` and `default.ingress.action=allow`
+- Bridge system stores data at `/var/lib/youeye/bridges/bridges.json` — needs to survive container recreation
+
+---
+
 ## v0.2.21.11 — iris — 2026-04-16
 **Branch:** dev
 **VM:** ye-iris
