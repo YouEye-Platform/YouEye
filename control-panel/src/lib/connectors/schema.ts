@@ -1,6 +1,7 @@
 /**
- * Zod schemas for connector manifest validation.
- * Connector manifests live in YE-AppMarket/connectors/*.yaml.
+ * Connector Manifest v1 Schema.
+ * No backwards compatibility — this is the only version.
+ * Designed with growth potential: fields for future features exist from day one.
  */
 
 import { z } from 'zod/v4';
@@ -9,9 +10,8 @@ import { z } from 'zod/v4';
 
 export const ConnectorAuthSchema = z.object({
   method: z.enum(['none', 'api-key', 'bearer', 'basic', 'oauth2']),
-  /** Header name for the credential (e.g. "Authorization") */
+  provider: z.string().optional(),
   header: z.string().optional(),
-  /** Header value template (e.g. "Bearer ${config.api_key}") */
   value: z.string().optional(),
 });
 
@@ -33,6 +33,7 @@ export const ConnectorConfigFieldSchema = z.object({
   label: z.string().min(1),
   type: z.enum(['text', 'secret', 'select', 'number', 'toggle']),
   required: z.boolean().default(false),
+  managed: z.boolean().default(false),
   default: z.union([z.string(), z.number(), z.boolean()]).optional(),
   helpText: z.string().optional(),
   helpUrl: z.string().url().optional(),
@@ -46,29 +47,39 @@ export const ConnectorConfigSchema = z.object({
 // ─── Response Transform ─────────────────────────────────────
 
 export const ResponseTransformSchema = z.object({
-  type: z.enum(['json-map', 'passthrough']),
-  /** JSONPath to the root of the result array/object */
+  type: z.enum(['json-map', 'script', 'passthrough']),
   root: z.string().optional(),
-  /** Field mapping: output key → JSONPath expression */
   map: z.record(z.string(), z.string()).optional(),
+  code: z.string().optional(),
 });
 
 // ─── API Endpoints ──────────────────────────────────────────
 
 export const ConnectorEndpointSchema = z.object({
   method: z.enum(['GET', 'POST', 'PUT', 'DELETE']),
-  /** URL template with ${param} substitution */
   url: z.string().min(1),
-  /** Query/body param mapping: upstream param name → template expression */
   params: z.record(z.string(), z.string()).optional(),
-  /** Headers to add to the upstream request */
   headers: z.record(z.string(), z.string()).optional(),
-  /** How to transform the upstream response */
   responseTransform: ResponseTransformSchema.optional(),
 });
 
 export const ConnectorApiSchema = z.object({
   endpoints: z.record(z.string(), ConnectorEndpointSchema),
+});
+
+// ─── UI Components ──────────────────────────────────────────
+
+export const ConnectorUIComponentSchema = z.object({
+  entry: z.string().min(1),
+  protocol: z.string().min(1),
+});
+
+export const ConnectorUISchema = z.record(z.string(), ConnectorUIComponentSchema).optional();
+
+// ─── Capabilities ───────────────────────────────────────────
+
+export const ConnectorCapabilitySchema = z.object({
+  multiple: z.boolean().default(false),
 });
 
 // ─── Metadata ───────────────────────────────────────────────
@@ -78,9 +89,7 @@ export const ConnectorMetadataSchema = z.object({
   name: z.string().min(1),
   description: z.string().min(1),
   icon: z.string().min(1),
-  /** What capability this connector provides (e.g. "encyclopedia", "media-catalog") */
-  provides: z.string().min(1),
-  /** Network requirement */
+  provides: z.array(z.string().min(1)).min(1),
   network: z.enum(['local', 'internet']),
 });
 
@@ -93,13 +102,15 @@ export const ConnectorManifestSchema = z.object({
   permissions: ConnectorPermissionsSchema,
   config: ConnectorConfigSchema.default({ fields: [] }),
   api: ConnectorApiSchema,
+  ui: ConnectorUISchema,
+  capabilities: z.record(z.string(), ConnectorCapabilitySchema).optional(),
 });
 
 // ─── Connector Catalog ──────────────────────────────────────
 
 export const ConnectorCatalogEntrySchema = z.object({
   id: z.string().min(1),
-  file: z.string().min(1),
+  file: z.string().min(1).optional(),
 });
 
 export const ConnectorCatalogSchema = z.object({
@@ -116,3 +127,4 @@ export type ConnectorCatalog = z.infer<typeof ConnectorCatalogSchema>;
 export type ConnectorEndpoint = z.infer<typeof ConnectorEndpointSchema>;
 export type ConnectorAuth = z.infer<typeof ConnectorAuthSchema>;
 export type ResponseTransform = z.infer<typeof ResponseTransformSchema>;
+export type ConnectorUIComponent = z.infer<typeof ConnectorUIComponentSchema>;

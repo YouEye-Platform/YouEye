@@ -178,3 +178,17 @@ export function uiContainerSpec(): LXDContainerSpec {
     port: 3000,
   };
 }
+
+export function connectorsContainerSpec(): LXDContainerSpec {
+  return {
+    name: 'connectors',
+    displayName: 'Connector Runtime',
+    containerName: 'youeye-connectors',
+    image: 'debian/12',
+    imageServer: 'https://images.linuxcontainers.org',
+    imageProtocol: 'simplestreams',
+    nodeVersion: '22.x',
+    appDir: '/opt/youeye-connectors',
+    port: 3001,
+  };
+}
