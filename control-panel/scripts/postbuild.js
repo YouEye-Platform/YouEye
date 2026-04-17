@@ -107,58 +107,99 @@ if (fs.existsSync(publicDest)) {
 copyRecursive(publicSrc, publicDest);
 console.log('Done copying public folder');
 
-// Step 3: Fix pnpm node_modules structure
+// Step 3: Fix pnpm node_modules — collect all packages from .pnpm versioned dirs
 console.log('Fixing pnpm modules...');
-const pnpmNodeModulesPath = path.join(nodeModulesPath, '.pnpm', 'node_modules');
 
-if (!fs.existsSync(pnpmNodeModulesPath)) {
-  console.log('No .pnpm/node_modules found, skipping fix');
-} else {
-  const packages = fs.readdirSync(pnpmNodeModulesPath);
-
-  for (const pkg of packages) {
-    const srcPath = path.join(pnpmNodeModulesPath, pkg);
-    const destPath = path.join(nodeModulesPath, pkg);
-
-    if (fs.existsSync(destPath)) {
-      console.log(`  Skipping ${pkg} (already exists)`);
-      continue;
+function findPnpmPackages(pnpmDir) {
+  const pkgs = new Map();
+  if (!fs.existsSync(pnpmDir)) return pkgs;
+  for (const entry of fs.readdirSync(pnpmDir)) {
+    if (entry === 'node_modules') continue;
+    const nmDir = path.join(pnpmDir, entry, 'node_modules');
+    if (!fs.existsSync(nmDir)) continue;
+    for (const pkg of fs.readdirSync(nmDir)) {
+      if (pkg === '.pnpm') continue;
+      const pkgPath = path.join(nmDir, pkg);
+      if (pkg.startsWith('@')) {
+        for (const sub of fs.readdirSync(pkgPath)) {
+          const key = `${pkg}/${sub}`;
+          const fullPath = path.join(pkgPath, sub);
+          const indexFile = path.join(fullPath, 'dist', 'index.js');
+          if (!pkgs.has(key) || fs.existsSync(indexFile)) {
+            pkgs.set(key, fullPath);
+          }
+        }
+      } else {
+        const indexFile = path.join(pkgPath, 'dist', 'index.js');
+        if (!pkgs.has(pkg) || fs.existsSync(indexFile)) {
+          pkgs.set(pkg, pkgPath);
+        }
+      }
     }
-
-    console.log(`  Copying ${pkg}...`);
-    copyRecursive(srcPath, destPath, true);
   }
-  console.log('Done fixing pnpm modules');
+  return pkgs;
 }
 
-// Step 4: Resolve all symlinks in node_modules (including nested ones)
+function mergePnpmPackages(pnpmDir, targetNodeModules, label) {
+  const pkgs = findPnpmPackages(pnpmDir);
+  for (const [name, srcPath] of pkgs) {
+    const destPath = path.join(targetNodeModules, name);
+    if (fs.existsSync(destPath)) {
+      const hasDist = fs.existsSync(path.join(destPath, 'dist'));
+      if (hasDist) continue;
+      const srcHasDist = fs.existsSync(path.join(srcPath, 'dist'));
+      if (!srcHasDist) continue;
+      console.log(`  [${label}] Replacing incomplete ${name}...`);
+      fs.rmSync(destPath, { recursive: true });
+    } else {
+      console.log(`  [${label}] Adding ${name}...`);
+    }
+    copyRecursive(srcPath, destPath, true);
+  }
+}
+
+const allPnpmDirs = [path.join(nodeModulesPath, '.pnpm')];
+const wsNodeModules = path.join(standalonePath, 'node_modules');
+if (appDir !== standalonePath && fs.existsSync(wsNodeModules)) {
+  allPnpmDirs.push(path.join(wsNodeModules, '.pnpm'));
+  for (const pkg of fs.readdirSync(wsNodeModules)) {
+    if (pkg === '.pnpm') continue;
+    const destPath = path.join(nodeModulesPath, pkg);
+    if (fs.existsSync(destPath)) continue;
+    const srcPath = path.join(wsNodeModules, pkg);
+    copyRecursive(srcPath, destPath, true);
+  }
+}
+
+for (const pnpmDir of allPnpmDirs) {
+  const label = pnpmDir.includes('standalone/node_modules') ? 'workspace' : 'app';
+  mergePnpmPackages(pnpmDir, nodeModulesPath, label);
+}
+console.log('Done fixing pnpm modules');
+
+// Step 4: Resolve all remaining symlinks in node_modules
 console.log('Resolving symlinks in node_modules...');
 function resolveSymlinksInDir(dir) {
   if (!fs.existsSync(dir)) return;
-
-  const items = fs.readdirSync(dir);
-  for (const item of items) {
-    const itemPath = path.join(dir, item);
-
+  for (const item of fs.readdirSync(dir)) {
     if (item === '.pnpm') continue;
-
+    const itemPath = path.join(dir, item);
     try {
       const lstat = fs.lstatSync(itemPath);
-
       if (lstat.isSymbolicLink()) {
-        const realPath = fs.realpathSync(itemPath);
-        console.log(`  Resolving ${item}...`);
-        fs.unlinkSync(itemPath);
-        copyRecursive(realPath, itemPath, true);
+        try {
+          const realPath = fs.realpathSync(itemPath);
+          fs.unlinkSync(itemPath);
+          copyRecursive(realPath, itemPath, true);
+        } catch { fs.unlinkSync(itemPath); }
       } else if (lstat.isDirectory() && item.startsWith('@')) {
         resolveSymlinksInDir(itemPath);
       }
     } catch (err) {
-      console.log(`  Error resolving ${item}: ${err.message}`);
+      console.log(`  Error: ${item}: ${err.message}`);
     }
   }
 }
-
 resolveSymlinksInDir(nodeModulesPath);
 console.log('Done resolving symlinks');
 
