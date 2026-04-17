@@ -190,5 +190,7 @@ export function connectorsContainerSpec(): LXDContainerSpec {
     nodeVersion: '22.x',
     appDir: '/opt/youeye-connectors',
     port: 3001,
+    entryFile: 'server.mjs',
+    postInstallCommands: ['npm rebuild isolated-vm'],
   };
 }

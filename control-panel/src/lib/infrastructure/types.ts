@@ -48,6 +48,8 @@ export interface LXDContainerSpec {
   nodeVersion: string; // e.g. "22.x"
   appDir: string;
   port: number;
+  entryFile?: string;
+  postInstallCommands?: string[];
 }
 
 /** Deployment progress event sent via SSE to caller */
