@@ -16,7 +16,7 @@ import { useTranslations } from "next-intl";
 import {
   User,
   Palette,
-  AppWindow,
+  Plug,
   Shield,
   Paintbrush,
   Users,
@@ -37,7 +37,7 @@ import {
 const USER_SECTIONS = [
   { id: "profile", labelKey: "profile" as const, icon: User, href: "/settings" },
   { id: "appearance", labelKey: "appearance" as const, icon: Palette, href: "/settings/appearance" },
-  { id: "apps", labelKey: "apps" as const, icon: AppWindow, href: "/settings/apps" },
+  { id: "connectors", labelKey: "connectors" as const, icon: Plug, href: "/settings/connectors" },
   { id: "timeline", labelKey: "timeline" as const, icon: Clock, href: "/timeline" },
   { id: "privacy", labelKey: "privacy" as const, icon: Shield, href: "/settings/privacy" },
   { id: "language", labelKey: "language" as const, icon: Languages, href: "/settings/language" },

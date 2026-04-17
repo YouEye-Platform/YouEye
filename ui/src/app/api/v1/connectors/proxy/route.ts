@@ -117,8 +117,27 @@ export async function POST(request: NextRequest) {
       )
     );
 
+  // Extract target hosts from manifest endpoints to enforce boundHost
+  const endpointDef = (manifest as Record<string, unknown>)?.api as
+    | { endpoints?: Record<string, { url?: string }> }
+    | undefined;
+  const targetHosts = new Set<string>();
+  if (endpointDef?.endpoints) {
+    for (const ep of Object.values(endpointDef.endpoints)) {
+      try {
+        const raw = ep.url?.replace(/\$\{[^}]+\}/g, "placeholder") ?? "";
+        const u = new URL(raw);
+        targetHosts.add(u.hostname);
+      } catch { /* skip malformed */ }
+    }
+  }
+
   const userConfig: Record<string, string> = {};
   for (const secret of secrets) {
+    // boundHost enforcement: only attach credentials to matching hosts
+    if (secret.boundHost && targetHosts.size > 0 && !targetHosts.has(secret.boundHost)) {
+      continue;
+    }
     const decrypted = await decryptValue(secret.encryptedValue, secret.nonce);
     if (decrypted) userConfig[secret.key] = decrypted;
   }

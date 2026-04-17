@@ -46,13 +46,15 @@ export async function GET(request: NextRequest) {
     const resolved = await resolveConnector(userId, capability, appId);
 
     if (!resolved) {
-      return NextResponse.json(
-        { error: "No connector available for capability", capability },
-        { status: 404 }
-      );
+      const uiBaseUrl = process.env.UI_EXTERNAL_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "";
+      return NextResponse.json({
+        status: "not-connected",
+        capability,
+        setupUrl: `${uiBaseUrl}/connectors/setup?app=${encodeURIComponent(appId)}&capability=${encodeURIComponent(capability)}`,
+      });
     }
 
-    return NextResponse.json(resolved);
+    return NextResponse.json({ status: "connected", ...resolved });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Resolver error";
     return NextResponse.json({ error: message }, { status: 500 });

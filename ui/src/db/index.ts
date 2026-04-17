@@ -286,6 +286,12 @@ export async function ensureSchema() {
         UNIQUE(user_id, connector_id, key)
       )`;
 
+    // C5: Add persistent column to user_connectors
+    await queryClient`ALTER TABLE user_connectors ADD COLUMN IF NOT EXISTS persistent BOOLEAN DEFAULT TRUE`;
+
+    // C5: Add boundHost column to user_connector_secrets
+    await queryClient`ALTER TABLE user_connector_secrets ADD COLUMN IF NOT EXISTS bound_host TEXT`;
+
     // Seed preset themes if the themes table is empty
     await seedPresetThemes();
 

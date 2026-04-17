@@ -440,6 +440,8 @@ export const userConnectors = pgTable("user_connectors", {
   /** Priority when multiple connectors for same capability (lower = preferred) */
   priority: integer("priority").default(0),
   enabled: boolean("enabled").default(true),
+  /** Whether this choice persists across sessions (false = session-only) */
+  persistent: boolean("persistent").default(true),
   /** User-specific connector config (non-secret settings) */
   config: jsonb("config").$type<Record<string, unknown>>().default({}),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
@@ -463,6 +465,8 @@ export const userConnectorSecrets = pgTable("user_connector_secrets", {
   encryptedValue: text("encrypted_value").notNull(),
   /** Encryption nonce (base64) */
   nonce: text("nonce").notNull(),
+  /** Host this credential is bound to — prevents forwarding to wrong host */
+  boundHost: text("bound_host"),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
 
