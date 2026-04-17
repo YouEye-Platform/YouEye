@@ -40,16 +40,18 @@ Each component is built and released independently using **component-prefixed ta
 | Component | Main tag | Dev tag | Agent tag |
 |-----------|----------|---------|-----------|
 | Spine | `spine-v0.2.22` | `spine-dev-v0.2.22.1` | `spine-sebastian-v0.2.22.1` |
-| Control Panel | `cp-v0.2.22` | `cp-dev-v0.2.22.1` | `cp-sebastian-v0.2.22.2` |
-| UI | `ui-v0.2.22` | `ui-dev-v0.2.22.1` | `ui-sebastian-v0.2.22.1` |
+| Control Panel | `cp-v0.2.22` | `cp-dev-v0.2.22.1` | `cp-sebastian-v0.2.22.3` |
+| UI | `ui-v0.2.22` | `ui-dev-v0.2.22.1` | `ui-sebastian-v0.2.22.3` |
+| Connector Runtime | — | — | `cr-sebastian-v0.2.22.3` |
 
 ## Current Versions
 
 | Component | Main | Dev | Sebastian |
 |-----------|------|-----|-----------|
 | Spine | 0.2.22 | 0.2.21.11 | — |
-| Control Panel | 0.2.22 | 0.2.21.11 | 0.2.22.2 |
-| UI | 0.2.22 | 0.2.21.11 | 0.2.22.2 |
+| Control Panel | 0.2.22 | 0.2.21.11 | 0.2.22.3 |
+| UI | 0.2.22 | 0.2.21.11 | 0.2.22.3 |
+| Connector Runtime | — | — | 0.2.22.3 |
 
 ## Related Repos
 

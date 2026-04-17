@@ -1,3 +1,38 @@
+## v0.2.22.3 — sebastian — 2026-04-17
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Session 2: C3 — Connector Runtime Container + Manifest v1 Schema
+
+### Changes
+- `connector-runtime/` — NEW: stateless Node.js proxy worker (isolated-vm for V8 script transforms, SSRF protection, rate limiting)
+- `control-panel/src/lib/infrastructure/deployer.ts` — Step 9: deploy youeye-connectors container
+- `control-panel/src/lib/infrastructure/lxd-deployer.ts` — entryFile + postInstallCommands support
+- `control-panel/src/lib/infrastructure/manifests.ts` — connectorsContainerSpec()
+- `control-panel/src/lib/infrastructure/types.ts` — entryFile, postInstallCommands fields
+- `control-panel/src/lib/connectors/schema.ts` — Manifest v1: provides[] array, ui section, capabilities
+- `control-panel/src/lib/connectors/registry.ts` — handles provides array + directory-based manifests
+- `control-panel/src/app/api/connectors/[connectorId]/manifest/route.ts` — NEW: manifest API endpoint
+- `control-panel/src/app/api/setup/run/route.ts` — connectors Caddy route in setup wizard
+- `control-panel/scripts/postbuild.js` — Fixed pnpm workspace module flattening
+- `ui/src/app/api/v1/connectors/proxy/route.ts` — NEW: proxy route (decrypt creds → forward to runtime)
+- `ui/src/lib/db/queries/connectors.ts` — CONNECTOR_RUNTIME_URL constant
+
+### Test Results
+- Connector runtime health: OK (38MB memory, 2s uptime)
+- Wikipedia search proxy: "quantum physics" returned results with Quantum mechanics
+- Caddy route: connectors.devvm.test → youeye-connectors:3001
+- All 3 connectors loaded from AppMarket (wikipedia, searxng, whoogle)
+- CP v0.2.22.3 deployed and running (13 containers total)
+- UI v0.2.22.3 deployed and running
+
+### Notes for Iris
+- YE-AppMarket `sebastian` branch has manifest v1 changes (provides[] array) + TMDB connector — merge both repos
+- Connector runtime needs `npm rebuild isolated-vm` after deploy (handled by postInstallCommands in deployer)
+- CP standalone build now uses pnpm-store flattening script — postbuild.js was updated to merge workspace-root node_modules
+- New tag prefix `cr-` for connector runtime releases
+- `tmdb-media` connector is the first with script transforms — requires user API key
+
 ## v0.2.22.2 — sebastian — 2026-04-17
 **Branch:** sebastian
 **VM:** ye-sebastian
