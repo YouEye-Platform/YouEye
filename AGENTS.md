@@ -1,3 +1,57 @@
+## v0.2.22.6 — sebastian — 2026-04-18
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Admin Settings Embed Migration — Phase 1 (infrastructure) + Phase 2 (read-only pages)
+
+### Changes
+
+**Control Panel — Embed Infrastructure (Phase 1):**
+- `control-panel/next.config.ts` — split CSP headers: `/embed/*` routes allow framing from UI origin (`frame-ancestors`), all other routes keep `DENY`
+- `control-panel/src/lib/embed/auth.ts` — NEW: HMAC token validation for signed embed URLs (bridge token as key, 5-min TTL)
+- `control-panel/src/middleware.ts` — added `/embed` to PUBLIC_ROUTES so embed pages bypass session auth (use signed URL tokens instead)
+- `control-panel/src/lib/ui-bridge/auth.ts` — added referer-based auth fallback for embed pages loaded in iframes
+- `control-panel/src/app/embed/layout.tsx` — themed embed layout: reads `theme`/`accent` URL params, injects CSS variables, ResizeObserver for auto-height, postMessage ready/resize signals
+- `control-panel/src/app/embed/health/route.ts` — NEW: health check endpoint for CP restart detection (UI polls this during skeleton state)
+- `control-panel/src/app/embed/app-network/[appId]/page.tsx` + `client.tsx` — rewritten to use new embed auth and theme CSS variables
+
+**Control Panel — Read-Only Embed Pages (Phase 2):**
+- `control-panel/src/app/embed/system/page.tsx` + `client.tsx` — NEW: system dashboard embed (hostname, OS, CPU/RAM/disk, container counts, auto-refresh)
+- `control-panel/src/app/embed/proxy/page.tsx` + `client.tsx` — NEW: proxy routes embed (Caddy reverse proxy table)
+- `control-panel/src/app/embed/backup/page.tsx` + `client.tsx` — NEW: backup history embed (config, schedule, history, auto-refresh)
+
+**UI — Embed Infrastructure (Phase 1):**
+- `ui/src/lib/admin/embed-token.ts` — NEW: server-side HMAC signed URL generation for CP embed pages
+- `ui/src/components/settings/admin-embed.tsx` — NEW: generic iframe wrapper with postMessage handling, auto-resize, skeleton loader during CP restarts, origin validation
+- `ui/src/app/api/ui-bridge/embed-status/route.ts` — NEW: receives CP restart notifications, stores status for AdminEmbed skeleton state
+
+**UI — Settings Pages Migrated (Phase 2):**
+- `ui/src/app/settings/system/page.tsx` — rewritten to use AdminEmbed (was direct bridge API component)
+- `ui/src/app/settings/proxy/page.tsx` — rewritten to use AdminEmbed
+- `ui/src/app/settings/backup/page.tsx` — rewritten to use AdminEmbed
+
+**Bug Fixes:**
+- `control-panel/scripts/postbuild.js` — fixed package completeness heuristic: `@swc/helpers` was missing from standalone build, breaking runtime
+- Embed layout postMessage race condition: resize event now doubles as ready signal, eliminating timing issue where parent missed the ready message
+
+### Test Results
+- System embed loads in iframe with correct system data (hostname, OS, CPU/RAM/disk)
+- Proxy embed loads with Caddy route table
+- Backup embed loads with backup configuration and history
+- Embed pages return 403 without valid signed HMAC token
+- Embed pages respect theme parameter (dark/light)
+- Auto-resize works via postMessage — no scrollbar in parent
+- CP health endpoint responds for restart detection
+- App-network embed continues working with new auth/theme system
+
+### Notes for Iris
+- Phase 1+2 only — phases 3-5 (interactive pages, complex pages, cleanup) remain
+- Old UI admin components (`ui/src/components/settings/admin/*.tsx`) are NOT deleted yet — cleanup is Phase 5
+- The admin proxy route (`/api/admin/[...path]`) is NOT deleted yet — still used by DNS, Containers, Users, Apps pages
+- CP postbuild fix (`@swc/helpers`) should be merged early — it fixes standalone builds for all branches
+- `bridge-embed.tsx` still exists alongside new `admin-embed.tsx` — will be removed in Phase 5
+- Embed auth uses the existing bridge token (`/etc/youeye/ui-bridge-token`) as HMAC key — no new secrets needed
+
 ## v0.2.22.5 — sebastian — 2026-04-17
 **Branch:** sebastian
 **VM:** ye-sebastian
