@@ -1,3 +1,28 @@
+## v0.2.22.7 — sebastian — 2026-04-18
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Admin Settings Embed Migration — Phase 3 (interactive pages: DNS + Containers)
+
+### Changes
+- `control-panel/src/app/embed/dns/page.tsx` + `client.tsx` — new CP embed page for DNS: Pi-Hole stats, top queries/blocked tables, enable/disable toggle
+- `control-panel/src/app/embed/containers/page.tsx` + `client.tsx` — new CP embed page for containers: list with status/IPv4, start/stop/restart actions, confirmation dialog, 30s auto-refresh
+- `ui/src/app/settings/dns/page.tsx` — rewritten to use `<AdminEmbed section="dns">`
+- `ui/src/app/settings/containers/page.tsx` — rewritten to use `<AdminEmbed section="containers">`
+- `control-panel/package.json` + `ui/package.json` — version bumped to 0.2.22.7
+
+### Test Results
+- Playwright: DNS embed loads with stats, toggle visible, auth enforced
+- Playwright: Containers embed loads with 13 containers, Stop/Restart buttons visible
+- Playwright: System embed (Phase 2) still works — no regression
+- Security: unauthenticated and fake-signature requests return Unauthorized
+- Screenshots: Tests/Sebastian/20260418_8/
+
+### Notes for Iris
+- No schema changes, no env var changes
+- Old admin proxy still active for unmigrated pages (Users, Apps, Branding, Language)
+- Phase 4 (complex pages) is next
+
 ## v0.2.22.6 — sebastian — 2026-04-18
 **Branch:** sebastian
 **VM:** ye-sebastian
