@@ -1,3 +1,33 @@
+## v0.2.22.12 — sebastian — 2026-04-18
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** WordArt Preset Gallery — save/load named designs
+
+### Changes
+- `ui/src/db/schema.ts` — new `wordartPresets` table (id, userId, name, style JSONB, scope, createdAt)
+- `ui/src/db/index.ts` — auto-migration CREATE TABLE + index for wordart_presets
+- `ui/src/lib/db/queries/wordart-presets.ts` — NEW: CRUD functions (getUserPresets, getServerPresets, createPreset, deletePreset, renamePreset)
+- `ui/src/app/api/v1/user/wordart/presets/route.ts` — NEW: REST API for user presets (GET/POST/DELETE/PATCH)
+- `ui/src/app/api/ui-bridge/wordart-presets/route.ts` — NEW: bridge API for server presets (bridge-token auth)
+- `ui/src/components/settings/wordart-gallery.tsx` — NEW: gallery component with mini WordArt previews, save/delete/rename
+- `ui/src/components/settings/user-wordart-settings.tsx` — integrated gallery below picker, pickerKey for re-render on preset apply
+- `control-panel/src/app/api/ui/wordart-presets/route.ts` — NEW: CP proxy to UI bridge
+- `control-panel/src/components/embed/WordArtGalleryEmbed.tsx` — NEW: embed-styled gallery for server branding
+- `control-panel/src/app/embed/branding/client.tsx` — integrated server presets gallery
+
+### Test Results
+- Branding page renders with gallery section below picker
+- Save Current flow: input appears, name accepted, preset saved to DB, appears in gallery with mini preview
+- Server Default card applies server-wide style and resets picker
+- Server Branding tab shows CP embed with server presets gallery
+- DB verified: wordart_presets table auto-created, records persisted
+- `sudo spine status` → 13 running, 0 stopped
+
+### Notes for Iris
+- New DB table `wordart_presets` auto-created on first access (no manual migration needed)
+- CP proxy at `/api/ui/wordart-presets` added — already in PUBLIC_ROUTES via `/api/ui` prefix from Phase 6
+
 ## v0.2.22.11 — sebastian — 2026-04-18
 **Branch:** sebastian
 **VM:** ye-sebastian
