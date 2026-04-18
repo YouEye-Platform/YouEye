@@ -1,18 +1,10 @@
-/**
- * AdminEmbed — iframes a CP embed page inside YE-UI settings.
- *
- * Handles:
- * - Auto-height via postMessage resize events
- * - Skeleton loader when CP is unavailable
- * - Origin validation on all messages
- * - Theme forwarding to the embed
- */
-
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
 
 const CP_ORIGIN = process.env.NEXT_PUBLIC_CP_ORIGIN || "https://control.devvm.test";
+const HEALTH_URL = `${CP_ORIGIN}/embed/health`;
+const HEALTH_POLL_INTERVAL = 5000;
 
 interface AdminEmbedProps {
   signedUrl: string;
@@ -22,9 +14,38 @@ interface AdminEmbedProps {
 
 export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const healthRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [height, setHeight] = useState(minHeight);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState(false);
+  const [restarting, setRestarting] = useState<string | null>(null);
+
+  const stopHealthPoll = useCallback(() => {
+    if (healthRef.current) {
+      clearInterval(healthRef.current);
+      healthRef.current = null;
+    }
+  }, []);
+
+  const startHealthPoll = useCallback(() => {
+    stopHealthPoll();
+    healthRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(3000) });
+        if (res.ok) {
+          stopHealthPoll();
+          setRestarting(null);
+          setReady(false);
+          setError(false);
+          if (iframeRef.current) {
+            const url = new URL(signedUrl);
+            url.searchParams.set("ts", String(Math.floor(Date.now() / 1000)));
+            iframeRef.current.src = signedUrl;
+          }
+        }
+      } catch { /* still down */ }
+    }, HEALTH_POLL_INTERVAL);
+  }, [signedUrl, stopHealthPoll]);
 
   const handleMessage = useCallback(
     (e: MessageEvent) => {
@@ -38,21 +59,34 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
       if (e.data?.type === "youeye-embed-resize" && typeof e.data.height === "number") {
         setHeight(Math.max(e.data.height, minHeight));
       }
+
+      if (e.data?.type === "youeye-embed-action") {
+        const action = e.data.action as string;
+        if (action === "cp-restarting") {
+          setRestarting("Control Panel");
+          startHealthPoll();
+        } else if (action === "ui-restarting") {
+          setRestarting("YouEye UI");
+        }
+      }
     },
-    [minHeight]
+    [minHeight, startHealthPoll]
   );
 
   useEffect(() => {
     window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [handleMessage]);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      stopHealthPoll();
+    };
+  }, [handleMessage, stopHealthPoll]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
-      if (!ready) setError(true);
+      if (!ready && !restarting) setError(true);
     }, 8000);
     return () => clearTimeout(timeout);
-  }, [ready]);
+  }, [ready, restarting]);
 
   const handleRetry = () => {
     setError(false);
@@ -61,6 +95,21 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
       iframeRef.current.src = signedUrl;
     }
   };
+
+  if (restarting) {
+    return (
+      <div
+        className="flex flex-col items-center justify-center gap-3 py-16 rounded-lg border border-border bg-background"
+        style={{ minHeight }}
+      >
+        <div className="h-6 w-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+        <p className="text-sm font-medium">{restarting} is restarting...</p>
+        <p className="text-xs text-muted-foreground">
+          This page will reload automatically when the service is back online.
+        </p>
+      </div>
+    );
+  }
 
   if (error) {
     return (

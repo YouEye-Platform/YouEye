@@ -1,36 +1,9 @@
-/**
- * Settings Page — Language Section
- *
- * Allows users to choose their preferred language.
- * Admin users can also change the system-wide default language.
- */
-
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { LanguageSettings } from "@/components/settings/language-settings";
 import { getUserSettings } from "@/lib/db/queries/settings";
-import { getBridgeToken } from "@/lib/admin/bridge-client";
-
-async function getSystemLanguage(): Promise<string | null> {
-  try {
-    const token = getBridgeToken();
-    if (!token) return null;
-
-    const cpUrl = process.env.CP_INTERNAL_URL || "http://youeye-control.youeye:3000";
-    const res = await fetch(`${cpUrl}/api/ui-bridge/language`, {
-      headers: { "X-UI-Bridge-Token": token },
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      return data.language || null;
-    }
-  } catch {
-    // Bridge unavailable
-  }
-  return null;
-}
+import { getSignedEmbedUrl } from "@/lib/admin/embed-token";
+import { UserLanguageSettings } from "@/components/settings/user-language-settings";
+import { AdminEmbed } from "@/components/settings/admin-embed";
 
 export default async function LanguagePage() {
   const session = await getSession();
@@ -39,15 +12,19 @@ export default async function LanguagePage() {
   const settings = await getUserSettings(session.userId);
   const currentUserLang = (settings.language as string) || null;
 
-  const currentSystemLang = session.isAdmin
-    ? await getSystemLanguage()
+  const systemLangUrl = session.isAdmin
+    ? getSignedEmbedUrl("language", session.username, true, { theme: "dark" })
     : null;
 
   return (
-    <LanguageSettings
-      isAdmin={session.isAdmin ?? false}
-      currentUserLanguage={currentUserLang}
-      currentSystemLanguage={currentSystemLang}
-    />
+    <div className="space-y-8">
+      <UserLanguageSettings currentLanguage={currentUserLang} />
+
+      {session.isAdmin && systemLangUrl && (
+        <div className="border-t pt-8">
+          <AdminEmbed signedUrl={systemLangUrl} title="System Language" minHeight={300} />
+        </div>
+      )}
+    </div>
   );
 }
