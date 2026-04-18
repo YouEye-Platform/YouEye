@@ -131,6 +131,49 @@ export async function validateAppToken(token: string): Promise<{ appId: string }
   }
 }
 
+// ─── Install Param Type Coercion ─────────────────────────
+
+/**
+ * Coerce install param values from strings (form input) to their declared types.
+ * The manifest's installParams schema declares types; form values arrive as strings.
+ * This converts them so env vars and variable resolution use correct types.
+ */
+export function coerceInstallParams(
+  params: Record<string, string>,
+  paramDefs: Array<{ name: string; type?: string; default?: string | number | boolean }>,
+): Record<string, string> {
+  const result: Record<string, string> = { ...params };
+
+  for (const def of paramDefs) {
+    const raw = params[def.name];
+    if (raw === undefined && def.default !== undefined) {
+      // Apply default value
+      result[def.name] = String(def.default);
+      continue;
+    }
+    if (raw === undefined) continue;
+
+    switch (def.type) {
+      case 'number': {
+        const n = Number(raw);
+        result[def.name] = isNaN(n) ? raw : String(n);
+        break;
+      }
+      case 'boolean':
+        result[def.name] = (raw === 'true' || raw === '1' || raw === 'yes') ? 'true' : 'false';
+        break;
+      case 'password':
+      case 'select':
+      case 'string':
+      default:
+        // Strings stay as-is
+        break;
+    }
+  }
+
+  return result;
+}
+
 // ─── Canonical Context Builder ────────────────────────────
 
 export async function buildCanonicalContext(

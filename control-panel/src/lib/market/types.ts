@@ -106,11 +106,13 @@ export interface InstallMetadata {
   subdomain: string;
   domain: string;
   enableSSO: boolean;
+  forwardAuthEnabled?: boolean;
   installedAt: string;
   installedVersion?: string;
   containers: ContainerMeta[];
   ssoSlug?: string;
   ssoClientId?: string;
+  forwardAuthSlug?: string;
   manifestSource?: string;
 
   // Legacy v1 field — kept for reading old install.json files
@@ -141,6 +143,9 @@ export interface AppStatusInfo {
   domain?: string;
   url?: string;
   installedAt?: string;
+  healthStatus?: 'healthy' | 'unhealthy' | 'unknown';
+  healthCheckedAt?: string | null;
+  forwardAuthEnabled?: boolean;
 }
 
 export interface ContainerStatusInfo {

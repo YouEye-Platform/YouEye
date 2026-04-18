@@ -56,9 +56,19 @@ export interface StaticResponseHandler {
 }
 
 /**
+ * Forward-auth handler (Authentik forward-auth proxy)
+ */
+export interface ForwardAuthHandler {
+  handler: 'forward_auth';
+  uri: string;
+  copy_headers: string[];
+  trust_forwarded_headers?: boolean;
+}
+
+/**
  * Handler types
  */
-export type RouteHandler = ReverseProxyHandler | RewriteHandler | StaticResponseHandler | { handler: string; [key: string]: unknown };
+export type RouteHandler = ReverseProxyHandler | RewriteHandler | StaticResponseHandler | ForwardAuthHandler | { handler: string; [key: string]: unknown };
 
 /**
  * Caddy route configuration
@@ -161,6 +171,10 @@ export interface RouteFormData {
   path: string;
   upstream: string;
   port: number;
+  forwardAuth?: {
+    uri: string;
+    copyHeaders: string[];
+  };
 }
 
 /**

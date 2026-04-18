@@ -272,26 +272,36 @@ export function normalizePathPattern(path: string | undefined): { normalized: st
 export function formDataToRoute(data: RouteFormData): { route: CaddyRoute; warning?: string } {
   // Build handlers array
   const handlers: CaddyRoute['handle'] = [];
-  
+
+  // Forward-auth handler (prepended before all other handlers)
+  if (data.forwardAuth) {
+    handlers.push({
+      handler: 'forward_auth',
+      uri: data.forwardAuth.uri,
+      copy_headers: data.forwardAuth.copyHeaders,
+      trust_forwarded_headers: true,
+    });
+  }
+
   // Normalize path pattern
   const { normalized: normalizedPath, warning } = normalizePathPattern(data.path);
   const isRootPath = normalizedPath === '/*';
-  
+
   // Add path stripping rewrite if path is not root
   // This makes /control/dashboard -> /dashboard
   if (!isRootPath) {
     // Strip the /* suffix to get the prefix to strip
     const stripPrefix = normalizedPath.slice(0, -2); // Remove /*
-    
+
     handlers.push({
       handler: 'rewrite',
       strip_path_prefix: stripPrefix,
     });
   }
-  
+
   // Normalize upstream for Incus DNS resolution
   const normalizedUpstream = normalizeUpstream(data.upstream);
-  
+
   // Add reverse proxy handler
   handlers.push({
     handler: 'reverse_proxy',
@@ -1185,4 +1195,170 @@ export async function setDomain(domain: string): Promise<void> {
   }
 
   await setConfig(config);
+}
+
+// ─── Forward-Auth Toggle ─────────────────────────────────
+
+/**
+ * Add forward_auth handler to an existing route (by hostname).
+ */
+export async function addForwardAuthToRoute(
+  hostname: string,
+  forwardAuthConfig: { uri: string; copyHeaders: string[] }
+): Promise<void> {
+  const config = await getConfig();
+  if (!config?.apps?.http?.servers) return;
+
+  let modified = false;
+  for (const server of Object.values(config.apps.http.servers)) {
+    for (const route of server.routes || []) {
+      const hosts = (route as any).match?.[0]?.host || [];
+      if (hosts.includes(hostname)) {
+        // Remove any existing forward_auth handler
+        route.handle = route.handle.filter((h: any) => h.handler !== 'forward_auth');
+        // Prepend new one
+        route.handle.unshift({
+          handler: 'forward_auth',
+          uri: forwardAuthConfig.uri,
+          copy_headers: forwardAuthConfig.copyHeaders,
+          trust_forwarded_headers: true,
+        });
+        modified = true;
+      }
+    }
+  }
+
+  if (modified) {
+    await setConfig(config);
+  }
+}
+
+/**
+ * Remove forward_auth handler from an existing route (by hostname).
+ */
+export async function removeForwardAuthFromRoute(hostname: string): Promise<void> {
+  const config = await getConfig();
+  if (!config?.apps?.http?.servers) return;
+
+  let modified = false;
+  for (const server of Object.values(config.apps.http.servers)) {
+    for (const route of server.routes || []) {
+      const hosts = (route as any).match?.[0]?.host || [];
+      if (hosts.includes(hostname)) {
+        const before = route.handle.length;
+        route.handle = route.handle.filter((h: any) => h.handler !== 'forward_auth');
+        if (route.handle.length !== before) modified = true;
+      }
+    }
+  }
+
+  if (modified) {
+    await setConfig(config);
+  }
+}
+
+// ─── Multi-Entrance Routing ──────────────────────────────
+
+export interface EntranceConfig {
+  name: string;
+  path: string;
+  port: number;
+  container?: string;
+  protocol?: 'http' | 'tcp';
+  authLevel?: 'private' | 'public' | 'internal' | 'none';
+  stripPath?: boolean;
+}
+
+/**
+ * Add multiple routes for an app with multiple entrances.
+ */
+export async function addAppRoutes(
+  appId: string,
+  hostname: string,
+  entrances: EntranceConfig[],
+  primaryContainer: string,
+  forwardAuthConfig?: { uri: string; copyHeaders: string[] }
+): Promise<void> {
+  for (const entrance of entrances) {
+    if (entrance.protocol === 'tcp') continue;
+    if (entrance.authLevel === 'internal') continue;
+
+    const containerName = entrance.container
+      ? `app-${appId}-${entrance.container}`
+      : primaryContainer;
+    const normalizedUpstream = normalizeUpstream(containerName);
+
+    const handlers: any[] = [];
+
+    // Add forward-auth for private entrances
+    if (entrance.authLevel === 'private' && forwardAuthConfig) {
+      handlers.push({
+        handler: 'forward_auth',
+        uri: forwardAuthConfig.uri,
+        copy_headers: forwardAuthConfig.copyHeaders,
+        trust_forwarded_headers: true,
+      });
+    }
+
+    // Path stripping
+    if (entrance.stripPath && entrance.path !== '/') {
+      handlers.push({
+        handler: 'rewrite',
+        strip_path_prefix: entrance.path,
+      });
+    }
+
+    // Reverse proxy
+    handlers.push({
+      handler: 'reverse_proxy',
+      upstreams: [{ dial: `${normalizedUpstream}:${entrance.port}` }],
+    });
+
+    const match: { host?: string[]; path?: string[] } = { host: [hostname] };
+    if (entrance.path !== '/') {
+      match.path = [`${entrance.path}/*`];
+    }
+
+    try {
+      const cfg = await getConfig();
+      if (!cfg?.apps?.http?.servers) continue;
+      const serverName = Object.keys(cfg.apps.http.servers)[0];
+      const server = cfg.apps.http.servers[serverName];
+      server.routes = server.routes || [];
+
+      // Remove existing route with same ID if present
+      const routeId = `app-${appId}-${entrance.name}`;
+      server.routes = server.routes.filter((r: any) => r['@id'] !== routeId);
+      server.routes.push({
+        '@id': routeId,
+        match: [match],
+        handle: handlers,
+        terminal: true,
+      });
+      await setConfig(cfg);
+    } catch (err) {
+      console.error(`[caddy] Failed to add entrance route ${entrance.name}:`, err);
+    }
+  }
+}
+
+/**
+ * Remove all routes for an app (by ID prefix).
+ */
+export async function removeAppRoutes(appId: string): Promise<void> {
+  const cfg = await getConfig();
+  if (!cfg?.apps?.http?.servers) return;
+
+  let modified = false;
+  for (const server of Object.values(cfg.apps.http.servers)) {
+    const before = (server.routes || []).length;
+    server.routes = (server.routes || []).filter(
+      (r: any) => !r['@id']?.startsWith(`app-${appId}-`)
+    );
+    if ((server.routes || []).length !== before) modified = true;
+  }
+
+  if (modified) {
+    await setConfig(cfg);
+  }
 }

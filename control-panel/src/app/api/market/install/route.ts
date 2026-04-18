@@ -56,6 +56,28 @@ export async function POST(request: NextRequest) {
 
   const appName = manifest.metadata?.name || config.appId;
 
+  // Validate required install params
+  if (manifest.installParams?.length) {
+    const errors: string[] = [];
+    for (const param of manifest.installParams) {
+      if (param.required && !config.installParams?.[param.name]) {
+        errors.push(`Missing required parameter: ${param.label || param.name}`);
+      }
+      if (param.validation?.pattern && config.installParams?.[param.name]) {
+        const re = new RegExp(param.validation.pattern);
+        if (!re.test(config.installParams[param.name])) {
+          errors.push(param.validation.message || `Invalid value for ${param.label || param.name}`);
+        }
+      }
+    }
+    if (errors.length > 0) {
+      return new Response(
+        JSON.stringify({ error: errors.join('; ') }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
   // Start tracking this install for reconnection support (returns AbortController)
   const abortController = startTracking(config.appId, appName);
 

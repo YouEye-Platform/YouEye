@@ -30,6 +30,9 @@ export interface InstalledApp {
   installedAt: string;
   subdomain: string;
   ssoSlug: string | null;
+  forwardAuthEnabled: boolean;
+  healthStatus: 'healthy' | 'unhealthy' | 'unknown';
+  healthCheckedAt: string | null;
 }
 
 // ─── Table Management ─────────────────────────────────────────
@@ -67,9 +70,22 @@ async function ensureTable(): Promise<void> {
       update_available BOOLEAN NOT NULL DEFAULT FALSE,
       installed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       subdomain TEXT NOT NULL DEFAULT '',
-      sso_slug TEXT
+      sso_slug TEXT,
+      forward_auth_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      health_status TEXT NOT NULL DEFAULT 'unknown',
+      health_checked_at TIMESTAMPTZ
     )
   `);
+
+  // Schema migration: add new columns to existing tables
+  try {
+    await psql(`ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS forward_auth_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
+    await psql(`ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS health_status TEXT NOT NULL DEFAULT 'unknown'`);
+    await psql(`ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS health_checked_at TIMESTAMPTZ`);
+  } catch {
+    // Columns may already exist
+  }
+
   tableCreated = true;
 }
 
@@ -78,7 +94,7 @@ async function ensureTable(): Promise<void> {
 function parseRows(raw: string): InstalledApp[] {
   if (!raw) return [];
   return raw.split('\n').filter(Boolean).map((line) => {
-    const [id, appId, type, installedVersion, catalogVersion, updateAvailable, installedAt, subdomain, ssoSlug] = line.split('|');
+    const [id, appId, type, installedVersion, catalogVersion, updateAvailable, installedAt, subdomain, ssoSlug, forwardAuthEnabled, healthStatus, healthCheckedAt] = line.split('|');
     return {
       id: parseInt(id, 10),
       appId,
@@ -89,11 +105,14 @@ function parseRows(raw: string): InstalledApp[] {
       installedAt,
       subdomain,
       ssoSlug: ssoSlug || null,
+      forwardAuthEnabled: forwardAuthEnabled === 't',
+      healthStatus: (healthStatus as 'healthy' | 'unhealthy' | 'unknown') || 'unknown',
+      healthCheckedAt: healthCheckedAt || null,
     };
   });
 }
 
-const SELECT_ALL = 'SELECT id, app_id, type, installed_version, catalog_version, update_available, installed_at, subdomain, sso_slug FROM installed_apps';
+const SELECT_ALL = 'SELECT id, app_id, type, installed_version, catalog_version, update_available, installed_at, subdomain, sso_slug, forward_auth_enabled, health_status, health_checked_at FROM installed_apps';
 
 export async function getAllInstalledApps(): Promise<InstalledApp[]> {
   await ensureTable();
@@ -114,17 +133,20 @@ export async function upsertInstalledApp(data: {
   installedVersion: string;
   subdomain: string;
   ssoSlug?: string | null;
+  forwardAuthEnabled?: boolean;
 }): Promise<void> {
   await ensureTable();
   const ssoSlug = data.ssoSlug ? `'${data.ssoSlug}'` : 'NULL';
+  const faEnabled = data.forwardAuthEnabled ? 'TRUE' : 'FALSE';
   await psql(`
-    INSERT INTO installed_apps (app_id, type, installed_version, subdomain, sso_slug)
-    VALUES ('${data.appId}', '${data.type}', '${data.installedVersion}', '${data.subdomain}', ${ssoSlug})
+    INSERT INTO installed_apps (app_id, type, installed_version, subdomain, sso_slug, forward_auth_enabled)
+    VALUES ('${data.appId}', '${data.type}', '${data.installedVersion}', '${data.subdomain}', ${ssoSlug}, ${faEnabled})
     ON CONFLICT (app_id) DO UPDATE SET
       type = EXCLUDED.type,
       installed_version = EXCLUDED.installed_version,
       subdomain = EXCLUDED.subdomain,
-      sso_slug = EXCLUDED.sso_slug
+      sso_slug = EXCLUDED.sso_slug,
+      forward_auth_enabled = EXCLUDED.forward_auth_enabled
   `);
 }
 
@@ -339,4 +361,21 @@ export async function getAppsWithUpdatesAvailable(): Promise<InstalledApp[]> {
   await ensureTable();
   const raw = await psql(`${SELECT_ALL} WHERE update_available = TRUE ORDER BY app_id`);
   return parseRows(raw);
+}
+
+// ─── Forward-Auth Toggle ─────────────────────────────────────
+
+export async function updateForwardAuthEnabled(appId: string, enabled: boolean): Promise<void> {
+  await ensureTable();
+  await psql(`UPDATE installed_apps SET forward_auth_enabled = ${enabled} WHERE app_id = '${appId}'`);
+}
+
+// ─── Health Status ───────────────────────────────────────────
+
+export async function updateHealthStatus(
+  appId: string,
+  status: 'healthy' | 'unhealthy' | 'unknown',
+): Promise<void> {
+  await ensureTable();
+  await psql(`UPDATE installed_apps SET health_status = '${status}', health_checked_at = NOW() WHERE app_id = '${appId}'`);
 }
