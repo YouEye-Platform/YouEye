@@ -108,17 +108,41 @@ copyRecursive(publicSrc, publicDest);
 console.log('Done copying public folder');
 
 // Step 3: Fix pnpm node_modules structure
+// In pnpm workspace builds, the .pnpm store lives at the workspace-root level
+// (standalone/node_modules/.pnpm/), not at the app level. We need to check both.
 console.log('Fixing pnpm modules...');
-const pnpmNodeModulesPath = path.join(nodeModulesPath, '.pnpm', 'node_modules');
+const appPnpmPath = path.join(nodeModulesPath, '.pnpm', 'node_modules');
+const workspaceRootModules = path.join(standalonePath, 'node_modules');
+const workspacePnpmPath = path.join(workspaceRootModules, '.pnpm', 'node_modules');
 
-if (!fs.existsSync(pnpmNodeModulesPath)) {
-  console.log('No .pnpm/node_modules found, skipping fix');
+// Try app-level first, then workspace-root level
+const pnpmNodeModulesPath = fs.existsSync(appPnpmPath) ? appPnpmPath
+  : (appDir !== standalonePath && fs.existsSync(workspacePnpmPath)) ? workspacePnpmPath
+  : null;
+
+if (!pnpmNodeModulesPath) {
+  console.log('No .pnpm/node_modules found at app or workspace root, skipping fix');
 } else {
+  console.log(`  Using pnpm store at: ${path.relative(standalonePath, pnpmNodeModulesPath)}`);
   const packages = fs.readdirSync(pnpmNodeModulesPath);
 
   for (const pkg of packages) {
     const srcPath = path.join(pnpmNodeModulesPath, pkg);
     const destPath = path.join(nodeModulesPath, pkg);
+
+    // For scoped packages (@next, @swc, etc.), merge contents rather than skip
+    if (pkg.startsWith('@') && fs.existsSync(destPath)) {
+      const scopedItems = fs.readdirSync(srcPath);
+      for (const sub of scopedItems) {
+        const subSrc = path.join(srcPath, sub);
+        const subDest = path.join(destPath, sub);
+        if (!fs.existsSync(subDest)) {
+          console.log(`  Copying ${pkg}/${sub}...`);
+          copyRecursive(subSrc, subDest, true);
+        }
+      }
+      continue;
+    }
 
     if (fs.existsSync(destPath)) {
       console.log(`  Skipping ${pkg} (already exists)`);
@@ -161,6 +185,82 @@ function resolveSymlinksInDir(dir) {
 
 resolveSymlinksInDir(nodeModulesPath);
 console.log('Done resolving symlinks');
+
+// Step 5: Fix incomplete packages from workspace-root pnpm store
+// Next.js trace sometimes copies only package.json but not the actual code.
+// Look up the correct version in the pnpm versioned store directories.
+const workspacePnpmStore = path.join(workspaceRootModules, '.pnpm');
+if (appDir !== standalonePath && fs.existsSync(workspacePnpmStore)) {
+  console.log('Checking for incomplete packages...');
+
+  function findInPnpmStore(pkgName, pkgVersion) {
+    // pnpm store paths: .pnpm/<name>@<version>/node_modules/<name>/
+    // For scoped: .pnpm/@scope+name@<version>/node_modules/@scope/name/
+    const namePrefix = pkgName.replace('/', '+');
+
+    // Helper: check if a store entry has the actual code (not just package.json)
+    function isComplete(storePath) {
+      if (!fs.existsSync(storePath)) return false;
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(storePath, 'package.json'), 'utf8'));
+        const mainFile = pkg.main || 'index.js';
+        return fs.existsSync(path.join(storePath, mainFile));
+      } catch { return false; }
+    }
+
+    // Try exact version first
+    const exact = path.join(workspacePnpmStore, namePrefix + '@' + pkgVersion, 'node_modules', ...pkgName.split('/'));
+    if (isComplete(exact)) return exact;
+
+    // Scan for any complete version (prefer matching, then any)
+    try {
+      const entries = fs.readdirSync(workspacePnpmStore)
+        .filter(e => e.startsWith(namePrefix + '@'))
+        .sort().reverse(); // newest version likely last alphabetically
+      for (const entry of entries) {
+        const candidate = path.join(workspacePnpmStore, entry, 'node_modules', ...pkgName.split('/'));
+        if (isComplete(candidate)) return candidate;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }
+
+  function fixIncomplete(dir, scopePrefix) {
+    if (!fs.existsSync(dir)) return;
+    for (const item of fs.readdirSync(dir)) {
+      if (item === '.pnpm' || item === '.package-lock.json') continue;
+      const itemPath = path.join(dir, item);
+      try {
+        const lstat = fs.lstatSync(itemPath);
+        if (!lstat.isDirectory()) continue;
+      } catch { continue; }
+
+      const fullName = scopePrefix ? `${scopePrefix}/${item}` : item;
+
+      if (item.startsWith('@')) {
+        fixIncomplete(itemPath, item);
+        continue;
+      }
+
+      const pkgJsonPath = path.join(itemPath, 'package.json');
+      if (!fs.existsSync(pkgJsonPath)) continue;
+      try {
+        const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
+        const mainFile = pkg.main || 'index.js';
+        if (!fs.existsSync(path.join(itemPath, mainFile))) {
+          const storePath = findInPnpmStore(fullName, pkg.version);
+          if (storePath) {
+            console.log(`  Fixing incomplete: ${fullName}@${pkg.version}`);
+            fs.rmSync(itemPath, { recursive: true });
+            copyRecursive(storePath, itemPath, true);
+          }
+        }
+      } catch { /* skip packages with invalid JSON */ }
+    }
+  }
+  fixIncomplete(nodeModulesPath, '');
+  console.log('Done fixing incomplete packages');
+}
 
 console.log('\nPostbuild complete!');
 console.log(`App directory: ${appDir}`);
