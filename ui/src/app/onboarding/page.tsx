@@ -267,6 +267,7 @@ export default function OnboardingPage() {
             <div className="rounded-2xl bg-white/5 border border-white/10 p-6">
               <PINPrompt
                 mode="create"
+                embedded
                 onSuccess={handlePinSuccess}
                 onCancel={handleSkipPin}
               />

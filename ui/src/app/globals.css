@@ -246,6 +246,11 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* Fix tw-animate-css flash: apply start-state before animation runs */
+.animate-in {
+  animation-fill-mode: backwards;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
