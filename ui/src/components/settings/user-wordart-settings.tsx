@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { SiteNameStyle } from "@/lib/db/queries/branding";
 import WordArtPicker from "@/components/wordart/WordArtPicker";
+import { WordArtGallery } from "./wordart-gallery";
 import { Save, Loader2, Check, RotateCcw } from "lucide-react";
 
 interface UserWordartSettingsProps {
@@ -16,6 +17,7 @@ export function UserWordartSettings({ siteName, serverDefault }: UserWordartSett
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [pickerKey, setPickerKey] = useState(0);
 
   const loadOverride = useCallback(async () => {
     try {
@@ -55,10 +57,16 @@ export function UserWordartSettings({ siteName, serverDefault }: UserWordartSett
       if (res.ok) {
         setStyle(serverDefault);
         setHasOverride(false);
+        setPickerKey((k) => k + 1);
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
       }
     } finally { setSaving(false); }
+  };
+
+  const handleApplyPreset = (presetStyle: SiteNameStyle) => {
+    setStyle(presetStyle);
+    setPickerKey((k) => k + 1);
   };
 
   return (
@@ -71,7 +79,7 @@ export function UserWordartSettings({ siteName, serverDefault }: UserWordartSett
       </div>
 
       {loaded ? (
-        <WordArtPicker siteName={siteName} initialStyle={style} onChange={setStyle} compact />
+        <WordArtPicker key={pickerKey} siteName={siteName} initialStyle={style} onChange={setStyle} compact />
       ) : (
         <div className="flex items-center justify-center h-32 rounded-md border border-dashed">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -91,6 +99,17 @@ export function UserWordartSettings({ siteName, serverDefault }: UserWordartSett
             Reset to Default
           </button>
         )}
+      </div>
+
+      <div className="border-t pt-4">
+        <WordArtGallery
+          siteName={siteName}
+          serverDefault={serverDefault}
+          currentStyle={style}
+          onApply={handleApplyPreset}
+          onSave={async () => {}}
+          scope="user"
+        />
       </div>
     </div>
   );

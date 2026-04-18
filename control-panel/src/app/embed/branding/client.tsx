@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import type { SiteNameStyle } from "@/lib/wordart-presets";
 import WordArtPickerInline from "@/components/setup/WordArtPickerInline";
+import WordArtGalleryEmbed from "@/components/embed/WordArtGalleryEmbed";
 
 interface BrandingData {
   site_name: string;
@@ -148,6 +149,15 @@ export function BrandingEmbedClient() {
         <button className="embed-btn" onClick={handleReset}>
           Reset Defaults
         </button>
+      </div>
+
+      {/* Server Presets Gallery */}
+      <div className="embed-card">
+        <WordArtGalleryEmbed
+          siteName={siteName}
+          currentStyle={style}
+          onApply={(s) => setStyle(s)}
+        />
       </div>
     </div>
   );

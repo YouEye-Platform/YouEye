@@ -292,6 +292,20 @@ export async function ensureSchema() {
     // C5: Add boundHost column to user_connector_secrets
     await queryClient`ALTER TABLE user_connector_secrets ADD COLUMN IF NOT EXISTS bound_host TEXT`;
 
+    await queryClient`
+      CREATE TABLE IF NOT EXISTS wordart_presets (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        style JSONB NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'user',
+        created_at TIMESTAMP DEFAULT NOW()
+      )`;
+
+    await queryClient`
+      CREATE INDEX IF NOT EXISTS idx_wordart_presets_user
+        ON wordart_presets(user_id)`;
+
     // Seed preset themes if the themes table is empty
     await seedPresetThemes();
 

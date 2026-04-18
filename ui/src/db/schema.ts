@@ -503,6 +503,25 @@ export const systemSettings = pgTable("system_settings", {
 });
 
 // ============================================
+// WordArt Presets
+// ============================================
+
+/**
+ * Saved WordArt designs — users can save/load named presets.
+ * scope='user': private to the owner. scope='server': admin-created, visible to all.
+ * Active WordArt is always a COPY in userSettings/systemSettings — deleting
+ * a preset never breaks anyone's active style.
+ */
+export const wordartPresets = pgTable("wordart_presets", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  style: jsonb("style").$type<Record<string, unknown>>().notNull(),
+  scope: text("scope").notNull().default("user"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
+});
+
+// ============================================
 // Themes
 // ============================================
 
