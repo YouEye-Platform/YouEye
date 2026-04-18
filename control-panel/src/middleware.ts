@@ -19,6 +19,8 @@ const PUBLIC_ROUTES = [
   '/api/auth/mode',
   '/api/setup/config',
   '/api/setup/ca-cert',
+  '/api/setup/check-dns',
+  '/api/setup/profile',
   '/api/deploy/infrastructure',
   '/api/ui-bridge',
   '/api/deploy/infrastructure/reconcile',
