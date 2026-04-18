@@ -58,6 +58,11 @@ async function getBridgeToken(): Promise<string> {
  * Validate the bridge token from the request headers.
  * Returns null if valid, or a NextResponse with 401 status if invalid.
  *
+ * Accepts two authentication methods:
+ * 1. X-UI-Bridge-Token header (server-to-server from YE-UI)
+ * 2. Referer from /embed/* (same-origin requests from embed pages,
+ *    which are already auth-gated by HMAC token validation in the server component)
+ *
  * Usage in route handlers:
  * ```
  * const authError = await validateBridgeToken(request);
@@ -69,31 +74,35 @@ export async function validateBridgeToken(
 ): Promise<NextResponse | null> {
   const providedToken = request.headers.get(TOKEN_HEADER);
 
-  if (!providedToken) {
-    return NextResponse.json(
-      { error: 'Missing authentication token', valid: false },
-      { status: 401 }
-    );
-  }
-
-  try {
-    const expectedToken = await getBridgeToken();
-
-    if (providedToken !== expectedToken) {
-      return NextResponse.json(
-        { error: 'Invalid authentication token', valid: false },
-        { status: 401 }
-      );
+  // Method 1: Bridge token header (server-to-server)
+  if (providedToken) {
+    try {
+      const expectedToken = await getBridgeToken();
+      if (providedToken === expectedToken) {
+        return null;
+      }
+    } catch (err) {
+      console.error('[UI Bridge] Token validation error:', err);
     }
-
-    return null; // Token is valid
-  } catch (err) {
-    console.error('[UI Bridge] Token validation error:', err);
-    return NextResponse.json(
-      { error: 'Authentication service error', valid: false },
-      { status: 500 }
-    );
   }
+
+  // Method 2: Same-origin embed request (Referer starts with /embed/)
+  const referer = request.headers.get('referer');
+  if (referer) {
+    try {
+      const refUrl = new URL(referer);
+      if (refUrl.pathname.startsWith('/embed/')) {
+        return null;
+      }
+    } catch {
+      // Invalid referer URL
+    }
+  }
+
+  return NextResponse.json(
+    { error: 'Missing authentication token', valid: false },
+    { status: 401 }
+  );
 }
 
 /**

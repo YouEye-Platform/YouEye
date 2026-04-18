@@ -28,6 +28,7 @@ const PUBLIC_ROUTES = [
   '/api/mail/send',       // SMTP proxy — auth via X-App-Slug / X-UI-Bridge-Token
   '/api/connectors',
   '/setup-complete',
+  '/embed',               // Embed pages use HMAC token auth via URL params
 ];
 
 // Exact-match public routes (no prefix matching)

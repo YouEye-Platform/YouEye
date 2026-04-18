@@ -1,18 +1,27 @@
 /**
  * Backup & Restore Settings Page (Admin Only)
  *
- * Displays backup configuration and history from the Control Panel bridge.
- * Supports per-app backup scheduling, backup history, and restore operations.
+ * Embeds CP's backup dashboard via iframe.
  */
 
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { BackupSettings } from "@/components/settings/admin/backup-settings";
+import { getSignedEmbedUrl } from "@/lib/admin/embed-token";
+import { AdminEmbed } from "@/components/settings/admin-embed";
 
 export default async function BackupSettingsPage() {
   const session = await getSession();
   if (!session) redirect("/login");
   if (!session.isAdmin) redirect("/settings");
 
-  return <BackupSettings />;
+  const signedUrl = getSignedEmbedUrl("backup", session.username, true, { theme: "dark" });
+  if (!signedUrl) {
+    return (
+      <div className="text-center py-12 text-muted-foreground">
+        Bridge token not configured. Cannot load admin settings.
+      </div>
+    );
+  }
+
+  return <AdminEmbed signedUrl={signedUrl} title="Backup & Restore" />;
 }
