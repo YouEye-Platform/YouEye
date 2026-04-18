@@ -1,3 +1,36 @@
+## v0.2.22.8 — sebastian — 2026-04-18
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Admin Settings Embed Migration — Phase 4 (complex pages: Users, Apps, Language)
+
+### Changes
+- `control-panel/src/app/embed/users/page.tsx` + `client.tsx` — new CP embed page for user management: full CRUD (list, create, set password, toggle active/admin, delete) via Authentik bridge APIs, system user filtering
+- `control-panel/src/app/embed/apps/page.tsx` + `client.tsx` — new CP embed page for apps & updates: categorized app list (Apps, Infrastructure, System), update status polling, self-destructive CP update flow with postMessage to parent, inline progress bars, edit dialog for user apps
+- `control-panel/src/app/embed/language/page.tsx` + `client.tsx` — new CP embed page for system default language: 5-language selector, two-step save (config + Authentik propagation)
+- `ui/src/components/settings/admin-embed.tsx` — added restart state handling: listens for `youeye-embed-action` postMessage (`cp-restarting`, `ui-restarting`), shows skeleton + spinner during restart, polls CP health endpoint every 5s, auto-reloads iframe when CP comes back
+- `ui/src/components/settings/user-language-settings.tsx` — new native component for user language selection (split from old LanguageSettings)
+- `ui/src/app/settings/users/page.tsx` — rewritten to use `<AdminEmbed section="users">`
+- `ui/src/app/settings/apps-list/page.tsx` — rewritten to use `<AdminEmbed section="apps">`
+- `ui/src/app/settings/language/page.tsx` — hybrid: native `<UserLanguageSettings>` on top + `<AdminEmbed>` for system language below (admin-only)
+- `control-panel/package.json` + `ui/package.json` — version bumped to 0.2.22.8
+
+### Test Results
+- Users embed: 2 users listed, create/password/delete/toggle actions visible, system users filtered
+- Apps embed: 13+ services displayed in 3 categories (Apps, Infrastructure, System), update buttons visible
+- Language embed: hybrid layout renders correctly — user language native, system language embedded (admin-only)
+- System embed (Phase 2): no regression
+- Auth: unauthenticated and invalid signatures correctly rejected
+- CP restart flow: postMessage triggers skeleton loader in parent, health polling restores iframe
+- Screenshots: Tests/Sebastian/20260418_9/
+
+### Notes for Iris
+- No schema changes, no env var changes
+- Branding page kept native (data lives in UI's DB — moving to CP embed would require storage migration)
+- Apps edit endpoint (`PUT /api/ui-bridge/apps/[id]`) doesn't exist on CP — edit button present but non-functional (known issue from old proxy component)
+- Old admin proxy route still active — cleanup is Phase 5
+- Phase 5 (cleanup: delete old proxy, old components, update docs) is next
+
 ## v0.2.22.7 — sebastian — 2026-04-18
 **Branch:** sebastian
 **VM:** ye-sebastian
