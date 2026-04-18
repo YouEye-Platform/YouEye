@@ -1,3 +1,30 @@
+## v0.2.22.9 — sebastian — 2026-04-18
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Admin Settings Embed Migration — Phase 5 (cleanup)
+
+### Changes
+- Deleted 10 orphaned admin components from `ui/src/components/settings/admin/`: system-settings, proxy-settings, backup-settings, dns-settings, container-settings, user-settings, apps-list-settings, update-overlay, bridge-unavailable, access-denied
+- Deleted `ui/src/components/settings/bridge-embed.tsx` — replaced by admin-embed.tsx in Phase 1
+- Deleted `ui/src/components/settings/language-settings.tsx` — replaced by user-language-settings.tsx in Phase 4
+- Deleted `ui/src/lib/admin/types.ts` — only imported by deleted admin components
+- Deleted `ui/src/lib/admin/use-admin.ts` — unused
+- Total: 14 files, 3,359 lines of dead code removed
+- Retained: catch-all proxy route and bridge-client.ts (still used by App Store, branding, config)
+
+### Test Results
+- All 8 embed settings pages verified: System, Proxy, Backup, DNS, Containers, Users, Apps, Language
+- App Store verified working (proxy retained)
+- 13 containers running, 0 stopped
+- Screenshots: Tests/Sebastian/20260418_10/
+
+### Notes for Iris
+- UI-only change (CP unchanged at v0.2.22.8)
+- Catch-all proxy `/api/admin/[...path]` intentionally retained — used by App Store, settings-shell, branding, app-drawer
+- bridge-client.ts intentionally retained — used by 10+ API routes (app registration, widget sync, notifications, etc.)
+- New wiki article: `YE-Wiki/control-panel/admin-settings-embed.md`
+
 ## v0.2.22.8 — sebastian — 2026-04-18
 **Branch:** sebastian
 **VM:** ye-sebastian
