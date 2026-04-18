@@ -1,3 +1,31 @@
+## v0.2.22.1 — vanya — 2026-04-18
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix setup/onboarding animation flash + embedded PINPrompt for UI onboarding
+
+### Changes
+- `control-panel/src/app/globals.css` — Added `.animate-in { animation-fill-mode: backwards; }` to fix tw-animate-css flash on setup wizard steps
+- `ui/src/app/globals.css` — Same animation-fill-mode fix for UI onboarding animations
+- `ui/src/components/timeline/pin-prompt.tsx` — Added `embedded` prop for inline rendering without modal overlay; conditional dark-theme styling for inputs, buttons, labels
+- `ui/src/app/onboarding/page.tsx` — Pass `embedded` to PINPrompt so it renders inline within the onboarding frosted glass wrapper instead of a full-screen modal
+- `control-panel/package.json` — Version bump to 0.2.22.1
+- `ui/package.json` — Version bump to 0.2.22.1
+
+### Test Results
+- CP: v0.2.22.1 deployed, 7 running 0 stopped, dashboard verified
+- UI: v0.2.22.1 deployed, service running, version confirmed in package.json
+- CSS fix verified in built assets: `.animate-in{animation-fill-mode:backwards}` present in both CP and UI CSS
+- Embedded prop verified in built JS: `embedded:!0` in onboarding page
+- Note: full visual test of onboarding flow blocked by SSO not being configured on this VM
+
+### Notes for Iris
+- CSS-only fix for CP (no JS changes)
+- PINPrompt `embedded` prop is additive — default behavior (modal) unchanged
+- SSO must be configured before UI onboarding flow can be visually tested end-to-end
+
+---
+
 ## v0.2.21.11 — iris — 2026-04-16
 **Branch:** dev
 **VM:** ye-iris
