@@ -1,3 +1,27 @@
+## v0.2.22.4 — vanya — 2026-04-18
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Upstream DNS server management in CP DNS settings
+
+### Changes
+- `control-panel/src/lib/apps/pihole-api.ts` — Added `getUpstreamDNS()` and `setUpstreamDNS()` functions using Pi-Hole FTL v6 `/api/config/dns` upstreams endpoint
+- `control-panel/src/app/api/apps/pihole/upstream/route.ts` — New API route (GET/PUT) with IP validation, deduplication, minimum-one-server enforcement
+- `control-panel/src/app/(dashboard)/dns/page.tsx` — Added "Upstream DNS Servers" card to Settings tab with current server list, add/remove, and quick presets (Cloudflare, Google, Quad9, OpenDNS)
+- `control-panel/messages/{en,ru,de,fr,es}.json` — 13 new i18n keys per language for upstream DNS UI
+- `control-panel/package.json` — Version bump to 0.2.22.4
+
+### Test Results
+- API GET returns current upstreams from Pi-Hole
+- API PUT updates upstreams and Pi-Hole reflects change immediately
+- Validation blocks empty arrays and invalid IP formats
+- CP deployed and running v0.2.22.4, spine status 7 running / 0 stopped
+
+### Notes for Iris
+- No breaking changes — additive only
+- Pi-Hole FTL v6 upstreams are at `config.dns.upstreams` (array of strings)
+- No UI changes needed, no Spine changes
+
 ## v0.2.22.3 — vanya — 2026-04-18
 **Branch:** vanya
 **VM:** ye-vanya
