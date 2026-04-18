@@ -27,6 +27,7 @@ const PUBLIC_ROUTES = [
   '/api/market/image',
   '/api/mail/send',       // SMTP proxy — auth via X-App-Slug / X-UI-Bridge-Token
   '/api/connectors',
+  '/api/ui',              // Embed client-side calls to UI bridge proxy (branding, etc.)
   '/setup-complete',
   '/embed',               // Embed pages use HMAC token auth via URL params
 ];
