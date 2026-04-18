@@ -1,3 +1,41 @@
+## v0.2.22.1 — andrew — 2026-04-18
+**Branch:** andrew
+**VM:** ye-andrew
+**Agent:** Andrew
+**Task:** Platform enhancements for external apps — forward-auth SSO, health monitoring, typed install params, multi-entrance routing
+
+### Changes
+- `control-panel/src/lib/market/engine.ts` — Forward-auth proxy creation during install (after SSO step), entrance-aware Caddy routing (multi-route with `addAppRoutes`), typed installParam coercion, rollback cleanup for forward-auth
+- `control-panel/src/lib/market/health-checker.ts` — NEW: Background 5-min health monitor, updates `health_status`/`health_checked_at` in DB
+- `control-panel/src/lib/market/installed-apps.ts` — Added `forward_auth_enabled`, `health_status`, `health_checked_at` columns + schema migration + toggle/health update helpers
+- `control-panel/src/lib/market/authentik.ts` — `createAuthentikForwardAuthApp()` and `removeAuthentikForwardAuthApp()` for proxy provider CRUD
+- `control-panel/src/lib/caddy/client.ts` — `addForwardAuthToRoute()`, `removeForwardAuthFromRoute()`, `addAppRoutes()`, `removeAppRoutes()` for multi-entrance routing
+- `control-panel/src/lib/caddy/types.ts` — `ForwardAuthHandler` interface, updated `RouteHandler` union, `forwardAuth` field on `RouteFormData`
+- `control-panel/src/lib/market/schema.ts` — `EntranceSchema`, typed `InstallParamSchema` (type/choices/validation), `forwardAuth` field
+- `control-panel/src/lib/market/types.ts` — `forwardAuthEnabled`, `forwardAuthSlug` on `InstallMetadata`, health fields on `AppStatusInfo`
+- `control-panel/src/lib/market/platform-env.ts` — `coerceInstallParams()` for type-safe param handling
+- `control-panel/src/lib/market/uninstaller.ts` — Forward-auth cleanup + `removeAppRoutes()` for multi-entrance
+- `control-panel/src/app/api/market/forward-auth/route.ts` — NEW: POST toggle endpoint
+- `control-panel/src/app/api/market/install/route.ts` — Server-side installParam validation
+- `control-panel/src/app/api/market/status/route.ts` — Health + forward-auth data in response
+- `control-panel/scripts/postbuild.js` — Fixed monorepo standalone build (workspace root node_modules merge)
+
+### Test Results
+- TypeScript compilation: clean (0 errors in app code)
+- CP deployed to VM: v0.2.22.1 running, /api/ping healthy
+- Status API: returns `{"apps":[]}` correctly (no installed apps)
+- Forward-auth toggle API: returns `{"error":"App test-app not installed"}` correctly
+- DB schema: `installed_apps` table has all 3 new columns verified via psql
+- CP dashboard: all 7 containers running, service health green
+
+### Notes for Iris
+- Forward-auth is non-fatal during install — if Authentik is unavailable, apps still install without SSO gating
+- Health-checker auto-starts on module import (60s delay after boot, 5-min interval)
+- Postbuild fix is critical for monorepo builds — workspace root deps (styled-jsx, @next/env) must be merged into standalone output
+- No UI changes for health dots or SSO toggle in this version — backend-only, UI can be added in follow-up
+
+---
+
 ## v0.2.21.11 — iris — 2026-04-16
 **Branch:** dev
 **VM:** ye-iris
