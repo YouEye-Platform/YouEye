@@ -13,7 +13,7 @@ export default async function LanguagePage() {
   const currentUserLang = (settings.language as string) || null;
 
   const systemLangUrl = session.isAdmin
-    ? getSignedEmbedUrl("language", session.username, true, { theme: "dark" })
+    ? getSignedEmbedUrl("language", session.username, true)
     : null;
 
   return (

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { useTheme } from "next-themes";
 
 const CP_ORIGIN = process.env.NEXT_PUBLIC_CP_ORIGIN || "https://control.devvm.test";
 const HEALTH_URL = `${CP_ORIGIN}/embed/health`;
@@ -19,6 +20,15 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
   const [ready, setReady] = useState(false);
   const [error, setError] = useState(false);
   const [restarting, setRestarting] = useState<string | null>(null);
+  const { resolvedTheme } = useTheme();
+
+  const sendThemeToEmbed = useCallback(() => {
+    if (!iframeRef.current?.contentWindow || !resolvedTheme) return;
+    iframeRef.current.contentWindow.postMessage(
+      { type: "youeye-embed-theme", theme: resolvedTheme },
+      CP_ORIGIN
+    );
+  }, [resolvedTheme]);
 
   const stopHealthPoll = useCallback(() => {
     if (healthRef.current) {
@@ -54,6 +64,7 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
       if (e.data?.type === "youeye-embed-ready" || e.data?.type === "youeye-embed-resize") {
         setReady(true);
         setError(false);
+        sendThemeToEmbed();
       }
 
       if (e.data?.type === "youeye-embed-resize" && typeof e.data.height === "number") {
@@ -70,7 +81,7 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
         }
       }
     },
-    [minHeight, startHealthPoll]
+    [minHeight, startHealthPoll, sendThemeToEmbed]
   );
 
   useEffect(() => {
@@ -80,6 +91,10 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
       stopHealthPoll();
     };
   }, [handleMessage, stopHealthPoll]);
+
+  useEffect(() => {
+    if (ready) sendThemeToEmbed();
+  }, [resolvedTheme, ready, sendThemeToEmbed]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {

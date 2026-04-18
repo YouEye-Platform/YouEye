@@ -41,10 +41,10 @@ const USER_SECTIONS = [
   { id: "timeline", labelKey: "timeline" as const, icon: Clock, href: "/timeline" },
   { id: "privacy", labelKey: "privacy" as const, icon: Shield, href: "/settings/privacy" },
   { id: "language", labelKey: "language" as const, icon: Languages, href: "/settings/language" },
+  { id: "branding", labelKey: "branding" as const, icon: Paintbrush, href: "/settings/branding" },
 ];
 
 const ADMIN_SECTIONS = [
-  { id: "branding", labelKey: "branding" as const, icon: Paintbrush, href: "/settings/branding" },
   { id: "users", labelKey: "users" as const, icon: Users, href: "/settings/users" },
   { id: "system", labelKey: "system" as const, icon: Server, href: "/settings/system" },
   { id: "containers", labelKey: "containers" as const, icon: Box, href: "/settings/containers" },

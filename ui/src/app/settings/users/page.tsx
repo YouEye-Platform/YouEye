@@ -8,7 +8,7 @@ export default async function UsersSettingsPage() {
   if (!session) redirect("/login");
   if (!session.isAdmin) redirect("/settings");
 
-  const signedUrl = getSignedEmbedUrl("users", session.username, true, { theme: "dark" });
+  const signedUrl = getSignedEmbedUrl("users", session.username, true);
   if (!signedUrl) redirect("/settings");
 
   return <AdminEmbed signedUrl={signedUrl} title="User Management" minHeight={400} />;

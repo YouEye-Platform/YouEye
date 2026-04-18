@@ -8,7 +8,7 @@
 
 import { getSession } from "@/lib/auth";
 import { getUserWidgets } from "@/lib/db/queries/widgets";
-import { getUserBackground } from "@/lib/db/queries/settings";
+import { getUserBackground, getUserWordartOverride } from "@/lib/db/queries/settings";
 import { getBranding } from "@/lib/db/queries/branding";
 import { findUserById, hasCompletedOnboarding } from "@/lib/db/queries/users";
 import { WidgetGrid } from "@/components/dashboard/widget-grid";
@@ -23,11 +23,12 @@ export default async function HomePage() {
   const onboarded = await hasCompletedOnboarding(session.userId);
   if (!onboarded) redirect("/onboarding");
 
-  const [widgets, background, branding, user] = await Promise.all([
+  const [widgets, background, branding, user, wordartOverride] = await Promise.all([
     getUserWidgets(session.userId),
     getUserBackground(session.userId),
     getBranding(),
     findUserById(session.userId),
+    getUserWordartOverride(session.userId),
   ]);
 
   // Use firstName for greeting widget, fall back to display name or username
@@ -40,7 +41,7 @@ export default async function HomePage() {
         email={session.email}
         isAdmin={session.isAdmin}
         siteName={branding.site_name}
-        siteNameStyle={branding.site_name_style}
+        siteNameStyle={wordartOverride ?? branding.site_name_style}
         logoUrl={branding.logo_url}
       />
       <main className="relative h-[calc(100vh-3.5rem)] overflow-hidden">

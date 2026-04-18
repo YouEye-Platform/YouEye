@@ -14,7 +14,7 @@ export default async function ProxySettingsPage() {
   if (!session) redirect("/login");
   if (!session.isAdmin) redirect("/settings");
 
-  const signedUrl = getSignedEmbedUrl("proxy", session.username, true, { theme: "dark" });
+  const signedUrl = getSignedEmbedUrl("proxy", session.username, true);
   if (!signedUrl) {
     return (
       <div className="text-center py-12 text-muted-foreground">

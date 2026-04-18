@@ -15,7 +15,7 @@ export default async function SystemSettingsPage() {
   if (!session) redirect("/login");
   if (!session.isAdmin) redirect("/settings");
 
-  const signedUrl = getSignedEmbedUrl("system", session.username, true, { theme: "dark" });
+  const signedUrl = getSignedEmbedUrl("system", session.username, true);
   if (!signedUrl) {
     return (
       <div className="text-center py-12 text-muted-foreground">

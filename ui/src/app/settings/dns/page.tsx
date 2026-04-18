@@ -8,7 +8,7 @@ export default async function DnsSettingsPage() {
   if (!session) redirect("/login");
   if (!session.isAdmin) redirect("/settings");
 
-  const signedUrl = getSignedEmbedUrl("dns", session.username, true, { theme: "dark" });
+  const signedUrl = getSignedEmbedUrl("dns", session.username, true);
   if (!signedUrl) {
     return (
       <div className="text-center py-12 text-muted-foreground">
