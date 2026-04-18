@@ -1,3 +1,38 @@
+## v0.2.22.3 — vanya — 2026-04-18
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Redesign setup-complete page with platform-specific DNS/cert instructions and trust profiles
+
+### Changes
+- `control-panel/src/lib/crypto/cert-utils.ts` — New utility: PEM→DER conversion and deterministic UUID v5 generation for .mobileconfig profiles
+- `control-panel/src/app/api/setup/check-dns/route.ts` — New endpoint: server-side Pi-Hole wildcard DNS verification, returns `{configured, domain, resolves_to}`
+- `control-panel/src/app/api/setup/profile/route.ts` — New endpoint: platform-specific certificate trust files (iOS/macOS .mobileconfig, Windows/Android DER .crt, Linux PEM)
+- `control-panel/src/components/setup/SetupDnsExplainer.tsx` — Full rewrite: dual DNS/cert status indicators, client-side timing heuristic for detection, platform-detected tabs with OS-specific commands, certificate download buttons, collapsible advanced terminal section
+- `control-panel/src/middleware.ts` — Added `/api/setup/check-dns` and `/api/setup/profile` to PUBLIC_ROUTES
+- `control-panel/messages/en.json` — 22 new i18n keys for setup namespace
+- `control-panel/messages/{ru,fr,de,es}.json` — Matching translations for all 5 languages
+- `control-panel/scripts/postbuild.js` — Fixed pnpm workspace hoisted deps: resolves incomplete packages from workspace-root pnpm store, handles version mismatches in .pnpm symlinks
+
+### Test Results
+- All 3 new API endpoints verified on live VM via curl:
+  - `/api/setup/check-dns` → `{"configured":true,"domain":"devvm.test","resolves_to":"10.10.40.22"}`
+  - `/api/setup/profile?platform=ios` → 200, valid .mobileconfig XML with CA cert payload
+  - `/api/setup/profile?platform=windows` → 200, DER-encoded .crt
+  - `/api/setup/profile?platform=linux` → 200, PEM file
+- Spine health check endpoint (`/api/auth/session`) returns 401 (accepted by Spine)
+- Setup-complete page renders correctly via IP access: dual indicators, platform tabs, download buttons, terminal commands
+- `spine update control` deploys v0.2.22.3 successfully with health check passing
+- Screenshot captured at `/tmp/shots/setup-complete-working.png`
+
+### Notes for Iris
+- The postbuild.js fix is critical for deployment reliability — previous releases had incomplete node_modules
+- Setup-complete page only accessible via IP (setup_completed must be true, accessed through Caddy IP flow)
+- Phase 2 (DoH DNS profiles) is planned but not yet implemented — brief filed at `Plans/To Plan/`
+- v0.2.22.2 release on Gitea has a broken artifact (incomplete deps) — use v0.2.22.3
+
+---
+
 ## v0.2.22.1 — vanya — 2026-04-18
 **Branch:** vanya
 **VM:** ye-vanya
