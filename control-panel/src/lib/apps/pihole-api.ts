@@ -628,3 +628,34 @@ export async function removeDomain(
     method: 'DELETE',
   });
 }
+
+// ─── Upstream DNS servers ───────────────────────────────────────────────────
+
+/**
+ * Get current upstream DNS servers
+ */
+export async function getUpstreamDNS(): Promise<string[]> {
+  const data = await piholeRequest<{
+    config: { dns: { upstreams: string[] } };
+  }>('/api/config/dns');
+  return data.config?.dns?.upstreams || [];
+}
+
+/**
+ * Set upstream DNS servers (replaces the full list)
+ */
+export async function setUpstreamDNS(servers: string[]): Promise<string[]> {
+  const data = await piholeRequest<{
+    config: { dns: { upstreams: string[] } };
+  }>('/api/config/dns', {
+    method: 'PATCH',
+    body: JSON.stringify({
+      config: {
+        dns: {
+          upstreams: servers,
+        },
+      },
+    }),
+  });
+  return data.config?.dns?.upstreams || [];
+}

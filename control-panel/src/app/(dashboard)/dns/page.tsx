@@ -22,6 +22,8 @@ import {
   Eye,
   EyeOff,
   Plus,
+  Server,
+  Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -101,6 +103,10 @@ export default function DNSPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
+  // Upstream DNS states
+  const [upstreamServers, setUpstreamServers] = useState<string[]>([]);
+  const [newUpstream, setNewUpstream] = useState('');
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -114,13 +120,14 @@ export default function DNSPage() {
 
         // If Pi-Hole is running, fetch all data
         if (data.status === 'running') {
-          const [statsRes, domainsRes, queriesRes, dnsRes, cnameRes, passwordRes] = await Promise.all([
+          const [statsRes, domainsRes, queriesRes, dnsRes, cnameRes, passwordRes, upstreamRes] = await Promise.all([
             fetch('/api/apps/pihole/stats'),
             fetch('/api/apps/pihole/domains'),
             fetch('/api/apps/pihole/queries?limit=100'),
             fetch('/api/apps/pihole/dns-records'),
             fetch('/api/apps/pihole/cname-records'),
             fetch('/api/apps/pihole/password'),
+            fetch('/api/apps/pihole/upstream'),
           ]);
 
           if (statsRes.ok) {
@@ -152,6 +159,11 @@ export default function DNSPage() {
           if (passwordRes.ok) {
             const passwordData = await passwordRes.json();
             setPasswordStatus(passwordData);
+          }
+
+          if (upstreamRes.ok) {
+            const upstreamData = await upstreamRes.json();
+            setUpstreamServers(upstreamData.upstreams || []);
           }
         }
       }
@@ -439,6 +451,108 @@ export default function DNSPage() {
       await fetchData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to change password');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleAddUpstream = async (server: string) => {
+    const trimmed = server.trim();
+    if (!trimmed) return;
+    if (upstreamServers.includes(trimmed)) {
+      setError('This server is already in the list');
+      return;
+    }
+
+    setActionLoading(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const response = await authenticatedFetch('/api/apps/pihole/upstream', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ upstreams: [...upstreamServers, trimmed] }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to add upstream server');
+      }
+
+      setUpstreamServers(data.upstreams || []);
+      setSuccess(t('upstreamAdded'));
+      setNewUpstream('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add upstream server');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRemoveUpstream = async (server: string) => {
+    const remaining = upstreamServers.filter(s => s !== server);
+    if (remaining.length === 0) {
+      setError(t('upstreamMinOne'));
+      return;
+    }
+
+    setActionLoading(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const response = await authenticatedFetch('/api/apps/pihole/upstream', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ upstreams: remaining }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to remove upstream server');
+      }
+
+      setUpstreamServers(data.upstreams || []);
+      setSuccess(t('upstreamRemoved'));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove upstream server');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const UPSTREAM_PRESETS: { name: string; servers: string[] }[] = [
+    { name: 'Cloudflare', servers: ['1.1.1.1', '1.0.0.1'] },
+    { name: 'Google', servers: ['8.8.8.8', '8.8.4.4'] },
+    { name: 'Quad9', servers: ['9.9.9.9', '149.112.112.112'] },
+    { name: 'OpenDNS', servers: ['208.67.222.222', '208.67.220.220'] },
+  ];
+
+  const handleApplyPreset = async (servers: string[]) => {
+    setActionLoading(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const response = await authenticatedFetch('/api/apps/pihole/upstream', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ upstreams: servers }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to apply preset');
+      }
+
+      setUpstreamServers(data.upstreams || []);
+      setSuccess(t('upstreamUpdated'));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to apply preset');
     } finally {
       setActionLoading(false);
     }
@@ -1052,6 +1166,103 @@ export default function DNSPage() {
 
               {activeTab === 'settings' && (
                 <div className="space-y-4">
+                  {/* Upstream DNS Servers */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <Server className="h-5 w-5" />
+                        {t('upstreamDns')}
+                      </CardTitle>
+                      <CardDescription>
+                        {t('upstreamDnsDesc')}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {/* Current servers */}
+                      <div className="border rounded-lg overflow-hidden">
+                        {upstreamServers.length === 0 ? (
+                          <div className="text-center py-6 text-gray-500">
+                            {t('noUpstreamServers')}
+                          </div>
+                        ) : (
+                          <table className="w-full">
+                            <thead className="bg-gray-50 border-b">
+                              <tr>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">{t('server')}</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">{tc('actions')}</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                              {upstreamServers.map((server, idx) => (
+                                <tr key={idx} className="hover:bg-gray-50">
+                                  <td className="px-4 py-2 text-sm font-mono">{server}</td>
+                                  <td className="px-4 py-2 text-right">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleRemoveUpstream(server)}
+                                      disabled={actionLoading || upstreamServers.length <= 1}
+                                      className="text-red-600 hover:text-red-700"
+                                      title={upstreamServers.length <= 1 ? t('upstreamMinOne') : ''}
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+
+                      {/* Add custom server */}
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          handleAddUpstream(newUpstream);
+                        }}
+                        className="flex gap-3 items-end"
+                      >
+                        <div className="flex-1 max-w-xs">
+                          <label className="text-sm font-medium text-gray-700 mb-1 block">{t('addUpstream')}</label>
+                          <Input
+                            placeholder="8.8.8.8"
+                            value={newUpstream}
+                            onChange={(e) => setNewUpstream(e.target.value)}
+                          />
+                        </div>
+                        <Button type="submit" disabled={actionLoading || !newUpstream.trim()}>
+                          {actionLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
+                          {tc('add')}
+                        </Button>
+                      </form>
+
+                      {/* Presets */}
+                      <div>
+                        <label className="text-sm font-medium text-gray-700 mb-2 block">{t('presets')}</label>
+                        <div className="flex flex-wrap gap-2">
+                          {UPSTREAM_PRESETS.map((preset) => (
+                            <Button
+                              key={preset.name}
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleApplyPreset(preset.servers)}
+                              disabled={actionLoading}
+                              className="text-sm"
+                            >
+                              <Zap className="h-3 w-3 mr-1.5" />
+                              {preset.name}
+                              <span className="text-gray-400 ml-1.5 font-mono text-xs">
+                                {preset.servers[0]}
+                              </span>
+                            </Button>
+                          ))}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-2">{t('presetsDesc')}</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+
                   {/* Password Management */}
                   <Card>
                     <CardHeader>

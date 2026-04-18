@@ -471,7 +471,18 @@
     "removePihole": "Pi-Hole entfernen",
     "startToView": "Starten Sie Pi-Hole für DNS-Statistiken",
     "stop": "Stoppen",
-    "start": "Starten"
+    "start": "Starten",
+    "upstreamDns": "Upstream-DNS-Server",
+    "upstreamDnsDesc": "DNS-Server, an die Pi-Hole Anfragen weiterleitet, wenn sie nicht blockiert oder zwischengespeichert sind",
+    "noUpstreamServers": "Keine Upstream-DNS-Server konfiguriert",
+    "server": "Server",
+    "addUpstream": "Server hinzufügen",
+    "upstreamAdded": "Upstream-DNS-Server hinzugefügt",
+    "upstreamRemoved": "Upstream-DNS-Server entfernt",
+    "upstreamUpdated": "Upstream-DNS-Server aktualisiert",
+    "upstreamMinOne": "Mindestens ein Upstream-DNS-Server ist erforderlich",
+    "presets": "Schnellvorlagen",
+    "presetsDesc": "Vorlage anwenden, um alle aktuellen Server zu ersetzen"
   },
   "people": {
     "title": "Benutzer",

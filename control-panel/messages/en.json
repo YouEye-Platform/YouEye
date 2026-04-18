@@ -471,7 +471,18 @@
     "removePihole": "Remove Pi-Hole",
     "startToView": "Start Pi-Hole to view DNS statistics and manage blocklists",
     "stop": "Stop",
-    "start": "Start"
+    "start": "Start",
+    "upstreamDns": "Upstream DNS Servers",
+    "upstreamDnsDesc": "DNS servers that Pi-Hole forwards queries to when they are not blocked or cached",
+    "noUpstreamServers": "No upstream DNS servers configured",
+    "server": "Server",
+    "addUpstream": "Add Server",
+    "upstreamAdded": "Upstream DNS server added",
+    "upstreamRemoved": "Upstream DNS server removed",
+    "upstreamUpdated": "Upstream DNS servers updated",
+    "upstreamMinOne": "At least one upstream DNS server is required",
+    "presets": "Quick Presets",
+    "presetsDesc": "Apply a preset to replace all current upstream servers"
   },
   "people": {
     "title": "People",
