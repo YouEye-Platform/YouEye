@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Globe, ExternalLink, Download, Monitor, Apple, Terminal,
   Copy, Check, ChevronDown, Smartphone, ShieldCheck,
@@ -29,95 +29,94 @@ function detectPlatform(): Platform {
   return 'windows';
 }
 
-// ─── Connectivity hook (timing heuristic) ────────────────────
+// ─── Connectivity hook (iframe + postMessage) ───────────────
+//
+// The setup-complete page is served via IP (or control.devvm.test),
+// so cross-origin fetch/img to devvm.test always fails with self-signed
+// certs.  Iframe navigation gets the same TLS treatment as top-level
+// navigation, so we load a hidden iframe pointing at
+// https://<domain>/api/ping?verify=1.  Caddy's path-only /api/ping
+// route sends ALL hosts to CP, which returns a tiny HTML page that
+// does parent.postMessage({type:'ye-dns-ok'}).  If the user's device
+// can resolve the domain AND the TLS handshake succeeds, we receive
+// the message → indicator goes green.
 
 function useConnectivityCheck(domain: string) {
-  const [dnsReady, setDnsReady] = useState(false);
-  const [certReady, setCertReady] = useState(false);
+  const [reachable, setReachable] = useState(false);
   const [checking, setChecking] = useState(true);
-  const timingsRef = useRef<number[]>([]);
-
-  const check = useCallback(async () => {
-    if (!domain) return;
-    const start = Date.now();
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
-      await fetch(`https://${domain}/api/ping`, {
-        mode: 'no-cors',
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      setDnsReady(true);
-      setCertReady(true);
-      setChecking(false);
-    } catch {
-      const elapsed = Date.now() - start;
-      timingsRef.current.push(elapsed);
-      if (timingsRef.current.length > 3) timingsRef.current.shift();
-
-      const sorted = [...timingsRef.current].sort((a, b) => a - b);
-      const median = sorted[Math.floor(sorted.length / 2)];
-
-      if (median >= 1500) {
-        setDnsReady(true);
-        setCertReady(false);
-      } else {
-        setDnsReady(false);
-        setCertReady(false);
-      }
-    }
-  }, [domain]);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   useEffect(() => {
-    if (certReady) return;
-    check();
-    const interval = setInterval(check, 5000);
-    return () => clearInterval(interval);
-  }, [domain, certReady, check]);
+    if (!domain || reachable) return;
 
-  return { dnsReady, certReady, checking };
+    let active = true;
+
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'ye-dns-ok' && active) {
+        setReachable(true);
+        setChecking(false);
+      }
+    };
+    window.addEventListener('message', onMessage);
+
+    const probe = () => {
+      // Remove previous iframe
+      if (iframeRef.current?.parentNode) {
+        iframeRef.current.parentNode.removeChild(iframeRef.current);
+      }
+      const iframe = document.createElement('iframe');
+      iframe.style.cssText =
+        'position:absolute;width:0;height:0;border:0;opacity:0;pointer-events:none';
+      iframe.src = `https://${domain}/api/ping?verify=1&_t=${Date.now()}`;
+      document.body.appendChild(iframe);
+      iframeRef.current = iframe;
+    };
+
+    // First probe + mark "not checking" after 3 s if still waiting
+    probe();
+    const firstTimer = setTimeout(() => {
+      if (active) setChecking(false);
+    }, 3000);
+
+    // Re-probe every 5 s until reachable
+    const interval = setInterval(probe, 5000);
+
+    return () => {
+      active = false;
+      window.removeEventListener('message', onMessage);
+      clearInterval(interval);
+      clearTimeout(firstTimer);
+      if (iframeRef.current?.parentNode) {
+        iframeRef.current.parentNode.removeChild(iframeRef.current);
+      }
+    };
+  }, [domain, reachable]);
+
+  return { reachable, checking };
 }
 
-// ─── Status indicators ──────────────────────────────────────
+// ─── Status indicator (single reachability check) ───────────
 
-function StatusIndicators({ dnsReady, certReady, checking, domain, t }: {
-  dnsReady: boolean;
-  certReady: boolean;
+function StatusIndicator({ reachable, checking, domain, t }: {
+  reachable: boolean;
   checking: boolean;
   domain: string;
   t: ReturnType<typeof useTranslations>;
 }) {
   return (
-    <div className="rounded-xl border bg-white/80 p-5 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="rounded-xl border bg-white/80 p-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex items-start gap-3">
         <div className={`mt-0.5 h-5 w-5 rounded-full flex-shrink-0 transition-colors duration-500 ${
-          dnsReady ? 'bg-green-500' : 'bg-gray-300 animate-pulse'
+          reachable ? 'bg-green-500' : 'bg-gray-300 animate-pulse'
         }`} />
         <div>
-          <p className="font-medium text-sm">{t('statusDns')}</p>
+          <p className="font-medium text-sm">{t('statusConnection')}</p>
           <p className="text-xs text-muted-foreground">
-            {checking && !dnsReady
+            {checking && !reachable
               ? t('statusChecking')
-              : dnsReady
-                ? t('statusDnsOk', { domain })
-                : t('statusDnsNotReady', { domain })}
-          </p>
-        </div>
-      </div>
-
-      <div className="flex items-start gap-3">
-        <div className={`mt-0.5 h-5 w-5 rounded-full flex-shrink-0 transition-colors duration-500 ${
-          certReady ? 'bg-green-500' : 'bg-gray-300 animate-pulse'
-        }`} />
-        <div>
-          <p className="font-medium text-sm">{t('statusCert')}</p>
-          <p className="text-xs text-muted-foreground">
-            {checking && !certReady
-              ? t('statusChecking')
-              : certReady
-                ? t('statusCertOk')
-                : t('statusCertNotReady')}
+              : reachable
+                ? t('statusReachable', { domain })
+                : t('statusNotReachable', { domain })}
           </p>
         </div>
       </div>
@@ -334,51 +333,47 @@ function CertStep({ serverIp, platform, t }: {
 export default function SetupDnsExplainer({ domain, siteName, standalone = false }: Props) {
   const t = useTranslations('setup');
   const [platform, setPlatform] = useState<Platform>('windows');
-  const { dnsReady, certReady, checking } = useConnectivityCheck(domain);
+  const { reachable, checking } = useConnectivityCheck(domain);
 
   useEffect(() => {
     setPlatform(detectPlatform());
   }, []);
 
   const serverIp = typeof window !== 'undefined' ? window.location.hostname : 'your-server-ip';
-  const allReady = dnsReady && certReady;
 
   return (
     <div className={`w-full ${standalone ? 'max-w-xl' : 'max-w-lg'} mx-auto space-y-5`}>
       {/* Header */}
       <div className="text-center animate-in fade-in slide-in-from-bottom-4 duration-500">
         <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-5">
-          {allReady
+          {reachable
             ? <ShieldCheck className="h-8 w-8 text-green-500" />
             : <Globe className="h-8 w-8 text-primary" />}
         </div>
         <h1 className="text-2xl font-bold mb-2">
-          {allReady ? t('allSet') : standalone ? t('accessYourServer') : t('almostThere')}
+          {reachable ? t('allSet') : standalone ? t('accessYourServer') : t('almostThere')}
         </h1>
         <p className="text-muted-foreground text-sm">
-          {allReady
+          {reachable
             ? t('allSetDesc')
             : t('configureDnsDesc', { domain })}
         </p>
       </div>
 
-      {/* Status indicators */}
-      <StatusIndicators
-        dnsReady={dnsReady}
-        certReady={certReady}
+      {/* Status indicator */}
+      <StatusIndicator
+        reachable={reachable}
         checking={checking}
         domain={domain}
         t={t}
       />
 
-      {/* Step 1: DNS — hide when DNS ready */}
-      {!dnsReady && (
-        <DnsStep serverIp={serverIp} platform={platform} t={t} />
-      )}
-
-      {/* Step 2: Certificate — show when DNS ready but cert not, or always if neither ready */}
-      {!certReady && (
-        <CertStep serverIp={serverIp} platform={platform} t={t} />
+      {/* Steps — hide when device can reach the server */}
+      {!reachable && (
+        <>
+          <DnsStep serverIp={serverIp} platform={platform} t={t} />
+          <CertStep serverIp={serverIp} platform={platform} t={t} />
+        </>
       )}
 
       {/* Go to server */}
@@ -386,7 +381,7 @@ export default function SetupDnsExplainer({ domain, siteName, standalone = false
         <a
           href={`https://${domain}`}
           className={`inline-flex items-center gap-2 rounded-lg px-6 py-3 text-sm font-medium transition-all w-full justify-center ${
-            allReady
+            reachable
               ? 'bg-primary text-white hover:bg-primary/90 shadow-lg shadow-primary/25'
               : 'bg-muted text-muted-foreground hover:bg-muted/80'
           }`}

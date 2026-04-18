@@ -21,8 +21,23 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        // Apply to all routes
-        source: '/:path*',
+        // /api/ping?verify=1 — embeddable iframe for setup-complete
+        // connectivity check.  Must allow framing from any origin.
+        source: '/api/ping',
+        headers: [
+          {
+            key: 'Content-Security-Policy',
+            value: "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *",
+          },
+          {
+            key: 'X-Content-Type-Options',
+            value: 'nosniff',
+          },
+        ],
+      },
+      {
+        // Apply to all routes except /api/ping (handled above)
+        source: '/((?!api/ping).*)',
         headers: [
           {
             key: 'X-Frame-Options',
@@ -47,7 +62,7 @@ const nextConfig: NextConfig = {
           {
             // Basic CSP - allows self, inline styles for shadcn/tailwind
             key: 'Content-Security-Policy',
-            value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://git.byka.wtf; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none';",
+            value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://git.byka.wtf; font-src 'self' data:; connect-src 'self'; frame-src https:; frame-ancestors 'none';",
           },
         ],
       },
