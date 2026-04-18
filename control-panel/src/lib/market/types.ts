@@ -235,7 +235,31 @@ export interface MarketApp {
     longDescription: string;
     screenshots: { url: string; caption?: string }[];
   };
-  installParams?: { name: string; label: string; required: boolean; description?: string }[];
+  installParams?: {
+    name: string;
+    label: string;
+    required: boolean;
+    description?: string;
+    type?: 'string' | 'number' | 'boolean' | 'select' | 'password';
+    default?: string | number | boolean;
+    choices?: { value: string; label: string }[];
+    validation?: {
+      pattern?: string;
+      message?: string;
+      min?: number;
+      max?: number;
+    };
+  }[];
+  entrances?: {
+    name: string;
+    path: string;
+    port: number;
+    container?: string;
+    protocol?: 'http' | 'tcp';
+    authLevel?: 'private' | 'public' | 'internal' | 'none';
+    stripPath?: boolean;
+  }[];
+  forwardAuth?: 'default' | 'enabled' | 'disabled';
   capabilities?: {
     widgets?: boolean;
     notifications?: boolean | 'push';

@@ -23,6 +23,8 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
+import { HealthDot } from '@/components/market/health-dot';
+import { SSOIndicator } from '@/components/market/forward-auth-toggle';
 import type { MarketApp, AppStatusInfo, InstallEvent } from '@/lib/market/types';
 
 const ICON_MAP: Record<string, typeof Search> = {
@@ -84,19 +86,30 @@ export function AppCard({ app, status, installProgress }: AppCardProps) {
   const t = useTranslations('market');
   const FallbackIcon = ICON_MAP[app.icon] ?? Package;
   const appStatus = status?.status ?? 'not-installed';
+  const isInstalled = appStatus !== 'not-installed';
+  const isStopped = appStatus === 'stopped';
   const statusCfg = STATUS_CONFIG[appStatus] ?? STATUS_CONFIG['not-installed'];
   const StatusIcon = statusCfg.Icon;
 
   return (
     <Link href={`/market/${app.id}`} className="block">
       <div
-        className="rounded-xl border border-gray-200 bg-white p-5 flex flex-col gap-3 hover:shadow-md transition-all cursor-pointer"
+        className={`rounded-xl border border-gray-200 bg-white p-5 flex flex-col gap-3 hover:shadow-md transition-all cursor-pointer ${
+          isStopped ? 'opacity-60 grayscale' : ''
+        }`}
         data-app-id={app.id}
       >
         {/* Header */}
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-lg bg-blue-50 flex items-center justify-center">
+            <div className="relative p-2.5 rounded-lg bg-blue-50 flex items-center justify-center">
+              {isInstalled && (
+                <HealthDot
+                  healthStatus={status?.healthStatus}
+                  healthCheckedAt={status?.healthCheckedAt}
+                  className="absolute -top-0.5 -right-0.5"
+                />
+              )}
               {app.iconUrl ? (
                 <Image
                   src={app.iconUrl}
@@ -123,14 +136,22 @@ export function AppCard({ app, status, installProgress }: AppCardProps) {
               <span className="text-xs text-gray-400 capitalize">{app.category}</span>
             </div>
           </div>
-          <Badge variant="outline" className={statusCfg.className}>
-            {appStatus === 'installing' ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <StatusIcon className="h-3 w-3" />
+          <div className="flex items-center gap-1.5">
+            {isInstalled && (
+              <SSOIndicator
+                hasNativeSSO={app.supportsSSO}
+                forwardAuthEnabled={status?.forwardAuthEnabled}
+              />
             )}
-            {statusCfg.label}
-          </Badge>
+            <Badge variant="outline" className={statusCfg.className}>
+              {appStatus === 'installing' ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <StatusIcon className="h-3 w-3" />
+              )}
+              {statusCfg.label}
+            </Badge>
+          </div>
         </div>
 
         {/* Description (truncated to 2 lines) */}

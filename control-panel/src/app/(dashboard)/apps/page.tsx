@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { authenticatedFetch } from '@/lib/api-client';
 import { useTranslations } from 'next-intl';
+import { HealthDot } from '@/components/market/health-dot';
 import type { UnifiedApp, UnifiedAppsResponse } from '@/app/api/apps/unified/route';
 
 const ICON_MAP: Record<string, typeof Package> = {
@@ -127,7 +128,15 @@ function AppRow({
             {app.updateInfo}
           </span>
         )}
-        <StatusBadge status={app.status} />
+        <div className="flex items-center gap-1.5">
+          {app.status === 'running' && app.healthStatus && (
+            <HealthDot
+              healthStatus={app.healthStatus}
+              healthCheckedAt={app.healthCheckedAt}
+            />
+          )}
+          <StatusBadge status={app.status} />
+        </div>
         <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-blue-500 transition-colors" />
       </div>
     </Link>

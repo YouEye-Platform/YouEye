@@ -297,7 +297,13 @@ function manifestToMarketApp(manifest: AppManifest): MarketApp {
       label: p.label,
       required: p.required,
       description: p.description,
+      type: p.type,
+      default: p.default,
+      choices: p.choices,
+      validation: p.validation,
     })),
+    entrances: manifest.entrances,
+    forwardAuth: manifest.forwardAuth,
     capabilities: manifest.capabilities ? {
       widgets: manifest.capabilities.widgets,
       notifications: manifest.capabilities.notifications,
