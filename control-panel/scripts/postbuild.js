@@ -140,15 +140,20 @@ function findPnpmPackages(pnpmDir) {
   return pkgs;
 }
 
+function hasCodeContent(dir) {
+  try {
+    const items = fs.readdirSync(dir);
+    return items.some(i => i === 'dist' || i === 'cjs' || i === 'esm' || i === 'lib' || i.endsWith('.js') || i.endsWith('.mjs'));
+  } catch { return false; }
+}
+
 function mergePnpmPackages(pnpmDir, targetNodeModules, label) {
   const pkgs = findPnpmPackages(pnpmDir);
   for (const [name, srcPath] of pkgs) {
     const destPath = path.join(targetNodeModules, name);
     if (fs.existsSync(destPath)) {
-      const hasDist = fs.existsSync(path.join(destPath, 'dist'));
-      if (hasDist) continue;
-      const srcHasDist = fs.existsSync(path.join(srcPath, 'dist'));
-      if (!srcHasDist) continue;
+      if (hasCodeContent(destPath)) continue;
+      if (!hasCodeContent(srcPath)) continue;
       console.log(`  [${label}] Replacing incomplete ${name}...`);
       fs.rmSync(destPath, { recursive: true });
     } else {
@@ -202,6 +207,30 @@ function resolveSymlinksInDir(dir) {
 }
 resolveSymlinksInDir(nodeModulesPath);
 console.log('Done resolving symlinks');
+
+// Step 5: Copy missing workspace-level dependencies (pnpm hoists some to root)
+const workspaceDeps = ['@swc/helpers', '@swc/counter', '@next/env', 'styled-jsx', 'client-only', 'next', 'react', 'react-dom'];
+const wsRootNodeModules = path.resolve(rootDir, '..', 'node_modules');
+for (const dep of workspaceDeps) {
+  const destPath = path.join(nodeModulesPath, dep);
+  if (fs.existsSync(destPath) && hasCodeContent(destPath)) continue;
+  for (const searchDir of [path.join(rootDir, 'node_modules'), wsRootNodeModules]) {
+    const srcPath = path.join(searchDir, dep);
+    if (!fs.existsSync(srcPath)) continue;
+    let realSrc = srcPath;
+    try { if (fs.lstatSync(srcPath).isSymbolicLink()) realSrc = fs.realpathSync(srcPath); } catch { continue; }
+    if (!hasCodeContent(realSrc)) continue;
+    console.log(`  Copying ${dep} from ${searchDir === wsRootNodeModules ? 'workspace' : 'local'} node_modules...`);
+    if (fs.existsSync(destPath)) fs.rmSync(destPath, { recursive: true });
+    copyRecursive(realSrc, destPath, true);
+    break;
+  }
+}
+console.log('Done copying workspace dependencies');
+
+// Ensure styled-jsx is present (Next.js requires it)
+const styledJsx = path.join(nodeModulesPath, 'styled-jsx');
+if (fs.existsSync(styledJsx)) console.log('styled-jsx already present in standalone');
 
 console.log('\nPostbuild complete!');
 console.log(`App directory: ${appDir}`);
