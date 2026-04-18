@@ -1,3 +1,40 @@
+## v0.2.22.11 — sebastian — 2026-04-18
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Admin Settings Embed Migration — Phase 6 (theme fix + branding redesign)
+
+### Changes
+- `ui/src/components/settings/admin-embed.tsx` — Added `useTheme()` + postMessage syncing so embeds follow light/dark mode
+- `ui/src/app/settings/system/page.tsx` (+ 7 other pages) — Removed hardcoded `{ theme: "dark" }` from `getSignedEmbedUrl()` calls
+- `ui/src/lib/db/queries/settings.ts` — Added `getUserWordartOverride`, `saveUserWordartOverride`, `deleteUserWordartOverride` for per-user WordArt JSONB storage
+- `ui/src/app/api/v1/user/wordart/route.ts` — NEW: REST API (GET/PUT/DELETE) for per-user WordArt
+- `ui/src/components/settings/user-wordart-settings.tsx` — NEW: Client component for personal WordArt customization
+- `ui/src/app/api/ui-bridge/branding/route.ts` — NEW: Bridge-authenticated branding endpoint for CP
+- `control-panel/src/app/api/ui/branding/route.ts` — NEW: CP proxy to UI bridge for branding data
+- `control-panel/src/app/embed/branding/page.tsx` + `client.tsx` — NEW: Server branding embed (site name, WordArt, accent color)
+- `ui/src/app/settings/branding/page.tsx` — Rewritten: no longer admin-only, renders tabbed layout
+- `ui/src/components/settings/branding-tabs.tsx` — NEW: "My WordArt" (all users) + "Server Branding" (admin-only embed) tabs
+- `ui/src/components/settings/settings-shell.tsx` — Moved branding from ADMIN_SECTIONS to USER_SECTIONS
+- `ui/messages/{en,de,fr,ru,es}.json` — Added `branding` key to `settings.sections`
+- `control-panel/src/middleware.ts` — Added `/api/ui` to PUBLIC_ROUTES for embed proxy access
+- `ui/src/app/page.tsx`, `settings/layout.tsx`, `notifications/page.tsx`, `timeline/page.tsx` — WordArt override support in Navbar
+
+### Test Results
+- Branding page: both tabs verified (My WordArt + Server Branding embed)
+- Theme switching: embeds follow light/dark mode correctly
+- System embed verified in both light and dark modes
+- Server Branding embed loads branding data from UI via bridge proxy
+- CP middleware fix verified: /api/ui/branding returns 200 (was 401)
+- 13 containers running, 0 stopped
+
+### Notes for Iris
+- Both CP and UI changed — must deploy both
+- CP middleware change: `/api/ui` added to PUBLIC_ROUTES (embed proxy)
+- No DB migration needed — WordArt stored in existing userSettings JSONB
+- Branding page accessible to all users now (not admin-only); admin sees extra "Server Branding" tab
+- Authentik branding sync: CP triggers fire-and-forget POST to /api/ui-bridge/authentik/branding on save
+
 ## v0.2.22.9 — sebastian — 2026-04-18
 **Branch:** sebastian
 **VM:** ye-sebastian

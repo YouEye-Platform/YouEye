@@ -49,8 +49,8 @@ Each component is built and released independently using **component-prefixed ta
 | Component | Main | Dev | Sebastian |
 |-----------|------|-----|-----------|
 | Spine | 0.2.22 | 0.2.21.11 | — |
-| Control Panel | 0.2.22 | 0.2.21.11 | 0.2.22.3 |
-| UI | 0.2.22 | 0.2.21.11 | 0.2.22.3 |
+| Control Panel | 0.2.22 | 0.2.21.11 | 0.2.22.11 |
+| UI | 0.2.22 | 0.2.21.11 | 0.2.22.11 |
 | Connector Runtime | — | — | 0.2.22.3 |
 
 ## Related Repos
