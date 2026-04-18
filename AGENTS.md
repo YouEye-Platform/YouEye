@@ -1,3 +1,29 @@
+## v0.2.22.5 — vanya — 2026-04-18
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Client-side connectivity check for setup-complete page (iframe+postMessage)
+
+### Changes
+- `control-panel/src/app/api/ping/route.ts` — Added `?verify=1` mode: returns HTML page with `parent.postMessage({type:'ye-dns-ok'})` for iframe-based connectivity probing
+- `control-panel/src/components/setup/SetupDnsExplainer.tsx` — Rewrote `useConnectivityCheck` from cross-origin timing heuristic to iframe+postMessage; merged dual DNS/cert indicators into single reachability indicator
+- `control-panel/next.config.ts` — Separate CSP rule for `/api/ping` (`frame-ancestors *`); added `frame-src https:` to global CSP so parent page can embed cross-origin iframes
+- `control-panel/src/middleware.ts` — Removed middleware verify=1 short-circuit (no longer needed with per-route CSP)
+- `control-panel/messages/{en,ru,de,fr,es}.json` — Replaced 6 dual-indicator i18n keys with 3 combined connection status keys
+- `control-panel/package.json` — Version bump to 0.2.22.5
+
+### Test Results
+- `curl -sk -I "https://devvm.test/api/ping?verify=1"` returns `frame-ancestors *`, no `X-Frame-Options: DENY`
+- Browser iframe test: postMessage received (`{origin:"https://devvm.test",type:"ye-dns-ok"}`)
+- Setup-complete page: green indicator, "All set!", DNS/cert steps hidden
+- Deployed and verified on ye-vanya VM
+
+### Notes for Iris
+- No breaking changes — additive only
+- Key insight: Chromium `--ignore-certificate-errors` only applies to top-level/iframe navigation, not fetch/img subresources — this is why the old timing heuristic never worked with self-signed certs
+- `frame-src https:` in global CSP is required so the parent page (served via IP) can embed iframes from the configured domain
+- Caddy's path-only `/api/ping` route forwards ALL hosts to CP, so `devvm.test/api/ping` reaches CP even though `devvm.test` normally routes to YE-UI
+
 ## v0.2.22.4 — vanya — 2026-04-18
 **Branch:** vanya
 **VM:** ye-vanya
