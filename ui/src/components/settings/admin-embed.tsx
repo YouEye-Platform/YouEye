@@ -30,7 +30,7 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
     (e: MessageEvent) => {
       if (e.origin !== CP_ORIGIN) return;
 
-      if (e.data?.type === "youeye-embed-ready") {
+      if (e.data?.type === "youeye-embed-ready" || e.data?.type === "youeye-embed-resize") {
         setReady(true);
         setError(false);
       }
