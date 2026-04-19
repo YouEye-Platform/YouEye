@@ -8,6 +8,7 @@
 import { getSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { getBranding } from "@/lib/db/queries/branding";
+import { getUserWordartOverride } from "@/lib/db/queries/settings";
 import { Navbar } from "@/components/layout/navbar";
 import { TimelineFeed } from "@/components/timeline/timeline-feed";
 import { hasPIN, hasActivePINSession } from "@/lib/crypto/pin-session";
@@ -19,12 +20,13 @@ export default async function TimelinePage() {
 
   const t = await getTranslations('timeline');
 
-  const [branding, pinExists, sessionActive] = await Promise.all([
+  const [branding, pinExists, sessionActive, wordartOverride] = await Promise.all([
     getBranding(),
     hasPIN(session.userId),
     hasPIN(session.userId).then((exists) =>
       exists ? hasActivePINSession(session.userId) : false
     ),
+    getUserWordartOverride(session.userId),
   ]);
 
   return (
@@ -34,7 +36,7 @@ export default async function TimelinePage() {
         email={session.email}
         isAdmin={session.isAdmin}
         siteName={branding.site_name}
-        siteNameStyle={branding.site_name_style}
+        siteNameStyle={wordartOverride ?? branding.site_name_style}
         logoUrl={branding.logo_url}
       />
       <main className="max-w-4xl mx-auto px-6 py-8">

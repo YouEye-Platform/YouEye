@@ -180,6 +180,318 @@
 - Postbuild fix is critical for monorepo builds — workspace root deps (styled-jsx, @next/env) must be merged into standalone output
 - No UI changes for health dots or SSO toggle in this version — backend-only, UI can be added in follow-up
 
+## v0.2.22.12 — sebastian — 2026-04-18
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** WordArt Preset Gallery — save/load named designs
+
+### Changes
+- `ui/src/db/schema.ts` — new `wordartPresets` table (id, userId, name, style JSONB, scope, createdAt)
+- `ui/src/db/index.ts` — auto-migration CREATE TABLE + index for wordart_presets
+- `ui/src/lib/db/queries/wordart-presets.ts` — NEW: CRUD functions (getUserPresets, getServerPresets, createPreset, deletePreset, renamePreset)
+- `ui/src/app/api/v1/user/wordart/presets/route.ts` — NEW: REST API for user presets (GET/POST/DELETE/PATCH)
+- `ui/src/app/api/ui-bridge/wordart-presets/route.ts` — NEW: bridge API for server presets (bridge-token auth)
+- `ui/src/components/settings/wordart-gallery.tsx` — NEW: gallery component with mini WordArt previews, save/delete/rename
+- `ui/src/components/settings/user-wordart-settings.tsx` — integrated gallery below picker, pickerKey for re-render on preset apply
+- `control-panel/src/app/api/ui/wordart-presets/route.ts` — NEW: CP proxy to UI bridge
+- `control-panel/src/components/embed/WordArtGalleryEmbed.tsx` — NEW: embed-styled gallery for server branding
+- `control-panel/src/app/embed/branding/client.tsx` — integrated server presets gallery
+
+### Test Results
+- Branding page renders with gallery section below picker
+- Save Current flow: input appears, name accepted, preset saved to DB, appears in gallery with mini preview
+- Server Default card applies server-wide style and resets picker
+- Server Branding tab shows CP embed with server presets gallery
+- DB verified: wordart_presets table auto-created, records persisted
+- `sudo spine status` → 13 running, 0 stopped
+
+### Notes for Iris
+- New DB table `wordart_presets` auto-created on first access (no manual migration needed)
+- CP proxy at `/api/ui/wordart-presets` added — already in PUBLIC_ROUTES via `/api/ui` prefix from Phase 6
+
+## v0.2.22.11 — sebastian — 2026-04-18
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Admin Settings Embed Migration — Phase 6 (theme fix + branding redesign)
+
+### Changes
+- `ui/src/components/settings/admin-embed.tsx` — Added `useTheme()` + postMessage syncing so embeds follow light/dark mode
+- `ui/src/app/settings/system/page.tsx` (+ 7 other pages) — Removed hardcoded `{ theme: "dark" }` from `getSignedEmbedUrl()` calls
+- `ui/src/lib/db/queries/settings.ts` — Added `getUserWordartOverride`, `saveUserWordartOverride`, `deleteUserWordartOverride` for per-user WordArt JSONB storage
+- `ui/src/app/api/v1/user/wordart/route.ts` — NEW: REST API (GET/PUT/DELETE) for per-user WordArt
+- `ui/src/components/settings/user-wordart-settings.tsx` — NEW: Client component for personal WordArt customization
+- `ui/src/app/api/ui-bridge/branding/route.ts` — NEW: Bridge-authenticated branding endpoint for CP
+- `control-panel/src/app/api/ui/branding/route.ts` — NEW: CP proxy to UI bridge for branding data
+- `control-panel/src/app/embed/branding/page.tsx` + `client.tsx` — NEW: Server branding embed (site name, WordArt, accent color)
+- `ui/src/app/settings/branding/page.tsx` — Rewritten: no longer admin-only, renders tabbed layout
+- `ui/src/components/settings/branding-tabs.tsx` — NEW: "My WordArt" (all users) + "Server Branding" (admin-only embed) tabs
+- `ui/src/components/settings/settings-shell.tsx` — Moved branding from ADMIN_SECTIONS to USER_SECTIONS
+- `ui/messages/{en,de,fr,ru,es}.json` — Added `branding` key to `settings.sections`
+- `control-panel/src/middleware.ts` — Added `/api/ui` to PUBLIC_ROUTES for embed proxy access
+- `ui/src/app/page.tsx`, `settings/layout.tsx`, `notifications/page.tsx`, `timeline/page.tsx` — WordArt override support in Navbar
+
+### Test Results
+- Branding page: both tabs verified (My WordArt + Server Branding embed)
+- Theme switching: embeds follow light/dark mode correctly
+- System embed verified in both light and dark modes
+- Server Branding embed loads branding data from UI via bridge proxy
+- CP middleware fix verified: /api/ui/branding returns 200 (was 401)
+- 13 containers running, 0 stopped
+
+### Notes for Iris
+- Both CP and UI changed — must deploy both
+- CP middleware change: `/api/ui` added to PUBLIC_ROUTES (embed proxy)
+- No DB migration needed — WordArt stored in existing userSettings JSONB
+- Branding page accessible to all users now (not admin-only); admin sees extra "Server Branding" tab
+- Authentik branding sync: CP triggers fire-and-forget POST to /api/ui-bridge/authentik/branding on save
+
+## v0.2.22.9 — sebastian — 2026-04-18
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Admin Settings Embed Migration — Phase 5 (cleanup)
+
+### Changes
+- Deleted 10 orphaned admin components from `ui/src/components/settings/admin/`: system-settings, proxy-settings, backup-settings, dns-settings, container-settings, user-settings, apps-list-settings, update-overlay, bridge-unavailable, access-denied
+- Deleted `ui/src/components/settings/bridge-embed.tsx` — replaced by admin-embed.tsx in Phase 1
+- Deleted `ui/src/components/settings/language-settings.tsx` — replaced by user-language-settings.tsx in Phase 4
+- Deleted `ui/src/lib/admin/types.ts` — only imported by deleted admin components
+- Deleted `ui/src/lib/admin/use-admin.ts` — unused
+- Total: 14 files, 3,359 lines of dead code removed
+- Retained: catch-all proxy route and bridge-client.ts (still used by App Store, branding, config)
+
+### Test Results
+- All 8 embed settings pages verified: System, Proxy, Backup, DNS, Containers, Users, Apps, Language
+- App Store verified working (proxy retained)
+- 13 containers running, 0 stopped
+- Screenshots: Tests/Sebastian/20260418_10/
+
+### Notes for Iris
+- UI-only change (CP unchanged at v0.2.22.8)
+- Catch-all proxy `/api/admin/[...path]` intentionally retained — used by App Store, settings-shell, branding, app-drawer
+- bridge-client.ts intentionally retained — used by 10+ API routes (app registration, widget sync, notifications, etc.)
+- New wiki article: `YE-Wiki/control-panel/admin-settings-embed.md`
+
+## v0.2.22.8 — sebastian — 2026-04-18
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Admin Settings Embed Migration — Phase 4 (complex pages: Users, Apps, Language)
+
+### Changes
+- `control-panel/src/app/embed/users/page.tsx` + `client.tsx` — new CP embed page for user management: full CRUD (list, create, set password, toggle active/admin, delete) via Authentik bridge APIs, system user filtering
+- `control-panel/src/app/embed/apps/page.tsx` + `client.tsx` — new CP embed page for apps & updates: categorized app list (Apps, Infrastructure, System), update status polling, self-destructive CP update flow with postMessage to parent, inline progress bars, edit dialog for user apps
+- `control-panel/src/app/embed/language/page.tsx` + `client.tsx` — new CP embed page for system default language: 5-language selector, two-step save (config + Authentik propagation)
+- `ui/src/components/settings/admin-embed.tsx` — added restart state handling: listens for `youeye-embed-action` postMessage (`cp-restarting`, `ui-restarting`), shows skeleton + spinner during restart, polls CP health endpoint every 5s, auto-reloads iframe when CP comes back
+- `ui/src/components/settings/user-language-settings.tsx` — new native component for user language selection (split from old LanguageSettings)
+- `ui/src/app/settings/users/page.tsx` — rewritten to use `<AdminEmbed section="users">`
+- `ui/src/app/settings/apps-list/page.tsx` — rewritten to use `<AdminEmbed section="apps">`
+- `ui/src/app/settings/language/page.tsx` — hybrid: native `<UserLanguageSettings>` on top + `<AdminEmbed>` for system language below (admin-only)
+- `control-panel/package.json` + `ui/package.json` — version bumped to 0.2.22.8
+
+### Test Results
+- Users embed: 2 users listed, create/password/delete/toggle actions visible, system users filtered
+- Apps embed: 13+ services displayed in 3 categories (Apps, Infrastructure, System), update buttons visible
+- Language embed: hybrid layout renders correctly — user language native, system language embedded (admin-only)
+- System embed (Phase 2): no regression
+- Auth: unauthenticated and invalid signatures correctly rejected
+- CP restart flow: postMessage triggers skeleton loader in parent, health polling restores iframe
+- Screenshots: Tests/Sebastian/20260418_9/
+
+### Notes for Iris
+- No schema changes, no env var changes
+- Branding page kept native (data lives in UI's DB — moving to CP embed would require storage migration)
+- Apps edit endpoint (`PUT /api/ui-bridge/apps/[id]`) doesn't exist on CP — edit button present but non-functional (known issue from old proxy component)
+- Old admin proxy route still active — cleanup is Phase 5
+- Phase 5 (cleanup: delete old proxy, old components, update docs) is next
+
+## v0.2.22.7 — sebastian — 2026-04-18
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Admin Settings Embed Migration — Phase 3 (interactive pages: DNS + Containers)
+
+### Changes
+- `control-panel/src/app/embed/dns/page.tsx` + `client.tsx` — new CP embed page for DNS: Pi-Hole stats, top queries/blocked tables, enable/disable toggle
+- `control-panel/src/app/embed/containers/page.tsx` + `client.tsx` — new CP embed page for containers: list with status/IPv4, start/stop/restart actions, confirmation dialog, 30s auto-refresh
+- `ui/src/app/settings/dns/page.tsx` — rewritten to use `<AdminEmbed section="dns">`
+- `ui/src/app/settings/containers/page.tsx` — rewritten to use `<AdminEmbed section="containers">`
+- `control-panel/package.json` + `ui/package.json` — version bumped to 0.2.22.7
+
+### Test Results
+- Playwright: DNS embed loads with stats, toggle visible, auth enforced
+- Playwright: Containers embed loads with 13 containers, Stop/Restart buttons visible
+- Playwright: System embed (Phase 2) still works — no regression
+- Security: unauthenticated and fake-signature requests return Unauthorized
+- Screenshots: Tests/Sebastian/20260418_8/
+
+### Notes for Iris
+- No schema changes, no env var changes
+- Old admin proxy still active for unmigrated pages (Users, Apps, Branding, Language)
+- Phase 4 (complex pages) is next
+
+## v0.2.22.6 — sebastian — 2026-04-18
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Admin Settings Embed Migration — Phase 1 (infrastructure) + Phase 2 (read-only pages)
+
+### Changes
+
+**Control Panel — Embed Infrastructure (Phase 1):**
+- `control-panel/next.config.ts` — split CSP headers: `/embed/*` routes allow framing from UI origin (`frame-ancestors`), all other routes keep `DENY`
+- `control-panel/src/lib/embed/auth.ts` — NEW: HMAC token validation for signed embed URLs (bridge token as key, 5-min TTL)
+- `control-panel/src/middleware.ts` — added `/embed` to PUBLIC_ROUTES so embed pages bypass session auth (use signed URL tokens instead)
+- `control-panel/src/lib/ui-bridge/auth.ts` — added referer-based auth fallback for embed pages loaded in iframes
+- `control-panel/src/app/embed/layout.tsx` — themed embed layout: reads `theme`/`accent` URL params, injects CSS variables, ResizeObserver for auto-height, postMessage ready/resize signals
+- `control-panel/src/app/embed/health/route.ts` — NEW: health check endpoint for CP restart detection (UI polls this during skeleton state)
+- `control-panel/src/app/embed/app-network/[appId]/page.tsx` + `client.tsx` — rewritten to use new embed auth and theme CSS variables
+
+**Control Panel — Read-Only Embed Pages (Phase 2):**
+- `control-panel/src/app/embed/system/page.tsx` + `client.tsx` — NEW: system dashboard embed (hostname, OS, CPU/RAM/disk, container counts, auto-refresh)
+- `control-panel/src/app/embed/proxy/page.tsx` + `client.tsx` — NEW: proxy routes embed (Caddy reverse proxy table)
+- `control-panel/src/app/embed/backup/page.tsx` + `client.tsx` — NEW: backup history embed (config, schedule, history, auto-refresh)
+
+**UI — Embed Infrastructure (Phase 1):**
+- `ui/src/lib/admin/embed-token.ts` — NEW: server-side HMAC signed URL generation for CP embed pages
+- `ui/src/components/settings/admin-embed.tsx` — NEW: generic iframe wrapper with postMessage handling, auto-resize, skeleton loader during CP restarts, origin validation
+- `ui/src/app/api/ui-bridge/embed-status/route.ts` — NEW: receives CP restart notifications, stores status for AdminEmbed skeleton state
+
+**UI — Settings Pages Migrated (Phase 2):**
+- `ui/src/app/settings/system/page.tsx` — rewritten to use AdminEmbed (was direct bridge API component)
+- `ui/src/app/settings/proxy/page.tsx` — rewritten to use AdminEmbed
+- `ui/src/app/settings/backup/page.tsx` — rewritten to use AdminEmbed
+
+**Bug Fixes:**
+- `control-panel/scripts/postbuild.js` — fixed package completeness heuristic: `@swc/helpers` was missing from standalone build, breaking runtime
+- Embed layout postMessage race condition: resize event now doubles as ready signal, eliminating timing issue where parent missed the ready message
+
+### Test Results
+- System embed loads in iframe with correct system data (hostname, OS, CPU/RAM/disk)
+- Proxy embed loads with Caddy route table
+- Backup embed loads with backup configuration and history
+- Embed pages return 403 without valid signed HMAC token
+- Embed pages respect theme parameter (dark/light)
+- Auto-resize works via postMessage — no scrollbar in parent
+- CP health endpoint responds for restart detection
+- App-network embed continues working with new auth/theme system
+
+### Notes for Iris
+- Phase 1+2 only — phases 3-5 (interactive pages, complex pages, cleanup) remain
+- Old UI admin components (`ui/src/components/settings/admin/*.tsx`) are NOT deleted yet — cleanup is Phase 5
+- The admin proxy route (`/api/admin/[...path]`) is NOT deleted yet — still used by DNS, Containers, Users, Apps pages
+- CP postbuild fix (`@swc/helpers`) should be merged early — it fixes standalone builds for all branches
+- `bridge-embed.tsx` still exists alongside new `admin-embed.tsx` — will be removed in Phase 5
+- Embed auth uses the existing bridge token (`/etc/youeye/ui-bridge-token`) as HMAC key — no new secrets needed
+
+## v0.2.22.5 — sebastian — 2026-04-17
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Session 3: C5 — Settings > Connectors UI, Connection Flow, Credential Management
+
+### Changes
+- `ui/src/app/settings/connectors/page.tsx` — NEW: Connectors settings page (replaces old Apps settings)
+- `ui/src/app/settings/connectors/[appId]/page.tsx` — NEW: Per-app connector management page
+- `ui/src/app/connectors/setup/page.tsx` — NEW: Setup redirect page with redirect URI validation
+- `ui/src/components/settings/connector-app-list.tsx` — NEW: App list with connector status summary
+- `ui/src/components/settings/connector-detail.tsx` — NEW: Capability management, source picker, credential entry
+- `ui/src/components/settings/connector-setup.tsx` — NEW: Full-page source selection with identity indicator
+- `ui/src/app/api/settings/connectors/route.ts` — NEW: List apps with connector status
+- `ui/src/app/api/settings/connectors/[appId]/route.ts` — NEW: Per-app capabilities + connect/disconnect
+- `ui/src/app/api/settings/connectors/credentials/route.ts` — NEW: Credential storage (AES-256-GCM)
+- `ui/src/app/api/v1/connectors/resolve/route.ts` — Returns not-connected status with setupUrl instead of 404
+- `ui/src/app/api/v1/connectors/proxy/route.ts` — Added boundHost enforcement for credential forwarding
+- `ui/src/db/schema.ts` — Added `persistent` to userConnectors, `boundHost` to userConnectorSecrets
+- `ui/src/db/index.ts` — Auto-migration for new columns
+- `ui/src/components/settings/settings-shell.tsx` — Renamed Apps → Connectors in sidebar
+- `ui/src/app/settings/apps/page.tsx` — Redirects to /settings/connectors
+- `ui/src/app/settings/apps/[appId]/page.tsx` — Redirects to /settings/connectors/[appId]
+- `ui/messages/en.json` — Added connectorSettings translation namespace
+
+### Test Results
+- Settings > Connectors page renders with app list (Wiki, Notes, Translate, Search, Weather)
+- Per-app detail page renders with capabilities and direct access section
+- Setup redirect page renders with source selection and identity indicator
+- Sidebar correctly shows "Connectors" with plug icon
+- All other settings pages unaffected
+
+### Notes for Iris
+- Old `/settings/apps` routes redirect to `/settings/connectors` — no broken links
+- `connectorSettings` i18n namespace added to en.json — other locales need translation
+- boundHost enforcement in proxy route prevents credential forwarding to wrong API hosts
+- Admin bridge iframe in detail page returns 404 (CP endpoint doesn't exist yet) — non-blocking
+
+## v0.2.22.3 — sebastian — 2026-04-17
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Session 2: C3 — Connector Runtime Container + Manifest v1 Schema
+
+### Changes
+- `connector-runtime/` — NEW: stateless Node.js proxy worker (isolated-vm for V8 script transforms, SSRF protection, rate limiting)
+- `control-panel/src/lib/infrastructure/deployer.ts` — Step 9: deploy youeye-connectors container
+- `control-panel/src/lib/infrastructure/lxd-deployer.ts` — entryFile + postInstallCommands support
+- `control-panel/src/lib/infrastructure/manifests.ts` — connectorsContainerSpec()
+- `control-panel/src/lib/infrastructure/types.ts` — entryFile, postInstallCommands fields
+- `control-panel/src/lib/connectors/schema.ts` — Manifest v1: provides[] array, ui section, capabilities
+- `control-panel/src/lib/connectors/registry.ts` — handles provides array + directory-based manifests
+- `control-panel/src/app/api/connectors/[connectorId]/manifest/route.ts` — NEW: manifest API endpoint
+- `control-panel/src/app/api/setup/run/route.ts` — connectors Caddy route in setup wizard
+- `control-panel/scripts/postbuild.js` — Fixed pnpm workspace module flattening
+- `ui/src/app/api/v1/connectors/proxy/route.ts` — NEW: proxy route (decrypt creds → forward to runtime)
+- `ui/src/lib/db/queries/connectors.ts` — CONNECTOR_RUNTIME_URL constant
+
+### Test Results
+- Connector runtime health: OK (38MB memory, 2s uptime)
+- Wikipedia search proxy: "quantum physics" returned results with Quantum mechanics
+- Caddy route: connectors.devvm.test → youeye-connectors:3001
+- All 3 connectors loaded from AppMarket (wikipedia, searxng, whoogle)
+- CP v0.2.22.3 deployed and running (13 containers total)
+- UI v0.2.22.3 deployed and running
+
+### Notes for Iris
+- YE-AppMarket `sebastian` branch has manifest v1 changes (provides[] array) + TMDB connector — merge both repos
+- Connector runtime needs `npm rebuild isolated-vm` after deploy (handled by postInstallCommands in deployer)
+- CP standalone build now uses pnpm-store flattening script — postbuild.js was updated to merge workspace-root node_modules
+- New tag prefix `cr-` for connector runtime releases
+- `tmdb-media` connector is the first with script transforms — requires user API key
+
+## v0.2.22.2 — sebastian — 2026-04-17
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** C1+C2 — App Gateway Migration + Network Isolation + App Bridges
+
+### Changes
+- `control-panel/src/lib/market/engine.ts` — Token hash forwarding to YE-UI on app registration, ACL application after container deploy, bridge dependency detection and auto-activation
+- `control-panel/src/lib/market/platform-env.ts` — Gateway URL redirected from CP to YE-UI (`http://youeye-ui.youeye:3000/api/apps/v1`), added `url` field to containers map (`https://{subdomain}.{domain}`)
+- `control-panel/src/lib/market/types.ts` — Added `url: string` to containers record in VariableContext
+- `control-panel/src/lib/incus/network-acl.ts` — NEW: Incus network ACL management (subnet-based rules, Incus 6.23 compatible)
+- `control-panel/src/lib/bridges/store.ts` — NEW: Bridge CRUD with JSON file storage at `/var/lib/youeye/bridges/bridges.json`
+- `control-panel/src/lib/bridges/manager.ts` — NEW: Bridge lifecycle (detect deps from env_mapping, create, activate with env injection, deactivate, pending bridge auto-activation)
+- `control-panel/src/app/api/bridges/` — NEW: Bridge REST API (list, create, get, update, delete)
+- `control-panel/src/app/embed/` — NEW: Chromeless embed layout + bridge management UI page
+- `ui/src/db/schema.ts` — Added `tokenHash` column to apps table
+- `ui/src/lib/auth/app-token.ts` — NEW: SHA-256 token hash validation for app gateway
+- `ui/src/app/api/apps/v1/platform/route.ts` — NEW: App gateway platform endpoint (migrated from CP)
+- `ui/src/app/api/apps/v1/widgets/sync/route.ts` — NEW: App gateway widget sync endpoint (migrated from CP)
+- `ui/src/app/settings/apps/[appId]/page.tsx` — NEW: Per-app settings page with bridge embed
+- `ui/src/components/settings/bridge-embed.tsx` — NEW: Bridge management iframe component
+
+### Test Results
+- Network isolation verified: apps reach internal subnet, blocked from internet
+- Dashboard, Wiki app confirmed working under ACLs
+- Gateway endpoint returns 401 for unauthenticated requests (correct)
+
+### Notes for Iris
+- `@acl-name` syntax not supported in Incus 6.23 — using subnet-based ACL rules instead
+- System container ACLs need `default.egress.action=allow` and `default.ingress.action=allow`
+- App container ACLs need `default.egress.action=reject` and `default.ingress.action=allow`
+- Bridge system stores data at `/var/lib/youeye/bridges/bridges.json` — needs to survive container recreation
+
 ---
 
 ## v0.2.21.11 — iris — 2026-04-16

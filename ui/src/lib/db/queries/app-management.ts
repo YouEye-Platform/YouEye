@@ -68,6 +68,7 @@ export async function registerApp(data: {
   subdomain?: string;
   icon?: string;
   manifest?: Record<string, unknown>;
+  tokenHash?: string;
 }): Promise<void> {
   await ensureSchema();
 
@@ -87,6 +88,7 @@ export async function registerApp(data: {
         subdomain: data.subdomain,
         icon: data.icon,
         manifest: data.manifest ?? existing[0].manifest,
+        tokenHash: data.tokenHash ?? existing[0].tokenHash,
         updatedAt: new Date(),
       })
       .where(eq(apps.id, data.id));
@@ -99,6 +101,7 @@ export async function registerApp(data: {
       subdomain: data.subdomain,
       icon: data.icon,
       manifest: data.manifest ?? {},
+      tokenHash: data.tokenHash,
     });
   }
 }

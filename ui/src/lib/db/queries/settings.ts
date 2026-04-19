@@ -8,6 +8,7 @@
 import { eq } from "drizzle-orm";
 import { db, ensureSchema } from "@/db";
 import { userSettings } from "@/db/schema";
+import type { SiteNameStyle } from "@/lib/db/queries/branding";
 
 /** Default background: animated flowing-lines with purple preset */
 const DEFAULT_BACKGROUND = {
@@ -93,4 +94,54 @@ export async function saveUserBackground(
   }
 
   return { type, settings: bgSettings };
+}
+
+export async function getUserWordartOverride(
+  userId: string
+): Promise<SiteNameStyle | null> {
+  const settings = await getUserSettings(userId);
+  return (settings.wordartOverride as SiteNameStyle) ?? null;
+}
+
+export async function saveUserWordartOverride(
+  userId: string,
+  style: SiteNameStyle
+) {
+  await ensureSchema();
+  const existing = await getUserSettings(userId);
+  const merged = { ...existing, wordartOverride: style };
+
+  const rows = await db
+    .select()
+    .from(userSettings)
+    .where(eq(userSettings.userId, userId))
+    .limit(1);
+
+  if (rows.length === 0) {
+    await db.insert(userSettings).values({ userId, settings: merged });
+  } else {
+    await db
+      .update(userSettings)
+      .set({ settings: merged, updatedAt: new Date() })
+      .where(eq(userSettings.userId, userId));
+  }
+}
+
+export async function deleteUserWordartOverride(userId: string) {
+  await ensureSchema();
+  const existing = await getUserSettings(userId);
+  const { wordartOverride: _, ...rest } = existing;
+
+  const rows = await db
+    .select()
+    .from(userSettings)
+    .where(eq(userSettings.userId, userId))
+    .limit(1);
+
+  if (rows.length > 0) {
+    await db
+      .update(userSettings)
+      .set({ settings: rest, updatedAt: new Date() })
+      .where(eq(userSettings.userId, userId));
+  }
 }

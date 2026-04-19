@@ -7,6 +7,7 @@
 import { getSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { getBranding } from "@/lib/db/queries/branding";
+import { getUserWordartOverride } from "@/lib/db/queries/settings";
 import { Navbar } from "@/components/layout/navbar";
 import { NotificationsList } from "@/components/notifications/notifications-list";
 import { getTranslations } from "next-intl/server";
@@ -15,9 +16,10 @@ export default async function NotificationsPage() {
   const session = await getSession();
   if (!session) redirect("/login");
 
-  const [branding, t] = await Promise.all([
+  const [branding, t, wordartOverride] = await Promise.all([
     getBranding(),
     getTranslations("notifications"),
+    getUserWordartOverride(session.userId),
   ]);
 
   return (
@@ -27,7 +29,7 @@ export default async function NotificationsPage() {
         email={session.email}
         isAdmin={session.isAdmin}
         siteName={branding.site_name}
-        siteNameStyle={branding.site_name_style}
+        siteNameStyle={wordartOverride ?? branding.site_name_style}
         logoUrl={branding.logo_url}
       />
       <main className="mx-auto max-w-3xl px-4 py-8">

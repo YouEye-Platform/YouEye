@@ -65,10 +65,13 @@ import {
   generateAppToken,
   envToString,
   coerceInstallParams,
+  getPlatformContext,
 } from './platform-env';
 import { getContainerName } from './engine-helpers';
 import { resolveConnectors } from './engine-connectors';
 import { CONTAINER_DOMAIN } from './constants';
+import { ensureNetworkAcls, applyAppAcl } from '../incus/network-acl';
+import { activatePendingBridges, detectBridgeDependencies, createBridge } from '../bridges/manager';
 
 // ─── Install Rollback ─────────────────────────────────────
 
@@ -246,6 +249,7 @@ async function registerAppWithUI(
   containerName: string,
   port: number,
   icon: string | null,
+  appToken?: string,
 ): Promise<void> {
   const uiIP = await getIncusContainerIP('youeye-ui');
   if (!uiIP) return;
@@ -253,13 +257,20 @@ async function registerAppWithUI(
   const bridgeToken = await readBridgeToken();
   const containerUrl = port ? `http://${containerName}.${CONTAINER_DOMAIN}:${port}` : `http://${containerName}.${CONTAINER_DOMAIN}`;
 
+  // Hash the app token so YE-UI can validate future app requests by hash lookup
+  let tokenHash: string | undefined;
+  if (appToken) {
+    const crypto = await import('crypto');
+    tokenHash = crypto.createHash('sha256').update(appToken).digest('hex');
+  }
+
   const res = await fetch(`http://${uiIP}:3000/api/v1/apps/register`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(bridgeToken ? { 'X-UI-Bridge-Token': bridgeToken } : {}),
     },
-    body: JSON.stringify({ id: appId, name, container_url: containerUrl, subdomain, icon }),
+    body: JSON.stringify({ id: appId, name, container_url: containerUrl, subdomain, icon, token_hash: tokenHash }),
   });
 
   if (!res.ok) {
@@ -649,6 +660,15 @@ export async function installApp(
         }
 
         await applyResourcePolicy(containerName, 'normal');
+
+        // Apply network isolation ACL to app container
+        try {
+          await ensureNetworkAcls();
+          await applyAppAcl(containerName);
+        } catch (aclErr) {
+          console.warn(`[engine] ACL application warning for ${containerName}:`, aclErr);
+        }
+
         emit(onEvent, step, totalSteps, 'success', `${containerName} deployed`);
       } catch (err) {
         emit(onEvent, step, totalSteps, 'error', `Failed to deploy ${containerName}`, String(err));
@@ -832,10 +852,50 @@ export async function installApp(
   try {
     const displayName = config.customName || manifest.metadata.name;
     const displayIcon = config.customIcon || manifest.metadata.iconUrl || manifest.metadata.icon || null;
-    await registerAppWithUI(appId, displayName, config.subdomain, primaryContainerName, primaryPort, displayIcon);
+    await registerAppWithUI(appId, displayName, config.subdomain, primaryContainerName, primaryPort, displayIcon, appToken);
     emit(onEvent, step, totalSteps, 'success', 'Registered with dashboard');
   } catch (err) {
     emit(onEvent, step, totalSteps, 'success', `Dashboard registration skipped: ${err}`);
+  }
+
+  // ── Step 11: Detect bridge dependencies from env_mapping ──
+
+  if (manifest.env_mapping) {
+    try {
+      const deps = detectBridgeDependencies(manifest.env_mapping, appId);
+      for (const dep of deps) {
+        await createBridge({
+          from: appId,
+          to: dep.targetAppId,
+          envMappings: dep.envMappings,
+          approvedBy: 'auto',
+        });
+      }
+      if (deps.length > 0) {
+        emit(onEvent, step, totalSteps, 'success', `Detected ${deps.length} bridge dependencies`);
+      }
+    } catch (err) {
+      console.warn('[engine] Bridge dependency detection warning:', err);
+    }
+  }
+
+  // ── Step 12: Activate pending bridges targeting this app ──
+
+  try {
+    const platform = await getPlatformContext();
+    const domain = platform.domain || config.domain;
+    const activated = await activatePendingBridges(
+      appId,
+      primaryContainerName,
+      primaryPort,
+      config.subdomain,
+      domain,
+    );
+    if (activated.length > 0) {
+      emit(onEvent, step, totalSteps, 'success', `Activated ${activated.length} pending bridges`);
+    }
+  } catch (err) {
+    console.warn('[engine] Pending bridge activation warning:', err);
   }
 
   } catch (err) {

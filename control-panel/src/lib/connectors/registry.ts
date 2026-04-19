@@ -80,7 +80,8 @@ export async function fetchConnectorManifest(connectorId: string): Promise<Conne
   const entry = catalog.connectors.find((c) => c.id === connectorId);
   if (!entry) throw new Error(`Connector "${connectorId}" not found in catalog`);
 
-  const yamlText = await fetchFile(entry.file);
+  const filePath = entry.file || `connectors/${connectorId}/connector.yaml`;
+  const yamlText = await fetchFile(filePath);
   const raw = parseYAML(yamlText);
   const manifest = ConnectorManifestSchema.parse(raw);
 
@@ -105,7 +106,9 @@ export async function listConnectors(capability?: string): Promise<ConnectorMani
 
   for (const result of results) {
     if (result.status === 'fulfilled') {
-      if (!capability || result.value.metadata.provides === capability) {
+      const provides = result.value.metadata.provides;
+      const capList = Array.isArray(provides) ? provides : [provides];
+      if (!capability || capList.includes(capability)) {
         manifests.push(result.value);
       }
     }

@@ -1,17 +1,21 @@
-/**
- * DNS Settings Page (Admin Only)
- *
- * Pi-Hole DNS stats and control.
- */
-
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { DnsSettings } from "@/components/settings/admin/dns-settings";
+import { getSignedEmbedUrl } from "@/lib/admin/embed-token";
+import { AdminEmbed } from "@/components/settings/admin-embed";
 
 export default async function DnsSettingsPage() {
   const session = await getSession();
   if (!session) redirect("/login");
   if (!session.isAdmin) redirect("/settings");
 
-  return <DnsSettings />;
+  const signedUrl = getSignedEmbedUrl("dns", session.username, true);
+  if (!signedUrl) {
+    return (
+      <div className="text-center py-12 text-muted-foreground">
+        Bridge token not configured. Cannot load admin settings.
+      </div>
+    );
+  }
+
+  return <AdminEmbed signedUrl={signedUrl} title="DNS Settings" />;
 }

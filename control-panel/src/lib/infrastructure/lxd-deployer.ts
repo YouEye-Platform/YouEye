@@ -276,8 +276,11 @@ else:
   `;
   await execShell(cn, downloadScript, { timeout: 300_000 });
 
-  // Next.js runtime peer deps (styled-jsx, @swc/helpers, @next/env, client-only)
-  // are now bundled into standalone.tar by Canvas SDK postbuild.mjs — no npm fetch needed.
+  if (spec.postInstallCommands?.length) {
+    for (const cmd of spec.postInstallCommands) {
+      await execShell(cn, `cd ${spec.appDir} && ${cmd}`, { timeout: 120_000 });
+    }
+  }
 
   // Create systemd service file using base64 (more reliable than heredoc over exec API)
   const serviceName = spec.containerName;
@@ -288,7 +291,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=${spec.appDir}
-ExecStart=/usr/bin/node ${spec.appDir}/server.js
+ExecStart=/usr/bin/node ${spec.appDir}/${spec.entryFile ?? 'server.js'}
 EnvironmentFile=-/etc/${spec.containerName}.env
 Environment=NODE_ENV=production
 Environment=PORT=${spec.port}

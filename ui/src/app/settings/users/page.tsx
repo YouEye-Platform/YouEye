@@ -1,17 +1,15 @@
-/**
- * Users Settings Page (Admin Only)
- *
- * Displays user data from Authentik via the Control Panel bridge.
- */
-
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { UserSettings } from "@/components/settings/admin/user-settings";
+import { getSignedEmbedUrl } from "@/lib/admin/embed-token";
+import { AdminEmbed } from "@/components/settings/admin-embed";
 
 export default async function UsersSettingsPage() {
   const session = await getSession();
   if (!session) redirect("/login");
   if (!session.isAdmin) redirect("/settings");
 
-  return <UserSettings />;
+  const signedUrl = getSignedEmbedUrl("users", session.username, true);
+  if (!signedUrl) redirect("/settings");
+
+  return <AdminEmbed signedUrl={signedUrl} title="User Management" minHeight={400} />;
 }

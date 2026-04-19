@@ -1,0 +1,4 @@
+node_modules/
+.standalone/
+dist/
+standalone.tar

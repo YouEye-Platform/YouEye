@@ -13,6 +13,7 @@ import {
   authentikServerManifest,
   authentikWorkerManifest,
   uiContainerSpec,
+  connectorsContainerSpec,
 } from './manifests';
 import { getOrCreateSecret, generatePassword } from './secrets';
 import { deployOCIContainer, getContainerIP, containerExists } from './oci-deployer';
@@ -20,11 +21,12 @@ import { deployLXDContainer } from './lxd-deployer';
 import { waitForPostgres, waitForAuthentik, waitForCaddy, waitForPiHole } from './health-checks';
 import { setupAuthentikDatabase } from './postgres-setup';
 import { createAuthentikAPIToken, setupCaddyAuthentikRoute } from './authentik-setup';
-import { setDefaultRoute, ensurePingRoute } from '../caddy/client';
+import { setDefaultRoute, ensurePingRoute, setContainerRoute } from '../caddy/client';
+import { settingsService } from '../settings';
 import { execShell } from '../incus/server';
 import { applyResourcePolicy } from './resource-policy';
 
-const TOTAL_STEPS = 8;
+const TOTAL_STEPS = 9;
 const PIHOLE_CONTAINER = 'youeye-pihole';
 
 /**
@@ -262,6 +264,32 @@ export async function deployInfrastructure(
   } catch (err) {
     emit(onEvent, 8, 'error', 'UI container deployment failed', String(err));
   }
+
+  // ─── Step 9: Connector Runtime ���───────────────��─────────
+  emit(onEvent, 9, 'running', 'Deploying Connector Runtime container...');
+  try {
+    const spec = connectorsContainerSpec();
+    await deployLXDContainer(spec, {
+      spineSocketPath: '/var/run/spine/spine.sock',
+      giteaBaseURL: 'https://git.byka.wtf',
+      giteaOrg: 'potemsla',
+      giteaRepo: 'YouEye',
+      tagPrefix: 'cr',
+    });
+    await applyResourcePolicy('youeye-connectors', 'normal');
+
+    // Add Caddy route for connectors subdomain (non-fatal — route also created during setup)
+    try {
+      const config = await settingsService.getRaw();
+      if (config.domain) {
+        await setContainerRoute(config.domain, 'youeye-connectors', 3001, 'subdomain', 'connectors');
+      }
+    } catch { /* domain not configured yet — route will be set during setup wizard */ }
+
+    emit(onEvent, 9, 'success', 'Connector Runtime container deployed');
+  } catch (err) {
+    emit(onEvent, 9, 'error', 'Connector Runtime deployment failed', String(err));
+  }
 }
 
 /**
@@ -277,7 +305,7 @@ export async function reconcileInfrastructure(
   hostIP: string,
   onEvent: EventCallback
 ): Promise<void> {
-  const RECONCILE_STEPS = 6; // postgres, authentik, authentik-worker, caddy, pihole, ui
+  const RECONCILE_STEPS = 7; // postgres, authentik, authentik-worker, caddy, pihole, ui, connectors
 
   function remit(step: number, status: DeploymentEvent['status'], message: string, detail?: string) {
     onEvent({ step, totalSteps: RECONCILE_STEPS, status, message, detail });
@@ -291,6 +319,7 @@ export async function reconcileInfrastructure(
     'youeye-caddy',
     'youeye-pihole',
     'youeye-ui',
+    'youeye-connectors',
   ];
 
   const missing: string[] = [];
@@ -486,5 +515,42 @@ export async function reconcileInfrastructure(
     }
   } else {
     remit(6, 'skipped', 'YouEye UI already running');
+  }
+
+  // ─── Step 7: Connector Runtime ──────────────────────────
+  if (missing.includes('youeye-connectors')) {
+    remit(7, 'running', 'Deploying missing Connector Runtime container...');
+    try {
+      const spec = connectorsContainerSpec();
+      await deployLXDContainer(spec, {
+        spineSocketPath: '/var/run/spine/spine.sock',
+        giteaBaseURL: 'https://git.byka.wtf',
+        giteaOrg: 'potemsla',
+        giteaRepo: 'YouEye',
+        tagPrefix: 'cr',
+      });
+      await applyResourcePolicy('youeye-connectors', 'normal');
+
+      try {
+        const config = await settingsService.getRaw();
+        if (config.domain) {
+          await setContainerRoute(config.domain, 'youeye-connectors', 3001, 'subdomain', 'connectors');
+        }
+      } catch { /* domain not configured — route will be set during setup */ }
+
+      remit(7, 'success', 'Connector Runtime container deployed');
+    } catch (err) {
+      remit(7, 'error', 'Connector Runtime deployment failed', String(err));
+    }
+  } else {
+    remit(7, 'skipped', 'Connector Runtime already running');
+
+    // Ensure connectors route exists (upgrade path)
+    try {
+      const config = await settingsService.getRaw();
+      if (config.domain) {
+        await setContainerRoute(config.domain, 'youeye-connectors', 3001, 'subdomain', 'connectors');
+      }
+    } catch { /* non-fatal */ }
   }
 }

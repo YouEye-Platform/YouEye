@@ -120,6 +120,8 @@ export const apps = pgTable("apps", {
   manifest: jsonb("manifest").$type<Record<string, unknown>>().default({}),
   /** Display order in app drawer */
   displayOrder: integer("display_order").default(0),
+  /** SHA-256 hash of the app's gateway token (for app-to-UI API auth) */
+  tokenHash: text("token_hash"),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
 });
@@ -438,6 +440,8 @@ export const userConnectors = pgTable("user_connectors", {
   /** Priority when multiple connectors for same capability (lower = preferred) */
   priority: integer("priority").default(0),
   enabled: boolean("enabled").default(true),
+  /** Whether this choice persists across sessions (false = session-only) */
+  persistent: boolean("persistent").default(true),
   /** User-specific connector config (non-secret settings) */
   config: jsonb("config").$type<Record<string, unknown>>().default({}),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
@@ -461,6 +465,8 @@ export const userConnectorSecrets = pgTable("user_connector_secrets", {
   encryptedValue: text("encrypted_value").notNull(),
   /** Encryption nonce (base64) */
   nonce: text("nonce").notNull(),
+  /** Host this credential is bound to — prevents forwarding to wrong host */
+  boundHost: text("bound_host"),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
 
@@ -494,6 +500,25 @@ export const systemSettings = pgTable("system_settings", {
   /** Setting value as JSON */
   value: jsonb("value").$type<unknown>(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
+});
+
+// ============================================
+// WordArt Presets
+// ============================================
+
+/**
+ * Saved WordArt designs — users can save/load named presets.
+ * scope='user': private to the owner. scope='server': admin-created, visible to all.
+ * Active WordArt is always a COPY in userSettings/systemSettings — deleting
+ * a preset never breaks anyone's active style.
+ */
+export const wordartPresets = pgTable("wordart_presets", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  style: jsonb("style").$type<Record<string, unknown>>().notNull(),
+  scope: text("scope").notNull().default("user"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
 
 // ============================================

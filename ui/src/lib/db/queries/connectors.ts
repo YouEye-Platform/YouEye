@@ -11,6 +11,7 @@ import { userConnectors, userConnectorSecrets, appPermissions } from "@/db/schem
 import { eq, and, asc, isNull } from "drizzle-orm";
 
 const CP_API_URL = process.env.CP_API_URL ?? "http://youeye-control.youeye:3000/api";
+const CONNECTOR_RUNTIME_URL = process.env.CONNECTOR_RUNTIME_URL ?? "http://youeye-connectors.youeye:3001";
 
 /**
  * Resolve which connector a user should use for a given capability.
@@ -134,7 +135,7 @@ export async function resolveConnector(
     name: connectorInfo.name,
     capability,
     network: connectorInfo.network,
-    proxyBaseUrl: `${CP_API_URL}/connectors/${connectorId}/proxy`,
+    proxyBaseUrl: `${CONNECTOR_RUNTIME_URL}/proxy`,
     permission,
     approvalUrl: permission === "pending"
       ? `${uiBaseUrl}/permissions/grant?app=${encodeURIComponent(appId)}&capability=${encodeURIComponent(capability)}&connector=${encodeURIComponent(connectorId)}`
