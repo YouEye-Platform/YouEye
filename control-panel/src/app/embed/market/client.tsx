@@ -2,22 +2,28 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 
+// ─── Types ────────────────────────────────────────────────
+
 interface MarketApp {
   id: string;
   name: string;
   description: string;
   icon?: string;
+  iconUrl?: string;
   category: string;
+  integration?: "native" | "basic";
   tags?: string[];
   version?: string;
   type?: string;
   sso?: boolean;
+  supportsSSO?: boolean;
+  website?: string;
   installed: boolean;
   installInfo?: { appId: string; status: string };
   installedVersion?: string | null;
   updateAvailable?: boolean;
   catalogVersion?: string | null;
-  entrances?: Array<{ name: string; subdomain?: string }>;
+  entrances?: Array<{ name: string; subdomain?: string; path?: string; port?: number; authLevel?: string }>;
   installParams?: Array<{
     name: string;
     label?: string;
@@ -27,6 +33,11 @@ interface MarketApp {
     choices?: string[];
     description?: string;
   }>;
+  forwardAuth?: string;
+  detail?: {
+    longDescription?: string;
+    screenshots?: Array<{ url: string; caption?: string }>;
+  };
 }
 
 interface InstallProgress {
@@ -45,6 +56,8 @@ interface ActiveInstall {
   error?: string;
 }
 
+// ─── Constants ────────────────────────────────────────────
+
 const CATEGORY_ORDER = ["productivity", "search", "media", "social", "utilities"];
 const CATEGORY_LABELS: Record<string, string> = {
   productivity: "Productivity",
@@ -54,6 +67,58 @@ const CATEGORY_LABELS: Record<string, string> = {
   utilities: "Utilities",
 };
 
+// ─── SVG Icons (inline, no external deps) ─────────────────
+
+function ShieldIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
+  );
+}
+
+function ArrowLeftIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
+    </svg>
+  );
+}
+
+function ExternalLinkIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
+  );
+}
+
+function ChevronLeftIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="15 18 9 12 15 6" />
+    </svg>
+  );
+}
+
+function ChevronRightIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  );
+}
+
+function GlobeIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z" />
+    </svg>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────
+
 export function MarketEmbedClient() {
   const [apps, setApps] = useState<MarketApp[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,6 +126,9 @@ export function MarketEmbedClient() {
   const [refreshing, setRefreshing] = useState(false);
   const [domain, setDomain] = useState("");
   const [search, setSearch] = useState("");
+
+  // Detail view
+  const [selectedApp, setSelectedApp] = useState<MarketApp | null>(null);
 
   // Install state
   const [installTarget, setInstallTarget] = useState<MarketApp | null>(null);
@@ -77,6 +145,9 @@ export function MarketEmbedClient() {
   const [activeInstalls, setActiveInstalls] = useState<ActiveInstall[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressRef = useRef<HTMLDivElement>(null);
+
+  // Screenshot lightbox
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   const fetchCatalog = useCallback(async () => {
     try {
@@ -182,12 +253,10 @@ export function MarketEmbedClient() {
         return;
       }
 
-      // Start polling for other consumers
       if (!pollRef.current) {
         pollRef.current = setInterval(pollActiveInstalls, 2000);
       }
 
-      // Read SSE stream
       const reader = res.body?.getReader();
       if (!reader) { setInstalling(false); return; }
       const decoder = new TextDecoder();
@@ -258,7 +327,8 @@ export function MarketEmbedClient() {
     }
   };
 
-  // Filter + group
+  // ─── Filter & Group ─────────────────────────────────────
+
   const filtered = apps.filter(a => {
     if (!search) return true;
     const q = search.toLowerCase();
@@ -268,24 +338,38 @@ export function MarketEmbedClient() {
       || (a.tags || []).some(t => t.toLowerCase().includes(q));
   });
 
-  const installed = filtered.filter(a => a.installed);
-  const available = filtered.filter(a => !a.installed);
-  const grouped: Record<string, MarketApp[]> = {};
-  for (const app of available) {
-    const cat = app.category || "utilities";
-    (grouped[cat] ??= []).push(app);
-  }
+  const nativeApps = filtered.filter(a => a.integration === "native" || a.type === "native");
+  const marketplaceApps = filtered.filter(a => a.integration !== "native" && a.type !== "native");
+
+  const installedMarketplace = marketplaceApps.filter(a => a.installed);
+  const availableMarketplace = marketplaceApps.filter(a => !a.installed);
+
+  const groupByCategory = (list: MarketApp[]) => {
+    const groups: Record<string, MarketApp[]> = {};
+    for (const app of list) {
+      const cat = app.category || "utilities";
+      (groups[cat] ??= []).push(app);
+    }
+    return groups;
+  };
+
+  const nativeGrouped = groupByCategory(nativeApps);
+  const availableGrouped = groupByCategory(availableMarketplace);
+
+  // ─── Loading ────────────────────────────────────────────
 
   if (loading) {
     return (
       <div style={{ padding: 16 }}>
         <div className="embed-skeleton" style={{ height: 20, width: 200, marginBottom: 16 }} />
-        <div className="embed-grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 12 }}>
           {[1, 2, 3, 4, 5, 6].map(i => (
-            <div key={i} className="embed-card">
-              <div className="embed-skeleton" style={{ height: 40, width: 40, borderRadius: 8, marginBottom: 8 }} />
-              <div className="embed-skeleton" style={{ height: 14, width: 120, marginBottom: 6 }} />
-              <div className="embed-skeleton" style={{ height: 12, width: "80%" }} />
+            <div key={i} className="embed-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 16 }}>
+              <div className="embed-skeleton" style={{ height: 40, width: 40, borderRadius: 10, flexShrink: 0 }} />
+              <div style={{ flex: 1 }}>
+                <div className="embed-skeleton" style={{ height: 14, width: 120, marginBottom: 6 }} />
+                <div className="embed-skeleton" style={{ height: 12, width: "80%" }} />
+              </div>
             </div>
           ))}
         </div>
@@ -299,6 +383,492 @@ export function MarketEmbedClient() {
         <div className="embed-card" style={{ textAlign: "center", padding: 32 }}>
           <div style={{ color: "var(--embed-danger)", marginBottom: 8 }}>{error}</div>
           <button className="embed-btn" onClick={() => { setLoading(true); fetchCatalog(); }}>Retry</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── App Detail View ────────────────────────────────────
+
+  if (selectedApp) {
+    const app = selectedApp;
+    const isNative = app.integration === "native" || app.type === "native";
+    const longDesc = app.detail?.longDescription || app.description;
+    const screenshots = app.detail?.screenshots || [];
+
+    return (
+      <div style={{ padding: 16, maxWidth: 900 }}>
+        {/* Back button */}
+        <button
+          onClick={() => { setSelectedApp(null); setLightboxIndex(null); }}
+          style={{
+            display: "flex", alignItems: "center", gap: 6, fontSize: 13,
+            color: "var(--embed-text-muted)", background: "none", border: "none",
+            cursor: "pointer", marginBottom: 16, padding: 0,
+          }}
+        >
+          <ArrowLeftIcon size={16} />
+          Back to App Market
+        </button>
+
+        {/* Header card */}
+        <div className="embed-card" style={{ padding: 20, marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
+            {/* Icon */}
+            <div style={{
+              width: 64, height: 64, borderRadius: 14, flexShrink: 0,
+              background: "color-mix(in srgb, var(--embed-primary) 10%, transparent)",
+              display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
+            }}>
+              {app.iconUrl ? (
+                <img src={app.iconUrl} alt={app.name} style={{ width: 40, height: 40, objectFit: "contain" }} />
+              ) : (
+                <span style={{ fontSize: 24, fontWeight: 700, color: "var(--embed-primary)" }}>
+                  {app.name.charAt(0)}
+                </span>
+              )}
+            </div>
+
+            {/* Info */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 20, fontWeight: 700 }}>{app.name}</span>
+                {app.version && (
+                  <span className="embed-badge" style={{ fontSize: 11 }}>v{app.version}</span>
+                )}
+                {isNative ? (
+                  <span style={{
+                    display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 500,
+                    padding: "2px 8px", borderRadius: 9999,
+                    background: "color-mix(in srgb, var(--embed-primary) 12%, transparent)",
+                    color: "var(--embed-primary)", border: "1px solid color-mix(in srgb, var(--embed-primary) 25%, transparent)",
+                  }}>
+                    <ShieldIcon size={11} /> YouEye
+                  </span>
+                ) : (
+                  <span style={{
+                    display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 500,
+                    padding: "2px 8px", borderRadius: 9999,
+                    color: "var(--embed-text-muted)", border: "1px solid var(--embed-border)",
+                  }}>
+                    <GlobeIcon size={11} /> External
+                  </span>
+                )}
+              </div>
+              <div className="embed-muted" style={{ fontSize: 12, marginTop: 4, textTransform: "capitalize" }}>
+                {app.category}
+              </div>
+
+              {/* Status if installed */}
+              {app.installed && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 13 }}>
+                  <span style={{ color: "var(--embed-success)", fontWeight: 500 }}>Installed</span>
+                  {app.installInfo?.status === "running" && (
+                    <span className="embed-badge-green" style={{ fontSize: 10 }}>Running</span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Action buttons */}
+          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            {!app.installed ? (
+              <button className="embed-btn" onClick={() => openInstallForm(app)}
+                style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)", fontWeight: 500, padding: "8px 20px" }}>
+                Install {app.name}
+              </button>
+            ) : (
+              <>
+                {app.entrances?.[0]?.subdomain && domain && (
+                  <button className="embed-btn" onClick={() => window.open(`https://${app.entrances![0].subdomain}.${domain}`, "_blank")}
+                    style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)", fontWeight: 500, padding: "8px 20px" }}>
+                    <ExternalLinkIcon size={14} /> Open {app.name}
+                  </button>
+                )}
+                <button className="embed-btn" onClick={() => setUninstallTarget(app)}
+                  style={{ borderColor: "var(--embed-danger)", color: "var(--embed-danger)", padding: "8px 20px" }}>
+                  Uninstall
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Description */}
+        <div className="embed-card" style={{ padding: 20, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--embed-text-muted)", marginBottom: 10 }}>
+            Description
+          </div>
+          <div style={{ fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-line" }}>{longDesc}</div>
+        </div>
+
+        {/* Screenshots */}
+        {screenshots.length > 0 && (
+          <div className="embed-card" style={{ padding: 20, marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--embed-text-muted)", marginBottom: 10 }}>
+              Screenshots
+            </div>
+            <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4 }}>
+              {screenshots.map((shot, i) => (
+                <button
+                  key={i}
+                  onClick={() => setLightboxIndex(i)}
+                  style={{
+                    flexShrink: 0, border: "1px solid var(--embed-border)", borderRadius: 8,
+                    overflow: "hidden", cursor: "pointer", background: "none", padding: 0,
+                  }}
+                >
+                  <img
+                    src={shot.url}
+                    alt={shot.caption || `Screenshot ${i + 1}`}
+                    style={{ height: 160, width: "auto", objectFit: "cover", display: "block" }}
+                  />
+                  {shot.caption && (
+                    <div style={{
+                      fontSize: 11, padding: "6px 8px", color: "var(--embed-text-muted)",
+                      background: "var(--embed-hover)", whiteSpace: "nowrap", overflow: "hidden",
+                      textOverflow: "ellipsis", maxWidth: 260,
+                    }}>
+                      {shot.caption}
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Details */}
+        <div className="embed-card" style={{ padding: 20, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--embed-text-muted)", marginBottom: 12 }}>
+            Details
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 24px" }}>
+            {/* SSO */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
+                background: "var(--embed-hover)",
+              }}>
+                <ShieldIcon size={16} />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--embed-text-muted)" }}>SSO Support</div>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>
+                  {(app.supportsSSO || app.sso !== false)
+                    ? <span style={{ color: "var(--embed-success)" }}>Enabled</span>
+                    : app.forwardAuth !== "disabled"
+                      ? <span style={{ color: "var(--embed-success)" }}>Forward-auth</span>
+                      : <span style={{ color: "var(--embed-text-muted)" }}>Disabled</span>}
+                </div>
+              </div>
+            </div>
+
+            {/* Website */}
+            {app.website && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{
+                  width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
+                  background: "var(--embed-hover)",
+                }}>
+                  <GlobeIcon size={16} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: "var(--embed-text-muted)" }}>Website</div>
+                  <a href={app.website} target="_blank" rel="noopener noreferrer"
+                    style={{ fontSize: 13, fontWeight: 500, color: "var(--embed-primary)", textDecoration: "none", display: "flex", alignItems: "center", gap: 4 }}>
+                    {(() => { try { return new URL(app.website).hostname; } catch { return app.website; } })()}
+                    <ExternalLinkIcon size={11} />
+                  </a>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Tags */}
+          {app.tags && app.tags.length > 0 && (
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--embed-border)" }}>
+              <div style={{ fontSize: 11, color: "var(--embed-text-muted)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 500 }}>
+                Tags
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {app.tags.map(tag => (
+                  <span key={tag} style={{
+                    fontSize: 11, padding: "3px 10px", borderRadius: 9999,
+                    background: "var(--embed-hover)", color: "var(--embed-text-muted)",
+                  }}>
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Entrances */}
+          {app.entrances && app.entrances.length > 0 && (
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--embed-border)" }}>
+              <div style={{ fontSize: 11, color: "var(--embed-text-muted)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 500 }}>
+                Access Points
+              </div>
+              {app.entrances.map((e, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ fontWeight: 500 }}>{e.name}</span>
+                  {e.path && <span className="embed-muted">{e.path}</span>}
+                  {e.authLevel && (
+                    <span className="embed-badge" style={{ fontSize: 10 }}>{e.authLevel}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Screenshot Lightbox */}
+        {lightboxIndex !== null && screenshots[lightboxIndex] && (
+          <div
+            onClick={() => setLightboxIndex(null)}
+            style={{
+              position: "fixed", inset: 0, zIndex: 200,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)",
+            }}
+          >
+            <div onClick={e => e.stopPropagation()} style={{ position: "relative", maxWidth: "90vw", maxHeight: "90vh" }}>
+              {lightboxIndex > 0 && (
+                <button onClick={() => setLightboxIndex(lightboxIndex - 1)} style={{
+                  position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", zIndex: 10,
+                  padding: 8, borderRadius: "50%", background: "rgba(0,0,0,0.5)", color: "white",
+                  border: "none", cursor: "pointer",
+                }}>
+                  <ChevronLeftIcon />
+                </button>
+              )}
+              {lightboxIndex < screenshots.length - 1 && (
+                <button onClick={() => setLightboxIndex(lightboxIndex + 1)} style={{
+                  position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", zIndex: 10,
+                  padding: 8, borderRadius: "50%", background: "rgba(0,0,0,0.5)", color: "white",
+                  border: "none", cursor: "pointer",
+                }}>
+                  <ChevronRightIcon />
+                </button>
+              )}
+              <img
+                src={screenshots[lightboxIndex].url}
+                alt={screenshots[lightboxIndex].caption || `Screenshot ${lightboxIndex + 1}`}
+                style={{ maxHeight: "85vh", width: "auto", objectFit: "contain", borderRadius: 8 }}
+              />
+              {screenshots[lightboxIndex].caption && (
+                <p style={{ textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.8)", marginTop: 10 }}>
+                  {screenshots[lightboxIndex].caption}
+                </p>
+              )}
+              <p style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+                {lightboxIndex + 1} / {screenshots.length}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Install / Uninstall dialogs rendered below */}
+        {renderInstallDialog()}
+        {renderUninstallDialog()}
+      </div>
+    );
+  }
+
+  // ─── Catalog View ───────────────────────────────────────
+
+  function renderCategorySection(label: string, apps: MarketApp[]) {
+    if (!apps.length) return null;
+    return (
+      <div style={{ marginBottom: 20 }} key={label}>
+        <div style={{
+          fontSize: 11, fontWeight: 600, color: "var(--embed-text-muted)",
+          textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8,
+        }}>
+          {label}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
+          {apps.map(app => (
+            <AppCard key={app.id} app={app} onSelect={setSelectedApp} onInstall={openInstallForm} onUninstall={setUninstallTarget} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function renderInstallDialog() {
+    if (!installTarget) return null;
+    return (
+      <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", zIndex: 100 }}
+        onClick={() => { if (!installing) setInstallTarget(null); }}>
+        <div className="embed-card" style={{ maxWidth: 480, width: "90%", maxHeight: "80vh", overflow: "auto" }}
+          onClick={e => e.stopPropagation()}>
+          <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>
+            Install {installTarget.name}
+          </div>
+          <div className="embed-muted" style={{ fontSize: 12, marginBottom: 16 }}>
+            {installTarget.description}
+          </div>
+
+          {!installing && !installDone && (
+            <>
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Subdomain</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <input type="text" value={installForm.subdomain}
+                    onChange={e => setInstallForm(f => ({ ...f, subdomain: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "") }))}
+                    style={{
+                      flex: 1, padding: "6px 10px", fontSize: 13, borderRadius: 6,
+                      border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
+                      color: "var(--embed-text)", outline: "none",
+                    }} />
+                  <span className="embed-muted" style={{ fontSize: 13 }}>.{domain}</span>
+                </div>
+              </div>
+
+              {installTarget.installParams?.map(param => (
+                <div key={param.name} style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>
+                    {param.label || param.name}
+                    {param.required && <span style={{ color: "var(--embed-danger)" }}> *</span>}
+                  </div>
+                  {param.description && (
+                    <div className="embed-muted" style={{ fontSize: 11, marginBottom: 4 }}>{param.description}</div>
+                  )}
+                  {param.choices ? (
+                    <select
+                      value={installForm.params[param.name] || ""}
+                      onChange={e => setInstallForm(f => ({ ...f, params: { ...f.params, [param.name]: e.target.value } }))}
+                      style={{
+                        width: "100%", padding: "6px 10px", fontSize: 13, borderRadius: 6,
+                        border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
+                        color: "var(--embed-text)", outline: "none",
+                      }}>
+                      <option value="">Select...</option>
+                      {param.choices.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  ) : (
+                    <input
+                      type={param.type === "number" ? "number" : "text"}
+                      value={installForm.params[param.name] || ""}
+                      onChange={e => setInstallForm(f => ({ ...f, params: { ...f.params, [param.name]: e.target.value } }))}
+                      placeholder={param.default || ""}
+                      style={{
+                        width: "100%", padding: "6px 10px", fontSize: 13, borderRadius: 6,
+                        border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
+                        color: "var(--embed-text)", outline: "none",
+                      }} />
+                  )}
+                </div>
+              ))}
+
+              {(installTarget.supportsSSO || installTarget.sso !== false) && (
+                <div className="embed-badge-green" style={{ marginBottom: 12, display: "inline-block", fontSize: 11 }}>
+                  SSO enabled automatically
+                </div>
+              )}
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+                <button className="embed-btn" onClick={() => setInstallTarget(null)}>Cancel</button>
+                <button className="embed-btn" onClick={handleInstall}
+                  disabled={!installForm.subdomain}
+                  style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}>
+                  Install
+                </button>
+              </div>
+            </>
+          )}
+
+          {(installing || installDone) && (
+            <>
+              <div ref={progressRef} style={{
+                maxHeight: 300, overflowY: "auto", fontSize: 12,
+                background: "var(--embed-bg)", borderRadius: 6,
+                border: "1px solid var(--embed-border)", padding: 10,
+              }}>
+                {installProgress.map((ev, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 4 }}>
+                    <span style={{
+                      flexShrink: 0, width: 14, textAlign: "center",
+                      color: ev.status === "success" ? "var(--embed-success)"
+                        : ev.status === "error" ? "var(--embed-danger)"
+                        : ev.status === "skipped" ? "var(--embed-text-muted)"
+                        : "var(--embed-primary)",
+                    }}>
+                      {ev.status === "success" ? "\u2713" : ev.status === "error" ? "\u2717" : ev.status === "skipped" ? "\u2013" : "\u25CF"}
+                    </span>
+                    <span style={{ color: ev.status === "error" ? "var(--embed-danger)" : "var(--embed-text)" }}>
+                      {ev.message}
+                      {ev.detail && <span className="embed-muted"> \u2014 {ev.detail}</span>}
+                    </span>
+                  </div>
+                ))}
+                {installing && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--embed-primary)" }}>
+                    <span style={{ animation: "embed-pulse 1s infinite" }}>{"\u25CF"}</span>
+                    <span>Working...</span>
+                  </div>
+                )}
+              </div>
+
+              {installing && installProgress.length > 0 && (() => {
+                const last = installProgress[installProgress.length - 1];
+                const pct = Math.round((last.step / Math.max(last.totalSteps, 1)) * 100);
+                return (
+                  <div className="embed-progress-track" style={{ marginTop: 8 }}>
+                    <div className="embed-progress-bar" style={{ width: `${pct}%`, background: "var(--embed-primary)" }} />
+                  </div>
+                );
+              })()}
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                {installing && (
+                  <button className="embed-btn" onClick={handleCancelInstall}
+                    style={{ borderColor: "var(--embed-danger)", color: "var(--embed-danger)" }}>
+                    Cancel
+                  </button>
+                )}
+                {installDone && (
+                  <button className="embed-btn" onClick={() => { setInstallTarget(null); setInstallProgress([]); }}
+                    style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}>
+                    Close
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function renderUninstallDialog() {
+    if (!uninstallTarget) return null;
+    return (
+      <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", zIndex: 100 }}
+        onClick={() => { if (!uninstalling) setUninstallTarget(null); }}>
+        <div className="embed-card" style={{ maxWidth: 400, width: "90%" }} onClick={e => e.stopPropagation()}>
+          <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>Uninstall {uninstallTarget.name}?</div>
+          <div className="embed-muted" style={{ fontSize: 13, marginBottom: 4 }}>
+            This will remove the container, Caddy route, and SSO configuration.
+          </div>
+          <div style={{
+            padding: "8px 12px", borderRadius: 6, fontSize: 12, marginBottom: 12,
+            background: "color-mix(in srgb, var(--embed-danger) 10%, transparent)",
+            border: "1px solid color-mix(in srgb, var(--embed-danger) 25%, transparent)",
+            color: "var(--embed-danger)",
+          }}>
+            This action cannot be undone. App data will be permanently deleted.
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="embed-btn" onClick={() => setUninstallTarget(null)} disabled={uninstalling}>Cancel</button>
+            <button className="embed-btn" onClick={handleUninstall} disabled={uninstalling}
+              style={{ borderColor: "var(--embed-danger)", color: "var(--embed-danger)" }}>
+              {uninstalling ? "Uninstalling..." : "Uninstall"}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -344,9 +914,9 @@ export function MarketEmbedClient() {
             return (
               <div key={inst.appId} style={{ fontSize: 12, marginBottom: 4 }}>
                 <span style={{ fontWeight: 500 }}>{inst.appName}</span>
-                <span className="embed-muted"> — {last?.message || "Starting..."}</span>
+                <span className="embed-muted"> \u2014 {last?.message || "Starting..."}</span>
                 <div className="embed-progress-track" style={{ marginTop: 4 }}>
-                  <div className="embed-progress-bar" style={{ width: `${pct}%` }} />
+                  <div className="embed-progress-bar" style={{ width: `${pct}%`, background: "var(--embed-primary)" }} />
                 </div>
               </div>
             );
@@ -354,37 +924,72 @@ export function MarketEmbedClient() {
         </div>
       )}
 
-      {/* Installed */}
-      {installed.length > 0 && (
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--embed-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-            Installed ({installed.length})
+      {/* Built for YouEye — native apps */}
+      {nativeApps.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{
+            display: "flex", alignItems: "center", gap: 6,
+            fontSize: 12, fontWeight: 600, color: "var(--embed-text-muted)",
+            textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12,
+          }}>
+            <ShieldIcon size={14} />
+            Built for YouEye ({nativeApps.length})
           </div>
-          <div className="embed-grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-            {installed.map(app => (
-              <AppCard key={app.id} app={app} onInstall={openInstallForm} onUninstall={setUninstallTarget} />
-            ))}
-          </div>
+          {[...CATEGORY_ORDER, ...Object.keys(nativeGrouped).filter(c => !CATEGORY_ORDER.includes(c))].map(cat => {
+            const catApps = nativeGrouped[cat];
+            if (!catApps?.length) return null;
+            return (
+              <div key={cat} style={{ marginBottom: 14 }}>
+                <div style={{
+                  fontSize: 10, fontWeight: 500, color: "var(--embed-text-muted)",
+                  textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6, opacity: 0.7,
+                }}>
+                  {CATEGORY_LABELS[cat] || cat}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
+                  {catApps.map(app => (
+                    <AppCard key={app.id} app={app} onSelect={setSelectedApp} onInstall={openInstallForm} onUninstall={setUninstallTarget} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {/* Available by category */}
-      {[...CATEGORY_ORDER, ...Object.keys(grouped).filter(c => !CATEGORY_ORDER.includes(c))].map(cat => {
-        const catApps = grouped[cat];
-        if (!catApps?.length) return null;
-        return (
-          <div key={cat} style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--embed-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-              {CATEGORY_LABELS[cat] || cat}
-            </div>
-            <div className="embed-grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-              {catApps.map(app => (
-                <AppCard key={app.id} app={app} onInstall={openInstallForm} onUninstall={setUninstallTarget} />
-              ))}
-            </div>
+      {/* Installed marketplace apps */}
+      {installedMarketplace.length > 0 && renderCategorySection(`Installed (${installedMarketplace.length})`, installedMarketplace)}
+
+      {/* Available marketplace apps by category */}
+      {availableMarketplace.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{
+            fontSize: 12, fontWeight: 600, color: "var(--embed-text-muted)",
+            textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12,
+          }}>
+            Available ({availableMarketplace.length})
           </div>
-        );
-      })}
+          {[...CATEGORY_ORDER, ...Object.keys(availableGrouped).filter(c => !CATEGORY_ORDER.includes(c))].map(cat => {
+            const catApps = availableGrouped[cat];
+            if (!catApps?.length) return null;
+            return (
+              <div key={cat} style={{ marginBottom: 14 }}>
+                <div style={{
+                  fontSize: 10, fontWeight: 500, color: "var(--embed-text-muted)",
+                  textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6, opacity: 0.7,
+                }}>
+                  {CATEGORY_LABELS[cat] || cat}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
+                  {catApps.map(app => (
+                    <AppCard key={app.id} app={app} onSelect={setSelectedApp} onInstall={openInstallForm} onUninstall={setUninstallTarget} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {filtered.length === 0 && (
         <div className="embed-card" style={{ textAlign: "center", padding: 32 }}>
@@ -392,204 +997,60 @@ export function MarketEmbedClient() {
         </div>
       )}
 
-      {/* Install Dialog */}
-      {installTarget && (
-        <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", zIndex: 100 }}
-          onClick={() => { if (!installing) setInstallTarget(null); }}>
-          <div className="embed-card" style={{ maxWidth: 480, width: "90%", maxHeight: "80vh", overflow: "auto" }}
-            onClick={e => e.stopPropagation()}>
-            <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>
-              Install {installTarget.name}
-            </div>
-            <div className="embed-muted" style={{ fontSize: 12, marginBottom: 16 }}>
-              {installTarget.description}
-            </div>
-
-            {!installing && !installDone && (
-              <>
-                {/* Subdomain */}
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Subdomain</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <input type="text" value={installForm.subdomain}
-                      onChange={e => setInstallForm(f => ({ ...f, subdomain: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "") }))}
-                      style={{
-                        flex: 1, padding: "6px 10px", fontSize: 13, borderRadius: 6,
-                        border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
-                        color: "var(--embed-text)", outline: "none",
-                      }} />
-                    <span className="embed-muted" style={{ fontSize: 13 }}>.{domain}</span>
-                  </div>
-                </div>
-
-                {/* Install params */}
-                {installTarget.installParams?.map(param => (
-                  <div key={param.name} style={{ marginBottom: 12 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>
-                      {param.label || param.name}
-                      {param.required && <span style={{ color: "var(--embed-danger)" }}> *</span>}
-                    </div>
-                    {param.description && (
-                      <div className="embed-muted" style={{ fontSize: 11, marginBottom: 4 }}>{param.description}</div>
-                    )}
-                    {param.choices ? (
-                      <select
-                        value={installForm.params[param.name] || ""}
-                        onChange={e => setInstallForm(f => ({ ...f, params: { ...f.params, [param.name]: e.target.value } }))}
-                        style={{
-                          width: "100%", padding: "6px 10px", fontSize: 13, borderRadius: 6,
-                          border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
-                          color: "var(--embed-text)", outline: "none",
-                        }}>
-                        <option value="">Select...</option>
-                        {param.choices.map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    ) : (
-                      <input
-                        type={param.type === "number" ? "number" : "text"}
-                        value={installForm.params[param.name] || ""}
-                        onChange={e => setInstallForm(f => ({ ...f, params: { ...f.params, [param.name]: e.target.value } }))}
-                        placeholder={param.default || ""}
-                        style={{
-                          width: "100%", padding: "6px 10px", fontSize: 13, borderRadius: 6,
-                          border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
-                          color: "var(--embed-text)", outline: "none",
-                        }} />
-                    )}
-                  </div>
-                ))}
-
-                {/* SSO badge */}
-                {installTarget.sso !== false && (
-                  <div className="embed-badge-green" style={{ marginBottom: 12, display: "inline-block", fontSize: 11 }}>
-                    SSO enabled automatically
-                  </div>
-                )}
-
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
-                  <button className="embed-btn" onClick={() => setInstallTarget(null)}>Cancel</button>
-                  <button className="embed-btn" onClick={handleInstall}
-                    disabled={!installForm.subdomain}
-                    style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}>
-                    Install
-                  </button>
-                </div>
-              </>
-            )}
-
-            {/* Progress */}
-            {(installing || installDone) && (
-              <>
-                <div ref={progressRef} style={{
-                  maxHeight: 300, overflowY: "auto", fontSize: 12,
-                  background: "var(--embed-bg)", borderRadius: 6,
-                  border: "1px solid var(--embed-border)", padding: 10,
-                }}>
-                  {installProgress.map((ev, i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 4 }}>
-                      <span style={{
-                        flexShrink: 0, width: 14, textAlign: "center",
-                        color: ev.status === "success" ? "var(--embed-success)"
-                          : ev.status === "error" ? "var(--embed-danger)"
-                          : ev.status === "skipped" ? "var(--embed-text-muted)"
-                          : "var(--embed-primary)",
-                      }}>
-                        {ev.status === "success" ? "✓" : ev.status === "error" ? "✗" : ev.status === "skipped" ? "–" : "●"}
-                      </span>
-                      <span style={{ color: ev.status === "error" ? "var(--embed-danger)" : "var(--embed-text)" }}>
-                        {ev.message}
-                        {ev.detail && <span className="embed-muted"> — {ev.detail}</span>}
-                      </span>
-                    </div>
-                  ))}
-                  {installing && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--embed-primary)" }}>
-                      <span style={{ animation: "embed-pulse 1s infinite" }}>●</span>
-                      <span>Working...</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Progress bar */}
-                {installing && installProgress.length > 0 && (() => {
-                  const last = installProgress[installProgress.length - 1];
-                  const pct = Math.round((last.step / Math.max(last.totalSteps, 1)) * 100);
-                  return (
-                    <div className="embed-progress-track" style={{ marginTop: 8 }}>
-                      <div className="embed-progress-bar" style={{ width: `${pct}%` }} />
-                    </div>
-                  );
-                })()}
-
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-                  {installing && (
-                    <button className="embed-btn" onClick={handleCancelInstall}
-                      style={{ borderColor: "var(--embed-danger)", color: "var(--embed-danger)" }}>
-                      Cancel
-                    </button>
-                  )}
-                  {installDone && (
-                    <button className="embed-btn" onClick={() => { setInstallTarget(null); setInstallProgress([]); }}
-                      style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}>
-                      Close
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Uninstall Dialog */}
-      {uninstallTarget && (
-        <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", zIndex: 100 }}
-          onClick={() => { if (!uninstalling) setUninstallTarget(null); }}>
-          <div className="embed-card" style={{ maxWidth: 400, width: "90%" }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>Uninstall {uninstallTarget.name}?</div>
-            <div className="embed-muted" style={{ fontSize: 13, marginBottom: 4 }}>
-              This will remove the container, Caddy route, and SSO configuration.
-            </div>
-            <div style={{
-              padding: "8px 12px", borderRadius: 6, fontSize: 12, marginBottom: 12,
-              background: "color-mix(in srgb, var(--embed-danger) 10%, transparent)",
-              border: "1px solid color-mix(in srgb, var(--embed-danger) 25%, transparent)",
-              color: "var(--embed-danger)",
-            }}>
-              This action cannot be undone. App data will be permanently deleted.
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <button className="embed-btn" onClick={() => setUninstallTarget(null)} disabled={uninstalling}>Cancel</button>
-              <button className="embed-btn" onClick={handleUninstall} disabled={uninstalling}
-                style={{ borderColor: "var(--embed-danger)", color: "var(--embed-danger)" }}>
-                {uninstalling ? "Uninstalling..." : "Uninstall"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {renderInstallDialog()}
+      {renderUninstallDialog()}
     </div>
   );
 }
 
-function AppCard({ app, onInstall, onUninstall }: {
+// ─── App Card Component ───────────────────────────────────
+
+function AppCard({ app, onSelect, onInstall, onUninstall }: {
   app: MarketApp;
+  onSelect: (app: MarketApp) => void;
   onInstall: (app: MarketApp) => void;
   onUninstall: (app: MarketApp) => void;
 }) {
+  const isNative = app.integration === "native" || app.type === "native";
+
   return (
-    <div className="embed-card" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    <div
+      className="embed-card"
+      onClick={() => onSelect(app)}
+      style={{ display: "flex", flexDirection: "column", gap: 8, cursor: "pointer", transition: "border-color 0.15s" }}
+      onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--embed-primary)")}
+      onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--embed-border)")}
+    >
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {/* Icon */}
         <div style={{
-          width: 36, height: 36, borderRadius: 8, flexShrink: 0,
-          background: "var(--embed-hover)", display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: app.icon ? 20 : 15, fontWeight: 700, color: "var(--embed-text-muted)",
+          width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+          background: "color-mix(in srgb, var(--embed-primary) 10%, transparent)",
+          display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
         }}>
-          {app.icon || app.name.charAt(0)}
+          {app.iconUrl ? (
+            <img src={app.iconUrl} alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
+          ) : (
+            <span style={{ fontSize: 16, fontWeight: 700, color: "var(--embed-primary)" }}>
+              {app.name.charAt(0)}
+            </span>
+          )}
         </div>
+
+        {/* Name + type badge */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontWeight: 500, fontSize: 13 }}>{app.name}</span>
+            <span style={{ fontWeight: 600, fontSize: 13 }}>{app.name}</span>
+            {isNative && (
+              <span style={{
+                display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 500,
+                padding: "1px 6px", borderRadius: 9999,
+                background: "color-mix(in srgb, var(--embed-primary) 12%, transparent)",
+                color: "var(--embed-primary)",
+              }}>
+                <ShieldIcon size={9} /> YouEye
+              </span>
+            )}
             {app.version && <span className="embed-muted" style={{ fontSize: 11 }}>v{app.version}</span>}
           </div>
           <div className="embed-muted" style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -598,13 +1059,27 @@ function AppCard({ app, onInstall, onUninstall }: {
         </div>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      {/* Tags row */}
+      {app.tags && app.tags.length > 0 && (
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {app.tags.slice(0, 4).map(tag => (
+            <span key={tag} style={{
+              fontSize: 10, padding: "2px 8px", borderRadius: 9999,
+              background: "var(--embed-hover)", color: "var(--embed-text-muted)",
+            }}>
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Footer: badges + action */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "auto" }}>
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
           <span className="embed-badge" style={{ fontSize: 10 }}>{app.category}</span>
-          {app.sso !== false && <span className="embed-badge-green" style={{ fontSize: 10 }}>SSO</span>}
-          {app.type === "native" && <span className="embed-badge" style={{ fontSize: 10 }}>native</span>}
+          {(app.supportsSSO || app.sso !== false) && <span className="embed-badge-green" style={{ fontSize: 10 }}>SSO</span>}
         </div>
-        <div>
+        <div onClick={e => e.stopPropagation()}>
           {app.installed ? (
             <button className="embed-btn" onClick={() => onUninstall(app)}
               style={{ padding: "3px 10px", fontSize: 11, borderColor: "var(--embed-danger)", color: "var(--embed-danger)" }}>
