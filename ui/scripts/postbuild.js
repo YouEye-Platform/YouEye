@@ -136,6 +136,10 @@ const localModules = path.join(rootDir, 'node_modules');
 function hasCodeContent(dir) {
   try {
     const items = fs.readdirSync(dir);
+    // A properly installed package has both code AND package.json.
+    // Next.js standalone trace sometimes copies only dist/ without package.json,
+    // which makes `require('next')` fail at runtime.
+    if (!items.includes('package.json')) return false;
     return items.some(i => i === 'dist' || i === 'cjs' || i === 'esm' || i === 'lib' || i.endsWith('.js') || i.endsWith('.mjs'));
   } catch { return false; }
 }
