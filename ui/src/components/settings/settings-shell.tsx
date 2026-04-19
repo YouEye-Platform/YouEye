@@ -11,7 +11,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import {
   User,
@@ -52,7 +51,7 @@ const ADMIN_SECTIONS = [
   { id: "proxy", labelKey: "proxy" as const, icon: ArrowLeftRight, href: "/settings/proxy" },
   { id: "backup", labelKey: "backup" as const, icon: HardDrive, href: "/settings/backup" },
   { id: "apps-list", labelKey: "apps" as const, icon: PackageOpen, href: "/settings/apps-list" },
-  { id: "market", labelKey: "appMarket" as const, icon: Store, href: "/app-store" },
+  { id: "market", labelKey: "appMarket" as const, icon: Store, href: "/app-market" },
 ];
 
 interface SettingsShellProps {
@@ -66,18 +65,9 @@ export function SettingsShell({ children, isAdmin }: SettingsShellProps) {
   const ts = useTranslations("settings.sections");
   const ta = useTranslations("settings.admin");
   const tn = useTranslations("nav");
-  const [cpUrl, setCpUrl] = useState<string | null>(null);
-
-  // Fetch CP URL for the external link
-  useEffect(() => {
-    if (!isAdmin) return;
-    fetch("/api/admin/config")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.cpUrl) setCpUrl(data.cpUrl);
-      })
-      .catch(() => {});
-  }, [isAdmin]);
+  const cpUrl = isAdmin
+    ? (process.env.NEXT_PUBLIC_CP_ORIGIN || null)
+    : null;
 
   const isActive = (href: string) => {
     if (href === "/settings") return pathname === "/settings";

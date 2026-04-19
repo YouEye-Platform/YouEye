@@ -7,5 +7,5 @@
 import { redirect } from "next/navigation";
 
 export default function MarketSettingsPage() {
-  redirect("/app-store");
+  redirect("/app-market");
 }

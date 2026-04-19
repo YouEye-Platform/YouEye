@@ -249,20 +249,6 @@ function EditAppDialog({
           />
         </div>
 
-        {/* Admin: set as default */}
-        {isAdmin && (
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <input
-              type="checkbox"
-              checked={setAsDefault}
-              onChange={(e) => setSetAsDefault(e.target.checked)}
-              className="rounded border-input"
-            />
-            <Globe className="h-3.5 w-3.5 text-muted-foreground" />
-            Set as server default for all users
-          </label>
-        )}
-
         {/* Actions */}
         <div className="flex gap-2 pt-2">
           <Button
@@ -401,19 +387,6 @@ export function AppDrawerSettings({ isAdmin = false }: AppDrawerSettingsProps) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(userUpdate),
     });
-
-    // Optionally set as global default (admin only)
-    if (setAsDefault && isAdmin) {
-      const adminUpdate: Record<string, unknown> = {};
-      if (data.customName) adminUpdate.name = data.customName;
-      if (data.iconValue) adminUpdate.icon = data.iconValue;
-
-      await fetch(`/api/admin/apps/${appId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(adminUpdate),
-      });
-    }
 
     // Refresh
     await fetchApps();

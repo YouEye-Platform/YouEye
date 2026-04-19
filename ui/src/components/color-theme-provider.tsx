@@ -87,8 +87,6 @@ export function ColorThemeProvider({ children }: { children: React.ReactNode }) 
         setNextTheme(data.mode);
       }
 
-      // Always push to Authentik on initial load (ensures sync after restart/restore)
-      pushThemeToAuthentik(data.colors);
     } catch (err) {
       console.warn("[ColorTheme] Failed to fetch active theme:", err);
     } finally {
@@ -116,8 +114,6 @@ export function ColorThemeProvider({ children }: { children: React.ReactNode }) 
         setActiveTheme(data);
         applyThemeCSS(data.cssVariables);
 
-        // Fire-and-forget: push theme to Authentik via CP bridge
-        pushThemeToAuthentik(data.colors);
       } catch (err) {
         console.error("[ColorTheme] Failed to set theme:", err);
       }
@@ -153,21 +149,3 @@ export function useColorTheme() {
   return useContext(ColorThemeContext);
 }
 
-/**
- * Push theme CSS to Authentik login page via the admin bridge.
- * This is fire-and-forget — we don't wait for the result.
- */
-async function pushThemeToAuthentik(colors: ThemeColors) {
-  try {
-    const res = await fetch("/api/admin/authentik/branding", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ colors }),
-    });
-    if (!res.ok) {
-      console.warn("[authentik-branding] Push failed:", res.status);
-    }
-  } catch (err) {
-    console.warn("[authentik-branding] Push failed:", err);
-  }
-}

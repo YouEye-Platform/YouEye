@@ -54,12 +54,6 @@ export function BrandingSettings() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ site_name: siteName, site_name_style: style, accent_color: accentColor }),
       });
-      // Sync to Authentik login page
-      fetch("/api/admin/authentik/branding", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      }).catch(() => {});
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } finally { setSaving(false); }
