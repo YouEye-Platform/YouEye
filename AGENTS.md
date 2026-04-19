@@ -109,6 +109,77 @@
 - PINPrompt `embedded` prop is additive — default behavior (modal) unchanged
 - SSO must be configured before UI onboarding flow can be visually tested end-to-end
 
+## v0.2.22.2 — andrew — 2026-04-18
+**Branch:** andrew
+**VM:** ye-andrew
+**Agent:** Andrew
+**Task:** Platform enhancements UI — forward-auth SSO toggle, health dots, typed install params, multi-entrance display
+
+### Changes (UI layer — builds on v0.2.22.1 backend)
+- `control-panel/src/components/market/health-dot.tsx` — NEW: Green/red pulsing health indicator with time-ago tooltip
+- `control-panel/src/components/market/forward-auth-toggle.tsx` — NEW: `ForwardAuthToggle` switch for app detail, `SSOIndicator` shield icon for cards
+- `control-panel/src/components/market/entrances-display.tsx` — NEW: Multi-entrance route list with auth-level badges (SSO Required, Public, Internal, No Auth)
+- `control-panel/src/components/market/install-dialog.tsx` — Full rewrite: typed form controls (boolean toggle, select dropdown, password show/hide, number with min/max), required vs advanced collapsible sections, client-side validation
+- `control-panel/src/components/market/app-card.tsx` — HealthDot on app icon, SSOIndicator next to status, stopped-app dimming
+- `control-panel/src/app/(dashboard)/market/[appId]/page.tsx` — HealthDot, ForwardAuthToggle (installed) / SSO label (uninstalled), EntrancesDisplay
+- `control-panel/src/app/(dashboard)/apps/page.tsx` — HealthDot next to StatusBadge for running apps
+- `control-panel/src/lib/market/types.ts` — Extended `MarketApp` with full typed installParams (type/choices/validation/default), entrances, forwardAuth
+- `control-panel/src/lib/market/catalog.ts` — Pass through typed fields in `manifestToMarketApp()`
+- `control-panel/src/app/api/market/app/[appId]/route.ts` — Pass through typed installParam fields in fallback conversion
+- `control-panel/src/app/api/apps/unified/route.ts` — Added healthStatus/healthCheckedAt to UnifiedApp, populated from health-checker
+
+### Test Results
+- Build: clean, deployed to VM as cp-andrew-v0.2.22.2
+- Market page: 8 apps rendered with proper categorization
+- Whoogle detail: shows "Forward-auth (auto)" SSO label
+- Vaultwarden detail: shows "Native OAuth2" SSO label
+- Apps page: all services listed with status badges and health dots
+- Install dialog: Display Name + Subdomain form with auto-slugify
+
+### Notes for Iris
+- HealthDot returns `null` when status is `unknown` — no dot rendered for apps without health checks
+- ForwardAuthToggle only renders for installed apps; uninstalled apps get a static label based on manifest `supportsSSO` + `forwardAuth` fields
+- Install dialog splits params into required (always visible) and advanced (collapsible) — no UI change if app has no installParams
+- Catalog and app-detail API were stripping typed fields — fixed in both `catalog.ts` and `app/[appId]/route.ts`
+
+---
+
+## v0.2.22.1 — andrew — 2026-04-18
+**Branch:** andrew
+**VM:** ye-andrew
+**Agent:** Andrew
+**Task:** Platform enhancements for external apps — forward-auth SSO, health monitoring, typed install params, multi-entrance routing
+
+### Changes
+- `control-panel/src/lib/market/engine.ts` — Forward-auth proxy creation during install (after SSO step), entrance-aware Caddy routing (multi-route with `addAppRoutes`), typed installParam coercion, rollback cleanup for forward-auth
+- `control-panel/src/lib/market/health-checker.ts` — NEW: Background 5-min health monitor, updates `health_status`/`health_checked_at` in DB
+- `control-panel/src/lib/market/installed-apps.ts` — Added `forward_auth_enabled`, `health_status`, `health_checked_at` columns + schema migration + toggle/health update helpers
+- `control-panel/src/lib/market/authentik.ts` — `createAuthentikForwardAuthApp()` and `removeAuthentikForwardAuthApp()` for proxy provider CRUD
+- `control-panel/src/lib/caddy/client.ts` — `addForwardAuthToRoute()`, `removeForwardAuthFromRoute()`, `addAppRoutes()`, `removeAppRoutes()` for multi-entrance routing
+- `control-panel/src/lib/caddy/types.ts` — `ForwardAuthHandler` interface, updated `RouteHandler` union, `forwardAuth` field on `RouteFormData`
+- `control-panel/src/lib/market/schema.ts` — `EntranceSchema`, typed `InstallParamSchema` (type/choices/validation), `forwardAuth` field
+- `control-panel/src/lib/market/types.ts` — `forwardAuthEnabled`, `forwardAuthSlug` on `InstallMetadata`, health fields on `AppStatusInfo`
+- `control-panel/src/lib/market/platform-env.ts` — `coerceInstallParams()` for type-safe param handling
+- `control-panel/src/lib/market/uninstaller.ts` — Forward-auth cleanup + `removeAppRoutes()` for multi-entrance
+- `control-panel/src/app/api/market/forward-auth/route.ts` — NEW: POST toggle endpoint
+- `control-panel/src/app/api/market/install/route.ts` — Server-side installParam validation
+- `control-panel/src/app/api/market/status/route.ts` — Health + forward-auth data in response
+- `control-panel/scripts/postbuild.js` — Fixed monorepo standalone build (workspace root node_modules merge)
+
+### Test Results
+- TypeScript compilation: clean (0 errors in app code)
+- CP deployed to VM: v0.2.22.1 running, /api/ping healthy
+- Status API: returns `{"apps":[]}` correctly (no installed apps)
+- Forward-auth toggle API: returns `{"error":"App test-app not installed"}` correctly
+- DB schema: `installed_apps` table has all 3 new columns verified via psql
+- CP dashboard: all 7 containers running, service health green
+
+### Notes for Iris
+- Forward-auth is non-fatal during install — if Authentik is unavailable, apps still install without SSO gating
+- Health-checker auto-starts on module import (60s delay after boot, 5-min interval)
+- Postbuild fix is critical for monorepo builds — workspace root deps (styled-jsx, @next/env) must be merged into standalone output
+- No UI changes for health dots or SSO toggle in this version — backend-only, UI can be added in follow-up
+
 ---
 
 ## v0.2.21.11 — iris — 2026-04-16

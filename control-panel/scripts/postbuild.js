@@ -155,6 +155,59 @@ if (!pnpmNodeModulesPath) {
   console.log('Done fixing pnpm modules');
 }
 
+// Step 3b: Merge workspace root node_modules into app (monorepo layout)
+// In a pnpm monorepo, Next.js standalone puts some deps at standalone/node_modules/.pnpm/
+// instead of standalone/{appDir}/node_modules/.pnpm/. We need to merge them.
+if (appDir !== standalonePath) {
+  const workspaceNodeModules = path.join(standalonePath, 'node_modules', '.pnpm');
+  if (fs.existsSync(workspaceNodeModules)) {
+    console.log('Merging workspace root node_modules into app...');
+
+    // Copy .pnpm contents from workspace root into app's .pnpm
+    const appPnpm = path.join(nodeModulesPath, '.pnpm');
+    if (!fs.existsSync(appPnpm)) fs.mkdirSync(appPnpm, { recursive: true });
+
+    // Merge .pnpm/node_modules from workspace root
+    const wsNodeModulesInPnpm = path.join(workspaceNodeModules, 'node_modules');
+    if (fs.existsSync(wsNodeModulesInPnpm)) {
+      for (const pkg of fs.readdirSync(wsNodeModulesInPnpm)) {
+        const destPath = path.join(nodeModulesPath, pkg);
+        if (!fs.existsSync(destPath)) {
+          console.log(`  Copying workspace dep ${pkg}...`);
+          copyRecursive(path.join(wsNodeModulesInPnpm, pkg), destPath, true);
+        }
+      }
+    }
+
+    // Also merge all workspace pnpm store packages directly
+    for (const storeEntry of fs.readdirSync(workspaceNodeModules)) {
+      if (storeEntry === 'node_modules') continue;
+      const storeDir = path.join(workspaceNodeModules, storeEntry, 'node_modules');
+      if (!fs.existsSync(storeDir)) continue;
+      for (const pkg of fs.readdirSync(storeDir)) {
+        const srcPkg = path.join(storeDir, pkg);
+        const destPkg = path.join(nodeModulesPath, pkg);
+        if (pkg.startsWith('@')) {
+          // Scoped package — merge subdirectories
+          if (!fs.existsSync(destPkg)) fs.mkdirSync(destPkg, { recursive: true });
+          for (const sub of fs.readdirSync(srcPkg)) {
+            const destSub = path.join(destPkg, sub);
+            if (!fs.existsSync(destSub) || fs.readdirSync(destSub).length <= 1) {
+              console.log(`  Copying workspace store dep ${pkg}/${sub}...`);
+              if (fs.existsSync(destSub)) fs.rmSync(destSub, { recursive: true });
+              copyRecursive(path.join(srcPkg, sub), destSub, true);
+            }
+          }
+        } else if (!fs.existsSync(destPkg)) {
+          console.log(`  Copying workspace store dep ${pkg}...`);
+          copyRecursive(srcPkg, destPkg, true);
+        }
+      }
+    }
+    console.log('Done merging workspace deps');
+  }
+}
+
 // Step 4: Resolve all symlinks in node_modules (including nested ones)
 console.log('Resolving symlinks in node_modules...');
 function resolveSymlinksInDir(dir) {

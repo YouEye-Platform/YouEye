@@ -242,6 +242,143 @@ export async function createAuthentikOAuth2App(params: {
 }
 
 /**
+ * Create an Authentik forward-auth proxy provider and application.
+ * Used for apps without native OAuth2 — Caddy's forward_auth directive
+ * checks the user's Authentik session before proxying to the app.
+ */
+export async function createAuthentikForwardAuthApp(params: {
+  slug: string;
+  name: string;
+  externalHost: string;
+}): Promise<{ providerId: number; slug: string }> {
+  const config = await getAuthentikConfig();
+
+  // Find authorization flow (implicit consent — no prompt for self-hosted)
+  const flows = await authentikAPI<{ results: Array<{ pk: string; slug: string }> }>(
+    config,
+    '/flows/instances/?designation=authorization'
+  );
+  if (!flows.results?.length) throw new Error('No authorization flow found');
+  const implicitFlow = flows.results.find((f) => f.slug === 'default-provider-authorization-implicit-consent');
+  const authFlowPk = (implicitFlow ?? flows.results[0]).pk;
+
+  // Find invalidation flow (required by Authentik for proxy providers)
+  const invalidationFlows = await authentikAPI<{ results: Array<{ pk: string; slug: string }> }>(
+    config,
+    '/flows/instances/?designation=invalidation'
+  );
+  const invalidationFlow =
+    invalidationFlows.results?.find((f) => f.slug === 'default-provider-invalidation-flow') ||
+    invalidationFlows.results?.[0];
+  if (!invalidationFlow) throw new Error('No invalidation flow found');
+
+  // Find authentication flow
+  const authFlows = await authentikAPI<{ results: Array<{ pk: string; slug: string }> }>(
+    config,
+    '/flows/instances/?designation=authentication'
+  );
+  const authenticationFlowPk = authFlows.results?.[0]?.pk;
+
+  // Delete existing provider/app if they exist
+  try {
+    await authentikAPI(config, `/core/applications/${params.slug}/`, 'DELETE');
+  } catch { /* may not exist */ }
+  try {
+    const allProviders = await authentikAPI<{ results: Array<{ pk: number; name?: string }> }>(
+      config,
+      '/providers/proxy/?page_size=100'
+    );
+    for (const p of allProviders.results || []) {
+      if (p.name === params.name) {
+        try { await authentikAPI(config, `/providers/proxy/${p.pk}/`, 'DELETE'); } catch {}
+      }
+    }
+  } catch { /* listing may fail */ }
+
+  // Create proxy provider in forward_single mode
+  const providerBody: Record<string, unknown> = {
+    name: params.name,
+    authorization_flow: authFlowPk,
+    invalidation_flow: invalidationFlow.pk,
+    external_host: params.externalHost,
+    mode: 'forward_single',
+    access_token_validity: 'hours=24',
+  };
+  if (authenticationFlowPk) {
+    providerBody.authentication_flow = authenticationFlowPk;
+  }
+  const provider = await authentikAPI<{ pk: number }>(config, '/providers/proxy/', 'POST', providerBody);
+
+  // Create application
+  await authentikAPI(config, '/core/applications/', 'POST', {
+    name: params.name,
+    slug: params.slug,
+    provider: provider.pk,
+    meta_launch_url: params.externalHost,
+    policy_engine_mode: 'any',
+  });
+
+  // Add provider to embedded outpost and ensure external URL is configured
+  try {
+    const outposts = await authentikAPI<{ results: Array<{ pk: string; name: string; providers: number[]; config: Record<string, unknown> }> }>(
+      config,
+      '/outposts/instances/?page_size=50'
+    );
+    const embedded = outposts.results?.find((o) => o.name.toLowerCase().includes('embedded'));
+    if (embedded) {
+      const updatedProviders = [...new Set([...embedded.providers, provider.pk])];
+      const patchBody: Record<string, unknown> = { providers: updatedProviders };
+
+      // Ensure outpost has the external Authentik URL so forward-auth redirects
+      // go to auth.domain instead of the internal container IP
+      if (!embedded.config?.authentik_host) {
+        const externalUrl = await getAuthentikExternalUrl();
+        if (externalUrl) {
+          patchBody.config = {
+            ...embedded.config,
+            authentik_host: externalUrl,
+            authentik_host_browser: externalUrl,
+            authentik_host_insecure: true,
+          };
+        }
+      }
+
+      await authentikAPI(config, `/outposts/instances/${embedded.pk}/`, 'PATCH', patchBody);
+    }
+  } catch (err) {
+    console.warn('[authentik] Failed to add provider to embedded outpost:', err);
+  }
+
+  return { providerId: provider.pk, slug: params.slug };
+}
+
+/**
+ * Remove an Authentik forward-auth proxy provider and application.
+ */
+export async function removeAuthentikForwardAuthApp(slug: string): Promise<void> {
+  try {
+    const config = await getAuthentikConfig();
+    try {
+      await authentikAPI(config, `/core/applications/${slug}/`, 'DELETE');
+    } catch { /* may not exist */ }
+    try {
+      const allProviders = await authentikAPI<{ results: Array<{ pk: number; name?: string }> }>(
+        config,
+        '/providers/proxy/?page_size=100'
+      );
+      for (const p of allProviders.results || []) {
+        if (p.name?.includes(slug) || p.name?.includes('YouEye -')) {
+          // Match by checking the application still references this slug
+          try { await authentikAPI(config, `/providers/proxy/${p.pk}/`, 'DELETE'); } catch {}
+        }
+      }
+    } catch { /* listing may fail */ }
+  } catch (err) {
+    console.error(`[Market SSO] Failed to remove Authentik forward-auth app ${slug}:`, err);
+  }
+}
+
+/**
  * Remove an Authentik OAuth2 application and provider for a market app.
  */
 export async function removeAuthentikOAuth2App(slug: string): Promise<void> {

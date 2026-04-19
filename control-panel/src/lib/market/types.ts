@@ -106,11 +106,13 @@ export interface InstallMetadata {
   subdomain: string;
   domain: string;
   enableSSO: boolean;
+  forwardAuthEnabled?: boolean;
   installedAt: string;
   installedVersion?: string;
   containers: ContainerMeta[];
   ssoSlug?: string;
   ssoClientId?: string;
+  forwardAuthSlug?: string;
   manifestSource?: string;
 
   // Legacy v1 field — kept for reading old install.json files
@@ -141,6 +143,9 @@ export interface AppStatusInfo {
   domain?: string;
   url?: string;
   installedAt?: string;
+  healthStatus?: 'healthy' | 'unhealthy' | 'unknown';
+  healthCheckedAt?: string | null;
+  forwardAuthEnabled?: boolean;
 }
 
 export interface ContainerStatusInfo {
@@ -230,7 +235,31 @@ export interface MarketApp {
     longDescription: string;
     screenshots: { url: string; caption?: string }[];
   };
-  installParams?: { name: string; label: string; required: boolean; description?: string }[];
+  installParams?: {
+    name: string;
+    label: string;
+    required: boolean;
+    description?: string;
+    type?: 'string' | 'number' | 'boolean' | 'select' | 'password';
+    default?: string | number | boolean;
+    choices?: { value: string; label: string }[];
+    validation?: {
+      pattern?: string;
+      message?: string;
+      min?: number;
+      max?: number;
+    };
+  }[];
+  entrances?: {
+    name: string;
+    path: string;
+    port: number;
+    container?: string;
+    protocol?: 'http' | 'tcp';
+    authLevel?: 'private' | 'public' | 'internal' | 'none';
+    stripPath?: boolean;
+  }[];
+  forwardAuth?: 'default' | 'enabled' | 'disabled';
   capabilities?: {
     widgets?: boolean;
     notifications?: boolean | 'push';

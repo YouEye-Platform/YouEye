@@ -24,6 +24,7 @@ import {
   checkLxdAppUpdate,
   type LxdUpdateResult,
 } from '@/lib/apps/lxd-updates';
+import { getAllHealthStatuses, getLastHealthCheckAt } from '@/lib/market/health-checker';
 
 // ─── Response types ───────────────────────────────────────────────────────────
 
@@ -53,6 +54,10 @@ export interface UnifiedApp {
   updateInfo?: string;
   /** Links to existing management pages */
   managementLinks?: Array<{ label: string; href: string }>;
+  /** Health check status for marketplace/native apps */
+  healthStatus?: 'healthy' | 'unhealthy' | 'unknown';
+  /** Last health check timestamp */
+  healthCheckedAt?: string | null;
 }
 
 export interface UnifiedAppsResponse {
@@ -173,6 +178,10 @@ export async function GET() {
       }
     });
 
+    // Get health statuses for marketplace apps
+    const healthStatuses = getAllHealthStatuses();
+    const lastHealthCheck = getLastHealthCheckAt();
+
     // Build the unified list
     const apps: UnifiedApp[] = APP_DEFINITIONS.map((def) => {
       // Container info
@@ -253,6 +262,8 @@ export async function GET() {
         updateAvailable,
         updateInfo,
         managementLinks: def.managementLinks,
+        healthStatus: healthStatuses[def.id] ?? undefined,
+        healthCheckedAt: lastHealthCheck,
       };
     });
 

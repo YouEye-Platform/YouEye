@@ -9,10 +9,11 @@
 
 import { incusRequest } from '../incus/server';
 import { containerExists } from '../infrastructure/oci-deployer';
-import { getRoutes, removeRoute } from '../caddy/client';
+import { getRoutes, removeRoute, removeAppRoutes } from '../caddy/client';
 import { readInstallMetadata, removeInstallMetadata } from './metadata';
 import { removeInstalledApp } from './installed-apps';
 import { removeAuthentikOAuth2App } from './sso-engine';
+import { removeAuthentikForwardAuthApp } from './authentik';
 import type { UninstallOptions, UninstallVerification } from './types';
 
 const POSTGRES_CONTAINER = 'youeye-postgres';
@@ -115,12 +116,15 @@ export async function uninstallApp(
         }
       }
       if (!caddyRemoved) caddyRemoved = true; // No route found = already clean
+
+      // Also remove multi-entrance routes (app-{appId}-* pattern)
+      await removeAppRoutes(appId);
     } catch (err) {
       errors.push(`Failed to remove Caddy route: ${err}`);
     }
   }
 
-  // 3. Remove Authentik SSO app
+  // 3. Remove Authentik SSO app (OAuth2 + forward-auth proxy)
   let authentikRemoved = false;
   const ssoSlug = metadata.ssoSlug || `youeye-app-${appId}`;
   try {
@@ -128,12 +132,19 @@ export async function uninstallApp(
     authentikRemoved = true;
   } catch (err) {
     const errMsg = String(err);
-    // Not found is fine — already cleaned
     if (errMsg.includes('404') || errMsg.includes('not found')) {
       authentikRemoved = true;
     } else {
       errors.push(`Failed to remove Authentik SSO app: ${err}`);
     }
+  }
+
+  // Also remove forward-auth proxy provider if it exists
+  const faSlug = metadata.forwardAuthSlug || `youeye-fa-${appId}`;
+  try {
+    await removeAuthentikForwardAuthApp(faSlug);
+  } catch {
+    // Forward-auth may not have been created — best effort
   }
 
   // 4. Remove Pi-Hole DNS entries for app subdomain

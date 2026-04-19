@@ -218,6 +218,30 @@ export const InstallParamSchema = z.object({
   label: z.string().min(1),
   required: z.boolean().default(false),
   description: z.string().optional(),
+  type: z.enum(['string', 'number', 'boolean', 'select', 'password']).optional().default('string'),
+  default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+  choices: z.array(z.object({
+    value: z.string(),
+    label: z.string(),
+  })).optional(),
+  validation: z.object({
+    pattern: z.string().optional(),
+    message: z.string().optional(),
+    min: z.number().optional(),
+    max: z.number().optional(),
+  }).optional(),
+});
+
+// ─── Entrances (multi-entrance routing) ──────────────────
+
+export const EntranceSchema = z.object({
+  name: z.string().min(1),
+  path: z.string().optional().default('/'),
+  port: z.number().int().positive(),
+  container: z.string().optional(),
+  protocol: z.enum(['http', 'tcp']).optional().default('http'),
+  authLevel: z.enum(['private', 'public', 'internal', 'none']).optional().default('private'),
+  stripPath: z.boolean().optional().default(false),
 });
 
 // ─── Backup ───────────────────────────────────────────────
@@ -344,6 +368,8 @@ export const AppManifestSchema = z
     capabilities: CapabilitiesSchema,
     connectors: ConnectorsSchema.optional(),
     installParams: z.array(InstallParamSchema).optional().default([]),
+    forwardAuth: z.enum(['default', 'enabled', 'disabled']).optional(),
+    entrances: z.array(EntranceSchema).optional(),
     sso: SSOSchema.optional(),
     backup: BackupSchema.optional(),
     uninstall: UninstallSchema.optional(),

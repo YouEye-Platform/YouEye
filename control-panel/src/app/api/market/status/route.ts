@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { listInstalledApps, readInstallMetadata } from '@/lib/market/metadata';
 import { containerExists, getContainerIP } from '@/lib/infrastructure/oci-deployer';
 import { incusRequest } from '@/lib/incus/server';
+import { getInstalledApp } from '@/lib/market/installed-apps';
 import type { AppStatusInfo, ContainerStatusInfo, AppStatus } from '@/lib/market/types';
 
 export const dynamic = 'force-dynamic';
@@ -62,6 +63,20 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
     const containerNames = metadata.containers.map((c: any) => typeof c === 'string' ? c : c.containerName);
     const containers = await Promise.all(containerNames.map(getContainerStatus));
     const status = deriveAppStatus(containers);
+
+    // Enrich with health + forward-auth data from DB
+    let healthStatus: 'healthy' | 'unhealthy' | 'unknown' = 'unknown';
+    let healthCheckedAt: string | null = null;
+    let forwardAuthEnabled = false;
+    try {
+      const dbApp = await getInstalledApp(appId);
+      if (dbApp) {
+        healthStatus = dbApp.healthStatus;
+        healthCheckedAt = dbApp.healthCheckedAt;
+        forwardAuthEnabled = dbApp.forwardAuthEnabled;
+      }
+    } catch {}
+
     return {
       appId,
       status,
@@ -72,6 +87,9 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
         ? `https://${metadata.subdomain}.${metadata.domain}`
         : undefined,
       installedAt: metadata.installedAt,
+      healthStatus,
+      healthCheckedAt,
+      forwardAuthEnabled,
     };
   }
 

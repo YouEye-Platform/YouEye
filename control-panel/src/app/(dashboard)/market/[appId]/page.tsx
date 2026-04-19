@@ -27,6 +27,9 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { InstallDialog } from '@/components/market/install-dialog';
 import { UninstallDialog } from '@/components/market/uninstall-dialog';
+import { HealthDot } from '@/components/market/health-dot';
+import { ForwardAuthToggle } from '@/components/market/forward-auth-toggle';
+import { EntrancesDisplay } from '@/components/market/entrances-display';
 import { authenticatedFetch } from '@/lib/api-client';
 import type { MarketApp, AppStatusInfo, InstallConfig, InstallEvent } from '@/lib/market/types';
 
@@ -324,6 +327,10 @@ export default function AppDetailPage() {
                 <span className="text-sm text-green-600 font-medium capitalize">
                   {appStatus}
                 </span>
+                <HealthDot
+                  healthStatus={status?.healthStatus}
+                  healthCheckedAt={status?.healthCheckedAt}
+                />
                 {status?.url && (
                   <a
                     href={status.url}
@@ -406,22 +413,33 @@ export default function AppDetailPage() {
           Details
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {/* SSO */}
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-gray-50">
-              <Shield className="h-4 w-4 text-gray-500" />
+          {/* SSO / Forward-Auth */}
+          {isInstalled ? (
+            <ForwardAuthToggle
+              appId={app.id}
+              hasNativeSSO={app.supportsSSO}
+              forwardAuthEnabled={status?.forwardAuthEnabled ?? false}
+              onToggled={() => fetchStatus()}
+            />
+          ) : (
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-gray-50">
+                <Shield className="h-4 w-4 text-gray-500" />
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">SSO Support</p>
+                <p className="text-sm font-medium text-gray-700">
+                  {app.supportsSSO ? (
+                    <span className="text-green-600">Native OAuth2</span>
+                  ) : app.forwardAuth !== 'disabled' ? (
+                    <span className="text-green-600">Forward-auth (auto)</span>
+                  ) : (
+                    <span className="text-gray-400">Disabled</span>
+                  )}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs text-gray-400">SSO Support</p>
-              <p className="text-sm font-medium text-gray-700">
-                {app.supportsSSO ? (
-                  <span className="text-green-600">Supported</span>
-                ) : (
-                  <span className="text-gray-400">Not supported</span>
-                )}
-              </p>
-            </div>
-          </div>
+          )}
 
           {/* Website */}
           {app.website && (
@@ -471,6 +489,15 @@ export default function AppDetailPage() {
               ))}
             </div>
           </div>
+        )}
+
+        {/* Entrances / Access Points */}
+        {app.entrances && app.entrances.length > 0 && (
+          <EntrancesDisplay
+            entrances={app.entrances}
+            subdomain={status?.subdomain}
+            domain={status?.domain}
+          />
         )}
       </div>
 
