@@ -734,12 +734,13 @@ export async function installApp(
   emit(onEvent, step, totalSteps, 'running', 'Configuring reverse proxy...');
   try {
     // Build forward-auth config for Caddy if enabled
-    let forwardAuthConfig: { uri: string; copyHeaders: string[] } | undefined;
+    let forwardAuthConfig: { upstreamDial: string; uri: string; copyHeaders: string[] } | undefined;
     if (forwardAuthEnabled) {
       const authentikIP = await getIncusContainerIP('youeye-authentik');
       if (authentikIP) {
         forwardAuthConfig = {
-          uri: `http://${authentikIP}:9000/outpost.goauthentik.io/auth/caddy`,
+          upstreamDial: `${authentikIP}:9000`,
+          uri: '/outpost.goauthentik.io/auth/caddy',
           copyHeaders: [
             'X-authentik-username',
             'X-authentik-groups',

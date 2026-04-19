@@ -266,6 +266,73 @@ export function normalizePathPattern(path: string | undefined): { normalized: st
 }
 
 /**
+ * Build a forward-auth handler as a reverse_proxy with handle_response.
+ *
+ * Caddy's `forward_auth` is a Caddyfile-only directive. In the JSON admin API
+ * we replicate it as a reverse_proxy that GETs the auth-check URI, then on a
+ * 2xx response copies selected headers back to the original request.
+ *
+ * The structure was derived from `caddy adapt` output.
+ */
+export function buildForwardAuthHandler(
+  upstreamDial: string,
+  uri: string,
+  copyHeaders: string[],
+): any {
+  // For each header: delete first (prevent spoofing), then set from proxy
+  // response if non-empty.
+  const headerRoutes: Array<Record<string, unknown>> = [
+    { handle: [{ handler: 'vars' }] }, // anchor for Caddy's internal plumbing
+  ];
+
+  for (const header of copyHeaders) {
+    // Normalise to Title-Case (Caddy canonicalises headers)
+    const canonical = header
+      .split('-')
+      .map((p) => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase())
+      .join('-');
+
+    // Delete the header (prevent client spoofing)
+    headerRoutes.push({
+      handle: [{ handler: 'headers', request: { delete: [canonical] } }],
+    });
+
+    // Set from proxy response, only if non-empty
+    headerRoutes.push({
+      handle: [
+        {
+          handler: 'headers',
+          request: { set: { [canonical]: [`{http.reverse_proxy.header.${canonical}}`] } },
+        },
+      ],
+      match: [
+        { not: [{ vars: { [`{http.reverse_proxy.header.${canonical}}`]: [''] } }] },
+      ],
+    });
+  }
+
+  return {
+    handler: 'reverse_proxy',
+    upstreams: [{ dial: upstreamDial }],
+    rewrite: { method: 'GET', uri },
+    headers: {
+      request: {
+        set: {
+          'X-Forwarded-Method': ['{http.request.method}'],
+          'X-Forwarded-Uri': ['{http.request.uri}'],
+        },
+      },
+    },
+    handle_response: [
+      {
+        match: { status_code: [2] },
+        routes: headerRoutes,
+      },
+    ],
+  };
+}
+
+/**
  * Convert form data to Caddy route
  * Includes path stripping when path is not root
  */
@@ -275,12 +342,11 @@ export function formDataToRoute(data: RouteFormData): { route: CaddyRoute; warni
 
   // Forward-auth handler (prepended before all other handlers)
   if (data.forwardAuth) {
-    handlers.push({
-      handler: 'forward_auth',
-      uri: data.forwardAuth.uri,
-      copy_headers: data.forwardAuth.copyHeaders,
-      trust_forwarded_headers: true,
-    });
+    handlers.push(buildForwardAuthHandler(
+      data.forwardAuth.upstreamDial,
+      data.forwardAuth.uri,
+      data.forwardAuth.copyHeaders,
+    ));
   }
 
   // Normalize path pattern
@@ -1204,7 +1270,7 @@ export async function setDomain(domain: string): Promise<void> {
  */
 export async function addForwardAuthToRoute(
   hostname: string,
-  forwardAuthConfig: { uri: string; copyHeaders: string[] }
+  forwardAuthConfig: { upstreamDial: string; uri: string; copyHeaders: string[] }
 ): Promise<void> {
   const config = await getConfig();
   if (!config?.apps?.http?.servers) return;
@@ -1214,15 +1280,14 @@ export async function addForwardAuthToRoute(
     for (const route of server.routes || []) {
       const hosts = (route as any).match?.[0]?.host || [];
       if (hosts.includes(hostname)) {
-        // Remove any existing forward_auth handler
-        route.handle = route.handle.filter((h: any) => h.handler !== 'forward_auth');
+        // Remove any existing forward-auth handler (identified by handle_response on reverse_proxy)
+        route.handle = route.handle.filter((h: any) => !(h.handler === 'reverse_proxy' && (h as any).handle_response));
         // Prepend new one
-        route.handle.unshift({
-          handler: 'forward_auth',
-          uri: forwardAuthConfig.uri,
-          copy_headers: forwardAuthConfig.copyHeaders,
-          trust_forwarded_headers: true,
-        });
+        route.handle.unshift(buildForwardAuthHandler(
+          forwardAuthConfig.upstreamDial,
+          forwardAuthConfig.uri,
+          forwardAuthConfig.copyHeaders,
+        ));
         modified = true;
       }
     }
@@ -1246,7 +1311,7 @@ export async function removeForwardAuthFromRoute(hostname: string): Promise<void
       const hosts = (route as any).match?.[0]?.host || [];
       if (hosts.includes(hostname)) {
         const before = route.handle.length;
-        route.handle = route.handle.filter((h: any) => h.handler !== 'forward_auth');
+        route.handle = route.handle.filter((h: any) => !(h.handler === 'reverse_proxy' && (h as any).handle_response));
         if (route.handle.length !== before) modified = true;
       }
     }
@@ -1277,7 +1342,7 @@ export async function addAppRoutes(
   hostname: string,
   entrances: EntranceConfig[],
   primaryContainer: string,
-  forwardAuthConfig?: { uri: string; copyHeaders: string[] }
+  forwardAuthConfig?: { upstreamDial: string; uri: string; copyHeaders: string[] }
 ): Promise<void> {
   for (const entrance of entrances) {
     if (entrance.protocol === 'tcp') continue;
@@ -1292,12 +1357,11 @@ export async function addAppRoutes(
 
     // Add forward-auth for private entrances
     if (entrance.authLevel === 'private' && forwardAuthConfig) {
-      handlers.push({
-        handler: 'forward_auth',
-        uri: forwardAuthConfig.uri,
-        copy_headers: forwardAuthConfig.copyHeaders,
-        trust_forwarded_headers: true,
-      });
+      handlers.push(buildForwardAuthHandler(
+        forwardAuthConfig.upstreamDial,
+        forwardAuthConfig.uri,
+        forwardAuthConfig.copyHeaders,
+      ));
     }
 
     // Path stripping

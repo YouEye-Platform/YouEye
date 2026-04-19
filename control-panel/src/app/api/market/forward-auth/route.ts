@@ -58,11 +58,12 @@ export async function POST(request: NextRequest) {
         externalHost,
       });
 
-      // Add forward_auth handler to existing Caddy route
+      // Add forward-auth handler to existing Caddy route
       const authentikIP = await getContainerIP('youeye-authentik');
       if (authentikIP) {
         await addForwardAuthToRoute(hostname, {
-          uri: `http://${authentikIP}:9000/outpost.goauthentik.io/auth/caddy`,
+          upstreamDial: `${authentikIP}:9000`,
+          uri: '/outpost.goauthentik.io/auth/caddy',
           copyHeaders: [
             'X-authentik-username',
             'X-authentik-groups',

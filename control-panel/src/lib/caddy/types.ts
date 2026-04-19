@@ -56,13 +56,20 @@ export interface StaticResponseHandler {
 }
 
 /**
- * Forward-auth handler (Authentik forward-auth proxy)
+ * Forward-auth handler — implemented as reverse_proxy with handle_response.
+ * Caddy's `forward_auth` is a Caddyfile-only directive; in the JSON API we must
+ * use a reverse_proxy that rewrites the request to the auth endpoint, then copies
+ * headers from a 2xx response back to the original request.
  */
 export interface ForwardAuthHandler {
-  handler: 'forward_auth';
-  uri: string;
-  copy_headers: string[];
-  trust_forwarded_headers?: boolean;
+  handler: 'reverse_proxy';
+  upstreams: Upstream[];
+  rewrite: { method: string; uri: string };
+  headers: { request: { set: Record<string, string[]> } };
+  handle_response: Array<{
+    match: { status_code: number[] };
+    routes: Array<{ handle: Array<Record<string, unknown>>; match?: Array<Record<string, unknown>> }>;
+  }>;
 }
 
 /**
@@ -172,6 +179,7 @@ export interface RouteFormData {
   upstream: string;
   port: number;
   forwardAuth?: {
+    upstreamDial: string;
     uri: string;
     copyHeaders: string[];
   };

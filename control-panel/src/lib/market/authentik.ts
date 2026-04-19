@@ -262,6 +262,16 @@ export async function createAuthentikForwardAuthApp(params: {
   const implicitFlow = flows.results.find((f) => f.slug === 'default-provider-authorization-implicit-consent');
   const authFlowPk = (implicitFlow ?? flows.results[0]).pk;
 
+  // Find invalidation flow (required by Authentik for proxy providers)
+  const invalidationFlows = await authentikAPI<{ results: Array<{ pk: string; slug: string }> }>(
+    config,
+    '/flows/instances/?designation=invalidation'
+  );
+  const invalidationFlow =
+    invalidationFlows.results?.find((f) => f.slug === 'default-provider-invalidation-flow') ||
+    invalidationFlows.results?.[0];
+  if (!invalidationFlow) throw new Error('No invalidation flow found');
+
   // Find authentication flow
   const authFlows = await authentikAPI<{ results: Array<{ pk: string; slug: string }> }>(
     config,
@@ -289,6 +299,7 @@ export async function createAuthentikForwardAuthApp(params: {
   const providerBody: Record<string, unknown> = {
     name: params.name,
     authorization_flow: authFlowPk,
+    invalidation_flow: invalidationFlow.pk,
     external_host: params.externalHost,
     mode: 'forward_single',
     access_token_validity: 'hours=24',
@@ -307,18 +318,32 @@ export async function createAuthentikForwardAuthApp(params: {
     policy_engine_mode: 'any',
   });
 
-  // Add provider to embedded outpost
+  // Add provider to embedded outpost and ensure external URL is configured
   try {
-    const outposts = await authentikAPI<{ results: Array<{ pk: string; name: string; providers: number[] }> }>(
+    const outposts = await authentikAPI<{ results: Array<{ pk: string; name: string; providers: number[]; config: Record<string, unknown> }> }>(
       config,
       '/outposts/instances/?page_size=50'
     );
     const embedded = outposts.results?.find((o) => o.name.toLowerCase().includes('embedded'));
     if (embedded) {
       const updatedProviders = [...new Set([...embedded.providers, provider.pk])];
-      await authentikAPI(config, `/outposts/instances/${embedded.pk}/`, 'PATCH', {
-        providers: updatedProviders,
-      });
+      const patchBody: Record<string, unknown> = { providers: updatedProviders };
+
+      // Ensure outpost has the external Authentik URL so forward-auth redirects
+      // go to auth.domain instead of the internal container IP
+      if (!embedded.config?.authentik_host) {
+        const externalUrl = await getAuthentikExternalUrl();
+        if (externalUrl) {
+          patchBody.config = {
+            ...embedded.config,
+            authentik_host: externalUrl,
+            authentik_host_browser: externalUrl,
+            authentik_host_insecure: true,
+          };
+        }
+      }
+
+      await authentikAPI(config, `/outposts/instances/${embedded.pk}/`, 'PATCH', patchBody);
     }
   } catch (err) {
     console.warn('[authentik] Failed to add provider to embedded outpost:', err);
