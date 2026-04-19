@@ -140,55 +140,72 @@ function hasCodeContent(dir) {
   } catch { return false; }
 }
 
+// Find a package inside pnpm's versioned store directories
+// e.g. .pnpm/@swc+helpers@0.5.15/node_modules/@swc/helpers/
+function findInPnpmStore(pkgName, pnpmDirs) {
+  const storePrefix = pkgName.replace('/', '+');
+  for (const pnpmDir of pnpmDirs) {
+    if (!fs.existsSync(pnpmDir)) continue;
+    try {
+      const entries = fs.readdirSync(pnpmDir)
+        .filter(e => e.startsWith(storePrefix + '@'))
+        .sort().reverse();
+      for (const entry of entries) {
+        const candidate = path.join(pnpmDir, entry, 'node_modules', ...pkgName.split('/'));
+        if (fs.existsSync(candidate) && hasCodeContent(candidate)) return candidate;
+      }
+    } catch { /* ignore */ }
+  }
+  return null;
+}
+
+// pnpm store locations to search
+const pnpmStoreDirs = [
+  path.join(localModules, '.pnpm'),
+  path.join(workspaceModules, '.pnpm'),
+];
+
 // Packages that Next.js standalone needs at runtime but doesn't bundle.
 const needed = ['next', 'react', 'react-dom', '@swc/helpers', '@swc/counter', '@next/env', 'styled-jsx', 'client-only'];
 for (const pkg of needed) {
   const dest = path.join(nodeModulesPath, pkg);
   // Skip only if already properly present with actual code (not just package.json)
   if (fs.existsSync(dest) && hasCodeContent(dest)) continue;
-  // Try local node_modules first (pnpm resolves symlinks here), then workspace root
+  // Try local node_modules first, then workspace root, then pnpm store
   const candidates = [path.join(localModules, pkg), path.join(workspaceModules, pkg)];
+  let found = false;
   for (const src of candidates) {
     if (!fs.existsSync(src)) continue;
     let realSrc = src;
     try { if (fs.lstatSync(src).isSymbolicLink()) realSrc = fs.realpathSync(src); } catch { continue; }
     if (!hasCodeContent(realSrc)) continue;
     console.log(`  Copying ${pkg} from ${path.dirname(src) === localModules ? 'local' : 'workspace'} node_modules...`);
-    // Remove existing incomplete entry
     try { fs.lstatSync(dest); fs.rmSync(dest, { recursive: true }); } catch {}
-    // Ensure parent directory exists (for scoped packages like @swc/helpers)
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    // Use cp -rL to properly follow pnpm symlinks
     require('child_process').execSync(`cp -rL "${realSrc}" "${dest}"`);
+    found = true;
     break;
+  }
+  // Fallback: search pnpm versioned store directories
+  if (!found) {
+    const storeSrc = findInPnpmStore(pkg, pnpmStoreDirs);
+    if (storeSrc) {
+      console.log(`  Copying ${pkg} from pnpm store...`);
+      try { fs.lstatSync(dest); fs.rmSync(dest, { recursive: true }); } catch {}
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      require('child_process').execSync(`cp -rL "${storeSrc}" "${dest}"`);
+    }
   }
 }
 console.log('Done copying workspace dependencies');
 
-// Step 6: Ensure styled-jsx is present (required by Next.js at runtime)
-const styledJsxDest = path.join(nodeModulesPath, 'styled-jsx');
-if (!fs.existsSync(path.join(styledJsxDest, 'package.json'))) {
-  // In a pnpm monorepo, styled-jsx may be hoisted to the workspace root
-  const candidates = [
-    path.join(rootDir, 'node_modules', 'styled-jsx'),
-    path.join(rootDir, '..', 'node_modules', 'styled-jsx'),
-  ];
-  let found = false;
-  for (const src of candidates) {
-    if (fs.existsSync(path.join(src, 'package.json'))) {
-      console.log(`Copying styled-jsx from ${src}...`);
-      if (fs.existsSync(styledJsxDest)) fs.rmSync(styledJsxDest, { recursive: true });
-      copyRecursive(src, styledJsxDest, true);
-      console.log('Done copying styled-jsx');
-      found = true;
-      break;
-    }
+// Step 6: Final verification — ensure critical packages are present
+const critical = ['styled-jsx', '@swc/helpers', '@next/env'];
+for (const pkg of critical) {
+  const dest = path.join(nodeModulesPath, pkg);
+  if (!fs.existsSync(dest) || !hasCodeContent(dest)) {
+    console.log(`WARNING: ${pkg} still missing after postbuild — UI may fail at runtime`);
   }
-  if (!found) {
-    console.log('WARNING: styled-jsx not found — UI may fail at runtime');
-  }
-} else {
-  console.log('styled-jsx already present in standalone');
 }
 
 console.log('\nPostbuild complete!');
