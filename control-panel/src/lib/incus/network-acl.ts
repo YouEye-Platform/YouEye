@@ -154,7 +154,10 @@ export async function applyAppAcl(containerName: string): Promise<void> {
       devices.eth0 = { name: 'eth0', network: 'incusbr0', type: 'nic' };
     }
     devices.eth0['security.acls'] = ACL_APP;
-    devices.eth0['security.acls.default.egress.action'] = 'reject';
+    // Default egress must be 'allow' — the ACL's own final 'reject' rule handles blocking.
+    // Setting default to 'reject' causes Incus to insert a drop rule BEFORE the ACL's
+    // explicit allow rules in nftables, making the subnet/DNS allows unreachable (502s).
+    devices.eth0['security.acls.default.egress.action'] = 'allow';
     devices.eth0['security.acls.default.ingress.action'] = 'allow';
 
     await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices });
