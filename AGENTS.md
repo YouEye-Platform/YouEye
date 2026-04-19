@@ -1,3 +1,39 @@
+## v0.2.22.4 — iris — 2026-04-19
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris (merge-manager)
+**Task:** One-way bridge migration — remove all UI→CP calls, add App Market embed
+
+### Changes
+- `ui/src/lib/admin/bridge-client.ts` — Stripped to getBridgeToken/clearTokenCache only; removed bridgeRequest, BridgeError, CP_BASE_URL
+- `ui/src/app/api/admin/[...path]/route.ts` — **DELETED** catch-all bridge proxy
+- `ui/src/app/api/admin/authentik/branding/route.ts` — **DELETED** Authentik CSS sync
+- `ui/src/app/api/admin/apps/[appId]/route.ts` — **DELETED** admin app edit bridge
+- `ui/src/app/api/market-image/route.ts` — **DELETED** market image proxy
+- `ui/src/components/settings/app-market.tsx` — **DELETED** old market component
+- `ui/src/app/app-market/page.tsx` — **NEW** iframe embed for App Market
+- `ui/src/app/app-store/page.tsx` — Changed to redirect to /app-market
+- `ui/src/app/app-store/[appId]/page.tsx` — Changed to redirect to /app-market
+- `ui/src/components/settings/settings-shell.tsx` — cpUrl via env var, href /app-market
+- `ui/src/components/color-theme-provider.tsx` — Removed pushThemeToAuthentik calls
+- `ui/src/components/settings/branding-settings.tsx` — Removed Authentik branding sync
+- `ui/src/components/settings/app-drawer-settings.tsx` — Removed "set as default" bridge call
+- `control-panel/src/app/embed/market/page.tsx` — **NEW** Market embed server page
+- `control-panel/src/app/embed/market/client.tsx` — **NEW** Full marketplace UI with SSE install
+- `control-panel/src/lib/incus/network-acl.ts` — Fixed ACL default egress action (reject→allow)
+- `ui/scripts/postbuild.js` — Fixed hasCodeContent to require package.json (standalone build fix)
+
+### Test Results
+- Settings pages: Profile, Appearance, Branding all load correctly
+- App Market embed: loads via iframe, shows catalog, Whoogle installed with Uninstall
+- App Drawer: works without "set as default" UI
+- Whoogle: accessible after ACL fix (was 502)
+
+### Notes for Iris
+- v0.2.22.3 had broken UI standalone.tar (missing next/package.json); v0.2.22.4 is the fix
+- UI standalone tar is now 155MB (was 28MB) because full next module is included
+- Bridge is now one-way: CP→UI via /api/ui-bridge/* only; UI makes zero outbound calls to CP
+
 ## v0.2.22.5 — vanya — 2026-04-18
 **Branch:** vanya
 **VM:** ye-vanya
