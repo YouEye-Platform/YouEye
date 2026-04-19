@@ -127,31 +127,40 @@ console.log('Done resolving symlinks');
 
 // Step 5: Copy hoisted monorepo dependencies that standalone misses
 // In a pnpm monorepo, some deps are hoisted to the workspace root and
-// not included in the standalone output. Copy them using -L (dereference)
-// to follow pnpm symlinks properly.
+// not included in the standalone output. Next.js trace sometimes copies
+// only package.json without the actual code — check for real content.
 const workspaceRoot = path.join(rootDir, '..');
 const workspaceModules = path.join(workspaceRoot, 'node_modules');
 const localModules = path.join(rootDir, 'node_modules');
+
+function hasCodeContent(dir) {
+  try {
+    const items = fs.readdirSync(dir);
+    return items.some(i => i === 'dist' || i === 'cjs' || i === 'esm' || i === 'lib' || i.endsWith('.js') || i.endsWith('.mjs'));
+  } catch { return false; }
+}
 
 // Packages that Next.js standalone needs at runtime but doesn't bundle.
 const needed = ['next', 'react', 'react-dom', '@swc/helpers', '@swc/counter', '@next/env', 'styled-jsx', 'client-only'];
 for (const pkg of needed) {
   const dest = path.join(nodeModulesPath, pkg);
-  // Skip if already properly present (has package.json)
-  if (fs.existsSync(path.join(dest, 'package.json'))) continue;
+  // Skip only if already properly present with actual code (not just package.json)
+  if (fs.existsSync(dest) && hasCodeContent(dest)) continue;
   // Try local node_modules first (pnpm resolves symlinks here), then workspace root
   const candidates = [path.join(localModules, pkg), path.join(workspaceModules, pkg)];
   for (const src of candidates) {
-    if (fs.existsSync(path.join(src, 'package.json'))) {
-      console.log(`  Copying ${pkg} from ${path.dirname(src) === localModules ? 'local' : 'workspace'} node_modules...`);
-      // Remove existing entry — use lstatSync to detect symlinks (existsSync follows them and misses broken links)
-      try { const st = fs.lstatSync(dest); fs.rmSync(dest, { recursive: true }); } catch {}
-      // Ensure parent directory exists (for scoped packages like @swc/helpers)
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      // Use cp -rL to properly follow pnpm symlinks
-      require('child_process').execSync(`cp -rL "${src}" "${dest}"`);
-      break;
-    }
+    if (!fs.existsSync(src)) continue;
+    let realSrc = src;
+    try { if (fs.lstatSync(src).isSymbolicLink()) realSrc = fs.realpathSync(src); } catch { continue; }
+    if (!hasCodeContent(realSrc)) continue;
+    console.log(`  Copying ${pkg} from ${path.dirname(src) === localModules ? 'local' : 'workspace'} node_modules...`);
+    // Remove existing incomplete entry
+    try { fs.lstatSync(dest); fs.rmSync(dest, { recursive: true }); } catch {}
+    // Ensure parent directory exists (for scoped packages like @swc/helpers)
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    // Use cp -rL to properly follow pnpm symlinks
+    require('child_process').execSync(`cp -rL "${realSrc}" "${dest}"`);
+    break;
   }
 }
 console.log('Done copying workspace dependencies');
