@@ -1,3 +1,25 @@
+## v0.2.22.5 — iris — 2026-04-19
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris (merge-manager)
+**Task:** Fix UI App Market — icons, navbar, native/non-native split, detail pages
+
+### Changes
+- `control-panel/src/app/embed/market/client.tsx` — Major rewrite: added icon rendering with iconUrl fallback, native/non-native app grouping (BUILT FOR YOUEYE / INSTALLED / AVAILABLE), app detail page with screenshots/lightbox/SSO info, search, refresh, install from URL
+- `ui/src/app/app-market/layout.tsx` — **NEW** layout with YouEye Navbar for app market page
+- `ui/src/app/app-market/page.tsx` — Simplified to use layout-provided auth gate
+
+### Test Results
+- UI market (devvm.test/app-market): navbar visible, 3 sections rendered, icons working
+- CP market (control.devvm.test/market): reference implementation matches
+- All 14 apps visible (6 native, 1 installed, 7 available)
+
+### Notes for Iris
+- `spine update control` only deploys CP, not UI — UI needs manual push or separate update mechanism
+- UI standalone tarball built correctly but deployment requires incus file push
+
+---
+
 ## v0.2.22.4 — iris — 2026-04-19
 **Branch:** dev
 **VM:** ye-iris
