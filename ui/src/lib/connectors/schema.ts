@@ -90,7 +90,10 @@ export const ConnectorMetadataSchema = z.object({
   name: z.string().min(1),
   description: z.string().min(1),
   icon: z.string().min(1),
-  provides: z.array(z.string().min(1)).min(1),
+  // Accept both string and array for backwards compatibility
+  provides: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).transform(
+    (val) => (Array.isArray(val) ? val : [val])
+  ),
   network: z.enum(["local", "internet"]),
 });
 

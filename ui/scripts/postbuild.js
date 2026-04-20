@@ -170,7 +170,7 @@ const pnpmStoreDirs = [
 ];
 
 // Packages that Next.js standalone needs at runtime but doesn't bundle.
-const needed = ['next', 'react', 'react-dom', '@swc/helpers', '@swc/counter', '@next/env', 'styled-jsx', 'client-only'];
+const needed = ['next', 'react', 'react-dom', '@swc/helpers', '@swc/counter', '@next/env', 'styled-jsx', 'client-only', 'yaml', 'zod'];
 for (const pkg of needed) {
   const dest = path.join(nodeModulesPath, pkg);
   // Skip only if already properly present with actual code (not just package.json)
