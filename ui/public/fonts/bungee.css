@@ -2,6 +2,6 @@
   font-family: 'Bungee';
   font-style: normal;
   font-weight: 400;
-  font-display: swap;
+  font-display: block;
   src: url(/fonts/bungee/bungee-0.ttf) format('truetype');
 }

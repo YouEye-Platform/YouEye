@@ -2,48 +2,48 @@
   font-family: 'Outfit';
   font-style: normal;
   font-weight: 300;
-  font-display: swap;
+  font-display: block;
   src: url(/fonts/outfit/outfit-0.ttf) format('truetype');
 }
 @font-face {
   font-family: 'Outfit';
   font-style: normal;
   font-weight: 400;
-  font-display: swap;
+  font-display: block;
   src: url(/fonts/outfit/outfit-1.ttf) format('truetype');
 }
 @font-face {
   font-family: 'Outfit';
   font-style: normal;
   font-weight: 500;
-  font-display: swap;
+  font-display: block;
   src: url(/fonts/outfit/outfit-2.ttf) format('truetype');
 }
 @font-face {
   font-family: 'Outfit';
   font-style: normal;
   font-weight: 600;
-  font-display: swap;
+  font-display: block;
   src: url(/fonts/outfit/outfit-3.ttf) format('truetype');
 }
 @font-face {
   font-family: 'Outfit';
   font-style: normal;
   font-weight: 700;
-  font-display: swap;
+  font-display: block;
   src: url(/fonts/outfit/outfit-4.ttf) format('truetype');
 }
 @font-face {
   font-family: 'Outfit';
   font-style: normal;
   font-weight: 800;
-  font-display: swap;
+  font-display: block;
   src: url(/fonts/outfit/outfit-5.ttf) format('truetype');
 }
 @font-face {
   font-family: 'Outfit';
   font-style: normal;
   font-weight: 900;
-  font-display: swap;
+  font-display: block;
   src: url(/fonts/outfit/outfit-6.ttf) format('truetype');
 }
