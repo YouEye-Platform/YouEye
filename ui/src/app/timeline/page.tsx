@@ -30,14 +30,13 @@ export default async function TimelinePage() {
     getUserWordartOverride(session.userId),
   ]);
 
-  // Preload user's custom font if different from system font
-  const userFont = wordartOverride?.fontFamily;
-  const systemFont = branding.site_name_style?.fontFamily ?? "Inter";
-  const needsUserFontPreload = userFont && userFont !== systemFont;
+  // Preload the font being used for the site name
+  const activeStyle = wordartOverride ?? branding.site_name_style;
+  const fontFamily = activeStyle?.fontFamily ?? "Inter";
 
   return (
     <div className="min-h-screen bg-background">
-      {needsUserFontPreload && <FontPreloadLink fontFamily={userFont} />}
+      <FontPreloadLink fontFamily={fontFamily} />
       <Navbar
         username={session.name || session.username}
         email={session.email}

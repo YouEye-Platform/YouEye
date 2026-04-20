@@ -35,15 +35,13 @@ export default async function HomePage() {
   // Use firstName for greeting widget, fall back to display name or username
   const greetingName = user?.firstName || session.name || session.username;
 
-  // If user has a wordart override with a different font, preload it
-  // (layout already preloads the system font)
-  const userFont = wordartOverride?.fontFamily;
-  const systemFont = branding.site_name_style?.fontFamily ?? "Inter";
-  const needsUserFontPreload = userFont && userFont !== systemFont;
+  // Preload the font being used for the site name
+  const activeStyle = wordartOverride ?? branding.site_name_style;
+  const fontFamily = activeStyle?.fontFamily ?? "Inter";
 
   return (
     <div className="relative min-h-screen">
-      {needsUserFontPreload && <FontPreloadLink fontFamily={userFont} />}
+      <FontPreloadLink fontFamily={fontFamily} />
       <Navbar
         username={session.name || session.username}
         email={session.email}

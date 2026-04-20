@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import { Providers } from "@/components/providers";
-import { FontPreload } from "@/components/layout/font-preload";
 import "./globals.css";
 import { getSiteName } from "@/lib/site-config";
 
@@ -25,8 +24,6 @@ export default async function RootLayout({
   return (
     <html lang={locale} suppressHydrationWarning>
       <body className="min-h-screen antialiased">
-        {/* Font preload links at the very top of body for immediate processing */}
-        <FontPreload />
         <NextIntlClientProvider messages={messages}>
           <Providers>{children}</Providers>
         </NextIntlClientProvider>
