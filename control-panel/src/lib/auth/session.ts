@@ -114,7 +114,7 @@ export async function setSessionCookies(token: string, csrfToken: string): Promi
   cookieStore.set(SESSION_COOKIE, token, {
     httpOnly: true,
     secure: useSecure,
-    sameSite: 'lax',
+    sameSite: useSecure ? 'none' : 'lax',
     maxAge: SESSION_DURATION,
     path: '/',
   });
@@ -123,7 +123,7 @@ export async function setSessionCookies(token: string, csrfToken: string): Promi
   cookieStore.set(CSRF_COOKIE, csrfToken, {
     httpOnly: false,
     secure: useSecure,
-    sameSite: 'lax',
+    sameSite: useSecure ? 'none' : 'lax',
     maxAge: SESSION_DURATION,
     path: '/',
   });

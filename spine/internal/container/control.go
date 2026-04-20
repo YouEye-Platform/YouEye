@@ -379,7 +379,7 @@ Environment=PORT=%d
 Environment=JWT_SECRET=%s
 Environment=HOST_IP=%s
 Environment=TEST_ADMIN_SECRET=%s
-Environment=SECURE_COOKIES=false
+Environment=SECURE_COOKIES=true
 ExecStart=/usr/bin/node %s/server.js
 Restart=always
 RestartSec=3
