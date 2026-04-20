@@ -3,9 +3,15 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useTheme } from "next-themes";
 
-const CP_ORIGIN = process.env.NEXT_PUBLIC_CP_ORIGIN || "https://control.devvm.test";
-const HEALTH_URL = `${CP_ORIGIN}/embed/health`;
 const HEALTH_POLL_INTERVAL = 5000;
+
+function getCpOrigin(signedUrl: string): string {
+  try {
+    return new URL(signedUrl).origin;
+  } catch {
+    return '';
+  }
+}
 
 interface AdminEmbedProps {
   signedUrl: string;
@@ -14,6 +20,7 @@ interface AdminEmbedProps {
 }
 
 export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProps) {
+  const cpOrigin = getCpOrigin(signedUrl);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const healthRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [height, setHeight] = useState(minHeight);
@@ -26,7 +33,7 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
     if (!iframeRef.current?.contentWindow || !resolvedTheme) return;
     iframeRef.current.contentWindow.postMessage(
       { type: "youeye-embed-theme", theme: resolvedTheme },
-      CP_ORIGIN
+      cpOrigin
     );
   }, [resolvedTheme]);
 
@@ -41,7 +48,7 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
     stopHealthPoll();
     healthRef.current = setInterval(async () => {
       try {
-        const res = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(3000) });
+        const res = await fetch(`${cpOrigin}/embed/health`, { signal: AbortSignal.timeout(3000) });
         if (res.ok) {
           stopHealthPoll();
           setRestarting(null);
@@ -59,7 +66,7 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
 
   const handleMessage = useCallback(
     (e: MessageEvent) => {
-      if (e.origin !== CP_ORIGIN) return;
+      if (e.origin !== cpOrigin) return;
 
       if (e.data?.type === "youeye-embed-ready" || e.data?.type === "youeye-embed-resize") {
         setReady(true);

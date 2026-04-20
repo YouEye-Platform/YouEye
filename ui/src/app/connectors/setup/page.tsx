@@ -61,7 +61,8 @@ function validateRedirectUri(uri: string, appSubdomain: string | null): string |
     if (appSubdomain && url.hostname.startsWith(appSubdomain + ".")) {
       return uri;
     }
-    if (url.hostname === "localhost" || url.hostname === "devvm.test") {
+    const platformDomain = (process.env.UI_EXTERNAL_URL || '').replace(/^https?:\/\//, '');
+    if (url.hostname === "localhost" || (platformDomain && url.hostname.endsWith(platformDomain))) {
       return uri;
     }
     return null;

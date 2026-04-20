@@ -107,14 +107,12 @@ export async function getSession(): Promise<SessionPayload | null> {
 export async function setSessionCookies(token: string, csrfToken: string): Promise<void> {
   const cookieStore = await cookies();
   
-  // HTTP-only session cookie
-  // Note: secure should be true when using HTTPS
-  const useSecure = process.env.SECURE_COOKIES === 'true';
-  
+  // Always secure + SameSite=None — CP is always behind Caddy TLS,
+  // and embeds are loaded cross-origin from the UI.
   cookieStore.set(SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: useSecure,
-    sameSite: useSecure ? 'none' : 'lax',
+    secure: true,
+    sameSite: 'none',
     maxAge: SESSION_DURATION,
     path: '/',
   });
@@ -122,8 +120,8 @@ export async function setSessionCookies(token: string, csrfToken: string): Promi
   // CSRF token cookie (readable by JavaScript)
   cookieStore.set(CSRF_COOKIE, csrfToken, {
     httpOnly: false,
-    secure: useSecure,
-    sameSite: useSecure ? 'none' : 'lax',
+    secure: true,
+    sameSite: 'none',
     maxAge: SESSION_DURATION,
     path: '/',
   });

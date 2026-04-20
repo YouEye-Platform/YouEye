@@ -19,7 +19,10 @@ const nextConfig: NextConfig = {
   
   // Security headers
   async headers() {
-    const parentOrigin = process.env.PLATFORM_ORIGIN || 'https://devvm.test';
+    // Derive UI origin from CONTROL_EXTERNAL_URL (set during SSO setup).
+    // e.g. "https://control.skibidi.io" → "https://skibidi.io"
+    const controlUrl = process.env.CONTROL_EXTERNAL_URL || '';
+    const parentOrigin = controlUrl.replace('://control.', '://') || 'https://localhost';
     const commonHeaders = [
       { key: 'X-Content-Type-Options', value: 'nosniff' },
       { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },

@@ -31,7 +31,7 @@ export async function GET(request: Request) {
 
   await ensureSchema();
 
-  const externalUrl = process.env.UI_EXTERNAL_URL || "https://devvm.test";
+  const externalUrl = process.env.UI_EXTERNAL_URL || "https://localhost";
   const domain = externalUrl.replace(/^https?:\/\//, "");
 
   let version = "0.0.0";
