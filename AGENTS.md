@@ -1,3 +1,25 @@
+## v0.2.22.13 — iris — 2026-04-20
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris (merge-manager)
+**Task:** One-way bridge hardening + WordArt flicker fix
+
+### Changes
+- `control-panel/src/lib/ui-bridge/auth.ts` — Hardened to reject ALL non-embed requests (401)
+- `ui/public/fonts/*.css` — All 35 font CSS files changed from `font-display: swap` to `font-display: block`
+
+### Test Results
+- CP bridge API returns 401 for non-embed requests
+- WordArt renders correctly on first paint (no flicker)
+- Multiple rapid reload tests confirmed no visible font swap
+
+### Notes for Iris
+- One-way bridge is now complete and hardened
+- UI cannot call CP even if it tried (gets 401)
+- Connectors fetch directly from Gitea, language stored locally
+
+---
+
 ## v0.2.22.5 — iris — 2026-04-19
 **Branch:** dev
 **VM:** ye-iris
