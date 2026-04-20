@@ -197,6 +197,12 @@ export async function middleware(request: NextRequest) {
     return applySecurityHeaders(NextResponse.next(), pathname);
   }
 
+  // Embed routes handle their own auth (show sign-in prompt within iframe).
+  // Don't redirect to /login — that would get blocked by frame-ancestors.
+  if (pathname.startsWith('/embed')) {
+    return applySecurityHeaders(NextResponse.next(), pathname);
+  }
+
   // Get session cookie
   const sessionCookie = request.cookies.get('ye-session');
 
