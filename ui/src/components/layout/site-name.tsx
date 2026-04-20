@@ -11,8 +11,8 @@ import { useEffect } from "react";
 import type { SiteNameStyle } from "@/lib/db/queries/branding";
 import { CHARACTER_SHAPE_PRESETS } from "@/lib/wordart-presets";
 
-/** Font family → local CSS file mapping */
-const FONT_CSS_MAP: Record<string, string> = {
+/** Font family → local CSS file mapping (exported for server-side preloading) */
+export const FONT_CSS_MAP: Record<string, string> = {
   'Montserrat': '/fonts/montserrat.css',
   'Playfair Display': '/fonts/playfair-display.css',
   'Inter': '/fonts/inter.css',

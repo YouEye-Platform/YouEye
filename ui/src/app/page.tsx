@@ -13,6 +13,7 @@ import { getBranding } from "@/lib/db/queries/branding";
 import { findUserById, hasCompletedOnboarding } from "@/lib/db/queries/users";
 import { WidgetGrid } from "@/components/dashboard/widget-grid";
 import { Navbar } from "@/components/layout/navbar";
+import { FontPreloadLink } from "@/components/layout/font-preload";
 import { redirect } from "next/navigation";
 
 export default async function HomePage() {
@@ -34,8 +35,15 @@ export default async function HomePage() {
   // Use firstName for greeting widget, fall back to display name or username
   const greetingName = user?.firstName || session.name || session.username;
 
+  // If user has a wordart override with a different font, preload it
+  // (layout already preloads the system font)
+  const userFont = wordartOverride?.fontFamily;
+  const systemFont = branding.site_name_style?.fontFamily ?? "Inter";
+  const needsUserFontPreload = userFont && userFont !== systemFont;
+
   return (
     <div className="relative min-h-screen">
+      {needsUserFontPreload && <FontPreloadLink fontFamily={userFont} />}
       <Navbar
         username={session.name || session.username}
         email={session.email}
