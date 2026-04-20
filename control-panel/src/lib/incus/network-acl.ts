@@ -75,6 +75,10 @@ export async function ensureNetworkAcls(): Promise<void> {
   }
 
   if (!(await aclExists(ACL_APP))) {
+    // Option E: ACL contains ONLY allow rules. The device's default egress action
+    // is set to 'reject' in applyAppAcl(). This ensures Incus places the allow rules
+    // BEFORE the default reject in nftables. Including an explicit reject rule in the
+    // ACL causes Incus to reorder rules, putting reject BEFORE allows (bug).
     await incusRequest('POST', '/1.0/network-acls', {
       name: ACL_APP,
       description: 'App containers — allow internal subnet, block internet',
@@ -100,11 +104,7 @@ export async function ensureNetworkAcls(): Promise<void> {
           destination_port: '53',
           description: 'Allow DNS resolution (TCP)',
         },
-        {
-          action: 'reject',
-          state: 'enabled',
-          description: 'Block all other egress (internet)',
-        },
+        // NO explicit reject rule — device default.egress.action handles it
       ],
     } as AclConfig);
     created = true;
@@ -154,10 +154,11 @@ export async function applyAppAcl(containerName: string): Promise<void> {
       devices.eth0 = { name: 'eth0', network: 'incusbr0', type: 'nic' };
     }
     devices.eth0['security.acls'] = ACL_APP;
-    // Default egress must be 'allow' — the ACL's own final 'reject' rule handles blocking.
-    // Setting default to 'reject' causes Incus to insert a drop rule BEFORE the ACL's
-    // explicit allow rules in nftables, making the subnet/DNS allows unreachable (502s).
-    devices.eth0['security.acls.default.egress.action'] = 'allow';
+    // Option E: Set default egress to 'reject'. The ACL contains ONLY allow rules.
+    // Incus places the allow rules BEFORE the default reject in nftables, fixing the
+    // rule ordering bug that caused 502s. (The old approach with an explicit reject
+    // rule in the ACL caused Incus to reorder rules, putting reject BEFORE allows.)
+    devices.eth0['security.acls.default.egress.action'] = 'reject';
     devices.eth0['security.acls.default.ingress.action'] = 'allow';
 
     await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices });
