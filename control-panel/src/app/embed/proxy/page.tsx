@@ -1,16 +1,12 @@
-import { validateEmbedToken } from "@/lib/embed/auth";
+import { validateEmbedSession } from "@/lib/embed/session-auth";
+import { EmbedAuthError } from "@/components/embed/auth-error";
 import { ProxyEmbedClient } from "./client";
 
-export default async function ProxyEmbedPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string>>;
-}) {
-  const params = new URLSearchParams(await searchParams);
-  const user = await validateEmbedToken(params);
+export default async function ProxyEmbedPage() {
+  const auth = await validateEmbedSession("admin");
 
-  if (!user || !user.isAdmin) {
-    return <div style={{ padding: 24, textAlign: "center", color: "#a1a1aa" }}>Unauthorized</div>;
+  if (!auth.authorized) {
+    return <EmbedAuthError reason={auth.reason || "Unauthorized"} showSignIn={!auth.authenticated} />;
   }
 
   return <ProxyEmbedClient />;

@@ -10,6 +10,7 @@ export default async function BrandingPage() {
 
   const branding = await getBranding();
 
+  // Embed now uses session-based auth — only generate URL for admins
   const serverBrandingUrl = session.isAdmin
     ? getSignedEmbedUrl("branding", session.username, true)
     : null;

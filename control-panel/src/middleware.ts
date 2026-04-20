@@ -16,6 +16,7 @@ const PUBLIC_ROUTES = [
   '/api/auth/logout',
   '/api/auth/csrf',
   '/api/auth/callback',
+  '/api/auth/popup-close',  // SSO popup close page
   '/api/auth/mode',
   '/api/setup/config',
   '/api/setup/ca-cert',
@@ -31,7 +32,7 @@ const PUBLIC_ROUTES = [
   '/api/connectors',
   '/api/ui',              // Embed client-side calls to UI bridge proxy (branding, etc.)
   '/setup-complete',
-  '/embed',               // Embed pages use HMAC token auth via URL params
+  // Note: /embed routes now use session auth (same as main CP), not HMAC tokens
 ];
 
 // Exact-match public routes (no prefix matching)

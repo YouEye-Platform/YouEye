@@ -8,14 +8,8 @@ export default async function DnsSettingsPage() {
   if (!session) redirect("/login");
   if (!session.isAdmin) redirect("/settings");
 
-  const signedUrl = getSignedEmbedUrl("dns", session.username, true);
-  if (!signedUrl) {
-    return (
-      <div className="text-center py-12 text-muted-foreground">
-        Bridge token not configured. Cannot load admin settings.
-      </div>
-    );
-  }
+  // Embed now uses session-based auth — CP validates user's SSO session cookie
+  const embedUrl = getSignedEmbedUrl("dns", session.username, true);
 
-  return <AdminEmbed signedUrl={signedUrl} title="DNS Settings" />;
+  return <AdminEmbed signedUrl={embedUrl} title="DNS Settings" />;
 }

@@ -8,8 +8,8 @@ export default async function AppsListPage() {
   if (!session) redirect("/login");
   if (!session.isAdmin) redirect("/settings");
 
-  const signedUrl = getSignedEmbedUrl("apps", session.username, true);
-  if (!signedUrl) redirect("/settings");
+  // Embed now uses session-based auth — CP validates user's SSO session cookie
+  const embedUrl = getSignedEmbedUrl("apps", session.username, true);
 
-  return <AdminEmbed signedUrl={signedUrl} title="Apps &amp; Updates" minHeight={500} />;
+  return <AdminEmbed signedUrl={embedUrl} title="Apps &amp; Updates" minHeight={500} />;
 }

@@ -1,57 +1,33 @@
 /**
- * Embed Token Generator — server-side only.
+ * Embed URL Generator — server-side only.
  *
- * Signs iframe URLs using the bridge token as HMAC key.
- * CP validates these tokens before rendering embed pages.
+ * One-way bridge: CP embeds now use session-based auth (same SSO session
+ * as main CP). UI no longer needs the bridge token for embed URLs.
+ *
+ * The CP validates the user's session cookie when loading embed pages.
+ * If not logged in, CP shows a sign-in prompt within the iframe.
  */
 
-import { createHmac } from "crypto";
-import { readFileSync } from "fs";
-
-const TOKEN_FILE_PATH = "/etc/youeye/ui-bridge-token";
-
-let cachedToken: string | null = null;
-let tokenReadFailed = false;
-
-function getBridgeToken(): string | null {
-  if (cachedToken) return cachedToken;
-  if (tokenReadFailed) return null;
-  try {
-    const token = readFileSync(TOKEN_FILE_PATH, "utf-8").trim();
-    if (!token) {
-      tokenReadFailed = true;
-      return null;
-    }
-    cachedToken = token;
-    return cachedToken;
-  } catch {
-    tokenReadFailed = true;
-    return null;
-  }
-}
-
+/**
+ * Get embed URL for a CP section.
+ *
+ * @param section - The embed section (e.g., "containers", "backup")
+ * @param _username - Unused, kept for API compatibility
+ * @param _isAdmin - Unused, kept for API compatibility
+ * @param extraParams - Optional query params (e.g., theme, accent)
+ */
 export function getSignedEmbedUrl(
   section: string,
-  username: string,
-  isAdmin: boolean,
+  _username: string,
+  _isAdmin: boolean,
   extraParams?: Record<string, string>
-): string | null {
-  const bridgeToken = getBridgeToken();
-  if (!bridgeToken) return null;
-
+): string {
   const cpBase = process.env.CP_EMBED_URL || "https://control.devvm.test";
-  const ts = Math.floor(Date.now() / 1000);
-  const adminFlag = isAdmin ? "1" : "0";
-  const payload = `embed:${username}:${adminFlag}:${ts}`;
-  const sig = createHmac("sha256", bridgeToken).update(payload).digest("hex");
 
-  const params = new URLSearchParams({
-    user: username,
-    admin: adminFlag,
-    ts: String(ts),
-    sig,
-    ...extraParams,
-  });
+  if (extraParams && Object.keys(extraParams).length > 0) {
+    const params = new URLSearchParams(extraParams);
+    return `${cpBase}/embed/${section}?${params.toString()}`;
+  }
 
-  return `${cpBase}/embed/${section}?${params.toString()}`;
+  return `${cpBase}/embed/${section}`;
 }

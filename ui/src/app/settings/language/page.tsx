@@ -12,6 +12,7 @@ export default async function LanguagePage() {
   const settings = await getUserSettings(session.userId);
   const currentUserLang = (settings.language as string) || null;
 
+  // Embed now uses session-based auth — only generate URL for admins
   const systemLangUrl = session.isAdmin
     ? getSignedEmbedUrl("language", session.username, true)
     : null;

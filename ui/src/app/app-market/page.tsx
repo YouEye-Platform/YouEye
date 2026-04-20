@@ -3,6 +3,7 @@
  *
  * Embeds the Control Panel's marketplace UI via iframe.
  * Layout provides the YouEye navbar and auth gate.
+ * Auth via session-based SSO — CP validates user's session cookie.
  */
 
 import { getSession } from "@/lib/auth";
@@ -13,21 +14,14 @@ export default async function AppMarketPage() {
   // Layout already gates auth — session is guaranteed here
   const session = await getSession();
 
-  const signedUrl = session
+  // Embed now uses session-based auth — CP validates user's SSO session cookie
+  const embedUrl = session
     ? getSignedEmbedUrl("market", session.username, true)
-    : null;
-
-  if (!signedUrl) {
-    return (
-      <div className="max-w-4xl mx-auto px-6 py-12 text-center text-muted-foreground">
-        Bridge token not configured. Cannot load App Market.
-      </div>
-    );
-  }
+    : "";
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
-      <AdminEmbed signedUrl={signedUrl} title="App Market" minHeight={600} />
+      <AdminEmbed signedUrl={embedUrl} title="App Market" minHeight={600} />
     </div>
   );
 }

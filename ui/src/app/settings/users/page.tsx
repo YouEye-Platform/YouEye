@@ -8,8 +8,8 @@ export default async function UsersSettingsPage() {
   if (!session) redirect("/login");
   if (!session.isAdmin) redirect("/settings");
 
-  const signedUrl = getSignedEmbedUrl("users", session.username, true);
-  if (!signedUrl) redirect("/settings");
+  // Embed now uses session-based auth — CP validates user's SSO session cookie
+  const embedUrl = getSignedEmbedUrl("users", session.username, true);
 
-  return <AdminEmbed signedUrl={signedUrl} title="User Management" minHeight={400} />;
+  return <AdminEmbed signedUrl={embedUrl} title="User Management" minHeight={400} />;
 }
