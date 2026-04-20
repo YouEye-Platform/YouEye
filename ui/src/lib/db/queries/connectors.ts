@@ -4,13 +4,20 @@
  * Manages user connector preferences and resolution.
  * The connector system lets users choose which data sources
  * their apps connect to (e.g., SearXNG vs Whoogle for search).
+ *
+ * One-Way Bridge: Connector catalog fetched directly from Gitea,
+ * not proxied through CP.
  */
 
 import { db, ensureSchema } from "@/db";
 import { userConnectors, userConnectorSecrets, appPermissions } from "@/db/schema";
 import { eq, and, asc, isNull } from "drizzle-orm";
+import {
+  fetchConnectorManifest,
+  listConnectors,
+} from "@/lib/connectors/registry";
+import type { ConnectorManifest } from "@/lib/connectors/schema";
 
-const CP_API_URL = process.env.CP_API_URL ?? "http://youeye-control.youeye:3000/api";
 const CONNECTOR_RUNTIME_URL = process.env.CONNECTOR_RUNTIME_URL ?? "http://youeye-connectors.youeye:3001";
 
 /**
@@ -197,31 +204,43 @@ export async function getUserConnectors(userId: string) {
     .orderBy(asc(userConnectors.capability), asc(userConnectors.priority));
 }
 
-// ─── CP Registry Helpers ──────────────────────────────────
+// ─── Registry Helpers (Direct Gitea Fetch) ─────────────────
 
+/**
+ * Convert ConnectorManifest to the info format used by resolveConnector.
+ */
+function manifestToInfo(manifest: ConnectorManifest) {
+  return {
+    id: manifest.metadata.id,
+    name: manifest.metadata.name,
+    network: manifest.metadata.network,
+    authMethod: manifest.permissions.auth.method,
+    configFields: manifest.config.fields.map((f) => ({
+      name: f.name,
+      required: f.required,
+    })),
+  };
+}
+
+/**
+ * Fetch connector info by ID — directly from Gitea via local registry.
+ */
 async function fetchConnectorInfo(connectorId: string) {
   try {
-    const res = await fetch(`${CP_API_URL}/connectors`, {
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const connector = data.connectors?.find((c: { id: string }) => c.id === connectorId);
-    return connector ?? null;
+    const manifest = await fetchConnectorManifest(connectorId);
+    return manifestToInfo(manifest);
   } catch {
     return null;
   }
 }
 
+/**
+ * Fetch connectors by capability — directly from Gitea via local registry.
+ */
 async function fetchConnectorsByCapability(capability: string) {
   try {
-    const res = await fetch(
-      `${CP_API_URL}/connectors?capability=${encodeURIComponent(capability)}`,
-      { signal: AbortSignal.timeout(10_000) }
-    );
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.connectors ?? [];
+    const manifests = await listConnectors(capability);
+    return manifests.map(manifestToInfo);
   } catch {
     return [];
   }

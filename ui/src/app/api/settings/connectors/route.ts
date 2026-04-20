@@ -2,9 +2,8 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { db, ensureSchema } from "@/db";
 import { apps, userConnectors } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
-
-const CP_API_URL = process.env.CP_API_URL ?? "http://youeye-control.youeye:3000/api";
+import { eq } from "drizzle-orm";
+import { listConnectors } from "@/lib/connectors/registry";
 
 interface ConnectorSummary {
   id: string;
@@ -21,15 +20,14 @@ export async function GET() {
 
   const installedApps = await db.select().from(apps).orderBy(apps.displayOrder);
 
+  // One-Way Bridge: fetch connector catalog directly from Gitea
   let connectorCatalog: ConnectorSummary[] = [];
   try {
-    const res = await fetch(`${CP_API_URL}/connectors`, {
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      connectorCatalog = data.connectors ?? [];
-    }
+    const manifests = await listConnectors();
+    connectorCatalog = manifests.map((m) => ({
+      id: m.metadata.id,
+      provides: m.metadata.provides,
+    }));
   } catch { /* offline — show apps without connector data */ }
 
   const userPrefs = await db

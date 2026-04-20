@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth";
 import { db, ensureSchema } from "@/db";
 import { userConnectorSecrets } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
+import { fetchConnectorManifest } from "@/lib/connectors/registry";
 
 const ENCRYPTION_KEY = process.env.CONNECTOR_ENCRYPTION_KEY || "youeye-dev-key-32bytes-padding!";
 
@@ -36,18 +37,13 @@ export async function POST(request: NextRequest) {
   }
 
   // Auto-derive boundHost from connector manifest if not provided
+  // One-Way Bridge: fetch directly from Gitea via local registry
   if (!boundHost) {
     try {
-      const CP_API_URL = process.env.CP_API_URL ?? "http://youeye-control.youeye:3000/api";
-      const res = await fetch(`${CP_API_URL}/connectors/${connectorId}/manifest`, {
-        signal: AbortSignal.timeout(5_000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const hosts = data.manifest?.permissions?.network?.allowedHosts;
-        if (Array.isArray(hosts) && hosts.length === 1) {
-          boundHost = hosts[0];
-        }
+      const manifest = await fetchConnectorManifest(connectorId);
+      const hosts = manifest.permissions?.network?.allowedHosts;
+      if (Array.isArray(hosts) && hosts.length === 1) {
+        boundHost = hosts[0];
       }
     } catch { /* proceed without boundHost */ }
   }

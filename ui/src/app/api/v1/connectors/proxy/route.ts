@@ -15,11 +15,11 @@ import { resolveServiceAuth } from "@/lib/auth/service";
 import { db, ensureSchema } from "@/db";
 import { userConnectorSecrets } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
+import { fetchConnectorManifest } from "@/lib/connectors/registry";
+import type { ConnectorManifest } from "@/lib/connectors/schema";
 
 const CONNECTOR_RUNTIME_URL =
   process.env.CONNECTOR_RUNTIME_URL ?? "http://youeye-connectors.youeye:3001";
-const CP_API_URL =
-  process.env.CP_API_URL ?? "http://youeye-control.youeye:3000/api";
 
 // AES-256-GCM decryption for stored credentials
 const ENCRYPTION_KEY = process.env.CONNECTOR_ENCRYPTION_KEY || "youeye-dev-key-32bytes-padding!";
@@ -73,19 +73,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing connectorId or endpoint" }, { status: 400 });
   }
 
-  // Fetch manifest from CP registry (it has the catalog cache)
-  let manifest: Record<string, unknown> | null = null;
+  // One-Way Bridge: fetch manifest directly from Gitea via local registry
+  let manifest: ConnectorManifest | null = null;
   try {
-    const res = await fetch(`${CP_API_URL}/connectors/${connectorId}/manifest`, {
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      manifest = data.manifest;
-    }
+    manifest = await fetchConnectorManifest(connectorId);
   } catch { /* fall through */ }
 
-  // Fallback: try connector runtime directly
+  // Fallback: try connector runtime directly (for offline scenarios)
   if (!manifest) {
     try {
       const res = await fetch(`${CONNECTOR_RUNTIME_URL}/manifests?id=${connectorId}`, {

@@ -1,16 +1,18 @@
 /**
  * Authentik Avatar Sync
  *
- * Sends the user's avatar to Authentik via the CP bridge endpoint.
- * This is best-effort — failure doesn't block the upload.
+ * @deprecated One-Way Bridge: This module is no longer used.
+ * UI no longer calls CP. Avatars are stored locally in UI only.
+ * Users can set their Authentik avatar directly via Authentik admin.
+ *
+ * Keeping this file for reference. Safe to delete in future cleanup.
  */
 
 const BRIDGE_TOKEN_PATH = "/etc/youeye/ui-bridge-token";
 const CP_INTERNAL_URL = process.env.CP_INTERNAL_URL || "http://youeye-control.youeye:3000";
 
 /**
- * Sync avatar to Authentik via the Control Panel bridge.
- * Sends the avatar image to the CP which forwards it to Authentik's API.
+ * @deprecated No longer used. See module deprecation notice.
  */
 export async function syncAvatarToAuthentik(
   authentikId: string,

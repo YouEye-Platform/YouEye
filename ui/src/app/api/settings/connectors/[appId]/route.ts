@@ -3,8 +3,7 @@ import { getSession } from "@/lib/auth";
 import { db, ensureSchema } from "@/db";
 import { apps, userConnectors, userConnectorSecrets } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
-
-const CP_API_URL = process.env.CP_API_URL ?? "http://youeye-control.youeye:3000/api";
+import { listConnectors } from "@/lib/connectors/registry";
 
 export async function GET(
   _request: NextRequest,
@@ -28,6 +27,7 @@ export async function GET(
     requires?: Array<{ capability: string; multiple?: boolean }>;
   })?.requires ?? [];
 
+  // One-Way Bridge: fetch connector catalog directly from Gitea via local registry
   let connectorCatalog: Array<{
     id: string;
     name: string;
@@ -38,14 +38,22 @@ export async function GET(
     configFields: Array<{ name: string; label: string; type: string; required: boolean }>;
   }> = [];
   try {
-    const res = await fetch(`${CP_API_URL}/connectors`, {
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      connectorCatalog = data.connectors ?? [];
-    }
-  } catch { /* offline */ }
+    const manifests = await listConnectors();
+    connectorCatalog = manifests.map((m) => ({
+      id: m.metadata.id,
+      name: m.metadata.name,
+      icon: m.metadata.icon,
+      provides: m.metadata.provides,
+      network: m.metadata.network,
+      authMethod: m.permissions.auth.method,
+      configFields: m.config.fields.map((f) => ({
+        name: f.name,
+        label: f.label,
+        type: f.type,
+        required: f.required,
+      })),
+    }));
+  } catch { /* offline — Gitea unreachable */ }
 
   const userPrefs = await db
     .select()

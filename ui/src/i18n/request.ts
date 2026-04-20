@@ -3,55 +3,41 @@
  *
  * Resolves the active locale for each request:
  *   1. User's personal language setting (from userSettings.language)
- *   2. System language from bridge (cached)
+ *   2. System language from local DB (site_language in systemSettings)
  *   3. Fallback: "en"
+ *
+ * One-Way Bridge: Language is now stored locally in UI's database.
+ * CP pushes changes via PUT /api/ui-bridge/language (CP → UI direction).
+ * UI never fetches from CP.
  */
 
 import { getRequestConfig } from "next-intl/server";
 import { resolveLocale, defaultLocale } from "./config";
-import { cookies } from "next/headers";
 
 /** Cached system language with TTL */
 let cachedSystemLang: { value: string; expiresAt: number } | null = null;
 const CACHE_TTL_MS = 60_000;
 
 /**
- * Fetch system language from CP bridge endpoint.
- * Falls back to "en" on any error.
+ * Get system language from local database.
+ * Cached in memory with 60s TTL for performance.
  */
-async function getSystemLanguage(): Promise<string> {
+async function fetchSystemLanguage(): Promise<string> {
   const now = Date.now();
   if (cachedSystemLang && now < cachedSystemLang.expiresAt) {
     return cachedSystemLang.value;
   }
 
   try {
-    // Read bridge token and CP URL from environment
-    const bridgeToken = process.env.UI_BRIDGE_TOKEN || "";
-    const cpUrl = process.env.CP_INTERNAL_URL || "http://youeye-control.youeye:3000";
-
-    if (!bridgeToken) {
-      return defaultLocale;
-    }
-
-    const res = await fetch(`${cpUrl}/api/ui-bridge/language`, {
-      headers: {
-        "X-UI-Bridge-Token": bridgeToken,
-      },
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      const lang = data.language || defaultLocale;
-      cachedSystemLang = { value: lang, expiresAt: now + CACHE_TTL_MS };
-      return lang;
-    }
+    // Dynamic import to avoid circular deps and build-time issues
+    const { getSystemLanguage } = await import("@/lib/db/queries/settings");
+    const lang = await getSystemLanguage();
+    cachedSystemLang = { value: lang, expiresAt: now + CACHE_TTL_MS };
+    return lang;
   } catch {
-    // Bridge unavailable — use default
+    // Database not available during build — use default
+    return defaultLocale;
   }
-
-  return defaultLocale;
 }
 
 /**
@@ -80,7 +66,7 @@ async function getUserLanguage(): Promise<string | null> {
 export default getRequestConfig(async () => {
   // Resolution order: user override > system language > "en"
   const userLang = await getUserLanguage();
-  const systemLang = await getSystemLanguage();
+  const systemLang = await fetchSystemLanguage();
 
   const locale = resolveLocale(userLang || systemLang);
 

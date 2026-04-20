@@ -1,29 +1,39 @@
 /**
  * GET /api/v1/connectors/list — List available connectors
- * Proxies to CP /api/connectors with optional capability filter
+ *
+ * One-Way Bridge: Fetches directly from Gitea via local registry,
+ * bypassing CP entirely.
  */
 
 import { NextResponse } from "next/server";
-
-const CP_API_URL = process.env.CP_API_URL ?? "http://youeye-control.youeye:3000/api";
+import { listConnectors } from "@/lib/connectors/registry";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const capability = url.searchParams.get("capability");
+  const capability = url.searchParams.get("capability") ?? undefined;
 
   try {
-    const cpUrl = capability
-      ? `${CP_API_URL}/connectors?capability=${encodeURIComponent(capability)}`
-      : `${CP_API_URL}/connectors`;
+    const manifests = await listConnectors(capability);
+    const connectors = manifests.map((m) => ({
+      id: m.metadata.id,
+      name: m.metadata.name,
+      icon: m.metadata.icon,
+      description: m.metadata.description,
+      provides: m.metadata.provides,
+      network: m.metadata.network,
+      authMethod: m.permissions.auth.method,
+      configFields: m.config.fields.map((f) => ({
+        name: f.name,
+        label: f.label,
+        type: f.type,
+        required: f.required,
+        helpText: f.helpText,
+        helpUrl: f.helpUrl,
+      })),
+    }));
 
-    const res = await fetch(cpUrl, { signal: AbortSignal.timeout(10_000) });
-    if (!res.ok) {
-      return NextResponse.json({ error: "CP unavailable" }, { status: 502 });
-    }
-
-    const data = await res.json();
-    return NextResponse.json(data);
+    return NextResponse.json({ connectors });
   } catch {
-    return NextResponse.json({ error: "CP unreachable" }, { status: 502 });
+    return NextResponse.json({ error: "Registry unreachable" }, { status: 502 });
   }
 }

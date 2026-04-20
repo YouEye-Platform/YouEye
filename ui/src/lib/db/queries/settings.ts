@@ -7,8 +7,9 @@
 
 import { eq } from "drizzle-orm";
 import { db, ensureSchema } from "@/db";
-import { userSettings } from "@/db/schema";
+import { userSettings, systemSettings } from "@/db/schema";
 import type { SiteNameStyle } from "@/lib/db/queries/branding";
+import { locales, defaultLocale } from "@/i18n/config";
 
 /** Default background: animated flowing-lines with purple preset */
 const DEFAULT_BACKGROUND = {
@@ -144,4 +145,66 @@ export async function deleteUserWordartOverride(userId: string) {
       .set({ settings: rest, updatedAt: new Date() })
       .where(eq(userSettings.userId, userId));
   }
+}
+
+// ============================================
+// System Language (One-Way Bridge)
+// ============================================
+
+/**
+ * Get system-wide default language from local DB.
+ * Returns the stored locale or "en" if not set.
+ */
+export async function getSystemLanguage(): Promise<string> {
+  await ensureSchema();
+  const [row] = await db
+    .select()
+    .from(systemSettings)
+    .where(eq(systemSettings.key, "site_language"));
+
+  const lang = row?.value as string | null;
+  if (lang && (locales as readonly string[]).includes(lang)) {
+    return lang;
+  }
+  return defaultLocale;
+}
+
+/**
+ * Set system-wide default language.
+ * Called by CP via PUT /api/ui-bridge/language when admin changes system language.
+ */
+export async function setSystemLanguage(language: string): Promise<void> {
+  await ensureSchema();
+
+  // Validate locale
+  if (!(locales as readonly string[]).includes(language)) {
+    throw new Error(`Invalid locale: ${language}`);
+  }
+
+  const [existing] = await db
+    .select()
+    .from(systemSettings)
+    .where(eq(systemSettings.key, "site_language"));
+
+  if (existing) {
+    await db
+      .update(systemSettings)
+      .set({ value: language, updatedAt: new Date() })
+      .where(eq(systemSettings.key, "site_language"));
+  } else {
+    await db.insert(systemSettings).values({ key: "site_language", value: language });
+  }
+}
+
+/**
+ * Get a user's language preference (for i18n resolution).
+ * Returns the user's override or null if not set.
+ */
+export async function getUserLanguage(userId: string): Promise<string | null> {
+  const settings = await getUserSettings(userId);
+  const lang = settings.language;
+  if (typeof lang === "string" && (locales as readonly string[]).includes(lang)) {
+    return lang;
+  }
+  return null;
 }
