@@ -661,12 +661,14 @@ export async function installApp(
 
         await applyResourcePolicy(containerName, 'normal');
 
-        // Apply network isolation ACL to app container
-        try {
-          await ensureNetworkAcls();
-          await applyAppAcl(containerName);
-        } catch (aclErr) {
-          console.warn(`[engine] ACL application warning for ${containerName}:`, aclErr);
+        // Apply network isolation ACL to app container (skip if manifest declares internet access)
+        if (containerSpec.network !== 'internet') {
+          try {
+            await ensureNetworkAcls();
+            await applyAppAcl(containerName);
+          } catch (aclErr) {
+            console.warn(`[engine] ACL application warning for ${containerName}:`, aclErr);
+          }
         }
 
         emit(onEvent, step, totalSteps, 'success', `${containerName} deployed`);
@@ -698,6 +700,7 @@ export async function installApp(
 
         emit(onEvent, step, totalSteps, healthy ? 'success' : 'error',
           healthy ? `${containerName} is healthy` : `${containerName} health check timed out`);
+        if (!healthy) throw new Error(`Health check failed for ${containerName}`);
       }
     }
   } catch (err) {

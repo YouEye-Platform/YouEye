@@ -103,6 +103,7 @@ export const ContainerSchema = z.object({
   healthCheck: HealthCheckSchema.optional(),
   source: ContainerSourceSchema.optional(),
   postDeploy: z.array(PostDeployStepSchema).optional().default([]),
+  network: z.enum(['isolated', 'internet']).optional().default('isolated'),
 });
 
 // ─── Secrets ───────────────────────────────────────────────
