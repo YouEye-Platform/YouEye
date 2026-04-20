@@ -16,13 +16,10 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  
-  // Security headers
+
+  // Static security headers only — dynamic CSP (frame-ancestors) is set in middleware
+  // because next.config headers are baked at build time and can't read runtime env vars.
   async headers() {
-    // Derive UI origin from CONTROL_EXTERNAL_URL (set during SSO setup).
-    // e.g. "https://control.skibidi.io" → "https://skibidi.io"
-    const controlUrl = process.env.CONTROL_EXTERNAL_URL || '';
-    const parentOrigin = controlUrl.replace('://control.', '://') || 'https://localhost';
     const commonHeaders = [
       { key: 'X-Content-Type-Options', value: 'nosniff' },
       { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
@@ -32,42 +29,8 @@ const nextConfig: NextConfig = {
 
     return [
       {
-        // /api/ping?verify=1 — embeddable iframe for setup-complete
-        // connectivity check.  Must allow framing from any origin.
-        source: '/api/ping',
-        headers: [
-          {
-            key: 'Content-Security-Policy',
-            value: "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *",
-          },
-          {
-            key: 'X-Content-Type-Options',
-            value: 'nosniff',
-          },
-        ],
-      },
-      {
-        // Embed routes — allow framing from YE-UI origin
-        source: '/embed/:path*',
-        headers: [
-          ...commonHeaders,
-          {
-            key: 'Content-Security-Policy',
-            value: `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://git.byka.wtf; font-src 'self' data:; connect-src 'self'; frame-ancestors ${parentOrigin};`,
-          },
-        ],
-      },
-      {
-        // All other routes — deny framing (excludes /api/ping and /embed/)
-        source: '/((?!api/ping|embed/).*)',
-        headers: [
-          ...commonHeaders,
-          { key: 'X-Frame-Options', value: 'DENY' },
-          {
-            key: 'Content-Security-Policy',
-            value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://git.byka.wtf; font-src 'self' data:; connect-src 'self'; frame-src https:; frame-ancestors 'none';",
-          },
-        ],
+        source: '/:path*',
+        headers: commonHeaders,
       },
     ];
   },

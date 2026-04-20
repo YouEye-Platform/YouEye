@@ -106,6 +106,35 @@ async function isSetupCompleted(): Promise<boolean> {
   return setupCompletedCache?.value ?? false;
 }
 
+/**
+ * Derive the UI origin from CONTROL_EXTERNAL_URL at runtime.
+ * e.g. "https://control.skibidi.io" → "https://skibidi.io"
+ */
+function getParentOrigin(): string {
+  const controlUrl = process.env.CONTROL_EXTERNAL_URL || '';
+  return controlUrl.replace('://control.', '://') || 'https://localhost';
+}
+
+/**
+ * Apply CSP headers based on route — must be in middleware because
+ * next.config.ts headers() is evaluated at build time, not runtime.
+ */
+function applySecurityHeaders(response: NextResponse, pathname: string): NextResponse {
+  if (pathname === '/api/ping') {
+    response.headers.set('Content-Security-Policy',
+      "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *");
+  } else if (pathname.startsWith('/embed')) {
+    const parentOrigin = getParentOrigin();
+    response.headers.set('Content-Security-Policy',
+      `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://git.byka.wtf; font-src 'self' data:; connect-src 'self'; frame-ancestors ${parentOrigin};`);
+  } else {
+    response.headers.set('X-Frame-Options', 'DENY');
+    response.headers.set('Content-Security-Policy',
+      "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://git.byka.wtf; font-src 'self' data:; connect-src 'self'; frame-src https:; frame-ancestors 'none';");
+  }
+  return response;
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -165,12 +194,12 @@ export async function middleware(request: NextRequest) {
         );
       }
     }
-    return NextResponse.next();
+    return applySecurityHeaders(NextResponse.next(), pathname);
   }
 
   // Get session cookie
   const sessionCookie = request.cookies.get('ye-session');
-  
+
   if (!sessionCookie?.value) {
     // No session - redirect to login for pages, return 401 for API
     if (pathname.startsWith('/api/')) {
@@ -185,28 +214,23 @@ export async function middleware(request: NextRequest) {
   // Verify JWT
   const secret = getMiddlewareJWTSecret();
   if (!secret) {
-    // JWT_SECRET not configured - this is a server configuration error
-    // Allow the request through, the page will handle it
     console.error('[Middleware] Cannot verify JWT - JWT_SECRET not configured');
-    return NextResponse.next();
+    return applySecurityHeaders(NextResponse.next(), pathname);
   }
 
   try {
     await jwtVerify(sessionCookie.value, secret);
-    // Token is valid, allow request
-    return NextResponse.next();
+    return applySecurityHeaders(NextResponse.next(), pathname);
   } catch (error) {
-    // Token is invalid or expired
     console.log('[Middleware] Invalid JWT token, redirecting to login');
-    
-    // Clear invalid cookies
+
     const response = pathname.startsWith('/api/')
       ? NextResponse.json({ error: 'Session expired' }, { status: 401 })
       : NextResponse.redirect(new URL('/login', request.url));
-    
+
     response.cookies.delete('ye-session');
     response.cookies.delete('ye-csrf');
-    
+
     return response;
   }
 }
