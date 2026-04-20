@@ -24,11 +24,9 @@ export default async function RootLayout({
 
   return (
     <html lang={locale} suppressHydrationWarning>
-      <head>
-        {/* Preload site name font to prevent FOUT (Flash Of Unstyled Text) */}
-        <FontPreload />
-      </head>
       <body className="min-h-screen antialiased">
+        {/* Font preload links at the very top of body for immediate processing */}
+        <FontPreload />
         <NextIntlClientProvider messages={messages}>
           <Providers>{children}</Providers>
         </NextIntlClientProvider>
