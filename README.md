@@ -40,16 +40,16 @@ Each component is built and released independently using **component-prefixed ta
 | Component | Main tag | Dev tag |
 |-----------|----------|---------|
 | Spine | `spine-v0.3.1` | `spine-dev-v0.3.0` |
-| Control Panel | `cp-v0.3.1` | `cp-dev-v0.3.0` |
-| UI | `ui-v0.3.0` | `ui-dev-v0.3.0` |
+| Control Panel | `cp-v0.3.2` | `cp-dev-v0.3.0` |
+| UI | `ui-v0.3.2` | `ui-dev-v0.3.0` |
 
 ## Current Versions
 
 | Component | Main | Dev |
 |-----------|------|-----|
 | Spine | 0.3.1 | 0.3.0 |
-| Control Panel | 0.3.1 | 0.3.0 |
-| UI | 0.3.0 | 0.3.0 |
+| Control Panel | 0.3.2 | 0.3.0 |
+| UI | 0.3.2 | 0.3.0 |
 
 ## Related Repos
 
