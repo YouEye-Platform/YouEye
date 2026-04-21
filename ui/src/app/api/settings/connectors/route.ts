@@ -37,9 +37,11 @@ export async function GET() {
 
   const result = installedApps.map((app) => {
     const manifest = app.manifest as Record<string, unknown> | null;
-    const connectorReqs = (manifest?.connectors as { requires?: Array<{ capability: string }> })?.requires ?? [];
+    const connectors = manifest?.connectors as { requires?: Array<{ capability: string }>; consumes?: Array<{ capability: string }> } | undefined;
+    const connectorReqs = connectors?.requires ?? connectors?.consumes ?? [];
     const capabilities = connectorReqs.map((r) => r.capability);
-    const isExternalApp = !app.id.startsWith("ye-") && capabilities.length === 0;
+    const manifestId = (manifest?.id as string) ?? app.id;
+    const isExternalApp = !manifestId.startsWith("ye-") && !app.id.startsWith("ye-") && capabilities.length === 0;
 
     const connected = capabilities.filter((cap) =>
       userPrefs.some(
