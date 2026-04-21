@@ -1,3 +1,27 @@
+## v0.3.4.2 / v0.3.2.2 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Profile embed theme sync, template avatar picker, background app installs
+
+### Changes
+- `control-panel/src/app/embed/market/client.tsx` — Non-blocking installs: dialog closes on submit, progress via inline banner, postMessage events for global tracking
+- `control-panel/src/app/embed/layout.tsx` — Added embed-spin keyframe for install spinner
+- `ui/src/components/settings/profile-settings.tsx` — PostMessage theme propagation (dark/light sync), 32 emoji+gradient template avatar picker with canvas→blob→upload
+- `ui/src/components/app-install-listener.tsx` — NEW: Global Sonner toast notifications for app install progress, polls /api/v1/admin/install-progress
+- `ui/src/app/api/v1/admin/install-progress/route.ts` — NEW: Proxy to CP install-progress endpoint
+- `ui/src/components/providers.tsx` — Added AppInstallListener to global providers
+- `ui/messages/{en,ru,de,es,fr}.json` — Avatar picker translation keys
+
+### Test Results
+- TypeScript: clean (no new errors introduced)
+- Deployment: spine status shows 8 running, 0 stopped, CP v0.3.4.2
+
+### Notes for Iris
+- No DB migrations
+- No env var changes
+- UI depends on CP install-progress API (already exists)
+
 ## v0.3.4.1 / v0.3.2.1 — vanya — 2026-04-21
 **Branch:** vanya
 **VM:** ye-vanya
