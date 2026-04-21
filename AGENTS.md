@@ -1,3 +1,28 @@
+## v0.3.4.1 — sebastian — 2026-04-21
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Consolidate manifest format to apiVersion v1, remove all legacy compat code
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — Removed AppRefSchema, legacy fields, v1/v2 enum. Single apiVersion:'v1' format.
+- `control-panel/src/lib/market/catalog.ts` — Removed getAllEntries() v1 merging, parseAppRef indirection. Direct catalog.apps usage.
+- `control-panel/src/lib/market/engine.ts` — Removed legacy fallbacks for dbMode, sso.redirectUris, sso.configure.
+- `control-panel/src/lib/market/parser.ts` — Removed parseAppRef function.
+- `control-panel/src/lib/market/types.ts` — Removed legacy type aliases and fields.
+- `control-panel/src/lib/market/installed-apps.ts` — Removed fetchNativeAppVersionLegacy(), v1 catalog compat.
+- `control-panel/src/lib/apps/definitions.ts` — Uses containers[] instead of native block.
+- Various UI/SSO/language files — Replaced legacy field references.
+
+### Test Results
+- Build: successful (22 files, -356/+112 lines)
+- Deployed to VM, service running
+
+### Notes for Iris
+- Merge ALL native app repos (Wiki, Search, Notes, Cinema, Weather, Translate) — apiVersion changes
+- Merge YE-AppMarket — catalog.yaml + deleted native/*.yaml + external manifest changes
+- No version bump — code-only cleanup
+
 ## v0.2.22.13 — iris — 2026-04-20
 **Branch:** dev
 **VM:** ye-iris
