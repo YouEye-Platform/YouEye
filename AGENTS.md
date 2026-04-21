@@ -1,3 +1,27 @@
+## v0.3.2.2 — sebastian — 2026-04-21
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Session 4 — Connector Settings UI fixes + end-to-end verification
+
+### Changes
+- `ui/src/app/api/settings/connectors/route.ts` — Fixed isExternalApp detection (check manifest.id prefix) + added consumes fallback
+- `ui/src/app/api/settings/connectors/[appId]/route.ts` — Added consumes field fallback for connector requirements
+- `ui/src/app/connectors/setup/page.tsx` — Added consumes field fallback for setup page validation
+- `ui/package.json` — Version bump to 0.3.2.2
+- `ui/tests/connector-settings.spec.ts` — 7 Playwright tests for connector settings UI
+
+### Test Results
+- Playwright: 7 tests (connector-settings.spec.ts)
+- Browser: full connect/disconnect flow verified for all free connectors
+
+### Notes for Iris
+- DB app manifests need `connectors.requires` injected (SQL ran on dev VM, not in migration)
+- `APPMARKET_BRANCH` env var must be set in UI container for full connector catalog
+- Wiki uses `consumes` not `requires` — both are now supported in all 3 API routes
+
+---
+
 ## v0.3.2.1 — sebastian — 2026-04-21
 **Branch:** sebastian
 **VM:** ye-sebastian
