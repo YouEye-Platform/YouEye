@@ -1,3 +1,29 @@
+## v0.3.4.2 / v0.3.2.1 — andrew — 2026-04-21
+**Branch:** andrew
+**VM:** ye-andrew
+**Agent:** Andrew
+**Task:** Jellyfin SSO fixes — entry URL auto-redirect, username claim, display name
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — Added `entry_url` to SSOSchema for SSO entry path
+- `control-panel/src/lib/market/engine.ts` — Passes `sso_entry_url` during app registration with UI
+- `ui/src/db/schema.ts` + `ui/src/db/index.ts` — Added `sso_entry_url` column to apps table with auto-migration
+- `ui/src/app/api/v1/apps/drawer/route.ts` — buildAppUrl appends ssoEntryUrl when set
+- `ui/src/app/api/v1/header/config/route.ts` — Same SSO entry URL logic for header config API
+- `ui/src/app/api/v1/apps/register/route.ts` — Accepts sso_entry_url in registration body
+- `ui/src/lib/db/queries/app-management.ts` — Stores ssoEntryUrl in registerApp
+- `ui/src/lib/db/queries/apps.ts` — Returns ssoEntryUrl in getUserAppsWithConfig
+
+### Test Results
+- Verified SSO login creates user as "tester" (not UUID) via Jellyfin Users API
+- Verified drawer API returns `https://jellyfin.devvm.test/sso/OID/start/authentik`
+- Verified SSO flow works end-to-end from SSO entry URL
+
+### Notes for Iris
+- CP and UI must merge together — entry_url schema + DB column are coupled
+- YE-AppMarket must also merge for the manifest changes
+- Existing installed apps need manual DB update for sso_entry_url (new installs get it automatically)
+
 ## v0.3.4.1 — andrew — 2026-04-21
 **Branch:** andrew
 **VM:** ye-andrew
