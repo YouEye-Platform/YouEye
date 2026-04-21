@@ -722,6 +722,21 @@ export async function installApp(
     (ssoSetupMethod === 'http-api' && (manifest.sso.configure?.steps?.length ?? 0) > 0)
   );
 
+  // Inject Caddy root CA into OCI containers that use SSO, so they can
+  // reach Authentik over HTTPS with self-signed certs.
+  if (ssoEnabled) {
+    for (const containerSpec of manifest.containers) {
+      if (containerSpec.type === 'oci') {
+        const cn = getContainerName(appId, containerSpec.name, manifest.containers.length);
+        try {
+          await injectCaddyRootCA(cn);
+        } catch (err) {
+          console.warn(`[engine] CA cert injection warning for ${cn}:`, err);
+        }
+      }
+    }
+  }
+
   if (hasConfigureSteps) {
     checkCancelled();
     // Get primary container IP for SSO configuration
@@ -908,6 +923,25 @@ export async function installApp(
   }
 
   emit(onEvent, step, totalSteps, 'success', `${manifest.metadata.name} installed successfully!`);
+}
+
+/**
+ * Inject Caddy's root CA certificate into an OCI container's trust store.
+ * This allows the container to make HTTPS calls to other services
+ * (like Authentik) that use Caddy's self-signed certificates.
+ */
+async function injectCaddyRootCA(containerName: string): Promise<void> {
+  // Read the Caddy root CA from the Caddy container
+  const { stdout: certPem } = await execShell(
+    'youeye-caddy',
+    'cat /data/caddy/pki/authorities/local/root.crt',
+    { timeout: 5_000 }
+  );
+  if (!certPem || !certPem.includes('BEGIN CERTIFICATE')) return;
+
+  // Write the cert into the target container and update the trust store
+  const escaped = certPem.replace(/'/g, "'\\''");
+  await execShell(containerName, `echo '${escaped}' > /usr/local/share/ca-certificates/caddy-root.crt && update-ca-certificates 2>/dev/null || true`, { timeout: 10_000 });
 }
 
 // Re-export for backward compat
