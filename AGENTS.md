@@ -1,3 +1,29 @@
+## v0.3.4.1 — andrew — 2026-04-21
+**Branch:** andrew
+**VM:** ye-andrew
+**Agent:** Andrew
+**Task:** Add Caddy root CA injection for external app SSO HTTPS trust
+
+### Changes
+- `control-panel/src/lib/market/engine.ts` — Added `injectCaddyRootCA()` helper and CA injection loop before SSO configure steps; OCI containers with SSO now automatically trust Caddy's self-signed certificates for OIDC discovery
+- `control-panel/package.json` — Version bump to 0.3.4.1
+
+### Test Results
+- Jellyfin (first external app) installed end-to-end from App Market UI
+- SSO-Auth plugin auto-installed and configured with Authentik OIDC
+- SSO login flow verified: Jellyfin → Authentik → redirect back → authenticated
+- CA cert injection confirmed in container trust store (151 certs after injection)
+- Caddy route and Pi-Hole DNS entry auto-created
+- 5 screenshots captured throughout install flow
+
+### Notes for Iris
+- This change is required for ANY external app with SSO (not just Jellyfin)
+- The CA injection runs only for OCI containers where `ssoEnabled` is true
+- If Caddy root cert is missing or malformed, injection is silently skipped (warning logged)
+- Companion change: Jellyfin manifest in YE-AppMarket (andrew branch) must be merged alongside
+
+---
+
 ## v0.2.22.13 — iris — 2026-04-20
 **Branch:** dev
 **VM:** ye-iris
