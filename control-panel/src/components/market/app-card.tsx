@@ -126,7 +126,7 @@ export function AppCard({ app, status, installProgress }: AppCardProps) {
             <div>
               <div className="flex items-center gap-1.5">
                 <h3 className="font-semibold text-gray-900">{app.name}</h3>
-                {app.type === 'native' && (
+                {app.integration === 'native' && (
                   <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100">
                     <Shield className="h-2.5 w-2.5" />
                     YouEye

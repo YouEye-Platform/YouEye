@@ -387,10 +387,10 @@ async function updateInstalledApp(
       console.error(`[Reconfigure] Failed to update Authentik for ${appId}:`, err);
     }
 
-    // Re-run SSO configure steps for apps that have internal SSO config (like Memos)
+    // Re-run SSO setup steps for apps that have API/CLI SSO configuration
     if (rawManifest) {
-      const ssoConfig = (rawManifest as { sso?: { configure?: { steps?: Array<Record<string, unknown>> } } }).sso;
-      if (ssoConfig?.configure?.steps) {
+      const ssoConfig = (rawManifest as { sso?: { setup?: { method?: string; api?: { steps?: Array<Record<string, unknown>> }; cli?: { steps?: Array<Record<string, unknown>> } } } }).sso;
+      if (ssoConfig?.setup && (ssoConfig.setup.api?.steps?.length || ssoConfig.setup.cli?.steps?.length)) {
         try {
           const primaryContainer = typeof meta.containers[0] === 'string' ? meta.containers[0] : (meta.containers[0] as any)?.containerName;
           const primaryIP = await getContainerIP(primaryContainer);
@@ -757,24 +757,20 @@ async function propagateLanguageToApp(
   systemLang: string
 ): Promise<void> {
   try {
-    // Import the catalog fetcher to get the manifest
+    // Language is now handled via env_mapping with ${platform.locale}
     const { fetchManifest } = await import('@/lib/market/catalog');
     const manifest = await fetchManifest(app.appId);
-    if (!manifest?.language) return;
+    const envMapping = manifest?.env_mapping ?? {};
+    const localeEntry = Object.entries(envMapping).find(([, v]) => v.includes('${platform.locale'));
+    if (!localeEntry) return;
 
-    const langValue = manifest.language.format === 'full'
-      ? ({ en: 'english', ru: 'russian', es: 'spanish', de: 'german', fr: 'french' }[systemLang] || 'english')
-      : systemLang;
-
-    // Set the environment variable on each container
+    const [envVar] = localeEntry;
     for (const containerSpec of manifest.containers) {
       const containerName = manifest.containers.length === 1
         ? `app-${app.appId}`
         : `app-${app.appId}-${containerSpec.name}`;
       await incusRequest('PATCH', `/1.0/instances/${containerName}`, {
-        config: {
-          [`environment.${manifest.language.env_var}`]: langValue,
-        },
+        config: { [`environment.${envVar}`]: systemLang },
       });
     }
   } catch {

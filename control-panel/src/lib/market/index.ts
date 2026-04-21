@@ -12,10 +12,8 @@ export { parseManifest, parseCatalog, tryParseManifest } from './parser';
 export type {
   AppManifest,
   AppMetadata,
-  AppFeatures,
   ContainerSpec,
   SecretSpec,
-  SharedPostgresSpec,
   ConfigFileSpec,
   SSOConfig,
   SSOStep,

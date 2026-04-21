@@ -23,9 +23,11 @@ export async function GET(
   }
 
   const manifest = app.manifest as Record<string, unknown> | null;
-  const connectorReqs = (manifest?.connectors as {
+  const connectorsDef = manifest?.connectors as {
     requires?: Array<{ capability: string; multiple?: boolean }>;
-  })?.requires ?? [];
+    consumes?: Array<{ capability: string; multiple?: boolean }>;
+  } | undefined;
+  const connectorReqs = connectorsDef?.requires ?? connectorsDef?.consumes ?? [];
 
   // One-Way Bridge: fetch connector catalog directly from Gitea via local registry
   let connectorCatalog: Array<{

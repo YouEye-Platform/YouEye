@@ -328,7 +328,7 @@ export default function AppDetailPage() {
                   v{app.version}
                 </Badge>
               )}
-              {app.type === 'native' ? (
+              {app.integration === 'native' ? (
                 <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100">
                   <Shield className="h-3 w-3" />
                   Native

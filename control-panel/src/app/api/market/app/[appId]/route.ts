@@ -40,11 +40,10 @@ export async function GET(
         icon: manifest.metadata.icon,
         iconUrl: manifest.metadata.iconUrl,
         category: manifest.metadata.category,
-        type: manifest.type ?? 'marketplace',
-        integration: manifest.integration || (manifest.type === 'native' ? 'native' : 'basic'),
+        integration: manifest.integration,
         version: manifest.version,
         defaultSubdomain: manifest.metadata.defaultSubdomain,
-        supportsSSO: !!manifest.sso || manifest.features?.supportsSSO || false,
+        supportsSSO: !!manifest.sso,
         website: manifest.metadata.website,
         tags: manifest.metadata.tags,
         detail: manifest.detail
@@ -56,7 +55,7 @@ export async function GET(
               })),
             }
           : undefined,
-        installParams: (manifest.installParams?.length ? manifest.installParams : manifest.native?.installParams)?.map((p) => ({
+        installParams: manifest.installParams?.map((p) => ({
           name: p.name,
           label: p.label,
           required: p.required,

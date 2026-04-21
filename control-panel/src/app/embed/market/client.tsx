@@ -392,7 +392,7 @@ export function MarketEmbedClient() {
 
   if (selectedApp) {
     const app = selectedApp;
-    const isNative = app.integration === "native" || app.type === "native";
+    const isNative = app.integration === "native";
     const longDesc = app.detail?.longDescription || app.description;
     const screenshots = app.detail?.screenshots || [];
 
@@ -1011,7 +1011,7 @@ function AppCard({ app, onSelect, onInstall, onUninstall }: {
   onInstall: (app: MarketApp) => void;
   onUninstall: (app: MarketApp) => void;
 }) {
-  const isNative = app.integration === "native" || app.type === "native";
+  const isNative = app.integration === "native";
 
   return (
     <div

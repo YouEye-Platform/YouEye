@@ -1,5 +1,5 @@
 /**
- * Market engine types (v2).
+ * Market engine types.
  * Inferred from Zod schemas + runtime types for install flow.
  */
 
@@ -30,7 +30,6 @@ import type {
   SystemCatalogEntrySchema,
   DetailSchema,
   DetailScreenshotSchema,
-  AppRefSchema,
   InstallParamSchema,
   ConnectorsSchema,
   PostDeployStepSchema,
@@ -64,17 +63,10 @@ export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
 export type SystemCatalogEntry = z.infer<typeof SystemCatalogEntrySchema>;
 export type AppDetail = z.infer<typeof DetailSchema>;
 export type DetailScreenshot = z.infer<typeof DetailScreenshotSchema>;
-export type AppRef = z.infer<typeof AppRefSchema>;
 export type InstallParam = z.infer<typeof InstallParamSchema>;
 export type ConnectorsSpec = z.infer<typeof ConnectorsSchema>;
 export type PostDeployStep = z.infer<typeof PostDeployStepSchema>;
 export type VolumeSpec = z.infer<typeof VolumeSchema>;
-
-// Legacy type aliases (kept for files that import them during migration)
-export type AppFeatures = { supportsSSO: boolean; requiresSharedPostgres: boolean };
-export type NativeConfig = NonNullable<AppManifest['native']>;
-export type NativeCatalogEntry = { id: string; file: string; type: 'native' };
-export type SharedPostgresSpec = { database: string; user: string; password: string };
 
 // ─── Install Config ────────────────────────────────────────
 
@@ -126,9 +118,6 @@ export interface InstallMetadata {
   credentials?: CredentialMeta[];
   /** SSO entry URL path (e.g. /sso/OID/start/authentik) — appended to app URL for direct login */
   ssoEntryUrl?: string;
-
-  // Legacy v1 field — kept for reading old install.json files
-  type?: 'marketplace' | 'native';
 }
 
 // ─── Install Events (SSE) ──────────────────────────────────
@@ -279,9 +268,6 @@ export interface MarketApp {
     smtp?: boolean;
     connectors?: { provides?: string[]; consumes?: string[] };
   };
-
-  // Legacy field — UI may still reference this
-  type?: 'marketplace' | 'native';
 }
 
 // ─── Restore Options ─────────────────────────────────────

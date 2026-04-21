@@ -152,6 +152,79 @@
 
 ---
 
+## v0.3.2.2 — sebastian — 2026-04-21
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Session 4 — Connector Settings UI fixes + end-to-end verification
+
+### Changes
+- `ui/src/app/api/settings/connectors/route.ts` — Fixed isExternalApp detection (check manifest.id prefix) + added consumes fallback
+- `ui/src/app/api/settings/connectors/[appId]/route.ts` — Added consumes field fallback for connector requirements
+- `ui/src/app/connectors/setup/page.tsx` — Added consumes field fallback for setup page validation
+- `ui/package.json` — Version bump to 0.3.2.2
+- `ui/tests/connector-settings.spec.ts` — 7 Playwright tests for connector settings UI
+
+### Test Results
+- Playwright: 7 tests (connector-settings.spec.ts)
+- Browser: full connect/disconnect flow verified for all free connectors
+
+### Notes for Iris
+- DB app manifests need `connectors.requires` injected (SQL ran on dev VM, not in migration)
+- `APPMARKET_BRANCH` env var must be set in UI container for full connector catalog
+- Wiki uses `consumes` not `requires` — both are now supported in all 3 API routes
+
+---
+
+## v0.3.2.1 — sebastian — 2026-04-21
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Connector runtime + Canvas-compatible proxy route + SearXNG 403 fix
+
+### Changes
+- `ui/src/lib/connectors/runtime/server.mjs` — Connector runtime server (Node HTTP, /health + /proxy endpoints, SSRF blocklist, json-map/script/passthrough transforms)
+- `ui/src/app/api/v1/connectors/[connectorId]/proxy/route.ts` — Canvas SDK compatibility route (extracts connectorId from URL path, forwards to runtime)
+- `ui/package.json` — Version bump to 0.3.2.1
+- `ui/tests/connector-runtime.spec.ts` — 8 Playwright tests for connector system
+
+### Test Results
+- Playwright: 8 tests, all passed
+- Screenshots: Tests/Sebastian/20260421_1/
+
+### Notes for Iris
+- Connector runtime server.mjs must be deployed to `youeye-connectors` container at `/opt/youeye-connectors/server.mjs`
+- SearXNG containers need `formats: [html, json, rss]` in `/etc/searxng/settings.yml` (not in CP installer yet)
+- Search app needs `YOUEYE_API_URL=http://youeye-ui.youeye:3000/api/v1` and `CP_API_URL=http://youeye-ui.youeye:3000/api/v1` in env
+- The `connector:search-engine` permission must be granted for users to use search through the connector system
+
+---
+
+## v0.3.4.1 — sebastian — 2026-04-21
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Consolidate manifest format to apiVersion v1, remove all legacy compat code
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — Removed AppRefSchema, legacy fields, v1/v2 enum. Single apiVersion:'v1' format.
+- `control-panel/src/lib/market/catalog.ts` — Removed getAllEntries() v1 merging, parseAppRef indirection. Direct catalog.apps usage.
+- `control-panel/src/lib/market/engine.ts` — Removed legacy fallbacks for dbMode, sso.redirectUris, sso.configure.
+- `control-panel/src/lib/market/parser.ts` — Removed parseAppRef function.
+- `control-panel/src/lib/market/types.ts` — Removed legacy type aliases and fields.
+- `control-panel/src/lib/market/installed-apps.ts` — Removed fetchNativeAppVersionLegacy(), v1 catalog compat.
+- `control-panel/src/lib/apps/definitions.ts` — Uses containers[] instead of native block.
+- Various UI/SSO/language files — Replaced legacy field references.
+
+### Test Results
+- Build: successful (22 files, -356/+112 lines)
+- Deployed to VM, service running
+
+### Notes for Iris
+- Merge ALL native app repos (Wiki, Search, Notes, Cinema, Weather, Translate) — apiVersion changes
+- Merge YE-AppMarket — catalog.yaml + deleted native/*.yaml + external manifest changes
+- No version bump — code-only cleanup
+
 ## v0.2.22.13 — iris — 2026-04-20
 **Branch:** dev
 **VM:** ye-iris

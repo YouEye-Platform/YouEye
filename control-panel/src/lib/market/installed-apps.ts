@@ -11,8 +11,7 @@
 
 import { execShell } from '@/lib/incus/server';
 import { listInstalledApps, readInstallMetadata } from './metadata';
-import { fetchCatalog, fetchFile, fetchRepoFile, getEffectiveBranch } from './catalog';
-import { parseAppRef } from './parser';
+import { fetchCatalog, fetchRepoFile, getEffectiveBranch } from './catalog';
 import { parse as parseYAML } from 'yaml';
 import { isNewer } from '@/lib/version';
 
@@ -204,7 +203,7 @@ export async function migrateFromInstallJson(): Promise<number> {
 
     await upsertInstalledApp({
       appId: meta.appId,
-      type: meta.integration || meta.type || 'basic',
+      type: meta.integration || 'basic',
       installedVersion: meta.installedVersion ?? '',
       subdomain: meta.subdomain,
       ssoSlug: meta.ssoSlug,
@@ -241,32 +240,10 @@ async function fetchNativeAppVersion(
 }
 
 /**
- * Legacy v1: fetch version via app-ref indirection.
- */
-async function fetchNativeAppVersionLegacy(
-  nativeRefFile: string,
-  branch: string,
-): Promise<string | null> {
-  try {
-    const refYaml = await fetchFile(nativeRefFile, branch);
-    const ref = parseAppRef(refYaml);
-    const [owner, repoName] = ref.repo.split('/');
-    const manifestYaml = await fetchRepoFile(owner, repoName, ref.manifest, branch);
-    const parsed = parseYAML(manifestYaml);
-    return parsed?.version ?? null;
-  } catch (err) {
-    console.warn('[installed-apps] Failed to fetch native app version (legacy):', err);
-    return null;
-  }
-}
-
-/**
  * Compare each installed app's version against the latest available version.
  *
- * For external/marketplace apps: uses `latestVersion` from the catalog entry.
- * For native apps: fetches `youeye-app.yaml` from the native app's own repo
- * (resolved via the app-ref pointer in the AppMarket catalog) to get the
- * authoritative version.
+ * For apps with `repo`: fetches `youeye-app.yaml` from the app's own repo.
+ * For apps with `latestVersion`: uses the catalog-specified version directly.
  *
  * Updates the `catalog_version` and `update_available` columns in the DB.
  * Returns the list of apps with available updates.
@@ -286,26 +263,9 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
   const installed = await getAllInstalledApps();
   const appsWithUpdates: InstalledApp[] = [];
 
-  // Build lookup maps — support both v1 and v2 catalog formats
   const entryMap = new Map<string, { file?: string; repo?: string; manifest?: string; latestVersion?: string; integration?: string }>();
-
-  // v2 flat list
-  if (catalog.apps && catalog.apps.length > 0) {
-    for (const e of catalog.apps) {
-      entryMap.set(e.id, e);
-    }
-  }
-
-  // v1 legacy: native + external
-  if (catalog.native) {
-    for (const e of catalog.native) {
-      entryMap.set(e.id, { file: e.file, integration: 'native' });
-    }
-  }
-  if (catalog.external) {
-    for (const e of catalog.external) {
-      entryMap.set(e.id, e);
-    }
+  for (const e of catalog.apps) {
+    entryMap.set(e.id, e);
   }
 
   for (const app of installed) {
@@ -314,11 +274,7 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
     const entry = entryMap.get(app.appId);
 
     if (entry?.repo) {
-      // App with repo reference: fetch version from manifest in repo
       catalogVersion = await fetchNativeAppVersion(entry.repo, entry.manifest || 'youeye-app.yaml', branch);
-    } else if (entry?.file && entry.integration === 'native') {
-      // Legacy v1 native app-ref
-      catalogVersion = await fetchNativeAppVersionLegacy(entry.file, branch);
     } else if (entry?.latestVersion) {
       // Catalog-specified version
       catalogVersion = entry.latestVersion;

@@ -30,9 +30,11 @@ export default async function ConnectorSetupPage({
   }
 
   const manifest = app.manifest as Record<string, unknown> | null;
-  const connectorReqs = (manifest?.connectors as {
+  const connectorsDef = manifest?.connectors as {
     requires?: Array<{ capability: string }>;
-  })?.requires ?? [];
+    consumes?: Array<{ capability: string }>;
+  } | undefined;
+  const connectorReqs = connectorsDef?.requires ?? connectorsDef?.consumes ?? [];
   const validCapability = connectorReqs.some((r) => r.capability === capability);
 
   if (!validCapability) {

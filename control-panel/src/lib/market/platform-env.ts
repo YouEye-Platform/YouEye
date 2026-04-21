@@ -453,7 +453,7 @@ export async function buildVariableContext(
   // Create a minimal manifest if not provided
   if (!manifest) {
     return buildCanonicalContext({
-      apiVersion: 'v2',
+      apiVersion: 'v1',
       kind: 'app',
       integration: 'basic',
       metadata: { id: config.appId, name: config.appId, description: '', icon: '', category: 'utilities', defaultSubdomain: config.subdomain, tags: [] },
