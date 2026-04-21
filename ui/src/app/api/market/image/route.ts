@@ -1,10 +1,14 @@
 /**
  * GET /api/market/image?url=<encoded-url>
- * Proxies external images through the CP to avoid CORS/TLS issues.
- * Only allows URLs from trusted domains.
  *
- * For git.byka.wtf (self-signed TLS), uses Node.js https module with
- * rejectUnauthorized: false. For all other allowed domains, uses standard fetch.
+ * Proxies external images so the app drawer can display icons for
+ * external/marketplace apps.  Icon URLs are stored in the DB as
+ * "/api/market/image?url=..." (relative to whichever host serves
+ * the page).  The CP already has this endpoint; the UI mirrors it
+ * so icons render on the UI domain too.
+ *
+ * Only allows URLs from trusted domains.  For git.byka.wtf
+ * (self-signed TLS) it skips certificate validation.
  */
 
 import { NextResponse } from 'next/server';
@@ -23,13 +27,8 @@ const ALLOWED_DOMAINS = [
   'jellyfin.org',
 ];
 
-/** Domains that use self-signed certificates and need TLS verification skipped */
 const INSECURE_DOMAINS = ['git.byka.wtf'];
 
-/**
- * Fetch an image from a self-signed cert domain using Node.js https
- * with rejectUnauthorized: false.
- */
 function fetchInsecure(url: string): Promise<{ buffer: Buffer; contentType: string }> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
@@ -43,7 +42,6 @@ function fetchInsecure(url: string): Promise<{ buffer: Buffer; contentType: stri
     };
 
     const req = https.request(options, (res) => {
-      // Follow redirects (Gitea sometimes 302s)
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         const redirectUrl = new URL(res.headers.location, url).href;
         fetchInsecure(redirectUrl).then(resolve).catch(reject);
@@ -58,9 +56,8 @@ function fetchInsecure(url: string): Promise<{ buffer: Buffer; contentType: stri
       const chunks: Buffer[] = [];
       res.on('data', (chunk: Buffer) => chunks.push(chunk));
       res.on('end', () => {
-        const buffer = Buffer.concat(chunks);
         resolve({
-          buffer,
+          buffer: Buffer.concat(chunks),
           contentType: res.headers['content-type'] || 'application/octet-stream',
         });
       });
@@ -99,12 +96,10 @@ export async function GET(request: Request) {
     let contentType: string;
 
     if (INSECURE_DOMAINS.some((d) => parsed.hostname === d || parsed.hostname.endsWith('.' + d))) {
-      // Self-signed cert domain — use Node.js https with rejectUnauthorized: false
       const result = await fetchInsecure(imageUrl);
       buffer = result.buffer;
       contentType = result.contentType;
     } else {
-      // Standard fetch for trusted domains
       const res = await fetch(imageUrl, { signal: AbortSignal.timeout(10_000) });
       if (!res.ok) {
         return NextResponse.json({ error: `Failed to fetch: ${res.status}` }, { status: 502 });
