@@ -1,3 +1,15 @@
+## v0.3.4.3 — andrew — 2026-04-21
+**Branch:** andrew
+**VM:** ye-andrew
+**Agent:** Andrew
+**Task:** Fix custom scope mapping filter for SSO admin role mapping
+
+### Changes
+- `control-panel/src/lib/market/authentik.ts` — Scope mapping filter now includes custom Authentik mappings (managed=null) alongside built-in ones, enabling YouEye Groups claim in OIDC tokens for admin role mapping
+
+### Notes for Iris
+- This is the engine-side fix for admin role mapping. Without it, future app installs won't get the `groups` claim in their OIDC tokens, breaking any `roleClaim: "groups"` config.
+
 ## v0.3.4.2 / v0.3.2.1 — andrew — 2026-04-21
 **Branch:** andrew
 **VM:** ye-andrew
