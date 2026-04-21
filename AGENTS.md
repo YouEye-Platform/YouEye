@@ -1,3 +1,19 @@
+## v0.3.2.9 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Floating satellite panels for app drawer edit mode
+
+### Changes
+- `ui/src/components/layout/app-drawer.tsx` — Complete redesign of edit mode: drawer itself stays visually unchanged (icons just shake + become draggable). Hidden apps panel floats as a separate card to the LEFT (grid layout, not a list). Controls panel floats as a separate card BELOW. All three are independent floating cards via CSS absolute + overflow:visible on Radix PopoverContent.
+- `ui/package.json` — Version bump 0.3.2.7 → 0.3.2.9
+
+### Test Results
+- FIFO screenshot verified: normal mode shows compact popover with pencil icon, edit mode shows three separate floating cards (drawer, hidden panel left, controls below)
+
+### Notes for Iris
+- No DB migrations. Drag-and-drop uses HTML5 DnD API (no external deps). CSS absolute positioning on PopoverContent with overflow:visible — no extra portals needed.
+
 ## v0.3.2.7 — vanya — 2026-04-21
 **Branch:** vanya
 **VM:** ye-vanya
