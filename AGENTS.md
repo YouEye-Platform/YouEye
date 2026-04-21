@@ -1,3 +1,19 @@
+## v0.3.2.7 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** App drawer edit mode sections in separate bordered cards
+
+### Changes
+- `ui/src/components/layout/app-drawer.tsx` — Edit mode sections (hidden panel, visible grid, controls) each wrapped in rounded bordered cards with gaps between them
+- `ui/package.json` — Bumped 0.3.2.6 → 0.3.2.7
+
+### Test Results
+- FIFO screenshot: /tmp/shots/v7-02-cards-edit.png — all three cards visually distinct
+
+### Notes for Iris
+- Styling-only change, no logic changes
+
 ## v0.3.2.6 — vanya — 2026-04-21
 **Branch:** vanya
 **VM:** ye-vanya
