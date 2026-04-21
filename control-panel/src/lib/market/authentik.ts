@@ -168,13 +168,13 @@ export async function createAuthentikOAuth2App(params: {
     invalidationFlows.results?.[0];
   if (!invalidationFlow) throw new Error('No invalidation flow found');
 
-  // Get scope mappings
+  // Get scope mappings — include built-in OAuth2 scopes AND custom ones (e.g. YouEye Groups)
   const mappings = await authentikAPI<{
-    results: Array<{ pk: string; scope_name: string; managed: string }>;
+    results: Array<{ pk: string; scope_name: string; managed: string | null; name: string }>;
   }>(config, '/propertymappings/provider/scope/?page_size=100');
   const scopeMappingPks: string[] = [];
   for (const m of mappings.results || []) {
-    if (m.managed?.startsWith('goauthentik.io/providers/oauth2/scope-')) {
+    if (m.managed?.startsWith('goauthentik.io/providers/oauth2/scope-') || !m.managed) {
       scopeMappingPks.push(m.pk);
     }
   }
