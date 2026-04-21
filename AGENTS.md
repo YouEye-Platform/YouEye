@@ -1,3 +1,23 @@
+## v0.3.2.5 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Revert app drawer from Sheet panel to Google-style Popover dropdown
+
+### Changes
+- `ui/src/components/layout/app-drawer.tsx` — Reverted from Sheet side-panel to Popover dropdown (Google-style). Kept edit mode with show/hide/reorder, drawer prefs (columns, icon scale), and admin-only marketplace link. Removed max-height slider (dropdown auto-sizes). Footer now has "Manage Apps" + "Edit" button.
+- `ui/package.json` — Bumped 0.3.2.4 → 0.3.2.5
+- `ui/tests/server-name-widget-drawer.spec.ts` — Updated tests for Popover instead of Sheet
+
+### Test Results
+- Playwright: 10 tests, verified via FIFO + spec update
+- Screenshots: /tmp/shots/drawer-02-open.png
+
+### Notes for Iris
+- This is a UX fix requested by the user — the Sheet panel was too wide and ugly
+- All edit mode features (show/hide/reorder, column/scale prefs) are preserved in the popover
+- No DB changes — same API endpoints and JSONB storage
+
 ## v0.3.2.4 — vanya — 2026-04-21
 **Branch:** vanya
 **VM:** ye-vanya

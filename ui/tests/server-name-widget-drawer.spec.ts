@@ -84,12 +84,12 @@ test.describe('Server Name Widget & App Drawer', () => {
     await page.screenshot({ path: 'test-results/04-homepage-server-name.png' });
   });
 
-  test('app drawer opens as sheet', async () => {
+  test('app drawer opens as popover dropdown', async () => {
     await page.locator('button[aria-label="Apps"]').click();
     await page.waitForTimeout(500);
 
-    // Sheet title
-    await expect(page.locator('[data-slot="sheet-title"]')).toHaveText('Apps');
+    // Popover shows Manage Apps footer and Edit button
+    await expect(page.locator('text=Manage Apps')).toBeVisible();
     await expect(page.locator('button:has-text("Edit")')).toBeVisible();
     await page.screenshot({ path: 'test-results/05-drawer-open.png' });
   });
@@ -101,20 +101,19 @@ test.describe('Server Name Widget & App Drawer', () => {
     await expect(page.locator('button:has-text("Done editing")')).toBeVisible();
     await expect(page.locator('text=Columns')).toBeVisible();
     await expect(page.locator('text=Icon size')).toBeVisible();
-    await expect(page.locator('text=Max height')).toBeVisible();
     await page.screenshot({ path: 'test-results/06-drawer-edit.png' });
   });
 
   test('column selector toggles', async () => {
-    // Click column 4
-    const buttons = page.locator('button:has-text("4")');
-    const col4 = buttons.last();
-    await col4.click();
+    // Click column 5
+    const buttons = page.locator('button:has-text("5")');
+    const col5 = buttons.last();
+    await col5.click();
     await page.waitForTimeout(300);
-    await page.screenshot({ path: 'test-results/07-columns-4.png' });
+    await page.screenshot({ path: 'test-results/07-columns-5.png' });
 
-    // Click back to 3
-    await page.locator('button:has-text("3")').last().click();
+    // Click back to 4
+    await page.locator('button:has-text("4")').last().click();
     await page.waitForTimeout(300);
   });
 
