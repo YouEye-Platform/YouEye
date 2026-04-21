@@ -1,3 +1,27 @@
+## v0.3.2.1 — sebastian — 2026-04-21
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Connector runtime + Canvas-compatible proxy route + SearXNG 403 fix
+
+### Changes
+- `ui/src/lib/connectors/runtime/server.mjs` — Connector runtime server (Node HTTP, /health + /proxy endpoints, SSRF blocklist, json-map/script/passthrough transforms)
+- `ui/src/app/api/v1/connectors/[connectorId]/proxy/route.ts` — Canvas SDK compatibility route (extracts connectorId from URL path, forwards to runtime)
+- `ui/package.json` — Version bump to 0.3.2.1
+- `ui/tests/connector-runtime.spec.ts` — 8 Playwright tests for connector system
+
+### Test Results
+- Playwright: 8 tests, all passed
+- Screenshots: Tests/Sebastian/20260421_1/
+
+### Notes for Iris
+- Connector runtime server.mjs must be deployed to `youeye-connectors` container at `/opt/youeye-connectors/server.mjs`
+- SearXNG containers need `formats: [html, json, rss]` in `/etc/searxng/settings.yml` (not in CP installer yet)
+- Search app needs `YOUEYE_API_URL=http://youeye-ui.youeye:3000/api/v1` and `CP_API_URL=http://youeye-ui.youeye:3000/api/v1` in env
+- The `connector:search-engine` permission must be granted for users to use search through the connector system
+
+---
+
 ## v0.3.4.1 — sebastian — 2026-04-21
 **Branch:** sebastian
 **VM:** ye-sebastian
