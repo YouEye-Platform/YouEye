@@ -1,9 +1,9 @@
 /**
- * App Drawer — Sheet-based panel with edit mode
+ * App Drawer — Google-style Popover with edit mode
  *
- * Opens as a right-side sheet from the 9-dot grid button.
- * Normal mode: grid of visible apps with configurable columns/scale.
- * Edit mode: two-panel layout for dragging apps in/out of the drawer.
+ * Opens as a dropdown popover from the 9-dot grid button.
+ * Normal mode: clean grid of visible apps (like Google's app launcher).
+ * Edit mode: list view with show/hide and reorder controls.
  * Drawer preferences (columns, icon scale, max height) persist per-user.
  */
 
@@ -34,12 +34,10 @@ import {
 import type { ComponentType } from "react";
 
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from "@/components/ui/sheet";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useTranslations } from "next-intl";
@@ -69,7 +67,7 @@ interface DrawerPrefs {
 }
 
 const DEFAULT_PREFS: DrawerPrefs = {
-  columns: 3,
+  columns: 4,
   iconScale: 1,
   maxHeight: 400,
 };
@@ -110,37 +108,43 @@ function AppIcon({
   icon,
   customIconUrl,
   name,
-  size = 40,
+  className = "w-10 h-10",
 }: {
   icon: string | null;
   customIconUrl: string | null;
   name: string;
-  size?: number;
+  className?: string;
 }) {
-  const imgClass = `rounded-xl object-cover`;
-  const imgStyle = { width: size, height: size };
-  const iconInner = Math.round(size * 0.5);
-
   if (customIconUrl) {
-    return <img src={customIconUrl} alt={name} className={imgClass} style={imgStyle} />;
+    return (
+      <img
+        src={customIconUrl}
+        alt={name}
+        className={`${className} rounded-xl object-cover`}
+      />
+    );
   }
   if (icon && icon.startsWith("emoji:")) {
-    return <span style={{ fontSize: iconInner }} className="leading-none">{icon.slice(6)}</span>;
+    return <span className="text-xl leading-none">{icon.slice(6)}</span>;
   }
   if (icon && (icon.startsWith("http") || icon.startsWith("/"))) {
-    return <img src={icon} alt={name} className={imgClass} style={imgStyle} />;
+    return (
+      <img
+        src={icon}
+        alt={name}
+        className={`${className} rounded-xl object-cover`}
+      />
+    );
   }
   if (icon) {
     const key = toKebabCase(icon);
     const IconComponent = ICON_MAP[key];
     if (IconComponent) {
-      return <IconComponent className="text-foreground/80" style={{ width: iconInner, height: iconInner }} />;
+      return <IconComponent className="h-5 w-5 text-foreground/80" />;
     }
   }
   return (
-    <span className="text-foreground/80 font-medium" style={{ fontSize: iconInner * 0.8 }}>
-      {name.charAt(0).toUpperCase()}
-    </span>
+    <span className="text-foreground/80">{name.charAt(0).toUpperCase()}</span>
   );
 }
 
@@ -224,7 +228,6 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
           body: JSON.stringify({ visible }),
         });
       } catch {
-        // Revert on error
         setAllApps((prev) =>
           prev.map((a) => (a.id === appId ? { ...a, visible: !visible } : a))
         );
@@ -251,7 +254,6 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
         const thisOrder = thisApp.order;
         const swapOrder = swapApp.order;
 
-        // Persist both order changes
         fetch(`/api/v1/apps/drawer/${thisApp.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -295,274 +297,210 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
     .filter((a) => !a.visible)
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  // Icon sizing based on scale
-  const baseIconSize = 48;
-  const iconSize = Math.round(baseIconSize * prefs.iconScale);
-  const containerSize = iconSize + 16;
-
   return (
-    <>
-      {/* Trigger button */}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-9 w-9"
-        aria-label={t("title")}
-        onClick={() => setOpen(true)}
-      >
-        <DotsIcon className="h-5 w-5" />
-      </Button>
-
-      {/* Sheet panel */}
-      <Sheet open={open} onOpenChange={(v) => { setOpen(v); if (!v) setEditMode(false); }}>
-        <SheetContent
-          side="right"
-          showCloseButton={!editMode}
-          className="w-[380px] sm:max-w-[420px] flex flex-col p-0"
+    <Popover
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (!v) setEditMode(false);
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-9 w-9"
+          aria-label={t("title")}
         >
-          {/* Header */}
-          <SheetHeader className="px-4 pt-4 pb-2 border-b border-border/40">
-            <div className="flex items-center justify-between">
-              <SheetTitle className="text-base">{t("title")}</SheetTitle>
+          <DotsIcon className="h-5 w-5" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        sideOffset={8}
+        className="w-[340px] rounded-xl p-0 origin-top-right"
+      >
+        {editMode ? (
+          <>
+            {/* Edit mode header */}
+            <div className="flex items-center justify-between px-3 py-2.5 border-b border-border/40">
+              <span className="text-sm font-medium">{t("title")}</span>
               <Button
-                variant={editMode ? "default" : "ghost"}
+                variant="default"
                 size="sm"
                 className="h-7 gap-1.5 text-xs"
-                onClick={() => setEditMode(!editMode)}
+                onClick={() => setEditMode(false)}
               >
-                {editMode ? (
-                  <><Check className="h-3.5 w-3.5" />{t("doneEditing")}</>
-                ) : (
-                  <><Pencil className="h-3.5 w-3.5" />Edit</>
-                )}
+                <Check className="h-3.5 w-3.5" />
+                {t("doneEditing")}
               </Button>
             </div>
-            <SheetDescription className="sr-only">
-              {t("description")}
-            </SheetDescription>
-          </SheetHeader>
 
-          {/* Main content */}
-          <div className="flex-1 overflow-hidden flex flex-col">
-            {editMode ? (
-              <EditModeContent
-                visibleApps={visibleApps}
-                hiddenApps={hiddenApps}
-                iconSize={iconSize}
-                containerSize={containerSize}
-                columns={prefs.columns}
-                onToggleVisibility={toggleVisibility}
-                onMoveApp={moveApp}
-              />
-            ) : (
-              <NormalModeContent
-                apps={visibleApps}
-                iconSize={iconSize}
-                containerSize={containerSize}
-                columns={prefs.columns}
-                maxHeight={prefs.maxHeight}
-                isAdmin={isAdmin}
-                onAppClick={handleAppClick}
-                onClose={() => setOpen(false)}
-                t={t}
-              />
-            )}
-          </div>
-
-          {/* Controls footer — visible in edit mode */}
-          {editMode && (
-            <DrawerControls prefs={prefs} onPrefsChange={persistPrefs} />
-          )}
-        </SheetContent>
-      </Sheet>
-    </>
-  );
-}
-
-// ────────────────────────────────────────
-// Normal Mode
-// ────────────────────────────────────────
-
-function NormalModeContent({
-  apps,
-  iconSize,
-  containerSize,
-  columns,
-  maxHeight,
-  isAdmin,
-  onAppClick,
-  onClose,
-  t,
-}: {
-  apps: DrawerApp[];
-  iconSize: number;
-  containerSize: number;
-  columns: number;
-  maxHeight: number;
-  isAdmin: boolean;
-  onAppClick: (app: DrawerApp) => void;
-  onClose: () => void;
-  t: ReturnType<typeof useTranslations>;
-}) {
-  if (apps.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center px-4">
-        <p className="text-sm text-muted-foreground mb-3">
-          {t("noAppsInstalled")}
-        </p>
-        {isAdmin && (
-          <Link
-            href="/app-market"
-            className="text-sm text-primary hover:underline"
-            onClick={onClose}
-          >
-            {t("visitMarketplace")}
-          </Link>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <ScrollArea style={{ maxHeight }} className="flex-1">
-      <div
-        className="grid gap-1 p-3"
-        style={{ gridTemplateColumns: `repeat(${columns}, 1fr)` }}
-      >
-        {apps.map((app) => {
-          const up = isAppUp(app.status);
-          return (
-            <div
-              key={app.id}
-              className={`relative flex flex-col items-center p-2 rounded-xl cursor-pointer transition-all duration-150 hover:bg-accent/60 hover:scale-105${up ? "" : " opacity-40 grayscale"}`}
-              onClick={() => onAppClick(app)}
-              title={up ? app.name : `${app.name} — offline`}
-            >
-              <div
-                className="rounded-xl bg-accent/80 flex items-center justify-center font-medium shadow-sm overflow-hidden transition-transform duration-150"
-                style={{ width: containerSize, height: containerSize }}
-              >
-                <AppIcon
-                  icon={app.icon}
-                  customIconUrl={app.custom_icon_url}
-                  name={app.name}
-                  size={iconSize}
-                />
-              </div>
-              <span className="text-[11px] text-center line-clamp-1 w-full mt-1.5 text-foreground/80 leading-tight">
-                {app.name}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </ScrollArea>
-  );
-}
-
-// ────────────────────────────────────────
-// Edit Mode — two panels
-// ────────────────────────────────────────
-
-function EditModeContent({
-  visibleApps,
-  hiddenApps,
-  iconSize,
-  containerSize,
-  columns,
-  onToggleVisibility,
-  onMoveApp,
-}: {
-  visibleApps: DrawerApp[];
-  hiddenApps: DrawerApp[];
-  iconSize: number;
-  containerSize: number;
-  columns: number;
-  onToggleVisibility: (appId: string, visible: boolean) => void;
-  onMoveApp: (appId: string, direction: "up" | "down") => void;
-}) {
-  return (
-    <ScrollArea className="flex-1">
-      <div className="p-3 space-y-4">
-        {/* Visible apps section */}
-        <div>
-          <div className="flex items-center gap-2 mb-2 px-1">
-            <Eye className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              In drawer ({visibleApps.length})
-            </span>
-          </div>
-          {visibleApps.length === 0 ? (
-            <div className="text-xs text-muted-foreground text-center py-4 border border-dashed border-border/60 rounded-lg">
-              No apps in drawer
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {visibleApps.map((app, idx) => (
-                <EditAppRow
-                  key={app.id}
-                  app={app}
-                  iconSize={Math.round(iconSize * 0.7)}
-                  isFirst={idx === 0}
-                  isLast={idx === visibleApps.length - 1}
-                  onHide={() => onToggleVisibility(app.id, false)}
-                  onMoveUp={() => onMoveApp(app.id, "up")}
-                  onMoveDown={() => onMoveApp(app.id, "down")}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Hidden apps section */}
-        {hiddenApps.length > 0 && (
-          <div>
-            <div className="flex items-center gap-2 mb-2 px-1">
-              <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Hidden ({hiddenApps.length})
-              </span>
-            </div>
-            <div className="space-y-1">
-              {hiddenApps.map((app) => (
-                <div
-                  key={app.id}
-                  className="flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-accent/40 transition-colors opacity-60"
-                >
-                  <div
-                    className="rounded-lg bg-accent/60 flex items-center justify-center overflow-hidden shrink-0"
-                    style={{ width: Math.round(iconSize * 0.7), height: Math.round(iconSize * 0.7) }}
-                  >
-                    <AppIcon
-                      icon={app.icon}
-                      customIconUrl={app.custom_icon_url}
-                      name={app.name}
-                      size={Math.round(iconSize * 0.5)}
-                    />
+            {/* Edit mode content */}
+            <ScrollArea className="max-h-[400px]">
+              <div className="p-3 space-y-3">
+                {/* Visible apps */}
+                <div>
+                  <div className="flex items-center gap-2 mb-1.5 px-1">
+                    <Eye className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      In drawer ({visibleApps.length})
+                    </span>
                   </div>
-                  <span className="text-sm flex-1 truncate">{app.name}</span>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0"
-                    onClick={() => onToggleVisibility(app.id, true)}
-                    title="Show in drawer"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </Button>
+                  {visibleApps.length === 0 ? (
+                    <div className="text-xs text-muted-foreground text-center py-3 border border-dashed border-border/60 rounded-lg">
+                      No apps in drawer
+                    </div>
+                  ) : (
+                    <div className="space-y-0.5">
+                      {visibleApps.map((app, idx) => (
+                        <EditAppRow
+                          key={app.id}
+                          app={app}
+                          isFirst={idx === 0}
+                          isLast={idx === visibleApps.length - 1}
+                          onHide={() => toggleVisibility(app.id, false)}
+                          onMoveUp={() => moveApp(app.id, "up")}
+                          onMoveDown={() => moveApp(app.id, "down")}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ))}
+
+                {/* Hidden apps */}
+                {hiddenApps.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-1.5 px-1">
+                      <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Hidden ({hiddenApps.length})
+                      </span>
+                    </div>
+                    <div className="space-y-0.5">
+                      {hiddenApps.map((app) => (
+                        <div
+                          key={app.id}
+                          className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-accent/40 transition-colors opacity-60"
+                        >
+                          <div className="w-7 h-7 rounded-lg bg-accent/60 flex items-center justify-center overflow-hidden shrink-0">
+                            <AppIcon
+                              icon={app.icon}
+                              customIconUrl={app.custom_icon_url}
+                              name={app.name}
+                              className="w-5 h-5"
+                            />
+                          </div>
+                          <span className="text-sm flex-1 truncate">
+                            {app.name}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 shrink-0"
+                            onClick={() => toggleVisibility(app.id, true)}
+                            title="Show in drawer"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+
+            {/* Drawer controls footer */}
+            <DrawerControls prefs={prefs} onPrefsChange={persistPrefs} />
+          </>
+        ) : (
+          <>
+            {/* Normal mode — Google-style grid */}
+            <ScrollArea style={{ maxHeight: prefs.maxHeight }}>
+              <div className="p-3">
+                {visibleApps.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 text-center">
+                    <p className="text-sm text-muted-foreground mb-3">
+                      {t("noAppsInstalled")}
+                    </p>
+                    {isAdmin && (
+                      <Link
+                        href="/app-market"
+                        className="text-sm text-primary hover:underline"
+                        onClick={() => setOpen(false)}
+                      >
+                        {t("visitMarketplace")}
+                      </Link>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    className="grid gap-1"
+                    style={{
+                      gridTemplateColumns: `repeat(${prefs.columns}, 1fr)`,
+                    }}
+                  >
+                    {visibleApps.map((app) => {
+                      const up = isAppUp(app.status);
+                      return (
+                        <div
+                          key={app.id}
+                          className={`relative flex flex-col items-center p-2 rounded-xl cursor-pointer transition-all duration-150 hover:bg-accent/60 hover:scale-105${up ? "" : " opacity-40 grayscale"}`}
+                          onClick={() => handleAppClick(app)}
+                          title={up ? app.name : `${app.name} — offline`}
+                        >
+                          <div className="w-10 h-10 rounded-xl bg-accent/80 flex items-center justify-center text-base font-medium shadow-sm overflow-hidden transition-transform duration-150">
+                            <AppIcon
+                              icon={app.icon}
+                              customIconUrl={app.custom_icon_url}
+                              name={app.name}
+                            />
+                          </div>
+                          <span className="text-[11px] text-center line-clamp-1 w-full mt-1.5 text-foreground/80 leading-tight">
+                            {app.name}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+
+            {/* Footer */}
+            <div className="border-t px-3 py-2.5 flex items-center justify-between">
+              <Link
+                href="/settings/apps"
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
+                onClick={() => setOpen(false)}
+              >
+                <Settings className="h-3.5 w-3.5" />
+                {t("manageApps")}
+              </Link>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setEditMode(true)}
+              >
+                <Pencil className="h-3 w-3" />
+                Edit
+              </Button>
             </div>
-          </div>
+          </>
         )}
-      </div>
-    </ScrollArea>
+      </PopoverContent>
+    </Popover>
   );
 }
+
+// ────────────────────────────────────────
+// Edit Mode Row
+// ────────────────────────────────────────
 
 function EditAppRow({
   app,
-  iconSize,
   isFirst,
   isLast,
   onHide,
@@ -570,7 +508,6 @@ function EditAppRow({
   onMoveDown,
 }: {
   app: DrawerApp;
-  iconSize: number;
   isFirst: boolean;
   isLast: boolean;
   onHide: () => void;
@@ -580,18 +517,15 @@ function EditAppRow({
   const up = isAppUp(app.status);
   return (
     <div
-      className={`flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-accent/40 transition-colors${up ? "" : " opacity-40 grayscale"}`}
+      className={`flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-accent/40 transition-colors${up ? "" : " opacity-40 grayscale"}`}
     >
-      <GripVertical className="h-4 w-4 text-muted-foreground/40 shrink-0" />
-      <div
-        className="rounded-lg bg-accent/80 flex items-center justify-center overflow-hidden shrink-0"
-        style={{ width: iconSize, height: iconSize }}
-      >
+      <GripVertical className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />
+      <div className="w-7 h-7 rounded-lg bg-accent/80 flex items-center justify-center overflow-hidden shrink-0">
         <AppIcon
           icon={app.icon}
           customIconUrl={app.custom_icon_url}
           name={app.name}
-          size={Math.round(iconSize * 0.75)}
+          className="w-5 h-5"
         />
       </div>
       <span className="text-sm flex-1 truncate">{app.name}</span>
@@ -629,7 +563,7 @@ function EditAppRow({
 }
 
 // ────────────────────────────────────────
-// Controls Footer
+// Controls Footer (edit mode only)
 // ────────────────────────────────────────
 
 function DrawerControls({
@@ -640,15 +574,15 @@ function DrawerControls({
   onPrefsChange: (p: DrawerPrefs) => void;
 }) {
   return (
-    <div className="border-t border-border/40 px-4 py-3 space-y-3 bg-muted/30">
+    <div className="border-t border-border/40 px-3 py-2.5 space-y-2 bg-muted/30">
       {/* Columns */}
       <div className="flex items-center justify-between">
         <span className="text-xs text-muted-foreground">Columns</span>
         <div className="flex items-center gap-1">
-          {[2, 3, 4, 5].map((n) => (
+          {[3, 4, 5].map((n) => (
             <button
               key={n}
-              className={`w-7 h-7 rounded-md text-xs font-medium transition-colors ${
+              className={`w-6 h-6 rounded text-xs font-medium transition-colors ${
                 prefs.columns === n
                   ? "bg-primary text-primary-foreground"
                   : "bg-accent/60 text-foreground/60 hover:bg-accent"
@@ -666,30 +600,14 @@ function DrawerControls({
         <span className="text-xs text-muted-foreground">Icon size</span>
         <input
           type="range"
-          min="0.6"
-          max="1.8"
+          min="0.7"
+          max="1.5"
           step="0.1"
           value={prefs.iconScale}
           onChange={(e) =>
             onPrefsChange({ ...prefs, iconScale: parseFloat(e.target.value) })
           }
-          className="w-28 h-1.5 appearance-none bg-accent rounded-full cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:cursor-pointer"
-        />
-      </div>
-
-      {/* Max height */}
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-xs text-muted-foreground">Max height</span>
-        <input
-          type="range"
-          min="200"
-          max="700"
-          step="50"
-          value={prefs.maxHeight}
-          onChange={(e) =>
-            onPrefsChange({ ...prefs, maxHeight: parseInt(e.target.value, 10) })
-          }
-          className="w-28 h-1.5 appearance-none bg-accent rounded-full cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:cursor-pointer"
+          className="w-24 h-1.5 appearance-none bg-accent rounded-full cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:cursor-pointer"
         />
       </div>
     </div>
