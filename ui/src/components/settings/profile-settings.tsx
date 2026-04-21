@@ -10,7 +10,83 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslations } from "next-intl";
-import { Save, Loader2, MapPin, FileText } from "lucide-react";
+import { useTheme } from "next-themes";
+import { Save, Loader2, MapPin, FileText, Upload, Smile, X } from "lucide-react";
+
+// ─── Avatar Presets ──────────────────────────────────────
+
+interface AvatarPreset {
+  emoji: string;
+  bg: [string, string]; // gradient stops
+}
+
+const AVATAR_PRESETS: AvatarPreset[] = [
+  // Animals
+  { emoji: "\u{1F431}", bg: ["#f59e0b", "#d97706"] },
+  { emoji: "\u{1F436}", bg: ["#8b5cf6", "#7c3aed"] },
+  { emoji: "\u{1F98A}", bg: ["#ef4444", "#dc2626"] },
+  { emoji: "\u{1F43C}", bg: ["#6366f1", "#4f46e5"] },
+  { emoji: "\u{1F981}", bg: ["#f97316", "#ea580c"] },
+  { emoji: "\u{1F438}", bg: ["#22c55e", "#16a34a"] },
+  { emoji: "\u{1F427}", bg: ["#06b6d4", "#0891b2"] },
+  { emoji: "\u{1F985}", bg: ["#92400e", "#78350f"] },
+  // Objects & Symbols
+  { emoji: "\u{1F680}", bg: ["#3b82f6", "#2563eb"] },
+  { emoji: "\u2B50", bg: ["#eab308", "#ca8a04"] },
+  { emoji: "\u{1F3B5}", bg: ["#ec4899", "#db2777"] },
+  { emoji: "\u{1F3AE}", bg: ["#8b5cf6", "#7c3aed"] },
+  { emoji: "\u{1F4DA}", bg: ["#14b8a6", "#0d9488"] },
+  { emoji: "\u{1F3A8}", bg: ["#f472b6", "#ec4899"] },
+  { emoji: "\u{1F4F7}", bg: ["#64748b", "#475569"] },
+  { emoji: "\u2615", bg: ["#92400e", "#78350f"] },
+  // Nature & Space
+  { emoji: "\u{1F30A}", bg: ["#06b6d4", "#0891b2"] },
+  { emoji: "\u{1F319}", bg: ["#6366f1", "#4f46e5"] },
+  { emoji: "\u2600\uFE0F", bg: ["#f59e0b", "#d97706"] },
+  { emoji: "\u{1F33F}", bg: ["#22c55e", "#16a34a"] },
+  { emoji: "\u{1F338}", bg: ["#f472b6", "#ec4899"] },
+  { emoji: "\u{1F30B}", bg: ["#ef4444", "#b91c1c"] },
+  // Abstract
+  { emoji: "\u{1F48E}", bg: ["#06b6d4", "#0891b2"] },
+  { emoji: "\u{1F52E}", bg: ["#a855f7", "#9333ea"] },
+  { emoji: "\u26A1", bg: ["#eab308", "#ca8a04"] },
+  { emoji: "\u{1F525}", bg: ["#ef4444", "#dc2626"] },
+  { emoji: "\u{1F308}", bg: ["#8b5cf6", "#ec4899"] },
+  { emoji: "\u{1F3AF}", bg: ["#ef4444", "#dc2626"] },
+  { emoji: "\u{1F47E}", bg: ["#22c55e", "#16a34a"] },
+  { emoji: "\u{1F916}", bg: ["#64748b", "#475569"] },
+  { emoji: "\u{1F984}", bg: ["#d946ef", "#a855f7"] },
+  { emoji: "\u{1F47D}", bg: ["#22d3ee", "#06b6d4"] },
+];
+
+async function renderPresetToBlob(emoji: string, bg: [string, string]): Promise<Blob> {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+
+  // Gradient circle background
+  const gradient = ctx.createLinearGradient(0, 0, size, size);
+  gradient.addColorStop(0, bg[0]);
+  gradient.addColorStop(1, bg[1]);
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Emoji centered
+  ctx.font = `${size * 0.52}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(emoji, size / 2, size / 2 + size * 0.03);
+
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob!), "image/png");
+  });
+}
+
+// ─── Component ───────────────────────────────────────────
 
 interface ProfileSettingsProps {
   userId: string;
@@ -35,8 +111,10 @@ export function ProfileSettings({
   profileEmbedUrl,
 }: ProfileSettingsProps) {
   const t = useTranslations("settings.profile");
+  const { resolvedTheme } = useTheme();
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -71,10 +149,21 @@ export function ProfileSettings({
       .finally(() => setLoading(false));
   }, []);
 
+  // Send current theme to embed iframe
+  const sendThemeToEmbed = useCallback(() => {
+    if (!embedRef.current?.contentWindow || !resolvedTheme) return;
+    const origin = (() => { try { return new URL(profileEmbedUrl).origin; } catch { return "*"; } })();
+    embedRef.current.contentWindow.postMessage(
+      { type: "youeye-embed-theme", theme: resolvedTheme },
+      origin
+    );
+  }, [resolvedTheme, profileEmbedUrl]);
+
   // Listen for profile updates from the CP embed
   const handleMessage = useCallback((e: MessageEvent) => {
     if (e.data?.type === "youeye-embed-ready" || e.data?.type === "youeye-embed-resize") {
       setEmbedReady(true);
+      sendThemeToEmbed();
     }
     if (e.data?.type === "youeye-embed-resize" && typeof e.data.height === "number") {
       setEmbedHeight(Math.max(e.data.height, 100));
@@ -94,12 +183,17 @@ export function ProfileSettings({
         }),
       }).catch(() => {});
     }
-  }, []);
+  }, [sendThemeToEmbed]);
 
   useEffect(() => {
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [handleMessage]);
+
+  // Propagate theme changes to embed
+  useEffect(() => {
+    if (embedReady) sendThemeToEmbed();
+  }, [resolvedTheme, embedReady, sendThemeToEmbed]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -166,6 +260,31 @@ export function ProfileSettings({
     }
   };
 
+  const handlePresetSelect = async (preset: AvatarPreset) => {
+    setAvatarUploading(true);
+    setError("");
+    try {
+      const blob = await renderPresetToBlob(preset.emoji, preset.bg);
+      const formData = new FormData();
+      formData.append("file", blob, "avatar.png");
+
+      const res = await fetch("/api/v1/user/avatar", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+
+      setAvatarUrl(data.url + "?t=" + Date.now());
+      setShowPicker(false);
+      window.dispatchEvent(new CustomEvent("avatar-updated", { detail: { url: data.url } }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to set avatar");
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
   const initials = (displayName || username || "?")
     .split(" ")
     .map((w) => w[0])
@@ -209,23 +328,40 @@ export function ProfileSettings({
       </div>
 
       {/* Avatar */}
-      <div className="flex items-center gap-4">
-        <div className="relative group">
-          {avatarUrl ? (
-            <img
-              src={avatarUrl}
-              alt="Avatar"
-              className="w-16 h-16 rounded-full object-cover"
-            />
-          ) : (
-            <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-lg font-semibold">
-              {initials}
-            </div>
-          )}
-          <label className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
-            <span className="text-xs text-white font-medium">
-              {avatarUploading ? "..." : t("avatarEdit")}
-            </span>
+      <div className="space-y-3">
+        <div className="flex items-center gap-4">
+          <div className="relative">
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt="Avatar"
+                className="w-16 h-16 rounded-full object-cover"
+              />
+            ) : (
+              <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-lg font-semibold">
+                {initials}
+              </div>
+            )}
+            {avatarUploading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full">
+                <Loader2 className="w-5 h-5 text-white animate-spin" />
+              </div>
+            )}
+          </div>
+
+          <div>
+            <p className="font-medium">{displayName || username}</p>
+            <p className="text-sm text-muted-foreground">
+              {isAdmin ? t("administrator") : t("user")}
+            </p>
+          </div>
+        </div>
+
+        {/* Avatar action buttons */}
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-input bg-background hover:bg-accent cursor-pointer transition-colors">
+            <Upload className="w-3.5 h-3.5" />
+            {t("avatarUpload")}
             <input
               type="file"
               accept="image/*"
@@ -234,22 +370,51 @@ export function ProfileSettings({
               disabled={avatarUploading}
             />
           </label>
-        </div>
-
-        <div>
-          <p className="font-medium">{displayName || username}</p>
-          <p className="text-sm text-muted-foreground">
-            {isAdmin ? t("administrator") : t("user")}
-          </p>
+          <button
+            onClick={() => setShowPicker(!showPicker)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border transition-colors ${
+              showPicker
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-input bg-background hover:bg-accent"
+            }`}
+            disabled={avatarUploading}
+          >
+            {showPicker ? <X className="w-3.5 h-3.5" /> : <Smile className="w-3.5 h-3.5" />}
+            {showPicker ? t("avatarPickerClose") : t("avatarPickerOpen")}
+          </button>
           {avatarUrl && (
             <button
               onClick={handleAvatarRemove}
-              className="text-xs text-destructive hover:underline mt-1"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-input bg-background hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors"
+              disabled={avatarUploading}
             >
-              Remove avatar
+              {t("avatarRemove")}
             </button>
           )}
         </div>
+
+        {/* Template avatar picker */}
+        {showPicker && (
+          <div className="p-3 border border-border rounded-lg bg-muted/30">
+            <p className="text-xs text-muted-foreground mb-2">{t("avatarPickerHint")}</p>
+            <div className="grid grid-cols-8 gap-2">
+              {AVATAR_PRESETS.map((preset, i) => (
+                <button
+                  key={i}
+                  onClick={() => handlePresetSelect(preset)}
+                  disabled={avatarUploading}
+                  className="w-10 h-10 rounded-full flex items-center justify-center text-lg hover:scale-110 hover:ring-2 hover:ring-primary/50 transition-transform disabled:opacity-50"
+                  style={{
+                    background: `linear-gradient(135deg, ${preset.bg[0]}, ${preset.bg[1]})`,
+                  }}
+                  title={preset.emoji}
+                >
+                  {preset.emoji}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Account Name — CP embed (synced to Authentik) */}
