@@ -38,7 +38,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { id, name, container_url, subdomain, icon, token_hash } = body;
+  const { id, name, container_url, subdomain, icon, token_hash, sso_entry_url } = body;
 
   if (!id || !name || !container_url) {
     return NextResponse.json(
@@ -59,6 +59,7 @@ export async function POST(request: Request) {
     icon: manifest?.icon ?? icon,
     manifest: manifest ? (manifest as unknown as Record<string, unknown>) : undefined,
     tokenHash: token_hash,
+    ssoEntryUrl: sso_entry_url,
   });
 
   // If manifest was fetched, cache it

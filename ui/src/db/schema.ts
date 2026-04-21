@@ -122,6 +122,8 @@ export const apps = pgTable("apps", {
   displayOrder: integer("display_order").default(0),
   /** SHA-256 hash of the app's gateway token (for app-to-UI API auth) */
   tokenHash: text("token_hash"),
+  /** SSO entry URL path (e.g. /sso/OID/start/authentik) — appended to subdomain URL for auto-SSO login */
+  ssoEntryUrl: text("sso_entry_url"),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
 });

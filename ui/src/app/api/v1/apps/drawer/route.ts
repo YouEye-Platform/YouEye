@@ -12,12 +12,14 @@ function buildAppUrl(
   subdomain: string | null,
   containerUrl: string | null,
   appId: string,
-  host: string
+  host: string,
+  ssoEntryUrl: string | null
 ): string {
   if (!subdomain) return containerUrl ?? `/app/${appId}`;
   // Derive protocol + base domain from the request host
   const baseDomain = host.replace(/:\d+$/, "");
-  return `https://${subdomain}.${baseDomain}`;
+  const baseUrl = `https://${subdomain}.${baseDomain}`;
+  return ssoEntryUrl ? `${baseUrl}${ssoEntryUrl}` : baseUrl;
 }
 
 export async function GET(request: NextRequest) {
@@ -40,7 +42,7 @@ export async function GET(request: NextRequest) {
       order: a.displayOrder,
       section_id: a.sectionId,
       status: a.status,
-      url: buildAppUrl(a.subdomain, a.containerUrl, a.id, host),
+      url: buildAppUrl(a.subdomain, a.containerUrl, a.id, host, a.ssoEntryUrl),
     })),
     sections: data.sections.map((s) => ({
       id: s.sectionId,

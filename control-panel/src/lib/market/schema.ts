@@ -187,6 +187,7 @@ export const RedirectUriSchema = z.object({
 export const SSOSchema = z.object({
   type: z.enum(['oauth2', 'ldap']).default('oauth2'),
   callback_path: z.string().min(1),
+  entry_url: z.string().optional(),
   additional_callbacks: z.array(z.string()).default([]),
   // Legacy fields (kept for backward compat during migration)
   authentikSlug: z.string().optional(),

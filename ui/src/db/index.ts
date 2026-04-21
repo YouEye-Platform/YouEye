@@ -84,6 +84,9 @@ export async function ensureSchema() {
     // C1: App gateway migration — token hash for app-to-UI auth
     await queryClient`ALTER TABLE apps ADD COLUMN IF NOT EXISTS token_hash TEXT`;
 
+    // C6: SSO entry URL — apps with SSO can specify a direct login path
+    await queryClient`ALTER TABLE apps ADD COLUMN IF NOT EXISTS sso_entry_url TEXT`;
+
     await queryClient`
       CREATE TABLE IF NOT EXISTS user_settings (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

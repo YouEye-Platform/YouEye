@@ -82,19 +82,26 @@ export async function GET(request: NextRequest) {
     baseDomain = (request.headers.get("host") ?? "").replace(/:\d+$/, "");
   }
 
-  const apps = appsData.apps.map((a) => ({
-    id: a.id,
-    name: a.name,
-    custom_name: a.customName,
-    icon: a.icon,
-    custom_icon_url: a.customIconUrl,
-    url: a.subdomain
-      ? `https://${a.subdomain}.${baseDomain}`
-      : a.containerUrl,
-    order: a.displayOrder,
-    section: a.sectionId,
-    status: a.status,
-  }));
+  const apps = appsData.apps.map((a) => {
+    let url: string | null;
+    if (a.subdomain) {
+      const baseUrl = `https://${a.subdomain}.${baseDomain}`;
+      url = a.ssoEntryUrl ? `${baseUrl}${a.ssoEntryUrl}` : baseUrl;
+    } else {
+      url = a.containerUrl;
+    }
+    return {
+      id: a.id,
+      name: a.name,
+      custom_name: a.customName,
+      icon: a.icon,
+      custom_icon_url: a.customIconUrl,
+      url,
+      order: a.displayOrder,
+      section: a.sectionId,
+      status: a.status,
+    };
+  });
 
   // Resolve theme — use user's active or default
   let themeResponse: {

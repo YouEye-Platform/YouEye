@@ -69,6 +69,7 @@ export async function registerApp(data: {
   icon?: string;
   manifest?: Record<string, unknown>;
   tokenHash?: string;
+  ssoEntryUrl?: string;
 }): Promise<void> {
   await ensureSchema();
 
@@ -89,6 +90,7 @@ export async function registerApp(data: {
         icon: data.icon,
         manifest: data.manifest ?? existing[0].manifest,
         tokenHash: data.tokenHash ?? existing[0].tokenHash,
+        ssoEntryUrl: data.ssoEntryUrl ?? existing[0].ssoEntryUrl,
         updatedAt: new Date(),
       })
       .where(eq(apps.id, data.id));
@@ -102,6 +104,7 @@ export async function registerApp(data: {
       icon: data.icon,
       manifest: data.manifest ?? {},
       tokenHash: data.tokenHash,
+      ssoEntryUrl: data.ssoEntryUrl,
     });
   }
 }
