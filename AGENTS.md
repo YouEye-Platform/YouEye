@@ -1,3 +1,25 @@
+## v0.3.4.7 — andrew — 2026-04-21
+**Branch:** andrew
+**VM:** ye-andrew
+**Agent:** Andrew
+**Task:** RS256 signing key for OAuth2 providers; Immich + Nextcloud SSO end-to-end testing
+
+### Changes
+- `control-panel/src/lib/market/authentik.ts` — Added `findSigningKey()` to look up Authentik's self-signed certificate keypair; auto-assign signing_key to new OAuth2 providers for RS256 JWT signing
+- `control-panel/src/lib/market/engine.ts` — Fixed `injectCaddyRootCA()`: mkdir -p before writing cert (OCI images may not have /usr/local/share/ca-certificates/); write cert to /tmp/caddy-root.crt for NODE_EXTRA_CA_CERTS fallback
+- `control-panel/package.json` — Bumped version to 0.3.4.7
+
+### Test Results
+- Immich SSO: full install → admin signup → OAuth config → SSO login as "Tester Dev" (name, email, username all correct)
+- Nextcloud SSO: full install → CLI OIDC setup → SSO login as "Tester Dev" via user_oidc (name, email correct, backend=user_oidc)
+- RS256 signing key auto-assigned to both Immich and Nextcloud Authentik providers
+
+### Notes for Iris
+- `findSigningKey()` queries Authentik's certificate keypairs API, prefers "Self-signed" cert, falls back to first available
+- Engine's `injectCaddyRootCA()` now handles missing directories in OCI images (was failing silently on mkdir)
+- Nextcloud requires `allow_local_remote_servers = true` to reach Authentik at private IPs — added to manifest CLI steps
+- The `user_oidc:provider:create` command was wrong for Nextcloud 31.x — correct command is `user_oidc:provider`
+
 ## v0.3.4.6 — andrew — 2026-04-21
 **Branch:** andrew
 **VM:** ye-andrew
