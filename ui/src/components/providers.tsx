@@ -15,6 +15,7 @@
 import { ThemeProvider } from "next-themes";
 import { ColorThemeProvider } from "@/components/color-theme-provider";
 import { Toaster } from "@/components/ui/sonner";
+import { AppInstallListener } from "@/components/app-install-listener";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -25,6 +26,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       disableTransitionOnChange
     >
       <ColorThemeProvider>
+        <AppInstallListener />
         {children}
         <Toaster />
       </ColorThemeProvider>

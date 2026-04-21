@@ -208,3 +208,54 @@ export async function getUserLanguage(userId: string): Promise<string | null> {
   }
   return null;
 }
+
+// ============================================
+// Drawer Preferences
+// ============================================
+
+export interface DrawerPrefs {
+  columns: number;
+  iconScale: number;
+  maxHeight: number;
+}
+
+const DEFAULT_DRAWER_PREFS: DrawerPrefs = {
+  columns: 3,
+  iconScale: 1,
+  maxHeight: 400,
+};
+
+export async function getDrawerPrefs(userId: string): Promise<DrawerPrefs> {
+  const settings = await getUserSettings(userId);
+  const prefs = settings.drawerPrefs as Partial<DrawerPrefs> | undefined;
+  return {
+    columns: prefs?.columns ?? DEFAULT_DRAWER_PREFS.columns,
+    iconScale: prefs?.iconScale ?? DEFAULT_DRAWER_PREFS.iconScale,
+    maxHeight: prefs?.maxHeight ?? DEFAULT_DRAWER_PREFS.maxHeight,
+  };
+}
+
+export async function saveDrawerPrefs(
+  userId: string,
+  prefs: Partial<DrawerPrefs>
+) {
+  await ensureSchema();
+  const existing = await getUserSettings(userId);
+  const current = (existing.drawerPrefs as Partial<DrawerPrefs>) ?? {};
+  const merged = { ...existing, drawerPrefs: { ...DEFAULT_DRAWER_PREFS, ...current, ...prefs } };
+
+  const rows = await db
+    .select()
+    .from(userSettings)
+    .where(eq(userSettings.userId, userId))
+    .limit(1);
+
+  if (rows.length === 0) {
+    await db.insert(userSettings).values({ userId, settings: merged });
+  } else {
+    await db
+      .update(userSettings)
+      .set({ settings: merged, updatedAt: new Date() })
+      .where(eq(userSettings.userId, userId));
+  }
+}

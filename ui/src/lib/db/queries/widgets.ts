@@ -12,18 +12,18 @@ import { widgets } from "@/db/schema";
 /** Default widget layout for new users */
 const DEFAULT_WIDGETS = [
   {
-    widgetType: "greeting",
-    positionX: 25,
-    positionY: 25,
-    width: 50,
-    height: 12,
+    widgetType: "server-name",
+    positionX: 20,
+    positionY: 18,
+    width: 57,
+    height: 13,
     settings: {},
     order: 0,
   },
   {
     widgetType: "search",
     positionX: 30,
-    positionY: 45,
+    positionY: 42,
     width: 40,
     height: 10,
     settings: {},
@@ -31,10 +31,10 @@ const DEFAULT_WIDGETS = [
   },
   {
     widgetType: "clock",
-    positionX: 78,
+    positionX: 80,
     positionY: 5,
-    width: 18,
-    height: 15,
+    width: 14,
+    height: 10,
     settings: {},
     order: 2,
   },

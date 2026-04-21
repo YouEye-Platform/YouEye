@@ -139,6 +139,9 @@ const themeCSS = `
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
   }
+  @keyframes embed-spin {
+    to { transform: rotate(360deg); }
+  }
   .embed-dot {
     display: inline-block;
     width: 8px;

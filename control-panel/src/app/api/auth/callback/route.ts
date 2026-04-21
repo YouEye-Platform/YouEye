@@ -2,6 +2,10 @@
  * OAuth2 Callback Route
  *
  * GET /api/auth/callback?code=...&state=... - Exchanges code for token, creates session
+ *
+ * After creating the session, redirects to the path stored in the oauth-redirect
+ * cookie (set by /api/auth/sso?redirect=...), or falls back to "/".
+ * This enables the silent SSO flow for CP embeds.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -25,8 +29,6 @@ export async function GET(request: NextRequest) {
   }
 
   // Determine the external base URL for all redirects.
-  // Inside the container, request.url is http://0.0.0.0:3000/... which is wrong.
-  // Use CONTROL_EXTERNAL_URL or reconstruct from forwarded headers.
   const controlUrl = process.env.CONTROL_EXTERNAL_URL;
   let baseUrl: string;
   if (controlUrl) {
@@ -57,6 +59,10 @@ export async function GET(request: NextRequest) {
   const savedState = cookieStore.get('oauth-state')?.value;
   cookieStore.delete('oauth-state');
 
+  // Read and clear the post-login redirect destination
+  const postLoginRedirect = cookieStore.get('oauth-redirect')?.value || '/';
+  cookieStore.delete('oauth-redirect');
+
   if (!savedState || savedState !== state) {
     console.error('OAuth2 state mismatch');
     return NextResponse.redirect(new URL('/login?error=Invalid+state', baseUrl));
@@ -82,8 +88,8 @@ export async function GET(request: NextRequest) {
 
     console.log(`SSO login successful for "${username}" (admin: ${isAdmin})`);
 
-    // Redirect to dashboard
-    return NextResponse.redirect(new URL('/', baseUrl));
+    // Redirect to the post-login destination (embed page or dashboard)
+    return NextResponse.redirect(new URL(postLoginRedirect, baseUrl));
   } catch (error) {
     console.error('OAuth2 callback error:', error);
     const msg = error instanceof Error ? error.message : 'Authentication failed';

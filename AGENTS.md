@@ -224,6 +224,199 @@
 - Merge ALL native app repos (Wiki, Search, Notes, Cinema, Weather, Translate) — apiVersion changes
 - Merge YE-AppMarket — catalog.yaml + deleted native/*.yaml + external manifest changes
 - No version bump — code-only cleanup
+## v0.3.2.10 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Truly separate floating panels via createPortal
+
+### Changes
+- `ui/src/components/layout/app-drawer.tsx` — Replaced CSS absolute+overflow:visible approach (which failed — panels rendered inside popover box) with React createPortal. Satellite panels now render as independent DOM elements at document.body with position:fixed. Drawer stays 340px unchanged. Hidden apps shown as grid tiles. Uses useElementRect hook with ResizeObserver.
+- `ui/package.json` — Version bump 0.3.2.9 → 0.3.2.10
+
+### Test Results
+- FIFO screenshots verified: normal mode unchanged, edit mode shows 3 separate floating cards
+
+### Notes for Iris
+- No DB migrations. Uses React createPortal + position:fixed for satellite panels. onInteractOutside prevented in edit mode.
+
+## v0.3.2.9 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Floating satellite panels for app drawer edit mode
+
+### Changes
+- `ui/src/components/layout/app-drawer.tsx` — Complete redesign of edit mode: drawer itself stays visually unchanged (icons just shake + become draggable). Hidden apps panel floats as a separate card to the LEFT (grid layout, not a list). Controls panel floats as a separate card BELOW. All three are independent floating cards via CSS absolute + overflow:visible on Radix PopoverContent.
+- `ui/package.json` — Version bump 0.3.2.7 → 0.3.2.9
+
+### Test Results
+- FIFO screenshot verified: normal mode shows compact popover with pencil icon, edit mode shows three separate floating cards (drawer, hidden panel left, controls below)
+
+### Notes for Iris
+- No DB migrations. Drag-and-drop uses HTML5 DnD API (no external deps). CSS absolute positioning on PopoverContent with overflow:visible — no extra portals needed.
+
+## v0.3.2.7 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** App drawer edit mode sections in separate bordered cards
+
+### Changes
+- `ui/src/components/layout/app-drawer.tsx` — Edit mode sections (hidden panel, visible grid, controls) each wrapped in rounded bordered cards with gaps between them
+- `ui/package.json` — Bumped 0.3.2.6 → 0.3.2.7
+
+### Test Results
+- FIFO screenshot: /tmp/shots/v7-02-cards-edit.png — all three cards visually distinct
+
+### Notes for Iris
+- Styling-only change, no logic changes
+
+## v0.3.2.6 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** App drawer expandable edit mode + larger server name widget
+
+### Changes
+- `ui/src/components/layout/app-drawer.tsx` — Removed "Manage Apps", pencil icon (no text) in top-left, edit mode expands to near-full-height with hidden apps panel on left, drag-and-drop reordering between visible/hidden, controls footer with columns/icon-size/max-height
+- `ui/src/components/widgets/server-name-widget.tsx` — Increased font clamp to 6rem, reduced padding
+- `ui/src/components/widgets/index.ts` — Default size 40x10 → 52x13 (30% larger)
+- `ui/src/components/dashboard/widget-grid.tsx` — Updated DEFAULT_WIDGETS for server-name (57% width, 13% height)
+- `ui/src/lib/db/queries/widgets.ts` — Updated server-side DEFAULT_WIDGETS to match
+- `ui/package.json` — Bumped 0.3.2.5 → 0.3.2.6
+
+### Test Results
+- FIFO screenshots: /tmp/shots/v6-0{1-6}*.png — all verified
+- Drawer normal mode: compact popover with pencil icon, no Manage Apps
+- Drawer edit mode: two-panel with hidden apps on left, controls at bottom
+- Widget: bigger font, less empty space
+
+### Notes for Iris
+- Drag-and-drop uses HTML5 DnD API (no external deps)
+- Server name widget default size increase only affects new users or after Reset
+- No DB migrations
+
+## v0.3.2.5 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Revert app drawer from Sheet panel to Google-style Popover dropdown
+
+### Changes
+- `ui/src/components/layout/app-drawer.tsx` — Reverted from Sheet side-panel to Popover dropdown (Google-style). Kept edit mode with show/hide/reorder, drawer prefs (columns, icon scale), and admin-only marketplace link. Removed max-height slider (dropdown auto-sizes). Footer now has "Manage Apps" + "Edit" button.
+- `ui/package.json` — Bumped 0.3.2.4 → 0.3.2.5
+- `ui/tests/server-name-widget-drawer.spec.ts` — Updated tests for Popover instead of Sheet
+
+### Test Results
+- Playwright: 10 tests, verified via FIFO + spec update
+- Screenshots: /tmp/shots/drawer-02-open.png
+
+### Notes for Iris
+- This is a UX fix requested by the user — the Sheet panel was too wide and ugly
+- All edit mode features (show/hide/reorder, column/scale prefs) are preserved in the popover
+- No DB changes — same API endpoints and JSONB storage
+
+## v0.3.2.4 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Server Name WordArt widget, compact widgets, app drawer overhaul
+
+### Changes
+- `ui/src/components/widgets/server-name-widget.tsx` — NEW: Server Name WordArt widget displaying instance name with user's wordart style
+- `ui/src/components/widgets/index.ts` — Added server-name to catalog, reduced greeting/clock default sizes
+- `ui/src/components/widgets/greeting-widget.tsx` — Compact layout (p-0, leading-tight)
+- `ui/src/components/widgets/clock-widget.tsx` — Compact layout (text-3xl, gap-0.5, text-xs date)
+- `ui/src/components/dashboard/widget-grid.tsx` — Default widgets now use server-name instead of greeting
+- `ui/src/components/layout/app-drawer.tsx` — Full rewrite: Sheet-based panel with edit mode, column/scale/height controls
+- `ui/src/components/layout/navbar.tsx` — Pass isAdmin to AppDrawer
+- `ui/src/lib/db/queries/settings.ts` — DrawerPrefs get/save functions
+- `ui/src/lib/db/queries/widgets.ts` — Updated DEFAULT_WIDGETS
+- `ui/src/app/api/v1/apps/drawer/prefs/route.ts` — NEW: Drawer prefs API
+- `ui/messages/{en,de,es,fr,ru}.json` — Added serverName i18n key
+- `ui/tests/server-name-widget-drawer.spec.ts` — 10 Playwright tests
+
+### Test Results
+- Playwright: 10 tests, all passed (31s)
+- Screenshots: Tests/Vanya/playwright/test-results/
+
+### Notes for Iris
+- No DB migrations needed — drawer prefs stored in existing user_settings JSONB
+- Existing users keep their old widget layout; new defaults only apply to new users or after Reset
+- The "Manage Apps" footer in the app drawer is removed — settings page app drawer management is unchanged
+
+## v0.3.2.3 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix sharp module missing from UI standalone build
+
+### Changes
+- `ui/scripts/postbuild.js` — Added sharp + full transitive dep tree (detect-libc, color, color-convert, color-string, color-name, simple-swizzle, is-arrayish, semver) to needed packages list; added Step 5b to copy @img/* native bindings from pnpm store
+- `ui/package.json` — Bumped 0.3.2.2 → 0.3.2.3
+
+### Root Cause
+pnpm hoists sharp to workspace root with symlinks. Next.js standalone copies the symlink as-is, but the relative `../../` resolves to `.next/` instead of the monorepo root. The postbuild Step 4 caught the broken symlink but silently skipped it.
+
+### Test Results
+- `node -e "require('sharp')"` inside youeye-ui container: OK
+- Avatar upload and emoji picker work end-to-end
+
+### Notes for Iris
+- This fix applies to all future UI builds — no manual intervention needed
+- No env var or DB changes
+
+## v0.3.4.2 / v0.3.2.2 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Profile embed theme sync, template avatar picker, background app installs
+
+### Changes
+- `control-panel/src/app/embed/market/client.tsx` — Non-blocking installs: dialog closes on submit, progress via inline banner, postMessage events for global tracking
+- `control-panel/src/app/embed/layout.tsx` — Added embed-spin keyframe for install spinner
+- `ui/src/components/settings/profile-settings.tsx` — PostMessage theme propagation (dark/light sync), 32 emoji+gradient template avatar picker with canvas→blob→upload
+- `ui/src/components/app-install-listener.tsx` — NEW: Global Sonner toast notifications for app install progress, polls /api/v1/admin/install-progress
+- `ui/src/app/api/v1/admin/install-progress/route.ts` — NEW: Proxy to CP install-progress endpoint
+- `ui/src/components/providers.tsx` — Added AppInstallListener to global providers
+- `ui/messages/{en,ru,de,es,fr}.json` — Avatar picker translation keys
+
+### Test Results
+- TypeScript: clean (no new errors introduced)
+- Deployment: spine status shows 8 running, 0 stopped, CP v0.3.4.2
+
+### Notes for Iris
+- No DB migrations
+- No env var changes
+- UI depends on CP install-progress API (already exists)
+
+## v0.3.4.1 / v0.3.2.1 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Profile name sync to Authentik, silent SSO for CP embeds, user self-profile
+
+### Changes
+- `control-panel/src/app/api/setup/run/route.ts` — Remove fake first_name/last_name from Authentik API calls; add custom OIDC profile scope mapping creation during setup
+- `control-panel/src/components/embed/auth-error.tsx` — Replace manual Sign In button with auto-redirect through SSO (silent if user already authenticated)
+- `control-panel/src/app/api/auth/sso/route.ts` — Accept ?redirect= param, store in cookie for post-login redirect
+- `control-panel/src/app/api/auth/callback/route.ts` — Read oauth-redirect cookie, redirect to embed page instead of /
+- `control-panel/src/app/api/user/profile/route.ts` — New: GET/PATCH own profile via Authentik (non-admin safe)
+- `control-panel/src/app/embed/profile/page.tsx` — New: profile embed page (user role, not admin-only)
+- `control-panel/src/app/embed/profile/client.tsx` — New: profile editing form (first/last name, synced to Authentik)
+- `ui/src/app/settings/page.tsx` — Pass CP profile embed URL to profile settings
+- `ui/src/components/settings/profile-settings.tsx` — Replace inline name fields with CP embed; keep bio/timezone/avatar local; listen for profile-updated messages
+
+### Test Results
+- CP deployed v0.3.4.1, UI deployed v0.3.2.1
+- spine status: 8 running, 0 stopped
+- Authentik OIDC scope mapping updated (split name into given_name/family_name)
+
+### Notes for Iris
+- Authentik scope mapping change is applied live via API (not in code). The setup wizard now creates it on fresh installs.
+- The custom scope mapping "YouEye: OpenID profile (split name)" replaces the default profile mapping in both OIDC providers.
+- CP deploy path is /opt/app (not /opt/youeye-control). UI deploy path is /opt/youeye-ui.
 
 ## v0.2.22.13 — iris — 2026-04-20
 **Branch:** dev

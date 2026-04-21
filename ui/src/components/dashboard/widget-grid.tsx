@@ -12,7 +12,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Paintbrush, Plus, RotateCcw, Check, Settings2, User, Search, Clock, List, Package } from "lucide-react";
+import { Paintbrush, Plus, RotateCcw, Check, Settings2, User, Search, Clock, List, Package, Type } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { WidgetContainer, type WidgetPosition } from "./widget-container";
 import {
@@ -48,6 +48,7 @@ interface WidgetGridProps {
 
 /** Icon to show in the add-widget menu thumbnail for each built-in widget type */
 const WIDGET_PREVIEW_ICONS: Record<string, LucideIcon> = {
+  "server-name": Type,
   greeting: User,
   search: Search,
   clock: Clock,
@@ -56,9 +57,9 @@ const WIDGET_PREVIEW_ICONS: Record<string, LucideIcon> = {
 
 /** Default layout for the reset button */
 const DEFAULT_WIDGETS: Omit<WidgetData, "id">[] = [
-  { widgetType: "greeting", positionX: 25, positionY: 25, width: 50, height: 12, settings: {}, order: 0 },
-  { widgetType: "search", positionX: 30, positionY: 45, width: 40, height: 10, settings: {}, order: 1 },
-  { widgetType: "clock", positionX: 78, positionY: 5, width: 18, height: 15, settings: {}, order: 2 },
+  { widgetType: "server-name", positionX: 20, positionY: 18, width: 57, height: 13, settings: {}, order: 0 },
+  { widgetType: "search", positionX: 30, positionY: 40, width: 40, height: 10, settings: {}, order: 1 },
+  { widgetType: "clock", positionX: 80, positionY: 5, width: 14, height: 10, settings: {}, order: 2 },
 ];
 
 export interface AppWidgetDef {

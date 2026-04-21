@@ -133,9 +133,7 @@ export function MarketEmbedClient() {
   // Install state
   const [installTarget, setInstallTarget] = useState<MarketApp | null>(null);
   const [installForm, setInstallForm] = useState<{ subdomain: string; params: Record<string, string> }>({ subdomain: "", params: {} });
-  const [installing, setInstalling] = useState(false);
-  const [installProgress, setInstallProgress] = useState<InstallProgress[]>([]);
-  const [installDone, setInstallDone] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
 
   // Uninstall state
   const [uninstallTarget, setUninstallTarget] = useState<MarketApp | null>(null);
@@ -143,8 +141,9 @@ export function MarketEmbedClient() {
 
   // Active installs polling
   const [activeInstalls, setActiveInstalls] = useState<ActiveInstall[]>([]);
+  const [completedInstalls, setCompletedInstalls] = useState<string[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const progressRef = useRef<HTMLDivElement>(null);
+  const prevActiveRef = useRef<Set<string>>(new Set());
 
   // Screenshot lightbox
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
@@ -179,7 +178,27 @@ export function MarketEmbedClient() {
       const res = await fetch("/api/ui-bridge/market?action=install-progress");
       if (res.ok) {
         const data = await res.json();
-        const active = (data.installs ?? []).filter((i: ActiveInstall) => !i.done);
+        const allInstalls: ActiveInstall[] = data.installs ?? [];
+        const active = allInstalls.filter((i) => !i.done);
+        const done = allInstalls.filter((i) => i.done);
+
+        // Detect newly completed installs → notify parent UI
+        const activeIds = new Set(active.map((i) => i.appId));
+        for (const id of prevActiveRef.current) {
+          if (!activeIds.has(id)) {
+            const completed = done.find((i) => i.appId === id);
+            window.parent.postMessage({
+              type: "youeye-app-install-complete",
+              appId: id,
+              appName: completed?.appName || id,
+              error: completed?.error || null,
+            }, "*");
+            setCompletedInstalls((prev) => [...prev, id]);
+            setTimeout(() => setCompletedInstalls((prev) => prev.filter((x) => x !== id)), 5000);
+          }
+        }
+        prevActiveRef.current = activeIds;
+
         setActiveInstalls(active);
         if (active.length === 0 && pollRef.current) {
           clearInterval(pollRef.current);
@@ -195,13 +214,6 @@ export function MarketEmbedClient() {
     fetchDomain();
     pollActiveInstalls();
   }, [fetchCatalog, fetchDomain, pollActiveInstalls]);
-
-  // Auto-scroll progress
-  useEffect(() => {
-    if (progressRef.current) {
-      progressRef.current.scrollTop = progressRef.current.scrollHeight;
-    }
-  }, [installProgress]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -221,88 +233,82 @@ export function MarketEmbedClient() {
       }
     }
     setInstallForm({ subdomain: defaultSub, params });
-    setInstallProgress([]);
-    setInstallDone(false);
+    setInstallError(null);
     setInstallTarget(app);
   };
 
   const handleInstall = async () => {
     if (!installTarget || !domain) return;
-    setInstalling(true);
-    setInstallProgress([]);
-    setInstallDone(false);
+
+    const target = installTarget;
+    const form = { ...installForm };
+
+    // Close dialog immediately — install proceeds in background
+    setInstallTarget(null);
+    setInstallError(null);
+
+    // Notify parent UI that install started
+    window.parent.postMessage({
+      type: "youeye-app-install-started",
+      appId: target.id,
+      appName: target.name,
+    }, "*");
+
+    // Track this install for the banner before polling picks it up
+    prevActiveRef.current.add(target.id);
 
     try {
       const res = await fetch("/api/ui-bridge/market?action=install", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          appId: installTarget.id,
-          subdomain: installForm.subdomain,
+          appId: target.id,
+          subdomain: form.subdomain,
           domain,
           enableSSO: true,
-          installParams: Object.keys(installForm.params).length > 0 ? installForm.params : undefined,
+          installParams: Object.keys(form.params).length > 0 ? form.params : undefined,
         }),
       });
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Install failed" }));
-        setInstallProgress([{ step: 0, totalSteps: 0, status: "error", message: err.error || "Install failed" }]);
-        setInstallDone(true);
-        setInstalling(false);
+        window.parent.postMessage({
+          type: "youeye-app-install-complete",
+          appId: target.id,
+          appName: target.name,
+          error: err.error || "Install failed",
+        }, "*");
+        prevActiveRef.current.delete(target.id);
         return;
       }
 
+      // Start polling for progress banner
       if (!pollRef.current) {
         pollRef.current = setInterval(pollActiveInstalls, 2000);
       }
 
+      // Consume SSE stream in background (don't block — just drain to avoid leak)
       const reader = res.body?.getReader();
-      if (!reader) { setInstalling(false); return; }
-      const decoder = new TextDecoder();
-      let buf = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() || "";
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith("data: ")) {
-            try {
-              const event: InstallProgress = JSON.parse(trimmed.slice(6));
-              setInstallProgress(prev => [...prev, event]);
-            } catch { /* skip malformed */ }
-          }
-        }
+      if (reader) {
+        (async () => {
+          try {
+            while (true) {
+              const { done } = await reader.read();
+              if (done) break;
+            }
+          } catch { /* stream ended */ }
+          fetchCatalog();
+        })();
       }
-
-      setInstallDone(true);
-      setInstalling(false);
-      fetchCatalog();
     } catch (err) {
-      setInstallProgress(prev => [...prev, {
-        step: 0, totalSteps: 0, status: "error",
-        message: err instanceof Error ? err.message : "Install failed",
-      }]);
-      setInstallDone(true);
-      setInstalling(false);
+      window.parent.postMessage({
+        type: "youeye-app-install-complete",
+        appId: target.id,
+        appName: target.name,
+        error: err instanceof Error ? err.message : "Install failed",
+      }, "*");
+      prevActiveRef.current.delete(target.id);
     }
-  };
-
-  const handleCancelInstall = async () => {
-    if (!installTarget) return;
-    try {
-      await fetch("/api/ui-bridge/market?action=cancel-install", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ appId: installTarget.id }),
-      });
-    } catch { /* best-effort */ }
-    setInstalling(false);
-    setInstallTarget(null);
   };
 
   const handleUninstall = async () => {
@@ -474,10 +480,17 @@ export function MarketEmbedClient() {
           {/* Action buttons */}
           <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
             {!app.installed ? (
-              <button className="embed-btn" onClick={() => openInstallForm(app)}
-                style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)", fontWeight: 500, padding: "8px 20px" }}>
-                Install {app.name}
-              </button>
+              activeInstalls.some(i => i.appId === app.id) ? (
+                <button className="embed-btn" disabled
+                  style={{ fontWeight: 500, padding: "8px 20px", opacity: 0.6 }}>
+                  Installing...
+                </button>
+              ) : (
+                <button className="embed-btn" onClick={() => openInstallForm(app)}
+                  style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)", fontWeight: 500, padding: "8px 20px" }}>
+                  Install {app.name}
+                </button>
+              )
             ) : (
               <>
                 {app.entrances?.[0]?.subdomain && domain && (
@@ -691,7 +704,7 @@ export function MarketEmbedClient() {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
           {apps.map(app => (
-            <AppCard key={app.id} app={app} onSelect={setSelectedApp} onInstall={openInstallForm} onUninstall={setUninstallTarget} />
+            <AppCard key={app.id} app={app} onSelect={setSelectedApp} onInstall={openInstallForm} onUninstall={setUninstallTarget} isInstalling={activeInstalls.some(i => i.appId === app.id)} />
           ))}
         </div>
       </div>
@@ -702,7 +715,7 @@ export function MarketEmbedClient() {
     if (!installTarget) return null;
     return (
       <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", zIndex: 100 }}
-        onClick={() => { if (!installing) setInstallTarget(null); }}>
+        onClick={() => setInstallTarget(null)}>
         <div className="embed-card" style={{ maxWidth: 480, width: "90%", maxHeight: "80vh", overflow: "auto" }}
           onClick={e => e.stopPropagation()}>
           <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>
@@ -712,133 +725,74 @@ export function MarketEmbedClient() {
             {installTarget.description}
           </div>
 
-          {!installing && !installDone && (
-            <>
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Subdomain</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <input type="text" value={installForm.subdomain}
-                    onChange={e => setInstallForm(f => ({ ...f, subdomain: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "") }))}
-                    style={{
-                      flex: 1, padding: "6px 10px", fontSize: 13, borderRadius: 6,
-                      border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
-                      color: "var(--embed-text)", outline: "none",
-                    }} />
-                  <span className="embed-muted" style={{ fontSize: 13 }}>.{domain}</span>
-                </div>
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Subdomain</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <input type="text" value={installForm.subdomain}
+                onChange={e => setInstallForm(f => ({ ...f, subdomain: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "") }))}
+                style={{
+                  flex: 1, padding: "6px 10px", fontSize: 13, borderRadius: 6,
+                  border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
+                  color: "var(--embed-text)", outline: "none",
+                }} />
+              <span className="embed-muted" style={{ fontSize: 13 }}>.{domain}</span>
+            </div>
+          </div>
+
+          {installTarget.installParams?.map(param => (
+            <div key={param.name} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>
+                {param.label || param.name}
+                {param.required && <span style={{ color: "var(--embed-danger)" }}> *</span>}
               </div>
-
-              {installTarget.installParams?.map(param => (
-                <div key={param.name} style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>
-                    {param.label || param.name}
-                    {param.required && <span style={{ color: "var(--embed-danger)" }}> *</span>}
-                  </div>
-                  {param.description && (
-                    <div className="embed-muted" style={{ fontSize: 11, marginBottom: 4 }}>{param.description}</div>
-                  )}
-                  {param.choices ? (
-                    <select
-                      value={installForm.params[param.name] || ""}
-                      onChange={e => setInstallForm(f => ({ ...f, params: { ...f.params, [param.name]: e.target.value } }))}
-                      style={{
-                        width: "100%", padding: "6px 10px", fontSize: 13, borderRadius: 6,
-                        border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
-                        color: "var(--embed-text)", outline: "none",
-                      }}>
-                      <option value="">Select...</option>
-                      {param.choices.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  ) : (
-                    <input
-                      type={param.type === "number" ? "number" : "text"}
-                      value={installForm.params[param.name] || ""}
-                      onChange={e => setInstallForm(f => ({ ...f, params: { ...f.params, [param.name]: e.target.value } }))}
-                      placeholder={param.default || ""}
-                      style={{
-                        width: "100%", padding: "6px 10px", fontSize: 13, borderRadius: 6,
-                        border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
-                        color: "var(--embed-text)", outline: "none",
-                      }} />
-                  )}
-                </div>
-              ))}
-
-              {(installTarget.supportsSSO || installTarget.sso !== false) && (
-                <div className="embed-badge-green" style={{ marginBottom: 12, display: "inline-block", fontSize: 11 }}>
-                  SSO enabled automatically
-                </div>
+              {param.description && (
+                <div className="embed-muted" style={{ fontSize: 11, marginBottom: 4 }}>{param.description}</div>
               )}
+              {param.choices ? (
+                <select
+                  value={installForm.params[param.name] || ""}
+                  onChange={e => setInstallForm(f => ({ ...f, params: { ...f.params, [param.name]: e.target.value } }))}
+                  style={{
+                    width: "100%", padding: "6px 10px", fontSize: 13, borderRadius: 6,
+                    border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
+                    color: "var(--embed-text)", outline: "none",
+                  }}>
+                  <option value="">Select...</option>
+                  {param.choices.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              ) : (
+                <input
+                  type={param.type === "number" ? "number" : "text"}
+                  value={installForm.params[param.name] || ""}
+                  onChange={e => setInstallForm(f => ({ ...f, params: { ...f.params, [param.name]: e.target.value } }))}
+                  placeholder={param.default || ""}
+                  style={{
+                    width: "100%", padding: "6px 10px", fontSize: 13, borderRadius: 6,
+                    border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
+                    color: "var(--embed-text)", outline: "none",
+                  }} />
+              )}
+            </div>
+          ))}
 
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
-                <button className="embed-btn" onClick={() => setInstallTarget(null)}>Cancel</button>
-                <button className="embed-btn" onClick={handleInstall}
-                  disabled={!installForm.subdomain}
-                  style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}>
-                  Install
-                </button>
-              </div>
-            </>
+          {(installTarget.supportsSSO || installTarget.sso !== false) && (
+            <div className="embed-badge-green" style={{ marginBottom: 12, display: "inline-block", fontSize: 11 }}>
+              SSO enabled automatically
+            </div>
           )}
 
-          {(installing || installDone) && (
-            <>
-              <div ref={progressRef} style={{
-                maxHeight: 300, overflowY: "auto", fontSize: 12,
-                background: "var(--embed-bg)", borderRadius: 6,
-                border: "1px solid var(--embed-border)", padding: 10,
-              }}>
-                {installProgress.map((ev, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 4 }}>
-                    <span style={{
-                      flexShrink: 0, width: 14, textAlign: "center",
-                      color: ev.status === "success" ? "var(--embed-success)"
-                        : ev.status === "error" ? "var(--embed-danger)"
-                        : ev.status === "skipped" ? "var(--embed-text-muted)"
-                        : "var(--embed-primary)",
-                    }}>
-                      {ev.status === "success" ? "\u2713" : ev.status === "error" ? "\u2717" : ev.status === "skipped" ? "\u2013" : "\u25CF"}
-                    </span>
-                    <span style={{ color: ev.status === "error" ? "var(--embed-danger)" : "var(--embed-text)" }}>
-                      {ev.message}
-                      {ev.detail && <span className="embed-muted"> \u2014 {ev.detail}</span>}
-                    </span>
-                  </div>
-                ))}
-                {installing && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--embed-primary)" }}>
-                    <span style={{ animation: "embed-pulse 1s infinite" }}>{"\u25CF"}</span>
-                    <span>Working...</span>
-                  </div>
-                )}
-              </div>
-
-              {installing && installProgress.length > 0 && (() => {
-                const last = installProgress[installProgress.length - 1];
-                const pct = Math.round((last.step / Math.max(last.totalSteps, 1)) * 100);
-                return (
-                  <div className="embed-progress-track" style={{ marginTop: 8 }}>
-                    <div className="embed-progress-bar" style={{ width: `${pct}%`, background: "var(--embed-primary)" }} />
-                  </div>
-                );
-              })()}
-
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-                {installing && (
-                  <button className="embed-btn" onClick={handleCancelInstall}
-                    style={{ borderColor: "var(--embed-danger)", color: "var(--embed-danger)" }}>
-                    Cancel
-                  </button>
-                )}
-                {installDone && (
-                  <button className="embed-btn" onClick={() => { setInstallTarget(null); setInstallProgress([]); }}
-                    style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}>
-                    Close
-                  </button>
-                )}
-              </div>
-            </>
+          {installError && (
+            <div style={{ fontSize: 12, color: "var(--embed-danger)", marginBottom: 8 }}>{installError}</div>
           )}
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+            <button className="embed-btn" onClick={() => setInstallTarget(null)}>Cancel</button>
+            <button className="embed-btn" onClick={handleInstall}
+              disabled={!installForm.subdomain}
+              style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}>
+              Install
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -905,16 +859,20 @@ export function MarketEmbedClient() {
       {/* Active installs banner */}
       {activeInstalls.length > 0 && (
         <div className="embed-card" style={{ marginBottom: 16, borderColor: "var(--embed-primary)" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: "var(--embed-primary)" }}>
-            Installing...
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--embed-primary)" }}>
+            <span style={{ width: 14, height: 14, border: "2px solid var(--embed-primary)", borderTopColor: "transparent", borderRadius: "50%", animation: "embed-spin 0.8s linear infinite", display: "inline-block" }} />
+            Installing ({activeInstalls.length})
           </div>
           {activeInstalls.map(inst => {
             const last = inst.events[inst.events.length - 1];
             const pct = last ? Math.round((last.step / Math.max(last.totalSteps, 1)) * 100) : 0;
             return (
-              <div key={inst.appId} style={{ fontSize: 12, marginBottom: 4 }}>
-                <span style={{ fontWeight: 500 }}>{inst.appName}</span>
-                <span className="embed-muted"> \u2014 {last?.message || "Starting..."}</span>
+              <div key={inst.appId} style={{ fontSize: 12, marginBottom: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+                  <span style={{ fontWeight: 500 }}>{inst.appName}</span>
+                  <span className="embed-muted" style={{ fontSize: 11 }}>{pct}%</span>
+                </div>
+                <span className="embed-muted" style={{ fontSize: 11 }}>{last?.message || "Starting..."}</span>
                 <div className="embed-progress-track" style={{ marginTop: 4 }}>
                   <div className="embed-progress-bar" style={{ width: `${pct}%`, background: "var(--embed-primary)" }} />
                 </div>
@@ -923,6 +881,16 @@ export function MarketEmbedClient() {
           })}
         </div>
       )}
+
+      {/* Recently completed installs */}
+      {completedInstalls.length > 0 && apps.filter(a => completedInstalls.includes(a.id)).map(app => (
+        <div key={app.id} className="embed-card" style={{ marginBottom: 16, borderColor: "var(--embed-success)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--embed-success)" }}>
+            <span>{"\u2713"}</span>
+            <span style={{ fontWeight: 500 }}>{app.name}</span> installed successfully
+          </div>
+        </div>
+      ))}
 
       {/* Built for YouEye — native apps */}
       {nativeApps.length > 0 && (
@@ -948,7 +916,7 @@ export function MarketEmbedClient() {
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
                   {catApps.map(app => (
-                    <AppCard key={app.id} app={app} onSelect={setSelectedApp} onInstall={openInstallForm} onUninstall={setUninstallTarget} />
+                    <AppCard key={app.id} app={app} onSelect={setSelectedApp} onInstall={openInstallForm} onUninstall={setUninstallTarget} isInstalling={activeInstalls.some(i => i.appId === app.id)} />
                   ))}
                 </div>
               </div>
@@ -982,7 +950,7 @@ export function MarketEmbedClient() {
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
                   {catApps.map(app => (
-                    <AppCard key={app.id} app={app} onSelect={setSelectedApp} onInstall={openInstallForm} onUninstall={setUninstallTarget} />
+                    <AppCard key={app.id} app={app} onSelect={setSelectedApp} onInstall={openInstallForm} onUninstall={setUninstallTarget} isInstalling={activeInstalls.some(i => i.appId === app.id)} />
                   ))}
                 </div>
               </div>
@@ -1005,11 +973,12 @@ export function MarketEmbedClient() {
 
 // ─── App Card Component ───────────────────────────────────
 
-function AppCard({ app, onSelect, onInstall, onUninstall }: {
+function AppCard({ app, onSelect, onInstall, onUninstall, isInstalling }: {
   app: MarketApp;
   onSelect: (app: MarketApp) => void;
   onInstall: (app: MarketApp) => void;
   onUninstall: (app: MarketApp) => void;
+  isInstalling?: boolean;
 }) {
   const isNative = app.integration === "native";
 
@@ -1085,6 +1054,10 @@ function AppCard({ app, onSelect, onInstall, onUninstall }: {
               style={{ padding: "3px 10px", fontSize: 11, borderColor: "var(--embed-danger)", color: "var(--embed-danger)" }}>
               Uninstall
             </button>
+          ) : isInstalling ? (
+            <span className="embed-badge" style={{ fontSize: 10, color: "var(--embed-primary)", borderColor: "color-mix(in srgb, var(--embed-primary) 30%, transparent)" }}>
+              Installing...
+            </span>
           ) : (
             <button className="embed-btn" onClick={() => onInstall(app)}
               style={{ padding: "3px 10px", fontSize: 11, borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}>

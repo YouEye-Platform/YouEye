@@ -93,7 +93,7 @@ export function GreetingWidget({ settings }: GreetingWidgetProps) {
   // Terminal format: "> Good morning, name_" with blinking cursor
   if (preset.terminalFormat) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full items-center justify-center p-0">
         <div
           className={cn("wordart-animated", "inline-block")}
           style={style}
@@ -114,9 +114,9 @@ export function GreetingWidget({ settings }: GreetingWidgetProps) {
   }
 
   return (
-    <div className="flex h-full items-center justify-center">
+    <div className="flex h-full items-center justify-center p-0">
       <div
-        className={cn(preset.animation ? "wordart-animated" : undefined, "text-center")}
+        className={cn(preset.animation ? "wordart-animated" : undefined, "text-center leading-tight")}
         style={style}
       >
         {greeting},{" "}

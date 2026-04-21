@@ -1,16 +1,21 @@
 /**
  * Settings Page — Profile Section (Default)
  *
- * Shows profile information with ability to update display name and avatar.
+ * Shows profile information with:
+ * - CP embed for account name editing (synced to Authentik)
+ * - Local fields for bio, timezone, avatar
  */
 
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
+import { getSignedEmbedUrl } from "@/lib/admin/embed-token";
 import { ProfileSettings } from "@/components/settings/profile-settings";
 
 export default async function SettingsPage() {
   const session = await getSession();
   if (!session) redirect("/login");
+
+  const profileEmbedUrl = getSignedEmbedUrl("profile", session.username ?? "", session.isAdmin ?? false);
 
   return (
     <ProfileSettings
@@ -19,6 +24,7 @@ export default async function SettingsPage() {
       name={session.name ?? ""}
       email={session.email ?? ""}
       isAdmin={session.isAdmin ?? false}
+      profileEmbedUrl={profileEmbedUrl}
     />
   );
 }
