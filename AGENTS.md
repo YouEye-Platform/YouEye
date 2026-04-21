@@ -1,3 +1,24 @@
+## v0.3.2.3 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix sharp module missing from UI standalone build
+
+### Changes
+- `ui/scripts/postbuild.js` — Added sharp + full transitive dep tree (detect-libc, color, color-convert, color-string, color-name, simple-swizzle, is-arrayish, semver) to needed packages list; added Step 5b to copy @img/* native bindings from pnpm store
+- `ui/package.json` — Bumped 0.3.2.2 → 0.3.2.3
+
+### Root Cause
+pnpm hoists sharp to workspace root with symlinks. Next.js standalone copies the symlink as-is, but the relative `../../` resolves to `.next/` instead of the monorepo root. The postbuild Step 4 caught the broken symlink but silently skipped it.
+
+### Test Results
+- `node -e "require('sharp')"` inside youeye-ui container: OK
+- Avatar upload and emoji picker work end-to-end
+
+### Notes for Iris
+- This fix applies to all future UI builds — no manual intervention needed
+- No env var or DB changes
+
 ## v0.3.4.2 / v0.3.2.2 — vanya — 2026-04-21
 **Branch:** vanya
 **VM:** ye-vanya
