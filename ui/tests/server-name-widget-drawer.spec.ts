@@ -84,23 +84,27 @@ test.describe('Server Name Widget & App Drawer', () => {
     await page.screenshot({ path: 'test-results/04-homepage-server-name.png' });
   });
 
-  test('app drawer opens as popover dropdown', async () => {
+  test('app drawer opens as popover with pencil icon', async () => {
     await page.locator('button[aria-label="Apps"]').click();
     await page.waitForTimeout(500);
 
-    // Popover shows Manage Apps footer and Edit button
-    await expect(page.locator('text=Manage Apps')).toBeVisible();
-    await expect(page.locator('button:has-text("Edit")')).toBeVisible();
+    // Pencil icon in top-left, no "Manage Apps" text
+    await expect(page.locator('[title="Edit drawer"]')).toBeVisible();
     await page.screenshot({ path: 'test-results/05-drawer-open.png' });
   });
 
-  test('drawer edit mode shows controls', async () => {
-    await page.locator('button:has-text("Edit")').click();
+  test('drawer edit mode shows two-panel layout with controls', async () => {
+    await page.locator('[title="Edit drawer"]').click();
     await page.waitForTimeout(500);
 
+    // Edit mode header with Done button
     await expect(page.locator('button:has-text("Done editing")')).toBeVisible();
+    // Hidden panel on left
+    await expect(page.locator('text=HIDDEN')).toBeVisible();
+    // Controls at bottom
     await expect(page.locator('text=Columns')).toBeVisible();
     await expect(page.locator('text=Icon size')).toBeVisible();
+    await expect(page.locator('text=Max height')).toBeVisible();
     await page.screenshot({ path: 'test-results/06-drawer-edit.png' });
   });
 
@@ -120,7 +124,8 @@ test.describe('Server Name Widget & App Drawer', () => {
   test('exit edit mode', async () => {
     await page.locator('button:has-text("Done editing")').click();
     await page.waitForTimeout(500);
-    await expect(page.locator('button:has-text("Edit")')).toBeVisible();
+    // Back to normal mode — pencil icon visible
+    await expect(page.locator('[title="Edit drawer"]')).toBeVisible();
     await page.screenshot({ path: 'test-results/08-drawer-normal.png' });
   });
 

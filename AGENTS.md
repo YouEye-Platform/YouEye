@@ -1,3 +1,28 @@
+## v0.3.2.6 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** App drawer expandable edit mode + larger server name widget
+
+### Changes
+- `ui/src/components/layout/app-drawer.tsx` — Removed "Manage Apps", pencil icon (no text) in top-left, edit mode expands to near-full-height with hidden apps panel on left, drag-and-drop reordering between visible/hidden, controls footer with columns/icon-size/max-height
+- `ui/src/components/widgets/server-name-widget.tsx` — Increased font clamp to 6rem, reduced padding
+- `ui/src/components/widgets/index.ts` — Default size 40x10 → 52x13 (30% larger)
+- `ui/src/components/dashboard/widget-grid.tsx` — Updated DEFAULT_WIDGETS for server-name (57% width, 13% height)
+- `ui/src/lib/db/queries/widgets.ts` — Updated server-side DEFAULT_WIDGETS to match
+- `ui/package.json` — Bumped 0.3.2.5 → 0.3.2.6
+
+### Test Results
+- FIFO screenshots: /tmp/shots/v6-0{1-6}*.png — all verified
+- Drawer normal mode: compact popover with pencil icon, no Manage Apps
+- Drawer edit mode: two-panel with hidden apps on left, controls at bottom
+- Widget: bigger font, less empty space
+
+### Notes for Iris
+- Drag-and-drop uses HTML5 DnD API (no external deps)
+- Server name widget default size increase only affects new users or after Reset
+- No DB migrations
+
 ## v0.3.2.5 — vanya — 2026-04-21
 **Branch:** vanya
 **VM:** ye-vanya
