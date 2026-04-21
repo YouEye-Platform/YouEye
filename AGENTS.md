@@ -1,3 +1,27 @@
+## v0.3.4.6 — andrew — 2026-04-21
+**Branch:** andrew
+**VM:** ye-andrew
+**Agent:** Andrew
+**Task:** Admin credentials API + UI for marketplace apps; SSO variable resolution for callback_path/entry_url
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — Added `CredentialSchema` (label/username/passwordSecret) to manifest schema
+- `control-panel/src/lib/market/types.ts` — Added `CredentialSpec`, `CredentialMeta` types; added `credentials` and `ssoEntryUrl` to `InstallMetadata`
+- `control-panel/src/lib/market/engine.ts` — Persist credentials in install metadata; resolve variables in `entry_url` and `callback_path`
+- `control-panel/src/lib/market/platform-env.ts` — Inline variable resolution for `callback_path` in SSO context; added `credentials: []` to mock manifest
+- `control-panel/src/app/api/market/credentials/route.ts` — NEW: API endpoint to read admin credentials (secret values from disk)
+- `control-panel/src/app/api/market/status/route.ts` — Include `ssoEntryUrl` in app URL for "Open" button
+- `control-panel/src/app/(dashboard)/market/[appId]/page.tsx` — Credentials card with show/hide toggle and copy buttons
+
+### Test Results
+- CP builds and deploys successfully (v0.3.4.6, 10 containers running)
+- Credentials API returns admin passwords from disk secrets for installed apps
+
+### Notes for Iris
+- New manifest field: `credentials` — array of {label, username, passwordSecret}. Stored in install.json, values read from disk secrets at API time.
+- `callback_path` and `entry_url` now support variable resolution (`${authentik.name}`, `${app.id}`)
+- AppMarket manifests updated: all 5 external apps now have credentials sections; Memos/Jellyfin use `${authentik.name}` instead of hardcoded "Authentik"/"authentik"
+
 ## v0.3.4.5 — andrew — 2026-04-21
 **Branch:** andrew
 **VM:** ye-andrew
