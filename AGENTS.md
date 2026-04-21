@@ -1,3 +1,19 @@
+## v0.3.2.10 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Truly separate floating panels via createPortal
+
+### Changes
+- `ui/src/components/layout/app-drawer.tsx` — Replaced CSS absolute+overflow:visible approach (which failed — panels rendered inside popover box) with React createPortal. Satellite panels now render as independent DOM elements at document.body with position:fixed. Drawer stays 340px unchanged. Hidden apps shown as grid tiles. Uses useElementRect hook with ResizeObserver.
+- `ui/package.json` — Version bump 0.3.2.9 → 0.3.2.10
+
+### Test Results
+- FIFO screenshots verified: normal mode unchanged, edit mode shows 3 separate floating cards
+
+### Notes for Iris
+- No DB migrations. Uses React createPortal + position:fixed for satellite panels. onInteractOutside prevented in edit mode.
+
 ## v0.3.2.9 — vanya — 2026-04-21
 **Branch:** vanya
 **VM:** ye-vanya
