@@ -1,17 +1,15 @@
 /**
- * App Drawer — Google-style Popover with edit mode
+ * App Drawer — Google-style Popover with expandable edit mode
  *
- * Opens as a dropdown popover from the 9-dot grid button.
- * Normal mode: clean grid of visible apps (like Google's app launcher).
- * Edit mode: list view with show/hide and reorder controls.
- * Drawer preferences (columns, icon scale, max height) persist per-user.
+ * Normal: compact dropdown from the 9-dot grid button.
+ * Edit: expands to near-full-height with hidden apps panel on the left,
+ *       drag-and-drop reordering, and layout controls at the bottom.
  */
 
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
-  Settings,
   Search,
   BookOpen,
   StickyNote,
@@ -23,13 +21,9 @@ import {
   MessageCircle,
   Pencil,
   Check,
-  Minus,
   Plus,
   GripVertical,
-  Eye,
   EyeOff,
-  ChevronUp,
-  ChevronDown,
 } from "lucide-react";
 import type { ComponentType } from "react";
 
@@ -162,10 +156,11 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
   const [editMode, setEditMode] = useState(false);
   const [prefs, setPrefs] = useState<DrawerPrefs>(DEFAULT_PREFS);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
+  const [draggedAppId, setDraggedAppId] = useState<string | null>(null);
+  const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
   const savePrefsTimeout = useRef<NodeJS.Timeout | null>(null);
   const t = useTranslations("appDrawer");
 
-  // Fetch apps (all, including hidden)
   const fetchApps = useCallback(async () => {
     try {
       const res = await fetch("/api/v1/apps/drawer");
@@ -177,7 +172,6 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
     }
   }, []);
 
-  // Fetch drawer prefs
   const fetchPrefs = useCallback(async () => {
     try {
       const res = await fetch("/api/v1/apps/drawer/prefs");
@@ -202,7 +196,6 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
     }
   }, [open, fetchApps, fetchPrefs, prefsLoaded]);
 
-  // Save prefs with debounce
   const persistPrefs = useCallback((newPrefs: DrawerPrefs) => {
     setPrefs(newPrefs);
     if (savePrefsTimeout.current) clearTimeout(savePrefsTimeout.current);
@@ -215,7 +208,6 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
     }, 500);
   }, []);
 
-  // Toggle app visibility
   const toggleVisibility = useCallback(
     async (appId: string, visible: boolean) => {
       setAllApps((prev) =>
@@ -236,39 +228,39 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
     []
   );
 
-  // Move app up/down in order
-  const moveApp = useCallback(
-    async (appId: string, direction: "up" | "down") => {
+  const reorderApp = useCallback(
+    async (draggedId: string, targetId: string) => {
+      if (draggedId === targetId) return;
+
       setAllApps((prev) => {
-        const visibleApps = [...prev]
+        const visible = [...prev]
           .filter((a) => a.visible)
           .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
 
-        const idx = visibleApps.findIndex((a) => a.id === appId);
-        if (idx < 0) return prev;
-        const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-        if (swapIdx < 0 || swapIdx >= visibleApps.length) return prev;
+        const dragIdx = visible.findIndex((a) => a.id === draggedId);
+        const targetIdx = visible.findIndex((a) => a.id === targetId);
+        if (dragIdx < 0 || targetIdx < 0) return prev;
 
-        const thisApp = visibleApps[idx];
-        const swapApp = visibleApps[swapIdx];
-        const thisOrder = thisApp.order;
-        const swapOrder = swapApp.order;
+        // Remove dragged, insert at target position
+        const [dragged] = visible.splice(dragIdx, 1);
+        visible.splice(targetIdx, 0, dragged);
 
-        fetch(`/api/v1/apps/drawer/${thisApp.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ order: swapOrder }),
-        }).catch(() => {});
-        fetch(`/api/v1/apps/drawer/${swapApp.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ order: thisOrder }),
-        }).catch(() => {});
+        // Reassign orders
+        const orderMap = new Map<string, number>();
+        visible.forEach((a, i) => orderMap.set(a.id, i));
+
+        // Persist order changes
+        visible.forEach((a, i) => {
+          fetch(`/api/v1/apps/drawer/${a.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ order: i }),
+          }).catch(() => {});
+        });
 
         return prev.map((a) => {
-          if (a.id === thisApp.id) return { ...a, order: swapOrder };
-          if (a.id === swapApp.id) return { ...a, order: thisOrder };
-          return a;
+          const newOrder = orderMap.get(a.id);
+          return newOrder !== undefined ? { ...a, order: newOrder } : a;
         });
       });
     },
@@ -281,6 +273,54 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
       window.location.href = app.url;
       setOpen(false);
     }
+  };
+
+  // Drag handlers
+  const handleDragStart = (e: React.DragEvent, appId: string) => {
+    setDraggedAppId(appId);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", appId);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedAppId(null);
+    setDragOverTarget(null);
+  };
+
+  const handleDragOverApp = (e: React.DragEvent, appId: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverTarget(appId);
+  };
+
+  const handleDropOnApp = (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    if (draggedAppId && draggedAppId !== targetId) {
+      reorderApp(draggedAppId, targetId);
+    }
+    setDraggedAppId(null);
+    setDragOverTarget(null);
+  };
+
+  const handleDropOnHidden = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (draggedAppId) {
+      toggleVisibility(draggedAppId, false);
+    }
+    setDraggedAppId(null);
+    setDragOverTarget(null);
+  };
+
+  const handleDropOnVisible = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (draggedAppId) {
+      const app = allApps.find((a) => a.id === draggedAppId);
+      if (app && !app.visible) {
+        toggleVisibility(draggedAppId, true);
+      }
+    }
+    setDraggedAppId(null);
+    setDragOverTarget(null);
   };
 
   // Sorted app lists
@@ -318,177 +358,42 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
       <PopoverContent
         align="end"
         sideOffset={8}
-        className="w-[340px] rounded-xl p-0 origin-top-right"
+        className={
+          editMode
+            ? "w-[520px] rounded-xl p-0 origin-top-right transition-all duration-200"
+            : "w-[340px] rounded-xl p-0 origin-top-right transition-all duration-200"
+        }
+        style={editMode ? { maxHeight: "calc(100vh - 80px)" } : undefined}
       >
         {editMode ? (
-          <>
-            {/* Edit mode header */}
-            <div className="flex items-center justify-between px-3 py-2.5 border-b border-border/40">
-              <span className="text-sm font-medium">{t("title")}</span>
-              <Button
-                variant="default"
-                size="sm"
-                className="h-7 gap-1.5 text-xs"
-                onClick={() => setEditMode(false)}
-              >
-                <Check className="h-3.5 w-3.5" />
-                {t("doneEditing")}
-              </Button>
-            </div>
-
-            {/* Edit mode content */}
-            <ScrollArea className="max-h-[400px]">
-              <div className="p-3 space-y-3">
-                {/* Visible apps */}
-                <div>
-                  <div className="flex items-center gap-2 mb-1.5 px-1">
-                    <Eye className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                      In drawer ({visibleApps.length})
-                    </span>
-                  </div>
-                  {visibleApps.length === 0 ? (
-                    <div className="text-xs text-muted-foreground text-center py-3 border border-dashed border-border/60 rounded-lg">
-                      No apps in drawer
-                    </div>
-                  ) : (
-                    <div className="space-y-0.5">
-                      {visibleApps.map((app, idx) => (
-                        <EditAppRow
-                          key={app.id}
-                          app={app}
-                          isFirst={idx === 0}
-                          isLast={idx === visibleApps.length - 1}
-                          onHide={() => toggleVisibility(app.id, false)}
-                          onMoveUp={() => moveApp(app.id, "up")}
-                          onMoveDown={() => moveApp(app.id, "down")}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Hidden apps */}
-                {hiddenApps.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-1.5 px-1">
-                      <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                        Hidden ({hiddenApps.length})
-                      </span>
-                    </div>
-                    <div className="space-y-0.5">
-                      {hiddenApps.map((app) => (
-                        <div
-                          key={app.id}
-                          className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-accent/40 transition-colors opacity-60"
-                        >
-                          <div className="w-7 h-7 rounded-lg bg-accent/60 flex items-center justify-center overflow-hidden shrink-0">
-                            <AppIcon
-                              icon={app.icon}
-                              customIconUrl={app.custom_icon_url}
-                              name={app.name}
-                              className="w-5 h-5"
-                            />
-                          </div>
-                          <span className="text-sm flex-1 truncate">
-                            {app.name}
-                          </span>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 shrink-0"
-                            onClick={() => toggleVisibility(app.id, true)}
-                            title="Show in drawer"
-                          >
-                            <Plus className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-
-            {/* Drawer controls footer */}
-            <DrawerControls prefs={prefs} onPrefsChange={persistPrefs} />
-          </>
+          <EditModeView
+            visibleApps={visibleApps}
+            hiddenApps={hiddenApps}
+            prefs={prefs}
+            onPrefsChange={persistPrefs}
+            onDone={() => setEditMode(false)}
+            onToggleVisibility={toggleVisibility}
+            draggedAppId={draggedAppId}
+            dragOverTarget={dragOverTarget}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onDragOverApp={handleDragOverApp}
+            onDropOnApp={handleDropOnApp}
+            onDropOnHidden={handleDropOnHidden}
+            onDropOnVisible={handleDropOnVisible}
+            t={t}
+          />
         ) : (
-          <>
-            {/* Normal mode — Google-style grid */}
-            <ScrollArea style={{ maxHeight: prefs.maxHeight }}>
-              <div className="p-3">
-                {visibleApps.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-10 text-center">
-                    <p className="text-sm text-muted-foreground mb-3">
-                      {t("noAppsInstalled")}
-                    </p>
-                    {isAdmin && (
-                      <Link
-                        href="/app-market"
-                        className="text-sm text-primary hover:underline"
-                        onClick={() => setOpen(false)}
-                      >
-                        {t("visitMarketplace")}
-                      </Link>
-                    )}
-                  </div>
-                ) : (
-                  <div
-                    className="grid gap-1"
-                    style={{
-                      gridTemplateColumns: `repeat(${prefs.columns}, 1fr)`,
-                    }}
-                  >
-                    {visibleApps.map((app) => {
-                      const up = isAppUp(app.status);
-                      return (
-                        <div
-                          key={app.id}
-                          className={`relative flex flex-col items-center p-2 rounded-xl cursor-pointer transition-all duration-150 hover:bg-accent/60 hover:scale-105${up ? "" : " opacity-40 grayscale"}`}
-                          onClick={() => handleAppClick(app)}
-                          title={up ? app.name : `${app.name} — offline`}
-                        >
-                          <div className="w-10 h-10 rounded-xl bg-accent/80 flex items-center justify-center text-base font-medium shadow-sm overflow-hidden transition-transform duration-150">
-                            <AppIcon
-                              icon={app.icon}
-                              customIconUrl={app.custom_icon_url}
-                              name={app.name}
-                            />
-                          </div>
-                          <span className="text-[11px] text-center line-clamp-1 w-full mt-1.5 text-foreground/80 leading-tight">
-                            {app.name}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-
-            {/* Footer */}
-            <div className="border-t px-3 py-2.5 flex items-center justify-between">
-              <Link
-                href="/settings/apps"
-                className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
-                onClick={() => setOpen(false)}
-              >
-                <Settings className="h-3.5 w-3.5" />
-                {t("manageApps")}
-              </Link>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                onClick={() => setEditMode(true)}
-              >
-                <Pencil className="h-3 w-3" />
-                Edit
-              </Button>
-            </div>
-          </>
+          <NormalModeView
+            apps={visibleApps}
+            columns={prefs.columns}
+            maxHeight={prefs.maxHeight}
+            isAdmin={isAdmin}
+            onAppClick={handleAppClick}
+            onClose={() => setOpen(false)}
+            onEdit={() => setEditMode(true)}
+            t={t}
+          />
         )}
       </PopoverContent>
     </Popover>
@@ -496,68 +401,279 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
 }
 
 // ────────────────────────────────────────
-// Edit Mode Row
+// Normal Mode
 // ────────────────────────────────────────
 
-function EditAppRow({
-  app,
-  isFirst,
-  isLast,
-  onHide,
-  onMoveUp,
-  onMoveDown,
+function NormalModeView({
+  apps,
+  columns,
+  maxHeight,
+  isAdmin,
+  onAppClick,
+  onClose,
+  onEdit,
+  t,
 }: {
-  app: DrawerApp;
-  isFirst: boolean;
-  isLast: boolean;
-  onHide: () => void;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
+  apps: DrawerApp[];
+  columns: number;
+  maxHeight: number;
+  isAdmin: boolean;
+  onAppClick: (app: DrawerApp) => void;
+  onClose: () => void;
+  onEdit: () => void;
+  t: ReturnType<typeof useTranslations>;
 }) {
-  const up = isAppUp(app.status);
   return (
-    <div
-      className={`flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-accent/40 transition-colors${up ? "" : " opacity-40 grayscale"}`}
-    >
-      <GripVertical className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />
-      <div className="w-7 h-7 rounded-lg bg-accent/80 flex items-center justify-center overflow-hidden shrink-0">
-        <AppIcon
-          icon={app.icon}
-          customIconUrl={app.custom_icon_url}
-          name={app.name}
-          className="w-5 h-5"
-        />
-      </div>
-      <span className="text-sm flex-1 truncate">{app.name}</span>
-      <div className="flex items-center gap-0.5 shrink-0">
+    <>
+      {/* Pencil icon — top left */}
+      <div className="absolute top-2 left-2 z-10">
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6"
-          disabled={isFirst}
-          onClick={onMoveUp}
+          className="h-7 w-7 text-muted-foreground/60 hover:text-foreground"
+          onClick={onEdit}
+          title="Edit drawer"
         >
-          <ChevronUp className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          disabled={isLast}
-          onClick={onMoveDown}
-        >
-          <ChevronDown className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 text-destructive hover:text-destructive"
-          onClick={onHide}
-          title="Hide from drawer"
-        >
-          <Minus className="h-3.5 w-3.5" />
+          <Pencil className="h-3.5 w-3.5" />
         </Button>
       </div>
+
+      <ScrollArea style={{ maxHeight }}>
+        <div className="p-3 pt-2">
+          {apps.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 text-center">
+              <p className="text-sm text-muted-foreground mb-3">
+                {t("noAppsInstalled")}
+              </p>
+              {isAdmin && (
+                <Link
+                  href="/app-market"
+                  className="text-sm text-primary hover:underline"
+                  onClick={onClose}
+                >
+                  {t("visitMarketplace")}
+                </Link>
+              )}
+            </div>
+          ) : (
+            <div
+              className="grid gap-1"
+              style={{
+                gridTemplateColumns: `repeat(${columns}, 1fr)`,
+              }}
+            >
+              {apps.map((app) => {
+                const up = isAppUp(app.status);
+                return (
+                  <div
+                    key={app.id}
+                    className={`relative flex flex-col items-center p-2 rounded-xl cursor-pointer transition-all duration-150 hover:bg-accent/60 hover:scale-105${up ? "" : " opacity-40 grayscale"}`}
+                    onClick={() => onAppClick(app)}
+                    title={up ? app.name : `${app.name} — offline`}
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-accent/80 flex items-center justify-center text-base font-medium shadow-sm overflow-hidden transition-transform duration-150">
+                      <AppIcon
+                        icon={app.icon}
+                        customIconUrl={app.custom_icon_url}
+                        name={app.name}
+                      />
+                    </div>
+                    <span className="text-[11px] text-center line-clamp-1 w-full mt-1.5 text-foreground/80 leading-tight">
+                      {app.name}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+    </>
+  );
+}
+
+// ────────────────────────────────────────
+// Edit Mode — two-panel with drag-and-drop
+// ────────────────────────────────────────
+
+function EditModeView({
+  visibleApps,
+  hiddenApps,
+  prefs,
+  onPrefsChange,
+  onDone,
+  onToggleVisibility,
+  draggedAppId,
+  dragOverTarget,
+  onDragStart,
+  onDragEnd,
+  onDragOverApp,
+  onDropOnApp,
+  onDropOnHidden,
+  onDropOnVisible,
+  t,
+}: {
+  visibleApps: DrawerApp[];
+  hiddenApps: DrawerApp[];
+  prefs: DrawerPrefs;
+  onPrefsChange: (p: DrawerPrefs) => void;
+  onDone: () => void;
+  onToggleVisibility: (id: string, visible: boolean) => void;
+  draggedAppId: string | null;
+  dragOverTarget: string | null;
+  onDragStart: (e: React.DragEvent, id: string) => void;
+  onDragEnd: () => void;
+  onDragOverApp: (e: React.DragEvent, id: string) => void;
+  onDropOnApp: (e: React.DragEvent, id: string) => void;
+  onDropOnHidden: (e: React.DragEvent) => void;
+  onDropOnVisible: (e: React.DragEvent) => void;
+  t: ReturnType<typeof useTranslations>;
+}) {
+  return (
+    <div className="flex flex-col" style={{ maxHeight: "calc(100vh - 100px)" }}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border/40 shrink-0">
+        <span className="text-sm font-medium">{t("title")}</span>
+        <Button
+          variant="default"
+          size="sm"
+          className="h-7 gap-1.5 text-xs"
+          onClick={onDone}
+        >
+          <Check className="h-3.5 w-3.5" />
+          {t("doneEditing")}
+        </Button>
+      </div>
+
+      {/* Two-panel body */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        {/* Left panel — hidden apps */}
+        <div
+          className={`w-[160px] border-r border-border/40 flex flex-col shrink-0 transition-colors ${
+            draggedAppId ? "bg-muted/20" : ""
+          }`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+          }}
+          onDrop={onDropOnHidden}
+        >
+          <div className="flex items-center gap-1.5 px-3 py-2 border-b border-border/20">
+            <EyeOff className="h-3 w-3 text-muted-foreground" />
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+              Hidden ({hiddenApps.length})
+            </span>
+          </div>
+          <ScrollArea className="flex-1">
+            <div className="p-1.5 space-y-0.5">
+              {hiddenApps.length === 0 ? (
+                <div className="text-[10px] text-muted-foreground/50 text-center py-6 px-2">
+                  Drag apps here to hide
+                </div>
+              ) : (
+                hiddenApps.map((app) => (
+                  <div
+                    key={app.id}
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-grab transition-all hover:bg-accent/40 opacity-60 ${
+                      draggedAppId === app.id ? "opacity-30 scale-95" : ""
+                    }`}
+                    draggable
+                    onDragStart={(e) => onDragStart(e, app.id)}
+                    onDragEnd={onDragEnd}
+                  >
+                    <div className="w-6 h-6 rounded-md bg-accent/60 flex items-center justify-center overflow-hidden shrink-0">
+                      <AppIcon
+                        icon={app.icon}
+                        customIconUrl={app.custom_icon_url}
+                        name={app.name}
+                        className="w-4 h-4"
+                      />
+                    </div>
+                    <span className="text-[11px] truncate flex-1">
+                      {app.name}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-5 w-5 shrink-0 opacity-0 group-hover:opacity-100"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleVisibility(app.id, true);
+                      }}
+                      title="Show in drawer"
+                    >
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+
+        {/* Right panel — visible apps grid (drag-and-drop reorder) */}
+        <div
+          className="flex-1 flex flex-col min-h-0"
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+          }}
+          onDrop={onDropOnVisible}
+        >
+          <ScrollArea className="flex-1">
+            <div
+              className="grid gap-1 p-3"
+              style={{
+                gridTemplateColumns: `repeat(${prefs.columns}, 1fr)`,
+              }}
+            >
+              {visibleApps.map((app) => {
+                const up = isAppUp(app.status);
+                const isDragging = draggedAppId === app.id;
+                const isDragOver = dragOverTarget === app.id;
+                return (
+                  <div
+                    key={app.id}
+                    className={`relative flex flex-col items-center p-2 rounded-xl cursor-grab transition-all duration-150 ${
+                      isDragging
+                        ? "opacity-30 scale-90"
+                        : isDragOver
+                          ? "bg-primary/10 ring-2 ring-primary/30 scale-105"
+                          : "hover:bg-accent/60"
+                    }${up ? "" : " opacity-40 grayscale"}`}
+                    draggable
+                    onDragStart={(e) => onDragStart(e, app.id)}
+                    onDragEnd={onDragEnd}
+                    onDragOver={(e) => onDragOverApp(e, app.id)}
+                    onDrop={(e) => onDropOnApp(e, app.id)}
+                    title={app.name}
+                  >
+                    <GripVertical className="absolute top-0.5 right-0.5 h-3 w-3 text-muted-foreground/30" />
+                    <div className="w-10 h-10 rounded-xl bg-accent/80 flex items-center justify-center text-base font-medium shadow-sm overflow-hidden">
+                      <AppIcon
+                        icon={app.icon}
+                        customIconUrl={app.custom_icon_url}
+                        name={app.name}
+                      />
+                    </div>
+                    <span className="text-[11px] text-center line-clamp-1 w-full mt-1.5 text-foreground/80 leading-tight">
+                      {app.name}
+                    </span>
+                  </div>
+                );
+              })}
+              {visibleApps.length === 0 && (
+                <div className="col-span-full text-xs text-muted-foreground text-center py-8">
+                  Drag apps here to show
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+      </div>
+
+      {/* Controls footer */}
+      <DrawerControls prefs={prefs} onPrefsChange={onPrefsChange} />
     </div>
   );
 }
@@ -574,7 +690,7 @@ function DrawerControls({
   onPrefsChange: (p: DrawerPrefs) => void;
 }) {
   return (
-    <div className="border-t border-border/40 px-3 py-2.5 space-y-2 bg-muted/30">
+    <div className="border-t border-border/40 px-3 py-2.5 space-y-2 bg-muted/30 shrink-0">
       {/* Columns */}
       <div className="flex items-center justify-between">
         <span className="text-xs text-muted-foreground">Columns</span>
@@ -606,6 +722,25 @@ function DrawerControls({
           value={prefs.iconScale}
           onChange={(e) =>
             onPrefsChange({ ...prefs, iconScale: parseFloat(e.target.value) })
+          }
+          className="w-24 h-1.5 appearance-none bg-accent rounded-full cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:cursor-pointer"
+        />
+      </div>
+
+      {/* Max height */}
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs text-muted-foreground">Max height</span>
+        <input
+          type="range"
+          min="200"
+          max="700"
+          step="50"
+          value={prefs.maxHeight}
+          onChange={(e) =>
+            onPrefsChange({
+              ...prefs,
+              maxHeight: parseInt(e.target.value, 10),
+            })
           }
           className="w-24 h-1.5 appearance-none bg-accent rounded-full cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:cursor-pointer"
         />

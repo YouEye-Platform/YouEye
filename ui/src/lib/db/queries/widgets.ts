@@ -13,10 +13,10 @@ import { widgets } from "@/db/schema";
 const DEFAULT_WIDGETS = [
   {
     widgetType: "server-name",
-    positionX: 28,
-    positionY: 22,
-    width: 44,
-    height: 10,
+    positionX: 20,
+    positionY: 18,
+    width: 57,
+    height: 13,
     settings: {},
     order: 0,
   },

@@ -51,18 +51,18 @@ export function ServerNameWidget({ settings }: ServerNameWidgetProps) {
   // User override > admin style > default
   const baseStyle = userOverride ?? adminStyle ?? DEFAULT_WIDGET_STYLE;
 
-  // Scale up for prominent widget display
+  // Scale up for prominent widget display — fill the widget width
   const displayStyle = useMemo((): SiteNameStyle => {
     return {
       ...baseStyle,
-      fontSize: "clamp(2.5rem, 5vw, 4rem)",
+      fontSize: "clamp(3rem, 8vw, 6rem)",
     };
   }, [baseStyle]);
 
   if (!loaded || !siteName) return null;
 
   return (
-    <div className="flex h-full items-center justify-center">
+    <div className="flex h-full w-full items-center justify-center px-2">
       <SiteName name={siteName} style={displayStyle} as="h1" />
     </div>
   );

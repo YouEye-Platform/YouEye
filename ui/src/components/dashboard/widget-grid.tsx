@@ -57,8 +57,8 @@ const WIDGET_PREVIEW_ICONS: Record<string, LucideIcon> = {
 
 /** Default layout for the reset button */
 const DEFAULT_WIDGETS: Omit<WidgetData, "id">[] = [
-  { widgetType: "server-name", positionX: 28, positionY: 22, width: 44, height: 10, settings: {}, order: 0 },
-  { widgetType: "search", positionX: 30, positionY: 42, width: 40, height: 10, settings: {}, order: 1 },
+  { widgetType: "server-name", positionX: 20, positionY: 18, width: 57, height: 13, settings: {}, order: 0 },
+  { widgetType: "search", positionX: 30, positionY: 40, width: 40, height: 10, settings: {}, order: 1 },
   { widgetType: "clock", positionX: 80, positionY: 5, width: 14, height: 10, settings: {}, order: 2 },
 ];
 
