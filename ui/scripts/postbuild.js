@@ -170,7 +170,7 @@ const pnpmStoreDirs = [
 ];
 
 // Packages that Next.js standalone needs at runtime but doesn't bundle.
-const needed = ['next', 'react', 'react-dom', '@swc/helpers', '@swc/counter', '@next/env', 'styled-jsx', 'client-only', 'yaml', 'zod'];
+const needed = ['next', 'react', 'react-dom', '@swc/helpers', '@swc/counter', '@next/env', 'styled-jsx', 'client-only', 'yaml', 'zod', 'sharp', 'semver'];
 for (const pkg of needed) {
   const dest = path.join(nodeModulesPath, pkg);
   // Skip only if already properly present with actual code (not just package.json)
@@ -200,6 +200,33 @@ for (const pkg of needed) {
       require('child_process').execSync(`cp -rL "${storeSrc}" "${dest}"`);
     }
   }
+}
+// Step 5b: Copy sharp's @img native bindings from pnpm store
+// sharp v0.33+ uses @img/sharp-linux-x64 and @img/sharp-libvips-linux-x64
+// which are nested inside the pnpm store under sharp's own node_modules
+function findSharpImgDir(pnpmDir) {
+  if (!fs.existsSync(pnpmDir)) return null;
+  const entries = fs.readdirSync(pnpmDir).filter(e => e.startsWith('sharp@')).sort().reverse();
+  for (const entry of entries) {
+    const candidate = path.join(pnpmDir, entry, 'node_modules', '@img');
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+const imgSrc = findSharpImgDir(path.join(workspaceModules, '.pnpm')) || findSharpImgDir(path.join(localModules, '.pnpm'));
+if (imgSrc) {
+  const imgDest = path.join(nodeModulesPath, '@img');
+  fs.mkdirSync(imgDest, { recursive: true });
+  for (const pkg of fs.readdirSync(imgSrc)) {
+    const dest = path.join(imgDest, pkg);
+    if (fs.existsSync(dest)) continue;
+    const src = path.join(imgSrc, pkg);
+    console.log(`  Copying @img/${pkg} (sharp native binding)...`);
+    require('child_process').execSync(`cp -rL "${src}" "${dest}"`);
+  }
+  console.log('Done copying sharp native bindings');
+} else {
+  console.log('WARNING: @img native bindings for sharp not found in pnpm store');
 }
 console.log('Done copying workspace dependencies');
 
