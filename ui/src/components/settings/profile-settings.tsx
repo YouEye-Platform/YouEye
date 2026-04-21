@@ -1,15 +1,16 @@
 /**
  * Profile Settings
  *
- * Shows user profile info with editable first name, last name, bio, and timezone.
+ * Account name editing is handled by the CP embed (synced to Authentik).
+ * Bio, timezone, and avatar are UI-local fields.
  * Username/email come from Authentik SSO and are display-only.
  */
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslations } from "next-intl";
-import { User, Mail, Shield, Save, Loader2, MapPin, FileText } from "lucide-react";
+import { Save, Loader2, MapPin, FileText } from "lucide-react";
 
 interface ProfileSettingsProps {
   userId: string;
@@ -17,11 +18,10 @@ interface ProfileSettingsProps {
   name: string;
   email: string;
   isAdmin: boolean;
+  profileEmbedUrl: string;
 }
 
-interface ProfileData {
-  firstName: string;
-  lastName: string;
+interface LocalProfileData {
   bio: string;
   timezone: string;
 }
@@ -32,6 +32,7 @@ export function ProfileSettings({
   name,
   email,
   isAdmin,
+  profileEmbedUrl,
 }: ProfileSettingsProps) {
   const t = useTranslations("settings.profile");
   const [avatarUploading, setAvatarUploading] = useState(false);
@@ -40,32 +41,65 @@ export function ProfileSettings({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
+  const [displayName, setDisplayName] = useState(name);
+  const embedRef = useRef<HTMLIFrameElement>(null);
+  const [embedReady, setEmbedReady] = useState(false);
+  const [embedHeight, setEmbedHeight] = useState(200);
 
-  const [profile, setProfile] = useState<ProfileData>({
-    firstName: "",
-    lastName: "",
+  const [profile, setProfile] = useState<LocalProfileData>({
     bio: "",
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   });
 
-  // Load profile from API on mount
+  // Load local profile fields (bio, timezone, avatar) from API on mount
   useEffect(() => {
     fetch("/api/v1/user/profile")
       .then((r) => r.json())
       .then((data) => {
         setProfile({
-          firstName: data.firstName || "",
-          lastName: data.lastName || "",
           bio: data.bio || "",
           timezone: data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
         });
         if (data.image) {
           setAvatarUrl(data.image);
         }
+        // Update display name from latest DB state
+        const fullName = [data.firstName, data.lastName].filter(Boolean).join(" ");
+        if (fullName) setDisplayName(fullName);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  // Listen for profile updates from the CP embed
+  const handleMessage = useCallback((e: MessageEvent) => {
+    if (e.data?.type === "youeye-embed-ready" || e.data?.type === "youeye-embed-resize") {
+      setEmbedReady(true);
+    }
+    if (e.data?.type === "youeye-embed-resize" && typeof e.data.height === "number") {
+      setEmbedHeight(Math.max(e.data.height, 100));
+    }
+    if (e.data?.type === "youeye-profile-updated") {
+      // Name was changed in the CP embed — update local DB and display
+      const newName = [e.data.firstName, e.data.lastName].filter(Boolean).join(" ");
+      if (newName) setDisplayName(newName);
+
+      // Sync firstName/lastName to UI's local DB so it persists across SSO re-login
+      fetch("/api/v1/user/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          firstName: e.data.firstName || null,
+          lastName: e.data.lastName || null,
+        }),
+      }).catch(() => {});
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [handleMessage]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -112,7 +146,6 @@ export function ProfileSettings({
       }
 
       setAvatarUrl(data.url + "?t=" + Date.now());
-      // Dispatch event so header updates without page reload
       window.dispatchEvent(new CustomEvent("avatar-updated", { detail: { url: data.url } }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Avatar upload failed");
@@ -133,19 +166,13 @@ export function ProfileSettings({
     }
   };
 
-  const initials = (() => {
-    if (profile.firstName && profile.lastName) {
-      return `${profile.firstName[0]}${profile.lastName[0]}`.toUpperCase();
-    }
-    return (name || username || "?")
-      .split(" ")
-      .map((w) => w[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
-  })();
+  const initials = (displayName || username || "?")
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 
-  // Build a list of common timezones
   const timezones = (() => {
     try {
       return Intl.supportedValuesOf("timeZone");
@@ -167,14 +194,6 @@ export function ProfileSettings({
             <div className="h-4 w-32 bg-muted rounded" />
             <div className="h-3 w-20 bg-muted rounded" />
           </div>
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="space-y-2">
-              <div className="h-4 w-24 bg-muted rounded" />
-              <div className="h-10 bg-muted rounded" />
-            </div>
-          ))}
         </div>
       </div>
     );
@@ -218,7 +237,7 @@ export function ProfileSettings({
         </div>
 
         <div>
-          <p className="font-medium">{name || username}</p>
+          <p className="font-medium">{displayName || username}</p>
           <p className="text-sm text-muted-foreground">
             {isAdmin ? t("administrator") : t("user")}
           </p>
@@ -233,58 +252,36 @@ export function ProfileSettings({
         </div>
       </div>
 
-      {/* Editable fields */}
+      {/* Account Name — CP embed (synced to Authentik) */}
+      <div className="max-w-lg">
+        <div className="relative">
+          {!embedReady && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg border border-border bg-background" style={{ minHeight: 100 }}>
+              <div className="space-y-3 w-full max-w-md px-8">
+                <div className="h-4 w-3/4 rounded bg-muted animate-pulse" />
+                <div className="h-4 w-full rounded bg-muted animate-pulse" />
+              </div>
+            </div>
+          )}
+          <iframe
+            ref={embedRef}
+            src={profileEmbedUrl}
+            title="Account Name"
+            sandbox="allow-scripts allow-same-origin allow-forms"
+            style={{
+              width: "100%",
+              height: embedHeight,
+              border: "none",
+              borderRadius: 8,
+              opacity: embedReady ? 1 : 0,
+              transition: "opacity 0.2s ease",
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Local fields: bio, timezone */}
       <div className="space-y-4 max-w-lg">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <label className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <User className="w-4 h-4" />
-              {t("firstName")}
-            </label>
-            <input
-              type="text"
-              value={profile.firstName}
-              onChange={(e) => setProfile({ ...profile, firstName: e.target.value })}
-              className="w-full px-3 py-2 bg-background border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder={t("firstName")}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <User className="w-4 h-4" />
-              {t("lastName")}
-            </label>
-            <input
-              type="text"
-              value={profile.lastName}
-              onChange={(e) => setProfile({ ...profile, lastName: e.target.value })}
-              className="w-full px-3 py-2 bg-background border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder={t("lastName")}
-            />
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-            <User className="w-4 h-4" />
-            {t("username")}
-          </label>
-          <div className="px-3 py-2 bg-muted rounded-md text-sm">
-            {username}
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-            <Mail className="w-4 h-4" />
-            {t("email")}
-          </label>
-          <div className="px-3 py-2 bg-muted rounded-md text-sm">
-            {email}
-          </div>
-        </div>
-
         <div className="space-y-1.5">
           <label className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
             <FileText className="w-4 h-4" />
@@ -315,14 +312,7 @@ export function ProfileSettings({
           </select>
         </div>
 
-        {isAdmin && (
-          <div className="flex items-center gap-2 px-3 py-2 bg-primary/10 text-primary rounded-md text-sm">
-            <Shield className="w-4 h-4" />
-            {t("adminPrivileges")}
-          </div>
-        )}
-
-        {/* Save button */}
+        {/* Save button (bio & timezone) */}
         <div className="flex items-center gap-3">
           <button
             onClick={handleSave}

@@ -357,13 +357,13 @@ export async function POST(request: NextRequest) {
             let userId: number;
             if (exactMatch) {
               userId = exactMatch.pk;
-              // Update name fields if provided
+              // Update name/email if provided
+              // Note: Authentik only has a single "name" field (no first_name/last_name).
+              // Our custom OIDC scope mapping splits "name" into given_name/family_name.
               const patchData: Record<string, string> = {};
-              if (body.admin_first_name) patchData.first_name = body.admin_first_name;
-              if (body.admin_last_name) patchData.last_name = body.admin_last_name;
-              if (body.admin_email) patchData.email = body.admin_email;
               const fullNameForPatch = [body.admin_first_name, body.admin_last_name].filter(Boolean).join(' ');
               if (fullNameForPatch) patchData.name = fullNameForPatch;
+              if (body.admin_email) patchData.email = body.admin_email;
               if (Object.keys(patchData).length > 0) {
                 await authentikAPI(akConfig, `/core/users/${userId}/`, 'PATCH', patchData);
               }
@@ -372,14 +372,13 @@ export async function POST(request: NextRequest) {
               });
               stepUpdate('admin', 'done', `Updated existing user "${body.admin_username}"`);
             } else {
+              // Authentik only has a single "name" field — no first_name/last_name.
               const fullName = [body.admin_first_name, body.admin_last_name].filter(Boolean).join(' ') || body.admin_username;
               const user = await authentikAPI<{ pk: number }>(akConfig, '/core/users/', 'POST', {
                 username: body.admin_username,
                 name: fullName,
                 email: body.admin_email,
                 is_active: true,
-                ...(body.admin_first_name && { first_name: body.admin_first_name }),
-                ...(body.admin_last_name && { last_name: body.admin_last_name }),
               });
               userId = user.pk;
               await authentikAPI(akConfig, `/core/users/${userId}/set_password/`, 'POST', {
@@ -458,12 +457,46 @@ export async function POST(request: NextRequest) {
           if (!invFlowPk) throw new Error('No invalidation flow found');
 
           // Get scope mappings
-          const mappings = await authentikAPI<{ results: Array<{ pk: string; scope_name: string; managed: string }> }>(
+          const mappings = await authentikAPI<{ results: Array<{ pk: string; scope_name: string; managed: string; name: string }> }>(
             akConfig, '/propertymappings/provider/scope/?page_size=100'
           );
+
+          // Start with all default managed scope mappings EXCEPT the default profile one
+          // (we replace it with our custom split-name version below)
+          const defaultProfileManaged = 'goauthentik.io/providers/oauth2/scope-profile';
           const scopePks = mappings.results
-            ?.filter(m => m.managed?.startsWith('goauthentik.io/providers/oauth2/scope-'))
+            ?.filter(m => m.managed?.startsWith('goauthentik.io/providers/oauth2/scope-') && m.managed !== defaultProfileManaged)
             .map(m => m.pk) || [];
+
+          // Ensure custom profile scope mapping that splits "name" into given_name/family_name.
+          // Authentik only stores a single "name" field; the default mapping returns the full
+          // name as given_name (breaking first/last name split). Our mapping fixes this.
+          const profileExpression = [
+            'name_parts = request.user.name.split(" ", 1) if request.user.name else [""]',
+            'given = name_parts[0] if name_parts else ""',
+            'family = name_parts[1] if len(name_parts) > 1 else ""',
+            '',
+            'return {',
+            '    "name": request.user.name,',
+            '    "given_name": given,',
+            '    "family_name": family,',
+            '    "preferred_username": request.user.username,',
+            '    "nickname": request.user.username,',
+            '    "groups": [group.name for group in request.user.ak_groups.all()],',
+            '}',
+          ].join('\n');
+
+          let profileMappingPk = mappings.results?.find(m => m.name === 'YouEye: OpenID profile (split name)')?.pk;
+          if (!profileMappingPk) {
+            const pm = await authentikAPI<{ pk: string }>(akConfig, '/propertymappings/provider/scope/', 'POST', {
+              name: 'YouEye: OpenID profile (split name)',
+              scope_name: 'profile',
+              description: 'Profile scope with first/last name split from full name',
+              expression: profileExpression,
+            });
+            profileMappingPk = pm.pk;
+          }
+          scopePks.push(profileMappingPk);
 
           // Ensure groups scope mapping (idempotent)
           let groupsMappingPk = mappings.results?.find(m => m.scope_name === 'groups')?.pk;
