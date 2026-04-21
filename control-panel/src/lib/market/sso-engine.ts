@@ -83,10 +83,10 @@ async function executeStep(step: SSOStep, ctx: StepContext): Promise<void> {
 
   // Handle forEach on a GET response
   if (step.forEach) {
-    const response = await executeHTTPStep(step, ctx);
-    if (response === null) return;
+    const result = await executeHTTPStep(step, ctx);
+    if (result === null) return;
 
-    const items = extractIterableItems(response, step.forEach);
+    const items = extractIterableItems(result.body, step.forEach);
     if (step.action && items) {
       for (const item of items) {
         if (step.condition) {
@@ -100,24 +100,44 @@ async function executeStep(step: SSOStep, ctx: StepContext): Promise<void> {
   }
 
   // Standard step
-  const response = await executeHTTPStep(step, ctx);
-  if (response === null) return;
+  const result = await executeHTTPStep(step, ctx);
+  if (result === null) return;
 
-  // Extract token from response
-  if (step.extractToken && response) {
-    const token = extractValueFromPath(response, step.extractToken.from);
+  // Extract token from JSON response body
+  if (step.extractToken && result.body) {
+    const token = extractValueFromPath(result.body, step.extractToken.from);
     if (token) {
       ctx.tokens[step.extractToken.as] = String(token);
     }
   }
 
-  // Save response for later steps
-  if (step.saveAs && response) {
-    ctx.saved[step.saveAs] = response;
+  // Extract token from Set-Cookie response header.
+  // Also checks Grpc-Metadata-Set-Cookie (gRPC-gateway prefixes response metadata).
+  if (step.extractCookie && result.response) {
+    const setCookie = result.response.headers.get('set-cookie')
+      || result.response.headers.get('grpc-metadata-set-cookie')
+      || '';
+    const cookieMatch = setCookie.match(
+      new RegExp(`(?:^|[,;]\\s*)${escapeRegExp(step.extractCookie.name)}=([^;,]+)`)
+    );
+    if (cookieMatch) {
+      ctx.tokens[step.extractCookie.as] = cookieMatch[1];
+    }
+  }
+
+  // Save response body for later steps
+  if (step.saveAs && result.body) {
+    ctx.saved[step.saveAs] = result.body;
   }
 }
 
-async function executeHTTPStep(step: SSOStep, ctx: StepContext): Promise<unknown> {
+/** Result from an HTTP step — body + raw response for header extraction. */
+interface HTTPStepResult {
+  body: unknown;
+  response: Response;
+}
+
+async function executeHTTPStep(step: SSOStep, ctx: StepContext): Promise<HTTPStepResult | null> {
   const url = resolveStepVariables(step.url!, ctx);
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -156,10 +176,10 @@ async function executeHTTPStep(step: SSOStep, ctx: StepContext): Promise<unknown
       throw new Error(`SSO step ${step.method} ${url} failed: ${res.status} ${text}`);
     }
 
-    if (res.status === 204) return {};
+    if (res.status === 204) return { body: {}, response: res };
     const text = await res.text();
-    if (!text) return {};
-    return JSON.parse(text);
+    if (!text) return { body: {}, response: res };
+    return { body: JSON.parse(text), response: res };
   } catch (err) {
     if (step.ignoreError) return null;
     throw err;
@@ -379,4 +399,9 @@ function setNestedValue(obj: Record<string, unknown>, dotPath: string, value: un
   }
 
   current[parts[parts.length - 1]] = value;
+}
+
+/** Escape special regex characters in a string. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

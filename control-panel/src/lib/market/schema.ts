@@ -155,6 +155,12 @@ export const SSOStepSchema = z.object({
       as: z.string().min(1),
     })
     .optional(),
+  extractCookie: z
+    .object({
+      name: z.string().min(1),
+      as: z.string().min(1),
+    })
+    .optional(),
   saveAs: z.string().optional(),
   ignoreError: z.boolean().optional().default(false),
   condition: z.string().optional(),
