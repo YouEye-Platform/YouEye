@@ -1,3 +1,32 @@
+## v0.3.2.4 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Server Name WordArt widget, compact widgets, app drawer overhaul
+
+### Changes
+- `ui/src/components/widgets/server-name-widget.tsx` — NEW: Server Name WordArt widget displaying instance name with user's wordart style
+- `ui/src/components/widgets/index.ts` — Added server-name to catalog, reduced greeting/clock default sizes
+- `ui/src/components/widgets/greeting-widget.tsx` — Compact layout (p-0, leading-tight)
+- `ui/src/components/widgets/clock-widget.tsx` — Compact layout (text-3xl, gap-0.5, text-xs date)
+- `ui/src/components/dashboard/widget-grid.tsx` — Default widgets now use server-name instead of greeting
+- `ui/src/components/layout/app-drawer.tsx` — Full rewrite: Sheet-based panel with edit mode, column/scale/height controls
+- `ui/src/components/layout/navbar.tsx` — Pass isAdmin to AppDrawer
+- `ui/src/lib/db/queries/settings.ts` — DrawerPrefs get/save functions
+- `ui/src/lib/db/queries/widgets.ts` — Updated DEFAULT_WIDGETS
+- `ui/src/app/api/v1/apps/drawer/prefs/route.ts` — NEW: Drawer prefs API
+- `ui/messages/{en,de,es,fr,ru}.json` — Added serverName i18n key
+- `ui/tests/server-name-widget-drawer.spec.ts` — 10 Playwright tests
+
+### Test Results
+- Playwright: 10 tests, all passed (31s)
+- Screenshots: Tests/Vanya/playwright/test-results/
+
+### Notes for Iris
+- No DB migrations needed — drawer prefs stored in existing user_settings JSONB
+- Existing users keep their old widget layout; new defaults only apply to new users or after Reset
+- The "Manage Apps" footer in the app drawer is removed — settings page app drawer management is unchanged
+
 ## v0.3.2.3 — vanya — 2026-04-21
 **Branch:** vanya
 **VM:** ye-vanya
