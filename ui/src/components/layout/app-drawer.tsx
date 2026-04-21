@@ -530,10 +530,10 @@ function EditModeView({
   t: ReturnType<typeof useTranslations>;
 }) {
   return (
-    <div className="flex flex-col p-3 gap-3" style={{ maxHeight: "calc(100vh - 100px)" }}>
+    <div className="flex flex-col p-4 gap-4" style={{ maxHeight: "calc(100vh - 100px)" }}>
       {/* Header */}
       <div className="flex items-center justify-between shrink-0">
-        <span className="text-sm font-medium">{t("title")}</span>
+        <span className="text-sm font-semibold">{t("title")}</span>
         <Button
           variant="default"
           size="sm"
@@ -545,12 +545,14 @@ function EditModeView({
         </Button>
       </div>
 
-      {/* Two-panel body — each panel in its own card */}
-      <div className="flex flex-1 min-h-0 gap-2.5">
+      {/* Two-panel body — each panel in its own distinct card */}
+      <div className="flex flex-1 min-h-0 gap-3">
         {/* Left card — hidden apps */}
         <div
-          className={`w-[155px] rounded-lg border border-border/60 flex flex-col shrink-0 transition-colors overflow-hidden ${
-            draggedAppId ? "bg-muted/30 border-dashed" : "bg-muted/10"
+          className={`w-[155px] rounded-xl border bg-card shadow-sm flex flex-col shrink-0 transition-all overflow-hidden ${
+            draggedAppId
+              ? "border-primary/40 bg-primary/5 border-dashed shadow-md"
+              : "border-border"
           }`}
           onDragOver={(e) => {
             e.preventDefault();
@@ -558,16 +560,16 @@ function EditModeView({
           }}
           onDrop={onDropOnHidden}
         >
-          <div className="flex items-center gap-1.5 px-2.5 py-2">
-            <EyeOff className="h-3 w-3 text-muted-foreground" />
-            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+          <div className="flex items-center gap-1.5 px-3 py-2.5 border-b border-border/50">
+            <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
               Hidden ({hiddenApps.length})
             </span>
           </div>
           <ScrollArea className="flex-1">
-            <div className="px-1.5 pb-1.5 space-y-0.5">
+            <div className="p-2 space-y-0.5">
               {hiddenApps.length === 0 ? (
-                <div className="text-[10px] text-muted-foreground/40 text-center py-6 px-2">
+                <div className="text-[11px] text-muted-foreground/50 text-center py-6 px-2">
                   Drag apps here to hide
                 </div>
               ) : (
@@ -613,7 +615,11 @@ function EditModeView({
 
         {/* Right card — visible apps grid */}
         <div
-          className="flex-1 rounded-lg border border-border/60 flex flex-col min-h-0 overflow-hidden bg-background"
+          className={`flex-1 rounded-xl border bg-card shadow-sm flex flex-col min-h-0 overflow-hidden ${
+            draggedAppId && !visibleApps.find((a) => a.id === draggedAppId)
+              ? "border-primary/40 bg-primary/5 shadow-md"
+              : "border-border"
+          }`}
           onDragOver={(e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = "move";
@@ -690,7 +696,7 @@ function DrawerControls({
   onPrefsChange: (p: DrawerPrefs) => void;
 }) {
   return (
-    <div className="rounded-lg border border-border/60 px-3 py-2.5 space-y-2 bg-muted/20 shrink-0">
+    <div className="rounded-xl border border-border bg-card shadow-sm px-3 py-2.5 space-y-2 shrink-0">
       {/* Columns */}
       <div className="flex items-center justify-between">
         <span className="text-xs text-muted-foreground">Columns</span>
