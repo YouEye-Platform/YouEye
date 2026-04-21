@@ -940,6 +940,17 @@ export async function installApp(
  * Inject Caddy's root CA certificate into an OCI container's trust store.
  * This allows the container to make HTTPS calls to other services
  * (like Authentik) that use Caddy's self-signed certificates.
+ *
+ * Handles two scenarios:
+ * 1. System CA store: creates the directory if missing, runs update-ca-certificates
+ *    (works for curl, Python requests, Go apps, etc.)
+ * 2. Node.js: writes cert to /tmp/caddy-root.crt — Node.js ignores system CAs
+ *    but reads NODE_EXTRA_CA_CERTS (set separately in container env).
+ *
+ * For Node.js apps, the engine also sets NODE_TLS_REJECT_UNAUTHORIZED=0
+ * in the container environment when SSO is enabled. This is a practical
+ * necessity because NODE_EXTRA_CA_CERTS is only read at process startup,
+ * and the cert is injected after the container is already running.
  */
 async function injectCaddyRootCA(containerName: string): Promise<void> {
   // Read the Caddy root CA from the Caddy container
@@ -950,9 +961,17 @@ async function injectCaddyRootCA(containerName: string): Promise<void> {
   );
   if (!certPem || !certPem.includes('BEGIN CERTIFICATE')) return;
 
-  // Write the cert into the target container and update the trust store
+  // Write the cert into the target container:
+  // 1. System CA store (mkdir -p in case the dir doesn't exist in OCI images)
+  // 2. /tmp/caddy-root.crt as a fallback for NODE_EXTRA_CA_CERTS
   const escaped = certPem.replace(/'/g, "'\\''");
-  await execShell(containerName, `echo '${escaped}' > /usr/local/share/ca-certificates/caddy-root.crt && update-ca-certificates 2>/dev/null || true`, { timeout: 10_000 });
+  await execShell(containerName,
+    `mkdir -p /usr/local/share/ca-certificates/ && ` +
+    `echo '${escaped}' > /usr/local/share/ca-certificates/caddy-root.crt && ` +
+    `echo '${escaped}' > /tmp/caddy-root.crt && ` +
+    `update-ca-certificates 2>/dev/null || true`,
+    { timeout: 10_000 }
+  );
 }
 
 // Re-export for backward compat

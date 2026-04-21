@@ -136,6 +136,26 @@ export async function getAuthentikExternalUrl(): Promise<string | null> {
 }
 
 /**
+ * Find a usable signing key in Authentik for RS256 JWT signing.
+ * Returns the certificate PK, or undefined if none found.
+ */
+async function findSigningKey(config: AuthentikConfig): Promise<string | undefined> {
+  try {
+    const certs = await authentikAPI<{ results: Array<{ pk: string; name: string }> }>(
+      config,
+      '/crypto/certificatekeypairs/?has_key=true&page_size=50'
+    );
+    const selfSigned = certs.results?.find((c) => c.name.includes('Self-signed'));
+    const pk = (selfSigned ?? certs.results?.[0])?.pk;
+    console.log(`[authentik] findSigningKey: found=${!!pk} pk=${pk} count=${certs.results?.length}`);
+    return pk;
+  } catch (err) {
+    console.warn('[authentik] findSigningKey failed:', err);
+    return undefined;
+  }
+}
+
+/**
  * Create an OAuth2 provider and application in Authentik for a market app.
  */
 export async function createAuthentikOAuth2App(params: {
@@ -178,6 +198,9 @@ export async function createAuthentikOAuth2App(params: {
       scopeMappingPks.push(m.pk);
     }
   }
+
+  // Find signing key — required for RS256 ID token signing (apps like Immich reject HS256)
+  const signingKeyPk = await findSigningKey(config);
 
   // Generate client secret
   const secretBytes = new Uint8Array(32);
@@ -224,6 +247,7 @@ export async function createAuthentikOAuth2App(params: {
     access_code_validity: 'minutes=1',
     access_token_validity: 'minutes=5',
     refresh_token_validity: 'days=30',
+    ...(signingKeyPk ? { signing_key: signingKeyPk } : {}),
   });
 
   // Create Application
