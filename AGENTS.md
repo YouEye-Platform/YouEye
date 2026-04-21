@@ -1,3 +1,30 @@
+## v0.3.4.1 / v0.3.2.1 — vanya — 2026-04-21
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Profile name sync to Authentik, silent SSO for CP embeds, user self-profile
+
+### Changes
+- `control-panel/src/app/api/setup/run/route.ts` — Remove fake first_name/last_name from Authentik API calls; add custom OIDC profile scope mapping creation during setup
+- `control-panel/src/components/embed/auth-error.tsx` — Replace manual Sign In button with auto-redirect through SSO (silent if user already authenticated)
+- `control-panel/src/app/api/auth/sso/route.ts` — Accept ?redirect= param, store in cookie for post-login redirect
+- `control-panel/src/app/api/auth/callback/route.ts` — Read oauth-redirect cookie, redirect to embed page instead of /
+- `control-panel/src/app/api/user/profile/route.ts` — New: GET/PATCH own profile via Authentik (non-admin safe)
+- `control-panel/src/app/embed/profile/page.tsx` — New: profile embed page (user role, not admin-only)
+- `control-panel/src/app/embed/profile/client.tsx` — New: profile editing form (first/last name, synced to Authentik)
+- `ui/src/app/settings/page.tsx` — Pass CP profile embed URL to profile settings
+- `ui/src/components/settings/profile-settings.tsx` — Replace inline name fields with CP embed; keep bio/timezone/avatar local; listen for profile-updated messages
+
+### Test Results
+- CP deployed v0.3.4.1, UI deployed v0.3.2.1
+- spine status: 8 running, 0 stopped
+- Authentik OIDC scope mapping updated (split name into given_name/family_name)
+
+### Notes for Iris
+- Authentik scope mapping change is applied live via API (not in code). The setup wizard now creates it on fresh installs.
+- The custom scope mapping "YouEye: OpenID profile (split name)" replaces the default profile mapping in both OIDC providers.
+- CP deploy path is /opt/app (not /opt/youeye-control). UI deploy path is /opt/youeye-ui.
+
 ## v0.2.22.13 — iris — 2026-04-20
 **Branch:** dev
 **VM:** ye-iris
