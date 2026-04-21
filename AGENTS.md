@@ -1,3 +1,22 @@
+## v0.3.4.5 — andrew — 2026-04-21
+**Branch:** andrew
+**VM:** ye-andrew
+**Agent:** Andrew
+**Task:** Add extractCookie to SSO engine for cookie-based auth apps (Memos)
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — Added `extractCookie` field to SSOStepSchema (name + as)
+- `control-panel/src/lib/market/sso-engine.ts` — Cookie extraction from Set-Cookie and Grpc-Metadata-Set-Cookie headers; refactored executeHTTPStep to return headers alongside body
+
+### Test Results
+- Memos installed successfully with full SSO configuration via cookie-based auth
+- Admin user created with HOST role, Authentik identity provider configured
+- Clean reinstall verified (uninstall → fresh install → all 9 steps pass)
+
+### Notes for Iris
+- New SSO engine feature: `extractCookie` — needed for any app that returns auth tokens via cookies instead of JSON response body (gRPC-gateway apps like Memos)
+- No breaking changes to existing manifests — extractToken still works as before
+
 ## v0.3.4.4 / v0.3.2.2 — andrew — 2026-04-21
 **Branch:** andrew
 **VM:** ye-andrew
