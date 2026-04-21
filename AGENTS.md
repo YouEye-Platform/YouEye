@@ -1,3 +1,28 @@
+## v0.3.4.4 / v0.3.2.2 — andrew — 2026-04-21
+**Branch:** andrew
+**VM:** ye-andrew
+**Agent:** Andrew
+**Task:** Fix external app icons in app drawer and Jellyfin icon/screenshot in App Market
+
+### Changes
+- `control-panel/src/app/api/market/image/route.ts` — Added `jellyfin.org` to ALLOWED_DOMAINS so Jellyfin screenshots can be proxied
+- `ui/src/app/api/market/image/route.ts` — NEW: Image proxy route mirroring CP's endpoint, so app drawer icons (stored as `/api/market/image?url=...`) resolve on the UI domain
+- `ui/src/middleware.ts` — Added `/api/market/image` to PUBLIC_ROUTES (no auth required for icon serving)
+- `ui/package.json` — Bumped to 0.3.2.2
+- `control-panel/package.json` — Bumped to 0.3.4.4
+
+### Test Results
+- Playwright: 8 FIFO screenshots, all verified
+- Jellyfin icon visible in App Market card and detail page
+- Jellyfin screenshot visible in App Market detail page
+- Jellyfin icon visible in App Drawer (was broken placeholder before)
+- UI image proxy returns HTTP 200 for Gitea-hosted SVG icons
+
+### Notes for Iris
+- The UI now has `/api/market/image` route — must be included in builds
+- All external app manifests in YE-AppMarket now use relative iconUrl paths (branch-independent)
+- Existing installed apps with `/api/market/image?url=...` in their icon DB column will work automatically with the new UI proxy
+
 ## v0.3.4.3 — andrew — 2026-04-21
 **Branch:** andrew
 **VM:** ye-andrew
