@@ -52,6 +52,7 @@
   },
   "widgets": {
     "searchPlaceholder": "Поиск в интернете...",
+    "serverName": "Имя сервера",
     "clock": "Часы",
     "greeting": "Приветствие",
     "search": "Поиск",

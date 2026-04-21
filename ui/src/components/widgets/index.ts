@@ -6,6 +6,7 @@
  */
 
 import { GreetingWidget } from "./greeting-widget";
+import { ServerNameWidget } from "./server-name-widget";
 import { SearchWidget } from "./search-widget";
 import { ClockWidget } from "./clock-widget";
 import { TimelinePreviewWidget } from "./timeline-preview-widget";
@@ -46,13 +47,22 @@ export { AppWidget };
 
 export const WIDGET_CATALOG: WidgetMeta[] = [
   {
+    id: "server-name",
+    name: "Server Name",
+    description: "Instance name with WordArt styling — like a search engine logo",
+    category: "built-in",
+    component: ServerNameWidget,
+    defaultSize: { width: 40, height: 10 },
+    minSize: { width: 15, height: 5 },
+  },
+  {
     id: "greeting",
     name: "Greeting",
     description: "Personalized greeting with time-based message",
     category: "built-in",
     component: GreetingWidget,
-    defaultSize: { width: 40, height: 10 },
-    minSize: { width: 20, height: 6 },
+    defaultSize: { width: 35, height: 8 },
+    minSize: { width: 18, height: 5 },
     settingsSchema: [
       {
         key: "name",
@@ -78,8 +88,8 @@ export const WIDGET_CATALOG: WidgetMeta[] = [
     description: "Digital clock with date display",
     category: "built-in",
     component: ClockWidget,
-    defaultSize: { width: 18, height: 15 },
-    minSize: { width: 12, height: 10 },
+    defaultSize: { width: 14, height: 10 },
+    minSize: { width: 10, height: 7 },
     settingsSchema: [
       {
         key: "showSeconds",

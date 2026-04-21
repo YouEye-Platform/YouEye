@@ -45,7 +45,7 @@ export function Navbar({
             <Home className="h-4 w-4" />
           </Link>
         </Button>
-        <AppDrawer />
+        <AppDrawer isAdmin={isAdmin} />
         <NotificationBell />
         <UserMenu username={username} email={email} isAdmin={isAdmin} />
       </div>

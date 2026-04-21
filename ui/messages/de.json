@@ -52,6 +52,7 @@
   },
   "widgets": {
     "searchPlaceholder": "Im Web suchen...",
+    "serverName": "Servername",
     "clock": "Uhr",
     "greeting": "Begrüßung",
     "search": "Suche",

@@ -37,11 +37,11 @@ export function ClockWidget({ settings }: ClockWidgetProps) {
   });
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-1">
-      <span className="text-4xl font-light tabular-nums tracking-wider text-foreground">
+    <div className="flex h-full flex-col items-center justify-center gap-0.5 p-0">
+      <span className="text-3xl font-light tabular-nums tracking-wider text-foreground leading-tight">
         {timeStr}
       </span>
-      <span className="text-sm text-muted-foreground">{dateStr}</span>
+      <span className="text-xs text-muted-foreground leading-tight">{dateStr}</span>
     </div>
   );
 }
