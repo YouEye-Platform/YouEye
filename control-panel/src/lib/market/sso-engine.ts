@@ -53,6 +53,16 @@ export async function executeSSOSteps(
 }
 
 async function executeStep(step: SSOStep, ctx: StepContext): Promise<void> {
+  // Delay step — wait before proceeding (used for restart-and-wait flows)
+  if (step.delay) {
+    await new Promise(resolve => setTimeout(resolve, step.delay));
+  }
+
+  // Delay-only step (no method/url) — just wait, nothing else to do
+  if (!step.method || !step.url) {
+    return;
+  }
+
   // Evaluate condition — but skip pre-evaluation for forEach steps where the
   // condition references the iteration variable (e.g., "provider.title contains 'Authentik'").
   // Those conditions are meant to filter each item, not gate the entire step.
@@ -108,18 +118,25 @@ async function executeStep(step: SSOStep, ctx: StepContext): Promise<void> {
 }
 
 async function executeHTTPStep(step: SSOStep, ctx: StepContext): Promise<unknown> {
-  const url = resolveStepVariables(step.url, ctx);
+  const url = resolveStepVariables(step.url!, ctx);
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
 
-  // Apply auth
-  if (step.auth) {
+  // Apply custom headers first (can override Content-Type, Authorization, etc.)
+  if (step.headers) {
+    for (const [key, value] of Object.entries(step.headers)) {
+      headers[key] = resolveStepVariables(value, ctx);
+    }
+  }
+
+  // Apply Bearer auth only if no custom Authorization header was set
+  if (step.auth && !step.headers?.['Authorization']) {
     const token = resolveStepVariables(step.auth, ctx);
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const options: RequestInit = { method: step.method, headers };
+  const options: RequestInit = { method: step.method!, headers };
 
   // Handle body with special merge/set logic
   if (step.body !== undefined) {
@@ -184,7 +201,13 @@ async function executeActionStep(
     'Content-Type': 'application/json',
   };
 
-  if (action.auth) {
+  if (action.headers) {
+    for (const [key, value] of Object.entries(action.headers)) {
+      headers[key] = resolveStepVariables(value, ctx);
+    }
+  }
+
+  if (action.auth && !action.headers?.['Authorization']) {
     headers['Authorization'] = `Bearer ${resolveStepVariables(action.auth, ctx)}`;
   }
 

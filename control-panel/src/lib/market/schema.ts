@@ -143,10 +143,12 @@ export const ConfigFileSchema = z.object({
 // ─── SSO (v2: setup methods) ──────────────────────────────
 
 export const SSOStepSchema = z.object({
-  method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']),
-  url: z.string().min(1),
+  method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']).optional(),
+  url: z.string().optional(),
   body: z.unknown().optional(),
   auth: z.string().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  delay: z.number().int().positive().optional(),
   extractToken: z
     .object({
       from: z.string().min(1),
@@ -162,6 +164,7 @@ export const SSOStepSchema = z.object({
       method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']),
       url: z.string().min(1),
       auth: z.string().optional(),
+      headers: z.record(z.string(), z.string()).optional(),
     })
     .optional(),
 });
