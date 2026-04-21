@@ -37,9 +37,9 @@ export async function executeSSOSteps(
   sso: SSOConfig,
   baseCtx: Partial<VariableContext>
 ): Promise<void> {
-  if (!sso.configure || sso.configure.type === 'none' || sso.configure.steps.length === 0) {
-    return;
-  }
+  if (!sso.setup || sso.setup.method === 'none') return;
+  const steps = sso.setup.api?.steps ?? [];
+  if (steps.length === 0) return;
 
   const ctx: StepContext = {
     variables: baseCtx,
@@ -47,7 +47,7 @@ export async function executeSSOSteps(
     saved: {},
   };
 
-  for (const step of sso.configure.steps) {
+  for (const step of steps) {
     await executeStep(step, ctx);
   }
 }

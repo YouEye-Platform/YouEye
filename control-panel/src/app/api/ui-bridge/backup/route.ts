@@ -34,11 +34,11 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch installed apps for the schedule table
-    let apps: Array<{ appId: string; type: string; subdomain?: string; installedVersion?: string }> = [];
+    let apps: Array<{ appId: string; integration: string; subdomain?: string; installedVersion?: string }> = [];
     try {
       apps = (await listInstalledApps()).map(a => ({
         appId: a.appId,
-        type: a.type || 'marketplace',
+        integration: a.integration,
         subdomain: a.subdomain,
         installedVersion: a.installedVersion,
       }));

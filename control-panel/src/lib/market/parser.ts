@@ -1,14 +1,14 @@
 /**
- * YAML parser for youeye-file.yaml manifests.
+ * YAML parser for youeye-app.yaml manifests.
  * Parses YAML text and validates against the AppManifest schema.
  */
 
 import { parse as parseYAML } from 'yaml';
-import { AppManifestSchema, CatalogSchema, AppRefSchema } from './schema';
-import type { AppManifest, Catalog, AppRef } from './types';
+import { AppManifestSchema, CatalogSchema } from './schema';
+import type { AppManifest, Catalog } from './types';
 
 /**
- * Parse and validate a youeye-file.yaml manifest.
+ * Parse and validate a youeye-app.yaml manifest.
  * Throws on invalid YAML or schema validation failure.
  */
 export function parseManifest(yamlText: string): AppManifest {
@@ -22,14 +22,6 @@ export function parseManifest(yamlText: string): AppManifest {
 export function parseCatalog(yamlText: string): Catalog {
   const raw = parseYAML(yamlText);
   return CatalogSchema.parse(raw);
-}
-
-/**
- * Parse and validate an app-ref pointer YAML (native app reference).
- */
-export function parseAppRef(yamlText: string): AppRef {
-  const raw = parseYAML(yamlText);
-  return AppRefSchema.parse(raw);
 }
 
 /**

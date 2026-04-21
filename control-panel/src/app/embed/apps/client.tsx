@@ -276,7 +276,7 @@ function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit }
             <span style={{ fontWeight: 500, fontSize: 13 }}>{app.displayName}</span>
             {app.version && <span className="embed-muted" style={{ fontSize: 12 }}>v{app.version}</span>}
             <span className="embed-badge" style={{ fontSize: 10 }}>
-              {app.integration === "native" || app.type === "native" ? "native" : app.type || "community"}
+              {app.integration === "native" ? "native" : "community"}
             </span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>

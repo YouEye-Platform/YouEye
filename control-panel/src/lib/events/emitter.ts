@@ -193,7 +193,7 @@ async function deliverToApps(event: PlatformEvent): Promise<void> {
 
       // Derive port from manifest
       const primarySpec = manifest?.containers?.find((c) => c.primary) || manifest?.containers?.[0];
-      const port = primarySpec?.port || (manifest?.native?.port) || 3000;
+      const port = primarySpec?.port || 3000;
 
       const payload = JSON.stringify(event);
 

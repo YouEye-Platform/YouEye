@@ -1,17 +1,15 @@
 /**
- * Catalog fetcher (v2) — pulls app manifests from AppMarket, app repos, or URLs.
+ * Catalog fetcher — pulls app manifests from AppMarket, app repos, or URLs.
  *
- * v2 changes:
- *   - Flat catalog: `apps[]` instead of `native[]`/`external[]`
- *   - Catalog entries can have `repo` (manifest in app's own repo) or `file` (manifest in AppMarket)
- *   - New: install from repo URL (any repo with youeye-app.yaml)
- *   - Supports both v1 and v2 catalog formats
+ * Catalog format: flat `apps[]` list. Each entry has `repo` (manifest in
+ * app's own repo) or `file` (manifest in AppMarket). Also supports install
+ * from arbitrary repo URL (any repo with youeye-app.yaml).
  */
 
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
-import { parseCatalog, parseManifest, parseAppRef } from './parser';
+import { parseCatalog, parseManifest } from './parser';
 import type { AppManifest, Catalog, CatalogEntry, MarketApp } from './types';
 import { settingsService } from '@/lib/settings';
 
@@ -102,49 +100,11 @@ export async function fetchCatalog(): Promise<Catalog> {
   }
 }
 
-// ─── Catalog Entry Resolution ─────────────────────────────
-
-/**
- * Get all catalog entries as a flat list (supports v1 and v2 formats).
- */
-function getAllEntries(catalog: Catalog): CatalogEntry[] {
-  const entries: CatalogEntry[] = [];
-
-  // v2 flat list
-  if (catalog.apps && catalog.apps.length > 0) {
-    entries.push(...catalog.apps);
-  }
-
-  // v1 legacy: convert native + external to flat entries
-  if (catalog.native) {
-    for (const n of catalog.native) {
-      // Only add if not already in v2 apps list
-      if (!entries.find(e => e.id === n.id)) {
-        entries.push({
-          id: n.id,
-          file: n.file,
-          manifest: 'youeye-app.yaml',
-          integration: 'native',
-        });
-      }
-    }
-  }
-  if (catalog.external) {
-    for (const e of catalog.external) {
-      if (!entries.find(x => x.id === e.id)) {
-        entries.push(e);
-      }
-    }
-  }
-
-  return entries;
-}
-
 // ─── Manifest Fetching ────────────────────────────────────
 
 /**
  * Fetch a manifest by app ID from the catalog.
- * Supports v2 (repo reference or inline file) and v1 (app-ref indirection).
+ * Entry has `repo` (manifest in app's own repo) or `file` (manifest in AppMarket).
  */
 export async function fetchManifest(appId: string): Promise<AppManifest> {
   const cached = manifestCache.get(appId);
@@ -154,8 +114,7 @@ export async function fetchManifest(appId: string): Promise<AppManifest> {
 
   const catalog = await fetchCatalog();
   const branch = await getEffectiveBranch();
-  const entries = getAllEntries(catalog);
-  const entry = entries.find(e => e.id === appId);
+  const entry = catalog.apps.find(e => e.id === appId);
 
   if (!entry) throw new Error(`App "${appId}" not found in catalog`);
 
@@ -164,7 +123,6 @@ export async function fetchManifest(appId: string): Promise<AppManifest> {
   let resolveRepo = REPO_NAME;
 
   if (entry.repo) {
-    // v2: manifest lives in app's own repo
     const [owner, repoName] = entry.repo.split('/');
     resolveOwner = owner;
     resolveRepo = repoName;
@@ -172,22 +130,8 @@ export async function fetchManifest(appId: string): Promise<AppManifest> {
     const yamlText = await fetchRepoFile(owner, repoName, manifestFile, branch);
     manifest = parseManifest(yamlText);
   } else if (entry.file) {
-    // Check if it's an app-ref pointer (v1 native)
     const yamlText = await fetchFile(entry.file, branch);
-
-    // Try to parse as app-ref first
-    try {
-      const ref = parseAppRef(yamlText);
-      // It's an app-ref — fetch the actual manifest from the referenced repo
-      const [owner, repoName] = ref.repo.split('/');
-      resolveOwner = owner;
-      resolveRepo = repoName;
-      const manifestYaml = await fetchRepoFile(owner, repoName, ref.manifest, branch);
-      manifest = parseManifest(manifestYaml);
-    } catch {
-      // Not an app-ref — it's a direct manifest file
-      manifest = parseManifest(yamlText);
-    }
+    manifest = parseManifest(yamlText);
   } else {
     throw new Error(`Catalog entry for "${appId}" has neither repo nor file`);
   }
@@ -260,17 +204,6 @@ function resolveManifestPaths(manifest: AppManifest, owner: string, repo: string
 // ─── MarketApp Conversion ─────────────────────────────────
 
 function manifestToMarketApp(manifest: AppManifest): MarketApp {
-  // Determine integration level
-  const integration = manifest.integration || (manifest.type === 'native' ? 'native' : 'basic');
-
-  // Determine SSO support
-  const supportsSSO = !!manifest.sso || manifest.features?.supportsSSO || false;
-
-  // Collect install params from root level or native block
-  const installParams = manifest.installParams?.length
-    ? manifest.installParams
-    : manifest.native?.installParams;
-
   return {
     id: manifest.metadata.id,
     name: manifest.metadata.name,
@@ -278,11 +211,10 @@ function manifestToMarketApp(manifest: AppManifest): MarketApp {
     icon: manifest.metadata.icon,
     iconUrl: manifest.metadata.iconUrl,
     category: manifest.metadata.category,
-    integration: integration as 'native' | 'basic',
-    type: manifest.type ?? (integration === 'native' ? 'native' : 'marketplace'), // Legacy compat
+    integration: manifest.integration,
     version: manifest.version,
     defaultSubdomain: manifest.metadata.defaultSubdomain,
-    supportsSSO,
+    supportsSSO: !!manifest.sso,
     website: manifest.metadata.website,
     tags: manifest.metadata.tags,
     detail: manifest.detail ? {
@@ -292,7 +224,7 @@ function manifestToMarketApp(manifest: AppManifest): MarketApp {
         caption: s.caption,
       })),
     } : undefined,
-    installParams: installParams?.map((p) => ({
+    installParams: manifest.installParams?.map((p) => ({
       name: p.name,
       label: p.label,
       required: p.required,
@@ -317,11 +249,10 @@ function manifestToMarketApp(manifest: AppManifest): MarketApp {
 
 export async function fetchAvailableApps(): Promise<MarketApp[]> {
   const catalog = await fetchCatalog();
-  const entries = getAllEntries(catalog);
   const apps: MarketApp[] = [];
 
   const results = await Promise.allSettled(
-    entries.map(async (entry) => {
+    catalog.apps.map(async (entry) => {
       const manifest = await fetchManifest(entry.id);
       return manifestToMarketApp(manifest);
     })
@@ -357,8 +288,7 @@ export async function getNativeApps(): Promise<MarketApp[]> {
     catalog = cached.catalog;
   }
 
-  const entries = getAllEntries(catalog);
-  const nativeEntries = entries.filter(e => e.integration === 'native');
+  const nativeEntries = catalog.apps.filter(e => e.integration === 'native');
   const nativeApps: MarketApp[] = [];
 
   for (const entry of nativeEntries) {

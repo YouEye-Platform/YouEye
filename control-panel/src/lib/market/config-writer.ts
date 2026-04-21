@@ -70,17 +70,11 @@ export async function writeAllConfigFiles(
  * Returns null if the manifest has no language config.
  */
 export function readLanguageConfig(
-  manifest: AppManifest,
-  systemLang: string
+  _manifest: AppManifest,
+  _systemLang: string
 ): { envVar: string; value: string } | null {
-  if (!manifest.language) return null;
-
-  const { env_var, format } = manifest.language;
-  const value = format === 'full'
-    ? (FULL_LANG_NAMES[systemLang] || 'english')
-    : systemLang;
-
-  return { envVar: env_var, value };
+  // Language is now handled via env_mapping with ${platform.locale}
+  return null;
 }
 
 /**

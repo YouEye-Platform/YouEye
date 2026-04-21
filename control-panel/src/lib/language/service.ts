@@ -120,12 +120,15 @@ async function getAppsWithLanguageSupport(): Promise<Array<{
     for (const app of installed) {
       try {
         const manifest = await fetchManifest(app.appId);
-        if (manifest?.language) {
+        // Language support is declared via env_mapping with ${platform.locale}
+        const envMapping = manifest?.env_mapping ?? {};
+        const localeVar = Object.entries(envMapping).find(([, v]) => v.includes('${platform.locale'));
+        if (localeVar) {
           result.push({
             appId: app.appId,
             containers: app.containers.map((c: any) => typeof c === 'string' ? c : c.containerName),
-            envVar: manifest.language.env_var,
-            format: manifest.language.format || 'iso639',
+            envVar: localeVar[0],
+            format: 'iso639',
           });
         }
       } catch {

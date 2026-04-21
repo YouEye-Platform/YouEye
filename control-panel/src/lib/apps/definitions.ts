@@ -290,17 +290,17 @@ export function getAppByContainer(containerName: string): AppDefinition | undefi
  */
 export function appDefinitionFromManifest(
   manifest: { metadata: { id: string; name: string; description: string; icon: string };
-    native?: { repo: string; containerName: string; port: number; appDir?: string; healthCheck?: { type: string; path?: string } };
-    containers?: Array<{ name: string; primary?: boolean; image?: string; port?: number; healthCheck?: unknown }>;
-    type?: string },
+    integration?: 'native' | 'basic';
+    containers: Array<{ name: string; primary?: boolean; image?: string; port?: number; type?: string; source?: { repo?: string; appDir?: string }; healthCheck?: { type: string; path?: string } }> },
   installMeta?: { subdomain?: string }
 ): AppDefinition {
-  const isNative = !!manifest.native;
   const appId = manifest.metadata.id;
+  const containers = manifest.containers;
+  const primary = containers.find((c) => c.primary) || containers[0];
 
-  if (isNative) {
-    const n = manifest.native!;
-    const repoName = n.repo.includes('/') ? n.repo.split('/').pop()! : n.repo;
+  if (manifest.integration === 'native' || primary?.type === 'lxd') {
+    const containerName = containers.length === 1 ? `app-${appId}` : `app-${appId}-${primary.name}`;
+    const repoName = primary?.source?.repo?.includes('/') ? primary.source.repo.split('/').pop()! : (primary?.source?.repo || appId);
     return {
       id: appId,
       displayName: manifest.metadata.name,
@@ -308,20 +308,19 @@ export function appDefinitionFromManifest(
       icon: manifest.metadata.icon,
       category: 'user',
       type: 'lxd',
-      containers: [{ name: n.containerName, canControl: true }],
+      containers: [{ name: containerName, canControl: true }],
       updatedBy: 'control-panel',
-      webPort: n.port,
+      webPort: primary?.port || 3000,
       lxdConfig: {
         giteaRepo: repoName,
-        appDir: n.appDir || '/opt/app',
-        serviceName: n.containerName,
-        healthEndpoint: n.healthCheck?.type === 'http' ? (n.healthCheck.path || '/api/health') : '/api/health',
+        appDir: primary?.source?.appDir || '/opt/app',
+        serviceName: containerName,
+        healthEndpoint: primary?.healthCheck?.type === 'http' ? (primary.healthCheck.path || '/api/health') : '/api/health',
       },
     };
   }
 
-  // OCI marketplace app
-  const containers = manifest.containers || [];
+  // OCI app
   return {
     id: appId,
     displayName: manifest.metadata.name,
@@ -333,9 +332,9 @@ export function appDefinitionFromManifest(
       name: containers.length === 1 ? `app-${appId}` : `app-${appId}-${c.name}`,
       canControl: true,
     })),
-    imageRef: containers.find((c) => c.primary)?.image || containers[0]?.image,
+    imageRef: primary?.image || containers[0]?.image,
     updatedBy: 'control-panel',
-    webPort: containers.find((c) => c.primary)?.port || containers[0]?.port,
+    webPort: primary?.port || containers[0]?.port,
   };
 }
 

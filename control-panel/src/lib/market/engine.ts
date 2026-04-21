@@ -1,5 +1,5 @@
 /**
- * App Market deployment engine (v2).
+ * App Market deployment engine.
  * Unified YAML-driven installer — no more native/marketplace branching.
  *
  * Flow for ANY app:
@@ -173,7 +173,7 @@ function countSteps(manifest: AppManifest, ssoEnabled: boolean): number {
   let steps = 1; // Generate secrets
 
   // Database setup
-  const dbMode = manifest.database?.mode || (manifest.features?.requiresSharedPostgres ? 'shared' : 'none');
+  const dbMode = manifest.database?.mode ?? 'none';
   if (dbMode === 'shared') steps++;
 
   if (manifest.configFiles.length > 0) steps++;
@@ -188,8 +188,7 @@ function countSteps(manifest: AppManifest, ssoEnabled: boolean): number {
   // SSO configure steps
   const hasConfigureSteps = ssoEnabled && manifest.sso && (
     (manifest.sso.setup?.method === 'api' && (manifest.sso.setup.api?.steps?.length ?? 0) > 0) ||
-    (manifest.sso.setup?.method === 'cli' && (manifest.sso.setup.cli?.steps?.length ?? 0) > 0) ||
-    (manifest.sso.configure?.type === 'http-api' && (manifest.sso.configure.steps?.length ?? 0) > 0)
+    (manifest.sso.setup?.method === 'cli' && (manifest.sso.setup.cli?.steps?.length ?? 0) > 0)
   );
   if (hasConfigureSteps) steps++;
 
@@ -388,10 +387,9 @@ export async function installApp(
   const totalSteps = countSteps(manifest, ssoEnabled);
   let step = 0;
 
-  // Determine database mode (v2 field or legacy fallback)
-  const dbMode = manifest.database?.mode || (manifest.features?.requiresSharedPostgres ? 'shared' : 'none');
-  const dbName = manifest.database?.name || manifest.sharedPostgres?.database || '';
-  const dbUser = manifest.database?.user || manifest.sharedPostgres?.user || '';
+  const dbMode = manifest.database?.mode ?? 'none';
+  const dbName = manifest.database?.name ?? '';
+  const dbUser = manifest.database?.user ?? '';
 
   // Rollback context — tracks resources created so far for cleanup on failure
   const rollbackCtx: RollbackContext = {
@@ -491,15 +489,6 @@ export async function installApp(
 
       if (manifest.sso.callback_path) {
         redirectUris.push({ matching_mode: 'strict', url: `${appUrl}${manifest.sso.callback_path}` });
-      }
-
-      // Legacy v1 redirectUris
-      if (manifest.sso.redirectUris) {
-        const prelimCtx = await buildCanonicalContext(manifest, config, undefined, dbPassword);
-        prelimCtx.secrets = secrets;
-        for (const r of manifest.sso.redirectUris) {
-          redirectUris.push({ matching_mode: 'strict', url: resolveVariables(r.url, prelimCtx) });
-        }
       }
 
       for (const cb of manifest.sso.additional_callbacks || []) {
@@ -715,11 +704,9 @@ export async function installApp(
 
   // ── Step 7: SSO Configure Steps ─────────────────────────
 
-  const ssoSetupMethod = manifest.sso?.setup?.method || manifest.sso?.configure?.type;
-  const hasConfigureSteps = ssoEnabled && manifest.sso && (
-    (ssoSetupMethod === 'api' && ((manifest.sso.setup?.api?.steps?.length ?? 0) > 0 || (manifest.sso.configure?.steps?.length ?? 0) > 0)) ||
-    (ssoSetupMethod === 'cli' && (manifest.sso.setup?.cli?.steps?.length ?? 0) > 0) ||
-    (ssoSetupMethod === 'http-api' && (manifest.sso.configure?.steps?.length ?? 0) > 0)
+  const hasConfigureSteps = ssoEnabled && manifest.sso?.setup && (
+    (manifest.sso.setup.method === 'api' && (manifest.sso.setup.api?.steps?.length ?? 0) > 0) ||
+    (manifest.sso.setup.method === 'cli' && (manifest.sso.setup.cli?.steps?.length ?? 0) > 0)
   );
 
   if (hasConfigureSteps) {
@@ -740,7 +727,7 @@ export async function installApp(
           await execShell(primaryContainerName, resolvedCmd, { timeout: cliStep.timeout });
         }
       } else {
-        // API-based SSO setup (v2 or legacy v1)
+        // API-based SSO setup
         await executeSSOSteps(manifest.sso!, ctx);
       }
       emit(onEvent, step, totalSteps, 'success', `${manifest.metadata.name} SSO configured`);
@@ -813,12 +800,9 @@ export async function installApp(
   emit(onEvent, step, totalSteps, 'running', 'Saving configuration...');
   const installedVersion = manifest.version ?? '';
 
-  // Determine integration level
-  const integration = manifest.integration || (manifest.type === 'native' ? 'native' : 'basic');
-
   const meta: InstallMetadata = {
     appId,
-    integration: integration as 'native' | 'basic',
+    integration: manifest.integration,
     subdomain: config.subdomain,
     domain: config.domain,
     enableSSO: ssoEnabled,
@@ -836,7 +820,7 @@ export async function installApp(
   try {
     await upsertInstalledApp({
       appId,
-      type: integration,
+      type: manifest.integration,
       installedVersion,
       subdomain: config.subdomain,
       ssoSlug,
