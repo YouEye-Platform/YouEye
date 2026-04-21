@@ -77,15 +77,18 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
       }
     } catch {}
 
+    const baseUrl = metadata.subdomain && metadata.domain
+      ? `https://${metadata.subdomain}.${metadata.domain}`
+      : undefined;
+    const entryUrl = metadata.ssoEntryUrl;
+
     return {
       appId,
       status,
       containers,
       subdomain: metadata.subdomain,
       domain: metadata.domain,
-      url: metadata.subdomain && metadata.domain
-        ? `https://${metadata.subdomain}.${metadata.domain}`
-        : undefined,
+      url: baseUrl && entryUrl ? `${baseUrl}${entryUrl}` : baseUrl,
       installedAt: metadata.installedAt,
       healthStatus,
       healthCheckedAt,

@@ -115,6 +115,14 @@ export const SecretSchema = z.object({
   length: z.number().int().positive().default(32),
 });
 
+// ─── Credentials (admin-visible default accounts) ─────────
+
+export const CredentialSchema = z.object({
+  label: z.string().min(1),
+  username: z.string().min(1),
+  passwordSecret: z.string().min(1),
+});
+
 // ─── Database (v2: replaces requiresSharedPostgres) ───────
 
 export const DatabaseSchema = z.object({
@@ -375,6 +383,7 @@ export const AppManifestSchema = z
     }).optional(),
 
     secrets: z.array(SecretSchema).optional().default([]),
+    credentials: z.array(CredentialSchema).optional().default([]),
     configFiles: z.array(ConfigFileSchema).optional().default([]),
     capabilities: CapabilitiesSchema,
     connectors: ConnectorsSchema.optional(),

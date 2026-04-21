@@ -10,6 +10,7 @@ import type {
   ContainerSchema,
   ContainerSourceSchema,
   SecretSchema,
+  CredentialSchema,
   DatabaseSchema,
   ConfigFileSchema,
   CapabilitiesSchema,
@@ -43,6 +44,7 @@ export type AppMetadata = z.infer<typeof MetadataSchema>;
 export type ContainerSpec = z.infer<typeof ContainerSchema>;
 export type ContainerSource = z.infer<typeof ContainerSourceSchema>;
 export type SecretSpec = z.infer<typeof SecretSchema>;
+export type CredentialSpec = z.infer<typeof CredentialSchema>;
 export type DatabaseSpec = z.infer<typeof DatabaseSchema>;
 export type ConfigFileSpec = z.infer<typeof ConfigFileSchema>;
 export type SSOConfig = z.infer<typeof SSOSchema>;
@@ -100,6 +102,12 @@ export interface ContainerMeta {
   type: 'lxd' | 'oci';
 }
 
+export interface CredentialMeta {
+  label: string;
+  username: string;
+  passwordSecret: string;
+}
+
 export interface InstallMetadata {
   appId: string;
   integration: 'native' | 'basic';
@@ -114,6 +122,10 @@ export interface InstallMetadata {
   ssoClientId?: string;
   forwardAuthSlug?: string;
   manifestSource?: string;
+  /** Admin-visible default credentials (references secrets by name) */
+  credentials?: CredentialMeta[];
+  /** SSO entry URL path (e.g. /sso/OID/start/authentik) — appended to app URL for direct login */
+  ssoEntryUrl?: string;
 
   // Legacy v1 field — kept for reading old install.json files
   type?: 'marketplace' | 'native';

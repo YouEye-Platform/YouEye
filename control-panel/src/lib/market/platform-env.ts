@@ -261,7 +261,11 @@ export async function buildCanonicalContext(
       discovery_url: ssoResult ? `${authentikExternalUrl}/application/o/${ssoSlug}/.well-known/openid-configuration` : '',
       client_id: ssoResult?.clientId || '',
       client_secret: ssoResult?.clientSecret || '',
-      callback_url: manifest.sso ? `${appUrl}${manifest.sso.callback_path}` : '',
+      callback_url: manifest.sso
+        ? `${appUrl}${manifest.sso.callback_path
+            .replace(/\$\{authentik\.name\}/g, authentikDisplayName)
+            .replace(/\$\{app\.id\}/g, config.appId)}`
+        : '',
       logout_url: ssoResult ? `${authentikExternalUrl}/application/o/${ssoSlug}/end-session/` : '',
     },
     secrets: {},
@@ -456,6 +460,7 @@ export async function buildVariableContext(
       containers: [],
       env_mapping: {},
       secrets: [],
+      credentials: [],
       configFiles: [],
       installParams: [],
     } as AppManifest, shimConfig);

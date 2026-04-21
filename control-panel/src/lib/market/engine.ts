@@ -489,15 +489,16 @@ export async function installApp(
 
       // Build redirect URIs from callback_path + additional_callbacks
       const redirectUris: { matching_mode: 'strict'; url: string }[] = [];
+      const prelimCtx = await buildCanonicalContext(manifest, config, undefined, dbPassword);
+      prelimCtx.secrets = secrets;
 
       if (manifest.sso.callback_path) {
-        redirectUris.push({ matching_mode: 'strict', url: `${appUrl}${manifest.sso.callback_path}` });
+        const resolvedCallbackPath = resolveVariables(manifest.sso.callback_path, prelimCtx);
+        redirectUris.push({ matching_mode: 'strict', url: `${appUrl}${resolvedCallbackPath}` });
       }
 
       // Legacy v1 redirectUris
       if (manifest.sso.redirectUris) {
-        const prelimCtx = await buildCanonicalContext(manifest, config, undefined, dbPassword);
-        prelimCtx.secrets = secrets;
         for (const r of manifest.sso.redirectUris) {
           redirectUris.push({ matching_mode: 'strict', url: resolveVariables(r.url, prelimCtx) });
         }
@@ -846,6 +847,12 @@ export async function installApp(
     ssoClientId,
     forwardAuthSlug: rollbackCtx.forwardAuthSlug,
     manifestSource: config.repoUrl || 'appmarket',
+    credentials: manifest.credentials?.length
+      ? manifest.credentials.map((c) => ({ label: c.label, username: c.username, passwordSecret: c.passwordSecret }))
+      : undefined,
+    ssoEntryUrl: manifest.sso?.entry_url
+      ? resolveVariables(manifest.sso.entry_url, ctx)
+      : undefined,
   };
   await saveInstallMetadata(meta);
 
@@ -871,7 +878,9 @@ export async function installApp(
   try {
     const displayName = config.customName || manifest.metadata.name;
     const displayIcon = config.customIcon || manifest.metadata.iconUrl || manifest.metadata.icon || null;
-    const ssoEntryUrl = manifest.sso?.entry_url;
+    const ssoEntryUrl = manifest.sso?.entry_url
+      ? resolveVariables(manifest.sso.entry_url, ctx)
+      : undefined;
     await registerAppWithUI(appId, displayName, config.subdomain, primaryContainerName, primaryPort, displayIcon, appToken, ssoEntryUrl);
     emit(onEvent, step, totalSteps, 'success', 'Registered with dashboard');
   } catch (err) {

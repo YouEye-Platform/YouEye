@@ -22,6 +22,10 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  KeyRound,
+  Eye,
+  EyeOff,
+  Copy,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -64,6 +68,11 @@ export default function AppDetailPage() {
   const [showUninstallDialog, setShowUninstallDialog] = useState(false);
   const [uninstalling, setUninstalling] = useState(false);
 
+  // Credentials state
+  const [credentials, setCredentials] = useState<{ label: string; username: string; password: string }[]>([]);
+  const [credentialsLoaded, setCredentialsLoaded] = useState(false);
+  const [visiblePasswords, setVisiblePasswords] = useState<Set<number>>(new Set());
+
   const fetchApp = useCallback(async () => {
     try {
       const res = await fetch(`/api/market/app/${encodeURIComponent(appId)}`);
@@ -102,14 +111,29 @@ export default function AppDetailPage() {
     }
   }, []);
 
+  const fetchCredentials = useCallback(async () => {
+    try {
+      const res = await authenticatedFetch(`/api/market/credentials?app=${encodeURIComponent(appId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setCredentials(data.credentials ?? []);
+      }
+    } catch {
+      // Credentials fetch failure is non-fatal
+    } finally {
+      setCredentialsLoaded(true);
+    }
+  }, [appId]);
+
   useEffect(() => {
     Promise.all([fetchApp(), fetchStatus(), fetchDomain()]).finally(() =>
       setLoading(false)
     );
 
+    fetchCredentials();
     const interval = setInterval(fetchStatus, 10_000);
     return () => clearInterval(interval);
-  }, [fetchApp, fetchStatus, fetchDomain]);
+  }, [fetchApp, fetchStatus, fetchDomain, fetchCredentials]);
 
   // ── Polling for install progress ─────────────────────────────
 
@@ -500,6 +524,72 @@ export default function AppDetailPage() {
           />
         )}
       </div>
+
+      {/* Default Credentials (shown when app is installed and has credentials) */}
+      {isInstalled && credentialsLoaded && credentials.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <KeyRound className="h-4 w-4 text-amber-600" />
+            <h2 className="text-sm font-semibold text-amber-700 uppercase tracking-wide">
+              Default Credentials
+            </h2>
+          </div>
+          <div className="space-y-3">
+            {credentials.map((cred, i) => (
+              <div key={i} className="rounded-lg border border-amber-200 bg-white p-4">
+                <p className="text-xs text-gray-400 font-medium mb-2">{cred.label}</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-xs text-gray-400">Username</p>
+                    <div className="flex items-center gap-2">
+                      <code className="text-sm font-mono text-gray-800">{cred.username}</code>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(cred.username)}
+                        className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600"
+                        title="Copy username"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400">Password</p>
+                    <div className="flex items-center gap-2">
+                      <code className="text-sm font-mono text-gray-800">
+                        {visiblePasswords.has(i) ? cred.password : '\u2022'.repeat(12)}
+                      </code>
+                      <button
+                        onClick={() => {
+                          setVisiblePasswords((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(i)) next.delete(i);
+                            else next.add(i);
+                            return next;
+                          });
+                        }}
+                        className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600"
+                        title={visiblePasswords.has(i) ? 'Hide password' : 'Show password'}
+                      >
+                        {visiblePasswords.has(i) ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      </button>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(cred.password)}
+                        className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600"
+                        title="Copy password"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-amber-600/70 mt-3">
+            Use these credentials to access the app&apos;s admin panel. You can promote SSO users to admin from within the app.
+          </p>
+        </div>
+      )}
 
       {/* Install dialog */}
       {showInstallDialog && app && (
