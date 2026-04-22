@@ -1,3 +1,29 @@
+## v0.3.3.4 — sebastian — 2026-04-22
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Correct connector system to per-app model with Internal/External badges and auto-wire
+
+### Changes
+- `ui/src/app/api/settings/connectors/route.ts` — Reverted to per-app response format (`{apps, connectors}`)
+- `ui/src/components/settings/connector-app-list.tsx` — Reverted to per-app list with connection status
+- `ui/src/components/settings/connector-detail.tsx` — Added Internal/External badges (green=local, blue=internet), backend discovery showing installed app names, install hints for admins
+- `ui/src/app/api/settings/connectors/[appId]/route.ts` — Added backend discovery for local connectors
+- `ui/src/lib/db/queries/connectors.ts` — Removed auto-select; auto-wire only resolves baseUrl after user selects a connector
+- `ui/src/lib/connectors/schema.ts` — Removed redundant `source` field
+- `control-panel/src/lib/connectors/schema.ts` — Removed redundant `source` field
+- `ui/messages/en.json` — Added `installAvailable`, removed orphaned capability-centric i18n strings
+- Deleted `capability-detail.tsx`, `capability/[capability]/page.tsx`, `capability/[capability]/route.ts` (wrong capability-centric model)
+
+### Test Results
+- Browser: per-app list shows Wiki, Search, Cinema, Weather with correct connection counts
+- Detail view: Internal/External badges render correctly, backend names shown for local connectors
+
+### Notes for Iris
+- This is a design correction — the previous v0.3.3.3 had a capability-centric UI which was wrong
+- AppMarket manifests also updated (separate commit) to remove `source` field
+- YE-App-Search `provides` block restored (separate commit)
+
 ## v0.3.3.3 — sebastian — 2026-04-22
 **Branch:** sebastian
 **VM:** ye-sebastian
