@@ -97,7 +97,6 @@ export const ConnectorMetadataSchema = z.object({
   icon: z.string().min(1),
   provides: z.array(z.string().min(1)).min(1),
   network: z.enum(['local', 'internet']),
-  source: z.enum(['internal', 'external', 'both']).default('external'),
   compatibleApps: z.array(CompatibleAppSchema).optional(),
 });
 

@@ -15,6 +15,7 @@ import {
   Globe,
   Server,
   Key,
+  Download,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -25,6 +26,12 @@ interface ConfigField {
   type: string;
   required: boolean;
   managed?: boolean;
+}
+
+interface Backend {
+  appId: string;
+  appName: string;
+  installed: boolean;
 }
 
 interface AvailableConnector {
@@ -38,6 +45,7 @@ interface AvailableConnector {
   authProviderConnected?: boolean;
   configFields: ConfigField[];
   credentialsConfigured: boolean;
+  backends: Backend[];
 }
 
 interface Connection {
@@ -234,6 +242,7 @@ export function ConnectorDetail({ appId, directAccessEmbedUrl }: { appId: string
             <CapabilityRow
               key={cap.capability}
               cap={cap}
+              isAdmin={isAdmin}
               onConnect={connect}
               onDisconnect={disconnect}
               onRefresh={fetchDetail}
@@ -270,11 +279,13 @@ export function ConnectorDetail({ appId, directAccessEmbedUrl }: { appId: string
 
 function CapabilityRow({
   cap,
+  isAdmin,
   onConnect,
   onDisconnect,
   onRefresh,
 }: {
   cap: Capability;
+  isAdmin: boolean;
   onConnect: (capability: string, connectorId: string) => void;
   onDisconnect: (capability: string, connectorId?: string) => void;
   onRefresh: () => void;
@@ -328,6 +339,23 @@ function CapabilityRow({
                   <span className="text-sm">
                     {connector?.name ?? conn.connectorId}
                   </span>
+                  {/* Internal/External badge */}
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-0.5 ${
+                    connector?.network === "internet"
+                      ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                      : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                  }`}>
+                    {connector?.network === "internet" ? t("external") : t("internal")}
+                  </span>
+                  {/* Backend status for internal connectors */}
+                  {connector && connector.network === "local" && connector.backends.length > 0 && (
+                    <span className="text-[10px] text-muted-foreground">
+                      {connector.backends.some((b) => b.installed)
+                        ? `(${connector.backends.find((b) => b.installed)?.appName})`
+                        : ""
+                      }
+                    </span>
+                  )}
                   {connector && !connector.credentialsConfigured && (
                     <span className="text-xs text-amber-600 flex items-center gap-0.5">
                       <AlertTriangle className="w-3 h-3" />
@@ -424,9 +452,30 @@ function CapabilityRow({
                         <Server className="w-3.5 h-3.5 text-green-500" />
                       )}
                       <span className="text-sm">{connector.name}</span>
-                      <span className="text-[10px] text-muted-foreground px-1.5 py-0.5 bg-muted rounded-full">
-                        {connector.network}
+                      {/* Internal/External badge */}
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                        connector.network === "internet"
+                          ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                          : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                      }`}>
+                        {connector.network === "internet" ? t("external") : t("internal")}
                       </span>
+                      {/* Backend status */}
+                      {connector.network === "local" && connector.backends.length > 0 && (
+                        <>
+                          {connector.backends.some((b) => b.installed) ? (
+                            <span className="text-[10px] text-green-600 flex items-center gap-0.5">
+                              <Check className="w-2.5 h-2.5" />
+                              {connector.backends.find((b) => b.installed)?.appName}
+                            </span>
+                          ) : isAdmin ? (
+                            <span className="text-[10px] text-amber-600 flex items-center gap-0.5">
+                              <Download className="w-2.5 h-2.5" />
+                              {t("installAvailable")}
+                            </span>
+                          ) : null}
+                        </>
+                      )}
                     </div>
                     {connector.credentialsConfigured ? (
                       <Check className="w-3.5 h-3.5 text-green-500" />

@@ -4,6 +4,7 @@ import { db, ensureSchema } from "@/db";
 import { apps, userConnectors, userConnectorSecrets } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { listConnectors } from "@/lib/connectors/registry";
+import { discoverBackends } from "@/lib/db/queries/connectors";
 import { listProviders, getUserToken } from "@/lib/db/queries/auth-providers";
 
 export async function GET(
@@ -97,7 +98,7 @@ export async function GET(
     .from(userConnectorSecrets)
     .where(eq(userConnectorSecrets.userId, session.userId));
 
-  const capabilities = connectorReqs.map((req) => {
+  const capabilities = await Promise.all(connectorReqs.map(async (req) => {
     const availableConnectors = connectorCatalog.filter((c) =>
       c.provides.includes(req.capability)
     );
@@ -109,51 +110,66 @@ export async function GET(
         (p.consumerApp === appId || p.consumerApp === null)
     );
 
+    const connectorDetails = await Promise.all(availableConnectors.map(async (c) => {
+      // For managed fields, check if the auth provider token exists
+      const managedFields = c.configFields.filter((f) => f.managed);
+      const manualFields = c.configFields.filter((f) => !f.managed && f.required);
+
+      const managedCredsOk = managedFields.length === 0 ||
+        (c.authProvider && providerTokenStatus[c.authProvider]);
+      const manualCredsOk = manualFields.length === 0 ||
+        manualFields.every((f) =>
+          secrets.some((s) => s.connectorId === c.id && s.key === f.name)
+        );
+
+      const hasRequiredCreds = c.authMethod === "none" ||
+        (managedCredsOk && manualCredsOk);
+
+      // Find matching auth provider for OAuth connectors
+      const matchingProvider = c.authProvider
+        ? providers.find((p) => p.slug === c.authProvider)
+        : undefined;
+
+      // Backend discovery for connectors backed by installed apps
+      let backends: { appId: string; appName: string; installed: boolean }[] = [];
+      if (c.network === "local") {
+        try {
+          backends = (await discoverBackends(c.id)).map((b) => ({
+            appId: b.appId,
+            appName: b.appName,
+            installed: b.installed,
+          }));
+        } catch { /* no backends */ }
+      }
+
+      return {
+        id: c.id,
+        name: c.name,
+        icon: c.icon,
+        network: c.network,
+        authMethod: c.authMethod,
+        authProvider: c.authProvider,
+        authProviderName: matchingProvider?.name,
+        authProviderConnected: c.authProvider
+          ? providerTokenStatus[c.authProvider] ?? false
+          : undefined,
+        configFields: c.configFields,
+        credentialsConfigured: hasRequiredCreds,
+        backends,
+      };
+    }));
+
     return {
       capability: req.capability,
       multiple: req.multiple ?? false,
-      availableConnectors: availableConnectors.map((c) => {
-        // For managed fields, check if the auth provider token exists
-        const managedFields = c.configFields.filter((f) => f.managed);
-        const manualFields = c.configFields.filter((f) => !f.managed && f.required);
-
-        const managedCredsOk = managedFields.length === 0 ||
-          (c.authProvider && providerTokenStatus[c.authProvider]);
-        const manualCredsOk = manualFields.length === 0 ||
-          manualFields.every((f) =>
-            secrets.some((s) => s.connectorId === c.id && s.key === f.name)
-          );
-
-        const hasRequiredCreds = c.authMethod === "none" ||
-          (managedCredsOk && manualCredsOk);
-
-        // Find matching auth provider for OAuth connectors
-        const matchingProvider = c.authProvider
-          ? providers.find((p) => p.slug === c.authProvider)
-          : undefined;
-
-        return {
-          id: c.id,
-          name: c.name,
-          icon: c.icon,
-          network: c.network,
-          authMethod: c.authMethod,
-          authProvider: c.authProvider,
-          authProviderName: matchingProvider?.name,
-          authProviderConnected: c.authProvider
-            ? providerTokenStatus[c.authProvider] ?? false
-            : undefined,
-          configFields: c.configFields,
-          credentialsConfigured: hasRequiredCreds,
-        };
-      }),
+      availableConnectors: connectorDetails,
       connections: connections.map((c) => ({
         id: c.id,
         connectorId: c.connectorId,
         persistent: c.persistent,
       })),
     };
-  });
+  }));
 
   return NextResponse.json({
     app: {

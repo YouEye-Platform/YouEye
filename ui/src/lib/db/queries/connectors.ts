@@ -41,12 +41,10 @@ export async function resolveConnector(
   name: string;
   capability: string;
   network: string;
-  source: string;
   proxyBaseUrl: string;
   permission: "granted";
   requiresCredentials: boolean;
   credentialsConfigured: boolean;
-  autoWired: boolean;
   baseUrl?: string;
 } | null> {
   await ensureSchema();
@@ -83,10 +81,8 @@ export async function resolveConnector(
       .limit(1);
   }
 
-  // No explicit preference — try auto-wiring
+  // No explicit preference — user must choose
   if (!pref) {
-    const autoResult = await tryAutoWire(capability);
-    if (autoResult) return autoResult;
     return null;
   }
 
@@ -117,94 +113,31 @@ export async function resolveConnector(
     );
   }
 
+  // Resolve baseUrl for connectors backed by installed apps (auto-wire)
+  let baseUrl: string | undefined;
+  const compatApps = info.compatibleApps;
+  if (compatApps?.length) {
+    try {
+      const backends = await discoverBackends(connectorId);
+      const installed = backends.find((b) => b.installed);
+      if (installed?.internalUrl) {
+        baseUrl = installed.internalUrl;
+      }
+    } catch { /* no backends */ }
+  }
+
   // Selecting a connector IS the permission — always "granted"
   return {
     connectorId,
     name: info.name,
     capability,
     network: info.network,
-    source: info.source,
     proxyBaseUrl: `${CONNECTOR_RUNTIME_URL}/proxy`,
     permission: "granted",
     requiresCredentials,
     credentialsConfigured,
-    autoWired: false,
+    baseUrl,
   };
-}
-
-/**
- * Try auto-wiring a connector for a given capability.
- *
- * Auto-wire rules (in priority order):
- * 1. If exactly 1 compatible app is installed with auth: none → auto-connect
- * 2. External connector with auth: none (Open-Meteo, Wikipedia) → auto-connect
- * 3. Otherwise → null (user must choose manually)
- */
-async function tryAutoWire(capability: string): Promise<{
-  connectorId: string;
-  name: string;
-  capability: string;
-  network: string;
-  source: string;
-  proxyBaseUrl: string;
-  permission: "granted";
-  requiresCredentials: boolean;
-  credentialsConfigured: boolean;
-  autoWired: boolean;
-  baseUrl?: string;
-} | null> {
-  const connectors = await listConnectors(capability);
-
-  // Rule 1: Check for internal/both connectors with exactly one installed backend
-  for (const connector of connectors) {
-    const source = connector.metadata.source ?? "external";
-    if (source === "external") continue;
-    if (connector.permissions.auth.method !== "none") continue;
-
-    const compatApps = connector.metadata.compatibleApps;
-    if (!compatApps?.length) continue;
-
-    const backends = await discoverBackends(connector.metadata.id);
-    const installedBackends = backends.filter((b) => b.installed);
-
-    if (installedBackends.length === 1) {
-      return {
-        connectorId: connector.metadata.id,
-        name: connector.metadata.name,
-        capability,
-        network: connector.metadata.network,
-        source,
-        proxyBaseUrl: `${CONNECTOR_RUNTIME_URL}/proxy`,
-        permission: "granted",
-        requiresCredentials: false,
-        credentialsConfigured: true,
-        autoWired: true,
-        baseUrl: installedBackends[0].internalUrl ?? undefined,
-      };
-    }
-  }
-
-  // Rule 2: External connectors with auth: none (e.g., Open-Meteo, Wikipedia)
-  for (const connector of connectors) {
-    const source = connector.metadata.source ?? "external";
-    if (source !== "external") continue;
-    if (connector.permissions.auth.method !== "none") continue;
-
-    return {
-      connectorId: connector.metadata.id,
-      name: connector.metadata.name,
-      capability,
-      network: connector.metadata.network,
-      source,
-      proxyBaseUrl: `${CONNECTOR_RUNTIME_URL}/proxy`,
-      permission: "granted",
-      requiresCredentials: false,
-      credentialsConfigured: true,
-      autoWired: true,
-    };
-  }
-
-  return null;
 }
 
 /**
@@ -318,16 +251,16 @@ export async function discoverBackends(
  */
 export async function discoverBackendsByCapability(
   capability: string
-): Promise<{ connectorId: string; name: string; source: string; backends: ConnectorBackend[] }[]> {
+): Promise<{ connectorId: string; name: string; network: string; backends: ConnectorBackend[] }[]> {
   const connectors = await listConnectors(capability);
-  const results: { connectorId: string; name: string; source: string; backends: ConnectorBackend[] }[] = [];
+  const results: { connectorId: string; name: string; network: string; backends: ConnectorBackend[] }[] = [];
 
   for (const connector of connectors) {
     const backends = await discoverBackends(connector.metadata.id);
     results.push({
       connectorId: connector.metadata.id,
       name: connector.metadata.name,
-      source: connector.metadata.source ?? "external",
+      network: connector.metadata.network,
       backends,
     });
   }
@@ -345,8 +278,8 @@ function manifestToInfo(manifest: ConnectorManifest) {
     id: manifest.metadata.id,
     name: manifest.metadata.name,
     network: manifest.metadata.network,
-    source: manifest.metadata.source ?? "external",
     authMethod: manifest.permissions.auth.method,
+    compatibleApps: manifest.metadata.compatibleApps,
     configFields: manifest.config.fields.map((f) => ({
       name: f.name,
       required: f.required,

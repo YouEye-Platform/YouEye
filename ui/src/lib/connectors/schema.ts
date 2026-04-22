@@ -101,7 +101,6 @@ export const ConnectorMetadataSchema = z.object({
     (val) => (Array.isArray(val) ? val : [val])
   ),
   network: z.enum(["local", "internet"]),
-  source: z.enum(["internal", "external", "both"]).default("external"),
   compatibleApps: z.array(CompatibleAppSchema).optional(),
 });
 
