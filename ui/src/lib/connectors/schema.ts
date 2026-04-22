@@ -32,7 +32,7 @@ export const ConnectorPermissionsSchema = z.object({
 export const ConnectorConfigFieldSchema = z.object({
   name: z.string().regex(/^[a-z0-9_]+$/),
   label: z.string().min(1),
-  type: z.enum(["text", "secret", "select", "number", "toggle"]),
+  type: z.enum(["text", "secret", "select", "number", "toggle", "url"]),
   required: z.boolean().default(false),
   managed: z.boolean().default(false),
   default: z.union([z.string(), z.number(), z.boolean()]).optional(),

@@ -22,11 +22,21 @@ export async function GET(request: Request) {
       provides: m.metadata.provides,
       network: m.metadata.network,
       authMethod: m.permissions.auth.method,
+      authProvider: m.permissions.auth.provider,
+      hasUi: !!(m.ui && Object.keys(m.ui).length > 0),
+      uiComponents: m.ui
+        ? Object.entries(m.ui).map(([name, comp]) => ({
+            name,
+            entry: comp.entry,
+            protocol: comp.protocol,
+          }))
+        : [],
       configFields: m.config.fields.map((f) => ({
         name: f.name,
         label: f.label,
         type: f.type,
         required: f.required,
+        managed: f.managed,
         helpText: f.helpText,
         helpUrl: f.helpUrl,
       })),
