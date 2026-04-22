@@ -12,7 +12,7 @@
 
 import { NextResponse } from 'next/server';
 import { validateBridgeToken } from '@/lib/ui-bridge/auth';
-import { listBrands, updateBrand, updateFlow } from '@/lib/authentik/client';
+import { listBrands, updateBrand, updateFlow, ensureAvatarSettings } from '@/lib/authentik/client';
 import { execShell } from '@/lib/incus/server';
 import { generateWordArtSVG } from '@/lib/authentik/wordart-svg';
 import { readFileSync, readdirSync, existsSync } from 'fs';
@@ -158,6 +158,9 @@ export async function POST(request: Request) {
       }
       console.log(`[authentik-branding] Updated flow titles to "${flowTitle}"`);
     }
+
+    // Ensure avatar settings are configured for custom user avatars
+    await ensureAvatarSettings();
 
     return NextResponse.json({
       success: true,

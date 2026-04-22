@@ -939,6 +939,16 @@ export async function POST(request: NextRequest) {
               }
             }
             console.log(`[setup] Updated Authentik flow titles to "${flowTitle}"`);
+
+            // Enable attributes.avatar so custom user avatars work
+            try {
+              await authentikAPI(akConfig, '/admin/settings/', 'PATCH', {
+                avatars: 'attributes.avatar,gravatar,initials',
+              });
+              console.log('[setup] Enabled attributes.avatar in Authentik settings');
+            } catch {
+              console.warn('[setup] Non-fatal: could not set avatar mode');
+            }
           }
         } catch (err) {
           console.warn('[setup] Non-fatal: Authentik branding sync failed:', err);
