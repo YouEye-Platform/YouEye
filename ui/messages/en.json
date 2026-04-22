@@ -540,7 +540,9 @@
     "rememberChoice": "Remember this choice",
     "connect": "Connect",
     "internetWarning": "This app has internet access. Data from this source may be sent externally.",
-    "redirecting": "Redirecting..."
+    "redirecting": "Redirecting...",
+    "signInWith": "Sign in with",
+    "connected": "connected"
   },
   "onboarding": {
     "welcomeTo": "Welcome to",

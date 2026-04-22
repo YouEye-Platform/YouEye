@@ -24,6 +24,7 @@ interface ConfigField {
   label: string;
   type: string;
   required: boolean;
+  managed?: boolean;
 }
 
 interface AvailableConnector {
@@ -32,6 +33,9 @@ interface AvailableConnector {
   icon: string;
   network: string;
   authMethod: string;
+  authProvider?: string;
+  authProviderName?: string;
+  authProviderConnected?: boolean;
   configFields: ConfigField[];
   credentialsConfigured: boolean;
 }
@@ -347,21 +351,50 @@ function CapabilityRow({
           {cap.connections.map((conn) => {
             const connector = cap.availableConnectors.find((c) => c.id === conn.connectorId);
             if (!connector || connector.credentialsConfigured) return null;
-            const requiredFields = connector.configFields.filter(
-              (f) => f.required && f.type === "secret"
+
+            // Managed fields use OAuth — show sign-in button
+            const hasManagedFields = connector.configFields.some(
+              (f) => f.managed && f.required
             );
-            if (requiredFields.length === 0) return null;
+            // Manual fields need direct entry
+            const manualFields = connector.configFields.filter(
+              (f) => f.required && f.type === "secret" && !f.managed
+            );
+
+            if (!hasManagedFields && manualFields.length === 0) return null;
+
             return (
               <div key={`cred-${conn.id}`} className="mt-2 pl-3 border-l-2 border-amber-300">
-                <p className="text-xs text-muted-foreground mb-1">{t("enterCredentials")}</p>
-                {requiredFields.map((field) => (
-                  <CredentialEntry
-                    key={field.name}
-                    connectorId={conn.connectorId}
-                    field={field}
-                    onSaved={onRefresh}
-                  />
-                ))}
+                {hasManagedFields && connector.authProvider && !connector.authProviderConnected && (
+                  <div className="mb-2">
+                    <a
+                      href={`/api/auth/providers/${connector.authProvider}?redirect_uri=${encodeURIComponent(window.location.pathname)}`}
+                      className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                    >
+                      <Key className="w-4 h-4" />
+                      {t("signInWith")} {connector.authProviderName || connector.authProvider}
+                    </a>
+                  </div>
+                )}
+                {hasManagedFields && connector.authProviderConnected && (
+                  <div className="mb-2 flex items-center gap-1.5 text-sm text-green-600">
+                    <Check className="w-4 h-4" />
+                    {connector.authProviderName || connector.authProvider} {t("connected")}
+                  </div>
+                )}
+                {manualFields.length > 0 && (
+                  <>
+                    <p className="text-xs text-muted-foreground mb-1">{t("enterCredentials")}</p>
+                    {manualFields.map((field) => (
+                      <CredentialEntry
+                        key={field.name}
+                        connectorId={conn.connectorId}
+                        field={field}
+                        onSaved={onRefresh}
+                      />
+                    ))}
+                  </>
+                )}
               </div>
             );
           })}

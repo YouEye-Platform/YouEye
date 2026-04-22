@@ -4,6 +4,7 @@ import { db, ensureSchema } from "@/db";
 import { apps, userConnectors, userConnectorSecrets } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { listConnectors } from "@/lib/connectors/registry";
+import { listProviders, getUserToken } from "@/lib/db/queries/auth-providers";
 
 export async function GET(
   _request: NextRequest,
@@ -37,7 +38,11 @@ export async function GET(
     provides: string[];
     network: string;
     authMethod: string;
-    configFields: Array<{ name: string; label: string; type: string; required: boolean }>;
+    authProvider?: string;
+    configFields: Array<{
+      name: string; label: string; type: string;
+      required: boolean; managed: boolean;
+    }>;
   }> = [];
   try {
     const manifests = await listConnectors();
@@ -48,14 +53,33 @@ export async function GET(
       provides: m.metadata.provides,
       network: m.metadata.network,
       authMethod: m.permissions.auth.method,
+      authProvider: m.permissions.auth.provider,
       configFields: m.config.fields.map((f) => ({
         name: f.name,
         label: f.label,
         type: f.type,
         required: f.required,
+        managed: f.managed ?? false,
       })),
     }));
   } catch { /* offline — Gitea unreachable */ }
+
+  // Fetch auth providers for OAuth-managed connectors
+  let providers: Array<{ id: string; slug: string; name: string; enabled: boolean }> = [];
+  try {
+    providers = await listProviders();
+  } catch { /* no providers yet */ }
+
+  // Check which providers the user has tokens for
+  const providerTokenStatus: Record<string, boolean> = {};
+  for (const p of providers) {
+    try {
+      const token = await getUserToken(session.userId, p.id);
+      providerTokenStatus[p.slug] = !!token;
+    } catch {
+      providerTokenStatus[p.slug] = false;
+    }
+  }
 
   const userPrefs = await db
     .select()
@@ -89,10 +113,24 @@ export async function GET(
       capability: req.capability,
       multiple: req.multiple ?? false,
       availableConnectors: availableConnectors.map((c) => {
+        // For managed fields, check if the auth provider token exists
+        const managedFields = c.configFields.filter((f) => f.managed);
+        const manualFields = c.configFields.filter((f) => !f.managed && f.required);
+
+        const managedCredsOk = managedFields.length === 0 ||
+          (c.authProvider && providerTokenStatus[c.authProvider]);
+        const manualCredsOk = manualFields.length === 0 ||
+          manualFields.every((f) =>
+            secrets.some((s) => s.connectorId === c.id && s.key === f.name)
+          );
+
         const hasRequiredCreds = c.authMethod === "none" ||
-          c.configFields
-            .filter((f) => f.required)
-            .every((f) => secrets.some((s) => s.connectorId === c.id && s.key === f.name));
+          (managedCredsOk && manualCredsOk);
+
+        // Find matching auth provider for OAuth connectors
+        const matchingProvider = c.authProvider
+          ? providers.find((p) => p.slug === c.authProvider)
+          : undefined;
 
         return {
           id: c.id,
@@ -100,6 +138,11 @@ export async function GET(
           icon: c.icon,
           network: c.network,
           authMethod: c.authMethod,
+          authProvider: c.authProvider,
+          authProviderName: matchingProvider?.name,
+          authProviderConnected: c.authProvider
+            ? providerTokenStatus[c.authProvider] ?? false
+            : undefined,
           configFields: c.configFields,
           credentialsConfigured: hasRequiredCreds,
         };
