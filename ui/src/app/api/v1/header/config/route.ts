@@ -17,7 +17,7 @@ import { getUnreadCount } from "@/lib/db/queries/notifications";
 import { getUserAppsWithConfig } from "@/lib/db/queries/apps";
 import { getUserActiveTheme, getDefaultTheme } from "@/lib/db/queries/themes";
 import { generateCompactCSS } from "@/lib/themes/css-generator";
-import { getUserSettings } from "@/lib/db/queries/settings";
+import { getUserSettings, getDrawerPrefs } from "@/lib/db/queries/settings";
 import { resolveServiceAuth } from "@/lib/auth/service";
 import { db } from "@/db";
 import { users } from "@/db/schema";
@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [branding, unreadCount, appsData, activeThemeData, userSettingsData, userImageRow] =
+  const [branding, unreadCount, appsData, activeThemeData, userSettingsData, userImageRow, drawerPrefs] =
     await Promise.all([
       getBranding(),
       getUnreadCount(userId),
@@ -62,6 +62,7 @@ export async function GET(request: NextRequest) {
       getUserActiveTheme(userId),
       getUserSettings(userId),
       db.select({ image: users.image }).from(users).where(eq(users.id, userId)).limit(1),
+      getDrawerPrefs(userId),
     ]);
 
   const sections = appsData.sections.map((s) => ({
@@ -182,5 +183,6 @@ export async function GET(request: NextRequest) {
       ],
       logout_url: "/api/auth/logout",
     },
+    drawer_prefs: drawerPrefs,
   });
 }
