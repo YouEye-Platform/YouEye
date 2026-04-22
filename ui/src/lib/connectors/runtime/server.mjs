@@ -17,10 +17,13 @@
 import { createServer } from "node:http";
 import { URL } from "node:url";
 import { runInNewContext } from "node:vm";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const BIND = process.env.HOSTNAME || "0.0.0.0";
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
+const ASSETS_DIR = process.env.ASSETS_DIR || "/opt/youeye-connectors/assets";
 
 // ─── SSRF Blocklist ──────────────────────────────────────────
 
@@ -290,6 +293,107 @@ async function handleProxy(body) {
   }
 }
 
+// ─── UI Asset Serving ───────────────────────────────────────
+
+const MIME_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+};
+
+/**
+ * Build CSP header from connector manifest's allowedHosts.
+ * Local connectors only get 'self' + *.devvm.test.
+ * Internet connectors get allowed hosts appended.
+ */
+function buildCSP(allowedHosts, networkType) {
+  const hosts = (allowedHosts || []).map((h) => `https://${h}`).join(" ");
+  const devvmTest = "https://*.devvm.test";
+  if (networkType === "local" || !hosts) {
+    return `default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self' ${devvmTest}; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; frame-src 'none'`;
+  }
+  return `default-src 'self'; script-src 'self' 'unsafe-inline' ${hosts}; connect-src 'self' ${devvmTest} ${hosts}; img-src 'self' data: blob: ${hosts}; style-src 'self' 'unsafe-inline'; frame-src 'none'`;
+}
+
+/**
+ * Serve a connector's UI asset file.
+ * Path: /{connectorId}/{filename} e.g. /spotify-music/player.html
+ */
+function handleAsset(connectorId, filename, res) {
+  // Prevent path traversal
+  const safe = filename.replace(/\.\./g, "").replace(/[^a-zA-Z0-9._-]/g, "");
+  const filePath = join(ASSETS_DIR, connectorId, safe);
+
+  if (!existsSync(filePath)) {
+    res.writeHead(404);
+    res.end(JSON.stringify({ error: `Asset not found: ${connectorId}/${safe}` }));
+    return;
+  }
+
+  const ext = "." + safe.split(".").pop();
+  const mime = MIME_TYPES[ext] || "application/octet-stream";
+
+  try {
+    const content = readFileSync(filePath);
+
+    // Try to load manifest for CSP headers
+    const manifestPath = join(ASSETS_DIR, connectorId, "connector.yaml");
+    let csp = buildCSP([], "local");
+    if (existsSync(manifestPath)) {
+      try {
+        // Quick YAML parsing for allowedHosts — just extract the hosts
+        const yaml = readFileSync(manifestPath, "utf-8");
+        const hostMatches = yaml.match(/allowedHosts:\s*\n((?:\s*-\s*"[^"]+"\s*\n?)*)/);
+        if (hostMatches) {
+          const hosts = hostMatches[1].match(/"([^"]+)"/g)?.map((h) => h.replace(/"/g, "")) || [];
+          const networkMatch = yaml.match(/network:\s*"?(\w+)"?/);
+          const network = networkMatch?.[1] || "local";
+          csp = buildCSP(hosts, network);
+        }
+      } catch { /* ignore YAML parse errors */ }
+    }
+
+    res.writeHead(200, {
+      "Content-Type": mime,
+      "Content-Security-Policy": csp,
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "ALLOWALL", // served via iframe from apps
+    });
+    res.end(content);
+  } catch (err) {
+    res.writeHead(500);
+    res.end(JSON.stringify({ error: `Failed to read asset: ${err.message}` }));
+  }
+}
+
+// ─── PostMessage Protocol Definitions ───────────────────────
+
+const PROTOCOLS = {
+  "youeye-player-v1": {
+    commands: ["play", "pause", "seek", "volume", "queue", "stop"],
+    events: ["youeye-player-ready", "state", "ended", "error"],
+    description: "Audio/video playback control",
+  },
+  "youeye-map-v1": {
+    commands: ["setCenter", "addMarker", "removeMarker", "fitBounds", "setLayer"],
+    events: ["youeye-map-ready", "click", "moveend", "markerClick"],
+    description: "Interactive map rendering",
+  },
+  "youeye-viewer-v1": {
+    commands: ["load", "show", "next", "prev", "zoom"],
+    events: ["youeye-viewer-ready", "state", "select"],
+    description: "Image/document viewing",
+  },
+  "youeye-card-v1": {
+    commands: [],
+    events: ["youeye-card-ready"],
+    description: "Info card ready signal",
+  },
+};
+
 // ─── HTTP Server ─────────────────────────────────────────────
 
 function readBody(req) {
@@ -329,6 +433,21 @@ const server = createServer(async (req, res) => {
       res.writeHead(400);
       res.end(JSON.stringify({ ok: false, error: err.message, code: "BAD_REQUEST" }));
     }
+    return;
+  }
+
+  // GET /protocols — expose PostMessage protocol definitions
+  if (url.pathname === "/protocols" && req.method === "GET") {
+    res.writeHead(200);
+    res.end(JSON.stringify({ protocols: PROTOCOLS }));
+    return;
+  }
+
+  // GET /assets/{connectorId}/{filename} — serve connector UI assets
+  const assetMatch = url.pathname.match(/^\/assets\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9._-]+)$/);
+  if (assetMatch && req.method === "GET") {
+    const [, connectorId, filename] = assetMatch;
+    handleAsset(connectorId, filename, res);
     return;
   }
 
