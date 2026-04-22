@@ -110,9 +110,11 @@ function applyJsonMap(data, transform) {
 function applyScript(data, code) {
   const sandbox = { data, result: null };
   try {
-    runInNewContext(`result = (function(data) { ${code} })(data)`, sandbox, {
+    // The manifest code defines a `function transform(data) { ... }`.
+    // We execute it and then call transform(data).
+    const wrapped = `${code}\nresult = transform(data);`;
+    runInNewContext(wrapped, sandbox, {
       timeout: 1000,
-      // 8 MB memory not directly settable in vm, but timeout prevents runaways
     });
     return sandbox.result ?? data;
   } catch (err) {
