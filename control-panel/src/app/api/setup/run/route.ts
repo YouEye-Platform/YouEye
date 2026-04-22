@@ -505,7 +505,7 @@ export async function POST(request: NextRequest) {
               name: 'YouEye Groups',
               scope_name: 'groups',
               description: 'Returns user group memberships',
-              expression: 'return {"groups": [group.name for group in request.user.ak_groups.all()]}',
+              expression: 'groups = [group.name for group in request.user.ak_groups.all()]\nif "authentik Admins" in groups:\n    groups.append("admin")\nreturn {"groups": groups}',
             });
             groupsMappingPk = gm.pk;
           }

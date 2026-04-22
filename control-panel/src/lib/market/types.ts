@@ -14,6 +14,7 @@ import type {
   DatabaseSchema,
   ConfigFileSchema,
   CapabilitiesSchema,
+  AdminMappingSchema,
   SSOSchema,
   SSOStepSchema,
   SSOSetupSchema,
@@ -46,6 +47,7 @@ export type SecretSpec = z.infer<typeof SecretSchema>;
 export type CredentialSpec = z.infer<typeof CredentialSchema>;
 export type DatabaseSpec = z.infer<typeof DatabaseSchema>;
 export type ConfigFileSpec = z.infer<typeof ConfigFileSchema>;
+export type AdminMapping = z.infer<typeof AdminMappingSchema>;
 export type SSOConfig = z.infer<typeof SSOSchema>;
 export type SSOStep = z.infer<typeof SSOStepSchema>;
 export type SSOSetup = z.infer<typeof SSOSetupSchema>;

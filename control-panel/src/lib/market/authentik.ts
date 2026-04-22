@@ -9,6 +9,7 @@
 import { spineClient } from '@/lib/spine/client';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import { settingsService } from '@/lib/settings/service';
+import type { AdminMapping } from './types';
 
 interface AuthentikConfig {
   url: string;
@@ -156,6 +157,89 @@ async function findSigningKey(config: AuthentikConfig): Promise<string | undefin
 }
 
 /**
+ * The normalized YouEye Groups expression.
+ * Emits all Authentik group names AND adds "admin" when user is in "authentik Admins".
+ * This lets apps that check for "admin" in the groups claim (e.g. Nextcloud) auto-grant admin,
+ * while apps that check "authentik Admins" directly (e.g. Jellyfin) still work.
+ */
+const GROUPS_EXPRESSION_NORMALIZED =
+  'groups = [group.name for group in request.user.ak_groups.all()]\n' +
+  'if "authentik Admins" in groups:\n' +
+  '    groups.append("admin")\n' +
+  'return {"groups": groups}';
+
+/**
+ * Ensure the Authentik scope mappings needed for admin role detection.
+ *
+ * - `type: groups` — updates the global "YouEye Groups" mapping to normalize
+ *   "authentik Admins" → also includes the app-expected group name (e.g. "admin").
+ * - `type: roleClaim` — creates a per-app scope mapping that emits a custom claim
+ *   (e.g. "immich_role": "admin") based on Authentik group membership.
+ *
+ * Returns PKs of any scope mappings to attach to the OAuth2 provider.
+ */
+export async function ensureAdminScopeMapping(
+  config: AuthentikConfig,
+  adminMapping: AdminMapping,
+  appSlug: string
+): Promise<string[]> {
+  const extraPks: string[] = [];
+
+  if (adminMapping.type === 'groups') {
+    // Update the global "YouEye Groups" scope mapping expression to emit
+    // the normalized group name. This is idempotent — if the expression
+    // already contains the normalization, it's a no-op.
+    const mappings = await authentikAPI<{
+      results: Array<{ pk: string; scope_name: string; expression: string }>;
+    }>(config, '/propertymappings/provider/scope/?page_size=100');
+
+    const groupsMapping = mappings.results?.find(m => m.scope_name === 'groups');
+    if (groupsMapping && !groupsMapping.expression.includes('groups.append("admin")')) {
+      await authentikAPI(config, `/propertymappings/provider/scope/${groupsMapping.pk}/`, 'PATCH', {
+        expression: GROUPS_EXPRESSION_NORMALIZED,
+      });
+      console.log('[authentik] Updated YouEye Groups mapping with admin normalization');
+    }
+  } else if (adminMapping.type === 'roleClaim') {
+    // Create a per-app scope mapping for the custom role claim
+    const mappingName = `YouEye ${appSlug} admin-role`;
+    const { claimName, adminValue, defaultValue } = adminMapping;
+
+    const expression =
+      `if any(group.name == "authentik Admins" for group in request.user.ak_groups.all()):\n` +
+      `    return {"${claimName}": "${adminValue}"}\n` +
+      `return {"${claimName}": "${defaultValue}"}`;
+
+    // Check if it already exists
+    const existing = await authentikAPI<{
+      results: Array<{ pk: string; name: string }>;
+    }>(config, `/propertymappings/provider/scope/?search=${encodeURIComponent(mappingName)}`);
+
+    const found = existing.results?.find(m => m.name === mappingName);
+    if (found) {
+      // Update expression in case it changed
+      await authentikAPI(config, `/propertymappings/provider/scope/${found.pk}/`, 'PATCH', {
+        expression,
+      });
+      extraPks.push(found.pk);
+    } else {
+      const created = await authentikAPI<{ pk: string }>(
+        config, '/propertymappings/provider/scope/', 'POST', {
+          name: mappingName,
+          scope_name: claimName,
+          description: `Admin role claim for ${appSlug} — maps "authentik Admins" group to ${claimName}=${adminValue}`,
+          expression,
+        }
+      );
+      extraPks.push(created.pk);
+    }
+    console.log(`[authentik] Ensured admin role scope mapping for ${appSlug} (claim: ${claimName})`);
+  }
+
+  return extraPks;
+}
+
+/**
  * Create an OAuth2 provider and application in Authentik for a market app.
  */
 export async function createAuthentikOAuth2App(params: {
@@ -165,6 +249,8 @@ export async function createAuthentikOAuth2App(params: {
   launchUrl: string;
   /** Use implicit consent to avoid BUG-004 consent screen friction */
   implicitConsent?: boolean;
+  /** Admin mapping from manifest — triggers scope mapping creation */
+  adminMapping?: AdminMapping;
 }): Promise<{ clientId: string; clientSecret: string }> {
   const config = await getAuthentikConfig();
   const clientId = params.slug;
@@ -196,6 +282,16 @@ export async function createAuthentikOAuth2App(params: {
   for (const m of mappings.results || []) {
     if (m.managed?.startsWith('goauthentik.io/providers/oauth2/scope-') || !m.managed) {
       scopeMappingPks.push(m.pk);
+    }
+  }
+
+  // Handle admin mapping — create/update scope mappings as needed
+  if (params.adminMapping) {
+    const extraPks = await ensureAdminScopeMapping(config, params.adminMapping, clientId);
+    for (const pk of extraPks) {
+      if (!scopeMappingPks.includes(pk)) {
+        scopeMappingPks.push(pk);
+      }
     }
   }
 

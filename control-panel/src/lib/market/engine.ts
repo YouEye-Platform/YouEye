@@ -505,6 +505,7 @@ export async function installApp(
         redirectUris,
         launchUrl: appUrl,
         implicitConsent: true,
+        adminMapping: manifest.sso?.adminMapping,
       });
 
       ssoClientId = result.clientId;

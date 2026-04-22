@@ -147,6 +147,21 @@ export const ConfigFileSchema = z.object({
   template: z.string().min(1),
 });
 
+// ─── SSO Admin Mapping ────────────────────────────────────
+
+export const AdminMappingSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('groups'),
+    groupName: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal('roleClaim'),
+    claimName: z.string().min(1),
+    adminValue: z.string().min(1),
+    defaultValue: z.string().min(1),
+  }),
+]);
+
 // ─── SSO ──────────────────────────────────────────────────
 
 export const SSOStepSchema = z.object({
@@ -198,6 +213,7 @@ export const SSOSchema = z.object({
   callback_path: z.string().min(1),
   entry_url: z.string().optional(),
   additional_callbacks: z.array(z.string()).default([]),
+  adminMapping: AdminMappingSchema.optional(),
   setup: SSOSetupSchema.optional(),
 });
 
