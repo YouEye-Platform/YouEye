@@ -11,8 +11,11 @@
  */
 
 import { test, expect, chromium } from "@playwright/test";
+import { SignJWT } from "jose";
 
 const DEVVM = "https://devvm.test";
+const JWT_SECRET =
+  "5bed9b45317c939593786844f4803016fcbfcbf9981b6f8893dd07b5b11953e2";
 
 test.describe("Connector Settings", () => {
   let browser: Awaited<ReturnType<typeof chromium.connectOverCDP>>;
@@ -22,6 +25,35 @@ test.describe("Connector Settings", () => {
   test.beforeAll(async () => {
     browser = await chromium.connectOverCDP("http://localhost:9222");
     context = await browser.newContext({ ignoreHTTPSErrors: true });
+
+    // Create authenticated session cookie
+    const secret = new TextEncoder().encode(JWT_SECRET);
+    const now = Math.floor(Date.now() / 1000);
+    const token = await new SignJWT({
+      userId: "705a7b03-57dd-412e-8705-dd5db453dc9a",
+      username: "tester",
+      name: "Test User",
+      email: "tester@test.local",
+      isAdmin: true,
+      groups: ["authentik Admins"],
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt(now)
+      .setExpirationTime(now + 3600)
+      .sign(secret);
+
+    await context.addCookies([
+      {
+        name: "ye-ui-session",
+        value: token,
+        domain: "devvm.test",
+        path: "/",
+        httpOnly: true,
+        secure: true,
+        sameSite: "Lax",
+      },
+    ]);
+
     page = await context.newPage();
   });
 
@@ -61,7 +93,7 @@ test.describe("Connector Settings", () => {
     await expect(notesRow).toContainText("No connectors");
   });
 
-  test("external apps section shows SearXNG and Whoogle", async () => {
+  test("external apps section shows installed external apps", async () => {
     await page.goto(`${DEVVM}/settings/connectors`);
     await page.waitForLoadState("networkidle");
 
@@ -70,10 +102,6 @@ test.describe("Connector Settings", () => {
     const searxng = page.locator("button", { hasText: "SearXNG" });
     await expect(searxng).toBeVisible();
     await expect(searxng).toContainText("External app");
-
-    const whoogle = page.locator("button", { hasText: "Whoogle" });
-    await expect(whoogle).toBeVisible();
-    await expect(whoogle).toContainText("External app");
   });
 
   test("app detail page shows capabilities and connectors", async () => {
@@ -166,6 +194,49 @@ test.describe("Connector Settings", () => {
     expect(searxng).toBeDefined();
     expect(searxng.network).toBe("local");
     expect(searxng.authMethod).toBe("none");
+  });
+
+  test("connected connectors show Internal/External badges", async () => {
+    await page.goto(`${DEVVM}/settings/connectors/search`);
+    await page.waitForLoadState("networkidle");
+
+    // SearXNG is a local connector — should show "Internal" badge
+    await expect(page.locator("text=Internal").first()).toBeVisible();
+
+    // Navigate to Wiki which has Wikipedia (internet) connected
+    await page.goto(`${DEVVM}/settings/connectors/wiki`);
+    await page.waitForLoadState("networkidle");
+
+    // Wikipedia is an internet connector — should show "External" badge
+    await expect(page.locator("text=External").first()).toBeVisible();
+  });
+
+  test("local connectors show backend app name", async () => {
+    await page.goto(`${DEVVM}/settings/connectors/search`);
+    await page.waitForLoadState("networkidle");
+
+    // SearXNG connector should show the installed app name in parentheses
+    await expect(page.locator("text=(SearXNG)")).toBeVisible();
+  });
+
+  test("app detail API includes backends for local connectors", async () => {
+    const res = await page.request.get(
+      `${DEVVM}/api/settings/connectors/search`
+    );
+    expect(res.status()).toBe(200);
+
+    const data = await res.json();
+    const searchCap = data.capabilities.find(
+      (c: { capability: string }) => c.capability === "search-engine"
+    );
+
+    // SearXNG should have backends from backend discovery
+    const searxng = searchCap.availableConnectors.find(
+      (c: { id: string }) => c.id === "searxng-search"
+    );
+    expect(searxng.backends).toBeDefined();
+    expect(searxng.backends.length).toBeGreaterThan(0);
+    expect(searxng.backends[0].appName).toBeDefined();
   });
 
   test("permissions section renders on connectors page", async () => {
