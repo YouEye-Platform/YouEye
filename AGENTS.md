@@ -1,3 +1,50 @@
+## v0.3.5.1 / v0.3.3.1 — vanya — 2026-04-22
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Avatar management in CP embed + shared avatar across native apps
+
+### Changes — CP (v0.3.5.1)
+- `control-panel/src/app/api/user/avatar/route.ts` — NEW: CP-owned avatar upload/delete to Authentik via `attributes.avatar` PATCH
+- `control-panel/src/app/embed/avatar/page.tsx` + `client.tsx` — NEW: Standalone avatar picker embed for onboarding
+- `control-panel/src/app/embed/profile/client.tsx` — Added avatar upload (file + 32 emoji presets via canvas) and remove to profile embed
+- `control-panel/src/lib/authentik/client.ts` — Added `ensureAvatarSettings()` to configure Authentik for attributes.avatar
+- `control-panel/src/app/api/setup/run/route.ts` — Avatar settings configured during initial setup
+- `control-panel/src/app/api/ui-bridge/authentik/branding/route.ts` — Avatar settings ensured during branding sync
+- `control-panel/src/app/api/ui-bridge/user/avatar/` — DELETED: old bridge route removed
+
+### Changes — UI (v0.3.3.1)
+- `ui/src/app/api/v1/header/config/route.ts` — Added `avatar_url` (full URL) to user object in response
+- `ui/src/app/api/v1/user/avatar/[id]/route.ts` — Made public (no auth), added UUID sanitization for path traversal prevention
+- `ui/src/middleware.ts` — Added `/api/v1/user/avatar` to PUBLIC_ROUTES for cross-subdomain access
+- `ui/src/components/settings/profile-settings.tsx` — Removed avatar handling code, now receives from CP embed via postMessage
+- `ui/src/app/onboarding/page.tsx` — New 4-step flow (Welcome → Avatar → PIN → Done), theme-aware classes
+- `ui/src/app/api/v1/user/avatar/route.ts` — Removed Authentik sync call
+- `ui/src/lib/avatar/authentik-sync.ts` — DELETED: old UI→CP bridge sync
+- `ui/messages/en.json`, `ui/messages/ru.json` — New onboarding i18n keys
+
+### Changes — Native Apps (Search v0.3.1.1, Weather v0.3.1.1)
+- `YE-App-Search/src/lib/types/index.ts` — Added `avatar_url` to HeaderConfig user type
+- `YE-App-Search/src/lib/components/layout/user-menu.tsx` — Display avatar image with initials fallback
+- `YE-App-Search/src/lib/components/layout/app-header.tsx` — Pass avatarUrl from header config to UserMenu
+- `YE-App-Weather/src/lib/types/index.ts` — Added `avatar_url` to HeaderConfig user type
+- `YE-App-Weather/src/components/layout/user-menu.tsx` — Display avatar via AvatarImage with initials fallback
+- `YE-App-Weather/src/components/layout/weather-header.tsx` — Pass avatarUrl from header config to UserMenu
+
+### Test Results
+- Avatar visible in UI dashboard, Search app, and Weather app headers — all three show same avatar
+- Avatar endpoint serves publicly (HTTP 200, 5534B) without cookies
+- Header config API returns full avatar_url for service-to-service calls
+- Onboarding: 4-step flow renders correctly with system theme
+- Screenshots: Tests/Vanya/20260422_1/
+
+### Notes for Iris
+- **Architecture change**: ALL UI→CP bridge calls for avatar eliminated. CP owns Authentik avatar management end-to-end.
+- **Avatar serving is now public** — profile pictures are served without auth at `/api/v1/user/avatar/[id]` (like Gravatar). Upload/delete still require auth.
+- **Header config contract change**: `user.avatar_url` is now included. Existing apps that don't use it are unaffected (additive change).
+- Native apps (Search, Weather) have independent releases for the avatar display change.
+- Authentik admin settings MUST have `attributes.avatar` in the `avatars` chain — setup wizard and branding sync handle this automatically.
+
 ## v0.3.4.7 — andrew — 2026-04-21
 **Branch:** andrew
 **VM:** ye-andrew
