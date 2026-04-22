@@ -1,3 +1,22 @@
+## v0.3.3.2 — vanya — 2026-04-22
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Drawer prefs in header config API for cross-app consistency (Session 20)
+
+### Changes — UI (v0.3.3.2)
+- `ui/src/app/api/v1/header/config/route.ts` — Added `getDrawerPrefs()` call and `drawer_prefs` field to response
+- `ui/package.json` — Bumped 0.3.3.1 → 0.3.3.2
+
+### Test Results
+- Build: clean standalone.tar
+- Deploy: youeye-ui container updated and serving
+- Browser: drawer_prefs correctly returned in header config, native apps render consistent drawer layout
+
+### Notes for Iris
+- All native apps now consume `drawer_prefs` from header config to render app drawer with same columns/iconScale/maxHeight as homepage
+- No CP changes in this session
+
 ## v0.3.5.1 / v0.3.3.1 — vanya — 2026-04-22
 **Branch:** vanya
 **VM:** ye-vanya
