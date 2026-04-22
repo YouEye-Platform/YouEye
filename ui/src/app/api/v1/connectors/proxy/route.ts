@@ -17,6 +17,7 @@ import { userConnectorSecrets } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { fetchConnectorManifest } from "@/lib/connectors/registry";
 import type { ConnectorManifest } from "@/lib/connectors/schema";
+import { getValidAccessToken, getProviderById } from "@/lib/db/queries/auth-providers";
 
 const CONNECTOR_RUNTIME_URL =
   process.env.CONNECTOR_RUNTIME_URL ?? "http://youeye-connectors.youeye:3001";
@@ -132,6 +133,17 @@ export async function POST(request: NextRequest) {
     if (secret.boundHost && targetHosts.size > 0 && !targetHosts.has(secret.boundHost)) {
       continue;
     }
+
+    // If this secret is managed by an auth provider, get a fresh token
+    if (secret.authProviderId) {
+      const freshToken = await getValidAccessToken(userId, secret.authProviderId);
+      if (freshToken) {
+        userConfig[secret.key] = freshToken;
+        continue;
+      }
+      // Fall through to stored value if refresh failed
+    }
+
     const decrypted = await decryptValue(secret.encryptedValue, secret.nonce);
     if (decrypted) userConfig[secret.key] = decrypted;
   }

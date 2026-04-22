@@ -10,7 +10,7 @@
  */
 
 import { db, ensureSchema } from "@/db";
-import { userConnectors, userConnectorSecrets, appPermissions } from "@/db/schema";
+import { userConnectors, userConnectorSecrets } from "@/db/schema";
 import { eq, and, asc, isNull } from "drizzle-orm";
 import {
   fetchConnectorManifest,
@@ -22,10 +22,15 @@ const CONNECTOR_RUNTIME_URL = process.env.CONNECTOR_RUNTIME_URL ?? "http://youey
 
 /**
  * Resolve which connector a user should use for a given capability.
+ *
+ * Connection model: selecting a connector IS the permission.
+ * No separate permission table — an enabled user_connectors row = granted.
+ * No row = not-connected (return null, caller shows setup flow).
+ *
  * Resolution order:
  * 1. User's app-specific preference (consumer_app matches)
  * 2. User's default preference (consumer_app is null)
- * 3. First available connector from the CP registry
+ * 3. null — not connected (no auto-fallback to catalog)
  */
 export async function resolveConnector(
   userId: string,
@@ -37,8 +42,7 @@ export async function resolveConnector(
   capability: string;
   network: string;
   proxyBaseUrl: string;
-  permission: "granted" | "pending" | "denied";
-  approvalUrl?: string;
+  permission: "granted";
   requiresCredentials: boolean;
   credentialsConfigured: boolean;
 } | null> {
@@ -76,45 +80,17 @@ export async function resolveConnector(
       .limit(1);
   }
 
-  // 3. If no preference, get first available from CP registry
-  let connectorId: string;
-  let connectorInfo: { name: string; network: string; authMethod: string; configFields: Array<{ name: string; required: boolean }> };
+  // No connector selected = not connected. No auto-fallback.
+  // The user must explicitly choose a connector via Settings or the setup flow.
+  if (!pref) return null;
 
-  if (pref) {
-    connectorId = pref.connectorId;
-    // Fetch connector info from CP
-    const info = await fetchConnectorInfo(connectorId);
-    if (!info) return null;
-    connectorInfo = info;
-  } else {
-    // Query CP for any connector with this capability
-    const available = await fetchConnectorsByCapability(capability);
-    if (available.length === 0) return null;
-    connectorId = available[0].id;
-    connectorInfo = available[0];
-  }
-
-  // Check permission
-  const permissionKey = `connector:${capability}`;
-  const [permRow] = await db
-    .select({ granted: appPermissions.granted })
-    .from(appPermissions)
-    .where(
-      and(
-        eq(appPermissions.userId, userId),
-        eq(appPermissions.appId, appId),
-        eq(appPermissions.permission, permissionKey)
-      )
-    )
-    .limit(1);
-
-  const permission: "granted" | "pending" | "denied" = permRow?.granted
-    ? "granted"
-    : "pending";
+  const connectorId = pref.connectorId;
+  const info = await fetchConnectorInfo(connectorId);
+  if (!info) return null;
 
   // Check credentials
-  const requiresCredentials = connectorInfo.authMethod !== "none" &&
-    connectorInfo.configFields.some((f) => f.required);
+  const requiresCredentials = info.authMethod !== "none" &&
+    info.configFields.some((f) => f.required);
 
   let credentialsConfigured = !requiresCredentials;
   if (requiresCredentials) {
@@ -127,7 +103,7 @@ export async function resolveConnector(
           eq(userConnectorSecrets.connectorId, connectorId)
         )
       );
-    const requiredFields = connectorInfo.configFields
+    const requiredFields = info.configFields
       .filter((f) => f.required)
       .map((f) => f.name);
     credentialsConfigured = requiredFields.every((field) =>
@@ -135,18 +111,14 @@ export async function resolveConnector(
     );
   }
 
-  const uiBaseUrl = process.env.UI_EXTERNAL_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "";
-
+  // Selecting a connector IS the permission — always "granted"
   return {
     connectorId,
-    name: connectorInfo.name,
+    name: info.name,
     capability,
-    network: connectorInfo.network,
+    network: info.network,
     proxyBaseUrl: `${CONNECTOR_RUNTIME_URL}/proxy`,
-    permission,
-    approvalUrl: permission === "pending"
-      ? `${uiBaseUrl}/permissions/grant?app=${encodeURIComponent(appId)}&capability=${encodeURIComponent(capability)}&connector=${encodeURIComponent(connectorId)}`
-      : undefined,
+    permission: "granted",
     requiresCredentials,
     credentialsConfigured,
   };

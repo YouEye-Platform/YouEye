@@ -469,7 +469,79 @@ export const userConnectorSecrets = pgTable("user_connector_secrets", {
   nonce: text("nonce").notNull(),
   /** Host this credential is bound to — prevents forwarding to wrong host */
   boundHost: text("bound_host"),
+  /** Auth provider that manages this credential (null = manually entered) */
+  authProviderId: uuid("auth_provider_id"),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
+});
+
+// ============================================
+// Auth Providers (shared credentials across connectors)
+// ============================================
+
+/**
+ * Auth providers — admin-configured credential sources.
+ * A provider (e.g., "Google", "Spotify") can serve credentials to
+ * multiple connectors. Users authenticate once; all connectors
+ * referencing that provider get tokens automatically.
+ */
+export const authProviders = pgTable("auth_providers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** Provider slug (e.g., "google", "spotify", "microsoft") */
+  slug: text("slug").notNull().unique(),
+  /** Display name (e.g., "Google", "Spotify") */
+  name: text("name").notNull(),
+  /** Provider type: oauth2, api-key-shared */
+  type: text("type").notNull(),
+  /** OAuth2 client ID (admin-configured) */
+  clientId: text("client_id"),
+  /** OAuth2 client secret (encrypted) */
+  clientSecretEncrypted: text("client_secret_encrypted"),
+  /** Encryption nonce for client secret */
+  clientSecretNonce: text("client_secret_nonce"),
+  /** OAuth2 authorization URL */
+  authUrl: text("auth_url"),
+  /** OAuth2 token URL */
+  tokenUrl: text("token_url"),
+  /** Space-separated default scopes */
+  defaultScopes: text("default_scopes"),
+  /** Whether this provider is enabled */
+  enabled: boolean("enabled").default(true),
+  /** Additional provider config (e.g., PKCE settings) */
+  config: jsonb("config").$type<Record<string, unknown>>().default({}),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
+});
+
+/**
+ * User auth provider tokens — per-user credential storage for auth providers.
+ * Stores OAuth2 tokens or shared API keys from a provider.
+ * Multiple connectors can reference the same provider token.
+ */
+export const userAuthTokens = pgTable("user_auth_tokens", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  /** Auth provider this token belongs to */
+  providerId: uuid("provider_id")
+    .notNull()
+    .references(() => authProviders.id, { onDelete: "cascade" }),
+  /** Encrypted access token */
+  accessTokenEncrypted: text("access_token_encrypted").notNull(),
+  /** Nonce for access token */
+  accessTokenNonce: text("access_token_nonce").notNull(),
+  /** Encrypted refresh token (nullable for API keys / non-refreshable tokens) */
+  refreshTokenEncrypted: text("refresh_token_encrypted"),
+  /** Nonce for refresh token */
+  refreshTokenNonce: text("refresh_token_nonce"),
+  /** Granted scopes (space-separated) */
+  scopes: text("scopes"),
+  /** When the access token expires */
+  expiresAt: timestamp("expires_at", { mode: "date" }),
+  /** Host(s) this token is bound to (comma-separated) */
+  boundHosts: text("bound_hosts"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
 });
 
 // ============================================

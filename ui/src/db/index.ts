@@ -295,6 +295,45 @@ export async function ensureSchema() {
     // C5: Add boundHost column to user_connector_secrets
     await queryClient`ALTER TABLE user_connector_secrets ADD COLUMN IF NOT EXISTS bound_host TEXT`;
 
+    // Auth providers — shared credentials across connectors
+    await queryClient`
+      CREATE TABLE IF NOT EXISTS auth_providers (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        slug TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        client_id TEXT,
+        client_secret_encrypted TEXT,
+        client_secret_nonce TEXT,
+        auth_url TEXT,
+        token_url TEXT,
+        default_scopes TEXT,
+        enabled BOOLEAN DEFAULT TRUE,
+        config JSONB DEFAULT '{}',
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )`;
+
+    await queryClient`
+      CREATE TABLE IF NOT EXISTS user_auth_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider_id UUID NOT NULL REFERENCES auth_providers(id) ON DELETE CASCADE,
+        access_token_encrypted TEXT NOT NULL,
+        access_token_nonce TEXT NOT NULL,
+        refresh_token_encrypted TEXT,
+        refresh_token_nonce TEXT,
+        scopes TEXT,
+        expires_at TIMESTAMP,
+        bound_hosts TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(user_id, provider_id)
+      )`;
+
+    // Link connector secrets to auth providers for managed credentials
+    await queryClient`ALTER TABLE user_connector_secrets ADD COLUMN IF NOT EXISTS auth_provider_id UUID REFERENCES auth_providers(id) ON DELETE SET NULL`;
+
     await queryClient`
       CREATE TABLE IF NOT EXISTS wordart_presets (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
