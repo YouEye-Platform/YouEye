@@ -1,3 +1,31 @@
+## v0.3.5.1 — andrew — 2026-04-22
+**Branch:** andrew
+**VM:** ye-andrew
+**Agent:** Andrew
+**Task:** Manifest-driven SSO admin mapping (adminMapping) for automatic admin provisioning
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — Added `AdminMappingSchema` discriminated union (groups | roleClaim) and `adminMapping` field to `SSOSchema`
+- `control-panel/src/lib/market/types.ts` — Exported `AdminMapping` type from schema
+- `control-panel/src/lib/market/authentik.ts` — Added `ensureAdminScopeMapping()` function: for `groups` type, updates global "YouEye Groups" scope mapping to normalize "authentik Admins" → also emit "admin"; for `roleClaim` type, creates per-app scope mapping with custom claim. Added `adminMapping` param to `createAuthentikOAuth2App`
+- `control-panel/src/lib/market/engine.ts` — Passes `adminMapping` from manifest to Authentik OAuth2 provider creation
+- `control-panel/src/app/api/setup/run/route.ts` — Updated YouEye Groups expression to normalized version (includes admin append)
+- `control-panel/src/lib/auth/sso-setup.ts` — Updated YouEye Groups expression to normalized version
+- `control-panel/src/lib/ui/manager.ts` — Updated YouEye Groups expression to normalized version
+- `control-panel/package.json` — Bumped version to 0.3.5.1
+
+### Test Results
+- Nextcloud: SSO login → tester user provisioned into "authentik Admins" + "admin" groups → full admin access to admin panel verified
+- Jellyfin: existing behavior preserved (SSO users recognized as admin via "authentik Admins" group)
+- Immich: roleClaim scope mapping created and attached to provider (limitation: only evaluated at first user registration)
+- Authentik: YouEye Groups expression updated with admin normalization, immich_role scope mapping created
+
+### Notes for Iris
+- The `groups` type modifies the GLOBAL "YouEye Groups" scope mapping — affects ALL apps with groups scope. The normalization is additive (appends "admin", doesn't remove "authentik Admins")
+- The `roleClaim` type creates per-app scope mappings — isolated per app, no global side effects
+- Immich limitation: `oauth.roleClaim` only evaluated at first user registration, not subsequent logins. Fresh installs work; existing users won't be retroactively promoted
+- Three setup files (setup/run/route.ts, sso-setup.ts, manager.ts) all updated to use the normalized groups expression — ensures consistency whether created during initial setup or app install
+
 ## v0.3.4.7 — andrew — 2026-04-21
 **Branch:** andrew
 **VM:** ye-andrew
