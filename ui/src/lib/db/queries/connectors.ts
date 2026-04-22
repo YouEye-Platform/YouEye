@@ -366,14 +366,3 @@ async function fetchConnectorInfo(connectorId: string) {
   }
 }
 
-/**
- * Fetch connectors by capability — directly from Gitea via local registry.
- */
-async function fetchConnectorsByCapability(capability: string) {
-  try {
-    const manifests = await listConnectors(capability);
-    return manifests.map(manifestToInfo);
-  } catch {
-    return [];
-  }
-}
