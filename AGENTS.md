@@ -1,3 +1,49 @@
+## v0.3.3.3 — sebastian — 2026-04-22
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Connector system enhancement — source tags, auto-wiring, service registry, capability-centric UI
+
+### Changes
+
+#### Phase 1-3: Manifest Schema + Proxy + CP Engine
+- `YE-AppMarket/connectors/*.yaml` — Added `source: internal|external|both` and `compatibleApps` to all 16 connector manifests; replaced hardcoded container URLs with `${baseUrl}` template variable in SearXNG/Whoogle
+- `control-panel/src/lib/connectors/schema.ts` — Added `CompatibleAppSchema`, `source`, `compatibleApps` to Zod schema
+- `control-panel/src/lib/connectors/proxy.ts` — Added `baseUrl` template variable resolution
+- `control-panel/src/lib/market/engine-connectors.ts` — Full rewrite: removed hardcoded `CONNECTOR_APP_MAP`, replaced with dynamic `compatibleApps` lookup from manifests
+
+#### Phase 4: UI Discovery + Auto-Wire
+- `ui/src/lib/connectors/schema.ts` — Mirrored CP schema additions
+- `ui/src/lib/db/queries/connectors.ts` — Added `discoverBackends()`, `discoverBackendsByCapability()`, `tryAutoWire()` with two rules (internal+1 backend, external+auth:none); updated `resolveConnector()` return type with `autoWired`, `source`, `baseUrl`
+- `ui/src/app/api/v1/connectors/backends/route.ts` — New backend discovery endpoint
+- `ui/src/app/api/v1/connectors/resolve/route.ts` — Returns `auto-connected` status
+
+#### Phase 5: Capability-Centric UI
+- `ui/src/app/api/settings/connectors/route.ts` — Full rewrite: returns capability groups with source tags, backend discovery, auto-wire status
+- `ui/src/app/api/settings/connectors/capability/[capability]/route.ts` — New per-capability detail API with connect/disconnect
+- `ui/src/components/settings/connector-app-list.tsx` — Full rewrite: capability list with active connector, auto-wire badges, backend counts
+- `ui/src/components/settings/capability-detail.tsx` — New component: Internal/External sections, radio picker, credential entry, install hints
+- `ui/src/app/settings/connectors/capability/[capability]/page.tsx` — New capability detail page
+- `ui/messages/en.json` — Added 12 i18n strings for Internal/External/auto-connected UI
+
+#### Phase 6: Cleanup
+- `ui/src/lib/db/queries/connectors.ts` — Removed unused `fetchConnectorsByCapability()`
+
+### Test Results
+- Build: passes (next build)
+- Browser: connector list shows all capabilities with source indicators
+- Search Engine detail: SearXNG auto-wired as Internal, Whoogle available with install hint
+- Weather Data detail: Open-Meteo auto-wired as External
+- Screenshots: phase5-connectors-list.png, phase5-search-detail.png, phase5-weather-detail.png
+
+### Notes for Iris
+- New route `/settings/connectors/capability/[capability]` — add to nav if needed
+- Old per-app routes (`/settings/connectors/[appId]`) still work for backward compat
+- AppMarket manifests now require `source` field (defaults to "external" if missing)
+- Auto-wire is transparent — no DB rows created, resolved at query time
+
+---
+
 ## v0.3.3.1 — sebastian — 2026-04-22
 **Branch:** sebastian
 **VM:** ye-sebastian
