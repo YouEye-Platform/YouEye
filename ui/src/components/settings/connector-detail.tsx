@@ -126,7 +126,7 @@ function CredentialEntry({ connectorId, field, onSaved }: CredentialEntryProps) 
   );
 }
 
-export function ConnectorDetail({ appId }: { appId: string }) {
+export function ConnectorDetail({ appId, directAccessEmbedUrl }: { appId: string; directAccessEmbedUrl?: string }) {
   const [app, setApp] = useState<AppInfo | null>(null);
   const [capabilities, setCapabilities] = useState<Capability[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -247,7 +247,7 @@ export function ConnectorDetail({ appId }: { appId: string }) {
             {t("directAccessDescription")}
           </p>
           <iframe
-            src={`${typeof window !== "undefined" ? window.location.origin : ""}/control/embed/app-network/${appId}`}
+            src={directAccessEmbedUrl || `${typeof window !== "undefined" ? window.location.origin : ""}/control/embed/app-network/${appId}`}
             style={{
               width: "100%",
               minHeight: 200,

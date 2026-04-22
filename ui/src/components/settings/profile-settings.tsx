@@ -239,8 +239,9 @@ export function ProfileSettings({
         return;
       }
 
-      setAvatarUrl(data.url + "?t=" + Date.now());
-      window.dispatchEvent(new CustomEvent("avatar-updated", { detail: { url: data.url } }));
+      const bustUrl = data.url + "?t=" + Date.now();
+      setAvatarUrl(bustUrl);
+      window.dispatchEvent(new CustomEvent("avatar-updated", { detail: { url: bustUrl } }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Avatar upload failed");
     } finally {
@@ -275,9 +276,10 @@ export function ProfileSettings({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Upload failed");
 
-      setAvatarUrl(data.url + "?t=" + Date.now());
+      const bustUrl = data.url + "?t=" + Date.now();
+      setAvatarUrl(bustUrl);
       setShowPicker(false);
-      window.dispatchEvent(new CustomEvent("avatar-updated", { detail: { url: data.url } }));
+      window.dispatchEvent(new CustomEvent("avatar-updated", { detail: { url: bustUrl } }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to set avatar");
     } finally {

@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { saveAvatar, deleteAvatar } from "@/lib/avatar/storage";
+import { syncAvatarToAuthentik } from "@/lib/avatar/authentik-sync";
 import { db } from "@/db";
 import { users, userAssets } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -73,9 +74,12 @@ export async function POST(request: NextRequest) {
       .set({ image: servingUrl, updatedAt: new Date() })
       .where(eq(users.id, session.userId));
 
-    // One-Way Bridge: Avatar sync to Authentik removed.
-    // Avatars are now UI-local only. Users can set their Authentik
-    // avatar directly via the Authentik admin interface if needed.
+    // Best-effort sync to Authentik (non-blocking)
+    if (session.authentikId) {
+      syncAvatarToAuthentik(session.authentikId, buffer).catch((err) =>
+        console.warn("[Avatar] Authentik sync failed (non-blocking):", err)
+      );
+    }
 
     return NextResponse.json({
       url: servingUrl,

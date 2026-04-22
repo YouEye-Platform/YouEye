@@ -120,30 +120,35 @@ function AppIcon({
   customIconUrl,
   name,
   className = "w-10 h-10",
+  size,
 }: {
   icon: string | null;
   customIconUrl: string | null;
   name: string;
   className?: string;
+  size?: number;
 }) {
+  const sizeStyle = size ? { width: size, height: size } : undefined;
   if (customIconUrl) {
     return (
       <img
         src={customIconUrl}
         alt={name}
-        className={`${className} rounded-xl object-cover`}
+        className={`${size ? "" : className} rounded-xl object-cover`}
+        style={sizeStyle}
       />
     );
   }
   if (icon && icon.startsWith("emoji:")) {
-    return <span className="text-xl leading-none">{icon.slice(6)}</span>;
+    return <span className="text-xl leading-none" style={size ? { fontSize: size * 0.5 } : undefined}>{icon.slice(6)}</span>;
   }
   if (icon && (icon.startsWith("http") || icon.startsWith("/"))) {
     return (
       <img
         src={icon}
         alt={name}
-        className={`${className} rounded-xl object-cover`}
+        className={`${size ? "" : className} rounded-xl object-cover`}
+        style={sizeStyle}
       />
     );
   }
@@ -151,7 +156,7 @@ function AppIcon({
     const key = toKebabCase(icon);
     const IconComponent = ICON_MAP[key];
     if (IconComponent) {
-      return <IconComponent className="h-5 w-5 text-foreground/80" />;
+      return <IconComponent className="text-foreground/80" style={size ? { width: size * 0.5, height: size * 0.5 } : { width: 20, height: 20 }} />;
     }
   }
   return (
@@ -231,6 +236,7 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [draggedAppId, setDraggedAppId] = useState<string | null>(null);
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
+  const [insertSide, setInsertSide] = useState<"before" | "after">("before");
   const savePrefsTimeout = useRef<NodeJS.Timeout | null>(null);
   const t = useTranslations("appDrawer");
 
@@ -370,6 +376,8 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     setDragOverTarget(appId);
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setInsertSide(e.clientX < rect.left + rect.width / 2 ? "before" : "after");
   };
 
   const handleDropOnApp = (e: React.DragEvent, targetId: string) => {
@@ -546,7 +554,7 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
                                 isDragging
                                   ? "opacity-30 scale-90"
                                   : isDragOver
-                                    ? "bg-primary/10 ring-2 ring-primary/30 scale-105"
+                                    ? `bg-primary/10 scale-105 ${insertSide === "before" ? "border-l-2 border-l-primary" : "border-r-2 border-r-primary"}`
                                     : "hover:bg-accent/60"
                               }`
                             : `cursor-pointer hover:bg-accent/60 hover:scale-105`
@@ -591,11 +599,12 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
                         {editMode && (
                           <GripVertical className="absolute top-0.5 right-0.5 h-3 w-3 text-muted-foreground/30" />
                         )}
-                        <div className="w-10 h-10 rounded-xl bg-accent/80 flex items-center justify-center text-base font-medium shadow-sm overflow-hidden transition-transform duration-150">
+                        <div className="rounded-xl bg-accent/80 flex items-center justify-center text-base font-medium shadow-sm overflow-hidden transition-transform duration-150" style={{ width: 40 * prefs.iconScale, height: 40 * prefs.iconScale }}>
                           <AppIcon
                             icon={app.icon}
                             customIconUrl={app.custom_icon_url}
                             name={app.name}
+                            size={40 * prefs.iconScale}
                           />
                         </div>
                         <span className="text-[11px] text-center line-clamp-1 w-full mt-1.5 text-foreground/80 leading-tight">
@@ -685,11 +694,12 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
                         onDragStart={(e) => handleDragStart(e, app.id)}
                         onDragEnd={handleDragEnd}
                       >
-                        <div className="w-10 h-10 rounded-xl bg-accent/80 flex items-center justify-center text-base font-medium shadow-sm overflow-hidden">
+                        <div className="rounded-xl bg-accent/80 flex items-center justify-center text-base font-medium shadow-sm overflow-hidden" style={{ width: 40 * prefs.iconScale, height: 40 * prefs.iconScale }}>
                           <AppIcon
                             icon={app.icon}
                             customIconUrl={app.custom_icon_url}
                             name={app.name}
+                            size={40 * prefs.iconScale}
                           />
                         </div>
                         <span className="text-[11px] text-center line-clamp-1 w-full mt-1.5 text-foreground/80 leading-tight">

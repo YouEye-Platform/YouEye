@@ -18,6 +18,11 @@ export function DnsEmbedClient() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [upstreams, setUpstreams] = useState<string[]>([]);
+  const [upstreamDraft, setUpstreamDraft] = useState<string[]>([]);
+  const [upstreamSaving, setUpstreamSaving] = useState(false);
+  const [upstreamError, setUpstreamError] = useState<string | null>(null);
+  const [upstreamEditing, setUpstreamEditing] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -35,7 +40,34 @@ export function DnsEmbedClient() {
 
   useEffect(() => {
     fetchData();
+    fetch("/api/ui-bridge/dns/upstream")
+      .then((r) => r.json())
+      .then((d) => { setUpstreams(d.upstreams || []); setUpstreamDraft(d.upstreams || []); })
+      .catch(() => {});
   }, [fetchData]);
+
+  const handleUpstreamSave = async () => {
+    const filtered = upstreamDraft.map((s) => s.trim()).filter(Boolean);
+    if (filtered.length === 0) { setUpstreamError("At least one upstream server required"); return; }
+    setUpstreamSaving(true);
+    setUpstreamError(null);
+    try {
+      const res = await fetch("/api/ui-bridge/dns/upstream", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ upstreams: filtered }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed");
+      setUpstreams(result.upstreams || filtered);
+      setUpstreamDraft(result.upstreams || filtered);
+      setUpstreamEditing(false);
+    } catch (err) {
+      setUpstreamError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setUpstreamSaving(false);
+    }
+  };
 
   const handleToggle = async () => {
     if (!data) return;
@@ -126,6 +158,62 @@ export function DnsEmbedClient() {
         >
           {toggling ? "..." : isEnabled ? "Disable" : "Enable"}
         </button>
+      </div>
+
+      {/* Upstream DNS */}
+      <div className="embed-card" style={{ marginTop: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <div className="embed-card-title" style={{ margin: 0 }}>Upstream DNS Servers</div>
+          {!upstreamEditing ? (
+            <button className="embed-btn" onClick={() => { setUpstreamEditing(true); setUpstreamDraft([...upstreams]); }}>
+              Edit
+            </button>
+          ) : (
+            <div style={{ display: "flex", gap: 6 }}>
+              <button className="embed-btn" onClick={() => { setUpstreamEditing(false); setUpstreamError(null); }}>
+                Cancel
+              </button>
+              <button
+                className="embed-btn"
+                style={{ borderColor: "var(--embed-success)", color: "var(--embed-success)" }}
+                onClick={handleUpstreamSave}
+                disabled={upstreamSaving}
+              >
+                {upstreamSaving ? "..." : "Save"}
+              </button>
+            </div>
+          )}
+        </div>
+        {upstreamError && <div style={{ color: "var(--embed-danger)", fontSize: 12, marginBottom: 8 }}>{upstreamError}</div>}
+        {upstreamEditing ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {upstreamDraft.map((s, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input
+                  className="embed-input"
+                  value={s}
+                  onChange={(e) => { const d = [...upstreamDraft]; d[i] = e.target.value; setUpstreamDraft(d); }}
+                  placeholder="e.g. 8.8.8.8 or 1.1.1.1#53"
+                  style={{ flex: 1, padding: "4px 8px", fontSize: 13, border: "1px solid var(--embed-border)", borderRadius: 4, background: "transparent", color: "inherit" }}
+                />
+                {upstreamDraft.length > 1 && (
+                  <button className="embed-btn" style={{ padding: "2px 8px", color: "var(--embed-danger)", borderColor: "var(--embed-danger)" }}
+                    onClick={() => setUpstreamDraft(upstreamDraft.filter((_, j) => j !== i))}>✕</button>
+                )}
+              </div>
+            ))}
+            <button className="embed-btn" style={{ alignSelf: "flex-start", fontSize: 12 }}
+              onClick={() => setUpstreamDraft([...upstreamDraft, ""])}>+ Add server</button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {upstreams.length > 0 ? upstreams.map((s) => (
+              <span key={s} className="embed-badge embed-mono" style={{ fontSize: 12 }}>{s}</span>
+            )) : (
+              <span className="embed-muted" style={{ fontSize: 13 }}>No upstream servers configured</span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Stats Cards */}
