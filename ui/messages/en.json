@@ -542,7 +542,20 @@
     "internetWarning": "This app has internet access. Data from this source may be sent externally.",
     "redirecting": "Redirecting...",
     "signInWith": "Sign in with",
-    "connected": "connected"
+    "connected": "connected",
+    "internal": "Internal",
+    "external": "External",
+    "internalExternal": "Internal / External",
+    "autoConnected": "Auto",
+    "notConnected": "Not connected",
+    "activeSource": "Active Source",
+    "internalSources": "Internal Sources",
+    "internalDescription": "Data stays within your network. Backed by apps installed on your server.",
+    "externalSources": "External Sources",
+    "externalDescription": "Fetches data from the internet. May require API keys.",
+    "capabilityDescription": "Choose which source provides this capability.",
+    "backendsAvailable": "Additional backends available to install",
+    "installableBackends": "Available to install:"
   },
   "onboarding": {
     "welcomeTo": "Welcome to",
