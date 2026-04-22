@@ -1,3 +1,39 @@
+## v0.3.3.1 — sebastian — 2026-04-22
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Full connector system overhaul — unified permission model, auth providers, runtime, UI components, 9 new connectors
+
+### Changes
+- `ui/src/db/schema.ts` — added auth_providers and user_auth_tokens tables, auth_provider_id column
+- `ui/src/db/index.ts` — auto-migration for new tables
+- `ui/src/lib/db/queries/auth-providers.ts` — NEW: complete auth provider CRUD, OAuth2 token management, refresh, propagation
+- `ui/src/lib/db/queries/connectors.ts` — removed app_permissions check (selecting connector = permission)
+- `ui/src/lib/connectors/runtime/server.mjs` — fixed script transform, added asset serving, protocols endpoint, CSP
+- `ui/src/lib/connectors/postmessage-bridge.ts` — NEW: ConnectorBridge class for iframe communication
+- `ui/src/lib/connectors/use-connector-bridge.ts` — NEW: React hook for connector UI bridge
+- `ui/src/lib/connectors/schema.ts` — added url config field type
+- `ui/src/app/api/auth/providers/[slug]/route.ts` — NEW: OAuth2 flow initiation
+- `ui/src/app/api/auth/providers/[slug]/callback/route.ts` — NEW: OAuth2 callback + token storage
+- `ui/src/app/api/settings/auth-providers/route.ts` — NEW: admin provider management
+- `ui/src/app/api/settings/connectors/[appId]/route.ts` — enhanced with provider status
+- `ui/src/app/api/v1/connectors/list/route.ts` — added UI and managed field info
+- `ui/src/app/api/v1/connectors/proxy/route.ts` — enhanced with auto-refresh from auth providers
+- `ui/src/components/settings/connector-detail.tsx` — OAuth sign-in buttons for managed creds
+- `ui/messages/en.json` — new translation keys
+
+### Test Results
+- Wikipedia proxy chain: resolve → proxy → search = 20 results ✓
+- Connector list API: 15 connectors with correct capabilities ✓
+- Asset serving via connectors.devvm.test ✓
+- Settings connect/disconnect flow ✓
+
+### Notes for Iris
+- DB migration automatic via ensureSchema() — no manual steps needed
+- Dev VMs need APPMARKET_BRANCH=sebastian in UI .env (remove on merge)
+- No UI version bump — bump when merging to dev
+- Caddy route connectors.devvm.test must point to youeye-connectors container
+
 ## v0.3.4.7 — andrew — 2026-04-21
 **Branch:** andrew
 **VM:** ye-andrew
