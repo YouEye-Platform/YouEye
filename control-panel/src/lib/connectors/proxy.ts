@@ -22,6 +22,8 @@ export interface ProxyRequest {
   lang?: string;
   /** User-supplied connector config (API keys, etc.) — decrypted before passing here */
   userConfig?: Record<string, string>;
+  /** Resolved base URL for connectors using ${baseUrl} template (auto-wired or user-provided) */
+  baseUrl?: string;
 }
 
 export interface ProxyResult {
@@ -52,6 +54,7 @@ function substituteTemplate(
     query: Record<string, string | number | boolean | undefined>;
     config: Record<string, string>;
     lang?: string;
+    baseUrl?: string;
   }
 ): string {
   return template.replace(/\$\{([^}]+)\}/g, (_, expr: string) => {
@@ -70,7 +73,9 @@ function substituteTemplate(
 
     let value: string | undefined;
 
-    if (namespace === 'query' || namespace === 'param') {
+    if (path === 'baseUrl') {
+      value = context.baseUrl;
+    } else if (namespace === 'query' || namespace === 'param') {
       const v = context.query[key];
       value = v !== undefined ? String(v) : undefined;
     } else if (namespace === 'config') {
@@ -221,6 +226,7 @@ export async function executeProxy(req: ProxyRequest): Promise<ProxyResult | Pro
     query: req.params,
     config: req.userConfig ?? {},
     lang: req.lang,
+    baseUrl: req.baseUrl,
   };
 
   // 4. Build upstream URL

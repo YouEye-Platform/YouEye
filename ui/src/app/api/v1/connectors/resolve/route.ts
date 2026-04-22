@@ -54,7 +54,10 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    return NextResponse.json({ status: "connected", ...resolved });
+    return NextResponse.json({
+      status: resolved.autoWired ? "auto-connected" : "connected",
+      ...resolved,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Resolver error";
     return NextResponse.json({ error: message }, { status: 500 });

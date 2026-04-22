@@ -84,6 +84,12 @@ export const ConnectorCapabilitySchema = z.object({
 
 // ─── Metadata ───────────────────────────────────────────────
 
+export const CompatibleAppSchema = z.object({
+  appId: z.string().min(1),
+  defaultPort: z.number().int().positive(),
+  protocol: z.enum(['http', 'https']).default('http'),
+});
+
 export const ConnectorMetadataSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/),
   name: z.string().min(1),
@@ -91,6 +97,8 @@ export const ConnectorMetadataSchema = z.object({
   icon: z.string().min(1),
   provides: z.array(z.string().min(1)).min(1),
   network: z.enum(['local', 'internet']),
+  source: z.enum(['internal', 'external', 'both']).default('external'),
+  compatibleApps: z.array(CompatibleAppSchema).optional(),
 });
 
 // ─── Root Connector Manifest ────────────────────────────────
@@ -128,3 +136,4 @@ export type ConnectorEndpoint = z.infer<typeof ConnectorEndpointSchema>;
 export type ConnectorAuth = z.infer<typeof ConnectorAuthSchema>;
 export type ResponseTransform = z.infer<typeof ResponseTransformSchema>;
 export type ConnectorUIComponent = z.infer<typeof ConnectorUIComponentSchema>;
+export type CompatibleApp = z.infer<typeof CompatibleAppSchema>;

@@ -5,9 +5,8 @@
  * the connector registry (YE-AppMarket/connectors/*.yaml) and checking
  * whether the providing app is actually installed (via install.json).
  *
- * This is generic — adding a new connector only requires a YAML manifest
- * in YE-AppMarket and an install.json for the providing app. No code
- * changes needed here.
+ * Uses `compatibleApps` from connector manifests to discover which installed
+ * apps can back each connector — no hardcoded maps.
  */
 
 import { CONTAINER_DOMAIN } from './constants';
@@ -15,75 +14,65 @@ import { readInstallMetadata } from './metadata';
 import { findConnectorByCapability, fetchConnectorManifest } from '../connectors/registry';
 import type { AppManifest } from './types';
 
-/** Map from connector metadata.id prefix to the appId in installed_apps */
-const CONNECTOR_APP_MAP: Record<string, string> = {
-  'searxng': 'searxng',
-  'whoogle': 'whoogle',
-  'wikipedia': '_external_', // Wikipedia is internet-based, always available
-};
-
 /**
- * Given a connector manifest, find the installed app that provides it
- * and return the primary container's internal URL.
+ * Given a connector manifest, find an installed app that backs it
+ * using the connector's `compatibleApps` metadata.
+ * Returns the internal URL if a compatible app is installed.
  */
 async function resolveConnectorUrl(
   connectorId: string,
 ): Promise<{ url: string; type: string } | null> {
-  // Derive the appId from the connector ID (e.g. "searxng-search" → "searxng")
-  const appId = Object.keys(CONNECTOR_APP_MAP).find((key) => connectorId.startsWith(key));
-  if (!appId) return null;
-
-  const mappedAppId = CONNECTOR_APP_MAP[appId];
-
-  // External connectors (Wikipedia) don't need an installed app
-  if (mappedAppId === '_external_') return null;
-
-  // Check if the providing app is actually installed
-  const meta = await readInstallMetadata(mappedAppId);
-  if (!meta) return null;
-
-  // Read the connector manifest for the authoritative endpoint URL
+  let manifest;
   try {
-    const connectorManifest = await fetchConnectorManifest(connectorId);
-    // The connector manifest has the correct container name in its API endpoints.
-    // Extract the base URL from the first endpoint definition.
-    const firstEndpoint = Object.values(connectorManifest.api?.endpoints ?? {})[0];
-    if (firstEndpoint?.url) {
-      const urlMatch = firstEndpoint.url.match(/^(https?:\/\/[^/]+)/);
-      if (urlMatch) {
-        // Replace .incus with current domain suffix in case manifest hasn't been updated
-        const url = urlMatch[1].replace(/\.incus([:/])/g, `.${CONTAINER_DOMAIN}$1`)
-                                .replace(/\.incus$/, `.${CONTAINER_DOMAIN}`);
-        return { url, type: appId };
+    manifest = await fetchConnectorManifest(connectorId);
+  } catch {
+    return null;
+  }
+
+  // External-only connectors don't need an installed app
+  if (manifest.metadata.source === 'external') return null;
+
+  const compatibleApps = manifest.metadata.compatibleApps;
+  if (!compatibleApps?.length) return null;
+
+  // Check each compatible app to see if it's installed
+  for (const compat of compatibleApps) {
+    const meta = await readInstallMetadata(compat.appId);
+    if (!meta) continue;
+
+    // Find the primary container name from install metadata
+    const containers = meta.containers ?? [];
+    let primaryName: string | null = null;
+
+    if (containers.length > 0) {
+      const first = containers[0];
+      if (typeof first === 'string') {
+        // v1 format: string array
+        primaryName = (containers as unknown as string[]).find((c) => c.includes('main')) ?? (containers[0] as unknown as string);
+      } else {
+        // v2 format: object array
+        const objs = containers as Array<{ name: string; containerName: string; type: string }>;
+        primaryName = (objs.find((c) => c.name === 'main') ?? objs[0])?.containerName ?? null;
       }
     }
-  } catch {
-    // Connector manifest not fetchable — fall back to install metadata
+    if (!primaryName) continue;
+
+    const url = `${compat.protocol}://${primaryName}.${CONTAINER_DOMAIN}:${compat.defaultPort}`;
+    return { url, type: compat.appId };
   }
 
-  // Fallback: build URL from install.json container names
-  // v2: containers are objects { name, containerName, type }, v1: strings
-  const containers = meta.containers ?? [];
-  let primaryName: string | null = null;
-
-  if (containers.length > 0) {
-    const first = containers[0];
-    if (typeof first === 'string') {
-      // v1 format: string array
-      primaryName = (containers as unknown as string[]).find((c) => c.includes('main')) ?? (containers[0] as unknown as string);
-    } else {
-      // v2 format: object array
-      const objs = containers as Array<{ name: string; containerName: string; type: string }>;
-      primaryName = (objs.find((c) => c.name === 'main') ?? objs[0])?.containerName ?? null;
-    }
-  }
-  if (!primaryName) return null;
-
-  const portMap: Record<string, number> = { searxng: 8080, whoogle: 5000 };
-  const port = portMap[mappedAppId] ?? 3000;
-
-  return { url: `http://${primaryName}.${CONTAINER_DOMAIN}:${port}`, type: appId };
+  return null;
 }
+
+/** Map capability names to env var prefixes for injection */
+const CAPABILITY_ENV_MAP: Record<string, { urlKey: string; typeKey: string }> = {
+  'search-engine': { urlKey: 'SEARCH_ENGINE_URL', typeKey: 'SEARCH_ENGINE_TYPE' },
+  'translation': { urlKey: 'TRANSLATION_URL', typeKey: 'TRANSLATION_TYPE' },
+  'weather-data': { urlKey: 'WEATHER_DATA_URL', typeKey: 'WEATHER_DATA_TYPE' },
+  'media-catalog': { urlKey: 'MEDIA_CATALOG_URL', typeKey: 'MEDIA_CATALOG_TYPE' },
+  'music-search': { urlKey: 'MUSIC_URL', typeKey: 'MUSIC_TYPE' },
+  'photo-browse': { urlKey: 'PHOTOS_URL', typeKey: 'PHOTOS_TYPE' },
+};
 
 /**
  * Resolve connector requirements from a manifest into extra environment variables.
@@ -102,12 +91,17 @@ export async function resolveConnectors(
     const resolved = await resolveConnectorUrl(connector.metadata.id);
     if (!resolved) continue;
 
-    // Inject env vars based on capability type
-    if (req.capability === 'search-engine') {
-      env.SEARCH_ENGINE_URL = resolved.url;
-      env.SEARCH_ENGINE_TYPE = resolved.type;
+    // Use capability-specific env var names, or generic fallback
+    const mapping = CAPABILITY_ENV_MAP[req.capability];
+    if (mapping) {
+      env[mapping.urlKey] = resolved.url;
+      env[mapping.typeKey] = resolved.type;
+    } else {
+      // Generic: CONNECTOR_{CAPABILITY}_URL
+      const envPrefix = req.capability.toUpperCase().replace(/-/g, '_');
+      env[`CONNECTOR_${envPrefix}_URL`] = resolved.url;
+      env[`CONNECTOR_${envPrefix}_TYPE`] = resolved.type;
     }
-    // Future capabilities (media-server, cloud-storage, etc.) add cases here
   }
 
   return env;
