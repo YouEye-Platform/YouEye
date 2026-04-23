@@ -78,11 +78,13 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="outline-none">
-        <Avatar>
-          {avatarUrl && <AvatarImage src={avatarUrl} alt={username} />}
-          <AvatarFallback className="text-xs">{initials}</AvatarFallback>
-        </Avatar>
+      <DropdownMenuTrigger asChild>
+        <button className="inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent transition-colors outline-none">
+          <Avatar className="size-7">
+            {avatarUrl && <AvatarImage src={avatarUrl} alt={username} />}
+            <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+          </Avatar>
+        </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuLabel className="flex flex-col gap-0.5">
