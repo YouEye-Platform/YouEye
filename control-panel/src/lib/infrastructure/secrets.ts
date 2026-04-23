@@ -32,7 +32,7 @@ export function generateSecretKey(bytes = 50): string {
 export async function ensureDataDirectory(appPath: string): Promise<string> {
   const fullPath = path.join(BASE_DIR, appPath);
   if (!existsSync(fullPath)) {
-    await mkdir(fullPath, { recursive: true, mode: 0o700 });
+    await mkdir(fullPath, { recursive: true, mode: 0o777 });
   }
   return fullPath;
 }
@@ -52,7 +52,7 @@ export async function readSecret(app: string, name: string): Promise<string | nu
 export async function writeSecret(app: string, name: string, value: string): Promise<void> {
   const dir = path.join(BASE_DIR, app);
   if (!existsSync(dir)) {
-    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await mkdir(dir, { recursive: true, mode: 0o777 });
   }
   await writeFile(path.join(dir, name), value, { mode: 0o600 });
 }

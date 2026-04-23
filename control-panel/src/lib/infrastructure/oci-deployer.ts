@@ -136,10 +136,11 @@ export async function deployOCIContainer(
 
   for (let i = 0; i < manifest.volumes.length; i++) {
     const vol = manifest.volumes[i];
-    // Ensure host directory exists with restrictive permissions.
-    // OCI apps run as non-root UIDs but shift=true handles UID mapping.
+    // Ensure host directory exists. Use 0o777 because shift=true handles
+    // UID mapping for security — the directory must be writable by the
+    // container's non-root user (www-data, node, etc.) after UID shifting.
     if (!existsSync(vol.host)) {
-      await mkdir(vol.host, { recursive: true, mode: 0o700 });
+      await mkdir(vol.host, { recursive: true, mode: 0o777 });
     }
 
     devices[`volume${i}`] = {
