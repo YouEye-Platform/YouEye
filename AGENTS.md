@@ -1,3 +1,27 @@
+## v0.3.5.3 — sebastian — 2026-04-23
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix SearXNG availability + implement Link Handling tab
+
+### Changes
+- `ui/src/app/api/settings/connectors/[appId]/route.ts` — Extract `info_cards` with triggers from app manifest, return as `linkHandlers` in API response
+- `ui/src/components/settings/app-settings-detail.tsx` — Replace Link Handling placeholder with real implementation: displays link handler types, trigger domain patterns, descriptions
+- `ui/messages/{en,ru,de,fr,es}.json` — i18n keys for link handling (linkHandlingActive, linkHandlingDomains, linkHandlingExplanation)
+- `ui/package.json` — Version bump 0.3.5.2 → 0.3.5.3
+- VM env: `APPMARKET_BRANCH=sebastian` set in youeye-ui container (fixes connector manifest fetch)
+
+### Test Results
+- Cinema Link Handling: Shows "Movie Info" with imdb.com, themoviedb.org domains
+- Wiki Link Handling: Shows "Article Summary" with *.wikipedia.org/* pattern
+- SearXNG: Now shows as available with "Internal" badge + green checkmark
+- Whoogle: Correctly shows "not installed" in amber
+- Apps without link handlers (Notes, Weather, Translate, Search): Show empty state
+
+### Notes for Iris
+- The `APPMARKET_BRANCH` env var must be set on any VM running the sebastian branch. Without it, UI defaults to `main` which may lack connector manifest updates (e.g. compatibleApps field).
+- Link handlers are read-only in this release — the plan's Session C will add management (enable/disable, conflict resolution, SmartLink component).
+
 ## v0.3.5.2 — sebastian — 2026-04-23
 **Branch:** sebastian
 **VM:** ye-sebastian
