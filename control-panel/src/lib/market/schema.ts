@@ -383,7 +383,25 @@ export const AppManifestSchema = z
       return true;
     },
     { message: 'LXD containers with source must specify a repo' }
-  );
+  )
+  .superRefine((data, ctx) => {
+    // F2: roleClaim scope coherence check at schema level
+    if (data.sso?.adminMapping?.type === 'roleClaim') {
+      const claimName = (data.sso.adminMapping as { claimName: string }).claimName;
+      const steps = data.sso?.setup?.api?.steps ?? [];
+      for (const step of steps) {
+        if (!step.body) continue;
+        const bodyStr = JSON.stringify(step.body);
+        if (/scope/i.test(bodyStr) && !bodyStr.includes(claimName)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['sso', 'adminMapping', 'claimName'],
+            message: `roleClaim "${claimName}" not found in configure step oauth.scope — admin mapping may fail silently`,
+          });
+        }
+      }
+    }
+  });
 
 // ─── Catalog Schema ───────────────────────────────────────
 

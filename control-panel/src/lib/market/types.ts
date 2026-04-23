@@ -127,9 +127,19 @@ export interface InstallMetadata {
 export interface InstallEvent {
   step: number;
   totalSteps: number;
-  status: 'running' | 'success' | 'error' | 'skipped';
+  status: 'running' | 'success' | 'error' | 'skipped' | 'warning';
   message: string;
   detail?: string;
+  phase?: 'install' | 'verify';
+  duration?: number;
+  errorContext?: {
+    url?: string;
+    method?: string;
+    statusCode?: number;
+    responseBody?: string;
+    resolvedVars?: Record<string, string>;
+    suggestion?: string;
+  };
 }
 
 export type InstallEventCallback = (event: InstallEvent) => void;

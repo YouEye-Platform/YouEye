@@ -43,9 +43,19 @@ interface MarketApp {
 interface InstallProgress {
   step: number;
   totalSteps: number;
-  status: "running" | "success" | "error" | "skipped";
+  status: "running" | "success" | "error" | "skipped" | "warning";
   message: string;
   detail?: string;
+  phase?: "install" | "verify";
+  duration?: number;
+  errorContext?: {
+    url?: string;
+    method?: string;
+    statusCode?: number;
+    responseBody?: string;
+    resolvedVars?: Record<string, string>;
+    suggestion?: string;
+  };
 }
 
 interface ActiveInstall {
@@ -134,6 +144,10 @@ export function MarketEmbedClient() {
   const [installTarget, setInstallTarget] = useState<MarketApp | null>(null);
   const [installForm, setInstallForm] = useState<{ subdomain: string; params: Record<string, string> }>({ subdomain: "", params: {} });
   const [installError, setInstallError] = useState<string | null>(null);
+
+  // Validation state (F1)
+  const [validationReport, setValidationReport] = useState<{ valid: boolean; errors: { check: string; severity: string; message: string; detail?: string }[]; warnings: { check: string; severity: string; message: string; detail?: string }[]; info: { check: string; severity: string; message: string; detail?: string }[] } | null>(null);
+  const [validating, setValidating] = useState(false);
 
   // Uninstall state
   const [uninstallTarget, setUninstallTarget] = useState<MarketApp | null>(null);
@@ -234,7 +248,20 @@ export function MarketEmbedClient() {
     }
     setInstallForm({ subdomain: defaultSub, params });
     setInstallError(null);
+    setValidationReport(null);
     setInstallTarget(app);
+
+    // F1: trigger async validation
+    setValidating(true);
+    fetch("/api/ui-bridge/market?action=validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ appId: app.id, checkImages: true, checkUrls: false }),
+    })
+      .then(r => r.json())
+      .then(report => setValidationReport(report))
+      .catch(() => {})
+      .finally(() => setValidating(false));
   };
 
   const handleInstall = async () => {
@@ -775,6 +802,40 @@ export function MarketEmbedClient() {
             </div>
           ))}
 
+          {/* F1: Validation report */}
+          {validating && (
+            <div style={{ fontSize: 11, color: "var(--embed-muted-text)", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 10, height: 10, border: "2px solid var(--embed-primary)", borderTopColor: "transparent", borderRadius: "50%", animation: "embed-spin 0.8s linear infinite", display: "inline-block" }} />
+              Validating manifest...
+            </div>
+          )}
+          {validationReport && !validating && (
+            <details style={{ marginBottom: 12, border: `1px solid ${validationReport.errors.length > 0 ? "var(--embed-danger)" : validationReport.warnings.length > 0 ? "var(--embed-warning, #f59e0b)" : "var(--embed-success)"}`, borderRadius: 6, overflow: "hidden" }}
+              open={validationReport.errors.length > 0}>
+              <summary style={{ cursor: "pointer", padding: "6px 8px", fontSize: 11, fontWeight: 500, display: "flex", alignItems: "center", gap: 6,
+                color: validationReport.errors.length > 0 ? "var(--embed-danger)" : validationReport.warnings.length > 0 ? "var(--embed-warning, #f59e0b)" : "var(--embed-success)",
+                background: validationReport.errors.length > 0 ? "rgba(239,68,68,0.06)" : validationReport.warnings.length > 0 ? "rgba(245,158,11,0.06)" : "rgba(34,197,94,0.06)" }}>
+                <span>{validationReport.errors.length > 0 ? "\u2717" : validationReport.warnings.length > 0 ? "\u26a0" : "\u2713"}</span>
+                {validationReport.errors.length > 0
+                  ? `${validationReport.errors.length} issue${validationReport.errors.length > 1 ? "s" : ""} found`
+                  : validationReport.warnings.length > 0
+                    ? `Manifest OK — ${validationReport.warnings.length} warning${validationReport.warnings.length > 1 ? "s" : ""}`
+                    : "Manifest verified"}
+              </summary>
+              <div style={{ padding: "4px 8px", fontSize: 11 }}>
+                {[...validationReport.errors, ...validationReport.warnings, ...validationReport.info].map((item, i) => (
+                  <div key={i} style={{ padding: "3px 0", display: "flex", alignItems: "flex-start", gap: 6, color: item.severity === "error" ? "var(--embed-danger)" : item.severity === "warning" ? "var(--embed-warning, #f59e0b)" : "var(--embed-muted-text)" }}>
+                    <span style={{ flexShrink: 0 }}>{item.severity === "error" ? "\u2717" : item.severity === "warning" ? "\u26a0" : "\u2139"}</span>
+                    <div>
+                      <div>{item.message}</div>
+                      {item.detail && <div style={{ fontSize: 10, color: "var(--embed-muted-text)", marginTop: 2 }}>{item.detail}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+
           {(installTarget.supportsSSO || installTarget.sso !== false) && (
             <div className="embed-badge-green" style={{ marginBottom: 12, display: "inline-block", fontSize: 11 }}>
               SSO enabled automatically
@@ -866,6 +927,9 @@ export function MarketEmbedClient() {
           {activeInstalls.map(inst => {
             const last = inst.events[inst.events.length - 1];
             const pct = last ? Math.round((last.step / Math.max(last.totalSteps, 1)) * 100) : 0;
+            const hasError = inst.events.some((e: InstallProgress) => e.status === 'error');
+            const hasWarning = inst.events.some((e: InstallProgress) => e.status === 'warning');
+            const barColor = hasError ? "var(--embed-danger)" : hasWarning ? "var(--embed-warning, #f59e0b)" : "var(--embed-primary)";
             return (
               <div key={inst.appId} style={{ fontSize: 12, marginBottom: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
@@ -874,8 +938,43 @@ export function MarketEmbedClient() {
                 </div>
                 <span className="embed-muted" style={{ fontSize: 11 }}>{last?.message || "Starting..."}</span>
                 <div className="embed-progress-track" style={{ marginTop: 4 }}>
-                  <div className="embed-progress-bar" style={{ width: `${pct}%`, background: "var(--embed-primary)" }} />
+                  <div className="embed-progress-bar" style={{ width: `${pct}%`, background: barColor }} />
                 </div>
+                {/* Render error/warning events with context */}
+                {inst.events.filter((e: InstallProgress) => e.status === 'error' || e.status === 'warning').map((ev: InstallProgress, i: number) => {
+                  const ec = ev.errorContext;
+                  const isError = ev.status === 'error';
+                  const borderCol = isError ? "var(--embed-danger)" : "var(--embed-warning, #f59e0b)";
+                  const bgCol = isError ? "rgba(239,68,68,0.08)" : "rgba(245,158,11,0.08)";
+                  return (
+                    <details key={i} style={{ marginTop: 6, border: `1px solid ${borderCol}`, borderRadius: 6, background: bgCol, overflow: "hidden" }}>
+                      <summary style={{ cursor: "pointer", padding: "6px 8px", fontSize: 11, fontWeight: 500, color: borderCol, display: "flex", alignItems: "center", gap: 6 }}>
+                        <span>{isError ? "\u2717" : "\u26a0"}</span>
+                        <span style={{ flex: 1 }}>{ev.message}</span>
+                        {ec?.statusCode && (
+                          <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: borderCol, color: "#fff" }}>{ec.statusCode}</span>
+                        )}
+                      </summary>
+                      {ec && (
+                        <div style={{ padding: "6px 8px", fontSize: 11, borderTop: `1px solid ${borderCol}` }}>
+                          {ec.method && ec.url && (
+                            <div style={{ fontFamily: "monospace", fontSize: 10, color: "var(--embed-muted-text)", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={ec.url}>
+                              {ec.method} {ec.url}
+                            </div>
+                          )}
+                          {ec.responseBody && (
+                            <pre style={{ margin: "4px 0", padding: 6, background: "rgba(0,0,0,0.06)", borderRadius: 4, fontSize: 10, maxHeight: 100, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{ec.responseBody}</pre>
+                          )}
+                          {ec.suggestion && (
+                            <div style={{ marginTop: 4, padding: "4px 8px", background: "rgba(59,130,246,0.1)", borderRadius: 4, color: "var(--embed-text)", fontSize: 11 }}>
+                              {"\ud83d\udca1"} {ec.suggestion}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </details>
+                  );
+                })}
               </div>
             );
           })}

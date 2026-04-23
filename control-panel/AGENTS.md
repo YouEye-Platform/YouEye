@@ -1,3 +1,30 @@
+## v0.3.5.2 — andrew — 2026-04-23
+**Branch:** andrew
+**VM:** ye-andrew
+**Agent:** Andrew
+**Task:** Session 13 — Smoother External App Integration (F5 + F2 + F1)
+
+### Changes
+- `src/lib/market/types.ts` — Extended InstallEvent with 'warning' status, phase, duration, errorContext fields
+- `src/lib/market/sso-engine.ts` — Added StepError class with errorContext, getSuggestion/getNetworkSuggestion helpers, redactVars; HTTP step failures now throw StepError with captured URL, method, statusCode, responseBody, suggestion
+- `src/lib/market/engine.ts` — Error context passthrough in SSO/container/health catch blocks; runtime roleClaim scope warning after SSO configure
+- `src/lib/market/schema.ts` — Added superRefine to AppManifestSchema checking roleClaim claimName presence in SSO scope fields
+- `src/lib/market/validator.ts` — NEW: 8-check validation pipeline (schema, template vars, Docker image, icon/screenshot URLs, SSO scope, SSO structure, subdomain collision)
+- `src/app/api/market/validate/route.ts` — NEW: POST endpoint accepting appId or raw manifest, returns ValidationReport
+- `src/app/api/ui-bridge/market/route.ts` — Added action=validate handler; error SSE events now include errorContext from StepError
+- `src/app/embed/market/client.tsx` — Pre-install validation badge (green/amber/red), expandable error context cards with status badges, method+URL, response body, suggestions
+
+### Test Results
+- Playwright: 10 tests (6 API + 4 UI), all passing
+- Screenshots: Tests/Andrew/playwright/screenshots/
+
+### Notes for Iris
+- Three new exports from validator.ts used by engine.ts (checkRoleClaimScope, findFieldsContaining)
+- New /api/market/validate route has JWT middleware auth (same as all non-public API routes)
+- StepError class exported from sso-engine.ts, imported by engine.ts and route.ts for instanceof checks
+
+---
+
 ## v0.2.19.19 — vanya — 2026-04-10
 **Branch:** vanya
 **VM:** ye-vanya

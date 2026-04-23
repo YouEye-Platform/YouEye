@@ -8,8 +8,57 @@
  * Re-exports Authentik CRUD operations from the existing sso-setup module.
  */
 
-import type { SSOConfig, SSOStep, VariableContext } from './types';
+import type { SSOConfig, SSOStep, VariableContext, InstallEvent } from './types';
 import { resolveVariables, resolveVariablesDeep } from './variables';
+
+// ─── Error with structured context ────────────────────────────
+
+export class StepError extends Error {
+  errorContext: InstallEvent['errorContext'];
+  constructor(message: string, errorContext: InstallEvent['errorContext']) {
+    super(message);
+    this.name = 'StepError';
+    this.errorContext = errorContext;
+  }
+}
+
+function getSuggestion(status: number, url: string): string {
+  switch (status) {
+    case 401: case 403:
+      return 'Auth credentials may be wrong. Check the admin password secret in /var/lib/youeye/app-{id}/.admin_password';
+    case 404:
+      return `API endpoint not found at ${url}. The app version may use a different path.`;
+    case 500:
+      return 'Internal server error in the app. Check container logs: sudo incus exec {container} -- journalctl -n 50';
+    case 502: case 503:
+      return 'App may still be starting up. Try "Reconfigure SSO" after a few minutes.';
+    case 409:
+      return 'Resource already exists. This may happen on reinstall — the step may need ignoreError: true.';
+    default:
+      return `Unexpected HTTP ${status}. Check container logs for details.`;
+  }
+}
+
+function getNetworkSuggestion(err: Error): string {
+  const msg = err.message;
+  if (msg.includes('ECONNREFUSED'))
+    return 'Connection refused — container may not be listening on the expected port.';
+  if (msg.includes('timeout') || msg.includes('ETIMEDOUT') || msg.includes('AbortError'))
+    return 'Request timed out — app may be under heavy load or unresponsive. Check container health.';
+  if (msg.includes('ENOTFOUND'))
+    return 'DNS resolution failed — container hostname not found on the network.';
+  return 'Network error connecting to the app. Check that the container is running and reachable.';
+}
+
+/** Redact sensitive variable values for safe inclusion in error reports. */
+export function redactVars(vars: Record<string, string>): Record<string, string> {
+  const redacted: Record<string, string> = {};
+  const sensitive = /password|secret|token|key/i;
+  for (const [k, v] of Object.entries(vars)) {
+    redacted[k] = sensitive.test(k) && v.length > 4 ? `${v.slice(0, 4)}...` : v;
+  }
+  return redacted;
+}
 
 // Re-export Authentik CRUD operations
 export {
@@ -171,9 +220,20 @@ async function executeHTTPStep(step: SSOStep, ctx: StepContext): Promise<HTTPSte
     });
 
     if (!res.ok) {
-      if (step.ignoreError) return null;
       const text = await res.text().catch(() => '');
-      throw new Error(`SSO step ${step.method} ${url} failed: ${res.status} ${text}`);
+      const truncated = text.slice(0, 500);
+      const errorCtx: InstallEvent['errorContext'] = {
+        url,
+        method: step.method!,
+        statusCode: res.status,
+        responseBody: truncated,
+        suggestion: getSuggestion(res.status, url),
+      };
+      if (step.ignoreError) return null;
+      throw new StepError(
+        `SSO step ${step.method} ${url} failed: ${res.status} ${res.statusText}`,
+        errorCtx
+      );
     }
 
     if (res.status === 204) return { body: {}, response: res };
@@ -182,7 +242,16 @@ async function executeHTTPStep(step: SSOStep, ctx: StepContext): Promise<HTTPSte
     return { body: JSON.parse(text), response: res };
   } catch (err) {
     if (step.ignoreError) return null;
-    throw err;
+    if (err instanceof StepError) throw err;
+    const errorCtx: InstallEvent['errorContext'] = {
+      url,
+      method: step.method!,
+      suggestion: getNetworkSuggestion(err as Error),
+    };
+    throw new StepError(
+      `SSO step ${step.method} ${url}: ${(err as Error).message}`,
+      errorCtx
+    );
   }
 }
 

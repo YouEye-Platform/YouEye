@@ -53,6 +53,7 @@ import {
   createAuthentikOAuth2App,
   removeAuthentikOAuth2App,
   executeSSOSteps,
+  StepError,
 } from './sso-engine';
 import {
   createAuthentikForwardAuthApp,
@@ -667,7 +668,16 @@ export async function installApp(
 
         emit(onEvent, step, totalSteps, 'success', `${containerName} deployed`);
       } catch (err) {
-        emit(onEvent, step, totalSteps, 'error', `Failed to deploy ${containerName}`, String(err));
+        onEvent({
+          step,
+          totalSteps,
+          status: 'error',
+          message: `Failed to deploy ${containerName}`,
+          detail: String(err),
+          errorContext: {
+            suggestion: 'Container deployment failed. Check disk space, image availability, and incus status.',
+          },
+        });
         throw err;
       }
 
@@ -676,6 +686,7 @@ export async function installApp(
         step++;
         emit(onEvent, step, totalSteps, 'running', `Waiting for ${containerName} to be healthy...`);
 
+        const hcStart = Date.now();
         let healthy = false;
         if (containerSpec.healthCheck.type === 'http') {
           healthy = await waitForAppHealth(
@@ -692,8 +703,25 @@ export async function installApp(
           );
         }
 
-        emit(onEvent, step, totalSteps, healthy ? 'success' : 'error',
-          healthy ? `${containerName} is healthy` : `${containerName} health check timed out`);
+        const hcDuration = Date.now() - hcStart;
+        if (healthy) {
+          onEvent({ step, totalSteps, status: 'success', message: `${containerName} is healthy`, duration: hcDuration });
+        } else {
+          const hcUrl = containerSpec.healthCheck.type === 'http'
+            ? `http://${containerName}:${containerSpec.port || 80}${containerSpec.healthCheck.path || '/'}`
+            : `postgres://${containerName}`;
+          onEvent({
+            step,
+            totalSteps,
+            status: 'error',
+            message: `${containerName} health check timed out`,
+            duration: hcDuration,
+            errorContext: {
+              url: hcUrl,
+              suggestion: 'Health check timed out. The app may need more startup time, or the health endpoint path may be wrong.',
+            },
+          });
+        }
         if (!healthy) throw new Error(`Health check failed for ${containerName}`);
       }
     }
@@ -751,8 +779,31 @@ export async function installApp(
         await executeSSOSteps(manifest.sso!, ctx);
       }
       emit(onEvent, step, totalSteps, 'success', `${manifest.metadata.name} SSO configured`);
+
+      // F2: Runtime roleClaim scope warning
+      if (manifest.sso?.adminMapping?.type === 'roleClaim') {
+        const { checkRoleClaimScope } = await import('./validator');
+        const scopeWarning = checkRoleClaimScope(manifest);
+        if (scopeWarning) {
+          onEvent({
+            step,
+            totalSteps,
+            status: 'warning',
+            message: scopeWarning.message,
+            detail: scopeWarning.detail,
+          });
+        }
+      }
     } catch (err) {
-      emit(onEvent, step, totalSteps, 'error', 'SSO configuration failed', String(err));
+      const errorContext = err instanceof StepError ? err.errorContext : undefined;
+      onEvent({
+        step,
+        totalSteps,
+        status: 'error',
+        message: 'SSO configuration failed',
+        detail: String(err),
+        errorContext,
+      });
       throw err;
     }
   }

@@ -149,6 +149,32 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  if (action === 'validate') {
+    try {
+      const body = await request.json();
+      const { validateManifest } = await import('@/lib/market/validator');
+      const { fetchManifest: fetchMan } = await import('@/lib/market/catalog');
+
+      let manifestData: unknown;
+      if (body.manifest) {
+        manifestData = body.manifest;
+      } else if (body.appId) {
+        manifestData = await fetchMan(body.appId);
+      } else {
+        return NextResponse.json({ error: 'Provide appId or manifest' }, { status: 400 });
+      }
+
+      const report = await validateManifest(manifestData, {
+        checkImages: body.checkImages !== false,
+        checkUrls: body.checkUrls !== false,
+        checkSubdomain: body.subdomain,
+      });
+      return NextResponse.json(report);
+    } catch (err) {
+      return NextResponse.json({ error: String(err) }, { status: 500 });
+    }
+  }
+
   if (action === 'cancel-install') {
     try {
       const body = await request.json();
@@ -238,6 +264,8 @@ export async function POST(request: NextRequest) {
       } catch (err) {
         finishTrack(config.appId, String(err));
         try {
+          const { StepError } = await import('@/lib/market/sso-engine');
+          const errorContext = err instanceof StepError ? err.errorContext : undefined;
           controller.enqueue(
             encoder.encode(
               `data: ${JSON.stringify({
@@ -246,6 +274,7 @@ export async function POST(request: NextRequest) {
                 status: 'error',
                 message: 'Installation failed',
                 detail: String(err),
+                errorContext,
               })}\n\n`
             )
           );
