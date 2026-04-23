@@ -5,7 +5,7 @@
 
 import { incusRequest } from '../incus/server';
 import type { OCIManifest } from './types';
-import { mkdir } from 'fs/promises';
+import { mkdir, chmod } from 'fs/promises';
 import { existsSync } from 'fs';
 
 /**
@@ -136,12 +136,12 @@ export async function deployOCIContainer(
 
   for (let i = 0; i < manifest.volumes.length; i++) {
     const vol = manifest.volumes[i];
-    // Ensure host directory exists. Use 0o777 because shift=true handles
-    // UID mapping for security — the directory must be writable by the
-    // container's non-root user (www-data, node, etc.) after UID shifting.
+    // Ensure host directory exists and is writable by the container's
+    // non-root user. chmod after mkdir to bypass umask restrictions.
     if (!existsSync(vol.host)) {
-      await mkdir(vol.host, { recursive: true, mode: 0o777 });
+      await mkdir(vol.host, { recursive: true });
     }
+    await chmod(vol.host, 0o777);
 
     devices[`volume${i}`] = {
       type: 'disk',
