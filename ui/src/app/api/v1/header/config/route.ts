@@ -105,6 +105,7 @@ export async function GET(request: NextRequest) {
       order: a.displayOrder,
       section: a.sectionId,
       status: a.status,
+      visible: a.visible,
     };
   });
 
