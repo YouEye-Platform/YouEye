@@ -1,3 +1,33 @@
+## v0.3.5.1 — sebastian — 2026-04-23
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Settings restructure — rename Connectors → Apps, add Accounts page, per-app tabbed settings
+
+### Changes
+- `ui/src/components/settings/settings-shell.tsx` — Sidebar: "Connectors" replaced with "Apps" + "Accounts"; admin "Apps" renamed to "App Management"
+- `ui/src/components/settings/app-settings-detail.tsx` — NEW: Per-app settings page with 3 tabs (Data Sources, Link Handling, Permissions)
+- `ui/src/components/settings/accounts-settings.tsx` — NEW: Centralized Connected Accounts + API Keys page
+- `ui/src/app/settings/apps/page.tsx` — NEW: Apps list route (replaces connectors)
+- `ui/src/app/settings/apps/[appId]/page.tsx` — NEW: Per-app detail route with tabbed interface
+- `ui/src/app/settings/accounts/page.tsx` — NEW: Accounts settings route
+- `ui/src/app/api/settings/accounts/route.ts` — NEW: Aggregate API for OAuth accounts + API keys
+- `ui/src/app/api/auth/providers/[slug]/disconnect/route.ts` — NEW: OAuth disconnect endpoint
+- `ui/src/app/settings/connectors/page.tsx` — Redirect to `/settings/apps`
+- `ui/src/app/settings/connectors/[appId]/page.tsx` — Redirect to `/settings/apps/[appId]`
+- `ui/messages/{en,ru,de,fr,es}.json` — i18n for Apps, Accounts, App Management, tabs, empty states
+
+### Test Results
+- Browser: Sidebar shows Apps/Accounts correctly, redirect works, app list shows all 7 apps
+- Per-app detail: 3 tabs render, Data Sources shows capabilities, Link Handling shows placeholder, Permissions fetches state
+- Accounts page: Connected Accounts and API Keys sections render with empty states
+- Playwright: 14 tests written (`tests/settings-apps.spec.ts`), CDP-connected to persistent browser
+
+### Notes for Iris
+- This is Session A of the info-cards-and-connectors plan. Link Handling tab is placeholder (Session C). Accounts OAuth flow needs auth providers configured (Session D).
+- Old `/settings/connectors` URLs redirect to `/settings/apps` — no breaking change for bookmarks
+- No changes to CP or Spine — UI-only release
+
 ## v0.3.3.4 — sebastian — 2026-04-22
 **Branch:** sebastian
 **VM:** ye-sebastian
