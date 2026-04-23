@@ -1,3 +1,25 @@
+## v0.3.3.3 — vanya — 2026-04-23
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix header icon spacing, notification bugs, toast positioning, standardize native app drawers (Session 21)
+
+### Changes — UI (v0.3.3.3)
+- `ui/src/components/layout/user-menu.tsx` — Wrapped avatar trigger in h-9 w-9 button for consistent icon spacing
+- `ui/src/components/layout/notification-bell.tsx` — Standardized button to h-9 w-9, fixed interface fields from snake_case to camelCase
+- `ui/src/components/ui/sonner.tsx` — Added position="top-right" and duration={5000} for auto-dismissing toasts
+- `ui/src/components/notifications/notifications-list.tsx` — Fixed API paths /api/notifications → /api/v1/notifications (5 places), fixed NaN time bug, added NaN guard
+- `ui/package.json` — Bumped 0.3.3.2 → 0.3.3.3
+
+### Test Results
+- Build: clean standalone.tar (226MB), deployed to youeye-ui container
+- Browser: even header spacing, notifications load with correct times, toasts auto-dismiss top-right
+
+### Notes for Iris
+- notification-bell and notifications-list now use camelCase field names matching Drizzle ORM output
+- API path fix critical — /api/notifications never existed, only /api/v1/notifications
+- No CP or Spine changes
+
 ## v0.3.3.2 — vanya — 2026-04-22
 **Branch:** vanya
 **VM:** ye-vanya
