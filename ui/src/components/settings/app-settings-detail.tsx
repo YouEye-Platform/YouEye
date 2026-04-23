@@ -14,6 +14,8 @@ import {
   ArrowLeft,
   Plug,
   Link2,
+  Globe,
+  ExternalLink,
   Shield,
   ShieldCheck,
   ShieldX,
@@ -89,6 +91,13 @@ interface Permission {
   grantedAt: string | null;
 }
 
+interface LinkHandler {
+  type: string;
+  description: string;
+  endpoint: string;
+  triggers: string[];
+}
+
 /* ── Tab type ── */
 
 type TabId = "data-sources" | "link-handling" | "permissions";
@@ -106,6 +115,7 @@ export function AppSettingsDetail({
 }) {
   const [app, setApp] = useState<AppInfo | null>(null);
   const [capabilities, setCapabilities] = useState<Capability[]>([]);
+  const [linkHandlers, setLinkHandlers] = useState<LinkHandler[]>([]);
   const [isAdmin, setIsAdmin] = useState(isAdminProp);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabId>("data-sources");
@@ -123,6 +133,7 @@ export function AppSettingsDetail({
         const data = await res.json();
         setApp(data.app);
         setCapabilities(data.capabilities);
+        setLinkHandlers(data.linkHandlers ?? []);
         setIsAdmin(data.isAdmin);
       }
     } catch {
@@ -247,7 +258,7 @@ export function AppSettingsDetail({
         />
       )}
 
-      {activeTab === "link-handling" && <LinkHandlingTab />}
+      {activeTab === "link-handling" && <LinkHandlingTab linkHandlers={linkHandlers} appName={app?.name ?? appId} />}
 
       {activeTab === "permissions" && (
         <PermissionsTab
@@ -367,18 +378,64 @@ function ConnectorDetailInner({ appId, directAccessEmbedUrl }: { appId: string; 
   );
 }
 
-/* ── Link Handling Tab (placeholder for Session C) ── */
+/* ── Link Handling Tab ── */
 
-function LinkHandlingTab() {
+function LinkHandlingTab({ linkHandlers, appName }: { linkHandlers: LinkHandler[]; appName: string }) {
   const t = useTranslations("connectorSettings");
 
+  if (linkHandlers.length === 0) {
+    return (
+      <div className="py-8 text-center border rounded-lg">
+        <Link2 className="w-8 h-8 mx-auto mb-3 text-muted-foreground opacity-40" />
+        <p className="text-sm text-muted-foreground">{t("linkHandlingEmpty")}</p>
+        <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+          {t("linkHandlingDescription")}
+        </p>
+      </div>
+    );
+  }
+
+  const formatType = (s: string) =>
+    s.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
   return (
-    <div className="py-8 text-center border rounded-lg">
-      <Link2 className="w-8 h-8 mx-auto mb-3 text-muted-foreground opacity-40" />
-      <p className="text-sm text-muted-foreground">{t("linkHandlingEmpty")}</p>
-      <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
-        {t("linkHandlingDescription")}
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        {t("linkHandlingActive", { appName })}
       </p>
+
+      {linkHandlers.map((handler) => (
+        <div key={handler.type} className="border rounded-lg p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Link2 className="w-4 h-4 text-primary" />
+            <span className="text-sm font-medium">{formatType(handler.type)}</span>
+          </div>
+
+          {handler.description && (
+            <p className="text-xs text-muted-foreground">{handler.description}</p>
+          )}
+
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              {t("linkHandlingDomains")}
+            </p>
+            {handler.triggers.map((trigger) => (
+              <div
+                key={trigger}
+                className="flex items-center gap-2 py-1.5 px-3 rounded-md bg-accent/30"
+              >
+                <Globe className="w-3.5 h-3.5 text-blue-500" />
+                <code className="text-sm font-mono">{trigger}</code>
+                <ExternalLink className="w-3 h-3 text-muted-foreground ml-auto" />
+              </div>
+            ))}
+          </div>
+
+          <p className="text-[11px] text-muted-foreground">
+            {t("linkHandlingExplanation", { appName })}
+          </p>
+        </div>
+      ))}
     </div>
   );
 }

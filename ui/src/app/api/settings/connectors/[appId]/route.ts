@@ -200,6 +200,22 @@ export async function GET(
     };
   }));
 
+  // Extract link handlers (info_cards with triggers) from manifest
+  const infoCards = (manifest?.info_cards as Array<{
+    type: string;
+    description?: string;
+    endpoint: string;
+    triggers?: string[];
+  }>) ?? [];
+  const linkHandlers = infoCards
+    .filter((card) => card.triggers && card.triggers.length > 0)
+    .map((card) => ({
+      type: card.type,
+      description: card.description ?? card.type,
+      endpoint: card.endpoint,
+      triggers: card.triggers!,
+    }));
+
   return NextResponse.json({
     app: {
       id: app.id,
@@ -208,6 +224,7 @@ export async function GET(
       subdomain: app.subdomain,
     },
     capabilities,
+    linkHandlers,
     isAdmin: session.isAdmin,
   });
 }
