@@ -82,7 +82,8 @@
       "apps": "Приложения",
       "appManagement": "Управление приложениями",
       "appMarket": "Маркет приложений",
-      "backup": "Резервное копирование"
+      "backup": "Резервное копирование",
+      "connectorDefaults": "Коннекторы по умолчанию"
     },
     "profile": {
       "title": "Профиль",
@@ -554,7 +555,20 @@
     "internal": "Внутренний",
     "external": "Внешний",
     "installAvailable": "Доступна установка",
-    "manageInAccounts": "Управление в Аккаунтах"
+    "manageInAccounts": "Управление в Аккаунтах",
+    "custom": "Свой URL",
+    "default": "По умолчанию",
+    "installed": "установлено",
+    "notInstalled": "не установлено",
+    "installFromMarket": "Установить из маркетплейса",
+    "askAdminToInstall": "Попросите администратора установить это приложение.",
+    "useOnServer": "Использовать на сервере",
+    "useYourOwn": "Использовать свой",
+    "testConnection": "Проверить соединение",
+    "reachable": "Доступен",
+    "unreachable": "Недоступен",
+    "backendUnavailable": "Бэкенд недоступен",
+    "noConnectorsAvailable": "Нет доступных коннекторов для этой функции."
   },
   "accountSettings": {
     "pageTitle": "Аккаунты",

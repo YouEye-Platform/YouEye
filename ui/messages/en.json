@@ -82,7 +82,8 @@
       "backup": "Backup",
       "apps": "Apps",
       "appManagement": "App Management",
-      "appMarket": "App Market"
+      "appMarket": "App Market",
+      "connectorDefaults": "Connector Defaults"
     },
     "profile": {
       "title": "Profile",
@@ -553,8 +554,21 @@
     "connected": "connected",
     "internal": "Internal",
     "external": "External",
+    "custom": "Custom URL",
+    "default": "Default",
+    "installed": "installed",
+    "notInstalled": "not installed",
     "installAvailable": "Install available",
-    "manageInAccounts": "Manage in Accounts"
+    "installFromMarket": "Install from Marketplace",
+    "askAdminToInstall": "Ask your administrator to install this app.",
+    "manageInAccounts": "Manage in Accounts",
+    "useOnServer": "Use on this server",
+    "useYourOwn": "Use your own",
+    "testConnection": "Test Connection",
+    "reachable": "Reachable",
+    "unreachable": "Unreachable",
+    "backendUnavailable": "Backend unavailable",
+    "noConnectorsAvailable": "No connectors available for this capability."
   },
   "accountSettings": {
     "pageTitle": "Accounts",

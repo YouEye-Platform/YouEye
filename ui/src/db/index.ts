@@ -334,6 +334,17 @@ export async function ensureSchema() {
     // Link connector secrets to auth providers for managed credentials
     await queryClient`ALTER TABLE user_connector_secrets ADD COLUMN IF NOT EXISTS auth_provider_id UUID REFERENCES auth_providers(id) ON DELETE SET NULL`;
 
+    // Connector defaults — admin-set system-wide default connector per capability
+    await queryClient`
+      CREATE TABLE IF NOT EXISTS connector_defaults (
+        capability TEXT PRIMARY KEY,
+        connector_id TEXT NOT NULL,
+        shared_key_encrypted TEXT,
+        shared_key_nonce TEXT,
+        set_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        set_at TIMESTAMP DEFAULT NOW()
+      )`;
+
     await queryClient`
       CREATE TABLE IF NOT EXISTS wordart_presets (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

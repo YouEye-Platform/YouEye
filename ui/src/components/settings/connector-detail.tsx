@@ -16,6 +16,11 @@ import {
   Server,
   Key,
   Download,
+  ExternalLink,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  Star,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -32,12 +37,14 @@ interface Backend {
   appId: string;
   appName: string;
   installed: boolean;
+  internalUrl: string | null;
 }
 
 interface AvailableConnector {
   id: string;
   name: string;
   icon: string;
+  logoUrl: string | null;
   network: string;
   authMethod: string;
   authProvider?: string;
@@ -46,6 +53,10 @@ interface AvailableConnector {
   configFields: ConfigField[];
   credentialsConfigured: boolean;
   backends: Backend[];
+  available: boolean;
+  hasCompatibleApps: boolean;
+  isDefault: boolean;
+  customUrl: string | null;
 }
 
 interface Connection {
@@ -67,6 +78,34 @@ interface AppInfo {
   icon: string | null;
   subdomain: string | null;
 }
+
+/* ── Connector Logo ── */
+
+function ConnectorLogo({ connector, size = 20 }: { connector: { name: string; icon: string; logoUrl?: string | null }; size?: number }) {
+  const [imgError, setImgError] = useState(false);
+  if (connector.logoUrl && !imgError) {
+    return (
+      <img
+        src={connector.logoUrl}
+        alt={connector.name}
+        width={size}
+        height={size}
+        className="rounded-sm object-contain"
+        onError={() => setImgError(true)}
+      />
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center justify-center rounded-sm bg-muted text-[10px] font-bold"
+      style={{ width: size, height: size }}
+    >
+      {connector.name.charAt(0).toUpperCase()}
+    </span>
+  );
+}
+
+/* ── Credential Entry ── */
 
 interface CredentialEntryProps {
   connectorId: string;
@@ -138,6 +177,179 @@ function CredentialEntry({ connectorId, field, onSaved }: CredentialEntryProps) 
   );
 }
 
+/* ── Dual Mode Connector Picker ── */
+
+function DualModePicker({
+  connector,
+  capability,
+  appId,
+  isAdmin,
+  onConnect,
+  onCancel,
+}: {
+  connector: AvailableConnector;
+  capability: string;
+  appId: string;
+  isAdmin: boolean;
+  onConnect: (capability: string, connectorId: string, config?: Record<string, unknown>) => void;
+  onCancel: () => void;
+}) {
+  const [mode, setMode] = useState<"internal" | "external">(
+    connector.backends.some((b) => b.installed) ? "internal" : "external"
+  );
+  const [customUrl, setCustomUrl] = useState(connector.customUrl ?? "");
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
+  const t = useTranslations("connectorSettings");
+
+  const installedBackend = connector.backends.find((b) => b.installed);
+  const hasInternalOption = connector.hasCompatibleApps;
+
+  const testConnection = async () => {
+    if (!customUrl.trim()) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch(`/api/settings/connectors/${appId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "test-connection", url: customUrl.trim() }),
+      });
+      const data = await res.json();
+      setTestResult({ ok: data.reachable, error: data.error });
+    } catch {
+      setTestResult({ ok: false, error: "Request failed" });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const connectInternal = () => {
+    onConnect(capability, connector.id, {});
+  };
+
+  const connectExternal = () => {
+    if (!customUrl.trim()) return;
+    onConnect(capability, connector.id, { customUrl: customUrl.trim() });
+  };
+
+  // If no compatible apps, skip dual mode — just connect directly
+  if (!hasInternalOption) {
+    return null;
+  }
+
+  return (
+    <div className="border rounded-lg p-4 mt-2 space-y-3 bg-card">
+      <div className="flex items-center gap-2 mb-2">
+        <ConnectorLogo connector={connector} size={24} />
+        <span className="font-medium text-sm">{connector.name}</span>
+      </div>
+
+      {/* Internal mode */}
+      <label className="flex items-start gap-3 p-3 rounded-md border cursor-pointer hover:bg-accent/30 transition-colors">
+        <input
+          type="radio"
+          name={`mode-${connector.id}`}
+          checked={mode === "internal"}
+          onChange={() => setMode("internal")}
+          className="mt-0.5"
+        />
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <Server className="w-4 h-4 text-green-500" />
+            <span className="text-sm font-medium">{t("useOnServer")}</span>
+          </div>
+          {installedBackend ? (
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-green-600">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              {installedBackend.appName} {t("installed")}
+            </div>
+          ) : isAdmin ? (
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-amber-600">
+              <Download className="w-3.5 h-3.5" />
+              {connector.backends[0]?.appName ?? connector.name} {t("notInstalled")}
+              <button
+                onClick={(e) => { e.preventDefault(); window.open("/settings/market", "_blank"); }}
+                className="text-primary underline ml-1"
+              >
+                {t("installFromMarket")}
+              </button>
+            </div>
+          ) : (
+            <div className="mt-1 text-xs text-muted-foreground">
+              {t("askAdminToInstall")}
+            </div>
+          )}
+        </div>
+      </label>
+
+      {/* External mode */}
+      <label className="flex items-start gap-3 p-3 rounded-md border cursor-pointer hover:bg-accent/30 transition-colors">
+        <input
+          type="radio"
+          name={`mode-${connector.id}`}
+          checked={mode === "external"}
+          onChange={() => setMode("external")}
+          className="mt-0.5"
+        />
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <Globe className="w-4 h-4 text-blue-500" />
+            <span className="text-sm font-medium">{t("useYourOwn")}</span>
+          </div>
+          {mode === "external" && (
+            <div className="mt-2 space-y-2">
+              <input
+                type="url"
+                value={customUrl}
+                onChange={(e) => { setCustomUrl(e.target.value); setTestResult(null); }}
+                placeholder="https://searx.example.com"
+                className="w-full px-3 py-1.5 text-sm border rounded-md bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                onClick={(e) => e.stopPropagation()}
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={(e) => { e.preventDefault(); testConnection(); }}
+                  disabled={testing || !customUrl.trim()}
+                  className="px-3 py-1 text-xs border rounded-md hover:bg-accent disabled:opacity-50 flex items-center gap-1"
+                >
+                  {testing ? <Loader2 className="w-3 h-3 animate-spin" /> : <ExternalLink className="w-3 h-3" />}
+                  {t("testConnection")}
+                </button>
+                {testResult && (
+                  <span className={`text-xs flex items-center gap-1 ${testResult.ok ? "text-green-600" : "text-red-500"}`}>
+                    {testResult.ok ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                    {testResult.ok ? t("reachable") : (testResult.error || t("unreachable"))}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </label>
+
+      {/* Action buttons */}
+      <div className="flex items-center gap-2 pt-1">
+        <button
+          onClick={() => mode === "internal" ? connectInternal() : connectExternal()}
+          disabled={mode === "internal" ? !installedBackend : !customUrl.trim()}
+          className="px-4 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
+        >
+          {t("connect")}
+        </button>
+        <button
+          onClick={onCancel}
+          className="px-4 py-1.5 text-sm text-muted-foreground hover:text-foreground"
+        >
+          {t("cancel")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Main Export ── */
+
 export function ConnectorDetail({ appId, directAccessEmbedUrl }: { appId: string; directAccessEmbedUrl?: string }) {
   const [app, setApp] = useState<AppInfo | null>(null);
   const [capabilities, setCapabilities] = useState<Capability[]>([]);
@@ -167,7 +379,7 @@ export function ConnectorDetail({ appId, directAccessEmbedUrl }: { appId: string
     fetchDetail();
   }, [fetchDetail]);
 
-  const connect = async (capability: string, connectorId: string) => {
+  const connect = async (capability: string, connectorId: string, config?: Record<string, unknown>) => {
     await fetch(`/api/settings/connectors/${appId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -176,6 +388,7 @@ export function ConnectorDetail({ appId, directAccessEmbedUrl }: { appId: string
         capability,
         connectorId,
         persistent: true,
+        config,
       }),
     });
     fetchDetail();
@@ -242,6 +455,7 @@ export function ConnectorDetail({ appId, directAccessEmbedUrl }: { appId: string
             <CapabilityRow
               key={cap.capability}
               cap={cap}
+              appId={appId}
               isAdmin={isAdmin}
               onConnect={connect}
               onDisconnect={disconnect}
@@ -277,20 +491,25 @@ export function ConnectorDetail({ appId, directAccessEmbedUrl }: { appId: string
   );
 }
 
-function CapabilityRow({
+/* ── Capability Row ── */
+
+export function CapabilityRow({
   cap,
+  appId,
   isAdmin,
   onConnect,
   onDisconnect,
   onRefresh,
 }: {
   cap: Capability;
+  appId: string;
   isAdmin: boolean;
-  onConnect: (capability: string, connectorId: string) => void;
+  onConnect: (capability: string, connectorId: string, config?: Record<string, unknown>) => void;
   onDisconnect: (capability: string, connectorId?: string) => void;
   onRefresh: () => void;
 }) {
   const [showPicker, setShowPicker] = useState(false);
+  const [dualModeConnector, setDualModeConnector] = useState<AvailableConnector | null>(null);
   const t = useTranslations("connectorSettings");
 
   const connectedIds = new Set(cap.connections.map((c) => c.connectorId));
@@ -298,6 +517,27 @@ function CapabilityRow({
 
   const formatCapability = (s: string) =>
     s.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  // Filter connectors: show available ones + already-connected ones
+  // For non-admin: hide unavailable local connectors from picker
+  const pickableConnectors = cap.availableConnectors.filter((c) => {
+    if (connectedIds.has(c.id)) return false; // already connected
+    if (c.available) return true;
+    // Unavailable local connector — only show to admins
+    return isAdmin;
+  });
+
+  const handlePickerSelect = (connector: AvailableConnector) => {
+    // If connector has compatible apps (dual mode), show the mode picker
+    if (connector.hasCompatibleApps) {
+      setDualModeConnector(connector);
+      setShowPicker(false);
+      return;
+    }
+    // Otherwise connect directly
+    onConnect(cap.capability, connector.id);
+    setShowPicker(false);
+  };
 
   return (
     <div className="border rounded-lg p-4">
@@ -325,30 +565,47 @@ function CapabilityRow({
         <div className="mt-2 space-y-1.5">
           {cap.connections.map((conn) => {
             const connector = cap.availableConnectors.find((c) => c.id === conn.connectorId);
+            const isUnavailable = connector && !connector.available;
+
             return (
               <div
                 key={conn.id}
-                className="flex items-center justify-between py-1.5 px-3 rounded-md bg-accent/30"
+                className={`flex items-center justify-between py-1.5 px-3 rounded-md ${
+                  isUnavailable ? "bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800" : "bg-accent/30"
+                }`}
               >
                 <div className="flex items-center gap-2">
-                  {connector?.network === "internet" ? (
-                    <Globe className="w-3.5 h-3.5 text-blue-500" />
-                  ) : (
-                    <Server className="w-3.5 h-3.5 text-green-500" />
-                  )}
+                  {connector && <ConnectorLogo connector={connector} size={18} />}
                   <span className="text-sm">
                     {connector?.name ?? conn.connectorId}
                   </span>
                   {/* Internal/External badge */}
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-0.5 ${
-                    connector?.network === "internet"
-                      ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                      : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                  }`}>
-                    {connector?.network === "internet" ? t("external") : t("internal")}
-                  </span>
+                  {connector && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-0.5 ${
+                      connector.customUrl
+                        ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                        : connector.network === "internet"
+                          ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                          : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                    }`}>
+                      {connector.customUrl ? t("custom") : connector.network === "internet" ? t("external") : t("internal")}
+                    </span>
+                  )}
+                  {/* Default badge */}
+                  {connector?.isDefault && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 flex items-center gap-0.5">
+                      <Star className="w-2.5 h-2.5" />
+                      {t("default")}
+                    </span>
+                  )}
+                  {/* Custom URL display */}
+                  {connector?.customUrl && (
+                    <span className="text-[10px] text-muted-foreground truncate max-w-[200px]">
+                      {connector.customUrl}
+                    </span>
+                  )}
                   {/* Backend status for internal connectors */}
-                  {connector && connector.network === "local" && connector.backends.length > 0 && (
+                  {connector && !connector.customUrl && connector.network === "local" && connector.backends.length > 0 && (
                     <span className="text-[10px] text-muted-foreground">
                       {connector.backends.some((b) => b.installed)
                         ? `(${connector.backends.find((b) => b.installed)?.appName})`
@@ -356,7 +613,14 @@ function CapabilityRow({
                       }
                     </span>
                   )}
-                  {connector && !connector.credentialsConfigured && (
+                  {/* Unavailable warning */}
+                  {isUnavailable && (
+                    <span className="text-xs text-red-500 flex items-center gap-0.5">
+                      <AlertTriangle className="w-3 h-3" />
+                      {t("backendUnavailable")}
+                    </span>
+                  )}
+                  {connector && !isUnavailable && !connector.credentialsConfigured && (
                     <span className="text-xs text-amber-600 flex items-center gap-0.5">
                       <AlertTriangle className="w-3 h-3" />
                       {t("needsApiKey")}
@@ -380,11 +644,9 @@ function CapabilityRow({
             const connector = cap.availableConnectors.find((c) => c.id === conn.connectorId);
             if (!connector || connector.credentialsConfigured) return null;
 
-            // Managed fields use OAuth — show sign-in button
             const hasManagedFields = connector.configFields.some(
               (f) => f.managed && f.required
             );
-            // Manual fields need direct entry
             const manualFields = connector.configFields.filter(
               (f) => f.required && f.type === "secret" && !f.managed
             );
@@ -396,7 +658,7 @@ function CapabilityRow({
                 {hasManagedFields && connector.authProvider && !connector.authProviderConnected && (
                   <div className="mb-2">
                     <a
-                      href={`/api/auth/providers/${connector.authProvider}?redirect_uri=${encodeURIComponent(window.location.pathname)}`}
+                      href={`/api/auth/providers/${connector.authProvider}?redirect_uri=${encodeURIComponent(typeof window !== "undefined" ? window.location.pathname : "/")}`}
                       className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
                     >
                       <Key className="w-4 h-4" />
@@ -423,34 +685,52 @@ function CapabilityRow({
                     ))}
                   </>
                 )}
+                {/* Manage in Accounts link */}
+                <a
+                  href="/settings/accounts"
+                  className="text-xs text-primary hover:underline flex items-center gap-1 mt-2"
+                >
+                  <Key className="w-3 h-3" />
+                  {t("manageInAccounts")}
+                </a>
               </div>
             );
           })}
         </div>
       )}
 
+      {/* Dual mode picker (shown when user clicks a connector with compatible apps) */}
+      {dualModeConnector && (
+        <DualModePicker
+          connector={dualModeConnector}
+          capability={cap.capability}
+          appId={appId}
+          isAdmin={isAdmin}
+          onConnect={(capability, connectorId, config) => {
+            onConnect(capability, connectorId, config);
+            setDualModeConnector(null);
+          }}
+          onCancel={() => setDualModeConnector(null)}
+        />
+      )}
+
       {/* Picker for new connections */}
-      {(!hasConnection || cap.multiple) && (
+      {(!hasConnection || cap.multiple) && !dualModeConnector && (
         <div className="mt-2">
           {showPicker ? (
             <div className="space-y-1.5">
-              {cap.availableConnectors
-                .filter((c) => !connectedIds.has(c.id))
-                .map((connector) => (
+              {pickableConnectors.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2">{t("noConnectorsAvailable")}</p>
+              ) : (
+                pickableConnectors.map((connector) => (
                   <button
                     key={connector.id}
-                    onClick={() => {
-                      onConnect(cap.capability, connector.id);
-                      setShowPicker(false);
-                    }}
-                    className="w-full flex items-center justify-between py-2 px-3 rounded-md border hover:bg-accent/50 transition-colors text-left"
+                    onClick={() => handlePickerSelect(connector)}
+                    disabled={!connector.available && !isAdmin}
+                    className="w-full flex items-center justify-between py-2 px-3 rounded-md border hover:bg-accent/50 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <div className="flex items-center gap-2">
-                      {connector.network === "internet" ? (
-                        <Globe className="w-3.5 h-3.5 text-blue-500" />
-                      ) : (
-                        <Server className="w-3.5 h-3.5 text-green-500" />
-                      )}
+                      <ConnectorLogo connector={connector} size={18} />
                       <span className="text-sm">{connector.name}</span>
                       {/* Internal/External badge */}
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
@@ -460,6 +740,13 @@ function CapabilityRow({
                       }`}>
                         {connector.network === "internet" ? t("external") : t("internal")}
                       </span>
+                      {/* Default badge */}
+                      {connector.isDefault && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 flex items-center gap-0.5">
+                          <Star className="w-2.5 h-2.5" />
+                          {t("default")}
+                        </span>
+                      )}
                       {/* Backend status */}
                       {connector.network === "local" && connector.backends.length > 0 && (
                         <>
@@ -468,10 +755,10 @@ function CapabilityRow({
                               <Check className="w-2.5 h-2.5" />
                               {connector.backends.find((b) => b.installed)?.appName}
                             </span>
-                          ) : isAdmin ? (
-                            <span className="text-[10px] text-amber-600 flex items-center gap-0.5">
-                              <Download className="w-2.5 h-2.5" />
-                              {t("installAvailable")}
+                          ) : !connector.available ? (
+                            <span className="text-[10px] text-red-500 flex items-center gap-0.5">
+                              <AlertTriangle className="w-2.5 h-2.5" />
+                              {t("notInstalled")}
                             </span>
                           ) : null}
                         </>
@@ -483,7 +770,8 @@ function CapabilityRow({
                       <Key className="w-3.5 h-3.5 text-amber-500" />
                     )}
                   </button>
-                ))}
+                ))
+              )}
               <button
                 onClick={() => setShowPicker(false)}
                 className="text-xs text-muted-foreground hover:text-foreground"

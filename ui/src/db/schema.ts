@@ -545,6 +545,28 @@ export const userAuthTokens = pgTable("user_auth_tokens", {
 });
 
 // ============================================
+// Connector Defaults (admin-set system-wide)
+// ============================================
+
+/**
+ * Admin-configured default connector per capability.
+ * New users get these pre-applied. Shared API keys stored encrypted.
+ */
+export const connectorDefaults = pgTable("connector_defaults", {
+  /** Capability name (e.g. "search-engine") — primary key */
+  capability: text("capability").primaryKey(),
+  /** Default connector ID from catalog */
+  connectorId: text("connector_id").notNull(),
+  /** Optional shared encrypted API key for this connector */
+  sharedKeyEncrypted: text("shared_key_encrypted"),
+  /** Nonce for shared key */
+  sharedKeyNonce: text("shared_key_nonce"),
+  /** Admin who set this default */
+  setBy: uuid("set_by").references(() => users.id, { onDelete: "set null" }),
+  setAt: timestamp("set_at", { mode: "date" }).defaultNow(),
+});
+
+// ============================================
 // Settings
 // ============================================
 

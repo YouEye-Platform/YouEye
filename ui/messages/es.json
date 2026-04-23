@@ -81,7 +81,8 @@
       "proxy": "Proxy",
       "apps": "Apps",
       "appManagement": "Gestión de apps",
-      "appMarket": "Tienda de apps"
+      "appMarket": "Tienda de apps",
+      "connectorDefaults": "Conectores predeterminados"
     },
     "profile": {
       "title": "Perfil",
@@ -553,7 +554,20 @@
     "internal": "Interno",
     "external": "Externo",
     "installAvailable": "Instalaci\u00f3n disponible",
-    "manageInAccounts": "Gestionar en Cuentas"
+    "manageInAccounts": "Gestionar en Cuentas",
+    "custom": "URL personalizada",
+    "default": "Predeterminado",
+    "installed": "instalado",
+    "notInstalled": "no instalado",
+    "installFromMarket": "Instalar desde el Marketplace",
+    "askAdminToInstall": "Pida a su administrador que instale esta aplicación.",
+    "useOnServer": "Usar en este servidor",
+    "useYourOwn": "Usar el propio",
+    "testConnection": "Probar conexión",
+    "reachable": "Accesible",
+    "unreachable": "Inaccesible",
+    "backendUnavailable": "Backend no disponible",
+    "noConnectorsAvailable": "No hay conectores disponibles para esta función."
   },
   "accountSettings": {
     "pageTitle": "Cuentas",

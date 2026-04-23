@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { db, ensureSchema } from "@/db";
-import { apps, userConnectors, userConnectorSecrets } from "@/db/schema";
+import { apps, userConnectors, userConnectorSecrets, connectorDefaults } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { listConnectors } from "@/lib/connectors/registry";
 import { discoverBackends } from "@/lib/db/queries/connectors";
 import { listProviders, getUserToken } from "@/lib/db/queries/auth-providers";
+import { connectorLogoUrl } from "@/lib/connectors/logos";
 
 export async function GET(
   _request: NextRequest,
@@ -40,6 +41,7 @@ export async function GET(
     network: string;
     authMethod: string;
     authProvider?: string;
+    hasCompatibleApps: boolean;
     configFields: Array<{
       name: string; label: string; type: string;
       required: boolean; managed: boolean;
@@ -55,6 +57,7 @@ export async function GET(
       network: m.metadata.network,
       authMethod: m.permissions.auth.method,
       authProvider: m.permissions.auth.provider,
+      hasCompatibleApps: !!m.metadata.compatibleApps?.length,
       configFields: m.config.fields.map((f) => ({
         name: f.name,
         label: f.label,
@@ -98,8 +101,17 @@ export async function GET(
     .from(userConnectorSecrets)
     .where(eq(userConnectorSecrets.userId, session.userId));
 
+  // Fetch admin defaults for capability comparison
+  let defaults: Array<{ capability: string; connectorId: string }> = [];
+  try {
+    defaults = await db.select({
+      capability: connectorDefaults.capability,
+      connectorId: connectorDefaults.connectorId,
+    }).from(connectorDefaults);
+  } catch { /* table may not exist yet */ }
+
   const capabilities = await Promise.all(connectorReqs.map(async (req) => {
-    const availableConnectors = connectorCatalog.filter((c) =>
+    const matchingConnectors = connectorCatalog.filter((c) =>
       c.provides.includes(req.capability)
     );
 
@@ -110,7 +122,9 @@ export async function GET(
         (p.consumerApp === appId || p.consumerApp === null)
     );
 
-    const connectorDetails = await Promise.all(availableConnectors.map(async (c) => {
+    const defaultConnectorId = defaults.find((d) => d.capability === req.capability)?.connectorId;
+
+    const connectorDetails = await Promise.all(matchingConnectors.map(async (c) => {
       // For managed fields, check if the auth provider token exists
       const managedFields = c.configFields.filter((f) => f.managed);
       const manualFields = c.configFields.filter((f) => !f.managed && f.required);
@@ -131,21 +145,32 @@ export async function GET(
         : undefined;
 
       // Backend discovery for connectors backed by installed apps
-      let backends: { appId: string; appName: string; installed: boolean }[] = [];
-      if (c.network === "local") {
-        try {
-          backends = (await discoverBackends(c.id)).map((b) => ({
-            appId: b.appId,
-            appName: b.appName,
-            installed: b.installed,
-          }));
-        } catch { /* no backends */ }
-      }
+      let backends: { appId: string; appName: string; installed: boolean; internalUrl: string | null }[] = [];
+      try {
+        const discovered = await discoverBackends(c.id);
+        backends = discovered.map((b) => ({
+          appId: b.appId,
+          appName: b.appName,
+          installed: b.installed,
+          internalUrl: b.internalUrl,
+        }));
+      } catch { /* no backends */ }
+
+      // Availability: internet connectors always available;
+      // local connectors only available if a backend is installed OR user has a custom URL
+      const userPref = connections.find((conn) => conn.connectorId === c.id);
+      const userConfig = userPref
+        ? userPrefs.find((p) => p.id === userPref.id)?.config as Record<string, unknown> | null
+        : null;
+      const hasCustomUrl = !!userConfig?.customUrl;
+      const hasInstalledBackend = backends.some((b) => b.installed);
+      const available = c.network === "internet" || hasInstalledBackend || hasCustomUrl;
 
       return {
         id: c.id,
         name: c.name,
         icon: c.icon,
+        logoUrl: connectorLogoUrl(c.id),
         network: c.network,
         authMethod: c.authMethod,
         authProvider: c.authProvider,
@@ -156,6 +181,10 @@ export async function GET(
         configFields: c.configFields,
         credentialsConfigured: hasRequiredCreds,
         backends,
+        available,
+        hasCompatibleApps: c.hasCompatibleApps,
+        isDefault: c.id === defaultConnectorId,
+        customUrl: (userConfig?.customUrl as string) ?? null,
       };
     }));
 
@@ -196,12 +225,14 @@ export async function POST(
   await ensureSchema();
 
   const body = await request.json();
-  const { action, capability, connectorId, persistent = true } = body;
+  const { action, capability, connectorId, persistent = true, config } = body;
 
   if (action === "connect") {
     if (!capability || !connectorId) {
       return NextResponse.json({ error: "Missing capability or connectorId" }, { status: 400 });
     }
+
+    const connectorConfig = config ?? {};
 
     const existing = await db
       .select()
@@ -219,7 +250,7 @@ export async function POST(
     if (existing.length > 0) {
       await db
         .update(userConnectors)
-        .set({ enabled: true, persistent, updatedAt: new Date() })
+        .set({ enabled: true, persistent, config: connectorConfig, updatedAt: new Date() })
         .where(eq(userConnectors.id, existing[0].id));
     } else {
       await db.insert(userConnectors).values({
@@ -228,10 +259,71 @@ export async function POST(
         capability,
         consumerApp: appId,
         persistent,
+        config: connectorConfig,
       });
     }
 
     return NextResponse.json({ ok: true });
+  }
+
+  if (action === "update-config") {
+    if (!capability || !connectorId || !config) {
+      return NextResponse.json({ error: "Missing capability, connectorId, or config" }, { status: 400 });
+    }
+
+    const existing = await db
+      .select()
+      .from(userConnectors)
+      .where(
+        and(
+          eq(userConnectors.userId, session.userId),
+          eq(userConnectors.capability, capability),
+          eq(userConnectors.consumerApp, appId),
+          eq(userConnectors.connectorId, connectorId)
+        )
+      )
+      .limit(1);
+
+    if (existing.length > 0) {
+      const merged = { ...(existing[0].config as Record<string, unknown> ?? {}), ...config };
+      await db
+        .update(userConnectors)
+        .set({ config: merged, updatedAt: new Date() })
+        .where(eq(userConnectors.id, existing[0].id));
+      return NextResponse.json({ ok: true });
+    }
+
+    return NextResponse.json({ error: "Connector not connected" }, { status: 404 });
+  }
+
+  if (action === "test-connection") {
+    const { url } = body;
+    if (!url || typeof url !== "string") {
+      return NextResponse.json({ error: "Missing url" }, { status: 400 });
+    }
+    try {
+      new URL(url);
+    } catch {
+      return NextResponse.json({ ok: false, error: "Invalid URL" }, { status: 400 });
+    }
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        signal: AbortSignal.timeout(10_000),
+        headers: { "User-Agent": "YouEye-ConnectorTest/1.0" },
+      });
+      return NextResponse.json({
+        ok: true,
+        status: res.status,
+        reachable: res.ok,
+      });
+    } catch (err) {
+      return NextResponse.json({
+        ok: false,
+        error: err instanceof Error ? err.message : "Connection failed",
+        reachable: false,
+      });
+    }
   }
 
   if (action === "disconnect") {
