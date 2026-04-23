@@ -1,3 +1,27 @@
+## v0.3.3.6 — vanya — 2026-04-23
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Widget container-query scaling — WordArt and Clock text scales with widget resize (Session 24)
+
+### Changes — UI (v0.3.3.6)
+- `ui/src/components/dashboard/widget-container.tsx` — Added `containerType: "size"` to widget content wrapper, enabling CSS container query units (cqw/cqh) inside all widgets
+- `ui/src/components/widgets/server-name-widget.tsx` — Switched fontSize from viewport-relative `clamp(3rem, 8vw, 6rem)` to container-relative `clamp(1.5rem, 15cqw, 12rem)` so text scales with widget resize
+- `ui/src/components/widgets/clock-widget.tsx` — Restyled with gradient time display, uppercase date, and cqw-based font scaling (`clamp(1rem, 10cqw, 6rem)`)
+- `ui/src/components/widgets/index.ts` — Reduced server-name default width from 52→26% (half)
+- `ui/src/components/dashboard/widget-grid.tsx` — Updated DEFAULT_WIDGETS server-name width from 57→30%
+- `ui/package.json` — Bumped 0.3.3.5 → 0.3.3.6
+- `ui/tests/widget-scaling.spec.ts` — New test suite: container queries, cqw font scaling, clock gradient, reset defaults
+
+### Test Results
+- Playwright: 5 tests passed (widget-scaling.spec.ts)
+- Screenshots: Tests/Vanya/scaling-*.png
+
+### Notes for Iris
+- Existing user layouts are preserved (widget positions/sizes stored in DB)
+- New defaults only apply on "Reset" or when adding a new widget
+- CSS `container-type: size` is applied to ALL widget wrappers, not just WordArt/Clock — future widgets can use cqw units for free
+
 ## v0.3.3.4 — vanya — 2026-04-23
 **Branch:** vanya
 **VM:** ye-vanya

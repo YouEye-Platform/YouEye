@@ -231,8 +231,11 @@ export function WidgetContainer({
         </button>
       )}
 
-      {/* Widget content */}
-      <div className={cn("w-full h-full overflow-hidden", !isTransparent && "rounded-xl p-4")}>
+      {/* Widget content — container-type: size enables cqw/cqh units inside widgets */}
+      <div
+        className={cn("w-full h-full overflow-hidden", !isTransparent && "rounded-xl p-4")}
+        style={{ containerType: "size" }}
+      >
         <WidgetCard widgetType={widget.widgetType} settings={widget.settings} />
       </div>
 

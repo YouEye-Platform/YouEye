@@ -1,7 +1,9 @@
 /**
  * Clock Widget
  *
- * Displays the current time and date. Updates every second.
+ * Displays the current time and date with a modern, styled look.
+ * Updates every second. Text scales proportionally with the widget
+ * container via CSS container query units (cqw/cqh).
  */
 
 "use client";
@@ -37,11 +39,27 @@ export function ClockWidget({ settings }: ClockWidgetProps) {
   });
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-0.5 p-0">
-      <span className="text-3xl font-light tabular-nums tracking-wider text-foreground leading-tight">
+    <div className="flex h-full flex-col items-center justify-center gap-[1cqh] overflow-hidden">
+      <span
+        className="tabular-nums font-semibold tracking-wide leading-none whitespace-nowrap"
+        style={{
+          fontSize: "clamp(1rem, 10cqw, 6rem)",
+          backgroundImage: "linear-gradient(135deg, var(--primary), color-mix(in oklch, var(--primary) 60%, var(--muted-foreground)))",
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+          backgroundClip: "text",
+        }}
+      >
         {timeStr}
       </span>
-      <span className="text-xs text-muted-foreground leading-tight">{dateStr}</span>
+      <span
+        className="text-muted-foreground leading-tight whitespace-nowrap font-medium tracking-wider uppercase"
+        style={{
+          fontSize: "clamp(0.5rem, 3cqw, 1.5rem)",
+        }}
+      >
+        {dateStr}
+      </span>
     </div>
   );
 }
