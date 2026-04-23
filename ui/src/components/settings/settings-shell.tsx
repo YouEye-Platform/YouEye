@@ -31,6 +31,7 @@ import {
   ExternalLink,
   PackageOpen,
   HardDrive,
+  Link2,
 } from "lucide-react";
 
 /** Section definitions use labelKey to look up translations at render time */
