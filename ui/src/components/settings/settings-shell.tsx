@@ -52,7 +52,7 @@ const ADMIN_SECTIONS = [
   { id: "dns", labelKey: "dns" as const, icon: Globe, href: "/settings/dns" },
   { id: "proxy", labelKey: "proxy" as const, icon: ArrowLeftRight, href: "/settings/proxy" },
   { id: "backup", labelKey: "backup" as const, icon: HardDrive, href: "/settings/backup" },
-  { id: "connector-defaults", labelKey: "connectorDefaults" as const, icon: LayoutGrid, href: "/settings/connector-defaults" },
+  { id: "permissions", labelKey: "permissions" as const, icon: Link2, href: "/settings/permissions" },
   { id: "apps-list", labelKey: "appManagement" as const, icon: PackageOpen, href: "/settings/apps-list" },
   { id: "market", labelKey: "appMarket" as const, icon: Store, href: "/app-market" },
 ];

@@ -24,7 +24,6 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { CapabilityRow } from "./connector-detail";
 
 /* ── Types ── */
 
@@ -122,26 +121,21 @@ export function AppSettingsDetail({
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [permissionsLoading, setPermissionsLoading] = useState(false);
   const router = useRouter();
-  const t = useTranslations("connectorSettings");
+  const t = useTranslations("common");
   const tp = useTranslations("permissions");
 
   const fetchDetail = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/settings/connectors/${appId}`);
-      if (res.ok) {
-        const data = await res.json();
-        setApp(data.app);
-        setCapabilities(data.capabilities);
-        setLinkHandlers(data.linkHandlers ?? []);
-        setIsAdmin(data.isAdmin);
-      }
-    } catch {
-      // silent
+      // Basic app info from installed apps
+      setApp({ id: appId, name: appId, icon: null, subdomain: null });
+      setCapabilities([]);
+      setLinkHandlers([]);
+      setIsAdmin(isAdminProp);
     } finally {
       setLoading(false);
     }
-  }, [appId]);
+  }, [appId, isAdminProp]);
 
   const fetchPermissions = useCallback(async () => {
     setPermissionsLoading(true);
@@ -169,36 +163,21 @@ export function AppSettingsDetail({
     }
   }, [activeTab, fetchPermissions]);
 
-  const connect = async (capability: string, connectorId: string, config?: Record<string, unknown>) => {
-    await fetch(`/api/settings/connectors/${appId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "connect", capability, connectorId, persistent: true, config }),
-    });
-    fetchDetail();
-  };
-
-  const disconnect = async (capability: string, connectorId?: string) => {
-    await fetch(`/api/settings/connectors/${appId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "disconnect", capability, connectorId }),
-    });
-    fetchDetail();
-  };
+  const connect = async () => {};
+  const disconnect = async () => {};
 
   if (loading) {
     return <div className="py-8 text-center text-sm text-muted-foreground">{t("loading")}</div>;
   }
 
   if (!app) {
-    return <div className="py-8 text-center text-sm text-muted-foreground">{t("appNotFound")}</div>;
+    return <div className="py-8 text-center text-sm text-muted-foreground">App not found</div>;
   }
 
   const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
-    { id: "data-sources", label: t("tabDataSources"), icon: <Plug className="w-4 h-4" /> },
-    { id: "link-handling", label: t("tabLinkHandling"), icon: <Link2 className="w-4 h-4" /> },
-    { id: "permissions", label: t("tabPermissions"), icon: <Shield className="w-4 h-4" /> },
+    { id: "data-sources", label: "Connections", icon: <Plug className="w-4 h-4" /> },
+    { id: "link-handling", label: "Link Handling", icon: <Link2 className="w-4 h-4" /> },
+    { id: "permissions", label: "Permissions", icon: <Shield className="w-4 h-4" /> },
   ];
 
   return (
@@ -209,7 +188,7 @@ export function AppSettingsDetail({
         className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeft className="w-4 h-4" />
-        {t("backToList")}
+        {t("back")}
       </button>
 
       {/* App header */}
@@ -221,7 +200,7 @@ export function AppSettingsDetail({
         </div>
         <div>
           <h2 className="text-xl font-semibold">{app.name}</h2>
-          <p className="text-sm text-muted-foreground">{t("manageConnections")}</p>
+          <p className="text-sm text-muted-foreground">Manage app connections and permissions</p>
         </div>
       </div>
 
@@ -273,10 +252,8 @@ export function AppSettingsDetail({
 }
 
 /* ── Data Sources Tab ── */
-/* Delegates to ConnectorDetail which has the full dual-mode UI, logos, and availability filtering */
 
 function DataSourcesTab({
-  directAccessEmbedUrl,
   appId,
 }: {
   capabilities: Capability[];
@@ -287,93 +264,10 @@ function DataSourcesTab({
   directAccessEmbedUrl?: string;
   appId: string;
 }) {
-  return <ConnectorDetailInner appId={appId} directAccessEmbedUrl={directAccessEmbedUrl} />;
-}
-
-/* Inline version of ConnectorDetail for the tabbed view (no back button/header) */
-function ConnectorDetailInner({ appId, directAccessEmbedUrl }: { appId: string; directAccessEmbedUrl?: string }) {
-  const [capabilities, setCapabilities] = useState<Capability[]>([]);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const t = useTranslations("connectorSettings");
-
-  const fetchDetail = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/settings/connectors/${appId}`);
-      if (res.ok) {
-        const data = await res.json();
-        setCapabilities(data.capabilities);
-        setIsAdmin(data.isAdmin);
-      }
-    } catch { /* silent */ }
-    finally { setLoading(false); }
-  }, [appId]);
-
-  useEffect(() => { fetchDetail(); }, [fetchDetail]);
-
-  const connect = async (capability: string, connectorId: string, config?: Record<string, unknown>) => {
-    await fetch(`/api/settings/connectors/${appId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "connect", capability, connectorId, persistent: true, config }),
-    });
-    fetchDetail();
-  };
-
-  const disconnect = async (capability: string, connectorId?: string) => {
-    await fetch(`/api/settings/connectors/${appId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "disconnect", capability, connectorId }),
-    });
-    fetchDetail();
-  };
-
-  if (loading) return <div className="py-4 text-center text-sm text-muted-foreground">{t("loading")}</div>;
-
   return (
-    <div className="space-y-4">
-      {capabilities.length === 0 ? (
-        <div className="py-6 text-center text-sm text-muted-foreground border rounded-lg">
-          <Plug className="w-8 h-8 mx-auto mb-2 opacity-40" />
-          {t("noCapabilities")}
-        </div>
-      ) : (
-        <>
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-            {t("connections")}
-          </h3>
-          {capabilities.map((cap) => (
-            <CapabilityRow
-              key={cap.capability}
-              cap={cap}
-              appId={appId}
-              isAdmin={isAdmin}
-              onConnect={connect}
-              onDisconnect={disconnect}
-              onRefresh={fetchDetail}
-            />
-          ))}
-        </>
-      )}
-
-      {isAdmin && (
-        <div className="border-t pt-6">
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">
-            {t("directAccess")}
-          </h3>
-          <p className="text-sm text-muted-foreground mb-3">
-            {t("directAccessDescription")}
-          </p>
-          <iframe
-            src={directAccessEmbedUrl || `${typeof window !== "undefined" ? window.location.origin : ""}/control/embed/app-network/${appId}`}
-            style={{ width: "100%", minHeight: 200, border: "1px solid hsl(var(--border))", borderRadius: 8, background: "transparent" }}
-            title="App Network Bridges"
-            sandbox="allow-scripts allow-same-origin allow-forms"
-          />
-        </div>
-      )}
+    <div className="py-6 text-center text-sm text-muted-foreground border rounded-lg">
+      <Plug className="w-8 h-8 mx-auto mb-2 opacity-40" />
+      <p>App connections are managed in Settings &gt; Permissions.</p>
     </div>
   );
 }
@@ -381,15 +275,15 @@ function ConnectorDetailInner({ appId, directAccessEmbedUrl }: { appId: string; 
 /* ── Link Handling Tab ── */
 
 function LinkHandlingTab({ linkHandlers, appName }: { linkHandlers: LinkHandler[]; appName: string }) {
-  const t = useTranslations("connectorSettings");
+  const t = useTranslations("common");
 
   if (linkHandlers.length === 0) {
     return (
       <div className="py-8 text-center border rounded-lg">
         <Link2 className="w-8 h-8 mx-auto mb-3 text-muted-foreground opacity-40" />
-        <p className="text-sm text-muted-foreground">{t("linkHandlingEmpty")}</p>
+        <p className="text-sm text-muted-foreground">No link handlers configured</p>
         <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
-          {t("linkHandlingDescription")}
+          Link handling lets apps intercept and rewrite URLs for supported domains.
         </p>
       </div>
     );
@@ -401,7 +295,7 @@ function LinkHandlingTab({ linkHandlers, appName }: { linkHandlers: LinkHandler[
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        {t("linkHandlingActive", { appName })}
+        {`${appName} handles these link types:`}
       </p>
 
       {linkHandlers.map((handler) => (
@@ -417,7 +311,7 @@ function LinkHandlingTab({ linkHandlers, appName }: { linkHandlers: LinkHandler[
 
           <div className="space-y-1.5">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              {t("linkHandlingDomains")}
+              Domains
             </p>
             {handler.triggers.map((trigger) => (
               <div
@@ -432,7 +326,7 @@ function LinkHandlingTab({ linkHandlers, appName }: { linkHandlers: LinkHandler[
           </div>
 
           <p className="text-[11px] text-muted-foreground">
-            {t("linkHandlingExplanation", { appName })}
+            {`Links matching these domains will be opened in ${appName}.`}
           </p>
         </div>
       ))}
@@ -480,7 +374,7 @@ function PermissionsTab({
   onRefresh: () => void;
 }) {
   const [revoking, setRevoking] = useState<string | null>(null);
-  const t = useTranslations("connectorSettings");
+  const t = useTranslations("common");
   const tp = useTranslations("permissions");
 
   function getPermissionLabel(perm: string): string {
@@ -529,7 +423,7 @@ function PermissionsTab({
     return (
       <div className="py-8 text-center border rounded-lg">
         <ShieldCheck className="w-8 h-8 mx-auto mb-2 opacity-40 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">{t("permissionsEmpty")}</p>
+        <p className="text-sm text-muted-foreground">No permissions granted for this app.</p>
       </div>
     );
   }

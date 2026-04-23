@@ -68,10 +68,10 @@ import {
   getPlatformContext,
 } from './platform-env';
 import { getContainerName } from './engine-helpers';
-import { resolveConnectors } from './engine-connectors';
 import { CONTAINER_DOMAIN } from './constants';
 import { ensureNetworkAcls, applyAppAcl } from '../incus/network-acl';
 import { activatePendingBridges, detectBridgeDependencies, createBridge } from '../bridges/manager';
+import { generateSuggestionsForApp } from '../bridges/suggestions';
 
 // ─── Install Rollback ─────────────────────────────────────
 
@@ -563,9 +563,6 @@ export async function installApp(
     ? resolveEnvMapping(manifest.env_mapping, ctx)
     : {};
 
-  // Also resolve connector env vars
-  const connectorEnv = await resolveConnectors(manifest);
-
   // Resolve volume host paths in the context
   for (const containerSpec of manifest.containers) {
     for (const vol of containerSpec.volumes) {
@@ -632,7 +629,7 @@ export async function installApp(
 
           // Write env file to LXD container
           const staticEnv = resolveEnvironment(containerSpec.environment || {}, ctx);
-          const fullEnv = { ...envFromMapping, ...staticEnv, ...connectorEnv };
+          const fullEnv = { ...envFromMapping, ...staticEnv };
           await writeEnvToContainer(containerName, fullEnv);
 
           // Restart service to pick up env
@@ -647,7 +644,7 @@ export async function installApp(
         } else {
           // ── OCI container deployment ─────────────────
           const staticEnv = resolveEnvironment(containerSpec.environment || {}, ctx);
-          const fullEnv = { ...envFromMapping, ...staticEnv, ...connectorEnv };
+          const fullEnv = { ...envFromMapping, ...staticEnv };
           const ociManifest = buildOCIManifest(containerSpec, containerName, appId, fullEnv);
           await deployOCIContainer(ociManifest, '');
         }
@@ -911,6 +908,17 @@ export async function installApp(
     }
   } catch (err) {
     console.warn('[engine] Pending bridge activation warning:', err);
+  }
+
+  // ── Step 13: Generate connection suggestions ──────────────
+
+  try {
+    const suggestions = await generateSuggestionsForApp(manifest);
+    if (suggestions.length > 0) {
+      emit(onEvent, step, totalSteps, 'success', `Generated ${suggestions.length} connection suggestions`);
+    }
+  } catch (err) {
+    console.warn('[engine] Suggestions generation warning:', err);
   }
 
   } catch (err) {

@@ -244,4 +244,98 @@ async function appendAclToContainer(containerName: string, aclName: string): Pro
   }
 }
 
+/**
+ * Grant internet access to an app container for specific hosts.
+ * Creates a dedicated ACL with per-host egress allow rules.
+ */
+export async function grantInternetAccess(
+  containerName: string,
+  hosts: string[],
+  blanket?: boolean,
+): Promise<string> {
+  const aclName = `ye-internet-${containerName}`;
+
+  // Remove existing grant ACL if any
+  if (await aclExists(aclName)) {
+    await removeAclFromContainer(containerName, aclName);
+    await incusRequest('DELETE', `/1.0/network-acls/${aclName}`);
+  }
+
+  const egress: AclRule[] = [];
+
+  if (blanket) {
+    // Allow all egress
+    egress.push({
+      action: 'allow',
+      state: 'enabled',
+      description: 'Blanket internet access',
+    });
+  } else {
+    // Per-host rules — allow HTTPS + HTTP to each host
+    for (const host of hosts) {
+      egress.push({
+        action: 'allow',
+        state: 'enabled',
+        destination: host,
+        protocol: 'tcp',
+        destination_port: '443',
+        description: `HTTPS to ${host}`,
+      });
+      egress.push({
+        action: 'allow',
+        state: 'enabled',
+        destination: host,
+        protocol: 'tcp',
+        destination_port: '80',
+        description: `HTTP to ${host}`,
+      });
+    }
+  }
+
+  await incusRequest('POST', '/1.0/network-acls', {
+    name: aclName,
+    description: `Internet grant: ${containerName} → ${blanket ? 'all' : hosts.join(', ')}`,
+    ingress: [],
+    egress,
+  } as AclConfig);
+
+  await appendAclToContainer(containerName, aclName);
+  return aclName;
+}
+
+/**
+ * Revoke internet access for an app container.
+ */
+export async function revokeInternetAccess(
+  containerName: string,
+  aclName: string,
+): Promise<void> {
+  await removeAclFromContainer(containerName, aclName);
+  try {
+    await incusRequest('DELETE', `/1.0/network-acls/${aclName}`);
+  } catch {
+    // ACL may not exist
+  }
+}
+
+async function removeAclFromContainer(containerName: string, aclName: string): Promise<void> {
+  try {
+    const res = await incusRequest<{
+      devices: Record<string, Record<string, string>>;
+    }>('GET', `/1.0/instances/${containerName}`);
+    const instance = res.metadata;
+
+    const devices = { ...instance.devices };
+    if (!devices.eth0) return;
+
+    const existing = devices.eth0['security.acls'] || '';
+    const aclList = existing.split(',').filter(Boolean).filter(a => a !== aclName);
+    devices.eth0['security.acls'] = aclList.join(',');
+
+    await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices });
+  } catch (err) {
+    console.warn(`[acl] Failed to remove ACL ${aclName} from ${containerName}:`, err);
+  }
+}
+
 export { ACL_SYSTEM, ACL_APP };

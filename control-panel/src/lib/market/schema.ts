@@ -62,23 +62,6 @@ export const PostDeployStepSchema = z.object({
   timeout: z.number().int().positive().default(30_000),
 });
 
-// ─── Connector ────────────────────────────────────────────
-
-export const ConnectorRequirementSchema = z.object({
-  capability: z.string().min(1),
-});
-
-export const ConnectorProvisionSchema = z.object({
-  id: z.string().min(1),
-  capability: z.string().min(1),
-  description: z.string().optional(),
-});
-
-export const ConnectorsSchema = z.object({
-  requires: z.array(ConnectorRequirementSchema).default([]),
-  provides: z.array(ConnectorProvisionSchema).default([]),
-});
-
 // ─── Container Source (LXD-only: Gitea repo deploy) ───────
 
 export const ContainerSourceSchema = z.object({
@@ -211,10 +194,21 @@ export const CapabilitiesSchema = z.object({
   widgets: z.boolean().optional(),
   info_cards: z.boolean().optional(),
   settings_panel: z.boolean().optional(),
-  connectors: z.object({
-    provides: z.array(z.string()).default([]),
-    consumes: z.array(z.string()).default([]),
-  }).optional(),
+}).optional();
+
+// ─── Wants (app-to-app connection declarations) ──────────
+
+export const WantSchema = z.object({
+  appId: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().optional(),
+  defaultPort: z.number().int().positive().optional(),
+});
+
+// ─── Internet (per-host egress declarations) ─────────────
+
+export const InternetSchema = z.object({
+  hosts: z.array(z.string()).default([]),
 }).optional();
 
 // ─── Install Parameters ───────────────────────────────────
@@ -341,7 +335,8 @@ export const AppManifestSchema = z
     credentials: z.array(CredentialSchema).optional().default([]),
     configFiles: z.array(ConfigFileSchema).optional().default([]),
     capabilities: CapabilitiesSchema,
-    connectors: ConnectorsSchema.optional(),
+    wants: z.array(WantSchema).optional().default([]),
+    internet: InternetSchema,
     installParams: z.array(InstallParamSchema).optional().default([]),
     forwardAuth: z.enum(['default', 'enabled', 'disabled']).optional(),
     entrances: z.array(EntranceSchema).optional(),

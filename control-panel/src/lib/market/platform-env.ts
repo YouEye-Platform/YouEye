@@ -463,6 +463,7 @@ export async function buildVariableContext(
       credentials: [],
       configFiles: [],
       installParams: [],
+      wants: [],
     } as AppManifest, shimConfig);
   }
 

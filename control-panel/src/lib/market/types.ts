@@ -31,7 +31,8 @@ import type {
   DetailSchema,
   DetailScreenshotSchema,
   InstallParamSchema,
-  ConnectorsSchema,
+  WantSchema,
+  InternetSchema,
   PostDeployStepSchema,
   VolumeSchema,
 } from './schema';
@@ -64,7 +65,8 @@ export type SystemCatalogEntry = z.infer<typeof SystemCatalogEntrySchema>;
 export type AppDetail = z.infer<typeof DetailSchema>;
 export type DetailScreenshot = z.infer<typeof DetailScreenshotSchema>;
 export type InstallParam = z.infer<typeof InstallParamSchema>;
-export type ConnectorsSpec = z.infer<typeof ConnectorsSchema>;
+export type WantSpec = z.infer<typeof WantSchema>;
+export type InternetSpec = z.infer<typeof InternetSchema>;
 export type PostDeployStep = z.infer<typeof PostDeployStepSchema>;
 export type VolumeSpec = z.infer<typeof VolumeSchema>;
 
@@ -266,7 +268,6 @@ export interface MarketApp {
     widgets?: boolean;
     notifications?: boolean | 'push';
     smtp?: boolean;
-    connectors?: { provides?: string[]; consumes?: string[] };
   };
 }
 
