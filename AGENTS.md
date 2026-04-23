@@ -1,3 +1,20 @@
+## v0.3.3.4 — vanya — 2026-04-23
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix hidden apps not filtering in native app drawers, add visible/order to header config API (Session 22)
+
+### Changes — UI (v0.3.3.4)
+- `ui/src/app/api/v1/header/config/route.ts` — Added `visible` field to apps array in response
+- `ui/package.json` — Bumped 0.3.3.3 → 0.3.3.4
+
+### Test Results
+- Build: clean standalone.tar (227MB), deployed to youeye-ui container
+
+### Notes for Iris
+- Header config API now includes `visible: boolean` per app — native apps use this to filter hidden apps
+- All native apps updated to filter `visible !== false` and sort by `order`
+
 ## v0.3.3.3 — vanya — 2026-04-23
 **Branch:** vanya
 **VM:** ye-vanya
