@@ -8,8 +8,9 @@ import {
   Check,
   X,
   Trash2,
-  Plus,
   Shield,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
 
 interface Bridge {
@@ -55,6 +56,8 @@ export function PermissionsClient({ bridges: initialBridges, grants: initialGran
   const [bridges, setBridges] = useState(initialBridges);
   const [grants, setGrants] = useState(initialGrants);
   const [suggestions, setSuggestions] = useState(initialSuggestions);
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<string | null>(null);
 
   const activeBridges = bridges.filter((b) => b.active);
   const activeGrants = grants.filter((g) => g.active);
@@ -116,9 +119,11 @@ export function PermissionsClient({ bridges: initialBridges, grants: initialGran
       });
       if (res.ok) {
         setSuggestions(suggestions.filter((x) => x.id !== s.id));
-        // Refresh bridges
         const bridgesRes = await fetch("/api/v1/admin/proxy-cp?path=/api/bridges");
-        if (bridgesRes.ok) setBridges(await bridgesRes.json());
+        if (bridgesRes.ok) {
+          const data = await bridgesRes.json();
+          setBridges(Array.isArray(data) ? data : (data.bridges ?? []));
+        }
       }
     } else if (s.type === "internet" && s.hosts) {
       const res = await fetch(`/api/v1/admin/proxy-cp`, {
@@ -140,6 +145,34 @@ export function PermissionsClient({ bridges: initialBridges, grants: initialGran
         const grantsRes = await fetch("/api/v1/admin/proxy-cp?path=/api/internet-grants");
         if (grantsRes.ok) setGrants(await grantsRes.json());
       }
+    }
+  }
+
+  async function scanForSuggestions() {
+    setScanning(true);
+    setScanResult(null);
+    try {
+      const res = await fetch(`/api/v1/admin/proxy-cp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: `/api/suggestions/regenerate`, method: "POST" }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setScanResult(`Found ${data.total ?? 0} new suggestion${(data.total ?? 0) !== 1 ? "s" : ""}`);
+        // Refresh suggestions list
+        const sugRes = await fetch("/api/v1/admin/proxy-cp?path=/api/suggestions");
+        if (sugRes.ok) {
+          const sugData = await sugRes.json();
+          setSuggestions(Array.isArray(sugData) ? sugData : []);
+        }
+      } else {
+        setScanResult("Scan failed — could not reach Control Panel");
+      }
+    } catch {
+      setScanResult("Scan failed — network error");
+    } finally {
+      setScanning(false);
     }
   }
 
@@ -175,7 +208,7 @@ export function PermissionsClient({ bridges: initialBridges, grants: initialGran
                   <ArrowRight className="h-3 w-3 text-muted-foreground" />
                   <span className="font-medium">{b.to}</span>
                   <span className="text-xs text-muted-foreground ml-2">
-                    {b.direction === "both-ways" ? "↔ Both ways" : "→ One-way"}
+                    {b.direction === "both-ways" ? "both ways" : "one-way"}
                   </span>
                 </div>
                 <button
@@ -221,11 +254,32 @@ export function PermissionsClient({ bridges: initialBridges, grants: initialGran
       </section>
 
       {/* Suggestions */}
-      {activeSuggestions.length > 0 && (
-        <section>
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
+      <section>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
             Suggestions
           </h3>
+          <button
+            onClick={scanForSuggestions}
+            disabled={scanning}
+            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 px-2 py-1 rounded border border-border hover:bg-accent transition-colors disabled:opacity-50"
+          >
+            {scanning ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3 w-3" />
+            )}
+            {scanning ? "Scanning..." : "Scan apps"}
+          </button>
+        </div>
+        {scanResult && (
+          <p className="text-xs text-muted-foreground mb-2">{scanResult}</p>
+        )}
+        {activeSuggestions.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-4">
+            No pending suggestions. Click &quot;Scan apps&quot; to check installed apps for connection needs.
+          </p>
+        ) : (
           <div className="space-y-2">
             {activeSuggestions.map((s) => (
               <div
@@ -281,8 +335,8 @@ export function PermissionsClient({ bridges: initialBridges, grants: initialGran
               </div>
             ))}
           </div>
-        </section>
-      )}
+        )}
+      </section>
     </div>
   );
 }

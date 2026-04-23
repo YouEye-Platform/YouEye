@@ -16,9 +16,11 @@ export default async function PermissionsPage() {
     fetch(`${cpUrl}/api/suggestions`, { cache: "no-store" }).catch(() => null),
   ]);
 
-  const bridges = bridgesRes?.ok ? await bridgesRes.json() : [];
+  const bridgesData = bridgesRes?.ok ? await bridgesRes.json() : { bridges: [] };
+  const bridges = Array.isArray(bridgesData) ? bridgesData : (bridgesData.bridges ?? []);
   const grants = grantsRes?.ok ? await grantsRes.json() : [];
-  const suggestions = suggestionsRes?.ok ? await suggestionsRes.json() : [];
+  const suggestionsRaw = suggestionsRes?.ok ? await suggestionsRes.json() : [];
+  const suggestions = Array.isArray(suggestionsRaw) ? suggestionsRaw : [];
 
   return (
     <PermissionsClient
