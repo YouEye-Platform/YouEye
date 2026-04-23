@@ -1,3 +1,38 @@
+## v0.3.5.2 — sebastian — 2026-04-23
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Connector improvements — availability logic, dual mode, logos, admin defaults
+
+### Changes
+- `ui/src/app/api/settings/connectors/[appId]/route.ts` — Full rewrite: availability flag based on network type + installed backends + custom URL; connector logos from Gitea; admin default annotations; test-connection and update-config actions
+- `ui/src/lib/connectors/logos.ts` — NEW: Utility to build Gitea raw URLs for connector logo SVGs
+- `ui/src/components/settings/connector-detail.tsx` — Rewritten CapabilityRow with: availability filtering, connector logos (ConnectorLogo component), DualModePicker (internal/external radio, URL input, test connection), default badges, unavailable warnings, exported for reuse
+- `ui/src/components/settings/app-settings-detail.tsx` — Replaced inline DataSourcesTab with imported CapabilityRow from connector-detail; removed 270+ lines of orphaned old code; updated types for new API fields
+- `ui/src/db/schema.ts` — Added `connectorDefaults` table (capability PK, connectorId, shared key encryption fields, setBy, setAt)
+- `ui/src/db/index.ts` — Added CREATE TABLE IF NOT EXISTS for connector_defaults in ensureSchema()
+- `ui/src/app/api/settings/admin/connector-defaults/route.ts` — NEW: Admin-only API for GET/POST/DELETE connector defaults per capability
+- `ui/src/components/settings/connector-defaults-admin.tsx` — NEW: Admin UI for managing system-wide connector defaults
+- `ui/src/app/settings/connector-defaults/page.tsx` — NEW: Admin settings page route
+- `ui/src/components/settings/settings-shell.tsx` — Added "Connector Defaults" to admin sidebar
+- `ui/messages/{en,ru,de,fr,es}.json` — i18n keys for connector availability, dual mode, logos, defaults
+- `ui/src/app/not-found.tsx` — NEW: Custom 404 page (fixes React 19 + styled-jsx SSG build error)
+- `ui/src/pages/_error.tsx` — NEW: Custom error page (fixes pre-existing build failure)
+
+### Test Results
+- Browser: Settings > Apps shows all apps with connection counts
+- Search app: SearXNG shows red "Backend unavailable" (local connector, app not installed)
+- Cinema app: TMDB shows "External" badge with credential entry + "Manage in Accounts" link
+- Connector Defaults page: All 7 capabilities listed with dropdown selectors
+- Admin sidebar: "Connector Defaults" entry appears and highlights correctly
+
+### Notes for Iris
+- This is Session B of the info-cards-and-connectors plan. Sessions C-F remain (link rewrites, auth providers, UI components, network isolation).
+- New `connector_defaults` DB table auto-created by ensureSchema() — no migration needed
+- Availability logic: `available = network === "internet" || hasInstalledBackend || hasCustomUrl`
+- DualModePicker only shown for connectors with `hasCompatibleApps` — internet-only connectors connect directly
+- No changes to CP or Spine — UI-only release
+
 ## v0.3.5.1 — sebastian — 2026-04-23
 **Branch:** sebastian
 **VM:** ye-sebastian
