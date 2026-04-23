@@ -1,3 +1,39 @@
+## v0.3.5.4 (UI) / v0.3.5.2 (CP) — sebastian — 2026-04-23
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Replace connector system with permissions-based networking
+
+### Changes
+- Stripped ~60 connector files across CP and UI (routes, components, DB tables, i18n keys)
+- `control-panel/src/lib/market/schema.ts` — Added WantSchema and InternetSchema to manifest
+- `control-panel/src/lib/incus/network-acl.ts` — Added grantInternetAccess(), revokeInternetAccess()
+- `control-panel/src/lib/bridges/internet-store.ts` — NEW: JSON store for internet grants
+- `control-panel/src/lib/bridges/suggestions.ts` — NEW: suggestions engine (scan wants vs installed)
+- `control-panel/src/app/api/internet-grants/` — NEW: GET/POST/DELETE internet grant endpoints
+- `control-panel/src/app/api/suggestions/` — NEW: GET/POST suggestions endpoints
+- `ui/src/app/api/v1/my-connections/route.ts` — NEW: discovery API for apps
+- `ui/src/app/api/v1/request-bridge/route.ts` — NEW: bridge request API
+- `ui/src/app/api/v1/admin/proxy-cp/route.ts` — NEW: admin CP proxy for client-side calls
+- `ui/src/app/settings/permissions/` — NEW: admin Permissions settings page
+- `ui/src/components/settings/settings-shell.tsx` — Added "Permissions" nav entry
+- `ui/messages/{en,ru,de,fr,es}.json` — Added permissions i18n keys
+- All 6 native app youeye-app.yaml — Added wants + internet declarations
+- All 6 native apps — Stripped connector client code
+- YouEye-Canvas — Replaced connectors module with connections module
+- YE-AppMarket — Removed connector-catalog.yaml and connectors/ directory
+
+### Test Results
+- Dashboard loads after deploy (verified)
+- Permissions admin page renders correctly with sidebar nav
+- Login flow works via Authentik SSO
+
+### Notes for Iris
+- This is a large architectural change — review the permissions page carefully
+- The discovery API (/api/v1/my-connections) is new and untested with real bridges
+- Native apps had connector code stripped but don't yet use the new connections helpers (they're legacy pre-Canvas apps)
+- The youeye-connectors container was recreated by Spine reconciliation — it's now unused but harmless
+
 ## v0.3.5.3 — sebastian — 2026-04-23
 **Branch:** sebastian
 **VM:** ye-sebastian
