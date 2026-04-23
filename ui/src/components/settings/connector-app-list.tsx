@@ -115,7 +115,7 @@ export function ConnectorAppList() {
               {nativeApps.map((app) => (
                 <button
                   key={app.id}
-                  onClick={() => router.push(`/settings/connectors/${app.id}`)}
+                  onClick={() => router.push(`/settings/apps/${app.id}`)}
                   className="w-full flex items-center justify-between px-4 py-3 hover:bg-accent/50 transition-colors text-left"
                 >
                   <div className="flex items-center gap-3">
@@ -147,7 +147,7 @@ export function ConnectorAppList() {
                 {externalApps.map((app) => (
                   <button
                     key={app.id}
-                    onClick={() => router.push(`/settings/connectors/${app.id}`)}
+                    onClick={() => router.push(`/settings/apps/${app.id}`)}
                     className="w-full flex items-center justify-between px-4 py-3 hover:bg-accent/50 transition-colors text-left"
                   >
                     <div className="flex items-center gap-3">

@@ -213,7 +213,7 @@ export function ConnectorDetail({ appId, directAccessEmbedUrl }: { appId: string
   return (
     <div className="space-y-6">
       <button
-        onClick={() => router.push("/settings/connectors")}
+        onClick={() => router.push("/settings/apps")}
         className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeft className="w-4 h-4" />

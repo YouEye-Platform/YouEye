@@ -1,13 +1,13 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { ConnectorAppList } from "@/components/settings/connector-app-list";
+import { AccountsSettings } from "@/components/settings/accounts-settings";
 import { getTranslations } from "next-intl/server";
 
-export default async function AppsSettingsPage() {
+export default async function AccountsSettingsPage() {
   const session = await getSession();
   if (!session) redirect("/login");
 
-  const t = await getTranslations("connectorSettings");
+  const t = await getTranslations("accountSettings");
 
   return (
     <div className="space-y-8">
@@ -18,7 +18,7 @@ export default async function AppsSettingsPage() {
         </p>
       </div>
 
-      <ConnectorAppList />
+      <AccountsSettings />
     </div>
   );
 }

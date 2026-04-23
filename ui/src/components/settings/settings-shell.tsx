@@ -15,7 +15,8 @@ import { useTranslations } from "next-intl";
 import {
   User,
   Palette,
-  Plug,
+  LayoutGrid,
+  KeyRound,
   Shield,
   Paintbrush,
   Users,
@@ -36,7 +37,8 @@ import {
 const USER_SECTIONS = [
   { id: "profile", labelKey: "profile" as const, icon: User, href: "/settings" },
   { id: "appearance", labelKey: "appearance" as const, icon: Palette, href: "/settings/appearance" },
-  { id: "connectors", labelKey: "connectors" as const, icon: Plug, href: "/settings/connectors" },
+  { id: "apps", labelKey: "apps" as const, icon: LayoutGrid, href: "/settings/apps" },
+  { id: "accounts", labelKey: "accounts" as const, icon: KeyRound, href: "/settings/accounts" },
   { id: "timeline", labelKey: "timeline" as const, icon: Clock, href: "/timeline" },
   { id: "privacy", labelKey: "privacy" as const, icon: Shield, href: "/settings/privacy" },
   { id: "language", labelKey: "language" as const, icon: Languages, href: "/settings/language" },
@@ -50,7 +52,7 @@ const ADMIN_SECTIONS = [
   { id: "dns", labelKey: "dns" as const, icon: Globe, href: "/settings/dns" },
   { id: "proxy", labelKey: "proxy" as const, icon: ArrowLeftRight, href: "/settings/proxy" },
   { id: "backup", labelKey: "backup" as const, icon: HardDrive, href: "/settings/backup" },
-  { id: "apps-list", labelKey: "apps" as const, icon: PackageOpen, href: "/settings/apps-list" },
+  { id: "apps-list", labelKey: "appManagement" as const, icon: PackageOpen, href: "/settings/apps-list" },
   { id: "market", labelKey: "appMarket" as const, icon: Store, href: "/app-market" },
 ];
 
@@ -71,6 +73,10 @@ export function SettingsShell({ children, isAdmin }: SettingsShellProps) {
 
   const isActive = (href: string) => {
     if (href === "/settings") return pathname === "/settings";
+    // /settings/apps must not match /settings/apps-list
+    if (href === "/settings/apps") {
+      return pathname === "/settings/apps" || (pathname.startsWith("/settings/apps/") && !pathname.startsWith("/settings/apps-list"));
+    }
     return pathname.startsWith(href);
   };
 
