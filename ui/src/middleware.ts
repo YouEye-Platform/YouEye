@@ -30,7 +30,7 @@ const PUBLIC_ROUTES = [
 ];
 
 /** Static resource patterns to skip */
-const STATIC_PATTERNS = ["/_next/", "/favicon.ico", "/icons/", "/branding/", "/user-assets/", "/fonts/"];
+const STATIC_PATTERNS = ["/_next/", "/favicon.ico", "/icon", "/apple-icon", "/icons/", "/branding/", "/user-assets/", "/fonts/"];
 
 function getJWTSecret(): Uint8Array | null {
   const secret = process.env.JWT_SECRET;

@@ -17,7 +17,10 @@ import type { IconConfig, IconSize } from "./icon-config";
 import { ICON_SIZES } from "./icon-config";
 import type { SiteNameStyle } from "@/lib/db/queries/branding";
 
-const BRANDING_DIR = join(process.cwd(), "public", "branding");
+// Persistent data dir outside the app code so icons survive deploys.
+// Falls back to public/branding only if DATA_DIR env is not set.
+const BRANDING_DIR = process.env.BRANDING_DATA_DIR
+  || join(process.env.DATA_DIR || "/opt/youeye-ui-data", "branding");
 
 /** Build an SVG for letter-mode icon */
 function buildLetterSVG(

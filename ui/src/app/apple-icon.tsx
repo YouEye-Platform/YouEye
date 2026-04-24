@@ -1,24 +1,39 @@
 /**
  * Apple Touch Icon Route (180x180)
+ *
+ * Auto-regenerates from DB config if files are missing (e.g., after deploy).
  */
 
 import { ImageResponse } from "next/og";
-import { readFile } from "fs/promises";
-import { join } from "path";
-import { existsSync } from "fs";
+import { getRenderedIcon, renderIconPNGs } from "@/lib/icon-renderer";
+import { getBranding } from "@/lib/db/queries/branding";
+import type { IconConfig } from "@/lib/icon-config";
 
+export const dynamic = "force-dynamic";
 export const size = { width: 180, height: 180 };
 export const contentType = "image/png";
 
 export default async function AppleIcon() {
-  const iconPath = join(process.cwd(), "public", "branding", "icon-180.png");
+  let buf = await getRenderedIcon(180);
 
-  if (existsSync(iconPath)) {
-    const buf = await readFile(iconPath);
+  if (!buf) {
+    try {
+      const branding = await getBranding();
+      const config = branding.icon_config as IconConfig | null;
+      if (config?.mode === "letter" && branding.site_name_style) {
+        await renderIconPNGs(config, branding.site_name, branding.site_name_style);
+        buf = await getRenderedIcon(180);
+      }
+    } catch {
+      // Fall through to fallback
+    }
+  }
+
+  if (buf) {
     return new Response(buf, {
       headers: {
         "Content-Type": "image/png",
-        "Cache-Control": "public, max-age=3600",
+        "Cache-Control": "public, max-age=60",
       },
     });
   }
