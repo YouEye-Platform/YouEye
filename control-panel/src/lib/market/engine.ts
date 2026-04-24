@@ -76,6 +76,7 @@ import {
   getSystemServices,
   addProxyDevices,
   buildAppNIC,
+  setAppNetworkNAT,
 } from '../incus/app-network';
 import { activatePendingBridges, detectBridgeDependencies, createBridge } from '../bridges/manager';
 import { generateSuggestionsForApp } from '../bridges/suggestions';
@@ -561,11 +562,13 @@ export async function installApp(
   // ── Step 5: Create per-app bridge + build canonical context ──
 
   // Create bridge FIRST — context build needs to know if proxy devices are used.
+  // NAT is always enabled during install — apps need internet to pull images/packages.
+  // Post-install, NAT can be toggled off for apps that shouldn't have outbound internet.
   let appBridgeName: string | undefined;
-  const hasInternetContainer = manifest.containers.some(c => c.network === 'internet');
+  const wantsInternet = manifest.containers.some(c => c.network === 'internet');
 
   try {
-    const { bridgeName } = await createAppNetwork(appId, { nat: hasInternetContainer });
+    const { bridgeName } = await createAppNetwork(appId, { nat: true });
     appBridgeName = bridgeName;
     emit(onEvent, step, totalSteps, 'success', `App network created: ${bridgeName}`);
   } catch (err) {
@@ -1011,6 +1014,12 @@ export async function installApp(
     // Comprehensive rollback: clean up containers, DB, SSO, Caddy, metadata
     await rollbackInstall(rollbackCtx, onEvent, totalSteps);
     throw err;
+  }
+
+  // Post-install: disable NAT on the app bridge if the app doesn't need internet.
+  // NAT was enabled during install so containers could pull packages/images.
+  if (appBridgeName && !wantsInternet) {
+    await setAppNetworkNAT(appId, false);
   }
 
   emit(onEvent, step, totalSteps, 'success', `${manifest.metadata.name} installed successfully!`);

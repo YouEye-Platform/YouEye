@@ -210,6 +210,25 @@ export async function deleteAppNetwork(appId: string): Promise<void> {
   await freeSubnet(appId);
 }
 
+/**
+ * Enable or disable NAT (internet access) on an app's bridge.
+ * NAT is enabled during install so containers can pull packages/images,
+ * then disabled post-install for apps that don't declare `network: internet`.
+ */
+export async function setAppNetworkNAT(appId: string, enable: boolean): Promise<void> {
+  const bridgeName = await getAppBridgeName(appId);
+  if (!bridgeName) return;
+
+  try {
+    await incusRequest('PATCH', `/1.0/networks/${bridgeName}`, {
+      config: { 'ipv4.nat': enable ? 'true' : 'false' },
+    });
+    console.log(`[app-network] NAT ${enable ? 'enabled' : 'disabled'} on ${bridgeName}`);
+  } catch (err) {
+    console.warn(`[app-network] Failed to set NAT on ${bridgeName}:`, err);
+  }
+}
+
 // ─── Caddy NIC Management ──────────────────────────────────
 
 /**
