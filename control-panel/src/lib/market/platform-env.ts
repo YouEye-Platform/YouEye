@@ -182,6 +182,8 @@ export async function buildCanonicalContext(
   ssoResult?: { clientId: string; clientSecret: string; slug: string },
   dbPassword?: string,
   appToken?: string,
+  /** If true, system services are at localhost via proxy devices (per-app bridge model) */
+  useProxyDevices?: boolean,
 ): Promise<Partial<VariableContext>> {
   const platform = await getPlatformContext();
   const domain = platform.domain || config.domain;
@@ -243,14 +245,18 @@ export async function buildCanonicalContext(
       internal_url: `http://${primaryContainerName}.${CONTAINER_DOMAIN}:${primaryPort}`,
     },
     integration: {
-      gateway_url: `http://youeye-ui.${CONTAINER_DOMAIN}:3000/api/apps/v1`,
+      // Per-app bridge: UI is at localhost:3001 via proxy device
+      // Legacy: UI is at youeye-ui.youeye:3000 on shared bridge
+      gateway_url: useProxyDevices
+        ? 'http://localhost:3001/api/apps/v1'
+        : `http://youeye-ui.${CONTAINER_DOMAIN}:3000/api/apps/v1`,
       app_token: appToken || '',
     },
     containers,
     database: {
       url: '',
       dsn: '',
-      host: `youeye-postgres.${CONTAINER_DOMAIN}`,
+      host: useProxyDevices ? 'localhost' : `youeye-postgres.${CONTAINER_DOMAIN}`,
       port: '5432',
       name: '',
       user: '',
@@ -287,7 +293,9 @@ export async function buildCanonicalContext(
 
   // Database context
   if (manifest.database?.mode === 'shared' && manifest.database.name && manifest.database.user) {
-    const dbHost = `youeye-postgres.${CONTAINER_DOMAIN}`;
+    // Per-app bridge model: proxy device exposes postgres at localhost:5432
+    // Legacy model: postgres reachable via DNS on shared bridge
+    const dbHost = useProxyDevices ? 'localhost' : `youeye-postgres.${CONTAINER_DOMAIN}`;
     const pw = dbPassword || '';
     ctx.database = {
       url: `postgresql://${manifest.database.user}:${pw}@${dbHost}:5432/${manifest.database.name}`,

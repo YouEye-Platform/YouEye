@@ -70,6 +70,13 @@ import {
 import { getContainerName } from './engine-helpers';
 import { CONTAINER_DOMAIN } from './constants';
 import { ensureNetworkAcls, createContainerAcl, grantInternetAccess as grantInternet } from '../incus/network-acl';
+import {
+  createAppNetwork,
+  addCaddyToAppNetwork,
+  getSystemServices,
+  addProxyDevices,
+  buildAppNIC,
+} from '../incus/app-network';
 import { activatePendingBridges, detectBridgeDependencies, createBridge } from '../bridges/manager';
 import { generateSuggestionsForApp } from '../bridges/suggestions';
 
@@ -159,6 +166,13 @@ async function rollbackInstall(
   // 5. Remove metadata and secrets
   try { await removeInstallMetadata(ctx.appId); } catch {}
   try { await removeInstalledApp(ctx.appId); } catch {}
+
+  // 6. Clean up per-app bridge network
+  try {
+    const { removeCaddyFromAppNetwork, deleteAppNetwork } = await import('../incus/app-network');
+    await removeCaddyFromAppNetwork(ctx.appId);
+    await deleteAppNetwork(ctx.appId);
+  } catch {}
 
   onEvent({ step: 0, totalSteps, status: 'running', message: 'Rollback complete — all resources cleaned up' });
 }
@@ -544,10 +558,22 @@ export async function installApp(
     }
   }
 
-  // ── Step 5: Generate app token + build canonical context ──
+  // ── Step 5: Create per-app bridge + build canonical context ──
+
+  // Create bridge FIRST — context build needs to know if proxy devices are used.
+  let appBridgeName: string | undefined;
+  const hasInternetContainer = manifest.containers.some(c => c.network === 'internet');
+
+  try {
+    const { bridgeName } = await createAppNetwork(appId, { nat: hasInternetContainer });
+    appBridgeName = bridgeName;
+    emit(onEvent, step, totalSteps, 'success', `App network created: ${bridgeName}`);
+  } catch (err) {
+    console.warn('[engine] Failed to create app network, falling back to incusbr0:', err);
+  }
 
   const appToken = await generateAppToken(appId);
-  const ctx = await buildCanonicalContext(manifest, config, ssoResult, dbPassword, appToken);
+  const ctx = await buildCanonicalContext(manifest, config, ssoResult, dbPassword, appToken, !!appBridgeName);
   ctx.secrets = secrets;
 
   // Populate installParams with type coercion
@@ -576,6 +602,16 @@ export async function installApp(
   const containerNames: string[] = [];
   let primaryContainerName = '';
   let primaryPort = 0;
+
+  // Build NIC device config for per-app bridge (if available)
+  let appNIC: Record<string, Record<string, string>> | undefined;
+  if (appBridgeName) {
+    try {
+      appNIC = await buildAppNIC(appId);
+    } catch (err) {
+      console.warn('[engine] Failed to build app NIC:', err);
+    }
+  }
 
   try {
     for (const containerSpec of manifest.containers) {
@@ -625,7 +661,8 @@ export async function installApp(
               giteaOrg: gitInfo.org,
               giteaRepo: gitInfo.repo,
               tagPrefix: source.tagPrefix,
-            }
+            },
+            appNIC,
           );
 
           // Write env file to LXD container
@@ -647,7 +684,7 @@ export async function installApp(
           const staticEnv = resolveEnvironment(containerSpec.environment || {}, ctx);
           const fullEnv = { ...envFromMapping, ...staticEnv };
           const ociManifest = buildOCIManifest(containerSpec, containerName, appId, fullEnv);
-          await deployOCIContainer(ociManifest, '');
+          await deployOCIContainer(ociManifest, '', appNIC);
         }
 
         await applyResourcePolicy(containerName, 'normal');
@@ -689,41 +726,59 @@ export async function installApp(
     throw err;
   }
 
-  // ── Step 6b: Per-container ACL isolation ──────────────────
-  // Create per-container ACLs AFTER all containers are deployed (we need sibling IPs).
-  // ALL containers get ACLs — including network:internet ones (they also get internet grants).
+  // ── Step 6b: Network isolation — proxy devices + Caddy NIC ──────
+  // Per-app bridge provides structural isolation.
+  // Proxy devices expose system services (postgres, authentik, UI) at localhost:{port}.
+  // Caddy NIC lets the reverse proxy reach the app on its bridge.
 
-  try {
-    await ensureNetworkAcls();
-    const needsSharedDb = (manifest.database?.mode ?? 'none') === 'shared';
-    const needsSSO = ssoEnabled;
+  if (appBridgeName) {
+    try {
+      const needsSharedDb = (manifest.database?.mode ?? 'none') === 'shared';
+      const needsSSO = ssoEnabled;
 
-    // Resolve all container IPs
-    const containerIPs = new Map<string, string>();
-    for (const cn of containerNames) {
-      const ip = await getContainerIP(cn);
-      if (ip) containerIPs.set(cn, ip);
-    }
-
-    // Create per-container ACL for each container
-    for (const containerSpec of manifest.containers) {
-      const cn = getContainerName(appId, containerSpec.name, manifest.containers.length);
-      const siblingIPs = containerNames
-        .filter(s => s !== cn)
-        .map(s => containerIPs.get(s))
-        .filter((ip): ip is string => !!ip);
-
-      await createContainerAcl(cn, { siblingIPs, needsSharedDb, needsSSO });
-
-      // Containers with network:internet get blanket internet access
-      // (per-host restrictions deferred to future update)
-      if (containerSpec.network === 'internet') {
-        await grantInternet(cn, [], true);
+      // Add proxy devices for system services to each container
+      const services = await getSystemServices({ needsSharedDb, needsSSO });
+      for (const cn of containerNames) {
+        await addProxyDevices(cn, services);
       }
+
+      // Hot-plug Caddy NIC onto the app bridge (Docker/Traefik model)
+      await addCaddyToAppNetwork(appId);
+
+      emit(onEvent, step, totalSteps, 'success', `Network isolation configured for ${containerNames.length} containers`);
+    } catch (netErr) {
+      console.warn('[engine] Network configuration warning:', netErr);
     }
-    emit(onEvent, step, totalSteps, 'success', `Network isolation configured for ${containerNames.length} containers`);
-  } catch (aclErr) {
-    console.warn('[engine] ACL configuration warning:', aclErr);
+  } else {
+    // Fallback: use legacy ACL system for containers on incusbr0
+    try {
+      await ensureNetworkAcls();
+      const needsSharedDb = (manifest.database?.mode ?? 'none') === 'shared';
+      const needsSSO = ssoEnabled;
+
+      const containerIPs = new Map<string, string>();
+      for (const cn of containerNames) {
+        const ip = await getContainerIP(cn);
+        if (ip) containerIPs.set(cn, ip);
+      }
+
+      for (const containerSpec of manifest.containers) {
+        const cn = getContainerName(appId, containerSpec.name, manifest.containers.length);
+        const siblingIPs = containerNames
+          .filter(s => s !== cn)
+          .map(s => containerIPs.get(s))
+          .filter((ip): ip is string => !!ip);
+
+        await createContainerAcl(cn, { siblingIPs, needsSharedDb, needsSSO });
+
+        if (containerSpec.network === 'internet') {
+          await grantInternet(cn, [], true);
+        }
+      }
+      emit(onEvent, step, totalSteps, 'success', `Network isolation configured (legacy ACL) for ${containerNames.length} containers`);
+    } catch (aclErr) {
+      console.warn('[engine] ACL configuration warning:', aclErr);
+    }
   }
 
   // ── Steps 7-10: Post-deploy (SSO configure, Caddy, metadata, dashboard)
@@ -866,6 +921,7 @@ export async function installApp(
       : undefined,
     databaseMode: manifest.database?.mode ?? 'none',
     hasSSO: ssoEnabled,
+    usePerAppBridge: !!appBridgeName,
   };
   await saveInstallMetadata(meta);
 

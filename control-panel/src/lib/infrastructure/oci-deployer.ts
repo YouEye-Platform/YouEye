@@ -84,7 +84,8 @@ async function waitForIncusOperation(operationPath: string, timeoutSeconds = 600
  */
 export async function deployOCIContainer(
   manifest: OCIManifest,
-  hostIP: string
+  hostIP: string,
+  nicDevices?: Record<string, Record<string, string>>,
 ): Promise<void> {
   // Clean up any leftover container from a failed previous install
   if (await containerExists(manifest.containerName)) {
@@ -148,6 +149,11 @@ export async function deployOCIContainer(
       path: vol.container,
       shift: 'true',
     };
+  }
+
+  // Merge per-app bridge NIC devices if provided (overrides default profile NIC)
+  if (nicDevices) {
+    Object.assign(devices, nicDevices);
   }
 
   // Create container via Incus REST API

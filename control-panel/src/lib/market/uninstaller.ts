@@ -92,14 +92,28 @@ export async function uninstallApp(
     }
   }
 
-  // 1b. Clean up per-container ACLs
-  try {
-    const { deleteContainerAcl } = await import('../incus/network-acl');
-    for (const c of containers) {
-      await deleteContainerAcl(c.containerName);
+  // 1b. Clean up per-app bridge network OR legacy ACLs
+  const usePerAppBridge = metadata.usePerAppBridge;
+  if (usePerAppBridge) {
+    try {
+      const { removeCaddyFromAppNetwork, deleteAppNetwork } = await import('../incus/app-network');
+      // Remove Caddy NIC first (before deleting the bridge)
+      await removeCaddyFromAppNetwork(appId);
+      // Delete the bridge (containers already deleted above, so bridge should be empty)
+      await deleteAppNetwork(appId);
+    } catch (err) {
+      errors.push(`Failed to remove app network: ${err}`);
     }
-  } catch (err) {
-    errors.push(`Failed to remove ACLs: ${err}`);
+  } else {
+    // Legacy: clean up per-container ACLs
+    try {
+      const { deleteContainerAcl } = await import('../incus/network-acl');
+      for (const c of containers) {
+        await deleteContainerAcl(c.containerName);
+      }
+    } catch (err) {
+      errors.push(`Failed to remove ACLs: ${err}`);
+    }
   }
 
   // 1c. Clean up bridge records referencing this app

@@ -24,12 +24,13 @@ export async function deployLXDContainer(
     giteaOrg: string;
     giteaRepo: string;
     tagPrefix?: string;
-  }
+  },
+  nicDevices?: Record<string, Record<string, string>>,
 ): Promise<void> {
   if (await containerExists(spec.containerName)) return;
 
   // Create the LXD container
-  const createPayload = {
+  const createPayload: Record<string, unknown> = {
     name: spec.containerName,
     source: {
       type: 'image',
@@ -41,6 +42,11 @@ export async function deployLXDContainer(
       'security.privileged': 'false',
     },
   };
+
+  // If per-app bridge NIC provided, attach to container at creation time
+  if (nicDevices) {
+    createPayload.devices = nicDevices;
+  }
 
   const result = await incusRequest<Record<string, unknown>>(
     'POST',
