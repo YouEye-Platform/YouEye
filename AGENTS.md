@@ -1,3 +1,20 @@
+## v0.3.5.4 — vanya — 2026-04-24
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix Authentik favicon sync — DNS, auth, and data bugs (Session 26b)
+
+### Changes — CP (v0.3.5.4)
+- `control-panel/src/lib/authentik/sync-branding.ts` — NEW: extracted Authentik sync logic into reusable function
+- `control-panel/src/app/api/ui-bridge/authentik/branding/route.ts` — Simplified to use sync-branding module; fixed DNS from `.incus` to `.${CONTAINER_DOMAIN}`
+- `control-panel/src/app/api/ui/branding/route.ts` — Replaced broken fire-and-forget HTTP self-call with direct `syncBrandingToAuthentik()` call + CSS generation
+
+### Notes for Iris
+- The branding sync was silently failing since the one-way bridge auth change. This fix makes it work again.
+- Authentik favicon is now pushed automatically on every branding save via the Server Branding embed.
+
+---
+
 ## v0.3.3.9 / v0.3.5.3 — vanya — 2026-04-24
 **Branch:** vanya
 **VM:** ye-vanya
