@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync } from "fs";
 import { CONTAINER_DOMAIN } from "@/lib/market/constants";
+import { syncBrandingToAuthentik } from "@/lib/authentik/sync-branding";
+import { generateSetupAuthentikCSS } from "@/lib/authentik/setup-css";
 
 const TOKEN_FILE_PATH = "/etc/youeye/ui-bridge-token";
 const UI_BASE = `http://youeye-ui.${CONTAINER_DOMAIN}:3000`;
@@ -52,12 +54,22 @@ export async function PUT(request: NextRequest) {
     const result = await res.json();
 
     // Sync to Authentik login page (best-effort, fire-and-forget)
-    fetch(`http://localhost:3000/api/ui-bridge/authentik/branding`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-UI-Bridge-Token": token },
-      body: "{}",
-      signal: AbortSignal.timeout(10000),
-    }).catch(() => {});
+    // Generate CSS and call sync directly — avoids embed-only auth on HTTP route
+    const style = body.site_name_style as Record<string, unknown> | undefined;
+    const fontSlug = style?.fontFamily
+      ? String(style.fontFamily).toLowerCase().replace(/\s+/g, "-")
+      : undefined;
+    const css = generateSetupAuthentikCSS(
+      style as Parameters<typeof generateSetupAuthentikCSS>[0],
+      undefined,
+      body.site_name,
+    );
+    syncBrandingToAuthentik({
+      css,
+      siteName: body.site_name,
+      siteNameStyle: style,
+      fontSlug,
+    }).catch((err) => console.warn("[ui-branding] Non-fatal: Authentik sync failed:", err));
 
     return NextResponse.json(result);
   } catch {
