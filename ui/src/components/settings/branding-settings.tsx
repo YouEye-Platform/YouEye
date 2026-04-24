@@ -9,6 +9,9 @@
 import { useState, useEffect, useCallback } from "react";
 import type { SiteNameStyle } from "@/lib/db/queries/branding";
 import WordArtPicker from "@/components/wordart/WordArtPicker";
+import { IconPickerBranding, renderToBlob } from "@/components/settings/icon-picker-branding";
+import type { IconConfig } from "@/lib/icon-config";
+import { DEFAULT_ICON_CONFIG } from "@/lib/icon-config";
 import { Upload, RotateCcw, Save, Loader2, Check, X } from "lucide-react";
 
 const DEFAULT_STYLE: SiteNameStyle = {
@@ -24,6 +27,7 @@ export function BrandingSettings() {
   const [saved, setSaved] = useState(false);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [faviconUrl, setFaviconUrl] = useState<string | null>(null);
+  const [iconConfig, setIconConfig] = useState<IconConfig>(DEFAULT_ICON_CONFIG);
   const [loaded, setLoaded] = useState(false);
 
   const loadBranding = useCallback(async () => {
@@ -36,6 +40,7 @@ export function BrandingSettings() {
       setLogoUrl(data.logo_url);
       setFaviconUrl(data.favicon_url);
       if (data.site_name_style) setStyle(data.site_name_style);
+      if (data.icon_config) setIconConfig(data.icon_config);
     } catch { /* defaults */ }
     setLoaded(true);
   }, []);
@@ -49,11 +54,36 @@ export function BrandingSettings() {
   const handleSave = async () => {
     setSaving(true);
     try {
+      // Save branding (includes icon_config for letter mode auto-render)
       await fetch("/api/v1/branding", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ site_name: siteName, site_name_style: style, accent_color: accentColor }),
+        body: JSON.stringify({
+          site_name: siteName,
+          site_name_style: style,
+          accent_color: accentColor,
+          icon_config: iconConfig,
+        }),
       });
+
+      // For non-letter modes, render client-side and upload the blob
+      if (iconConfig.mode !== "letter") {
+        try {
+          const blob = await renderToBlob(iconConfig, siteName, style, 512);
+          if (blob) {
+            const formData = new FormData();
+            formData.append("icon_config", JSON.stringify(iconConfig));
+            formData.append("icon_blob", blob, "icon.png");
+            await fetch("/api/v1/branding/icon", {
+              method: "POST",
+              body: formData,
+            });
+          }
+        } catch (err) {
+          console.warn("Icon render upload failed:", err);
+        }
+      }
+
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } finally { setSaving(false); }
@@ -63,6 +93,7 @@ export function BrandingSettings() {
     setStyle(DEFAULT_STYLE);
     setSiteName("YouEye");
     setAccentColor("#8B5CF6");
+    setIconConfig(DEFAULT_ICON_CONFIG);
   };
 
   const handleFileUpload = async (type: "logo" | "favicon", file: File) => {
@@ -130,23 +161,21 @@ export function BrandingSettings() {
         </div>
       </div>
 
-      {/* Favicon Upload */}
+      {/* Server Icon / Favicon */}
       <div className="space-y-2">
-        <label className="text-sm font-medium">Favicon</label>
-        <div className="flex items-center gap-3">
-          {faviconUrl && <img src={faviconUrl} alt="Favicon" className="w-6 h-6 object-contain rounded border" />}
-          <label className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm cursor-pointer hover:bg-muted transition-colors">
-            <Upload className="h-4 w-4" />
-            Upload
-            <input type="file" accept="image/x-icon,image/png" className="hidden"
-              onChange={e => { const f = e.target.files?.[0]; if (f) handleFileUpload("favicon", f); }} />
-          </label>
-          {faviconUrl && (
-            <button onClick={() => setFaviconUrl(null)} className="text-muted-foreground hover:text-foreground">
-              <X className="h-4 w-4" />
-            </button>
-          )}
-        </div>
+        <label className="text-sm font-medium">Server Icon / Favicon</label>
+        {loaded ? (
+          <IconPickerBranding
+            config={iconConfig}
+            onChange={setIconConfig}
+            siteName={siteName}
+            siteNameStyle={style}
+          />
+        ) : (
+          <div className="flex items-center justify-center h-20 rounded-md border border-dashed">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        )}
       </div>
 
       {/* Actions */}

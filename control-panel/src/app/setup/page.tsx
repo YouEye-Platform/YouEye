@@ -14,9 +14,11 @@ import SetupChoice from '@/components/setup/SetupChoice';
 import SetupRestore from '@/components/setup/SetupRestore';
 import SetupServerName from '@/components/setup/SetupServerName';
 import SetupWordArt from '@/components/setup/SetupWordArt';
+import SetupIcon from '@/components/setup/SetupIcon';
 import SetupAdminAccount from '@/components/setup/SetupAdminAccount';
 import SetupProvisioning from '@/components/setup/SetupProvisioning';
 import SetupDnsExplainer from '@/components/setup/SetupDnsExplainer';
+import { type IconConfig, DEFAULT_ICON_CONFIG } from '@/lib/icon-config';
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -36,9 +38,9 @@ interface SetupStep {
   message?: string;
 }
 
-// Steps: -2=language, -1=choice(new/restore), 0=serverName, 1=wordart, 2=admin, 3=provisioning, 4=dns
+// Steps: -2=language, -1=choice(new/restore), 0=serverName, 1=wordart, 2=icon, 3=admin, 4=provisioning, 5=dns
 // Restore flow: -2=language → -1=choice → 'restore'
-type WizardStep = -2 | -1 | 0 | 1 | 2 | 3 | 4 | 'restore';
+type WizardStep = -2 | -1 | 0 | 1 | 2 | 3 | 4 | 5 | 'restore';
 
 // ─── Main Component ──────────────────────────────────────────
 
@@ -63,7 +65,10 @@ export default function SetupPage() {
   // Step 1: WordArt
   const [nameStyle, setNameStyle] = useState<SiteNameStyle>(DEFAULT_STYLE);
 
-  // Step 2: Admin account
+  // Step 2: Icon
+  const [iconConfig, setIconConfig] = useState<IconConfig>(DEFAULT_ICON_CONFIG);
+
+  // Step 3: Admin account
   const [adminFirstName, setAdminFirstName] = useState('');
   const [adminLastName, setAdminLastName] = useState('');
   const [adminUsername, setAdminUsername] = useState('');
@@ -187,6 +192,7 @@ export default function SetupPage() {
           admin_email: adminEmail,
           admin_password: adminPassword,
           site_name_style: nameStyle,
+          icon_config: iconConfig,
           authentik_name: authentikName || `${siteName} ID`,
           language: selectedLanguage || 'en',
         }),
@@ -240,12 +246,12 @@ export default function SetupPage() {
     } catch (err) {
       setSetupError(err instanceof Error ? err.message : 'Setup failed');
     }
-  }, [siteName, domain, subdomains, nameStyle, adminUsername, adminEmail, adminPassword, authentikName, adminFirstName, adminLastName, selectedLanguage, t]);
+  }, [siteName, domain, subdomains, nameStyle, iconConfig, adminUsername, adminEmail, adminPassword, authentikName, adminFirstName, adminLastName, selectedLanguage, t]);
 
-  // Start provisioning when we enter step 3
+  // Start provisioning when we enter step 4
   const provisioningStarted = useRef(false);
   useEffect(() => {
-    if (step === 3 && !provisioningStarted.current) {
+    if (step === 4 && !provisioningStarted.current) {
       provisioningStarted.current = true;
       handleRunSetup();
     }
@@ -269,9 +275,9 @@ export default function SetupPage() {
     return 'opacity-100 translate-x-0 transition-all duration-300';
   };
 
-  // Step indicator dots (only for steps 0-2, not during restore flow)
-  const showDots = typeof step === 'number' && step >= 0 && step <= 2;
-  const stepLabels = [t('serverSetup'), t('style'), t('adminAccount')];
+  // Step indicator dots (only for steps 0-3, not during restore flow)
+  const showDots = typeof step === 'number' && step >= 0 && step <= 3;
+  const stepLabels = [t('serverSetup'), t('style'), 'Icon', t('adminAccount')];
 
   return (
     <div className="w-full max-w-2xl px-4">
@@ -343,6 +349,17 @@ export default function SetupPage() {
         )}
 
         {step === 2 && (
+          <SetupIcon
+            siteName={siteName}
+            siteNameStyle={nameStyle}
+            iconConfig={iconConfig}
+            setIconConfig={setIconConfig}
+            onNext={() => goToStep(3)}
+            onBack={() => goToStep(1, 'back')}
+          />
+        )}
+
+        {step === 3 && (
           <SetupAdminAccount
             firstName={adminFirstName}
             setFirstName={setAdminFirstName}
@@ -354,12 +371,12 @@ export default function SetupPage() {
             setEmail={setAdminEmail}
             password={adminPassword}
             setPassword={setAdminPassword}
-            onNext={() => goToStep(3)}
-            onBack={() => goToStep(1, 'back')}
+            onNext={() => goToStep(4)}
+            onBack={() => goToStep(2, 'back')}
           />
         )}
 
-        {step === 3 && (
+        {step === 4 && (
           <SetupProvisioning
             steps={setupSteps}
             isComplete={setupComplete}
@@ -371,11 +388,11 @@ export default function SetupPage() {
               setSetupSteps([]);
               handleRunSetup();
             }}
-            onComplete={() => goToStep(4)}
+            onComplete={() => goToStep(5)}
           />
         )}
 
-        {step === 4 && (
+        {step === 5 && (
           <SetupDnsExplainer
             domain={domain}
             siteName={siteName}

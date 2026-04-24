@@ -68,6 +68,26 @@ export async function POST(request: Request) {
       branding_custom_css: css,
     };
 
+    // Push rendered favicon to Authentik
+    try {
+      const uiBase = `http://youeye-ui.incus:3000`;
+      const faviconRes = await fetch(`${uiBase}/api/v1/branding/icon?size=192`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (faviconRes.ok) {
+        const faviconBuf = Buffer.from(await faviconRes.arrayBuffer());
+        const faviconB64 = faviconBuf.toString('base64');
+        await execShell(
+          'youeye-authentik',
+          `mkdir -p /web/dist/assets/icons && printf '%s' '${faviconB64}' | base64 -d > /web/dist/assets/icons/youeye-favicon.png`
+        );
+        updateData.branding_favicon = '/static/dist/assets/icons/youeye-favicon.png';
+        console.log('[authentik-branding] Pushed custom favicon to Authentik');
+      }
+    } catch (favErr) {
+      console.warn('[authentik-branding] Non-fatal: favicon push failed:', favErr);
+    }
+
     if (siteName) {
       updateData.branding_title = siteName;
     }

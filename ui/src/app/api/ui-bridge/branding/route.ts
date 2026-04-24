@@ -28,7 +28,18 @@ export async function PUT(request: NextRequest) {
       site_name: body.site_name,
       site_name_style: body.site_name_style,
       accent_color: body.accent_color,
+      icon_config: body.icon_config,
     });
+
+    // Auto-render icon if in letter mode
+    if (body.icon_config?.mode === "letter" && updated.site_name_style) {
+      try {
+        const { renderIconPNGs } = await import("@/lib/icon-renderer");
+        await renderIconPNGs(body.icon_config, updated.site_name, updated.site_name_style);
+      } catch (err) {
+        console.warn("[bridge-branding] Non-fatal: icon render failed:", err);
+      }
+    }
 
     if (body.logo_url !== undefined) {
       await setBrandingAsset("logo", body.logo_url);

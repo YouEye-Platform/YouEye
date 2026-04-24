@@ -31,6 +31,7 @@ const PUBLIC_ROUTES = [
   '/api/mail/send',       // SMTP proxy — auth via X-App-Slug / X-UI-Bridge-Token
   '/api/connectors',
   '/api/ui',              // Embed client-side calls to UI bridge proxy (branding, etc.)
+  '/api/branding/favicon', // Public favicon (proxied from UI)
   '/setup-complete',
   // Note: /embed routes now use session auth (same as main CP), not HMAC tokens
 ];
