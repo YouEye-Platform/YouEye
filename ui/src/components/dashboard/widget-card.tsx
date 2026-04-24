@@ -13,9 +13,10 @@ import { useTranslations } from "next-intl";
 interface WidgetCardProps {
   widgetType: string;
   settings?: Record<string, unknown>;
+  onAutoSize?: (size: { height: number }) => void;
 }
 
-export function WidgetCard({ widgetType, settings }: WidgetCardProps) {
+export function WidgetCard({ widgetType, settings, onAutoSize }: WidgetCardProps) {
   const t = useTranslations('widgets');
   const Component = WIDGET_REGISTRY[widgetType];
 
@@ -27,5 +28,5 @@ export function WidgetCard({ widgetType, settings }: WidgetCardProps) {
     );
   }
 
-  return <Component settings={settings} />;
+  return <Component settings={settings} onAutoSize={onAutoSize} />;
 }

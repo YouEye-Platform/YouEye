@@ -15,6 +15,8 @@ import type { ComponentType } from "react";
 
 export interface WidgetComponentProps {
   settings?: Record<string, unknown>;
+  /** Called by auto-fit widgets to report their ideal content height (px). */
+  onAutoSize?: (size: { height: number }) => void;
 }
 
 export interface SettingsField {
@@ -40,6 +42,8 @@ export interface WidgetMeta {
   settingsSchema?: SettingsField[];
   /** For app-provided widgets */
   appId?: string;
+  /** Widget auto-fits height to content. Width is user-controlled, text fills it. */
+  autoFit?: boolean;
 }
 
 /** The generic app widget component used for all app-provided widgets */
@@ -52,8 +56,9 @@ export const WIDGET_CATALOG: WidgetMeta[] = [
     description: "Instance name with WordArt styling — like a search engine logo",
     category: "built-in",
     component: ServerNameWidget,
-    defaultSize: { width: 26, height: 13 },
-    minSize: { width: 10, height: 5 },
+    defaultSize: { width: 26, height: 8 },
+    minSize: { width: 8, height: 3 },
+    autoFit: true,
   },
   {
     id: "greeting",
@@ -88,8 +93,9 @@ export const WIDGET_CATALOG: WidgetMeta[] = [
     description: "Digital clock with date display",
     category: "built-in",
     component: ClockWidget,
-    defaultSize: { width: 14, height: 10 },
-    minSize: { width: 10, height: 7 },
+    defaultSize: { width: 14, height: 6 },
+    minSize: { width: 8, height: 3 },
+    autoFit: true,
     settingsSchema: [
       {
         key: "showSeconds",
@@ -150,4 +156,3 @@ export const WIDGET_REGISTRY: Record<string, ComponentType<WidgetComponentProps>
 export function getWidgetMeta(widgetType: string): WidgetMeta | undefined {
   return WIDGET_CATALOG.find((w) => w.id === widgetType);
 }
-

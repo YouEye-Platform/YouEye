@@ -11,6 +11,9 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+
+export const dynamic = "force-dynamic";
+
 import { getSession } from "@/lib/auth";
 import { getBranding } from "@/lib/db/queries/branding";
 import { getUnreadCount } from "@/lib/db/queries/notifications";

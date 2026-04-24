@@ -1,3 +1,27 @@
+## v0.3.3.7 — vanya — 2026-04-24
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Widget auto-fit — text fills container width, height auto-adjusts, no empty space (Session 24)
+
+### Changes — UI (v0.3.3.7)
+- `ui/src/components/widgets/index.ts` — Added `autoFit` flag + `onAutoSize` callback to WidgetComponentProps/WidgetMeta
+- `ui/src/components/dashboard/widget-container.tsx` — Auto-fit height handler, hide vertical resize handles for autoFit widgets, minimal padding (p-1) for autoFit
+- `ui/src/components/dashboard/widget-card.tsx` — Thread `onAutoSize` to widget components
+- `ui/src/components/widgets/server-name-widget.tsx` — JS fit-text-to-width: measures text, scales fontSize to fill container, reports height via onAutoSize
+- `ui/src/components/widgets/clock-widget.tsx` — Same fit-text approach, gradient time, proportional date (28% of time size)
+- `ui/src/components/dashboard/widget-grid.tsx` — Updated default heights for auto-fit widgets
+- `ui/tests/widget-scaling.spec.ts` — Updated: fill-ratio tests, autoFit handle removal, reset defaults
+- `ui/package.json` — Bumped 0.3.3.6 → 0.3.3.7
+
+### Test Results
+- Playwright: 5 tests passed (widget-scaling.spec.ts)
+
+### Notes for Iris
+- AutoFit widgets: only width is user-resizable, height auto-adjusts to content
+- Bottom/top resize handles hidden for autoFit widgets in edit mode
+- Existing layouts preserved — height auto-adjusts on first load
+
 ## v0.3.3.6 — vanya — 2026-04-23
 **Branch:** vanya
 **VM:** ye-vanya
