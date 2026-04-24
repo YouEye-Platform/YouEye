@@ -133,6 +133,11 @@ async function removeAclFromContainer(containerName: string, aclName: string): P
 
 // ─── System ACL (unchanged) ─────────────────────────────────
 
+// ACL schema version — bump this when createContainerAcl() rules change.
+// On startup, if the stored version doesn't match, all app ACLs are rebuilt.
+const ACL_VERSION = 2;
+const ACL_VERSION_FILE = '/var/lib/youeye/acl-version';
+
 let _aclsInitialized = false;
 
 export async function ensureNetworkAcls(): Promise<void> {
@@ -167,7 +172,110 @@ export async function ensureNetworkAcls(): Promise<void> {
     }
   }
 
+  // Version-based ACL refresh: rebuild all app ACLs when schema changes
+  try {
+    const { readFile } = await import('fs/promises');
+    let storedVersion = 0;
+    try {
+      storedVersion = parseInt(await readFile(ACL_VERSION_FILE, 'utf-8'), 10) || 0;
+    } catch { /* file doesn't exist yet */ }
+
+    if (storedVersion < ACL_VERSION) {
+      console.log(`[acl] ACL version ${storedVersion} → ${ACL_VERSION}, refreshing all app ACLs...`);
+      await refreshAllContainerAcls();
+    }
+  } catch (err) {
+    console.warn('[acl] Version-based ACL refresh failed:', err);
+  }
+
   _aclsInitialized = true;
+}
+
+/**
+ * Rebuild ACLs for ALL installed app containers using current rules.
+ * Called automatically when ACL_VERSION changes, or manually via API.
+ * Re-reads install metadata to determine each container's needs.
+ */
+export async function refreshAllContainerAcls(): Promise<number> {
+  const { listInstalledApps } = await import('../market/metadata');
+  const { loadBridges } = await import('../bridges/store');
+
+  const apps = await listInstalledApps();
+  if (apps.length === 0) {
+    await writeAclVersion();
+    return 0;
+  }
+
+  let refreshed = 0;
+
+  for (const meta of apps) {
+    const containers = (meta.containers || []).map(c =>
+      typeof c === 'string' ? c : c.containerName
+    );
+    // Determine needs from metadata (session 19+ stores these)
+    // Fallback: enableSSO is always set; databaseMode may be missing for pre-session-19 installs.
+    // For pre-session-19 apps, infer: if enableSSO is true, it's a native app that likely needs DB.
+    const needsSharedDb = (meta as any).databaseMode === 'shared'
+      || (!(meta as any).databaseMode && meta.enableSSO);
+    const needsSSO = meta.enableSSO || (meta as any).hasSSO || false;
+
+    // Build a set of containers that need internet access
+    const internetContainers = new Set<string>();
+    for (const c of meta.containers || []) {
+      if (typeof c !== 'string' && (c as any).network === 'internet') {
+        internetContainers.add(c.containerName);
+      }
+    }
+
+    for (const cn of containers) {
+      try {
+        const siblingIPs: string[] = [];
+        for (const sib of containers.filter(s => s !== cn)) {
+          const ip = await getContainerIP(sib);
+          if (ip) siblingIPs.push(ip);
+        }
+
+        await createContainerAcl(cn, { siblingIPs, needsSharedDb, needsSSO });
+
+        // Re-apply internet access for containers that declared network:internet (blanket mode)
+        if (internetContainers.has(cn)) {
+          await grantInternetAccess(cn, [], true);
+        }
+
+        refreshed++;
+      } catch (err) {
+        console.warn(`[acl] Refresh: failed to recreate ACL for ${cn}:`, err);
+      }
+    }
+  }
+
+  // Re-apply active bridge rules
+  const bridges = await loadBridges();
+  for (const bridge of bridges) {
+    if (!bridge.active) continue;
+    const fromContainer = `app-${bridge.from}`;
+    const toContainer = `app-${bridge.to}`;
+    try {
+      await addBridgeRuleToAcl(fromContainer, toContainer);
+      if (bridge.direction === 'both-ways') {
+        await addBridgeRuleToAcl(toContainer, fromContainer);
+      }
+    } catch (err) {
+      console.warn(`[acl] Refresh: failed to re-apply bridge ${bridge.id}:`, err);
+    }
+  }
+
+  await writeAclVersion();
+  console.log(`[acl] Refreshed ACLs for ${refreshed} containers (version ${ACL_VERSION})`);
+  return refreshed;
+}
+
+async function writeAclVersion(): Promise<void> {
+  try {
+    const { writeFile, mkdir } = await import('fs/promises');
+    await mkdir('/var/lib/youeye', { recursive: true });
+    await writeFile(ACL_VERSION_FILE, String(ACL_VERSION));
+  } catch {}
 }
 
 export async function applySystemAcl(containerName: string): Promise<void> {
@@ -282,7 +390,20 @@ export async function createContainerAcl(
     });
   }
 
-  // 4. Shared database — postgres
+  // 4. Platform API — youeye-ui (all apps need this for header, notifications, settings, timeline)
+  const uiIP = await getContainerIP('youeye-ui');
+  if (uiIP) {
+    egress.push({
+      action: 'allow',
+      state: 'enabled',
+      destination: uiIP + '/32',
+      protocol: 'tcp',
+      destination_port: '3000',
+      description: 'YouEye UI platform API',
+    });
+  }
+
+  // 5. Shared database — postgres
   if (opts.needsSharedDb) {
     const pgIP = await getContainerIP('youeye-postgres');
     if (pgIP) {
@@ -297,7 +418,7 @@ export async function createContainerAcl(
     }
   }
 
-  // 5. SSO — authentik
+  // 6. SSO — authentik
   if (opts.needsSSO) {
     const authIP = await getContainerIP('youeye-authentik');
     if (authIP) {

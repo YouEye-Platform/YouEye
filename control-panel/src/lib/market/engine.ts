@@ -593,6 +593,7 @@ export async function installApp(
         name: containerSpec.name,
         containerName,
         type: containerSpec.type,
+        network: containerSpec.network || 'isolated',
       });
 
       checkCancelled();
@@ -714,10 +715,10 @@ export async function installApp(
 
       await createContainerAcl(cn, { siblingIPs, needsSharedDb, needsSSO });
 
-      // Containers with network:internet also get an internet grant ACL
+      // Containers with network:internet get blanket internet access
+      // (per-host restrictions deferred to future update)
       if (containerSpec.network === 'internet') {
-        const hosts = manifest.internet?.hosts ?? [];
-        await grantInternet(cn, hosts, hosts.length === 0);
+        await grantInternet(cn, [], true);
       }
     }
     emit(onEvent, step, totalSteps, 'success', `Network isolation configured for ${containerNames.length} containers`);

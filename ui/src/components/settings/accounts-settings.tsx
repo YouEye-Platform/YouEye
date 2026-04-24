@@ -1,27 +1,17 @@
 /**
- * Accounts Settings — Connected accounts and API keys
+ * Accounts Settings — Connected accounts
  *
- * Shows:
- * 1. OAuth accounts (Google, Spotify, etc.) with connect/disconnect
- * 2. Manual API keys stored for connectors
+ * Shows OAuth accounts (Google, Spotify, etc.) with connect/disconnect.
  */
 
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  KeyRound,
   Shield,
   Check,
   AlertTriangle,
-  ExternalLink,
-  Trash2,
   RefreshCw,
-  Eye,
-  EyeOff,
-  Plus,
-  Key,
-  Link2Off,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 
@@ -37,17 +27,8 @@ interface OAuthAccount {
   daysUntilExpiry: number | null;
 }
 
-interface ApiKeyEntry {
-  id: string;
-  connectorId: string;
-  key: string;
-  boundHost: string | null;
-  createdAt: string | null;
-}
-
 export function AccountsSettings() {
   const [oauthAccounts, setOauthAccounts] = useState<OAuthAccount[]>([]);
-  const [apiKeys, setApiKeys] = useState<ApiKeyEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
   const t = useTranslations("accountSettings");
@@ -59,7 +40,6 @@ export function AccountsSettings() {
       if (res.ok) {
         const data = await res.json();
         setOauthAccounts(data.oauthAccounts ?? []);
-        setApiKeys(data.apiKeys ?? []);
       }
     } catch {
       // silent
@@ -71,25 +51,6 @@ export function AccountsSettings() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
-
-  const deleteApiKey = async (connectorId: string, key: string) => {
-    const id = `${connectorId}:${key}`;
-    setDeleting(id);
-    try {
-      const res = await fetch("/api/settings/connectors/credentials", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ connectorId, key }),
-      });
-      if (res.ok) {
-        setApiKeys((prev) => prev.filter((k) => !(k.connectorId === connectorId && k.key === key)));
-      }
-    } catch {
-      // silent
-    } finally {
-      setDeleting(null);
-    }
-  };
 
   const disconnectOAuth = async (providerId: string, slug: string) => {
     setDeleting(providerId);
@@ -219,77 +180,6 @@ export function AccountsSettings() {
           </div>
         )}
       </section>
-
-      {/* API Keys */}
-      <section className="space-y-4">
-        <div>
-          <h3 className="text-base font-medium flex items-center gap-2">
-            <KeyRound className="w-4 h-4" />
-            {t("apiKeys")}
-          </h3>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {t("apiKeysDescription")}
-          </p>
-        </div>
-
-        {apiKeys.length === 0 ? (
-          <div className="py-6 text-center text-sm text-muted-foreground border rounded-lg">
-            <KeyRound className="w-8 h-8 mx-auto mb-2 opacity-40" />
-            <p>{t("noApiKeys")}</p>
-          </div>
-        ) : (
-          <div className="border rounded-lg divide-y">
-            {apiKeys.map((entry) => {
-              const deleteId = `${entry.connectorId}:${entry.key}`;
-              return (
-                <div
-                  key={entry.id}
-                  className="flex items-center justify-between px-4 py-3"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
-                      <Key className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                    </div>
-                    <div>
-                      <div className="text-sm font-medium">
-                        {formatConnectorId(entry.connectorId)}
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <span>{entry.key}</span>
-                        {entry.boundHost && (
-                          <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">
-                            {entry.boundHost}
-                          </span>
-                        )}
-                        {entry.createdAt && (
-                          <span>
-                            {t("added")} {new Date(entry.createdAt).toLocaleDateString()}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => deleteApiKey(entry.connectorId, entry.key)}
-                    disabled={deleting === deleteId}
-                    className="p-2 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                    title={t("deleteApiKey")}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
     </div>
   );
-}
-
-function formatConnectorId(id: string): string {
-  return id
-    .replace(/-/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
 }

@@ -94,6 +94,8 @@ export interface ContainerMeta {
   name: string;
   containerName: string;
   type: 'lxd' | 'oci';
+  /** Network mode from manifest: 'isolated' (default) or 'internet' */
+  network?: 'isolated' | 'internet';
 }
 
 export interface CredentialMeta {

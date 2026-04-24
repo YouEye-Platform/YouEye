@@ -1,10 +1,11 @@
 /**
- * App Settings Detail — Tabbed per-app settings page
+ * App Settings Detail — Per-app settings with consolidated tabs
  *
- * Three tabs:
- * 1. Data Sources — connector capability management (from connector-detail.tsx)
- * 2. Link Handling — placeholder for link rewrite system (Session C)
- * 3. Permissions — per-app permission management
+ * Four tabs:
+ * 1. Overview — App info, status, version, subdomain
+ * 2. Permissions — Per-app user permission management
+ * 3. Network (admin only) — Bridges + internet grants for THIS app
+ * 4. Link Handling — URL rewrite handlers
  */
 
 "use client";
@@ -12,7 +13,6 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   ArrowLeft,
-  Plug,
   Link2,
   Globe,
   ExternalLink,
@@ -21,64 +21,25 @@ import {
   ShieldX,
   Trash2,
   RefreshCw,
+  ArrowRight,
+  Info,
+  Loader2,
+  Check,
+  X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 /* ── Types ── */
 
-interface ConfigField {
-  name: string;
-  label: string;
-  type: string;
-  required: boolean;
-  managed?: boolean;
-}
-
-interface Backend {
-  appId: string;
-  appName: string;
-  installed: boolean;
-  internalUrl: string | null;
-}
-
-interface AvailableConnector {
-  id: string;
-  name: string;
-  icon: string;
-  logoUrl: string | null;
-  network: string;
-  authMethod: string;
-  authProvider?: string;
-  authProviderName?: string;
-  authProviderConnected?: boolean;
-  configFields: ConfigField[];
-  credentialsConfigured: boolean;
-  backends: Backend[];
-  available: boolean;
-  hasCompatibleApps: boolean;
-  isDefault: boolean;
-  customUrl: string | null;
-}
-
-interface Connection {
-  id: string;
-  connectorId: string;
-  persistent: boolean;
-}
-
-interface Capability {
-  capability: string;
-  multiple: boolean;
-  availableConnectors: AvailableConnector[];
-  connections: Connection[];
-}
-
 interface AppInfo {
   id: string;
   name: string;
   icon: string | null;
   subdomain: string | null;
+  version: string | null;
+  status: string | null;
+  containerUrl: string | null;
 }
 
 interface Permission {
@@ -97,15 +58,32 @@ interface LinkHandler {
   triggers: string[];
 }
 
+interface Bridge {
+  id: string;
+  from: string;
+  to: string;
+  direction: string;
+  active: boolean;
+  aclName?: string;
+}
+
+interface InternetGrant {
+  id: string;
+  appId: string;
+  containerName: string;
+  hosts: string[];
+  blanket: boolean;
+  active: boolean;
+}
+
 /* ── Tab type ── */
 
-type TabId = "data-sources" | "link-handling" | "permissions";
+type TabId = "overview" | "permissions" | "network" | "link-handling";
 
 /* ── Main Component ── */
 
 export function AppSettingsDetail({
   appId,
-  directAccessEmbedUrl,
   isAdmin: isAdminProp,
 }: {
   appId: string;
@@ -113,11 +91,10 @@ export function AppSettingsDetail({
   isAdmin: boolean;
 }) {
   const [app, setApp] = useState<AppInfo | null>(null);
-  const [capabilities, setCapabilities] = useState<Capability[]>([]);
   const [linkHandlers, setLinkHandlers] = useState<LinkHandler[]>([]);
-  const [isAdmin, setIsAdmin] = useState(isAdminProp);
+  const [isAdmin] = useState(isAdminProp);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<TabId>("data-sources");
+  const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [permissionsLoading, setPermissionsLoading] = useState(false);
   const router = useRouter();
@@ -127,15 +104,25 @@ export function AppSettingsDetail({
   const fetchDetail = useCallback(async () => {
     setLoading(true);
     try {
-      // Basic app info from installed apps
-      setApp({ id: appId, name: appId, icon: null, subdomain: null });
-      setCapabilities([]);
+      // Fetch app info from drawer API
+      const res = await fetch("/api/v1/apps/drawer");
+      if (res.ok) {
+        const data = await res.json();
+        const allApps = data.apps ?? [];
+        const found = allApps.find((a: AppInfo) => a.id === appId);
+        if (found) {
+          setApp(found);
+        } else {
+          setApp({ id: appId, name: appId, icon: null, subdomain: null, version: null, status: null, containerUrl: null });
+        }
+      } else {
+        setApp({ id: appId, name: appId, icon: null, subdomain: null, version: null, status: null, containerUrl: null });
+      }
       setLinkHandlers([]);
-      setIsAdmin(isAdminProp);
     } finally {
       setLoading(false);
     }
-  }, [appId, isAdminProp]);
+  }, [appId]);
 
   const fetchPermissions = useCallback(async () => {
     setPermissionsLoading(true);
@@ -163,9 +150,6 @@ export function AppSettingsDetail({
     }
   }, [activeTab, fetchPermissions]);
 
-  const connect = async () => {};
-  const disconnect = async () => {};
-
   if (loading) {
     return <div className="py-8 text-center text-sm text-muted-foreground">{t("loading")}</div>;
   }
@@ -174,11 +158,14 @@ export function AppSettingsDetail({
     return <div className="py-8 text-center text-sm text-muted-foreground">App not found</div>;
   }
 
-  const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
-    { id: "data-sources", label: "Connections", icon: <Plug className="w-4 h-4" /> },
-    { id: "link-handling", label: "Link Handling", icon: <Link2 className="w-4 h-4" /> },
+  const tabs: { id: TabId; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
+    { id: "overview", label: "Overview", icon: <Info className="w-4 h-4" /> },
     { id: "permissions", label: "Permissions", icon: <Shield className="w-4 h-4" /> },
+    { id: "network", label: "Network", icon: <Globe className="w-4 h-4" />, adminOnly: true },
+    { id: "link-handling", label: "Link Handling", icon: <Link2 className="w-4 h-4" /> },
   ];
+
+  const visibleTabs = tabs.filter((tab) => !tab.adminOnly || isAdmin);
 
   return (
     <div className="space-y-6">
@@ -200,14 +187,14 @@ export function AppSettingsDetail({
         </div>
         <div>
           <h2 className="text-xl font-semibold">{app.name}</h2>
-          <p className="text-sm text-muted-foreground">Manage app connections and permissions</p>
+          <p className="text-sm text-muted-foreground">Manage app settings and permissions</p>
         </div>
       </div>
 
       {/* Tab bar */}
       <div className="border-b">
         <nav className="flex gap-6" aria-label="App settings tabs">
-          {tabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
@@ -225,19 +212,7 @@ export function AppSettingsDetail({
       </div>
 
       {/* Tab content */}
-      {activeTab === "data-sources" && (
-        <DataSourcesTab
-          capabilities={capabilities}
-          isAdmin={isAdmin}
-          onConnect={connect}
-          onDisconnect={disconnect}
-          onRefresh={fetchDetail}
-          directAccessEmbedUrl={directAccessEmbedUrl}
-          appId={appId}
-        />
-      )}
-
-      {activeTab === "link-handling" && <LinkHandlingTab linkHandlers={linkHandlers} appName={app?.name ?? appId} />}
+      {activeTab === "overview" && <OverviewTab app={app} />}
 
       {activeTab === "permissions" && (
         <PermissionsTab
@@ -247,27 +222,214 @@ export function AppSettingsDetail({
           onRefresh={fetchPermissions}
         />
       )}
+
+      {activeTab === "network" && isAdmin && <NetworkTab appId={appId} />}
+
+      {activeTab === "link-handling" && <LinkHandlingTab linkHandlers={linkHandlers} appName={app?.name ?? appId} />}
     </div>
   );
 }
 
-/* ── Data Sources Tab ── */
+/* ── Overview Tab ── */
 
-function DataSourcesTab({
-  appId,
-}: {
-  capabilities: Capability[];
-  isAdmin: boolean;
-  onConnect: (capability: string, connectorId: string, config?: Record<string, unknown>) => void;
-  onDisconnect: (capability: string, connectorId?: string) => void;
-  onRefresh: () => void;
-  directAccessEmbedUrl?: string;
-  appId: string;
-}) {
+function OverviewTab({ app }: { app: AppInfo }) {
+  const domain = typeof window !== "undefined" ? window.location.hostname : "";
+  const appUrl = app.subdomain ? `https://${app.subdomain}.${domain}` : null;
+
   return (
-    <div className="py-6 text-center text-sm text-muted-foreground border rounded-lg">
-      <Plug className="w-8 h-8 mx-auto mb-2 opacity-40" />
-      <p>App connections are managed in Settings &gt; Permissions.</p>
+    <div className="space-y-4">
+      <div className="border rounded-lg divide-y">
+        <div className="flex items-center justify-between px-4 py-3">
+          <span className="text-sm text-muted-foreground">App ID</span>
+          <code className="text-sm font-mono">{app.id}</code>
+        </div>
+        {app.version && (
+          <div className="flex items-center justify-between px-4 py-3">
+            <span className="text-sm text-muted-foreground">Version</span>
+            <span className="text-sm">{app.version}</span>
+          </div>
+        )}
+        {app.status && (
+          <div className="flex items-center justify-between px-4 py-3">
+            <span className="text-sm text-muted-foreground">Status</span>
+            <span className={`text-sm px-2 py-0.5 rounded-full text-xs font-medium ${
+              app.status === "healthy"
+                ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                : "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+            }`}>
+              {app.status}
+            </span>
+          </div>
+        )}
+        {app.subdomain && (
+          <div className="flex items-center justify-between px-4 py-3">
+            <span className="text-sm text-muted-foreground">Subdomain</span>
+            <span className="text-sm font-mono">{app.subdomain}</span>
+          </div>
+        )}
+        {appUrl && (
+          <div className="flex items-center justify-between px-4 py-3">
+            <span className="text-sm text-muted-foreground">URL</span>
+            <a
+              href={appUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-primary hover:underline flex items-center gap-1"
+            >
+              {appUrl}
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Network Tab (admin only) ── */
+
+function NetworkTab({ appId }: { appId: string }) {
+  const [bridges, setBridges] = useState<Bridge[]>([]);
+  const [grants, setGrants] = useState<InternetGrant[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchNetwork = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [bridgesRes, grantsRes] = await Promise.all([
+        fetch(`/api/v1/admin/proxy-cp?path=${encodeURIComponent(`/api/bridges?appId=${appId}`)}`),
+        fetch(`/api/v1/admin/proxy-cp?path=${encodeURIComponent("/api/internet-grants")}`),
+      ]);
+
+      if (bridgesRes.ok) {
+        const data = await bridgesRes.json();
+        const all = Array.isArray(data) ? data : (data.bridges ?? []);
+        setBridges(all.filter((b: Bridge) => b.from === appId || b.to === appId));
+      }
+      if (grantsRes.ok) {
+        const data = await grantsRes.json();
+        const all = Array.isArray(data) ? data : [];
+        setGrants(all.filter((g: InternetGrant) => g.appId === appId));
+      }
+    } catch {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  }, [appId]);
+
+  useEffect(() => {
+    fetchNetwork();
+  }, [fetchNetwork]);
+
+  async function revokeBridge(id: string) {
+    const res = await fetch("/api/v1/admin/proxy-cp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: `/api/bridges/${id}`, method: "DELETE" }),
+    });
+    if (res.ok) {
+      setBridges(bridges.filter((b) => b.id !== id));
+    }
+  }
+
+  async function revokeGrant(id: string) {
+    const res = await fetch("/api/v1/admin/proxy-cp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: `/api/internet-grants/${id}`, method: "DELETE" }),
+    });
+    if (res.ok) {
+      setGrants(grants.filter((g) => g.id !== id));
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="py-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
+        <Loader2 className="w-4 h-4 animate-spin" />
+        Loading network info...
+      </div>
+    );
+  }
+
+  const activeBridges = bridges.filter((b) => b.active);
+  const activeGrants = grants.filter((g) => g.active);
+
+  return (
+    <div className="space-y-6">
+      {/* Bridges */}
+      <section>
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
+          App Connections (Bridges)
+        </h3>
+        {activeBridges.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-4 border rounded-lg text-center">
+            No active bridges for this app.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {activeBridges.map((b) => (
+              <div
+                key={b.id}
+                className="flex items-center justify-between rounded-lg border bg-card p-3"
+              >
+                <div className="flex items-center gap-2">
+                  <Link2 className="h-4 w-4 text-green-500" />
+                  <span className="font-medium">{b.from}</span>
+                  <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                  <span className="font-medium">{b.to}</span>
+                  <span className="text-xs text-muted-foreground ml-2">
+                    {b.direction === "both-ways" ? "both ways" : "one-way"}
+                  </span>
+                </div>
+                <button
+                  onClick={() => revokeBridge(b.id)}
+                  className="text-xs text-destructive hover:underline flex items-center gap-1"
+                >
+                  <Trash2 className="h-3 w-3" /> Revoke
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Internet Grants */}
+      <section>
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
+          Internet Access
+        </h3>
+        {activeGrants.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-4 border rounded-lg text-center">
+            No internet access granted for this app.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {activeGrants.map((g) => (
+              <div
+                key={g.id}
+                className="flex items-center justify-between rounded-lg border bg-card p-3"
+              >
+                <div className="flex items-center gap-2">
+                  <Globe className="h-4 w-4 text-blue-500" />
+                  <span className="text-sm">
+                    {g.blanket
+                      ? "All internet access"
+                      : `${g.hosts.length} host${g.hosts.length !== 1 ? "s" : ""}: ${g.hosts.join(", ")}`}
+                  </span>
+                </div>
+                <button
+                  onClick={() => revokeGrant(g.id)}
+                  className="text-xs text-destructive hover:underline flex items-center gap-1"
+                >
+                  <Trash2 className="h-3 w-3" /> Revoke
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -484,4 +646,3 @@ function PermissionsTab({
     </div>
   );
 }
-

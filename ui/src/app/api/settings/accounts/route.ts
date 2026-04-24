@@ -1,11 +1,7 @@
 /**
  * Accounts API — aggregate view of user accounts
  *
- * GET /api/settings/accounts — returns connected accounts info
- *
- * Note: OAuth providers and connector secrets were removed in the
- * permissions-based networking migration. This endpoint now returns
- * minimal account data.
+ * GET /api/settings/accounts — returns connected accounts info.
  */
 
 import { NextResponse } from "next/server";
@@ -19,6 +15,5 @@ export async function GET() {
 
   return NextResponse.json({
     oauthAccounts: [],
-    apiKeys: [],
   });
 }

@@ -24,7 +24,6 @@ const PUBLIC_ROUTES = [
   "/api/market/image",
   "/api/v1/onboarding",
   "/api/v1/notifications",  // Auth handled at route level (session, bridge token, app-slug)
-  "/api/v1/connectors",
 ];
 
 /** Static resource patterns to skip */
