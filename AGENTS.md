@@ -1,3 +1,36 @@
+## v0.3.5.12 (CP) — sebastian — 2026-04-24
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Per-App Bridge Network Architecture — replace ACL isolation with Docker-style bridge networking
+
+### Changes
+- `control-panel/src/lib/incus/app-network.ts` — NEW: Core module for per-app bridge networking. Bridge lifecycle (create/delete with retry), subnet allocation (10.76.{N}.0/24), proxy devices for system services (postgres/authentik/UI), Caddy NIC hot-plug, cross-app NIC permissions (grant/revoke), NAT control, container migration, query helpers.
+- `control-panel/src/lib/market/engine.ts` — Create per-app bridge before container deploy. NAT enabled during install, disabled post-install for no-internet apps. Caddy route uses container IP instead of DNS name. Legacy ACL fallback preserved.
+- `control-panel/src/lib/market/platform-env.ts` — Proxy device mode: db_host=localhost, gateway=localhost:3001 when using per-app bridges.
+- `control-panel/src/lib/infrastructure/oci-deployer.ts` — Accept custom NIC devices for bridge attachment at container creation.
+- `control-panel/src/lib/infrastructure/lxd-deployer.ts` — Accept custom NIC devices for bridge attachment at container creation.
+- `control-panel/src/lib/market/uninstaller.ts` — Clean up per-app bridge on uninstall (remove Caddy NIC, delete bridge with retry verification).
+- `control-panel/src/lib/market/types.ts` — Added `usePerAppBridge` field to InstallMetadata.
+- `control-panel/src/lib/bridges/manager.ts` — Bridge permissions use NIC hot-plug for per-app bridge apps, ACL rules for legacy. resolveBridgeMappings uses IP instead of DNS for internal host refs.
+- `control-panel/src/app/api/admin/migrate-networks/route.ts` — NEW: Migration endpoint to move existing apps from incusbr0 to per-app bridges.
+- `control-panel/src/app/api/internet-grants/route.ts` — Uses bridge NAT for per-app bridge apps instead of ACL rules.
+- `control-panel/src/app/api/internet-grants/[id]/route.ts` — Revoke uses bridge NAT disable for per-app bridge apps.
+
+### Test Results
+- Full install/uninstall cycle verified: bridge creation, container deployment, proxy devices, Caddy NIC, route with IP, NAT disable, bridge cleanup with retry
+- All 7 existing apps migrated from incusbr0 to per-app bridges via migration endpoint
+- All apps reachable via SSO (307 redirect) after migration
+- Multi-container app (searxng) correctly shares a single bridge
+
+### Notes for Iris
+- ACL system preserved as fallback — not deleted, just deprecated in favor of per-app bridges
+- All existing apps were migrated during development testing; production migration uses POST /api/admin/migrate-networks
+- Bridge naming: `yeapp{N}` (N=1-254, max 15 chars for Linux interface names)
+- Subnet range: 10.76.{N}.0/24 — registry at /var/lib/youeye/networks/subnets.json
+- Caddy routes now use container IP (not DNS) — DNS doesn't cross bridges
+- Internet access: NAT on bridge, not ACL rules. Enabled during install, disabled post-install unless manifest declares network:internet
+
 ## v0.3.5.5 (CP) + v0.3.5.6 (UI) — sebastian — 2026-04-24
 **Branch:** sebastian
 **VM:** ye-sebastian
