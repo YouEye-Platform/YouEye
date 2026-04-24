@@ -1,3 +1,31 @@
+## v0.3.5.4 (CP) — sebastian — 2026-04-24
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Per-container ACL isolation — replace shared ye-app-isolated
+
+### Changes
+- `control-panel/src/lib/incus/network-acl.ts` — Rewrote ACL system: per-container ye-iso-{name} ACLs replace shared ye-app-isolated. New functions: createContainerAcl(), addBridgeRuleToAcl(), removeBridgeRuleFromAcl(), deleteContainerAcl(). Auto-migration on startup.
+- `control-panel/src/lib/market/engine.ts` — Moved ACL creation after container loop (need sibling IPs). All containers now get ACLs including network:internet ones.
+- `control-panel/src/lib/bridges/manager.ts` — Bridges add destination rules to existing ACLs. Added resolveContainerName() for multi-container apps. System container target validation.
+- `control-panel/src/lib/market/uninstaller.ts` — ACL + bridge cleanup on app uninstall.
+- `control-panel/src/lib/market/schema.ts` — WantSchema rejects system container IDs.
+- `control-panel/src/lib/market/types.ts` — InstallMetadata gains databaseMode, hasSSO fields.
+- `control-panel/src/app/api/bridges/route.ts` — API rejects system container bridge targets.
+- `control-panel/tests/acl-isolation.spec.ts` — 9 Playwright tests covering isolation, bridge validation, app health.
+
+### Test Results
+- Playwright: 9 tests, all passed
+- Live verification: cross-app traffic blocked, caddy/pihole allowed, sibling ACLs correct
+- All 8 app containers migrated, 16 running / 0 stopped
+
+### Notes for Iris
+- Migration runs automatically on first request — no manual steps needed
+- Old ye-app-isolated and ye-bridge-* ACLs are deleted during migration
+- Pre-existing searxng-to-redis bridge has a known issue: "redis" is an intra-app container, not a separate app. Bridge detection creates false bridges for intra-app refs. The sibling ACL rules handle connectivity — this is a pre-existing bug, not introduced here.
+
+---
+
 ## v0.3.5.4 (UI) / v0.3.5.2 (CP) — sebastian — 2026-04-23
 **Branch:** sebastian
 **VM:** ye-sebastian
