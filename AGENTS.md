@@ -1,3 +1,28 @@
+## v0.3.3.9 / v0.3.5.3 — vanya — 2026-04-24
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix WordArt picker auto-fill and icon rendering pipeline bugs (Session 26)
+
+### Changes — UI (v0.3.3.9)
+- `ui/src/middleware.ts` — Added `/icon` and `/apple-icon` to STATIC_PATTERNS so favicon routes bypass auth
+- `ui/src/app/icon.tsx` — Rewritten: force-dynamic + auto-regeneration from DB config for letter mode
+- `ui/src/app/apple-icon.tsx` — Same force-dynamic + auto-regen pattern
+- `ui/src/lib/icon-renderer.ts` — BRANDING_DIR moved from public/branding (wiped on deploy) to persistent /opt/youeye-ui-data/branding/
+
+### Changes — CP (v0.3.5.3)
+- `control-panel/src/components/setup/WordArtPickerInline.tsx` — Added findInitialIndices() to reverse-map current style to preset indices on mount; added useRef mount guard to skip first useEffect render
+
+### Test Results
+- `ui/tests/icon-rendering-fixes.spec.ts` — /icon and /apple-icon return 200 without auth, serve valid PNG, no stale prerendered cache
+- `ui/tests/wordart-picker-autofill.spec.ts` — WordArt picker shows current style on mount, API returns valid site_name_style
+
+### Notes for Iris
+- UI middleware change is safe — only adds to STATIC_PATTERNS, no removals
+- Icon renderer path change requires /opt/youeye-ui-data/branding/ directory in UI container (created automatically via mkdir recursive)
+
+---
+
 ## v0.3.3.8 / v0.3.5.2 — vanya — 2026-04-24
 **Branch:** vanya
 **VM:** ye-vanya
