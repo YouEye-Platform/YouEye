@@ -106,7 +106,7 @@ export function ServerNameWidget({ settings, onAutoSize }: ServerNameWidgetProps
   if (!loaded || !siteName) return null;
 
   return (
-    <div ref={containerRef} className="flex h-full w-full items-center justify-center overflow-hidden">
+    <div ref={containerRef} className="flex h-full w-full items-center justify-center overflow-visible">
       <SiteName
         name={siteName}
         style={displayStyle}

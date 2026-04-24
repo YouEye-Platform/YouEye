@@ -63,6 +63,7 @@ export function WidgetContainer({
 
   const meta = getWidgetMeta(widget.widgetType);
   const isAutoFit = meta?.autoFit ?? false;
+  const allowOverflow = meta?.allowOverflow ?? false;
 
   const pxX = (widget.positionX / 100) * containerSize.width;
   const pxY = (widget.positionY / 100) * containerSize.height;
@@ -255,7 +256,7 @@ export function WidgetContainer({
 
       {/* Widget content — container-type: size enables cqw/cqh units inside widgets */}
       <div
-        className={cn("w-full h-full overflow-hidden", !isTransparent && `rounded-xl ${paddingClass}`)}
+        className={cn("w-full h-full", allowOverflow ? "overflow-visible" : "overflow-hidden", !isTransparent && `rounded-xl ${paddingClass}`)}
         style={{ containerType: "size" }}
       >
         <WidgetCard

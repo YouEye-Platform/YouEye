@@ -44,6 +44,8 @@ export interface WidgetMeta {
   appId?: string;
   /** Widget auto-fits height to content. Width is user-controlled, text fills it. */
   autoFit?: boolean;
+  /** Allow widget content (e.g. text-shadow effects) to paint beyond the container bounds. */
+  allowOverflow?: boolean;
 }
 
 /** The generic app widget component used for all app-provided widgets */
@@ -59,6 +61,7 @@ export const WIDGET_CATALOG: WidgetMeta[] = [
     defaultSize: { width: 26, height: 8 },
     minSize: { width: 8, height: 3 },
     autoFit: true,
+    allowOverflow: true,
   },
   {
     id: "greeting",
