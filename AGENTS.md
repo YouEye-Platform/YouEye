@@ -1,3 +1,24 @@
+## v0.3.3.11 — vanya — 2026-04-24
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Restore selectable clock widget themes (Session 28)
+
+### Changes
+- `ui/src/lib/clock-presets.ts` — NEW: 14 theme definitions across 4 categories (Clean, Bold, Glow, Retro)
+- `ui/src/components/widgets/clock-theme-picker.tsx` — NEW: visual thumbnail picker with category tabs
+- `ui/src/components/widgets/clock-widget.tsx` — Refactored to apply theme styles from presets instead of hardcoded gradient
+- `ui/src/components/dashboard/widget-settings-dialog.tsx` — Wire ClockThemePicker into settings dialog
+- `ui/tests/clock-themes.spec.ts` — NEW: Playwright spec for theme selection
+
+### Test Results
+- FIFO: 10 screenshots verifying all theme categories + theme application
+- Playwright: clock-themes.spec.ts with 5 test cases
+
+### Notes for Iris
+- UI-only change, no CP or Spine modifications
+- Default theme ("gradient") matches the pre-existing hardcoded style — no visual regression for users who haven't customized
+
 ## v0.3.3.10 / v0.3.5.5 — vanya — 2026-04-24
 **Branch:** vanya
 **VM:** ye-vanya
