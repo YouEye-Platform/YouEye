@@ -18,6 +18,25 @@ import {
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
 import { execShell } from '../incus/server';
 import { CONTAINER_DOMAIN } from '../market/constants';
+import { readInstallMetadata } from '../market/metadata';
+
+/**
+ * Resolve an app ID to its primary Incus container name.
+ * Single-container apps: app-{appId}
+ * Multi-container apps: app-{appId}-{primaryName} (from install metadata)
+ * Falls back to app-{appId} if metadata is unavailable.
+ */
+async function resolveContainerName(appId: string): Promise<string> {
+  const meta = await readInstallMetadata(appId);
+  if (meta?.containers && meta.containers.length > 1) {
+    // Multi-container app — find the primary or use first
+    const primary = meta.containers.find((c: any) => c.name === 'main' || c.name === 'server')
+      || meta.containers[0];
+    const cn = typeof primary === 'string' ? primary : primary.containerName;
+    if (cn) return cn;
+  }
+  return `app-${appId}`;
+}
 
 /**
  * Parse env_mapping for ${containers.NAME.*} references
@@ -126,9 +145,9 @@ export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
 
   await ensureNetworkAcls();
 
-  // Add bridge rule to the source container's per-container ACL
-  const fromContainer = `app-${bridge.from}`;
-  const toContainer = `app-${bridge.to}`;
+  // Resolve actual container names (handles multi-container apps)
+  const fromContainer = await resolveContainerName(bridge.from);
+  const toContainer = await resolveContainerName(bridge.to);
 
   let aclName: string | undefined;
   try {
@@ -145,7 +164,7 @@ export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
   const resolvedMappings = bridge.envMappings.filter(m => m.resolved);
   if (resolvedMappings.length > 0) {
     try {
-      const envFile = `/etc/app-${bridge.from}.env`;
+      const envFile = `/etc/${fromContainer}.env`;
       const existingEnv = await execShell(fromContainer, `cat ${envFile} 2>/dev/null || echo ""`, { timeout: 5000 });
       const lines = existingEnv.stdout.split('\n').filter(Boolean);
 
@@ -189,8 +208,8 @@ export async function deactivateBridge(bridgeId: string): Promise<Bridge | null>
   const bridge = await getBridge(bridgeId);
   if (!bridge) return null;
 
-  const fromContainer = `app-${bridge.from}`;
-  const toContainer = `app-${bridge.to}`;
+  const fromContainer = await resolveContainerName(bridge.from);
+  const toContainer = await resolveContainerName(bridge.to);
 
   try {
     await removeBridgeRuleFromAcl(fromContainer, toContainer);
@@ -212,8 +231,8 @@ export async function deleteBridge(bridgeId: string): Promise<boolean> {
   if (!bridge) return false;
 
   if (bridge.active) {
-    const fromContainer = `app-${bridge.from}`;
-    const toContainer = `app-${bridge.to}`;
+    const fromContainer = await resolveContainerName(bridge.from);
+    const toContainer = await resolveContainerName(bridge.to);
     try {
       await removeBridgeRuleFromAcl(fromContainer, toContainer);
       if (bridge.direction === 'both-ways') {
