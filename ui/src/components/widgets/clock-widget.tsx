@@ -1,20 +1,70 @@
 /**
  * Clock Widget
  *
- * Displays the current time and date with a modern, styled look.
+ * Displays the current time and date with selectable visual themes.
  * Text is fit-to-width: it always fills the container, and height
- * auto-adjusts. Resize the widget wider → text gets bigger.
+ * auto-adjusts. Resize the widget wider -> text gets bigger.
  * Minimal padding for a tight, clean appearance.
  */
 
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, type CSSProperties } from "react";
+import { getClockPreset, type ClockTheme } from "@/lib/clock-presets";
 
 interface ClockWidgetProps {
-  settings?: { showSeconds?: boolean; format24h?: boolean };
+  settings?: {
+    showSeconds?: boolean;
+    format24h?: boolean;
+    clockTheme?: string;
+  };
   onAutoSize?: (size: { height: number }) => void;
 }
+
+/** Build inline styles from a clock theme preset */
+function buildTimeStyle(theme: ClockTheme, fitSize: number): CSSProperties {
+  const { time } = theme;
+  const style: CSSProperties = {
+    fontSize: `${fitSize}px`,
+    fontFamily: time.fontFamily,
+    fontWeight: time.fontWeight,
+    letterSpacing: time.letterSpacing,
+    color: time.color,
+  };
+
+  if (time.textShadow !== "none") {
+    style.textShadow = time.textShadow;
+  }
+
+  if (time.gradient) {
+    style.backgroundImage = `linear-gradient(${time.gradient.direction}, ${time.gradient.from}, ${time.gradient.to})`;
+    style.WebkitBackgroundClip = "text";
+    style.WebkitTextFillColor = "transparent";
+    style.backgroundClip = "text";
+  }
+
+  return style;
+}
+
+function buildDateStyle(theme: ClockTheme, dateSize: number): CSSProperties {
+  const { date, time } = theme;
+  const style: CSSProperties = {
+    fontSize: `${dateSize}px`,
+    fontFamily: date.fontFamily ?? time.fontFamily,
+    fontWeight: date.fontWeight ?? 400,
+    letterSpacing: date.letterSpacing ?? "0.05em",
+    color: date.color,
+    textTransform: (date.textTransform as CSSProperties["textTransform"]) ?? "none",
+  };
+
+  if (date.textShadow) {
+    style.textShadow = date.textShadow;
+  }
+
+  return style;
+}
+
+const DEFAULT_THEME_ID = "gradient";
 
 export function ClockWidget({ settings, onAutoSize }: ClockWidgetProps) {
   const [now, setNow] = useState<Date>(new Date());
@@ -31,6 +81,8 @@ export function ClockWidget({ settings, onAutoSize }: ClockWidgetProps) {
 
   const showSeconds = settings?.showSeconds ?? true;
   const format24h = settings?.format24h ?? true;
+  const themeId = settings?.clockTheme ?? DEFAULT_THEME_ID;
+  const theme = getClockPreset(themeId) ?? getClockPreset(DEFAULT_THEME_ID)!;
 
   const timeStr = now.toLocaleTimeString(undefined, {
     hour: "2-digit",
@@ -64,7 +116,6 @@ export function ClockWidget({ settings, onAutoSize }: ClockWidgetProps) {
     requestAnimationFrame(() => {
       const c = containerRef.current;
       if (c) {
-        // Sum up all child heights
         let totalH = 0;
         for (const child of c.children) {
           totalH += (child as HTMLElement).getBoundingClientRect().height;
@@ -85,27 +136,20 @@ export function ClockWidget({ settings, onAutoSize }: ClockWidgetProps) {
     return () => observer.disconnect();
   }, [fitText]);
 
-  // Date is proportional to time
   const dateSize = Math.max(8, fitSize * 0.28);
 
   return (
     <div ref={containerRef} className="flex h-full w-full flex-col items-center justify-center overflow-hidden">
       <span
         ref={timeRef}
-        className="tabular-nums font-semibold tracking-wide leading-none whitespace-nowrap"
-        style={{
-          fontSize: `${fitSize}px`,
-          backgroundImage: "linear-gradient(135deg, var(--primary), color-mix(in oklch, var(--primary) 60%, var(--muted-foreground)))",
-          WebkitBackgroundClip: "text",
-          WebkitTextFillColor: "transparent",
-          backgroundClip: "text",
-        }}
+        className="tabular-nums leading-none whitespace-nowrap"
+        style={buildTimeStyle(theme, fitSize)}
       >
         {timeStr}
       </span>
       <span
-        className="text-muted-foreground leading-tight whitespace-nowrap font-medium tracking-wider uppercase"
-        style={{ fontSize: `${dateSize}px` }}
+        className="leading-tight whitespace-nowrap"
+        style={buildDateStyle(theme, dateSize)}
       >
         {dateStr}
       </span>

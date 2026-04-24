@@ -13,6 +13,7 @@ import { useTranslations } from "next-intl";
 import { X, Settings2 } from "lucide-react";
 import { getWidgetMeta, type SettingsField } from "@/components/widgets";
 import { GreetingPresetPicker } from "@/components/widgets/greeting-preset-picker";
+import { ClockThemePicker } from "@/components/widgets/clock-theme-picker";
 import { cn } from "@/lib/utils";
 
 interface WidgetSettingsDialogProps {
@@ -280,6 +281,16 @@ export function WidgetSettingsDialog({
             <GreetingPresetPicker
               selectedPresetId={(localSettings.greetingPreset as string) ?? "default"}
               onSelect={(presetId) => handleChange("greetingPreset", presetId)}
+            />
+          </div>
+        )}
+
+        {/* Clock theme picker — only for clock widget */}
+        {widgetType === "clock" && (
+          <div className="px-4 py-3 border-b">
+            <ClockThemePicker
+              selectedThemeId={(localSettings.clockTheme as string) ?? "gradient"}
+              onSelect={(themeId) => handleChange("clockTheme", themeId)}
             />
           </div>
         )}
