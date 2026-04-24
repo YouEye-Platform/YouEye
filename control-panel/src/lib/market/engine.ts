@@ -882,10 +882,17 @@ export async function installApp(
       emit(onEvent, step, totalSteps, 'success', `Routes added: ${entrances.length} entrances for ${hostname}`);
     } else {
       // Single-route (standard)
+      // For per-app bridge containers, use IP instead of DNS name.
+      // Caddy's DNS resolver (incusbr0) can't resolve names on app bridges.
+      let routeUpstream = primaryContainerName;
+      if (appBridgeName) {
+        const appIP = await getIncusContainerIP(primaryContainerName);
+        if (appIP) routeUpstream = appIP;
+      }
       await ensureRoute({
         hostname,
         path: '/*',
-        upstream: primaryContainerName,
+        upstream: routeUpstream,
         port: primaryPort,
         forwardAuth: forwardAuthConfig,
       });
