@@ -1,3 +1,47 @@
+## v0.3.3.8 / v0.3.5.2 — vanya — 2026-04-24
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Server icon/favicon system — configurable icon picker, auto-render, multi-app favicon (Session 25)
+
+### Changes — UI (v0.3.3.8)
+- `ui/src/lib/icon-config.ts` — New: IconConfig type, DEFAULT_ICON_CONFIG, ICON_SIZES constants
+- `ui/src/lib/icon-renderer.ts` — New: Server-side SVG→PNG renderer via sharp with embedded font support
+- `ui/src/app/api/v1/branding/icon/route.ts` — New: POST (upload rendered icon), GET (serve icon PNG by size)
+- `ui/src/app/api/ui-bridge/branding/icon/route.ts` — New: Bridge endpoint for icon uploads from CP
+- `ui/src/app/icon.tsx` — New: Next.js dynamic favicon route (32px)
+- `ui/src/app/apple-icon.tsx` — New: Apple touch icon route (180px)
+- `ui/src/components/settings/icon-picker-branding.tsx` — New: Full icon picker (Letter/Icons/Emoji/Upload tabs, shape, background)
+- `ui/src/app/api/v1/branding/route.ts` — Added icon_config to PUT, auto-regenerate icons on wordart change
+- `ui/src/app/api/ui-bridge/branding/route.ts` — Added icon_config passthrough, letter mode auto-render
+- `ui/src/components/settings/branding-settings.tsx` — Added IconPickerBranding, icon save/upload logic
+- `ui/src/lib/db/queries/branding.ts` — Added icon_config field to BrandingConfig, DB queries
+- `ui/src/middleware.ts` — Added /api/v1/branding/icon to PUBLIC_ROUTES
+- `ui/tests/server-icon.spec.ts` — New: 8 Playwright tests (API, UI picker, CP proxy)
+
+### Changes — Control Panel (v0.3.5.2)
+- `control-panel/src/lib/icon-config.ts` — New: Mirror of IconConfig type
+- `control-panel/src/components/setup/SetupIcon.tsx` — New: Setup wizard icon step (Letter/Emoji, shape, background)
+- `control-panel/src/app/api/branding/favicon/route.ts` — New: CP favicon proxy (fetches from UI)
+- `control-panel/src/app/api/ui/branding/icon/route.ts` — New: Bridge proxy for icon uploads
+- `control-panel/src/app/embed/branding/client.tsx` — Added icon picker (Letter/Emoji, shape, background, canvas preview)
+- `control-panel/src/app/layout.tsx` — Added dynamic favicon metadata
+- `control-panel/src/app/setup/page.tsx` — Added icon step (step 2), renumbered wizard steps
+- `control-panel/src/app/api/setup/run/route.ts` — Added icon_config DB write, fontconfig install, Authentik favicon push
+- `control-panel/src/app/api/ui-bridge/authentik/branding/route.ts` — Added favicon push to Authentik container
+- `control-panel/src/middleware.ts` — Added /api/branding/favicon to PUBLIC_ROUTES
+
+### Test Results
+- Playwright: 8 tests passed (server-icon.spec.ts)
+- Visual verification: icon picker, letter/emoji modes, shape controls, save flow, favicon serving
+
+### Notes for Iris
+- UI container requires `fontconfig` + `fonts-dejavu-core` packages for server-side icon rendering
+- Setup provisioning auto-installs fontconfig and registers custom fonts
+- Icon auto-regenerates when WordArt changes (letter mode only)
+- Four icon modes: Letter (from WordArt), Emoji (native), Lucide icons, Upload
+- CP favicon served via proxy from UI's /api/v1/branding/icon endpoint
+
 ## v0.3.3.7 — vanya — 2026-04-24
 **Branch:** vanya
 **VM:** ye-vanya
