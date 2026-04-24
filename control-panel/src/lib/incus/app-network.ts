@@ -199,11 +199,24 @@ export async function deleteAppNetwork(appId: string): Promise<void> {
   }
 
   if (await bridgeExists(bridgeName)) {
-    try {
-      await incusRequest('DELETE', `/1.0/networks/${bridgeName}`);
-      console.log(`[app-network] Deleted bridge ${bridgeName}`);
-    } catch (err) {
-      console.warn(`[app-network] Failed to delete bridge ${bridgeName}:`, err);
+    // Retry deletion — bridge may still be "in use" while container teardown finalizes
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await incusRequest('DELETE', `/1.0/networks/${bridgeName}`);
+        // Verify it's actually gone
+        if (!(await bridgeExists(bridgeName))) {
+          console.log(`[app-network] Deleted bridge ${bridgeName}`);
+          break;
+        }
+        // Still exists — wait and retry
+        await new Promise((r) => setTimeout(r, 2000));
+      } catch (err) {
+        if (attempt === 4) {
+          console.warn(`[app-network] Failed to delete bridge ${bridgeName} after 5 attempts:`, err);
+        } else {
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      }
     }
   }
 
