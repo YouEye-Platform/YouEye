@@ -1,3 +1,38 @@
+## v0.3.5.5 (CP) + v0.3.5.6 (UI) — sebastian — 2026-04-24
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** ACL fixes, connector purge, per-app settings consolidation
+
+### Changes
+- `control-panel/src/lib/incus/network-acl.ts` — Added youeye-ui:3000 ACL rule for all apps. Added ACL_VERSION system with refreshAllContainerAcls() for automatic migration. Blanket internet access for network:internet apps.
+- `control-panel/src/lib/market/engine.ts` — Switched to blanket internet grants. Store network mode in ContainerMeta.
+- `control-panel/src/lib/market/types.ts` — Added `network?: 'isolated' | 'internet'` to ContainerMeta.
+- `control-panel/src/lib/infrastructure/deployer.ts` — Removed connector container deployment (Step 9) and reconcile step. TOTAL_STEPS 9→8.
+- `control-panel/src/lib/infrastructure/manifests.ts` — Deleted connectorsContainerSpec() function.
+- `control-panel/src/app/api/setup/run/route.ts` — Removed connectors Caddy route from routeMap.
+- `ui/src/components/settings/app-settings-detail.tsx` — Complete rewrite with Overview/Permissions/Network/LinkHandling tabs. Removed all connector types.
+- `ui/src/app/settings/apps/client.tsx` — New file: app list client component for settings navigation.
+- `ui/src/app/settings/apps/page.tsx` — Server component wrapping AppsListClient.
+- `ui/src/app/settings/permissions/page.tsx` — Replaced with redirect to /settings/apps.
+- `ui/src/components/settings/settings-shell.tsx` — Removed permissions from admin sidebar.
+- `ui/src/db/index.ts` — Removed 5 connector tables.
+- `ui/src/middleware.ts` — Removed /api/v1/connectors from PUBLIC_ROUTES.
+- `ui/src/components/settings/accounts-settings.tsx` — Removed API key management section.
+
+### Test Results
+- ACL connectivity verified: wiki→youeye-ui:3000 OK, wiki→postgres:5432 OK, wiki→internet OK
+- Cross-app isolation verified for non-internet apps
+- Connector container deleted, Caddy route removed
+
+### Notes for Iris
+- Connector concept fully abandoned — all code/docs/plans removed
+- Internet apps have blanket egress (no cross-container isolation) — per-host restrictions planned for future
+- ACL_VERSION=2 auto-refreshes all app ACLs on first ensureNetworkAcls() call after update
+- /settings/permissions now redirects to /settings/apps
+
+---
+
 ## v0.3.5.4 (CP) — sebastian — 2026-04-24
 **Branch:** sebastian
 **VM:** ye-sebastian
