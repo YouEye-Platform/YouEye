@@ -92,6 +92,27 @@ export async function uninstallApp(
     }
   }
 
+  // 1b. Clean up per-container ACLs
+  try {
+    const { deleteContainerAcl } = await import('../incus/network-acl');
+    for (const c of containers) {
+      await deleteContainerAcl(c.containerName);
+    }
+  } catch (err) {
+    errors.push(`Failed to remove ACLs: ${err}`);
+  }
+
+  // 1c. Clean up bridge records referencing this app
+  try {
+    const { getBridgesForApp, deleteBridge } = await import('../bridges/manager');
+    const bridges = await getBridgesForApp(appId);
+    for (const bridge of bridges) {
+      await deleteBridge(bridge.id);
+    }
+  } catch (err) {
+    errors.push(`Failed to clean up bridges: ${err}`);
+  }
+
   // 2. Remove Caddy routes
   let caddyRemoved = false;
   if (metadata.subdomain && metadata.domain) {

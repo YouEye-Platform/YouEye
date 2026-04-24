@@ -198,12 +198,21 @@ export const CapabilitiesSchema = z.object({
 
 // ─── Wants (app-to-app connection declarations) ──────────
 
+/** System container IDs — never valid bridge/want targets */
+const SYSTEM_APP_IDS = [
+  'postgres', 'authentik', 'caddy', 'pihole', 'control', 'ui',
+  'authentik-worker',
+];
+
 export const WantSchema = z.object({
   appId: z.string().min(1),
   name: z.string().min(1),
   description: z.string().optional(),
   defaultPort: z.number().int().positive().optional(),
-});
+}).refine(
+  (data) => !SYSTEM_APP_IDS.includes(data.appId),
+  { message: 'wants cannot target system containers' }
+);
 
 // ─── Internet (per-host egress declarations) ─────────────
 

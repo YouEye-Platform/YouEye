@@ -69,7 +69,7 @@ import {
 } from './platform-env';
 import { getContainerName } from './engine-helpers';
 import { CONTAINER_DOMAIN } from './constants';
-import { ensureNetworkAcls, applyAppAcl } from '../incus/network-acl';
+import { ensureNetworkAcls, createContainerAcl, grantInternetAccess as grantInternet } from '../incus/network-acl';
 import { activatePendingBridges, detectBridgeDependencies, createBridge } from '../bridges/manager';
 import { generateSuggestionsForApp } from '../bridges/suggestions';
 
@@ -651,16 +651,6 @@ export async function installApp(
 
         await applyResourcePolicy(containerName, 'normal');
 
-        // Apply network isolation ACL to app container (skip if manifest declares internet access)
-        if (containerSpec.network !== 'internet') {
-          try {
-            await ensureNetworkAcls();
-            await applyAppAcl(containerName);
-          } catch (aclErr) {
-            console.warn(`[engine] ACL application warning for ${containerName}:`, aclErr);
-          }
-        }
-
         emit(onEvent, step, totalSteps, 'success', `${containerName} deployed`);
       } catch (err) {
         emit(onEvent, step, totalSteps, 'error', `Failed to deploy ${containerName}`, String(err));
@@ -696,6 +686,43 @@ export async function installApp(
   } catch (err) {
     await rollbackInstall(rollbackCtx, onEvent, totalSteps);
     throw err;
+  }
+
+  // ── Step 6b: Per-container ACL isolation ──────────────────
+  // Create per-container ACLs AFTER all containers are deployed (we need sibling IPs).
+  // ALL containers get ACLs — including network:internet ones (they also get internet grants).
+
+  try {
+    await ensureNetworkAcls();
+    const needsSharedDb = (manifest.database?.mode ?? 'none') === 'shared';
+    const needsSSO = ssoEnabled;
+
+    // Resolve all container IPs
+    const containerIPs = new Map<string, string>();
+    for (const cn of containerNames) {
+      const ip = await getContainerIP(cn);
+      if (ip) containerIPs.set(cn, ip);
+    }
+
+    // Create per-container ACL for each container
+    for (const containerSpec of manifest.containers) {
+      const cn = getContainerName(appId, containerSpec.name, manifest.containers.length);
+      const siblingIPs = containerNames
+        .filter(s => s !== cn)
+        .map(s => containerIPs.get(s))
+        .filter((ip): ip is string => !!ip);
+
+      await createContainerAcl(cn, { siblingIPs, needsSharedDb, needsSSO });
+
+      // Containers with network:internet also get an internet grant ACL
+      if (containerSpec.network === 'internet') {
+        const hosts = manifest.internet?.hosts ?? [];
+        await grantInternet(cn, hosts, hosts.length === 0);
+      }
+    }
+    emit(onEvent, step, totalSteps, 'success', `Network isolation configured for ${containerNames.length} containers`);
+  } catch (aclErr) {
+    console.warn('[engine] ACL configuration warning:', aclErr);
   }
 
   // ── Steps 7-10: Post-deploy (SSO configure, Caddy, metadata, dashboard)
@@ -836,6 +863,8 @@ export async function installApp(
     ssoEntryUrl: manifest.sso?.entry_url
       ? resolveVariables(manifest.sso.entry_url, ctx)
       : undefined,
+    databaseMode: manifest.database?.mode ?? 'none',
+    hasSSO: ssoEnabled,
   };
   await saveInstallMetadata(meta);
 

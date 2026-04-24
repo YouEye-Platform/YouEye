@@ -12,6 +12,7 @@ import {
   loadBridges,
   getBridgesForApp,
 } from '@/lib/bridges/manager';
+import { SYSTEM_APP_IDS } from '@/lib/incus/network-acl';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -31,6 +32,13 @@ export async function POST(request: Request) {
   if (!from || !to) {
     return NextResponse.json(
       { error: 'from and to are required' },
+      { status: 400 },
+    );
+  }
+
+  if (SYSTEM_APP_IDS.includes(to)) {
+    return NextResponse.json(
+      { error: 'Cannot create bridge to system containers' },
       { status: 400 },
     );
   }

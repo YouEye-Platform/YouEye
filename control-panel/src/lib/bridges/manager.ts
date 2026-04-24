@@ -11,7 +11,10 @@ import {
   addBridge, updateBridge, removeBridge, getBridge,
   getBridgesForApp, getPendingBridgesForTarget, loadBridges,
 } from './store';
-import { createBridgeAcl, removeBridgeAcl, ensureNetworkAcls } from '../incus/network-acl';
+import {
+  addBridgeRuleToAcl, removeBridgeRuleFromAcl, ensureNetworkAcls,
+  SYSTEM_APP_IDS,
+} from '../incus/network-acl';
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
 import { execShell } from '../incus/server';
 import { CONTAINER_DOMAIN } from '../market/constants';
@@ -61,6 +64,11 @@ export async function createBridge(params: {
   envMappings: EnvMapping[];
   approvedBy: string;
 }): Promise<Bridge> {
+  // Reject bridges targeting system containers
+  if (SYSTEM_APP_IDS.includes(params.to)) {
+    throw new Error(`Cannot create bridge to system container: ${params.to}`);
+  }
+
   const bridge: Bridge = {
     id: `${params.from}-to-${params.to}`,
     from: params.from,
@@ -118,15 +126,19 @@ export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
 
   await ensureNetworkAcls();
 
-  // Create Incus ACL for this bridge
+  // Add bridge rule to the source container's per-container ACL
   const fromContainer = `app-${bridge.from}`;
   const toContainer = `app-${bridge.to}`;
 
   let aclName: string | undefined;
   try {
-    aclName = await createBridgeAcl(fromContainer, toContainer, bridge.direction);
+    await addBridgeRuleToAcl(fromContainer, toContainer);
+    if (bridge.direction === 'both-ways') {
+      await addBridgeRuleToAcl(toContainer, fromContainer);
+    }
+    aclName = `rule-in-ye-iso-${fromContainer}`;
   } catch (err) {
-    console.warn(`[bridges] ACL creation failed for ${bridgeId}:`, err);
+    console.warn(`[bridges] ACL rule addition failed for ${bridgeId}:`, err);
   }
 
   // Inject resolved env vars into source container
@@ -177,8 +189,16 @@ export async function deactivateBridge(bridgeId: string): Promise<Bridge | null>
   const bridge = await getBridge(bridgeId);
   if (!bridge) return null;
 
-  if (bridge.aclName) {
-    await removeBridgeAcl(bridge.aclName);
+  const fromContainer = `app-${bridge.from}`;
+  const toContainer = `app-${bridge.to}`;
+
+  try {
+    await removeBridgeRuleFromAcl(fromContainer, toContainer);
+    if (bridge.direction === 'both-ways') {
+      await removeBridgeRuleFromAcl(toContainer, fromContainer);
+    }
+  } catch (err) {
+    console.warn(`[bridges] ACL rule removal failed for ${bridgeId}:`, err);
   }
 
   return updateBridge(bridgeId, { active: false, aclName: undefined });
@@ -191,8 +211,17 @@ export async function deleteBridge(bridgeId: string): Promise<boolean> {
   const bridge = await getBridge(bridgeId);
   if (!bridge) return false;
 
-  if (bridge.active && bridge.aclName) {
-    await removeBridgeAcl(bridge.aclName);
+  if (bridge.active) {
+    const fromContainer = `app-${bridge.from}`;
+    const toContainer = `app-${bridge.to}`;
+    try {
+      await removeBridgeRuleFromAcl(fromContainer, toContainer);
+      if (bridge.direction === 'both-ways') {
+        await removeBridgeRuleFromAcl(toContainer, fromContainer);
+      }
+    } catch (err) {
+      console.warn(`[bridges] ACL rule removal failed during delete for ${bridge.id}:`, err);
+    }
   }
 
   return removeBridge(bridgeId);

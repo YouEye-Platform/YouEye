@@ -120,6 +120,10 @@ export interface InstallMetadata {
   credentials?: CredentialMeta[];
   /** SSO entry URL path (e.g. /sso/OID/start/authentik) — appended to app URL for direct login */
   ssoEntryUrl?: string;
+  /** Database mode from manifest — used by ACL migration to determine postgres access */
+  databaseMode?: 'shared' | 'own' | 'none';
+  /** Whether this app has SSO configured — used by ACL migration to determine authentik access */
+  hasSSO?: boolean;
 }
 
 // ─── Install Events (SSE) ──────────────────────────────────
