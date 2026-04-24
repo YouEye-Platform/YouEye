@@ -1,3 +1,28 @@
+## v0.3.3.10 / v0.3.5.5 — vanya — 2026-04-24
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix WordArt widget overflow clipping + Enhanced icon picker with Lucide icons (Session 27)
+
+### Changes
+- `ui/src/components/widgets/index.ts` — Added `allowOverflow` to WidgetMeta interface; server-name widget opts in
+- `ui/src/components/dashboard/widget-container.tsx` — Conditional overflow-visible for widgets with allowOverflow
+- `ui/src/components/widgets/server-name-widget.tsx` — Inner container changed to overflow-visible
+- `control-panel/src/app/embed/branding/client.tsx` — Major rewrite: added Lucide icons tab (~1700 icons with search), expanded emojis (24→450+), upload tab, gradient presets, icon color picker
+- `control-panel/src/app/api/ui/branding/upload/route.ts` — NEW: bridge proxy for file uploads
+- `ui/src/app/api/ui-bridge/branding/upload/route.ts` — NEW: bridge endpoint for file uploads
+
+### Test Results
+- `ui/tests/wordart-overflow.spec.ts` — overflow-visible verification, text-shadow rendering
+- `ui/tests/icon-picker-enhanced.spec.ts` — branding API, icon routes, upload auth
+
+### Notes for Iris
+- UI change is backward-compatible — only server-name widget affected, all others retain overflow-hidden
+- CP icon picker is self-contained in the embed branding page, no other CP pages affected
+- Upload bridge routes follow existing bridge pattern (X-UI-Bridge-Token auth)
+
+---
+
 ## v0.3.5.4 — vanya — 2026-04-24
 **Branch:** vanya
 **VM:** ye-vanya
