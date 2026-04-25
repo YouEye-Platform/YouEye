@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Key, Type, Globe, Eye, EyeOff, ChevronDown, ChevronRight, Settings2, Link2 } from 'lucide-react';
+import { X, Key, Type, Globe, Eye, EyeOff, ChevronDown, ChevronRight, Settings2, Link2, Wifi } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -47,6 +47,7 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [connections, setConnections] = useState<ConnectionsResponse | null>(null);
   const [connectionToggles, setConnectionToggles] = useState<Record<string, boolean>>({});
+  const [allowInternet, setAllowInternet] = useState(false);
 
   // Initialize defaults
   useEffect(() => {
@@ -71,6 +72,7 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
             toggles[c.targetAppId] = c.installed;
           }
           setConnectionToggles(toggles);
+          setAllowInternet(data.internet.needsInternet);
         }
       })
       .catch(() => {});
@@ -168,6 +170,7 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
       installParams: Object.keys(resolvedParams).length > 0 ? resolvedParams : undefined,
       customName: trimmedName !== app.name ? trimmedName : undefined,
       approvedConnections: approvedConnections.length > 0 ? approvedConnections : undefined,
+      allowInternet,
     });
   };
 
@@ -338,6 +341,39 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
               </div>
             </div>
           )}
+
+          {/* Internet / LAN Access */}
+          <div className="space-y-2">
+            <Label className="flex items-center gap-1.5">
+              <Wifi className="h-3.5 w-3.5 text-gray-500" />
+              Internet &amp; LAN Access
+            </Label>
+            <div className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-800 p-3">
+              <div>
+                <p className="text-sm font-medium">Allow Internet &amp; LAN Access</p>
+                <p className="text-xs text-gray-400">
+                  {connections?.internet?.hosts?.length
+                    ? `Uses: ${connections.internet.hosts.join(', ')}`
+                    : 'Allow this app to make outbound network requests'}
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={allowInternet}
+                onClick={() => setAllowInternet(prev => !prev)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  allowInternet ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                    allowInternet ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
 
           {/* Actions */}
           <div className="flex gap-3 pt-2">

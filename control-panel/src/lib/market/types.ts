@@ -88,6 +88,8 @@ export interface InstallConfig {
   repoBranch?: string;
   /** Connections approved at install time (from manifest.wants) */
   approvedConnections?: ApprovedConnection[];
+  /** User's explicit internet/LAN access choice at install time */
+  allowInternet?: boolean;
 }
 
 /** A connection approved by the user at install time */

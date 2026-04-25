@@ -564,7 +564,8 @@ export async function installApp(
   // NAT is always enabled during install — apps need internet to pull images/packages.
   // Post-install, NAT can be toggled off for apps that shouldn't have outbound internet.
   let appBridgeName: string | undefined;
-  const wantsInternet = manifest.containers.some(c => c.network === 'internet');
+  const wantsInternet = manifest.containers.some(c => c.network === 'internet')
+    || (manifest.internet?.hosts?.length ?? 0) > 0;
 
   try {
     const { bridgeName } = await createAppNetwork(appId, { nat: true });
@@ -1054,9 +1055,11 @@ export async function installApp(
     throw err;
   }
 
-  // Post-install: disable NAT on the app bridge if the app doesn't need internet.
+  // Post-install: disable NAT on the app bridge if the app doesn't need internet/LAN.
   // NAT was enabled during install so containers could pull packages/images.
-  if (appBridgeName && !wantsInternet) {
+  // User's explicit choice (config.allowInternet) overrides manifest default.
+  const grantInternet = config.allowInternet ?? wantsInternet;
+  if (appBridgeName && !grantInternet) {
     await setAppNetworkNAT(appId, false);
   }
 

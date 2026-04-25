@@ -67,7 +67,7 @@ interface ConnectionInfo {
 interface ConnectionsData {
   outgoing: ConnectionInfo[];
   incoming: ConnectionInfo[];
-  internet: { hosts: string[] };
+  internet: { hosts: string[]; needsInternet: boolean };
 }
 
 // ─── Constants ────────────────────────────────────────────
@@ -160,6 +160,7 @@ export function MarketEmbedClient() {
   // Connection toggles state
   const [connections, setConnections] = useState<ConnectionsData | null>(null);
   const [connectionToggles, setConnectionToggles] = useState<Record<string, boolean>>({});
+  const [allowInternet, setAllowInternet] = useState(false);
 
   // Uninstall state
   const [uninstallTarget, setUninstallTarget] = useState<MarketApp | null>(null);
@@ -262,6 +263,7 @@ export function MarketEmbedClient() {
     setInstallError(null);
     setConnections(null);
     setConnectionToggles({});
+    setAllowInternet(false);
     setInstallTarget(app);
 
     // Fetch connections in background
@@ -276,6 +278,8 @@ export function MarketEmbedClient() {
           toggles[c.targetAppId] = c.installed;
         }
         setConnectionToggles(toggles);
+        // Pre-tick internet if manifest declares it
+        setAllowInternet(data.internet.needsInternet);
       }
     } catch {
       // Non-blocking — dialog still works without connections
@@ -319,6 +323,7 @@ export function MarketEmbedClient() {
           enableSSO: true,
           installParams: Object.keys(form.params).length > 0 ? form.params : undefined,
           approvedConnections: approvedConnections.length > 0 ? approvedConnections : undefined,
+          allowInternet,
         }),
       });
 
@@ -876,6 +881,43 @@ export function MarketEmbedClient() {
               </div>
             </div>
           )}
+
+          {/* Internet / LAN Access */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "8px 10px", borderRadius: 6,
+              border: "1px solid var(--embed-border)",
+              background: "var(--embed-bg)",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <GlobeIcon size={16} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>Allow Internet &amp; LAN Access</div>
+                  <div className="embed-muted" style={{ fontSize: 11 }}>
+                    {connections?.internet?.hosts?.length
+                      ? `Uses: ${connections.internet.hosts.join(", ")}`
+                      : "Allow this app to make outbound network requests"}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAllowInternet(prev => !prev)}
+                style={{
+                  position: "relative", width: 36, height: 20, borderRadius: 10, border: "none", cursor: "pointer",
+                  background: allowInternet ? "var(--embed-primary, #3b82f6)" : "var(--embed-border, #555)",
+                  transition: "background 0.2s",
+                  flexShrink: 0,
+                }}>
+                <span style={{
+                  position: "absolute", top: 2, left: allowInternet ? 18 : 2,
+                  width: 16, height: 16, borderRadius: "50%", background: "#fff",
+                  transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
+                }} />
+              </button>
+            </div>
+          </div>
 
           {(installTarget.supportsSSO || installTarget.sso !== false) && (
             <div className="embed-badge-green" style={{ marginBottom: 12, display: "inline-block", fontSize: 11 }}>

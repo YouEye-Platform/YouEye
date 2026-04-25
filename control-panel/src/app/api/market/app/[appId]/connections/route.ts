@@ -24,7 +24,7 @@ export interface ConnectionInfo {
 export interface ConnectionsResponse {
   outgoing: ConnectionInfo[];
   incoming: ConnectionInfo[];
-  internet: { hosts: string[] };
+  internet: { hosts: string[]; needsInternet: boolean };
 }
 
 export async function GET(
@@ -79,6 +79,8 @@ export async function GET(
     // Internet access requirements
     const internet = {
       hosts: manifest.internet?.hosts ?? [],
+      needsInternet: (manifest.internet?.hosts?.length ?? 0) > 0
+        || manifest.containers.some(c => c.network === 'internet'),
     };
 
     return NextResponse.json({ outgoing, incoming, internet } satisfies ConnectionsResponse);
