@@ -1,3 +1,38 @@
+## cp-v0.3.5.6 / ui-v0.3.3.12 — vanya — 2026-04-25
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** TLS certificate management — Let's Encrypt DNS-01 + custom upload (Session 29)
+
+### Changes
+- `control-panel/src/lib/acme/client.ts` — ACME client with step-by-step DNS-01 flow (startOrder, verifyAndFinalize)
+- `control-panel/src/lib/acme/storage.ts` — TLS cert persistence via settingsService (youeye.yaml)
+- `control-panel/src/lib/caddy/client.ts` — loadExternalCert/removeExternalCert via Caddy load_pem API
+- `control-panel/src/lib/caddy/types.ts` — Added LoadPemEntry, certificate_selection types
+- `control-panel/src/app/api/tls/acme/route.ts` — POST start order, PUT verify & finalize
+- `control-panel/src/app/api/tls/upload/route.ts` — POST custom PEM cert upload
+- `control-panel/src/app/api/tls/download/route.ts` — GET cert/key/bundle/CA download
+- `control-panel/src/app/api/tls/status/route.ts` — GET status, DELETE revert to self-signed
+- `control-panel/src/app/embed/tls/` — Embed page for UI settings iframe
+- `control-panel/src/components/settings/tls-manager-card.tsx` — Standalone card component (kept for direct CP use)
+- `control-panel/package.json` — Bumped to 0.3.5.6, added acme-client dependency
+- `ui/src/app/settings/tls/page.tsx` — TLS settings page (embeds CP iframe)
+- `ui/src/components/settings/settings-shell.tsx` — Added TLS sidebar item with Lock icon
+- `ui/messages/*.json` — Added "tls" translation key to all 5 locales
+
+### Test Results
+- CP build: successful (TypeScript clean)
+- UI build: successful
+- TLS embed page: renders correctly in UI settings iframe
+- TLS status API: returns correct self-signed mode
+- CA cert download: working via execShell to youeye-caddy
+
+### Notes for Iris
+- CP has new `acme-client` npm dependency (pnpm-lock.yaml updated)
+- TLS data stored in youeye.yaml via settingsService (keys: tls_mode, tls_cert_pem, tls_key_pem, etc.)
+- Caddy integration uses load_pem module + tagged automation policies
+- Both CP and UI need to be deployed together for the sidebar entry to work
+
 ## v0.3.3.11 — vanya — 2026-04-24
 **Branch:** vanya
 **VM:** ye-vanya
