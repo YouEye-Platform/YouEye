@@ -71,9 +71,12 @@ export async function removeSuggestion(id: string): Promise<void> {
  * Generate suggestions for a newly installed app.
  * Scans its `wants` list against installed apps, and its `internet.hosts`.
  * Also checks all OTHER installed apps' `wants` to see if any want this new app.
+ *
+ * @param skipTargetIds - target app IDs to skip (already approved at install time)
  */
 export async function generateSuggestionsForApp(
   manifest: AppManifest,
+  skipTargetIds?: Set<string>,
 ): Promise<Suggestion[]> {
   const existing = await readStore();
   const bridges = await loadBridges();
@@ -87,6 +90,9 @@ export async function generateSuggestionsForApp(
   // 1. Check this app's wants against installed apps
   const wants = manifest.wants ?? [];
   for (const want of wants) {
+    // Skip targets already approved at install time
+    if (skipTargetIds?.has(want.appId)) continue;
+
     const existing_bridge = bridges.find(
       b => b.from === appId && b.to === want.appId
     );

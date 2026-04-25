@@ -86,6 +86,14 @@ export interface InstallConfig {
   repoUrl?: string;
   /** Branch/tag for repo-based installs */
   repoBranch?: string;
+  /** Connections approved at install time (from manifest.wants) */
+  approvedConnections?: ApprovedConnection[];
+}
+
+/** A connection approved by the user at install time */
+export interface ApprovedConnection {
+  targetAppId: string;
+  approved: boolean;
 }
 
 // ─── Install Metadata (persisted to install.json) ──────────

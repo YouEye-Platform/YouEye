@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Key, Type, Globe, Eye, EyeOff, ChevronDown, ChevronRight, Settings2 } from 'lucide-react';
+import { X, Key, Type, Globe, Eye, EyeOff, ChevronDown, ChevronRight, Settings2, Link2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,7 +13,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useTranslations } from 'next-intl';
-import type { MarketApp, InstallConfig } from '@/lib/market/types';
+import type { MarketApp, InstallConfig, ApprovedConnection } from '@/lib/market/types';
+import type { ConnectionsResponse } from '@/app/api/market/app/[appId]/connections/route';
 
 interface InstallDialogProps {
   app: MarketApp;
@@ -44,6 +45,8 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const [connections, setConnections] = useState<ConnectionsResponse | null>(null);
+  const [connectionToggles, setConnectionToggles] = useState<Record<string, boolean>>({});
 
   // Initialize defaults
   useEffect(() => {
@@ -55,6 +58,23 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
     }
     setInstallParamsState(defaults);
   }, [app.installParams]);
+
+  // Fetch connections
+  useEffect(() => {
+    fetch(`/api/market/app/${encodeURIComponent(app.id)}/connections`)
+      .then(res => res.ok ? res.json() : null)
+      .then((data: ConnectionsResponse | null) => {
+        if (data) {
+          setConnections(data);
+          const toggles: Record<string, boolean> = {};
+          for (const c of data.outgoing) {
+            toggles[c.targetAppId] = c.installed;
+          }
+          setConnectionToggles(toggles);
+        }
+      })
+      .catch(() => {});
+  }, [app.id]);
 
   // Auto-slugify subdomain when name changes (unless user manually edited subdomain)
   useEffect(() => {
@@ -136,12 +156,18 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
     }
 
     const trimmedName = displayName.trim();
+    const approvedConnections: ApprovedConnection[] = connections?.outgoing?.map(c => ({
+      targetAppId: c.targetAppId,
+      approved: connectionToggles[c.targetAppId] ?? false,
+    })) ?? [];
+
     onInstall({
       appId: app.id,
       subdomain: subdomain.trim().toLowerCase(),
       domain,
       installParams: Object.keys(resolvedParams).length > 0 ? resolvedParams : undefined,
       customName: trimmedName !== app.name ? trimmedName : undefined,
+      approvedConnections: approvedConnections.length > 0 ? approvedConnections : undefined,
     });
   };
 
@@ -261,6 +287,55 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Connections */}
+          {connections && connections.outgoing.length > 0 && (
+            <div className="space-y-3">
+              <Label className="flex items-center gap-1.5">
+                <Link2 className="h-3.5 w-3.5 text-gray-500" />
+                Connections
+              </Label>
+              <p className="text-xs text-gray-400">
+                This app can connect to the following apps.
+              </p>
+              <div className="space-y-2">
+                {connections.outgoing.map(c => (
+                  <div
+                    key={c.targetAppId}
+                    className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-800 p-3"
+                  >
+                    <div>
+                      <p className="text-sm font-medium">{c.targetAppName}</p>
+                      <p className="text-xs text-gray-400">
+                        {c.description || `Connect to ${c.targetAppName}`}
+                        {!c.installed && (
+                          <span className="text-amber-500 ml-1">(not installed)</span>
+                        )}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={connectionToggles[c.targetAppId] ?? false}
+                      onClick={() => setConnectionToggles(prev => ({
+                        ...prev,
+                        [c.targetAppId]: !prev[c.targetAppId],
+                      }))}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        connectionToggles[c.targetAppId] ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                          connectionToggles[c.targetAppId] ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

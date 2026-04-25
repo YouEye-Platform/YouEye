@@ -32,7 +32,7 @@ import type {
 import { readFile } from 'fs/promises';
 import { resolveVariables, resolveEnvironment } from './variables';
 import { writeAllConfigFiles } from './config-writer';
-import { saveInstallMetadata, removeInstallMetadata } from './metadata';
+import { saveInstallMetadata, removeInstallMetadata, readInstallMetadata } from './metadata';
 import { upsertInstalledApp, removeInstalledApp } from './installed-apps';
 import { deployOCIContainer, getContainerIP, containerExists } from '../infrastructure/oci-deployer';
 import { deployLXDContainer } from '../infrastructure/lxd-deployer';
@@ -77,7 +77,7 @@ import {
   buildAppNIC,
   setAppNetworkNAT,
 } from '../incus/app-network';
-import { activatePendingBridges, detectBridgeDependencies, createBridge } from '../bridges/manager';
+import { activatePendingBridges, detectBridgeDependencies, createBridge, resolveBridgeMappings, activateBridge } from '../bridges/manager';
 import { generateSuggestionsForApp } from '../bridges/suggestions';
 
 // ─── Install Rollback ─────────────────────────────────────
@@ -956,7 +956,69 @@ export async function installApp(
     }
   }
 
-  // ── Step 12: Activate pending bridges targeting this app ──
+  // ── Step 12: Activate approved connections from install dialog ──
+
+  const approvedConnections = config.approvedConnections ?? [];
+  const approvedIds = new Set(
+    approvedConnections.filter(c => c.approved).map(c => c.targetAppId)
+  );
+
+  if (approvedIds.size > 0) {
+    step++;
+    emit(onEvent, step, totalSteps, 'running', `Setting up ${approvedIds.size} approved connections...`);
+    try {
+      const platform = await getPlatformContext();
+      const dom = platform.domain || config.domain;
+      let activated = 0;
+
+      for (const targetId of approvedIds) {
+        // Build env mappings from manifest.wants (if this app references the target)
+        const envMappings = manifest.env_mapping
+          ? detectBridgeDependencies(manifest.env_mapping, appId)
+              .filter(d => d.targetAppId === targetId)
+              .flatMap(d => d.envMappings)
+          : [];
+
+        const bridge = await createBridge({
+          from: appId,
+          to: targetId,
+          envMappings,
+          approvedBy: 'install',
+        });
+
+        // If target is installed, resolve mappings and activate immediately
+        try {
+          const targetMeta = await readInstallMetadata(targetId);
+          if (targetMeta) {
+            const targetContainer = targetMeta.containers?.[0]?.containerName || `app-${targetId}`;
+            const targetPort = manifest.wants?.find(w => w.appId === targetId)?.defaultPort || 8080;
+            const targetSub = targetMeta.subdomain || targetId;
+
+            const resolved = await resolveBridgeMappings(
+              envMappings, targetContainer, targetPort, targetSub, dom
+            );
+            // Update bridge with resolved mappings, then activate
+            const { updateBridge } = await import('../bridges/store');
+            await updateBridge(bridge.id, { envMappings: resolved });
+            const result = await activateBridge(bridge.id);
+            if (result?.active) activated++;
+          }
+        } catch (err) {
+          console.warn(`[engine] Could not activate bridge to ${targetId}:`, err);
+        }
+      }
+
+      emit(onEvent, step, totalSteps, 'success',
+        activated > 0
+          ? `Activated ${activated} connections`
+          : `${approvedIds.size} connections created (will activate when targets are installed)`
+      );
+    } catch (err) {
+      console.warn('[engine] Approved connections warning:', err);
+    }
+  }
+
+  // ── Step 12b: Activate pending bridges targeting this app ──
 
   try {
     const platform = await getPlatformContext();
@@ -975,10 +1037,10 @@ export async function installApp(
     console.warn('[engine] Pending bridge activation warning:', err);
   }
 
-  // ── Step 13: Generate connection suggestions ──────────────
+  // ── Step 13: Generate suggestions for unapproved connections ──
 
   try {
-    const suggestions = await generateSuggestionsForApp(manifest);
+    const suggestions = await generateSuggestionsForApp(manifest, approvedIds);
     if (suggestions.length > 0) {
       emit(onEvent, step, totalSteps, 'success', `Generated ${suggestions.length} connection suggestions`);
     }

@@ -76,6 +76,18 @@ interface InternetGrant {
   active: boolean;
 }
 
+interface Suggestion {
+  id: string;
+  type: "bridge" | "internet";
+  fromAppId: string;
+  fromAppName: string;
+  targetAppId?: string;
+  targetAppName?: string;
+  hosts?: string[];
+  targetInstalled?: boolean;
+  dismissed: boolean;
+}
+
 /* ── Tab type ── */
 
 type TabId = "overview" | "permissions" | "network" | "link-handling";
@@ -291,14 +303,17 @@ function OverviewTab({ app }: { app: AppInfo }) {
 function NetworkTab({ appId }: { appId: string }) {
   const [bridges, setBridges] = useState<Bridge[]>([]);
   const [grants, setGrants] = useState<InternetGrant[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [loading, setLoading] = useState(true);
+  const [approving, setApproving] = useState<string | null>(null);
 
   const fetchNetwork = useCallback(async () => {
     setLoading(true);
     try {
-      const [bridgesRes, grantsRes] = await Promise.all([
+      const [bridgesRes, grantsRes, suggestionsRes] = await Promise.all([
         fetch(`/api/v1/admin/proxy-cp?path=${encodeURIComponent(`/api/bridges?appId=${appId}`)}`),
         fetch(`/api/v1/admin/proxy-cp?path=${encodeURIComponent("/api/internet-grants")}`),
+        fetch(`/api/v1/admin/proxy-cp?path=${encodeURIComponent("/api/suggestions")}`),
       ]);
 
       if (bridgesRes.ok) {
@@ -310,6 +325,13 @@ function NetworkTab({ appId }: { appId: string }) {
         const data = await grantsRes.json();
         const all = Array.isArray(data) ? data : [];
         setGrants(all.filter((g: InternetGrant) => g.appId === appId));
+      }
+      if (suggestionsRes.ok) {
+        const data = await suggestionsRes.json();
+        const all = Array.isArray(data) ? data : (data.suggestions ?? []);
+        setSuggestions(
+          all.filter((s: Suggestion) => !s.dismissed && (s.fromAppId === appId || s.targetAppId === appId))
+        );
       }
     } catch {
       // silent
@@ -344,6 +366,44 @@ function NetworkTab({ appId }: { appId: string }) {
     }
   }
 
+  async function approveSuggestion(suggestion: Suggestion) {
+    setApproving(suggestion.id);
+    try {
+      const res = await fetch("/api/v1/admin/proxy-cp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: "/api/suggestions/approve",
+          method: "POST",
+          body: { suggestionId: suggestion.id },
+        }),
+      });
+      if (res.ok) {
+        setSuggestions(suggestions.filter((s) => s.id !== suggestion.id));
+        // Refresh to pick up the new bridge
+        fetchNetwork();
+      }
+    } catch {
+      // silent
+    } finally {
+      setApproving(null);
+    }
+  }
+
+  async function dismissSuggestion(id: string) {
+    const res = await fetch("/api/v1/admin/proxy-cp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path: `/api/suggestions/${id}/dismiss`,
+        method: "POST",
+      }),
+    });
+    if (res.ok) {
+      setSuggestions(suggestions.filter((s) => s.id !== id));
+    }
+  }
+
   if (loading) {
     return (
       <div className="py-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
@@ -358,6 +418,64 @@ function NetworkTab({ appId }: { appId: string }) {
 
   return (
     <div className="space-y-6">
+      {/* Pending Suggestions */}
+      {suggestions.length > 0 && (
+        <section>
+          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
+            Pending Connections
+          </h3>
+          <div className="space-y-2">
+            {suggestions.map((s) => (
+              <div
+                key={s.id}
+                className="flex items-center justify-between rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 p-3"
+              >
+                <div className="flex items-center gap-2">
+                  <Link2 className="h-4 w-4 text-amber-500" />
+                  <div>
+                    <div className="flex items-center gap-1">
+                      <span className="font-medium text-sm">{s.fromAppName}</span>
+                      <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                      <span className="font-medium text-sm">{s.targetAppName || "Internet"}</span>
+                    </div>
+                    {s.type === "internet" && s.hosts && (
+                      <span className="text-xs text-muted-foreground">
+                        Hosts: {s.hosts.join(", ")}
+                      </span>
+                    )}
+                    {s.targetInstalled === false && (
+                      <span className="text-xs text-amber-600 dark:text-amber-400">
+                        Target not installed yet
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => approveSuggestion(s)}
+                    disabled={approving === s.id}
+                    className="text-xs text-green-600 hover:underline flex items-center gap-1 disabled:opacity-50"
+                  >
+                    {approving === s.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Check className="h-3 w-3" />
+                    )}
+                    Approve
+                  </button>
+                  <button
+                    onClick={() => dismissSuggestion(s.id)}
+                    className="text-xs text-muted-foreground hover:underline flex items-center gap-1"
+                  >
+                    <X className="h-3 w-3" /> Dismiss
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Bridges */}
       <section>
         <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
