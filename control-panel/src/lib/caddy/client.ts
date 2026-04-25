@@ -1336,13 +1336,16 @@ export interface EntranceConfig {
 
 /**
  * Add multiple routes for an app with multiple entrances.
+ * When appBridgeName is set, resolves container IPs instead of using DNS names
+ * (DNS doesn't cross per-app bridges).
  */
 export async function addAppRoutes(
   appId: string,
   hostname: string,
   entrances: EntranceConfig[],
   primaryContainer: string,
-  forwardAuthConfig?: { upstreamDial: string; uri: string; copyHeaders: string[] }
+  forwardAuthConfig?: { upstreamDial: string; uri: string; copyHeaders: string[] },
+  appBridgeName?: string,
 ): Promise<void> {
   for (const entrance of entrances) {
     if (entrance.protocol === 'tcp') continue;
@@ -1351,7 +1354,16 @@ export async function addAppRoutes(
     const containerName = entrance.container
       ? `app-${appId}-${entrance.container}`
       : primaryContainer;
-    const normalizedUpstream = normalizeUpstream(containerName);
+
+    // For per-app bridge apps, use container IP (DNS doesn't cross bridges)
+    let resolvedUpstream: string;
+    if (appBridgeName) {
+      const { getContainerIP } = await import('../incus/container-ip');
+      const ip = await getContainerIP(containerName);
+      resolvedUpstream = ip || normalizeUpstream(containerName);
+    } else {
+      resolvedUpstream = normalizeUpstream(containerName);
+    }
 
     const handlers: any[] = [];
 
@@ -1375,7 +1387,7 @@ export async function addAppRoutes(
     // Reverse proxy
     handlers.push({
       handler: 'reverse_proxy',
-      upstreams: [{ dial: `${normalizedUpstream}:${entrance.port}` }],
+      upstreams: [{ dial: `${resolvedUpstream}:${entrance.port}` }],
     });
 
     const match: { host?: string[]; path?: string[] } = { host: [hostname] };

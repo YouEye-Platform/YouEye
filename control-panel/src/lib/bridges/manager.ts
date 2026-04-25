@@ -11,10 +11,32 @@ import {
   addBridge, updateBridge, removeBridge, getBridge,
   getBridgesForApp, getPendingBridgesForTarget, loadBridges,
 } from './store';
-import { createBridgeAcl, removeBridgeAcl, ensureNetworkAcls } from '../incus/network-acl';
+import {
+  grantBridgeAccess, revokeBridgeAccess,
+  SYSTEM_APP_IDS,
+} from '../incus/app-network';
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
 import { execShell } from '../incus/server';
 import { CONTAINER_DOMAIN } from '../market/constants';
+import { readInstallMetadata } from '../market/metadata';
+
+/**
+ * Resolve an app ID to its primary Incus container name.
+ * Single-container apps: app-{appId}
+ * Multi-container apps: app-{appId}-{primaryName} (from install metadata)
+ * Falls back to app-{appId} if metadata is unavailable.
+ */
+async function resolveContainerName(appId: string): Promise<string> {
+  const meta = await readInstallMetadata(appId);
+  if (meta?.containers && meta.containers.length > 1) {
+    // Multi-container app — find the primary or use first
+    const primary = meta.containers.find((c: any) => c.name === 'main' || c.name === 'server')
+      || meta.containers[0];
+    const cn = typeof primary === 'string' ? primary : primary.containerName;
+    if (cn) return cn;
+  }
+  return `app-${appId}`;
+}
 
 /**
  * Parse env_mapping for ${containers.NAME.*} references
@@ -61,6 +83,11 @@ export async function createBridge(params: {
   envMappings: EnvMapping[];
   approvedBy: string;
 }): Promise<Bridge> {
+  // Reject bridges targeting system containers
+  if (SYSTEM_APP_IDS.includes(params.to)) {
+    throw new Error(`Cannot create bridge to system container: ${params.to}`);
+  }
+
   const bridge: Bridge = {
     id: `${params.from}-to-${params.to}`,
     from: params.from,
@@ -80,14 +107,22 @@ export async function createBridge(params: {
 /**
  * Resolve bridge env mappings against live container state.
  * Called when the target app is installed and its containers are running.
+ *
+ * For per-app bridge apps, internal_host/url uses the container IP (DNS
+ * doesn't cross bridges). For legacy incusbr0 apps, uses DNS names.
  */
-export function resolveBridgeMappings(
+export async function resolveBridgeMappings(
   envMappings: EnvMapping[],
   targetContainerName: string,
   targetPort: number,
   targetSubdomain: string,
   domain: string,
-): EnvMapping[] {
+): Promise<EnvMapping[]> {
+  // Determine if target is on a per-app bridge — if so, use IP for internal refs
+  const targetIP = await getIncusContainerIP(targetContainerName);
+  const useIP = targetIP ? true : false;
+  const internalHost = useIP ? targetIP! : `${targetContainerName}.${CONTAINER_DOMAIN}`;
+
   return envMappings.map(m => {
     let resolved = m.template;
     const target = m.template.match(/\$\{containers\.([^.]+)\.([^}]+)\}/);
@@ -95,10 +130,10 @@ export function resolveBridgeMappings(
       const prop = target[2];
       switch (prop) {
         case 'internal_host':
-          resolved = `${targetContainerName}.${CONTAINER_DOMAIN}`;
+          resolved = internalHost;
           break;
         case 'internal_url':
-          resolved = `http://${targetContainerName}.${CONTAINER_DOMAIN}:${targetPort}`;
+          resolved = `http://${internalHost}:${targetPort}`;
           break;
         case 'url':
           resolved = `https://${targetSubdomain}.${domain}`;
@@ -110,30 +145,33 @@ export function resolveBridgeMappings(
 }
 
 /**
- * Activate a bridge: create ACL rule + inject env vars + restart source container.
+ * Activate a bridge: grant network access + inject env vars + restart source container.
+ *
+ * Per-app bridge apps: NIC hot-plug (container gets NIC on target's bridge)
+ * Legacy apps (incusbr0): ACL rules
  */
 export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
   const bridge = await getBridge(bridgeId);
   if (!bridge || bridge.active) return bridge;
 
-  await ensureNetworkAcls();
+  // Resolve actual container names (handles multi-container apps)
+  const fromContainer = await resolveContainerName(bridge.from);
+  const toContainer = await resolveContainerName(bridge.to);
 
-  // Create Incus ACL for this bridge
-  const fromContainer = `app-${bridge.from}`;
-  const toContainer = `app-${bridge.to}`;
-
-  let aclName: string | undefined;
   try {
-    aclName = await createBridgeAcl(fromContainer, toContainer, bridge.direction);
+    await grantBridgeAccess(fromContainer, bridge.to);
+    if (bridge.direction === 'both-ways') {
+      await grantBridgeAccess(toContainer, bridge.from);
+    }
   } catch (err) {
-    console.warn(`[bridges] ACL creation failed for ${bridgeId}:`, err);
+    console.warn(`[bridges] Network access grant failed for ${bridgeId}:`, err);
   }
 
   // Inject resolved env vars into source container
   const resolvedMappings = bridge.envMappings.filter(m => m.resolved);
   if (resolvedMappings.length > 0) {
     try {
-      const envFile = `/etc/app-${bridge.from}.env`;
+      const envFile = `/etc/${fromContainer}.env`;
       const existingEnv = await execShell(fromContainer, `cat ${envFile} 2>/dev/null || echo ""`, { timeout: 5000 });
       const lines = existingEnv.stdout.split('\n').filter(Boolean);
 
@@ -165,23 +203,30 @@ export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
 
   return updateBridge(bridgeId, {
     active: true,
-    aclName,
     activatedAt: new Date().toISOString(),
   });
 }
 
 /**
- * Deactivate a bridge: remove ACL rule.
+ * Deactivate a bridge: revoke network access.
  */
 export async function deactivateBridge(bridgeId: string): Promise<Bridge | null> {
   const bridge = await getBridge(bridgeId);
   if (!bridge) return null;
 
-  if (bridge.aclName) {
-    await removeBridgeAcl(bridge.aclName);
+  const fromContainer = await resolveContainerName(bridge.from);
+  const toContainer = await resolveContainerName(bridge.to);
+
+  try {
+    await revokeBridgeAccess(fromContainer, bridge.to);
+    if (bridge.direction === 'both-ways') {
+      await revokeBridgeAccess(toContainer, bridge.from);
+    }
+  } catch (err) {
+    console.warn(`[bridges] Network access revocation failed for ${bridgeId}:`, err);
   }
 
-  return updateBridge(bridgeId, { active: false, aclName: undefined });
+  return updateBridge(bridgeId, { active: false });
 }
 
 /**
@@ -191,8 +236,18 @@ export async function deleteBridge(bridgeId: string): Promise<boolean> {
   const bridge = await getBridge(bridgeId);
   if (!bridge) return false;
 
-  if (bridge.active && bridge.aclName) {
-    await removeBridgeAcl(bridge.aclName);
+  if (bridge.active) {
+    const fromContainer = await resolveContainerName(bridge.from);
+    const toContainer = await resolveContainerName(bridge.to);
+
+    try {
+      await revokeBridgeAccess(fromContainer, bridge.to);
+      if (bridge.direction === 'both-ways') {
+        await revokeBridgeAccess(toContainer, bridge.from);
+      }
+    } catch (err) {
+      console.warn(`[bridges] Network access cleanup failed during delete for ${bridge.id}:`, err);
+    }
   }
 
   return removeBridge(bridgeId);
@@ -213,7 +268,7 @@ export async function activatePendingBridges(
   const activated: Bridge[] = [];
 
   for (const bridge of pending) {
-    const resolvedMappings = resolveBridgeMappings(
+    const resolvedMappings = await resolveBridgeMappings(
       bridge.envMappings,
       targetContainerName,
       targetPort,

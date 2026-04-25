@@ -65,6 +65,7 @@
       "profile": "Профиль",
       "appearance": "Внешний вид",
       "apps": "Приложения",
+      "accounts": "Аккаунты",
       "timeline": "Хронология",
       "privacy": "Конфиденциальность",
       "language": "Язык",
@@ -79,6 +80,8 @@
       "dns": "DNS",
       "proxy": "Прокси",
       "apps": "Приложения",
+      "permissions": "Разрешения",
+      "appManagement": "Управление приложениями",
       "appMarket": "Маркет приложений",
       "backup": "Резервное копирование"
     },
@@ -502,6 +505,12 @@
   "marketSettings": {
     "title": "Маркет приложений",
     "description": "Регистрация и управление приложениями, просмотр каталога."
+  },
+  "accountSettings": {
+    "pageTitle": "Аккаунты",
+    "pageDescription": "Управление подключёнными аккаунтами и API-ключами.",
+    "noAccounts": "Аккаунты пока не подключены.",
+    "loading": "Загрузка..."
   },
   "onboarding": {
     "welcomeTo": "Welcome to",

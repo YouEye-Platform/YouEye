@@ -32,7 +32,7 @@ import type {
 import { readFile } from 'fs/promises';
 import { resolveVariables, resolveEnvironment } from './variables';
 import { writeAllConfigFiles } from './config-writer';
-import { saveInstallMetadata, removeInstallMetadata } from './metadata';
+import { saveInstallMetadata, removeInstallMetadata, readInstallMetadata } from './metadata';
 import { upsertInstalledApp, removeInstalledApp } from './installed-apps';
 import { deployOCIContainer, getContainerIP, containerExists } from '../infrastructure/oci-deployer';
 import { deployLXDContainer } from '../infrastructure/lxd-deployer';
@@ -69,10 +69,17 @@ import {
   getPlatformContext,
 } from './platform-env';
 import { getContainerName } from './engine-helpers';
-import { resolveConnectors } from './engine-connectors';
 import { CONTAINER_DOMAIN } from './constants';
-import { ensureNetworkAcls, applyAppAcl } from '../incus/network-acl';
-import { activatePendingBridges, detectBridgeDependencies, createBridge } from '../bridges/manager';
+import {
+  createAppNetwork,
+  addCaddyToAppNetwork,
+  getSystemServices,
+  addProxyDevices,
+  buildAppNIC,
+  setAppNetworkNAT,
+} from '../incus/app-network';
+import { activatePendingBridges, detectBridgeDependencies, createBridge, resolveBridgeMappings, activateBridge } from '../bridges/manager';
+import { generateSuggestionsForApp } from '../bridges/suggestions';
 
 // ─── Install Rollback ─────────────────────────────────────
 
@@ -160,6 +167,13 @@ async function rollbackInstall(
   // 5. Remove metadata and secrets
   try { await removeInstallMetadata(ctx.appId); } catch {}
   try { await removeInstalledApp(ctx.appId); } catch {}
+
+  // 6. Clean up per-app bridge network
+  try {
+    const { removeCaddyFromAppNetwork, deleteAppNetwork } = await import('../incus/app-network');
+    await removeCaddyFromAppNetwork(ctx.appId);
+    await deleteAppNetwork(ctx.appId);
+  } catch {}
 
   onEvent({ step: 0, totalSteps, status: 'running', message: 'Rollback complete — all resources cleaned up' });
 }
@@ -546,10 +560,25 @@ export async function installApp(
     }
   }
 
-  // ── Step 5: Generate app token + build canonical context ──
+  // ── Step 5: Create per-app bridge + build canonical context ──
+
+  // Create bridge FIRST — context build needs to know if proxy devices are used.
+  // NAT is always enabled during install — apps need internet to pull images/packages.
+  // Post-install, NAT can be toggled off for apps that shouldn't have outbound internet.
+  let appBridgeName: string | undefined;
+  const wantsInternet = manifest.containers.some(c => c.network === 'internet')
+    || (manifest.internet?.hosts?.length ?? 0) > 0;
+
+  try {
+    const { bridgeName } = await createAppNetwork(appId, { nat: true });
+    appBridgeName = bridgeName;
+    emit(onEvent, step, totalSteps, 'success', `App network created: ${bridgeName}`);
+  } catch (err) {
+    console.warn('[engine] Failed to create app network, falling back to incusbr0:', err);
+  }
 
   const appToken = await generateAppToken(appId);
-  const ctx = await buildCanonicalContext(manifest, config, ssoResult, dbPassword, appToken);
+  const ctx = await buildCanonicalContext(manifest, config, ssoResult, dbPassword, appToken, !!appBridgeName);
   ctx.secrets = secrets;
 
   // Populate installParams with type coercion
@@ -565,9 +594,6 @@ export async function installApp(
     ? resolveEnvMapping(manifest.env_mapping, ctx)
     : {};
 
-  // Also resolve connector env vars
-  const connectorEnv = await resolveConnectors(manifest);
-
   // Resolve volume host paths in the context
   for (const containerSpec of manifest.containers) {
     for (const vol of containerSpec.volumes) {
@@ -581,6 +607,16 @@ export async function installApp(
   const containerNames: string[] = [];
   let primaryContainerName = '';
   let primaryPort = 0;
+
+  // Build NIC device config for per-app bridge (if available)
+  let appNIC: Record<string, Record<string, string>> | undefined;
+  if (appBridgeName) {
+    try {
+      appNIC = await buildAppNIC(appId);
+    } catch (err) {
+      console.warn('[engine] Failed to build app NIC:', err);
+    }
+  }
 
   try {
     for (const containerSpec of manifest.containers) {
@@ -598,6 +634,7 @@ export async function installApp(
         name: containerSpec.name,
         containerName,
         type: containerSpec.type,
+        network: containerSpec.network || 'isolated',
       });
 
       checkCancelled();
@@ -629,12 +666,13 @@ export async function installApp(
               giteaOrg: gitInfo.org,
               giteaRepo: gitInfo.repo,
               tagPrefix: source.tagPrefix,
-            }
+            },
+            appNIC,
           );
 
           // Write env file to LXD container
           const staticEnv = resolveEnvironment(containerSpec.environment || {}, ctx);
-          const fullEnv = { ...envFromMapping, ...staticEnv, ...connectorEnv };
+          const fullEnv = { ...envFromMapping, ...staticEnv };
           await writeEnvToContainer(containerName, fullEnv);
 
           // Restart service to pick up env
@@ -649,22 +687,12 @@ export async function installApp(
         } else {
           // ── OCI container deployment ─────────────────
           const staticEnv = resolveEnvironment(containerSpec.environment || {}, ctx);
-          const fullEnv = { ...envFromMapping, ...staticEnv, ...connectorEnv };
+          const fullEnv = { ...envFromMapping, ...staticEnv };
           const ociManifest = buildOCIManifest(containerSpec, containerName, appId, fullEnv);
-          await deployOCIContainer(ociManifest, '');
+          await deployOCIContainer(ociManifest, '', appNIC);
         }
 
         await applyResourcePolicy(containerName, 'normal');
-
-        // Apply network isolation ACL to app container (skip if manifest declares internet access)
-        if (containerSpec.network !== 'internet') {
-          try {
-            await ensureNetworkAcls();
-            await applyAppAcl(containerName);
-          } catch (aclErr) {
-            console.warn(`[engine] ACL application warning for ${containerName}:`, aclErr);
-          }
-        }
 
         emit(onEvent, step, totalSteps, 'success', `${containerName} deployed`);
       } catch (err) {
@@ -728,6 +756,31 @@ export async function installApp(
   } catch (err) {
     await rollbackInstall(rollbackCtx, onEvent, totalSteps);
     throw err;
+  }
+
+  // ── Step 6b: Network isolation — proxy devices + Caddy NIC ──────
+  // Per-app bridge provides structural isolation.
+  // Proxy devices expose system services (postgres, authentik, UI) at localhost:{port}.
+  // Caddy NIC lets the reverse proxy reach the app on its bridge.
+
+  if (appBridgeName) {
+    try {
+      const needsSharedDb = (manifest.database?.mode ?? 'none') === 'shared';
+      const needsSSO = ssoEnabled;
+
+      // Add proxy devices for system services to each container
+      const services = await getSystemServices({ needsSharedDb, needsSSO });
+      for (const cn of containerNames) {
+        await addProxyDevices(cn, services);
+      }
+
+      // Hot-plug Caddy NIC onto the app bridge (Docker/Traefik model)
+      await addCaddyToAppNetwork(appId);
+
+      emit(onEvent, step, totalSteps, 'success', `Network isolation configured for ${containerNames.length} containers`);
+    } catch (netErr) {
+      console.warn('[engine] Network configuration warning:', netErr);
+    }
   }
 
   // ── Steps 7-10: Post-deploy (SSO configure, Caddy, metadata, dashboard)
@@ -847,14 +900,21 @@ export async function installApp(
         stripPath: e.stripPath || false,
       }));
 
-      await addAppRoutes(appId, hostname, entrances, primaryContainerName, forwardAuthConfig);
+      await addAppRoutes(appId, hostname, entrances, primaryContainerName, forwardAuthConfig, appBridgeName);
       emit(onEvent, step, totalSteps, 'success', `Routes added: ${entrances.length} entrances for ${hostname}`);
     } else {
       // Single-route (standard)
+      // For per-app bridge containers, use IP instead of DNS name.
+      // Caddy's DNS resolver (incusbr0) can't resolve names on app bridges.
+      let routeUpstream = primaryContainerName;
+      if (appBridgeName) {
+        const appIP = await getIncusContainerIP(primaryContainerName);
+        if (appIP) routeUpstream = appIP;
+      }
       await ensureRoute({
         hostname,
         path: '/*',
-        upstream: primaryContainerName,
+        upstream: routeUpstream,
         port: primaryPort,
         forwardAuth: forwardAuthConfig,
       });
@@ -891,6 +951,9 @@ export async function installApp(
     ssoEntryUrl: manifest.sso?.entry_url
       ? resolveVariables(manifest.sso.entry_url, ctx)
       : undefined,
+    databaseMode: manifest.database?.mode ?? 'none',
+    hasSSO: ssoEnabled,
+    usePerAppBridge: !!appBridgeName,
   };
   await saveInstallMetadata(meta);
 
@@ -946,7 +1009,69 @@ export async function installApp(
     }
   }
 
-  // ── Step 12: Activate pending bridges targeting this app ──
+  // ── Step 12: Activate approved connections from install dialog ──
+
+  const approvedConnections = config.approvedConnections ?? [];
+  const approvedIds = new Set(
+    approvedConnections.filter(c => c.approved).map(c => c.targetAppId)
+  );
+
+  if (approvedIds.size > 0) {
+    step++;
+    emit(onEvent, step, totalSteps, 'running', `Setting up ${approvedIds.size} approved connections...`);
+    try {
+      const platform = await getPlatformContext();
+      const dom = platform.domain || config.domain;
+      let activated = 0;
+
+      for (const targetId of approvedIds) {
+        // Build env mappings from manifest.wants (if this app references the target)
+        const envMappings = manifest.env_mapping
+          ? detectBridgeDependencies(manifest.env_mapping, appId)
+              .filter(d => d.targetAppId === targetId)
+              .flatMap(d => d.envMappings)
+          : [];
+
+        const bridge = await createBridge({
+          from: appId,
+          to: targetId,
+          envMappings,
+          approvedBy: 'install',
+        });
+
+        // If target is installed, resolve mappings and activate immediately
+        try {
+          const targetMeta = await readInstallMetadata(targetId);
+          if (targetMeta) {
+            const targetContainer = targetMeta.containers?.[0]?.containerName || `app-${targetId}`;
+            const targetPort = manifest.wants?.find(w => w.appId === targetId)?.defaultPort || 8080;
+            const targetSub = targetMeta.subdomain || targetId;
+
+            const resolved = await resolveBridgeMappings(
+              envMappings, targetContainer, targetPort, targetSub, dom
+            );
+            // Update bridge with resolved mappings, then activate
+            const { updateBridge } = await import('../bridges/store');
+            await updateBridge(bridge.id, { envMappings: resolved });
+            const result = await activateBridge(bridge.id);
+            if (result?.active) activated++;
+          }
+        } catch (err) {
+          console.warn(`[engine] Could not activate bridge to ${targetId}:`, err);
+        }
+      }
+
+      emit(onEvent, step, totalSteps, 'success',
+        activated > 0
+          ? `Activated ${activated} connections`
+          : `${approvedIds.size} connections created (will activate when targets are installed)`
+      );
+    } catch (err) {
+      console.warn('[engine] Approved connections warning:', err);
+    }
+  }
+
+  // ── Step 12b: Activate pending bridges targeting this app ──
 
   try {
     const platform = await getPlatformContext();
@@ -965,10 +1090,29 @@ export async function installApp(
     console.warn('[engine] Pending bridge activation warning:', err);
   }
 
+  // ── Step 13: Generate suggestions for unapproved connections ──
+
+  try {
+    const suggestions = await generateSuggestionsForApp(manifest, approvedIds);
+    if (suggestions.length > 0) {
+      emit(onEvent, step, totalSteps, 'success', `Generated ${suggestions.length} connection suggestions`);
+    }
+  } catch (err) {
+    console.warn('[engine] Suggestions generation warning:', err);
+  }
+
   } catch (err) {
     // Comprehensive rollback: clean up containers, DB, SSO, Caddy, metadata
     await rollbackInstall(rollbackCtx, onEvent, totalSteps);
     throw err;
+  }
+
+  // Post-install: disable NAT on the app bridge if the app doesn't need internet/LAN.
+  // NAT was enabled during install so containers could pull packages/images.
+  // User's explicit choice (config.allowInternet) overrides manifest default.
+  const grantInternet = config.allowInternet ?? wantsInternet;
+  if (appBridgeName && !grantInternet) {
+    await setAppNetworkNAT(appId, false);
   }
 
   emit(onEvent, step, totalSteps, 'success', `${manifest.metadata.name} installed successfully!`);

@@ -248,7 +248,6 @@ export async function POST(request: NextRequest) {
               { sub: subs.control || 'control', container: 'youeye-control', port: 3000 },
               { sub: subs.auth || 'auth', container: 'youeye-authentik', port: 9000 },
               { sub: subs.dns || 'dns', container: 'youeye-pihole', port: 80 },
-              { sub: 'connectors', container: 'youeye-connectors', port: 3001 },
             ];
 
             const uiSub = subs.ui || '';

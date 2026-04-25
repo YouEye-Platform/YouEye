@@ -92,6 +92,28 @@ export async function uninstallApp(
     }
   }
 
+  // 1b. Clean up per-app bridge network
+  try {
+    const { removeCaddyFromAppNetwork, deleteAppNetwork } = await import('../incus/app-network');
+    // Remove Caddy NIC first (before deleting the bridge)
+    await removeCaddyFromAppNetwork(appId);
+    // Delete the bridge (containers already deleted above, so bridge should be empty)
+    await deleteAppNetwork(appId);
+  } catch (err) {
+    errors.push(`Failed to remove app network: ${err}`);
+  }
+
+  // 1c. Clean up bridge records referencing this app
+  try {
+    const { getBridgesForApp, deleteBridge } = await import('../bridges/manager');
+    const bridges = await getBridgesForApp(appId);
+    for (const bridge of bridges) {
+      await deleteBridge(bridge.id);
+    }
+  } catch (err) {
+    errors.push(`Failed to clean up bridges: ${err}`);
+  }
+
   // 2. Remove Caddy routes
   let caddyRemoved = false;
   if (metadata.subdomain && metadata.domain) {

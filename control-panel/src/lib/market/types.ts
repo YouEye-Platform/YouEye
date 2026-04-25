@@ -32,7 +32,8 @@ import type {
   DetailSchema,
   DetailScreenshotSchema,
   InstallParamSchema,
-  ConnectorsSchema,
+  WantSchema,
+  InternetSchema,
   PostDeployStepSchema,
   VolumeSchema,
 } from './schema';
@@ -66,7 +67,8 @@ export type SystemCatalogEntry = z.infer<typeof SystemCatalogEntrySchema>;
 export type AppDetail = z.infer<typeof DetailSchema>;
 export type DetailScreenshot = z.infer<typeof DetailScreenshotSchema>;
 export type InstallParam = z.infer<typeof InstallParamSchema>;
-export type ConnectorsSpec = z.infer<typeof ConnectorsSchema>;
+export type WantSpec = z.infer<typeof WantSchema>;
+export type InternetSpec = z.infer<typeof InternetSchema>;
 export type PostDeployStep = z.infer<typeof PostDeployStepSchema>;
 export type VolumeSpec = z.infer<typeof VolumeSchema>;
 
@@ -86,6 +88,16 @@ export interface InstallConfig {
   repoUrl?: string;
   /** Branch/tag for repo-based installs */
   repoBranch?: string;
+  /** Connections approved at install time (from manifest.wants) */
+  approvedConnections?: ApprovedConnection[];
+  /** User's explicit internet/LAN access choice at install time */
+  allowInternet?: boolean;
+}
+
+/** A connection approved by the user at install time */
+export interface ApprovedConnection {
+  targetAppId: string;
+  approved: boolean;
 }
 
 // ─── Install Metadata (persisted to install.json) ──────────
@@ -94,6 +106,8 @@ export interface ContainerMeta {
   name: string;
   containerName: string;
   type: 'lxd' | 'oci';
+  /** Network mode from manifest: 'isolated' (default) or 'internet' */
+  network?: 'isolated' | 'internet';
 }
 
 export interface CredentialMeta {
@@ -120,6 +134,12 @@ export interface InstallMetadata {
   credentials?: CredentialMeta[];
   /** SSO entry URL path (e.g. /sso/OID/start/authentik) — appended to app URL for direct login */
   ssoEntryUrl?: string;
+  /** Database mode from manifest — used by ACL migration to determine postgres access */
+  databaseMode?: 'shared' | 'own' | 'none';
+  /** Whether this app has SSO configured — used by ACL migration to determine authentik access */
+  hasSSO?: boolean;
+  /** @deprecated All apps use per-app bridge networking now. Kept for install.json compat. */
+  usePerAppBridge?: boolean;
 }
 
 // ─── Install Events (SSE) ──────────────────────────────────
@@ -278,7 +298,6 @@ export interface MarketApp {
     widgets?: boolean;
     notifications?: boolean | 'push';
     smtp?: boolean;
-    connectors?: { provides?: string[]; consumes?: string[] };
   };
 }
 

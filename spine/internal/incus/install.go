@@ -112,13 +112,19 @@ func Install() error {
 	if err := initializeWithPreseed(zfsAvailable); err != nil {
 		return err
 	}
-	
+
 	// Note: We don't set project restrictions anymore because:
 	// - ZFS snapshots (incremental backups) are blocked by restricted=true
 	// - On VMs (where ZFS works), we don't need LXC-specific protections
 	// - On LXC (where dir driver is used), we may need privileged fallback
-	
+
 	fmt.Println("✓ Incus initialized")
+
+	// Restrict DHCP range to .100–.254 so system containers can use
+	// static IPs in the .10–.19 range without collision.
+	if err := ConfigureSystemDHCP(); err != nil {
+		fmt.Printf("Warning: could not configure static IP DHCP range: %v\n", err)
+	}
 
 	// Configure OCI remote for Docker Hub images
 	configureOCIRemote()
@@ -383,7 +389,12 @@ func initializeManually(preseedErr error, zfsAvailable bool) error {
 		return fmt.Errorf("failed to add network to profile: %w", err)
 	}
 	util.LogSuccess("Network device added")
-	
+
+	// Restrict DHCP range for static system IPs
+	if err := ConfigureSystemDHCP(); err != nil {
+		fmt.Printf("Warning: could not configure static IP DHCP range: %v\n", err)
+	}
+
 	return nil
 }
 

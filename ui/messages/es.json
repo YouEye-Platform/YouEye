@@ -64,7 +64,8 @@
     "sections": {
       "profile": "Perfil",
       "appearance": "Apariencia",
-      "apps": "Apps",
+      "apps": "Aplicaciones",
+      "accounts": "Cuentas",
       "timeline": "Cronología",
       "privacy": "Privacidad",
       "language": "Idioma",
@@ -79,6 +80,8 @@
       "dns": "DNS",
       "proxy": "Proxy",
       "apps": "Apps",
+      "permissions": "Permisos",
+      "appManagement": "Gestión de apps",
       "appMarket": "Tienda de apps"
     },
     "profile": {
@@ -501,6 +504,12 @@
   "marketSettings": {
     "title": "Tienda de apps",
     "description": "Registra y gestiona apps nativas, explora el catálogo."
+  },
+  "accountSettings": {
+    "pageTitle": "Cuentas",
+    "pageDescription": "Gestiona tus cuentas conectadas y claves API.",
+    "noAccounts": "Aún no hay cuentas conectadas.",
+    "loading": "Cargando..."
   },
   "onboarding": {
     "welcomeTo": "Welcome to",

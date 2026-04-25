@@ -65,6 +65,7 @@
       "profile": "Profil",
       "appearance": "Erscheinungsbild",
       "apps": "Apps",
+      "accounts": "Konten",
       "timeline": "Zeitachse",
       "privacy": "Datenschutz",
       "language": "Sprache",
@@ -79,6 +80,8 @@
       "dns": "DNS",
       "proxy": "Proxy",
       "apps": "Apps",
+      "permissions": "Berechtigungen",
+      "appManagement": "App-Verwaltung",
       "appMarket": "App-Markt"
     },
     "profile": {
@@ -501,6 +504,12 @@
   "marketSettings": {
     "title": "App-Markt",
     "description": "Native Apps registrieren und verwalten, Katalog durchsuchen."
+  },
+  "accountSettings": {
+    "pageTitle": "Konten",
+    "pageDescription": "Verwalten Sie Ihre verbundenen Konten und API-Schlüssel.",
+    "noAccounts": "Noch keine Konten verbunden.",
+    "loading": "Laden..."
   },
   "onboarding": {
     "welcomeTo": "Welcome to",

@@ -29,8 +29,11 @@ const PUBLIC_ROUTES = [
   '/api/ping',
   '/api/market/image',
   '/api/mail/send',       // SMTP proxy — auth via X-App-Slug / X-UI-Bridge-Token
-  '/api/connectors',
   '/api/ui',              // Embed client-side calls to UI bridge proxy (branding, etc.)
+  '/api/bridges',         // Internal: UI server-side fetches bridge data
+  '/api/internet-grants', // Internal: UI server-side fetches internet grant data
+  '/api/suggestions',     // Internal: UI server-side fetches connection suggestions
+  '/api/market/app',      // Internal: app detail + connections endpoints
   '/setup-complete',
   // Note: /embed routes now use session auth (same as main CP), not HMAC tokens
 ];

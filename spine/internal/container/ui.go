@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"git.byka.wtf/potemsla/YouEye/spine/internal/config"
+	"git.byka.wtf/potemsla/YouEye/spine/internal/incus"
 	"git.byka.wtf/potemsla/YouEye/spine/internal/releases"
 )
 
@@ -31,10 +32,20 @@ func DeployUIContainer(cfg *config.Config) error {
 	}
 
 	if !containerAlreadyExists {
-		// Create container
+		// Create container (init only, don't start yet — set static IP first)
 		fmt.Printf("Creating container '%s' from %s...\n", containerName, image)
-		if err := exec.Command("incus", "launch", image, containerName).Run(); err != nil {
+		if err := exec.Command("incus", "init", image, containerName).Run(); err != nil {
 			return fmt.Errorf("failed to create UI container: %w", err)
+		}
+
+		// Set static IP before starting
+		if err := incus.SetContainerStaticIP(containerName); err != nil {
+			fmt.Printf("Warning: could not set static IP for %s: %v\n", containerName, err)
+		}
+
+		// Start the container
+		if err := exec.Command("incus", "start", containerName).Run(); err != nil {
+			return fmt.Errorf("failed to start UI container: %w", err)
 		}
 
 		// Wait for container to be running with network

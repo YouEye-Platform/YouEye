@@ -421,58 +421,6 @@ export const gatewayRequests = pgTable("gateway_requests", {
 });
 
 // ============================================
-// Connectors
-// ============================================
-
-/**
- * User connector preferences — which connector each user selects for each capability.
- * Users can have different connectors per consuming app or a default for all apps.
- */
-export const userConnectors = pgTable("user_connectors", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  /** Connector ID from the catalog (e.g. "searxng-search") */
-  connectorId: text("connector_id").notNull(),
-  /** Capability this connector provides (e.g. "search-engine") */
-  capability: text("capability").notNull(),
-  /** Which app uses this connector (null = default for all apps) */
-  consumerApp: text("consumer_app"),
-  /** Priority when multiple connectors for same capability (lower = preferred) */
-  priority: integer("priority").default(0),
-  enabled: boolean("enabled").default(true),
-  /** Whether this choice persists across sessions (false = session-only) */
-  persistent: boolean("persistent").default(true),
-  /** User-specific connector config (non-secret settings) */
-  config: jsonb("config").$type<Record<string, unknown>>().default({}),
-  createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
-  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
-});
-
-/**
- * User connector secrets — encrypted API keys and credentials per connector.
- * Values encrypted with AES-256-GCM, key derived from system secret.
- */
-export const userConnectorSecrets = pgTable("user_connector_secrets", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  /** Connector ID */
-  connectorId: text("connector_id").notNull(),
-  /** Config field name (e.g. "api_key") */
-  key: text("key").notNull(),
-  /** Encrypted value (AES-256-GCM, base64) */
-  encryptedValue: text("encrypted_value").notNull(),
-  /** Encryption nonce (base64) */
-  nonce: text("nonce").notNull(),
-  /** Host this credential is bound to — prevents forwarding to wrong host */
-  boundHost: text("bound_host"),
-  createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
-});
-
-// ============================================
 // Settings
 // ============================================
 

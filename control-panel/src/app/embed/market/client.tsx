@@ -66,6 +66,20 @@ interface ActiveInstall {
   error?: string;
 }
 
+interface ConnectionInfo {
+  targetAppId: string;
+  targetAppName: string;
+  description?: string;
+  installed: boolean;
+  defaultPort?: number;
+}
+
+interface ConnectionsData {
+  outgoing: ConnectionInfo[];
+  incoming: ConnectionInfo[];
+  internet: { hosts: string[]; needsInternet: boolean };
+}
+
 // ─── Constants ────────────────────────────────────────────
 
 const CATEGORY_ORDER = ["productivity", "search", "media", "social", "utilities"];
@@ -127,6 +141,14 @@ function GlobeIcon({ size = 14 }: { size?: number }) {
   );
 }
 
+function Link2Icon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 17H7A5 5 0 0 1 7 7h2" /><path d="M15 7h2a5 5 0 1 1 0 10h-2" /><line x1="8" y1="12" x2="16" y2="12" />
+    </svg>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────
 
 export function MarketEmbedClient() {
@@ -148,6 +170,11 @@ export function MarketEmbedClient() {
   // Validation state (F1)
   const [validationReport, setValidationReport] = useState<{ valid: boolean; errors: { check: string; severity: string; message: string; detail?: string }[]; warnings: { check: string; severity: string; message: string; detail?: string }[]; info: { check: string; severity: string; message: string; detail?: string }[] } | null>(null);
   const [validating, setValidating] = useState(false);
+
+  // Connection toggles state
+  const [connections, setConnections] = useState<ConnectionsData | null>(null);
+  const [connectionToggles, setConnectionToggles] = useState<Record<string, boolean>>({});
+  const [allowInternet, setAllowInternet] = useState(false);
 
   // Uninstall state
   const [uninstallTarget, setUninstallTarget] = useState<MarketApp | null>(null);
@@ -238,7 +265,7 @@ export function MarketEmbedClient() {
     setRefreshing(false);
   };
 
-  const openInstallForm = (app: MarketApp) => {
+  const openInstallForm = async (app: MarketApp) => {
     const defaultSub = app.entrances?.[0]?.subdomain || app.id.replace(/^ye-app-/i, "").replace(/\s+/g, "-").toLowerCase();
     const params: Record<string, string> = {};
     if (app.installParams) {
@@ -249,6 +276,9 @@ export function MarketEmbedClient() {
     setInstallForm({ subdomain: defaultSub, params });
     setInstallError(null);
     setValidationReport(null);
+    setConnections(null);
+    setConnectionToggles({});
+    setAllowInternet(false);
     setInstallTarget(app);
 
     // F1: trigger async validation
@@ -262,6 +292,23 @@ export function MarketEmbedClient() {
       .then(report => setValidationReport(report))
       .catch(() => {})
       .finally(() => setValidating(false));
+
+    // Fetch connections in background
+    try {
+      const res = await fetch(`/api/ui-bridge/market?action=connections&app=${encodeURIComponent(app.id)}`);
+      if (res.ok) {
+        const data: ConnectionsData = await res.json();
+        setConnections(data);
+        const toggles: Record<string, boolean> = {};
+        for (const c of data.outgoing) {
+          toggles[c.targetAppId] = c.installed;
+        }
+        setConnectionToggles(toggles);
+        setAllowInternet(data.internet.needsInternet);
+      }
+    } catch {
+      // Non-blocking — dialog still works without connections
+    }
   };
 
   const handleInstall = async () => {
@@ -284,6 +331,12 @@ export function MarketEmbedClient() {
     // Track this install for the banner before polling picks it up
     prevActiveRef.current.add(target.id);
 
+    // Build approved connections from toggles
+    const approvedConnections = connections?.outgoing?.map(c => ({
+      targetAppId: c.targetAppId,
+      approved: connectionToggles[c.targetAppId] ?? false,
+    })) ?? [];
+
     try {
       const res = await fetch("/api/ui-bridge/market?action=install", {
         method: "POST",
@@ -294,6 +347,8 @@ export function MarketEmbedClient() {
           domain,
           enableSSO: true,
           installParams: Object.keys(form.params).length > 0 ? form.params : undefined,
+          approvedConnections: approvedConnections.length > 0 ? approvedConnections : undefined,
+          allowInternet,
         }),
       });
 
@@ -835,6 +890,94 @@ export function MarketEmbedClient() {
               </div>
             </details>
           )}
+
+
+          {/* Connections */}
+          {connections && connections.outgoing.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                <Link2Icon size={14} />
+                Connections
+              </div>
+              <div className="embed-muted" style={{ fontSize: 11, marginBottom: 8 }}>
+                This app can connect to the following apps. Toggle to allow or deny.
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {connections.outgoing.map(c => (
+                  <div key={c.targetAppId} style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "8px 10px", borderRadius: 6,
+                    border: "1px solid var(--embed-border)",
+                    background: "var(--embed-bg)",
+                  }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>{c.targetAppName}</div>
+                      <div className="embed-muted" style={{ fontSize: 11 }}>
+                        {c.description || `Connect to ${c.targetAppName}`}
+                        {!c.installed && (
+                          <span style={{ marginLeft: 6, color: "var(--embed-warning, #b8860b)" }}>
+                            (not installed)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setConnectionToggles(prev => ({ ...prev, [c.targetAppId]: !prev[c.targetAppId] }))}
+                      style={{
+                        position: "relative", width: 36, height: 20, borderRadius: 10, border: "none", cursor: "pointer",
+                        background: connectionToggles[c.targetAppId] ? "var(--embed-primary, #3b82f6)" : "var(--embed-border, #555)",
+                        transition: "background 0.2s",
+                        flexShrink: 0,
+                      }}>
+                      <span style={{
+                        position: "absolute", top: 2, left: connectionToggles[c.targetAppId] ? 18 : 2,
+                        width: 16, height: 16, borderRadius: "50%", background: "#fff",
+                        transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
+                      }} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Internet / LAN Access */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "8px 10px", borderRadius: 6,
+              border: "1px solid var(--embed-border)",
+              background: "var(--embed-bg)",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <GlobeIcon size={16} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>Allow Internet &amp; LAN Access</div>
+                  <div className="embed-muted" style={{ fontSize: 11 }}>
+                    {connections?.internet?.hosts?.length
+                      ? `Uses: ${connections.internet.hosts.join(", ")}`
+                      : "Allow this app to make outbound network requests"}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAllowInternet(prev => !prev)}
+                style={{
+                  position: "relative", width: 36, height: 20, borderRadius: 10, border: "none", cursor: "pointer",
+                  background: allowInternet ? "var(--embed-primary, #3b82f6)" : "var(--embed-border, #555)",
+                  transition: "background 0.2s",
+                  flexShrink: 0,
+                }}>
+                <span style={{
+                  position: "absolute", top: 2, left: allowInternet ? 18 : 2,
+                  width: 16, height: 16, borderRadius: "50%", background: "#fff",
+                  transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
+                }} />
+              </button>
+            </div>
+          </div>
 
           {(installTarget.supportsSSO || installTarget.sso !== false) && (
             <div className="embed-badge-green" style={{ marginBottom: 12, display: "inline-block", fontSize: 11 }}>

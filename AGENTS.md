@@ -25,6 +25,481 @@
 - The `roleClaim` type creates per-app scope mappings — isolated per app, no global side effects
 - Immich limitation: `oauth.roleClaim` only evaluated at first user registration, not subsequent logins. Fresh installs work; existing users won't be retroactively promoted
 - Three setup files (setup/run/route.ts, sso-setup.ts, manager.ts) all updated to use the normalized groups expression — ensures consistency whether created during initial setup or app install
+## v0.3.5.18 (CP) — sebastian — 2026-04-25
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Internet/LAN access toggle in install dialog + fix native app internet access
+
+### Changes
+- `control-panel/src/lib/market/types.ts` — added `allowInternet` to InstallConfig
+- `control-panel/src/lib/market/engine.ts` — fixed wantsInternet to also check internet.hosts; engine now respects config.allowInternet override
+- `control-panel/src/app/api/market/app/[appId]/connections/route.ts` — added needsInternet computed field to response
+- `control-panel/src/app/embed/market/client.tsx` — added "Allow Internet & LAN Access" toggle with GlobeIcon, pre-ticked from needsInternet
+- `control-panel/src/components/market/install-dialog.tsx` — added matching toggle to standalone dialog
+
+### Test Results
+- `GET /api/market/app/weather/connections` → needsInternet: true, hosts: [api.open-meteo.com, geocoding-api.open-meteo.com]
+- `GET /api/market/app/cinema/connections` → needsInternet: true, hosts: [api.themoviedb.org, image.tmdb.org]
+- Weather NAT manually enabled on yeapp3 → `curl api.open-meteo.com` succeeds
+- CP deployed and running on VM, api/ping OK
+
+### Notes for Iris
+- Native app manifests also updated in their own repos (all 6 apps: network: internet added to containers)
+- Cinema manifest: removed installParams.tmdbApiKey — app should handle API key internally
+- Existing installed apps need NAT manually enabled if they were installed before this fix
+
+## v0.3.5.17 (CP) + v0.3.5.7 (UI) — sebastian — 2026-04-25
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Discovery API — resolve container IPs for bridge targets
+
+### Changes
+- `control-panel/src/app/api/bridges/resolve/route.ts` — NEW: resolves app's primary container IP+port from install metadata + Incus
+- `ui/src/app/api/v1/my-connections/route.ts` — REWRITE: calls CP bridge resolve endpoint for actual IPs instead of DNS names
+- `ui/src/middleware.ts` — Added /api/v1/my-connections to PUBLIC_ROUTES
+- `control-panel/package.json` — Bumped to 0.3.5.17
+- `ui/package.json` — Bumped to 0.3.5.7
+
+### Test Results
+- API: /api/bridges/resolve?appId=searxng → returns container IP 10.76.2.241 + port 8080
+- API: /api/v1/my-connections with X-YouEye-App: search → returns SearXNG with resolved IP
+- E2E: Search UI returns "hello world" results from SearXNG (screenshot verified)
+
+### Notes for Iris
+- First UI release in this session — UI was previously at v0.3.5.6
+- Both CP and UI must be deployed together for bridge discovery to work
+- No database migrations required
+- No Spine changes
+
+---
+
+## v0.3.5.16 (CP) — sebastian — 2026-04-25
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Install-time connection prompts for app bridge system
+
+### Changes
+- `control-panel/src/lib/market/types.ts` — Added ApprovedConnection type + approvedConnections to InstallConfig
+- `control-panel/src/lib/market/engine.ts` — New step 12: process approved connections, create+activate bridges inline
+- `control-panel/src/lib/bridges/suggestions.ts` — Skip already-approved targets in suggestion generation
+- `control-panel/src/app/api/market/app/[appId]/connections/route.ts` — NEW: returns outgoing/incoming wants + internet requirements
+- `control-panel/src/app/api/suggestions/approve/route.ts` — NEW: creates bridge from suggestion + activates
+- `control-panel/src/app/api/suggestions/[id]/dismiss/route.ts` — NEW: dismiss suggestion endpoint
+- `control-panel/src/app/api/suggestions/route.ts` — Added approve action
+- `control-panel/src/app/api/ui-bridge/market/route.ts` — Added connections proxy action
+- `control-panel/src/app/embed/market/client.tsx` — Connection toggles in embedded install dialog
+- `control-panel/src/components/market/install-dialog.tsx` — Connection toggles in standalone install dialog
+- `control-panel/src/middleware.ts` — Added /api/market/app to public routes
+- `ui/src/components/settings/app-settings-detail.tsx` — Pending suggestions with approve/dismiss in Network tab
+
+### Test Results
+- API: connections endpoint returns correct outgoing/incoming for Search and SearXNG
+- API: suggestion approval creates and activates bridge (search-to-searxng)
+- Network: Search container has NIC on SearXNG's bridge, HTTP 200 from SearXNG
+
+### Notes for Iris
+- UI component changed (app-settings-detail.tsx) — needs UI rebuild for Network tab suggestions
+- No database migrations required
+- No Spine changes in this release
+
+## v0.3.5.14 (CP) + v0.3.1.1 (Spine) — sebastian — 2026-04-25
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Static IP assignment for all system containers
+
+### Changes
+- `spine/internal/incus/static_ips.go` — NEW: subnet detection, DHCP range restriction, static IP device override
+- `spine/internal/incus/install.go` — configure DHCP ranges after Incus init
+- `spine/internal/container/control.go` — init → set static IP → start (not launch)
+- `spine/internal/container/ui.go` — same init → static IP → start pattern
+- `spine/internal/cmd/root.go` — version bump to 0.3.1.1
+- `control-panel/src/lib/incus/static-ips.ts` — NEW: mirrors Spine logic via Incus REST API
+- `control-panel/src/lib/incus/container-ip.ts` — fast path returns static IP for system containers
+- `control-panel/src/lib/infrastructure/deployer.ts` — Caddyfile templates use static IPs instead of DNS names
+- `control-panel/src/lib/infrastructure/oci-deployer.ts` — apply static IP before container start
+- `control-panel/src/lib/infrastructure/lxd-deployer.ts` — apply static IP before container start
+- `control-panel/src/lib/incus/app-network.ts` — use static IPs for proxy device targets
+- `control-panel/src/app/api/admin/migrate-networks/route.ts` — DELETED (not needed for fresh installs)
+- `control-panel/src/lib/market/types.ts` — usePerAppBridge marked deprecated
+- `control-panel/package.json` — version bump to 0.3.5.14
+
+### Test Results
+- All 7 system containers verified at correct static IPs (.10-.16)
+- 15 containers running, 0 stopped
+- Platform healthy: `curl -sk https://devvm.test/api/ping` → `{"status":"ok"}`
+
+### Notes for Iris
+- Spine + CP cross-component change — both releases required
+- No backwards compatibility — designed for fresh install
+- Static IPs are offsets from dynamic incusbr0 subnet base (auto-detected)
+
+## v0.3.5.13 (CP) — sebastian — 2026-04-25
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Post-migration cleanup — remove legacy ACL system, connector debris, fix metadata gap
+
+### Changes
+- `control-panel/src/lib/incus/network-acl.ts` — DELETED (829 lines of legacy ACL code)
+- `control-panel/src/lib/incus/app-network.ts` — added SYSTEM_APP_IDS export (moved from deleted network-acl.ts)
+- `control-panel/src/lib/bridges/manager.ts` — removed legacy ACL branches from activate/deactivate/delete
+- `control-panel/src/lib/market/engine.ts` — removed legacy ACL else block and imports
+- `control-panel/src/lib/market/uninstaller.ts` — removed legacy ACL cleanup branch
+- `control-panel/src/app/api/internet-grants/route.ts` — removed legacy ACL grant path
+- `control-panel/src/app/api/internet-grants/[id]/route.ts` — removed legacy ACL revoke path
+- `control-panel/src/app/api/bridges/route.ts` — updated SYSTEM_APP_IDS import to app-network
+- `control-panel/src/app/api/admin/migrate-networks/route.ts` — added fixMetadataOnly mode
+- `control-panel/src/lib/caddy/client.ts` — addAppRoutes now resolves container IPs for per-app bridge apps
+- `connector-runtime/` — DELETED (entire abandoned package)
+- `ui/tests/connector-settings.spec.ts` — DELETED
+- `ui/tests/connector-runtime.spec.ts` — DELETED
+- `pnpm-workspace.yaml` — removed connector-runtime
+
+### Test Results
+- 15 containers running, 0 stopped
+- All 7 apps verified responding (HTTP 307)
+- Metadata fix verified: all apps have usePerAppBridge=true + bridgeName
+- Bridge and internet-grant records cleaned of stale aclName references
+
+### Notes for Iris
+- 27 files changed, 143 insertions, 2499 deletions
+- network-acl.ts is gone — any code importing from it will fail
+- SYSTEM_APP_IDS now lives in app-network.ts
+- The ye-system ACL for system containers is still in Incus (managed by Spine, not CP)
+- Connector-runtime removed from workspace — pnpm install will be faster
+
+## v0.3.5.12 (CP) — sebastian — 2026-04-24
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Per-App Bridge Network Architecture — replace ACL isolation with Docker-style bridge networking
+
+### Changes
+- `control-panel/src/lib/incus/app-network.ts` — NEW: Core module for per-app bridge networking. Bridge lifecycle (create/delete with retry), subnet allocation (10.76.{N}.0/24), proxy devices for system services (postgres/authentik/UI), Caddy NIC hot-plug, cross-app NIC permissions (grant/revoke), NAT control, container migration, query helpers.
+- `control-panel/src/lib/market/engine.ts` — Create per-app bridge before container deploy. NAT enabled during install, disabled post-install for no-internet apps. Caddy route uses container IP instead of DNS name. Legacy ACL fallback preserved.
+- `control-panel/src/lib/market/platform-env.ts` — Proxy device mode: db_host=localhost, gateway=localhost:3001 when using per-app bridges.
+- `control-panel/src/lib/infrastructure/oci-deployer.ts` — Accept custom NIC devices for bridge attachment at container creation.
+- `control-panel/src/lib/infrastructure/lxd-deployer.ts` — Accept custom NIC devices for bridge attachment at container creation.
+- `control-panel/src/lib/market/uninstaller.ts` — Clean up per-app bridge on uninstall (remove Caddy NIC, delete bridge with retry verification).
+- `control-panel/src/lib/market/types.ts` — Added `usePerAppBridge` field to InstallMetadata.
+- `control-panel/src/lib/bridges/manager.ts` — Bridge permissions use NIC hot-plug for per-app bridge apps, ACL rules for legacy. resolveBridgeMappings uses IP instead of DNS for internal host refs.
+- `control-panel/src/app/api/admin/migrate-networks/route.ts` — NEW: Migration endpoint to move existing apps from incusbr0 to per-app bridges.
+- `control-panel/src/app/api/internet-grants/route.ts` — Uses bridge NAT for per-app bridge apps instead of ACL rules.
+- `control-panel/src/app/api/internet-grants/[id]/route.ts` — Revoke uses bridge NAT disable for per-app bridge apps.
+
+### Test Results
+- Full install/uninstall cycle verified: bridge creation, container deployment, proxy devices, Caddy NIC, route with IP, NAT disable, bridge cleanup with retry
+- All 7 existing apps migrated from incusbr0 to per-app bridges via migration endpoint
+- All apps reachable via SSO (307 redirect) after migration
+- Multi-container app (searxng) correctly shares a single bridge
+
+### Notes for Iris
+- ACL system preserved as fallback — not deleted, just deprecated in favor of per-app bridges
+- All existing apps were migrated during development testing; production migration uses POST /api/admin/migrate-networks
+- Bridge naming: `yeapp{N}` (N=1-254, max 15 chars for Linux interface names)
+- Subnet range: 10.76.{N}.0/24 — registry at /var/lib/youeye/networks/subnets.json
+- Caddy routes now use container IP (not DNS) — DNS doesn't cross bridges
+- Internet access: NAT on bridge, not ACL rules. Enabled during install, disabled post-install unless manifest declares network:internet
+
+## v0.3.5.5 (CP) + v0.3.5.6 (UI) — sebastian — 2026-04-24
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** ACL fixes, connector purge, per-app settings consolidation
+
+### Changes
+- `control-panel/src/lib/incus/network-acl.ts` — Added youeye-ui:3000 ACL rule for all apps. Added ACL_VERSION system with refreshAllContainerAcls() for automatic migration. Blanket internet access for network:internet apps.
+- `control-panel/src/lib/market/engine.ts` — Switched to blanket internet grants. Store network mode in ContainerMeta.
+- `control-panel/src/lib/market/types.ts` — Added `network?: 'isolated' | 'internet'` to ContainerMeta.
+- `control-panel/src/lib/infrastructure/deployer.ts` — Removed connector container deployment (Step 9) and reconcile step. TOTAL_STEPS 9→8.
+- `control-panel/src/lib/infrastructure/manifests.ts` — Deleted connectorsContainerSpec() function.
+- `control-panel/src/app/api/setup/run/route.ts` — Removed connectors Caddy route from routeMap.
+- `ui/src/components/settings/app-settings-detail.tsx` — Complete rewrite with Overview/Permissions/Network/LinkHandling tabs. Removed all connector types.
+- `ui/src/app/settings/apps/client.tsx` — New file: app list client component for settings navigation.
+- `ui/src/app/settings/apps/page.tsx` — Server component wrapping AppsListClient.
+- `ui/src/app/settings/permissions/page.tsx` — Replaced with redirect to /settings/apps.
+- `ui/src/components/settings/settings-shell.tsx` — Removed permissions from admin sidebar.
+- `ui/src/db/index.ts` — Removed 5 connector tables.
+- `ui/src/middleware.ts` — Removed /api/v1/connectors from PUBLIC_ROUTES.
+- `ui/src/components/settings/accounts-settings.tsx` — Removed API key management section.
+
+### Test Results
+- ACL connectivity verified: wiki→youeye-ui:3000 OK, wiki→postgres:5432 OK, wiki→internet OK
+- Cross-app isolation verified for non-internet apps
+- Connector container deleted, Caddy route removed
+
+### Notes for Iris
+- Connector concept fully abandoned — all code/docs/plans removed
+- Internet apps have blanket egress (no cross-container isolation) — per-host restrictions planned for future
+- ACL_VERSION=2 auto-refreshes all app ACLs on first ensureNetworkAcls() call after update
+- /settings/permissions now redirects to /settings/apps
+
+---
+
+## v0.3.5.4 (CP) — sebastian — 2026-04-24
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Per-container ACL isolation — replace shared ye-app-isolated
+
+### Changes
+- `control-panel/src/lib/incus/network-acl.ts` — Rewrote ACL system: per-container ye-iso-{name} ACLs replace shared ye-app-isolated. New functions: createContainerAcl(), addBridgeRuleToAcl(), removeBridgeRuleFromAcl(), deleteContainerAcl(). Auto-migration on startup.
+- `control-panel/src/lib/market/engine.ts` — Moved ACL creation after container loop (need sibling IPs). All containers now get ACLs including network:internet ones.
+- `control-panel/src/lib/bridges/manager.ts` — Bridges add destination rules to existing ACLs. Added resolveContainerName() for multi-container apps. System container target validation.
+- `control-panel/src/lib/market/uninstaller.ts` — ACL + bridge cleanup on app uninstall.
+- `control-panel/src/lib/market/schema.ts` — WantSchema rejects system container IDs.
+- `control-panel/src/lib/market/types.ts` — InstallMetadata gains databaseMode, hasSSO fields.
+- `control-panel/src/app/api/bridges/route.ts` — API rejects system container bridge targets.
+- `control-panel/tests/acl-isolation.spec.ts` — 9 Playwright tests covering isolation, bridge validation, app health.
+
+### Test Results
+- Playwright: 9 tests, all passed
+- Live verification: cross-app traffic blocked, caddy/pihole allowed, sibling ACLs correct
+- All 8 app containers migrated, 16 running / 0 stopped
+
+### Notes for Iris
+- Migration runs automatically on first request — no manual steps needed
+- Old ye-app-isolated and ye-bridge-* ACLs are deleted during migration
+- Pre-existing searxng-to-redis bridge has a known issue: "redis" is an intra-app container, not a separate app. Bridge detection creates false bridges for intra-app refs. The sibling ACL rules handle connectivity — this is a pre-existing bug, not introduced here.
+
+---
+
+## v0.3.5.4 (UI) / v0.3.5.2 (CP) — sebastian — 2026-04-23
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Replace connector system with permissions-based networking
+
+### Changes
+- Stripped ~60 connector files across CP and UI (routes, components, DB tables, i18n keys)
+- `control-panel/src/lib/market/schema.ts` — Added WantSchema and InternetSchema to manifest
+- `control-panel/src/lib/incus/network-acl.ts` — Added grantInternetAccess(), revokeInternetAccess()
+- `control-panel/src/lib/bridges/internet-store.ts` — NEW: JSON store for internet grants
+- `control-panel/src/lib/bridges/suggestions.ts` — NEW: suggestions engine (scan wants vs installed)
+- `control-panel/src/app/api/internet-grants/` — NEW: GET/POST/DELETE internet grant endpoints
+- `control-panel/src/app/api/suggestions/` — NEW: GET/POST suggestions endpoints
+- `ui/src/app/api/v1/my-connections/route.ts` — NEW: discovery API for apps
+- `ui/src/app/api/v1/request-bridge/route.ts` — NEW: bridge request API
+- `ui/src/app/api/v1/admin/proxy-cp/route.ts` — NEW: admin CP proxy for client-side calls
+- `ui/src/app/settings/permissions/` — NEW: admin Permissions settings page
+- `ui/src/components/settings/settings-shell.tsx` — Added "Permissions" nav entry
+- `ui/messages/{en,ru,de,fr,es}.json` — Added permissions i18n keys
+- All 6 native app youeye-app.yaml — Added wants + internet declarations
+- All 6 native apps — Stripped connector client code
+- YouEye-Canvas — Replaced connectors module with connections module
+- YE-AppMarket — Removed connector-catalog.yaml and connectors/ directory
+
+### Test Results
+- Dashboard loads after deploy (verified)
+- Permissions admin page renders correctly with sidebar nav
+- Login flow works via Authentik SSO
+
+### Notes for Iris
+- This is a large architectural change — review the permissions page carefully
+- The discovery API (/api/v1/my-connections) is new and untested with real bridges
+- Native apps had connector code stripped but don't yet use the new connections helpers (they're legacy pre-Canvas apps)
+- The youeye-connectors container was recreated by Spine reconciliation — it's now unused but harmless
+
+## v0.3.5.3 — sebastian — 2026-04-23
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix SearXNG availability + implement Link Handling tab
+
+### Changes
+- `ui/src/app/api/settings/connectors/[appId]/route.ts` — Extract `info_cards` with triggers from app manifest, return as `linkHandlers` in API response
+- `ui/src/components/settings/app-settings-detail.tsx` — Replace Link Handling placeholder with real implementation: displays link handler types, trigger domain patterns, descriptions
+- `ui/messages/{en,ru,de,fr,es}.json` — i18n keys for link handling (linkHandlingActive, linkHandlingDomains, linkHandlingExplanation)
+- `ui/package.json` — Version bump 0.3.5.2 → 0.3.5.3
+- VM env: `APPMARKET_BRANCH=sebastian` set in youeye-ui container (fixes connector manifest fetch)
+
+### Test Results
+- Cinema Link Handling: Shows "Movie Info" with imdb.com, themoviedb.org domains
+- Wiki Link Handling: Shows "Article Summary" with *.wikipedia.org/* pattern
+- SearXNG: Now shows as available with "Internal" badge + green checkmark
+- Whoogle: Correctly shows "not installed" in amber
+- Apps without link handlers (Notes, Weather, Translate, Search): Show empty state
+
+### Notes for Iris
+- The `APPMARKET_BRANCH` env var must be set on any VM running the sebastian branch. Without it, UI defaults to `main` which may lack connector manifest updates (e.g. compatibleApps field).
+- Link handlers are read-only in this release — the plan's Session C will add management (enable/disable, conflict resolution, SmartLink component).
+
+## v0.3.5.2 — sebastian — 2026-04-23
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Connector improvements — availability logic, dual mode, logos, admin defaults
+
+### Changes
+- `ui/src/app/api/settings/connectors/[appId]/route.ts` — Full rewrite: availability flag based on network type + installed backends + custom URL; connector logos from Gitea; admin default annotations; test-connection and update-config actions
+- `ui/src/lib/connectors/logos.ts` — NEW: Utility to build Gitea raw URLs for connector logo SVGs
+- `ui/src/components/settings/connector-detail.tsx` — Rewritten CapabilityRow with: availability filtering, connector logos (ConnectorLogo component), DualModePicker (internal/external radio, URL input, test connection), default badges, unavailable warnings, exported for reuse
+- `ui/src/components/settings/app-settings-detail.tsx` — Replaced inline DataSourcesTab with imported CapabilityRow from connector-detail; removed 270+ lines of orphaned old code; updated types for new API fields
+- `ui/src/db/schema.ts` — Added `connectorDefaults` table (capability PK, connectorId, shared key encryption fields, setBy, setAt)
+- `ui/src/db/index.ts` — Added CREATE TABLE IF NOT EXISTS for connector_defaults in ensureSchema()
+- `ui/src/app/api/settings/admin/connector-defaults/route.ts` — NEW: Admin-only API for GET/POST/DELETE connector defaults per capability
+- `ui/src/components/settings/connector-defaults-admin.tsx` — NEW: Admin UI for managing system-wide connector defaults
+- `ui/src/app/settings/connector-defaults/page.tsx` — NEW: Admin settings page route
+- `ui/src/components/settings/settings-shell.tsx` — Added "Connector Defaults" to admin sidebar
+- `ui/messages/{en,ru,de,fr,es}.json` — i18n keys for connector availability, dual mode, logos, defaults
+- `ui/src/app/not-found.tsx` — NEW: Custom 404 page (fixes React 19 + styled-jsx SSG build error)
+- `ui/src/pages/_error.tsx` — NEW: Custom error page (fixes pre-existing build failure)
+
+### Test Results
+- Browser: Settings > Apps shows all apps with connection counts
+- Search app: SearXNG shows red "Backend unavailable" (local connector, app not installed)
+- Cinema app: TMDB shows "External" badge with credential entry + "Manage in Accounts" link
+- Connector Defaults page: All 7 capabilities listed with dropdown selectors
+- Admin sidebar: "Connector Defaults" entry appears and highlights correctly
+
+### Notes for Iris
+- This is Session B of the info-cards-and-connectors plan. Sessions C-F remain (link rewrites, auth providers, UI components, network isolation).
+- New `connector_defaults` DB table auto-created by ensureSchema() — no migration needed
+- Availability logic: `available = network === "internet" || hasInstalledBackend || hasCustomUrl`
+- DualModePicker only shown for connectors with `hasCompatibleApps` — internet-only connectors connect directly
+- No changes to CP or Spine — UI-only release
+
+## v0.3.5.1 — sebastian — 2026-04-23
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Settings restructure — rename Connectors → Apps, add Accounts page, per-app tabbed settings
+
+### Changes
+- `ui/src/components/settings/settings-shell.tsx` — Sidebar: "Connectors" replaced with "Apps" + "Accounts"; admin "Apps" renamed to "App Management"
+- `ui/src/components/settings/app-settings-detail.tsx` — NEW: Per-app settings page with 3 tabs (Data Sources, Link Handling, Permissions)
+- `ui/src/components/settings/accounts-settings.tsx` — NEW: Centralized Connected Accounts + API Keys page
+- `ui/src/app/settings/apps/page.tsx` — NEW: Apps list route (replaces connectors)
+- `ui/src/app/settings/apps/[appId]/page.tsx` — NEW: Per-app detail route with tabbed interface
+- `ui/src/app/settings/accounts/page.tsx` — NEW: Accounts settings route
+- `ui/src/app/api/settings/accounts/route.ts` — NEW: Aggregate API for OAuth accounts + API keys
+- `ui/src/app/api/auth/providers/[slug]/disconnect/route.ts` — NEW: OAuth disconnect endpoint
+- `ui/src/app/settings/connectors/page.tsx` — Redirect to `/settings/apps`
+- `ui/src/app/settings/connectors/[appId]/page.tsx` — Redirect to `/settings/apps/[appId]`
+- `ui/messages/{en,ru,de,fr,es}.json` — i18n for Apps, Accounts, App Management, tabs, empty states
+
+### Test Results
+- Browser: Sidebar shows Apps/Accounts correctly, redirect works, app list shows all 7 apps
+- Per-app detail: 3 tabs render, Data Sources shows capabilities, Link Handling shows placeholder, Permissions fetches state
+- Accounts page: Connected Accounts and API Keys sections render with empty states
+- Playwright: 14 tests written (`tests/settings-apps.spec.ts`), CDP-connected to persistent browser
+
+### Notes for Iris
+- This is Session A of the info-cards-and-connectors plan. Link Handling tab is placeholder (Session C). Accounts OAuth flow needs auth providers configured (Session D).
+- Old `/settings/connectors` URLs redirect to `/settings/apps` — no breaking change for bookmarks
+- No changes to CP or Spine — UI-only release
+
+## v0.3.3.4 — sebastian — 2026-04-22
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Correct connector system to per-app model with Internal/External badges and auto-wire
+
+### Changes
+- `ui/src/app/api/settings/connectors/route.ts` — Reverted to per-app response format (`{apps, connectors}`)
+- `ui/src/components/settings/connector-app-list.tsx` — Reverted to per-app list with connection status
+- `ui/src/components/settings/connector-detail.tsx` — Added Internal/External badges (green=local, blue=internet), backend discovery showing installed app names, install hints for admins
+- `ui/src/app/api/settings/connectors/[appId]/route.ts` — Added backend discovery for local connectors
+- `ui/src/lib/db/queries/connectors.ts` — Removed auto-select; auto-wire only resolves baseUrl after user selects a connector
+- `ui/src/lib/connectors/schema.ts` — Removed redundant `source` field
+- `control-panel/src/lib/connectors/schema.ts` — Removed redundant `source` field
+- `ui/messages/en.json` — Added `installAvailable`, removed orphaned capability-centric i18n strings
+- Deleted `capability-detail.tsx`, `capability/[capability]/page.tsx`, `capability/[capability]/route.ts` (wrong capability-centric model)
+
+### Test Results
+- Browser: per-app list shows Wiki, Search, Cinema, Weather with correct connection counts
+- Detail view: Internal/External badges render correctly, backend names shown for local connectors
+
+### Notes for Iris
+- This is a design correction — the previous v0.3.3.3 had a capability-centric UI which was wrong
+- AppMarket manifests also updated (separate commit) to remove `source` field
+- YE-App-Search `provides` block restored (separate commit)
+
+## v0.3.3.3 — sebastian — 2026-04-22
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Connector system enhancement — source tags, auto-wiring, service registry, capability-centric UI
+
+### Changes
+
+#### Phase 1-3: Manifest Schema + Proxy + CP Engine
+- `YE-AppMarket/connectors/*.yaml` — Added `source: internal|external|both` and `compatibleApps` to all 16 connector manifests; replaced hardcoded container URLs with `${baseUrl}` template variable in SearXNG/Whoogle
+- `control-panel/src/lib/connectors/schema.ts` — Added `CompatibleAppSchema`, `source`, `compatibleApps` to Zod schema
+- `control-panel/src/lib/connectors/proxy.ts` — Added `baseUrl` template variable resolution
+- `control-panel/src/lib/market/engine-connectors.ts` — Full rewrite: removed hardcoded `CONNECTOR_APP_MAP`, replaced with dynamic `compatibleApps` lookup from manifests
+
+#### Phase 4: UI Discovery + Auto-Wire
+- `ui/src/lib/connectors/schema.ts` — Mirrored CP schema additions
+- `ui/src/lib/db/queries/connectors.ts` — Added `discoverBackends()`, `discoverBackendsByCapability()`, `tryAutoWire()` with two rules (internal+1 backend, external+auth:none); updated `resolveConnector()` return type with `autoWired`, `source`, `baseUrl`
+- `ui/src/app/api/v1/connectors/backends/route.ts` — New backend discovery endpoint
+- `ui/src/app/api/v1/connectors/resolve/route.ts` — Returns `auto-connected` status
+
+#### Phase 5: Capability-Centric UI
+- `ui/src/app/api/settings/connectors/route.ts` — Full rewrite: returns capability groups with source tags, backend discovery, auto-wire status
+- `ui/src/app/api/settings/connectors/capability/[capability]/route.ts` — New per-capability detail API with connect/disconnect
+- `ui/src/components/settings/connector-app-list.tsx` — Full rewrite: capability list with active connector, auto-wire badges, backend counts
+- `ui/src/components/settings/capability-detail.tsx` — New component: Internal/External sections, radio picker, credential entry, install hints
+- `ui/src/app/settings/connectors/capability/[capability]/page.tsx` — New capability detail page
+- `ui/messages/en.json` — Added 12 i18n strings for Internal/External/auto-connected UI
+
+#### Phase 6: Cleanup
+- `ui/src/lib/db/queries/connectors.ts` — Removed unused `fetchConnectorsByCapability()`
+
+### Test Results
+- Build: passes (next build)
+- Browser: connector list shows all capabilities with source indicators
+- Search Engine detail: SearXNG auto-wired as Internal, Whoogle available with install hint
+- Weather Data detail: Open-Meteo auto-wired as External
+- Screenshots: phase5-connectors-list.png, phase5-search-detail.png, phase5-weather-detail.png
+
+### Notes for Iris
+- New route `/settings/connectors/capability/[capability]` — add to nav if needed
+- Old per-app routes (`/settings/connectors/[appId]`) still work for backward compat
+- AppMarket manifests now require `source` field (defaults to "external" if missing)
+- Auto-wire is transparent — no DB rows created, resolved at query time
+
+---
+
+## v0.3.3.1 — sebastian — 2026-04-22
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Full connector system overhaul — unified permission model, auth providers, runtime, UI components, 9 new connectors
+
+### Changes
+- `ui/src/db/schema.ts` — added auth_providers and user_auth_tokens tables, auth_provider_id column
+- `ui/src/db/index.ts` — auto-migration for new tables
+- `ui/src/lib/db/queries/auth-providers.ts` — NEW: complete auth provider CRUD, OAuth2 token management, refresh, propagation
+- `ui/src/lib/db/queries/connectors.ts` — removed app_permissions check (selecting connector = permission)
+- `ui/src/lib/connectors/runtime/server.mjs` — fixed script transform, added asset serving, protocols endpoint, CSP
+- `ui/src/lib/connectors/postmessage-bridge.ts` — NEW: ConnectorBridge class for iframe communication
+- `ui/src/lib/connectors/use-connector-bridge.ts` — NEW: React hook for connector UI bridge
+- `ui/src/lib/connectors/schema.ts` — added url config field type
+- `ui/src/app/api/auth/providers/[slug]/route.ts` — NEW: OAuth2 flow initiation
+- `ui/src/app/api/auth/providers/[slug]/callback/route.ts` — NEW: OAuth2 callback + token storage
+- `ui/src/app/api/settings/auth-providers/route.ts` — NEW: admin provider management
+- `ui/src/app/api/settings/connectors/[appId]/route.ts` — enhanced with provider status
+- `ui/src/app/api/v1/connectors/list/route.ts` — added UI and managed field info
+- `ui/src/app/api/v1/connectors/proxy/route.ts` — enhanced with auto-refresh from auth providers
+- `ui/src/components/settings/connector-detail.tsx` — OAuth sign-in buttons for managed creds
+- `ui/messages/en.json` — new translation keys
+
+### Test Results
+- Wikipedia proxy chain: resolve → proxy → search = 20 results ✓
+- Connector list API: 15 connectors with correct capabilities ✓
+- Asset serving via connectors.devvm.test ✓
+- Settings connect/disconnect flow ✓
+
+### Notes for Iris
+- DB migration automatic via ensureSchema() — no manual steps needed
+- Dev VMs need APPMARKET_BRANCH=sebastian in UI .env (remove on merge)
+- No UI version bump — bump when merging to dev
+- Caddy route connectors.devvm.test must point to youeye-connectors container
 
 ## v0.3.4.7 — andrew — 2026-04-21
 **Branch:** andrew

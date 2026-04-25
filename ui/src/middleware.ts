@@ -24,7 +24,7 @@ const PUBLIC_ROUTES = [
   "/api/market/image",
   "/api/v1/onboarding",
   "/api/v1/notifications",  // Auth handled at route level (session, bridge token, app-slug)
-  "/api/v1/connectors",
+  "/api/v1/my-connections", // App discovery API — auth via X-YouEye-App header
 ];
 
 /** Static resource patterns to skip */

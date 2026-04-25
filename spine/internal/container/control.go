@@ -91,50 +91,62 @@ func DeployControlPanel(cfg *config.Config) error {
 }
 
 // createContainer creates the container with appropriate security settings.
+// Uses `incus init` (not `launch`) so we can set a static IP before starting.
 // ZFS storage uses unprivileged containers (more secure).
 // Dir storage may need privileged fallback in LXC environments.
 func createContainer(containerName string) error {
 	util.LogStep(1, 7, "Creating container...")
-	
+
 	// First, detect current storage driver
 	storageDriver := detectStorageDriver()
 	util.LogDebug(fmt.Sprintf("Storage driver detected: %s", storageDriver))
-	
-	// Try unprivileged first (preferred)
-	cmdOut, err := util.RunCmdCapture("incus", "launch", "images:debian/12", containerName,
+
+	// Try unprivileged first (preferred) — init only, don't start yet
+	cmdOut, err := util.RunCmdCapture("incus", "init", "images:debian/12", containerName,
 		"-c", "security.privileged=false",
 		"-c", "security.nesting=true")
-	
+
 	if err != nil {
 		// Check if idmap error (only fallback to privileged if using dir driver)
 		if storageDriver == "dir" && (strings.Contains(cmdOut, "idmapped") || strings.Contains(cmdOut, "Failed to change ownership")) {
 			util.LogDebug("Unprivileged failed with idmap error, trying privileged (dir driver)")
-			
+
 			// Clean up failed container
 			exec.Command("incus", "delete", containerName, "--force").Run()
-			
+
 			// Try privileged as fallback
-			cmdOut2, err2 := util.RunCmdCapture("incus", "launch", "images:debian/12", containerName,
+			cmdOut2, err2 := util.RunCmdCapture("incus", "init", "images:debian/12", containerName,
 				"-c", "security.privileged=true",
 				"-c", "security.nesting=true")
-			
+
 			if err2 != nil {
 				util.LogError(fmt.Sprintf("Failed to create privileged container: %s", strings.TrimSpace(cmdOut2)))
 				return fmt.Errorf("failed to create container: %w", err2)
 			}
-			
+
 			util.LogSuccess(fmt.Sprintf("Container '%s' created (privileged fallback)", containerName))
 			util.LogDebug("Note: Privileged container used due to idmapped storage limitation")
 			util.LogDebug("Consider deploying on a system with ZFS for better security")
-			incus.StorageDriver = "dir-privileged"  // Track that we needed privileged
-			return nil
+			incus.StorageDriver = "dir-privileged" // Track that we needed privileged
+		} else {
+			util.LogError(fmt.Sprintf("Failed to create container: %s", strings.TrimSpace(cmdOut)))
+			return fmt.Errorf("failed to create container: %w", err)
 		}
-		
-		util.LogError(fmt.Sprintf("Failed to create container: %s", strings.TrimSpace(cmdOut)))
-		return fmt.Errorf("failed to create container: %w", err)
+	} else {
+		util.LogSuccess(fmt.Sprintf("Container '%s' created (unprivileged)", containerName))
 	}
-	
-	util.LogSuccess(fmt.Sprintf("Container '%s' created (unprivileged)", containerName))
+
+	// Set static IP before starting so the container gets the right IP on first DHCP
+	if err := incus.SetContainerStaticIP(containerName); err != nil {
+		util.LogDebug(fmt.Sprintf("Warning: could not set static IP: %v", err))
+	}
+
+	// Now start the container
+	util.LogDebug("Starting container...")
+	if _, startErr := util.RunCmdCapture("incus", "start", containerName); startErr != nil {
+		return fmt.Errorf("failed to start container %s: %w", containerName, startErr)
+	}
+
 	return nil
 }
 

@@ -6,6 +6,7 @@
  * GET  ?action=updates          — apps with available updates
  * GET  ?action=installed-versions — installed app versions
  * GET  ?action=install-progress — active install progress (events, done)
+ * GET  ?action=connections&app=ID — connection requirements for an app
  * POST ?action=install          — start install (SSE stream)
  * POST ?action=uninstall        — remove app
  * POST ?action=refresh-catalog  — refresh catalog and check for updates
@@ -89,6 +90,20 @@ export async function GET(request: NextRequest) {
       }
       const installs = getAllActiveInstalls();
       return NextResponse.json({ installs });
+    }
+
+    if (action === 'connections') {
+      const appId = request.nextUrl.searchParams.get('app');
+      if (!appId) {
+        return NextResponse.json({ error: 'app parameter required' }, { status: 400 });
+      }
+      // Proxy to the connections endpoint
+      const connRes = await fetch(`http://localhost:3000/api/market/app/${encodeURIComponent(appId)}/connections`);
+      if (!connRes.ok) {
+        const err = await connRes.json().catch(() => ({ error: 'Failed to fetch connections' }));
+        return NextResponse.json(err, { status: connRes.status });
+      }
+      return NextResponse.json(await connRes.json());
     }
 
     // Default: catalog
