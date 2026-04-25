@@ -1,3 +1,35 @@
+## v0.3.5.14 (CP) + v0.3.1.1 (Spine) — sebastian — 2026-04-25
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Static IP assignment for all system containers
+
+### Changes
+- `spine/internal/incus/static_ips.go` — NEW: subnet detection, DHCP range restriction, static IP device override
+- `spine/internal/incus/install.go` — configure DHCP ranges after Incus init
+- `spine/internal/container/control.go` — init → set static IP → start (not launch)
+- `spine/internal/container/ui.go` — same init → static IP → start pattern
+- `spine/internal/cmd/root.go` — version bump to 0.3.1.1
+- `control-panel/src/lib/incus/static-ips.ts` — NEW: mirrors Spine logic via Incus REST API
+- `control-panel/src/lib/incus/container-ip.ts` — fast path returns static IP for system containers
+- `control-panel/src/lib/infrastructure/deployer.ts` — Caddyfile templates use static IPs instead of DNS names
+- `control-panel/src/lib/infrastructure/oci-deployer.ts` — apply static IP before container start
+- `control-panel/src/lib/infrastructure/lxd-deployer.ts` — apply static IP before container start
+- `control-panel/src/lib/incus/app-network.ts` — use static IPs for proxy device targets
+- `control-panel/src/app/api/admin/migrate-networks/route.ts` — DELETED (not needed for fresh installs)
+- `control-panel/src/lib/market/types.ts` — usePerAppBridge marked deprecated
+- `control-panel/package.json` — version bump to 0.3.5.14
+
+### Test Results
+- All 7 system containers verified at correct static IPs (.10-.16)
+- 15 containers running, 0 stopped
+- Platform healthy: `curl -sk https://devvm.test/api/ping` → `{"status":"ok"}`
+
+### Notes for Iris
+- Spine + CP cross-component change — both releases required
+- No backwards compatibility — designed for fresh install
+- Static IPs are offsets from dynamic incusbr0 subnet base (auto-detected)
+
 ## v0.3.5.13 (CP) — sebastian — 2026-04-25
 **Branch:** sebastian
 **VM:** ye-sebastian
