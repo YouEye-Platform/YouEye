@@ -1,3 +1,29 @@
+## v0.3.5.17 (CP) + v0.3.5.7 (UI) — sebastian — 2026-04-25
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Discovery API — resolve container IPs for bridge targets
+
+### Changes
+- `control-panel/src/app/api/bridges/resolve/route.ts` — NEW: resolves app's primary container IP+port from install metadata + Incus
+- `ui/src/app/api/v1/my-connections/route.ts` — REWRITE: calls CP bridge resolve endpoint for actual IPs instead of DNS names
+- `ui/src/middleware.ts` — Added /api/v1/my-connections to PUBLIC_ROUTES
+- `control-panel/package.json` — Bumped to 0.3.5.17
+- `ui/package.json` — Bumped to 0.3.5.7
+
+### Test Results
+- API: /api/bridges/resolve?appId=searxng → returns container IP 10.76.2.241 + port 8080
+- API: /api/v1/my-connections with X-YouEye-App: search → returns SearXNG with resolved IP
+- E2E: Search UI returns "hello world" results from SearXNG (screenshot verified)
+
+### Notes for Iris
+- First UI release in this session — UI was previously at v0.3.5.6
+- Both CP and UI must be deployed together for bridge discovery to work
+- No database migrations required
+- No Spine changes
+
+---
+
 ## v0.3.5.16 (CP) — sebastian — 2026-04-25
 **Branch:** sebastian
 **VM:** ye-sebastian
