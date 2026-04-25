@@ -108,6 +108,18 @@ export interface TLSAutomationPolicy {
   issuers?: Array<{
     module: string;
   }>;
+  certificate_selection?: {
+    any_tag?: string[];
+  };
+}
+
+/**
+ * PEM-loaded certificate for Caddy's tls.certificates.load_pem
+ */
+export interface LoadPemEntry {
+  certificate: string;
+  key: string;
+  tags: string[];
 }
 
 /**
@@ -142,6 +154,7 @@ export interface CaddyApps {
     };
     certificates?: {
       automate?: string[];
+      load_pem?: LoadPemEntry[];
     };
   };
 }

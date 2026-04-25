@@ -78,6 +78,7 @@
       "containers": "Contenedores",
       "dns": "DNS",
       "proxy": "Proxy",
+      "tls": "TLS",
       "apps": "Apps",
       "appMarket": "Tienda de apps"
     },

@@ -1263,6 +1263,117 @@ export async function setDomain(domain: string): Promise<void> {
   await setConfig(config);
 }
 
+// ─── External Certificate Loading ────────────────────────
+
+/**
+ * Load an external PEM certificate into Caddy and configure
+ * TLS automation to use it for the specified subjects.
+ *
+ * The cert is loaded via Caddy's `tls.certificates.load_pem` module
+ * and tagged so the automation policy selects it by tag.
+ * A fallback on_demand internal CA policy is preserved for
+ * IP-based access and uncovered hostnames.
+ */
+export async function loadExternalCert(
+  certPem: string,
+  keyPem: string,
+  subjects: string[],
+): Promise<void> {
+  const config = await getConfig();
+
+  if (!config.apps) config.apps = {};
+  if (!config.apps.tls) config.apps.tls = {};
+
+  // Load PEM cert with tag
+  config.apps.tls.certificates = {
+    ...config.apps.tls.certificates,
+    load_pem: [
+      {
+        certificate: certPem,
+        key: keyPem,
+        tags: ['external'],
+      },
+    ],
+  };
+
+  // Update automation policies:
+  // 1. Tagged policy for our subjects (uses the loaded cert)
+  // 2. Fallback on_demand internal CA for everything else
+  if (!config.apps.tls.automation) config.apps.tls.automation = {};
+
+  const filteredPolicies = (config.apps.tls.automation.policies || []).filter(
+    (p) => !p.certificate_selection?.any_tag?.includes('external'),
+  );
+
+  // Keep on_demand fallback, remove old subject-based internal policies for these subjects
+  const otherPolicies = filteredPolicies.filter((p) => {
+    if (p.on_demand) return true;
+    // Keep policies whose subjects don't overlap with ours
+    if (p.subjects?.length) {
+      const remaining = p.subjects.filter((s) => !subjects.includes(s));
+      if (remaining.length === 0) return false;
+      p.subjects = remaining;
+      return true;
+    }
+    return true;
+  });
+
+  // Ensure on_demand fallback exists
+  const hasOnDemand = otherPolicies.some((p) => p.on_demand && !p.subjects?.length);
+  if (!hasOnDemand) {
+    otherPolicies.push({
+      on_demand: true,
+      issuers: [{ module: 'internal' }],
+    });
+  }
+
+  config.apps.tls.automation.policies = [
+    {
+      subjects,
+      certificate_selection: { any_tag: ['external'] },
+    },
+    ...otherPolicies,
+  ];
+
+  await setConfig(config);
+  console.log(`[Caddy] External cert loaded for: ${subjects.join(', ')}`);
+}
+
+/**
+ * Remove external certificate and revert to internal CA for all subjects.
+ */
+export async function removeExternalCert(): Promise<void> {
+  const config = await getConfig();
+
+  if (!config.apps?.tls) return;
+
+  // Remove load_pem entries
+  if (config.apps.tls.certificates) {
+    delete config.apps.tls.certificates.load_pem;
+  }
+
+  // Remove policies with external tag selection
+  if (config.apps.tls.automation?.policies) {
+    config.apps.tls.automation.policies = config.apps.tls.automation.policies.filter(
+      (p) => !p.certificate_selection?.any_tag?.includes('external'),
+    );
+
+    // Ensure at least an on_demand fallback remains
+    const hasOnDemand = config.apps.tls.automation.policies.some(
+      (p) => p.on_demand && !p.subjects?.length,
+    );
+    if (!hasOnDemand) {
+      config.apps.tls.automation.policies.push({
+        on_demand: true,
+        issuers: [{ module: 'internal' }],
+      });
+    }
+  }
+
+  await setConfig(config);
+  console.log('[Caddy] External cert removed, reverted to internal CA');
+}
+
 // ─── Forward-Auth Toggle ─────────────────────────────────
 
 /**
