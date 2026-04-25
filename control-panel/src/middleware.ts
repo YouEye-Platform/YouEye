@@ -34,6 +34,7 @@ const PUBLIC_ROUTES = [
   '/api/internet-grants', // Internal: UI server-side fetches internet grant data
   '/api/suggestions',     // Internal: UI server-side fetches connection suggestions
   '/api/market/app',      // Internal: app detail + connections endpoints
+  '/api/branding/favicon', // Public favicon (proxied from UI)
   '/setup-complete',
   // Note: /embed routes now use session auth (same as main CP), not HMAC tokens
 ];

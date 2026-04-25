@@ -27,10 +27,8 @@ interface Notification {
   type: string;
   title: string;
   message: string | null;
-  app_id: string | null;
   appId: string | null;
   read: boolean;
-  created_at: string;
   createdAt: string;
   action: { type?: string; url?: string } | null;
 }
@@ -74,7 +72,7 @@ export function NotificationsList() {
       if (debouncedSearch) params.set("search", debouncedSearch);
 
       try {
-        const res = await fetch(`/api/notifications?${params}`);
+        const res = await fetch(`/api/v1/notifications?${params}`);
         if (!res.ok) return;
         const data = await res.json();
 
@@ -99,25 +97,25 @@ export function NotificationsList() {
   }, [fetchNotifications]);
 
   const markRead = async (id: string) => {
-    await fetch(`/api/notifications/${id}`, { method: "PUT" });
+    await fetch(`/api/v1/notifications/${id}`, { method: "PUT" });
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n))
     );
   };
 
   const markAllRead = async () => {
-    await fetch("/api/notifications", { method: "PUT" });
+    await fetch("/api/v1/notifications", { method: "PUT" });
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
   };
 
   const dismiss = async (id: string) => {
-    await fetch(`/api/notifications/${id}`, { method: "DELETE" });
+    await fetch(`/api/v1/notifications/${id}`, { method: "DELETE" });
     setNotifications((prev) => prev.filter((n) => n.id !== id));
     setTotal((t) => Math.max(0, t - 1));
   };
 
   const deleteRead = async () => {
-    await fetch("/api/notifications", { method: "DELETE" });
+    await fetch("/api/v1/notifications", { method: "DELETE" });
     setNotifications((prev) => prev.filter((n) => !n.read));
     setTotal((t) => Math.max(0, t - notifications.filter((n) => n.read).length));
   };
@@ -143,9 +141,10 @@ export function NotificationsList() {
   };
 
   const timeAgo = (dateStr: string) => {
-    const seconds = Math.floor(
-      (Date.now() - new Date(dateStr).getTime()) / 1000
-    );
+    if (!dateStr) return t("justNow");
+    const ms = new Date(dateStr).getTime();
+    if (isNaN(ms)) return t("justNow");
+    const seconds = Math.floor((Date.now() - ms) / 1000);
     if (seconds < 60) return t("justNow");
     if (seconds < 3600)
       return t("minutesAgo", { count: Math.floor(seconds / 60) });
@@ -284,11 +283,11 @@ export function NotificationsList() {
                   </p>
                 )}
                 <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
-                  <span>{timeAgo(notif.created_at || notif.createdAt)}</span>
-                  {(notif.app_id || notif.appId) && (
+                  <span>{timeAgo(notif.createdAt)}</span>
+                  {notif.appId && (
                     <>
                       <span>·</span>
-                      <span>{notif.app_id || notif.appId}</span>
+                      <span>{notif.appId}</span>
                     </>
                   )}
                 </div>

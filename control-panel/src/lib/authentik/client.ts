@@ -258,3 +258,20 @@ export async function updateFlow(
 ): Promise<unknown> {
   return authentikRequest(`/flows/instances/${slug}/`, 'PATCH', data);
 }
+
+/**
+ * Ensure Authentik uses attributes.avatar for custom user avatars.
+ * Falls back to gravatar then initials if no custom avatar is set.
+ */
+export async function ensureAvatarSettings(): Promise<void> {
+  try {
+    const settings = await authentikRequest<{ avatars: string }>('/admin/settings/');
+    if (!settings.avatars?.includes('attributes.avatar')) {
+      await authentikRequest('/admin/settings/', 'PATCH', {
+        avatars: 'attributes.avatar,gravatar,initials',
+      });
+    }
+  } catch {
+    // Non-fatal — avatar settings may already be correct
+  }
+}

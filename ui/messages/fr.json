@@ -79,6 +79,7 @@
       "containers": "Conteneurs",
       "dns": "DNS",
       "proxy": "Proxy",
+      "tls": "TLS",
       "apps": "Apps",
       "permissions": "Autorisations",
       "appManagement": "Gestion des apps",

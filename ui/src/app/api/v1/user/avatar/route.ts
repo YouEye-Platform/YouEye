@@ -1,14 +1,15 @@
 /**
  * User Avatar Upload/Delete API
  *
- * POST   /api/v1/user/avatar — upload a new avatar
+ * POST   /api/v1/user/avatar — upload/save avatar locally
  * DELETE /api/v1/user/avatar — remove current avatar
+ *
+ * Local storage only. Authentik sync is handled by the CP embed.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { saveAvatar, deleteAvatar } from "@/lib/avatar/storage";
-import { syncAvatarToAuthentik } from "@/lib/avatar/authentik-sync";
 import { db } from "@/db";
 import { users, userAssets } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -73,13 +74,6 @@ export async function POST(request: NextRequest) {
       .update(users)
       .set({ image: servingUrl, updatedAt: new Date() })
       .where(eq(users.id, session.userId));
-
-    // Best-effort sync to Authentik (non-blocking)
-    if (session.authentikId) {
-      syncAvatarToAuthentik(session.authentikId, buffer).catch((err) =>
-        console.warn("[Avatar] Authentik sync failed (non-blocking):", err)
-      );
-    }
 
     return NextResponse.json({
       url: servingUrl,

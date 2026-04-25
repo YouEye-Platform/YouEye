@@ -20,6 +20,15 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: `${config.site_name} Control Panel`,
     description: `Manage your ${config.site_name} infrastructure`,
+    icons: {
+      icon: [
+        { url: '/api/branding/favicon?size=32', sizes: '32x32', type: 'image/png' },
+        { url: '/api/branding/favicon?size=16', sizes: '16x16', type: 'image/png' },
+      ],
+      apple: [
+        { url: '/api/branding/favicon?size=180', sizes: '180x180', type: 'image/png' },
+      ],
+    },
   };
 }
 

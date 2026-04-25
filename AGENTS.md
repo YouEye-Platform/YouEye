@@ -500,6 +500,325 @@
 - Dev VMs need APPMARKET_BRANCH=sebastian in UI .env (remove on merge)
 - No UI version bump — bump when merging to dev
 - Caddy route connectors.devvm.test must point to youeye-connectors container
+## cp-v0.3.5.6 / ui-v0.3.3.12 — vanya — 2026-04-25
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** TLS certificate management — Let's Encrypt DNS-01 + custom upload (Session 29)
+
+### Changes
+- `control-panel/src/lib/acme/client.ts` — ACME client with step-by-step DNS-01 flow (startOrder, verifyAndFinalize)
+- `control-panel/src/lib/acme/storage.ts` — TLS cert persistence via settingsService (youeye.yaml)
+- `control-panel/src/lib/caddy/client.ts` — loadExternalCert/removeExternalCert via Caddy load_pem API
+- `control-panel/src/lib/caddy/types.ts` — Added LoadPemEntry, certificate_selection types
+- `control-panel/src/app/api/tls/acme/route.ts` — POST start order, PUT verify & finalize
+- `control-panel/src/app/api/tls/upload/route.ts` — POST custom PEM cert upload
+- `control-panel/src/app/api/tls/download/route.ts` — GET cert/key/bundle/CA download
+- `control-panel/src/app/api/tls/status/route.ts` — GET status, DELETE revert to self-signed
+- `control-panel/src/app/embed/tls/` — Embed page for UI settings iframe
+- `control-panel/src/components/settings/tls-manager-card.tsx` — Standalone card component (kept for direct CP use)
+- `control-panel/package.json` — Bumped to 0.3.5.6, added acme-client dependency
+- `ui/src/app/settings/tls/page.tsx` — TLS settings page (embeds CP iframe)
+- `ui/src/components/settings/settings-shell.tsx` — Added TLS sidebar item with Lock icon
+- `ui/messages/*.json` — Added "tls" translation key to all 5 locales
+
+### Test Results
+- CP build: successful (TypeScript clean)
+- UI build: successful
+- TLS embed page: renders correctly in UI settings iframe
+- TLS status API: returns correct self-signed mode
+- CA cert download: working via execShell to youeye-caddy
+
+### Notes for Iris
+- CP has new `acme-client` npm dependency (pnpm-lock.yaml updated)
+- TLS data stored in youeye.yaml via settingsService (keys: tls_mode, tls_cert_pem, tls_key_pem, etc.)
+- Caddy integration uses load_pem module + tagged automation policies
+- Both CP and UI need to be deployed together for the sidebar entry to work
+
+## v0.3.3.11 — vanya — 2026-04-24
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Restore selectable clock widget themes (Session 28)
+
+### Changes
+- `ui/src/lib/clock-presets.ts` — NEW: 14 theme definitions across 4 categories (Clean, Bold, Glow, Retro)
+- `ui/src/components/widgets/clock-theme-picker.tsx` — NEW: visual thumbnail picker with category tabs
+- `ui/src/components/widgets/clock-widget.tsx` — Refactored to apply theme styles from presets instead of hardcoded gradient
+- `ui/src/components/dashboard/widget-settings-dialog.tsx` — Wire ClockThemePicker into settings dialog
+- `ui/tests/clock-themes.spec.ts` — NEW: Playwright spec for theme selection
+
+### Test Results
+- FIFO: 10 screenshots verifying all theme categories + theme application
+- Playwright: clock-themes.spec.ts with 5 test cases
+
+### Notes for Iris
+- UI-only change, no CP or Spine modifications
+- Default theme ("gradient") matches the pre-existing hardcoded style — no visual regression for users who haven't customized
+
+## v0.3.3.10 / v0.3.5.5 — vanya — 2026-04-24
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix WordArt widget overflow clipping + Enhanced icon picker with Lucide icons (Session 27)
+
+### Changes
+- `ui/src/components/widgets/index.ts` — Added `allowOverflow` to WidgetMeta interface; server-name widget opts in
+- `ui/src/components/dashboard/widget-container.tsx` — Conditional overflow-visible for widgets with allowOverflow
+- `ui/src/components/widgets/server-name-widget.tsx` — Inner container changed to overflow-visible
+- `control-panel/src/app/embed/branding/client.tsx` — Major rewrite: added Lucide icons tab (~1700 icons with search), expanded emojis (24→450+), upload tab, gradient presets, icon color picker
+- `control-panel/src/app/api/ui/branding/upload/route.ts` — NEW: bridge proxy for file uploads
+- `ui/src/app/api/ui-bridge/branding/upload/route.ts` — NEW: bridge endpoint for file uploads
+
+### Test Results
+- `ui/tests/wordart-overflow.spec.ts` — overflow-visible verification, text-shadow rendering
+- `ui/tests/icon-picker-enhanced.spec.ts` — branding API, icon routes, upload auth
+
+### Notes for Iris
+- UI change is backward-compatible — only server-name widget affected, all others retain overflow-hidden
+- CP icon picker is self-contained in the embed branding page, no other CP pages affected
+- Upload bridge routes follow existing bridge pattern (X-UI-Bridge-Token auth)
+
+---
+
+## v0.3.5.4 — vanya — 2026-04-24
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix Authentik favicon sync — DNS, auth, and data bugs (Session 26b)
+
+### Changes — CP (v0.3.5.4)
+- `control-panel/src/lib/authentik/sync-branding.ts` — NEW: extracted Authentik sync logic into reusable function
+- `control-panel/src/app/api/ui-bridge/authentik/branding/route.ts` — Simplified to use sync-branding module; fixed DNS from `.incus` to `.${CONTAINER_DOMAIN}`
+- `control-panel/src/app/api/ui/branding/route.ts` — Replaced broken fire-and-forget HTTP self-call with direct `syncBrandingToAuthentik()` call + CSS generation
+
+### Notes for Iris
+- The branding sync was silently failing since the one-way bridge auth change. This fix makes it work again.
+- Authentik favicon is now pushed automatically on every branding save via the Server Branding embed.
+
+---
+
+## v0.3.3.9 / v0.3.5.3 — vanya — 2026-04-24
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix WordArt picker auto-fill and icon rendering pipeline bugs (Session 26)
+
+### Changes — UI (v0.3.3.9)
+- `ui/src/middleware.ts` — Added `/icon` and `/apple-icon` to STATIC_PATTERNS so favicon routes bypass auth
+- `ui/src/app/icon.tsx` — Rewritten: force-dynamic + auto-regeneration from DB config for letter mode
+- `ui/src/app/apple-icon.tsx` — Same force-dynamic + auto-regen pattern
+- `ui/src/lib/icon-renderer.ts` — BRANDING_DIR moved from public/branding (wiped on deploy) to persistent /opt/youeye-ui-data/branding/
+
+### Changes — CP (v0.3.5.3)
+- `control-panel/src/components/setup/WordArtPickerInline.tsx` — Added findInitialIndices() to reverse-map current style to preset indices on mount; added useRef mount guard to skip first useEffect render
+
+### Test Results
+- `ui/tests/icon-rendering-fixes.spec.ts` — /icon and /apple-icon return 200 without auth, serve valid PNG, no stale prerendered cache
+- `ui/tests/wordart-picker-autofill.spec.ts` — WordArt picker shows current style on mount, API returns valid site_name_style
+
+### Notes for Iris
+- UI middleware change is safe — only adds to STATIC_PATTERNS, no removals
+- Icon renderer path change requires /opt/youeye-ui-data/branding/ directory in UI container (created automatically via mkdir recursive)
+
+---
+
+## v0.3.3.8 / v0.3.5.2 — vanya — 2026-04-24
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Server icon/favicon system — configurable icon picker, auto-render, multi-app favicon (Session 25)
+
+### Changes — UI (v0.3.3.8)
+- `ui/src/lib/icon-config.ts` — New: IconConfig type, DEFAULT_ICON_CONFIG, ICON_SIZES constants
+- `ui/src/lib/icon-renderer.ts` — New: Server-side SVG→PNG renderer via sharp with embedded font support
+- `ui/src/app/api/v1/branding/icon/route.ts` — New: POST (upload rendered icon), GET (serve icon PNG by size)
+- `ui/src/app/api/ui-bridge/branding/icon/route.ts` — New: Bridge endpoint for icon uploads from CP
+- `ui/src/app/icon.tsx` — New: Next.js dynamic favicon route (32px)
+- `ui/src/app/apple-icon.tsx` — New: Apple touch icon route (180px)
+- `ui/src/components/settings/icon-picker-branding.tsx` — New: Full icon picker (Letter/Icons/Emoji/Upload tabs, shape, background)
+- `ui/src/app/api/v1/branding/route.ts` — Added icon_config to PUT, auto-regenerate icons on wordart change
+- `ui/src/app/api/ui-bridge/branding/route.ts` — Added icon_config passthrough, letter mode auto-render
+- `ui/src/components/settings/branding-settings.tsx` — Added IconPickerBranding, icon save/upload logic
+- `ui/src/lib/db/queries/branding.ts` — Added icon_config field to BrandingConfig, DB queries
+- `ui/src/middleware.ts` — Added /api/v1/branding/icon to PUBLIC_ROUTES
+- `ui/tests/server-icon.spec.ts` — New: 8 Playwright tests (API, UI picker, CP proxy)
+
+### Changes — Control Panel (v0.3.5.2)
+- `control-panel/src/lib/icon-config.ts` — New: Mirror of IconConfig type
+- `control-panel/src/components/setup/SetupIcon.tsx` — New: Setup wizard icon step (Letter/Emoji, shape, background)
+- `control-panel/src/app/api/branding/favicon/route.ts` — New: CP favicon proxy (fetches from UI)
+- `control-panel/src/app/api/ui/branding/icon/route.ts` — New: Bridge proxy for icon uploads
+- `control-panel/src/app/embed/branding/client.tsx` — Added icon picker (Letter/Emoji, shape, background, canvas preview)
+- `control-panel/src/app/layout.tsx` — Added dynamic favicon metadata
+- `control-panel/src/app/setup/page.tsx` — Added icon step (step 2), renumbered wizard steps
+- `control-panel/src/app/api/setup/run/route.ts` — Added icon_config DB write, fontconfig install, Authentik favicon push
+- `control-panel/src/app/api/ui-bridge/authentik/branding/route.ts` — Added favicon push to Authentik container
+- `control-panel/src/middleware.ts` — Added /api/branding/favicon to PUBLIC_ROUTES
+
+### Test Results
+- Playwright: 8 tests passed (server-icon.spec.ts)
+- Visual verification: icon picker, letter/emoji modes, shape controls, save flow, favicon serving
+
+### Notes for Iris
+- UI container requires `fontconfig` + `fonts-dejavu-core` packages for server-side icon rendering
+- Setup provisioning auto-installs fontconfig and registers custom fonts
+- Icon auto-regenerates when WordArt changes (letter mode only)
+- Four icon modes: Letter (from WordArt), Emoji (native), Lucide icons, Upload
+- CP favicon served via proxy from UI's /api/v1/branding/icon endpoint
+
+## v0.3.3.7 — vanya — 2026-04-24
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Widget auto-fit — text fills container width, height auto-adjusts, no empty space (Session 24)
+
+### Changes — UI (v0.3.3.7)
+- `ui/src/components/widgets/index.ts` — Added `autoFit` flag + `onAutoSize` callback to WidgetComponentProps/WidgetMeta
+- `ui/src/components/dashboard/widget-container.tsx` — Auto-fit height handler, hide vertical resize handles for autoFit widgets, minimal padding (p-1) for autoFit
+- `ui/src/components/dashboard/widget-card.tsx` — Thread `onAutoSize` to widget components
+- `ui/src/components/widgets/server-name-widget.tsx` — JS fit-text-to-width: measures text, scales fontSize to fill container, reports height via onAutoSize
+- `ui/src/components/widgets/clock-widget.tsx` — Same fit-text approach, gradient time, proportional date (28% of time size)
+- `ui/src/components/dashboard/widget-grid.tsx` — Updated default heights for auto-fit widgets
+- `ui/tests/widget-scaling.spec.ts` — Updated: fill-ratio tests, autoFit handle removal, reset defaults
+- `ui/package.json` — Bumped 0.3.3.6 → 0.3.3.7
+
+### Test Results
+- Playwright: 5 tests passed (widget-scaling.spec.ts)
+
+### Notes for Iris
+- AutoFit widgets: only width is user-resizable, height auto-adjusts to content
+- Bottom/top resize handles hidden for autoFit widgets in edit mode
+- Existing layouts preserved — height auto-adjusts on first load
+
+## v0.3.3.6 — vanya — 2026-04-23
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Widget container-query scaling — WordArt and Clock text scales with widget resize (Session 24)
+
+### Changes — UI (v0.3.3.6)
+- `ui/src/components/dashboard/widget-container.tsx` — Added `containerType: "size"` to widget content wrapper, enabling CSS container query units (cqw/cqh) inside all widgets
+- `ui/src/components/widgets/server-name-widget.tsx` — Switched fontSize from viewport-relative `clamp(3rem, 8vw, 6rem)` to container-relative `clamp(1.5rem, 15cqw, 12rem)` so text scales with widget resize
+- `ui/src/components/widgets/clock-widget.tsx` — Restyled with gradient time display, uppercase date, and cqw-based font scaling (`clamp(1rem, 10cqw, 6rem)`)
+- `ui/src/components/widgets/index.ts` — Reduced server-name default width from 52→26% (half)
+- `ui/src/components/dashboard/widget-grid.tsx` — Updated DEFAULT_WIDGETS server-name width from 57→30%
+- `ui/package.json` — Bumped 0.3.3.5 → 0.3.3.6
+- `ui/tests/widget-scaling.spec.ts` — New test suite: container queries, cqw font scaling, clock gradient, reset defaults
+
+### Test Results
+- Playwright: 5 tests passed (widget-scaling.spec.ts)
+- Screenshots: Tests/Vanya/scaling-*.png
+
+### Notes for Iris
+- Existing user layouts are preserved (widget positions/sizes stored in DB)
+- New defaults only apply on "Reset" or when adding a new widget
+- CSS `container-type: size` is applied to ALL widget wrappers, not just WordArt/Clock — future widgets can use cqw units for free
+
+## v0.3.3.4 — vanya — 2026-04-23
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix hidden apps not filtering in native app drawers, add visible/order to header config API (Session 22)
+
+### Changes — UI (v0.3.3.4)
+- `ui/src/app/api/v1/header/config/route.ts` — Added `visible` field to apps array in response
+- `ui/package.json` — Bumped 0.3.3.3 → 0.3.3.4
+
+### Test Results
+- Build: clean standalone.tar (227MB), deployed to youeye-ui container
+
+### Notes for Iris
+- Header config API now includes `visible: boolean` per app — native apps use this to filter hidden apps
+- All native apps updated to filter `visible !== false` and sort by `order`
+
+## v0.3.3.3 — vanya — 2026-04-23
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Fix header icon spacing, notification bugs, toast positioning, standardize native app drawers (Session 21)
+
+### Changes — UI (v0.3.3.3)
+- `ui/src/components/layout/user-menu.tsx` — Wrapped avatar trigger in h-9 w-9 button for consistent icon spacing
+- `ui/src/components/layout/notification-bell.tsx` — Standardized button to h-9 w-9, fixed interface fields from snake_case to camelCase
+- `ui/src/components/ui/sonner.tsx` — Added position="top-right" and duration={5000} for auto-dismissing toasts
+- `ui/src/components/notifications/notifications-list.tsx` — Fixed API paths /api/notifications → /api/v1/notifications (5 places), fixed NaN time bug, added NaN guard
+- `ui/package.json` — Bumped 0.3.3.2 → 0.3.3.3
+
+### Test Results
+- Build: clean standalone.tar (226MB), deployed to youeye-ui container
+- Browser: even header spacing, notifications load with correct times, toasts auto-dismiss top-right
+
+### Notes for Iris
+- notification-bell and notifications-list now use camelCase field names matching Drizzle ORM output
+- API path fix critical — /api/notifications never existed, only /api/v1/notifications
+- No CP or Spine changes
+
+## v0.3.3.2 — vanya — 2026-04-22
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Drawer prefs in header config API for cross-app consistency (Session 20)
+
+### Changes — UI (v0.3.3.2)
+- `ui/src/app/api/v1/header/config/route.ts` — Added `getDrawerPrefs()` call and `drawer_prefs` field to response
+- `ui/package.json` — Bumped 0.3.3.1 → 0.3.3.2
+
+### Test Results
+- Build: clean standalone.tar
+- Deploy: youeye-ui container updated and serving
+- Browser: drawer_prefs correctly returned in header config, native apps render consistent drawer layout
+
+### Notes for Iris
+- All native apps now consume `drawer_prefs` from header config to render app drawer with same columns/iconScale/maxHeight as homepage
+- No CP changes in this session
+
+## v0.3.5.1 / v0.3.3.1 — vanya — 2026-04-22
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Avatar management in CP embed + shared avatar across native apps
+
+### Changes — CP (v0.3.5.1)
+- `control-panel/src/app/api/user/avatar/route.ts` — NEW: CP-owned avatar upload/delete to Authentik via `attributes.avatar` PATCH
+- `control-panel/src/app/embed/avatar/page.tsx` + `client.tsx` — NEW: Standalone avatar picker embed for onboarding
+- `control-panel/src/app/embed/profile/client.tsx` — Added avatar upload (file + 32 emoji presets via canvas) and remove to profile embed
+- `control-panel/src/lib/authentik/client.ts` — Added `ensureAvatarSettings()` to configure Authentik for attributes.avatar
+- `control-panel/src/app/api/setup/run/route.ts` — Avatar settings configured during initial setup
+- `control-panel/src/app/api/ui-bridge/authentik/branding/route.ts` — Avatar settings ensured during branding sync
+- `control-panel/src/app/api/ui-bridge/user/avatar/` — DELETED: old bridge route removed
+
+### Changes — UI (v0.3.3.1)
+- `ui/src/app/api/v1/header/config/route.ts` — Added `avatar_url` (full URL) to user object in response
+- `ui/src/app/api/v1/user/avatar/[id]/route.ts` — Made public (no auth), added UUID sanitization for path traversal prevention
+- `ui/src/middleware.ts` — Added `/api/v1/user/avatar` to PUBLIC_ROUTES for cross-subdomain access
+- `ui/src/components/settings/profile-settings.tsx` — Removed avatar handling code, now receives from CP embed via postMessage
+- `ui/src/app/onboarding/page.tsx` — New 4-step flow (Welcome → Avatar → PIN → Done), theme-aware classes
+- `ui/src/app/api/v1/user/avatar/route.ts` — Removed Authentik sync call
+- `ui/src/lib/avatar/authentik-sync.ts` — DELETED: old UI→CP bridge sync
+- `ui/messages/en.json`, `ui/messages/ru.json` — New onboarding i18n keys
+
+### Changes — Native Apps (Search v0.3.1.1, Weather v0.3.1.1)
+- `YE-App-Search/src/lib/types/index.ts` — Added `avatar_url` to HeaderConfig user type
+- `YE-App-Search/src/lib/components/layout/user-menu.tsx` — Display avatar image with initials fallback
+- `YE-App-Search/src/lib/components/layout/app-header.tsx` — Pass avatarUrl from header config to UserMenu
+- `YE-App-Weather/src/lib/types/index.ts` — Added `avatar_url` to HeaderConfig user type
+- `YE-App-Weather/src/components/layout/user-menu.tsx` — Display avatar via AvatarImage with initials fallback
+- `YE-App-Weather/src/components/layout/weather-header.tsx` — Pass avatarUrl from header config to UserMenu
+
+### Test Results
+- Avatar visible in UI dashboard, Search app, and Weather app headers — all three show same avatar
+- Avatar endpoint serves publicly (HTTP 200, 5534B) without cookies
+- Header config API returns full avatar_url for service-to-service calls
+- Onboarding: 4-step flow renders correctly with system theme
+- Screenshots: Tests/Vanya/20260422_1/
+
+### Notes for Iris
+- **Architecture change**: ALL UI→CP bridge calls for avatar eliminated. CP owns Authentik avatar management end-to-end.
+- **Avatar serving is now public** — profile pictures are served without auth at `/api/v1/user/avatar/[id]` (like Gravatar). Upload/delete still require auth.
+- **Header config contract change**: `user.avatar_url` is now included. Existing apps that don't use it are unaffected (additive change).
+- Native apps (Search, Weather) have independent releases for the avatar display change.
+- Authentik admin settings MUST have `attributes.avatar` in the `avatars` chain — setup wizard and branding sync handle this automatically.
 
 ## v0.3.4.7 — andrew — 2026-04-21
 **Branch:** andrew

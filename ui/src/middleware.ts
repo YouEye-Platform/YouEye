@@ -17,18 +17,20 @@ const PUBLIC_ROUTES = [
   "/api/auth/logout",
   "/api/health",
   "/api/v1/branding",
+  "/api/v1/branding/icon",
   "/api/v1/header/config",
   "/api/v1/widgets",
   "/api/v1/apps/info-card",
   "/api/market-image",
   "/api/market/image",
+  "/api/v1/user/avatar",  // Public: profile pictures are served without auth (like Gravatar)
   "/api/v1/onboarding",
   "/api/v1/notifications",  // Auth handled at route level (session, bridge token, app-slug)
   "/api/v1/my-connections", // App discovery API — auth via X-YouEye-App header
 ];
 
 /** Static resource patterns to skip */
-const STATIC_PATTERNS = ["/_next/", "/favicon.ico", "/icons/", "/branding/", "/user-assets/", "/fonts/"];
+const STATIC_PATTERNS = ["/_next/", "/favicon.ico", "/icon", "/apple-icon", "/icons/", "/branding/", "/user-assets/", "/fonts/"];
 
 function getJWTSecret(): Uint8Array | null {
   const secret = process.env.JWT_SECRET;

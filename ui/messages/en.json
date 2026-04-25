@@ -79,6 +79,7 @@
       "containers": "Containers",
       "dns": "DNS",
       "proxy": "Proxy",
+      "tls": "TLS",
       "backup": "Backup",
       "apps": "Apps",
       "permissions": "Permissions",
@@ -515,6 +516,9 @@
   "onboarding": {
     "welcomeTo": "Welcome to",
     "getStarted": "Let's get started",
+    "chooseAvatarTitle": "Choose your look",
+    "chooseAvatarDesc": "Pick a profile picture or emoji avatar. This will be visible across your apps.",
+    "continue": "Continue",
     "createPinTitle": "Create a Timeline PIN",
     "createPinDesc": "Your timeline is encrypted with a personal PIN. This keeps your browsing history and activities private — even from server administrators.",
     "skipForNow": "Skip for now",

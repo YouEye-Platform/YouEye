@@ -17,9 +17,9 @@ interface Notification {
   type: string;
   title: string;
   message: string | null;
-  app_id: string | null;
+  appId: string | null;
   read: boolean;
-  created_at: string;
+  createdAt: string;
   action: { type?: string; url?: string } | null;
 }
 
@@ -136,12 +136,12 @@ export function NotificationBell() {
     <div className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="relative p-2 rounded-md hover:bg-accent transition-colors"
+        className="relative inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent transition-colors"
         aria-label={t('title')}
       >
-        <Bell className="w-5 h-5" />
+        <Bell className="h-4 w-4" />
         {unreadCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold text-white bg-red-500 rounded-full">
+          <span className="absolute top-0.5 right-0.5 flex items-center justify-center min-w-[16px] h-[16px] px-0.5 text-[9px] font-bold text-white bg-red-500 rounded-full">
             {unreadCount > 99 ? "99+" : unreadCount}
           </span>
         )}
@@ -194,7 +194,7 @@ export function NotificationBell() {
                         </p>
                       )}
                       <p className="text-xs text-muted-foreground mt-1">
-                        {timeAgo(notif.created_at)}
+                        {timeAgo(notif.createdAt)}
                       </p>
                     </div>
                     <button

@@ -37,6 +37,7 @@ export interface BrandingConfig {
   logo_url: string | null;
   favicon_url: string | null;
   accent_color: string;
+  icon_config: import("@/lib/icon-config").IconConfig | null;
 }
 
 const DEFAULT_STYLE: SiteNameStyle = {
@@ -78,12 +79,13 @@ async function setSystemSetting(key: string, value: unknown) {
 
 export async function getBranding(): Promise<BrandingConfig> {
   await ensureSchema();
-  const [name, style, logo, favicon, accent] = await Promise.all([
+  const [name, style, logo, favicon, accent, iconCfg] = await Promise.all([
     getSystemSetting("site_name"),
     getSystemSetting("site_name_style"),
     getSystemSetting("site_logo"),
     getSystemSetting("site_favicon"),
     getSystemSetting("site_accent_color"),
+    getSystemSetting("site_icon_config"),
   ]);
 
   return {
@@ -92,6 +94,7 @@ export async function getBranding(): Promise<BrandingConfig> {
     logo_url: (logo as string) ?? null,
     favicon_url: (favicon as string) ?? null,
     accent_color: (accent as string) ?? "#8B5CF6",
+    icon_config: (iconCfg as import("@/lib/icon-config").IconConfig) ?? null,
   };
 }
 
@@ -100,6 +103,7 @@ export async function updateBranding(
     site_name: string;
     site_name_style: SiteNameStyle;
     accent_color: string;
+    icon_config: import("@/lib/icon-config").IconConfig;
   }>
 ) {
   const updates: Promise<void>[] = [];
@@ -112,6 +116,9 @@ export async function updateBranding(
   }
   if (data.accent_color !== undefined) {
     updates.push(setSystemSetting("site_accent_color", data.accent_color));
+  }
+  if (data.icon_config !== undefined) {
+    updates.push(setSystemSetting("site_icon_config", data.icon_config));
   }
 
   await Promise.all(updates);

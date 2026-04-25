@@ -35,6 +35,7 @@ interface SetupRequest {
   admin_email: string;
   admin_password: string;
   site_name_style?: Record<string, unknown>;
+  icon_config?: Record<string, unknown>;
   authentik_name?: string;
   /** If set, only run this specific step (retry mode) */
   retry_step?: string;
@@ -814,6 +815,35 @@ export async function POST(request: NextRequest) {
                       { timeout: 10000 }
                     );
                   }
+
+                  // Ensure fontconfig is installed for server-side icon rendering
+                  try {
+                    await execShell(
+                      'youeye-ui',
+                      'dpkg -s fontconfig >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq fontconfig fonts-dejavu-core)',
+                      { timeout: 60000 }
+                    );
+                    // Register custom fonts directory
+                    await execShell(
+                      'youeye-ui',
+                      'mkdir -p /etc/fonts/conf.d && echo \'<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig><dir>/opt/youeye-ui/public/fonts</dir></fontconfig>\' > /etc/fonts/conf.d/90-youeye-fonts.conf && fc-cache -f',
+                      { timeout: 15000 }
+                    );
+                  } catch (fontErr) {
+                    console.warn('Non-fatal: fontconfig setup failed:', fontErr);
+                  }
+
+                  // Write icon_config to UI database
+                  if (body.icon_config) {
+                    const iconJson = JSON.stringify(body.icon_config).replace(/'/g, "''");
+                    const iconSql = `INSERT INTO system_settings (key, value, updated_at) VALUES ('site_icon_config', '${iconJson}'::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();`;
+                    const iconB64 = Buffer.from(iconSql).toString('base64');
+                    await execShell(
+                      'youeye-postgres',
+                      `echo "${iconB64}" | base64 -d | su - postgres -c "psql -U youeye -d youeye_ui"`,
+                      { timeout: 10000 }
+                    );
+                  }
                 } catch (e) {
                   console.error('Failed to write site_name to UI database:', e);
                 }
@@ -920,10 +950,37 @@ export async function POST(request: NextRequest) {
               console.warn('[setup] Non-fatal: SVG logo generation failed:', svgErr);
             }
 
+            // Push favicon to Authentik if icon_config was provided
+            let brandingFavicon: string | undefined;
+            if (body.icon_config) {
+              try {
+                // Try to render icon via UI's API (letter mode can be server-rendered)
+                const uiIP = await getContainerIP('youeye-ui');
+                if (uiIP) {
+                  const faviconRes = await fetch(`http://${uiIP}:3000/api/v1/branding/icon?size=192`, {
+                    signal: AbortSignal.timeout(5000),
+                  });
+                  if (faviconRes.ok) {
+                    const faviconBuf = Buffer.from(await faviconRes.arrayBuffer());
+                    const faviconB64 = faviconBuf.toString('base64');
+                    await execShell(
+                      'youeye-authentik',
+                      `printf '%s' '${faviconB64}' | base64 -d > /web/dist/assets/icons/youeye-favicon.png`
+                    );
+                    brandingFavicon = '/static/dist/assets/icons/youeye-favicon.png';
+                    console.log('[setup] Pushed custom favicon to Authentik');
+                  }
+                }
+              } catch (favErr) {
+                console.warn('[setup] Non-fatal: favicon push failed:', favErr);
+              }
+            }
+
             await authentikAPI(akConfig, `/core/brands/${defaultBrand.brand_uuid}/`, 'PATCH', {
               branding_title: brandingTitle,
               branding_logo: brandingLogo,
               branding_custom_css: brandingCSS,
+              ...(brandingFavicon ? { branding_favicon: brandingFavicon } : {}),
             });
             console.log(`[setup] Set Authentik branding_title to "${brandingTitle}" with custom CSS (${brandingCSS.length} chars)`);
 
@@ -938,6 +995,16 @@ export async function POST(request: NextRequest) {
               }
             }
             console.log(`[setup] Updated Authentik flow titles to "${flowTitle}"`);
+
+            // Enable attributes.avatar so custom user avatars work
+            try {
+              await authentikAPI(akConfig, '/admin/settings/', 'PATCH', {
+                avatars: 'attributes.avatar,gravatar,initials',
+              });
+              console.log('[setup] Enabled attributes.avatar in Authentik settings');
+            } catch {
+              console.warn('[setup] Non-fatal: could not set avatar mode');
+            }
           }
         } catch (err) {
           console.warn('[setup] Non-fatal: Authentik branding sync failed:', err);

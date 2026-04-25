@@ -5,13 +5,50 @@
  * Same as SetupWordArt but without nav buttons or page header.
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   type SiteNameStyle,
   FONT_PRESETS, EFFECT_PRESETS, COLOUR_PRESETS,
   ALL_SHAPE_PRESETS, isCharacterShape,
   composeStyle,
 } from '@/lib/wordart-presets';
+
+/** Reverse-map a SiteNameStyle back to preset indices */
+function findInitialIndices(s: SiteNameStyle | null | undefined) {
+  if (!s) return { font: 0, effect: 0, colour: 0, shape: 0 };
+  const font = s.fontFamily ? FONT_PRESETS.findIndex(p => p.fontFamily === s.fontFamily) : -1;
+  const colour = (() => {
+    if (s.gradient?.enabled) {
+      const i = COLOUR_PRESETS.findIndex(p => p.gradient?.enabled && p.gradient.from === s.gradient!.from && p.gradient.to === s.gradient!.to);
+      if (i >= 0) return i;
+    }
+    if (s.color) {
+      const i = COLOUR_PRESETS.findIndex(p => p.color.toLowerCase() === s.color!.toLowerCase());
+      if (i >= 0) return i;
+    }
+    return -1;
+  })();
+  const effect = (() => {
+    if (s.textStroke) return EFFECT_PRESETS.findIndex(p => p.id === 'outline');
+    if (!s.textShadow || s.textShadow === 'none') return 0;
+    const normalize = (ts: string) => ts.replace(/[\d.]+/g, '#').replace(/\s+/g, ' ');
+    const target = normalize(s.textShadow);
+    const i = EFFECT_PRESETS.findIndex(p => p.textShadow !== 'none' && normalize(p.textShadow) === target);
+    return i >= 0 ? i : -1;
+  })();
+  const shape = (() => {
+    if (s.charShapeId) {
+      const i = ALL_SHAPE_PRESETS.findIndex(p => p.id === s.charShapeId);
+      if (i >= 0) return i;
+    }
+    if (!s.transform) return 0;
+    const fnType = (t: string) => t.replace(/\([^)]*\)/g, '()').replace(/\s+/g, ' ');
+    const target = fnType(s.transform);
+    const i = ALL_SHAPE_PRESETS.findIndex(p => !isCharacterShape(p) && (p as any).transform !== 'none' && fnType((p as any).transform) === target);
+    return i >= 0 ? i : 0;
+  })();
+  return { font: Math.max(font, 0), effect: Math.max(effect, 0), colour: Math.max(colour, 0), shape: Math.max(shape, 0) };
+}
 import WordArtPreview, { usePreloadAllFonts } from './WordArtPreview';
 
 interface Props {
@@ -111,14 +148,18 @@ function IntensitySlider({ value, onChange }: { value: number; onChange: (v: num
 
 export default function WordArtPickerInline({ siteName, style, setStyle }: Props) {
   usePreloadAllFonts();
-  const [fontIdx, setFontIdx] = useState(0);
-  const [effectIdx, setEffectIdx] = useState(0);
-  const [colourIdx, setColourIdx] = useState(0);
-  const [shapeIdx, setShapeIdx] = useState(0);
+  const initIndices = useMemo(() => findInitialIndices(style), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [fontIdx, setFontIdx] = useState(initIndices.font);
+  const [effectIdx, setEffectIdx] = useState(initIndices.effect);
+  const [colourIdx, setColourIdx] = useState(initIndices.colour);
+  const [shapeIdx, setShapeIdx] = useState(initIndices.shape);
   const [effectInt, setEffectInt] = useState(1);
   const [shapeInt, setShapeInt] = useState(1);
+  const mountedRef = useRef(false);
 
   useEffect(() => {
+    // Skip first render — indices already match the loaded style
+    if (!mountedRef.current) { mountedRef.current = true; return; }
     setStyle(composeStyle(FONT_PRESETS[fontIdx], EFFECT_PRESETS[effectIdx], COLOUR_PRESETS[colourIdx], ALL_SHAPE_PRESETS[shapeIdx], effectInt, shapeInt));
   }, [fontIdx, effectIdx, colourIdx, shapeIdx, effectInt, shapeInt, setStyle]);
 

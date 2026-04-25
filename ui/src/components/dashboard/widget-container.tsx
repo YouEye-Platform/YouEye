@@ -4,12 +4,17 @@
  * Wraps widgets with optional glass-morphism card styling,
  * drag handle, resize handles (edges + corners), and edit-mode controls.
  * Supports per-widget background styles: transparent (default), glass, custom.
+ *
+ * Auto-fit widgets (autoFit: true in WidgetMeta) have height managed by the
+ * widget component itself — only width resize handles are shown in edit mode,
+ * and the widget reports its ideal height via onAutoSize.
  */
 "use client";
 
 import { useRef, useCallback, useState } from "react";
 import { GripVertical, X, Settings2 } from "lucide-react";
 import { WidgetCard } from "./widget-card";
+import { getWidgetMeta } from "@/components/widgets";
 import { cn } from "@/lib/utils";
 import { useTranslations } from "next-intl";
 
@@ -56,6 +61,10 @@ export function WidgetContainer({
   const [isResizing, setIsResizing] = useState(false);
   const t = useTranslations('widgetGrid');
 
+  const meta = getWidgetMeta(widget.widgetType);
+  const isAutoFit = meta?.autoFit ?? false;
+  const allowOverflow = meta?.allowOverflow ?? false;
+
   const pxX = (widget.positionX / 100) * containerSize.width;
   const pxY = (widget.positionY / 100) * containerSize.height;
   const pxW = (widget.width / 100) * containerSize.width;
@@ -68,6 +77,19 @@ export function WidgetContainer({
       return Math.max(0, Math.min(100, (px / total) * 100));
     },
     [containerSize]
+  );
+
+  // Auto-fit: widget reports its ideal content height in pixels
+  const handleAutoSize = useCallback(
+    (size: { height: number }) => {
+      if (!isAutoFit || containerSize.height <= 0) return;
+      const heightPct = toPercent(size.height, "y");
+      // Only adjust if meaningfully different to avoid save loops
+      if (Math.abs(heightPct - widget.height) > 0.5) {
+        onSizeChange(widget.id, widget.width, heightPct);
+      }
+    },
+    [isAutoFit, containerSize.height, widget.id, widget.width, widget.height, toPercent, onSizeChange]
   );
 
   const handleDragStart = useCallback(
@@ -126,12 +148,13 @@ export function WidgetContainer({
         let newY = startY;
 
         if (edges.right) newW = Math.max(MIN_W, startW + dx);
-        if (edges.bottom) newH = Math.max(MIN_H, startH + dy);
+        // For autoFit widgets, ignore vertical resize — height is auto-managed
+        if (!isAutoFit && edges.bottom) newH = Math.max(MIN_H, startH + dy);
         if (edges.left) {
           newW = Math.max(MIN_W, startW - dx);
           newX = startX + (startW - newW);
         }
-        if (edges.top) {
+        if (!isAutoFit && edges.top) {
           newH = Math.max(MIN_H, startH - dy);
           newY = startY + (startH - newH);
         }
@@ -154,14 +177,13 @@ export function WidgetContainer({
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     },
-    [isEditMode, pxW, pxH, pxX, pxY, widget.id, onSizeChange, onPositionChange, toPercent]
+    [isEditMode, isAutoFit, pxW, pxH, pxX, pxY, widget.id, onSizeChange, onPositionChange, toPercent]
   );
 
   const bgStyle = (widget.settings?.backgroundStyle as string) ?? "transparent";
   const customBgColor = (widget.settings?.customBackgroundColor as string) ?? undefined;
 
   const isTransparent = bgStyle === "transparent";
-  const isGlass = bgStyle === "default" || bgStyle === "glass";
   const bgClasses = (() => {
     switch (bgStyle) {
       case "transparent":
@@ -176,6 +198,9 @@ export function WidgetContainer({
     }
   })();
 
+  // AutoFit widgets get minimal padding (p-1) even with non-transparent backgrounds
+  const paddingClass = isAutoFit ? "p-1" : "p-4";
+
   const inlineStyle: React.CSSProperties = {
     left: `${pxX}px`,
     top: `${pxY}px`,
@@ -184,8 +209,6 @@ export function WidgetContainer({
     transition: isDragging || isResizing ? "none" : "box-shadow 0.2s, transform 0.15s",
     ...(bgStyle === "custom" && customBgColor ? { backgroundColor: customBgColor } : {}),
   };
-
-  const HANDLE = 12; // px, resize handle hit zone
 
   return (
     <div
@@ -231,12 +254,19 @@ export function WidgetContainer({
         </button>
       )}
 
-      {/* Widget content */}
-      <div className={cn("w-full h-full overflow-hidden", !isTransparent && "rounded-xl p-4")}>
-        <WidgetCard widgetType={widget.widgetType} settings={widget.settings} />
+      {/* Widget content — container-type: size enables cqw/cqh units inside widgets */}
+      <div
+        className={cn("w-full h-full", allowOverflow ? "overflow-visible" : "overflow-hidden", !isTransparent && `rounded-xl ${paddingClass}`)}
+        style={{ containerType: "size" }}
+      >
+        <WidgetCard
+          widgetType={widget.widgetType}
+          settings={widget.settings}
+          onAutoSize={isAutoFit ? handleAutoSize : undefined}
+        />
       </div>
 
-      {/* Resize handles — all edges and corners, visible in edit mode */}
+      {/* Resize handles — visible in edit mode */}
       {isEditMode && (
         <>
           {/* Right edge */}
@@ -244,45 +274,44 @@ export function WidgetContainer({
             className="absolute top-0 -right-1 w-3 h-full cursor-e-resize z-20"
             onMouseDown={(e) => handleResizeStart(e, { right: true })}
           />
-          {/* Bottom edge */}
-          <div
-            className="absolute -bottom-1 left-0 w-full h-3 cursor-s-resize z-20"
-            onMouseDown={(e) => handleResizeStart(e, { bottom: true })}
-          />
           {/* Left edge */}
           <div
             className="absolute top-0 -left-1 w-3 h-full cursor-w-resize z-20"
             onMouseDown={(e) => handleResizeStart(e, { left: true })}
           />
-          {/* Top edge */}
-          <div
-            className="absolute -top-1 left-0 w-full h-3 cursor-n-resize z-20"
-            onMouseDown={(e) => handleResizeStart(e, { top: true })}
-          />
-          {/* Bottom-right corner */}
-          <div
-            className="absolute -bottom-1 -right-1 w-4 h-4 cursor-se-resize z-25"
-            onMouseDown={(e) => handleResizeStart(e, { right: true, bottom: true })}
-          >
-            <svg viewBox="0 0 16 16" className="w-full h-full text-muted-foreground/60 opacity-0 group-hover:opacity-100 transition-opacity">
-              <path d="M14 14L6 14M14 14L14 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none" />
-            </svg>
-          </div>
-          {/* Bottom-left corner */}
-          <div
-            className="absolute -bottom-1 -left-1 w-4 h-4 cursor-sw-resize z-25"
-            onMouseDown={(e) => handleResizeStart(e, { left: true, bottom: true })}
-          />
-          {/* Top-right corner */}
-          <div
-            className="absolute -top-1 -right-1 w-4 h-4 cursor-ne-resize z-25"
-            onMouseDown={(e) => handleResizeStart(e, { right: true, top: true })}
-          />
-          {/* Top-left corner */}
-          <div
-            className="absolute -top-1 -left-1 w-4 h-4 cursor-nw-resize z-25"
-            onMouseDown={(e) => handleResizeStart(e, { left: true, top: true })}
-          />
+          {/* Bottom and top edges + corners — only for non-autoFit widgets */}
+          {!isAutoFit && (
+            <>
+              <div
+                className="absolute -bottom-1 left-0 w-full h-3 cursor-s-resize z-20"
+                onMouseDown={(e) => handleResizeStart(e, { bottom: true })}
+              />
+              <div
+                className="absolute -top-1 left-0 w-full h-3 cursor-n-resize z-20"
+                onMouseDown={(e) => handleResizeStart(e, { top: true })}
+              />
+              <div
+                className="absolute -bottom-1 -right-1 w-4 h-4 cursor-se-resize z-25"
+                onMouseDown={(e) => handleResizeStart(e, { right: true, bottom: true })}
+              >
+                <svg viewBox="0 0 16 16" className="w-full h-full text-muted-foreground/60 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <path d="M14 14L6 14M14 14L14 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+                </svg>
+              </div>
+              <div
+                className="absolute -bottom-1 -left-1 w-4 h-4 cursor-sw-resize z-25"
+                onMouseDown={(e) => handleResizeStart(e, { left: true, bottom: true })}
+              />
+              <div
+                className="absolute -top-1 -right-1 w-4 h-4 cursor-ne-resize z-25"
+                onMouseDown={(e) => handleResizeStart(e, { right: true, top: true })}
+              />
+              <div
+                className="absolute -top-1 -left-1 w-4 h-4 cursor-nw-resize z-25"
+                onMouseDown={(e) => handleResizeStart(e, { left: true, top: true })}
+              />
+            </>
+          )}
         </>
       )}
     </div>
