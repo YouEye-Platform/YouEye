@@ -15,7 +15,8 @@ import {
   uiContainerSpec,
 } from './manifests';
 import { getOrCreateSecret, generatePassword } from './secrets';
-import { deployOCIContainer, getContainerIP, containerExists } from './oci-deployer';
+import { deployOCIContainer, containerExists } from './oci-deployer';
+import { getSystemStaticIP, getSubnetBase } from '../incus/static-ips';
 import { deployLXDContainer } from './lxd-deployer';
 import { waitForPostgres, waitForAuthentik, waitForCaddy, waitForPiHole } from './health-checks';
 import { setupAuthentikDatabase } from './postgres-setup';
@@ -88,7 +89,7 @@ export async function deployInfrastructure(
   // ─── Step 3: Authentik server ──────────────────────────────
   emit(onEvent, 3, 'running', 'Deploying Authentik identity provider (this may take several minutes)...');
   try {
-    const postgresIP = await getContainerIP('youeye-postgres');
+    const postgresIP = await getSystemStaticIP('youeye-postgres');
     if (!postgresIP) throw new Error('Cannot get PostgreSQL container IP');
 
     const serverManifest = authentikServerManifest(
@@ -114,7 +115,7 @@ export async function deployInfrastructure(
   // ─── Step 4: Authentik worker ─────────────────────────────
   emit(onEvent, 4, 'running', 'Deploying Authentik worker...');
   try {
-    const postgresIP = await getContainerIP('youeye-postgres');
+    const postgresIP = await getSystemStaticIP('youeye-postgres');
     if (!postgresIP) throw new Error('Cannot get PostgreSQL container IP');
 
     const workerManifest = authentikWorkerManifest(
@@ -156,21 +157,18 @@ export async function deployInfrastructure(
       // By default, Caddy rejects non-localhost origins when admin listens on 0.0.0.0,
       // but CP needs admin API access via Incus network to manage routes.
       try {
-        // NOTE: We deliberately do NOT emit a `${hostIP}:443 { tls internal }`
-        // block. The `:443 { on_demand issuer internal }` block immediately
-        // below already serves CP from any IP via on-demand TLS — including
-        // the host's own LAN IP — so the IP-literal block is redundant.
-        // Removing it eliminates one of the four host-IP pins (the others
-        // being the CP systemd HOST_IP env, the Pi-Hole proxy device, and
-        // the Pi-Hole dnsmasq_lines wildcard) and means a host IP change
-        // requires no Caddyfile rewrite at all.
+        // Use static IP for the CP upstream — Caddy OCI containers have
+        // multiple NICs from per-app bridges, and their DNS resolver picks
+        // a per-app bridge dnsmasq that doesn't know about system container
+        // names. Static IPs bypass DNS entirely.
+        const controlIP = await getSystemStaticIP('youeye-control') || `youeye-control.${CONTAINER_DOMAIN}`;
         const caddyfile = [
           '{',
           '    admin 0.0.0.0:2019 {',
           '        origins *',
           '    }',
           '    on_demand_tls {',
-          `        ask http://youeye-control.${CONTAINER_DOMAIN}:3000/api/setup/config`,
+          `        ask http://${controlIP}:3000/api/setup/config`,
           '    }',
           '}',
           '',
@@ -179,7 +177,7 @@ export async function deployInfrastructure(
           '        on_demand',
           '        issuer internal',
           '    }',
-          `    reverse_proxy youeye-control.${CONTAINER_DOMAIN}:3000`,
+          `    reverse_proxy ${controlIP}:3000`,
           '}',
           '',
         ].join('\n');
@@ -338,7 +336,7 @@ export async function reconcileInfrastructure(
     try {
       // Ensure Authentik DB is set up (idempotent)
       const authentikSecrets = await setupAuthentikDatabase();
-      const postgresIP = await getContainerIP('youeye-postgres');
+      const postgresIP = await getSystemStaticIP('youeye-postgres');
       if (!postgresIP) throw new Error('Cannot get PostgreSQL container IP');
 
       const serverManifest = authentikServerManifest(
@@ -365,7 +363,7 @@ export async function reconcileInfrastructure(
     remit(3, 'running', 'Deploying missing Authentik worker...');
     try {
       const authentikSecrets = await setupAuthentikDatabase();
-      const postgresIP = await getContainerIP('youeye-postgres');
+      const postgresIP = await getSystemStaticIP('youeye-postgres');
       if (!postgresIP) throw new Error('Cannot get PostgreSQL container IP');
 
       const workerManifest = authentikWorkerManifest(
@@ -394,27 +392,25 @@ export async function reconcileInfrastructure(
       await applyResourcePolicy('youeye-caddy', 'critical');
       const healthy = await waitForCaddy();
       if (healthy) {
-        // Configure Caddy admin API origins
+        // Configure Caddy admin API origins — use static IP (see step 6 comment)
         try {
+          const controlIP = await getSystemStaticIP('youeye-control') || `youeye-control.${CONTAINER_DOMAIN}`;
           const caddyfile = [
             '{',
             '    admin 0.0.0.0:2019 {',
             '        origins *',
             '    }',
             '    on_demand_tls {',
-            `        ask http://youeye-control.${CONTAINER_DOMAIN}:3000/api/setup/config`,
+            `        ask http://${controlIP}:3000/api/setup/config`,
             '    }',
             '}',
             '',
-            // IP-literal block intentionally omitted — see deployer.ts:130
-            // for the rationale. The catch-all :443 block serves CP from
-            // any host IP via on-demand TLS.
             ':443 {',
             '    tls {',
             '        on_demand',
             '        issuer internal',
             '    }',
-            `    reverse_proxy youeye-control.${CONTAINER_DOMAIN}:3000`,
+            `    reverse_proxy ${controlIP}:3000`,
             '}',
             '',
           ].join('\n');

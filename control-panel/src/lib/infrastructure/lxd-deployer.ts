@@ -8,6 +8,7 @@
  */
 
 import { incusRequest, execShell } from '../incus/server';
+import { applyStaticIP } from '../incus/static-ips';
 import type { LXDContainerSpec } from './types';
 import { containerExists } from './oci-deployer';
 
@@ -61,6 +62,13 @@ export async function deployLXDContainer(
 
   if (result.type === 'async' && result.operation) {
     await waitForLXDOperation(result.operation, 300);
+  }
+
+  // Set static IP for system containers before starting
+  try {
+    await applyStaticIP(spec.containerName);
+  } catch (err) {
+    console.warn(`[lxd-deployer] Could not apply static IP to ${spec.containerName}:`, err);
   }
 
   // Start the container

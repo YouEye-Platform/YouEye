@@ -4,6 +4,7 @@
  */
 
 import { incusRequest } from '../incus/server';
+import { applyStaticIP } from '../incus/static-ips';
 import type { OCIManifest } from './types';
 import { mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
@@ -35,27 +36,8 @@ export async function containerExists(name: string): Promise<boolean> {
   }
 }
 
-/** Get IPv4 address of a running container. */
-export async function getContainerIP(containerName: string): Promise<string | null> {
-  try {
-    const resp = await incusRequest<Record<string, unknown>>('GET', `/1.0/instances/${containerName}/state`, undefined, { timeout: 5000 });
-    const metadata = resp.metadata as Record<string, unknown> | undefined;
-    if (!metadata) return null;
-
-    const network = metadata.network as Record<string, unknown> | undefined;
-    if (!network) return null;
-
-    const eth0 = network.eth0 as { addresses?: Array<{ family: string; address: string; scope: string }> } | undefined;
-    if (!eth0?.addresses) return null;
-
-    for (const addr of eth0.addresses) {
-      if (addr.family === 'inet' && addr.scope === 'global' && addr.address) {
-        return addr.address;
-      }
-    }
-  } catch { /* container may not be running */ }
-  return null;
-}
+/** Get IPv4 address of a container. Uses static IPs for system containers. */
+export { getContainerIP } from '../incus/container-ip';
 
 /**
  * Wait for an async Incus operation to complete.
@@ -185,6 +167,13 @@ export async function deployOCIContainer(
   // Wait for async operation (image download + container creation)
   if (result.type === 'async' && result.operation) {
     await waitForIncusOperation(result.operation, 600);
+  }
+
+  // Set static IP for system containers before starting (so first DHCP gives the right IP)
+  try {
+    await applyStaticIP(manifest.containerName);
+  } catch (err) {
+    console.warn(`[oci-deployer] Could not apply static IP to ${manifest.containerName}:`, err);
   }
 
   // Start the container

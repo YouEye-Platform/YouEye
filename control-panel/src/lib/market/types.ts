@@ -126,7 +126,7 @@ export interface InstallMetadata {
   databaseMode?: 'shared' | 'own' | 'none';
   /** Whether this app has SSO configured — used by ACL migration to determine authentik access */
   hasSSO?: boolean;
-  /** Whether this app uses per-app bridge networking (v2) instead of legacy ACLs */
+  /** @deprecated All apps use per-app bridge networking now. Kept for install.json compat. */
   usePerAppBridge?: boolean;
 }
 

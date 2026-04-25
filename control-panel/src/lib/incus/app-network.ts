@@ -16,6 +16,7 @@
 
 import { incusRequest } from './server';
 import { getContainerIP } from './container-ip';
+import { getSystemStaticIP } from './static-ips';
 
 // ─── Constants ──────────────────────────────────────────────
 
@@ -156,8 +157,8 @@ export async function createAppNetwork(
   const subnetCIDR = `${SUBNET_BASE}.${n}.0/24`;
   const gatewayIP = `${SUBNET_BASE}.${n}.1/24`;
 
-  // Resolve pihole IP for DNS forwarding
-  const piholeIP = await getContainerIP('youeye-pihole');
+  // Use static IP for pihole DNS forwarding (deterministic, survives restarts)
+  const piholeIP = await getSystemStaticIP('youeye-pihole') || await getContainerIP('youeye-pihole');
   if (!piholeIP) {
     console.warn('[app-network] Pihole IP not found — DNS forwarding will not work');
   }
@@ -388,7 +389,9 @@ export async function addProxyDevices(
     const devices = { ...res.metadata.devices };
 
     for (const svc of services) {
-      const serviceIP = await getContainerIP(svc.containerName);
+      // Use static IP for system containers (deterministic, survives restarts).
+      // Falls back to dynamic lookup for non-system containers.
+      const serviceIP = await getSystemStaticIP(svc.containerName) || await getContainerIP(svc.containerName);
       if (!serviceIP) {
         console.warn(`[app-network] Cannot resolve IP for ${svc.containerName}, skipping proxy`);
         continue;
@@ -673,14 +676,6 @@ export async function listAppNetworks(): Promise<Array<{
     bridgeName: bridgeNameFromSubnet(subnet),
     subnet,
   }));
-}
-
-/**
- * Check if an app has a per-app bridge.
- */
-export async function hasAppNetwork(appId: string): Promise<boolean> {
-  const registry = await readRegistry();
-  return appId in registry.allocated;
 }
 
 // System app IDs — the short names used in manifests and bridge records.
