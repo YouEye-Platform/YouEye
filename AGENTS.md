@@ -1,3 +1,27 @@
+## v0.3.5.18 (CP) — sebastian — 2026-04-25
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Internet/LAN access toggle in install dialog + fix native app internet access
+
+### Changes
+- `control-panel/src/lib/market/types.ts` — added `allowInternet` to InstallConfig
+- `control-panel/src/lib/market/engine.ts` — fixed wantsInternet to also check internet.hosts; engine now respects config.allowInternet override
+- `control-panel/src/app/api/market/app/[appId]/connections/route.ts` — added needsInternet computed field to response
+- `control-panel/src/app/embed/market/client.tsx` — added "Allow Internet & LAN Access" toggle with GlobeIcon, pre-ticked from needsInternet
+- `control-panel/src/components/market/install-dialog.tsx` — added matching toggle to standalone dialog
+
+### Test Results
+- `GET /api/market/app/weather/connections` → needsInternet: true, hosts: [api.open-meteo.com, geocoding-api.open-meteo.com]
+- `GET /api/market/app/cinema/connections` → needsInternet: true, hosts: [api.themoviedb.org, image.tmdb.org]
+- Weather NAT manually enabled on yeapp3 → `curl api.open-meteo.com` succeeds
+- CP deployed and running on VM, api/ping OK
+
+### Notes for Iris
+- Native app manifests also updated in their own repos (all 6 apps: network: internet added to containers)
+- Cinema manifest: removed installParams.tmdbApiKey — app should handle API key internally
+- Existing installed apps need NAT manually enabled if they were installed before this fix
+
 ## v0.3.5.17 (CP) + v0.3.5.7 (UI) — sebastian — 2026-04-25
 **Branch:** sebastian
 **VM:** ye-sebastian
