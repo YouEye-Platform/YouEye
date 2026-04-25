@@ -12,7 +12,7 @@ import {
   loadBridges,
   getBridgesForApp,
 } from '@/lib/bridges/manager';
-import { SYSTEM_APP_IDS } from '@/lib/incus/network-acl';
+import { SYSTEM_APP_IDS } from '@/lib/incus/app-network';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);

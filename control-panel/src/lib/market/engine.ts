@@ -69,7 +69,6 @@ import {
 } from './platform-env';
 import { getContainerName } from './engine-helpers';
 import { CONTAINER_DOMAIN } from './constants';
-import { ensureNetworkAcls, createContainerAcl, grantInternetAccess as grantInternet } from '../incus/network-acl';
 import {
   createAppNetwork,
   addCaddyToAppNetwork,
@@ -752,36 +751,6 @@ export async function installApp(
     } catch (netErr) {
       console.warn('[engine] Network configuration warning:', netErr);
     }
-  } else {
-    // Fallback: use legacy ACL system for containers on incusbr0
-    try {
-      await ensureNetworkAcls();
-      const needsSharedDb = (manifest.database?.mode ?? 'none') === 'shared';
-      const needsSSO = ssoEnabled;
-
-      const containerIPs = new Map<string, string>();
-      for (const cn of containerNames) {
-        const ip = await getContainerIP(cn);
-        if (ip) containerIPs.set(cn, ip);
-      }
-
-      for (const containerSpec of manifest.containers) {
-        const cn = getContainerName(appId, containerSpec.name, manifest.containers.length);
-        const siblingIPs = containerNames
-          .filter(s => s !== cn)
-          .map(s => containerIPs.get(s))
-          .filter((ip): ip is string => !!ip);
-
-        await createContainerAcl(cn, { siblingIPs, needsSharedDb, needsSSO });
-
-        if (containerSpec.network === 'internet') {
-          await grantInternet(cn, [], true);
-        }
-      }
-      emit(onEvent, step, totalSteps, 'success', `Network isolation configured (legacy ACL) for ${containerNames.length} containers`);
-    } catch (aclErr) {
-      console.warn('[engine] ACL configuration warning:', aclErr);
-    }
   }
 
   // ── Steps 7-10: Post-deploy (SSO configure, Caddy, metadata, dashboard)
@@ -878,7 +847,7 @@ export async function installApp(
         stripPath: e.stripPath || false,
       }));
 
-      await addAppRoutes(appId, hostname, entrances, primaryContainerName, forwardAuthConfig);
+      await addAppRoutes(appId, hostname, entrances, primaryContainerName, forwardAuthConfig, appBridgeName);
       emit(onEvent, step, totalSteps, 'success', `Routes added: ${entrances.length} entrances for ${hostname}`);
     } else {
       // Single-route (standard)

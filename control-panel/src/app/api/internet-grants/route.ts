@@ -4,8 +4,7 @@
  * GET  /api/internet-grants?appId=  — list grants (optionally filtered)
  * POST /api/internet-grants         — create a grant
  *
- * Per-app bridge apps: toggles NAT on the bridge (ipv4.nat=true)
- * Legacy apps (incusbr0): creates ACL rules (deprecated)
+ * All apps use per-app bridges: toggles NAT on the bridge (ipv4.nat=true)
  */
 
 import { NextResponse } from 'next/server';
@@ -14,8 +13,7 @@ import {
   createInternetGrant,
   type InternetGrant,
 } from '@/lib/bridges/internet-store';
-import { grantInternetAccess } from '@/lib/incus/network-acl';
-import { hasAppNetwork, setAppNetworkNAT } from '@/lib/incus/app-network';
+import { setAppNetworkNAT } from '@/lib/incus/app-network';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -37,15 +35,9 @@ export async function POST(request: Request) {
 
   const hostList = hosts ?? [];
   const isBlanket = blanket ?? false;
-  let aclName = '';
 
-  // Per-app bridge: toggle NAT on the bridge
-  if (await hasAppNetwork(appId)) {
-    await setAppNetworkNAT(appId, true);
-  } else {
-    // Legacy: ACL-based internet grant
-    aclName = await grantInternetAccess(containerName, hostList, isBlanket);
-  }
+  // Enable NAT on the app's per-app bridge
+  await setAppNetworkNAT(appId, true);
 
   const grant: InternetGrant = {
     id: `internet-${appId}`,
@@ -53,7 +45,7 @@ export async function POST(request: Request) {
     containerName,
     hosts: hostList,
     blanket: isBlanket,
-    aclName,
+    aclName: '',
     approvedBy: approvedBy ?? 'admin',
     approvedAt: new Date().toISOString(),
     active: true,

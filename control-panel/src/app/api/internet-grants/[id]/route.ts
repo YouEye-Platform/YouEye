@@ -6,8 +6,7 @@
 
 import { NextResponse } from 'next/server';
 import { deleteInternetGrant } from '@/lib/bridges/internet-store';
-import { revokeInternetAccess } from '@/lib/incus/network-acl';
-import { hasAppNetwork, setAppNetworkNAT } from '@/lib/incus/app-network';
+import { setAppNetworkNAT } from '@/lib/incus/app-network';
 
 export async function DELETE(
   _request: Request,
@@ -20,12 +19,8 @@ export async function DELETE(
     return NextResponse.json({ error: 'Grant not found' }, { status: 404 });
   }
 
-  // Per-app bridge: disable NAT; Legacy: remove ACL
-  if (await hasAppNetwork(grant.appId)) {
-    await setAppNetworkNAT(grant.appId, false);
-  } else {
-    await revokeInternetAccess(grant.containerName, grant.aclName);
-  }
+  // Disable NAT on the app's per-app bridge
+  await setAppNetworkNAT(grant.appId, false);
 
   return NextResponse.json({ ok: true });
 }

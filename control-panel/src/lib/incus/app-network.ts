@@ -683,4 +683,11 @@ export async function hasAppNetwork(appId: string): Promise<boolean> {
   return appId in registry.allocated;
 }
 
+// System app IDs — the short names used in manifests and bridge records.
+// Used by bridges/manager.ts and bridges/route.ts to reject bridges to system containers.
+export const SYSTEM_APP_IDS = [
+  'postgres', 'authentik', 'caddy', 'pihole', 'control', 'ui',
+  'authentik-worker',
+];
+
 export { SYSTEM_CONTAINERS, BRIDGE_PREFIX };

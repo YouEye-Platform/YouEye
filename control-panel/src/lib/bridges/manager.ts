@@ -12,11 +12,8 @@ import {
   getBridgesForApp, getPendingBridgesForTarget, loadBridges,
 } from './store';
 import {
-  addBridgeRuleToAcl, removeBridgeRuleFromAcl, ensureNetworkAcls,
+  grantBridgeAccess, revokeBridgeAccess,
   SYSTEM_APP_IDS,
-} from '../incus/network-acl';
-import {
-  grantBridgeAccess, revokeBridgeAccess, hasAppNetwork,
 } from '../incus/app-network';
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
 import { execShell } from '../incus/server';
@@ -161,26 +158,10 @@ export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
   const fromContainer = await resolveContainerName(bridge.from);
   const toContainer = await resolveContainerName(bridge.to);
 
-  // Determine if apps use per-app bridges
-  const fromOnBridge = await hasAppNetwork(bridge.from);
-  const toOnBridge = await hasAppNetwork(bridge.to);
-
-  let aclName: string | undefined;
   try {
-    if (fromOnBridge && toOnBridge) {
-      // Both on per-app bridges: NIC hot-plug
-      await grantBridgeAccess(fromContainer, bridge.to);
-      if (bridge.direction === 'both-ways') {
-        await grantBridgeAccess(toContainer, bridge.from);
-      }
-    } else {
-      // Legacy: ACL rules
-      await ensureNetworkAcls();
-      await addBridgeRuleToAcl(fromContainer, toContainer);
-      if (bridge.direction === 'both-ways') {
-        await addBridgeRuleToAcl(toContainer, fromContainer);
-      }
-      aclName = `rule-in-ye-iso-${fromContainer}`;
+    await grantBridgeAccess(fromContainer, bridge.to);
+    if (bridge.direction === 'both-ways') {
+      await grantBridgeAccess(toContainer, bridge.from);
     }
   } catch (err) {
     console.warn(`[bridges] Network access grant failed for ${bridgeId}:`, err);
@@ -222,7 +203,6 @@ export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
 
   return updateBridge(bridgeId, {
     active: true,
-    aclName,
     activatedAt: new Date().toISOString(),
   });
 }
@@ -237,26 +217,16 @@ export async function deactivateBridge(bridgeId: string): Promise<Bridge | null>
   const fromContainer = await resolveContainerName(bridge.from);
   const toContainer = await resolveContainerName(bridge.to);
 
-  const fromOnBridge = await hasAppNetwork(bridge.from);
-  const toOnBridge = await hasAppNetwork(bridge.to);
-
   try {
-    if (fromOnBridge && toOnBridge) {
-      await revokeBridgeAccess(fromContainer, bridge.to);
-      if (bridge.direction === 'both-ways') {
-        await revokeBridgeAccess(toContainer, bridge.from);
-      }
-    } else {
-      await removeBridgeRuleFromAcl(fromContainer, toContainer);
-      if (bridge.direction === 'both-ways') {
-        await removeBridgeRuleFromAcl(toContainer, fromContainer);
-      }
+    await revokeBridgeAccess(fromContainer, bridge.to);
+    if (bridge.direction === 'both-ways') {
+      await revokeBridgeAccess(toContainer, bridge.from);
     }
   } catch (err) {
     console.warn(`[bridges] Network access revocation failed for ${bridgeId}:`, err);
   }
 
-  return updateBridge(bridgeId, { active: false, aclName: undefined });
+  return updateBridge(bridgeId, { active: false });
 }
 
 /**
@@ -269,20 +239,11 @@ export async function deleteBridge(bridgeId: string): Promise<boolean> {
   if (bridge.active) {
     const fromContainer = await resolveContainerName(bridge.from);
     const toContainer = await resolveContainerName(bridge.to);
-    const fromOnBridge = await hasAppNetwork(bridge.from);
-    const toOnBridge = await hasAppNetwork(bridge.to);
 
     try {
-      if (fromOnBridge && toOnBridge) {
-        await revokeBridgeAccess(fromContainer, bridge.to);
-        if (bridge.direction === 'both-ways') {
-          await revokeBridgeAccess(toContainer, bridge.from);
-        }
-      } else {
-        await removeBridgeRuleFromAcl(fromContainer, toContainer);
-        if (bridge.direction === 'both-ways') {
-          await removeBridgeRuleFromAcl(toContainer, fromContainer);
-        }
+      await revokeBridgeAccess(fromContainer, bridge.to);
+      if (bridge.direction === 'both-ways') {
+        await revokeBridgeAccess(toContainer, bridge.from);
       }
     } catch (err) {
       console.warn(`[bridges] Network access cleanup failed during delete for ${bridge.id}:`, err);
