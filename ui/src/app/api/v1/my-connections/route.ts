@@ -5,7 +5,7 @@
  * Auth: X-YouEye-App header identifies the calling app.
  *
  * Returns:
- *   - bridges: active bridge connections for this app
+ *   - bridges: active bridge connections for this app (with resolved IPs)
  *   - internet: internet access status
  *   - available: wanted apps (from manifest) with install status
  */
@@ -63,19 +63,45 @@ export async function GET(request: Request) {
       fetch(`${CP_URL}/api/internet-grants?appId=${appSlug}`),
     ]);
 
-    const bridgesData = bridgesRes.ok ? await bridgesRes.json() : [];
+    const bridgesRaw = bridgesRes.ok ? await bridgesRes.json() : { bridges: [] };
     const internetData = internetRes.ok ? await internetRes.json() : [];
 
-    // Map bridges to connection format
-    const bridges: Bridge[] = (Array.isArray(bridgesData) ? bridgesData : [])
-      .filter((b: Record<string, unknown>) => b.active)
-      .map((b: Record<string, unknown>) => ({
-        appId: b.to as string,
-        name: b.to as string,
-        host: `app-${b.to}-main.youeye`,
-        port: 3000,
-        direction: b.direction as string || "one-way",
-      }));
+    // bridges API returns { bridges: [...] }
+    const bridgesArr = Array.isArray(bridgesRaw) ? bridgesRaw : (bridgesRaw.bridges ?? []);
+
+    // Map bridges to connection format with resolved IPs
+    const bridges: Bridge[] = [];
+    for (const b of bridgesArr) {
+      if (!b.active) continue;
+
+      const targetAppId = b.from === appSlug ? b.to : b.from;
+
+      // Resolve container IP and port from CP
+      let host = `app-${targetAppId}`;
+      let port = 3000;
+
+      try {
+        const resolveRes = await fetch(
+          `${CP_URL}/api/bridges/resolve?appId=${encodeURIComponent(targetAppId)}`,
+          { signal: AbortSignal.timeout(3_000) },
+        );
+        if (resolveRes.ok) {
+          const resolved = await resolveRes.json();
+          if (resolved.ip) host = resolved.ip;
+          if (resolved.port) port = resolved.port;
+        }
+      } catch {
+        // Fall through with DNS name
+      }
+
+      bridges.push({
+        appId: targetAppId,
+        name: targetAppId,
+        host,
+        port,
+        direction: (b.direction as string) || "one-way",
+      });
+    }
 
     // Internet status
     const grant = Array.isArray(internetData) ? internetData[0] : null;
