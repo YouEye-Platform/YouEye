@@ -1,3 +1,33 @@
+## v0.3.5.16 (CP) — sebastian — 2026-04-25
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Install-time connection prompts for app bridge system
+
+### Changes
+- `control-panel/src/lib/market/types.ts` — Added ApprovedConnection type + approvedConnections to InstallConfig
+- `control-panel/src/lib/market/engine.ts` — New step 12: process approved connections, create+activate bridges inline
+- `control-panel/src/lib/bridges/suggestions.ts` — Skip already-approved targets in suggestion generation
+- `control-panel/src/app/api/market/app/[appId]/connections/route.ts` — NEW: returns outgoing/incoming wants + internet requirements
+- `control-panel/src/app/api/suggestions/approve/route.ts` — NEW: creates bridge from suggestion + activates
+- `control-panel/src/app/api/suggestions/[id]/dismiss/route.ts` — NEW: dismiss suggestion endpoint
+- `control-panel/src/app/api/suggestions/route.ts` — Added approve action
+- `control-panel/src/app/api/ui-bridge/market/route.ts` — Added connections proxy action
+- `control-panel/src/app/embed/market/client.tsx` — Connection toggles in embedded install dialog
+- `control-panel/src/components/market/install-dialog.tsx` — Connection toggles in standalone install dialog
+- `control-panel/src/middleware.ts` — Added /api/market/app to public routes
+- `ui/src/components/settings/app-settings-detail.tsx` — Pending suggestions with approve/dismiss in Network tab
+
+### Test Results
+- API: connections endpoint returns correct outgoing/incoming for Search and SearXNG
+- API: suggestion approval creates and activates bridge (search-to-searxng)
+- Network: Search container has NIC on SearXNG's bridge, HTTP 200 from SearXNG
+
+### Notes for Iris
+- UI component changed (app-settings-detail.tsx) — needs UI rebuild for Network tab suggestions
+- No database migrations required
+- No Spine changes in this release
+
 ## v0.3.5.14 (CP) + v0.3.1.1 (Spine) — sebastian — 2026-04-25
 **Branch:** sebastian
 **VM:** ye-sebastian
