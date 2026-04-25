@@ -1,3 +1,38 @@
+## v0.3.5.13 (CP) — sebastian — 2026-04-25
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Post-migration cleanup — remove legacy ACL system, connector debris, fix metadata gap
+
+### Changes
+- `control-panel/src/lib/incus/network-acl.ts` — DELETED (829 lines of legacy ACL code)
+- `control-panel/src/lib/incus/app-network.ts` — added SYSTEM_APP_IDS export (moved from deleted network-acl.ts)
+- `control-panel/src/lib/bridges/manager.ts` — removed legacy ACL branches from activate/deactivate/delete
+- `control-panel/src/lib/market/engine.ts` — removed legacy ACL else block and imports
+- `control-panel/src/lib/market/uninstaller.ts` — removed legacy ACL cleanup branch
+- `control-panel/src/app/api/internet-grants/route.ts` — removed legacy ACL grant path
+- `control-panel/src/app/api/internet-grants/[id]/route.ts` — removed legacy ACL revoke path
+- `control-panel/src/app/api/bridges/route.ts` — updated SYSTEM_APP_IDS import to app-network
+- `control-panel/src/app/api/admin/migrate-networks/route.ts` — added fixMetadataOnly mode
+- `control-panel/src/lib/caddy/client.ts` — addAppRoutes now resolves container IPs for per-app bridge apps
+- `connector-runtime/` — DELETED (entire abandoned package)
+- `ui/tests/connector-settings.spec.ts` — DELETED
+- `ui/tests/connector-runtime.spec.ts` — DELETED
+- `pnpm-workspace.yaml` — removed connector-runtime
+
+### Test Results
+- 15 containers running, 0 stopped
+- All 7 apps verified responding (HTTP 307)
+- Metadata fix verified: all apps have usePerAppBridge=true + bridgeName
+- Bridge and internet-grant records cleaned of stale aclName references
+
+### Notes for Iris
+- 27 files changed, 143 insertions, 2499 deletions
+- network-acl.ts is gone — any code importing from it will fail
+- SYSTEM_APP_IDS now lives in app-network.ts
+- The ye-system ACL for system containers is still in Incus (managed by Spine, not CP)
+- Connector-runtime removed from workspace — pnpm install will be faster
+
 ## v0.3.5.12 (CP) — sebastian — 2026-04-24
 **Branch:** sebastian
 **VM:** ye-sebastian
