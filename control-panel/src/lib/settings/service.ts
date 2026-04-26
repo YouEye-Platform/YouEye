@@ -118,7 +118,7 @@ class SettingsService {
    * Use this for call sites that need the raw format
    * (e.g. setup/config endpoint, bridge endpoints).
    */
-  async getRaw(): Promise<{ site_name: string; domain: string; subdomains: Record<string, string>; setup_completed: boolean; release_branch?: string; language?: string; smtp_host?: string; smtp_port?: number; smtp_username?: string; smtp_from?: string; smtp_require_tls?: boolean }> {
+  async getRaw(): Promise<{ site_name: string; domain: string; subdomains: Record<string, string>; setup_completed: boolean; release_branch?: string; language?: string; smtp_host?: string; smtp_port?: number; smtp_username?: string; smtp_from?: string; smtp_require_tls?: boolean; [key: string]: unknown }> {
     const now = Date.now();
     if (this.cache && (now - this.cacheTimestamp) < this.CACHE_TTL_MS) {
       // Convert cached typed settings back to raw
@@ -140,7 +140,7 @@ class SettingsService {
     // Also populate the typed cache
     this.cache = fromRaw(raw as unknown as Record<string, unknown>);
     this.cacheTimestamp = Date.now();
-    return raw;
+    return raw as Awaited<ReturnType<typeof this.getRaw>>;
   }
 
   /** Invalidate the cache (call after external config changes) */
