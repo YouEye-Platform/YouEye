@@ -1,3 +1,27 @@
+## v0.3.5.3 (CP) — iris — 2026-04-26
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris (acting as dev agent)
+**Task:** Move TLS certificate choice to Name Your Server step; add custom TLD and upload-own-cert options
+
+### Changes
+- `control-panel/src/components/setup/SetupServerName.tsx` — Added TLS certificate choice section (Let's Encrypt with "Recommended" badge, self-signed, upload own cert). Added custom TLD text input when "Other..." is selected from the TLD dropdown. LE option auto-disabled for local TLDs. Exports `TlsChoice` type.
+- `control-panel/src/components/setup/SetupDnsExplainer.tsx` — Removed `TlsPathChoice` inline component. Now accepts `tlsChoice` prop from page.tsx and goes directly to the selected flow. Added `UploadCertFlow` component for PEM paste/browse upload via `/api/tls/upload`. Replaced hardcoded `bg-white/80` with theme-aware `bg-card`.
+- `control-panel/src/app/setup/page.tsx` — Added `tlsChoice` and `customTld` state. Computes `effectiveTld` for custom TLD sentinel. Passes `tlsChoice`/`setTlsChoice` to SetupServerName and `tlsChoice` to SetupDnsExplainer. Auto-resets LE choice to self-signed when switching to a local TLD.
+- `control-panel/src/lib/wordart-presets.ts` — Expanded `TLD_OPTIONS` from 13 to 22 entries: added .xyz, .cloud, .sh, .cc, .tv, .info, .pro, and "Other..." (`__custom__` sentinel with group `'custom'`).
+- `control-panel/messages/{en,de,es,fr,ru}.json` — Added 14 new i18n keys (certificateChoice, recommended, tlsUploadOwn, tlsUploadOwnDesc, uploadCertTitle, uploadCertDesc, uploadCertLabel, uploadKeyLabel, uploadCertBrowse, uploadChainOptional, uploadChainLabel, uploadCertApply, uploadCertDone, uploadCertDoneDesc). Updated tlsLetsEncrypt to remove inline "(recommended)" text.
+- `control-panel/package.json` — Bumped version to 0.3.5.3
+
+### Test Results
+- CP builds cleanly (102MB standalone.tar)
+- CP deploys and starts successfully (Next.js 16.1.4 on port 3000)
+- User will test setup wizard flow via fresh spine deploy
+
+### Notes for Iris
+- The upload cert flow uses the existing `/api/tls/upload` POST endpoint — no new API routes.
+- Custom TLD uses `__custom__` sentinel value in the TLD dropdown; page.tsx resolves it to the actual typed TLD before computing the domain string.
+- `TlsChoice` type exported from SetupServerName for shared use.
+
 ## v0.3.5.2 (CP) / v0.3.3.2 (UI) — iris — 2026-04-26
 **Branch:** dev
 **VM:** ye-iris
