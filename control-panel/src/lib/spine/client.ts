@@ -351,8 +351,17 @@ export class SpineClient {
   /**
    * Get site-level YouEye configuration from youeye.yaml
    */
-  async getConfig(): Promise<{ site_name: string; domain: string; subdomains: Record<string, string>; setup_completed: boolean; release_branch?: string; language?: string }> {
-    return this.request('/api/config');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async getConfig(): Promise<Record<string, any>> {
+    const raw = await this.request('/api/config') as Record<string, unknown>;
+    // Spine stores unrecognized keys in an "extra" map. Merge them into
+    // the top level so callers can read e.g. raw.tls_acme_account_key
+    // without knowing about the extra indirection.
+    if (raw.extra && typeof raw.extra === 'object') {
+      const { extra, ...rest } = raw;
+      return { ...rest, ...extra as Record<string, unknown> };
+    }
+    return raw;
   }
 
   /**

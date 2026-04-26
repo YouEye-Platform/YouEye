@@ -1750,6 +1750,10 @@ type YouEyeConfig struct {
 	SetupCompleted bool              `yaml:"setup_completed" json:"setup_completed"`
 	ReleaseBranch  string            `yaml:"release_branch,omitempty" json:"release_branch"`
 	Language       string            `yaml:"language,omitempty" json:"language"`
+	// Extra holds arbitrary key-value pairs that the Control Panel needs
+	// to persist (e.g. tls_acme_account_key, tls_cert_pem). Spine doesn't
+	// interpret these — it just stores and returns them.
+	Extra          map[string]string `yaml:"extra,omitempty" json:"extra,omitempty"`
 }
 
 var youeyeConfigPath = "/var/lib/youeye/config/youeye.yaml"
@@ -1869,6 +1873,27 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if v, ok := patch["language"].(string); ok {
 			existing.Language = v
+		}
+
+		// Store any unrecognized keys in Extra — this allows the
+		// Control Panel to persist arbitrary settings (TLS certs,
+		// ACME account keys, etc.) without Spine needing to know
+		// about each field.
+		knownKeys := map[string]bool{
+			"site_name": true, "domain": true, "subdomains": true,
+			"setup_completed": true, "release_branch": true, "language": true,
+			"extra": true,
+		}
+		for key, val := range patch {
+			if knownKeys[key] {
+				continue
+			}
+			if s, ok := val.(string); ok {
+				if existing.Extra == nil {
+					existing.Extra = make(map[string]string)
+				}
+				existing.Extra[key] = s
+			}
 		}
 
 		if err := saveYouEyeConfig(existing); err != nil {
