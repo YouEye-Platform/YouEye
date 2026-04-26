@@ -197,19 +197,24 @@ export async function verifyAndFinalize(
     await client.completeChallenge(challenge);
   }
 
-  // Wait for order to be ready
-  const finalOrder = await client.waitForValidStatus(activeOrder.order);
+  // Wait for challenges to be validated (status: "ready" or "valid")
+  const readyOrder = await client.waitForValidStatus(activeOrder.order);
 
   // Create CSR
   const [, csr] = await acme.crypto.createCsr({
     altNames: activeOrder.domains,
   }, activeOrder.privateKey);
 
-  // Finalize order
-  await client.finalizeOrder(finalOrder, csr);
+  // Finalize order — skip if already "valid" (e.g. retry after prior finalization succeeded)
+  if (readyOrder.status !== 'valid') {
+    await client.finalizeOrder(readyOrder, csr);
+  }
+
+  // Wait for order to reach "valid" with certificate URL populated
+  const validOrder = await client.waitForValidStatus(readyOrder);
 
   // Get certificate
-  const certificate = await client.getCertificate(finalOrder);
+  const certificate = await client.getCertificate(validOrder);
 
   // Parse expiry from certificate
   const expiresAt = parseCertExpiry(certificate);
