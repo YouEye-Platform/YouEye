@@ -70,18 +70,18 @@ export function PINPrompt({ mode, onSuccess, onCancel, embedded }: PINPromptProp
   const formContent = (
     <form onSubmit={handleSubmit} className={embedded ? "space-y-4" : "p-6 space-y-4"}>
       <div>
-        <label className={`block text-sm font-medium mb-1.5 ${embedded ? "text-white/70" : ""}`}>
+        <label className={`block text-sm font-medium mb-1.5 ${embedded ? "text-muted-foreground" : ""}`}>
           {mode === "create" ? t('choosePin') : t('enterPin')}
         </label>
         <div className="relative">
-          <Lock className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${embedded ? "text-white/30" : "text-muted-foreground"}`} />
+          <Lock className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground`} />
           <input
             type={showPin ? "text" : "password"}
             value={pin}
             onChange={(e) => setPin(e.target.value)}
             placeholder={t('enterPinPlaceholder')}
             className={embedded
-              ? "w-full pl-10 pr-10 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-white/20"
+              ? "w-full pl-10 pr-10 py-2.5 bg-muted border border-border rounded-xl text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               : "w-full pl-10 pr-10 py-2.5 bg-muted rounded-lg border-0 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             }
             autoFocus
@@ -90,7 +90,7 @@ export function PINPrompt({ mode, onSuccess, onCancel, embedded }: PINPromptProp
           <button
             type="button"
             onClick={() => setShowPin(!showPin)}
-            className={embedded ? "absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60" : "absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
           >
             {showPin ? (
               <EyeOff className="w-4 h-4" />
@@ -103,18 +103,18 @@ export function PINPrompt({ mode, onSuccess, onCancel, embedded }: PINPromptProp
 
       {mode === "create" && (
         <div>
-          <label className={`block text-sm font-medium mb-1.5 ${embedded ? "text-white/70" : ""}`}>
+          <label className={`block text-sm font-medium mb-1.5 ${embedded ? "text-muted-foreground" : ""}`}>
             {t('confirmPin')}
           </label>
           <div className="relative">
-            <Lock className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${embedded ? "text-white/30" : "text-muted-foreground"}`} />
+            <Lock className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground`} />
             <input
               type={showPin ? "text" : "password"}
               value={confirmPin}
               onChange={(e) => setConfirmPin(e.target.value)}
               placeholder={t('confirmPinPlaceholder')}
               className={embedded
-                ? "w-full pl-10 pr-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-white/20"
+                ? "w-full pl-10 pr-4 py-2.5 bg-muted border border-border rounded-xl text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 : "w-full pl-10 pr-4 py-2.5 bg-muted rounded-lg border-0 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               }
               autoComplete="off"
@@ -124,7 +124,7 @@ export function PINPrompt({ mode, onSuccess, onCancel, embedded }: PINPromptProp
       )}
 
       {error && (
-        <p className={`text-sm text-center ${embedded ? "text-red-400" : "text-red-500"}`}>{error}</p>
+        <p className="text-sm text-center text-red-500">{error}</p>
       )}
 
       <div className="flex gap-3 pt-2">
@@ -133,7 +133,7 @@ export function PINPrompt({ mode, onSuccess, onCancel, embedded }: PINPromptProp
             type="button"
             onClick={onCancel}
             className={embedded
-              ? "flex-1 py-2.5 text-sm rounded-xl bg-transparent border border-white/10 text-white/50 hover:text-white/70 hover:border-white/20 transition-colors"
+              ? "flex-1 py-2.5 text-sm rounded-xl bg-transparent border border-border text-muted-foreground hover:text-foreground hover:border-border/80 transition-colors"
               : "flex-1 py-2.5 text-sm rounded-lg border hover:bg-accent transition-colors"
             }
           >
@@ -144,7 +144,7 @@ export function PINPrompt({ mode, onSuccess, onCancel, embedded }: PINPromptProp
           type="submit"
           disabled={loading || pin.length < 4}
           className={embedded
-            ? "flex-1 py-2.5 text-sm rounded-xl bg-white/10 hover:bg-white/15 backdrop-blur-sm text-white font-medium transition-colors disabled:opacity-50"
+            ? "flex-1 py-2.5 text-sm rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-medium transition-colors disabled:opacity-50"
             : "flex-1 py-2.5 text-sm rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
           }
         >
@@ -157,7 +157,7 @@ export function PINPrompt({ mode, onSuccess, onCancel, embedded }: PINPromptProp
       </div>
 
       {mode === "create" && (
-        <p className={`text-xs text-center ${embedded ? "text-white/30" : "text-muted-foreground"}`}>
+        <p className="text-xs text-center text-muted-foreground">
           {t('pinRecoveryWarning')}
         </p>
       )}

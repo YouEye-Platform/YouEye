@@ -154,7 +154,7 @@ export async function middleware(request: NextRequest) {
     // Allow these paths through (needed for setup flow to work)
     const setupAllowedPaths = [
       '/setup', '/setup-complete', '/login',
-      '/api/auth/', '/api/setup/', '/api/deploy/',
+      '/api/auth/', '/api/setup/', '/api/deploy/', '/api/tls/',
     ];
     const isSetupPath = setupAllowedPaths.some(p => pathname === p || pathname.startsWith(p));
 

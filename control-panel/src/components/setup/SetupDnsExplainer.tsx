@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Globe, ExternalLink, Download, Monitor, Apple, Terminal,
   Copy, Check, ChevronDown, Smartphone, ShieldCheck,
+  ShieldAlert, Loader2, Lock, ArrowLeft,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
@@ -16,6 +17,14 @@ interface Props {
 }
 
 type Platform = 'windows' | 'macos' | 'linux' | 'ios' | 'android';
+type TlsPath = 'choice' | 'letsencrypt' | 'selfsigned';
+type AcmeStep = 'domain' | 'records' | 'verifying' | 'done';
+
+interface DnsChallenge {
+  domain: string;
+  txtName: string;
+  txtValue: string;
+}
 
 // ─── Platform detection ──────────────────────────────────────
 
@@ -29,17 +38,12 @@ function detectPlatform(): Platform {
   return 'windows';
 }
 
+/** Check if a domain is local/private (LE won't work) */
+function isLocalDomain(domain: string): boolean {
+  return /\.(local|test|internal|lan|home|localhost|invalid|example)$/i.test(domain);
+}
+
 // ─── Connectivity hook (iframe + postMessage) ───────────────
-//
-// The setup-complete page is served via IP (or control.devvm.test),
-// so cross-origin fetch/img to devvm.test always fails with self-signed
-// certs.  Iframe navigation gets the same TLS treatment as top-level
-// navigation, so we load a hidden iframe pointing at
-// https://<domain>/api/ping?verify=1.  Caddy's path-only /api/ping
-// route sends ALL hosts to CP, which returns a tiny HTML page that
-// does parent.postMessage({type:'ye-dns-ok'}).  If the user's device
-// can resolve the domain AND the TLS handshake succeeds, we receive
-// the message → indicator goes green.
 
 function useConnectivityCheck(domain: string) {
   const [reachable, setReachable] = useState(false);
@@ -60,7 +64,6 @@ function useConnectivityCheck(domain: string) {
     window.addEventListener('message', onMessage);
 
     const probe = () => {
-      // Remove previous iframe
       if (iframeRef.current?.parentNode) {
         iframeRef.current.parentNode.removeChild(iframeRef.current);
       }
@@ -72,13 +75,11 @@ function useConnectivityCheck(domain: string) {
       iframeRef.current = iframe;
     };
 
-    // First probe + mark "not checking" after 3 s if still waiting
     probe();
     const firstTimer = setTimeout(() => {
       if (active) setChecking(false);
     }, 3000);
 
-    // Re-probe every 5 s until reachable
     const interval = setInterval(probe, 5000);
 
     return () => {
@@ -95,7 +96,7 @@ function useConnectivityCheck(domain: string) {
   return { reachable, checking };
 }
 
-// ─── Status indicator (single reachability check) ───────────
+// ─── Status indicator ────────────────────────────────────────
 
 function StatusIndicator({ reachable, checking, domain, t }: {
   reachable: boolean;
@@ -225,7 +226,7 @@ function DnsStep({ serverIp, platform, t }: {
   );
 }
 
-// ─── Certificate step ────────────────────────────────────────
+// ─── Certificate step (self-signed) ─────────────────────────
 
 function CertStep({ serverIp, platform, t }: {
   serverIp: string;
@@ -247,7 +248,6 @@ function CertStep({ serverIp, platform, t }: {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Determine which download to show prominently
   const isApple = platform === 'ios' || platform === 'macos';
   const profilePlatform = platform === 'ios' || platform === 'macos' ? platform : null;
   const certPlatform = platform === 'windows' || platform === 'android' ? platform : null;
@@ -257,7 +257,6 @@ function CertStep({ serverIp, platform, t }: {
       <h3 className="font-semibold text-sm">{t('step2Title')}</h3>
       <p className="text-sm text-muted-foreground">{t('step2Desc')}</p>
 
-      {/* Primary download button */}
       {isApple && (
         <a
           href={`/api/setup/profile?platform=${profilePlatform}`}
@@ -291,14 +290,12 @@ function CertStep({ serverIp, platform, t }: {
         </a>
       )}
 
-      {/* iOS extra step */}
       {platform === 'ios' && (
         <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-3">
           {t('iosExtraStep')}
         </p>
       )}
 
-      {/* Advanced: terminal commands (collapsed by default) */}
       {(platform === 'windows' || platform === 'macos' || platform === 'linux') && (
         <div className="border-t pt-3">
           <button
@@ -328,18 +325,294 @@ function CertStep({ serverIp, platform, t }: {
   );
 }
 
+// ─── Let's Encrypt ACME flow ─────────────────────────────────
+
+function AcmeFlow({ domain, t }: {
+  domain: string;
+  t: ReturnType<typeof useTranslations>;
+}) {
+  const [acmeStep, setAcmeStep] = useState<AcmeStep>('domain');
+  const [acmeDomain, setAcmeDomain] = useState(domain);
+  const [includeWildcard, setIncludeWildcard] = useState(true);
+  const [orderId, setOrderId] = useState('');
+  const [challenges, setChallenges] = useState<DnsChallenge[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+
+  const copyText = (text: string, idx: number) => {
+    navigator.clipboard.writeText(text);
+    setCopiedIndex(idx);
+    setTimeout(() => setCopiedIndex(null), 2000);
+  };
+
+  const handleStartOrder = async () => {
+    if (!acmeDomain.trim()) {
+      setError(t('acmeDomainRequired'));
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const csrfRes = await fetch('/api/auth/csrf');
+      const { csrfToken } = await csrfRes.json();
+
+      const res = await fetch('/api/tls/acme', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': csrfToken,
+        },
+        body: JSON.stringify({
+          domain: acmeDomain.trim(),
+          includeWildcard,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to start order');
+
+      setOrderId(data.orderId);
+      setChallenges(data.challenges);
+      setAcmeStep('records');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to start ACME order');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerify = async () => {
+    setLoading(true);
+    setError('');
+    setAcmeStep('verifying');
+    try {
+      const csrfRes = await fetch('/api/auth/csrf');
+      const { csrfToken } = await csrfRes.json();
+
+      const res = await fetch('/api/tls/acme', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': csrfToken,
+        },
+        body: JSON.stringify({ orderId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Verification failed');
+
+      setAcmeStep('done');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'ACME verification failed');
+      setAcmeStep('records');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Step: Enter domain
+  if (acmeStep === 'domain') {
+    return (
+      <div className="rounded-xl border bg-white/80 p-5 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex items-center gap-2">
+          <Lock className="h-4 w-4 text-green-600" />
+          <h3 className="font-semibold text-sm">{t('acmeTitle')}</h3>
+        </div>
+        <p className="text-sm text-muted-foreground">{t('acmeDesc')}</p>
+
+        <div>
+          <label className="block text-xs font-medium text-muted-foreground mb-1.5">
+            {t('acmeDomainLabel')}
+          </label>
+          <input
+            type="text"
+            value={acmeDomain}
+            onChange={(e) => setAcmeDomain(e.target.value)}
+            placeholder="example.com"
+            className="w-full px-3 py-2 rounded-lg border text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+        </div>
+
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={includeWildcard}
+            onChange={(e) => setIncludeWildcard(e.target.checked)}
+            className="rounded"
+          />
+          {t('acmeWildcard')}
+        </label>
+
+        {error && (
+          <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>
+        )}
+
+        <button
+          onClick={handleStartOrder}
+          disabled={loading || !acmeDomain.trim()}
+          className="inline-flex items-center gap-2 rounded-lg bg-green-600 text-white px-5 py-2.5 text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
+          {t('acmeStartOrder')}
+        </button>
+      </div>
+    );
+  }
+
+  // Step: Show DNS TXT records
+  if (acmeStep === 'records') {
+    return (
+      <div className="rounded-xl border bg-white/80 p-5 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex items-center gap-2">
+          <Lock className="h-4 w-4 text-green-600" />
+          <h3 className="font-semibold text-sm">{t('acmeRecordsTitle')}</h3>
+        </div>
+        <p className="text-sm text-muted-foreground">{t('acmeRecordsDesc')}</p>
+
+        <div className="space-y-3">
+          {challenges.map((challenge, i) => (
+            <div key={i} className="rounded-lg border bg-muted/30 p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-foreground">TXT Record {i + 1}</span>
+                <button
+                  onClick={() => copyText(challenge.txtValue, i)}
+                  className="p-1 rounded hover:bg-muted transition-colors"
+                  title="Copy value"
+                >
+                  {copiedIndex === i
+                    ? <Check className="h-3.5 w-3.5 text-green-500" />
+                    : <Copy className="h-3.5 w-3.5 text-muted-foreground" />}
+                </button>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs text-muted-foreground w-12 flex-shrink-0">Name:</span>
+                  <code className="text-xs bg-muted rounded px-2 py-1 break-all">{challenge.txtName}</code>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs text-muted-foreground w-12 flex-shrink-0">Value:</span>
+                  <code className="text-xs bg-muted rounded px-2 py-1 break-all">{challenge.txtValue}</code>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-3">
+          {t('acmeRecordsHint')}
+        </p>
+
+        {error && (
+          <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>
+        )}
+
+        <button
+          onClick={handleVerify}
+          disabled={loading}
+          className="inline-flex items-center gap-2 rounded-lg bg-green-600 text-white px-5 py-2.5 text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+          {t('acmeVerify')}
+        </button>
+      </div>
+    );
+  }
+
+  // Step: Verifying
+  if (acmeStep === 'verifying') {
+    return (
+      <div className="rounded-xl border bg-white/80 p-5 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex items-center gap-3">
+          <Loader2 className="h-5 w-5 animate-spin text-green-600" />
+          <div>
+            <h3 className="font-semibold text-sm">{t('acmeVerifying')}</h3>
+            <p className="text-xs text-muted-foreground">{t('acmeVerifyingDesc')}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Step: Done
+  return (
+    <div className="rounded-xl border bg-green-50 border-green-200 p-5 space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex items-center gap-2">
+        <ShieldCheck className="h-5 w-5 text-green-600" />
+        <h3 className="font-semibold text-sm text-green-800">{t('acmeDone')}</h3>
+      </div>
+      <p className="text-sm text-green-700">{t('acmeDoneDesc')}</p>
+    </div>
+  );
+}
+
+// ─── TLS path choice ─────────────────────────────────────────
+
+function TlsPathChoice({ domain, onSelect, t }: {
+  domain: string;
+  onSelect: (path: TlsPath) => void;
+  t: ReturnType<typeof useTranslations>;
+}) {
+  const isLocal = isLocalDomain(domain);
+
+  return (
+    <div className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <h3 className="font-semibold text-sm text-center mb-4">{t('tlsChoiceTitle')}</h3>
+
+      {/* Let's Encrypt option */}
+      <button
+        onClick={() => onSelect('letsencrypt')}
+        className={`w-full text-left rounded-xl border p-5 transition-all hover:border-green-300 hover:bg-green-50/50 ${
+          isLocal ? 'opacity-60' : ''
+        }`}
+      >
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 p-2 rounded-lg bg-green-100">
+            <Lock className="h-4 w-4 text-green-700" />
+          </div>
+          <div>
+            <p className="font-medium text-sm">{t('tlsLetsEncrypt')}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{t('tlsLetsEncryptDesc')}</p>
+            {isLocal && (
+              <p className="text-xs text-amber-600 mt-1">{t('tlsLetsEncryptLocalWarn')}</p>
+            )}
+          </div>
+        </div>
+      </button>
+
+      {/* Self-signed option */}
+      <button
+        onClick={() => onSelect('selfsigned')}
+        className="w-full text-left rounded-xl border p-5 transition-all hover:border-primary/30 hover:bg-muted/50"
+      >
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 p-2 rounded-lg bg-muted">
+            <ShieldAlert className="h-4 w-4 text-muted-foreground" />
+          </div>
+          <div>
+            <p className="font-medium text-sm">{t('tlsSelfSigned')}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{t('tlsSelfSignedDesc')}</p>
+          </div>
+        </div>
+      </button>
+    </div>
+  );
+}
+
 // ─── Main component ──────────────────────────────────────────
 
 export default function SetupDnsExplainer({ domain, siteName, standalone = false }: Props) {
   const t = useTranslations('setup');
   const [platform, setPlatform] = useState<Platform>('windows');
   const { reachable, checking } = useConnectivityCheck(domain);
+  const [tlsPath, setTlsPath] = useState<TlsPath>(standalone ? 'selfsigned' : 'choice');
 
   useEffect(() => {
     setPlatform(detectPlatform());
   }, []);
 
   const serverIp = typeof window !== 'undefined' ? window.location.hostname : 'your-server-ip';
+
+  // When LE cert is issued and connectivity check passes, show success
+  const acmeDone = tlsPath === 'letsencrypt';
 
   return (
     <div className={`w-full ${standalone ? 'max-w-xl' : 'max-w-lg'} mx-auto space-y-5`}>
@@ -360,20 +633,78 @@ export default function SetupDnsExplainer({ domain, siteName, standalone = false
         </p>
       </div>
 
-      {/* Status indicator */}
-      <StatusIndicator
-        reachable={reachable}
-        checking={checking}
-        domain={domain}
-        t={t}
-      />
+      {/* TLS path choice (only in wizard mode, not standalone) */}
+      {!standalone && tlsPath === 'choice' && !reachable && (
+        <TlsPathChoice domain={domain} onSelect={setTlsPath} t={t} />
+      )}
 
-      {/* Steps — hide when device can reach the server */}
-      {!reachable && (
+      {/* Let's Encrypt ACME flow */}
+      {tlsPath === 'letsencrypt' && !reachable && (
         <>
+          <button
+            onClick={() => setTlsPath('choice')}
+            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            {t('tlsBackToChoice')}
+          </button>
+          <AcmeFlow domain={domain} t={t} />
+        </>
+      )}
+
+      {/* Self-signed CA flow */}
+      {tlsPath === 'selfsigned' && !reachable && (
+        <>
+          {!standalone && (
+            <button
+              onClick={() => setTlsPath('choice')}
+              className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              {t('tlsBackToChoice')}
+            </button>
+          )}
+          {/* Status indicator */}
+          <StatusIndicator
+            reachable={reachable}
+            checking={checking}
+            domain={domain}
+            t={t}
+          />
           <DnsStep serverIp={serverIp} platform={platform} t={t} />
           <CertStep serverIp={serverIp} platform={platform} t={t} />
         </>
+      )}
+
+      {/* Status indicator for LE path (show after ACME flow) */}
+      {tlsPath === 'letsencrypt' && (
+        <StatusIndicator
+          reachable={reachable}
+          checking={checking}
+          domain={domain}
+          t={t}
+        />
+      )}
+
+      {/* When reachable and was LE path - no cert install needed */}
+      {reachable && acmeDone && (
+        <div className="rounded-xl border bg-green-50 border-green-200 p-5 space-y-2 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5 text-green-600" />
+            <p className="font-medium text-sm text-green-800">{t('acmeNoCertInstall')}</p>
+          </div>
+          <p className="text-xs text-green-700">{t('acmeNoCertInstallDesc')}</p>
+        </div>
+      )}
+
+      {/* Status indicator for choice mode (show when still choosing) */}
+      {tlsPath === 'choice' && (
+        <StatusIndicator
+          reachable={reachable}
+          checking={checking}
+          domain={domain}
+          t={t}
+        />
       )}
 
       {/* Go to server */}
