@@ -160,6 +160,11 @@ export async function POST(request: NextRequest) {
   }
 
   const body: SetupRequest = await request.json();
+  // Sanitize domain: strip trailing dots (e.g. "potemk." → "potemk")
+  // Trailing dots produce URLs like "https://control.potemk." which Authentik rejects
+  if (body.domain) {
+    body.domain = body.domain.replace(/\.+$/, '');
+  }
   const retryStep = body.retry_step;
 
   const stream = new ReadableStream({

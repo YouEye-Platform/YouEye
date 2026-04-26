@@ -7,6 +7,7 @@ import { useTranslations } from 'next-intl';
 import {
   type SiteNameStyle,
   DEFAULT_STYLE,
+  TLD_OPTIONS,
 } from '@/lib/wordart-presets';
 
 import SetupLanguage from '@/components/setup/SetupLanguage';
@@ -119,8 +120,17 @@ export default function SetupPage() {
         if (config.domain) {
           const lastDot = config.domain.lastIndexOf('.');
           if (lastDot > 0) {
-            setDomainSlug(config.domain.slice(0, lastDot));
-            setTld('.' + config.domain.slice(lastDot + 1));
+            const slug = config.domain.slice(0, lastDot);
+            const tldPart = '.' + config.domain.slice(lastDot + 1);
+            setDomainSlug(slug);
+            // Check if this TLD is one of the standard options
+            if (TLD_OPTIONS.some(opt => opt.value === tldPart)) {
+              setTld(tldPart);
+            } else {
+              // Custom TLD — set the sentinel and populate customTld
+              setTld('__custom__');
+              setCustomTld(config.domain.slice(lastDot + 1));
+            }
           }
         }
         if (config.subdomains) {
@@ -347,6 +357,8 @@ export default function SetupPage() {
                 if (isLocal && tlsChoice === 'letsencrypt') setTlsChoice('selfsigned');
               }
             }}
+            customTld={customTld}
+            setCustomTld={setCustomTld}
             subdomains={subdomains}
             setSubdomains={(v) => setSubdomains(prev => ({ ...prev, ...v }))}
             authentikName={authentikName}

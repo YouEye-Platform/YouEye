@@ -20,6 +20,8 @@ interface Props {
   setDomainSlug: (v: string) => void;
   tld: string;
   setTld: (v: string) => void;
+  customTld: string;
+  setCustomTld: (v: string) => void;
   subdomains: Record<string, string>;
   setSubdomains: (v: Record<string, string>) => void;
   authentikName: string;
@@ -41,6 +43,7 @@ export default function SetupServerName({
   siteName, setSiteName,
   domainSlug, setDomainSlug,
   tld, setTld,
+  customTld, setCustomTld,
   subdomains, setSubdomains,
   authentikName, setAuthentikName,
   tlsChoice, setTlsChoice,
@@ -50,7 +53,6 @@ export default function SetupServerName({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [authentikEdited, setAuthentikEdited] = useState(false);
   const [slugEdited, setSlugEdited] = useState(false);
-  const [customTld, setCustomTld] = useState('');
   const isCustomTld = tld === '__custom__';
 
   // Auto-fill domain slug from site name
@@ -145,7 +147,7 @@ export default function SetupServerName({
             <span className="text-sm text-muted-foreground">.</span>
             <Input
               value={customTld}
-              onChange={e => setCustomTld(e.target.value.replace(/^\./, '').replace(/[^a-z0-9.-]/gi, '').toLowerCase())}
+              onChange={e => setCustomTld(e.target.value.replace(/^\./, '').replace(/[^a-z0-9.-]/gi, '').replace(/\.+$/, '').toLowerCase())}
               placeholder="wtf"
               className="h-9 text-sm font-mono flex-1"
               autoFocus
