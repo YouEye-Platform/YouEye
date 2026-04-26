@@ -22,6 +22,7 @@ import { setDomainDNS } from '@/lib/apps/pihole-api';
 import { generateSetupAuthentikCSS } from '@/lib/authentik/setup-css';
 import { generateWordArtSVG } from '@/lib/authentik/wordart-svg';
 import { execShell } from '@/lib/incus/server';
+import { tlsStorage } from '@/lib/acme/storage';
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 
@@ -37,6 +38,8 @@ interface SetupRequest {
   site_name_style?: Record<string, unknown>;
   icon_config?: Record<string, unknown>;
   authentik_name?: string;
+  /** TLS mode chosen during setup (letsencrypt, selfsigned, upload) */
+  tls_choice?: string;
   /** If set, only run this specific step (retry mode) */
   retry_step?: string;
 }
@@ -246,6 +249,20 @@ export async function POST(request: NextRequest) {
             stepUpdate('caddy', 'error', 'Could not configure domain TLS — HTTPS may not work');
             await saveStepState('caddy', 'error');
             hasError = true;
+          }
+
+          // If an ACME cert was already issued during setup (LE flow in step 0),
+          // restore it now — setDomain() resets TLS policies to self-signed
+          if (!hasError) {
+            try {
+              const storedCert = await tlsStorage.getCert();
+              if (storedCert && storedCert.mode === 'acme') {
+                await caddy.loadExternalCert(storedCert.certPem, storedCert.keyPem, storedCert.domains);
+                console.log('[setup] Restored ACME certificate after setDomain');
+              }
+            } catch (certErr) {
+              console.warn('[setup] Non-fatal: could not restore ACME cert:', certErr);
+            }
           }
 
           if (!hasError || retryStep === 'caddy') {

@@ -40,8 +40,8 @@ interface SetupStep {
   message?: string;
 }
 
-// Steps: -2=language, -1=choice, 0=serverName, 1=wordart, 2=icon, 3=admin,
-//        4=provisioning, 5=tls(LE/upload), 6=dns
+// Steps: -2=language, -1=choice, 0=serverName(+LE inline), 1=wordart, 2=icon, 3=admin,
+//        4=provisioning, 5=tls(upload only), 6=dns
 // Restore flow: -2=language → -1=choice → 'restore'
 type WizardStep = -2 | -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 'restore';
 
@@ -66,6 +66,7 @@ export default function SetupPage() {
   const [authentikName, setAuthentikName] = useState('');
   const [customTld, setCustomTld] = useState('');
   const [tlsChoice, setTlsChoice] = useState<TlsChoice>('selfsigned');
+  const [acmeCertIssued, setAcmeCertIssued] = useState(false);
 
   // Step 1: WordArt
   const [nameStyle, setNameStyle] = useState<SiteNameStyle>(DEFAULT_STYLE);
@@ -172,12 +173,15 @@ export default function SetupPage() {
   const effectiveTld = tld === '__custom__' ? (customTld.startsWith('.') ? customTld : `.${customTld}`) : tld;
   const domain = `${domainSlug}${effectiveTld}`;
 
-  // After provisioning completes: skip TLS step for self-signed, go to step 5 for LE/upload
+  // After provisioning completes:
+  // - LE: cert already issued in step 0 → go to DNS explainer
+  // - Self-signed: no TLS step needed → go to DNS explainer
+  // - Upload: show upload flow in step 5
   const handleProvisioningComplete = useCallback(() => {
-    if (tlsChoice === 'selfsigned') {
-      goToStep(6); // skip TLS step, go straight to DNS explainer
+    if (tlsChoice === 'upload') {
+      goToStep(5); // show upload flow
     } else {
-      goToStep(5); // show TLS setup (ACME or upload)
+      goToStep(6); // LE cert already issued or self-signed — go straight to DNS explainer
     }
   }, [tlsChoice, goToStep]);
 
@@ -218,6 +222,7 @@ export default function SetupPage() {
           icon_config: iconConfig,
           authentik_name: authentikName || `${siteName} ID`,
           language: selectedLanguage || 'en',
+          tls_choice: tlsChoice,
         }),
       });
 
@@ -365,6 +370,8 @@ export default function SetupPage() {
             setAuthentikName={setAuthentikName}
             tlsChoice={tlsChoice}
             setTlsChoice={setTlsChoice}
+            acmeCertIssued={acmeCertIssued}
+            setAcmeCertIssued={setAcmeCertIssued}
             onNext={() => goToStep(1)}
           />
         )}
@@ -426,7 +433,6 @@ export default function SetupPage() {
         {step === 5 && (
           <SetupTls
             domain={domain}
-            tlsChoice={tlsChoice}
             onComplete={() => goToStep(6)}
             onBack={() => goToStep(0, 'back')}
           />
