@@ -1,3 +1,27 @@
+## v0.3.5.2 (CP) / v0.3.3.2 (UI) — iris — 2026-04-26
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris (acting as dev agent)
+**Task:** Add Let's Encrypt to setup wizard; fix PIN prompt light mode visibility
+
+### Changes
+- `control-panel/src/components/setup/SetupDnsExplainer.tsx` — Added TLS path choice (Let's Encrypt vs self-signed) to the DNS explainer step. Integrated ACME DNS-01 flow with domain input, DNS TXT record display, and verification. Only shown in wizard mode (not standalone/setup-complete page).
+- `control-panel/src/middleware.ts` — Added `/api/tls/` to middleware setup-allowed paths so ACME endpoints are accessible during IP-based setup flow.
+- `control-panel/messages/{en,de,es,fr,ru}.json` — Added 24 i18n keys for the ACME/Let's Encrypt flow in all 5 languages.
+- `ui/src/components/timeline/pin-prompt.tsx` — Fixed embedded PIN prompt invisible text in light mode. Replaced hardcoded white text/borders with theme-aware Tailwind classes (text-foreground, bg-muted, border-border, bg-primary, text-primary-foreground).
+- `control-panel/package.json` — Bumped version to 0.3.5.2
+- `ui/package.json` — Bumped version to 0.3.3.2
+
+### Test Results
+- PIN prompt light mode: labels, inputs, icons, buttons all visible with proper contrast (verified via Playwright screenshot)
+- Setup-complete page (standalone mode): renders correctly, skips TLS choice as designed
+- Middleware: /api/tls/acme accessible via IP (returns 401 for auth, not redirect — confirms middleware allows path through)
+
+### Notes for Iris
+- The LE flow in SetupDnsExplainer uses the existing `/api/tls/acme` POST/PUT endpoints — no new API routes added.
+- TLS choice only appears when `standalone=false` (wizard mode has auth session for ACME calls). Standalone/setup-complete page skips to self-signed flow.
+- Local TLDs (.local, .test, etc.) show a warning that LE won't work, but still allow the attempt.
+
 ## v0.3.5.1 — andrew — 2026-04-22
 **Branch:** andrew
 **VM:** ye-andrew
