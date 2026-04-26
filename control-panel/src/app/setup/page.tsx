@@ -17,6 +17,7 @@ import SetupWordArt from '@/components/setup/SetupWordArt';
 import SetupIcon from '@/components/setup/SetupIcon';
 import SetupAdminAccount from '@/components/setup/SetupAdminAccount';
 import SetupProvisioning from '@/components/setup/SetupProvisioning';
+import SetupTls from '@/components/setup/SetupTls';
 import SetupDnsExplainer from '@/components/setup/SetupDnsExplainer';
 import { type IconConfig, DEFAULT_ICON_CONFIG } from '@/lib/icon-config';
 
@@ -38,9 +39,10 @@ interface SetupStep {
   message?: string;
 }
 
-// Steps: -2=language, -1=choice(new/restore), 0=serverName, 1=wordart, 2=icon, 3=admin, 4=provisioning, 5=dns
+// Steps: -2=language, -1=choice, 0=serverName, 1=wordart, 2=icon, 3=admin,
+//        4=provisioning, 5=tls(LE/upload), 6=dns
 // Restore flow: -2=language → -1=choice → 'restore'
-type WizardStep = -2 | -1 | 0 | 1 | 2 | 3 | 4 | 5 | 'restore';
+type WizardStep = -2 | -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 'restore';
 
 // ─── Main Component ──────────────────────────────────────────
 
@@ -77,7 +79,7 @@ export default function SetupPage() {
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
 
-  // Step 3: Provisioning
+  // Step 4: Provisioning
   const [setupSteps, setSetupSteps] = useState<SetupStep[]>([]);
   const [setupComplete, setSetupComplete] = useState(false);
   const [setupError, setSetupError] = useState('');
@@ -115,7 +117,6 @@ export default function SetupPage() {
         }
         if (config.site_name && config.site_name !== 'YouEye') setSiteName(config.site_name);
         if (config.domain) {
-          // Parse existing domain into slug + tld
           const lastDot = config.domain.lastIndexOf('.');
           if (lastDot > 0) {
             setDomainSlug(config.domain.slice(0, lastDot));
@@ -160,6 +161,15 @@ export default function SetupPage() {
   // Full domain string — resolve custom TLD sentinel
   const effectiveTld = tld === '__custom__' ? (customTld.startsWith('.') ? customTld : `.${customTld}`) : tld;
   const domain = `${domainSlug}${effectiveTld}`;
+
+  // After provisioning completes: skip TLS step for self-signed, go to step 5 for LE/upload
+  const handleProvisioningComplete = useCallback(() => {
+    if (tlsChoice === 'selfsigned') {
+      goToStep(6); // skip TLS step, go straight to DNS explainer
+    } else {
+      goToStep(5); // show TLS setup (ACME or upload)
+    }
+  }, [tlsChoice, goToStep]);
 
   // Run setup provisioning
   const handleRunSetup = useCallback(async () => {
@@ -278,7 +288,7 @@ export default function SetupPage() {
     return 'opacity-100 translate-x-0 transition-all duration-300';
   };
 
-  // Step indicator dots (only for steps 0-3, not during restore flow)
+  // Step indicator dots (only for steps 0-3)
   const showDots = typeof step === 'number' && step >= 0 && step <= 3;
   const stepLabels = [t('serverSetup'), t('style'), 'Icon', t('adminAccount')];
 
@@ -318,9 +328,7 @@ export default function SetupPage() {
 
         {step === 'restore' && (
           <SetupRestore
-            onComplete={() => {
-              router.replace('/');
-            }}
+            onComplete={() => { router.replace('/'); }}
             onBack={() => goToStep(-1, 'back')}
           />
         )}
@@ -334,7 +342,6 @@ export default function SetupPage() {
             tld={tld}
             setTld={(v) => {
               setTld(v);
-              // Auto-select self-signed for local TLDs, LE for real
               if (v !== '__custom__') {
                 const isLocal = /^\.(local|test|internal|lan|home|localhost|invalid|example)$/i.test(v);
                 if (isLocal && tlsChoice === 'letsencrypt') setTlsChoice('selfsigned');
@@ -400,11 +407,20 @@ export default function SetupPage() {
               setSetupSteps([]);
               handleRunSetup();
             }}
-            onComplete={() => goToStep(5)}
+            onComplete={handleProvisioningComplete}
           />
         )}
 
         {step === 5 && (
+          <SetupTls
+            domain={domain}
+            tlsChoice={tlsChoice}
+            onComplete={() => goToStep(6)}
+            onBack={() => goToStep(0, 'back')}
+          />
+        )}
+
+        {step === 6 && (
           <SetupDnsExplainer
             domain={domain}
             siteName={siteName}

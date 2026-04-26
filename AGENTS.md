@@ -1,3 +1,23 @@
+## v0.3.5.4 (CP) — iris — 2026-04-26
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris (acting as dev agent)
+**Task:** Add dedicated TLS setup step to setup wizard (step 5), simplify DNS explainer
+
+### Changes
+- `control-panel/src/components/setup/SetupTls.tsx` — NEW. Dedicated TLS setup step with AcmeFlow (ACME DNS-01 challenge: domain input, TXT records display, verify & finalize) and UploadFlow (PEM paste/browse for cert, key, optional chain). Runs after provisioning for LE and upload paths; self-signed skips this step entirely.
+- `control-panel/src/app/setup/page.tsx` — Reworked wizard step flow: steps 0-3 unchanged, step 4 provisioning, step 5 TLS setup (new), step 6 DNS explainer. `handleProvisioningComplete` routes self-signed to step 6, LE/upload to step 5. Imports new SetupTls component.
+- `control-panel/src/components/setup/SetupDnsExplainer.tsx` — Removed AcmeFlow and UploadCertFlow (moved to SetupTls). Simplified to DNS-only: connection status, DNS setup instructions per platform, self-signed cert install, and "Go to server" link. Removed ~420 lines of duplicated TLS flow code.
+- `control-panel/package.json` — Bumped version to 0.3.5.4
+
+### Test Results
+- CP builds cleanly (102MB standalone.tar)
+- CP deploys and starts successfully (Next.js 16.1.4 on port 3000)
+
+### Notes for Iris
+- The TLS setup step reuses existing `/api/tls/acme` (POST to start order, PUT to verify) and `/api/tls/upload` (POST) endpoints — no new API routes.
+- Self-signed path never renders SetupTls; provisioning callback goes directly to DNS explainer (step 6).
+
 ## v0.3.5.3 (CP) — iris — 2026-04-26
 **Branch:** dev
 **VM:** ye-iris
