@@ -1,12 +1,17 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { Globe, ChevronDown, ChevronUp, ArrowRight, AlertTriangle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import {
+  Globe, ChevronDown, ChevronUp, ArrowRight, AlertTriangle,
+  Lock, ShieldAlert, Upload,
+} from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { TLD_OPTIONS } from '@/lib/wordart-presets';
 import { useTranslations } from 'next-intl';
+
+export type TlsChoice = 'letsencrypt' | 'selfsigned' | 'upload';
 
 interface Props {
   siteName: string;
@@ -19,11 +24,17 @@ interface Props {
   setSubdomains: (v: Record<string, string>) => void;
   authentikName: string;
   setAuthentikName: (v: string) => void;
+  tlsChoice: TlsChoice;
+  setTlsChoice: (v: TlsChoice) => void;
   onNext: () => void;
 }
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+function isLocalDomain(tld: string): boolean {
+  return /^\.(local|test|internal|lan|home|localhost|invalid|example)$/i.test(tld);
 }
 
 export default function SetupServerName({
@@ -32,12 +43,15 @@ export default function SetupServerName({
   tld, setTld,
   subdomains, setSubdomains,
   authentikName, setAuthentikName,
+  tlsChoice, setTlsChoice,
   onNext,
 }: Props) {
   const t = useTranslations('setup');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [authentikEdited, setAuthentikEdited] = useState(false);
   const [slugEdited, setSlugEdited] = useState(false);
+  const [customTld, setCustomTld] = useState('');
+  const isCustomTld = tld === '__custom__';
 
   // Auto-fill domain slug from site name
   useEffect(() => {
@@ -53,9 +67,13 @@ export default function SetupServerName({
     }
   }, [siteName, authentikEdited, setAuthentikName]);
 
-  const domain = `${domainSlug}${tld}`;
-  const isRealTld = TLD_OPTIONS.find(opt => opt.value === tld)?.group === 'real';
-  const canProceed = siteName.trim().length > 0 && domainSlug.length > 0;
+  const effectiveTld = isCustomTld ? (customTld.startsWith('.') ? customTld : `.${customTld}`) : tld;
+  const domain = `${domainSlug}${effectiveTld}`;
+  const isRealTld = isCustomTld
+    ? !isLocalDomain(effectiveTld)
+    : TLD_OPTIONS.find(opt => opt.value === tld)?.group === 'real';
+  const isLocal = isCustomTld ? isLocalDomain(effectiveTld) : isLocalDomain(tld);
+  const canProceed = siteName.trim().length > 0 && domainSlug.length > 0 && (!isCustomTld || customTld.length > 0);
 
   return (
     <div className="w-full max-w-md mx-auto space-y-6">
@@ -112,22 +130,120 @@ export default function SetupServerName({
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </optgroup>
+              <optgroup label="─────────">
+                {TLD_OPTIONS.filter(opt => opt.group === 'custom').map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </optgroup>
             </select>
           </div>
         </div>
+
+        {/* Custom TLD input */}
+        {isCustomTld && (
+          <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
+            <span className="text-sm text-muted-foreground">.</span>
+            <Input
+              value={customTld}
+              onChange={e => setCustomTld(e.target.value.replace(/^\./, '').replace(/[^a-z0-9.-]/gi, '').toLowerCase())}
+              placeholder="wtf"
+              className="h-9 text-sm font-mono flex-1"
+              autoFocus
+            />
+          </div>
+        )}
+
         <p className="text-xs text-muted-foreground">
           {t('serverAddressPreview')}: <span className="font-mono font-medium">{domain || '...'}</span>
         </p>
         {isRealTld && (
-          <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+          <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200">
             <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
             <span>{t('realDomainWarning')}</span>
           </div>
         )}
       </div>
 
+      {/* ── TLS / Certificate Choice ── */}
+      <div className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200">
+        <Label>{t('certificateChoice')}</Label>
+
+        {/* Let's Encrypt */}
+        <button
+          type="button"
+          onClick={() => setTlsChoice('letsencrypt')}
+          className={`w-full text-left rounded-xl border p-4 transition-all ${
+            tlsChoice === 'letsencrypt'
+              ? 'border-green-400 bg-green-50/60 ring-1 ring-green-300 dark:bg-green-950/30 dark:border-green-700'
+              : 'hover:border-green-300 hover:bg-green-50/30'
+          } ${isLocal ? 'opacity-50 pointer-events-none' : ''}`}
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 p-2 rounded-lg bg-green-100 dark:bg-green-900/40">
+              <Lock className="h-4 w-4 text-green-700 dark:text-green-400" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <p className="font-medium text-sm">{t('tlsLetsEncrypt')}</p>
+                {!isLocal && (
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400">
+                    {t('recommended')}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">{t('tlsLetsEncryptDesc')}</p>
+              {isLocal && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">{t('tlsLetsEncryptLocalWarn')}</p>
+              )}
+            </div>
+          </div>
+        </button>
+
+        {/* Self-signed */}
+        <button
+          type="button"
+          onClick={() => setTlsChoice('selfsigned')}
+          className={`w-full text-left rounded-xl border p-4 transition-all ${
+            tlsChoice === 'selfsigned'
+              ? 'border-primary/40 bg-muted/60 ring-1 ring-primary/30'
+              : 'hover:border-primary/30 hover:bg-muted/30'
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 p-2 rounded-lg bg-muted">
+              <ShieldAlert className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div>
+              <p className="font-medium text-sm">{t('tlsSelfSigned')}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{t('tlsSelfSignedDesc')}</p>
+            </div>
+          </div>
+        </button>
+
+        {/* Upload own cert */}
+        <button
+          type="button"
+          onClick={() => setTlsChoice('upload')}
+          className={`w-full text-left rounded-xl border p-4 transition-all ${
+            tlsChoice === 'upload'
+              ? 'border-primary/40 bg-muted/60 ring-1 ring-primary/30'
+              : 'hover:border-primary/30 hover:bg-muted/30'
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 p-2 rounded-lg bg-muted">
+              <Upload className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div>
+              <p className="font-medium text-sm">{t('tlsUploadOwn')}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{t('tlsUploadOwnDesc')}</p>
+            </div>
+          </div>
+        </button>
+      </div>
+
       {/* Advanced Settings */}
-      <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200">
+      <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300">
         <button
           type="button"
           onClick={() => setShowAdvanced(!showAdvanced)}
@@ -157,7 +273,7 @@ export default function SetupServerName({
                       className="rounded-r-none border-r-0 h-8 text-xs font-mono"
                     />
                     <span className="h-8 flex items-center px-2 rounded-r-md border border-input bg-muted text-xs font-mono text-muted-foreground">
-                      .{domainSlug}{tld}
+                      .{domainSlug}{effectiveTld}
                     </span>
                   </div>
                 </div>
@@ -183,7 +299,7 @@ export default function SetupServerName({
       </div>
 
       {/* Next button */}
-      <div className="pt-2 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300">
+      <div className="pt-2 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-[400ms]">
         <Button
           onClick={onNext}
           disabled={!canProceed}

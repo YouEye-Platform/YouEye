@@ -4,9 +4,10 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Globe, ExternalLink, Download, Monitor, Apple, Terminal,
   Copy, Check, ChevronDown, Smartphone, ShieldCheck,
-  ShieldAlert, Loader2, Lock, ArrowLeft,
+  ShieldAlert, Loader2, Lock, Upload,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import type { TlsChoice } from '@/components/setup/SetupServerName';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -14,10 +15,11 @@ interface Props {
   domain: string;
   siteName: string;
   standalone?: boolean;
+  /** TLS choice from step 0 — when provided the choice screen is skipped */
+  tlsChoice?: TlsChoice;
 }
 
 type Platform = 'windows' | 'macos' | 'linux' | 'ios' | 'android';
-type TlsPath = 'choice' | 'letsencrypt' | 'selfsigned';
 type AcmeStep = 'domain' | 'records' | 'verifying' | 'done';
 
 interface DnsChallenge {
@@ -105,7 +107,7 @@ function StatusIndicator({ reachable, checking, domain, t }: {
   t: ReturnType<typeof useTranslations>;
 }) {
   return (
-    <div className="rounded-xl border bg-white/80 p-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="rounded-xl border bg-card p-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex items-start gap-3">
         <div className={`mt-0.5 h-5 w-5 rounded-full flex-shrink-0 transition-colors duration-500 ${
           reachable ? 'bg-green-500' : 'bg-gray-300 animate-pulse'
@@ -175,7 +177,7 @@ function DnsStep({ serverIp, platform, t }: {
   };
 
   return (
-    <div className="rounded-xl border bg-white/80 p-5 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-75">
+    <div className="rounded-xl border bg-card p-5 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-75">
       <h3 className="font-semibold text-sm">{t('step1Title')}</h3>
       <p className="text-sm text-muted-foreground">{t('step1Desc', { ip: serverIp })}</p>
 
@@ -187,7 +189,7 @@ function DnsStep({ serverIp, platform, t }: {
             onClick={() => setActiveTab(tab.key)}
             className={`flex items-center gap-1 flex-1 min-w-[60px] justify-center rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
               activeTab === tab.key
-                ? 'bg-white shadow-sm text-foreground'
+                ? 'bg-background shadow-sm text-foreground'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
@@ -253,7 +255,7 @@ function CertStep({ serverIp, platform, t }: {
   const certPlatform = platform === 'windows' || platform === 'android' ? platform : null;
 
   return (
-    <div className="rounded-xl border bg-white/80 p-5 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150">
+    <div className="rounded-xl border bg-card p-5 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150">
       <h3 className="font-semibold text-sm">{t('step2Title')}</h3>
       <p className="text-sm text-muted-foreground">{t('step2Desc')}</p>
 
@@ -291,7 +293,7 @@ function CertStep({ serverIp, platform, t }: {
       )}
 
       {platform === 'ios' && (
-        <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-3">
+        <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-3 dark:bg-amber-950/30 dark:text-amber-200">
           {t('iosExtraStep')}
         </p>
       )}
@@ -412,7 +414,7 @@ function AcmeFlow({ domain, t }: {
   // Step: Enter domain
   if (acmeStep === 'domain') {
     return (
-      <div className="rounded-xl border bg-white/80 p-5 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="rounded-xl border bg-card p-5 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
         <div className="flex items-center gap-2">
           <Lock className="h-4 w-4 text-green-600" />
           <h3 className="font-semibold text-sm">{t('acmeTitle')}</h3>
@@ -428,7 +430,7 @@ function AcmeFlow({ domain, t }: {
             value={acmeDomain}
             onChange={(e) => setAcmeDomain(e.target.value)}
             placeholder="example.com"
-            className="w-full px-3 py-2 rounded-lg border text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30"
+            className="w-full px-3 py-2 rounded-lg border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
         </div>
 
@@ -443,7 +445,7 @@ function AcmeFlow({ domain, t }: {
         </label>
 
         {error && (
-          <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>
+          <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 dark:bg-red-950/30 dark:text-red-400">{error}</p>
         )}
 
         <button
@@ -461,7 +463,7 @@ function AcmeFlow({ domain, t }: {
   // Step: Show DNS TXT records
   if (acmeStep === 'records') {
     return (
-      <div className="rounded-xl border bg-white/80 p-5 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="rounded-xl border bg-card p-5 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
         <div className="flex items-center gap-2">
           <Lock className="h-4 w-4 text-green-600" />
           <h3 className="font-semibold text-sm">{t('acmeRecordsTitle')}</h3>
@@ -497,12 +499,12 @@ function AcmeFlow({ domain, t }: {
           ))}
         </div>
 
-        <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-3">
+        <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-3 dark:bg-amber-950/30 dark:text-amber-200">
           {t('acmeRecordsHint')}
         </p>
 
         {error && (
-          <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>
+          <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 dark:bg-red-950/30 dark:text-red-400">{error}</p>
         )}
 
         <button
@@ -520,7 +522,7 @@ function AcmeFlow({ domain, t }: {
   // Step: Verifying
   if (acmeStep === 'verifying') {
     return (
-      <div className="rounded-xl border bg-white/80 p-5 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="rounded-xl border bg-card p-5 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
         <div className="flex items-center gap-3">
           <Loader2 className="h-5 w-5 animate-spin text-green-600" />
           <div>
@@ -534,64 +536,161 @@ function AcmeFlow({ domain, t }: {
 
   // Step: Done
   return (
-    <div className="rounded-xl border bg-green-50 border-green-200 p-5 space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="rounded-xl border bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800 p-5 space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex items-center gap-2">
         <ShieldCheck className="h-5 w-5 text-green-600" />
-        <h3 className="font-semibold text-sm text-green-800">{t('acmeDone')}</h3>
+        <h3 className="font-semibold text-sm text-green-800 dark:text-green-300">{t('acmeDone')}</h3>
       </div>
-      <p className="text-sm text-green-700">{t('acmeDoneDesc')}</p>
+      <p className="text-sm text-green-700 dark:text-green-400">{t('acmeDoneDesc')}</p>
     </div>
   );
 }
 
-// ─── TLS path choice ─────────────────────────────────────────
+// ─── Upload certificate flow ────────────────────────────────
 
-function TlsPathChoice({ domain, onSelect, t }: {
-  domain: string;
-  onSelect: (path: TlsPath) => void;
+function UploadCertFlow({ t }: {
   t: ReturnType<typeof useTranslations>;
 }) {
-  const isLocal = isLocalDomain(domain);
+  const [certPem, setCertPem] = useState('');
+  const [keyPem, setKeyPem] = useState('');
+  const [chainPem, setChainPem] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [done, setDone] = useState(false);
+  const [showChain, setShowChain] = useState(false);
+
+  const readFile = (e: React.ChangeEvent<HTMLInputElement>, setter: (v: string) => void) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setter(reader.result as string);
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleUpload = async () => {
+    if (!certPem.trim() || !keyPem.trim()) return;
+    setLoading(true);
+    setError('');
+    try {
+      const csrfRes = await fetch('/api/auth/csrf');
+      const { csrfToken } = await csrfRes.json();
+
+      const res = await fetch('/api/tls/upload', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': csrfToken,
+        },
+        body: JSON.stringify({
+          certificate: certPem.trim(),
+          privateKey: keyPem.trim(),
+          chain: chainPem.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      setDone(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (done) {
+    return (
+      <div className="rounded-xl border bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800 p-5 space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5 text-green-600" />
+          <h3 className="font-semibold text-sm text-green-800 dark:text-green-300">{t('uploadCertDone')}</h3>
+        </div>
+        <p className="text-sm text-green-700 dark:text-green-400">{t('uploadCertDoneDesc')}</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <h3 className="font-semibold text-sm text-center mb-4">{t('tlsChoiceTitle')}</h3>
+    <div className="rounded-xl border bg-card p-5 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex items-center gap-2">
+        <Upload className="h-4 w-4 text-primary" />
+        <h3 className="font-semibold text-sm">{t('uploadCertTitle')}</h3>
+      </div>
+      <p className="text-sm text-muted-foreground">{t('uploadCertDesc')}</p>
 
-      {/* Let's Encrypt option */}
-      <button
-        onClick={() => onSelect('letsencrypt')}
-        className={`w-full text-left rounded-xl border p-5 transition-all hover:border-green-300 hover:bg-green-50/50 ${
-          isLocal ? 'opacity-60' : ''
-        }`}
-      >
-        <div className="flex items-start gap-3">
-          <div className="mt-0.5 p-2 rounded-lg bg-green-100">
-            <Lock className="h-4 w-4 text-green-700" />
-          </div>
-          <div>
-            <p className="font-medium text-sm">{t('tlsLetsEncrypt')}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{t('tlsLetsEncryptDesc')}</p>
-            {isLocal && (
-              <p className="text-xs text-amber-600 mt-1">{t('tlsLetsEncryptLocalWarn')}</p>
-            )}
-          </div>
+      {/* Certificate */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-medium">{t('uploadCertLabel')}</label>
+          <label className="text-xs text-primary cursor-pointer hover:underline">
+            {t('uploadCertBrowse')}
+            <input type="file" className="hidden" accept=".pem,.crt,.cer" onChange={e => readFile(e, setCertPem)} />
+          </label>
         </div>
+        <textarea
+          value={certPem}
+          onChange={e => setCertPem(e.target.value)}
+          placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+          className="w-full h-24 px-3 py-2 rounded-lg border text-xs font-mono bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+        />
+      </div>
+
+      {/* Private key */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-medium">{t('uploadKeyLabel')}</label>
+          <label className="text-xs text-primary cursor-pointer hover:underline">
+            {t('uploadCertBrowse')}
+            <input type="file" className="hidden" accept=".pem,.key" onChange={e => readFile(e, setKeyPem)} />
+          </label>
+        </div>
+        <textarea
+          value={keyPem}
+          onChange={e => setKeyPem(e.target.value)}
+          placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
+          className="w-full h-24 px-3 py-2 rounded-lg border text-xs font-mono bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+        />
+      </div>
+
+      {/* Chain (optional) */}
+      <button
+        type="button"
+        onClick={() => setShowChain(!showChain)}
+        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showChain ? 'rotate-180' : ''}`} />
+        {t('uploadChainOptional')}
       </button>
 
-      {/* Self-signed option */}
-      <button
-        onClick={() => onSelect('selfsigned')}
-        className="w-full text-left rounded-xl border p-5 transition-all hover:border-primary/30 hover:bg-muted/50"
-      >
-        <div className="flex items-start gap-3">
-          <div className="mt-0.5 p-2 rounded-lg bg-muted">
-            <ShieldAlert className="h-4 w-4 text-muted-foreground" />
+      {showChain && (
+        <div className="space-y-1.5 animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium">{t('uploadChainLabel')}</label>
+            <label className="text-xs text-primary cursor-pointer hover:underline">
+              {t('uploadCertBrowse')}
+              <input type="file" className="hidden" accept=".pem,.crt" onChange={e => readFile(e, setChainPem)} />
+            </label>
           </div>
-          <div>
-            <p className="font-medium text-sm">{t('tlsSelfSigned')}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{t('tlsSelfSignedDesc')}</p>
-          </div>
+          <textarea
+            value={chainPem}
+            onChange={e => setChainPem(e.target.value)}
+            placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+            className="w-full h-20 px-3 py-2 rounded-lg border text-xs font-mono bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+          />
         </div>
+      )}
+
+      {error && (
+        <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 dark:bg-red-950/30 dark:text-red-400">{error}</p>
+      )}
+
+      <button
+        onClick={handleUpload}
+        disabled={loading || !certPem.trim() || !keyPem.trim()}
+        className="inline-flex items-center gap-2 rounded-lg bg-primary text-white px-5 py-2.5 text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+        {t('uploadCertApply')}
       </button>
     </div>
   );
@@ -599,20 +698,19 @@ function TlsPathChoice({ domain, onSelect, t }: {
 
 // ─── Main component ──────────────────────────────────────────
 
-export default function SetupDnsExplainer({ domain, siteName, standalone = false }: Props) {
+export default function SetupDnsExplainer({ domain, siteName, standalone = false, tlsChoice }: Props) {
   const t = useTranslations('setup');
   const [platform, setPlatform] = useState<Platform>('windows');
   const { reachable, checking } = useConnectivityCheck(domain);
-  const [tlsPath, setTlsPath] = useState<TlsPath>(standalone ? 'selfsigned' : 'choice');
+
+  // Resolve effective path: if tlsChoice was passed from step 0, use it directly
+  const effectivePath = tlsChoice ?? 'selfsigned';
 
   useEffect(() => {
     setPlatform(detectPlatform());
   }, []);
 
   const serverIp = typeof window !== 'undefined' ? window.location.hostname : 'your-server-ip';
-
-  // When LE cert is issued and connectivity check passes, show success
-  const acmeDone = tlsPath === 'letsencrypt';
 
   return (
     <div className={`w-full ${standalone ? 'max-w-xl' : 'max-w-lg'} mx-auto space-y-5`}>
@@ -633,78 +731,43 @@ export default function SetupDnsExplainer({ domain, siteName, standalone = false
         </p>
       </div>
 
-      {/* TLS path choice (only in wizard mode, not standalone) */}
-      {!standalone && tlsPath === 'choice' && !reachable && (
-        <TlsPathChoice domain={domain} onSelect={setTlsPath} t={t} />
+      {/* ── Let's Encrypt ACME flow ── */}
+      {effectivePath === 'letsencrypt' && !reachable && (
+        <AcmeFlow domain={domain} t={t} />
       )}
 
-      {/* Let's Encrypt ACME flow */}
-      {tlsPath === 'letsencrypt' && !reachable && (
+      {/* ── Self-signed CA flow ── */}
+      {effectivePath === 'selfsigned' && !reachable && (
         <>
-          <button
-            onClick={() => setTlsPath('choice')}
-            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            {t('tlsBackToChoice')}
-          </button>
-          <AcmeFlow domain={domain} t={t} />
-        </>
-      )}
-
-      {/* Self-signed CA flow */}
-      {tlsPath === 'selfsigned' && !reachable && (
-        <>
-          {!standalone && (
-            <button
-              onClick={() => setTlsPath('choice')}
-              className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              {t('tlsBackToChoice')}
-            </button>
-          )}
-          {/* Status indicator */}
-          <StatusIndicator
-            reachable={reachable}
-            checking={checking}
-            domain={domain}
-            t={t}
-          />
+          <StatusIndicator reachable={reachable} checking={checking} domain={domain} t={t} />
           <DnsStep serverIp={serverIp} platform={platform} t={t} />
           <CertStep serverIp={serverIp} platform={platform} t={t} />
         </>
       )}
 
-      {/* Status indicator for LE path (show after ACME flow) */}
-      {tlsPath === 'letsencrypt' && (
-        <StatusIndicator
-          reachable={reachable}
-          checking={checking}
-          domain={domain}
-          t={t}
-        />
+      {/* ── Upload custom cert flow ── */}
+      {effectivePath === 'upload' && !reachable && (
+        <>
+          <UploadCertFlow t={t} />
+          <StatusIndicator reachable={reachable} checking={checking} domain={domain} t={t} />
+          <DnsStep serverIp={serverIp} platform={platform} t={t} />
+        </>
       )}
 
-      {/* When reachable and was LE path - no cert install needed */}
-      {reachable && acmeDone && (
-        <div className="rounded-xl border bg-green-50 border-green-200 p-5 space-y-2 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {/* Status indicator for LE path */}
+      {effectivePath === 'letsencrypt' && (
+        <StatusIndicator reachable={reachable} checking={checking} domain={domain} t={t} />
+      )}
+
+      {/* When reachable and was LE path — no cert install needed */}
+      {reachable && effectivePath === 'letsencrypt' && (
+        <div className="rounded-xl border bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800 p-5 space-y-2 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <div className="flex items-center gap-2">
             <ShieldCheck className="h-5 w-5 text-green-600" />
-            <p className="font-medium text-sm text-green-800">{t('acmeNoCertInstall')}</p>
+            <p className="font-medium text-sm text-green-800 dark:text-green-300">{t('acmeNoCertInstall')}</p>
           </div>
-          <p className="text-xs text-green-700">{t('acmeNoCertInstallDesc')}</p>
+          <p className="text-xs text-green-700 dark:text-green-400">{t('acmeNoCertInstallDesc')}</p>
         </div>
-      )}
-
-      {/* Status indicator for choice mode (show when still choosing) */}
-      {tlsPath === 'choice' && (
-        <StatusIndicator
-          reachable={reachable}
-          checking={checking}
-          domain={domain}
-          t={t}
-        />
       )}
 
       {/* Go to server */}

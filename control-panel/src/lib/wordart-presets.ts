@@ -399,11 +399,13 @@ export const TRANSFORM_OPTIONS = [
 // ─── Shared constants ─────────────────────────────────────────
 
 export const TLD_OPTIONS = [
+  // Local network TLDs
   { value: '.local', label: '.local', group: 'local' },
   { value: '.home', label: '.home', group: 'local' },
   { value: '.lan', label: '.lan', group: 'local' },
   { value: '.test', label: '.test', group: 'local' },
   { value: '.internal', label: '.internal', group: 'local' },
+  // Public TLDs
   { value: '.com', label: '.com', group: 'real' },
   { value: '.net', label: '.net', group: 'real' },
   { value: '.org', label: '.org', group: 'real' },
@@ -412,6 +414,15 @@ export const TLD_OPTIONS = [
   { value: '.app', label: '.app', group: 'real' },
   { value: '.me', label: '.me', group: 'real' },
   { value: '.co', label: '.co', group: 'real' },
+  { value: '.xyz', label: '.xyz', group: 'real' },
+  { value: '.cloud', label: '.cloud', group: 'real' },
+  { value: '.sh', label: '.sh', group: 'real' },
+  { value: '.cc', label: '.cc', group: 'real' },
+  { value: '.tv', label: '.tv', group: 'real' },
+  { value: '.info', label: '.info', group: 'real' },
+  { value: '.pro', label: '.pro', group: 'real' },
+  // Custom — sentinel value; UI shows a text input when selected
+  { value: '__custom__', label: 'Other…', group: 'custom' },
 ];
 
 export const FUNNY_LOADING_MESSAGES = [

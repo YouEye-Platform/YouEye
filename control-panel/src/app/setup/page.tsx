@@ -12,7 +12,7 @@ import {
 import SetupLanguage from '@/components/setup/SetupLanguage';
 import SetupChoice from '@/components/setup/SetupChoice';
 import SetupRestore from '@/components/setup/SetupRestore';
-import SetupServerName from '@/components/setup/SetupServerName';
+import SetupServerName, { type TlsChoice } from '@/components/setup/SetupServerName';
 import SetupWordArt from '@/components/setup/SetupWordArt';
 import SetupIcon from '@/components/setup/SetupIcon';
 import SetupAdminAccount from '@/components/setup/SetupAdminAccount';
@@ -61,6 +61,8 @@ export default function SetupPage() {
     dns: 'dns',
   });
   const [authentikName, setAuthentikName] = useState('');
+  const [customTld, setCustomTld] = useState('');
+  const [tlsChoice, setTlsChoice] = useState<TlsChoice>('selfsigned');
 
   // Step 1: WordArt
   const [nameStyle, setNameStyle] = useState<SiteNameStyle>(DEFAULT_STYLE);
@@ -155,8 +157,9 @@ export default function SetupPage() {
     }
   }, [goToStep]);
 
-  // Full domain string
-  const domain = `${domainSlug}${tld}`;
+  // Full domain string — resolve custom TLD sentinel
+  const effectiveTld = tld === '__custom__' ? (customTld.startsWith('.') ? customTld : `.${customTld}`) : tld;
+  const domain = `${domainSlug}${effectiveTld}`;
 
   // Run setup provisioning
   const handleRunSetup = useCallback(async () => {
@@ -329,11 +332,20 @@ export default function SetupPage() {
             domainSlug={domainSlug}
             setDomainSlug={setDomainSlug}
             tld={tld}
-            setTld={setTld}
+            setTld={(v) => {
+              setTld(v);
+              // Auto-select self-signed for local TLDs, LE for real
+              if (v !== '__custom__') {
+                const isLocal = /^\.(local|test|internal|lan|home|localhost|invalid|example)$/i.test(v);
+                if (isLocal && tlsChoice === 'letsencrypt') setTlsChoice('selfsigned');
+              }
+            }}
             subdomains={subdomains}
             setSubdomains={(v) => setSubdomains(prev => ({ ...prev, ...v }))}
             authentikName={authentikName}
             setAuthentikName={setAuthentikName}
+            tlsChoice={tlsChoice}
+            setTlsChoice={setTlsChoice}
             onNext={() => goToStep(1)}
           />
         )}
@@ -396,6 +408,7 @@ export default function SetupPage() {
           <SetupDnsExplainer
             domain={domain}
             siteName={siteName}
+            tlsChoice={tlsChoice}
           />
         )}
       </div>
