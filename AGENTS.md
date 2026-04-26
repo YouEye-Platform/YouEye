@@ -1,3 +1,28 @@
+## v0.3.1.2 (Spine) — iris — 2026-04-26
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris (acting as dev agent)
+**Task:** Fix spine deploy timeout on fresh VMs — IPv6 hangs + insufficient timeout
+
+### Changes
+- `spine/internal/releases/releases.go` — Added `NewIPv4Client()` shared HTTP client that forces tcp4 dialer (avoids IPv6 AAAA hangs). Increased `fetchReleases()` timeout from 10s to 30s. Added 3-attempt retry with 2s/4s backoff on network errors.
+- `spine/internal/releases/client.go` — `NewClient()` now uses `NewIPv4Client(30s)` instead of bare `http.Client{Timeout: 10s}`.
+- `spine/internal/cmd/status.go` — `checkSpineUpdate()` uses `NewIPv4Client` instead of bare 10s client.
+- `spine/internal/cmd/update.go` — Spine binary download uses `NewIPv4Client(10m)` instead of `http.Get()`.
+- `spine/internal/container/control.go` — CP tarball download uses `NewIPv4Client(10m)` instead of bare client.
+- `spine/internal/api/server.go` — API server CP download uses `NewIPv4Client(10m)`.
+- `spine/install.sh` — Added `-4` flag to all curl calls hitting git.byka.wtf.
+- `spine/internal/cmd/root.go` — Bumped version to 0.3.1.2.
+
+### Test Results
+- Spine builds cleanly (16MB binary)
+- `spine status` fetches releases successfully (no timeout)
+- `spine version` shows 0.3.1.2
+
+### Notes for Iris
+- Root cause: Go's default HTTP client tries IPv6 first on VMs where DNS returns AAAA records for git.byka.wtf but there's no IPv6 route. The IPv6 connection hangs until the 10s timeout expires, leaving no budget for IPv4.
+- Fix is structural: force tcp4 at the dialer level so IPv6 is never attempted.
+
 ## v0.3.5.4 (CP) — iris — 2026-04-26
 **Branch:** dev
 **VM:** ye-iris
