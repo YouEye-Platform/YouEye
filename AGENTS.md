@@ -1,3 +1,24 @@
+## v0.3.5.5 (CP) — iris — 2026-04-26
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris
+**Task:** Fix custom TLD lost during setup wizard — customTld state not lifted to page level
+
+### Changes
+- `control-panel/src/components/setup/SetupServerName.tsx` — Removed local `customTld` useState; now received as props from parent. Added trailing-dot stripping on custom TLD input.
+- `control-panel/src/app/setup/page.tsx` — `customTld`/`setCustomTld` now passed as props to SetupServerName. Config restore logic detects non-standard TLDs and sets `__custom__` sentinel + populates `customTld`. Imported `TLD_OPTIONS` for lookup.
+- `control-panel/src/app/api/setup/run/route.ts` — Defense-in-depth: strip trailing dots from `body.domain` before any step uses it.
+- `control-panel/package.json` — Bumped to 0.3.5.5.
+
+### Test Results
+- Fresh setup with domain `potemk.in` (custom TLD `.in`): all 7 steps pass including SSO
+- Domain correctly saved as `potemk.in` in youeye.yaml
+- Authentik applications created with valid `meta_launch_url: https://control.potemk.in`
+
+### Notes for Iris
+- Root cause: `customTld` was local state inside SetupServerName, invisible to page.tsx which computed the domain for the API request with its own empty `customTld`. Result: domain sent as `potemk.` (no TLD) instead of `potemk.in`.
+- This also caused Authentik 2025.12 to reject `meta_launch_url: https://control.potemk.` as an invalid URL.
+
 ## v0.3.1.2 (Spine) — iris — 2026-04-26
 **Branch:** dev
 **VM:** ye-iris
