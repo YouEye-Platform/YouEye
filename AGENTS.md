@@ -1,3 +1,27 @@
+## v0.3.5.9 (CP) + v0.3.1.4 (Spine) — iris — 2026-04-26
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris
+**Task:** Three ACME/cleanup hotfixes — cleanup state, authoritative DNS, config API extra, order finalization
+
+### Changes
+- `spine/internal/cmd/cleanup.go` — Parse YAML, extract only `release_branch`, write minimal file after wipe (was preserving entire `youeye.yaml` including `setup_completed: true`)
+- `control-panel/src/lib/acme/client.ts` — Replaced `client.verifyChallenge()` with authoritative NS queries (bypasses DNS cache, <1s vs ~4 min). Fixed order finalization: skip `finalizeOrder` when order already `valid` from prior attempt, capture updated order for `getCertificate`
+- `spine/internal/api/server.go` — Added `Extra map[string]string` to `YouEyeConfig`, PATCH stores unrecognized keys (fixes `tls_acme_account_key` being silently dropped)
+- `control-panel/src/lib/spine/client.ts` — `getConfig()` merges `extra` into top-level
+- `control-panel/src/lib/settings/service.ts` — `getRaw()` widened with index signature
+- `control-panel/package.json` — Bumped 0.3.5.6 → 0.3.5.9
+- `spine/internal/cmd/root.go` — Bumped 0.3.1.2 → 0.3.1.4
+
+### Test Results
+- TypeScript: clean build
+- Hotpatched live VM for each fix, verified errors resolved in sequence
+- Full ACME flow: cleanup → deploy → setup wizard → LE cert (pending user test on fresh deploy)
+
+### Notes for Iris
+- Three sequential releases: Spine 0.3.1.3+CP 0.3.5.7, Spine 0.3.1.4+CP 0.3.5.8, CP 0.3.5.9
+- ACME flow tested via hotpatches on compiled bundle; source code matches final hotpatch state
+
 ## v0.3.5.6 (CP) — iris — 2026-04-26
 **Branch:** dev
 **VM:** ye-iris
