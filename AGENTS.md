@@ -1,3 +1,26 @@
+## v0.3.5.6 (CP) — iris — 2026-04-26
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris
+**Task:** Move Let's Encrypt ACME DNS-01 flow inline into server name setup step
+
+### Changes
+- `control-panel/src/components/setup/SetupServerName.tsx` — Added inline ACME sub-flow (DNS TXT record display, copy buttons, verify & issue) triggered when user selects Let's Encrypt and clicks Continue. Domain inputs lock during ACME flow. Wildcard checkbox shown before starting.
+- `control-panel/src/app/setup/page.tsx` — Added `acmeCertIssued` state. LE now skips step 5 (cert issued in step 0). Upload still goes to step 5. Sends `tls_choice` to backend.
+- `control-panel/src/app/api/setup/run/route.ts` — After `caddy.setDomain()`, checks `tlsStorage` for existing ACME cert and restores it via `caddy.loadExternalCert()`. Added `tls_choice` to request interface.
+- `control-panel/src/components/setup/SetupTls.tsx` — Removed AcmeFlow (moved to SetupServerName). Now upload-only.
+- `control-panel/package.json` — Bumped to 0.3.5.6.
+
+### Test Results
+- TypeScript: clean (no errors)
+- Build: standalone.tar 102MB, deployed via `spine update control`
+- ACME API: returns 401 Unauthorized without session (correct)
+- Self-signed flow: unaffected (existing path unchanged)
+
+### Notes for Iris
+- Full LE flow requires real public DNS — cannot be end-to-end tested on dev VMs with .test domains
+- The ACME order has 30-min TTL in memory; UI should show "Start over" on timeout errors
+
 ## v0.3.5.5 (CP) — iris — 2026-04-26
 **Branch:** dev
 **VM:** ye-iris
