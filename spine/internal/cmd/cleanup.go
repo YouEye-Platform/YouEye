@@ -247,18 +247,27 @@ func runCleanup() error {
 		// and is NOT deployment state — it's a user/operator choice about
 		// which release channel this VM tracks. Wiping it forces a manual
 		// `spine branch set` after every cleanup→deploy cycle.
-		var savedBranchConfig []byte
+		//
+		// FIXED (iris-v0.3.1.3): only preserve release_branch, not the
+		// entire file. Preserving everything (setup_completed, domain,
+		// site_name, etc.) caused spine deploy to skip the setup wizard
+		// after cleanup because setup_completed was still true.
+		var savedBranch string
 		if data, err := os.ReadFile(youeyeConfigPath); err == nil {
-			savedBranchConfig = data
-			fmt.Println("  Preserving release branch configuration")
+			var cfg branchConfig
+			if err := yaml.Unmarshal(data, &cfg); err == nil && cfg.ReleaseBranch != "" {
+				savedBranch = cfg.ReleaseBranch
+				fmt.Printf("  Preserving release branch: %s\n", savedBranch)
+			}
 		}
 
 		os.RemoveAll("/var/lib/youeye")
 
-		// Restore branch config
-		if savedBranchConfig != nil {
+		// Restore only the release branch
+		if savedBranch != "" {
 			os.MkdirAll("/var/lib/youeye/config", 0755)
-			if err := os.WriteFile(youeyeConfigPath, savedBranchConfig, 0644); err != nil {
+			minimal := fmt.Sprintf("release_branch: %s\n", savedBranch)
+			if err := os.WriteFile(youeyeConfigPath, []byte(minimal), 0644); err != nil {
 				fmt.Printf("  Warning: could not restore branch config: %v\n", err)
 			} else {
 				fmt.Println("  ✓ Release branch configuration restored")

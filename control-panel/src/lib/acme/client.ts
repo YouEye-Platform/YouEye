@@ -12,6 +12,7 @@
  */
 
 import * as acme from 'acme-client';
+import dns from 'dns';
 import { tlsStorage } from './storage';
 
 /** Challenge info returned to the UI */
@@ -172,15 +173,23 @@ export async function verifyAndFinalize(
 
   // Complete each challenge
   for (const { authz, challenge, keyAuth } of activeOrder.challenges) {
-    // Verify the DNS record is in place
+    // Verify the DNS record is in place by querying authoritative
+    // nameservers directly. This bypasses local resolver caches
+    // (systemd-resolved, c-ares) that can hold stale negative responses
+    // for minutes after TXT records are created.
+    const domain = authz.identifier.value;
+    const baseDomain = domain.replace(/^\*\./, '');
+    const recordName = `_acme-challenge.${baseDomain}`;
+
     try {
-      await client.verifyChallenge(authz, challenge);
-    } catch (err) {
-      const domain = authz.identifier.value;
+      const txtValues = await resolveViaAuthoritativeNs(recordName, baseDomain);
+      if (!txtValues.includes(keyAuth)) {
+        throw new Error('TXT value mismatch');
+      }
+    } catch {
       throw new Error(
         `DNS verification failed for ${domain}. ` +
-          `Ensure TXT record _acme-challenge.${domain.replace(/^\*\./, '')} ` +
-          `is set to: ${keyAuth}`,
+          `Ensure TXT record ${recordName} is set to: ${keyAuth}`,
       );
     }
 
@@ -242,6 +251,38 @@ export function getOrderStatus(orderId: string): {
     domains: order.domains,
     age: Date.now() - order.createdAt,
   };
+}
+
+/**
+ * Query authoritative nameservers directly for TXT records.
+ * Bypasses local DNS caches that may hold stale negative responses.
+ */
+async function resolveViaAuthoritativeNs(
+  recordName: string,
+  baseDomain: string,
+): Promise<string[]> {
+  // Get authoritative NS for the domain
+  const nsRecords = await dns.promises.resolveNs(baseDomain);
+  const nsIpArrays = await Promise.all(
+    nsRecords.map((ns) => dns.promises.resolve4(ns)),
+  );
+  const nsIps = nsIpArrays.flat().filter(Boolean);
+
+  if (!nsIps.length) {
+    throw new Error(`No authoritative nameservers found for ${baseDomain}`);
+  }
+
+  // Query authoritative NS directly
+  const resolver = new dns.Resolver();
+  resolver.setServers(nsIps);
+
+  const txtRecords = await new Promise<string[][]>((resolve, reject) => {
+    resolver.resolveTxt(recordName, (err, records) =>
+      err ? reject(err) : resolve(records),
+    );
+  });
+
+  return txtRecords.flat();
 }
 
 /**
