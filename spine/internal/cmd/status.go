@@ -3,13 +3,13 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
 	"git.byka.wtf/potemsla/YouEye/spine/internal/config"
+	"git.byka.wtf/potemsla/YouEye/spine/internal/releases"
 	"git.byka.wtf/potemsla/YouEye/spine/internal/version"
 )
 
@@ -80,7 +80,7 @@ func runStatus() error {
 }
 
 func checkSpineUpdate(cfg *config.Config) (bool, string) {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := releases.NewIPv4Client(30 * time.Second)
 	apiURL := fmt.Sprintf("%s%s/repos/%s/%s/releases?limit=50",
 		cfg.Releases.BaseURL,
 		cfg.Releases.APIPath,

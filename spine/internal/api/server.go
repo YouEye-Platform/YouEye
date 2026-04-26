@@ -623,7 +623,8 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 
 	update.Emit("control", update.StatusDownloading, 20, fmt.Sprintf("Downloading %s...", latestVersion))
 
-	resp, err := http.Get(downloadURL)
+	dlClient := releases.NewIPv4Client(10 * time.Minute)
+	resp, err := dlClient.Get(downloadURL)
 	if err != nil {
 		update.Fail("control", currentVersion, fmt.Sprintf("download failed: %v", err))
 		errorResponse(w, fmt.Sprintf("failed to download update: %v", err), http.StatusInternalServerError)

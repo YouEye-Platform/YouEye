@@ -136,9 +136,10 @@ func updateSelf() error {
 	downloadURL := releases.BuildDownloadURL(cfg, cfg.Releases.Repositories.Spine, tag, fmt.Sprintf("spine-linux-%s", arch))
 	fmt.Printf("Downloading from %s...\n", downloadURL)
 
-	// Download to temp file with random suffix
+	// Download to temp file with random suffix (IPv4-only to avoid IPv6 hangs)
 	tmpFile := fmt.Sprintf("/tmp/spine-update-%d", time.Now().UnixNano())
-	resp, err := http.Get(downloadURL)
+	dlClient := releases.NewIPv4Client(10 * time.Minute)
+	resp, err := dlClient.Get(downloadURL)
 	if err != nil {
 		update.Fail("spine", Version, fmt.Sprintf("download failed: %v", err))
 		return fmt.Errorf("failed to download update: %w", err)
@@ -416,7 +417,8 @@ func updateControl() error {
 	fmt.Printf("Downloading from %s...\n", downloadURL)
 
 	tmpFile := "/tmp/control-update.tar"
-	resp, err := http.Get(downloadURL)
+	cpDlClient := releases.NewIPv4Client(10 * time.Minute)
+	resp, err := cpDlClient.Get(downloadURL)
 	if err != nil {
 		return fmt.Errorf("failed to download update: %w", err)
 	}

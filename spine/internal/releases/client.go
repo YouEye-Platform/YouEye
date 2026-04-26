@@ -35,7 +35,7 @@ type Client struct {
 func NewClient(cfg *config.Config) *Client {
 	return &Client{
 		cfg:        cfg,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		httpClient: NewIPv4Client(30 * time.Second),
 	}
 }
 

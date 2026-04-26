@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -305,8 +304,8 @@ func DeployControlPanelApp(cfg *config.Config) error {
 
 	util.LogSubStep(fmt.Sprintf("Downloading from %s", downloadURL))
 
-	// Download the tarball
-	client := &http.Client{Timeout: 10 * time.Minute}
+	// Download the tarball (IPv4-only to avoid IPv6 hangs on fresh VMs)
+	client := releases.NewIPv4Client(10 * time.Minute)
 	resp, err := client.Get(downloadURL)
 	if err != nil {
 		return fmt.Errorf("failed to download: %w", err)

@@ -14,8 +14,11 @@
 package releases
 
 import (
+	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -25,6 +28,28 @@ import (
 	"git.byka.wtf/potemsla/YouEye/spine/internal/version"
 	"gopkg.in/yaml.v3"
 )
+
+// NewIPv4Client returns an HTTP client that forces IPv4 connections.
+// On fresh VMs without IPv6 routes, Go's default dialer tries AAAA records
+// first and hangs until timeout. Forcing tcp4 avoids this entirely.
+func NewIPv4Client(timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return dialer.DialContext(ctx, "tcp4", addr)
+			},
+			TLSClientConfig:     &tls.Config{},
+			TLSHandshakeTimeout: 10 * time.Second,
+			MaxIdleConns:        10,
+			IdleConnTimeout:     30 * time.Second,
+		},
+	}
+}
 
 // YouEyeConfigPath is the path to the runtime youeye.yaml config file.
 const YouEyeConfigPath = "/var/lib/youeye/config/youeye.yaml"
@@ -119,9 +144,10 @@ func BuildDownloadURL(cfg *config.Config, repo, tag, assetName string) string {
 }
 
 // fetchReleases fetches releases from the Gitea API for a given repo.
-// Returns the raw Release type defined in client.go.
+// Retries up to 3 times with backoff on network errors. Uses IPv4-only
+// client to avoid IPv6 hangs on fresh VMs without IPv6 routes.
 func fetchReleases(cfg *config.Config, repo string) ([]Release, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := NewIPv4Client(30 * time.Second)
 
 	apiURL := fmt.Sprintf("%s%s/repos/%s/%s/releases?limit=50",
 		cfg.Releases.BaseURL,
@@ -129,22 +155,32 @@ func fetchReleases(cfg *config.Config, repo string) ([]Release, error) {
 		cfg.Releases.Organization,
 		repo)
 
-	resp, err := client.Get(apiURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch releases: %w", err)
-	}
-	defer resp.Body.Close()
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		resp, err := client.Get(apiURL)
+		if err != nil {
+			lastErr = err
+			if attempt < 3 {
+				time.Sleep(time.Duration(attempt*2) * time.Second)
+				continue
+			}
+			return nil, fmt.Errorf("failed to fetch releases after %d attempts: %w", attempt, lastErr)
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("releases API returned status: %d", resp.StatusCode)
+		if resp.StatusCode != 200 {
+			return nil, fmt.Errorf("releases API returned status: %d", resp.StatusCode)
+		}
+
+		var rels []Release
+		if err := json.NewDecoder(resp.Body).Decode(&rels); err != nil {
+			return nil, fmt.Errorf("failed to decode releases: %w", err)
+		}
+
+		return rels, nil
 	}
 
-	var rels []Release
-	if err := json.NewDecoder(resp.Body).Decode(&rels); err != nil {
-		return nil, fmt.Errorf("failed to decode releases: %w", err)
-	}
-
-	return rels, nil
+	return nil, fmt.Errorf("failed to fetch releases: %w", lastErr)
 }
 
 // GetLatestVersionForBranch fetches all releases and returns the highest version
