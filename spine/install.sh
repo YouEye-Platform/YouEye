@@ -111,7 +111,7 @@ ensure_curl() {
 # In the YouEye monorepo, Spine tags are prefixed: spine-v0.2.21, spine-dev-v0.2.21.1
 get_latest_version() {
     # Use Gitea API to get releases (fetch up to 50, newest first)
-    RELEASES=$(curl -sSL "https://git.byka.wtf/api/v1/repos/potemsla/YouEye/releases?limit=50" 2>/dev/null)
+    RELEASES=$(curl -4 -sSL "https://git.byka.wtf/api/v1/repos/potemsla/YouEye/releases?limit=50" 2>/dev/null)
 
     # Extract all tag names, one per line
     TAGS=$(echo "$RELEASES" | tr ',' '\n' | grep '"tag_name"' | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
@@ -169,7 +169,7 @@ download_spine() {
     log_info "Downloading Spine from $DOWNLOAD_URL..."
 
     # Download to temp file first, then move
-    if curl -sSL -f "$DOWNLOAD_URL" -o "$TMP_FILE" && [ -s "$TMP_FILE" ]; then
+    if curl -4 -sSL -f "$DOWNLOAD_URL" -o "$TMP_FILE" && [ -s "$TMP_FILE" ]; then
         mv "$TMP_FILE" "${INSTALL_DIR}/spine"
         log_success "Downloaded successfully"
     else
@@ -178,7 +178,7 @@ download_spine() {
         log_warn "Release download failed, trying raw branch..."
         DOWNLOAD_URL="${REPO}/raw/branch/main/spine/spine-linux-${ARCH}"
 
-        if curl -sSL -f "$DOWNLOAD_URL" -o "$TMP_FILE" && [ -s "$TMP_FILE" ]; then
+        if curl -4 -sSL -f "$DOWNLOAD_URL" -o "$TMP_FILE" && [ -s "$TMP_FILE" ]; then
             mv "$TMP_FILE" "${INSTALL_DIR}/spine"
             log_success "Downloaded from main branch"
         else
