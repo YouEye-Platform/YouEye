@@ -144,6 +144,7 @@ export default function SetupServerName({
           domain,
           includeWildcard,
         }),
+        signal: AbortSignal.timeout(35_000),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to start order');
@@ -152,7 +153,12 @@ export default function SetupServerName({
       setAcmeChallenges(data.challenges);
       setAcmePhase('records');
     } catch (e) {
-      setAcmeError(e instanceof Error ? e.message : 'Failed to start ACME order');
+      const msg = e instanceof Error
+        ? (e.name === 'TimeoutError'
+          ? "Request timed out — Let's Encrypt may be rate-limiting this domain. Try again later or use a self-signed certificate."
+          : e.message)
+        : 'Failed to start ACME order';
+      setAcmeError(msg);
     } finally {
       setAcmeLoading(false);
     }
@@ -173,6 +179,7 @@ export default function SetupServerName({
           'X-CSRF-Token': csrfToken,
         },
         body: JSON.stringify({ orderId: acmeOrderId }),
+        signal: AbortSignal.timeout(65_000),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Verification failed');
@@ -180,7 +187,12 @@ export default function SetupServerName({
       setAcmePhase('done');
       setAcmeCertIssued(true);
     } catch (e) {
-      setAcmeError(e instanceof Error ? e.message : 'ACME verification failed');
+      const msg = e instanceof Error
+        ? (e.name === 'TimeoutError'
+          ? "Verification timed out — Let's Encrypt may be slow or rate-limiting. Your DNS records are still valid; try again in a few minutes."
+          : e.message)
+        : 'ACME verification failed';
+      setAcmeError(msg);
       setAcmePhase('records');
     } finally {
       setAcmeLoading(false);

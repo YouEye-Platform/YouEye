@@ -13,6 +13,18 @@ import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { startOrder, verifyAndFinalize } from '@/lib/acme/client';
 import * as caddy from '@/lib/caddy/client';
 
+/** Reject with timeout after ms — safety net around ACME calls */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(
+        `${label} timed out after ${Math.round(ms / 1000)}s — Let's Encrypt may be slow or rate-limiting. Try again later.`
+      )), ms)
+    ),
+  ]);
+}
+
 /**
  * POST — Start a new ACME order
  */
@@ -43,7 +55,7 @@ export async function POST(request: NextRequest) {
 
     console.log(`[TLS/ACME] Starting order for ${domain} (wildcard: ${includeWildcard})`);
 
-    const result = await startOrder(domain, includeWildcard);
+    const result = await withTimeout(startOrder(domain, includeWildcard), 30_000, 'ACME order creation');
 
     return NextResponse.json({
       orderId: result.orderId,
@@ -52,9 +64,10 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('[TLS/ACME] Order creation failed:', error);
+    const status = (error instanceof Error && error.message.includes('timed out')) ? 504 : 500;
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to start ACME order' },
-      { status: 500 },
+      { status },
     );
   }
 }
@@ -83,7 +96,7 @@ export async function PUT(request: NextRequest) {
 
     console.log(`[TLS/ACME] Verifying order ${orderId}`);
 
-    const result = await verifyAndFinalize(orderId);
+    const result = await withTimeout(verifyAndFinalize(orderId), 60_000, 'ACME verification');
 
     // Load the certificate into Caddy
     await caddy.loadExternalCert(result.certificate, result.privateKey, result.domains);
@@ -98,9 +111,10 @@ export async function PUT(request: NextRequest) {
     });
   } catch (error) {
     console.error('[TLS/ACME] Verification failed:', error);
+    const status = (error instanceof Error && error.message.includes('timed out')) ? 504 : 500;
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'ACME verification failed' },
-      { status: 500 },
+      { status },
     );
   }
 }

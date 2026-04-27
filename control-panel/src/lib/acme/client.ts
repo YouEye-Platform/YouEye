@@ -15,6 +15,28 @@ import * as acme from 'acme-client';
 import dns from 'dns';
 import { tlsStorage } from './storage';
 
+// ── Intercept ACME 429 rate limits ──────────────────────────
+// The acme-client library silently retries on 429, sleeping for
+// the full Retry-After value (can be 75,000+ seconds). We intercept
+// 429 responses and throw immediately with an actionable message.
+acme.axios.interceptors.response.use(undefined, (error: any) => {
+  if (error?.response?.status === 429) {
+    const retryAfter = parseInt(error.response.headers?.['retry-after'] || '0', 10);
+    const detail = error.response.data?.detail || 'Too many requests';
+
+    let retryMsg = '';
+    if (retryAfter > 0) {
+      const retryDate = new Date(Date.now() + retryAfter * 1000);
+      retryMsg = ` Try again after ${retryDate.toISOString().replace('T', ' ').replace(/\.\d+Z/, ' UTC')}.`;
+    }
+
+    return Promise.reject(new Error(
+      `Rate limited by Let's Encrypt: ${detail}.${retryMsg} You can use a self-signed certificate for now.`
+    ));
+  }
+  return Promise.reject(error);
+});
+
 /** Challenge info returned to the UI */
 export interface DnsChallengeRecord {
   domain: string;

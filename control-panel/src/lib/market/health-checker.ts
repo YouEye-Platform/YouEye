@@ -111,9 +111,11 @@ export async function refreshHealthCheck(): Promise<void> {
           continue;
         }
 
-        // HTTP health check on primary container (ContainerMeta doesn't store port, default to 3000)
-        const port = 3000;
-        const status = await checkAppHealth(containerName, port);
+        // HTTP health check on primary container — use stored port/path from install metadata
+        const port = (typeof primary !== 'string' && primary?.port) || 3000;
+        const path = (typeof primary !== 'string' && primary?.healthCheck?.type === 'http'
+          && primary.healthCheck.path) || '/';
+        const status = await checkAppHealth(containerName, port, path);
         lastResults.set(app.appId, status);
         await updateHealthStatus(app.appId, status);
       } catch {

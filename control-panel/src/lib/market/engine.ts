@@ -635,6 +635,12 @@ export async function installApp(
         containerName,
         type: containerSpec.type,
         network: containerSpec.network || 'isolated',
+        port: containerSpec.port,
+        healthCheck: containerSpec.healthCheck ? {
+          type: containerSpec.healthCheck.type,
+          path: 'path' in containerSpec.healthCheck ? containerSpec.healthCheck.path : undefined,
+          timeout: containerSpec.healthCheck.timeout,
+        } : undefined,
       });
 
       checkCancelled();

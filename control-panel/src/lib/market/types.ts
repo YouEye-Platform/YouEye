@@ -108,6 +108,14 @@ export interface ContainerMeta {
   type: 'lxd' | 'oci';
   /** Network mode from manifest: 'isolated' (default) or 'internet' */
   network?: 'isolated' | 'internet';
+  /** Primary listening port from manifest (used by health checker) */
+  port?: number;
+  /** Health check config from manifest (used by background health checker) */
+  healthCheck?: {
+    type: 'http' | 'postgres' | 'none';
+    path?: string;
+    timeout?: number;
+  };
 }
 
 export interface CredentialMeta {
