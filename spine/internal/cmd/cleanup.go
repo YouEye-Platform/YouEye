@@ -136,13 +136,19 @@ func runCleanup() error {
 	// in the Spine codebase. Spine has no business removing a user it
 	// didn't create. The step has been deleted; total step count went
 	// 18 → 17 (and 17 → 16 with --keep-data).
-	totalSteps := 17
+	totalSteps := 18
 	if cleanupKeepData {
-		totalSteps = 16
+		totalSteps = 17
 	}
 	step := 0
 
-	// Kill any running Spine API processes first
+	// Stop the spine systemd service first to prevent Restart=always from
+	// respawning the API process after pkill. Best-effort — service may not
+	// exist on a fresh system or after a previous cleanup.
+	exec.Command("systemctl", "stop", "spine").Run()
+	exec.Command("systemctl", "disable", "spine").Run()
+
+	// Kill any running Spine API processes first (fallback if service wasn't active)
 	exec.Command("pkill", "-9", "-f", "spine api serve").Run()
 
 	// Step 1: Stop all containers
@@ -317,13 +323,20 @@ func runCleanup() error {
 	// BUG-015 (alisa-v0.2.21.1): clean residual files that survived cleanup.
 	removeResidualFiles()
 
-	// Step 16: Remove ZFS packages installed by spine deploy, but only if
+	// Step 16: Remove spine.service so systemd no longer manages Spine.
+	// The service was already stopped and disabled at the top of cleanup;
+	// this step removes the unit file and reloads the daemon.
+	step++
+	fmt.Printf("[%d/%d] Removing spine systemd service...\n", step, totalSteps)
+	removeSpineService()
+
+	// Step 17: Remove ZFS packages installed by spine deploy, but only if
 	// no non-Incus zpools exist (otherwise we'd break someone else's setup).
 	step++
 	fmt.Printf("[%d/%d] Removing ZFS packages...\n", step, totalSteps)
 	removeZFSPackages()
 
-	// Step 17: Flush apt's metadata after repo removal so a subsequent
+	// Step 18: Flush apt's metadata after repo removal so a subsequent
 	// `spine deploy` doesn't see stale package indexes.
 	step++
 	fmt.Printf("[%d/%d] Refreshing apt metadata...\n", step, totalSteps)
@@ -353,6 +366,7 @@ func runCleanup() error {
 	fmt.Println("  - Incus nftables rules")
 	fmt.Println("  - /run/incus runtime dir")
 	fmt.Println("  - Zabbly apt source + GPG key")
+	fmt.Println("  - spine.service systemd unit")
 	fmt.Println("  - ZFS packages (if installed by spine deploy)")
 	fmt.Println()
 	fmt.Println("To reinstall, run: spine deploy")
@@ -442,6 +456,21 @@ func uninstallIncusPackages() error {
 // removeSpineIncusStartupDropIn removes /etc/systemd/system/incus-startup.service.d/
 // spine-dependency.conf and the parent directory if empty. Counterpart to
 // configureIncusStartupDependency() in deploy.go. Best-effort.
+// removeSpineService removes the spine.service systemd unit file and
+// reloads the daemon. The service was already stopped and disabled at the
+// top of cleanup; this just removes the leftover file.
+func removeSpineService() {
+	const unitFile = "/etc/systemd/system/spine.service"
+	if err := os.Remove(unitFile); err == nil {
+		fmt.Println("  Removed /etc/systemd/system/spine.service")
+		exec.Command("systemctl", "daemon-reload").Run()
+	} else if !os.IsNotExist(err) {
+		fmt.Printf("  Warning: could not remove spine.service: %v\n", err)
+	} else {
+		fmt.Println("  spine.service not found, skipping")
+	}
+}
+
 func removeSpineIncusStartupDropIn() {
 	const dropIn = "/etc/systemd/system/incus-startup.service.d/spine-dependency.conf"
 	const dropInDir = "/etc/systemd/system/incus-startup.service.d"

@@ -108,7 +108,15 @@ func runDeploy() error {
 		ensureSpineUpToDate(cfg)
 	}
 
-	// Kill any existing Spine API processes first
+	// Stop the spine systemd service (if running from a previous deploy)
+	// before starting a new detached API process. Without this, systemd's
+	// Restart=always respawns the old API after pkill, causing two
+	// concurrent `spine api serve` processes whose runHostIPCheck goroutines
+	// race with the CP's infrastructure deployment (BUG: Pi-Hole "already running").
+	exec.Command("systemctl", "stop", "spine").Run()
+	exec.Command("systemctl", "disable", "spine").Run()
+
+	// Kill any remaining Spine API processes (fallback if service wasn't active)
 	exec.Command("pkill", "-9", "-f", "spine api serve").Run()
 
 	// Create base data directories
