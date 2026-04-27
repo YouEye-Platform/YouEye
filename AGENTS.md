@@ -1,3 +1,27 @@
+## v0.3.5.11 (CP) — iris — 2026-04-27
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris
+**Task:** Manifest validator false warnings, health checker per-app port/path, ACME 429 rate limit handling
+
+### Changes
+- `control-panel/src/lib/market/validator.ts` — Add `containers`, `smtp`, `provider` to known namespace roots in template variable check; auto-accept container names declared in manifest
+- `control-panel/src/lib/market/types.ts` — Add `port` and `healthCheck` optional fields to `ContainerMeta` interface
+- `control-panel/src/lib/market/engine.ts` — Store `port` and `healthCheck` from manifest into `ContainerMeta` during installation
+- `control-panel/src/lib/market/health-checker.ts` — Read stored `port`/`healthCheck.path` per container instead of hardcoded 3000/"/"
+- `control-panel/src/lib/acme/client.ts` — Add axios response interceptor to catch LE 429 rate limits before acme-client's silent retry loop
+- `control-panel/src/app/api/tls/acme/route.ts` — Add `Promise.race` timeout wrappers (30s/60s) as safety net around ACME calls; return 504 on timeout
+- `control-panel/src/components/setup/SetupServerName.tsx` — Add `AbortSignal.timeout` (35s/65s) to ACME fetch calls; display user-friendly timeout messages
+- `control-panel/package.json` — Bumped 0.3.5.10 → 0.3.5.11
+
+### Test Results
+- TypeScript: clean build, no type errors
+- Artifact: standalone.tar 102MB uploaded to Gitea release #1265
+
+### Notes for Iris
+- Only CP changed — no Spine or UI release needed
+- Backward-compatible: existing install.json files without port/healthCheck fall back to 3000/"/"
+
 ## v0.3.5.10 (CP) — iris — 2026-04-27
 **Branch:** dev
 **VM:** ye-iris
