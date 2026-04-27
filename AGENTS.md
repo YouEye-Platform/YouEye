@@ -1,3 +1,18 @@
+## Main Release — spine 0.3.2, cp 0.3.6, ui 0.3.4 — iris — 2026-04-27
+**Branch:** main
+**VM:** ye-iris
+**Agent:** Iris (merge-manager)
+**Task:** Promote all dev work to main
+
+### Releases
+- Spine v0.3.2 (`spine-v0.3.2`) — Pi-Hole race condition fix, release API retry, cleanup/deploy service handling
+- Control Panel v0.3.6 (`cp-v0.3.6`) — manifest validator, health checker per-app port, ACME 429, admin credentials API, SSO naming, app network isolation
+- UI v0.3.4 (`ui-v0.3.4`) — clock widget themes, WordArt overflow, icon picker, widget scaling
+- All native apps v0.3.2 — connector cleanup, code modernization
+
+### Notes
+- Known issue: per-app bridge network isolation breaks install-time health checks (proxy devices added after health check). Deferred to next dev cycle.
+
 ## v0.3.5.11 (CP) — iris — 2026-04-27
 **Branch:** dev
 **VM:** ye-iris
