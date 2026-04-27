@@ -1,3 +1,24 @@
+## v0.3.1.5 — iris — 2026-04-27
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris (merge-manager)
+**Task:** Fix Pi-Hole "already running" race condition caused by spine.service Restart=always surviving cleanup
+
+### Changes
+- `spine/internal/cmd/cleanup.go` — stop/disable spine.service before pkill to prevent systemd respawning; add `removeSpineService()` helper and new step 16/18 to delete the unit file; bump totalSteps 17→18 (16→17 keep-data)
+- `spine/internal/cmd/deploy.go` — stop/disable spine.service before pkill at deploy start, preventing two concurrent `spine api serve` processes
+- `spine/internal/cmd/root.go` — version bump 0.3.1.4 → 0.3.1.5
+
+### Root Cause
+`spine cleanup` killed the API process but left spine.service enabled (Restart=always). systemd restarted the API after pkill. On next `spine deploy`, a second API launched. The systemd-restarted one's `runHostIPCheck` goroutine started Pi-Hole before the Control Panel's explicit start call, causing "The instance is already running" at step [7/8].
+
+### Test Results
+- Pending user verification via full cleanup→deploy cycle
+
+### Notes for Iris
+- Pure Spine changes, no CP or UI modifications
+- The image pull failure (step [3/4] → [1/7]) was a transient outage of images.linuxcontainers.org, not a code bug
+
 ## v0.2.21.1 — alisa — 2026-04-12
 **Branch:** alisa
 **VM:** ye-alisa
