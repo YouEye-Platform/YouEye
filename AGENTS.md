@@ -1,3 +1,24 @@
+## v0.3.5.10 (CP) — iris — 2026-04-27
+**Branch:** dev
+**VM:** ye-iris
+**Agent:** Iris
+**Task:** Source code fixes for 3 ACME/Caddy bugs discovered during LE cert issuance (previously hot-patched)
+
+### Changes
+- `control-panel/src/lib/acme/client.ts` — Preserve `.url` on `readyOrder` after first `waitForValidStatus` call; the raw ACME response body lacks `.url` which the second call requires
+- `control-panel/src/lib/caddy/client.ts` — Remove invalid `certificate_selection` field from TLS automation policy (Caddy 2.11 rejects it). Update `loadExternalCert`/`removeExternalCert` to use subject-only discriminant. Fix `ensureTLSSubject` to check ALL TLS policies before adding a subject (prevents duplicate subjects across internal/external policies)
+- `control-panel/src/lib/caddy/types.ts` — Remove `certificate_selection` from `TLSAutomationPolicy` interface
+- `control-panel/src/app/api/setup/run/route.ts` — Log root domain UI route creation errors instead of swallowing them (empty catch masked Caddy config failures, causing root domain to route to CP catch-all instead of UI)
+- `control-panel/package.json` — Bumped 0.3.5.9 → 0.3.5.10
+
+### Test Results
+- TypeScript: clean build
+- Bugs were previously confirmed via hot-patches on live VM; source now matches fixes
+
+### Notes for Iris
+- Only CP changed — no Spine or UI release needed
+- Sebastian and Vanya branches already merged into dev (confirmed via merge-base check)
+
 ## v0.3.5.9 (CP) + v0.3.1.4 (Spine) — iris — 2026-04-26
 **Branch:** dev
 **VM:** ye-iris
