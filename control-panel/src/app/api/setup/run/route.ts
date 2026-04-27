@@ -297,8 +297,9 @@ export async function POST(request: NextRequest) {
                 if (!result.success) {
                   routeErrors.push(`youeye-ui (root): ${result.error}`);
                 }
-              } catch {
-                // Non-critical
+              } catch (err) {
+                console.error('Failed to create root domain UI route:', err);
+                routeErrors.push(`youeye-ui (root): ${err instanceof Error ? err.message : String(err)}`);
               }
             }
 

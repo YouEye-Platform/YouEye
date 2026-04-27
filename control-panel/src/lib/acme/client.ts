@@ -199,6 +199,10 @@ export async function verifyAndFinalize(
 
   // Wait for challenges to be validated (status: "ready" or "valid")
   const readyOrder = await client.waitForValidStatus(activeOrder.order);
+  // Preserve .url from the original order — waitForValidStatus returns the raw
+  // ACME response body which does NOT include .url (it's added client-side by
+  // createOrder). The second waitForValidStatus call below needs it.
+  readyOrder.url = activeOrder.order.url;
 
   // Create CSR
   const [, csr] = await acme.crypto.createCsr({

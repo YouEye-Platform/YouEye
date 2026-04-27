@@ -570,6 +570,23 @@ function ensureTLSSubject(config: CaddyConfig, hostname: string): void {
     config.apps.tls.automation.policies = [];
   }
   
+  // Check ALL policies — if any policy already covers this hostname (exact or
+  // wildcard), skip. This prevents duplicate subjects across policies, e.g. when
+  // loadExternalCert() already added the hostname to an external-cert policy.
+  const allSubjects = config.apps.tls.automation.policies.flatMap(p => p.subjects || []);
+  if (allSubjects.includes(hostname)) {
+    console.log(`[Caddy] Skipping TLS subject ${hostname} - already in a policy`);
+    return;
+  }
+  const parts = hostname.split('.');
+  if (parts.length >= 3) {
+    const wildcardDomain = `*.${parts.slice(1).join('.')}`;
+    if (allSubjects.includes(wildcardDomain)) {
+      console.log(`[Caddy] Skipping TLS subject ${hostname} - covered by wildcard ${wildcardDomain}`);
+      return;
+    }
+  }
+
   // Find existing policy with internal issuer that has explicit subjects (not on_demand fallback).
   // The on_demand policy (without subjects) is a catch-all fallback for IP-based access
   // and must NOT have subjects added to it, as that would restrict its scope.
@@ -584,27 +601,13 @@ function ensureTLSSubject(config: CaddyConfig, hostname: string): void {
     };
     config.apps.tls.automation.policies.push(internalPolicy);
   }
-  
+
   if (!internalPolicy.subjects) {
     internalPolicy.subjects = [];
   }
-  
-  // Check if a wildcard already covers this hostname
-  // e.g., *.skibidi.wtf covers pi-hole.skibidi.wtf
-  const parts = hostname.split('.');
-  if (parts.length >= 3) {
-    const wildcardDomain = `*.${parts.slice(1).join('.')}`;
-    if (internalPolicy.subjects.includes(wildcardDomain)) {
-      console.log(`[Caddy] Skipping TLS subject ${hostname} - covered by wildcard ${wildcardDomain}`);
-      return;
-    }
-  }
-  
-  // Add hostname to subjects if not already present
-  if (!internalPolicy.subjects.includes(hostname)) {
-    console.log(`[Caddy] Adding TLS subject: ${hostname}`);
-    internalPolicy.subjects.push(hostname);
-  }
+
+  console.log(`[Caddy] Adding TLS subject: ${hostname}`);
+  internalPolicy.subjects.push(hostname);
 }
 
 /**
@@ -1301,8 +1304,9 @@ export async function loadExternalCert(
   // 2. Fallback on_demand internal CA for everything else
   if (!config.apps.tls.automation) config.apps.tls.automation = {};
 
+  // Filter out any previous external-cert policy (has subjects, no issuers, not on_demand)
   const filteredPolicies = (config.apps.tls.automation.policies || []).filter(
-    (p) => !p.certificate_selection?.any_tag?.includes('external'),
+    (p) => !(p.subjects?.length && !p.issuers?.length && !p.on_demand),
   );
 
   // Keep on_demand fallback, remove old subject-based internal policies for these subjects
@@ -1327,10 +1331,11 @@ export async function loadExternalCert(
     });
   }
 
+  // Policy with just subjects (no issuers) — Caddy 2.11 matches the pre-loaded
+  // PEM cert by subject automatically; certificate_selection is not a valid field.
   config.apps.tls.automation.policies = [
     {
       subjects,
-      certificate_selection: { any_tag: ['external'] },
     },
     ...otherPolicies,
   ];
@@ -1352,10 +1357,10 @@ export async function removeExternalCert(): Promise<void> {
     delete config.apps.tls.certificates.load_pem;
   }
 
-  // Remove policies with external tag selection
+  // Remove the external-cert policy (has subjects, no issuers, not on_demand)
   if (config.apps.tls.automation?.policies) {
     config.apps.tls.automation.policies = config.apps.tls.automation.policies.filter(
-      (p) => !p.certificate_selection?.any_tag?.includes('external'),
+      (p) => !(p.subjects?.length && !p.issuers?.length && !p.on_demand),
     );
 
     // Ensure at least an on_demand fallback remains

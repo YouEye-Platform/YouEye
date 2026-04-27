@@ -108,9 +108,6 @@ export interface TLSAutomationPolicy {
   issuers?: Array<{
     module: string;
   }>;
-  certificate_selection?: {
-    any_tag?: string[];
-  };
 }
 
 /**
