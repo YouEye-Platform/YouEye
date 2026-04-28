@@ -202,6 +202,13 @@ export const SSOSchema = z.object({
 
 // ─── Capabilities ─────────────────────────────────────────
 
+const LinkHandlerSchema = z.object({
+  type: z.string().min(1),
+  description: z.string(),
+  endpoint: z.string().optional().default('/'),
+  triggers: z.array(z.string().min(1)).min(1),
+});
+
 export const CapabilitiesSchema = z.object({
   notifications: z.union([z.boolean(), z.literal('push')]).optional(),
   smtp: z.boolean().optional(),
@@ -210,6 +217,7 @@ export const CapabilitiesSchema = z.object({
   widgets: z.boolean().optional(),
   info_cards: z.boolean().optional(),
   settings_panel: z.boolean().optional(),
+  link_handlers: z.array(LinkHandlerSchema).optional(),
 }).optional();
 
 // ─── Wants (app-to-app connection declarations) ──────────

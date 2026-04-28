@@ -27,24 +27,39 @@ interface HostInfo {
 
 /**
  * Get host-level system info from Spine's metrics endpoint.
- * Spine runs on the host, so it reads the real /proc and df.
+ * Falls back to /api/status (less detail) if /api/metrics is unavailable
+ * (older Spine versions don't have the metrics endpoint).
  */
 async function getHostInfo(): Promise<HostInfo> {
-  const metrics: SpineMetricsResponse = await spineClient.getMetrics();
-  return {
-    hostname: metrics.hostname,
-    os: metrics.os,
-    kernel: metrics.kernel,
-    uptime: metrics.uptime,
-    cpu: {
-      cores: metrics.cpu.cores,
-      model: metrics.cpu.model,
-      usage_percent: metrics.cpu.usage_percent,
-    },
-    memory: metrics.memory,
-    disk: metrics.disk,
-    load_average: metrics.load_average,
-  };
+  try {
+    const metrics: SpineMetricsResponse = await spineClient.getMetrics();
+    return {
+      hostname: metrics.hostname,
+      os: metrics.os,
+      kernel: metrics.kernel,
+      uptime: metrics.uptime,
+      cpu: {
+        cores: metrics.cpu.cores,
+        model: metrics.cpu.model,
+        usage_percent: metrics.cpu.usage_percent,
+      },
+      memory: metrics.memory,
+      disk: metrics.disk,
+      load_average: metrics.load_average,
+    };
+  } catch {
+    // Fallback: older Spine without /api/metrics — use /api/status for basics
+    const status = await spineClient.status();
+    return {
+      hostname: 'unknown',
+      os: status.host?.os || 'unknown',
+      kernel: 'unknown',
+      uptime: 'unknown',
+      cpu: { cores: 0, model: 'unknown' },
+      memory: { total_mb: 0, used_mb: 0, free_mb: 0 },
+      disk: { total_gb: 0, used_gb: 0, free_gb: 0 },
+    };
+  }
 }
 
 export async function GET(request: NextRequest) {

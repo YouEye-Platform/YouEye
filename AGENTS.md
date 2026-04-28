@@ -1,3 +1,31 @@
+## CP v0.3.6.4 + UI v0.3.4.4 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Phase 3 — Link Handling + System page 500 fix
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — Added LinkHandlerSchema and link_handlers to CapabilitiesSchema (Zod)
+- `control-panel/src/lib/market/types.ts` — Added link_handlers to MarketApp.capabilities interface
+- `control-panel/src/lib/market/catalog.ts` — Pass link_handlers from manifest capabilities to market app
+- `control-panel/src/lib/market/engine.ts` — registerAppWithUI accepts optional linkHandlers param, passes to UI registration
+- `control-panel/src/app/api/ui-bridge/system/route.ts` — Added fallback: if Spine /api/metrics 404s, degrade to /api/status with partial data
+- `control-panel/package.json` — Bumped to 0.3.6.4
+- `ui/src/app/api/v1/apps/[appId]/link-handlers/route.ts` — NEW: CRUD API for link handlers (GET/POST/DELETE), stored in apps.manifest.linkHandlers JSONB
+- `ui/src/components/settings/app-settings-detail.tsx` — Full LinkHandlingTab: add form (type, description, domains, endpoint), handler cards with domain pills, delete, validation
+- `ui/src/app/api/v1/apps/register/route.ts` — Accept link_handlers from CP registration payload, merge into manifest
+- `ui/package.json` — Bumped to 0.3.4.4
+
+### Test Results
+- Playwright CDP verification: Link Handling tab empty state, add handler form, handler card with 3 domain pills, delete handler
+- System page renders with full metrics (hostname, CPU, memory, disk, containers) — no more HTTP 500
+- 2 test suites: link-handling.spec.ts (12 tests), system-metrics.spec.ts (8 tests)
+
+### Notes for Iris
+- CP + UI changes, both deployed. Spine unchanged at v0.3.2.1.
+- Link handlers stored in existing `apps.manifest` JSONB column — no DB migration needed
+- The CP system bridge fallback is additive — if Spine has /api/metrics it uses it, otherwise falls back to /api/status
+
 ## UI v0.3.4.3 — vanya — 2026-04-28
 **Branch:** vanya
 **VM:** ye-vanya

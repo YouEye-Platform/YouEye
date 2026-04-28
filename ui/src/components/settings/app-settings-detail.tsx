@@ -211,9 +211,20 @@ export function AppSettingsDetail({
       } else {
         setApp({ id: appId, name: appId, icon: null, subdomain: null, version: null, status: null, containerUrl: null });
       }
-      setLinkHandlers([]);
     } finally {
       setLoading(false);
+    }
+  }, [appId]);
+
+  const fetchLinkHandlers = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/v1/apps/${appId}/link-handlers`);
+      if (res.ok) {
+        const data = await res.json();
+        setLinkHandlers(data.handlers ?? []);
+      }
+    } catch {
+      // silent
     }
   }, [appId]);
 
@@ -241,7 +252,10 @@ export function AppSettingsDetail({
     if (activeTab === "permissions") {
       fetchPermissions();
     }
-  }, [activeTab, fetchPermissions]);
+    if (activeTab === "link-handling") {
+      fetchLinkHandlers();
+    }
+  }, [activeTab, fetchPermissions, fetchLinkHandlers]);
 
   if (loading) {
     return <div className="py-8 text-center text-sm text-muted-foreground">{t("loading")}</div>;
@@ -318,7 +332,15 @@ export function AppSettingsDetail({
 
       {activeTab === "network" && isAdmin && <NetworkTab appId={appId} />}
 
-      {activeTab === "link-handling" && <LinkHandlingTab linkHandlers={linkHandlers} appName={app?.name ?? appId} />}
+      {activeTab === "link-handling" && (
+        <LinkHandlingTab
+          linkHandlers={linkHandlers}
+          appName={app?.name ?? appId}
+          appId={appId}
+          isAdmin={isAdmin}
+          onRefresh={fetchLinkHandlers}
+        />
+      )}
     </div>
   );
 }
@@ -716,62 +738,228 @@ function NetworkTab({ appId }: { appId: string }) {
 
 /* ── Link Handling Tab ── */
 
-function LinkHandlingTab({ linkHandlers, appName }: { linkHandlers: LinkHandler[]; appName: string }) {
-  const t = useTranslations("common");
-
-  if (linkHandlers.length === 0) {
-    return (
-      <div className="py-8 text-center border rounded-lg">
-        <Link2 className="w-8 h-8 mx-auto mb-3 text-muted-foreground opacity-40" />
-        <p className="text-sm text-muted-foreground">No link handlers configured</p>
-        <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
-          Link handling lets apps intercept and rewrite URLs for supported domains.
-        </p>
-      </div>
-    );
-  }
+function LinkHandlingTab({
+  linkHandlers,
+  appName,
+  appId,
+  isAdmin,
+  onRefresh,
+}: {
+  linkHandlers: LinkHandler[];
+  appName: string;
+  appId: string;
+  isAdmin: boolean;
+  onRefresh: () => void;
+}) {
+  const [showForm, setShowForm] = useState(false);
+  const [formType, setFormType] = useState("");
+  const [formDesc, setFormDesc] = useState("");
+  const [formTriggers, setFormTriggers] = useState("");
+  const [formEndpoint, setFormEndpoint] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const formatType = (s: string) =>
     s.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
+  async function handleAdd() {
+    setError(null);
+    const triggers = formTriggers
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    if (!formType.trim() || !formDesc.trim() || triggers.length === 0) {
+      setError("Type, description, and at least one domain are required.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/v1/apps/${appId}/link-handlers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: formType.trim(),
+          description: formDesc.trim(),
+          endpoint: formEndpoint.trim() || undefined,
+          triggers,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "Failed to add handler");
+        return;
+      }
+      setFormType("");
+      setFormDesc("");
+      setFormTriggers("");
+      setFormEndpoint("");
+      setShowForm(false);
+      onRefresh();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(type: string) {
+    setDeleting(type);
+    try {
+      await fetch(`/api/v1/apps/${appId}/link-handlers?type=${encodeURIComponent(type)}`, {
+        method: "DELETE",
+      });
+      onRefresh();
+    } finally {
+      setDeleting(null);
+    }
+  }
+
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        {`${appName} handles these link types:`}
-      </p>
-
-      {linkHandlers.map((handler) => (
-        <div key={handler.type} className="border rounded-lg p-4 space-y-3">
-          <div className="flex items-center gap-2">
-            <Link2 className="w-4 h-4 text-primary" />
-            <span className="text-sm font-medium">{formatType(handler.type)}</span>
+      {linkHandlers.length === 0 && !showForm ? (
+        <div className="py-8 text-center border rounded-lg">
+          <Link2 className="w-8 h-8 mx-auto mb-3 text-muted-foreground opacity-40" />
+          <p className="text-sm text-muted-foreground">No link handlers configured</p>
+          <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+            Link handling lets apps intercept and rewrite URLs for supported domains.
+          </p>
+          {isAdmin && (
+            <button
+              onClick={() => setShowForm(true)}
+              className="mt-4 text-xs font-medium text-primary hover:underline"
+            >
+              + Add link handler
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              {`${appName} handles these link types:`}
+            </p>
+            {isAdmin && !showForm && (
+              <button
+                onClick={() => setShowForm(true)}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                + Add handler
+              </button>
+            )}
           </div>
 
-          {handler.description && (
-            <p className="text-xs text-muted-foreground">{handler.description}</p>
+          {linkHandlers.map((handler) => (
+            <div key={handler.type} className="border rounded-lg p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Link2 className="w-4 h-4 text-primary" />
+                <span className="text-sm font-medium">{formatType(handler.type)}</span>
+                {isAdmin && (
+                  <button
+                    onClick={() => handleDelete(handler.type)}
+                    disabled={deleting === handler.type}
+                    className="ml-auto text-xs text-destructive hover:underline disabled:opacity-50 flex items-center gap-1"
+                  >
+                    {deleting === handler.type ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3 h-3" />
+                    )}
+                    Remove
+                  </button>
+                )}
+              </div>
+
+              {handler.description && (
+                <p className="text-xs text-muted-foreground">{handler.description}</p>
+              )}
+
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  Domains
+                </p>
+                {handler.triggers.map((trigger) => (
+                  <div
+                    key={trigger}
+                    className="flex items-center gap-2 py-1.5 px-3 rounded-md bg-accent/30"
+                  >
+                    <Globe className="w-3.5 h-3.5 text-blue-500" />
+                    <code className="text-sm font-mono">{trigger}</code>
+                    <ExternalLink className="w-3 h-3 text-muted-foreground ml-auto" />
+                  </div>
+                ))}
+              </div>
+
+              {handler.endpoint && (
+                <p className="text-[11px] text-muted-foreground font-mono">
+                  Endpoint: {handler.endpoint}
+                </p>
+              )}
+
+              <p className="text-[11px] text-muted-foreground">
+                {`Links matching these domains will be opened in ${appName}.`}
+              </p>
+            </div>
+          ))}
+        </>
+      )}
+
+      {/* Add handler form */}
+      {showForm && isAdmin && (
+        <div className="border rounded-lg p-4 space-y-3 bg-accent/10">
+          <p className="text-sm font-medium">Add Link Handler</p>
+
+          {error && (
+            <p className="text-xs text-destructive">{error}</p>
           )}
 
-          <div className="space-y-1.5">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              Domains
-            </p>
-            {handler.triggers.map((trigger) => (
-              <div
-                key={trigger}
-                className="flex items-center gap-2 py-1.5 px-3 rounded-md bg-accent/30"
-              >
-                <Globe className="w-3.5 h-3.5 text-blue-500" />
-                <code className="text-sm font-mono">{trigger}</code>
-                <ExternalLink className="w-3 h-3 text-muted-foreground ml-auto" />
-              </div>
-            ))}
+          <div className="space-y-2">
+            <input
+              type="text"
+              placeholder="Handler type (e.g. video-streaming)"
+              value={formType}
+              onChange={(e) => setFormType(e.target.value)}
+              className="w-full px-3 py-1.5 text-sm border rounded-md bg-background"
+            />
+            <input
+              type="text"
+              placeholder="Description (e.g. Opens video links in Cinema)"
+              value={formDesc}
+              onChange={(e) => setFormDesc(e.target.value)}
+              className="w-full px-3 py-1.5 text-sm border rounded-md bg-background"
+            />
+            <input
+              type="text"
+              placeholder="Domains, comma-separated (e.g. youtube.com, vimeo.com)"
+              value={formTriggers}
+              onChange={(e) => setFormTriggers(e.target.value)}
+              className="w-full px-3 py-1.5 text-sm border rounded-md bg-background"
+            />
+            <input
+              type="text"
+              placeholder="Endpoint path (optional, e.g. /watch)"
+              value={formEndpoint}
+              onChange={(e) => setFormEndpoint(e.target.value)}
+              className="w-full px-3 py-1.5 text-sm border rounded-md bg-background"
+            />
           </div>
 
-          <p className="text-[11px] text-muted-foreground">
-            {`Links matching these domains will be opened in ${appName}.`}
-          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={handleAdd}
+              disabled={saving}
+              className="px-3 py-1.5 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
+            >
+              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+              Save
+            </button>
+            <button
+              onClick={() => { setShowForm(false); setError(null); }}
+              className="px-3 py-1.5 text-xs font-medium rounded-md border hover:bg-accent"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
-      ))}
+      )}
     </div>
   );
 }

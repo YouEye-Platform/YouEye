@@ -265,6 +265,7 @@ async function registerAppWithUI(
   icon: string | null,
   appToken?: string,
   ssoEntryUrl?: string,
+  linkHandlers?: Array<{ type: string; description: string; endpoint?: string; triggers: string[] }>,
 ): Promise<void> {
   const uiIP = await getIncusContainerIP('youeye-ui');
   if (!uiIP) return;
@@ -279,13 +280,21 @@ async function registerAppWithUI(
     tokenHash = crypto.createHash('sha256').update(appToken).digest('hex');
   }
 
+  const payload: Record<string, unknown> = {
+    id: appId, name, container_url: containerUrl, subdomain, icon,
+    token_hash: tokenHash, sso_entry_url: ssoEntryUrl,
+  };
+  if (linkHandlers && linkHandlers.length > 0) {
+    payload.link_handlers = linkHandlers;
+  }
+
   const res = await fetch(`http://${uiIP}:3000/api/v1/apps/register`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(bridgeToken ? { 'X-UI-Bridge-Token': bridgeToken } : {}),
     },
-    body: JSON.stringify({ id: appId, name, container_url: containerUrl, subdomain, icon, token_hash: tokenHash, sso_entry_url: ssoEntryUrl }),
+    body: JSON.stringify(payload),
   });
 
   if (!res.ok) {
@@ -988,7 +997,8 @@ export async function installApp(
     const ssoEntryUrl = manifest.sso?.entry_url
       ? resolveVariables(manifest.sso.entry_url, ctx)
       : undefined;
-    await registerAppWithUI(appId, displayName, config.subdomain, primaryContainerName, primaryPort, displayIcon, appToken, ssoEntryUrl);
+    const linkHandlers = manifest.capabilities?.link_handlers ?? [];
+    await registerAppWithUI(appId, displayName, config.subdomain, primaryContainerName, primaryPort, displayIcon, appToken, ssoEntryUrl, linkHandlers);
     emit(onEvent, step, totalSteps, 'success', 'Registered with dashboard');
   } catch (err) {
     emit(onEvent, step, totalSteps, 'success', `Dashboard registration skipped: ${err}`);
