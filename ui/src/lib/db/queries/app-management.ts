@@ -245,7 +245,7 @@ export async function getInfoCardProviders(): Promise<
   return providers;
 }
 
-/** Get all app widget declarations from installed apps */
+/** Get all app widget declarations by live-fetching from running app containers */
 export async function getAppWidgetDeclarations(): Promise<
   Array<{
     appId: string;
@@ -260,24 +260,36 @@ export async function getAppWidgetDeclarations(): Promise<
     .from(apps)
     .where(eq(apps.enabled, true));
 
-  const result: Array<{
-    appId: string;
-    appName: string;
-    widgets: AppWidgetDeclaration[];
-  }> = [];
+  // Discover app backend URLs from Caddy's live config
+  const upstreamMap = await discoverAppUpstreams();
 
-  for (const app of allApps) {
-    const manifest = app.manifest as AppManifest | null;
-    if (manifest?.widgets && manifest.widgets.length > 0) {
-      result.push({
-        appId: app.id,
-        appName: app.name,
-        widgets: manifest.widgets,
-      });
-    }
+  const results = await Promise.allSettled(
+    allApps
+      .filter((app) => app.containerUrl || app.subdomain)
+      .map(async (app) => {
+        // Prefer Caddy-discovered upstream (avoids cross-bridge DNS issues),
+        // fall back to DB containerUrl
+        const upstream = (app.subdomain && upstreamMap.get(app.subdomain))
+          || app.containerUrl;
+        if (!upstream) return null;
+
+        const manifest = await fetchAppManifest(upstream);
+        if (manifest?.widgets && manifest.widgets.length > 0) {
+          return {
+            appId: app.id,
+            appName: app.name,
+            widgets: manifest.widgets,
+          };
+        }
+        return null;
+      })
+  );
+
+  const out: Array<{ appId: string; appName: string; widgets: AppWidgetDeclaration[] }> = [];
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value) out.push(r.value);
   }
-
-  return result;
+  return out;
 }
 
 /** Fetch manifest from an app's container */
@@ -300,6 +312,69 @@ export async function fetchAppManifest(
   } catch {
     return null;
   }
+}
+
+/**
+ * Discover app backend URLs from Caddy's admin API.
+ * Caddy is on the same Incus bridge as UI (youeye-caddy.youeye resolves),
+ * and its config contains the actual app container IPs as upstreams.
+ * Returns a map of subdomain → "http://<ip>:<port>".
+ *
+ * Uses Node http module instead of fetch — fetch adds an Origin header
+ * that Caddy's admin API rejects.
+ */
+async function discoverAppUpstreams(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  try {
+    const http = await import("http");
+    const data = await new Promise<string>((resolve, reject) => {
+      const req = http.get(
+        "http://youeye-caddy.youeye:2019/config/apps/http/servers",
+        (res) => {
+          let body = "";
+          res.on("data", (chunk: string) => (body += chunk));
+          res.on("end", () => resolve(body));
+        }
+      );
+      req.on("error", reject);
+      req.setTimeout(5000, () => {
+        req.destroy();
+        reject(new Error("timeout"));
+      });
+    });
+
+    const servers = JSON.parse(data) as Record<
+      string,
+      {
+        routes?: Array<{
+          match?: Array<{ host?: string[] }>;
+          handle?: Array<{
+            handler?: string;
+            upstreams?: Array<{ dial?: string }>;
+          }>;
+        }>;
+      }
+    >;
+
+    for (const server of Object.values(servers)) {
+      for (const route of server.routes ?? []) {
+        const hosts = route.match?.[0]?.host ?? [];
+        const proxy = route.handle?.find((h) => h.handler === "reverse_proxy");
+        const dial = proxy?.upstreams?.[0]?.dial;
+        if (!dial) continue;
+
+        for (const host of hosts) {
+          const dot = host.indexOf(".");
+          if (dot > 0) {
+            map.set(host.substring(0, dot), `http://${dial}`);
+          }
+        }
+      }
+    }
+  } catch {
+    // Caddy unreachable — fall back to DB containerUrl
+  }
+  return map;
 }
 
 /** Check app health */
