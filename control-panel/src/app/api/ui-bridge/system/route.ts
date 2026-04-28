@@ -4,12 +4,14 @@
  * GET /api/ui-bridge/system
  *
  * Returns aggregated system information for the dashboard overview.
- * Combines data from Spine status and Incus API.
+ * Host metrics (CPU, RAM, disk) come from Spine's /api/metrics endpoint
+ * which reads from the real host /proc, not the container's.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { validateBridgeToken } from '@/lib/ui-bridge/auth';
 import { spineClient } from '@/lib/spine/client';
+import type { SpineMetricsResponse } from '@/lib/spine/client';
 import { incusRequest, getServerInfo } from '@/lib/incus/server';
 
 interface HostInfo {
@@ -17,108 +19,32 @@ interface HostInfo {
   os: string;
   kernel: string;
   uptime: string;
-  cpu: { cores: number; model: string };
+  cpu: { cores: number; model: string; usage_percent?: string };
   memory: { total_mb: number; used_mb: number; free_mb: number };
   disk: { total_gb: number; used_gb: number; free_gb: number };
+  load_average?: string;
 }
 
 /**
- * Gather host-level system info by reading /proc and /sys.
- * Since the CP runs inside an Incus container, we use the
- * host-shared /proc filesystem for CPU/mem, and Spine for OS info.
+ * Get host-level system info from Spine's metrics endpoint.
+ * Spine runs on the host, so it reads the real /proc and df.
  */
 async function getHostInfo(): Promise<HostInfo> {
-  const info: HostInfo = {
-    hostname: 'unknown',
-    os: 'unknown',
-    kernel: 'unknown',
-    uptime: 'unknown',
-    cpu: { cores: 0, model: 'unknown' },
-    memory: { total_mb: 0, used_mb: 0, free_mb: 0 },
-    disk: { total_gb: 0, used_gb: 0, free_gb: 0 },
+  const metrics: SpineMetricsResponse = await spineClient.getMetrics();
+  return {
+    hostname: metrics.hostname,
+    os: metrics.os,
+    kernel: metrics.kernel,
+    uptime: metrics.uptime,
+    cpu: {
+      cores: metrics.cpu.cores,
+      model: metrics.cpu.model,
+      usage_percent: metrics.cpu.usage_percent,
+    },
+    memory: metrics.memory,
+    disk: metrics.disk,
+    load_average: metrics.load_average,
   };
-
-  try {
-    const status = await spineClient.status();
-    info.os = status.host?.os || 'unknown';
-  } catch {
-    // Spine may not be available
-  }
-
-  // Read system info from local /proc (shared with host in Incus)
-  try {
-    const { readFile } = await import('fs/promises');
-
-    // Hostname
-    try {
-      info.hostname = (await readFile('/etc/hostname', 'utf-8')).trim();
-    } catch {
-      info.hostname = 'youeye';
-    }
-
-    // Kernel
-    try {
-      const osRelease = (await readFile('/proc/version', 'utf-8')).trim();
-      const kernelMatch = osRelease.match(/Linux version ([\d.]+[^\s]*)/);
-      info.kernel = kernelMatch ? kernelMatch[1] : osRelease.split(' ').slice(0, 3).join(' ');
-    } catch { /* ignore */ }
-
-    // Uptime
-    try {
-      const uptimeStr = (await readFile('/proc/uptime', 'utf-8')).trim();
-      const uptimeSeconds = Math.floor(parseFloat(uptimeStr.split(' ')[0]));
-      const days = Math.floor(uptimeSeconds / 86400);
-      const hours = Math.floor((uptimeSeconds % 86400) / 3600);
-      const minutes = Math.floor((uptimeSeconds % 3600) / 60);
-      info.uptime = `${days}d ${hours}h ${minutes}m`;
-    } catch { /* ignore */ }
-
-    // CPU info
-    try {
-      const cpuInfo = await readFile('/proc/cpuinfo', 'utf-8');
-      const cores = (cpuInfo.match(/^processor\s*:/gm) || []).length;
-      const modelMatch = cpuInfo.match(/model name\s*:\s*(.+)/);
-      info.cpu = {
-        cores: cores || 1,
-        model: modelMatch ? modelMatch[1].trim() : 'unknown',
-      };
-    } catch { /* ignore */ }
-
-    // Memory info
-    try {
-      const memInfo = await readFile('/proc/meminfo', 'utf-8');
-      const totalMatch = memInfo.match(/MemTotal:\s+(\d+)/);
-      const freeMatch = memInfo.match(/MemAvailable:\s+(\d+)/);
-      if (totalMatch) {
-        const totalKb = parseInt(totalMatch[1], 10);
-        const freeKb = freeMatch ? parseInt(freeMatch[1], 10) : 0;
-        info.memory = {
-          total_mb: Math.round(totalKb / 1024),
-          used_mb: Math.round((totalKb - freeKb) / 1024),
-          free_mb: Math.round(freeKb / 1024),
-        };
-      }
-    } catch { /* ignore */ }
-
-    // Disk info (root filesystem)
-    try {
-      const { execSync } = await import('child_process');
-      const dfOutput = execSync('df -BG / 2>/dev/null', { encoding: 'utf-8' });
-      const lines = dfOutput.trim().split('\n');
-      if (lines.length >= 2) {
-        const parts = lines[1].split(/\s+/);
-        info.disk = {
-          total_gb: parseInt(parts[1], 10) || 0,
-          used_gb: parseInt(parts[2], 10) || 0,
-          free_gb: parseInt(parts[3], 10) || 0,
-        };
-      }
-    } catch { /* ignore */ }
-  } catch {
-    // /proc may not be accessible — proceed with defaults
-  }
-
-  return info;
 }
 
 export async function GET(request: NextRequest) {
@@ -174,6 +100,7 @@ export async function GET(request: NextRequest) {
       os: hostInfo.os,
       kernel: hostInfo.kernel,
       uptime: hostInfo.uptime,
+      load_average: hostInfo.load_average,
       cpu: hostInfo.cpu,
       memory: hostInfo.memory,
       disk: hostInfo.disk,

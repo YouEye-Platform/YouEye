@@ -164,6 +164,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/backup/config", s.handleBackupConfig)
 	s.mux.HandleFunc("/api/backup/restore", s.handleBackupRestore)
 	s.mux.HandleFunc("/api/backup/prune", s.handleBackupPrune)
+	s.mux.HandleFunc("/api/metrics", s.handleMetrics)
 }
 
 func (s *Server) ListenAndServe() error {
@@ -2329,4 +2330,170 @@ func (s *Server) handleBackupPrune(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{
 		"status": "pruned",
 	})
+}
+
+// handleMetrics returns real host-level CPU, memory, disk, and system info.
+// This runs on the host (not in a container), so /proc and df reflect the
+// actual Linux server metrics.
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	result := map[string]interface{}{}
+
+	// Hostname
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+	result["hostname"] = hostname
+
+	// OS
+	result["os"] = getOSRelease()
+
+	// Kernel
+	kernel := "unknown"
+	if data, err := os.ReadFile("/proc/version"); err == nil {
+		parts := strings.SplitN(strings.TrimSpace(string(data)), " ", 4)
+		if len(parts) >= 3 {
+			kernel = parts[2]
+		}
+	}
+	result["kernel"] = kernel
+
+	// Uptime
+	uptime := "unknown"
+	if data, err := os.ReadFile("/proc/uptime"); err == nil {
+		fields := strings.Fields(string(data))
+		if len(fields) >= 1 {
+			var secs float64
+			fmt.Sscanf(fields[0], "%f", &secs)
+			totalSec := int(secs)
+			days := totalSec / 86400
+			hours := (totalSec % 86400) / 3600
+			minutes := (totalSec % 3600) / 60
+			uptime = fmt.Sprintf("%dd %dh %dm", days, hours, minutes)
+		}
+	}
+	result["uptime"] = uptime
+
+	// Load average
+	loadAvg := "unknown"
+	if data, err := os.ReadFile("/proc/loadavg"); err == nil {
+		fields := strings.Fields(string(data))
+		if len(fields) >= 3 {
+			loadAvg = strings.Join(fields[:3], " ")
+		}
+	}
+	result["load_average"] = loadAvg
+
+	// CPU
+	cpuCores := 0
+	cpuModel := "unknown"
+	if data, err := os.ReadFile("/proc/cpuinfo"); err == nil {
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(line, "processor") {
+				cpuCores++
+			}
+			if strings.HasPrefix(line, "model name") && cpuModel == "unknown" {
+				parts := strings.SplitN(line, ":", 2)
+				if len(parts) == 2 {
+					cpuModel = strings.TrimSpace(parts[1])
+				}
+			}
+		}
+	}
+	if cpuCores == 0 {
+		cpuCores = 1
+	}
+
+	// CPU usage from /proc/stat (two samples, 200ms apart)
+	cpuUsage := 0.0
+	readCPUStat := func() (idle, total uint64) {
+		data, err := os.ReadFile("/proc/stat")
+		if err != nil {
+			return 0, 0
+		}
+		lines := strings.Split(string(data), "\n")
+		if len(lines) == 0 {
+			return 0, 0
+		}
+		fields := strings.Fields(lines[0]) // "cpu" aggregate line
+		if len(fields) < 5 {
+			return 0, 0
+		}
+		var vals [10]uint64
+		for i := 1; i < len(fields) && i <= 10; i++ {
+			fmt.Sscanf(fields[i], "%d", &vals[i-1])
+		}
+		for _, v := range vals {
+			total += v
+		}
+		idle = vals[3] // idle is 4th field
+		return idle, total
+	}
+	idle1, total1 := readCPUStat()
+	time.Sleep(200 * time.Millisecond)
+	idle2, total2 := readCPUStat()
+	if total2 > total1 {
+		totalDelta := float64(total2 - total1)
+		idleDelta := float64(idle2 - idle1)
+		cpuUsage = ((totalDelta - idleDelta) / totalDelta) * 100
+	}
+
+	result["cpu"] = map[string]interface{}{
+		"cores":        cpuCores,
+		"model":        cpuModel,
+		"usage_percent": fmt.Sprintf("%.1f", cpuUsage),
+	}
+
+	// Memory
+	totalMB, usedMB, freeMB := 0, 0, 0
+	if data, err := os.ReadFile("/proc/meminfo"); err == nil {
+		lines := strings.Split(string(data), "\n")
+		memMap := map[string]int{}
+		for _, line := range lines {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				key := strings.TrimSuffix(parts[0], ":")
+				var val int
+				fmt.Sscanf(parts[1], "%d", &val)
+				memMap[key] = val
+			}
+		}
+		totalKB := memMap["MemTotal"]
+		availKB := memMap["MemAvailable"]
+		totalMB = totalKB / 1024
+		freeMB = availKB / 1024
+		usedMB = totalMB - freeMB
+	}
+	result["memory"] = map[string]interface{}{
+		"total_mb": totalMB,
+		"used_mb":  usedMB,
+		"free_mb":  freeMB,
+	}
+
+	// Disk (root filesystem)
+	totalGB, usedGB, freeGB := 0, 0, 0
+	if out, err := exec.Command("df", "-BG", "/").Output(); err == nil {
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		if len(lines) >= 2 {
+			fields := strings.Fields(lines[1])
+			if len(fields) >= 4 {
+				fmt.Sscanf(strings.TrimSuffix(fields[1], "G"), "%d", &totalGB)
+				fmt.Sscanf(strings.TrimSuffix(fields[2], "G"), "%d", &usedGB)
+				fmt.Sscanf(strings.TrimSuffix(fields[3], "G"), "%d", &freeGB)
+			}
+		}
+	}
+	result["disk"] = map[string]interface{}{
+		"total_gb": totalGB,
+		"used_gb":  usedGB,
+		"free_gb":  freeGB,
+	}
+
+	jsonResponse(w, result)
 }

@@ -58,7 +58,7 @@ export const WIDGET_CATALOG: WidgetMeta[] = [
     description: "Instance name with WordArt styling — like a search engine logo",
     category: "built-in",
     component: ServerNameWidget,
-    defaultSize: { width: 26, height: 8 },
+    defaultSize: { width: 13, height: 4 },
     minSize: { width: 8, height: 3 },
     autoFit: true,
     allowOverflow: true,

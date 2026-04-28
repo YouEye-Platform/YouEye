@@ -5,6 +5,8 @@
  * Text is fit-to-width: it always fills the container, and height
  * auto-adjusts. Resize the widget wider -> text gets bigger.
  * Minimal padding for a tight, clean appearance.
+ *
+ * Supports animated themes (glitch, neon-pulse, shimmer, bounce, float).
  */
 
 "use client";
@@ -19,6 +21,43 @@ interface ClockWidgetProps {
     clockTheme?: string;
   };
   onAutoSize?: (size: { height: number }) => void;
+}
+
+/** CSS keyframes for animated clock themes — injected once into <head> */
+const CLOCK_KEYFRAMES = `
+@keyframes clock-glitch {
+  0%, 100% { transform: translate(0); text-shadow: inherit; }
+  20% { transform: translate(-2px, 1px); }
+  40% { transform: translate(2px, -1px); filter: hue-rotate(90deg); }
+  60% { transform: translate(-1px, -1px); }
+  80% { transform: translate(1px, 2px); filter: hue-rotate(0deg); }
+}
+@keyframes clock-neon-pulse {
+  0%, 100% { opacity: 1; filter: brightness(1); }
+  50% { opacity: 0.85; filter: brightness(1.3); }
+}
+@keyframes clock-shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+@keyframes clock-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+@keyframes clock-float {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-3px) rotate(0.5deg); }
+  75% { transform: translateY(3px) rotate(-0.5deg); }
+}
+`;
+
+let keyframesInjected = false;
+function ensureKeyframes() {
+  if (keyframesInjected || typeof document === "undefined") return;
+  const style = document.createElement("style");
+  style.textContent = CLOCK_KEYFRAMES;
+  document.head.appendChild(style);
+  keyframesInjected = true;
 }
 
 /** Build inline styles from a clock theme preset */
@@ -41,6 +80,15 @@ function buildTimeStyle(theme: ClockTheme, fitSize: number): CSSProperties {
     style.WebkitBackgroundClip = "text";
     style.WebkitTextFillColor = "transparent";
     style.backgroundClip = "text";
+  }
+
+  // Shimmer needs an oversized background for the sliding effect
+  if (theme.animation?.includes("clock-shimmer")) {
+    style.backgroundSize = "200% auto";
+  }
+
+  if (theme.animation) {
+    style.animation = theme.animation;
   }
 
   return style;
@@ -73,6 +121,10 @@ export function ClockWidget({ settings, onAutoSize }: ClockWidgetProps) {
   const [fitSize, setFitSize] = useState(32);
   const onAutoSizeRef = useRef(onAutoSize);
   onAutoSizeRef.current = onAutoSize;
+
+  useEffect(() => {
+    ensureKeyframes();
+  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 1000);

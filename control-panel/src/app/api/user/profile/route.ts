@@ -38,12 +38,18 @@ export async function GET() {
     const firstName = nameParts[0] || "";
     const lastName = nameParts.length > 1 ? user.name.substring(firstName.length + 1) : "";
 
+    // Extract avatar from Authentik user attributes (stored as data URL)
+    const avatarUrl = typeof user.attributes?.avatar === "string"
+      ? user.attributes.avatar
+      : undefined;
+
     return NextResponse.json({
       username: user.username,
       firstName,
       lastName,
       email: user.email,
       isAdmin: session.isAdmin,
+      avatarUrl,
     });
   } catch (error) {
     console.error("Failed to fetch user profile:", error);

@@ -1,8 +1,9 @@
 /**
  * Clock Theme Presets
  *
- * Selectable visual themes for the clock widget.
- * Each theme defines typography, colors, and effects for time and date display.
+ * Selectable visual themes for the clock widget, matching the greeting
+ * widget's preset structure. 5 categories, 17 curated styles.
+ * Self-hosted fonts: Caveat, Dancing Script, Playfair Display (in /public/fonts/).
  */
 
 export interface ClockThemeCSS {
@@ -27,23 +28,26 @@ export interface ClockTheme {
   readonly date: Partial<ClockThemeCSS> & { readonly color: string };
   /** Thumbnail preview needs a dark backdrop */
   readonly needsDarkBg?: boolean;
+  /** CSS animation applied to the time element */
+  readonly animation?: string;
 }
 
-export type ClockCategory = "clean" | "bold" | "glow" | "retro";
+export type ClockCategory = "classic" | "minimal" | "decorative" | "animated" | "fun";
 
 export const CLOCK_CATEGORIES: readonly { readonly id: ClockCategory; readonly label: string }[] = [
-  { id: "clean", label: "Clean" },
-  { id: "bold", label: "Bold" },
-  { id: "glow", label: "Glow" },
-  { id: "retro", label: "Retro" },
+  { id: "classic", label: "Classic" },
+  { id: "minimal", label: "Minimal" },
+  { id: "decorative", label: "Decorative" },
+  { id: "animated", label: "Animated" },
+  { id: "fun", label: "Fun" },
 ] as const;
 
 export const CLOCK_PRESETS: readonly ClockTheme[] = [
-  // ─── Clean ───
+  // ─── Classic ───
   {
     id: "gradient",
-    name: "Gradient",
-    category: "clean",
+    name: "Default",
+    category: "classic",
     time: {
       fontFamily: "inherit",
       fontWeight: 600,
@@ -64,116 +68,168 @@ export const CLOCK_PRESETS: readonly ClockTheme[] = [
     },
   },
   {
-    id: "minimal",
-    name: "Minimal",
-    category: "clean",
+    id: "elegant",
+    name: "Elegant",
+    category: "classic",
     time: {
-      fontFamily: "inherit",
-      fontWeight: 300,
-      letterSpacing: "-0.02em",
+      fontFamily: "'Playfair Display', Georgia, serif",
+      fontWeight: 400,
+      letterSpacing: "0.04em",
       color: "var(--foreground)",
-      textShadow: "none",
+      textShadow: "0 1px 3px rgba(0,0,0,0.1)",
     },
     date: {
+      fontFamily: "'Playfair Display', Georgia, serif",
       color: "var(--muted-foreground)",
       fontWeight: 400,
-      letterSpacing: "0.05em",
+      letterSpacing: "0.08em",
       textTransform: "uppercase",
     },
   },
   {
-    id: "soft",
-    name: "Soft",
-    category: "clean",
+    id: "luxury",
+    name: "Luxury",
+    category: "classic",
+    time: {
+      fontFamily: "'Playfair Display', Georgia, serif",
+      fontWeight: 700,
+      letterSpacing: "0.08em",
+      color: "transparent",
+      gradient: { from: "#BF953F", to: "#FCF6BA", direction: "135deg" },
+      textShadow: "none",
+    },
+    date: {
+      fontFamily: "'Playfair Display', Georgia, serif",
+      color: "#BF953F",
+      fontWeight: 500,
+      letterSpacing: "0.12em",
+      textTransform: "uppercase",
+    },
+  },
+
+  // ─── Minimal ───
+  {
+    id: "monochrome",
+    name: "Monochrome",
+    category: "minimal",
+    time: {
+      fontFamily: "system-ui, -apple-system, sans-serif",
+      fontWeight: 900,
+      letterSpacing: "-0.03em",
+      color: "var(--foreground)",
+      textShadow: "2px 2px 0 rgba(0,0,0,0.06)",
+    },
+    date: {
+      color: "var(--muted-foreground)",
+      fontWeight: 600,
+      letterSpacing: "0.04em",
+    },
+  },
+  {
+    id: "clean",
+    name: "Clean",
+    category: "minimal",
     time: {
       fontFamily: "inherit",
-      fontWeight: 400,
-      letterSpacing: "0.02em",
+      fontWeight: 300,
+      letterSpacing: "-0.02em",
       color: "var(--muted-foreground)",
       textShadow: "none",
     },
     date: {
       color: "color-mix(in oklch, var(--muted-foreground) 70%, transparent)",
       fontWeight: 400,
-      letterSpacing: "0.08em",
+      letterSpacing: "0.05em",
+      textTransform: "uppercase",
+    },
+  },
+  {
+    id: "brutalist",
+    name: "Brutalist",
+    category: "minimal",
+    time: {
+      fontFamily: "'Courier New', Courier, monospace",
+      fontWeight: 900,
+      letterSpacing: "0.06em",
+      color: "var(--foreground)",
+      textShadow: "none",
+      textTransform: "uppercase",
+    },
+    date: {
+      fontFamily: "'Courier New', Courier, monospace",
+      color: "var(--muted-foreground)",
+      fontWeight: 700,
+      letterSpacing: "0.1em",
       textTransform: "uppercase",
     },
   },
 
-  // ─── Bold ───
+  // ─── Decorative ───
   {
-    id: "solid",
-    name: "Solid",
-    category: "bold",
+    id: "handwritten",
+    name: "Handwritten",
+    category: "decorative",
     time: {
-      fontFamily: "inherit",
-      fontWeight: 800,
-      letterSpacing: "0.04em",
-      color: "var(--foreground)",
+      fontFamily: "'Caveat', cursive",
+      fontWeight: 700,
+      letterSpacing: "0.01em",
+      color: "#4A3728",
       textShadow: "none",
     },
     date: {
-      color: "var(--muted-foreground)",
+      fontFamily: "'Caveat', cursive",
+      color: "#8B7355",
       fontWeight: 600,
-      letterSpacing: "0.12em",
-      textTransform: "uppercase",
+      letterSpacing: "0.04em",
     },
   },
   {
-    id: "accent",
-    name: "Accent",
-    category: "bold",
+    id: "calligraphy",
+    name: "Calligraphy",
+    category: "decorative",
+    time: {
+      fontFamily: "'Dancing Script', cursive",
+      fontWeight: 400,
+      letterSpacing: "0.02em",
+      color: "var(--foreground)",
+      textShadow: "0 1px 2px rgba(0,0,0,0.08)",
+    },
+    date: {
+      fontFamily: "'Dancing Script', cursive",
+      color: "var(--muted-foreground)",
+      fontWeight: 400,
+      letterSpacing: "0.06em",
+    },
+  },
+  {
+    id: "vaporwave",
+    name: "Vaporwave",
+    category: "decorative",
     time: {
       fontFamily: "inherit",
       fontWeight: 700,
-      letterSpacing: "0.02em",
-      color: "var(--primary)",
+      letterSpacing: "0.12em",
+      color: "transparent",
+      gradient: { from: "#FF71CE", to: "#B967FF", direction: "90deg" },
       textShadow: "none",
     },
     date: {
-      color: "var(--foreground)",
+      color: "#B967FF",
       fontWeight: 500,
-      letterSpacing: "0.06em",
+      letterSpacing: "0.15em",
       textTransform: "uppercase",
     },
   },
   {
     id: "sunset",
     name: "Sunset",
-    category: "bold",
+    category: "decorative",
     time: {
       fontFamily: "inherit",
       fontWeight: 700,
       letterSpacing: "0.03em",
       color: "#f97316",
-      gradient: {
-        from: "#f97316",
-        to: "#ec4899",
-        direction: "135deg",
-      },
-      textShadow: "none",
-    },
-    date: {
-      color: "var(--muted-foreground)",
-      fontWeight: 500,
-      letterSpacing: "0.1em",
-      textTransform: "uppercase",
-    },
-  },
-  {
-    id: "ocean",
-    name: "Ocean",
-    category: "bold",
-    time: {
-      fontFamily: "inherit",
-      fontWeight: 700,
-      letterSpacing: "0.03em",
-      color: "#06b6d4",
-      gradient: {
-        from: "#06b6d4",
-        to: "#3b82f6",
-        direction: "135deg",
-      },
+      gradient: { from: "#f97316", to: "#ec4899", direction: "135deg" },
       textShadow: "none",
     },
     date: {
@@ -184,58 +240,60 @@ export const CLOCK_PRESETS: readonly ClockTheme[] = [
     },
   },
 
-  // ─── Glow ───
+  // ─── Animated ───
   {
-    id: "neon",
-    name: "Neon",
-    category: "glow",
+    id: "cyberpunk",
+    name: "Cyberpunk",
+    category: "animated",
     needsDarkBg: true,
     time: {
-      fontFamily: "inherit",
+      fontFamily: "'Courier New', Courier, monospace",
       fontWeight: 700,
-      letterSpacing: "0.06em",
-      color: "#22d3ee",
-      textShadow: "0 0 7px #22d3ee, 0 0 20px #22d3ee80, 0 0 40px #22d3ee40",
-    },
-    date: {
-      color: "#22d3ee99",
-      fontWeight: 500,
-      letterSpacing: "0.15em",
-      textTransform: "uppercase",
-      textShadow: "0 0 5px #22d3ee60",
-    },
-  },
-  {
-    id: "neon-pink",
-    name: "Neon Pink",
-    category: "glow",
-    needsDarkBg: true,
-    time: {
-      fontFamily: "inherit",
-      fontWeight: 700,
-      letterSpacing: "0.06em",
-      color: "#f472b6",
-      textShadow: "0 0 7px #f472b6, 0 0 20px #f472b680, 0 0 40px #f472b640",
-    },
-    date: {
-      color: "#f472b699",
-      fontWeight: 500,
-      letterSpacing: "0.15em",
-      textTransform: "uppercase",
-      textShadow: "0 0 5px #f472b660",
-    },
-  },
-  {
-    id: "glow-primary",
-    name: "Glow",
-    category: "glow",
-    needsDarkBg: true,
-    time: {
-      fontFamily: "inherit",
-      fontWeight: 600,
       letterSpacing: "0.04em",
-      color: "var(--primary)",
-      textShadow: "0 0 10px var(--primary), 0 0 30px color-mix(in oklch, var(--primary) 50%, transparent)",
+      color: "#00fff9",
+      textShadow: "0 0 10px #00fff9, 0 0 40px #00fff9, 2px 0 #ff00de, -2px 0 #00fff9",
+    },
+    date: {
+      fontFamily: "'Courier New', Courier, monospace",
+      color: "#00fff999",
+      fontWeight: 400,
+      letterSpacing: "0.15em",
+      textTransform: "uppercase",
+      textShadow: "0 0 5px #00fff960",
+    },
+    animation: "clock-glitch 3s ease-in-out infinite",
+  },
+  {
+    id: "neon-pulse",
+    name: "Neon Pulse",
+    category: "animated",
+    needsDarkBg: true,
+    time: {
+      fontFamily: "inherit",
+      fontWeight: 800,
+      letterSpacing: "0.02em",
+      color: "#E879F9",
+      textShadow: "0 0 8px #E879F9, 0 0 24px rgba(232,121,249,0.4), 0 0 48px rgba(232,121,249,0.2)",
+    },
+    date: {
+      color: "#E879F999",
+      fontWeight: 500,
+      letterSpacing: "0.1em",
+      textTransform: "uppercase",
+    },
+    animation: "clock-neon-pulse 2s ease-in-out infinite",
+  },
+  {
+    id: "shimmer",
+    name: "Shimmer",
+    category: "animated",
+    time: {
+      fontFamily: "inherit",
+      fontWeight: 700,
+      letterSpacing: "0.01em",
+      color: "transparent",
+      gradient: { from: "#9333ea", to: "#ec4899", direction: "90deg" },
+      textShadow: "none",
     },
     date: {
       color: "var(--muted-foreground)",
@@ -243,13 +301,12 @@ export const CLOCK_PRESETS: readonly ClockTheme[] = [
       letterSpacing: "0.1em",
       textTransform: "uppercase",
     },
+    animation: "clock-shimmer 3s linear infinite",
   },
-
-  // ─── Retro ───
   {
     id: "terminal",
     name: "Terminal",
-    category: "retro",
+    category: "animated",
     needsDarkBg: true,
     time: {
       fontFamily: "'Courier New', Courier, monospace",
@@ -267,45 +324,67 @@ export const CLOCK_PRESETS: readonly ClockTheme[] = [
       textShadow: "0 0 3px #4ade8040",
     },
   },
+
+  // ─── Fun ───
   {
-    id: "digital",
-    name: "Digital",
-    category: "retro",
+    id: "playful",
+    name: "Playful",
+    category: "fun",
     time: {
-      fontFamily: "'Courier New', Courier, monospace",
+      fontFamily: "'Caveat', cursive",
       fontWeight: 700,
-      letterSpacing: "0.12em",
-      color: "var(--foreground)",
+      letterSpacing: "0.01em",
+      color: "transparent",
+      gradient: { from: "#F472B6", to: "#818CF8", direction: "90deg" },
       textShadow: "none",
     },
     date: {
-      fontFamily: "'Courier New', Courier, monospace",
-      color: "var(--muted-foreground)",
-      fontWeight: 400,
-      letterSpacing: "0.1em",
-      textTransform: "uppercase",
+      fontFamily: "'Caveat', cursive",
+      color: "#818CF8",
+      fontWeight: 600,
+      letterSpacing: "0.04em",
     },
+    animation: "clock-bounce 2s ease-in-out infinite",
   },
   {
-    id: "amber",
-    name: "Amber",
-    category: "retro",
-    needsDarkBg: true,
+    id: "retro",
+    name: "Retro",
+    category: "fun",
     time: {
       fontFamily: "'Courier New', Courier, monospace",
       fontWeight: 700,
-      letterSpacing: "0.1em",
-      color: "#fbbf24",
-      textShadow: "0 0 5px #fbbf2480",
+      letterSpacing: "0.08em",
+      color: "#FBBF24",
+      textShadow: "3px 3px 0 #92400E, 4px 4px 0 rgba(0,0,0,0.15)",
     },
     date: {
       fontFamily: "'Courier New', Courier, monospace",
-      color: "#fbbf2499",
+      color: "#FBBF24",
       fontWeight: 400,
-      letterSpacing: "0.15em",
+      letterSpacing: "0.12em",
       textTransform: "uppercase",
-      textShadow: "0 0 3px #fbbf2440",
+      textShadow: "2px 2px 0 #92400E",
     },
+  },
+  {
+    id: "dreamy",
+    name: "Dreamy",
+    category: "fun",
+    time: {
+      fontFamily: "'Dancing Script', cursive",
+      fontWeight: 400,
+      letterSpacing: "0.02em",
+      color: "transparent",
+      gradient: { from: "#C084FC", to: "#67E8F9", direction: "135deg" },
+      textShadow: "none",
+    },
+    date: {
+      fontFamily: "'Dancing Script', cursive",
+      color: "#C084FC",
+      fontWeight: 400,
+      letterSpacing: "0.06em",
+    },
+    animation: "clock-float 4s ease-in-out infinite",
   },
 ] as const;
 

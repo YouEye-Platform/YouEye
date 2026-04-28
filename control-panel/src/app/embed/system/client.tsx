@@ -7,7 +7,8 @@ interface SystemInfo {
   os: string;
   kernel: string;
   uptime: string;
-  cpu: { cores: number; model: string };
+  load_average?: string;
+  cpu: { cores: number; model: string; usage_percent?: string };
   memory: { total_mb: number; used_mb: number; free_mb: number };
   disk: { total_gb: number; used_gb: number; free_gb: number };
   incus: { version: string; storage_pool: string };
@@ -101,7 +102,15 @@ export function SystemEmbedClient() {
         <div className="embed-card">
           <div className="embed-card-title">CPU</div>
           <div><div className="embed-label">Model</div><div className="embed-value">{data.cpu.model}</div></div>
-          <div style={{ marginTop: 8 }}><div className="embed-label">Cores</div><div className="embed-value">{data.cpu.cores}</div></div>
+          <div style={{ display: "flex", gap: 16, marginTop: 8 }}>
+            <div><div className="embed-label">Cores</div><div className="embed-value">{data.cpu.cores}</div></div>
+            {data.cpu.usage_percent && (
+              <div><div className="embed-label">Usage</div><div className="embed-value">{data.cpu.usage_percent}%</div></div>
+            )}
+          </div>
+          {data.load_average && (
+            <div style={{ marginTop: 8 }}><div className="embed-label">Load Average</div><div className="embed-value">{data.load_average}</div></div>
+          )}
         </div>
 
         <div className="embed-card">
