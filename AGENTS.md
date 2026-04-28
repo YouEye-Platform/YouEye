@@ -1,3 +1,31 @@
+## CP v0.3.6.3 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Phase 1 — Background update queue, update-progress embed, Spine stale status fix
+
+### Changes
+- `control-panel/src/lib/updates/queue.ts` — NEW: PostgreSQL-backed background update queue with worker (polls 2s, processes one at a time, fire-and-forget). Handles all update types: Spine-managed, OCI, LXD, marketplace. Startup recovery marks stale "running" entries as failed.
+- `control-panel/src/app/api/apps/[name]/enqueue/route.ts` — NEW: POST endpoint to enqueue updates, returns immediately with queue position. Deduplicates pending/running entries for same component.
+- `control-panel/src/app/api/apps/queue/route.ts` — NEW: GET (active queue entries) + POST (acknowledge/dismiss completed/failed entries).
+- `control-panel/src/app/embed/update-progress/page.tsx` — NEW: Server component for hidden iframe embed, validates embed session.
+- `control-panel/src/app/embed/update-progress/client.tsx` — NEW: PostMessage bridge between YE-UI and CP. Handles start-update, check-updates, get-status, acknowledge. Polls 2s active / 30s idle.
+- `control-panel/src/lib/updates/state.ts` — Fixed Spine stale "completed" status bug: 60-second TTL on terminal statuses.
+- `control-panel/src/app/api/ui-bridge/updates/status/route.ts` — Returns both update statuses and queue entries.
+- `control-panel/package.json` — Bumped 0.3.6.1 → 0.3.6.3
+
+### Releases
+- CP v0.3.6.2 (`cp-vanya-v0.3.6.2`) — had SQL double-ORDER-BY bug
+- CP v0.3.6.3 (`cp-vanya-v0.3.6.3`) — fixed, deployed
+
+### Notes for Iris
+- New PostgreSQL table `update_queue` created automatically on first use
+- The background worker auto-starts on CP boot (non-test environments)
+- v0.3.6.2 release has a bug — use v0.3.6.3 only
+- Phase 2 (UI unified settings) and Phase 3 (link handling) still pending
+
+---
+
 ## v0.3.4.1 / v0.3.6.1 / v0.3.2.1 — vanya — 2026-04-28
 **Branch:** vanya
 **VM:** ye-vanya
