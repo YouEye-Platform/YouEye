@@ -1,3 +1,25 @@
+## CP v0.3.6.7 + UI v0.3.4.8 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** App Market redesign — Umbrel-inspired UI, custom URL installs, dynamic categories, native app icons
+
+### Changes
+- `control-panel/src/app/embed/market/client.tsx` — Complete rewrite: Umbrel-inspired card layout, detail pages, inline Lucide SVG icons for native apps, dynamic categories, "Add Custom" URL install flow, dark/light theme
+- `control-panel/src/lib/market/schema.ts` — Changed category from hardcoded enum to `z.string().min(1)` for dynamic categories
+- `control-panel/src/lib/market/installed-apps.ts` — Added source/source_url columns, URL-installed app update detection via manifest re-fetch
+- `ui/src/app/app-market/page.tsx` — Full-width iframe (removed max-width constraint)
+
+### Test Results
+- Build: CP and UI both compile successfully
+- Deploy: CP via `spine update control`, UI via manual tarball extraction
+- No Playwright tests (manual testing by user)
+
+### Notes for Iris
+- DB schema migration: `source` and `source_url` columns added to `installed_apps` table (auto-migrated on first use)
+- Category schema change is backwards-compatible (string superset of previous enum)
+- New icon SVGs are inline in client.tsx — new native apps need manual SVG addition
+
 ## CP v0.3.6.6 + UI v0.3.4.6 — vanya — 2026-04-28
 **Branch:** vanya
 **VM:** ye-vanya
