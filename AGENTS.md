@@ -1,3 +1,35 @@
+## v0.3.4.1 / v0.3.6.1 / v0.3.2.1 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** WordArt size, clock themes, profile avatar fix, host metrics
+
+### Changes
+- `ui/src/lib/db/queries/widgets.ts` — reduce default WordArt widget size by 50%
+- `ui/src/components/dashboard/widget-grid.tsx` — update reset layout default sizes
+- `ui/src/components/widgets/index.ts` — reduce WordArt catalog defaultSize
+- `ui/src/lib/clock-presets.ts` — rewrite: 17 presets across 5 categories (classic, minimal, decorative, animated, fun)
+- `ui/src/components/widgets/clock-widget.tsx` — add animation support and CSS keyframe injection
+- `ui/src/components/widgets/clock-theme-picker.tsx` — fix default category fallback
+- `control-panel/src/lib/authentik/client.ts` — add attributes field to AuthentikUser
+- `control-panel/src/app/api/user/profile/route.ts` — extract avatarUrl from Authentik user attributes
+- `spine/internal/api/server.go` — add GET /api/metrics endpoint (host CPU, RAM, disk, uptime, load)
+- `control-panel/src/lib/spine/client.ts` — add SpineMetricsResponse type and getMetrics()
+- `control-panel/src/app/api/ui-bridge/system/route.ts` — replace container /proc reads with Spine metrics
+- `control-panel/src/app/embed/system/client.tsx` — display CPU usage % and load average
+
+### Releases
+- UI v0.3.4.1 (`ui-vanya-v0.3.4.1`) — standalone.tar uploaded
+- CP v0.3.6.1 (`cp-vanya-v0.3.6.1`) — standalone.tar uploaded
+- Spine v0.3.2.1 (`spine-vanya-v0.3.2.1`) — binary uploaded
+
+### Notes for Iris
+- Clock themes: old 4-category system (clean/bold/glow/retro) replaced with 5 categories (classic/minimal/decorative/animated/fun)
+- Spine /api/metrics adds 200ms delay per request (CPU sampling) — cached by caller
+- System embed now depends on Spine being reachable; falls through to error if Spine is down
+
+---
+
 ## Main Release — spine 0.3.2, cp 0.3.6, ui 0.3.4 — iris — 2026-04-27
 **Branch:** main
 **VM:** ye-iris
