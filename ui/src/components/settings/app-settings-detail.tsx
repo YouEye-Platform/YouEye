@@ -26,7 +26,23 @@ import {
   Loader2,
   Check,
   X,
+  Search,
+  BookOpen,
+  StickyNote,
+  Film,
+  CloudSun,
+  Languages,
+  Camera,
+  MessageCircle,
+  Cog,
+  Monitor,
+  Database,
+  LayoutDashboard,
+  Box,
+  Server,
+  Package,
 } from "lucide-react";
+import type { ComponentType } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
@@ -92,6 +108,50 @@ interface Suggestion {
   dismissed: boolean;
 }
 
+/* ── Lucide Icon Map ── */
+
+const DETAIL_ICON_MAP: Record<string, ComponentType<{ className?: string }>> = {
+  search: Search,
+  "book-open": BookOpen,
+  "sticky-note": StickyNote,
+  film: Film,
+  "cloud-sun": CloudSun,
+  languages: Languages,
+  camera: Camera,
+  "message-circle": MessageCircle,
+  package: Package,
+  cog: Cog,
+  monitor: Monitor,
+  database: Database,
+  "shield-check": ShieldCheck,
+  globe: Globe,
+  shield: Shield,
+  "layout-dashboard": LayoutDashboard,
+  box: Box,
+  server: Server,
+};
+
+function toKebabCase(s: string): string {
+  return s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+}
+
+function DetailAppIcon({ icon, name }: { icon: string | null; name: string }) {
+  if (icon && icon.startsWith("emoji:")) {
+    return <span className="text-xl leading-none">{icon.slice(6)}</span>;
+  }
+  if (icon && (icon.startsWith("http") || icon.startsWith("/"))) {
+    return <img src={icon} alt={name} className="w-10 h-10 rounded-xl object-cover" />;
+  }
+  if (icon) {
+    const key = toKebabCase(icon);
+    const IconComponent = DETAIL_ICON_MAP[key];
+    if (IconComponent) {
+      return <IconComponent className="w-5 h-5 text-primary" />;
+    }
+  }
+  return <span className="text-sm font-bold text-primary">{name.charAt(0).toUpperCase()}</span>;
+}
+
 /* ── Tab type ── */
 
 type TabId = "overview" | "permissions" | "network" | "link-handling";
@@ -125,9 +185,26 @@ export function AppSettingsDetail({
       if (res.ok) {
         const data = await res.json();
         const allApps = data.apps ?? [];
-        const found = allApps.find((a: AppInfo) => a.id === appId);
-        if (found) {
-          setApp(found);
+        const allSystem = data.systemApps ?? [];
+        // Search both user apps and system components
+        const foundApp = allApps.find((a: AppInfo) => a.id === appId);
+        const foundSystem = allSystem.find((a: { id: string; name: string; icon: string; status: string; version: string | null; updateAvailable: boolean; updateInfo: string | null; category: string; description: string }) => a.id === appId);
+        if (foundApp) {
+          setApp(foundApp);
+        } else if (foundSystem) {
+          setApp({
+            id: foundSystem.id,
+            name: foundSystem.name,
+            icon: foundSystem.icon,
+            subdomain: null,
+            version: foundSystem.version,
+            status: foundSystem.status,
+            containerUrl: null,
+            updateAvailable: foundSystem.updateAvailable,
+            updateInfo: foundSystem.updateInfo,
+            category: foundSystem.category,
+            description: foundSystem.description,
+          });
         } else {
           setApp({ id: appId, name: appId, icon: null, subdomain: null, version: null, status: null, containerUrl: null });
         }
@@ -196,14 +273,14 @@ export function AppSettingsDetail({
 
       {/* App header */}
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-          <span className="text-sm font-bold text-primary">
-            {app.name.charAt(0).toUpperCase()}
-          </span>
+        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+          <DetailAppIcon icon={app.icon} name={app.name} />
         </div>
         <div>
           <h2 className="text-xl font-semibold">{app.name}</h2>
-          <p className="text-sm text-muted-foreground">Manage app settings and permissions</p>
+          <p className="text-sm text-muted-foreground">
+            {app.description || "Manage app settings and permissions"}
+          </p>
         </div>
       </div>
 
@@ -261,12 +338,7 @@ function OverviewTab({ app, isAdmin }: { app: AppInfo; isAdmin: boolean }) {
     setUpdating(true);
     setUpdateStatus(null);
     try {
-      const res = await fetch(
-        `/api/v1/admin/proxy-cp?path=${encodeURIComponent(`/api/apps/${app.id}/enqueue`)}`,
-        { method: "POST" }
-      );
-      // Use the proxy-cp POST method to enqueue
-      const proxyRes = await fetch("/api/v1/admin/proxy-cp", {
+      const res = await fetch("/api/v1/admin/proxy-cp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -274,10 +346,11 @@ function OverviewTab({ app, isAdmin }: { app: AppInfo; isAdmin: boolean }) {
           method: "POST",
         }),
       });
-      if (proxyRes.ok) {
-        setUpdateStatus({ ok: true, message: "Update queued" });
+      if (res.ok) {
+        setUpdateStatus({ ok: true, message: "Update queued successfully" });
       } else {
-        setUpdateStatus({ ok: false, message: "Failed to queue update" });
+        const data = await res.json().catch(() => ({}));
+        setUpdateStatus({ ok: false, message: data.error ?? "Failed to queue update" });
       }
     } catch {
       setUpdateStatus({ ok: false, message: "Failed to reach server" });
