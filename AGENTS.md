@@ -1,3 +1,25 @@
+## CP v0.3.6.5 + UI v0.3.4.5 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** System dashboard with live graphs + container task manager, fix app icons/status
+
+### Changes
+- `control-panel/src/app/api/ui-bridge/system/route.ts` — Added per-container resource stats (memory, CPU, disk) to system API response
+- `control-panel/src/app/embed/system/client.tsx` — Complete rewrite: live area charts for CPU/memory/disk, merged container task manager with per-container RAM/disk bars, stop/restart actions, 5s auto-refresh
+- `ui/src/app/settings/apps/client.tsx` — Removed colored icon backgrounds (ICON_COLORS), replaced with neutral bg-muted/50 for all categories
+- `ui/src/app/api/v1/apps/unified/route.ts` — Fixed installed apps showing "unknown" — now copies status from bridge enrichment data
+- `ui/src/components/settings/settings-shell.tsx` — Removed Containers nav item from admin sidebar (merged into System)
+- `ui/src/app/settings/containers/page.tsx` — Redirects to /settings/system
+
+### Test Results
+- Playwright: system-dashboard.spec.ts (10 tests), app-icons-status.spec.ts (5 tests)
+- Screenshots: verified apps page neutral icons, system dashboard with graphs, container task manager
+
+### Notes for Iris
+- Containers page now redirects to System — any existing links to /settings/containers will auto-redirect
+- The separate containers embed still exists in CP but is no longer linked from UI sidebar
+
 ## CP v0.3.6.4 + UI v0.3.4.4 — vanya — 2026-04-28
 **Branch:** vanya
 **VM:** ye-vanya
