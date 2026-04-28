@@ -209,19 +209,29 @@ export async function getUnifiedStatuses(): Promise<UpdateStatusRecord[]> {
   }
 
   // Overlay Spine's own status (source of truth for spine/control/ui updates via Spine)
+  // Skip completed/failed statuses older than 60 seconds — they're stale
   if (spineStatus && spineStatus.status !== 'idle') {
-    const component = spineStatus.component || 'spine';
-    result.set(component, {
-      component,
-      status: spineStatus.status,
-      progress: spineStatus.progress || 0,
-      message: spineStatus.message || '',
-      version_before: spineStatus.version_before || null,
-      version_after: spineStatus.version_after || null,
-      error: spineStatus.error || null,
-      started_at: spineStatus.started_at || null,
-      updated_at: spineStatus.updated_at || new Date().toISOString(),
-    });
+    const isTerminal = spineStatus.status === 'completed' || spineStatus.status === 'failed';
+    let isStale = false;
+    if (isTerminal && spineStatus.updated_at) {
+      const age = Date.now() - new Date(spineStatus.updated_at).getTime();
+      isStale = age > 60_000;
+    }
+
+    if (!isStale) {
+      const component = spineStatus.component || 'spine';
+      result.set(component, {
+        component,
+        status: spineStatus.status,
+        progress: spineStatus.progress || 0,
+        message: spineStatus.message || '',
+        version_before: spineStatus.version_before || null,
+        version_after: spineStatus.version_after || null,
+        error: spineStatus.error || null,
+        started_at: spineStatus.started_at || null,
+        updated_at: spineStatus.updated_at || new Date().toISOString(),
+      });
+    }
   }
 
   return Array.from(result.values());
