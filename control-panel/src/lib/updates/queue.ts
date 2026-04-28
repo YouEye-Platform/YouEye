@@ -143,7 +143,7 @@ export async function enqueueUpdate(
   );
 
   const entries = await queryEntries(
-    `component = '${component}' AND status = 'pending' ORDER BY id DESC LIMIT 1`
+    `component = '${component}' AND status = 'pending'`
   );
   return { entry: entries[0], alreadyQueued: false };
 }
@@ -213,7 +213,7 @@ let workerTimer: ReturnType<typeof setInterval> | null = null;
 async function processNextItem(): Promise<void> {
   if (workerRunning) return;
 
-  const pending = await queryEntries(`status = 'pending' ORDER BY requested_at ASC LIMIT 1`);
+  const pending = await queryEntries(`status = 'pending'`);
   if (pending.length === 0) return;
 
   const entry = pending[0];
