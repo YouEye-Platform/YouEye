@@ -1,3 +1,21 @@
+## ui-v0.3.4.3 — sebastian — 2026-04-28
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Info cards system — expose app link handlers with public URLs for Search integration (Session 33)
+
+### Changes
+- `ui/src/app/api/v1/apps/info-cards/route.ts` — Rewrote to include app public URLs (subdomain-based), support service auth, use UI_EXTERNAL_URL for service-to-service calls
+- `ui/src/lib/db/queries/app-management.ts` — Extended InfoCardDeclaration with embed_path and label fields, enhanced getInfoCardProviders() to return subdomain and icon
+- `ui/package.json` — Version bump 0.3.4 → 0.3.4.3
+
+### Test Results
+- Manual testing by user on VM
+
+### Notes for Iris
+- The Cinema manifest must be refreshed in UI's database after merge (the manifest JSONB column in apps table). Call Cinema's /api/manifest and update the apps table. Without this, the info-cards endpoint returns empty providers.
+- UI-only change. No CP or Spine changes.
+
 ## ui-v0.3.4.1 — sebastian — 2026-04-28
 **Branch:** sebastian
 **VM:** ye-sebastian
