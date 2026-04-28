@@ -1,3 +1,22 @@
+## v0.3.6.2 — sebastian — 2026-04-28
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix YOUEYE_GATEWAY dynamic resolution + send manifest during app registration (Session 37)
+
+### Changes
+- `src/lib/market/platform-env.ts` — `gateway_url` now resolves UI container IP dynamically via `getContainerIP('youeye-ui')` instead of unreliable `localhost:3001` proxy device. Falls back to DNS name if IP unavailable.
+- `src/lib/market/engine.ts` — `registerAppWithUI()` now accepts and sends the full manifest to UI during registration, ensuring `apps.manifest` column is populated even if UI can't fetch it from the app container (timing race).
+- `package.json` — Version bump to 0.3.6.2
+
+### Test Results
+- CP deployed via `spine update control` → v0.3.6.2 confirmed
+- All 14 containers running
+
+### Notes for Iris
+- The `localhost:3001` proxy device approach was breaking YOUEYE_GATEWAY for all native apps. Dynamic IP resolution matches the pattern already used for Authentik and Caddy IPs.
+- Sending the manifest during registration is a belt-and-suspenders fix. The UI register endpoint still tries to fetch live from the app first; CP's manifest is the fallback.
+
 ## v0.3.5.2 — andrew — 2026-04-23
 **Branch:** andrew
 **VM:** ye-andrew

@@ -1,3 +1,46 @@
+## v0.3.4.5 — sebastian — 2026-04-28
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix pending_timeline_events schema + accept manifest from CP during registration (Session 37)
+
+### Changes
+- `src/db/index.ts` — Added `CREATE TABLE IF NOT EXISTS pending_timeline_events` to `ensureSchema()`. Table was defined in Drizzle schema but never created at runtime.
+- `src/app/api/v1/apps/register/route.ts` — Accept `manifest` field from CP request body as fallback when live fetch from app container fails (timing race during install).
+- `package.json` — Version bump to 0.3.4.5
+
+### Test Results
+- Table creation verified via `\dt pending_timeline_events` in postgres
+- Timeline pending entry verified in DB after Cinema movie view
+- `curl -sk https://localhost/api/ping` → `{"status":"ok"}`
+
+### Notes for Iris
+- The manifest fallback ensures apps.manifest column is populated even if the app container isn't fully started when registration runs
+- pending_timeline_events was the missing piece for timeline event queuing when no PIN session is active
+
+## v0.3.4.4 — sebastian — 2026-04-28
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Timeline embed system — iframe embeds with structured data fallback (Session 35)
+
+### Changes
+- `src/lib/db/queries/timeline.ts` — Added embed_path to TimelineEntryData interface, documented standard data fields, updated processPendingEvents to carry embed_path
+- `src/app/api/v1/timeline/route.ts` — Pass embed_path through to both encrypt-immediately and queue-for-later paths
+- `src/app/api/v1/timeline/[collection]/route.ts` — Same embed_path pass-through for collection-specific endpoint
+- `src/components/timeline/timeline-embed.tsx` — NEW: Core component — IntersectionObserver lazy loading, iframe rendering, postMessage protocol, 5s timeout fallback to StandardCard
+- `src/components/timeline/timeline-entry-card.tsx` — REWRITTEN: embed_path support, domain prop, expanded TYPE_ICONS, render chain: embed_path -> TimelineEmbed -> legacy InfoCard
+- `src/components/timeline/timeline-feed.tsx` — Added embed_path to interface, baseDomain derivation, passes domain to cards
+
+### Test Results
+- Code changes only, no build in this session
+
+### Notes for Iris
+- TimelineEmbed constructs iframe URLs as https://{appSlug}.{domain}{embed_path} — apps must expose /embed/timeline/* routes
+- Fallback StandardCard renders from stored data fields (description, thumbnail_url, url) when app iframe is unavailable
+- postMessage protocol: youeye-embed-ready and youeye-embed-resize from iframe to parent
+- Both Cinema and Search branches must be merged alongside UI for end-to-end timeline embeds
+
 ## v0.2.19.10 — andrew — 2026-04-10
 **Branch:** andrew
 **VM:** ye-andrew
