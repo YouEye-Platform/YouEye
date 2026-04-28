@@ -24,7 +24,6 @@ import {
   Store,
   ArrowLeft,
   Clock,
-  Box,
   Globe,
   Languages,
   ArrowLeftRight,
@@ -48,7 +47,6 @@ const USER_SECTIONS = [
 const ADMIN_SECTIONS = [
   { id: "users", labelKey: "users" as const, icon: Users, href: "/settings/users" },
   { id: "system", labelKey: "system" as const, icon: Server, href: "/settings/system" },
-  { id: "containers", labelKey: "containers" as const, icon: Box, href: "/settings/containers" },
   { id: "dns", labelKey: "dns" as const, icon: Globe, href: "/settings/dns" },
   { id: "proxy", labelKey: "proxy" as const, icon: ArrowLeftRight, href: "/settings/proxy" },
   { id: "tls", labelKey: "tls" as const, icon: Lock, href: "/settings/tls" },

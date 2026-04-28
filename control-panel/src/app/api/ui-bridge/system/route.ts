@@ -80,33 +80,85 @@ export async function GET(request: NextRequest) {
       storagePool = env?.storage || 'default';
     } catch { /* ignore */ }
 
-    // Count containers
+    // Get per-container details with resource stats
+    interface ContainerDetail {
+      name: string;
+      status: string;
+      type: string;
+      ipv4: string | null;
+      memory_usage_mb: number;
+      memory_limit_mb: number;
+      cpu_usage_ns: number;
+      disk_usage_mb: number;
+    }
+
+    const containerDetails: ContainerDetail[] = [];
     let totalContainers = 0;
     let runningContainers = 0;
     let stoppedContainers = 0;
+
     try {
       const instancesResponse = await incusRequest<string[]>('GET', '/1.0/instances');
       const instancePaths = instancesResponse.metadata || [];
       totalContainers = instancePaths.length;
 
-      // Get state of each container
       for (const path of instancePaths) {
-        const name = path.split('/').pop();
-        if (!name) continue;
+        const cname = path.split('/').pop();
+        if (!cname) continue;
+
+        let status = 'unknown';
+        let ctype = 'container';
+        let ipv4: string | null = null;
+        let memUsage = 0;
+        let memLimit = 0;
+        let cpuUsage = 0;
+        let diskUsage = 0;
+
         try {
-          const stateResponse = await incusRequest<{ status: string }>(
-            'GET',
-            `/1.0/instances/${name}/state`
+          const instResp = await incusRequest<{ name: string; type: string; status: string }>(
+            'GET', `/1.0/instances/${cname}`
           );
-          const status = stateResponse.metadata?.status?.toLowerCase();
-          if (status === 'running') {
-            runningContainers++;
-          } else {
-            stoppedContainers++;
+          ctype = instResp.metadata?.type || 'container';
+        } catch { /* ignore */ }
+
+        try {
+          const stateResp = await incusRequest<{
+            status: string;
+            memory?: { usage: number; total: number };
+            cpu?: { usage: number };
+            disk?: Record<string, { usage: number }>;
+            network?: Record<string, { addresses?: Array<{ family: string; address: string; scope: string }> }>;
+          }>('GET', `/1.0/instances/${cname}/state`);
+
+          const st = stateResp.metadata;
+          status = st?.status?.toLowerCase() || 'unknown';
+          memUsage = Math.round((st?.memory?.usage || 0) / (1024 * 1024));
+          memLimit = Math.round((st?.memory?.total || 0) / (1024 * 1024));
+          cpuUsage = st?.cpu?.usage || 0;
+          diskUsage = Math.round((st?.disk?.root?.usage || 0) / (1024 * 1024));
+
+          const eth0 = st?.network?.['eth0'];
+          if (eth0?.addresses) {
+            const v4 = eth0.addresses.find(a => a.family === 'inet' && a.scope === 'global');
+            if (v4) ipv4 = v4.address;
           }
         } catch {
-          stoppedContainers++;
+          status = 'stopped';
         }
+
+        if (status === 'running') runningContainers++;
+        else stoppedContainers++;
+
+        containerDetails.push({
+          name: cname,
+          status,
+          type: ctype,
+          ipv4,
+          memory_usage_mb: memUsage,
+          memory_limit_mb: memLimit,
+          cpu_usage_ns: cpuUsage,
+          disk_usage_mb: diskUsage,
+        });
       }
     } catch { /* ignore */ }
 
@@ -128,6 +180,7 @@ export async function GET(request: NextRequest) {
         running: runningContainers,
         stopped: stoppedContainers,
       },
+      container_details: containerDetails,
     });
   } catch (err) {
     console.error('[UI Bridge] System info error:', err);

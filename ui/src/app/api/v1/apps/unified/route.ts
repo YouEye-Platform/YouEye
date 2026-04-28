@@ -98,6 +98,7 @@ export async function GET(request: NextRequest) {
     for (const app of drawerApps) {
       const bridgeMatch = bridgeApps.find((b) => b.id === app.id);
       if (bridgeMatch) {
+        app.status = bridgeMatch.status;
         app.version = bridgeMatch.version ?? null;
         app.updateAvailable = bridgeMatch.updateAvailable;
         app.updateInfo = bridgeMatch.updateInfo ?? null;

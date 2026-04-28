@@ -103,25 +103,11 @@ function toKebabCase(s: string): string {
   return s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 }
 
-/* ── Icon color palettes per category ── */
+/* ── Icon styling (neutral for all categories) ── */
 
-const ICON_COLORS: Record<string, { bg: string; text: string }> = {
-  system: {
-    bg: "bg-violet-100 dark:bg-violet-900/30",
-    text: "text-violet-600 dark:text-violet-400",
-  },
-  infrastructure: {
-    bg: "bg-sky-100 dark:bg-sky-900/30",
-    text: "text-sky-600 dark:text-sky-400",
-  },
-  user: {
-    bg: "bg-emerald-100 dark:bg-emerald-900/30",
-    text: "text-emerald-600 dark:text-emerald-400",
-  },
-  default: {
-    bg: "bg-primary/10",
-    text: "text-primary",
-  },
+const ICON_STYLE = {
+  bg: "bg-muted/50",
+  text: "text-muted-foreground",
 };
 
 /* ── Update Iframe Bridge ── */
@@ -227,19 +213,15 @@ function AppIcon({
   name,
   icon,
   customIconUrl,
-  category,
 }: {
   name: string;
   icon: string | null;
   customIconUrl?: string | null;
-  category?: string;
 }) {
-  const palette = ICON_COLORS[category ?? "default"] ?? ICON_COLORS.default;
-
   // Custom uploaded icon (highest priority)
   if (customIconUrl) {
     return (
-      <div className={`w-10 h-10 rounded-xl overflow-hidden shrink-0 ${palette.bg} flex items-center justify-center`}>
+      <div className={`w-10 h-10 rounded-xl overflow-hidden shrink-0 ${ICON_STYLE.bg} flex items-center justify-center`}>
         <img src={customIconUrl} alt={name} className="w-10 h-10 rounded-xl object-cover" />
       </div>
     );
@@ -248,7 +230,7 @@ function AppIcon({
   // Emoji icon
   if (icon && icon.startsWith("emoji:")) {
     return (
-      <div className={`w-10 h-10 rounded-xl ${palette.bg} flex items-center justify-center shrink-0`}>
+      <div className={`w-10 h-10 rounded-xl ${ICON_STYLE.bg} flex items-center justify-center shrink-0`}>
         <span className="text-lg leading-none">{icon.slice(6)}</span>
       </div>
     );
@@ -257,7 +239,7 @@ function AppIcon({
   // URL-based icon (favicon, http image)
   if (icon && (icon.startsWith("http") || icon.startsWith("/"))) {
     return (
-      <div className={`w-10 h-10 rounded-xl overflow-hidden shrink-0 ${palette.bg} flex items-center justify-center`}>
+      <div className={`w-10 h-10 rounded-xl overflow-hidden shrink-0 ${ICON_STYLE.bg} flex items-center justify-center`}>
         <img src={icon} alt={name} className="w-10 h-10 rounded-xl object-cover" />
       </div>
     );
@@ -269,8 +251,8 @@ function AppIcon({
     const IconComponent = ICON_MAP[key];
     if (IconComponent) {
       return (
-        <div className={`w-10 h-10 rounded-xl ${palette.bg} flex items-center justify-center shrink-0`}>
-          <IconComponent className={`w-5 h-5 ${palette.text}`} />
+        <div className={`w-10 h-10 rounded-xl ${ICON_STYLE.bg} flex items-center justify-center shrink-0`}>
+          <IconComponent className={`w-5 h-5 ${ICON_STYLE.text}`} />
         </div>
       );
     }
@@ -278,8 +260,8 @@ function AppIcon({
 
   // Fallback: first letter
   return (
-    <div className={`w-10 h-10 rounded-xl ${palette.bg} flex items-center justify-center shrink-0`}>
-      <span className={`text-sm font-bold ${palette.text}`}>{name.charAt(0).toUpperCase()}</span>
+    <div className={`w-10 h-10 rounded-xl ${ICON_STYLE.bg} flex items-center justify-center shrink-0`}>
+      <span className={`text-sm font-bold ${ICON_STYLE.text}`}>{name.charAt(0).toUpperCase()}</span>
     </div>
   );
 }
@@ -323,7 +305,7 @@ function AppRow({
         onClick={onClick}
         className="flex-1 flex items-center gap-3.5 text-left min-w-0"
       >
-        <AppIcon name={name} icon={icon} customIconUrl={customIconUrl} category={category} />
+        <AppIcon name={name} icon={icon} customIconUrl={customIconUrl} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium truncate">{name}</span>
