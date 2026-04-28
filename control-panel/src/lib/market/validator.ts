@@ -160,7 +160,7 @@ export async function validateManifest(
       // For dotted paths, check if the root is known
       const root = varName.split('.')[0];
       const knownRoots = new Set(['secrets', 'container', 'containers', 'database',
-        'platform', 'app', 'install', 'authentik', 'sso', 'smtp', 'provider']);
+        'platform', 'app', 'install', 'authentik', 'sso', 'smtp', 'provider', 'integration']);
       // Also accept container names declared in the manifest (e.g. containers.valkey.*)
       for (const c of manifest.containers) { if (c.name) knownRoots.add(c.name); }
       if (!knownVars.has(root) && !knownRoots.has(root)) {
