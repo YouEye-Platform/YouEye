@@ -1,3 +1,24 @@
+## ui-v0.3.4.1 — sebastian — 2026-04-28
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Native app widget auto-discovery from running containers
+
+### Changes
+- `ui/package.json` — Bumped 0.3.4 → 0.3.4.1
+- `ui/src/lib/db/queries/app-management.ts` — Rewrote `getAppWidgetDeclarations()` to live-fetch widget declarations from running app containers via Caddy admin API upstream discovery, replacing stale DB manifest reads. Added `discoverAppUpstreams()` helper that uses Node `http` module (fetch adds Origin header that Caddy rejects).
+
+### Test Results
+- Widget API returns 10 widgets from 6 native apps (Wiki 2, Notes 1, Translate 2, Cinema 2, Search 1, Weather 2)
+- Widget picker shows app tabs with correct icons and live iframe previews
+- Screenshots: Tests/Sebastian/20260428_1/
+- Playwright: widget-discovery.spec.ts
+
+### Notes for Iris
+- UI-only change. No CP or Spine changes.
+- Depends on Caddy admin API being reachable from UI container on same Incus bridge (`youeye-caddy.youeye:2019`). Falls back to DB `containerUrl` if Caddy is unreachable.
+- Uses `http.get` instead of `fetch` for Caddy admin API — Caddy rejects Origin headers from non-localhost. This is intentional.
+
 ## v0.3.6.1 — sebastian — 2026-04-28
 **Branch:** sebastian
 **VM:** ye-sebastian
