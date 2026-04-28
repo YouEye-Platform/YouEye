@@ -49,6 +49,8 @@ export interface InfoCardDeclaration {
   description: string;
   endpoint: string;
   triggers: string[];
+  embed_path?: string;
+  label?: string;
 }
 
 interface SettingField {
@@ -213,6 +215,8 @@ export async function getInfoCardProviders(): Promise<
     appId: string;
     appName: string;
     containerUrl: string;
+    subdomain: string | null;
+    icon: string | null;
     cards: InfoCardDeclaration[];
   }>
 > {
@@ -227,6 +231,8 @@ export async function getInfoCardProviders(): Promise<
     appId: string;
     appName: string;
     containerUrl: string;
+    subdomain: string | null;
+    icon: string | null;
     cards: InfoCardDeclaration[];
   }> = [];
 
@@ -237,6 +243,8 @@ export async function getInfoCardProviders(): Promise<
         appId: app.id,
         appName: app.name,
         containerUrl: app.containerUrl,
+        subdomain: app.subdomain ?? null,
+        icon: app.icon ?? null,
         cards: manifest.info_cards,
       });
     }
