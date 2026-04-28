@@ -245,11 +245,14 @@ export async function buildCanonicalContext(
       internal_url: `http://${primaryContainerName}.${CONTAINER_DOMAIN}:${primaryPort}`,
     },
     integration: {
-      // Per-app bridge: UI is at localhost:3001 via proxy device
-      // Legacy: UI is at youeye-ui.youeye:3000 on shared bridge
-      gateway_url: useProxyDevices
-        ? 'http://localhost:3001/api/apps/v1'
-        : `http://youeye-ui.${CONTAINER_DOMAIN}:3000/api/apps/v1`,
+      // Always resolve the real UI container IP — localhost:3001 proxy devices
+      // are unreliable for native apps and break YOUEYE_GATEWAY.
+      gateway_url: await (async () => {
+        const uiIP = await getContainerIP('youeye-ui');
+        return uiIP
+          ? `http://${uiIP}:3000/api/apps/v1`
+          : `http://youeye-ui.${CONTAINER_DOMAIN}:3000/api/apps/v1`;
+      })(),
       app_token: appToken || '',
     },
     containers,

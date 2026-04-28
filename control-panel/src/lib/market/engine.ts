@@ -265,6 +265,7 @@ async function registerAppWithUI(
   icon: string | null,
   appToken?: string,
   ssoEntryUrl?: string,
+  manifest?: Record<string, unknown>,
 ): Promise<void> {
   const uiIP = await getIncusContainerIP('youeye-ui');
   if (!uiIP) return;
@@ -285,7 +286,7 @@ async function registerAppWithUI(
       'Content-Type': 'application/json',
       ...(bridgeToken ? { 'X-UI-Bridge-Token': bridgeToken } : {}),
     },
-    body: JSON.stringify({ id: appId, name, container_url: containerUrl, subdomain, icon, token_hash: tokenHash, sso_entry_url: ssoEntryUrl }),
+    body: JSON.stringify({ id: appId, name, container_url: containerUrl, subdomain, icon, token_hash: tokenHash, sso_entry_url: ssoEntryUrl, manifest }),
   });
 
   if (!res.ok) {
@@ -988,7 +989,7 @@ export async function installApp(
     const ssoEntryUrl = manifest.sso?.entry_url
       ? resolveVariables(manifest.sso.entry_url, ctx)
       : undefined;
-    await registerAppWithUI(appId, displayName, config.subdomain, primaryContainerName, primaryPort, displayIcon, appToken, ssoEntryUrl);
+    await registerAppWithUI(appId, displayName, config.subdomain, primaryContainerName, primaryPort, displayIcon, appToken, ssoEntryUrl, manifest as unknown as Record<string, unknown>);
     emit(onEvent, step, totalSteps, 'success', 'Registered with dashboard');
   } catch (err) {
     emit(onEvent, step, totalSteps, 'success', `Dashboard registration skipped: ${err}`);

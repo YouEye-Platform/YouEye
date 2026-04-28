@@ -170,6 +170,16 @@ export async function ensureSchema() {
         ON timeline_entries(user_id, collection)`;
 
     await queryClient`
+      CREATE TABLE IF NOT EXISTS pending_timeline_events (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        collection TEXT NOT NULL DEFAULT 'history',
+        app_id TEXT NOT NULL,
+        payload JSONB NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      )`;
+
+    await queryClient`
       CREATE TABLE IF NOT EXISTS user_encryption_keys (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
