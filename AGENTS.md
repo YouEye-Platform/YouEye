@@ -1,3 +1,23 @@
+## UI v0.3.4.3 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Apps settings redesign — proper icons, click-through, update fix
+
+### Changes
+- `ui/src/app/settings/apps/client.tsx` — Rewrote AppIcon to render customIconUrl, emoji, URL-based, and Lucide icons with colored backgrounds per category; fixed system component onClick (was empty noop); added dot indicators to status badges; rounded-xl card styling
+- `ui/src/components/settings/app-settings-detail.tsx` — Detail page now searches both apps and systemApps from unified API; fixed double-fetch bug in handleUpdate; added Lucide icon rendering to detail header; shows description subtitle
+- `ui/package.json` — Bumped to 0.3.4.3
+
+### Test Results
+- Visual verification via Playwright screenshots: apps list, CP detail, Spine detail
+- All system components render with correct Lucide icons and descriptions
+- Click-through navigates to detail page for all items
+
+### Notes for Iris
+- UI-only change, no CP modifications
+- The update iframe bridge is unchanged — the list page still uses the CP embed iframe for updates. The detail page update button now uses a single correct proxy-cp POST (was broken double-fetch before)
+
 ## UI v0.3.4.2 — vanya — 2026-04-28
 **Branch:** vanya
 **VM:** ye-vanya
