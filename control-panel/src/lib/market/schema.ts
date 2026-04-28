@@ -23,7 +23,7 @@ export const MetadataSchema = z.object({
   description: z.string().min(1),
   icon: z.string().min(1),
   iconUrl: z.string().optional(),
-  category: z.enum(['search', 'social', 'productivity', 'media', 'utilities', 'infrastructure']),
+  category: z.string().min(1),
   website: z.string().url().optional(),
   tags: z.array(z.string()).default([]),
   defaultSubdomain: z.string().min(1),

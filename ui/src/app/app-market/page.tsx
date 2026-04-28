@@ -20,7 +20,7 @@ export default async function AppMarketPage() {
     : "";
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-8">
+    <div className="w-full px-0 py-0">
       <AdminEmbed signedUrl={embedUrl} title="App Market" minHeight={600} />
     </div>
   );

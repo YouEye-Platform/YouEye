@@ -32,6 +32,8 @@ export interface InstalledApp {
   forwardAuthEnabled: boolean;
   healthStatus: 'healthy' | 'unhealthy' | 'unknown';
   healthCheckedAt: string | null;
+  source: 'catalog' | 'url';
+  sourceUrl: string | null;
 }
 
 // ─── Table Management ─────────────────────────────────────────
@@ -81,6 +83,8 @@ async function ensureTable(): Promise<void> {
     await psql(`ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS forward_auth_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
     await psql(`ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS health_status TEXT NOT NULL DEFAULT 'unknown'`);
     await psql(`ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS health_checked_at TIMESTAMPTZ`);
+    await psql(`ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'catalog'`);
+    await psql(`ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS source_url TEXT`);
   } catch {
     // Columns may already exist
   }
@@ -93,7 +97,7 @@ async function ensureTable(): Promise<void> {
 function parseRows(raw: string): InstalledApp[] {
   if (!raw) return [];
   return raw.split('\n').filter(Boolean).map((line) => {
-    const [id, appId, type, installedVersion, catalogVersion, updateAvailable, installedAt, subdomain, ssoSlug, forwardAuthEnabled, healthStatus, healthCheckedAt] = line.split('|');
+    const [id, appId, type, installedVersion, catalogVersion, updateAvailable, installedAt, subdomain, ssoSlug, forwardAuthEnabled, healthStatus, healthCheckedAt, source, sourceUrl] = line.split('|');
     return {
       id: parseInt(id, 10),
       appId,
@@ -107,11 +111,13 @@ function parseRows(raw: string): InstalledApp[] {
       forwardAuthEnabled: forwardAuthEnabled === 't',
       healthStatus: (healthStatus as 'healthy' | 'unhealthy' | 'unknown') || 'unknown',
       healthCheckedAt: healthCheckedAt || null,
+      source: (source as 'catalog' | 'url') || 'catalog',
+      sourceUrl: sourceUrl || null,
     };
   });
 }
 
-const SELECT_ALL = 'SELECT id, app_id, type, installed_version, catalog_version, update_available, installed_at, subdomain, sso_slug, forward_auth_enabled, health_status, health_checked_at FROM installed_apps';
+const SELECT_ALL = 'SELECT id, app_id, type, installed_version, catalog_version, update_available, installed_at, subdomain, sso_slug, forward_auth_enabled, health_status, health_checked_at, source, source_url FROM installed_apps';
 
 export async function getAllInstalledApps(): Promise<InstalledApp[]> {
   await ensureTable();
@@ -166,7 +172,6 @@ export async function updateInstalledVersion(appId: string, version: string): Pr
 
 /**
  * Update the source tracking for a URL-installed app.
- * Adds source and source_url columns if they don't exist (schema migration).
  */
 export async function updateInstalledAppSource(
   appId: string,
@@ -174,15 +179,6 @@ export async function updateInstalledAppSource(
   sourceUrl?: string
 ): Promise<void> {
   await ensureTable();
-
-  // Add columns if they don't exist (safe migration)
-  try {
-    await psql(`ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'catalog'`);
-    await psql(`ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS source_url TEXT`);
-  } catch {
-    // Columns may already exist
-  }
-
   const urlSql = sourceUrl ? `'${sourceUrl.replace(/'/g, "''")}'` : 'NULL';
   await psql(`UPDATE installed_apps SET source = '${source}', source_url = ${urlSql} WHERE app_id = '${appId}'`);
 }
@@ -240,10 +236,37 @@ async function fetchNativeAppVersion(
 }
 
 /**
+ * Fetch latest version from a URL-installed app's manifest.
+ * Re-fetches the manifest from the original source_url.
+ */
+async function fetchUrlAppVersion(sourceUrl: string): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(sourceUrl, {
+      signal: controller.signal,
+      headers: { 'Accept': 'text/yaml, application/yaml, text/plain, */*', 'User-Agent': 'YouEye-AppMarket/1.0' },
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) return null;
+    const yamlText = await res.text();
+    if (yamlText.length > 1024 * 1024) return null;
+
+    const parsed = parseYAML(yamlText, { maxAliasCount: 0 });
+    return parsed?.version ?? null;
+  } catch (err) {
+    console.warn('[installed-apps] Failed to fetch URL app version:', sourceUrl, err);
+    return null;
+  }
+}
+
+/**
  * Compare each installed app's version against the latest available version.
  *
  * For apps with `repo`: fetches `youeye-app.yaml` from the app's own repo.
  * For apps with `latestVersion`: uses the catalog-specified version directly.
+ * For URL-installed apps without catalog entries: re-fetches the manifest from source_url.
  *
  * Updates the `catalog_version` and `update_available` columns in the DB.
  * Returns the list of apps with available updates.
@@ -276,8 +299,10 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
     if (entry?.repo) {
       catalogVersion = await fetchNativeAppVersion(entry.repo, entry.manifest || 'youeye-app.yaml', branch);
     } else if (entry?.latestVersion) {
-      // Catalog-specified version
       catalogVersion = entry.latestVersion;
+    } else if (!entry && app.source === 'url' && app.sourceUrl) {
+      // URL-installed custom app — no catalog entry, fetch version from source URL
+      catalogVersion = await fetchUrlAppVersion(app.sourceUrl);
     }
 
     let hasUpdate = false;
