@@ -1,3 +1,29 @@
+## UI v0.3.4.2 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Phase 2 — Unified app settings page (merge user + admin views)
+
+### Changes
+- `ui/src/app/api/v1/apps/unified/route.ts` — NEW: unified API merging drawer + CP bridge data
+- `ui/src/app/settings/apps/client.tsx` — Rewrote with sections: Updates Available, Installed Apps, System Components
+- `ui/src/components/settings/app-settings-detail.tsx` — Added Update Now button, version/category/description from bridge
+- `ui/src/components/settings/settings-shell.tsx` — Removed "App Management" admin sidebar entry
+- `ui/src/app/settings/apps-list/page.tsx` — DELETED (merged into unified view)
+- `ui/package.json` — 0.3.4.1 → 0.3.4.2
+
+### Test Results
+- Manual: deployed to VM, `spine status` 7 running / 0 stopped
+- API: `/api/v1/apps/unified` returns 401 without auth (correct)
+- UI: `https://devvm.test/` returns 307 redirect (correct)
+
+### Notes for Iris
+- No CP changes in this release (CP stays at v0.3.6.3)
+- The `/settings/apps-list` page is deleted — any links to it will 404
+- The unified API calls CP bridge internally with Referer spoofing for admin data
+
+---
+
 ## CP v0.3.6.3 — vanya — 2026-04-28
 **Branch:** vanya
 **VM:** ye-vanya
