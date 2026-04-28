@@ -40,6 +40,10 @@ interface AppInfo {
   version: string | null;
   status: string | null;
   containerUrl: string | null;
+  updateAvailable?: boolean;
+  updateInfo?: string | null;
+  category?: string;
+  description?: string;
 }
 
 interface Permission {
@@ -116,8 +120,8 @@ export function AppSettingsDetail({
   const fetchDetail = useCallback(async () => {
     setLoading(true);
     try {
-      // Fetch app info from drawer API
-      const res = await fetch("/api/v1/apps/drawer");
+      // Fetch from unified API to get versions + update info
+      const res = await fetch("/api/v1/apps/unified");
       if (res.ok) {
         const data = await res.json();
         const allApps = data.apps ?? [];
@@ -224,7 +228,7 @@ export function AppSettingsDetail({
       </div>
 
       {/* Tab content */}
-      {activeTab === "overview" && <OverviewTab app={app} />}
+      {activeTab === "overview" && <OverviewTab app={app} isAdmin={isAdmin} />}
 
       {activeTab === "permissions" && (
         <PermissionsTab
@@ -244,12 +248,85 @@ export function AppSettingsDetail({
 
 /* ── Overview Tab ── */
 
-function OverviewTab({ app }: { app: AppInfo }) {
+function OverviewTab({ app, isAdmin }: { app: AppInfo; isAdmin: boolean }) {
   const domain = typeof window !== "undefined" ? window.location.hostname : "";
   const appUrl = app.subdomain ? `https://${app.subdomain}.${domain}` : null;
+  const [updating, setUpdating] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
+
+  async function handleUpdate() {
+    setUpdating(true);
+    setUpdateStatus(null);
+    try {
+      const res = await fetch(
+        `/api/v1/admin/proxy-cp?path=${encodeURIComponent(`/api/apps/${app.id}/enqueue`)}`,
+        { method: "POST" }
+      );
+      // Use the proxy-cp POST method to enqueue
+      const proxyRes = await fetch("/api/v1/admin/proxy-cp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: `/api/apps/${app.id}/enqueue`,
+          method: "POST",
+        }),
+      });
+      if (proxyRes.ok) {
+        setUpdateStatus({ ok: true, message: "Update queued" });
+      } else {
+        setUpdateStatus({ ok: false, message: "Failed to queue update" });
+      }
+    } catch {
+      setUpdateStatus({ ok: false, message: "Failed to reach server" });
+    } finally {
+      setUpdating(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
+      {/* Update banner */}
+      {app.updateAvailable && isAdmin && (
+        <div className="flex items-center justify-between rounded-lg border border-blue-200 dark:border-blue-800/40 bg-blue-50/50 dark:bg-blue-950/20 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <ArrowLeft className="w-4 h-4 text-blue-500 rotate-90" />
+            <div>
+              <p className="text-sm font-medium">Update available</p>
+              {app.updateInfo && (
+                <p className="text-xs text-muted-foreground">{app.updateInfo}</p>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={handleUpdate}
+            disabled={updating}
+            className="px-3 py-1.5 text-xs font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+          >
+            {updating ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3 h-3" />
+            )}
+            Update Now
+          </button>
+        </div>
+      )}
+
+      {updateStatus && (
+        <div
+          className={`px-4 py-2 rounded-lg text-sm ${
+            updateStatus.ok
+              ? "bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300"
+              : "bg-red-50 text-red-800 dark:bg-red-900/20 dark:text-red-300"
+          }`}
+        >
+          {updateStatus.message}
+        </div>
+      )}
+
       <div className="border rounded-lg divide-y">
         <div className="flex items-center justify-between px-4 py-3">
           <span className="text-sm text-muted-foreground">App ID</span>
@@ -265,12 +342,18 @@ function OverviewTab({ app }: { app: AppInfo }) {
           <div className="flex items-center justify-between px-4 py-3">
             <span className="text-sm text-muted-foreground">Status</span>
             <span className={`text-sm px-2 py-0.5 rounded-full text-xs font-medium ${
-              app.status === "healthy"
+              app.status === "healthy" || app.status === "running"
                 ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
                 : "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
             }`}>
               {app.status}
             </span>
+          </div>
+        )}
+        {app.category && (
+          <div className="flex items-center justify-between px-4 py-3">
+            <span className="text-sm text-muted-foreground">Category</span>
+            <span className="text-sm capitalize">{app.category}</span>
           </div>
         )}
         {app.subdomain && (
@@ -291,6 +374,12 @@ function OverviewTab({ app }: { app: AppInfo }) {
               {appUrl}
               <ExternalLink className="w-3 h-3" />
             </a>
+          </div>
+        )}
+        {app.description && (
+          <div className="flex items-center justify-between px-4 py-3">
+            <span className="text-sm text-muted-foreground">Description</span>
+            <span className="text-sm text-right max-w-xs">{app.description}</span>
           </div>
         )}
       </div>

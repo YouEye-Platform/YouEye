@@ -29,7 +29,6 @@ import {
   Languages,
   ArrowLeftRight,
   ExternalLink,
-  PackageOpen,
   HardDrive,
   Lock,
 } from "lucide-react";
@@ -54,7 +53,6 @@ const ADMIN_SECTIONS = [
   { id: "proxy", labelKey: "proxy" as const, icon: ArrowLeftRight, href: "/settings/proxy" },
   { id: "tls", labelKey: "tls" as const, icon: Lock, href: "/settings/tls" },
   { id: "backup", labelKey: "backup" as const, icon: HardDrive, href: "/settings/backup" },
-  { id: "apps-list", labelKey: "appManagement" as const, icon: PackageOpen, href: "/settings/apps-list" },
   { id: "market", labelKey: "appMarket" as const, icon: Store, href: "/app-market" },
 ];
 
@@ -75,9 +73,8 @@ export function SettingsShell({ children, isAdmin }: SettingsShellProps) {
 
   const isActive = (href: string) => {
     if (href === "/settings") return pathname === "/settings";
-    // /settings/apps must not match /settings/apps-list
     if (href === "/settings/apps") {
-      return pathname === "/settings/apps" || (pathname.startsWith("/settings/apps/") && !pathname.startsWith("/settings/apps-list"));
+      return pathname === "/settings/apps" || pathname.startsWith("/settings/apps/");
     }
     return pathname.startsWith(href);
   };
