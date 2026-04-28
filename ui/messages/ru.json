@@ -77,6 +77,7 @@
       "users": "Пользователи",
       "system": "Система",
       "containers": "Контейнеры",
+      "network": "Сеть",
       "dns": "DNS",
       "proxy": "Прокси",
       "tls": "TLS",

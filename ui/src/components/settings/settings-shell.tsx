@@ -26,10 +26,7 @@ import {
   Clock,
   Globe,
   Languages,
-  ArrowLeftRight,
   ExternalLink,
-  HardDrive,
-  Lock,
 } from "lucide-react";
 
 /** Section definitions use labelKey to look up translations at render time */
@@ -47,10 +44,7 @@ const USER_SECTIONS = [
 const ADMIN_SECTIONS = [
   { id: "users", labelKey: "users" as const, icon: Users, href: "/settings/users" },
   { id: "system", labelKey: "system" as const, icon: Server, href: "/settings/system" },
-  { id: "dns", labelKey: "dns" as const, icon: Globe, href: "/settings/dns" },
-  { id: "proxy", labelKey: "proxy" as const, icon: ArrowLeftRight, href: "/settings/proxy" },
-  { id: "tls", labelKey: "tls" as const, icon: Lock, href: "/settings/tls" },
-  { id: "backup", labelKey: "backup" as const, icon: HardDrive, href: "/settings/backup" },
+  { id: "network", labelKey: "network" as const, icon: Globe, href: "/settings/network" },
   { id: "market", labelKey: "appMarket" as const, icon: Store, href: "/app-market" },
 ];
 
@@ -78,7 +72,7 @@ export function SettingsShell({ children, isAdmin }: SettingsShellProps) {
   };
 
   return (
-    <div className="max-w-6xl mx-auto flex gap-8 px-6 py-8">
+    <div className="max-w-7xl mx-auto flex gap-8 px-6 py-8">
       {/* Sidebar */}
       <nav className="w-52 shrink-0">
         <div className="sticky top-20 space-y-1">
