@@ -19,8 +19,21 @@ export async function GET(request: NextRequest) {
   }
 
   const providers = await getInfoCardProviders();
-  const host = request.headers.get("host") ?? "";
-  const baseDomain = host.replace(/:\d+$/, "");
+
+  // Service-to-service calls arrive on internal hostname (e.g. localhost:3001),
+  // so use the configured external URL to derive the public base domain.
+  const uiExternalUrl = process.env.UI_EXTERNAL_URL || process.env.BASE_URL || process.env.NEXTAUTH_URL || "";
+  const isServiceCall = !!request.headers.get("x-youeye-app");
+  let baseDomain: string;
+  if (isServiceCall && uiExternalUrl) {
+    try {
+      baseDomain = new URL(uiExternalUrl).hostname;
+    } catch {
+      baseDomain = (request.headers.get("host") ?? "").replace(/:\d+$/, "");
+    }
+  } else {
+    baseDomain = (request.headers.get("host") ?? "").replace(/:\d+$/, "");
+  }
 
   return NextResponse.json({
     providers: providers.map((p) => {
