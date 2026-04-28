@@ -1,3 +1,31 @@
+## CP v0.3.6.6 + UI v0.3.4.6 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Network settings overhaul — consolidated DNS/TLS, full Pi-Hole management UI, ZIP download
+
+### Changes
+- `control-panel/src/app/embed/dns/client.tsx` — Complete rewrite: 6-tab DNS management (Overview with charts, Query Log, Domains, Local DNS, Blocklists, Settings)
+- `control-panel/src/app/embed/tls/client.tsx` — Added ZIP download button for cert+key pair
+- `control-panel/src/app/api/tls/download/route.ts` — Added zip type with minimal ZIP builder
+- `control-panel/src/app/api/ui-bridge/dns/{history,queries,domains,records,cname,lists,config,gravity}/route.ts` — 8 new bridge API routes for full Pi-Hole API coverage
+- `control-panel/src/app/setup/page.tsx` — Skip restore-from-backup step in setup wizard
+- `ui/src/app/settings/network/{page,client}.tsx` — NEW: consolidated Network page with DNS|TLS tabs
+- `ui/src/components/settings/settings-shell.tsx` — DNS→Network rename, removed Proxy/Backup/TLS nav, widened layout
+- `ui/src/app/settings/{dns,tls,proxy}/page.tsx` — Redirect to /settings/network
+- `ui/src/app/settings/backup/page.tsx` — Redirect to /settings
+- `ui/messages/{en,de,es,fr,ru}.json` — Added "network" i18n key
+
+### Test Results
+- CP and UI builds verified, deployed to VM, 10 containers running
+- Gitea releases: cp-vanya-v0.3.6.6 (ID: 1292), ui-vanya-v0.3.4.6 (ID: 1293)
+
+### Notes for Iris
+- Old DNS/TLS/Proxy/Backup routes now redirect — no broken links
+- 8 new bridge API routes under /api/ui-bridge/dns/ — all use validateBridgeToken
+- Proxy page code preserved but hidden; backup page code preserved but hidden
+- Setup wizard step -1 (new/restore choice) disabled — will be re-enabled when backups are ready
+
 ## CP v0.3.6.5 + UI v0.3.4.5 — vanya — 2026-04-28
 **Branch:** vanya
 **VM:** ye-vanya
