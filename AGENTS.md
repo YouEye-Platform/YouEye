@@ -1,3 +1,21 @@
+## v0.3.6.1 — sebastian — 2026-04-28
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix manifest validator false warnings on native apps
+
+### Changes
+- `control-panel/src/lib/market/validator.ts` — Added `'integration'` to `knownRoots` Set; resolves 2 false "Unrecognized template variable" warnings for `${integration.gateway_url}` and `${integration.app_token}` on all native app manifests
+- `control-panel/package.json` — Bumped 0.3.6 → 0.3.6.1
+
+### Test Results
+- Verified `integration` present in compiled JS chunks inside deployed youeye-control container
+- `sudo spine status` → 7 running, 0 stopped
+
+### Notes for Iris
+- Trivial one-word addition to an existing Set. No merge conflicts expected.
+- Prior commit `ede27c5` (Iris, Apr 27) added `containers`, `smtp`, `provider` to same Set but missed `integration`.
+
 ## Main Release — spine 0.3.2, cp 0.3.6, ui 0.3.4 — iris — 2026-04-27
 **Branch:** main
 **VM:** ye-iris
