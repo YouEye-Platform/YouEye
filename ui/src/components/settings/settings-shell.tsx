@@ -16,14 +16,10 @@ import {
   User,
   Palette,
   LayoutGrid,
-  KeyRound,
-  Shield,
-  Paintbrush,
   Users,
   Server,
   Store,
   ArrowLeft,
-  Clock,
   Globe,
   Languages,
   ExternalLink,
@@ -34,11 +30,7 @@ const USER_SECTIONS = [
   { id: "profile", labelKey: "profile" as const, icon: User, href: "/settings" },
   { id: "appearance", labelKey: "appearance" as const, icon: Palette, href: "/settings/appearance" },
   { id: "apps", labelKey: "apps" as const, icon: LayoutGrid, href: "/settings/apps" },
-  { id: "accounts", labelKey: "accounts" as const, icon: KeyRound, href: "/settings/accounts" },
-  { id: "timeline", labelKey: "timeline" as const, icon: Clock, href: "/timeline" },
-  { id: "privacy", labelKey: "privacy" as const, icon: Shield, href: "/settings/privacy" },
   { id: "language", labelKey: "language" as const, icon: Languages, href: "/settings/language" },
-  { id: "branding", labelKey: "branding" as const, icon: Paintbrush, href: "/settings/branding" },
 ];
 
 const ADMIN_SECTIONS = [

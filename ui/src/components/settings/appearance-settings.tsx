@@ -1,11 +1,11 @@
 /**
  * Appearance Settings
  *
- * Theme selection (dark/light/system) + Color theme selection.
- * Includes:
- * 1. Dark/Light/System mode toggle
- * 2. Preset color theme grid (8 built-in themes)
- * 3. Custom theme creation dialog (admin only)
+ * Combined layout:
+ * 1. WordArt section (My WordArt tab + Server Branding tab for admins)
+ * 2. Color Theme grid (compact)
+ * 3. Dark/Light/System mode toggle
+ * 4. Custom theme creation (admin only)
  */
 
 "use client";
@@ -35,11 +35,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import type { ThemeColors } from "@/db/schema";
-import { AppDrawerSettings } from "@/components/settings/app-drawer-settings";
+import type { SiteNameStyle } from "@/lib/db/queries/branding";
+import { BrandingTabs } from "@/components/settings/branding-tabs";
 
 interface AppearanceSettingsProps {
   userId: string;
   isAdmin?: boolean;
+  siteName: string;
+  serverDefault: SiteNameStyle;
+  serverBrandingUrl: string | null;
 }
 
 interface ThemeListItem {
@@ -49,17 +53,15 @@ interface ThemeListItem {
   isPreset: boolean;
 }
 
-// Preview swatch colors for each theme
 const THEME_SWATCH_KEYS = ["primary", "ring", "accent"] as const;
-const DARK_SWATCH_KEYS = [
-  "darkPrimary",
-  "darkRing",
-  "darkAccent",
-] as const;
+const DARK_SWATCH_KEYS = ["darkPrimary", "darkRing", "darkAccent"] as const;
 
 export function AppearanceSettings({
   userId: _userId,
   isAdmin = false,
+  siteName,
+  serverDefault,
+  serverBrandingUrl,
 }: AppearanceSettingsProps) {
   const { theme, setTheme } = useTheme();
   const t = useTranslations("settings.appearance");
@@ -75,7 +77,6 @@ export function AppearanceSettings({
     { id: "system", label: t("system"), icon: Monitor },
   ];
 
-  // Fetch all available themes
   const fetchThemes = useCallback(async () => {
     try {
       const res = await fetch("/api/v1/themes");
@@ -107,7 +108,8 @@ export function AppearanceSettings({
   const isDarkMode = theme === "dark";
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
+      {/* Page header */}
       <div>
         <h2 className="text-xl font-semibold">{t("title")}</h2>
         <p className="text-sm text-muted-foreground mt-1">
@@ -115,43 +117,24 @@ export function AppearanceSettings({
         </p>
       </div>
 
-      {/* Dark/Light/System Mode */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-medium">Mode</h3>
-        <div className="flex gap-3">
-          {modes.map((m) => {
-            const Icon = m.icon;
-            const active = theme === m.id;
-            return (
-              <button
-                key={m.id}
-                onClick={() => {
-                  setTheme(m.id);
-                  fetch("/api/v1/themes/active", {
-                    method: "PUT",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ mode: m.id }),
-                  }).catch(() => {});
-                }}
-                className={`flex items-center gap-2 px-4 py-3 rounded-lg border-2 transition-colors ${
-                  active
-                    ? "border-primary bg-primary/5"
-                    : "border-transparent bg-muted hover:bg-accent"
-                }`}
-              >
-                <Icon className="w-5 h-5" />
-                <span className="text-sm font-medium">{m.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      {/* ─── WordArt Section ─── */}
+      <section className="space-y-4">
+        <BrandingTabs
+          siteName={siteName}
+          serverDefault={serverDefault}
+          isAdmin={isAdmin}
+          serverBrandingUrl={serverBrandingUrl}
+        />
+      </section>
 
-      {/* Color Theme Selection */}
-      <div className="space-y-4">
+      {/* ─── Divider ─── */}
+      <div className="border-t" />
+
+      {/* ─── Color Theme Section ─── */}
+      <section className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-medium">Color Theme</h3>
+            <h3 className="text-base font-semibold">Color Theme</h3>
             <p className="text-sm text-muted-foreground mt-0.5">
               Choose a color palette for the interface.
             </p>
@@ -165,13 +148,13 @@ export function AppearanceSettings({
         </div>
 
         {loading || themeLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
           </div>
         ) : (
           <>
-            {/* Preset Themes Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            {/* Preset Themes Grid (compact) */}
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
               {allThemes
                 .filter((t) => t.isPreset)
                 .map((t) => (
@@ -186,13 +169,13 @@ export function AppearanceSettings({
                 ))}
             </div>
 
-            {/* Custom Themes Section */}
+            {/* Custom Themes */}
             {allThemes.some((t) => !t.isPreset) && (
-              <div className="space-y-3 pt-2">
+              <div className="space-y-2 pt-1">
                 <h4 className="text-sm font-medium text-muted-foreground">
                   Custom Themes
                 </h4>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
                   {allThemes
                     .filter((t) => !t.isPreset)
                     .map((t) => (
@@ -208,56 +191,71 @@ export function AppearanceSettings({
                 </div>
               </div>
             )}
-
-            {/* Create Custom Theme Button (admin only) */}
-            {isAdmin && (
-              <div className="pt-2">
-                <Dialog
-                  open={showCustomDialog}
-                  onOpenChange={setShowCustomDialog}
-                >
-                  <DialogTrigger asChild>
-                    <Button variant="outline" className="gap-2">
-                      <Plus className="w-4 h-4" />
-                      Create Custom Theme
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-                    <DialogHeader>
-                      <DialogTitle>Create Custom Theme</DialogTitle>
-                    </DialogHeader>
-                    <CustomThemeForm
-                      onCreated={() => {
-                        setShowCustomDialog(false);
-                        fetchThemes();
-                      }}
-                    />
-                  </DialogContent>
-                </Dialog>
-              </div>
-            )}
           </>
         )}
-      </div>
 
-      {/* App Drawer Customization */}
-      <div className="space-y-3">
-        <AppDrawerSettings isAdmin={isAdmin} />
-      </div>
+        {/* Mode Toggle */}
+        <div className="pt-2">
+          <h4 className="text-sm font-medium mb-2">Mode</h4>
+          <div className="flex gap-2">
+            {modes.map((m) => {
+              const Icon = m.icon;
+              const active = theme === m.id;
+              return (
+                <button
+                  key={m.id}
+                  onClick={() => {
+                    setTheme(m.id);
+                    fetch("/api/v1/themes/active", {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ mode: m.id }),
+                    }).catch(() => {});
+                  }}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 transition-colors text-sm ${
+                    active
+                      ? "border-primary bg-primary/5"
+                      : "border-transparent bg-muted hover:bg-accent"
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span className="font-medium">{m.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-      {/* Background note */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-medium">Background</h3>
-        <p className="text-sm text-muted-foreground">
-          You can customize your homepage background by clicking the edit button
-          on the dashboard and selecting &quot;Background&quot;.
-        </p>
-      </div>
+        {/* Create Custom Theme (admin only) */}
+        {isAdmin && (
+          <div className="pt-1">
+            <Dialog open={showCustomDialog} onOpenChange={setShowCustomDialog}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-2">
+                  <Plus className="w-4 h-4" />
+                  Create Custom Theme
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Create Custom Theme</DialogTitle>
+                </DialogHeader>
+                <CustomThemeForm
+                  onCreated={() => {
+                    setShowCustomDialog(false);
+                    fetchThemes();
+                  }}
+                />
+              </DialogContent>
+            </Dialog>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
 
-// ─── Theme Card ─────────────────────────────────────────────────────
+// ─── Theme Card (compact) ───────────────────────────────────────────
 
 function ThemeCard({
   theme,
@@ -284,13 +282,13 @@ function ThemeCard({
       }`}
       onClick={onClick}
     >
-      <CardContent className="p-3">
+      <CardContent className="p-2.5">
         {/* Color swatches */}
-        <div className="flex gap-1.5 mb-2.5">
+        <div className="flex gap-1 mb-2">
           {swatchKeys.map((key) => (
             <div
               key={key}
-              className="w-6 h-6 rounded-full border border-border/50"
+              className="w-5 h-5 rounded-full border border-border/50"
               style={{ background: colors[key as keyof ThemeColors] }}
             />
           ))}
@@ -298,17 +296,16 @@ function ThemeCard({
 
         {/* Theme name + active indicator */}
         <div className="flex items-center justify-between">
-          <span className="text-sm font-medium truncate">{theme.name}</span>
+          <span className="text-xs font-medium truncate">{theme.name}</span>
           {isSwitching ? (
-            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
           ) : isActive ? (
-            <Check className="w-4 h-4 text-primary" />
+            <Check className="w-3.5 h-3.5 text-primary" />
           ) : null}
         </div>
 
-        {/* Preset badge */}
         {!theme.isPreset && (
-          <Badge variant="outline" className="mt-1.5 text-[10px] px-1.5 py-0">
+          <Badge variant="outline" className="mt-1 text-[9px] px-1 py-0">
             Custom
           </Badge>
         )}
@@ -326,7 +323,6 @@ interface ColorField {
 }
 
 const COLOR_FIELDS: ColorField[] = [
-  // Light mode
   { key: "background", label: "Background", section: "light" },
   { key: "foreground", label: "Foreground", section: "light" },
   { key: "primary", label: "Primary", section: "light" },
@@ -346,7 +342,6 @@ const COLOR_FIELDS: ColorField[] = [
   { key: "border", label: "Border", section: "light" },
   { key: "input", label: "Input", section: "light" },
   { key: "ring", label: "Ring", section: "light" },
-  // Dark mode
   { key: "darkBackground", label: "Background", section: "dark" },
   { key: "darkForeground", label: "Foreground", section: "dark" },
   { key: "darkPrimary", label: "Primary", section: "dark" },
@@ -368,7 +363,6 @@ const COLOR_FIELDS: ColorField[] = [
   { key: "darkRing", label: "Ring", section: "dark" },
 ];
 
-// Default values based on the Zinc preset
 const DEFAULT_CUSTOM_COLORS: ThemeColors = {
   background: "oklch(1 0 0)",
   foreground: "oklch(0.145 0 0)",
@@ -455,7 +449,6 @@ function CustomThemeForm({ onCreated }: { onCreated: () => void }) {
 
   return (
     <div className="space-y-4">
-      {/* Theme name */}
       <div className="space-y-2">
         <label className="text-sm font-medium">Theme Name</label>
         <Input
@@ -465,7 +458,6 @@ function CustomThemeForm({ onCreated }: { onCreated: () => void }) {
         />
       </div>
 
-      {/* Light/Dark section toggle */}
       <div className="flex gap-2">
         <Button
           variant={activeSection === "light" ? "default" : "outline"}
@@ -485,7 +477,6 @@ function CustomThemeForm({ onCreated }: { onCreated: () => void }) {
         </Button>
       </div>
 
-      {/* Color fields */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[40vh] overflow-y-auto pr-2">
         {filteredFields.map((field) => (
           <div key={field.key} className="space-y-1">
@@ -508,37 +499,21 @@ function CustomThemeForm({ onCreated }: { onCreated: () => void }) {
         ))}
       </div>
 
-      {/* Live preview */}
       <div className="space-y-2">
         <label className="text-sm font-medium">Preview</label>
         <div
           className="rounded-lg border p-4 space-y-2"
           style={{
-            background:
-              activeSection === "light"
-                ? colors.background
-                : colors.darkBackground,
-            color:
-              activeSection === "light"
-                ? colors.foreground
-                : colors.darkForeground,
-            borderColor:
-              activeSection === "light"
-                ? colors.border
-                : colors.darkBorder,
+            background: activeSection === "light" ? colors.background : colors.darkBackground,
+            color: activeSection === "light" ? colors.foreground : colors.darkForeground,
+            borderColor: activeSection === "light" ? colors.border : colors.darkBorder,
           }}
         >
           <div
             className="rounded-md px-3 py-1.5 text-sm font-medium inline-block"
             style={{
-              background:
-                activeSection === "light"
-                  ? colors.primary
-                  : colors.darkPrimary,
-              color:
-                activeSection === "light"
-                  ? colors.primaryForeground
-                  : colors.darkPrimaryForeground,
+              background: activeSection === "light" ? colors.primary : colors.darkPrimary,
+              color: activeSection === "light" ? colors.primaryForeground : colors.darkPrimaryForeground,
             }}
           >
             Primary Button
@@ -546,14 +521,8 @@ function CustomThemeForm({ onCreated }: { onCreated: () => void }) {
           <div
             className="rounded-md px-3 py-1.5 text-sm inline-block ml-2"
             style={{
-              background:
-                activeSection === "light"
-                  ? colors.secondary
-                  : colors.darkSecondary,
-              color:
-                activeSection === "light"
-                  ? colors.secondaryForeground
-                  : colors.darkSecondaryForeground,
+              background: activeSection === "light" ? colors.secondary : colors.darkSecondary,
+              color: activeSection === "light" ? colors.secondaryForeground : colors.darkSecondaryForeground,
             }}
           >
             Secondary
@@ -561,10 +530,7 @@ function CustomThemeForm({ onCreated }: { onCreated: () => void }) {
           <p
             className="text-xs mt-2"
             style={{
-              color:
-                activeSection === "light"
-                  ? colors.mutedForeground
-                  : colors.darkMutedForeground,
+              color: activeSection === "light" ? colors.mutedForeground : colors.darkMutedForeground,
             }}
           >
             This is muted text showing how content will look.
