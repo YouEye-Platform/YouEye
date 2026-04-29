@@ -1,3 +1,18 @@
+## cp-v0.3.6.9 — sebastian — 2026-04-29
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix native app container name mismatch breaking update detection
+
+### Changes
+- `control-panel/src/lib/apps/definitions.ts` — All 6 native app definitions had `ye-app-*` container names and service names, but Spine creates containers as `app-*`. Fixed all to match actual names.
+- `control-panel/src/app/api/market/status/route.ts` — Same `ye-app-*` → `app-*` fix in NATIVE_CONTAINER_MAP.
+- `CLAUDE.md` — Added standalone repo tag documentation and pitfall #24 to prevent component-prefix tags on standalone repos.
+
+### Notes for Iris
+- Also created `sebastian-v0.3.2.12` release on YE-App-Search with correct tag format (was previously `search-sebastian-v0.3.2.12` which was invisible to CP's release discovery).
+- The `ye-app-*` naming was likely introduced when definitions.ts was first written and never validated against actual container names. All native apps were affected.
+
 ## cp-v0.3.6.8 + ui-v0.3.4.9 + spine-v0.3.2.1 — sebastian — 2026-04-29
 **Branch:** sebastian
 **VM:** ye-sebastian
