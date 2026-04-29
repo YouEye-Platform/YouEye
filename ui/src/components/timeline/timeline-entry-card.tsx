@@ -2,13 +2,15 @@
  * Timeline Entry Card
  *
  * Renders a single decrypted timeline entry with type icon,
- * title, tags, timestamp, and optional inline info card.
+ * title, tags, timestamp, and either:
+ *   - An iframe embed from the source app (via embed_path)
+ *   - A standard card from stored data (fallback)
+ *   - A legacy info card fetch (backward compat)
  */
 
 "use client";
 
 import {
-  Clock,
   Film,
   Camera,
   FileText,
@@ -20,11 +22,17 @@ import {
   Trash2,
   ChevronDown,
   ChevronUp,
-  ExternalLink,
   Search,
+  MapPin,
+  BookOpen,
+  Eye,
+  Heart,
+  ListPlus,
+  Play,
 } from "lucide-react";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
+import { TimelineEmbed } from "./timeline-embed";
 import { TimelineInfoCard } from "./timeline-info-card";
 
 interface TimelineEntry {
@@ -36,6 +44,7 @@ interface TimelineEntry {
     entry_type: string;
     title: string;
     timestamp: string;
+    embed_path?: string;
     tags: Record<string, unknown>;
     data: Record<string, unknown>;
     info_card?: { card_type: string; endpoint: string };
@@ -46,19 +55,36 @@ interface TimelineEntry {
 
 interface TimelineEntryCardProps {
   entry: TimelineEntry;
+  /** Base domain for constructing app embed URLs (e.g. "devvm.test") */
+  domain?: string;
   onDelete?: (id: string) => void;
   onSelect?: (entry: TimelineEntry) => void;
 }
 
 const TYPE_ICONS: Record<string, typeof Film> = {
+  // Cinema
+  "cinema-movie-viewed": Eye,
+  "cinema-tv-viewed": Eye,
+  "cinema-movie-watched": Play,
+  "cinema-tv-watched": Play,
+  "cinema-watchlist-add": ListPlus,
+  "cinema-status-change": Film,
+  "cinema-review": Star,
+  "cinema-search": Search,
+  "cinema-movie-favorited": Heart,
+  // Search
+  "search-query": Search,
+  "search-link-clicked": Globe,
+  // Wiki
+  "wiki-article-read": BookOpen,
+  "wiki-article-edit": FileText,
+  // Generic
   "movie-watched": Film,
   "photo-taken": Camera,
   "note-created": FileText,
   "music-listened": Music,
   "article-read": Globe,
-  "wiki-article-read": Globe,
-  "wiki-article-edit": FileText,
-  "search-query": Search,
+  "search-query-legacy": Search,
   "event-scheduled": Calendar,
   "item-rated": Star,
 };
@@ -71,6 +97,7 @@ const COLLECTION_COLORS: Record<string, string> = {
 
 export function TimelineEntryCard({
   entry,
+  domain,
   onDelete,
   onSelect,
 }: TimelineEntryCardProps) {
@@ -115,12 +142,17 @@ export function TimelineEntryCard({
     ([, v]) => v !== null && v !== undefined
   );
 
-  // Determine the info card URL from entry data
-  const infoCardUrl =
-    entry.entry.infoCardUrl ??
-    entry.entry.info_card?.endpoint ??
-    (entry.entry.data.infoCardUrl as string | undefined) ??
-    null;
+  // Determine which card rendering to use:
+  // 1. embed_path → TimelineEmbed (iframe with fallback)
+  // 2. Legacy infoCardUrl → TimelineInfoCard (data fetch)
+  // 3. Neither → no card, just text entry
+  const hasEmbedPath = !!entry.entry.embed_path;
+  const legacyInfoCardUrl = !hasEmbedPath
+    ? (entry.entry.infoCardUrl ??
+      entry.entry.info_card?.endpoint ??
+      (entry.entry.data.infoCardUrl as string | undefined) ??
+      null)
+    : null;
 
   return (
     <div
@@ -150,7 +182,7 @@ export function TimelineEntryCard({
                   &middot;
                 </span>
                 <span className="text-xs text-muted-foreground capitalize">
-                  {entry.entry.app_id}
+                  {entry.entry.app_id.replace(/^ye-/, "")}
                 </span>
                 {entry.entry.import_source && (
                   <>
@@ -209,10 +241,24 @@ export function TimelineEntryCard({
             </div>
           )}
 
-          {/* Inline Info Card */}
-          {infoCardUrl && (
+          {/* Embed card (new system — iframe with fallback) */}
+          {hasEmbedPath && domain && (
             <div className="mt-3">
-              <TimelineInfoCard infoCardUrl={infoCardUrl} size="compact" />
+              <TimelineEmbed entry={entry.entry} domain={domain} />
+            </div>
+          )}
+
+          {/* Embed card fallback when no domain provided (standard card only) */}
+          {hasEmbedPath && !domain && (
+            <div className="mt-3">
+              <TimelineEmbed entry={entry.entry} domain="" />
+            </div>
+          )}
+
+          {/* Legacy info card (for entries created before embed_path) */}
+          {legacyInfoCardUrl && (
+            <div className="mt-3">
+              <TimelineInfoCard infoCardUrl={legacyInfoCardUrl} size="compact" />
             </div>
           )}
 

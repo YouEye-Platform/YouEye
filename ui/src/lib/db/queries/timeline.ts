@@ -16,11 +16,23 @@ export interface TimelineEntryData {
   entry_type: string;
   title: string;
   timestamp: string; // ISO 8601
+  /** Lean URL path on the source app for rendering a rich embed card.
+   *  Example: "/embed/timeline/movie-viewed?id=550&type=movie"
+   *  UI constructs full URL: https://{app}.{domain}{embed_path}
+   *  If the app is unavailable, falls back to rendering from `data`. */
+  embed_path?: string;
   info_card?: {
     card_type: string;
     endpoint: string;
   };
   tags: Record<string, unknown>;
+  /** Structured entry content — the real timeline data.
+   *  Standard fields apps SHOULD populate:
+   *    description?: string   — text snippet / overview
+   *    thumbnail_url?: string — poster, screenshot, favicon
+   *    url?: string           — original external URL
+   *  Plus any app-specific fields (tmdb_id, rating, query, etc.)
+   *  This data is programmatically accessible (MCP, AI agents, search). */
   data: Record<string, unknown>;
   // Import-specific fields
   import_source?: string;
@@ -367,6 +379,7 @@ export async function processPendingEvents(
         title: (event.payload.title as string) ?? "Untitled",
         timestamp:
           (event.payload.timestamp as string) ?? new Date().toISOString(),
+        embed_path: (event.payload.embed_path as string) ?? undefined,
         info_card: event.payload.info_card as
           | { card_type: string; endpoint: string }
           | undefined,

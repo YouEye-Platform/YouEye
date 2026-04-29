@@ -26,6 +26,7 @@ interface TimelineEntry {
     entry_type: string;
     title: string;
     timestamp: string;
+    embed_path?: string;
     tags: Record<string, unknown>;
     data: Record<string, unknown>;
     info_card?: { card_type: string; endpoint: string };
@@ -70,6 +71,12 @@ export function TimelineFeed({
   const [to, setTo] = useState("");
   const [offset, setOffset] = useState(0);
   const limit = 50;
+
+  // Derive base domain for embed iframe URLs (e.g. "devvm.test")
+  const baseDomain =
+    typeof window !== "undefined"
+      ? window.location.hostname
+      : "";
 
   /**
    * Retroactive enrichment: for entries without infoCardUrl,
@@ -283,6 +290,7 @@ export function TimelineFeed({
             <TimelineEntryCard
               key={entry.id}
               entry={entry}
+              domain={baseDomain}
               onDelete={handleDelete}
               onSelect={setSelectedEntry}
             />

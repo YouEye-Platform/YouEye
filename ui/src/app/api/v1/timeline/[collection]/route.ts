@@ -61,6 +61,7 @@ export async function POST(
     entry_type,
     title,
     timestamp,
+    embed_path: body.embed_path ?? undefined,
     info_card: body.info_card ?? undefined,
     tags: body.tags ?? {},
     data: body.data ?? {},
