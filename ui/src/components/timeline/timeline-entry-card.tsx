@@ -6,6 +6,9 @@
  *   - An iframe embed from the source app (via embed_path)
  *   - A standard card from stored data (fallback)
  *   - A legacy info card fetch (backward compat)
+ *
+ * Icons are resolved dynamically from app_meta (manifest data),
+ * with a legacy static map as fallback for old entries.
  */
 
 "use client";
@@ -32,8 +35,9 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { TimelineEmbed } from "./timeline-embed";
+import { TimelineEmbed, type AppMetaEntry } from "./timeline-embed";
 import { TimelineInfoCard } from "./timeline-info-card";
+import { resolveLucideIcon } from "@/lib/timeline/icon-map";
 
 interface TimelineEntry {
   id: string;
@@ -57,28 +61,18 @@ interface TimelineEntryCardProps {
   entry: TimelineEntry;
   /** Base domain for constructing app embed URLs (e.g. "devvm.test") */
   domain?: string;
+  /** App metadata map: app_id → { icon, accent_color, entry_icons } */
+  appMetaMap?: Record<string, AppMetaEntry>;
   onDelete?: (id: string) => void;
   onSelect?: (entry: TimelineEntry) => void;
 }
 
-const TYPE_ICONS: Record<string, typeof Film> = {
-  // Cinema
-  "cinema-movie-viewed": Eye,
-  "cinema-tv-viewed": Eye,
-  "cinema-movie-watched": Play,
-  "cinema-tv-watched": Play,
-  "cinema-watchlist-add": ListPlus,
-  "cinema-status-change": Film,
-  "cinema-review": Star,
-  "cinema-search": Search,
-  "cinema-movie-favorited": Heart,
-  // Search
-  "search-query": Search,
-  "search-link-clicked": Globe,
-  // Wiki
-  "wiki-article-read": BookOpen,
-  "wiki-article-edit": FileText,
-  // Generic
+/**
+ * Legacy icon map — kept as fallback for entries from before the
+ * dynamic manifest system. New apps don't need to be added here;
+ * they declare icons in their manifest and get resolved via appMeta.
+ */
+const LEGACY_TYPE_ICONS: Record<string, typeof Film> = {
   "movie-watched": Film,
   "photo-taken": Camera,
   "note-created": FileText,
@@ -95,9 +89,35 @@ const COLLECTION_COLORS: Record<string, string> = {
   imported: "border-l-emerald-500",
 };
 
+/**
+ * Resolve the icon for a timeline entry.
+ * Priority: entry-type icon from manifest > app-level icon from manifest > legacy map > Package
+ */
+function resolveEntryIcon(
+  entryType: string,
+  appId: string,
+  appMeta?: AppMetaEntry
+): typeof Film {
+  // 1. Per-entry-type icon from manifest
+  if (appMeta?.entry_icons[entryType]) {
+    return resolveLucideIcon(appMeta.entry_icons[entryType]);
+  }
+  // 2. App-level icon from manifest
+  if (appMeta?.icon) {
+    return resolveLucideIcon(appMeta.icon);
+  }
+  // 3. Legacy static map
+  if (LEGACY_TYPE_ICONS[entryType]) {
+    return LEGACY_TYPE_ICONS[entryType];
+  }
+  // 4. Fallback
+  return Package;
+}
+
 export function TimelineEntryCard({
   entry,
   domain,
+  appMetaMap,
   onDelete,
   onSelect,
 }: TimelineEntryCardProps) {
@@ -110,7 +130,8 @@ export function TimelineEntryCard({
     imported: t("imported"),
   };
 
-  const Icon = TYPE_ICONS[entry.entry.entry_type] ?? Package;
+  const appMeta = appMetaMap?.[entry.entry.app_id];
+  const Icon = resolveEntryIcon(entry.entry.entry_type, entry.entry.app_id, appMeta);
 
   const borderColor =
     COLLECTION_COLORS[entry.collection] ?? "border-l-gray-500";
@@ -244,14 +265,14 @@ export function TimelineEntryCard({
           {/* Embed card (new system — iframe with fallback) */}
           {hasEmbedPath && domain && (
             <div className="mt-3">
-              <TimelineEmbed entry={entry.entry} domain={domain} />
+              <TimelineEmbed entry={entry.entry} domain={domain} appMeta={appMeta} />
             </div>
           )}
 
           {/* Embed card fallback when no domain provided (standard card only) */}
           {hasEmbedPath && !domain && (
             <div className="mt-3">
-              <TimelineEmbed entry={entry.entry} domain="" />
+              <TimelineEmbed entry={entry.entry} domain="" appMeta={appMeta} />
             </div>
           )}
 

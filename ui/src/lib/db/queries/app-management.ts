@@ -23,9 +23,12 @@ export interface AppManifest {
   version: string;
   description?: string;
   icon?: string;
+  /** Accent color for timeline cards, badges, etc. (hex, e.g. "#a855f7") */
+  accent_color?: string;
   permissions?: string[];
   widgets?: AppWidgetDeclaration[];
   info_cards?: InfoCardDeclaration[];
+  timeline_embeds?: TimelineEmbedDeclaration[];
   settings?: { schema: SettingField[] };
   inter_app?: {
     provides?: { type: string; description: string }[];
@@ -51,6 +54,14 @@ export interface InfoCardDeclaration {
   triggers: string[];
   embed_path?: string;
   label?: string;
+}
+
+export interface TimelineEmbedDeclaration {
+  entry_type: string;
+  embed_path: string;
+  description?: string;
+  /** Lucide icon name for this entry type (e.g. "Eye", "Play") */
+  icon?: string;
 }
 
 interface SettingField {
@@ -207,6 +218,49 @@ export async function getApp(appId: string) {
     .limit(1);
 
   return app ?? null;
+}
+
+/** App metadata for timeline rendering (icon, color, per-entry-type icons) */
+export interface AppMeta {
+  icon: string | null;
+  accent_color: string | null;
+  /** Map of entry_type → lucide icon name from timeline_embeds in manifest */
+  entry_icons: Record<string, string>;
+}
+
+/** Get app metadata map for all enabled apps (used by timeline feed) */
+export async function getAppMetaMap(): Promise<Record<string, AppMeta>> {
+  await ensureSchema();
+
+  const allApps = await db
+    .select({
+      id: apps.id,
+      icon: apps.icon,
+      manifest: apps.manifest,
+    })
+    .from(apps)
+    .where(eq(apps.enabled, true));
+
+  const result: Record<string, AppMeta> = {};
+  for (const app of allApps) {
+    const manifest = app.manifest as Record<string, unknown> | null;
+    const accentColor = (manifest?.accent_color as string) ?? null;
+    const timelineEmbeds = (manifest?.timeline_embeds as Array<{ entry_type: string; icon?: string }>) ?? [];
+
+    const entryIcons: Record<string, string> = {};
+    for (const embed of timelineEmbeds) {
+      if (embed.icon) {
+        entryIcons[embed.entry_type] = embed.icon;
+      }
+    }
+
+    result[app.id] = {
+      icon: app.icon ?? null,
+      accent_color: accentColor,
+      entry_icons: entryIcons,
+    };
+  }
+  return result;
 }
 
 /** Get all apps that provide info cards by live-fetching runtime manifests */

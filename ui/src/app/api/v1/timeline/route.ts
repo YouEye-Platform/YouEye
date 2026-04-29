@@ -21,6 +21,7 @@ import {
 } from "@/lib/db/queries/timeline";
 import type { TimelineEntryData } from "@/lib/db/queries/timeline";
 import { checkPermission, grantPermission } from "@/lib/db/queries/permissions";
+import { getAppMetaMap } from "@/lib/db/queries/app-management";
 
 /** Native app IDs that are auto-granted timeline:write */
 const NATIVE_APP_IDS = ["ye-wiki", "ye-search", "ye-notes", "ye-cinema", "ye-weather", "ye-translate"];
@@ -82,12 +83,16 @@ export async function GET(request: Request) {
     { collection, limit, offset, app, entryType, tag, from, to, sort }
   );
 
-  const counts = await getTimelineCounts(session.userId);
+  const [counts, appMeta] = await Promise.all([
+    getTimelineCounts(session.userId),
+    getAppMetaMap(),
+  ]);
 
   return NextResponse.json({
     entries,
     total,
     counts,
+    app_meta: appMeta,
     pin_required: false,
     pin_exists: true,
     limit,

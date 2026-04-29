@@ -9,6 +9,9 @@
  * subdomain. The app renders the card using only URL params — no
  * server-side storage needed for the specific timeline entry.
  *
+ * Icons and colors are resolved dynamically from app_meta (sourced from
+ * the app manifest at install time) — no hardcoded per-app maps.
+ *
  * postMessage protocol:
  *   iframe → parent: { type: "youeye-embed-ready" }
  *   iframe → parent: { type: "youeye-embed-resize", height: number }
@@ -17,18 +20,16 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import {
-  Globe,
-  Film,
-  Camera,
-  FileText,
-  Search,
-  Calendar,
-  Star,
-  Package,
-  ExternalLink,
-  AlertCircle,
-} from "lucide-react";
+import { Package, ExternalLink } from "lucide-react";
+import { resolveLucideIcon } from "@/lib/timeline/icon-map";
+
+// ─── App Meta (passed down from timeline feed) ─────────────────────
+
+export interface AppMetaEntry {
+  icon: string | null;
+  accent_color: string | null;
+  entry_icons: Record<string, string>;
+}
 
 // ─── Standard Card Fallback ──────────────────────────────────────────
 
@@ -41,42 +42,49 @@ interface StandardCardData {
   tags: Record<string, unknown>;
 }
 
-const APP_ICONS: Record<string, typeof Film> = {
-  "ye-cinema": Film,
-  "ye-search": Search,
-  "ye-wiki": Globe,
-  "ye-notes": FileText,
-  "ye-photos": Camera,
-  "ye-weather": Calendar,
-  cinema: Film,
-  search: Search,
-  wiki: Globe,
-  notes: FileText,
-  photos: Camera,
-};
+/** Generate Tailwind-compatible border/bg classes from a hex accent color */
+function accentClasses(hex: string | null | undefined): string {
+  if (!hex) return "border-gray-500/40 bg-muted/30";
+  // Use inline style via CSS custom property for arbitrary colors
+  return "border-[var(--accent-border)] bg-[var(--accent-bg)]";
+}
 
-const APP_COLORS: Record<string, string> = {
-  "ye-cinema": "border-purple-500/40 bg-purple-500/5",
-  "ye-search": "border-amber-500/40 bg-amber-500/5",
-  "ye-wiki": "border-blue-500/40 bg-blue-500/5",
-  "ye-notes": "border-emerald-500/40 bg-emerald-500/5",
-  "ye-photos": "border-cyan-500/40 bg-cyan-500/5",
-  cinema: "border-purple-500/40 bg-purple-500/5",
-  search: "border-amber-500/40 bg-amber-500/5",
-  wiki: "border-blue-500/40 bg-blue-500/5",
-  notes: "border-emerald-500/40 bg-emerald-500/5",
-  photos: "border-cyan-500/40 bg-cyan-500/5",
-};
+function accentStyle(hex: string | null | undefined): React.CSSProperties {
+  if (!hex) return {};
+  // Parse hex to rgb for alpha blending
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return {
+    "--accent-border": `rgba(${r}, ${g}, ${b}, 0.4)`,
+    "--accent-bg": `rgba(${r}, ${g}, ${b}, 0.05)`,
+  } as React.CSSProperties;
+}
 
-function StandardCard({ entry }: { entry: StandardCardData }) {
-  const Icon = APP_ICONS[entry.app_id] ?? Package;
-  const colorClass = APP_COLORS[entry.app_id] ?? "border-gray-500/40 bg-muted/30";
+function StandardCard({
+  entry,
+  meta,
+}: {
+  entry: StandardCardData;
+  meta?: AppMetaEntry;
+}) {
+  const Icon = meta?.icon ? resolveLucideIcon(meta.icon) : Package;
+  const color = meta?.accent_color ?? null;
   const description = entry.data.description as string | undefined;
   const thumbnailUrl = entry.data.thumbnail_url as string | undefined;
   const url = entry.data.url as string | undefined;
 
+  // Strip app slug prefix from entry_type for display
+  const appSlug = entry.app_id.replace(/^ye-/, "");
+  const actionLabel = entry.entry_type
+    .replace(new RegExp(`^${appSlug}-`), "")
+    .replace(/-/g, " ");
+
   return (
-    <div className={`flex gap-3 rounded-lg border p-3 ${colorClass}`}>
+    <div
+      className={`flex gap-3 rounded-lg border p-3 ${accentClasses(color)}`}
+      style={accentStyle(color)}
+    >
       {/* Thumbnail */}
       {thumbnailUrl && (
         <img
@@ -94,11 +102,11 @@ function StandardCard({ entry }: { entry: StandardCardData }) {
         <div className="flex items-center gap-1.5 mb-1">
           <Icon className="w-3.5 h-3.5 text-muted-foreground" />
           <span className="text-[11px] text-muted-foreground capitalize">
-            {entry.app_id.replace(/^ye-/, "")}
+            {appSlug}
           </span>
           <span className="text-[11px] text-muted-foreground">·</span>
           <span className="text-[11px] text-muted-foreground">
-            {entry.entry_type.replace(/^cinema-|^search-|^wiki-/, "").replace(/-/g, " ")}
+            {actionLabel}
           </span>
         </div>
 
@@ -144,10 +152,12 @@ interface TimelineEmbedProps {
   };
   /** Base domain for app subdomains (e.g. "devvm.test") */
   domain: string;
+  /** App metadata from manifest (icon, accent_color, entry_icons) */
+  appMeta?: AppMetaEntry;
   className?: string;
 }
 
-export function TimelineEmbed({ entry, domain, className }: TimelineEmbedProps) {
+export function TimelineEmbed({ entry, domain, appMeta, className }: TimelineEmbedProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [embedReady, setEmbedReady] = useState(false);
   const [embedFailed, setEmbedFailed] = useState(false);
@@ -160,7 +170,7 @@ export function TimelineEmbed({ entry, domain, className }: TimelineEmbedProps) 
   if (!entry.embed_path) {
     return (
       <div className={className}>
-        <StandardCard entry={entry} />
+        <StandardCard entry={entry} meta={appMeta} />
       </div>
     );
   }
@@ -269,7 +279,7 @@ export function TimelineEmbed({ entry, domain, className }: TimelineEmbedProps) 
       )}
 
       {/* Fallback: standard card when embed fails */}
-      {isVisible && embedFailed && <StandardCard entry={entry} />}
+      {isVisible && embedFailed && <StandardCard entry={entry} meta={appMeta} />}
     </div>
   );
 }

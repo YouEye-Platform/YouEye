@@ -16,6 +16,7 @@ import { TimelineEntryDetail } from "./timeline-entry-detail";
 import { Clock, Plus, Lock, History } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { deriveInfoCardUrl } from "@/lib/timeline/derive-info-card-url";
+import type { AppMetaEntry } from "./timeline-embed";
 
 interface TimelineEntry {
   id: string;
@@ -63,6 +64,7 @@ export function TimelineFeed({
   });
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [appMetaMap, setAppMetaMap] = useState<Record<string, AppMetaEntry>>({});
 
   // Filters
   const [collection, setCollection] = useState("all");
@@ -154,6 +156,7 @@ export function TimelineFeed({
       setEntries(enrichEntries(data.entries));
       setTotal(data.total);
       setCounts(data.counts);
+      if (data.app_meta) setAppMetaMap(data.app_meta);
     } catch {
       // Silently fail
     } finally {
@@ -291,6 +294,7 @@ export function TimelineFeed({
               key={entry.id}
               entry={entry}
               domain={baseDomain}
+              appMetaMap={appMetaMap}
               onDelete={handleDelete}
               onSelect={setSelectedEntry}
             />

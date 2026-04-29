@@ -1,3 +1,26 @@
+## ui-v0.3.4.7 — sebastian — 2026-04-29
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Dynamic app metadata for timeline — remove hardcoded icon/color maps
+
+### Changes
+- `ui/src/lib/timeline/icon-map.ts` — New shared Lucide icon map (~45 icons) with `resolveLucideIcon()` helper for manifest-declared icon names
+- `ui/src/lib/db/queries/app-management.ts` — Added `AppMeta` interface, `TimelineEmbedDeclaration` type, `getAppMetaMap()` query that extracts accent_color and per-entry-type icons from app manifest JSONB
+- `ui/src/app/api/v1/timeline/route.ts` — Timeline API now returns `app_meta` map alongside entries
+- `ui/src/components/timeline/timeline-embed.tsx` — Removed hardcoded `APP_ICONS`/`APP_COLORS` maps; now uses `AppMetaEntry` prop with dynamic CSS custom properties for accent colors
+- `ui/src/components/timeline/timeline-entry-card.tsx` — Replaced `TYPE_ICONS` with 3-tier resolution: manifest entry icon → app icon → legacy static map → fallback
+- `ui/src/components/timeline/timeline-feed.tsx` — Passes `appMetaMap` from API response to entry cards
+- `ui/src/components/layout/app-drawer.tsx` — Expanded `ICON_MAP` from 9 to ~30 Lucide icons for manifest-declared app icons
+- `ui/package.json` — Version bump 0.3.4.6 → 0.3.4.7
+
+### Test Results
+- Manual testing by user on VM
+
+### Notes for Iris
+- App manifests in the `apps` table JSONB column must contain `accent_color` and `timeline_embeds[].icon` fields for the dynamic rendering to work. These are populated when apps re-register or manifests are re-fetched. Cinema, Search, and Wiki manifests have been updated in this release.
+- No DB schema changes. No CP or Spine changes.
+
 ## ui-v0.3.4.3 — sebastian — 2026-04-28
 **Branch:** sebastian
 **VM:** ye-sebastian
