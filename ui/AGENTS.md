@@ -1,3 +1,23 @@
+## v0.3.4.6 — sebastian — 2026-04-29
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix info card providers to live-fetch runtime manifests from app containers (Session 38)
+
+### Changes
+- `src/lib/db/queries/app-management.ts` — Rewrote `getInfoCardProviders()` to live-fetch each app's `/api/manifest` via `fetchAppManifest()` + `discoverAppUpstreams()` (Caddy IP discovery), with `Promise.allSettled()` for fault tolerance and DB manifest as fallback. Previously read `info_cards` from the stored installation manifest which never contains this field.
+- `package.json` — Version bump to 0.3.4.6
+
+### Test Results
+- API verified: `GET /api/v1/apps/info-cards` now returns Cinema provider with triggers `["imdb.com", "themoviedb.org"]` and `embed_path: "/embed/card/movie"` (was returning `{ providers: [] }`)
+- `sudo spine status` → 14 running, 1 stopped
+- UI service healthy after deploy
+
+### Notes for Iris
+- This follows the exact same pattern as `getAppWidgetDeclarations()` (same file, lines 256-301) which already live-fetches widget declarations
+- The stored installation manifest (youeye-file.yml format) never contains `info_cards` — only the app's runtime `/api/manifest` declares them
+- Falls back to DB manifest if live fetch fails, so existing behavior is preserved for apps whose containers are down
+
 ## v0.3.4.5 — sebastian — 2026-04-28
 **Branch:** sebastian
 **VM:** ye-sebastian

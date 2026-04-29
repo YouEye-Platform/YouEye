@@ -15,7 +15,7 @@ import {
   interAppLog,
   userAppConfig,
 } from "@/db/schema";
-import { eq, or, and } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 
 export interface AppManifest {
   id: string;
@@ -209,7 +209,7 @@ export async function getApp(appId: string) {
   return app ?? null;
 }
 
-/** Get all apps that provide info cards */
+/** Get all apps that provide info cards by live-fetching runtime manifests */
 export async function getInfoCardProviders(): Promise<
   Array<{
     appId: string;
@@ -225,9 +225,42 @@ export async function getInfoCardProviders(): Promise<
   const allApps = await db
     .select()
     .from(apps)
-    .where(and(eq(apps.enabled, true)));
+    .where(eq(apps.enabled, true));
 
-  const providers: Array<{
+  // Discover real container IPs via Caddy (avoids cross-bridge DNS issues)
+  const upstreamMap = await discoverAppUpstreams();
+
+  const results = await Promise.allSettled(
+    allApps
+      .filter((app) => app.containerUrl || app.subdomain)
+      .map(async (app) => {
+        const upstream =
+          (app.subdomain && upstreamMap.get(app.subdomain)) ||
+          app.containerUrl;
+        if (!upstream) return null;
+
+        const manifest = await fetchAppManifest(upstream);
+
+        // Fall back to DB manifest if live fetch fails
+        const effective = manifest ?? (app.manifest as AppManifest | null);
+        if (
+          effective?.info_cards &&
+          effective.info_cards.length > 0
+        ) {
+          return {
+            appId: app.id,
+            appName: app.name,
+            containerUrl: app.containerUrl ?? upstream,
+            subdomain: app.subdomain ?? null,
+            icon: app.icon ?? effective.icon ?? null,
+            cards: effective.info_cards,
+          };
+        }
+        return null;
+      })
+  );
+
+  const out: Array<{
     appId: string;
     appName: string;
     containerUrl: string;
@@ -235,22 +268,10 @@ export async function getInfoCardProviders(): Promise<
     icon: string | null;
     cards: InfoCardDeclaration[];
   }> = [];
-
-  for (const app of allApps) {
-    const manifest = app.manifest as AppManifest | null;
-    if (manifest?.info_cards && manifest.info_cards.length > 0 && app.containerUrl) {
-      providers.push({
-        appId: app.id,
-        appName: app.name,
-        containerUrl: app.containerUrl,
-        subdomain: app.subdomain ?? null,
-        icon: app.icon ?? null,
-        cards: manifest.info_cards,
-      });
-    }
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value) out.push(r.value);
   }
-
-  return providers;
+  return out;
 }
 
 /** Get all app widget declarations by live-fetching from running app containers */
