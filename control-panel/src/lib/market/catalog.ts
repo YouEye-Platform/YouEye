@@ -240,6 +240,7 @@ function manifestToMarketApp(manifest: AppManifest): MarketApp {
       widgets: manifest.capabilities.widgets,
       notifications: manifest.capabilities.notifications,
       smtp: manifest.capabilities.smtp,
+      link_handlers: manifest.capabilities.link_handlers,
     } : undefined,
   };
 }

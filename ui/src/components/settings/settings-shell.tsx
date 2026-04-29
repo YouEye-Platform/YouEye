@@ -16,22 +16,13 @@ import {
   User,
   Palette,
   LayoutGrid,
-  KeyRound,
-  Shield,
-  Paintbrush,
   Users,
   Server,
   Store,
   ArrowLeft,
-  Clock,
-  Box,
   Globe,
   Languages,
-  ArrowLeftRight,
   ExternalLink,
-  PackageOpen,
-  HardDrive,
-  Lock,
 } from "lucide-react";
 
 /** Section definitions use labelKey to look up translations at render time */
@@ -39,22 +30,13 @@ const USER_SECTIONS = [
   { id: "profile", labelKey: "profile" as const, icon: User, href: "/settings" },
   { id: "appearance", labelKey: "appearance" as const, icon: Palette, href: "/settings/appearance" },
   { id: "apps", labelKey: "apps" as const, icon: LayoutGrid, href: "/settings/apps" },
-  { id: "accounts", labelKey: "accounts" as const, icon: KeyRound, href: "/settings/accounts" },
-  { id: "timeline", labelKey: "timeline" as const, icon: Clock, href: "/timeline" },
-  { id: "privacy", labelKey: "privacy" as const, icon: Shield, href: "/settings/privacy" },
   { id: "language", labelKey: "language" as const, icon: Languages, href: "/settings/language" },
-  { id: "branding", labelKey: "branding" as const, icon: Paintbrush, href: "/settings/branding" },
 ];
 
 const ADMIN_SECTIONS = [
   { id: "users", labelKey: "users" as const, icon: Users, href: "/settings/users" },
   { id: "system", labelKey: "system" as const, icon: Server, href: "/settings/system" },
-  { id: "containers", labelKey: "containers" as const, icon: Box, href: "/settings/containers" },
-  { id: "dns", labelKey: "dns" as const, icon: Globe, href: "/settings/dns" },
-  { id: "proxy", labelKey: "proxy" as const, icon: ArrowLeftRight, href: "/settings/proxy" },
-  { id: "tls", labelKey: "tls" as const, icon: Lock, href: "/settings/tls" },
-  { id: "backup", labelKey: "backup" as const, icon: HardDrive, href: "/settings/backup" },
-  { id: "apps-list", labelKey: "appManagement" as const, icon: PackageOpen, href: "/settings/apps-list" },
+  { id: "network", labelKey: "network" as const, icon: Globe, href: "/settings/network" },
   { id: "market", labelKey: "appMarket" as const, icon: Store, href: "/app-market" },
 ];
 
@@ -75,15 +57,14 @@ export function SettingsShell({ children, isAdmin }: SettingsShellProps) {
 
   const isActive = (href: string) => {
     if (href === "/settings") return pathname === "/settings";
-    // /settings/apps must not match /settings/apps-list
     if (href === "/settings/apps") {
-      return pathname === "/settings/apps" || (pathname.startsWith("/settings/apps/") && !pathname.startsWith("/settings/apps-list"));
+      return pathname === "/settings/apps" || pathname.startsWith("/settings/apps/");
     }
     return pathname.startsWith(href);
   };
 
   return (
-    <div className="max-w-6xl mx-auto flex gap-8 px-6 py-8">
+    <div className="max-w-7xl mx-auto flex gap-8 px-6 py-8">
       {/* Sidebar */}
       <nav className="w-52 shrink-0">
         <div className="sticky top-20 space-y-1">

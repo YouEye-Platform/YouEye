@@ -306,6 +306,7 @@ export interface MarketApp {
     widgets?: boolean;
     notifications?: boolean | 'push';
     smtp?: boolean;
+    link_handlers?: Array<{ type: string; description: string; endpoint?: string; triggers: string[] }>;
   };
 }
 

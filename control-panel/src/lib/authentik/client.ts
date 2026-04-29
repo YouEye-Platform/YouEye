@@ -74,6 +74,7 @@ export interface AuthentikUser {
   last_login?: string;
   uid: string;
   path: string;
+  attributes?: Record<string, unknown>;
 }
 
 export interface AuthentikGroup {

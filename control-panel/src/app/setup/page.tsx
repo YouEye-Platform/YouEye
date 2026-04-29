@@ -40,9 +40,9 @@ interface SetupStep {
   message?: string;
 }
 
-// Steps: -2=language, -1=choice, 0=serverName(+LE inline), 1=wordart, 2=icon, 3=admin,
+// Steps: -2=language, 0=serverName(+LE inline), 1=wordart, 2=icon, 3=admin,
 //        4=provisioning, 5=tls(upload only), 6=dns
-// Restore flow: -2=language → -1=choice → 'restore'
+// Note: step -1 (choice) and 'restore' are disabled — backup feature is hidden
 type WizardStep = -2 | -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 'restore';
 
 // ─── Main Component ──────────────────────────────────────────
@@ -99,7 +99,7 @@ export default function SetupPage() {
     if (hasLanguageCookie) {
       const match = document.cookie.match(/ye-setup-language=(\w+)/);
       if (match) setSelectedLanguage(match[1]);
-      setStep(-1);
+      setStep(0);
     }
     setLanguageChecked(true);
   }, []);
@@ -165,7 +165,7 @@ export default function SetupPage() {
       });
       window.location.reload();
     } catch {
-      goToStep(-1);
+      goToStep(0);
     }
   }, [goToStep]);
 

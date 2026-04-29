@@ -391,6 +391,7 @@ export function TlsEmbedClient() {
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {status?.hasExternalCert && (
               <>
+                <button className="embed-btn" onClick={() => handleDownload("zip")} style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}>&#128230; Download Keys (ZIP)</button>
                 <button className="embed-btn" onClick={() => handleDownload("cert")}>&#128196; Certificate</button>
                 <button className="embed-btn" onClick={() => handleDownload("key")}>&#128273; Private Key</button>
                 <button className="embed-btn" onClick={() => handleDownload("bundle")}>&#128230; Bundle (JSON)</button>
@@ -400,7 +401,7 @@ export function TlsEmbedClient() {
           </div>
           <div className="embed-muted" style={{ fontSize: 12, marginTop: 6 }}>
             {status?.hasExternalCert
-              ? "Download your certificate and key as a backup."
+              ? "Download your certificate and private key as a ZIP archive, or individually."
               : "Download the CA certificate to trust self-signed certs in your browser/OS."}
           </div>
 

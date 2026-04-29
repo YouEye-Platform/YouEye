@@ -462,11 +462,30 @@ export class SpineClient {
   }
 
   /**
+   * Get real host-level system metrics (CPU, memory, disk, uptime).
+   * Spine reads from the actual host /proc, not the container's.
+   */
+  async getMetrics(): Promise<SpineMetricsResponse> {
+    return this.request('/api/metrics');
+  }
+
+  /**
    * Prune old backups based on retention policy.
    */
   async pruneBackups(type: string, appId: string, retention: number): Promise<{ deleted: number }> {
     return this.request('/api/backup/prune', 'POST', { type, app_id: appId, retention });
   }
+}
+
+export interface SpineMetricsResponse {
+  hostname: string;
+  os: string;
+  kernel: string;
+  uptime: string;
+  load_average: string;
+  cpu: { cores: number; model: string; usage_percent: string };
+  memory: { total_mb: number; used_mb: number; free_mb: number };
+  disk: { total_gb: number; used_gb: number; free_gb: number };
 }
 
 interface SpineBackupStatus {

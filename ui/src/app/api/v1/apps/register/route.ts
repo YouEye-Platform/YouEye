@@ -38,7 +38,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { id, name, container_url, subdomain, icon, token_hash, sso_entry_url, manifest: cpManifest } = body;
+  const { id, name, container_url, subdomain, icon, token_hash, sso_entry_url, link_handlers, manifest: cpManifest } = body;
 
   if (!id || !name || !container_url) {
     return NextResponse.json(
@@ -63,9 +63,15 @@ export async function POST(request: Request) {
     ssoEntryUrl: sso_entry_url,
   });
 
-  // Cache the manifest if we have one from either source
-  if (manifest) {
-    await updateAppManifest(id, manifest as unknown as Record<string, unknown>);
+  // Cache the manifest if we have one from either source. Merge in link_handlers from CP registration.
+  const manifestToStore = manifest
+    ? (manifest as unknown as Record<string, unknown>)
+    : {};
+  if (Array.isArray(link_handlers) && link_handlers.length > 0) {
+    manifestToStore.linkHandlers = link_handlers;
+  }
+  if (Object.keys(manifestToStore).length > 0) {
+    await updateAppManifest(id, manifestToStore);
   }
 
   return NextResponse.json({

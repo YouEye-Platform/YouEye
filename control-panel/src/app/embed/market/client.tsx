@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 
 // ─── Types ────────────────────────────────────────────────
 
@@ -38,6 +38,8 @@ interface MarketApp {
     longDescription?: string;
     screenshots?: Array<{ url: string; caption?: string }>;
   };
+  source?: string;
+  sourceUrl?: string;
 }
 
 interface InstallProgress {
@@ -80,26 +82,72 @@ interface ConnectionsData {
   internet: { hosts: string[]; needsInternet: boolean };
 }
 
-// ─── Constants ────────────────────────────────────────────
+// ─── Icon Map (Lucide-style SVG icons for native apps) ────
 
-const CATEGORY_ORDER = ["productivity", "search", "media", "social", "utilities"];
-const CATEGORY_LABELS: Record<string, string> = {
-  productivity: "Productivity",
-  search: "Search",
-  media: "Media",
-  social: "Social",
-  utilities: "Utilities",
-};
-
-// ─── SVG Icons (inline, no external deps) ─────────────────
-
-function ShieldIcon({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+const ICON_SVGS: Record<string, (size: number) => React.ReactElement> = {
+  "book-open": (s) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" /><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+    </svg>
+  ),
+  search: (s) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  ),
+  "sticky-note": (s) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /><path d="M14 3v4a2 2 0 0 0 2 2h4" />
+    </svg>
+  ),
+  film: (s) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" /><line x1="7" y1="2" x2="7" y2="22" /><line x1="17" y1="2" x2="17" y2="22" /><line x1="2" y1="12" x2="22" y2="12" /><line x1="2" y1="7" x2="7" y2="7" /><line x1="2" y1="17" x2="7" y2="17" /><line x1="17" y1="7" x2="22" y2="7" /><line x1="17" y1="17" x2="22" y2="17" />
+    </svg>
+  ),
+  "cloud-sun": (s) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="M20 12h2" /><path d="m19.07 4.93-1.41 1.41" /><path d="M15.947 12.65a4 4 0 0 0-5.925-4.128" /><path d="M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z" />
+    </svg>
+  ),
+  languages: (s) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m5 8 6 6" /><path d="m4 14 6-6 2-3" /><path d="M2 5h12" /><path d="M7 2h1" /><path d="m22 22-5-10-5 10" /><path d="M14 18h6" />
+    </svg>
+  ),
+  cloud: (s) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
+    </svg>
+  ),
+  globe: (s) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z" />
+    </svg>
+  ),
+  shield: (s) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     </svg>
-  );
+  ),
+  package: (s) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m7.5 4.27 9 5.15" /><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" /><path d="m3.3 7 8.7 5 8.7-5" /><path d="M12 22V12" />
+    </svg>
+  ),
+};
+
+function renderIcon(icon: string | undefined, size: number) {
+  if (!icon) return null;
+  const renderer = ICON_SVGS[icon];
+  if (renderer) return renderer(size);
+  // Try as emoji/unicode char
+  if (icon.length <= 4) return <span style={{ fontSize: size * 0.7 }}>{icon}</span>;
+  // Unknown icon name — show first letter
+  return <span style={{ fontSize: size * 0.5, fontWeight: 700 }}>{icon.charAt(0).toUpperCase()}</span>;
 }
+
+// ─── Small SVG Icons ──────────────────────────────────────
 
 function ArrowLeftIcon({ size = 16 }: { size?: number }) {
   return (
@@ -133,15 +181,31 @@ function ChevronRightIcon({ size = 20 }: { size?: number }) {
   );
 }
 
-function GlobeIcon({ size = 14 }: { size?: number }) {
+function PlusIcon({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z" />
+      <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
     </svg>
   );
 }
 
-function Link2Icon({ size = 14 }: { size?: number }) {
+function SearchIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  );
+}
+
+function RefreshIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+    </svg>
+  );
+}
+
+function LinkIcon({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9 17H7A5 5 0 0 1 7 7h2" /><path d="M15 7h2a5 5 0 1 1 0 10h-2" /><line x1="8" y1="12" x2="16" y2="12" />
@@ -149,7 +213,31 @@ function Link2Icon({ size = 14 }: { size?: number }) {
   );
 }
 
-// ─── Main Component ───────────────────────────────────────
+// ─── App Icon Component ──────────────────────────────────
+
+function AppIcon({ app, size = 48 }: { app: MarketApp; size?: number }) {
+  const borderRadius = size > 40 ? 16 : 12;
+  return (
+    <div style={{
+      width: size, height: size, borderRadius, flexShrink: 0,
+      background: "color-mix(in srgb, var(--embed-primary) 8%, var(--embed-card-bg))",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      overflow: "hidden", border: "1px solid color-mix(in srgb, var(--embed-border) 50%, transparent)",
+    }}>
+      {app.iconUrl ? (
+        <img src={app.iconUrl} alt="" style={{ width: size * 0.65, height: size * 0.65, objectFit: "contain" }} />
+      ) : app.icon ? (
+        <span style={{ color: "var(--embed-primary)" }}>{renderIcon(app.icon, size * 0.5)}</span>
+      ) : (
+        <span style={{ fontSize: size * 0.35, fontWeight: 700, color: "var(--embed-primary)" }}>
+          {app.name.charAt(0)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ─── Main Component ──────────────────────────────────────
 
 export function MarketEmbedClient() {
   const [apps, setApps] = useState<MarketApp[]>([]);
@@ -158,6 +246,7 @@ export function MarketEmbedClient() {
   const [refreshing, setRefreshing] = useState(false);
   const [domain, setDomain] = useState("");
   const [search, setSearch] = useState("");
+  const [activeCategory, setActiveCategory] = useState<string>("all");
 
   // Detail view
   const [selectedApp, setSelectedApp] = useState<MarketApp | null>(null);
@@ -167,11 +256,11 @@ export function MarketEmbedClient() {
   const [installForm, setInstallForm] = useState<{ subdomain: string; params: Record<string, string> }>({ subdomain: "", params: {} });
   const [installError, setInstallError] = useState<string | null>(null);
 
-  // Validation state (F1)
+  // Validation state
   const [validationReport, setValidationReport] = useState<{ valid: boolean; errors: { check: string; severity: string; message: string; detail?: string }[]; warnings: { check: string; severity: string; message: string; detail?: string }[]; info: { check: string; severity: string; message: string; detail?: string }[] } | null>(null);
   const [validating, setValidating] = useState(false);
 
-  // Connection toggles state
+  // Connection toggles
   const [connections, setConnections] = useState<ConnectionsData | null>(null);
   const [connectionToggles, setConnectionToggles] = useState<Record<string, boolean>>({});
   const [allowInternet, setAllowInternet] = useState(false);
@@ -188,6 +277,12 @@ export function MarketEmbedClient() {
 
   // Screenshot lightbox
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+
+  // Custom URL install
+  const [showCustomUrl, setShowCustomUrl] = useState(false);
+  const [customUrl, setCustomUrl] = useState("");
+  const [customFetching, setCustomFetching] = useState(false);
+  const [customError, setCustomError] = useState<string | null>(null);
 
   const fetchCatalog = useCallback(async () => {
     try {
@@ -223,7 +318,6 @@ export function MarketEmbedClient() {
         const active = allInstalls.filter((i) => !i.done);
         const done = allInstalls.filter((i) => i.done);
 
-        // Detect newly completed installs → notify parent UI
         const activeIds = new Set(active.map((i) => i.appId));
         for (const id of prevActiveRef.current) {
           if (!activeIds.has(id)) {
@@ -281,7 +375,6 @@ export function MarketEmbedClient() {
     setAllowInternet(false);
     setInstallTarget(app);
 
-    // F1: trigger async validation
     setValidating(true);
     fetch("/api/ui-bridge/market?action=validate", {
       method: "POST",
@@ -293,7 +386,6 @@ export function MarketEmbedClient() {
       .catch(() => {})
       .finally(() => setValidating(false));
 
-    // Fetch connections in background
     try {
       const res = await fetch(`/api/ui-bridge/market?action=connections&app=${encodeURIComponent(app.id)}`);
       if (res.ok) {
@@ -306,32 +398,19 @@ export function MarketEmbedClient() {
         setConnectionToggles(toggles);
         setAllowInternet(data.internet.needsInternet);
       }
-    } catch {
-      // Non-blocking — dialog still works without connections
-    }
+    } catch { /* non-blocking */ }
   };
 
   const handleInstall = async () => {
     if (!installTarget || !domain) return;
-
     const target = installTarget;
     const form = { ...installForm };
-
-    // Close dialog immediately — install proceeds in background
     setInstallTarget(null);
     setInstallError(null);
 
-    // Notify parent UI that install started
-    window.parent.postMessage({
-      type: "youeye-app-install-started",
-      appId: target.id,
-      appName: target.name,
-    }, "*");
-
-    // Track this install for the banner before polling picks it up
+    window.parent.postMessage({ type: "youeye-app-install-started", appId: target.id, appName: target.name }, "*");
     prevActiveRef.current.add(target.id);
 
-    // Build approved connections from toggles
     const approvedConnections = connections?.outgoing?.map(c => ({
       targetAppId: c.targetAppId,
       approved: connectionToggles[c.targetAppId] ?? false,
@@ -342,10 +421,7 @@ export function MarketEmbedClient() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          appId: target.id,
-          subdomain: form.subdomain,
-          domain,
-          enableSSO: true,
+          appId: target.id, subdomain: form.subdomain, domain, enableSSO: true,
           installParams: Object.keys(form.params).length > 0 ? form.params : undefined,
           approvedConnections: approvedConnections.length > 0 ? approvedConnections : undefined,
           allowInternet,
@@ -354,41 +430,22 @@ export function MarketEmbedClient() {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Install failed" }));
-        window.parent.postMessage({
-          type: "youeye-app-install-complete",
-          appId: target.id,
-          appName: target.name,
-          error: err.error || "Install failed",
-        }, "*");
+        window.parent.postMessage({ type: "youeye-app-install-complete", appId: target.id, appName: target.name, error: err.error || "Install failed" }, "*");
         prevActiveRef.current.delete(target.id);
         return;
       }
 
-      // Start polling for progress banner
-      if (!pollRef.current) {
-        pollRef.current = setInterval(pollActiveInstalls, 2000);
-      }
+      if (!pollRef.current) pollRef.current = setInterval(pollActiveInstalls, 2000);
 
-      // Consume SSE stream in background (don't block — just drain to avoid leak)
       const reader = res.body?.getReader();
       if (reader) {
         (async () => {
-          try {
-            while (true) {
-              const { done } = await reader.read();
-              if (done) break;
-            }
-          } catch { /* stream ended */ }
+          try { while (true) { const { done } = await reader.read(); if (done) break; } } catch { /* stream ended */ }
           fetchCatalog();
         })();
       }
     } catch (err) {
-      window.parent.postMessage({
-        type: "youeye-app-install-complete",
-        appId: target.id,
-        appName: target.name,
-        error: err instanceof Error ? err.message : "Install failed",
-      }, "*");
+      window.parent.postMessage({ type: "youeye-app-install-complete", appId: target.id, appName: target.name, error: err instanceof Error ? err.message : "Install failed" }, "*");
       prevActiveRef.current.delete(target.id);
     }
   };
@@ -412,53 +469,95 @@ export function MarketEmbedClient() {
     } finally {
       setUninstalling(false);
       setUninstallTarget(null);
+      setSelectedApp(null);
     }
   };
 
-  // ─── Filter & Group ─────────────────────────────────────
+  // Custom URL install
+  const handleCustomUrlFetch = async () => {
+    if (!customUrl.trim()) return;
+    setCustomFetching(true);
+    setCustomError(null);
+    try {
+      // Construct manifest URL from repo URL
+      let manifestUrl = customUrl.trim();
+      if (!manifestUrl.includes("youeye-app.yaml") && !manifestUrl.includes(".yaml") && !manifestUrl.includes(".yml")) {
+        // Assume it's a repo URL — construct manifest path
+        const cleanUrl = manifestUrl.replace(/\/$/, "");
+        manifestUrl = cleanUrl.includes("raw/branch")
+          ? cleanUrl
+          : `${cleanUrl}/raw/branch/main/youeye-app.yaml`;
+      }
+
+      const res = await fetch("/api/market/validate-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ manifestUrl }),
+      });
+      const data = await res.json();
+      if (!data.valid) {
+        setCustomError(data.errors?.join(", ") || "Invalid manifest");
+        return;
+      }
+
+      // Go straight to install — set up the app as install target
+      const app: MarketApp = {
+        ...data.manifest,
+        installed: false,
+        source: "url",
+        sourceUrl: manifestUrl,
+      };
+      setShowCustomUrl(false);
+      setCustomUrl("");
+      setSelectedApp(app);
+    } catch (err) {
+      setCustomError(err instanceof Error ? err.message : "Failed to fetch manifest");
+    } finally {
+      setCustomFetching(false);
+    }
+  };
+
+  // ─── Filter & Group ───────────────────────────────────
 
   const filtered = apps.filter(a => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return a.name.toLowerCase().includes(q)
-      || a.description.toLowerCase().includes(q)
-      || a.category.toLowerCase().includes(q)
-      || (a.tags || []).some(t => t.toLowerCase().includes(q));
+    if (search) {
+      const q = search.toLowerCase();
+      const matches = a.name.toLowerCase().includes(q)
+        || a.description.toLowerCase().includes(q)
+        || a.category.toLowerCase().includes(q)
+        || (a.tags || []).some(t => t.toLowerCase().includes(q));
+      if (!matches) return false;
+    }
+    if (activeCategory !== "all") {
+      return a.category === activeCategory;
+    }
+    return true;
   });
+
+  // Derive dynamic categories from catalog data
+  const allCategories = Array.from(new Set(apps.map(a => a.category).filter(Boolean))).sort();
 
   const nativeApps = filtered.filter(a => a.integration === "native" || a.type === "native");
   const marketplaceApps = filtered.filter(a => a.integration !== "native" && a.type !== "native");
+  const installedApps = filtered.filter(a => a.installed);
+  const availableApps = filtered.filter(a => !a.installed);
 
-  const installedMarketplace = marketplaceApps.filter(a => a.installed);
-  const availableMarketplace = marketplaceApps.filter(a => !a.installed);
-
-  const groupByCategory = (list: MarketApp[]) => {
-    const groups: Record<string, MarketApp[]> = {};
-    for (const app of list) {
-      const cat = app.category || "utilities";
-      (groups[cat] ??= []).push(app);
-    }
-    return groups;
-  };
-
-  const nativeGrouped = groupByCategory(nativeApps);
-  const availableGrouped = groupByCategory(availableMarketplace);
-
-  // ─── Loading ────────────────────────────────────────────
+  // ─── Loading ──────────────────────────────────────────
 
   if (loading) {
     return (
-      <div style={{ padding: 16 }}>
-        <div className="embed-skeleton" style={{ height: 20, width: 200, marginBottom: 16 }} />
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 12 }}>
+      <div style={{ padding: "32px 40px" }}>
+        <div className="embed-skeleton" style={{ height: 28, width: 200, marginBottom: 8 }} />
+        <div className="embed-skeleton" style={{ height: 16, width: 300, marginBottom: 32 }} />
+        <div className="embed-skeleton" style={{ height: 44, width: "100%", marginBottom: 24, borderRadius: 12 }} />
+        <div style={{ display: "flex", gap: 8, marginBottom: 32 }}>
+          {[1, 2, 3, 4, 5].map(i => (
+            <div key={i} className="embed-skeleton" style={{ height: 34, width: 90, borderRadius: 17 }} />
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
           {[1, 2, 3, 4, 5, 6].map(i => (
-            <div key={i} className="embed-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 16 }}>
-              <div className="embed-skeleton" style={{ height: 40, width: 40, borderRadius: 10, flexShrink: 0 }} />
-              <div style={{ flex: 1 }}>
-                <div className="embed-skeleton" style={{ height: 14, width: 120, marginBottom: 6 }} />
-                <div className="embed-skeleton" style={{ height: 12, width: "80%" }} />
-              </div>
-            </div>
+            <div key={i} className="embed-skeleton" style={{ height: 80, borderRadius: 14 }} />
           ))}
         </div>
       </div>
@@ -467,92 +566,97 @@ export function MarketEmbedClient() {
 
   if (error) {
     return (
-      <div style={{ padding: 16 }}>
-        <div className="embed-card" style={{ textAlign: "center", padding: 32 }}>
-          <div style={{ color: "var(--embed-danger)", marginBottom: 8 }}>{error}</div>
-          <button className="embed-btn" onClick={() => { setLoading(true); fetchCatalog(); }}>Retry</button>
-        </div>
+      <div style={{ padding: "32px 40px", textAlign: "center" }}>
+        <div style={{ color: "var(--embed-danger)", marginBottom: 12, fontSize: 15 }}>{error}</div>
+        <button className="embed-btn" onClick={() => { setLoading(true); fetchCatalog(); }}>Retry</button>
       </div>
     );
   }
 
-  // ─── App Detail View ────────────────────────────────────
+  // ─── Render App Detail Page ────────────────────────────
 
   if (selectedApp) {
     const app = selectedApp;
     const isNative = app.integration === "native";
     const longDesc = app.detail?.longDescription || app.description;
     const screenshots = app.detail?.screenshots || [];
+    const sameCategoryApps = apps.filter(a => a.category === app.category && a.id !== app.id).slice(0, 6);
 
     return (
-      <div style={{ padding: 16, maxWidth: 900 }}>
-        {/* Back button */}
+      <div style={{ padding: "24px 40px", maxWidth: 960, margin: "0 auto" }}>
+        {/* Back */}
         <button
           onClick={() => { setSelectedApp(null); setLightboxIndex(null); }}
           style={{
             display: "flex", alignItems: "center", gap: 6, fontSize: 13,
             color: "var(--embed-text-muted)", background: "none", border: "none",
-            cursor: "pointer", marginBottom: 16, padding: 0,
+            cursor: "pointer", marginBottom: 20, padding: 0,
           }}
         >
           <ArrowLeftIcon size={16} />
           Back to App Market
         </button>
 
-        {/* Header card */}
-        <div className="embed-card" style={{ padding: 20, marginBottom: 16 }}>
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
-            {/* Icon */}
-            <div style={{
-              width: 64, height: 64, borderRadius: 14, flexShrink: 0,
-              background: "color-mix(in srgb, var(--embed-primary) 10%, transparent)",
-              display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
-            }}>
-              {app.iconUrl ? (
-                <img src={app.iconUrl} alt={app.name} style={{ width: 40, height: 40, objectFit: "contain" }} />
-              ) : (
-                <span style={{ fontSize: 24, fontWeight: 700, color: "var(--embed-primary)" }}>
-                  {app.name.charAt(0)}
-                </span>
-              )}
-            </div>
-
-            {/* Info */}
+        {/* Hero Card */}
+        <div style={{
+          background: "var(--embed-card-bg)", border: "1px solid var(--embed-border)",
+          borderRadius: 16, padding: 28, marginBottom: 20,
+        }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 20 }}>
+            <AppIcon app={app} size={80} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 20, fontWeight: 700 }}>{app.name}</span>
-                {app.version && (
-                  <span className="embed-badge" style={{ fontSize: 11 }}>v{app.version}</span>
-                )}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+                <span style={{ fontSize: 24, fontWeight: 700 }}>{app.name}</span>
+                {app.version && <span className="embed-badge" style={{ fontSize: 11 }}>v{app.version}</span>}
                 {isNative ? (
                   <span style={{
-                    display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 500,
-                    padding: "2px 8px", borderRadius: 9999,
+                    display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600,
+                    padding: "3px 10px", borderRadius: 9999,
                     background: "color-mix(in srgb, var(--embed-primary) 12%, transparent)",
                     color: "var(--embed-primary)", border: "1px solid color-mix(in srgb, var(--embed-primary) 25%, transparent)",
                   }}>
-                    <ShieldIcon size={11} /> YouEye
+                    {renderIcon("shield", 12)} YouEye
+                  </span>
+                ) : app.source === "url" ? (
+                  <span style={{
+                    display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600,
+                    padding: "3px 10px", borderRadius: 9999,
+                    color: "var(--embed-warning)", border: "1px solid color-mix(in srgb, var(--embed-warning) 30%, transparent)",
+                  }}>
+                    Custom
                   </span>
                 ) : (
                   <span style={{
                     display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 500,
-                    padding: "2px 8px", borderRadius: 9999,
+                    padding: "3px 10px", borderRadius: 9999,
                     color: "var(--embed-text-muted)", border: "1px solid var(--embed-border)",
                   }}>
-                    <GlobeIcon size={11} /> External
+                    {renderIcon("globe", 11)} Community
                   </span>
                 )}
               </div>
-              <div className="embed-muted" style={{ fontSize: 12, marginTop: 4, textTransform: "capitalize" }}>
+              <div style={{ fontSize: 14, color: "var(--embed-text-muted)", marginBottom: 8 }}>{app.description}</div>
+              <div style={{ fontSize: 12, color: "var(--embed-text-muted)", textTransform: "capitalize", opacity: 0.7 }}>
                 {app.category}
+                {app.updateAvailable && (
+                  <span style={{
+                    marginLeft: 12, color: "var(--embed-primary)", fontWeight: 500,
+                  }}>
+                    Update available: v{app.catalogVersion}
+                  </span>
+                )}
               </div>
 
-              {/* Status if installed */}
               {app.installed && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 13 }}>
-                  <span style={{ color: "var(--embed-success)", fontWeight: 500 }}>Installed</span>
-                  {app.installInfo?.status === "running" && (
-                    <span className="embed-badge-green" style={{ fontSize: 10 }}>Running</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+                  <span style={{
+                    display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600,
+                    color: "var(--embed-success)",
+                  }}>
+                    Installed
+                  </span>
+                  {app.installedVersion && (
+                    <span style={{ fontSize: 11, color: "var(--embed-text-muted)" }}>v{app.installedVersion}</span>
                   )}
                 </div>
               )}
@@ -560,29 +664,35 @@ export function MarketEmbedClient() {
           </div>
 
           {/* Action buttons */}
-          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+          <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
             {!app.installed ? (
               activeInstalls.some(i => i.appId === app.id) ? (
-                <button className="embed-btn" disabled
-                  style={{ fontWeight: 500, padding: "8px 20px", opacity: 0.6 }}>
+                <button className="embed-btn" disabled style={{ padding: "10px 24px", fontSize: 14, opacity: 0.6 }}>
                   Installing...
                 </button>
               ) : (
-                <button className="embed-btn" onClick={() => openInstallForm(app)}
-                  style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)", fontWeight: 500, padding: "8px 20px" }}>
+                <button className="embed-btn" onClick={() => openInstallForm(app)} style={{
+                  padding: "10px 24px", fontSize: 14, fontWeight: 600,
+                  background: "var(--embed-primary)", color: "#fff",
+                  border: "1px solid var(--embed-primary)", borderRadius: 10,
+                }}>
                   Install {app.name}
                 </button>
               )
             ) : (
               <>
                 {app.entrances?.[0]?.subdomain && domain && (
-                  <button className="embed-btn" onClick={() => window.open(`https://${app.entrances![0].subdomain}.${domain}`, "_blank")}
-                    style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)", fontWeight: 500, padding: "8px 20px" }}>
+                  <button className="embed-btn" onClick={() => window.open(`https://${app.entrances![0].subdomain}.${domain}`, "_blank")} style={{
+                    padding: "10px 24px", fontSize: 14, fontWeight: 600,
+                    borderColor: "var(--embed-primary)", color: "var(--embed-primary)", borderRadius: 10,
+                  }}>
                     <ExternalLinkIcon size={14} /> Open {app.name}
                   </button>
                 )}
-                <button className="embed-btn" onClick={() => setUninstallTarget(app)}
-                  style={{ borderColor: "var(--embed-danger)", color: "var(--embed-danger)", padding: "8px 20px" }}>
+                <button className="embed-btn" onClick={() => setUninstallTarget(app)} style={{
+                  padding: "10px 20px", fontSize: 13,
+                  borderColor: "var(--embed-danger)", color: "var(--embed-danger)", borderRadius: 10,
+                }}>
                   Uninstall
                 </button>
               </>
@@ -591,40 +701,38 @@ export function MarketEmbedClient() {
         </div>
 
         {/* Description */}
-        <div className="embed-card" style={{ padding: 20, marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--embed-text-muted)", marginBottom: 10 }}>
-            Description
+        <div style={{
+          background: "var(--embed-card-bg)", border: "1px solid var(--embed-border)",
+          borderRadius: 14, padding: 24, marginBottom: 16,
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--embed-text-muted)", marginBottom: 12 }}>
+            About
           </div>
-          <div style={{ fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-line" }}>{longDesc}</div>
+          <div style={{ fontSize: 14, lineHeight: 1.75, whiteSpace: "pre-line", color: "var(--embed-text)" }}>{longDesc}</div>
         </div>
 
         {/* Screenshots */}
         {screenshots.length > 0 && (
-          <div className="embed-card" style={{ padding: 20, marginBottom: 16 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--embed-text-muted)", marginBottom: 10 }}>
+          <div style={{
+            background: "var(--embed-card-bg)", border: "1px solid var(--embed-border)",
+            borderRadius: 14, padding: 24, marginBottom: 16,
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--embed-text-muted)", marginBottom: 12 }}>
               Screenshots
             </div>
-            <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4 }}>
+            <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 4 }}>
               {screenshots.map((shot, i) => (
-                <button
-                  key={i}
-                  onClick={() => setLightboxIndex(i)}
-                  style={{
-                    flexShrink: 0, border: "1px solid var(--embed-border)", borderRadius: 8,
-                    overflow: "hidden", cursor: "pointer", background: "none", padding: 0,
-                  }}
+                <button key={i} onClick={() => setLightboxIndex(i)} style={{
+                  flexShrink: 0, border: "1px solid var(--embed-border)", borderRadius: 10,
+                  overflow: "hidden", cursor: "pointer", background: "none", padding: 0,
+                  transition: "transform 0.15s, box-shadow 0.15s",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.02)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.15)"; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = ""; }}
                 >
-                  <img
-                    src={shot.url}
-                    alt={shot.caption || `Screenshot ${i + 1}`}
-                    style={{ height: 160, width: "auto", objectFit: "cover", display: "block" }}
-                  />
+                  <img src={shot.url} alt={shot.caption || `Screenshot ${i + 1}`} style={{ height: 180, width: "auto", objectFit: "cover", display: "block" }} />
                   {shot.caption && (
-                    <div style={{
-                      fontSize: 11, padding: "6px 8px", color: "var(--embed-text-muted)",
-                      background: "var(--embed-hover)", whiteSpace: "nowrap", overflow: "hidden",
-                      textOverflow: "ellipsis", maxWidth: 260,
-                    }}>
+                    <div style={{ fontSize: 11, padding: "8px 10px", color: "var(--embed-text-muted)", background: "var(--embed-hover)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 280 }}>
                       {shot.caption}
                     </div>
                   )}
@@ -635,62 +743,41 @@ export function MarketEmbedClient() {
         )}
 
         {/* Details */}
-        <div className="embed-card" style={{ padding: 20, marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--embed-text-muted)", marginBottom: 12 }}>
+        <div style={{
+          background: "var(--embed-card-bg)", border: "1px solid var(--embed-border)",
+          borderRadius: 14, padding: 24, marginBottom: 16,
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--embed-text-muted)", marginBottom: 14 }}>
             Details
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 24px" }}>
-            {/* SSO */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{
-                width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
-                background: "var(--embed-hover)",
-              }}>
-                <ShieldIcon size={16} />
-              </div>
-              <div>
-                <div style={{ fontSize: 11, color: "var(--embed-text-muted)" }}>SSO Support</div>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>
-                  {(app.supportsSSO || app.sso !== false)
-                    ? <span style={{ color: "var(--embed-success)" }}>Enabled</span>
-                    : app.forwardAuth !== "disabled"
-                      ? <span style={{ color: "var(--embed-success)" }}>Forward-auth</span>
-                      : <span style={{ color: "var(--embed-text-muted)" }}>Disabled</span>}
-                </div>
-              </div>
-            </div>
-
-            {/* Website */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px 28px" }}>
+            <DetailItem icon="shield" label="SSO Support" value={
+              (app.supportsSSO || app.sso !== false)
+                ? <span style={{ color: "var(--embed-success)" }}>Enabled</span>
+                : app.forwardAuth !== "disabled"
+                  ? <span style={{ color: "var(--embed-success)" }}>Forward-auth</span>
+                  : <span style={{ color: "var(--embed-text-muted)" }}>No</span>
+            } />
             {app.website && (
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{
-                  width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
-                  background: "var(--embed-hover)",
-                }}>
-                  <GlobeIcon size={16} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, color: "var(--embed-text-muted)" }}>Website</div>
-                  <a href={app.website} target="_blank" rel="noopener noreferrer"
-                    style={{ fontSize: 13, fontWeight: 500, color: "var(--embed-primary)", textDecoration: "none", display: "flex", alignItems: "center", gap: 4 }}>
-                    {(() => { try { return new URL(app.website).hostname; } catch { return app.website; } })()}
-                    <ExternalLinkIcon size={11} />
-                  </a>
-                </div>
-              </div>
+              <DetailItem icon="globe" label="Website" value={
+                <a href={app.website} target="_blank" rel="noopener noreferrer" style={{ color: "var(--embed-primary)", textDecoration: "none", display: "flex", alignItems: "center", gap: 4 }}>
+                  {(() => { try { return new URL(app.website).hostname; } catch { return app.website; } })()}
+                  <ExternalLinkIcon size={11} />
+                </a>
+              } />
             )}
           </div>
 
           {/* Tags */}
           {app.tags && app.tags.length > 0 && (
-            <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--embed-border)" }}>
-              <div style={{ fontSize: 11, color: "var(--embed-text-muted)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 500 }}>
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--embed-border)" }}>
+              <div style={{ fontSize: 11, color: "var(--embed-text-muted)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>
                 Tags
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {app.tags.map(tag => (
                   <span key={tag} style={{
-                    fontSize: 11, padding: "3px 10px", borderRadius: 9999,
+                    fontSize: 11, padding: "4px 12px", borderRadius: 9999,
                     background: "var(--embed-hover)", color: "var(--embed-text-muted)",
                   }}>
                     {tag}
@@ -702,38 +789,47 @@ export function MarketEmbedClient() {
 
           {/* Entrances */}
           {app.entrances && app.entrances.length > 0 && (
-            <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--embed-border)" }}>
-              <div style={{ fontSize: 11, color: "var(--embed-text-muted)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 500 }}>
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--embed-border)" }}>
+              <div style={{ fontSize: 11, color: "var(--embed-text-muted)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>
                 Access Points
               </div>
               {app.entrances.map((e, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 4 }}>
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 4 }}>
                   <span style={{ fontWeight: 500 }}>{e.name}</span>
-                  {e.path && <span className="embed-muted">{e.path}</span>}
-                  {e.authLevel && (
-                    <span className="embed-badge" style={{ fontSize: 10 }}>{e.authLevel}</span>
-                  )}
+                  {e.path && <span style={{ color: "var(--embed-text-muted)" }}>{e.path}</span>}
+                  {e.authLevel && <span className="embed-badge" style={{ fontSize: 10 }}>{e.authLevel}</span>}
                 </div>
               ))}
             </div>
           )}
         </div>
 
-        {/* Screenshot Lightbox */}
+        {/* Related Apps */}
+        {sameCategoryApps.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--embed-text-muted)", marginBottom: 12, textTransform: "capitalize" }}>
+              More in {app.category}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
+              {sameCategoryApps.map(a => (
+                <AppCard key={a.id} app={a} onSelect={setSelectedApp} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Lightbox */}
         {lightboxIndex !== null && screenshots[lightboxIndex] && (
-          <div
-            onClick={() => setLightboxIndex(null)}
-            style={{
-              position: "fixed", inset: 0, zIndex: 200,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)",
-            }}
-          >
+          <div onClick={() => setLightboxIndex(null)} style={{
+            position: "fixed", inset: 0, zIndex: 200,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "rgba(0,0,0,0.8)", backdropFilter: "blur(6px)",
+          }}>
             <div onClick={e => e.stopPropagation()} style={{ position: "relative", maxWidth: "90vw", maxHeight: "90vh" }}>
               {lightboxIndex > 0 && (
                 <button onClick={() => setLightboxIndex(lightboxIndex - 1)} style={{
                   position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", zIndex: 10,
-                  padding: 8, borderRadius: "50%", background: "rgba(0,0,0,0.5)", color: "white",
+                  padding: 10, borderRadius: "50%", background: "rgba(0,0,0,0.6)", color: "white",
                   border: "none", cursor: "pointer",
                 }}>
                   <ChevronLeftIcon />
@@ -742,148 +838,114 @@ export function MarketEmbedClient() {
               {lightboxIndex < screenshots.length - 1 && (
                 <button onClick={() => setLightboxIndex(lightboxIndex + 1)} style={{
                   position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", zIndex: 10,
-                  padding: 8, borderRadius: "50%", background: "rgba(0,0,0,0.5)", color: "white",
+                  padding: 10, borderRadius: "50%", background: "rgba(0,0,0,0.6)", color: "white",
                   border: "none", cursor: "pointer",
                 }}>
                   <ChevronRightIcon />
                 </button>
               )}
-              <img
-                src={screenshots[lightboxIndex].url}
-                alt={screenshots[lightboxIndex].caption || `Screenshot ${lightboxIndex + 1}`}
-                style={{ maxHeight: "85vh", width: "auto", objectFit: "contain", borderRadius: 8 }}
-              />
+              <img src={screenshots[lightboxIndex].url} alt={screenshots[lightboxIndex].caption || ""} style={{ maxHeight: "85vh", width: "auto", objectFit: "contain", borderRadius: 12 }} />
               {screenshots[lightboxIndex].caption && (
-                <p style={{ textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.8)", marginTop: 10 }}>
-                  {screenshots[lightboxIndex].caption}
-                </p>
+                <p style={{ textAlign: "center", fontSize: 13, color: "rgba(255,255,255,0.8)", marginTop: 10 }}>{screenshots[lightboxIndex].caption}</p>
               )}
-              <p style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
-                {lightboxIndex + 1} / {screenshots.length}
-              </p>
+              <p style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>{lightboxIndex + 1} / {screenshots.length}</p>
             </div>
           </div>
         )}
 
-        {/* Install / Uninstall dialogs rendered below */}
         {renderInstallDialog()}
         {renderUninstallDialog()}
       </div>
     );
   }
 
-  // ─── Catalog View ───────────────────────────────────────
-
-  function renderCategorySection(label: string, apps: MarketApp[]) {
-    if (!apps.length) return null;
-    return (
-      <div style={{ marginBottom: 20 }} key={label}>
-        <div style={{
-          fontSize: 11, fontWeight: 600, color: "var(--embed-text-muted)",
-          textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8,
-        }}>
-          {label}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
-          {apps.map(app => (
-            <AppCard key={app.id} app={app} onSelect={setSelectedApp} onInstall={openInstallForm} onUninstall={setUninstallTarget} isInstalling={activeInstalls.some(i => i.appId === app.id)} />
-          ))}
-        </div>
-      </div>
-    );
-  }
+  // ─── Catalog View ─────────────────────────────────────
 
   function renderInstallDialog() {
     if (!installTarget) return null;
     return (
-      <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", zIndex: 100 }}
+      <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", zIndex: 100 }}
         onClick={() => setInstallTarget(null)}>
-        <div className="embed-card" style={{ maxWidth: 480, width: "90%", maxHeight: "80vh", overflow: "auto" }}
-          onClick={e => e.stopPropagation()}>
-          <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>
-            Install {installTarget.name}
-          </div>
-          <div className="embed-muted" style={{ fontSize: 12, marginBottom: 16 }}>
-            {installTarget.description}
+        <div style={{
+          maxWidth: 500, width: "92%", maxHeight: "80vh", overflow: "auto",
+          background: "var(--embed-card-bg)", border: "1px solid var(--embed-border)",
+          borderRadius: 16, padding: 24,
+        }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+            <AppIcon app={installTarget} size={40} />
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>Install {installTarget.name}</div>
+              <div style={{ fontSize: 12, color: "var(--embed-text-muted)" }}>{installTarget.description}</div>
+            </div>
           </div>
 
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Subdomain</div>
+          {/* Subdomain */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Subdomain</div>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <input type="text" value={installForm.subdomain}
                 onChange={e => setInstallForm(f => ({ ...f, subdomain: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "") }))}
                 style={{
-                  flex: 1, padding: "6px 10px", fontSize: 13, borderRadius: 6,
-                  border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
+                  flex: 1, padding: "8px 12px", fontSize: 13, borderRadius: 8,
+                  border: "1px solid var(--embed-border)", background: "var(--embed-bg, var(--embed-card-bg))",
                   color: "var(--embed-text)", outline: "none",
                 }} />
-              <span className="embed-muted" style={{ fontSize: 13 }}>.{domain}</span>
+              <span style={{ fontSize: 13, color: "var(--embed-text-muted)" }}>.{domain}</span>
             </div>
           </div>
 
+          {/* Install params */}
           {installTarget.installParams?.map(param => (
-            <div key={param.name} style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>
+            <div key={param.name} style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
                 {param.label || param.name}
                 {param.required && <span style={{ color: "var(--embed-danger)" }}> *</span>}
               </div>
-              {param.description && (
-                <div className="embed-muted" style={{ fontSize: 11, marginBottom: 4 }}>{param.description}</div>
-              )}
+              {param.description && <div style={{ fontSize: 11, color: "var(--embed-text-muted)", marginBottom: 4 }}>{param.description}</div>}
               {param.choices ? (
-                <select
-                  value={installForm.params[param.name] || ""}
-                  onChange={e => setInstallForm(f => ({ ...f, params: { ...f.params, [param.name]: e.target.value } }))}
-                  style={{
-                    width: "100%", padding: "6px 10px", fontSize: 13, borderRadius: 6,
-                    border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
-                    color: "var(--embed-text)", outline: "none",
-                  }}>
+                <select value={installForm.params[param.name] || ""} onChange={e => setInstallForm(f => ({ ...f, params: { ...f.params, [param.name]: e.target.value } }))} style={{
+                  width: "100%", padding: "8px 12px", fontSize: 13, borderRadius: 8,
+                  border: "1px solid var(--embed-border)", background: "var(--embed-bg, var(--embed-card-bg))",
+                  color: "var(--embed-text)", outline: "none",
+                }}>
                   <option value="">Select...</option>
                   {param.choices.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               ) : (
-                <input
-                  type={param.type === "number" ? "number" : "text"}
-                  value={installForm.params[param.name] || ""}
-                  onChange={e => setInstallForm(f => ({ ...f, params: { ...f.params, [param.name]: e.target.value } }))}
-                  placeholder={param.default || ""}
-                  style={{
-                    width: "100%", padding: "6px 10px", fontSize: 13, borderRadius: 6,
-                    border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
-                    color: "var(--embed-text)", outline: "none",
-                  }} />
+                <input type={param.type === "number" ? "number" : "text"} value={installForm.params[param.name] || ""} onChange={e => setInstallForm(f => ({ ...f, params: { ...f.params, [param.name]: e.target.value } }))} placeholder={param.default || ""} style={{
+                  width: "100%", padding: "8px 12px", fontSize: 13, borderRadius: 8,
+                  border: "1px solid var(--embed-border)", background: "var(--embed-bg, var(--embed-card-bg))",
+                  color: "var(--embed-text)", outline: "none",
+                }} />
               )}
             </div>
           ))}
 
-          {/* F1: Validation report */}
+          {/* Validation */}
           {validating && (
-            <div style={{ fontSize: 11, color: "var(--embed-muted-text)", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 10, height: 10, border: "2px solid var(--embed-primary)", borderTopColor: "transparent", borderRadius: "50%", animation: "embed-spin 0.8s linear infinite", display: "inline-block" }} />
+            <div style={{ fontSize: 11, color: "var(--embed-text-muted)", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 12, height: 12, border: "2px solid var(--embed-primary)", borderTopColor: "transparent", borderRadius: "50%", animation: "embed-spin 0.8s linear infinite", display: "inline-block" }} />
               Validating manifest...
             </div>
           )}
           {validationReport && !validating && (
-            <details style={{ marginBottom: 12, border: `1px solid ${validationReport.errors.length > 0 ? "var(--embed-danger)" : validationReport.warnings.length > 0 ? "var(--embed-warning, #f59e0b)" : "var(--embed-success)"}`, borderRadius: 6, overflow: "hidden" }}
+            <details style={{ marginBottom: 14, border: `1px solid ${validationReport.errors.length > 0 ? "var(--embed-danger)" : validationReport.warnings.length > 0 ? "var(--embed-warning)" : "var(--embed-success)"}`, borderRadius: 8, overflow: "hidden" }}
               open={validationReport.errors.length > 0}>
-              <summary style={{ cursor: "pointer", padding: "6px 8px", fontSize: 11, fontWeight: 500, display: "flex", alignItems: "center", gap: 6,
-                color: validationReport.errors.length > 0 ? "var(--embed-danger)" : validationReport.warnings.length > 0 ? "var(--embed-warning, #f59e0b)" : "var(--embed-success)",
+              <summary style={{ cursor: "pointer", padding: "8px 10px", fontSize: 12, fontWeight: 500, display: "flex", alignItems: "center", gap: 6,
+                color: validationReport.errors.length > 0 ? "var(--embed-danger)" : validationReport.warnings.length > 0 ? "var(--embed-warning)" : "var(--embed-success)",
                 background: validationReport.errors.length > 0 ? "rgba(239,68,68,0.06)" : validationReport.warnings.length > 0 ? "rgba(245,158,11,0.06)" : "rgba(34,197,94,0.06)" }}>
                 <span>{validationReport.errors.length > 0 ? "\u2717" : validationReport.warnings.length > 0 ? "\u26a0" : "\u2713"}</span>
-                {validationReport.errors.length > 0
-                  ? `${validationReport.errors.length} issue${validationReport.errors.length > 1 ? "s" : ""} found`
-                  : validationReport.warnings.length > 0
-                    ? `Manifest OK — ${validationReport.warnings.length} warning${validationReport.warnings.length > 1 ? "s" : ""}`
-                    : "Manifest verified"}
+                {validationReport.errors.length > 0 ? `${validationReport.errors.length} issue${validationReport.errors.length > 1 ? "s" : ""} found`
+                  : validationReport.warnings.length > 0 ? `Manifest OK \u2014 ${validationReport.warnings.length} warning${validationReport.warnings.length > 1 ? "s" : ""}`
+                  : "Manifest verified"}
               </summary>
-              <div style={{ padding: "4px 8px", fontSize: 11 }}>
+              <div style={{ padding: "6px 10px", fontSize: 11 }}>
                 {[...validationReport.errors, ...validationReport.warnings, ...validationReport.info].map((item, i) => (
-                  <div key={i} style={{ padding: "3px 0", display: "flex", alignItems: "flex-start", gap: 6, color: item.severity === "error" ? "var(--embed-danger)" : item.severity === "warning" ? "var(--embed-warning, #f59e0b)" : "var(--embed-muted-text)" }}>
+                  <div key={i} style={{ padding: "3px 0", display: "flex", alignItems: "flex-start", gap: 6, color: item.severity === "error" ? "var(--embed-danger)" : item.severity === "warning" ? "var(--embed-warning)" : "var(--embed-text-muted)" }}>
                     <span style={{ flexShrink: 0 }}>{item.severity === "error" ? "\u2717" : item.severity === "warning" ? "\u26a0" : "\u2139"}</span>
                     <div>
                       <div>{item.message}</div>
-                      {item.detail && <div style={{ fontSize: 10, color: "var(--embed-muted-text)", marginTop: 2 }}>{item.detail}</div>}
+                      {item.detail && <div style={{ fontSize: 10, color: "var(--embed-text-muted)", marginTop: 2 }}>{item.detail}</div>}
                     </div>
                   </div>
                 ))}
@@ -891,109 +953,66 @@ export function MarketEmbedClient() {
             </details>
           )}
 
-
           {/* Connections */}
           {connections && connections.outgoing.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
-                <Link2Icon size={14} />
-                Connections
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                <LinkIcon size={14} /> Connections
               </div>
-              <div className="embed-muted" style={{ fontSize: 11, marginBottom: 8 }}>
-                This app can connect to the following apps. Toggle to allow or deny.
-              </div>
+              <div style={{ fontSize: 11, color: "var(--embed-text-muted)", marginBottom: 8 }}>Toggle to allow or deny app connections.</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {connections.outgoing.map(c => (
                   <div key={c.targetAppId} style={{
                     display: "flex", alignItems: "center", justifyContent: "space-between",
-                    padding: "8px 10px", borderRadius: 6,
-                    border: "1px solid var(--embed-border)",
-                    background: "var(--embed-bg)",
+                    padding: "8px 12px", borderRadius: 8, border: "1px solid var(--embed-border)",
                   }}>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 500 }}>{c.targetAppName}</div>
-                      <div className="embed-muted" style={{ fontSize: 11 }}>
+                      <div style={{ fontSize: 11, color: "var(--embed-text-muted)" }}>
                         {c.description || `Connect to ${c.targetAppName}`}
-                        {!c.installed && (
-                          <span style={{ marginLeft: 6, color: "var(--embed-warning, #b8860b)" }}>
-                            (not installed)
-                          </span>
-                        )}
+                        {!c.installed && <span style={{ marginLeft: 6, color: "var(--embed-warning)" }}>(not installed)</span>}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setConnectionToggles(prev => ({ ...prev, [c.targetAppId]: !prev[c.targetAppId] }))}
-                      style={{
-                        position: "relative", width: 36, height: 20, borderRadius: 10, border: "none", cursor: "pointer",
-                        background: connectionToggles[c.targetAppId] ? "var(--embed-primary, #3b82f6)" : "var(--embed-border, #555)",
-                        transition: "background 0.2s",
-                        flexShrink: 0,
-                      }}>
-                      <span style={{
-                        position: "absolute", top: 2, left: connectionToggles[c.targetAppId] ? 18 : 2,
-                        width: 16, height: 16, borderRadius: "50%", background: "#fff",
-                        transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
-                      }} />
-                    </button>
+                    <ToggleSwitch on={connectionToggles[c.targetAppId] ?? false} onChange={v => setConnectionToggles(prev => ({ ...prev, [c.targetAppId]: v }))} />
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Internet / LAN Access */}
-          <div style={{ marginBottom: 12 }}>
+          {/* Internet */}
+          <div style={{ marginBottom: 14 }}>
             <div style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",
-              padding: "8px 10px", borderRadius: 6,
-              border: "1px solid var(--embed-border)",
-              background: "var(--embed-bg)",
+              padding: "8px 12px", borderRadius: 8, border: "1px solid var(--embed-border)",
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <GlobeIcon size={16} />
+                {renderIcon("globe", 16)}
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>Allow Internet &amp; LAN Access</div>
-                  <div className="embed-muted" style={{ fontSize: 11 }}>
-                    {connections?.internet?.hosts?.length
-                      ? `Uses: ${connections.internet.hosts.join(", ")}`
-                      : "Allow this app to make outbound network requests"}
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>Internet &amp; LAN Access</div>
+                  <div style={{ fontSize: 11, color: "var(--embed-text-muted)" }}>
+                    {connections?.internet?.hosts?.length ? `Uses: ${connections.internet.hosts.join(", ")}` : "Allow outbound network requests"}
                   </div>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setAllowInternet(prev => !prev)}
-                style={{
-                  position: "relative", width: 36, height: 20, borderRadius: 10, border: "none", cursor: "pointer",
-                  background: allowInternet ? "var(--embed-primary, #3b82f6)" : "var(--embed-border, #555)",
-                  transition: "background 0.2s",
-                  flexShrink: 0,
-                }}>
-                <span style={{
-                  position: "absolute", top: 2, left: allowInternet ? 18 : 2,
-                  width: 16, height: 16, borderRadius: "50%", background: "#fff",
-                  transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
-                }} />
-              </button>
+              <ToggleSwitch on={allowInternet} onChange={setAllowInternet} />
             </div>
           </div>
 
           {(installTarget.supportsSSO || installTarget.sso !== false) && (
-            <div className="embed-badge-green" style={{ marginBottom: 12, display: "inline-block", fontSize: 11 }}>
+            <div style={{ marginBottom: 14, display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 500, padding: "4px 10px", borderRadius: 9999, color: "var(--embed-success)", border: "1px solid color-mix(in srgb, var(--embed-success) 30%, transparent)" }}>
               SSO enabled automatically
             </div>
           )}
 
-          {installError && (
-            <div style={{ fontSize: 12, color: "var(--embed-danger)", marginBottom: 8 }}>{installError}</div>
-          )}
+          {installError && <div style={{ fontSize: 12, color: "var(--embed-danger)", marginBottom: 8 }}>{installError}</div>}
 
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
-            <button className="embed-btn" onClick={() => setInstallTarget(null)}>Cancel</button>
-            <button className="embed-btn" onClick={handleInstall}
-              disabled={!installForm.subdomain}
-              style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+            <button className="embed-btn" onClick={() => setInstallTarget(null)} style={{ borderRadius: 8, padding: "8px 16px" }}>Cancel</button>
+            <button className="embed-btn" onClick={handleInstall} disabled={!installForm.subdomain} style={{
+              borderRadius: 8, padding: "8px 20px", fontWeight: 600,
+              background: "var(--embed-primary)", color: "#fff", border: "1px solid var(--embed-primary)",
+            }}>
               Install
             </button>
           </div>
@@ -1005,25 +1024,31 @@ export function MarketEmbedClient() {
   function renderUninstallDialog() {
     if (!uninstallTarget) return null;
     return (
-      <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", zIndex: 100 }}
+      <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", zIndex: 100 }}
         onClick={() => { if (!uninstalling) setUninstallTarget(null); }}>
-        <div className="embed-card" style={{ maxWidth: 400, width: "90%" }} onClick={e => e.stopPropagation()}>
-          <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>Uninstall {uninstallTarget.name}?</div>
-          <div className="embed-muted" style={{ fontSize: 13, marginBottom: 4 }}>
+        <div style={{
+          maxWidth: 420, width: "92%",
+          background: "var(--embed-card-bg)", border: "1px solid var(--embed-border)",
+          borderRadius: 16, padding: 24,
+        }} onClick={e => e.stopPropagation()}>
+          <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 8 }}>Uninstall {uninstallTarget.name}?</div>
+          <div style={{ fontSize: 13, color: "var(--embed-text-muted)", marginBottom: 6 }}>
             This will remove the container, Caddy route, and SSO configuration.
           </div>
           <div style={{
-            padding: "8px 12px", borderRadius: 6, fontSize: 12, marginBottom: 12,
-            background: "color-mix(in srgb, var(--embed-danger) 10%, transparent)",
+            padding: "10px 14px", borderRadius: 8, fontSize: 12, marginBottom: 16,
+            background: "color-mix(in srgb, var(--embed-danger) 8%, transparent)",
             border: "1px solid color-mix(in srgb, var(--embed-danger) 25%, transparent)",
             color: "var(--embed-danger)",
           }}>
             This action cannot be undone. App data will be permanently deleted.
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <button className="embed-btn" onClick={() => setUninstallTarget(null)} disabled={uninstalling}>Cancel</button>
-            <button className="embed-btn" onClick={handleUninstall} disabled={uninstalling}
-              style={{ borderColor: "var(--embed-danger)", color: "var(--embed-danger)" }}>
+            <button className="embed-btn" onClick={() => setUninstallTarget(null)} disabled={uninstalling} style={{ borderRadius: 8, padding: "8px 16px" }}>Cancel</button>
+            <button className="embed-btn" onClick={handleUninstall} disabled={uninstalling} style={{
+              borderRadius: 8, padding: "8px 20px", fontWeight: 600,
+              background: "var(--embed-danger)", color: "#fff", border: "1px solid var(--embed-danger)",
+            }}>
               {uninstalling ? "Uninstalling..." : "Uninstall"}
             </button>
           </div>
@@ -1032,282 +1057,380 @@ export function MarketEmbedClient() {
     );
   }
 
-  return (
-    <div style={{ padding: 16 }}>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <div>
-          <div className="embed-title">App Market</div>
-          <div className="embed-subtitle">Browse and install apps for your platform</div>
+  function renderCustomUrlDialog() {
+    if (!showCustomUrl) return null;
+    return (
+      <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", zIndex: 100 }}
+        onClick={() => { if (!customFetching) { setShowCustomUrl(false); setCustomError(null); } }}>
+        <div style={{
+          maxWidth: 520, width: "92%",
+          background: "var(--embed-card-bg)", border: "1px solid var(--embed-border)",
+          borderRadius: 16, padding: 24,
+        }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+            <span style={{ color: "var(--embed-primary)" }}>{renderIcon("globe", 20)}</span>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>Add Custom App</div>
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Repository or Manifest URL</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input type="text" value={customUrl} onChange={e => setCustomUrl(e.target.value)} placeholder="https://git.example.com/org/app"
+                onKeyDown={e => { if (e.key === "Enter" && customUrl.trim()) handleCustomUrlFetch(); }}
+                disabled={customFetching} style={{
+                  flex: 1, padding: "8px 12px", fontSize: 13, borderRadius: 8,
+                  border: "1px solid var(--embed-border)", background: "var(--embed-bg, var(--embed-card-bg))",
+                  color: "var(--embed-text)", outline: "none",
+                }} />
+              <button className="embed-btn" onClick={handleCustomUrlFetch} disabled={customFetching || !customUrl.trim()} style={{
+                borderRadius: 8, padding: "8px 16px", fontWeight: 600,
+                borderColor: "var(--embed-primary)", color: "var(--embed-primary)",
+              }}>
+                {customFetching ? (
+                  <span style={{ width: 14, height: 14, border: "2px solid var(--embed-primary)", borderTopColor: "transparent", borderRadius: "50%", animation: "embed-spin 0.8s linear infinite", display: "inline-block" }} />
+                ) : "Fetch"}
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--embed-text-muted)", marginTop: 6 }}>
+              Paste a Gitea repo URL or direct link to a youeye-app.yaml manifest. The app will be fetched, validated, and available for install.
+            </div>
+          </div>
+
+          {/* Security notice */}
+          <div style={{
+            display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px",
+            borderRadius: 8, fontSize: 12,
+            background: "color-mix(in srgb, var(--embed-warning) 8%, transparent)",
+            border: "1px solid color-mix(in srgb, var(--embed-warning) 25%, transparent)",
+            color: "var(--embed-warning)",
+          }}>
+            <span style={{ flexShrink: 0 }}>{renderIcon("shield", 16)}</span>
+            <span>Only install apps from sources you trust. Third-party apps run as containers on your server.</span>
+          </div>
+
+          {customError && (
+            <div style={{
+              marginTop: 12, padding: "10px 12px", borderRadius: 8, fontSize: 12,
+              background: "color-mix(in srgb, var(--embed-danger) 8%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--embed-danger) 25%, transparent)",
+              color: "var(--embed-danger)",
+            }}>
+              {customError}
+            </div>
+          )}
+
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
+            <button className="embed-btn" onClick={() => { setShowCustomUrl(false); setCustomError(null); }} disabled={customFetching} style={{ borderRadius: 8, padding: "8px 16px" }}>Cancel</button>
+          </div>
         </div>
-        <button className="embed-btn" onClick={handleRefresh} disabled={refreshing}>
-          {refreshing ? "Refreshing..." : "Refresh"}
-        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "28px 40px", minHeight: "100vh" }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
+        <div>
+          <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.02em" }}>App Market</div>
+          <div style={{ fontSize: 14, color: "var(--embed-text-muted)", marginTop: 4 }}>
+            Discover and install apps for your platform
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button className="embed-btn" onClick={() => setShowCustomUrl(true)} style={{
+            borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600,
+            display: "flex", alignItems: "center", gap: 6,
+            borderColor: "var(--embed-primary)", color: "var(--embed-primary)",
+          }}>
+            <PlusIcon size={14} /> Add Custom
+          </button>
+          <button className="embed-btn" onClick={handleRefresh} disabled={refreshing} style={{
+            borderRadius: 8, padding: "8px 14px", fontSize: 13,
+            display: "flex", alignItems: "center", gap: 6,
+          }}>
+            <RefreshIcon size={14} /> {refreshing ? "..." : "Refresh"}
+          </button>
+        </div>
       </div>
 
       {/* Search */}
-      <div style={{ marginBottom: 16 }}>
-        <input
-          type="text"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search apps..."
+      <div style={{ position: "relative", marginBottom: 20 }}>
+        <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "var(--embed-text-muted)" }}>
+          <SearchIcon size={16} />
+        </div>
+        <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search apps..."
           style={{
-            width: "100%", padding: "8px 12px", fontSize: 13, borderRadius: 8,
+            width: "100%", padding: "12px 16px 12px 40px", fontSize: 14, borderRadius: 12,
             border: "1px solid var(--embed-border)", background: "var(--embed-card-bg)",
-            color: "var(--embed-text)", outline: "none",
+            color: "var(--embed-text)", outline: "none", transition: "border-color 0.2s",
           }}
+          onFocus={e => e.currentTarget.style.borderColor = "var(--embed-primary)"}
+          onBlur={e => e.currentTarget.style.borderColor = "var(--embed-border)"}
         />
+      </div>
+
+      {/* Category pills */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 28, flexWrap: "wrap" }}>
+        <CategoryPill label="All" active={activeCategory === "all"} onClick={() => setActiveCategory("all")} count={apps.length} />
+        {allCategories.map(cat => (
+          <CategoryPill key={cat} label={cat.charAt(0).toUpperCase() + cat.slice(1)} active={activeCategory === cat} onClick={() => setActiveCategory(cat)}
+            count={apps.filter(a => a.category === cat).length} />
+        ))}
       </div>
 
       {/* Active installs banner */}
       {activeInstalls.length > 0 && (
-        <div className="embed-card" style={{ marginBottom: 16, borderColor: "var(--embed-primary)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--embed-primary)" }}>
-            <span style={{ width: 14, height: 14, border: "2px solid var(--embed-primary)", borderTopColor: "transparent", borderRadius: "50%", animation: "embed-spin 0.8s linear infinite", display: "inline-block" }} />
+        <div style={{
+          background: "var(--embed-card-bg)", border: "1px solid var(--embed-primary)",
+          borderRadius: 14, padding: 20, marginBottom: 20,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, marginBottom: 10, color: "var(--embed-primary)" }}>
+            <span style={{ width: 16, height: 16, border: "2.5px solid var(--embed-primary)", borderTopColor: "transparent", borderRadius: "50%", animation: "embed-spin 0.8s linear infinite", display: "inline-block" }} />
             Installing ({activeInstalls.length})
           </div>
           {activeInstalls.map(inst => {
             const last = inst.events[inst.events.length - 1];
             const pct = last ? Math.round((last.step / Math.max(last.totalSteps, 1)) * 100) : 0;
-            const hasError = inst.events.some((e: InstallProgress) => e.status === 'error');
-            const hasWarning = inst.events.some((e: InstallProgress) => e.status === 'warning');
-            const barColor = hasError ? "var(--embed-danger)" : hasWarning ? "var(--embed-warning, #f59e0b)" : "var(--embed-primary)";
+            const hasError = inst.events.some(e => e.status === "error");
+            const barColor = hasError ? "var(--embed-danger)" : "var(--embed-primary)";
             return (
-              <div key={inst.appId} style={{ fontSize: 12, marginBottom: 8 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
-                  <span style={{ fontWeight: 500 }}>{inst.appName}</span>
-                  <span className="embed-muted" style={{ fontSize: 11 }}>{pct}%</span>
+              <div key={inst.appId} style={{ marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
+                  <span style={{ fontWeight: 600 }}>{inst.appName}</span>
+                  <span style={{ color: "var(--embed-text-muted)", fontSize: 12 }}>{pct}%</span>
                 </div>
-                <span className="embed-muted" style={{ fontSize: 11 }}>{last?.message || "Starting..."}</span>
-                <div className="embed-progress-track" style={{ marginTop: 4 }}>
+                <div style={{ fontSize: 11, color: "var(--embed-text-muted)", marginBottom: 4 }}>{last?.message || "Starting..."}</div>
+                <div className="embed-progress-track">
                   <div className="embed-progress-bar" style={{ width: `${pct}%`, background: barColor }} />
                 </div>
-                {/* Render error/warning events with context */}
-                {inst.events.filter((e: InstallProgress) => e.status === 'error' || e.status === 'warning').map((ev: InstallProgress, i: number) => {
-                  const ec = ev.errorContext;
-                  const isError = ev.status === 'error';
-                  const borderCol = isError ? "var(--embed-danger)" : "var(--embed-warning, #f59e0b)";
-                  const bgCol = isError ? "rgba(239,68,68,0.08)" : "rgba(245,158,11,0.08)";
-                  return (
-                    <details key={i} style={{ marginTop: 6, border: `1px solid ${borderCol}`, borderRadius: 6, background: bgCol, overflow: "hidden" }}>
-                      <summary style={{ cursor: "pointer", padding: "6px 8px", fontSize: 11, fontWeight: 500, color: borderCol, display: "flex", alignItems: "center", gap: 6 }}>
-                        <span>{isError ? "\u2717" : "\u26a0"}</span>
-                        <span style={{ flex: 1 }}>{ev.message}</span>
-                        {ec?.statusCode && (
-                          <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: borderCol, color: "#fff" }}>{ec.statusCode}</span>
-                        )}
-                      </summary>
-                      {ec && (
-                        <div style={{ padding: "6px 8px", fontSize: 11, borderTop: `1px solid ${borderCol}` }}>
-                          {ec.method && ec.url && (
-                            <div style={{ fontFamily: "monospace", fontSize: 10, color: "var(--embed-muted-text)", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={ec.url}>
-                              {ec.method} {ec.url}
-                            </div>
-                          )}
-                          {ec.responseBody && (
-                            <pre style={{ margin: "4px 0", padding: 6, background: "rgba(0,0,0,0.06)", borderRadius: 4, fontSize: 10, maxHeight: 100, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{ec.responseBody}</pre>
-                          )}
-                          {ec.suggestion && (
-                            <div style={{ marginTop: 4, padding: "4px 8px", background: "rgba(59,130,246,0.1)", borderRadius: 4, color: "var(--embed-text)", fontSize: 11 }}>
-                              {"\ud83d\udca1"} {ec.suggestion}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </details>
-                  );
-                })}
               </div>
             );
           })}
         </div>
       )}
 
-      {/* Recently completed installs */}
+      {/* Recently completed */}
       {completedInstalls.length > 0 && apps.filter(a => completedInstalls.includes(a.id)).map(app => (
-        <div key={app.id} className="embed-card" style={{ marginBottom: 16, borderColor: "var(--embed-success)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--embed-success)" }}>
-            <span>{"\u2713"}</span>
-            <span style={{ fontWeight: 500 }}>{app.name}</span> installed successfully
-          </div>
+        <div key={app.id} style={{
+          background: "var(--embed-card-bg)", border: "1px solid var(--embed-success)",
+          borderRadius: 14, padding: "14px 20px", marginBottom: 16,
+          display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "var(--embed-success)",
+        }}>
+          <span style={{ fontWeight: 600 }}>{"\u2713"} {app.name}</span> installed successfully
         </div>
       ))}
 
-      {/* Built for YouEye — native apps */}
-      {nativeApps.length > 0 && (
-        <div style={{ marginBottom: 24 }}>
+      {/* Installed section */}
+      {installedApps.length > 0 && (
+        <div style={{ marginBottom: 32 }}>
           <div style={{
-            display: "flex", alignItems: "center", gap: 6,
-            fontSize: 12, fontWeight: 600, color: "var(--embed-text-muted)",
-            textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12,
+            fontSize: 13, fontWeight: 700, color: "var(--embed-text-muted)",
+            textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 14,
+            display: "flex", alignItems: "center", gap: 8,
           }}>
-            <ShieldIcon size={14} />
-            Built for YouEye ({nativeApps.length})
+            <span style={{ color: "var(--embed-success)" }}>{renderIcon("package", 16)}</span>
+            Installed ({installedApps.length})
           </div>
-          {[...CATEGORY_ORDER, ...Object.keys(nativeGrouped).filter(c => !CATEGORY_ORDER.includes(c))].map(cat => {
-            const catApps = nativeGrouped[cat];
-            if (!catApps?.length) return null;
-            return (
-              <div key={cat} style={{ marginBottom: 14 }}>
-                <div style={{
-                  fontSize: 10, fontWeight: 500, color: "var(--embed-text-muted)",
-                  textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6, opacity: 0.7,
-                }}>
-                  {CATEGORY_LABELS[cat] || cat}
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
-                  {catApps.map(app => (
-                    <AppCard key={app.id} app={app} onSelect={setSelectedApp} onInstall={openInstallForm} onUninstall={setUninstallTarget} isInstalling={activeInstalls.some(i => i.appId === app.id)} />
-                  ))}
-                </div>
-              </div>
-            );
-          })}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
+            {installedApps.map(app => (
+              <AppCard key={app.id} app={app} onSelect={setSelectedApp} showStatus />
+            ))}
+          </div>
         </div>
       )}
 
-      {/* Installed marketplace apps */}
-      {installedMarketplace.length > 0 && renderCategorySection(`Installed (${installedMarketplace.length})`, installedMarketplace)}
-
-      {/* Available marketplace apps by category */}
-      {availableMarketplace.length > 0 && (
+      {/* Available section */}
+      {availableApps.length > 0 && (
         <div style={{ marginBottom: 20 }}>
           <div style={{
-            fontSize: 12, fontWeight: 600, color: "var(--embed-text-muted)",
-            textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12,
+            fontSize: 13, fontWeight: 700, color: "var(--embed-text-muted)",
+            textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 14,
           }}>
-            Available ({availableMarketplace.length})
+            Available ({availableApps.length})
           </div>
-          {[...CATEGORY_ORDER, ...Object.keys(availableGrouped).filter(c => !CATEGORY_ORDER.includes(c))].map(cat => {
-            const catApps = availableGrouped[cat];
-            if (!catApps?.length) return null;
-            return (
-              <div key={cat} style={{ marginBottom: 14 }}>
-                <div style={{
-                  fontSize: 10, fontWeight: 500, color: "var(--embed-text-muted)",
-                  textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6, opacity: 0.7,
-                }}>
-                  {CATEGORY_LABELS[cat] || cat}
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
-                  {catApps.map(app => (
-                    <AppCard key={app.id} app={app} onSelect={setSelectedApp} onInstall={openInstallForm} onUninstall={setUninstallTarget} isInstalling={activeInstalls.some(i => i.appId === app.id)} />
-                  ))}
-                </div>
+
+          {/* Native apps featured row */}
+          {activeCategory === "all" && nativeApps.filter(a => !a.installed).length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <div style={{
+                fontSize: 12, fontWeight: 600, color: "var(--embed-primary)",
+                marginBottom: 10, display: "flex", alignItems: "center", gap: 6,
+              }}>
+                {renderIcon("shield", 14)} Built for YouEye
               </div>
-            );
-          })}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
+                {nativeApps.filter(a => !a.installed).map(app => (
+                  <AppCard key={app.id} app={app} onSelect={setSelectedApp} featured />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Community / marketplace apps */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
+            {(activeCategory === "all" ? marketplaceApps.filter(a => !a.installed) : availableApps.filter(a => a.integration !== "native" && a.type !== "native")).map(app => (
+              <AppCard key={app.id} app={app} onSelect={setSelectedApp} />
+            ))}
+          </div>
         </div>
       )}
 
       {filtered.length === 0 && (
-        <div className="embed-card" style={{ textAlign: "center", padding: 32 }}>
-          <div className="embed-muted">No apps found</div>
+        <div style={{ textAlign: "center", padding: 48, color: "var(--embed-text-muted)" }}>
+          <div style={{ fontSize: 18, marginBottom: 8 }}>No apps found</div>
+          <div style={{ fontSize: 13 }}>Try a different search or category.</div>
         </div>
       )}
 
       {renderInstallDialog()}
       {renderUninstallDialog()}
+      {renderCustomUrlDialog()}
     </div>
   );
 }
 
-// ─── App Card Component ───────────────────────────────────
+// ─── App Card Component ──────────────────────────────────
 
-function AppCard({ app, onSelect, onInstall, onUninstall, isInstalling }: {
+function AppCard({ app, onSelect, featured, showStatus }: {
   app: MarketApp;
   onSelect: (app: MarketApp) => void;
-  onInstall: (app: MarketApp) => void;
-  onUninstall: (app: MarketApp) => void;
-  isInstalling?: boolean;
+  featured?: boolean;
+  showStatus?: boolean;
 }) {
   const isNative = app.integration === "native";
+  const borderDefault = featured
+    ? "color-mix(in srgb, var(--embed-primary) 25%, var(--embed-border))"
+    : "var(--embed-border)";
 
   return (
     <div
-      className="embed-card"
       onClick={() => onSelect(app)}
-      style={{ display: "flex", flexDirection: "column", gap: 8, cursor: "pointer", transition: "border-color 0.15s" }}
-      onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--embed-primary)")}
-      onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--embed-border)")}
+      style={{
+        display: "flex", alignItems: "center", gap: 14, cursor: "pointer",
+        padding: "16px 18px", borderRadius: 14,
+        background: "var(--embed-card-bg)",
+        border: `1px solid ${borderDefault}`,
+        transition: "border-color 0.2s, box-shadow 0.2s, transform 0.15s",
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.borderColor = "var(--embed-primary)";
+        e.currentTarget.style.boxShadow = "0 2px 12px color-mix(in srgb, var(--embed-primary) 10%, transparent)";
+        e.currentTarget.style.transform = "translateY(-1px)";
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.borderColor = borderDefault;
+        e.currentTarget.style.boxShadow = "";
+        e.currentTarget.style.transform = "";
+      }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        {/* Icon */}
-        <div style={{
-          width: 40, height: 40, borderRadius: 10, flexShrink: 0,
-          background: "color-mix(in srgb, var(--embed-primary) 10%, transparent)",
-          display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
-        }}>
-          {app.iconUrl ? (
-            <img src={app.iconUrl} alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-          ) : (
-            <span style={{ fontSize: 16, fontWeight: 700, color: "var(--embed-primary)" }}>
-              {app.name.charAt(0)}
+      <AppIcon app={app} size={48} />
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>{app.name}</span>
+          {isNative && (
+            <span style={{
+              display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 600,
+              padding: "1px 6px", borderRadius: 9999,
+              background: "color-mix(in srgb, var(--embed-primary) 10%, transparent)",
+              color: "var(--embed-primary)",
+            }}>
+              YouEye
+            </span>
+          )}
+          {app.source === "url" && (
+            <span style={{
+              fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 9999,
+              color: "var(--embed-warning)", border: "1px solid color-mix(in srgb, var(--embed-warning) 30%, transparent)",
+            }}>
+              Custom
+            </span>
+          )}
+          {app.updateAvailable && (
+            <span style={{
+              fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 9999,
+              color: "var(--embed-primary)", background: "color-mix(in srgb, var(--embed-primary) 10%, transparent)",
+            }}>
+              Update
             </span>
           )}
         </div>
-
-        {/* Name + type badge */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontWeight: 600, fontSize: 13 }}>{app.name}</span>
-            {isNative && (
-              <span style={{
-                display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 500,
-                padding: "1px 6px", borderRadius: 9999,
-                background: "color-mix(in srgb, var(--embed-primary) 12%, transparent)",
-                color: "var(--embed-primary)",
-              }}>
-                <ShieldIcon size={9} /> YouEye
-              </span>
-            )}
-            {app.version && <span className="embed-muted" style={{ fontSize: 11 }}>v{app.version}</span>}
-          </div>
-          <div className="embed-muted" style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {app.description}
-          </div>
+        <div style={{
+          fontSize: 12, color: "var(--embed-text-muted)",
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>
+          {app.description}
         </div>
+        {showStatus && app.installed && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, fontSize: 11 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--embed-success)", display: "inline-block" }} />
+            <span style={{ color: "var(--embed-text-muted)" }}>
+              {app.installedVersion ? `v${app.installedVersion}` : "Installed"}
+            </span>
+          </div>
+        )}
       </div>
 
-      {/* Tags row */}
-      {app.tags && app.tags.length > 0 && (
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-          {app.tags.slice(0, 4).map(tag => (
-            <span key={tag} style={{
-              fontSize: 10, padding: "2px 8px", borderRadius: 9999,
-              background: "var(--embed-hover)", color: "var(--embed-text-muted)",
-            }}>
-              {tag}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Footer: badges + action */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "auto" }}>
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-          <span className="embed-badge" style={{ fontSize: 10 }}>{app.category}</span>
-          {(app.supportsSSO || app.sso !== false) && <span className="embed-badge-green" style={{ fontSize: 10 }}>SSO</span>}
-        </div>
-        <div onClick={e => e.stopPropagation()}>
-          {app.installed ? (
-            <button className="embed-btn" onClick={() => onUninstall(app)}
-              style={{ padding: "3px 10px", fontSize: 11, borderColor: "var(--embed-danger)", color: "var(--embed-danger)" }}>
-              Uninstall
-            </button>
-          ) : isInstalling ? (
-            <span className="embed-badge" style={{ fontSize: 10, color: "var(--embed-primary)", borderColor: "color-mix(in srgb, var(--embed-primary) 30%, transparent)" }}>
-              Installing...
-            </span>
-          ) : (
-            <button className="embed-btn" onClick={() => onInstall(app)}
-              style={{ padding: "3px 10px", fontSize: 11, borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}>
-              Install
-            </button>
-          )}
-        </div>
+      {/* Subtle arrow */}
+      <div style={{ color: "var(--embed-text-muted)", opacity: 0.4, flexShrink: 0 }}>
+        <ChevronRightIcon size={18} />
       </div>
     </div>
+  );
+}
+
+// ─── Helper Components ───────────────────────────────────
+
+function CategoryPill({ label, active, onClick, count }: {
+  label: string; active: boolean; onClick: () => void; count?: number;
+}) {
+  return (
+    <button onClick={onClick} style={{
+      display: "inline-flex", alignItems: "center", gap: 6,
+      padding: "8px 16px", borderRadius: 20, fontSize: 13, fontWeight: 500,
+      border: `1px solid ${active ? "var(--embed-primary)" : "var(--embed-border)"}`,
+      background: active ? "color-mix(in srgb, var(--embed-primary) 12%, transparent)" : "var(--embed-card-bg)",
+      color: active ? "var(--embed-primary)" : "var(--embed-text-muted)",
+      cursor: "pointer", transition: "all 0.2s",
+    }}>
+      {label}
+      {count !== undefined && (
+        <span style={{ fontSize: 11, opacity: 0.7 }}>{count}</span>
+      )}
+    </button>
+  );
+}
+
+function DetailItem({ icon, label, value }: { icon: string; label: string; value: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{
+        width: 34, height: 34, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
+        background: "var(--embed-hover)", color: "var(--embed-text-muted)",
+      }}>
+        {renderIcon(icon, 16)}
+      </div>
+      <div>
+        <div style={{ fontSize: 11, color: "var(--embed-text-muted)" }}>{label}</div>
+        <div style={{ fontSize: 13, fontWeight: 500 }}>{value}</div>
+      </div>
+    </div>
+  );
+}
+
+function ToggleSwitch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button type="button" onClick={() => onChange(!on)} style={{
+      position: "relative", width: 38, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
+      background: on ? "var(--embed-primary)" : "var(--embed-border)",
+      transition: "background 0.2s", flexShrink: 0,
+    }}>
+      <span style={{
+        position: "absolute", top: 3, left: on ? 19 : 3,
+        width: 16, height: 16, borderRadius: "50%", background: "#fff",
+        transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+      }} />
+    </button>
   );
 }

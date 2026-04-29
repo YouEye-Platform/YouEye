@@ -126,7 +126,7 @@ export function ClockThemePicker({
 }: ClockThemePickerProps) {
   const [activeCategory, setActiveCategory] = useState<ClockCategory>(() => {
     const selected = CLOCK_PRESETS.find((p) => p.id === selectedThemeId);
-    return selected?.category ?? "clean";
+    return selected?.category ?? "classic";
   });
 
   const filteredThemes = useMemo(

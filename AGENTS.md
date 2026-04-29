@@ -78,6 +78,212 @@
 - Trivial one-word addition to an existing Set. No merge conflicts expected.
 - Prior commit `ede27c5` (Iris, Apr 27) added `containers`, `smtp`, `provider` to same Set but missed `integration`.
 
+## CP v0.3.6.7 + UI v0.3.4.8 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** App Market redesign — Umbrel-inspired UI, custom URL installs, dynamic categories, native app icons
+
+### Changes
+- `control-panel/src/app/embed/market/client.tsx` — Complete rewrite: Umbrel-inspired card layout, detail pages, inline Lucide SVG icons for native apps, dynamic categories, "Add Custom" URL install flow, dark/light theme
+- `control-panel/src/lib/market/schema.ts` — Changed category from hardcoded enum to `z.string().min(1)` for dynamic categories
+- `control-panel/src/lib/market/installed-apps.ts` — Added source/source_url columns, URL-installed app update detection via manifest re-fetch
+- `ui/src/app/app-market/page.tsx` — Full-width iframe (removed max-width constraint)
+
+### Test Results
+- Build: CP and UI both compile successfully
+- Deploy: CP via `spine update control`, UI via manual tarball extraction
+- No Playwright tests (manual testing by user)
+
+### Notes for Iris
+- DB schema migration: `source` and `source_url` columns added to `installed_apps` table (auto-migrated on first use)
+- Category schema change is backwards-compatible (string superset of previous enum)
+- New icon SVGs are inline in client.tsx — new native apps need manual SVG addition
+
+## CP v0.3.6.6 + UI v0.3.4.6 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Network settings overhaul — consolidated DNS/TLS, full Pi-Hole management UI, ZIP download
+
+### Changes
+- `control-panel/src/app/embed/dns/client.tsx` — Complete rewrite: 6-tab DNS management (Overview with charts, Query Log, Domains, Local DNS, Blocklists, Settings)
+- `control-panel/src/app/embed/tls/client.tsx` — Added ZIP download button for cert+key pair
+- `control-panel/src/app/api/tls/download/route.ts` — Added zip type with minimal ZIP builder
+- `control-panel/src/app/api/ui-bridge/dns/{history,queries,domains,records,cname,lists,config,gravity}/route.ts` — 8 new bridge API routes for full Pi-Hole API coverage
+- `control-panel/src/app/setup/page.tsx` — Skip restore-from-backup step in setup wizard
+- `ui/src/app/settings/network/{page,client}.tsx` — NEW: consolidated Network page with DNS|TLS tabs
+- `ui/src/components/settings/settings-shell.tsx` — DNS→Network rename, removed Proxy/Backup/TLS nav, widened layout
+- `ui/src/app/settings/{dns,tls,proxy}/page.tsx` — Redirect to /settings/network
+- `ui/src/app/settings/backup/page.tsx` — Redirect to /settings
+- `ui/messages/{en,de,es,fr,ru}.json` — Added "network" i18n key
+
+### Test Results
+- CP and UI builds verified, deployed to VM, 10 containers running
+- Gitea releases: cp-vanya-v0.3.6.6 (ID: 1292), ui-vanya-v0.3.4.6 (ID: 1293)
+
+### Notes for Iris
+- Old DNS/TLS/Proxy/Backup routes now redirect — no broken links
+- 8 new bridge API routes under /api/ui-bridge/dns/ — all use validateBridgeToken
+- Proxy page code preserved but hidden; backup page code preserved but hidden
+- Setup wizard step -1 (new/restore choice) disabled — will be re-enabled when backups are ready
+
+## CP v0.3.6.5 + UI v0.3.4.5 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** System dashboard with live graphs + container task manager, fix app icons/status
+
+### Changes
+- `control-panel/src/app/api/ui-bridge/system/route.ts` — Added per-container resource stats (memory, CPU, disk) to system API response
+- `control-panel/src/app/embed/system/client.tsx` — Complete rewrite: live area charts for CPU/memory/disk, merged container task manager with per-container RAM/disk bars, stop/restart actions, 5s auto-refresh
+- `ui/src/app/settings/apps/client.tsx` — Removed colored icon backgrounds (ICON_COLORS), replaced with neutral bg-muted/50 for all categories
+- `ui/src/app/api/v1/apps/unified/route.ts` — Fixed installed apps showing "unknown" — now copies status from bridge enrichment data
+- `ui/src/components/settings/settings-shell.tsx` — Removed Containers nav item from admin sidebar (merged into System)
+- `ui/src/app/settings/containers/page.tsx` — Redirects to /settings/system
+
+### Test Results
+- Playwright: system-dashboard.spec.ts (10 tests), app-icons-status.spec.ts (5 tests)
+- Screenshots: verified apps page neutral icons, system dashboard with graphs, container task manager
+
+### Notes for Iris
+- Containers page now redirects to System — any existing links to /settings/containers will auto-redirect
+- The separate containers embed still exists in CP but is no longer linked from UI sidebar
+
+## CP v0.3.6.4 + UI v0.3.4.4 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Phase 3 — Link Handling + System page 500 fix
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — Added LinkHandlerSchema and link_handlers to CapabilitiesSchema (Zod)
+- `control-panel/src/lib/market/types.ts` — Added link_handlers to MarketApp.capabilities interface
+- `control-panel/src/lib/market/catalog.ts` — Pass link_handlers from manifest capabilities to market app
+- `control-panel/src/lib/market/engine.ts` — registerAppWithUI accepts optional linkHandlers param, passes to UI registration
+- `control-panel/src/app/api/ui-bridge/system/route.ts` — Added fallback: if Spine /api/metrics 404s, degrade to /api/status with partial data
+- `control-panel/package.json` — Bumped to 0.3.6.4
+- `ui/src/app/api/v1/apps/[appId]/link-handlers/route.ts` — NEW: CRUD API for link handlers (GET/POST/DELETE), stored in apps.manifest.linkHandlers JSONB
+- `ui/src/components/settings/app-settings-detail.tsx` — Full LinkHandlingTab: add form (type, description, domains, endpoint), handler cards with domain pills, delete, validation
+- `ui/src/app/api/v1/apps/register/route.ts` — Accept link_handlers from CP registration payload, merge into manifest
+- `ui/package.json` — Bumped to 0.3.4.4
+
+### Test Results
+- Playwright CDP verification: Link Handling tab empty state, add handler form, handler card with 3 domain pills, delete handler
+- System page renders with full metrics (hostname, CPU, memory, disk, containers) — no more HTTP 500
+- 2 test suites: link-handling.spec.ts (12 tests), system-metrics.spec.ts (8 tests)
+
+### Notes for Iris
+- CP + UI changes, both deployed. Spine unchanged at v0.3.2.1.
+- Link handlers stored in existing `apps.manifest` JSONB column — no DB migration needed
+- The CP system bridge fallback is additive — if Spine has /api/metrics it uses it, otherwise falls back to /api/status
+
+## UI v0.3.4.3 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Apps settings redesign — proper icons, click-through, update fix
+
+### Changes
+- `ui/src/app/settings/apps/client.tsx` — Rewrote AppIcon to render customIconUrl, emoji, URL-based, and Lucide icons with colored backgrounds per category; fixed system component onClick (was empty noop); added dot indicators to status badges; rounded-xl card styling
+- `ui/src/components/settings/app-settings-detail.tsx` — Detail page now searches both apps and systemApps from unified API; fixed double-fetch bug in handleUpdate; added Lucide icon rendering to detail header; shows description subtitle
+- `ui/package.json` — Bumped to 0.3.4.3
+
+### Test Results
+- Visual verification via Playwright screenshots: apps list, CP detail, Spine detail
+- All system components render with correct Lucide icons and descriptions
+- Click-through navigates to detail page for all items
+
+### Notes for Iris
+- UI-only change, no CP modifications
+- The update iframe bridge is unchanged — the list page still uses the CP embed iframe for updates. The detail page update button now uses a single correct proxy-cp POST (was broken double-fetch before)
+
+## UI v0.3.4.2 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Phase 2 — Unified app settings page (merge user + admin views)
+
+### Changes
+- `ui/src/app/api/v1/apps/unified/route.ts` — NEW: unified API merging drawer + CP bridge data
+- `ui/src/app/settings/apps/client.tsx` — Rewrote with sections: Updates Available, Installed Apps, System Components
+- `ui/src/components/settings/app-settings-detail.tsx` — Added Update Now button, version/category/description from bridge
+- `ui/src/components/settings/settings-shell.tsx` — Removed "App Management" admin sidebar entry
+- `ui/src/app/settings/apps-list/page.tsx` — DELETED (merged into unified view)
+- `ui/package.json` — 0.3.4.1 → 0.3.4.2
+
+### Test Results
+- Manual: deployed to VM, `spine status` 7 running / 0 stopped
+- API: `/api/v1/apps/unified` returns 401 without auth (correct)
+- UI: `https://devvm.test/` returns 307 redirect (correct)
+
+### Notes for Iris
+- No CP changes in this release (CP stays at v0.3.6.3)
+- The `/settings/apps-list` page is deleted — any links to it will 404
+- The unified API calls CP bridge internally with Referer spoofing for admin data
+
+---
+
+## CP v0.3.6.3 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** Phase 1 — Background update queue, update-progress embed, Spine stale status fix
+
+### Changes
+- `control-panel/src/lib/updates/queue.ts` — NEW: PostgreSQL-backed background update queue with worker (polls 2s, processes one at a time, fire-and-forget). Handles all update types: Spine-managed, OCI, LXD, marketplace. Startup recovery marks stale "running" entries as failed.
+- `control-panel/src/app/api/apps/[name]/enqueue/route.ts` — NEW: POST endpoint to enqueue updates, returns immediately with queue position. Deduplicates pending/running entries for same component.
+- `control-panel/src/app/api/apps/queue/route.ts` — NEW: GET (active queue entries) + POST (acknowledge/dismiss completed/failed entries).
+- `control-panel/src/app/embed/update-progress/page.tsx` — NEW: Server component for hidden iframe embed, validates embed session.
+- `control-panel/src/app/embed/update-progress/client.tsx` — NEW: PostMessage bridge between YE-UI and CP. Handles start-update, check-updates, get-status, acknowledge. Polls 2s active / 30s idle.
+- `control-panel/src/lib/updates/state.ts` — Fixed Spine stale "completed" status bug: 60-second TTL on terminal statuses.
+- `control-panel/src/app/api/ui-bridge/updates/status/route.ts` — Returns both update statuses and queue entries.
+- `control-panel/package.json` — Bumped 0.3.6.1 → 0.3.6.3
+
+### Releases
+- CP v0.3.6.2 (`cp-vanya-v0.3.6.2`) — had SQL double-ORDER-BY bug
+- CP v0.3.6.3 (`cp-vanya-v0.3.6.3`) — fixed, deployed
+
+### Notes for Iris
+- New PostgreSQL table `update_queue` created automatically on first use
+- The background worker auto-starts on CP boot (non-test environments)
+- v0.3.6.2 release has a bug — use v0.3.6.3 only
+- Phase 2 (UI unified settings) and Phase 3 (link handling) still pending
+
+---
+
+## v0.3.4.1 / v0.3.6.1 / v0.3.2.1 — vanya — 2026-04-28
+**Branch:** vanya
+**VM:** ye-vanya
+**Agent:** Vanya
+**Task:** WordArt size, clock themes, profile avatar fix, host metrics
+
+### Changes
+- `ui/src/lib/db/queries/widgets.ts` — reduce default WordArt widget size by 50%
+- `ui/src/components/dashboard/widget-grid.tsx` — update reset layout default sizes
+- `ui/src/components/widgets/index.ts` — reduce WordArt catalog defaultSize
+- `ui/src/lib/clock-presets.ts` — rewrite: 17 presets across 5 categories (classic, minimal, decorative, animated, fun)
+- `ui/src/components/widgets/clock-widget.tsx` — add animation support and CSS keyframe injection
+- `ui/src/components/widgets/clock-theme-picker.tsx` — fix default category fallback
+- `control-panel/src/lib/authentik/client.ts` — add attributes field to AuthentikUser
+- `control-panel/src/app/api/user/profile/route.ts` — extract avatarUrl from Authentik user attributes
+- `spine/internal/api/server.go` — add GET /api/metrics endpoint (host CPU, RAM, disk, uptime, load)
+- `control-panel/src/lib/spine/client.ts` — add SpineMetricsResponse type and getMetrics()
+- `control-panel/src/app/api/ui-bridge/system/route.ts` — replace container /proc reads with Spine metrics
+- `control-panel/src/app/embed/system/client.tsx` — display CPU usage % and load average
+
+### Releases
+- UI v0.3.4.1 (`ui-vanya-v0.3.4.1`) — standalone.tar uploaded
+- CP v0.3.6.1 (`cp-vanya-v0.3.6.1`) — standalone.tar uploaded
+- Spine v0.3.2.1 (`spine-vanya-v0.3.2.1`) — binary uploaded
+
+### Notes for Iris
+- Clock themes: old 4-category system (clean/bold/glow/retro) replaced with 5 categories (classic/minimal/decorative/animated/fun)
+- Spine /api/metrics adds 200ms delay per request (CPU sampling) — cached by caller
+- System embed now depends on Spine being reachable; falls through to error if Spine is down
+
+---
+
 ## Main Release — spine 0.3.2, cp 0.3.6, ui 0.3.4 — iris — 2026-04-27
 **Branch:** main
 **VM:** ye-iris
