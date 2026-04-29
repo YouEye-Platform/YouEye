@@ -1,3 +1,28 @@
+## cp-v0.3.6.10 + ui-v0.3.4.11 — sebastian — 2026-04-29
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Phase 2 — One-way bridge enforcement: replace UI→CP proxy routes with CP embeds
+
+### Changes
+- `ui/src/app/api/v1/apps/unified/route.ts` — DELETED. Called `CP_INTERNAL_URL/api/ui-bridge/apps` to enrich admin app list.
+- `ui/src/app/api/v1/admin/proxy-cp/route.ts` — DELETED. Open proxy forwarding arbitrary requests to CP.
+- `ui/src/app/api/v1/admin/install-progress/route.ts` — DELETED. Polling proxy to CP install tracker.
+- `ui/src/app/settings/permissions/client.tsx` — DELETED. Orphaned 343-line component, never imported.
+- `ui/src/app/settings/apps/client.tsx` — Rewritten (548 lines removed). Admin sees CP `/embed/apps` iframe, regular users see local DB list.
+- `ui/src/app/settings/apps/page.tsx` — Generates signed embed URL for admin users.
+- `ui/src/components/settings/app-settings-detail.tsx` — Rewritten (500 lines removed). Network tab replaced with CP `/embed/app-network/[appId]` iframe.
+- `ui/src/components/app-install-listener.tsx` — Simplified (159 lines removed). PostMessage only, no polling.
+- `ui/src/app/api/v1/apps/drawer/route.ts` — Added version, subdomain, containerUrl fields.
+- `ui/src/lib/db/queries/apps.ts` — Added version to AppWithConfig interface.
+- `control-panel/src/app/embed/apps/client.tsx` — Added `youeye-app-navigate` postMessage for click-through.
+- `control-panel/src/app/embed/app-network/[appId]/client.tsx` — Full rewrite with bridges, internet grants, suggestions sections.
+
+### Notes for Iris
+- Net -1753/+392 lines. Zero remaining `CP_INTERNAL_URL`, `proxy-cp`, `unified`, or `install-progress` references in UI source.
+- Phase 3 (infra enforcement: remove CP_INTERNAL_URL env var, iptables block, pre-commit hook) is next.
+- The CP embed pages (`/embed/apps` and `/embed/app-network/[appId]`) already existed on the branch from Vanya's work.
+
 ## cp-v0.3.6.9 — sebastian — 2026-04-29
 **Branch:** sebastian
 **VM:** ye-sebastian
