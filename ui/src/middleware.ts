@@ -26,7 +26,6 @@ const PUBLIC_ROUTES = [
   "/api/v1/user/avatar",  // Public: profile pictures are served without auth (like Gravatar)
   "/api/v1/onboarding",
   "/api/v1/notifications",  // Auth handled at route level (session, bridge token, app-slug)
-  "/api/v1/my-connections", // App discovery API — auth via X-YouEye-App header
 ];
 
 /** Static resource patterns to skip */
