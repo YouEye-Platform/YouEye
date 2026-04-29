@@ -17,8 +17,8 @@ export const dynamic = 'force-dynamic';
 
 // Known native app containers — check these even without install metadata
 const NATIVE_CONTAINER_MAP: Record<string, string> = {
-  wiki: 'ye-app-wiki',
-  search: 'ye-app-search',
+  wiki: 'app-wiki',
+  search: 'app-search',
 };
 
 async function getContainerStatus(name: string): Promise<ContainerStatusInfo> {
