@@ -1,3 +1,28 @@
+## cp-v0.3.6.8 + ui-v0.3.4.9 + spine-v0.3.2.1 — sebastian — 2026-04-29
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Merge Vanya's sessions 29-37 into Sebastian branch — combined platform features
+
+### Changes (merge)
+- Merged `origin/vanya` into `sebastian` — 18 commits covering: App Market Umbrel redesign, system dashboard with live graphs, network settings overhaul (DNS/TLS), background update queue, unified app settings, link handling system, clock themes (17 presets), Spine /api/metrics endpoint, profile avatar
+- `control-panel/src/lib/market/engine.ts` — Conflict resolution: kept both `linkHandlers` (Vanya) and `manifest` (Sebastian) params in `registerAppWithUI()`; added manifest to payload builder
+- `ui/src/app/api/v1/apps/register/route.ts` — Conflict resolution: combined `link_handlers` and `cpManifest` destructuring; used Vanya's manifest-store pattern with Sebastian's cpManifest fallback
+- `control-panel/package.json` — Version 0.3.6.8 (above Vanya's 0.3.6.7 and Sebastian's 0.3.6.2)
+- `ui/package.json` — Version 0.3.4.9 (above Vanya's 0.3.4.8 and Sebastian's 0.3.4.7)
+
+### Releases
+- `cp-sebastian-v0.3.6.8` (Gitea ID: 1326) — 107MB artifact
+- `ui-sebastian-v0.3.4.9` (Gitea ID: 1327) — 226MB artifact
+- `spine-sebastian-v0.3.2.1` (Gitea ID: 1328) — 11MB artifact
+
+### Notes for Iris
+- This is a MERGE build combining Sebastian's timeline/info-card/search work with Vanya's settings/dashboard/market work
+- Andrew's branch had no unique commits — his work was already on main from Cycle 5
+- Conflict zones (engine.ts, register/route.ts) are additive — both agents' features preserved
+- Spine /api/metrics endpoint (from Vanya) is new on this branch — provides host CPU/RAM/disk/uptime/load
+- DB migrations: `update_queue` table (auto-created), `source`/`source_url` columns on `installed_apps` (auto-migrated)
+
 ## ui-v0.3.4.7 — sebastian — 2026-04-29
 **Branch:** sebastian
 **VM:** ye-sebastian
