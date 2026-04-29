@@ -321,9 +321,16 @@ func EnforceUIEgressBlock() {
 		}
 	}
 
-	// Apply ACL to UI container's eth0 (idempotent — set overwrites)
+	// Apply ACL to UI container's eth0 (idempotent — set overwrites).
+	// CRITICAL: set default actions to "allow" so only the explicit reject rule
+	// takes effect. Without this, Incus defaults to rejecting ALL traffic that
+	// doesn't match a rule, which kills all UI networking (inbound and outbound).
 	if err := exec.Command("incus", "config", "device", "set",
-		"youeye-ui", "eth0", "security.acls", aclName).Run(); err != nil {
+		"youeye-ui", "eth0",
+		"security.acls", aclName,
+		"security.acls.default.ingress.action", "allow",
+		"security.acls.default.egress.action", "allow",
+	).Run(); err != nil {
 		fmt.Printf("  Warning: could not apply ACL to youeye-ui: %v\n", err)
 		return
 	}
