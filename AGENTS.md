@@ -1,3 +1,18 @@
+## spine-v0.3.2.3 — sebastian — 2026-04-29
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix ACL default policy in EnforceUIEgressBlock — was killing all UI networking
+
+### Changes
+- `spine/internal/container/ui.go` — Added `security.acls.default.ingress.action=allow` and `security.acls.default.egress.action=allow` to the `incus config device set` call. Without these, Incus rejects ALL unmatched traffic when an ACL is attached, not just the explicit reject rule.
+- `spine/internal/cmd/root.go` — Version bump to 0.3.2.3
+
+### Notes for Iris
+- This was a production-breaking bug: `sebatron.gg` returned HTTP 502 because Caddy couldn't reach the UI container.
+- The fix is a single `incus config device set` call change — no architectural changes.
+- Spine rebuild with ldflags required.
+
 ## ui-v0.3.4.12 + spine-v0.3.2.2 — sebastian — 2026-04-29
 **Branch:** sebastian
 **VM:** ye-sebastian
