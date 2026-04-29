@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"git.byka.wtf/potemsla/YouEye/spine/internal/container"
 	"git.byka.wtf/potemsla/YouEye/spine/internal/releases"
 	"git.byka.wtf/potemsla/YouEye/spine/internal/update"
 	"git.byka.wtf/potemsla/YouEye/spine/internal/util"
@@ -493,6 +494,9 @@ func updateControl() error {
 
 	// Re-provision the bridge token to ensure both containers have it
 	provisionBridgeToken()
+
+	// Enforce UI→CP egress block (one-way bridge)
+	container.EnforceUIEgressBlock()
 
 	fmt.Printf("✓ Control Panel updated successfully to %s\n", latestVersion)
 

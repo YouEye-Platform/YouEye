@@ -1,3 +1,19 @@
+## ui-v0.3.4.12 + spine-v0.3.2.2 — sebastian — 2026-04-29
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Phase 3 — One-way bridge enforcement: network-level UI→CP block
+
+### Changes
+- `ui/src/lib/admin/embed-token.ts` — Removed `CP_EMBED_URL` env var fallback (last CP env var in UI source)
+- `spine/internal/container/ui.go` — Added `EnforceUIEgressBlock()`: creates Incus ACL `ye-ui-egress-block` and applies it to UI container NIC
+- `spine/internal/cmd/update.go` — Calls `EnforceUIEgressBlock()` after `provisionBridgeToken()` during `spine update control`
+
+### Notes for Iris
+- The Incus ACL blocks UI→CP traffic at the network level. CP→UI (bridge pushes) and browser→CP (iframes) are unaffected.
+- CLAUDE.md has a new pitfall #25 — VERY IMPORTANT: never reintroduce UI→CP server calls.
+- Spine change requires rebuild with ldflags.
+
 ## cp-v0.3.6.10 + ui-v0.3.4.11 — sebastian — 2026-04-29
 **Branch:** sebastian
 **VM:** ye-sebastian

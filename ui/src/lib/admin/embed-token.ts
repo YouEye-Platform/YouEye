@@ -24,8 +24,7 @@ export function getSignedEmbedUrl(
 ): string {
   // Derive CP base from UI_EXTERNAL_URL by prepending "control." to the domain.
   // e.g. "https://skibidi.io" → "https://control.skibidi.io"
-  const cpBase = process.env.CP_EMBED_URL
-    || process.env.UI_EXTERNAL_URL?.replace('://', '://control.')
+  const cpBase = process.env.UI_EXTERNAL_URL?.replace('://', '://control.')
     || 'https://localhost';
 
   if (extraParams && Object.keys(extraParams).length > 0) {

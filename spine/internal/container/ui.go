@@ -60,6 +60,10 @@ func DeployUIContainer(cfg *config.Config) error {
 			fmt.Printf("Warning: Failed to add socket proxies: %v\n", err)
 		}
 
+		// Block UI→CP traffic at the network level (one-way bridge enforcement)
+		fmt.Println("Enforcing UI→CP egress block...")
+		EnforceUIEgressBlock()
+
 		// Install Node.js
 		fmt.Printf("Installing Node.js %s...\n", nodeVersion)
 		if err := installUINodeJS(containerName, nodeVersion); err != nil {
@@ -285,5 +289,44 @@ WantedBy=multi-user.target
 	return nil
 }
 
-// getUIAssetDownloadURL gets a download URL for a UI release asset.
-// getUIAssetDownloadURL removed — now uses shared releases.GetAssetURLForBranch()
+// EnforceUIEgressBlock creates (if needed) and applies a network ACL that
+// prevents the UI container from initiating connections to the CP container.
+// CP→UI traffic is unaffected. This enforces the one-way bridge: CP pushes
+// to UI, UI never calls CP. Browser-side iframes bypass this entirely since
+// they go through Caddy, not container-to-container networking.
+//
+// Idempotent — safe to call on every deploy/update.
+func EnforceUIEgressBlock() {
+	cpIP, err := incus.GetSystemContainerIP("youeye-control")
+	if err != nil {
+		fmt.Printf("  Warning: could not resolve CP IP for egress block: %v\n", err)
+		return
+	}
+
+	aclName := "ye-ui-egress-block"
+
+	// Create ACL if it doesn't exist (idempotent — Incus returns error if exists)
+	createErr := exec.Command("incus", "network", "acl", "create", aclName,
+		"--description", "Block UI container from reaching CP container").Run()
+	if createErr == nil {
+		fmt.Printf("  Created network ACL: %s\n", aclName)
+		// Add the egress reject rule
+		if err := exec.Command("incus", "network", "acl", "rule", "add", aclName,
+			"egress", "action=reject",
+			fmt.Sprintf("destination=%s/32", cpIP),
+			"description=Block UI from reaching CP",
+		).Run(); err != nil {
+			fmt.Printf("  Warning: could not add egress rule to %s: %v\n", aclName, err)
+			return
+		}
+	}
+
+	// Apply ACL to UI container's eth0 (idempotent — set overwrites)
+	if err := exec.Command("incus", "config", "device", "set",
+		"youeye-ui", "eth0", "security.acls", aclName).Run(); err != nil {
+		fmt.Printf("  Warning: could not apply ACL to youeye-ui: %v\n", err)
+		return
+	}
+
+	fmt.Printf("  ✓ UI→CP egress block enforced (ACL: %s, blocked: %s)\n", aclName, cpIP)
+}
