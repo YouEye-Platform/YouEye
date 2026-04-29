@@ -42,6 +42,9 @@ export async function GET(request: NextRequest) {
       order: a.displayOrder,
       section_id: a.sectionId,
       status: a.status,
+      version: a.version ?? null,
+      subdomain: a.subdomain ?? null,
+      containerUrl: a.containerUrl ?? null,
       url: buildAppUrl(a.subdomain, a.containerUrl, a.id, host, a.ssoEntryUrl),
     })),
     sections: data.sections.map((s) => ({

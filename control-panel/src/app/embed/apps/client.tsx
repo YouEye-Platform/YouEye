@@ -257,6 +257,13 @@ function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit }
   const ps = statuses.get(component);
   const isUpdating = ps && !["idle", "completed", "failed"].includes(ps.status);
   const statusColor = STATUS_COLORS[app.status] || STATUS_COLORS.unknown;
+  const isUserApp = app.category === "user";
+
+  const handleNavigate = () => {
+    if (isUserApp) {
+      window.parent.postMessage({ type: "youeye-app-navigate", appId: app.id }, "*");
+    }
+  };
 
   return (
     <div className="embed-card" style={{ marginBottom: 6, padding: "10px 14px" }}>
@@ -266,12 +273,13 @@ function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit }
           width: 36, height: 36, borderRadius: 8,
           background: "var(--embed-hover)", display: "flex", alignItems: "center", justifyContent: "center",
           fontSize: 16, fontWeight: 700, color: "var(--embed-text-muted)",
-        }}>
+          cursor: isUserApp ? "pointer" : "default",
+        }} onClick={handleNavigate}>
           {app.displayName.charAt(0)}
         </div>
 
         {/* Info */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, cursor: isUserApp ? "pointer" : "default" }} onClick={handleNavigate}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontWeight: 500, fontSize: 13 }}>{app.displayName}</span>
             {app.version && <span className="embed-muted" style={{ fontSize: 12 }}>v{app.version}</span>}

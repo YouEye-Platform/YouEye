@@ -18,6 +18,7 @@ interface AppWithConfig {
   subdomain: string | null;
   ssoEntryUrl: string | null;
   status: string | null;
+  version: string | null;
   enabled: boolean | null;
   customName: string | null;
   customIconUrl: string | null;
@@ -60,6 +61,7 @@ export async function getUserAppsWithConfig(userId: string): Promise<{
       subdomain: app.subdomain,
       ssoEntryUrl: app.ssoEntryUrl ?? null,
       status: app.status,
+      version: app.version ?? null,
       enabled: app.enabled,
       customName: config?.customName ?? null,
       customIconUrl: config?.customIconUrl ?? null,
