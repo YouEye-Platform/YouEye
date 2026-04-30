@@ -185,6 +185,12 @@ export async function GET(request: NextRequest) {
         { key: "notifications", label: "Notifications", icon: "Bell", url: `${uiBaseUrl}/notifications` },
         { key: "settings", label: "Settings", icon: "Settings", url: `${uiBaseUrl}/settings` },
       ],
+      // If the request comes from a native app, include a deep link to its settings in YE-UI
+      ...(isServiceCall && request.headers.get("x-youeye-app")
+        ? {
+            app_settings_url: `${uiBaseUrl}/settings/apps/${request.headers.get("x-youeye-app")}?tab=app-settings`,
+          }
+        : {}),
       logout_url: "/api/auth/logout",
     },
     drawer_prefs: drawerPrefs,

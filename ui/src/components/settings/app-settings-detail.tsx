@@ -2,10 +2,11 @@
  * App Settings Detail — Per-app settings with consolidated tabs
  *
  * Tabs:
- * 1. Overview — App info, status, version, subdomain (local DB)
- * 2. Permissions — Per-app user permission management (local DB)
- * 3. Network (admin only) — CP embed iframe for bridges + grants
- * 4. Link Handling — URL rewrite handlers (local DB)
+ * 1. App Settings — Iframe embed of the app's own settings page (native apps only)
+ * 2. Overview — App info, status, version, subdomain (local DB)
+ * 3. Permissions — Per-app user permission management (local DB)
+ * 4. Network (admin only) — CP embed iframe for bridges + grants
+ * 5. Link Handling — URL rewrite handlers (local DB)
  */
 
 "use client";
@@ -23,6 +24,7 @@ import {
   RefreshCw,
   Info,
   Loader2,
+  Sliders,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -58,7 +60,7 @@ interface LinkHandler {
 
 /* ── Tab type ── */
 
-type TabId = "overview" | "permissions" | "network" | "link-handling";
+type TabId = "app-settings" | "overview" | "permissions" | "network" | "link-handling";
 
 /* ── Main Component ── */
 
@@ -66,16 +68,21 @@ export function AppSettingsDetail({
   appId,
   directAccessEmbedUrl,
   isAdmin: isAdminProp,
+  initialTab,
 }: {
   appId: string;
   directAccessEmbedUrl?: string;
   isAdmin: boolean;
+  initialTab?: string;
 }) {
   const [app, setApp] = useState<AppInfo | null>(null);
   const [linkHandlers, setLinkHandlers] = useState<LinkHandler[]>([]);
   const [isAdmin] = useState(isAdminProp);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const validTabs: TabId[] = ["app-settings", "overview", "permissions", "network", "link-handling"];
+  const [activeTab, setActiveTab] = useState<TabId>(
+    initialTab && validTabs.includes(initialTab as TabId) ? (initialTab as TabId) : "overview"
+  );
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [permissionsLoading, setPermissionsLoading] = useState(false);
   const router = useRouter();
@@ -155,14 +162,18 @@ export function AppSettingsDetail({
     return <div className="py-8 text-center text-sm text-muted-foreground">App not found</div>;
   }
 
-  const tabs: { id: TabId; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
+  // Only show app-settings tab for native apps that have a subdomain (i.e. they have a running web UI)
+  const hasAppSettings = !!app.subdomain;
+
+  const tabs: { id: TabId; label: string; icon: React.ReactNode; adminOnly?: boolean; hide?: boolean }[] = [
+    { id: "app-settings", label: "App Settings", icon: <Sliders className="w-4 h-4" />, hide: !hasAppSettings },
     { id: "overview", label: "Overview", icon: <Info className="w-4 h-4" /> },
     { id: "permissions", label: "Permissions", icon: <Shield className="w-4 h-4" /> },
     { id: "network", label: "Network", icon: <Globe className="w-4 h-4" />, adminOnly: true },
     { id: "link-handling", label: "Link Handling", icon: <Link2 className="w-4 h-4" /> },
   ];
 
-  const visibleTabs = tabs.filter((tab) => !tab.adminOnly || isAdmin);
+  const visibleTabs = tabs.filter((tab) => (!tab.adminOnly || isAdmin) && !tab.hide);
 
   return (
     <div className="space-y-6">
@@ -207,6 +218,10 @@ export function AppSettingsDetail({
       </div>
 
       {/* Tab content */}
+      {activeTab === "app-settings" && hasAppSettings && (
+        <AppSettingsEmbed subdomain={app.subdomain!} />
+      )}
+
       {activeTab === "overview" && <OverviewTab app={app} />}
 
       {activeTab === "permissions" && (
@@ -231,6 +246,36 @@ export function AppSettingsDetail({
           onRefresh={fetchLinkHandlers}
         />
       )}
+    </div>
+  );
+}
+
+/* ── App Settings Embed ── */
+
+function AppSettingsEmbed({ subdomain }: { subdomain: string }) {
+  const [iframeHeight, setIframeHeight] = useState(400);
+  const domain = typeof window !== "undefined" ? window.location.hostname : "";
+  const settingsUrl = `https://${subdomain}.${domain}/settings?embed=true`;
+
+  useEffect(() => {
+    function handleMessage(e: MessageEvent) {
+      if (e.data?.type === "youeye-app-settings-resize" && typeof e.data.height === "number") {
+        setIframeHeight(Math.max(200, e.data.height));
+      }
+    }
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
+
+  return (
+    <div className="border rounded-lg overflow-hidden">
+      <iframe
+        src={settingsUrl}
+        className="w-full border-0"
+        style={{ height: `${iframeHeight}px`, minHeight: "200px" }}
+        title="App Settings"
+        allow="clipboard-write"
+      />
     </div>
   );
 }
