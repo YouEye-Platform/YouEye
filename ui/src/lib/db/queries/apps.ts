@@ -20,6 +20,7 @@ interface AppWithConfig {
   status: string | null;
   version: string | null;
   enabled: boolean | null;
+  manifest: Record<string, unknown> | null;
   customName: string | null;
   customIconUrl: string | null;
   visible: boolean;
@@ -63,6 +64,7 @@ export async function getUserAppsWithConfig(userId: string): Promise<{
       status: app.status,
       version: app.version ?? null,
       enabled: app.enabled,
+      manifest: app.manifest ?? null,
       customName: config?.customName ?? null,
       customIconUrl: config?.customIconUrl ?? null,
       visible: config?.visible ?? true,

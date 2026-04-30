@@ -45,6 +45,7 @@ export async function GET(request: NextRequest) {
       version: a.version ?? null,
       subdomain: a.subdomain ?? null,
       containerUrl: a.containerUrl ?? null,
+      hasSettingsPanel: !!(a.manifest as any)?.capabilities?.settings_panel,
       url: buildAppUrl(a.subdomain, a.containerUrl, a.id, host, a.ssoEntryUrl),
     })),
     sections: data.sections.map((s) => ({

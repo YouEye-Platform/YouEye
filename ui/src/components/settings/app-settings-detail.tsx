@@ -25,7 +25,17 @@ import {
   Info,
   Loader2,
   Sliders,
+  Search,
+  BookOpen,
+  StickyNote,
+  Film,
+  CloudSun,
+  Languages,
+  Camera,
+  MessageCircle,
+  Package,
 } from "lucide-react";
+import type { ComponentType } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { AdminEmbed } from "@/components/settings/admin-embed";
@@ -40,6 +50,7 @@ interface AppInfo {
   version: string | null;
   status: string | null;
   containerUrl: string | null;
+  hasSettingsPanel: boolean;
 }
 
 interface Permission {
@@ -61,6 +72,57 @@ interface LinkHandler {
 /* ── Tab type ── */
 
 type TabId = "app-settings" | "overview" | "permissions" | "network" | "link-handling";
+
+/* ── Icon helpers ── */
+
+const ICON_MAP: Record<string, ComponentType<{ className?: string }>> = {
+  search: Search,
+  "book-open": BookOpen,
+  "sticky-note": StickyNote,
+  film: Film,
+  "cloud-sun": CloudSun,
+  languages: Languages,
+  camera: Camera,
+  "message-circle": MessageCircle,
+  package: Package,
+};
+
+function toKebabCase(s: string): string {
+  return s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+}
+
+function AppHeaderIcon({ name, icon }: { name: string; icon: string | null }) {
+  if (icon && icon.startsWith("emoji:")) {
+    return (
+      <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+        <span className="text-xl leading-none">{icon.slice(6)}</span>
+      </div>
+    );
+  }
+  if (icon && (icon.startsWith("http") || icon.startsWith("/"))) {
+    return (
+      <div className="w-10 h-10 rounded-xl overflow-hidden bg-primary/10 flex items-center justify-center">
+        <img src={icon} alt={name} className="w-10 h-10 rounded-xl object-cover" />
+      </div>
+    );
+  }
+  if (icon) {
+    const key = toKebabCase(icon);
+    const IconComponent = ICON_MAP[key];
+    if (IconComponent) {
+      return (
+        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+          <IconComponent className="w-5 h-5 text-primary" />
+        </div>
+      );
+    }
+  }
+  return (
+    <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+      <span className="text-sm font-bold text-primary">{name.charAt(0).toUpperCase()}</span>
+    </div>
+  );
+}
 
 /* ── Main Component ── */
 
@@ -107,12 +169,13 @@ export function AppSettingsDetail({
             version: found.version ?? null,
             status: found.status ?? null,
             containerUrl: found.containerUrl ?? null,
+            hasSettingsPanel: found.hasSettingsPanel ?? false,
           });
         } else {
-          setApp({ id: appId, name: appId, icon: null, subdomain: null, version: null, status: null, containerUrl: null });
+          setApp({ id: appId, name: appId, icon: null, subdomain: null, version: null, status: null, containerUrl: null, hasSettingsPanel: false });
         }
       } else {
-        setApp({ id: appId, name: appId, icon: null, subdomain: null, version: null, status: null, containerUrl: null });
+        setApp({ id: appId, name: appId, icon: null, subdomain: null, version: null, status: null, containerUrl: null, hasSettingsPanel: false });
       }
     } finally {
       setLoading(false);
@@ -151,6 +214,13 @@ export function AppSettingsDetail({
     fetchDetail();
   }, [fetchDetail]);
 
+  // If app loaded and has no settings panel, switch away from app-settings tab
+  useEffect(() => {
+    if (app && !app.hasSettingsPanel && activeTab === "app-settings") {
+      setActiveTab("overview");
+    }
+  }, [app, activeTab]);
+
   useEffect(() => {
     if (activeTab === "permissions") fetchPermissions();
     if (activeTab === "link-handling") fetchLinkHandlers();
@@ -164,11 +234,11 @@ export function AppSettingsDetail({
     return <div className="py-8 text-center text-sm text-muted-foreground">App not found</div>;
   }
 
-  // Only show app-settings tab for native apps that have a subdomain (i.e. they have a running web UI)
-  const hasAppSettings = !!app.subdomain;
+  // Only show app-settings tab if the app declares settings_panel capability AND has a subdomain for the embed
+  const hasAppSettings = app.hasSettingsPanel && !!app.subdomain;
 
   const tabs: { id: TabId; label: string; icon: React.ReactNode; adminOnly?: boolean; hide?: boolean }[] = [
-    { id: "app-settings", label: "App Settings", icon: <Sliders className="w-4 h-4" /> },
+    { id: "app-settings", label: "App Settings", icon: <Sliders className="w-4 h-4" />, hide: !hasAppSettings },
     { id: "overview", label: "Overview", icon: <Info className="w-4 h-4" /> },
     { id: "permissions", label: "Permissions", icon: <Shield className="w-4 h-4" /> },
     { id: "network", label: "Network", icon: <Globe className="w-4 h-4" />, adminOnly: true },
@@ -190,9 +260,7 @@ export function AppSettingsDetail({
 
       {/* App header */}
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-          <span className="text-sm font-bold text-primary">{app.name.charAt(0).toUpperCase()}</span>
-        </div>
+        <AppHeaderIcon name={app.name} icon={app.icon} />
         <div>
           <h2 className="text-xl font-semibold">{app.name}</h2>
           <p className="text-sm text-muted-foreground">Manage app settings and permissions</p>
