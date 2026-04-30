@@ -14,7 +14,7 @@
  * DNS: bridge dnsmasq → pihole (via raw.dnsmasq server= directive) → LAN DNS.
  */
 
-import { incusRequest } from './server';
+import { incusRequest, execShell } from './server';
 import { getContainerIP } from './container-ip';
 import { getSystemStaticIP } from './static-ips';
 
@@ -484,6 +484,17 @@ export async function grantBridgeAccess(
 
     await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices });
     console.log(`[app-network] Granted ${containerName} access to ${targetBridge} (${targetAppId})`);
+
+    // Bring the hot-plugged NIC up and get a DHCP lease.
+    // Without this, the interface stays DOWN and DNS discovery fails.
+    const ifName = `eth-${targetAppId.substring(0, 11)}`;
+    try {
+      await new Promise((r) => setTimeout(r, 1500));
+      await execShell(containerName, `ip link set ${ifName} up && dhclient ${ifName} 2>/dev/null || udhcpc -i ${ifName} 2>/dev/null || true`, { timeout: 15000 });
+      console.log(`[app-network] Activated ${ifName} in ${containerName}`);
+    } catch (activateErr) {
+      console.warn(`[app-network] NIC activation failed for ${ifName} in ${containerName}:`, activateErr);
+    }
   } catch (err) {
     console.warn(`[app-network] Failed to grant bridge access to ${containerName}:`, err);
   }

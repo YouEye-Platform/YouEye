@@ -189,8 +189,21 @@ export async function GET(request: NextRequest) {
         return app.status !== 'not-installed';
       });
 
-    // Add marketplace apps (from install metadata)
-    const marketApps = installed.map((meta) => {
+    // Add marketplace apps (from install metadata), skipping any whose
+    // containers are already covered by APP_DEFINITIONS (prevents duplicates
+    // for native apps like Search/Wiki that also have install.json files).
+    const definedContainers = new Set(
+      apps.flatMap((a) => a.containers.map((c) => c.name))
+    );
+
+    const marketApps = installed
+      .filter((meta) => {
+        const names = meta.containers.map((c: any) =>
+          typeof c === 'string' ? c : c.containerName
+        );
+        return !names.some((n: string) => definedContainers.has(n));
+      })
+      .map((meta) => {
       const dbEntry = dbAppsMap.get(meta.appId);
       return {
         id: meta.appId,
