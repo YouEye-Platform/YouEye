@@ -104,17 +104,14 @@ export function AvatarEmbedClient({ username }: { username: string }) {
 
     try {
       const dataUrl = await readAsDataUrl(blob);
+      setPreview(dataUrl);
+      // Always notify parent first — parent handles saving on UI side
+      window.parent.postMessage({ type: "youeye-avatar-updated", dataUrl }, "*");
+
+      // Try CP-side save (may fail without session during onboarding — non-fatal)
       const formData = new FormData();
       formData.append("file", blob, "avatar.png");
-      const res = await fetch("/api/user/avatar", { method: "POST", body: formData });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Upload failed");
-      }
-
-      setPreview(dataUrl);
-      window.parent.postMessage({ type: "youeye-avatar-updated", dataUrl }, "*");
+      await fetch("/api/user/avatar", { method: "POST", body: formData }).catch(() => {});
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {

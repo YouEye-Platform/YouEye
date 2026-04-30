@@ -1,13 +1,10 @@
 import { validateEmbedSession } from "@/lib/embed/session-auth";
-import { EmbedAuthError } from "@/components/embed/auth-error";
 import { AvatarEmbedClient } from "./client";
 
 export default async function AvatarEmbedPage() {
+  // Avatar picker is non-sensitive (emoji grid). Skip auth requirement so it
+  // works during onboarding when the user has no CP session yet. The parent
+  // page (UI onboarding) handles avatar saving via postMessage.
   const auth = await validateEmbedSession("user");
-
-  if (!auth.authorized) {
-    return <EmbedAuthError reason={auth.reason || "Unauthorized"} showSignIn={!auth.authenticated} />;
-  }
-
-  return <AvatarEmbedClient username={auth.session!.username} />;
+  return <AvatarEmbedClient username={auth.session?.username || ""} />;
 }

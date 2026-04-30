@@ -127,7 +127,12 @@ function applySecurityHeaders(response: NextResponse, pathname: string): NextRes
   if (pathname === '/api/ping') {
     response.headers.set('Content-Security-Policy',
       "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *");
-  } else if (pathname.startsWith('/embed')) {
+  } else if (pathname.startsWith('/embed') || pathname === '/api/auth/sso' || pathname.startsWith('/api/auth/callback')) {
+    // Embed pages AND the SSO auth chain need iframe-friendly CSP.
+    // When an embed has no session, EmbedAuthError auto-redirects the iframe
+    // through /api/auth/sso → Authentik → /api/auth/callback → back to embed.
+    // Without iframe-friendly headers on these paths, the browser blocks the
+    // SSO redirect chain and the embed spinner hangs forever.
     const parentOrigin = getParentOrigin();
     response.headers.set('Content-Security-Policy',
       `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://git.byka.wtf; font-src 'self' data:; connect-src 'self'; frame-ancestors ${parentOrigin};`);
