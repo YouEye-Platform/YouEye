@@ -1,6 +1,39 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import {
+  Server, Box, Cog, Monitor, Database, ShieldCheck, Globe, Shield,
+  LayoutDashboard, Search, BookOpen, StickyNote, Film, CloudSun,
+  Languages, Camera, MessageCircle, Package,
+} from "lucide-react";
+import type { ComponentType } from "react";
+
+const ICON_MAP: Record<string, ComponentType<{ style?: React.CSSProperties }>> = {
+  Server, Box, Cog, Monitor, Database, ShieldCheck, Globe, Shield,
+  LayoutDashboard, Search, BookOpen, StickyNote, Film, CloudSun,
+  Languages, Camera, MessageCircle, Package,
+};
+
+function toKebabCase(s: string): string {
+  return s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+}
+
+function toPascalCase(s: string): string {
+  return s.split("-").map(p => p.charAt(0).toUpperCase() + p.slice(1)).join("");
+}
+
+function resolveIcon(iconName: string): ComponentType<{ style?: React.CSSProperties }> | null {
+  // Try direct PascalCase match first (e.g. "Server", "ShieldCheck")
+  if (ICON_MAP[iconName]) return ICON_MAP[iconName];
+  // Try converting kebab-case to PascalCase (e.g. "cloud-sun" -> "CloudSun")
+  const pascal = toPascalCase(iconName);
+  if (ICON_MAP[pascal]) return ICON_MAP[pascal];
+  // Try converting to kebab then PascalCase
+  const kebab = toKebabCase(iconName);
+  const pascal2 = toPascalCase(kebab);
+  if (ICON_MAP[pascal2]) return ICON_MAP[pascal2];
+  return null;
+}
 
 interface AppInfo {
   id: string;
@@ -268,15 +301,25 @@ function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit }
   return (
     <div className="embed-card" style={{ marginBottom: 6, padding: "10px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        {/* Icon placeholder */}
-        <div style={{
-          width: 36, height: 36, borderRadius: 8,
-          background: "var(--embed-hover)", display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 16, fontWeight: 700, color: "var(--embed-text-muted)",
-          cursor: isUserApp ? "pointer" : "default",
-        }} onClick={handleNavigate}>
-          {app.displayName.charAt(0)}
-        </div>
+        {/* Icon */}
+        {(() => {
+          const Icon = resolveIcon(app.icon);
+          return (
+            <div style={{
+              width: 36, height: 36, borderRadius: 8,
+              background: "var(--embed-hover)", display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: isUserApp ? "pointer" : "default",
+            }} onClick={handleNavigate}>
+              {Icon ? (
+                <Icon style={{ width: 18, height: 18, color: "var(--embed-text-muted)" }} />
+              ) : (
+                <span style={{ fontSize: 16, fontWeight: 700, color: "var(--embed-text-muted)" }}>
+                  {app.displayName.charAt(0)}
+                </span>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Info */}
         <div style={{ flex: 1, minWidth: 0, cursor: isUserApp ? "pointer" : "default" }} onClick={handleNavigate}>
