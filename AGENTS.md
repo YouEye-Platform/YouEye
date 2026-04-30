@@ -1,3 +1,18 @@
+## ui-v0.3.4.13 — sebastian — 2026-04-30
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Universal App Settings tab with iframe embed support
+
+### Changes
+- `ui/src/components/settings/app-settings-detail.tsx` — Added "App Settings" tab that iframes the app's /settings?embed=true page with auto-height resize via postMessage
+- `ui/src/app/settings/apps/[appId]/page.tsx` — Pass tab URL param for deep-linking to App Settings tab
+- `ui/src/app/api/v1/header/config/route.ts` — Return app_settings_url in user_menu for native app deep-linking
+
+### Notes for Iris
+- This is the UI side of a cross-repo feature. All 6 native apps also need their matching releases merged.
+- The tab only appears when the app has a subdomain configured.
+
 ## cp-v0.3.6.12 — sebastian — 2026-04-30
 **Branch:** sebastian
 **VM:** ye-sebastian
