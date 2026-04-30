@@ -81,7 +81,7 @@ export function AppSettingsDetail({
   const [loading, setLoading] = useState(true);
   const validTabs: TabId[] = ["app-settings", "overview", "permissions", "network", "link-handling"];
   const [activeTab, setActiveTab] = useState<TabId>(
-    initialTab && validTabs.includes(initialTab as TabId) ? (initialTab as TabId) : "overview"
+    initialTab && validTabs.includes(initialTab as TabId) ? (initialTab as TabId) : "app-settings"
   );
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [permissionsLoading, setPermissionsLoading] = useState(false);
@@ -95,7 +95,9 @@ export function AppSettingsDetail({
       if (res.ok) {
         const data = await res.json();
         const allApps = data.apps ?? [];
-        const found = allApps.find((a: { id: string }) => a.id === appId);
+        // Try exact match first, then strip common prefixes (CP sends "ye-search", DB has "search")
+        const found = allApps.find((a: { id: string }) => a.id === appId)
+          ?? allApps.find((a: { id: string }) => a.id === appId.replace(/^(ye-|app-)/, ""));
         if (found) {
           setApp({
             id: found.id,
@@ -166,7 +168,7 @@ export function AppSettingsDetail({
   const hasAppSettings = !!app.subdomain;
 
   const tabs: { id: TabId; label: string; icon: React.ReactNode; adminOnly?: boolean; hide?: boolean }[] = [
-    { id: "app-settings", label: "App Settings", icon: <Sliders className="w-4 h-4" />, hide: !hasAppSettings },
+    { id: "app-settings", label: "App Settings", icon: <Sliders className="w-4 h-4" /> },
     { id: "overview", label: "Overview", icon: <Info className="w-4 h-4" /> },
     { id: "permissions", label: "Permissions", icon: <Shield className="w-4 h-4" /> },
     { id: "network", label: "Network", icon: <Globe className="w-4 h-4" />, adminOnly: true },
@@ -218,8 +220,15 @@ export function AppSettingsDetail({
       </div>
 
       {/* Tab content */}
-      {activeTab === "app-settings" && hasAppSettings && (
-        <AppSettingsEmbed subdomain={app.subdomain!} />
+      {activeTab === "app-settings" && (
+        hasAppSettings ? (
+          <AppSettingsEmbed subdomain={app.subdomain!} />
+        ) : (
+          <div className="py-8 text-center border rounded-lg">
+            <Sliders className="w-8 h-8 mx-auto mb-3 text-muted-foreground opacity-40" />
+            <p className="text-sm text-muted-foreground">No settings available for this app.</p>
+          </div>
+        )
       )}
 
       {activeTab === "overview" && <OverviewTab app={app} />}
