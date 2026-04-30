@@ -1,3 +1,18 @@
+## cp-v0.3.6.11 — sebastian — 2026-04-30
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix avatar embed not loading during onboarding (no CP session)
+
+### Changes
+- `control-panel/src/middleware.ts` — Allow `/api/auth/sso` and `/api/auth/callback` in iframes (same `frame-ancestors` as `/embed` routes)
+- `control-panel/src/app/embed/avatar/page.tsx` — Skip auth for avatar embed (non-sensitive emoji picker)
+- `control-panel/src/app/embed/avatar/client.tsx` — Send postMessage before CP upload, make CP upload non-fatal
+
+### Notes for Iris
+- Bridge sessions replaced HMAC with session auth on embeds. New users have no CP session during onboarding. Authentik blocks SSO-in-iframe with X-Frame-Options: DENY. Avatar embed now skips auth entirely (it's just emojis).
+- Other admin embeds still require session — monitor if any break for new users.
+
 ## spine-v0.3.2.3 — sebastian — 2026-04-29
 **Branch:** sebastian
 **VM:** ye-sebastian
