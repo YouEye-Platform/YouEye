@@ -1,3 +1,31 @@
+## cp-v0.3.6.15 / ui-v0.3.4.16 — sebastian — 2026-04-30
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix 5 bugs: icon backgrounds, dark mode flash, embed locale sync, SSO redirect, profile avatar
+
+### Changes
+- `ui/src/components/layout/app-drawer.tsx` — Removed grey `bg-accent/80` backgrounds from app icons
+- `ui/src/components/settings/app-drawer-settings.tsx` — Removed `bg-accent` from icon preview
+- `ui/src/app/settings/apps/client.tsx` — Removed `bg-muted/50` from all AppIcon branches
+- `ui/src/components/settings/app-settings-detail.tsx` — Removed `bg-primary/10` from AppHeaderIcon
+- `ui/src/components/providers.tsx` — Changed `defaultTheme="dark"` to `"system"` to fix dark mode flash
+- `ui/src/components/settings/admin-embed.tsx` — Pass theme+locale via URL params to CP embeds; send locale via postMessage
+- `ui/src/components/settings/profile-settings.tsx` — Send avatar URL to profile embed via postMessage
+- `control-panel/src/app/embed/layout.tsx` — Default to light theme; read locale from URL params and set cookie; listen for locale postMessage
+- `control-panel/src/app/embed/apps/client.tsx` — Removed grey background from app icon boxes
+- `control-panel/src/components/market/app-card.tsx` — Removed `bg-blue-50` from icon container
+- `control-panel/src/components/market/install-from-url-dialog.tsx` — Removed `bg-blue-50` from icon container
+- `control-panel/src/app/embed/profile/client.tsx` — Listen for `youeye-embed-avatar` postMessage to show avatar
+- `control-panel/src/i18n/request.ts` — Read `ye-embed-locale` cookie in locale resolution chain
+
+### Notes for Iris
+- All 6 native apps also updated with SSO redirect fix (middleware + auth routes)
+- Native app versions: Wiki 0.3.2.6, Search 0.3.2.16, Cinema 0.3.2.10, Notes 0.3.2.3, Weather 0.3.2.3, Translate 0.3.2.3
+- Dark mode default changed from "dark" to "system" — affects first-time users
+
+---
+
 ## cp-v0.3.6.13 / ui-v0.3.4.15 — sebastian — 2026-04-30
 **Branch:** sebastian
 **VM:** ye-sebastian
