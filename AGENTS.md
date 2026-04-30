@@ -1,3 +1,21 @@
+## cp-v0.3.6.13 / ui-v0.3.4.15 — sebastian — 2026-04-30
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Conditional settings tab via settings_panel capability + Lucide icons in CP embed app list
+
+### Changes
+- `control-panel/src/app/embed/apps/client.tsx` — Added Lucide icon rendering (was first-letter only)
+- `ui/src/components/settings/app-settings-detail.tsx` — Settings tab hidden when app has no settings_panel capability; app header shows actual icon
+- `ui/src/lib/db/queries/apps.ts` — Expose manifest data in AppWithConfig
+- `ui/src/app/api/v1/apps/drawer/route.ts` — Added hasSettingsPanel to drawer API response
+
+### Notes for Iris
+- Native app manifests updated (settings_panel: true in capabilities) — push before merging
+- DB migration: existing installs need `apps.manifest` updated to include settings_panel capability
+
+---
+
 ## ui-v0.3.4.13 — sebastian — 2026-04-30
 **Branch:** sebastian
 **VM:** ye-sebastian
