@@ -1,3 +1,21 @@
+## cp-v0.3.6.12 — sebastian — 2026-04-30
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix hot-plugged NIC activation + deduplicate apps list
+
+### Changes
+- `control-panel/src/lib/incus/app-network.ts` — grantBridgeAccess() now runs `ip link set up` + `dhclient` inside the container after hot-plugging a NIC, fixing DNS discovery failure for cross-bridge app connections (e.g. Search→SearXNG)
+- `control-panel/src/app/api/ui-bridge/apps/route.ts` — Filter marketplace apps whose containers already appear in APP_DEFINITIONS, preventing duplicate entries (Search, Wiki appeared twice in settings)
+
+### Test Results
+- Deployed to VM, `spine status` → 11 running, 0 stopped
+- Apps list API returns deduplicated entries (Search/Wiki once each, SearXNG once)
+- Search→SearXNG connectivity verified via curl (HTTP 200)
+
+### Notes for Iris
+- NIC activation fix only applies to future bridge activations; existing bridges with DOWN NICs need manual `ip link set up` + `dhclient`
+
 ## cp-v0.3.6.11 — sebastian — 2026-04-30
 **Branch:** sebastian
 **VM:** ye-sebastian
