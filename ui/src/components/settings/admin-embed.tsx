@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useTheme } from "next-themes";
+import { useLocale } from "next-intl";
 
 const HEALTH_POLL_INTERVAL = 5000;
 
@@ -28,6 +29,20 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
   const [error, setError] = useState(false);
   const [restarting, setRestarting] = useState<string | null>(null);
   const { resolvedTheme } = useTheme();
+  const locale = useLocale();
+
+  // Append theme and language to embed URL so the iframe SSR renders with
+  // correct theme and locale immediately, without waiting for postMessage.
+  const embedSrc = (() => {
+    try {
+      const url = new URL(signedUrl);
+      if (resolvedTheme) url.searchParams.set("theme", resolvedTheme);
+      if (locale) url.searchParams.set("locale", locale);
+      return url.toString();
+    } catch {
+      return signedUrl;
+    }
+  })();
 
   const sendThemeToEmbed = useCallback(() => {
     if (!iframeRef.current?.contentWindow || !resolvedTheme) return;
@@ -35,7 +50,13 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
       { type: "youeye-embed-theme", theme: resolvedTheme },
       cpOrigin
     );
-  }, [resolvedTheme]);
+    if (locale) {
+      iframeRef.current.contentWindow.postMessage(
+        { type: "youeye-embed-locale", locale },
+        cpOrigin
+      );
+    }
+  }, [resolvedTheme, locale]);
 
   const stopHealthPoll = useCallback(() => {
     if (healthRef.current) {
@@ -55,9 +76,7 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
           setReady(false);
           setError(false);
           if (iframeRef.current) {
-            const url = new URL(signedUrl);
-            url.searchParams.set("ts", String(Math.floor(Date.now() / 1000)));
-            iframeRef.current.src = signedUrl;
+            iframeRef.current.src = embedSrc;
           }
         }
       } catch { /* still down */ }
@@ -114,7 +133,7 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
     setError(false);
     setReady(false);
     if (iframeRef.current) {
-      iframeRef.current.src = signedUrl;
+      iframeRef.current.src = embedSrc;
     }
   };
 
@@ -168,7 +187,7 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
       )}
       <iframe
         ref={iframeRef}
-        src={signedUrl}
+        src={embedSrc}
         title={title || "Admin Settings"}
         sandbox="allow-scripts allow-same-origin allow-forms"
         style={{

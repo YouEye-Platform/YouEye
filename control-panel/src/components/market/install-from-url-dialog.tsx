@@ -247,7 +247,7 @@ export function InstallFromUrlDialog({
               <div className="rounded-xl border border-gray-200 bg-white p-5">
                 <div className="flex items-start gap-4">
                   {/* App icon */}
-                  <div className="p-3 rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
+                  <div className="p-3 rounded-xl flex items-center justify-center shrink-0">
                     {preview.iconUrl ? (
                       <Image
                         src={preview.iconUrl}

@@ -167,7 +167,7 @@ const embedScript = `
 (function() {
   // Read theme from URL params
   var params = new URLSearchParams(window.location.search);
-  var theme = params.get('theme') || 'dark';
+  var theme = params.get('theme') || 'light';
   var accent = params.get('accent');
   document.documentElement.setAttribute('data-theme', theme);
   if (accent) document.documentElement.style.setProperty('--embed-accent', accent);
@@ -189,11 +189,22 @@ const embedScript = `
   // Signal ready
   window.parent.postMessage({ type: 'youeye-embed-ready' }, '*');
 
-  // Listen for theme changes from parent
+  // Read locale from URL params and set cookie for server-side i18n
+  var locale = params.get('locale');
+  if (locale) {
+    document.cookie = 'ye-embed-locale=' + locale + ';path=/;max-age=86400;samesite=lax';
+    document.documentElement.setAttribute('lang', locale);
+  }
+
+  // Listen for theme and locale changes from parent
   window.addEventListener('message', function(e) {
     if (e.data && e.data.type === 'youeye-embed-theme') {
-      document.documentElement.setAttribute('data-theme', e.data.theme || 'dark');
+      document.documentElement.setAttribute('data-theme', e.data.theme || 'light');
       if (e.data.accent) document.documentElement.style.setProperty('--embed-accent', e.data.accent);
+    }
+    if (e.data && e.data.type === 'youeye-embed-locale' && e.data.locale) {
+      document.cookie = 'ye-embed-locale=' + e.data.locale + ';path=/;max-age=86400;samesite=lax';
+      document.documentElement.setAttribute('lang', e.data.locale);
     }
   });
 })();
@@ -205,7 +216,7 @@ export default function EmbedLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" data-theme="dark">
+    <html lang="en" data-theme="light">
       <head>
         <style dangerouslySetInnerHTML={{ __html: themeCSS }} />
       </head>

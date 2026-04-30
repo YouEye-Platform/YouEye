@@ -40,6 +40,7 @@ interface AppInfo {
   displayName: string;
   description: string;
   icon: string;
+  iconUrl?: string;
   category: string;
   type: string;
   integration?: "native" | "basic";
@@ -278,6 +279,32 @@ export function AppsEmbedClient() {
   );
 }
 
+function AppIconBox({ app, isUserApp, onClick }: { app: AppInfo; isUserApp: boolean; onClick: () => void }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const Icon = resolveIcon(app.icon);
+  const showImg = app.iconUrl && !imgFailed;
+
+  return (
+    <div style={{
+      width: 36, height: 36, borderRadius: 8,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      overflow: "hidden", flexShrink: 0,
+      cursor: isUserApp ? "pointer" : "default",
+    }} onClick={onClick}>
+      {showImg ? (
+        <img src={app.iconUrl} alt="" style={{ width: 20, height: 20, objectFit: "contain" }}
+          onError={() => setImgFailed(true)} />
+      ) : Icon ? (
+        <Icon style={{ width: 18, height: 18, color: "var(--embed-text-muted)" }} />
+      ) : (
+        <span style={{ fontSize: 16, fontWeight: 700, color: "var(--embed-text-muted)" }}>
+          {app.displayName.charAt(0)}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit }: {
   app: AppInfo;
   statuses: Map<string, UpdateStatus>;
@@ -302,24 +329,7 @@ function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit }
     <div className="embed-card" style={{ marginBottom: 6, padding: "10px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         {/* Icon */}
-        {(() => {
-          const Icon = resolveIcon(app.icon);
-          return (
-            <div style={{
-              width: 36, height: 36, borderRadius: 8,
-              background: "var(--embed-hover)", display: "flex", alignItems: "center", justifyContent: "center",
-              cursor: isUserApp ? "pointer" : "default",
-            }} onClick={handleNavigate}>
-              {Icon ? (
-                <Icon style={{ width: 18, height: 18, color: "var(--embed-text-muted)" }} />
-              ) : (
-                <span style={{ fontSize: 16, fontWeight: 700, color: "var(--embed-text-muted)" }}>
-                  {app.displayName.charAt(0)}
-                </span>
-              )}
-            </div>
-          );
-        })()}
+        <AppIconBox app={app} isUserApp={isUserApp} onClick={handleNavigate} />
 
         {/* Info */}
         <div style={{ flex: 1, minWidth: 0, cursor: isUserApp ? "pointer" : "default" }} onClick={handleNavigate}>

@@ -143,13 +143,19 @@ async function getSessionUserId(): Promise<string | null> {
 }
 
 export default getRequestConfig(async () => {
-  // Check setup-language cookie (set during wizard Step 0, before setup completes)
+  // Check setup-language cookie and embed locale cookie
   let setupLang: string | null = null;
+  let embedLocale: string | null = null;
   try {
     const cookieStore = await cookies();
     const setupCookie = cookieStore.get("ye-setup-language");
     if (setupCookie?.value) {
       setupLang = setupCookie.value;
+    }
+    // Embed locale cookie (set by embed layout inline script from ?locale= param)
+    const embedLocaleCookie = cookieStore.get("ye-embed-locale");
+    if (embedLocaleCookie?.value) {
+      embedLocale = embedLocaleCookie.value;
     }
   } catch {
     // cookies() may fail outside request context
@@ -165,8 +171,8 @@ export default getRequestConfig(async () => {
   // System language fallback
   const systemLang = await getSystemLanguage();
 
-  // Resolution: setup cookie > user override > system default > "en"
-  const locale = resolveLocale(setupLang || userLang || systemLang);
+  // Resolution: embed locale > setup cookie > user override > system default > "en"
+  const locale = resolveLocale(embedLocale || setupLang || userLang || systemLang);
 
   let messages;
   try {

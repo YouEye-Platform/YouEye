@@ -148,6 +148,18 @@ export function ProfileEmbedClient({ username, isAdmin }: ProfileEmbedClientProp
     return () => observer.disconnect();
   }, []);
 
+  // Listen for avatar sync from parent UI
+  // If UI has an avatar locally but Authentik doesn't, use the UI's avatar
+  useEffect(() => {
+    const handleMessage = (e: MessageEvent) => {
+      if (e.data?.type === "youeye-embed-avatar" && e.data.avatarUrl && !avatarPreview) {
+        setAvatarPreview(e.data.avatarUrl);
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [avatarPreview]);
+
   // ─── Name Save ──────────────────────────────────────
 
   const handleSave = async () => {

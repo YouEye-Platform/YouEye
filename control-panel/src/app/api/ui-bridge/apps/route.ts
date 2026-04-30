@@ -20,6 +20,7 @@ import {
 } from '@/lib/apps/update-cache';
 import { listInstalledApps } from '@/lib/market/metadata';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
+import { fetchManifest } from '@/lib/market/catalog';
 
 function extractIP(stateMetadata: Record<string, unknown>): string | undefined {
   const network = stateMetadata.network as Record<string, unknown> | undefined;
@@ -196,20 +197,30 @@ export async function GET(request: NextRequest) {
       apps.flatMap((a) => a.containers.map((c) => c.name))
     );
 
-    const marketApps = installed
+    const filteredMarket = installed
       .filter((meta) => {
         const names = meta.containers.map((c: any) =>
           typeof c === 'string' ? c : c.containerName
         );
         return !names.some((n: string) => definedContainers.has(n));
-      })
-      .map((meta) => {
+      });
+
+    // Best-effort manifest lookup for icon/name/description
+    const manifestResults = await Promise.allSettled(
+      filteredMarket.map((meta) => fetchManifest(meta.appId))
+    );
+
+    const marketApps = filteredMarket.map((meta, i) => {
       const dbEntry = dbAppsMap.get(meta.appId);
+      const manifest = manifestResults[i].status === 'fulfilled'
+        ? manifestResults[i].value
+        : null;
       return {
         id: meta.appId,
-        displayName: meta.appId,
-        description: 'Marketplace app',
-        icon: 'Package',
+        displayName: manifest?.metadata.name || meta.appId,
+        description: manifest?.metadata.description || 'Marketplace app',
+        icon: manifest?.metadata.icon || 'Package',
+        iconUrl: manifest?.metadata.iconUrl || undefined,
         category: 'user' as const,
         type: 'docker-lxd',
         containers: meta.containers.map((c: any) => {

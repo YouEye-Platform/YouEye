@@ -70,7 +70,7 @@ export function ProfileSettings({
       .finally(() => setLoading(false));
   }, []);
 
-  // Send current theme to embed iframe
+  // Send current theme + avatar to embed iframe
   const sendThemeToEmbed = useCallback(() => {
     if (!embedRef.current?.contentWindow || !resolvedTheme) return;
     const origin = (() => { try { return new URL(profileEmbedUrl).origin; } catch { return "*"; } })();
@@ -78,7 +78,15 @@ export function ProfileSettings({
       { type: "youeye-embed-theme", theme: resolvedTheme },
       origin
     );
-  }, [resolvedTheme, profileEmbedUrl]);
+    // Also send the current avatar URL so the embed can display it
+    // even if Authentik doesn't have the avatar synced yet
+    if (avatarUrl) {
+      embedRef.current.contentWindow.postMessage(
+        { type: "youeye-embed-avatar", avatarUrl },
+        origin
+      );
+    }
+  }, [resolvedTheme, profileEmbedUrl, avatarUrl]);
 
   // Listen for updates from the CP embed
   const handleMessage = useCallback((e: MessageEvent) => {
@@ -206,7 +214,13 @@ export function ProfileSettings({
           )}
           <iframe
             ref={embedRef}
-            src={profileEmbedUrl}
+            src={(() => {
+              try {
+                const url = new URL(profileEmbedUrl);
+                if (resolvedTheme) url.searchParams.set("theme", resolvedTheme);
+                return url.toString();
+              } catch { return profileEmbedUrl; }
+            })()}
             title="Profile Settings"
             sandbox="allow-scripts allow-same-origin allow-forms"
             style={{

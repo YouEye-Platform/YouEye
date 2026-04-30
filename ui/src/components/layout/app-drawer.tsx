@@ -643,7 +643,7 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
                         {editMode && (
                           <GripVertical className="absolute top-0.5 right-0.5 h-3 w-3 text-muted-foreground/30" />
                         )}
-                        <div className="rounded-xl bg-accent/80 flex items-center justify-center text-base font-medium shadow-sm overflow-hidden transition-transform duration-150" style={{ width: 40 * prefs.iconScale, height: 40 * prefs.iconScale }}>
+                        <div className="rounded-xl flex items-center justify-center text-base font-medium overflow-hidden transition-transform duration-150" style={{ width: 40 * prefs.iconScale, height: 40 * prefs.iconScale }}>
                           <AppIcon
                             icon={app.icon}
                             customIconUrl={app.custom_icon_url}
@@ -738,7 +738,7 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
                         onDragStart={(e) => handleDragStart(e, app.id)}
                         onDragEnd={handleDragEnd}
                       >
-                        <div className="rounded-xl bg-accent/80 flex items-center justify-center text-base font-medium shadow-sm overflow-hidden" style={{ width: 40 * prefs.iconScale, height: 40 * prefs.iconScale }}>
+                        <div className="rounded-xl flex items-center justify-center text-base font-medium overflow-hidden" style={{ width: 40 * prefs.iconScale, height: 40 * prefs.iconScale }}>
                           <AppIcon
                             icon={app.icon}
                             customIconUrl={app.custom_icon_url}

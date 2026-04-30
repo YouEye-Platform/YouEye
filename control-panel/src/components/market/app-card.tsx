@@ -102,7 +102,7 @@ export function AppCard({ app, status, installProgress }: AppCardProps) {
         {/* Header */}
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="relative p-2.5 rounded-lg bg-blue-50 flex items-center justify-center">
+            <div className="relative p-2.5 rounded-lg flex items-center justify-center">
               {isInstalled && (
                 <HealthDot
                   healthStatus={status?.healthStatus}

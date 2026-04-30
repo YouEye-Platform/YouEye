@@ -70,21 +70,21 @@ function StatusDot({ status }: { status: string | null }) {
 function AppIcon({ name, icon, customIconUrl }: { name: string; icon: string | null; customIconUrl?: string | null }) {
   if (customIconUrl) {
     return (
-      <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-muted/50 flex items-center justify-center">
+      <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 flex items-center justify-center">
         <img src={customIconUrl} alt={name} className="w-9 h-9 rounded-lg object-cover" />
       </div>
     );
   }
   if (icon && icon.startsWith("emoji:")) {
     return (
-      <div className="w-9 h-9 rounded-lg bg-muted/50 flex items-center justify-center shrink-0">
+      <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0">
         <span className="text-lg leading-none">{icon.slice(6)}</span>
       </div>
     );
   }
   if (icon && (icon.startsWith("http") || icon.startsWith("/"))) {
     return (
-      <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-muted/50 flex items-center justify-center">
+      <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 flex items-center justify-center">
         <img src={icon} alt={name} className="w-9 h-9 rounded-lg object-cover" />
       </div>
     );
@@ -94,14 +94,14 @@ function AppIcon({ name, icon, customIconUrl }: { name: string; icon: string | n
     const IconComponent = ICON_MAP[key];
     if (IconComponent) {
       return (
-        <div className="w-9 h-9 rounded-lg bg-muted/50 flex items-center justify-center shrink-0">
+        <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0">
           <IconComponent className="w-4.5 h-4.5 text-muted-foreground" />
         </div>
       );
     }
   }
   return (
-    <div className="w-9 h-9 rounded-lg bg-muted/50 flex items-center justify-center shrink-0">
+    <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0">
       <span className="text-sm font-bold text-muted-foreground">{name.charAt(0).toUpperCase()}</span>
     </div>
   );

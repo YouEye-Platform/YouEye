@@ -94,14 +94,14 @@ function toKebabCase(s: string): string {
 function AppHeaderIcon({ name, icon }: { name: string; icon: string | null }) {
   if (icon && icon.startsWith("emoji:")) {
     return (
-      <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+      <div className="w-10 h-10 rounded-xl flex items-center justify-center">
         <span className="text-xl leading-none">{icon.slice(6)}</span>
       </div>
     );
   }
   if (icon && (icon.startsWith("http") || icon.startsWith("/"))) {
     return (
-      <div className="w-10 h-10 rounded-xl overflow-hidden bg-primary/10 flex items-center justify-center">
+      <div className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center">
         <img src={icon} alt={name} className="w-10 h-10 rounded-xl object-cover" />
       </div>
     );
@@ -111,14 +111,14 @@ function AppHeaderIcon({ name, icon }: { name: string; icon: string | null }) {
     const IconComponent = ICON_MAP[key];
     if (IconComponent) {
       return (
-        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center">
           <IconComponent className="w-5 h-5 text-primary" />
         </div>
       );
     }
   }
   return (
-    <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+    <div className="w-10 h-10 rounded-xl flex items-center justify-center">
       <span className="text-sm font-bold text-primary">{name.charAt(0).toUpperCase()}</span>
     </div>
   );
