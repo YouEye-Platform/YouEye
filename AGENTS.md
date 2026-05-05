@@ -1,3 +1,27 @@
+## ui-v0.3.4.17 — sebastian — 2026-05-05
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Add RSA hybrid encryption for timeline entries, fix native app timeline API path
+
+### Changes
+- `ui/src/lib/crypto/encryption.ts` — Added RSA-OAEP 2048-bit keypair generation, hybrid encrypt/decrypt (AES-256-GCM + RSA key wrapping), and key import/export utilities
+- `ui/src/lib/crypto/pin-session.ts` — Generate RSA keypair on PIN creation, store encrypted private key; add getPublicKey/getPrivateKey exports; retrofit keypair for legacy users on PIN verify
+- `ui/src/db/schema.ts` — Added publicKey, encryptedPrivateKey, privateKeyNonce columns to userEncryptionKeys; added encryptionType, wrappedKey columns to timelineEntries
+- `ui/src/db/index.ts` — Added ALTER TABLE IF NOT EXISTS migrations for all new columns in ensureSchema()
+- `ui/src/app/api/v1/timeline/route.ts` — Three-path POST: direct AES (active PIN), hybrid RSA (public key), or pending queue; GET passes RSA private key for hybrid decryption
+- `ui/src/app/api/v1/timeline/entry/[id]/route.ts` — PUT handler retrieves RSA private key for hybrid entry updates
+- `ui/src/lib/db/queries/timeline.ts` — Added createHybridTimelineEntry; updated getTimelineEntries/getTimelineEntry/updateTimelineEntry to handle both pin and hybrid encryption types
+- `ui/package.json` — Bumped 0.3.4.16 → 0.3.4.17
+
+### Notes for Iris
+- DB schema auto-migrates via ensureSchema() — no manual migration needed
+- Native apps (Notes, Weather, Translate) also updated with timeline API path fix (separate releases)
+- Timeline entries now have encryption_type column ('pin' or 'hybrid') and wrappedKey for hybrid entries
+- RSA keypair is generated alongside PIN; legacy users get keypair on next PIN verify
+
+---
+
 ## cp-v0.3.6.15 / ui-v0.3.4.16 — sebastian — 2026-04-30
 **Branch:** sebastian
 **VM:** ye-sebastian
