@@ -7,7 +7,7 @@
 
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { getActiveDerivedKey } from "@/lib/crypto/pin-session";
+import { getActiveDerivedKey, getPrivateKey } from "@/lib/crypto/pin-session";
 import {
   deleteTimelineEntry,
   updateTimelineEntry,
@@ -34,11 +34,19 @@ export async function PUT(
 
   const body = await request.json();
 
+  // Get RSA private key for hybrid entries
+  let privateKey: CryptoKey | undefined;
+  try {
+    const pk = await getPrivateKey(session.userId, encryptionKey);
+    if (pk) privateKey = pk;
+  } catch { /* non-critical */ }
+
   const success = await updateTimelineEntry(
     id,
     session.userId,
     body,
-    encryptionKey
+    encryptionKey,
+    privateKey
   );
 
   if (!success) {

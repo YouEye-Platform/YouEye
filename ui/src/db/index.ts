@@ -162,8 +162,14 @@ export async function ensureSchema() {
         collection TEXT NOT NULL,
         encrypted_blob TEXT NOT NULL,
         nonce TEXT NOT NULL,
+        encryption_type TEXT DEFAULT 'pin',
+        wrapped_key TEXT,
         created_at TIMESTAMP DEFAULT NOW()
       )`;
+
+    // Hybrid encryption columns for timeline entries (safe on existing installs)
+    await queryClient`ALTER TABLE timeline_entries ADD COLUMN IF NOT EXISTS encryption_type TEXT DEFAULT 'pin'`;
+    await queryClient`ALTER TABLE timeline_entries ADD COLUMN IF NOT EXISTS wrapped_key TEXT`;
 
     await queryClient`
       CREATE INDEX IF NOT EXISTS idx_timeline_user_collection
@@ -186,9 +192,17 @@ export async function ensureSchema() {
         salt TEXT NOT NULL,
         key_hash TEXT NOT NULL,
         iterations INTEGER NOT NULL DEFAULT 600000,
+        public_key TEXT,
+        encrypted_private_key TEXT,
+        private_key_nonce TEXT,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )`;
+
+    // Hybrid encryption keypair columns (safe on existing installs)
+    await queryClient`ALTER TABLE user_encryption_keys ADD COLUMN IF NOT EXISTS public_key TEXT`;
+    await queryClient`ALTER TABLE user_encryption_keys ADD COLUMN IF NOT EXISTS encrypted_private_key TEXT`;
+    await queryClient`ALTER TABLE user_encryption_keys ADD COLUMN IF NOT EXISTS private_key_nonce TEXT`;
 
     await queryClient`
       CREATE TABLE IF NOT EXISTS pin_sessions (

@@ -11,11 +11,12 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getSession } from "@/lib/auth";
 import { resolveServiceAuth } from "@/lib/auth/service";
-import { getActiveDerivedKey, hasPIN } from "@/lib/crypto/pin-session";
+import { getActiveDerivedKey, hasPIN, getPublicKey, getPrivateKey } from "@/lib/crypto/pin-session";
 import {
   getTimelineEntries,
   getTimelineCounts,
   createTimelineEntry,
+  createHybridTimelineEntry,
   queuePendingEvent,
   processPendingEvents,
 } from "@/lib/db/queries/timeline";
@@ -77,10 +78,19 @@ export async function GET(request: Request) {
     // Non-critical — don't fail the main query
   }
 
+  // Get RSA private key for decrypting hybrid entries
+  let privateKey: CryptoKey | undefined;
+  try {
+    const pk = await getPrivateKey(session.userId, encryptionKey);
+    if (pk) privateKey = pk;
+  } catch {
+    // Non-critical — hybrid entries will be skipped
+  }
+
   const { entries, total } = await getTimelineEntries(
     session.userId,
     encryptionKey,
-    { collection, limit, offset, app, entryType, tag, from, to, sort }
+    { collection, limit, offset, app, entryType, tag, from, to, sort, privateKey }
   );
 
   const [counts, appMeta] = await Promise.all([
@@ -180,23 +190,22 @@ export async function POST(request: NextRequest) {
   const effectiveAppId = app_id ?? appId ?? "system";
   const timestamp = body.timestamp ?? new Date().toISOString();
 
-  // Try to encrypt immediately if PIN session is active
+  const entryData: TimelineEntryData = {
+    app_id: effectiveAppId,
+    entry_type,
+    title,
+    timestamp,
+    embed_path: body.embed_path ?? undefined,
+    info_card: body.info_card ?? undefined,
+    tags: body.tags ?? {},
+    data: body.data ?? {},
+  };
+
+  // Try to encrypt immediately if PIN session is active (fastest path — direct AES)
   const pinExists = await hasPIN(userId);
   if (pinExists) {
     const encryptionKey = await getActiveDerivedKey(userId);
     if (encryptionKey) {
-      // Encrypt and store directly
-      const entryData: TimelineEntryData = {
-        app_id: effectiveAppId,
-        entry_type,
-        title,
-        timestamp,
-        embed_path: body.embed_path ?? undefined,
-        info_card: body.info_card ?? undefined,
-        tags: body.tags ?? {},
-        data: body.data ?? {},
-      };
-
       const entryId = await createTimelineEntry(
         userId,
         collection as "history" | "future" | "imported",
@@ -206,9 +215,22 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({ id: entryId, queued: false }, { status: 201 });
     }
+
+    // No active PIN session — try hybrid encryption with public key
+    const publicKey = await getPublicKey(userId);
+    if (publicKey) {
+      const entryId = await createHybridTimelineEntry(
+        userId,
+        collection as "history" | "future" | "imported",
+        entryData,
+        publicKey
+      );
+
+      return NextResponse.json({ id: entryId, queued: false }, { status: 201 });
+    }
   }
 
-  // No active PIN session — queue for later encryption
+  // No PIN set up at all — queue unencrypted for later
   const payload = {
     entry_type,
     title,

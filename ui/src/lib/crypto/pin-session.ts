@@ -17,6 +17,10 @@ import {
   exportKey,
   encryptDerivedKeyForSession,
   decryptDerivedKeyFromSession,
+  generateKeyPair,
+  exportPublicKey,
+  encryptPrivateKey,
+  decryptPrivateKey,
   uint8ToBase64,
   base64ToUint8,
 } from "./encryption";
@@ -58,12 +62,21 @@ export async function createPIN(
   const key = await deriveKey(pin, salt);
   const keyHashValue = await hashKey(key);
 
-  // Store salt + key hash
+  // Generate RSA keypair for hybrid encryption
+  const { publicKey, privateKey } = await generateKeyPair();
+  const publicKeyB64 = await exportPublicKey(publicKey);
+  const { encryptedPrivateKey: encPrivKey, privateKeyNonce: privKeyNonce } =
+    await encryptPrivateKey(privateKey, key);
+
+  // Store salt + key hash + keypair
   await db.insert(userEncryptionKeys).values({
     userId,
     salt: uint8ToBase64(salt),
     keyHash: keyHashValue,
     iterations: 600000,
+    publicKey: publicKeyB64,
+    encryptedPrivateKey: encPrivKey,
+    privateKeyNonce: privKeyNonce,
   });
 
   // Create a PIN session
@@ -93,6 +106,24 @@ export async function verifyPIN(
 
   // Compare hashes
   if (computedHash !== keyRow.keyHash) return null;
+
+  // If user doesn't have a keypair yet (legacy), generate one now
+  if (!keyRow.publicKey) {
+    const { publicKey, privateKey } = await generateKeyPair();
+    const publicKeyB64 = await exportPublicKey(publicKey);
+    const { encryptedPrivateKey: encPrivKey, privateKeyNonce: privKeyNonce } =
+      await encryptPrivateKey(privateKey, key);
+
+    await db
+      .update(userEncryptionKeys)
+      .set({
+        publicKey: publicKeyB64,
+        encryptedPrivateKey: encPrivKey,
+        privateKeyNonce: privKeyNonce,
+        updatedAt: new Date(),
+      })
+      .where(eq(userEncryptionKeys.userId, userId));
+  }
 
   // PIN correct — create session
   return startPINSession(userId, key);
@@ -189,6 +220,51 @@ export async function getActiveDerivedKey(
   }
 }
 
+/** Get the user's RSA public key (always available after PIN setup) */
+export async function getPublicKey(userId: string): Promise<CryptoKey | null> {
+  await ensureSchema();
+
+  const [keyRow] = await db
+    .select({ publicKey: userEncryptionKeys.publicKey })
+    .from(userEncryptionKeys)
+    .where(eq(userEncryptionKeys.userId, userId))
+    .limit(1);
+
+  if (!keyRow?.publicKey) return null;
+
+  const { importPublicKey } = await import("./encryption");
+  return importPublicKey(keyRow.publicKey);
+}
+
+/** Get the user's decrypted RSA private key (requires active PIN session) */
+export async function getPrivateKey(
+  userId: string,
+  derivedKey: CryptoKey
+): Promise<CryptoKey | null> {
+  await ensureSchema();
+
+  const [keyRow] = await db
+    .select({
+      encryptedPrivateKey: userEncryptionKeys.encryptedPrivateKey,
+      privateKeyNonce: userEncryptionKeys.privateKeyNonce,
+    })
+    .from(userEncryptionKeys)
+    .where(eq(userEncryptionKeys.userId, userId))
+    .limit(1);
+
+  if (!keyRow?.encryptedPrivateKey || !keyRow?.privateKeyNonce) return null;
+
+  try {
+    return await decryptPrivateKey(
+      keyRow.encryptedPrivateKey,
+      keyRow.privateKeyNonce,
+      derivedKey
+    );
+  } catch {
+    return null;
+  }
+}
+
 /** Check if there's an active PIN session */
 export async function hasActivePINSession(userId: string): Promise<boolean> {
   const key = await getActiveDerivedKey(userId);
@@ -238,9 +314,9 @@ export async function changePIN(
 
   if (currentHash !== keyRow.keyHash) return false;
 
-  // Re-encrypt all timeline entries with new key
+  // Re-encrypt entries and private key with new PIN-derived key
   const { timelineEntries } = await import("@/db/schema");
-  const { decrypt, encrypt } = await import("./encryption");
+  const { decrypt: aesDecrypt, encrypt: aesEncrypt } = await import("./encryption");
 
   const newSalt = generateSalt();
   const newKey = await deriveKey(newPin, newSalt);
@@ -252,24 +328,47 @@ export async function changePIN(
     .from(timelineEntries)
     .where(eq(timelineEntries.userId, userId));
 
-  // Re-encrypt each entry
+  // Re-encrypt only 'pin' type entries (hybrid entries use RSA-wrapped keys, unaffected by PIN change)
   for (const entry of entries) {
-    const decrypted = await decrypt(entry.encryptedBlob, entry.nonce, currentKey);
-    const { ciphertext, nonce } = await encrypt(decrypted, newKey);
-    await db
-      .update(timelineEntries)
-      .set({ encryptedBlob: ciphertext, nonce })
-      .where(eq(timelineEntries.id, entry.id));
+    if (entry.encryptionType === "hybrid") continue;
+    try {
+      const decrypted = await aesDecrypt(entry.encryptedBlob, entry.nonce, currentKey);
+      const { ciphertext, nonce } = await aesEncrypt(decrypted, newKey);
+      await db
+        .update(timelineEntries)
+        .set({ encryptedBlob: ciphertext, nonce })
+        .where(eq(timelineEntries.id, entry.id));
+    } catch {
+      continue; // Skip corrupted entries
+    }
   }
 
-  // Update key params
+  // Re-encrypt the RSA private key with the new PIN-derived key
+  const updateSet: Record<string, unknown> = {
+    salt: uint8ToBase64(newSalt),
+    keyHash: newKeyHash,
+    updatedAt: new Date(),
+  };
+
+  if (keyRow.encryptedPrivateKey && keyRow.privateKeyNonce) {
+    try {
+      const privKey = await decryptPrivateKey(
+        keyRow.encryptedPrivateKey,
+        keyRow.privateKeyNonce,
+        currentKey
+      );
+      const { encryptedPrivateKey: newEncPrivKey, privateKeyNonce: newPrivKeyNonce } =
+        await encryptPrivateKey(privKey, newKey);
+      updateSet.encryptedPrivateKey = newEncPrivKey;
+      updateSet.privateKeyNonce = newPrivKeyNonce;
+    } catch {
+      // If private key decryption fails, leave it as-is
+    }
+  }
+
   await db
     .update(userEncryptionKeys)
-    .set({
-      salt: uint8ToBase64(newSalt),
-      keyHash: newKeyHash,
-      updatedAt: new Date(),
-    })
+    .set(updateSet)
     .where(eq(userEncryptionKeys.userId, userId));
 
   // End old sessions

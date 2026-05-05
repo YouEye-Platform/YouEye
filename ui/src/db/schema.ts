@@ -248,6 +248,10 @@ export const timelineEntries = pgTable("timeline_entries", {
   encryptedBlob: text("encrypted_blob").notNull(),
   /** GCM nonce/IV (base64) */
   nonce: text("nonce").notNull(),
+  /** Encryption type: 'pin' (direct AES with PIN-derived key) or 'hybrid' (RSA-wrapped per-entry AES key) */
+  encryptionType: text("encryption_type").default("pin"),
+  /** RSA-OAEP wrapped per-entry AES key (base64) — only for hybrid entries */
+  wrappedKey: text("wrapped_key"),
   /** DB-level timestamp (NOT the event timestamp, which is encrypted) */
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
@@ -293,6 +297,12 @@ export const userEncryptionKeys = pgTable("user_encryption_keys", {
   keyHash: text("key_hash").notNull(),
   /** PBKDF2 iterations used */
   iterations: integer("iterations").notNull().default(600000),
+  /** RSA-OAEP public key (SPKI, base64) — always available for hybrid encryption */
+  publicKey: text("public_key"),
+  /** RSA-OAEP private key encrypted with PIN-derived AES key (base64) */
+  encryptedPrivateKey: text("encrypted_private_key"),
+  /** AES-GCM nonce for the encrypted private key (base64) */
+  privateKeyNonce: text("private_key_nonce"),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
 });

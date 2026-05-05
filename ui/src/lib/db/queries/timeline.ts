@@ -8,7 +8,7 @@
 import { db, ensureSchema } from "@/db";
 import { timelineEntries, pendingTimelineEvents } from "@/db/schema";
 import { eq, and, desc, asc } from "drizzle-orm";
-import { encrypt, decrypt } from "@/lib/crypto/encryption";
+import { encrypt, decrypt, hybridEncrypt, hybridDecrypt } from "@/lib/crypto/encryption";
 
 /** The plaintext content stored inside encrypted blobs */
 export interface TimelineEntryData {
@@ -74,6 +74,33 @@ export async function createTimelineEntry(
   return row.id;
 }
 
+/** Create a new hybrid-encrypted timeline entry (RSA-wrapped per-entry AES key) */
+export async function createHybridTimelineEntry(
+  userId: string,
+  collection: "history" | "future" | "imported",
+  entryData: TimelineEntryData,
+  publicKey: CryptoKey
+): Promise<string> {
+  await ensureSchema();
+
+  const plaintext = JSON.stringify(entryData);
+  const { ciphertext, nonce, wrappedKey } = await hybridEncrypt(plaintext, publicKey);
+
+  const [row] = await db
+    .insert(timelineEntries)
+    .values({
+      userId,
+      collection,
+      encryptedBlob: ciphertext,
+      nonce,
+      encryptionType: "hybrid",
+      wrappedKey,
+    })
+    .returning({ id: timelineEntries.id });
+
+  return row.id;
+}
+
 /** Read and decrypt timeline entries with optional filtering */
 export async function getTimelineEntries(
   userId: string,
@@ -88,6 +115,7 @@ export async function getTimelineEntries(
     from?: string; // ISO date
     to?: string; // ISO date
     sort?: "asc" | "desc";
+    privateKey?: CryptoKey; // RSA private key for hybrid entries
   } = {}
 ): Promise<{ entries: DecryptedTimelineEntry[]; total: number }> {
   await ensureSchema();
@@ -102,6 +130,7 @@ export async function getTimelineEntries(
     from,
     to,
     sort = "desc",
+    privateKey,
   } = options;
 
   // Query all matching rows (filter by collection if specified)
@@ -120,12 +149,22 @@ export async function getTimelineEntries(
         : desc(timelineEntries.createdAt)
     );
 
-  // Decrypt all entries
+  // Decrypt all entries (handle both PIN-encrypted and hybrid-encrypted)
   const decrypted: DecryptedTimelineEntry[] = [];
 
   for (const row of rows) {
     try {
-      const plaintext = await decrypt(row.encryptedBlob, row.nonce, encryptionKey);
+      let plaintext: string;
+
+      if (row.encryptionType === "hybrid" && row.wrappedKey) {
+        // Hybrid entry: unwrap per-entry AES key with RSA private key
+        if (!privateKey) continue; // Can't decrypt without private key
+        plaintext = await hybridDecrypt(row.encryptedBlob, row.nonce, row.wrappedKey, privateKey);
+      } else {
+        // PIN-encrypted entry: decrypt directly with PIN-derived key
+        plaintext = await decrypt(row.encryptedBlob, row.nonce, encryptionKey);
+      }
+
       const entry: TimelineEntryData = JSON.parse(plaintext);
       decrypted.push({
         id: row.id,
@@ -193,7 +232,8 @@ export async function getTimelineEntries(
 export async function getTimelineEntry(
   entryId: string,
   userId: string,
-  encryptionKey: CryptoKey
+  encryptionKey: CryptoKey,
+  privateKey?: CryptoKey
 ): Promise<DecryptedTimelineEntry | null> {
   await ensureSchema();
 
@@ -208,7 +248,15 @@ export async function getTimelineEntry(
   if (!row) return null;
 
   try {
-    const plaintext = await decrypt(row.encryptedBlob, row.nonce, encryptionKey);
+    let plaintext: string;
+
+    if (row.encryptionType === "hybrid" && row.wrappedKey) {
+      if (!privateKey) return null;
+      plaintext = await hybridDecrypt(row.encryptedBlob, row.nonce, row.wrappedKey, privateKey);
+    } else {
+      plaintext = await decrypt(row.encryptedBlob, row.nonce, encryptionKey);
+    }
+
     const entry: TimelineEntryData = JSON.parse(plaintext);
     return {
       id: row.id,
@@ -244,12 +292,13 @@ export async function updateTimelineEntry(
   entryId: string,
   userId: string,
   entryData: Partial<TimelineEntryData>,
-  encryptionKey: CryptoKey
+  encryptionKey: CryptoKey,
+  privateKey?: CryptoKey
 ): Promise<boolean> {
   await ensureSchema();
 
   // Get existing entry
-  const existing = await getTimelineEntry(entryId, userId, encryptionKey);
+  const existing = await getTimelineEntry(entryId, userId, encryptionKey, privateKey);
   if (!existing) return false;
 
   // Only future entries can be updated
