@@ -1,3 +1,25 @@
+## cp-v0.3.6.17 / ui-v0.3.4.18 — sebastian — 2026-05-07
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Restructure apps settings page — split CP embed into section-filtered updates/system panels, fix embed height bug
+
+### Changes
+- `control-panel/src/app/embed/apps/client.tsx` — Added `?section=updates|system` URL param filtering; updates section returns empty div when no updates available; system section renders only infrastructure + system categories
+- `control-panel/src/app/embed/layout.tsx` — Added `min-height: 0 !important` to body CSS to fix height feedback loop caused by root layout's `min-h-screen`
+- `control-panel/package.json` — Bumped 0.3.6.16 → 0.3.6.17
+- `ui/src/app/settings/apps/page.tsx` — Generate two separate embed URLs for admins: `?section=updates` and `?section=system`
+- `ui/src/app/settings/apps/client.tsx` — Three-section layout: updates embed (self-collapsing, minHeight=0), user app list, system components embed (minHeight=200)
+- `ui/package.json` — Bumped 0.3.4.17 → 0.3.4.18
+
+### Notes for Iris
+- CP embed now supports `?section=` param — backwards compatible (no param = full render)
+- The embed height fix (`min-height: 0 !important`) is critical — without it, `document.body.scrollHeight` locks at skeleton height due to Next.js root layout's `min-h-screen`
+- UI changes depend on CP having section filter support — deploy CP first
+- This is Phase 1 of a 4-phase per-app white-label branding plan (see handoff.md)
+
+---
+
 ## ui-v0.3.4.17 — sebastian — 2026-05-05
 **Branch:** sebastian
 **VM:** ye-sebastian
