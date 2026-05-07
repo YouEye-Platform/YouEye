@@ -86,6 +86,7 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
   const handleMessage = useCallback(
     (e: MessageEvent) => {
       if (e.origin !== cpOrigin) return;
+      if (e.source !== iframeRef.current?.contentWindow) return;
 
       if (e.data?.type === "youeye-embed-ready" || e.data?.type === "youeye-embed-resize") {
         setReady(true);

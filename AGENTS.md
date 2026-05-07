@@ -1,3 +1,20 @@
+## ui-v0.3.4.19 — sebastian — 2026-05-07
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix AdminEmbed postMessage cross-iframe pollution — multiple embeds on same page received each other's resize events
+
+### Changes
+- `ui/src/components/settings/admin-embed.tsx` — Added `e.source !== iframeRef.current?.contentWindow` guard to `handleMessage` so each AdminEmbed only processes messages from its own iframe
+- `ui/package.json` — Bumped 0.3.4.18 → 0.3.4.19
+
+### Notes for Iris
+- Root cause: when multiple AdminEmbed instances exist on the same page (e.g., apps settings with updates + system embeds), all instances received ALL postMessages from ALL iframes because only `e.origin` was checked, not `e.source`
+- The system embed's height (829px) was being applied to the updates embed too, creating blank space above the app list
+- This is a companion fix to cp-v0.3.6.18 (embed layout hydration fix) — both were needed to fully resolve the blank space bug
+
+---
+
 ## cp-v0.3.6.18 — sebastian — 2026-05-07
 **Branch:** sebastian
 **VM:** ye-sebastian
