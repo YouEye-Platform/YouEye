@@ -49,6 +49,7 @@ const themeCSS = `
     color: var(--embed-text);
     background: var(--embed-bg);
     line-height: 1.5;
+    min-height: 0 !important;
   }
   .embed-card {
     background: var(--embed-card-bg);

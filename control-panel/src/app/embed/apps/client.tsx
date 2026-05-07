@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Server, Box, Cog, Monitor, Database, ShieldCheck, Globe, Shield,
   LayoutDashboard, Search, BookOpen, StickyNote, Film, CloudSun,
@@ -91,6 +92,9 @@ const COMPONENT_MAP: Record<string, string> = {
 };
 
 export function AppsEmbedClient() {
+  const searchParams = useSearchParams();
+  const section = searchParams.get("section") as "updates" | "system" | null;
+
   const [apps, setApps] = useState<AppInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -206,27 +210,73 @@ export function AppsEmbedClient() {
     return acc;
   }, {});
 
+  // section="updates" → only show updates available banner
+  if (section === "updates") {
+    if (appsWithUpdates.length === 0) return <div />;
+    return (
+      <div style={{ padding: 16 }}>
+        {restartOverlay && <RestartOverlay name={restartOverlay} />}
+        <div className="embed-header">
+          <div>
+            <div className="embed-title">Updates Available</div>
+            <div className="embed-subtitle">{appsWithUpdates.length} update{appsWithUpdates.length !== 1 ? "s" : ""} available</div>
+          </div>
+          <button className="embed-btn" onClick={() => { setChecking(true); fetchApps(true); }} disabled={checking}>
+            {checking ? "Checking..." : "Check for Updates"}
+          </button>
+        </div>
+        {appsWithUpdates.map(app => (
+          <AppCard key={app.id} app={app} statuses={statuses} confirmId={confirmId}
+            onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)} onEdit={setEditingApp} />
+        ))}
+        {editingApp && (
+          <EditAppDialog app={editingApp} onSaved={() => { setEditingApp(null); fetchApps(); }} onClose={() => setEditingApp(null)} />
+        )}
+      </div>
+    );
+  }
+
+  // section="system" → only show system + infrastructure categories
+  if (section === "system") {
+    const systemCats = ["infrastructure", "system"];
+    const hasAny = systemCats.some(cat => grouped[cat]?.length);
+    if (!hasAny) return <div />;
+    return (
+      <div style={{ padding: 16 }}>
+        {restartOverlay && <RestartOverlay name={restartOverlay} />}
+        <div className="embed-header">
+          <div>
+            <div className="embed-title">System Components</div>
+            <div className="embed-subtitle">Infrastructure and system services</div>
+          </div>
+        </div>
+        {systemCats.map(cat => {
+          const catApps = grouped[cat];
+          if (!catApps?.length) return null;
+          return (
+            <div key={cat} style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--embed-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+                {CATEGORY_LABELS[cat] || cat}
+              </div>
+              {catApps.map(app => (
+                <AppCard key={app.id} app={app} statuses={statuses} confirmId={confirmId}
+                  onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)} onEdit={setEditingApp} />
+              ))}
+            </div>
+          );
+        })}
+        {editingApp && (
+          <EditAppDialog app={editingApp} onSaved={() => { setEditingApp(null); fetchApps(); }} onClose={() => setEditingApp(null)} />
+        )}
+      </div>
+    );
+  }
+
+  // Default: render everything (backwards compatible)
   return (
     <div style={{ padding: 16 }}>
       {/* Restart overlay */}
-      {restartOverlay && (
-        <div style={{
-          position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
-          background: "rgba(0,0,0,0.6)", zIndex: 200,
-        }}>
-          <div className="embed-card" style={{ textAlign: "center", maxWidth: 360, padding: 32 }}>
-            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>
-              {restartOverlay} is restarting...
-            </div>
-            <div className="embed-muted" style={{ fontSize: 13 }}>
-              The page will reload automatically when the service is back online.
-            </div>
-            <div style={{ marginTop: 16 }}>
-              <div className="embed-skeleton" style={{ height: 4, width: "100%", borderRadius: 2 }} />
-            </div>
-          </div>
-        </div>
-      )}
+      {restartOverlay && <RestartOverlay name={restartOverlay} />}
 
       {/* Header */}
       <div className="embed-header">
@@ -275,6 +325,27 @@ export function AppsEmbedClient() {
       {editingApp && (
         <EditAppDialog app={editingApp} onSaved={() => { setEditingApp(null); fetchApps(); }} onClose={() => setEditingApp(null)} />
       )}
+    </div>
+  );
+}
+
+function RestartOverlay({ name }: { name: string }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
+      background: "rgba(0,0,0,0.6)", zIndex: 200,
+    }}>
+      <div className="embed-card" style={{ textAlign: "center", maxWidth: 360, padding: 32 }}>
+        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>
+          {name} is restarting...
+        </div>
+        <div className="embed-muted" style={{ fontSize: 13 }}>
+          The page will reload automatically when the service is back online.
+        </div>
+        <div style={{ marginTop: 16 }}>
+          <div className="embed-skeleton" style={{ height: 4, width: "100%", borderRadius: 2 }} />
+        </div>
+      </div>
     </div>
   );
 }

@@ -111,10 +111,12 @@ function AppIcon({ name, icon, customIconUrl }: { name: string; icon: string | n
 
 export function AppsListClient({
   isAdmin,
-  appsEmbedUrl,
+  updatesEmbedUrl,
+  systemEmbedUrl,
 }: {
   isAdmin: boolean;
-  appsEmbedUrl: string | null;
+  updatesEmbedUrl: string | null;
+  systemEmbedUrl: string | null;
 }) {
   const router = useRouter();
   const t = useTranslations("appsSettings");
@@ -141,13 +143,18 @@ export function AppsListClient({
         <p className="text-sm text-muted-foreground mt-1">{t("description")}</p>
       </div>
 
-      {/* Admin: CP embed with full app management (system components, updates, etc.) */}
-      {isAdmin && appsEmbedUrl && (
-        <AdminEmbed signedUrl={appsEmbedUrl} title="Apps & Updates" minHeight={300} />
+      {/* Admin: Updates available banner (self-collapses when no updates) */}
+      {isAdmin && updatesEmbedUrl && (
+        <AdminEmbed signedUrl={updatesEmbedUrl} title="Updates Available" minHeight={0} />
       )}
 
-      {/* Regular users: simple local DB app list */}
-      {!isAdmin && <UserAppList />}
+      {/* App list (everyone) — personalized icons + names */}
+      <UserAppList />
+
+      {/* Admin: System components (infrastructure, system services) */}
+      {isAdmin && systemEmbedUrl && (
+        <AdminEmbed signedUrl={systemEmbedUrl} title="System Components" minHeight={200} />
+      )}
     </div>
   );
 }
