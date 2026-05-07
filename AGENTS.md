@@ -1,3 +1,24 @@
+## cp-v0.3.6.18 — sebastian — 2026-05-07
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix embed layout — restructure to use CSS file + client component (nested html/body tags were stripped by React hydration)
+
+### Changes
+- `control-panel/src/app/embed/layout.tsx` — Removed nested `<html>/<body>` tags; now a simple wrapper using EmbedShell component
+- `control-panel/src/app/embed/embed-globals.css` — New: all embed CSS compiled into bundle via `<link>` tag (survives hydration, unlike inline `<style>`)
+- `control-panel/src/app/embed/embed-shell.tsx` — New: client component for height reporting, theme/locale sync, ready signal
+- `control-panel/package.json` — Bumped 0.3.6.17 → 0.3.6.18
+
+### Notes for Iris
+- Root cause: nested `<html>/<body>` in embed layout caused React hydration to strip the inline `<style>` and `<script>` tags, so `body { min-height: 0 !important }` never took effect. The root layout's `min-h-screen` locked body to viewport height.
+- CSS is now in a compiled file loaded via `<link>`, which React doesn't touch during hydration
+- Default theme changed from dark to light (matches most users; client component applies correct theme from URL param before iframe becomes visible)
+- All embed pages (apps, system, backup, containers, users, etc.) benefit from this fix
+- This is a **platform-wide embed fix** — affects all iframed CP pages, not just the apps page
+
+---
+
 ## cp-v0.3.6.17 / ui-v0.3.4.18 — sebastian — 2026-05-07
 **Branch:** sebastian
 **VM:** ye-sebastian
