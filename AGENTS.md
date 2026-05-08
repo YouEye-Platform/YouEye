@@ -1,3 +1,22 @@
+## ui-v0.3.4.23 — sebastian — 2026-05-08
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Universal branding picker — icon/name customization per app
+
+### Changes
+- `ui/src/components/settings/app-branding-tab.tsx` — Added icon picker (lucide/emoji/upload) and display name input to branding tab
+- `ui/src/components/settings/app-settings-detail.tsx` — Pass appIcon prop to AppBrandingTab
+- `ui/src/app/api/v1/user/apps/[appId]/branding/route.ts` — Extended GET/PUT/DELETE for customName + customIconUrl
+- `ui/src/app/api/v1/admin/apps/[appId]/branding/route.ts` — Added originalName/originalIcon to GET response
+- `ui/src/lib/db/queries/apps.ts` — Extended updateUserAppBranding() for new fields
+- `ui/package.json` — Bumped to v0.3.4.23
+
+### Notes for Iris
+- No DB migration — customName/customIconUrl columns already exist on user_app_config
+- Native app repos also updated in this session (see each repo's AGENTS.md)
+- Icon values use same format as app drawer: lucide name, "emoji:X", or URL path
+
 ## ui-v0.3.4.20 — sebastian — 2026-05-08
 **Branch:** sebastian
 **VM:** ye-sebastian
