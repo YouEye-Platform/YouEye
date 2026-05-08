@@ -68,29 +68,24 @@ function StatusDot({ status }: { status: string | null }) {
 }
 
 function AppIcon({ name, icon, customIconUrl }: { name: string; icon: string | null; customIconUrl?: string | null }) {
-  if (customIconUrl) {
-    return (
-      <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 flex items-center justify-center">
-        <img src={customIconUrl} alt={name} className="w-9 h-9 rounded-lg object-cover" />
-      </div>
-    );
-  }
-  if (icon && icon.startsWith("emoji:")) {
+  // Resolve display icon: customIconUrl overrides icon
+  const displayIcon = customIconUrl ?? icon;
+  if (displayIcon && displayIcon.startsWith("emoji:")) {
     return (
       <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0">
-        <span className="text-lg leading-none">{icon.slice(6)}</span>
+        <span className="text-lg leading-none">{displayIcon.slice(6)}</span>
       </div>
     );
   }
-  if (icon && (icon.startsWith("http") || icon.startsWith("/"))) {
+  if (displayIcon && (displayIcon.startsWith("http") || displayIcon.startsWith("/"))) {
     return (
       <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 flex items-center justify-center">
-        <img src={icon} alt={name} className="w-9 h-9 rounded-lg object-cover" />
+        <img src={displayIcon} alt={name} className="w-9 h-9 rounded-lg object-cover" />
       </div>
     );
   }
-  if (icon) {
-    const key = toKebabCase(icon);
+  if (displayIcon) {
+    const key = toKebabCase(displayIcon);
     const IconComponent = ICON_MAP[key];
     if (IconComponent) {
       return (

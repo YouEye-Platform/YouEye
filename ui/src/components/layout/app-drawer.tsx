@@ -173,31 +173,23 @@ function AppIcon({
   size?: number;
 }) {
   const sizeStyle = size ? { width: size, height: size } : undefined;
-  if (customIconUrl) {
+  // Resolve display icon: customIconUrl overrides icon
+  const displayIcon = customIconUrl ?? icon;
+  if (displayIcon && displayIcon.startsWith("emoji:")) {
+    return <span className="text-xl leading-none" style={size ? { fontSize: size * 0.5 } : undefined}>{displayIcon.slice(6)}</span>;
+  }
+  if (displayIcon && (displayIcon.startsWith("http") || displayIcon.startsWith("/"))) {
     return (
       <img
-        src={customIconUrl}
+        src={displayIcon}
         alt={name}
         className={`${size ? "" : className} rounded-xl object-cover`}
         style={sizeStyle}
       />
     );
   }
-  if (icon && icon.startsWith("emoji:")) {
-    return <span className="text-xl leading-none" style={size ? { fontSize: size * 0.5 } : undefined}>{icon.slice(6)}</span>;
-  }
-  if (icon && (icon.startsWith("http") || icon.startsWith("/"))) {
-    return (
-      <img
-        src={icon}
-        alt={name}
-        className={`${size ? "" : className} rounded-xl object-cover`}
-        style={sizeStyle}
-      />
-    );
-  }
-  if (icon) {
-    const key = toKebabCase(icon);
+  if (displayIcon) {
+    const key = toKebabCase(displayIcon);
     const IconComponent = ICON_MAP[key];
     if (IconComponent) {
       return <IconComponent className="text-foreground/80" style={size ? { width: size * 0.5, height: size * 0.5 } : { width: 20, height: 20 }} />;

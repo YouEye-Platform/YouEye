@@ -295,7 +295,7 @@ function BrandingEditor({
             <WordArtPicker
               key={pickerKey}
               siteName={displayedName}
-              value={style}
+              initialStyle={style}
               onChange={setStyle}
             />
           )}
