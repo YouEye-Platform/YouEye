@@ -16,42 +16,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
-  Search,
-  BookOpen,
-  StickyNote,
-  Film,
-  CloudSun,
-  Languages,
-  Package,
-  Camera,
-  MessageCircle,
   Pencil,
   Check,
   EyeOff,
   GripVertical,
-  Globe,
-  Music,
-  Star,
-  Heart,
-  Gamepad2,
-  Headphones,
-  ShoppingCart,
-  Utensils,
-  Newspaper,
-  Tv,
-  Radio,
-  Palette,
-  Code,
-  Terminal,
-  Mail,
-  Bookmark,
-  Calendar,
-  MapPin,
-  Video,
-  Image,
-  Database,
-  FileText,
 } from "lucide-react";
+import * as LucideIcons from "lucide-react";
 import type { ComponentType } from "react";
 
 import {
@@ -121,42 +91,17 @@ function DotsIcon({ className }: { className?: string }) {
   );
 }
 
-const ICON_MAP: Record<string, ComponentType<{ className?: string }>> = {
-  search: Search,
-  "book-open": BookOpen,
-  "sticky-note": StickyNote,
-  film: Film,
-  "cloud-sun": CloudSun,
-  languages: Languages,
-  camera: Camera,
-  "message-circle": MessageCircle,
-  package: Package,
-  globe: Globe,
-  music: Music,
-  star: Star,
-  heart: Heart,
-  gamepad2: Gamepad2,
-  headphones: Headphones,
-  "shopping-cart": ShoppingCart,
-  utensils: Utensils,
-  newspaper: Newspaper,
-  tv: Tv,
-  radio: Radio,
-  palette: Palette,
-  code: Code,
-  terminal: Terminal,
-  mail: Mail,
-  bookmark: Bookmark,
-  calendar: Calendar,
-  "map-pin": MapPin,
-  video: Video,
-  image: Image,
-  database: Database,
-  "file-text": FileText,
-};
+function kebabToPascal(s: string): string {
+  return s.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join("");
+}
 
-function toKebabCase(s: string): string {
-  return s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+function getLucideIcon(name: string): ComponentType<{ className?: string; style?: React.CSSProperties }> | undefined {
+  const pascal = kebabToPascal(name);
+  const icon = (LucideIcons as Record<string, unknown>)[pascal];
+  if (typeof icon === "function" || (typeof icon === "object" && icon !== null && "$$typeof" in (icon as Record<string, unknown>))) {
+    return icon as ComponentType<{ className?: string; style?: React.CSSProperties }>;
+  }
+  return undefined;
 }
 
 function AppIcon({
@@ -189,8 +134,7 @@ function AppIcon({
     );
   }
   if (displayIcon) {
-    const key = toKebabCase(displayIcon);
-    const IconComponent = ICON_MAP[key];
+    const IconComponent = getLucideIcon(displayIcon);
     if (IconComponent) {
       return <IconComponent className="text-foreground/80" style={size ? { width: size * 0.5, height: size * 0.5 } : { width: 20, height: 20 }} />;
     }

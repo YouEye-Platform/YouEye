@@ -6,18 +6,10 @@ import { useTranslations } from "next-intl";
 import {
   LayoutGrid,
   ChevronRight,
-  Package,
   Loader2,
   AlertCircle,
-  Search,
-  BookOpen,
-  StickyNote,
-  Film,
-  CloudSun,
-  Languages,
-  Camera,
-  MessageCircle,
 } from "lucide-react";
+import * as LucideIcons from "lucide-react";
 import type { ComponentType } from "react";
 import { AdminEmbed } from "@/components/settings/admin-embed";
 
@@ -34,22 +26,19 @@ interface DrawerApp {
   url: string;
 }
 
-/* ── Lucide Icon Map ── */
+/* ── Dynamic Lucide Icon Lookup ── */
 
-const ICON_MAP: Record<string, ComponentType<{ className?: string }>> = {
-  search: Search,
-  "book-open": BookOpen,
-  "sticky-note": StickyNote,
-  film: Film,
-  "cloud-sun": CloudSun,
-  languages: Languages,
-  camera: Camera,
-  "message-circle": MessageCircle,
-  package: Package,
-};
+function kebabToPascal(s: string): string {
+  return s.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join("");
+}
 
-function toKebabCase(s: string): string {
-  return s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+function getLucideIcon(name: string): ComponentType<{ className?: string }> | undefined {
+  const pascal = kebabToPascal(name);
+  const icon = (LucideIcons as Record<string, unknown>)[pascal];
+  if (typeof icon === "function" || (typeof icon === "object" && icon !== null && "$$typeof" in (icon as Record<string, unknown>))) {
+    return icon as ComponentType<{ className?: string }>;
+  }
+  return undefined;
 }
 
 /* ── Subcomponents ── */
@@ -85,8 +74,7 @@ function AppIcon({ name, icon, customIconUrl }: { name: string; icon: string | n
     );
   }
   if (displayIcon) {
-    const key = toKebabCase(displayIcon);
-    const IconComponent = ICON_MAP[key];
+    const IconComponent = getLucideIcon(displayIcon);
     if (IconComponent) {
       return (
         <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0">
