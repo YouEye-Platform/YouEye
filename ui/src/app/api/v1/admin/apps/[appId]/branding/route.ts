@@ -27,6 +27,8 @@ export async function GET(
     appId,
     brandingWordart: app.brandingWordart ?? null,
     headerDisplayMode: app.headerDisplayMode ?? "logo-text",
+    originalName: app.name,
+    originalIcon: app.icon,
   });
 }
 

@@ -26,6 +26,10 @@ export async function GET(
     appId,
     brandingWordart: app.brandingWordart,
     headerDisplayMode: app.headerDisplayMode,
+    customName: app.customName,
+    customIconUrl: app.customIconUrl,
+    originalName: app.name,
+    originalIcon: app.icon,
     adminBrandingWordart: app.adminBrandingWordart,
     adminHeaderDisplayMode: app.adminHeaderDisplayMode,
   });
@@ -44,6 +48,8 @@ export async function PUT(
     await updateUserAppBranding(session.userId, appId, {
       brandingWordart: body.brandingWordart,
       headerDisplayMode: body.headerDisplayMode,
+      customName: body.customName,
+      customIconUrl: body.customIconUrl,
     });
     return NextResponse.json({ ok: true });
   } catch {
@@ -62,6 +68,8 @@ export async function DELETE(
   await updateUserAppBranding(session.userId, appId, {
     brandingWordart: null,
     headerDisplayMode: null,
+    customName: null,
+    customIconUrl: null,
   });
   return NextResponse.json({ ok: true });
 }

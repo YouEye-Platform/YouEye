@@ -305,7 +305,7 @@ export function AppSettingsDetail({
       {activeTab === "overview" && <OverviewTab app={app} />}
 
       {activeTab === "branding" && (
-        <AppBrandingTab appId={app.id} appName={app.name} isAdmin={isAdmin} />
+        <AppBrandingTab appId={app.id} appName={app.name} appIcon={app.icon} isAdmin={isAdmin} />
       )}
 
       {activeTab === "permissions" && (

@@ -209,6 +209,8 @@ export async function updateUserAppBranding(
   data: {
     brandingWordart?: SiteNameStyle | null;
     headerDisplayMode?: string | null;
+    customName?: string | null;
+    customIconUrl?: string | null;
   }
 ) {
   await ensureSchema();
@@ -228,6 +230,12 @@ export async function updateUserAppBranding(
   }
   if (data.headerDisplayMode !== undefined) {
     updates.headerDisplayMode = data.headerDisplayMode;
+  }
+  if (data.customName !== undefined) {
+    updates.customName = data.customName;
+  }
+  if (data.customIconUrl !== undefined) {
+    updates.customIconUrl = data.customIconUrl;
   }
 
   if (existing) {
