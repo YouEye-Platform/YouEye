@@ -159,9 +159,8 @@ const DEFAULT_STYLE: SiteNameStyle = {
 };
 
 function getAvatarEmbedUrl(theme: string): string {
-  const cpBase = typeof window !== 'undefined'
-    ? `${window.location.protocol}//control.${window.location.host}`
-    : 'https://control.devvm.test';
+  if (typeof window === 'undefined') return '';
+  const cpBase = `${window.location.protocol}//control.${window.location.host}`;
   return `${cpBase}/embed/avatar?theme=${theme}`;
 }
 
