@@ -39,6 +39,8 @@ import type { ComponentType } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { AdminEmbed } from "@/components/settings/admin-embed";
+import { AppBrandingTab } from "@/components/settings/app-branding-tab";
+import { Palette } from "lucide-react";
 
 /* ── Types ── */
 
@@ -71,7 +73,7 @@ interface LinkHandler {
 
 /* ── Tab type ── */
 
-type TabId = "app-settings" | "overview" | "permissions" | "network" | "link-handling";
+type TabId = "app-settings" | "overview" | "branding" | "permissions" | "network" | "link-handling";
 
 /* ── Icon helpers ── */
 
@@ -141,7 +143,7 @@ export function AppSettingsDetail({
   const [linkHandlers, setLinkHandlers] = useState<LinkHandler[]>([]);
   const [isAdmin] = useState(isAdminProp);
   const [loading, setLoading] = useState(true);
-  const validTabs: TabId[] = ["app-settings", "overview", "permissions", "network", "link-handling"];
+  const validTabs: TabId[] = ["app-settings", "overview", "branding", "permissions", "network", "link-handling"];
   const [activeTab, setActiveTab] = useState<TabId>(
     initialTab && validTabs.includes(initialTab as TabId) ? (initialTab as TabId) : "app-settings"
   );
@@ -240,6 +242,7 @@ export function AppSettingsDetail({
   const tabs: { id: TabId; label: string; icon: React.ReactNode; adminOnly?: boolean; hide?: boolean }[] = [
     { id: "app-settings", label: "App Settings", icon: <Sliders className="w-4 h-4" />, hide: !hasAppSettings },
     { id: "overview", label: "Overview", icon: <Info className="w-4 h-4" /> },
+    { id: "branding", label: "Branding", icon: <Palette className="w-4 h-4" /> },
     { id: "permissions", label: "Permissions", icon: <Shield className="w-4 h-4" /> },
     { id: "network", label: "Network", icon: <Globe className="w-4 h-4" />, adminOnly: true },
     { id: "link-handling", label: "Link Handling", icon: <Link2 className="w-4 h-4" /> },
@@ -300,6 +303,10 @@ export function AppSettingsDetail({
       )}
 
       {activeTab === "overview" && <OverviewTab app={app} />}
+
+      {activeTab === "branding" && (
+        <AppBrandingTab appId={appId} appName={app.name} isAdmin={isAdmin} />
+      )}
 
       {activeTab === "permissions" && (
         <PermissionsTab

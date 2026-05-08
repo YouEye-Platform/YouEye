@@ -124,6 +124,10 @@ export const apps = pgTable("apps", {
   tokenHash: text("token_hash"),
   /** SSO entry URL path (e.g. /sso/OID/start/authentik) — appended to subdomain URL for auto-SSO login */
   ssoEntryUrl: text("sso_entry_url"),
+  /** Admin-set default WordArt branding for this app's header */
+  brandingWordart: jsonb("branding_wordart").$type<Record<string, unknown>>(),
+  /** Admin-set default header display mode: logo-text, text-only, logo-only */
+  headerDisplayMode: text("header_display_mode").default("logo-text"),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
 });
@@ -153,6 +157,10 @@ export const userAppConfig = pgTable("user_app_config", {
   displayOrder: integer("display_order").default(0),
   /** Section this app belongs to (references user_drawer_sections) */
   sectionId: text("section_id"),
+  /** User's per-app WordArt branding override */
+  brandingWordart: jsonb("branding_wordart").$type<Record<string, unknown>>(),
+  /** User's per-app header display mode override */
+  headerDisplayMode: text("header_display_mode"),
 });
 
 /**
@@ -478,6 +486,8 @@ export const wordartPresets = pgTable("wordart_presets", {
   name: text("name").notNull(),
   style: jsonb("style").$type<Record<string, unknown>>().notNull(),
   scope: text("scope").notNull().default("user"),
+  /** Optional app ID — when set, preset is scoped to a specific app */
+  appId: text("app_id"),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
 

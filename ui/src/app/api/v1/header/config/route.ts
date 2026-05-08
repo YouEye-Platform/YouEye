@@ -16,12 +16,15 @@ export const dynamic = "force-dynamic";
 
 import { getSession } from "@/lib/auth";
 import { getBranding } from "@/lib/db/queries/branding";
+import type { SiteNameStyle } from "@/lib/db/queries/branding";
 import { getUnreadCount } from "@/lib/db/queries/notifications";
 import { getUserAppsWithConfig } from "@/lib/db/queries/apps";
 import { getUserActiveTheme, getDefaultTheme } from "@/lib/db/queries/themes";
 import { generateCompactCSS } from "@/lib/themes/css-generator";
 import { getUserSettings, getDrawerPrefs } from "@/lib/db/queries/settings";
 import { resolveServiceAuth } from "@/lib/auth/service";
+import { siteNameStyleToCSS, FONT_CSS_MAP } from "@/components/layout/site-name";
+import { CHARACTER_SHAPE_PRESETS } from "@/lib/wordart-presets";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -98,6 +101,29 @@ export async function GET(request: NextRequest) {
     } else {
       url = a.containerUrl;
     }
+
+    // Pre-compute branding CSS for native apps
+    let brandingCss: Record<string, unknown> | null = null;
+    let brandingFontUrl: string | null = null;
+    let brandingCssChars: string[] | null = null;
+    const bw = a.brandingWordart as SiteNameStyle | null;
+    if (bw) {
+      const { css, fontUrl } = siteNameStyleToCSS(bw);
+      brandingCss = css as unknown as Record<string, unknown>;
+      brandingFontUrl = fontUrl;
+      // Per-character shape transforms
+      if (bw.charShapeId) {
+        const shape = CHARACTER_SHAPE_PRESETS.find((p) => p.id === bw.charShapeId);
+        if (shape) {
+          const intensity = bw.charShapeIntensity ?? 1;
+          // Pre-compute transforms for up to 30 chars
+          brandingCssChars = Array.from({ length: 30 }, (_, i) =>
+            shape.charTransform(i, 30, intensity)
+          );
+        }
+      }
+    }
+
     return {
       id: a.id,
       name: a.name,
@@ -109,6 +135,11 @@ export async function GET(request: NextRequest) {
       section: a.sectionId,
       status: a.status,
       visible: a.visible,
+      branding_wordart: bw,
+      header_display_mode: a.headerDisplayMode,
+      branding_css: brandingCss,
+      branding_font_url: brandingFontUrl,
+      branding_css_chars: brandingCssChars,
     };
   });
 

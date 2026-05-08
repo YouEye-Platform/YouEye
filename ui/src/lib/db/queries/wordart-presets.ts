@@ -1,4 +1,4 @@
-import { eq, and, or, desc } from "drizzle-orm";
+import { eq, and, or, desc, isNull } from "drizzle-orm";
 import { db, ensureSchema } from "@/db";
 import { wordartPresets } from "@/db/schema";
 import type { SiteNameStyle } from "@/lib/db/queries/branding";
@@ -9,6 +9,7 @@ export interface WordArtPreset {
   name: string;
   style: SiteNameStyle;
   scope: string;
+  appId: string | null;
   createdAt: Date | null;
 }
 
@@ -19,6 +20,7 @@ function rowToPreset(row: typeof wordartPresets.$inferSelect): WordArtPreset {
     name: row.name,
     style: row.style as unknown as SiteNameStyle,
     scope: row.scope,
+    appId: row.appId ?? null,
     createdAt: row.createdAt,
   };
 }
@@ -28,7 +30,7 @@ export async function getUserPresets(userId: string): Promise<WordArtPreset[]> {
   const rows = await db
     .select()
     .from(wordartPresets)
-    .where(and(eq(wordartPresets.userId, userId), eq(wordartPresets.scope, "user")))
+    .where(and(eq(wordartPresets.userId, userId), eq(wordartPresets.scope, "user"), isNull(wordartPresets.appId)))
     .orderBy(desc(wordartPresets.createdAt));
   return rows.map(rowToPreset);
 }
@@ -38,7 +40,7 @@ export async function getServerPresets(): Promise<WordArtPreset[]> {
   const rows = await db
     .select()
     .from(wordartPresets)
-    .where(eq(wordartPresets.scope, "server"))
+    .where(and(eq(wordartPresets.scope, "server"), isNull(wordartPresets.appId)))
     .orderBy(desc(wordartPresets.createdAt));
   return rows.map(rowToPreset);
 }
@@ -49,11 +51,44 @@ export async function getAllPresetsForUser(userId: string): Promise<WordArtPrese
     .select()
     .from(wordartPresets)
     .where(
-      or(
-        and(eq(wordartPresets.userId, userId), eq(wordartPresets.scope, "user")),
-        eq(wordartPresets.scope, "server")
+      and(
+        isNull(wordartPresets.appId),
+        or(
+          and(eq(wordartPresets.userId, userId), eq(wordartPresets.scope, "user")),
+          eq(wordartPresets.scope, "server")
+        )
       )
     )
+    .orderBy(desc(wordartPresets.createdAt));
+  return rows.map(rowToPreset);
+}
+
+/** Get user + server presets for a specific app */
+export async function getAppPresetsForUser(userId: string, appId: string): Promise<WordArtPreset[]> {
+  await ensureSchema();
+  const rows = await db
+    .select()
+    .from(wordartPresets)
+    .where(
+      and(
+        eq(wordartPresets.appId, appId),
+        or(
+          and(eq(wordartPresets.userId, userId), eq(wordartPresets.scope, "user")),
+          eq(wordartPresets.scope, "server")
+        )
+      )
+    )
+    .orderBy(desc(wordartPresets.createdAt));
+  return rows.map(rowToPreset);
+}
+
+/** Get server presets for a specific app */
+export async function getAppServerPresets(appId: string): Promise<WordArtPreset[]> {
+  await ensureSchema();
+  const rows = await db
+    .select()
+    .from(wordartPresets)
+    .where(and(eq(wordartPresets.scope, "server"), eq(wordartPresets.appId, appId)))
     .orderBy(desc(wordartPresets.createdAt));
   return rows.map(rowToPreset);
 }
@@ -62,12 +97,13 @@ export async function createPreset(
   userId: string,
   name: string,
   style: SiteNameStyle,
-  scope: "user" | "server" = "user"
+  scope: "user" | "server" = "user",
+  appId?: string
 ): Promise<WordArtPreset> {
   await ensureSchema();
   const [row] = await db
     .insert(wordartPresets)
-    .values({ userId, name, style: style as unknown as Record<string, unknown>, scope })
+    .values({ userId, name, style: style as unknown as Record<string, unknown>, scope, appId: appId ?? null })
     .returning();
   return rowToPreset(row);
 }

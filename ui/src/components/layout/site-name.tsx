@@ -131,4 +131,39 @@ export function SiteName({ name, style, className, as: Tag = "span" }: SiteNameP
   );
 }
 
+/**
+ * Convert a SiteNameStyle to React.CSSProperties + font URL.
+ * Used by the header config API to pre-compute CSS for native apps.
+ */
+export function siteNameStyleToCSS(s: SiteNameStyle): {
+  css: React.CSSProperties;
+  fontUrl: string | null;
+} {
+  const css: React.CSSProperties = {
+    fontFamily: `"${s.fontFamily}", sans-serif`,
+    fontSize: s.fontSize,
+    fontWeight: s.fontWeight,
+    letterSpacing: s.letterSpacing,
+    textTransform: s.textTransform as React.CSSProperties["textTransform"],
+    textShadow: s.textShadow !== "none" ? s.textShadow : undefined,
+    WebkitTextStroke: s.textStroke || undefined,
+    transform: s.transform || undefined,
+    display: s.transform ? "inline-block" : undefined,
+  };
+
+  if (s.gradient?.enabled) {
+    css.color = "transparent";
+    css.backgroundImage = `linear-gradient(${s.gradient.direction}, ${s.gradient.from}, ${s.gradient.to})`;
+    css.WebkitBackgroundClip = "text";
+    css.WebkitTextFillColor = "transparent";
+    css.backgroundClip = "text";
+  } else {
+    css.color = s.color;
+  }
+
+  const fontUrl = FONT_CSS_MAP[s.fontFamily] ?? null;
+
+  return { css, fontUrl };
+}
+
 export type { SiteNameStyle };

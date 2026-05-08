@@ -20,6 +20,8 @@ interface WordArtGalleryProps {
   onApply: (style: SiteNameStyle) => void;
   onSave: (name: string) => Promise<void>;
   scope: "user" | "server";
+  /** When set, presets are scoped to this app instead of global */
+  appId?: string;
 }
 
 function MiniPreview({ name, style }: { name: string; style: SiteNameStyle }) {
@@ -84,6 +86,7 @@ export function WordArtGallery({
   onApply,
   onSave,
   scope,
+  appId,
 }: WordArtGalleryProps) {
   const [presets, setPresets] = useState<Preset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -93,8 +96,9 @@ export function WordArtGallery({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
-  const apiBase =
-    scope === "user" ? "/api/v1/user/wordart/presets" : "/api/ui/wordart-presets";
+  const apiBase = appId
+    ? (scope === "user" ? `/api/v1/user/apps/${appId}/wordart/presets` : `/api/v1/admin/apps/${appId}/wordart/presets`)
+    : (scope === "user" ? "/api/v1/user/wordart/presets" : "/api/ui/wordart-presets");
 
   const loadPresets = useCallback(async () => {
     try {

@@ -10,6 +10,8 @@ import { db, ensureSchema } from "@/db";
 import { apps, userAppConfig, userDrawerSections } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 
+import type { SiteNameStyle } from "@/lib/db/queries/branding";
+
 interface AppWithConfig {
   id: string;
   name: string;
@@ -26,6 +28,13 @@ interface AppWithConfig {
   visible: boolean;
   displayOrder: number;
   sectionId: string | null;
+  /** Resolved branding WordArt (user override > admin default > null) */
+  brandingWordart: SiteNameStyle | null;
+  /** Resolved header display mode (user override > admin default > 'logo-text') */
+  headerDisplayMode: string;
+  /** Admin-set branding (for settings UI to show server default) */
+  adminBrandingWordart: SiteNameStyle | null;
+  adminHeaderDisplayMode: string;
 }
 
 interface DrawerSection {
@@ -54,6 +63,8 @@ export async function getUserAppsWithConfig(userId: string): Promise<{
 
   const mergedApps: AppWithConfig[] = allApps.map((app) => {
     const config = configMap.get(app.id);
+    const adminWordart = (app.brandingWordart as unknown as SiteNameStyle) ?? null;
+    const adminMode = app.headerDisplayMode ?? "logo-text";
     return {
       id: app.id,
       name: app.name,
@@ -70,6 +81,10 @@ export async function getUserAppsWithConfig(userId: string): Promise<{
       visible: config?.visible ?? true,
       displayOrder: config?.displayOrder ?? app.displayOrder ?? 0,
       sectionId: config?.sectionId ?? null,
+      brandingWordart: (config?.brandingWordart as unknown as SiteNameStyle) ?? adminWordart,
+      headerDisplayMode: config?.headerDisplayMode ?? adminMode,
+      adminBrandingWordart: adminWordart,
+      adminHeaderDisplayMode: adminMode,
     };
   });
 
@@ -159,6 +174,80 @@ export async function updateDrawerSections(
   }));
 
   return db.insert(userDrawerSections).values(rows).returning();
+}
+
+/** Admin: update the server-default branding for an app */
+export async function updateAppBranding(
+  appId: string,
+  data: {
+    brandingWordart?: SiteNameStyle | null;
+    headerDisplayMode?: string;
+  }
+) {
+  await ensureSchema();
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (data.brandingWordart !== undefined) {
+    updates.brandingWordart = data.brandingWordart
+      ? (data.brandingWordart as unknown as Record<string, unknown>)
+      : null;
+  }
+  if (data.headerDisplayMode !== undefined) {
+    updates.headerDisplayMode = data.headerDisplayMode;
+  }
+  const [row] = await db
+    .update(apps)
+    .set(updates)
+    .where(eq(apps.id, appId))
+    .returning();
+  return row;
+}
+
+/** User: update per-user branding override for an app */
+export async function updateUserAppBranding(
+  userId: string,
+  appId: string,
+  data: {
+    brandingWordart?: SiteNameStyle | null;
+    headerDisplayMode?: string | null;
+  }
+) {
+  await ensureSchema();
+
+  const [existing] = await db
+    .select()
+    .from(userAppConfig)
+    .where(
+      and(eq(userAppConfig.userId, userId), eq(userAppConfig.appId, appId))
+    );
+
+  const updates: Record<string, unknown> = {};
+  if (data.brandingWordart !== undefined) {
+    updates.brandingWordart = data.brandingWordart
+      ? (data.brandingWordart as unknown as Record<string, unknown>)
+      : null;
+  }
+  if (data.headerDisplayMode !== undefined) {
+    updates.headerDisplayMode = data.headerDisplayMode;
+  }
+
+  if (existing) {
+    const [row] = await db
+      .update(userAppConfig)
+      .set(updates)
+      .where(eq(userAppConfig.id, existing.id))
+      .returning();
+    return row;
+  }
+
+  const [row] = await db
+    .insert(userAppConfig)
+    .values({
+      userId,
+      appId,
+      ...updates,
+    })
+    .returning();
+  return row;
 }
 
 export async function getAllApps() {

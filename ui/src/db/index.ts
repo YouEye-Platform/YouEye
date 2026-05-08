@@ -87,6 +87,10 @@ export async function ensureSchema() {
     // C6: SSO entry URL — apps with SSO can specify a direct login path
     await queryClient`ALTER TABLE apps ADD COLUMN IF NOT EXISTS sso_entry_url TEXT`;
 
+    // Per-app white-label branding columns
+    await queryClient`ALTER TABLE apps ADD COLUMN IF NOT EXISTS branding_wordart JSONB`;
+    await queryClient`ALTER TABLE apps ADD COLUMN IF NOT EXISTS header_display_mode TEXT DEFAULT 'logo-text'`;
+
     await queryClient`
       CREATE TABLE IF NOT EXISTS user_settings (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -114,6 +118,10 @@ export async function ensureSchema() {
         section_id TEXT,
         UNIQUE(user_id, app_id)
       )`;
+
+    // Per-app user branding override columns
+    await queryClient`ALTER TABLE user_app_config ADD COLUMN IF NOT EXISTS branding_wordart JSONB`;
+    await queryClient`ALTER TABLE user_app_config ADD COLUMN IF NOT EXISTS header_display_mode TEXT`;
 
     await queryClient`
       CREATE TABLE IF NOT EXISTS user_drawer_sections (
@@ -295,6 +303,9 @@ export async function ensureSchema() {
     await queryClient`
       CREATE INDEX IF NOT EXISTS idx_wordart_presets_user
         ON wordart_presets(user_id)`;
+
+    // Per-app wordart presets
+    await queryClient`ALTER TABLE wordart_presets ADD COLUMN IF NOT EXISTS app_id TEXT`;
 
     // Seed preset themes if the themes table is empty
     await seedPresetThemes();
