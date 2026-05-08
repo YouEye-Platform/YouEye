@@ -305,14 +305,14 @@ export function AppSettingsDetail({
       {activeTab === "overview" && <OverviewTab app={app} />}
 
       {activeTab === "branding" && (
-        <AppBrandingTab appId={appId} appName={app.name} isAdmin={isAdmin} />
+        <AppBrandingTab appId={app.id} appName={app.name} isAdmin={isAdmin} />
       )}
 
       {activeTab === "permissions" && (
         <PermissionsTab
           permissions={permissions}
           loading={permissionsLoading}
-          appId={appId}
+          appId={app.id}
           onRefresh={fetchPermissions}
         />
       )}
@@ -325,7 +325,7 @@ export function AppSettingsDetail({
         <LinkHandlingTab
           linkHandlers={linkHandlers}
           appName={app?.name ?? appId}
-          appId={appId}
+          appId={app.id}
           isAdmin={isAdmin}
           onRefresh={fetchLinkHandlers}
         />
