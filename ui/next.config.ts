@@ -8,6 +8,18 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  async headers() {
+    return [
+      {
+        // Allow native apps on subdomains to load fonts cross-origin
+        source: "/fonts/:path*",
+        headers: [
+          { key: "Access-Control-Allow-Origin", value: "*" },
+          { key: "Access-Control-Allow-Methods", value: "GET" },
+        ],
+      },
+    ];
+  },
 };
 
 export default withNextIntl(nextConfig);
