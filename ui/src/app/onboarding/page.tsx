@@ -159,7 +159,6 @@ const DEFAULT_STYLE: SiteNameStyle = {
 };
 
 function getAvatarEmbedUrl(theme: string): string {
-  if (typeof window === 'undefined') return '';
   const cpBase = `${window.location.protocol}//control.${window.location.host}`;
   return `${cpBase}/embed/avatar?theme=${theme}`;
 }
@@ -176,6 +175,7 @@ export default function OnboardingPage() {
   const avatarEmbedRef = useRef<HTMLIFrameElement>(null);
   const [avatarEmbedReady, setAvatarEmbedReady] = useState(false);
   const [avatarEmbedHeight, setAvatarEmbedHeight] = useState(280);
+  const [avatarEmbedSrc, setAvatarEmbedSrc] = useState<string | undefined>(undefined);
 
   const isDark = resolvedTheme === 'dark';
   const theme = resolvedTheme || 'system';
@@ -229,6 +229,11 @@ export default function OnboardingPage() {
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, [resolvedTheme]);
+
+  // Set avatar embed src client-side (window is unavailable during SSR)
+  useEffect(() => {
+    setAvatarEmbedSrc(getAvatarEmbedUrl(theme));
+  }, [theme]);
 
   // Send theme updates to avatar embed
   useEffect(() => {
@@ -323,18 +328,20 @@ export default function OnboardingPage() {
                   <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
               )}
-              <iframe
-                ref={avatarEmbedRef}
-                src={getAvatarEmbedUrl(theme)}
-                title="Choose Avatar"
-                sandbox="allow-scripts allow-same-origin allow-forms"
-                style={{
-                  width: '100%',
-                  height: avatarEmbedHeight,
-                  border: 'none',
-                  display: avatarEmbedReady ? 'block' : 'none',
-                }}
-              />
+              {avatarEmbedSrc && (
+                <iframe
+                  ref={avatarEmbedRef}
+                  src={avatarEmbedSrc}
+                  title="Choose Avatar"
+                  sandbox="allow-scripts allow-same-origin allow-forms"
+                  style={{
+                    width: '100%',
+                    height: avatarEmbedHeight,
+                    border: 'none',
+                    display: avatarEmbedReady ? 'block' : 'none',
+                  }}
+                />
+              )}
             </div>
 
             <div className="flex items-center justify-center gap-3">
