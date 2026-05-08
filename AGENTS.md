@@ -1,3 +1,29 @@
+## ui-v0.3.4.20 — sebastian — 2026-05-08
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Per-app white-label branding system (Phases 2–4)
+
+### Changes
+- `ui/src/db/schema.ts` — Added branding_wordart + header_display_mode to apps/user_app_config, app_id to wordart_presets
+- `ui/src/db/index.ts` — Migration ALTER TABLE statements for new columns
+- `ui/src/lib/db/queries/apps.ts` — Branding merge logic, updateAppBranding(), updateUserAppBranding()
+- `ui/src/lib/db/queries/wordart-presets.ts` — App-scoped preset queries, backward-compat global filters
+- `ui/src/app/api/v1/admin/apps/[appId]/branding/route.ts` — Admin per-app branding API
+- `ui/src/app/api/v1/admin/apps/[appId]/wordart/presets/route.ts` — Admin app presets API
+- `ui/src/app/api/v1/user/apps/[appId]/branding/route.ts` — User per-app branding API
+- `ui/src/app/api/v1/user/apps/[appId]/wordart/presets/route.ts` — User app presets API
+- `ui/src/app/api/v1/header/config/route.ts` — Pre-computed branding CSS per app in header config
+- `ui/src/components/layout/site-name.tsx` — Exported siteNameStyleToCSS() utility
+- `ui/src/components/settings/app-branding-tab.tsx` — New branding tab with WordArt picker + display modes
+- `ui/src/components/settings/app-settings-detail.tsx` — Added branding tab to app settings
+- `ui/src/components/settings/wordart-gallery.tsx` — Added appId prop for per-app presets
+
+### Notes for Iris
+- DB migrations are idempotent (ALTER TABLE ADD COLUMN IF NOT EXISTS)
+- WordArt preset queries now filter global presets by isNull(appId) — backward compatible
+- Native apps need matching branding type updates (done in separate commits per app repo)
+
 ## ui-v0.3.4.19 — sebastian — 2026-05-07
 **Branch:** sebastian
 **VM:** ye-sebastian
