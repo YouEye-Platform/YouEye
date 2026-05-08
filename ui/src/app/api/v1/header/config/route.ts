@@ -23,7 +23,7 @@ import { getUserActiveTheme, getDefaultTheme } from "@/lib/db/queries/themes";
 import { generateCompactCSS } from "@/lib/themes/css-generator";
 import { getUserSettings, getDrawerPrefs } from "@/lib/db/queries/settings";
 import { resolveServiceAuth } from "@/lib/auth/service";
-import { siteNameStyleToCSS, FONT_CSS_MAP } from "@/components/layout/site-name";
+import { siteNameStyleToCSS } from "@/lib/site-name-utils";
 import { CHARACTER_SHAPE_PRESETS } from "@/lib/wordart-presets";
 import { db } from "@/db";
 import { users } from "@/db/schema";

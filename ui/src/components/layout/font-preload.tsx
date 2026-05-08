@@ -10,7 +10,7 @@
  */
 
 import { getBranding } from "@/lib/db/queries/branding";
-import { FONT_CSS_MAP } from "./site-name";
+import { FONT_CSS_MAP } from "@/lib/site-name-utils";
 
 /**
  * Map of font family → primary font file path (weight 400 or 700 depending on typical site name use).

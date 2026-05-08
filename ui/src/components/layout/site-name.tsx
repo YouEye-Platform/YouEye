@@ -10,39 +10,11 @@
 import { useEffect } from "react";
 import type { SiteNameStyle } from "@/lib/db/queries/branding";
 import { CHARACTER_SHAPE_PRESETS } from "@/lib/wordart-presets";
+import { FONT_CSS_MAP } from "@/lib/site-name-utils";
 
-/** Font family → local CSS file mapping (exported for server-side preloading) */
-export const FONT_CSS_MAP: Record<string, string> = {
-  'Montserrat': '/fonts/montserrat.css',
-  'Playfair Display': '/fonts/playfair-display.css',
-  'Inter': '/fonts/inter.css',
-  'Poppins': '/fonts/poppins.css',
-  'Space Grotesk': '/fonts/space-grotesk.css',
-  'JetBrains Mono': '/fonts/jetbrains-mono.css',
-  'Raleway': '/fonts/raleway.css',
-  'Caveat': '/fonts/caveat.css',
-  'Outfit': '/fonts/outfit.css',
-  'Plus Jakarta Sans': '/fonts/plus-jakarta-sans.css',
-  'Lobster': '/fonts/lobster.css',
-  'Permanent Marker': '/fonts/permanent-marker.css',
-  'Orbitron': '/fonts/orbitron.css',
-  'Abril Fatface': '/fonts/abril-fatface.css',
-  'Pacifico': '/fonts/pacifico.css',
-  'Bungee': '/fonts/bungee.css',
-  'Russo One': '/fonts/russo-one.css',
-  'Fredoka': '/fonts/fredoka.css',
-  'Satisfy': '/fonts/satisfy.css',
-  'Righteous': '/fonts/righteous.css',
-  // New fonts
-  'Bangers': '/fonts/bangers.css', 'Bebas Neue': '/fonts/bebas-neue.css',
-  'Dancing Script': '/fonts/dancing-script.css', 'Comfortaa': '/fonts/comfortaa.css',
-  'Oswald': '/fonts/oswald.css', 'Titan One': '/fonts/titan-one.css',
-  'Black Ops One': '/fonts/black-ops-one.css', 'Creepster': '/fonts/creepster.css',
-  'Monoton': '/fonts/monoton.css', 'Press Start 2P': '/fonts/press-start-2p.css',
-  'Audiowide': '/fonts/audiowide.css', 'Cinzel': '/fonts/cinzel.css',
-  'Great Vibes': '/fonts/great-vibes.css', 'Quicksand': '/fonts/quicksand.css',
-  'Archivo Black': '/fonts/archivo-black.css',
-};
+// Re-export for any existing consumers
+export { FONT_CSS_MAP } from "@/lib/site-name-utils";
+export { siteNameStyleToCSS } from "@/lib/site-name-utils";
 
 interface SiteNameProps {
   name: string;
@@ -129,41 +101,6 @@ export function SiteName({ name, style, className, as: Tag = "span" }: SiteNameP
       {name}
     </Tag>
   );
-}
-
-/**
- * Convert a SiteNameStyle to React.CSSProperties + font URL.
- * Used by the header config API to pre-compute CSS for native apps.
- */
-export function siteNameStyleToCSS(s: SiteNameStyle): {
-  css: React.CSSProperties;
-  fontUrl: string | null;
-} {
-  const css: React.CSSProperties = {
-    fontFamily: `"${s.fontFamily}", sans-serif`,
-    fontSize: s.fontSize,
-    fontWeight: s.fontWeight,
-    letterSpacing: s.letterSpacing,
-    textTransform: s.textTransform as React.CSSProperties["textTransform"],
-    textShadow: s.textShadow !== "none" ? s.textShadow : undefined,
-    WebkitTextStroke: s.textStroke || undefined,
-    transform: s.transform || undefined,
-    display: s.transform ? "inline-block" : undefined,
-  };
-
-  if (s.gradient?.enabled) {
-    css.color = "transparent";
-    css.backgroundImage = `linear-gradient(${s.gradient.direction}, ${s.gradient.from}, ${s.gradient.to})`;
-    css.WebkitBackgroundClip = "text";
-    css.WebkitTextFillColor = "transparent";
-    css.backgroundClip = "text";
-  } else {
-    css.color = s.color;
-  }
-
-  const fontUrl = FONT_CSS_MAP[s.fontFamily] ?? null;
-
-  return { css, fontUrl };
 }
 
 export type { SiteNameStyle };
