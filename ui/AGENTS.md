@@ -1,3 +1,22 @@
+## v0.3.4.29 — sebastian — 2026-05-09
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix skeleton flicker on admin embed with no updates (Session 64)
+
+### Changes
+- `src/components/settings/admin-embed.tsx` — Skip skeleton loading overlay when `minHeight === 0`. Self-collapsing embeds (like "Updates Available" when no updates exist) no longer flash a skeleton before disappearing.
+- `package.json` — Version bump to 0.3.4.29
+
+### Test Results
+- Deployed to VM, 15 running, 0 stopped
+- User testing in progress
+
+### Notes for Iris
+- Minimal change: one condition added (`minHeight > 0`) to the skeleton render guard
+- No CP changes needed — the CP embed already returns an empty div when no updates are available
+- System Components embed (minHeight=200) still shows its skeleton normally
+
 ## v0.3.4.6 — sebastian — 2026-04-29
 **Branch:** sebastian
 **VM:** ye-sebastian
