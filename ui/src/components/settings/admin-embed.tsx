@@ -89,13 +89,18 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
       if (e.source !== iframeRef.current?.contentWindow) return;
 
       if (e.data?.type === "youeye-embed-ready" || e.data?.type === "youeye-embed-resize") {
-        setReady(true);
         setError(false);
         sendThemeToEmbed();
+        // For self-collapsing embeds (minHeight=0), defer ready until we
+        // know the embed has non-zero content — otherwise the iframe briefly
+        // shows the CP embed's own loading skeleton before collapsing to 0.
+        if (minHeight > 0) setReady(true);
       }
 
       if (e.data?.type === "youeye-embed-resize" && typeof e.data.height === "number") {
-        setHeight(Math.max(e.data.height, minHeight));
+        const h = Math.max(e.data.height, minHeight);
+        setHeight(h);
+        if (minHeight === 0 && h > 0) setReady(true);
       }
 
       if (e.data?.type === "youeye-embed-action") {
@@ -124,11 +129,14 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
   }, [resolvedTheme, ready, sendThemeToEmbed]);
 
   useEffect(() => {
+    // Self-collapsing embeds (minHeight=0) stay invisible when empty —
+    // no need to show an error state if they never become ready.
+    if (minHeight === 0) return;
     const timeout = setTimeout(() => {
       if (!ready && !restarting) setError(true);
     }, 8000);
     return () => clearTimeout(timeout);
-  }, [ready, restarting]);
+  }, [ready, restarting, minHeight]);
 
   const handleRetry = () => {
     setError(false);
