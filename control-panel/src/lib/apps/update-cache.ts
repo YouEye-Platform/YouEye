@@ -79,8 +79,10 @@ export async function refreshAllUpdates(): Promise<Map<string, UpdateCheckResult
 
   isChecking = true;
   try {
-    // Check OCI and LXD updates in parallel
-    const [ociResults, _lxdResults] = await Promise.allSettled([
+    // Check OCI and LXD updates in parallel.
+    // OCI results go into updateResults (this cache).
+    // LXD results go into lxdCache (lxd-updates.ts) — read via getAllCachedLxdUpdates().
+    const [ociResults] = await Promise.allSettled([
       checkAllUpdates(),
       checkAllLxdUpdates(),
     ]);

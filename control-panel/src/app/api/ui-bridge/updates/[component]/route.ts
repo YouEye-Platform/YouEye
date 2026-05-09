@@ -27,18 +27,15 @@ export async function POST(
   try {
     await startUpdate(component, '').catch(() => {});
 
-    // UI is an LXD app updated by the Control Panel directly
-    if (component === 'ui') {
-      const appDef = getAppDefinition('ui');
-      if (!appDef) {
-        return NextResponse.json({ error: 'UI app definition not found' }, { status: 500 });
-      }
+    // Check if this is an LXD native app (UI, Search, Cinema, Weather, etc.)
+    const appDef = getAppDefinition(component);
+    if (appDef?.lxdConfig) {
       let lastEvent: { message?: string } = {};
       await updateLXDApp(appDef, (event) => { lastEvent = event; });
       await completeUpdate(component, '', '').catch(() => {});
       return NextResponse.json({
         status: 'success',
-        message: lastEvent.message || 'UI updated',
+        message: lastEvent.message || `${appDef.displayName} updated`,
       });
     }
 

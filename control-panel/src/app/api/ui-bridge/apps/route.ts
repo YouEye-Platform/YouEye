@@ -21,6 +21,7 @@ import {
 import { listInstalledApps } from '@/lib/market/metadata';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
 import { fetchManifest } from '@/lib/market/catalog';
+import { getAllCachedLxdUpdates } from '@/lib/apps/lxd-updates';
 
 function extractIP(stateMetadata: Record<string, unknown>): string | undefined {
   const network = stateMetadata.network as Record<string, unknown> | undefined;
@@ -112,6 +113,7 @@ export async function GET(request: NextRequest) {
     }
 
     const ociUpdates = getAllCachedUpdates();
+    const lxdUpdates = getAllCachedLxdUpdates();
 
     // Build unified list from APP_DEFINITIONS
     // Filter out user-category apps whose containers don't exist (not installed)
@@ -151,6 +153,18 @@ export async function GET(request: NextRequest) {
           if (ociResult?.hasUpdate) {
             updateAvailable = true;
             updateInfo = 'New image available';
+          }
+        }
+
+        // Check LXD native app updates (Search, Cinema, Weather, etc.)
+        if (def.lxdConfig && !updateAvailable) {
+          const lxdResult = lxdUpdates.get(def.id);
+          if (lxdResult?.hasUpdate && lxdResult.latestVersion) {
+            updateAvailable = true;
+            updateInfo = `${lxdResult.installedVersion || version || '?'} → ${lxdResult.latestVersion}`;
+          }
+          if (!version && lxdResult?.installedVersion) {
+            version = lxdResult.installedVersion;
           }
         }
 
