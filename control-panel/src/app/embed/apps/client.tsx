@@ -182,6 +182,10 @@ export function AppsEmbedClient() {
   };
 
   if (loading) {
+    // For the updates section, render nothing while loading — the parent
+    // UI keeps the embed invisible until it reports non-zero content height,
+    // so showing a skeleton here would cause a brief flicker before collapsing.
+    if (section === "updates") return <div />;
     return (
       <div style={{ padding: 16 }}>
         <div className="embed-skeleton" style={{ height: 20, width: 200, marginBottom: 16 }} />
