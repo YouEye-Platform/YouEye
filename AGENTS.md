@@ -1,3 +1,22 @@
+## cp-v0.3.6.21 — sebastian — 2026-05-09
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix native app update detection and execution in Settings > Apps
+
+### Changes
+- `control-panel/src/app/api/ui-bridge/apps/route.ts` — Added LXD cache read for native app update detection
+- `control-panel/src/app/api/ui-bridge/updates/[component]/route.ts` — Route LXD native apps through updateLXDApp() instead of Spine
+- `control-panel/src/lib/apps/update-cache.ts` — Clarified LXD results cache comment
+
+### Test Results
+- All native app updates (Search, Cinema, Weather) detected and executed successfully
+- Post-update health checks pass, correct versions deployed
+
+### Notes for Iris
+- Detection required reading from `getAllCachedLxdUpdates()` — separate cache from OCI updates
+- Execution required matching any `appDef.lxdConfig` in the update route, not just 'ui'
+
 ## ui-v0.3.4.23 — sebastian — 2026-05-08
 **Branch:** sebastian
 **VM:** ye-sebastian
