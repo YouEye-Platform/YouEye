@@ -174,7 +174,7 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
 
   return (
     <div className="relative">
-      {!ready && (
+      {!ready && minHeight > 0 && (
         <div
           className="absolute inset-0 z-10 flex items-center justify-center rounded-lg border border-border bg-background"
           style={{ minHeight }}
