@@ -1,3 +1,20 @@
+## v0.3.6.19 — sebastian — 2026-05-09
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix embed skeleton flicker for updates section (Session 64)
+
+### Changes
+- `src/app/embed/apps/client.tsx` — When `section=updates`, render empty div during loading instead of the 5-card skeleton. Parent UI keeps the embed invisible until non-zero content height is reported, so the skeleton was causing a brief flicker before collapsing.
+
+### Test Results
+- Deployed via `spine update control`, 15 running, 0 stopped
+- User testing in progress
+
+### Notes for Iris
+- Paired with UI v0.3.4.30 which defers iframe visibility for self-collapsing embeds (minHeight=0)
+- System section embed is unaffected — still shows loading skeleton normally
+
 ## v0.3.6.2 — sebastian — 2026-04-28
 **Branch:** sebastian
 **VM:** ye-sebastian
