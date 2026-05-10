@@ -12,6 +12,7 @@ import { jwtVerify } from "jose";
 /** Routes that don't require authentication */
 const PUBLIC_ROUTES = [
   "/login",
+  "/offline",
   "/api/auth/sso",
   "/api/auth/callback",
   "/api/auth/logout",
@@ -29,7 +30,7 @@ const PUBLIC_ROUTES = [
 ];
 
 /** Static resource patterns to skip */
-const STATIC_PATTERNS = ["/_next/", "/favicon.ico", "/icon", "/apple-icon", "/icons/", "/branding/", "/user-assets/", "/fonts/"];
+const STATIC_PATTERNS = ["/_next/", "/favicon.ico", "/icon", "/apple-icon", "/icons/", "/branding/", "/user-assets/", "/fonts/", "/sw.js", "/serwist-", "/manifest.webmanifest"];
 
 function getJWTSecret(): Uint8Array | null {
   const secret = process.env.JWT_SECRET;

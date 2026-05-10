@@ -67,6 +67,7 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   const sizeParam = request.nextUrl.searchParams.get("size") || "32";
+  const maskable = request.nextUrl.searchParams.get("maskable") === "1";
   const size = parseInt(sizeParam, 10) as IconSize;
 
   if (!ICON_SIZES.includes(size)) {
@@ -76,9 +77,28 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const buf = await getRenderedIcon(size);
+  let buf = await getRenderedIcon(size);
   if (!buf) {
     return new NextResponse(null, { status: 404 });
+  }
+
+  // Maskable icons need a 10% safe-zone padding so content isn't clipped
+  // by adaptive icon shapes (Android circles, squircles, etc.)
+  if (maskable) {
+    const sharp = (await import("sharp")).default;
+    const innerSize = Math.round(size * 0.8);
+    const padding = Math.round(size * 0.1);
+    buf = await sharp(buf)
+      .resize(innerSize, innerSize, { fit: "contain" })
+      .extend({
+        top: padding,
+        bottom: padding,
+        left: padding,
+        right: padding,
+        background: { r: 10, g: 10, b: 15, alpha: 1 }, // matches --background
+      })
+      .png()
+      .toBuffer();
   }
 
   return new NextResponse(buf, {
