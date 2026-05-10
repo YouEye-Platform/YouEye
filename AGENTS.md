@@ -1,3 +1,32 @@
+## ui-v0.3.4.33 — sebastian — 2026-05-10
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Add PWA support to YouEye UI (Phase 1)
+
+### Changes
+- `ui/src/app/manifest.ts` — Dynamic web app manifest from branding config
+- `ui/src/app/sw.ts` — Service worker with caching strategies (serwist)
+- `ui/src/app/offline/page.tsx` — Offline fallback page with auto-reconnect
+- `ui/src/app/layout.tsx` — Viewport metadata + apple-web-app meta tags
+- `ui/src/app/api/v1/branding/icon/route.ts` — Maskable icon support (?maskable=1)
+- `ui/src/components/pwa/install-banner.tsx` — Mobile install prompt banner
+- `ui/src/components/providers.tsx` — Include InstallBanner in provider tree
+- `ui/src/middleware.ts` — Allow /sw.js, /manifest.webmanifest, /offline without auth
+- `ui/next.config.ts` — Serwist integration for SW compilation
+- `ui/package.json` — Added serwist + @serwist/next deps, bumped to 0.3.4.33
+
+### Test Results
+- Manifest: verified accessible at /manifest.webmanifest (200 OK, correct JSON)
+- Service worker: verified /sw.js returns 200
+- Offline page: verified /offline returns 200
+- Health check: /api/health returns {"status":"ok"}
+
+### Notes for Iris
+- New dependencies: serwist, @serwist/next (pnpm-lock.yaml updated)
+- Build produces public/sw.js (generated, not committed)
+- No breaking changes to existing functionality
+
 ## cp-v0.3.6.21 — sebastian — 2026-05-09
 **Branch:** sebastian
 **VM:** ye-sebastian
