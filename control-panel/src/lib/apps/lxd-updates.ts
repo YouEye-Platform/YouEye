@@ -16,7 +16,7 @@ import { APP_DEFINITIONS, type AppDefinition } from './definitions';
 
 const GITEA_API = 'https://git.byka.wtf/api/v1';
 const GITEA_ORG = 'potemsla';
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours (must exceed the 3-hour background check interval)
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

@@ -88,6 +88,25 @@ export async function GET(request: NextRequest) {
     const sharp = (await import("sharp")).default;
     const innerSize = Math.round(size * 0.8);
     const padding = Math.round(size * 0.1);
+
+    // Use icon config background color for maskable padding
+    let bgColor = { r: 139, g: 92, b: 246, alpha: 1 }; // default purple
+    try {
+      const branding = await getBranding();
+      const iconBg = branding.icon_config?.background;
+      if (iconBg?.color) {
+        const hex = iconBg.color.replace('#', '');
+        bgColor = {
+          r: parseInt(hex.slice(0, 2), 16),
+          g: parseInt(hex.slice(2, 4), 16),
+          b: parseInt(hex.slice(4, 6), 16),
+          alpha: 1,
+        };
+      }
+    } catch {
+      // use default
+    }
+
     buf = await sharp(buf)
       .resize(innerSize, innerSize, { fit: "contain" })
       .extend({
@@ -95,7 +114,7 @@ export async function GET(request: NextRequest) {
         bottom: padding,
         left: padding,
         right: padding,
-        background: { r: 10, g: 10, b: 15, alpha: 1 }, // matches --background
+        background: bgColor,
       })
       .png()
       .toBuffer();

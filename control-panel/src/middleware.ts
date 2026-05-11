@@ -50,6 +50,9 @@ const STATIC_PATTERNS = [
   '/favicon.ico',
   '/icons/',
   '/manifest.json',
+  '/manifest.webmanifest',
+  '/sw.js',
+  '/swe-worker-',
   '/fonts/',
 ];
 
@@ -259,6 +262,6 @@ export const config = {
      * - favicon.ico (favicon file)
      * - public folder
      */
-    '/((?!_next/static|_next/image|favicon.ico|icons|manifest.json).*)',
+    '/((?!_next/static|_next/image|favicon.ico|icons|manifest.json|manifest.webmanifest|sw.js|swe-worker-).*)',
   ],
 };

@@ -1,3 +1,30 @@
+## cp-v0.3.6.23 / ui-v0.3.4.34 — sebastian — 2026-05-11
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** PWA Phase 3 — CP manifest + maskable icons + bridge endpoint + cache fix
+
+### Changes
+- `control-panel/src/app/manifest.ts` — new: dynamic PWA manifest reading site name from Spine config
+- `control-panel/src/app/sw.ts` — new: Serwist service worker with cache-first static assets, network-first API
+- `control-panel/src/app/offline/page.tsx` — new: offline fallback page
+- `control-panel/next.config.ts` — added Serwist wrapper + ignoreBuildErrors for SW types
+- `control-panel/src/app/layout.tsx` — added viewport export + appleWebApp meta
+- `control-panel/src/middleware.ts` — added sw.js/manifest.webmanifest to STATIC_PATTERNS bypass
+- `control-panel/package.json` — added @serwist/next + serwist deps
+- `control-panel/src/components/setup/SetupIcon.tsx` — maskable icon preview (circle + squircle)
+- `control-panel/src/app/api/ui-bridge/pwa-config/route.ts` — new: bridge endpoint for PWA config
+- `control-panel/src/app/api/branding/favicon/route.ts` — pass maskable param through to UI
+- `control-panel/src/lib/apps/lxd-updates.ts` — fix cache TTL (5min → 4hr) so native app updates stay visible
+- `ui/src/app/api/v1/branding/icon/route.ts` — maskable icon uses icon_config background color
+- `ui/src/app/manifest.ts` — background_color reads from icon_config
+- `ui/src/app/api/ui-bridge/pwa-config/route.ts` — new: bridge receiver for PWA config
+
+### Notes for Iris
+- CP now has full PWA support (installable as app)
+- LXD update cache TTL was the root cause of invisible native app updates
+- VAPID/push notifications deferred to a future phase
+
 ## ui-v0.3.4.33 — sebastian — 2026-05-10
 **Branch:** sebastian
 **VM:** ye-sebastian

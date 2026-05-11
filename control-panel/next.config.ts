@@ -1,11 +1,23 @@
 import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
+import withSerwistInit from "@serwist/next";
 
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
+
+const withSerwist = withSerwistInit({
+  swSrc: "src/app/sw.ts",
+  swDest: "public/sw.js",
+  disable: process.env.NODE_ENV === "development",
+});
 
 const nextConfig: NextConfig = {
   output: 'standalone',
   reactCompiler: true,
+  typescript: {
+    // Serwist WorkerGlobalScope types conflict with DOM types —
+    // the SW is compiled by its own webpack plugin, not TS.
+    ignoreBuildErrors: true,
+  },
 
   // Allow remote images from Gitea (App Market icons)
   images: {
@@ -36,4 +48,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withNextIntl(nextConfig);
+export default withSerwist(withNextIntl(nextConfig));

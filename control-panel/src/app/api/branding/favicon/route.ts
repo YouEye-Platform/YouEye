@@ -27,6 +27,7 @@ function getBridgeToken(): string | null {
 
 export async function GET(request: NextRequest) {
   const size = request.nextUrl.searchParams.get('size') || '32';
+  const maskable = request.nextUrl.searchParams.get('maskable');
   const token = getBridgeToken();
 
   if (!token) {
@@ -34,8 +35,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const params = new URLSearchParams({ size });
+    if (maskable) params.set('maskable', maskable);
     const res = await fetch(
-      `${UI_BASE}/api/v1/branding/icon?size=${size}`,
+      `${UI_BASE}/api/v1/branding/icon?${params}`,
       { signal: AbortSignal.timeout(5000) }
     );
 

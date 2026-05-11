@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
@@ -15,6 +15,12 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport: Viewport = {
+  themeColor: "#2563eb",
+  width: "device-width",
+  initialScale: 1,
+};
+
 export async function generateMetadata(): Promise<Metadata> {
   const config = await getSiteConfig();
   return {
@@ -28,6 +34,11 @@ export async function generateMetadata(): Promise<Metadata> {
       apple: [
         { url: '/api/branding/favicon?size=180', sizes: '180x180', type: 'image/png' },
       ],
+    },
+    appleWebApp: {
+      capable: true,
+      statusBarStyle: "default",
+      title: `${config.site_name} CP`,
     },
   };
 }

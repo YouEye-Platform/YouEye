@@ -12,11 +12,16 @@ import { getBranding } from "@/lib/db/queries/branding";
 export default async function manifest(): Promise<MetadataRoute.Manifest> {
   let siteName = "YouEye";
   let accentColor = "#8B5CF6";
+  let bgColor = "#0a0a0f";
 
   try {
     const branding = await getBranding();
     siteName = branding.site_name || "YouEye";
     accentColor = branding.accent_color || "#8B5CF6";
+    // Use icon background as the PWA background for visual consistency
+    if (branding.icon_config?.background?.color) {
+      bgColor = branding.icon_config.background.color;
+    }
   } catch {
     // DB may not be ready (fresh deploy) — use defaults
   }
@@ -27,7 +32,7 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
     description: "Your self-hosted personal dashboard",
     start_url: "/",
     display: "standalone",
-    background_color: "#0a0a0f",
+    background_color: bgColor,
     theme_color: accentColor,
     orientation: "any",
     icons: [

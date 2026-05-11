@@ -7,8 +7,8 @@
  * Canvas-based preview with shape + background controls.
  */
 
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { ArrowRight, ArrowLeft, Circle, Square, RectangleHorizontal } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { ArrowRight, ArrowLeft, Circle, Square, RectangleHorizontal, Smartphone } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { SiteNameStyle } from '@/lib/wordart-presets';
@@ -121,6 +121,53 @@ function renderIcon(
   ctx.restore();
 }
 
+// ─── Maskable preview ─────────────────────────────────────────
+
+/**
+ * Render a maskable icon preview: the icon shrunk to 80% with 10% padding
+ * (safe zone), then masked with a circle or squircle to show how Android/iOS
+ * adaptive icons will crop it.
+ */
+function renderMaskablePreview(
+  canvas: HTMLCanvasElement,
+  config: IconConfig,
+  siteName: string,
+  style: SiteNameStyle,
+  size: number,
+  maskShape: 'circle' | 'squircle'
+) {
+  const ctx = canvas.getContext('2d')!;
+  canvas.width = size;
+  canvas.height = size;
+  ctx.clearRect(0, 0, size, size);
+
+  // Draw background fill (extends to full canvas including safe zone)
+  const bgColor = config.background.color || '#8B5CF6';
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, size, size);
+
+  // Draw the icon content scaled to 80% (inner safe area)
+  const offscreen = document.createElement('canvas');
+  offscreen.width = size;
+  offscreen.height = size;
+  renderIcon(offscreen, { ...config, shape: 'square' }, siteName, style, size);
+
+  const innerSize = Math.round(size * 0.8);
+  const offset = Math.round(size * 0.1);
+  ctx.drawImage(offscreen, 0, 0, size, size, offset, offset, innerSize, innerSize);
+
+  // Apply mask (clip everything outside the shape)
+  ctx.globalCompositeOperation = 'destination-in';
+  ctx.beginPath();
+  if (maskShape === 'circle') {
+    ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+  } else {
+    ctx.roundRect(0, 0, size, size, size * 0.22);
+  }
+  ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+}
+
 // ─── Component ─────────────────────────────────────────────────
 
 export default function SetupIcon({
@@ -133,14 +180,25 @@ export default function SetupIcon({
 }: Props) {
   const t = useTranslations('setup');
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const maskCircleRef = useRef<HTMLCanvasElement>(null);
+  const maskSquircleRef = useRef<HTMLCanvasElement>(null);
   const [activeTab, setActiveTab] = useState<'letter' | 'emoji'>(iconConfig.mode === 'emoji' ? 'emoji' : 'letter');
+  const [showMaskable, setShowMaskable] = useState(false);
 
   // Redraw preview on any change
   useEffect(() => {
     if (canvasRef.current) {
       renderIcon(canvasRef.current, iconConfig, siteName, siteNameStyle, 192);
     }
-  }, [iconConfig, siteName, siteNameStyle]);
+    if (showMaskable) {
+      if (maskCircleRef.current) {
+        renderMaskablePreview(maskCircleRef.current, iconConfig, siteName, siteNameStyle, 192, 'circle');
+      }
+      if (maskSquircleRef.current) {
+        renderMaskablePreview(maskSquircleRef.current, iconConfig, siteName, siteNameStyle, 192, 'squircle');
+      }
+    }
+  }, [iconConfig, siteName, siteNameStyle, showMaskable]);
 
   const handleTabChange = useCallback((tab: 'letter' | 'emoji') => {
     setActiveTab(tab);
@@ -184,6 +242,40 @@ export default function SetupIcon({
             <span className="text-[9px] text-muted-foreground">tab icon</span>
           </div>
         </div>
+      </div>
+
+      {/* Maskable preview toggle */}
+      <div className="text-center">
+        <button
+          type="button"
+          onClick={() => setShowMaskable(!showMaskable)}
+          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <Smartphone className="h-3.5 w-3.5" />
+          {showMaskable ? 'Hide' : 'Show'} mobile app preview
+        </button>
+        {showMaskable && (
+          <div className="mt-3 flex justify-center gap-6">
+            <div className="flex flex-col items-center gap-1.5">
+              <canvas
+                ref={maskCircleRef}
+                width={192}
+                height={192}
+                className="w-14 h-14"
+              />
+              <span className="text-[9px] text-muted-foreground">Android</span>
+            </div>
+            <div className="flex flex-col items-center gap-1.5">
+              <canvas
+                ref={maskSquircleRef}
+                width={192}
+                height={192}
+                className="w-14 h-14"
+              />
+              <span className="text-[9px] text-muted-foreground">iOS</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Mode tabs */}
