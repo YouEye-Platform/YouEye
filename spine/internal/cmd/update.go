@@ -495,6 +495,9 @@ func updateControl() error {
 	// Re-provision the bridge token to ensure both containers have it
 	provisionBridgeToken()
 
+	// Re-provision CLI token for the `youeye` CLI tool
+	provisionCLIToken()
+
 	// Enforce UI→CP egress block (one-way bridge)
 	container.EnforceUIEgressBlock()
 

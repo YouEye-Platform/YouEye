@@ -215,6 +215,13 @@ export async function middleware(request: NextRequest) {
     return applySecurityHeaders(NextResponse.next(), pathname);
   }
 
+  // CLI token authentication — if X-CLI-Token header is present on API routes,
+  // let the request through to the route handler where getSession() will validate
+  // the token value in Node.js runtime (middleware runs in Edge where fs is unavailable).
+  if (pathname.startsWith('/api/') && request.headers.get('x-cli-token')) {
+    return applySecurityHeaders(NextResponse.next(), pathname);
+  }
+
   // Get session cookie
   const sessionCookie = request.cookies.get('ye-session');
 

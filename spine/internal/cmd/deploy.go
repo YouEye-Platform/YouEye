@@ -170,6 +170,9 @@ func runDeploy() error {
 	// Provision the UI bridge token to both containers
 	provisionBridgeToken()
 
+	// Provision CLI authentication token for the `youeye` CLI tool
+	provisionCLIToken()
+
 	// Auto-enable Spine API on boot
 	enableSpineService()
 
@@ -375,6 +378,66 @@ func provisionBridgeToken() {
 	}
 
 	fmt.Println("✓ Bridge token provisioned")
+}
+
+// provisionCLIToken generates a CLI authentication token and pushes it to the
+// Control Panel container. This token allows the `youeye` CLI tool to call
+// CP API endpoints without a browser session.
+//
+// The token is stored on the host at /var/lib/youeye/config/cli-token (0600)
+// and pushed to /etc/youeye/cli-token in the CP container.
+func provisionCLIToken() {
+	fmt.Println("Provisioning CLI authentication token...")
+
+	hostTokenPath := "/var/lib/youeye/config/cli-token"
+	containerTokenPath := "/etc/youeye/cli-token"
+
+	// Reuse existing token if it exists, otherwise generate a new one
+	var token string
+	if data, err := os.ReadFile(hostTokenPath); err == nil && len(strings.TrimSpace(string(data))) == 64 {
+		token = strings.TrimSpace(string(data))
+		fmt.Println("  Using existing CLI token from host")
+	} else {
+		token = util.GenerateBridgeToken()
+		fmt.Println("  Generated new CLI token")
+	}
+
+	// Persist on host
+	os.MkdirAll("/var/lib/youeye/config", 0700)
+	if err := os.WriteFile(hostTokenPath, []byte(token), 0600); err != nil {
+		fmt.Printf("  Warning: could not save CLI token: %v\n", err)
+		return
+	}
+
+	// Push to CP container
+	out, err := exec.Command("incus", "list", "youeye-control", "--format", "csv", "-c", "s").Output()
+	if err != nil || !strings.Contains(strings.ToUpper(string(out)), "RUNNING") {
+		fmt.Println("  Skipping CP push (not running)")
+		return
+	}
+
+	exec.Command("incus", "exec", "youeye-control", "--", "mkdir", "-p", "/etc/youeye").Run()
+
+	existingOut, _ := exec.Command("incus", "exec", "youeye-control", "--", "cat", containerTokenPath).Output()
+	if strings.TrimSpace(string(existingOut)) == token {
+		fmt.Println("  ✓ CP already has correct CLI token")
+	} else {
+		tmpFile := "/tmp/.ye-cli-token"
+		if err := os.WriteFile(tmpFile, []byte(token), 0600); err != nil {
+			fmt.Printf("  Warning: could not write temp CLI token: %v\n", err)
+			return
+		}
+		defer os.Remove(tmpFile)
+
+		if err := util.RunCmdQuiet("incus", "file", "push", tmpFile, "youeye-control"+containerTokenPath); err != nil {
+			fmt.Printf("  Warning: could not push CLI token to CP: %v\n", err)
+			return
+		}
+		exec.Command("incus", "exec", "youeye-control", "--", "chmod", "600", containerTokenPath).Run()
+		fmt.Println("  ✓ CLI token pushed to CP")
+	}
+
+	fmt.Println("✓ CLI token provisioned")
 }
 
 // enableSpineService creates and enables the Spine systemd service
