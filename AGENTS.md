@@ -1,3 +1,60 @@
+## cli-v0.1.0.1 / spine-v0.3.2.5 / cp-v0.3.6.25 — sebastian — 2026-05-11
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** YouEye unified CLI — single command for managing Spine + Control Panel
+
+### Changes
+- `cli/` — **NEW Go module**: unified `youeye` CLI binary (18 subcommands)
+  - `cli/cmd/youeye/main.go` — entry point
+  - `cli/internal/client/spine.go` — Spine HTTP-over-Unix-socket client
+  - `cli/internal/client/cp.go` — CP HTTP client with CLI token auth
+  - `cli/internal/output/format.go` — ANSI terminal formatting (tables, colors, status lines)
+  - `cli/internal/cmd/root.go` — root command, registers all subcommands
+  - `cli/internal/cmd/status.go` — `youeye status` [S+CP] with graceful degradation
+  - `cli/internal/cmd/version.go` — `youeye version` [S+CP]
+  - `cli/internal/cmd/app.go` — app install/remove/update/start/stop/restart/credentials/check-updates [CP]
+  - `cli/internal/cmd/market.go` — marketplace search/info [CP]
+  - `cli/internal/cmd/update.go` — update self/control/ui/system/incus/check [S/CP]
+  - `cli/internal/cmd/user.go` — user list/create/delete/password/info [CP]
+  - `cli/internal/cmd/proxy.go` — proxy list/add/remove/status [CP]
+  - `cli/internal/cmd/services.go` — services list/restart [CP]
+  - `cli/internal/cmd/container.go` — container list/exec/logs [CP]
+  - `cli/internal/cmd/domain.go` — domain show/set [CP]
+  - `cli/internal/cmd/config.go` — config show/set/validate [S+CP]
+  - `cli/internal/cmd/branch.go` — branch show/set/reset [S]
+  - `cli/internal/cmd/language.go` — language list/set [S]
+  - `cli/internal/cmd/setup.go` — setup status/reconfigure [CP]
+  - `cli/internal/cmd/deploy.go` — deploy [S] (delegates to `spine deploy`)
+  - `cli/internal/cmd/logs.go` — logs [S+CP]
+  - `cli/internal/cmd/cleanup.go` — cleanup [S]
+  - `cli/internal/cmd/uninstall.go` — uninstall [S]
+- `spine/internal/cmd/deploy.go` — added `provisionCLIToken()`: generates 64-char hex token, stores on host and pushes to CP container
+- `spine/internal/cmd/update.go` — added `provisionCLIToken()` call after CP update
+- `spine/internal/cmd/root.go` — bumped version 0.3.2.4 → 0.3.2.5
+- `control-panel/src/middleware.ts` — added CLI token bypass (X-CLI-Token header check)
+- `control-panel/src/lib/auth/session.ts` — added `isValidCLIToken()` with file read + cache + constant-time comparison; `getSession()` returns synthetic admin session for valid CLI tokens; CSRF bypass for CLI requests
+- `control-panel/package.json` — bumped 0.3.6.23 → 0.3.6.25
+
+### Test Results
+- `youeye status` — full platform status with infrastructure, services, apps
+- `youeye version` — all component versions (CLI 0.1.0.1, Spine 0.3.2.5, CP 0.3.6.25)
+- `youeye services` — service list with status/version/uptime
+- `youeye user list` — users from Authentik
+- `youeye market search wiki` — marketplace search
+- `youeye app list` — installed apps
+- `youeye proxy list` — all Caddy routes
+- `youeye domain show` — base domain
+- `youeye logs spine` — service logs
+- `youeye branch` — release branch info
+
+### Notes for Iris
+- New `cli/` directory in monorepo — first release, tag prefix `cli-`
+- CLI token auth is a new auth path in CP: middleware checks header presence (Edge RT), session.ts validates token (Node RT)
+- Spine 0.3.2.5 provisions CLI token during deploy and update control
+- CLI degrades gracefully: [S] commands work when CP is down, [CP] commands show clear error
+- Needs `sudo` for full functionality (Spine socket + CLI token file are root-only)
+
 ## cp-v0.3.6.23 / ui-v0.3.4.34 — sebastian — 2026-05-11
 **Branch:** sebastian
 **VM:** ye-sebastian
