@@ -1,7 +1,7 @@
 #!/bin/sh
 # YouEye Spine Installer
 # Works on minimal Debian/Ubuntu systems (Proxmox LXC, etc.)
-# Usage: curl -sSL https://git.byka.wtf/potemsla/YouEye/raw/branch/main/spine/install.sh | sh
+# Usage: curl -sSL https://git.byka.wtf/potemsla/YouEye/raw/branch/main/spine/install.sh | sh -s -- --branch sebastian
 
 set -e
 
@@ -13,10 +13,27 @@ SOCKET_DIR="/var/run/youeye"
 # Component tag prefix for Spine releases in the monorepo
 TAG_PREFIX="spine"
 
-# Release branch support: set BRANCH=dev to install from a branch channel
-# Default: "" (main releases). Branch releases use tags like "spine-dev-v0.2.21.1".
-# Usage: BRANCH=dev curl -sSL https://... | sh
+# Release branch support: install from a branch channel instead of main.
+# Branch releases use tags like "spine-dev-v0.2.21.1".
+#
+# Usage (any of these work):
+#   curl -sSL https://... | sh -s -- --branch sebastian
+#   curl -sSL https://... | BRANCH=sebastian sh
+#   export BRANCH=sebastian && curl -sSL https://... | sh
 BRANCH="${BRANCH:-}"
+
+# Parse command-line arguments (passed via `sh -s -- --branch <name>`)
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --branch|-b)
+            BRANCH="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
 
 # Colors (if terminal supports it)
 RED='\033[0;31m'

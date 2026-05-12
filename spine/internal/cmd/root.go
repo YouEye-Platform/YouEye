@@ -16,7 +16,7 @@ import (
 // Version and BuildDate are set at build time via ldflags:
 //   go build -ldflags "-X git.byka.wtf/potemsla/YouEye/spine/internal/cmd.Version=0.2.4.1 -X git.byka.wtf/potemsla/YouEye/spine/internal/cmd.BuildDate=2026-03-27"
 // Defaults here are used only for development builds.
-var Version = "0.3.2.10"
+var Version = "0.3.2.11"
 var BuildDate = "dev"
 
 // Global configuration
