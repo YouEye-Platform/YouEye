@@ -240,14 +240,14 @@ func addSocketProxies(containerName, spineSocketPath string) error {
 		fmt.Sprintf("echo '%s' > /etc/tmpfiles.d/youeye.conf", tmpfilesConfig))
 	util.LogDebug(fmt.Sprintf("Created tmpfiles.d config for %s persistence across reboots", spineSocketDir))
 	
-	if cmdOut, err := util.RunCmdCapture("incus", "config", "device", "add", containerName, "spine-socket", "proxy",
+	if cmdOut, err := util.RunCmdCapture("incus", "config", "device", "add", containerName, "youeye-socket", "proxy",
 		"bind=container",
 		"connect=unix:"+spineSocketPath,
 		"listen=unix:"+spineSocketPath,
 		"uid=0", "gid=0", "mode=0666"); err != nil {
-		util.LogDebug(fmt.Sprintf("Spine socket proxy warning: %s", strings.TrimSpace(cmdOut)))
+		util.LogDebug(fmt.Sprintf("YouEye socket proxy warning: %s", strings.TrimSpace(cmdOut)))
 	} else {
-		util.LogSuccess("Spine socket proxy added")
+		util.LogSuccess("YouEye socket proxy added")
 	}
 	
 	return nil
