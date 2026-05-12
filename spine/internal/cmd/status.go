@@ -68,6 +68,42 @@ func runStatus() error {
 	fmt.Printf("API Server:      %s\n", apiStatus)
 	fmt.Println("")
 
+	// Services (from CP)
+	if cp != nil && cp.Available() && cp.HasToken() {
+		fmt.Println("Services:")
+		svcList, err := cp.GetArray("/api/health/services")
+		if err == nil && len(svcList) > 0 {
+			for _, s := range svcList {
+				if svc, ok := s.(map[string]interface{}); ok {
+					name := firstOf(svc, "name", "slug")
+					health := firstOf(svc, "status", "health")
+					ver := firstOf(svc, "version")
+					if ver != "" {
+						fmt.Printf("  %-16s %s (v%s)\n", name, health, ver)
+					} else {
+						fmt.Printf("  %-16s %s\n", name, health)
+					}
+				}
+			}
+		}
+		fmt.Println()
+
+		// Installed apps
+		apps, err := cp.GetArray("/api/apps")
+		if err == nil && len(apps) > 0 {
+			fmt.Println("Installed Apps:")
+			for _, a := range apps {
+				if app, ok := a.(map[string]interface{}); ok {
+					name := firstOf(app, "name", "appId")
+					ver := firstOf(app, "version", "installedVersion")
+					health := firstOf(app, "healthStatus", "health", "status")
+					fmt.Printf("  %-16s %s (v%s)\n", name, health, ver)
+				}
+			}
+			fmt.Println()
+		}
+	}
+
 	// Suggestions
 	if update, _ := checkSpineUpdate(cfg); update {
 		fmt.Println("Run 'spine update self' to update Spine.")

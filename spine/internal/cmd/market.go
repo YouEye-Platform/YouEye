@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"git.byka.wtf/potemsla/YouEye/cli/internal/output"
+	"git.byka.wtf/potemsla/YouEye/spine/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -39,7 +39,6 @@ var marketSearchCmd = &cobra.Command{
 			category := firstOf(app, "category")
 			id := firstOf(app, "appId", "id")
 
-			// Match against name, description, category, id
 			searchable := strings.ToLower(name + " " + desc + " " + category + " " + id)
 			if strings.Contains(searchable, query) {
 				rows = append(rows, []string{id, name, category, truncate(desc, 50)})
@@ -90,11 +89,4 @@ var marketInfoCmd = &cobra.Command{
 func init() {
 	marketCmd.AddCommand(marketSearchCmd)
 	marketCmd.AddCommand(marketInfoCmd)
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max-3] + "..."
 }

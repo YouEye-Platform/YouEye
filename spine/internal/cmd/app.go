@@ -2,10 +2,8 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 
-	"git.byka.wtf/potemsla/YouEye/cli/internal/client"
-	"git.byka.wtf/potemsla/YouEye/cli/internal/output"
+	"git.byka.wtf/potemsla/YouEye/spine/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -76,7 +74,6 @@ var appInstallCmd = &cobra.Command{
 		}
 
 		if appInstallURL != "" {
-			// Install from URL
 			output.Info("Installing from URL: " + appInstallURL)
 			return cp.PostSSE("/api/market/install-url", map[string]interface{}{
 				"url": appInstallURL,
@@ -172,10 +169,10 @@ var appRemoveCmd = &cobra.Command{
 	},
 }
 
-var appControlCmd = func(action string) *cobra.Command {
+func newAppControlCmd(action string) *cobra.Command {
 	return &cobra.Command{
 		Use:   action + " <name>",
-		Short: strings.Title(action) + " an app's container",
+		Short: capitalize(action) + " an app's container",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !requireCP() {
@@ -269,28 +266,9 @@ func init() {
 	appCmd.AddCommand(appInstallCmd)
 	appCmd.AddCommand(appUpdateCmd)
 	appCmd.AddCommand(appRemoveCmd)
-	appCmd.AddCommand(appControlCmd("start"))
-	appCmd.AddCommand(appControlCmd("stop"))
-	appCmd.AddCommand(appControlCmd("restart"))
+	appCmd.AddCommand(newAppControlCmd("start"))
+	appCmd.AddCommand(newAppControlCmd("stop"))
+	appCmd.AddCommand(newAppControlCmd("restart"))
 	appCmd.AddCommand(appCredentialsCmd)
 	appCmd.AddCommand(appCheckUpdatesCmd)
-}
-
-func sseHandler(event client.SSEEvent) {
-	output.SSEProgress(event.Step, event.TotalSteps, event.Status, event.Message)
-	if event.Detail != "" && (event.Status == "error" || event.Status == "failed") {
-		fmt.Printf("    %s%s%s\n", output.Red, event.Detail, output.Reset)
-	}
-}
-
-func firstOf(m map[string]interface{}, keys ...string) string {
-	for _, k := range keys {
-		if v, ok := m[k]; ok && v != nil {
-			s := fmt.Sprintf("%v", v)
-			if s != "" && s != "<nil>" {
-				return s
-			}
-		}
-	}
-	return ""
 }

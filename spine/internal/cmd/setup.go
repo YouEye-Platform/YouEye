@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"git.byka.wtf/potemsla/YouEye/cli/internal/output"
+	"git.byka.wtf/potemsla/YouEye/spine/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -30,7 +30,6 @@ var setupStatusCmd = &cobra.Command{
 			output.Info("Open the web UI to complete setup")
 		}
 
-		// Show step status if available
 		if steps, err := cp.Get("/api/setup/steps"); err == nil {
 			if stepList, ok := steps["steps"].([]interface{}); ok {
 				for _, s := range stepList {
@@ -57,7 +56,7 @@ var setupReconfigureCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		output.Success("Setup wizard has been reset — open the web UI to reconfigure")
+		output.Success("Setup wizard has been reset -- open the web UI to reconfigure")
 		return nil
 	},
 }

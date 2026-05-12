@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"git.byka.wtf/potemsla/YouEye/cli/internal/output"
+	"git.byka.wtf/potemsla/YouEye/spine/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -72,7 +72,6 @@ var proxyRemoveCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		// Find route by hostname
 		routes, err := cp.GetArray("/api/caddy/routes")
 		if err != nil {
 			return err

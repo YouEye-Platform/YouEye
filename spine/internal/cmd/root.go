@@ -6,7 +6,9 @@ import (
 	"os/exec"
 
 	"git.byka.wtf/potemsla/YouEye/spine/internal/config"
+	"git.byka.wtf/potemsla/YouEye/spine/internal/cpapi"
 	"git.byka.wtf/potemsla/YouEye/spine/internal/logging"
+	"git.byka.wtf/potemsla/YouEye/spine/internal/output"
 	"git.byka.wtf/potemsla/YouEye/spine/internal/version"
 	"github.com/spf13/cobra"
 )
@@ -14,7 +16,7 @@ import (
 // Version and BuildDate are set at build time via ldflags:
 //   go build -ldflags "-X git.byka.wtf/potemsla/YouEye/spine/internal/cmd.Version=0.2.4.1 -X git.byka.wtf/potemsla/YouEye/spine/internal/cmd.BuildDate=2026-03-27"
 // Defaults here are used only for development builds.
-var Version = "0.3.2.5"
+var Version = "0.3.2.6"
 var BuildDate = "dev"
 
 // Global configuration
@@ -25,11 +27,11 @@ var cfgFile string
 
 var rootCmd = &cobra.Command{
 	Use:   "spine",
-	Short: "YouEye Spine - Infrastructure bootstrap and management",
-	Long: `Spine is the bootstrap and management tool for YouEye infrastructure.
+	Short: "YouEye Spine - Platform bootstrap and management",
+	Long: `Spine is the unified management tool for the YouEye platform.
 
-It installs Incus, deploys the Control Panel, and provides an API
-for Control Panel to communicate with the host system.`,
+It bootstraps infrastructure (Incus, Control Panel), manages apps,
+users, proxy routes, and provides an API for system integration.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Load configuration
 		var err error
@@ -41,10 +43,13 @@ for Control Panel to communicate with the host system.`,
 		if err != nil {
 			return fmt.Errorf("failed to load configuration: %w", err)
 		}
-		
+
 		// Initialize structured logging based on config
 		logging.Init(cfg.Logging.Level, cfg.Logging.Format)
-		
+
+		// Initialize CP client (lazy — commands that need it call requireCP())
+		cp = cpapi.NewClient()
+
 		return nil
 	},
 }
@@ -69,7 +74,7 @@ func init() {
 	// Version command flags
 	versionCmd.Flags().BoolVar(&versionCheckFlag, "check", false, "Check for available updates")
 
-	// Add all commands
+	// Infrastructure commands (existing)
 	rootCmd.AddCommand(installCmd)
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(apiCmd)
@@ -82,6 +87,16 @@ func init() {
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(branchCmd)
 	rootCmd.AddCommand(languageCmd)
+
+	// Platform management commands (merged from CLI)
+	rootCmd.AddCommand(appCmd)
+	rootCmd.AddCommand(marketCmd)
+	rootCmd.AddCommand(userCmd)
+	rootCmd.AddCommand(proxyCmd)
+	rootCmd.AddCommand(domainCmd)
+	rootCmd.AddCommand(servicesCmd)
+	rootCmd.AddCommand(containerMgmtCmd)
+	rootCmd.AddCommand(setupCmd)
 }
 
 // versionCmd shows version info
@@ -89,24 +104,48 @@ var versionCheckFlag bool
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Show Spine version",
+	Short: "Show all component versions",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("YouEye Spine v%s\n", Version)
-		fmt.Printf("Build: %s\n", BuildDate)
+		output.Header("YouEye Versions")
+		output.StatusLine("Spine", Version+" (built "+BuildDate+")", output.Cyan)
+
+		// Incus version
+		incusVer := getIncusVersion()
+		output.StatusLine("Incus", incusVer, "")
+
+		// CP version
+		cpStatus := getControlPanelStatus(GetConfig())
+		output.StatusLine("Control Panel", cpStatus, "")
+
+		// App versions from CP
+		if cp != nil && cp.Available() && cp.HasToken() {
+			apps, err := cp.GetArray("/api/apps")
+			if err == nil {
+				for _, a := range apps {
+					if app, ok := a.(map[string]interface{}); ok {
+						name := firstOf(app, "name", "appId")
+						ver := firstOf(app, "version", "installedVersion")
+						if name != "" && ver != "" {
+							output.StatusLine(name, ver, "")
+						}
+					}
+				}
+			}
+		}
 
 		if versionCheckFlag {
-			fmt.Println("")
+			fmt.Println()
 			fmt.Println("Checking for updates...")
 			if update, newVer := checkSpineUpdate(cfg); update {
 				cmp := version.CompareVersions(newVer, Version)
 				if cmp > 0 {
-					fmt.Printf("Update available: v%s → v%s\n", Version, newVer)
+					fmt.Printf("Update available: v%s -> v%s\n", Version, newVer)
 					fmt.Println("Run 'spine update self' to update.")
 				} else {
 					fmt.Printf("Remote version v%s is not newer than current v%s\n", newVer, Version)
 				}
 			} else {
-				fmt.Println("✓ Spine is up to date")
+				output.Success("Spine is up to date")
 			}
 		}
 	},
@@ -123,16 +162,41 @@ var statusCmd = &cobra.Command{
 
 // logsCmd shows service logs
 var logsCmd = &cobra.Command{
-	Use:   "logs",
-	Short: "View Spine service logs",
+	Use:   "logs [component]",
+	Short: "View logs (spine, control, ui, or app name)",
+	Long: `View logs for a component. Without arguments, shows Spine logs.
+  spine logs           Spine service logs
+  spine logs control   Control Panel logs
+  spine logs ui        UI logs
+  spine logs <app>     App container logs`,
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		runLogs()
-	},
-}
+		component := "spine"
+		if len(args) > 0 {
+			component = args[0]
+		}
 
-func runLogs() {
-	// Show journalctl logs for spine service
-	execCommand("journalctl", "-u", "spine", "-n", "50", "--no-pager")
+		switch component {
+		case "spine":
+			execCommand("journalctl", "-u", "spine", "-n", "100", "--no-pager")
+		case "control", "control-panel", "cp":
+			execCommand("incus", "exec", "youeye-control", "--", "journalctl", "-u", "youeye-control", "-n", "100", "--no-pager")
+		case "ui":
+			execCommand("incus", "exec", "youeye-ui", "--", "journalctl", "-u", "youeye-ui", "-n", "100", "--no-pager")
+		default:
+			c := exec.Command("incus", "exec", component, "--", "journalctl", "-n", "100", "--no-pager")
+			c.Stdout = os.Stdout
+			c.Stderr = os.Stderr
+			if err := c.Run(); err != nil {
+				c2 := exec.Command("incus", "exec", "app-"+component, "--", "journalctl", "-n", "100", "--no-pager")
+				c2.Stdout = os.Stdout
+				c2.Stderr = os.Stderr
+				if err2 := c2.Run(); err2 != nil {
+					fmt.Fprintf(os.Stderr, "Could not find container '%s' or 'app-%s'\n", component, component)
+				}
+			}
+		}
+	},
 }
 
 func execCommand(name string, args ...string) {

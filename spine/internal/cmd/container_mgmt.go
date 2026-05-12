@@ -4,16 +4,17 @@ import (
 	"fmt"
 	"strings"
 
-	"git.byka.wtf/potemsla/YouEye/cli/internal/output"
+	"git.byka.wtf/potemsla/YouEye/spine/internal/output"
 	"github.com/spf13/cobra"
 )
 
-var containerCmd = &cobra.Command{
-	Use:   "container",
-	Short: "Manage Incus containers",
+var containerMgmtCmd = &cobra.Command{
+	Use:     "container",
+	Aliases: []string{"ctr"},
+	Short:   "Manage Incus containers",
 }
 
-var containerListCmd = &cobra.Command{
+var containerMgmtListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all containers",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -42,7 +43,7 @@ var containerListCmd = &cobra.Command{
 	},
 }
 
-var containerExecCmd = &cobra.Command{
+var containerMgmtExecCmd = &cobra.Command{
 	Use:                "exec <name> -- <command...>",
 	Short:              "Execute a command in a container",
 	Args:               cobra.MinimumNArgs(1),
@@ -54,7 +55,6 @@ var containerExecCmd = &cobra.Command{
 
 		container := args[0]
 
-		// Find command after "--"
 		cmdArgs := []string{}
 		foundSep := false
 		for _, a := range args[1:] {
@@ -67,7 +67,6 @@ var containerExecCmd = &cobra.Command{
 			}
 		}
 		if !foundSep {
-			// No separator, use everything after container name as command
 			cmdArgs = args[1:]
 		}
 		if len(cmdArgs) == 0 {
@@ -91,7 +90,7 @@ var containerExecCmd = &cobra.Command{
 	},
 }
 
-var containerLogsCmd = &cobra.Command{
+var containerMgmtLogsCmd = &cobra.Command{
 	Use:   "logs <name>",
 	Short: "View container logs",
 	Args:  cobra.ExactArgs(1),
@@ -113,7 +112,7 @@ var containerLogsCmd = &cobra.Command{
 }
 
 func init() {
-	containerCmd.AddCommand(containerListCmd)
-	containerCmd.AddCommand(containerExecCmd)
-	containerCmd.AddCommand(containerLogsCmd)
+	containerMgmtCmd.AddCommand(containerMgmtListCmd)
+	containerMgmtCmd.AddCommand(containerMgmtExecCmd)
+	containerMgmtCmd.AddCommand(containerMgmtLogsCmd)
 }

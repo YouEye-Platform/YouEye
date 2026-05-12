@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"git.byka.wtf/potemsla/YouEye/cli/internal/output"
+	"git.byka.wtf/potemsla/YouEye/spine/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -203,14 +203,12 @@ func init() {
 // readPassword prompts for a password with echo disabled via stty.
 func readPassword(prompt string) string {
 	fmt.Print(prompt)
-	// Disable echo
 	exec.Command("stty", "-echo", "-F", "/dev/stdin").Run()
 	scanner := bufio.NewScanner(os.Stdin)
 	var pw string
 	if scanner.Scan() {
 		pw = scanner.Text()
 	}
-	// Re-enable echo
 	exec.Command("stty", "echo", "-F", "/dev/stdin").Run()
 	fmt.Println()
 	return pw

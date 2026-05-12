@@ -29,12 +29,16 @@ func Section(title string) {
 }
 
 func StatusLine(label, value, color string) {
-	padded := label + ":" + strings.Repeat(" ", max(1, 18-len(label)))
+	pad := 18 - len(label)
+	if pad < 1 {
+		pad = 1
+	}
+	padded := label + ":" + strings.Repeat(" ", pad)
 	fmt.Printf("  %s%s%s%s\n", padded, color, value, Reset)
 }
 
 func Success(msg string) {
-	fmt.Printf("%s✓%s %s\n", Green, Reset, msg)
+	fmt.Printf("%s\u2713%s %s\n", Green, Reset, msg)
 }
 
 func Warn(msg string) {
@@ -42,11 +46,11 @@ func Warn(msg string) {
 }
 
 func Error(msg string) {
-	fmt.Printf("%s✗%s %s\n", Red, Reset, msg)
+	fmt.Printf("%s\u2717%s %s\n", Red, Reset, msg)
 }
 
 func Info(msg string) {
-	fmt.Printf("%s→%s %s\n", Blue, Reset, msg)
+	fmt.Printf("%s\u2192%s %s\n", Blue, Reset, msg)
 }
 
 // Table prints a formatted table.
@@ -56,7 +60,6 @@ func Table(headers []string, rows [][]string) {
 		return
 	}
 
-	// Calculate column widths
 	widths := make([]int, len(headers))
 	for i, h := range headers {
 		widths[i] = len(h)
@@ -69,17 +72,15 @@ func Table(headers []string, rows [][]string) {
 		}
 	}
 
-	// Print header
 	headerLine := "  "
 	separatorLine := "  "
 	for i, h := range headers {
 		headerLine += fmt.Sprintf("%-*s  ", widths[i], h)
-		separatorLine += strings.Repeat("─", widths[i]) + "  "
+		separatorLine += strings.Repeat("\u2500", widths[i]) + "  "
 	}
 	fmt.Println(Bold + headerLine + Reset)
 	fmt.Println(Gray + separatorLine + Reset)
 
-	// Print rows
 	for _, row := range rows {
 		line := "  "
 		for i, cell := range row {
@@ -93,20 +94,20 @@ func Table(headers []string, rows [][]string) {
 
 // SSEProgress prints an SSE progress event.
 func SSEProgress(step, total int, status, message string) {
-	icon := "⏳"
+	icon := "\u23f3"
 	color := ""
 	switch status {
 	case "success", "complete", "done":
-		icon = Green + "✓" + Reset
+		icon = Green + "\u2713" + Reset
 		color = Green
 	case "error", "failed":
-		icon = Red + "✗" + Reset
+		icon = Red + "\u2717" + Reset
 		color = Red
 	case "skipped":
-		icon = Yellow + "→" + Reset
+		icon = Yellow + "\u2192" + Reset
 		color = Yellow
 	case "progress", "running":
-		icon = Blue + "⏳" + Reset
+		icon = Blue + "\u23f3" + Reset
 		color = Blue
 	}
 
@@ -115,11 +116,4 @@ func SSEProgress(step, total int, status, message string) {
 	} else {
 		fmt.Printf("  %s %s%s%s\n", icon, color, message, Reset)
 	}
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
