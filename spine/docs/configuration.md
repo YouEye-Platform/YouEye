@@ -82,8 +82,8 @@ Configure the Spine API server:
 
 ```yaml
 api:
-  socket_path: "/var/run/spine/spine.sock"  # Unix socket path
-  timeout: 30                                # Request timeout in seconds
+  socket_path: "/var/run/youeye/youeye.sock"  # Unix socket path
+  timeout: 30                                   # Request timeout in seconds
 ```
 
 ### Paths
@@ -92,9 +92,9 @@ Configure system paths:
 
 ```yaml
 paths:
-  spine_binary: "/usr/local/bin/spine"  # Spine binary location
-  systemd_service: "/etc/systemd/system/spine.service"
-  socket_dir: "/var/run/spine"
+  spine_binary: "/usr/local/bin/youeye"  # YouEye binary location
+  systemd_service: "/etc/systemd/system/youeye.service"
+  socket_dir: "/var/run/youeye"
 ```
 
 ### Security
@@ -158,14 +158,14 @@ deployment:
 
 # API server configuration
 api:
-  socket_path: "/var/run/spine/spine.sock"
+  socket_path: "/var/run/youeye/youeye.sock"
   timeout: 30
 
 # System paths
 paths:
-  spine_binary: "/usr/local/bin/spine"
-  systemd_service: "/etc/systemd/system/spine.service"
-  socket_dir: "/var/run/spine"
+  spine_binary: "/usr/local/bin/youeye"
+  systemd_service: "/etc/systemd/system/youeye.service"
+  socket_dir: "/var/run/youeye"
 
 # Security settings
 security:

@@ -1,3 +1,27 @@
+## v0.3.2.10 — sebastian — 2026-05-12
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Complete youeye rename — install.sh, self-update, systemd service migration
+
+### Changes
+- `install.sh` — Install binary as `/usr/local/bin/youeye` with `spine` symlink, create `youeye.service` instead of `spine.service`, migrate existing `spine.service` on upgrade
+- `internal/cmd/update.go` — Self-update always installs to canonical `/usr/local/bin/youeye`, recreates `spine` symlink, auto-migrates `spine.service` → `youeye.service`
+- `internal/cmd/api.go` — Updated hardcoded fallback socket dir from `/var/run/spine` to `/var/run/youeye`, PID file from `spine.pid` to `youeye.pid`
+- `internal/container/control.go` — Socket proxy setup derives directory from config path, creates `youeye.conf` tmpfiles.d instead of `spine.conf`
+- `README.md` — Updated socket path documentation
+- `docs/configuration.md` — Updated all path references to youeye
+
+### Test Results
+- Fresh install via `install.sh` verified: binary at `/usr/local/bin/youeye`, symlink at `/usr/local/bin/spine`
+- Self-update from v0.3.2.9→v0.3.2.10: symlink maintained, `youeye.service` used
+- Both `youeye` and `spine` commands work identically
+
+### Notes for Iris
+- Backward-compatible: existing systems using `spine` command continue to work via symlink
+- Self-update auto-migrates `spine.service` → `youeye.service` — no manual intervention needed
+- VMs that haven't run `youeye update self` yet (still on v0.3.2.8 or older) will need one manual migration or a fresh install via updated `install.sh`
+
 ## v0.3.1.5 — iris — 2026-04-27
 **Branch:** dev
 **VM:** ye-iris

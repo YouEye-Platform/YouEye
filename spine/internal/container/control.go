@@ -217,22 +217,28 @@ func addSocketProxies(containerName, spineSocketPath string) error {
 	}
 
 	// Spine socket proxy
-	util.LogSubStep("Adding Spine socket proxy...")
-	util.LogDebug("This allows the Control Panel to communicate with Spine API")
-	
+	util.LogSubStep("Adding YouEye socket proxy...")
+	util.LogDebug("This allows the Control Panel to communicate with the YouEye API")
+
+	// Derive the socket directory from the socket path
+	spineSocketDir := "/var/run/youeye"
+	if idx := strings.LastIndex(spineSocketPath, "/"); idx > 0 {
+		spineSocketDir = spineSocketPath[:idx]
+	}
+
 	// Create directory on host
-	os.MkdirAll("/var/run/spine", 0755)
-	
+	os.MkdirAll(spineSocketDir, 0755)
+
 	// Create directory inside container for initial setup
-	util.RunIncusExec(containerName, "mkdir", "-p", "/var/run/spine")
-	
-	// CRITICAL: Create tmpfiles.d config so /var/run/spine is created at boot
+	util.RunIncusExec(containerName, "mkdir", "-p", spineSocketDir)
+
+	// CRITICAL: Create tmpfiles.d config so socket dir is created at boot
 	// This is needed because /var/run is a tmpfs that resets on reboot
-	// Without this, the spine-socket proxy device fails after reboot
-	tmpfilesConfig := "d /var/run/spine 0755 root root -"
+	// Without this, the socket proxy device fails after reboot
+	tmpfilesConfig := fmt.Sprintf("d %s 0755 root root -", spineSocketDir)
 	util.RunIncusExec(containerName, "bash", "-c",
-		fmt.Sprintf("echo '%s' > /etc/tmpfiles.d/spine.conf", tmpfilesConfig))
-	util.LogDebug("Created tmpfiles.d config for /var/run/spine persistence across reboots")
+		fmt.Sprintf("echo '%s' > /etc/tmpfiles.d/youeye.conf", tmpfilesConfig))
+	util.LogDebug(fmt.Sprintf("Created tmpfiles.d config for %s persistence across reboots", spineSocketDir))
 	
 	if cmdOut, err := util.RunCmdCapture("incus", "config", "device", "add", containerName, "spine-socket", "proxy",
 		"bind=container",

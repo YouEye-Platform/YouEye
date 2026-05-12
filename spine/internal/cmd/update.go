@@ -196,12 +196,19 @@ func updateSelf() error {
 
 	update.Emit("spine", update.StatusInstalling, 70, "Installing update...")
 
+	// Canonical install path is /usr/local/bin/youeye; spine is a backward-compat symlink.
+	// The running binary may be either path — normalize to install at the canonical location
+	// and ensure the symlink exists.
+	canonicalBinary := cfg.Paths.SpineBinary // /usr/local/bin/youeye
+	legacyBinary := "/usr/local/bin/spine"
+
 	// Replace binary: unlink first (avoids "text file busy" on Linux), then rename
 	fmt.Println("Installing update...")
-	os.Remove(currentBinary) // Unlink running binary — kernel keeps inode alive until process exits
-	if err := os.Rename(tmpFile, currentBinary); err != nil {
+	os.Remove(canonicalBinary) // Unlink running binary — kernel keeps inode alive until process exits
+	os.Remove(legacyBinary)    // Remove old binary or symlink so we can recreate
+	if err := os.Rename(tmpFile, canonicalBinary); err != nil {
 		// Rename failed (possibly cross-device), try copy
-		if err := copyFile(tmpFile, currentBinary); err != nil {
+		if err := copyFile(tmpFile, canonicalBinary); err != nil {
 			// Restore from backup if available
 			if cfg.Security.BackupOnUpdate {
 				if restoreErr := copyFile(backupFile, currentBinary); restoreErr != nil {
@@ -216,9 +223,12 @@ func updateSelf() error {
 		os.Remove(tmpFile)
 	}
 
+	// Create backward-compatible spine symlink
+	os.Symlink(canonicalBinary, legacyBinary)
+
 	// Verify installation
 	fmt.Println("Verifying installation...")
-	verifyInstall := exec.Command(currentBinary, "version")
+	verifyInstall := exec.Command(canonicalBinary, "version")
 	if out, err := verifyInstall.CombinedOutput(); err != nil {
 		// Installation verification failed, try to restore backup
 		fmt.Printf("Installation verification failed: %s\n", string(out))
@@ -244,10 +254,37 @@ func updateSelf() error {
 	// Write completed status BEFORE restart — after restart, old process is gone
 	update.Complete("spine", Version, latestVersion)
 
+	// Migrate spine.service → youeye.service if the old service is still active
+	if _, err := os.Stat("/etc/systemd/system/spine.service"); err == nil {
+		fmt.Println("Migrating spine.service → youeye.service...")
+		exec.Command("systemctl", "stop", "spine").Run()
+		exec.Command("systemctl", "disable", "spine").Run()
+		os.Remove("/etc/systemd/system/spine.service")
+
+		serviceContent := `[Unit]
+Description=YouEye Platform Management Service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=/bin/mkdir -p /var/run/youeye
+ExecStart=/usr/local/bin/youeye api serve
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+`
+		os.WriteFile("/etc/systemd/system/youeye.service", []byte(serviceContent), 0644)
+		exec.Command("systemctl", "daemon-reload").Run()
+		exec.Command("systemctl", "enable", "youeye").Run()
+	}
+
 	// Restart the service so the API reflects the new version
 	fmt.Println("Restarting YouEye service...")
-	// Try new name first, fall back to legacy
 	if err := exec.Command("systemctl", "restart", "youeye").Run(); err != nil {
+		// Last resort: try legacy name (should not happen after migration above)
 		if err2 := exec.Command("systemctl", "restart", "spine").Run(); err2 != nil {
 			fmt.Printf("Warning: could not restart service: %v\n", err)
 			fmt.Println("You may need to manually restart: systemctl restart youeye")
@@ -258,8 +295,8 @@ func updateSelf() error {
 		fmt.Println("  ✓ YouEye service restarted")
 	}
 
-	fmt.Println("✓ Spine updated successfully")
-	fmt.Println("Run 'spine version' to verify")
+	fmt.Println("✓ YouEye updated successfully")
+	fmt.Println("Run 'youeye version' to verify")
 	return nil
 }
 

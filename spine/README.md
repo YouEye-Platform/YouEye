@@ -164,13 +164,13 @@ The `getAssetDownloadURL()` function finds the `browser_download_url` for the sp
 
 ## Socket Location
 
-The API server listens on a Unix socket at `/var/run/spine/spine.sock`.
+The API server listens on a Unix socket at `/var/run/youeye/youeye.sock`.
 
 Control Panel connects via a proxy device:
 ```bash
 incus config device add youeye-control spine-socket proxy \
-  listen=unix:/var/run/spine/spine.sock \
-  connect=unix:/var/run/spine/spine.sock \
+  listen=unix:/var/run/youeye/youeye.sock \
+  connect=unix:/var/run/youeye/youeye.sock \
   bind=container
 ```
 

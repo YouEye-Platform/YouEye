@@ -55,7 +55,7 @@ func startAPIServer() error {
 	if lastSlash > 0 {
 		socketDir = socketPath[:lastSlash]
 	} else {
-		socketDir = "/var/run/spine"
+		socketDir = "/var/run/youeye"
 	}
 	
 	if err := os.MkdirAll(socketDir, 0755); err != nil {
@@ -63,7 +63,7 @@ func startAPIServer() error {
 	}
 
 	// Write PID file
-	pidFile := socketDir + "/spine.pid"
+	pidFile := socketDir + "/youeye.pid"
 	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
 		fmt.Printf("Warning: could not write PID file: %v\n", err)
 	}
@@ -93,7 +93,7 @@ func startAPIServer() error {
 }
 
 func stopAPIServer() error {
-	pidFile := "/var/run/spine/spine.pid"
+	pidFile := "/var/run/youeye/youeye.pid"
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
 		return fmt.Errorf("API server not running (no PID file)")

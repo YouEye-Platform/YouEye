@@ -8,7 +8,7 @@ set -e
 REPO="https://git.byka.wtf/potemsla/YouEye"
 INSTALL_DIR="/usr/local/bin"
 SERVICE_DIR="/etc/systemd/system"
-SOCKET_DIR="/var/run/spine"
+SOCKET_DIR="/var/run/youeye"
 
 # Component tag prefix for Spine releases in the monorepo
 TAG_PREFIX="spine"
@@ -170,7 +170,7 @@ download_spine() {
 
     # Download to temp file first, then move
     if curl -4 -sSL -f "$DOWNLOAD_URL" -o "$TMP_FILE" && [ -s "$TMP_FILE" ]; then
-        mv "$TMP_FILE" "${INSTALL_DIR}/spine"
+        mv "$TMP_FILE" "${INSTALL_DIR}/youeye"
         log_success "Downloaded successfully"
     else
         rm -f "$TMP_FILE"
@@ -179,18 +179,22 @@ download_spine() {
         DOWNLOAD_URL="${REPO}/raw/branch/main/spine/spine-linux-${ARCH}"
 
         if curl -4 -sSL -f "$DOWNLOAD_URL" -o "$TMP_FILE" && [ -s "$TMP_FILE" ]; then
-            mv "$TMP_FILE" "${INSTALL_DIR}/spine"
+            mv "$TMP_FILE" "${INSTALL_DIR}/youeye"
             log_success "Downloaded from main branch"
         else
             rm -f "$TMP_FILE"
-            log_error "Failed to download Spine binary"
+            log_error "Failed to download YouEye binary"
             log_error "Tried: $DOWNLOAD_URL"
             exit 1
         fi
     fi
 
-    chmod +x "${INSTALL_DIR}/spine"
-    log_success "Spine installed to ${INSTALL_DIR}/spine"
+    chmod +x "${INSTALL_DIR}/youeye"
+
+    # Create backward-compatible 'spine' symlink
+    ln -sf "${INSTALL_DIR}/youeye" "${INSTALL_DIR}/spine"
+
+    log_success "YouEye installed to ${INSTALL_DIR}/youeye (spine symlink created)"
 }
 
 # Create systemd service
@@ -200,15 +204,24 @@ create_service() {
     # Create socket directory
     mkdir -p "$SOCKET_DIR"
 
-    cat > "${SERVICE_DIR}/spine.service" << 'EOF'
+    # Migrate from old spine.service if it exists
+    if [ -f "${SERVICE_DIR}/spine.service" ]; then
+        log_info "Migrating from spine.service to youeye.service..."
+        systemctl stop spine.service 2>/dev/null || true
+        systemctl disable spine.service 2>/dev/null || true
+        rm -f "${SERVICE_DIR}/spine.service"
+    fi
+
+    cat > "${SERVICE_DIR}/youeye.service" << 'EOF'
 [Unit]
-Description=YouEye Spine - System Management Service
-After=network.target
+Description=YouEye Platform Management Service
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/spine api serve
-ExecStartPre=/bin/mkdir -p /var/run/spine
+ExecStartPre=/bin/mkdir -p /var/run/youeye
+ExecStart=/usr/local/bin/youeye api serve
 Restart=always
 RestartSec=5
 
@@ -217,10 +230,10 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable spine.service
-    systemctl start spine.service
+    systemctl enable youeye.service
+    systemctl start youeye.service
 
-    log_success "Spine service created and started"
+    log_success "YouEye service created and started"
 }
 
 # Write release branch to youeye.yaml if BRANCH is set
@@ -258,19 +271,19 @@ EOFCFG
 verify_installation() {
     log_info "Verifying installation..."
 
-    if "${INSTALL_DIR}/spine" version >/dev/null 2>&1; then
-        VERSION=$("${INSTALL_DIR}/spine" version 2>&1 | head -1)
-        log_success "Spine installed successfully: $VERSION"
+    if "${INSTALL_DIR}/youeye" version >/dev/null 2>&1; then
+        VERSION=$("${INSTALL_DIR}/youeye" version 2>&1 | head -1)
+        log_success "YouEye installed successfully: $VERSION"
     else
-        log_error "Spine installation verification failed"
+        log_error "YouEye installation verification failed"
         exit 1
     fi
 
     # Check service status
-    if systemctl is-active --quiet spine.service; then
-        log_success "Spine service is running"
+    if systemctl is-active --quiet youeye.service; then
+        log_success "YouEye service is running"
     else
-        log_warn "Spine service is not running. Start with: systemctl start spine"
+        log_warn "YouEye service is not running. Start with: systemctl start youeye"
     fi
 }
 
@@ -299,10 +312,11 @@ main() {
     echo "=================================="
     echo ""
     echo "Next steps:"
-    echo "  1. Run 'spine status' to check system status"
-    echo "  2. Run 'spine deploy' to install full YouEye stack"
+    echo "  1. Run 'youeye status' to check system status"
+    echo "  2. Run 'youeye deploy' to install full YouEye stack"
     echo ""
-    echo "For help: spine --help"
+    echo "For help: youeye --help"
+    echo "  (The 'spine' command also works as a backward-compatible alias)"
     echo ""
 }
 
