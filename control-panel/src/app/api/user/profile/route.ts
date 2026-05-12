@@ -12,6 +12,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { listUsers, updateUser } from "@/lib/authentik/client";
+import { getContainerIP } from "@/lib/incus/container-ip";
+import { readFile } from "fs/promises";
+
+const BRIDGE_TOKEN_PATH = "/etc/youeye/ui-bridge-token";
 
 /**
  * Find an Authentik user by their username (exact match).
@@ -96,6 +100,11 @@ export async function PATCH(request: NextRequest) {
 
     await updateUser(user.pk, { name: fullName });
 
+    // Push name change to UI via bridge (server-to-server, non-fatal)
+    pushNameToUI(session.username, newFirst, newLast).catch((err) =>
+      console.warn("[Profile] Bridge name push failed (non-fatal):", err instanceof Error ? err.message : err)
+    );
+
     return NextResponse.json({
       username: user.username,
       firstName: newFirst,
@@ -106,5 +115,35 @@ export async function PATCH(request: NextRequest) {
   } catch (error) {
     console.error("Failed to update user profile:", error);
     return NextResponse.json({ error: "Failed to update profile" }, { status: 500 });
+  }
+}
+
+/**
+ * Push name change to YE-UI via bridge so it persists in the UI database.
+ * Non-fatal: if the bridge push fails, the postMessage client-side path
+ * is the primary sync mechanism for names.
+ */
+async function pushNameToUI(
+  username: string,
+  firstName: string,
+  lastName: string
+): Promise<void> {
+  const token = (await readFile(BRIDGE_TOKEN_PATH, "utf-8")).trim();
+  const uiIP = await getContainerIP("youeye-ui");
+  if (!uiIP || !token) return;
+
+  const res = await fetch(`http://${uiIP}:3000/api/ui-bridge/user-profile`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-UI-Bridge-Token": token,
+    },
+    body: JSON.stringify({ username, firstName, lastName }),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.warn(`[Profile] Bridge push failed: ${res.status} ${text}`);
   }
 }

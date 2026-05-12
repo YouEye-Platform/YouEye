@@ -37,7 +37,7 @@ export async function GET(
       status: 200,
       headers: {
         "Content-Type": "image/webp",
-        "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+        "Cache-Control": "public, max-age=60, must-revalidate",
       },
     });
   } catch {

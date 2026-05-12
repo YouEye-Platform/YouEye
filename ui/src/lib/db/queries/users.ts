@@ -44,10 +44,12 @@ export async function upsertUser(data: {
       username: data.username,
       name: data.name,
       email: data.email,
-      image: data.image,
       isAdmin: preservedAdmin,
       updatedAt: new Date(),
     };
+    // Only overwrite image if explicitly provided — prevents login from
+    // clobbering avatars saved via bridge or client-side upload
+    if (data.image !== undefined) updateFields.image = data.image;
     // Sync firstName/lastName from Authentik if provided
     if (data.firstName !== undefined) updateFields.firstName = data.firstName;
     if (data.lastName !== undefined) updateFields.lastName = data.lastName;
@@ -127,7 +129,7 @@ export async function completeOnboarding(userId: string) {
     .where(eq(users.id, userId));
 }
 
-/** Update a user's profile fields (bio, timezone, firstName, lastName) */
+/** Update a user's profile fields (bio, timezone, firstName, lastName, name) */
 export async function updateUserProfile(
   userId: string,
   data: {
@@ -135,6 +137,7 @@ export async function updateUserProfile(
     lastName?: string | null;
     bio?: string | null;
     timezone?: string | null;
+    name?: string;
   }
 ) {
   await ensureSchema();

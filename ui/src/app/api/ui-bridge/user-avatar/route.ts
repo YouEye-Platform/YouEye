@@ -71,7 +71,8 @@ export async function POST(request: NextRequest) {
 
     const buffer = Buffer.from(match[2], "base64");
     const { storagePath, sizeBytes } = await saveAvatar(userId, buffer);
-    const servingUrl = `/api/v1/user/avatar/${userId}`;
+    // Cache-busting: append timestamp so browsers fetch the new image
+    const servingUrl = `/api/v1/user/avatar/${userId}?v=${Date.now()}`;
 
     // Update DB: remove old asset record, insert new, update user image
     await db

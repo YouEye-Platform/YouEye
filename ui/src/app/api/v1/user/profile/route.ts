@@ -48,12 +48,21 @@ export async function PATCH(request: NextRequest) {
     lastName?: string | null;
     bio?: string | null;
     timezone?: string | null;
+    name?: string;
   } = {};
 
   if ("firstName" in body) patch.firstName = body.firstName || null;
   if ("lastName" in body) patch.lastName = body.lastName || null;
   if ("bio" in body) patch.bio = body.bio || null;
   if ("timezone" in body) patch.timezone = body.timezone || null;
+
+  // Keep the `name` column in sync when firstName/lastName change
+  if ("firstName" in body || "lastName" in body) {
+    const existing = await findUserById(session.userId);
+    const newFirst = ("firstName" in body ? body.firstName : existing?.firstName) || "";
+    const newLast = ("lastName" in body ? body.lastName : existing?.lastName) || "";
+    patch.name = [newFirst, newLast].filter(Boolean).join(" ") || undefined;
+  }
 
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });

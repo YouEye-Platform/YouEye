@@ -1,3 +1,28 @@
+## ui-v0.3.4.36 + cp-v0.3.6.29 — sebastian — 2026-05-12
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix profile sync — avatar and name changes from CP/Authentik not persisting in UI
+
+### Changes
+- `ui/src/app/api/v1/user/avatar/route.ts` — Added cache-busting timestamp to avatar serving URL
+- `ui/src/app/api/v1/user/avatar/[id]/route.ts` — Reduced aggressive caching (max-age 60s, must-revalidate)
+- `ui/src/app/api/ui-bridge/user-avatar/route.ts` — Added cache-busting timestamp to bridge avatar URL
+- `ui/src/lib/db/queries/users.ts` — Guard image field in upsertUser to prevent login from clobbering avatars; added name field to updateUserProfile
+- `ui/src/app/api/v1/user/profile/route.ts` — Sync `name` column when firstName/lastName change via PATCH
+- `ui/src/app/api/ui-bridge/user-profile/route.ts` — NEW: Bridge endpoint for CP→UI name sync (token-authenticated)
+- `ui/src/components/settings/profile-settings.tsx` — Fixed silent error swallowing on name sync catch
+- `control-panel/src/app/api/user/profile/route.ts` — Added pushNameToUI() bridge push after Authentik name save
+
+### Test Results
+- Manual verification by user on sebos.app deploy
+
+### Notes for Iris
+- New bridge endpoint `/api/ui-bridge/user-profile` added to UI — requires bridge token provisioning (already handled by spine)
+- Five root causes fixed: avatar caching, upsertUser image clobber, stale name column, missing CP→UI name bridge push, silent error swallowing
+
+---
+
 ## ui-v0.3.4.35 + cp-v0.3.6.28 — sebastian — 2026-05-12
 **Branch:** sebastian
 **VM:** ye-sebastian

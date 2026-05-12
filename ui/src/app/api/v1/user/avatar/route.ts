@@ -47,7 +47,8 @@ export async function POST(request: NextRequest) {
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const { storagePath, sizeBytes } = await saveAvatar(session.userId, buffer);
-    const servingUrl = `/api/v1/user/avatar/${session.userId}`;
+    // Cache-busting: append timestamp so browsers fetch the new image
+    const servingUrl = `/api/v1/user/avatar/${session.userId}?v=${Date.now()}`;
 
     // Delete existing avatar asset record
     await db
