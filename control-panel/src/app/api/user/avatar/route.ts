@@ -1,11 +1,11 @@
 /**
  * User Avatar API — CP-owned
  *
- * POST   /api/user/avatar — upload avatar to Authentik
- * DELETE /api/user/avatar — remove avatar from Authentik
+ * POST   /api/user/avatar — upload avatar to Authentik + push to UI via bridge
+ * DELETE /api/user/avatar — remove avatar from Authentik + push removal to UI
  *
  * Available to all authenticated users. The avatar is stored in Authentik
- * and propagated to SSO apps via the OIDC `picture` claim.
+ * and pushed to YE-UI via the bridge so it persists in the UI database.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -13,9 +13,49 @@ import { getSession } from "@/lib/auth/session";
 import { listUsers } from "@/lib/authentik/client";
 import { spineClient } from "@/lib/spine/client";
 import { getContainerIP } from "@/lib/incus/container-ip";
+import { readFile } from "fs/promises";
 
 const MAX_INPUT_SIZE = 5 * 1024 * 1024; // 5MB
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const BRIDGE_TOKEN_PATH = "/etc/youeye/ui-bridge-token";
+
+/**
+ * Push avatar data to YE-UI via the bridge so it persists in the UI database.
+ * Non-fatal: if the bridge push fails, the avatar is still saved in Authentik.
+ */
+async function pushAvatarToUI(
+  username: string,
+  dataUrl: string | null
+): Promise<void> {
+  try {
+    const token = (await readFile(BRIDGE_TOKEN_PATH, "utf-8")).trim();
+    const uiIP = await getContainerIP("youeye-ui");
+    if (!uiIP || !token) return;
+
+    const baseUrl = `http://${uiIP}:3000`;
+    const method = dataUrl ? "POST" : "DELETE";
+    const body = dataUrl
+      ? JSON.stringify({ username, dataUrl })
+      : JSON.stringify({ username });
+
+    const res = await fetch(`${baseUrl}/api/ui-bridge/user-avatar`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        "X-UI-Bridge-Token": token,
+      },
+      body,
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.warn(`[Avatar] Bridge push failed: ${res.status} ${text}`);
+    }
+  } catch (err) {
+    console.warn("[Avatar] Bridge push failed (non-fatal):", err instanceof Error ? err.message : err);
+  }
+}
 
 async function findAuthentikUser(username: string) {
   const result = await listUsers({ search: username, page_size: 10 });
@@ -107,6 +147,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Push to UI via bridge (non-fatal — avatar is already in Authentik)
+    await pushAvatarToUI(session.username, dataUrl);
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("[Avatar] Upload to Authentik failed:", error);
@@ -154,6 +197,9 @@ export async function DELETE() {
         { status: 502 }
       );
     }
+
+    // Push removal to UI via bridge
+    await pushAvatarToUI(session.username, null);
 
     return NextResponse.json({ success: true });
   } catch (error) {
