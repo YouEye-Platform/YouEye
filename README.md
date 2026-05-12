@@ -34,7 +34,6 @@ Host (Debian/Ubuntu)
 | `spine/` | Spine | Go 1.21+ |
 | `control-panel/` | Control Panel | Next.js 16, TypeScript, pnpm |
 | `ui/` | YouEye UI | Next.js 15, Drizzle ORM, pnpm |
-| `cli/` | YouEye CLI | Go 1.21+ (Cobra) |
 
 Each component is built and released independently using **component-prefixed tags**:
 
@@ -43,16 +42,14 @@ Each component is built and released independently using **component-prefixed ta
 | Spine | `spine-v0.3.2` | `spine-dev-v0.3.1.5` |
 | Control Panel | `cp-v0.3.6` | `cp-dev-v0.3.5.11` |
 | UI | `ui-v0.3.4` | `ui-dev-v0.3.3.2` |
-| CLI | `cli-v0.1.0` | `cli-dev-v0.1.0.1` |
 
 ## Current Versions
 
 | Component | Main | Dev |
 |-----------|------|-----|
-| Spine | 0.3.2 | 0.3.2.5 |
+| Spine | 0.3.2 | 0.3.2.6 |
 | Control Panel | 0.3.6 | 0.3.6.25 |
 | UI | 0.3.4 | 0.3.4.34 |
-| CLI | — | 0.1.0.1 |
 
 ## Related Repos
 
@@ -71,19 +68,22 @@ Native apps and other platform components live in their own repositories:
 | [YE-Wiki](https://git.byka.wtf/potemsla/YE-Wiki) | Platform documentation |
 | [YE-Website](https://git.byka.wtf/potemsla/YE-Website) | Public website |
 
-## YouEye CLI
+## Platform Management
 
-The `youeye` command unifies Spine and Control Panel management into a single tool:
+Spine is the single CLI for managing the entire platform:
 
 ```bash
-youeye status          # Full platform status
-youeye app install wiki  # Install an app
-youeye user list       # List users
-youeye services        # Service health
-youeye update check    # Check for updates
+spine status          # Full platform status (infra + services + apps)
+spine app install wiki  # Install an app from the marketplace
+spine user list       # List users
+spine services        # Service health
+spine update check    # Check all components for updates
+spine proxy list      # Caddy reverse proxy routes
+spine domain show     # Current base domain
+spine market search   # Browse app marketplace
 ```
 
-Requires `sudo` for full functionality. See `cli/` directory.
+Requires `sudo` for full functionality.
 
 ## Development
 
@@ -96,9 +96,6 @@ cd control-panel && pnpm install && pnpm dev
 
 # UI (Next.js 15)
 cd ui && pnpm install && pnpm dev
-
-# CLI (Go)
-cd cli && go build ./cmd/youeye
 ```
 
 Branch from `dev`, never from `main`. See `CLAUDE.md` for full agent workflow.

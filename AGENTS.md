@@ -1,3 +1,41 @@
+## spine-v0.3.2.6 — sebastian — 2026-05-12
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Merge youeye CLI into Spine — eliminate separate binary
+
+### Changes
+- `cli/` — REMOVED: entire separate Go module deleted
+- `spine/internal/cpapi/client.go` — NEW: CP API client (HTTP + CLI token auth) moved from cli/
+- `spine/internal/output/format.go` — NEW: ANSI terminal formatting (tables, colors, status lines)
+- `spine/internal/cmd/cp_helpers.go` — NEW: shared helpers (requireCP, nested, str, firstOf, etc.)
+- `spine/internal/cmd/app.go` — NEW: app management (list, info, install, update, remove, start/stop/restart, credentials, check-updates)
+- `spine/internal/cmd/market.go` — NEW: marketplace browsing (search, info)
+- `spine/internal/cmd/user.go` — NEW: user management (list, create, delete, password, info)
+- `spine/internal/cmd/proxy.go` — NEW: Caddy route management (list, add, remove, status)
+- `spine/internal/cmd/domain.go` — NEW: platform domain (show, set)
+- `spine/internal/cmd/services.go` — NEW: service health (list, restart)
+- `spine/internal/cmd/container_mgmt.go` — NEW: container management (list, exec, logs)
+- `spine/internal/cmd/setup.go` — NEW: setup wizard (status, reconfigure)
+- `spine/internal/cmd/update_extended.go` — NEW: update ui + update check subcommands
+- `spine/internal/cmd/root.go` — enhanced: registers new commands, improved version/logs
+- `spine/internal/cmd/status.go` — enhanced: shows services and apps when CP available
+- `README.md` — removed CLI references, updated monorepo structure
+
+### Test Results
+- All new commands tested on ye-sebastian VM with live CP
+- `spine status` — shows infra + services + apps
+- `spine app list` / `spine user list` / `spine proxy list` — all working
+- `spine services` / `spine domain show` / `spine market search` — all working
+- `spine version` — shows all component versions
+
+### Notes for Iris
+- The `cli/` directory is completely removed — no separate youeye binary anymore
+- All CLI functionality is now `spine <subcommand>` (e.g., `spine app list` instead of `youeye app list`)
+- CLI token auth mechanism stays (Spine→CP HTTP communication still uses it)
+- The cli-sebastian-v0.1.0.1 release on Gitea is now obsolete
+- CP v0.3.6.25 CLI token middleware is still needed (Spine uses it)
+
 ## cli-v0.1.0.1 / spine-v0.3.2.5 / cp-v0.3.6.25 — sebastian — 2026-05-11
 **Branch:** sebastian
 **VM:** ye-sebastian
