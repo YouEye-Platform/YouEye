@@ -210,23 +210,56 @@ for (const pkg of needed) {
 // Step 5b: Copy sharp's @img native bindings from pnpm store
 // sharp v0.33+ uses @img/sharp-linux-x64 and @img/sharp-libvips-linux-x64
 // which are nested inside the pnpm store under sharp's own node_modules
-function findSharpImgDir(pnpmDir) {
+//
+// CRITICAL: Must match the sharp JS wrapper version already copied into standalone.
+// The monorepo may hoist a different sharp version (e.g. 0.34.x) at the workspace root.
+// Bundling 0.34.x native bindings with a 0.33.x JS wrapper causes "A boolean was expected"
+// at runtime because the native API changed between versions.
+function findSharpImgDir(pnpmDir, version) {
   if (!fs.existsSync(pnpmDir)) return null;
-  const entries = fs.readdirSync(pnpmDir).filter(e => e.startsWith('sharp@')).sort().reverse();
+  // If we know the exact version, match it precisely
+  const prefix = version ? `sharp@${version}` : 'sharp@';
+  const entries = fs.readdirSync(pnpmDir).filter(e => {
+    if (!e.startsWith(prefix)) return false;
+    // For exact version match, ensure it's sharp@X.Y.Z (not sharp@X.Y.Z-beta etc.)
+    // The pnpm store entry format is sharp@0.33.5 or sharp@0.33.5_optional-dep
+    if (version) {
+      const rest = e.slice(`sharp@${version}`.length);
+      return rest === '' || rest.startsWith('_');
+    }
+    return true;
+  }).sort().reverse();
   for (const entry of entries) {
     const candidate = path.join(pnpmDir, entry, 'node_modules', '@img');
     if (fs.existsSync(candidate)) return candidate;
   }
   return null;
 }
-const imgSrc = findSharpImgDir(path.join(workspaceModules, '.pnpm')) || findSharpImgDir(path.join(localModules, '.pnpm'));
+// Read the sharp version from the standalone build to match native bindings
+const sharpPkgPath = path.join(nodeModulesPath, 'sharp', 'package.json');
+let sharpVersion = null;
+if (fs.existsSync(sharpPkgPath)) {
+  try {
+    sharpVersion = JSON.parse(fs.readFileSync(sharpPkgPath, 'utf-8')).version;
+    console.log(`  Sharp JS wrapper version in standalone: ${sharpVersion}`);
+  } catch {}
+}
+// Search local pnpm store first (UI's own deps), then workspace root
+const imgSrc = findSharpImgDir(path.join(localModules, '.pnpm'), sharpVersion)
+  || findSharpImgDir(path.join(workspaceModules, '.pnpm'), sharpVersion)
+  || findSharpImgDir(path.join(localModules, '.pnpm'), null)
+  || findSharpImgDir(path.join(workspaceModules, '.pnpm'), null);
 if (imgSrc) {
+  console.log(`  Using @img bindings from: ${imgSrc}`);
   const imgDest = path.join(nodeModulesPath, '@img');
   fs.mkdirSync(imgDest, { recursive: true });
   for (const pkg of fs.readdirSync(imgSrc)) {
     const dest = path.join(imgDest, pkg);
-    if (fs.existsSync(dest)) continue;
     const src = path.join(imgSrc, pkg);
+    // Always overwrite — earlier steps may have copied mismatched versions
+    if (fs.existsSync(dest)) {
+      fs.rmSync(dest, { recursive: true });
+    }
     console.log(`  Copying @img/${pkg} (sharp native binding)...`);
     require('child_process').execSync(`cp -rL "${src}" "${dest}"`);
   }

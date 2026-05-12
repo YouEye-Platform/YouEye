@@ -112,11 +112,12 @@ export function ProfileSettings({
     }
     if (e.data?.type === "youeye-avatar-updated") {
       if (e.data.dataUrl) {
-        // CP embed uploaded avatar — save locally from the data URL
+        // CP embed uploaded avatar — update browser state immediately.
+        // Server-side persistence is handled by CP→UI bridge push.
+        // Client-side upload is a fallback in case the bridge push hasn't landed yet.
         setAvatarUrl(e.data.dataUrl);
         window.dispatchEvent(new CustomEvent("avatar-updated", { detail: { url: e.data.dataUrl } }));
 
-        // Persist to UI's local storage by uploading the data URL as a file
         fetch(e.data.dataUrl)
           .then((r) => r.blob())
           .then((blob) => {
@@ -124,12 +125,16 @@ export function ProfileSettings({
             formData.append("file", blob, "avatar.png");
             return fetch("/api/v1/user/avatar", { method: "POST", body: formData });
           })
-          .catch(() => {});
+          .then((r) => {
+            if (r && !r.ok) console.warn("[avatar] Client-side fallback upload failed:", r.status);
+          })
+          .catch((err) => console.warn("[avatar] Client-side fallback upload error:", err));
       } else {
         // Avatar removed
         setAvatarUrl(null);
         window.dispatchEvent(new CustomEvent("avatar-updated", { detail: { url: null } }));
-        fetch("/api/v1/user/avatar", { method: "DELETE" }).catch(() => {});
+        fetch("/api/v1/user/avatar", { method: "DELETE" })
+          .catch((err) => console.warn("[avatar] Client-side fallback delete error:", err));
       }
     }
   }, [sendThemeToEmbed]);
