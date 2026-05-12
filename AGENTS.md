@@ -1,3 +1,35 @@
+## ui-v0.3.4.35 + cp-v0.3.6.28 — sebastian — 2026-05-12
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix avatar persistence — avatar disappears from navbar on page navigation
+
+### Changes
+- `ui/scripts/postbuild.js` — BUG FIX: sharp native bindings version mismatch. `findSharpImgDir` searched workspace root pnpm store first, picking up @img/sharp-linux-x64@0.34.5 native bindings instead of the 0.33.5 that the sharp JS wrapper expects. Now reads sharp version from standalone package.json, matches exact version, and searches local pnpm store first. Also changed copy loop to always overwrite existing @img packages.
+- `ui/src/app/api/ui-bridge/user-avatar/route.ts` — NEW: Bridge endpoint for CP→UI avatar sync. POST accepts `{username, dataUrl}`, resolves username to user ID, saves avatar via sharp + updates `userAssets` and `users.image` in DB. DELETE accepts `{username}`, removes avatar from disk and DB. Auth via `X-UI-Bridge-Token` header.
+- `control-panel/src/app/api/user/avatar/route.ts` — Added `pushAvatarToUI()` function. After saving avatar to Authentik, CP now pushes the data URL to YE-UI via the bridge endpoint. Called in both POST and DELETE handlers. Non-fatal on failure (avatar still persists in Authentik).
+- `ui/src/components/settings/profile-settings.tsx` — Fixed silent error swallowing: `.catch(() => {})` replaced with `.catch((err) => console.warn(...))` so avatar save failures are logged instead of silently discarded.
+- `ui/package.json` — version bumped 0.3.4.34 → 0.3.4.35
+- `control-panel/package.json` — version bumped 0.3.6.27 → 0.3.6.28
+
+### Root Cause Analysis
+The avatar disappeared on navigation because:
+1. Navbar renders per-page (not in a shared layout), so React state dies on every navigation
+2. The client-side `postMessage` flow only set browser state — no server-side persistence happened
+3. The `POST /api/v1/user/avatar` client-side fallback silently failed because sharp crashed (version mismatch)
+4. Silent `.catch(() => {})` hid the sharp crash entirely
+5. With no DB write, `UserMenu` fetching `/api/v1/user/profile` on remount got `image: null`
+
+### Test Results
+- Bridge endpoint verified via curl: POST with avatar data returns `{success: true, url: "/api/v1/user/avatar/{id}"}`
+- Sharp confirmed working in deployed container: `sharp(buf).resize().webp().toBuffer()` succeeds
+- Platform healthy: 7 running, 0 stopped after deploy
+
+### Notes for Iris
+- The bridge endpoint follows the same pattern as existing bridge endpoints (notifications, apps)
+- The postMessage client-side flow is kept as a fallback but the bridge push is now the primary persistence path
+- postbuild.js change is important — without it, any fresh build with workspace-level sharp version mismatch will crash at runtime
+
 ## spine-v0.3.2.8 + cp-v0.3.6.26 — sebastian — 2026-05-12
 **Branch:** sebastian
 **VM:** ye-sebastian
