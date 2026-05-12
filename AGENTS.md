@@ -1,3 +1,30 @@
+## spine-v0.3.2.8 + cp-v0.3.6.26 — sebastian — 2026-05-12
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix marketplace apps invisible in /api/apps/unified and CLI
+
+### Changes
+- `control-panel/src/app/api/apps/unified/route.ts` — BUG FIX: endpoint only returned hardcoded APP_DEFINITIONS, missing all marketplace-installed apps (e.g. SearXNG). Now queries `listInstalledApps()` + `getAllInstalledApps()`, fetches their container state from Incus, and merges them into the response with manifest metadata (display name, icon, description).
+- `spine/internal/cmd/cp_helpers.go` — NEW: `getIncusContainers()`, `trackedContainerNames()`, `untrackedContainers()`, `groupUntrackedAsApps()` — defense-in-depth helpers that cross-reference Incus containers with CP data so nothing can be invisible even if CP has gaps.
+- `spine/internal/cmd/container_mgmt.go` — `container list` appends untracked containers with warning.
+- `spine/internal/cmd/app.go` — `app list` appends untracked apps (grouped from untracked containers) with warning.
+- `spine/internal/cmd/status.go` — `status` shows "Untracked Containers" section if any exist.
+- `spine/internal/cmd/root.go` — version bumped to 0.3.2.8
+- `control-panel/package.json` — version bumped to 0.3.6.26
+
+### Test Results
+- `youeye app list` — SearXNG now visible as `searxng | SearXNG | 2026.3.29 | running | user`
+- `youeye container list` — both `app-searxng-main` and `app-searxng-redis` visible under app `searxng`
+- `youeye status` — SearXNG listed in "Installed Apps" with version, 15 running 0 stopped
+- `youeye app info searxng` — shows display name, version, 2 containers with IPs
+- No untracked warnings (CP fix eliminates the root cause; CLI fix provides defense-in-depth)
+
+### Notes for Iris
+- CP fix is the root cause fix: `/api/apps/unified` was missing the marketplace app merge that `/api/ui-bridge/apps` already had
+- CLI fix is defense-in-depth: even if CP misses an app, the CLI cross-references Incus directly
+- Both fixes are independently useful — CP fix benefits all API consumers, CLI fix catches any future gaps
+
 ## spine-v0.3.2.7 — sebastian — 2026-05-12
 **Branch:** sebastian
 **VM:** ye-sebastian

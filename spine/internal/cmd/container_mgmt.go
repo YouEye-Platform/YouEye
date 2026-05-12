@@ -53,7 +53,18 @@ var containerMgmtListCmd = &cobra.Command{
 				rows = append(rows, []string{name, status, ip, category, appID})
 			}
 		}
+		// Cross-reference with Incus to find untracked containers
+		tracked := trackedContainerNames(appsRaw)
+		untracked := untrackedContainers(tracked)
+		for _, c := range untracked {
+			rows = append(rows, []string{c.Name, c.Status, c.IP, "untracked", "—"})
+		}
+
 		output.Table([]string{"NAME", "STATUS", "IP", "CATEGORY", "APP"}, rows)
+
+		if len(untracked) > 0 {
+			output.Warn(fmt.Sprintf("%d container(s) running but not tracked by Control Panel", len(untracked)))
+		}
 		return nil
 	},
 }

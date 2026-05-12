@@ -135,6 +135,21 @@ func runStatus() error {
 					}
 					fmt.Println()
 				}
+
+				// Show untracked containers (security: nothing should be invisible)
+				tracked := trackedContainerNames(appsRaw)
+				untracked := untrackedContainers(tracked)
+				if len(untracked) > 0 {
+					fmt.Println("\033[33mUntracked Containers:\033[0m")
+					for _, c := range untracked {
+						if c.IP != "" {
+							fmt.Printf("  %-24s %s (%s)\n", c.Name, c.Status, c.IP)
+						} else {
+							fmt.Printf("  %-24s %s\n", c.Name, c.Status)
+						}
+					}
+					fmt.Printf("\n  \033[33m⚠ %d container(s) not tracked by Control Panel\033[0m\n\n", len(untracked))
+				}
 			}
 		}
 	}

@@ -41,7 +41,27 @@ var appListCmd = &cobra.Command{
 			category := firstOf(app, "category")
 			rows = append(rows, []string{id, displayName, ver, health, category})
 		}
+		// Cross-reference with Incus to find untracked containers and group as apps
+		tracked := trackedContainerNames(appsRaw)
+		untracked := untrackedContainers(tracked)
+		untrackedApps := groupUntrackedAsApps(untracked)
+		for _, app := range untrackedApps {
+			// Aggregate status from containers
+			status := "running"
+			for _, c := range app.Containers {
+				if c.Status != "running" {
+					status = c.Status
+					break
+				}
+			}
+			rows = append(rows, []string{app.Name, app.Name, "", status, "untracked"})
+		}
+
 		output.Table([]string{"ID", "NAME", "VERSION", "STATUS", "CATEGORY"}, rows)
+
+		if len(untrackedApps) > 0 {
+			output.Warn(fmt.Sprintf("%d app(s) running but not tracked by Control Panel", len(untrackedApps)))
+		}
 		return nil
 	},
 }

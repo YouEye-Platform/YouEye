@@ -25,6 +25,9 @@ import {
   type LxdUpdateResult,
 } from '@/lib/apps/lxd-updates';
 import { getAllHealthStatuses, getLastHealthCheckAt } from '@/lib/market/health-checker';
+import { listInstalledApps } from '@/lib/market/metadata';
+import { getAllInstalledApps } from '@/lib/market/installed-apps';
+import { fetchManifest } from '@/lib/market/catalog';
 
 // ─── Response types ───────────────────────────────────────────────────────────
 
@@ -111,10 +114,12 @@ export async function GET() {
     }
 
     // Parallel data fetches
-    const [instancesResp, spineStatus, spineUpdates] = await Promise.allSettled([
+    const [instancesResp, spineStatus, spineUpdates, marketInstalled, dbInstalledApps] = await Promise.allSettled([
       incusRequest<string[]>('GET', '/1.0/instances'),
       spineClient.status(),
       spineClient.checkUpdates(),
+      listInstalledApps(),
+      getAllInstalledApps(),
     ]);
 
     const instancePaths =
@@ -125,6 +130,9 @@ export async function GET() {
 
     const status = spineStatus.status === 'fulfilled' ? spineStatus.value : null;
     const updates = spineUpdates.status === 'fulfilled' ? spineUpdates.value : null;
+    const installed = marketInstalled.status === 'fulfilled' ? marketInstalled.value : [];
+    const dbApps = dbInstalledApps.status === 'fulfilled' ? dbInstalledApps.value : [];
+    const dbAppsMap = new Map(dbApps.map((a) => [a.appId, a]));
 
     // Fetch state for every known container in parallel
     const allContainerNames = APP_DEFINITIONS.flatMap((a) =>
@@ -267,8 +275,93 @@ export async function GET() {
       };
     });
 
+    // ── Marketplace apps: merge installed apps not in APP_DEFINITIONS ──────
+    const definedContainers = new Set(
+      apps.flatMap((a) => a.containers.map((c) => c.name))
+    );
+
+    const filteredMarket = installed.filter((meta) => {
+      const names = meta.containers.map((c: any) =>
+        typeof c === 'string' ? c : c.containerName
+      );
+      return !names.some((n: string) => definedContainers.has(n));
+    });
+
+    // Fetch container state for marketplace containers (not yet in containerStateMap)
+    const marketContainerNames = filteredMarket.flatMap((meta) =>
+      meta.containers.map((c: any) => typeof c === 'string' ? c : c.containerName)
+    );
+    const marketStateResults = await Promise.allSettled(
+      marketContainerNames.map(async (name) => {
+        if (!existingNames.has(name)) return { name, status: 'not-found' as const };
+        try {
+          const resp = await incusRequest<Record<string, unknown>>(
+            'GET',
+            `/1.0/instances/${name}/state`
+          );
+          const meta = resp.metadata ?? {};
+          return {
+            name,
+            status: ((meta.status as string) ?? 'unknown').toLowerCase(),
+            ip: extractIP(meta),
+          };
+        } catch {
+          return { name, status: 'unknown' as const };
+        }
+      })
+    );
+    for (const r of marketStateResults) {
+      if (r.status === 'fulfilled') {
+        containerStateMap.set(r.value.name, r.value);
+      }
+    }
+
+    // Best-effort manifest lookup for display names / icons
+    const manifestResults = await Promise.allSettled(
+      filteredMarket.map((meta) => fetchManifest(meta.appId))
+    );
+
+    const marketApps: UnifiedApp[] = filteredMarket.map((meta, i) => {
+      const dbEntry = dbAppsMap.get(meta.appId);
+      const manifest = manifestResults[i].status === 'fulfilled'
+        ? manifestResults[i].value
+        : null;
+
+      const containers: ContainerInfo[] = meta.containers.map((c: any) => {
+        const name = typeof c === 'string' ? c : c.containerName;
+        const state = containerStateMap.get(name);
+        return {
+          name,
+          status: state?.status ?? 'not-found',
+          canControl: true,
+          ip: state?.ip,
+        };
+      });
+
+      const containerStatuses = containers.map((c) => c.status);
+
+      return {
+        id: meta.appId,
+        displayName: manifest?.metadata.name || meta.appId,
+        description: manifest?.metadata.description || 'Marketplace app',
+        icon: manifest?.metadata.icon || 'Package',
+        category: 'user' as const,
+        type: 'docker-lxd',
+        containers,
+        updatedBy: 'control-panel' as const,
+        version: dbEntry?.installedVersion ?? undefined,
+        status: aggregateStatus(containerStatuses),
+        updateAvailable: dbEntry?.updateAvailable ?? false,
+        updateInfo: dbEntry?.updateAvailable && dbEntry.catalogVersion
+          ? `${dbEntry.installedVersion} → ${dbEntry.catalogVersion}`
+          : undefined,
+        healthStatus: healthStatuses[meta.appId] ?? undefined,
+        healthCheckedAt: lastHealthCheck,
+      };
+    });
+
     const response: UnifiedAppsResponse = {
-      apps,
+      apps: [...apps, ...marketApps],
       lastCheckedAt: getLastCheckedAt(),
       checkInProgress: isCheckInProgress(),
     };
