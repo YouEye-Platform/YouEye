@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
         const payload = JSON.stringify({ language: lang });
         const req = http.request(
           {
-            socketPath: '/var/run/spine/spine.sock',
+            socketPath: '/var/run/youeye/youeye.sock',
             path: '/api/config',
             method: 'PATCH',
             headers: {

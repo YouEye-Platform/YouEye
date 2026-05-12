@@ -250,7 +250,7 @@ export async function deployInfrastructure(
   try {
     const spec = uiContainerSpec();
     await deployLXDContainer(spec, {
-      spineSocketPath: '/var/run/spine/spine.sock',
+      spineSocketPath: '/var/run/youeye/youeye.sock',
       giteaBaseURL: 'https://git.byka.wtf',
       giteaOrg: 'potemsla',
       giteaRepo: 'YouEye',
@@ -472,7 +472,7 @@ export async function reconcileInfrastructure(
     try {
       const spec = uiContainerSpec();
       await deployLXDContainer(spec, {
-        spineSocketPath: '/var/run/spine/spine.sock',
+        spineSocketPath: '/var/run/youeye/youeye.sock',
         giteaBaseURL: 'https://git.byka.wtf',
         giteaOrg: 'potemsla',
         giteaRepo: 'YouEye',

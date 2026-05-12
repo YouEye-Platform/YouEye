@@ -680,7 +680,7 @@ export async function installApp(
               port: containerSpec.port || 3000,
             },
             {
-              spineSocketPath: '/var/run/spine/spine.sock',
+              spineSocketPath: '/var/run/youeye/youeye.sock',
               giteaBaseURL: GITEA_BASE,
               giteaOrg: gitInfo.org,
               giteaRepo: gitInfo.repo,

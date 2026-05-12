@@ -117,7 +117,7 @@ interface SpineAuthentikCredentials {
 export class SpineClient {
   private socketPath: string;
 
-  constructor(socketPath: string = '/var/run/spine/spine.sock') {
+  constructor(socketPath: string = '/var/run/youeye/youeye.sock') {
     this.socketPath = socketPath;
   }
 

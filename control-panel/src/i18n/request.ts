@@ -40,7 +40,7 @@ async function getSystemLanguage(): Promise<string> {
     const locale = await new Promise<string>((resolve) => {
       const req = http.request(
         {
-          socketPath: "/var/run/spine/spine.sock",
+          socketPath: "/var/run/youeye/youeye.sock",
           path: "/api/config",
           method: "GET",
           headers: { "Content-Type": "application/json" },
