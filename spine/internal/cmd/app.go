@@ -19,25 +19,29 @@ var appListCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		apps, err := cp.GetArray("/api/apps")
+		data, err := cp.Get("/api/apps/unified")
 		if err != nil {
 			return err
 		}
+		appsRaw, ok := data["apps"].([]interface{})
+		if !ok {
+			return fmt.Errorf("unexpected response format from /api/apps/unified")
+		}
 
 		rows := [][]string{}
-		for _, a := range apps {
+		for _, a := range appsRaw {
 			app, ok := a.(map[string]interface{})
 			if !ok {
 				continue
 			}
-			name := firstOf(app, "name", "appId")
+			id := firstOf(app, "id", "name", "appId")
+			displayName := firstOf(app, "displayName", "name")
 			ver := firstOf(app, "version", "installedVersion")
-			health := firstOf(app, "healthStatus", "health", "status")
-			subdomain := firstOf(app, "subdomain")
-			appType := firstOf(app, "type")
-			rows = append(rows, []string{name, ver, health, subdomain, appType})
+			health := firstOf(app, "status", "healthStatus", "health")
+			category := firstOf(app, "category")
+			rows = append(rows, []string{id, displayName, ver, health, category})
 		}
-		output.Table([]string{"NAME", "VERSION", "HEALTH", "SUBDOMAIN", "TYPE"}, rows)
+		output.Table([]string{"ID", "NAME", "VERSION", "STATUS", "CATEGORY"}, rows)
 		return nil
 	},
 }
@@ -50,13 +54,35 @@ var appInfoCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		data, err := cp.Get("/api/apps/" + args[0] + "/status")
-		if err != nil {
-			return err
+		app := findUnifiedApp(args[0])
+		if app == nil {
+			return fmt.Errorf("app '%s' not found", args[0])
 		}
-		output.Section("App: " + args[0])
-		for k, v := range data {
-			output.StatusLine(k, fmt.Sprintf("%v", v), "")
+
+		displayName := firstOf(app, "displayName", "name", "id")
+		output.Section("App: " + displayName)
+		output.StatusLine("ID", firstOf(app, "id"), "")
+		output.StatusLine("Category", firstOf(app, "category"), "")
+		output.StatusLine("Type", firstOf(app, "type"), "")
+		output.StatusLine("Version", firstOf(app, "version"), "")
+		output.StatusLine("Status", firstOf(app, "status"), statusColor(firstOf(app, "status")))
+		output.StatusLine("Updated By", firstOf(app, "updatedBy"), "")
+
+		if updateAvail, ok := app["updateAvailable"].(bool); ok && updateAvail {
+			output.StatusLine("Update", "available", output.Yellow)
+		}
+
+		if containers, ok := app["containers"].([]interface{}); ok && len(containers) > 0 {
+			fmt.Println()
+			output.StatusLine("Containers", fmt.Sprintf("%d", len(containers)), "")
+			for _, c := range containers {
+				if ctr, ok := c.(map[string]interface{}); ok {
+					name := firstOf(ctr, "name")
+					status := firstOf(ctr, "status")
+					ip := firstOf(ctr, "ip")
+					fmt.Printf("  %-25s %-10s %s\n", name, status, ip)
+				}
+			}
 		}
 		return nil
 	},

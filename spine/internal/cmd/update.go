@@ -244,13 +244,18 @@ func updateSelf() error {
 	// Write completed status BEFORE restart — after restart, old process is gone
 	update.Complete("spine", Version, latestVersion)
 
-	// Restart the spine service so the API reflects the new version
-	fmt.Println("Restarting Spine service...")
-	if err := exec.Command("systemctl", "restart", "spine").Run(); err != nil {
-		fmt.Printf("Warning: could not restart spine service: %v\n", err)
-		fmt.Println("You may need to manually restart: systemctl restart spine")
+	// Restart the service so the API reflects the new version
+	fmt.Println("Restarting YouEye service...")
+	// Try new name first, fall back to legacy
+	if err := exec.Command("systemctl", "restart", "youeye").Run(); err != nil {
+		if err2 := exec.Command("systemctl", "restart", "spine").Run(); err2 != nil {
+			fmt.Printf("Warning: could not restart service: %v\n", err)
+			fmt.Println("You may need to manually restart: systemctl restart youeye")
+		} else {
+			fmt.Println("  ✓ Service restarted (legacy)")
+		}
 	} else {
-		fmt.Println("  ✓ Spine service restarted")
+		fmt.Println("  ✓ YouEye service restarted")
 	}
 
 	fmt.Println("✓ Spine updated successfully")

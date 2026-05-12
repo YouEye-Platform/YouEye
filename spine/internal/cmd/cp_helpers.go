@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"git.byka.wtf/potemsla/YouEye/spine/internal/cpapi"
 	"git.byka.wtf/potemsla/YouEye/spine/internal/output"
@@ -17,12 +18,12 @@ func requireCP() bool {
 	}
 	if !cp.Available() {
 		output.Error("Control Panel is unreachable.")
-		fmt.Println("  Check that YouEye is deployed and running: spine status")
+		fmt.Println("  Check that YouEye is deployed and running: youeye status")
 		return false
 	}
 	if !cp.HasToken() {
 		output.Warn("CLI token not found at " + cpapi.CLITokenPath)
-		fmt.Println("  Run: sudo spine deploy (or provision the CLI token manually)")
+		fmt.Println("  Run: sudo youeye deploy (or provision the CLI token manually)")
 		return false
 	}
 	return true
@@ -97,6 +98,31 @@ func sseHandler(event cpapi.SSEEvent) {
 	if event.Detail != "" && (event.Status == "error" || event.Status == "failed") {
 		fmt.Printf("    %s%s%s\n", output.Red, event.Detail, output.Reset)
 	}
+}
+
+// findUnifiedApp looks up an app by id or displayName from /api/apps/unified.
+func findUnifiedApp(name string) map[string]interface{} {
+	data, err := cp.Get("/api/apps/unified")
+	if err != nil {
+		return nil
+	}
+	appsRaw, ok := data["apps"].([]interface{})
+	if !ok {
+		return nil
+	}
+	nameLower := strings.ToLower(name)
+	for _, a := range appsRaw {
+		app, ok := a.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		id := strings.ToLower(firstOf(app, "id"))
+		display := strings.ToLower(firstOf(app, "displayName"))
+		if id == nameLower || display == nameLower {
+			return app
+		}
+	}
+	return nil
 }
 
 // capitalize returns s with the first letter uppercased.

@@ -128,19 +128,19 @@ func addUISocketProxies(containerName string, cfg *config.Config) error {
 	// Create the socket directory inside the container first —
 	// Incus proxy devices with bind=container need the listen path to exist.
 	if err := exec.Command("incus", "exec", containerName, "--",
-		"mkdir", "-p", "/var/run/spine").Run(); err != nil {
-		return fmt.Errorf("failed to create /var/run/spine in container: %w", err)
+		"mkdir", "-p", "/var/run/youeye").Run(); err != nil {
+		return fmt.Errorf("failed to create /var/run/youeye in container: %w", err)
 	}
 
-	// Spine API socket proxy
+	// YouEye API socket proxy
 	if err := exec.Command("incus", "config", "device", "add", containerName,
-		"spine-socket", "proxy",
+		"youeye-socket", "proxy",
 		"connect=unix:"+socketPath,
-		"listen=unix:/var/run/spine/spine.sock",
+		"listen=unix:/var/run/youeye/youeye.sock",
 		"bind=container",
 		"uid=0", "gid=0", "mode=0666",
 	).Run(); err != nil {
-		return fmt.Errorf("failed to add spine socket proxy: %w", err)
+		return fmt.Errorf("failed to add youeye socket proxy: %w", err)
 	}
 
 	// Incus socket proxy (for UI container to query Incus API)

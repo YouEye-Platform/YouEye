@@ -21,24 +21,39 @@ var containerMgmtListCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		containers, err := cp.GetArray("/api/containers")
+		data, err := cp.Get("/api/apps/unified")
 		if err != nil {
 			return err
 		}
+		appsRaw, ok := data["apps"].([]interface{})
+		if !ok {
+			return fmt.Errorf("unexpected response format")
+		}
 
 		rows := [][]string{}
-		for _, c := range containers {
-			ctr, ok := c.(map[string]interface{})
+		for _, a := range appsRaw {
+			app, ok := a.(map[string]interface{})
 			if !ok {
 				continue
 			}
-			name := firstOf(ctr, "name", "containerName")
-			status := firstOf(ctr, "status", "state")
-			ip := firstOf(ctr, "ip", "ipv4", "address")
-			ctrType := firstOf(ctr, "type")
-			rows = append(rows, []string{name, status, ip, ctrType})
+			appID := firstOf(app, "id")
+			category := firstOf(app, "category")
+			containers, ok := app["containers"].([]interface{})
+			if !ok {
+				continue
+			}
+			for _, c := range containers {
+				ctr, ok := c.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				name := firstOf(ctr, "name")
+				status := firstOf(ctr, "status")
+				ip := firstOf(ctr, "ip")
+				rows = append(rows, []string{name, status, ip, category, appID})
+			}
 		}
-		output.Table([]string{"NAME", "STATUS", "IP", "TYPE"}, rows)
+		output.Table([]string{"NAME", "STATUS", "IP", "CATEGORY", "APP"}, rows)
 		return nil
 	},
 }

@@ -221,7 +221,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{
 		"version": s.version,
-		"service": "spine",
+		"service": "youeye",
 	})
 }
 
@@ -506,7 +506,7 @@ func (s *Server) handleUpdateSelf(w http.ResponseWriter, r *http.Request) {
 
 	// Run update in background — the CLI now writes status to disk at each stage
 	go func() {
-		cmd := exec.Command("spine", "update", "self")
+		cmd := exec.Command("youeye", "update", "self")
 		cmd.Run()
 	}()
 

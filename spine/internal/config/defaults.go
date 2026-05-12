@@ -43,7 +43,7 @@ func Default() *Config {
 			},
 		},
 		API: APIConfig{
-			SocketPath:        "/var/run/spine/spine.sock",
+			SocketPath:        "/var/run/youeye/youeye.sock",
 			SocketPermissions: 0666,
 			Auth: AuthConfig{
 				MaxAttempts:            5,
@@ -53,9 +53,9 @@ func Default() *Config {
 		},
 		Paths: PathsConfig{
 			IncusSocket:     "/var/lib/incus/unix.socket",
-			SpineBinary:     "/usr/local/bin/spine",
+			SpineBinary:     "/usr/local/bin/youeye",
 			SystemdServices: "/etc/systemd/system",
-			ConfigDir:       "/etc/spine",
+			ConfigDir:       "/etc/youeye",
 		},
 		Security: SecurityConfig{
 			JWTSecretLength: 64,

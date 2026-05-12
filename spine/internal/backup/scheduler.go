@@ -42,7 +42,7 @@ type youeyeYAML struct {
 var (
 	schedulerRunning bool
 	youeyeConfigFile = "/var/lib/youeye/config/youeye.yaml"
-	cpSocketPath     = "/var/lib/youeye/spine.sock"
+	cpSocketPath     = "/var/lib/youeye/youeye.sock"
 )
 
 // StartScheduler begins the backup scheduler goroutine.

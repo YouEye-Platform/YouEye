@@ -17,7 +17,7 @@ func runStatus() error {
 	cfg := GetConfig()
 	
 	fmt.Println("========================================")
-	fmt.Println("  YouEye Spine Status")
+	fmt.Println("  YouEye Platform Status")
 	fmt.Println("========================================")
 	fmt.Println("")
 
@@ -88,28 +88,63 @@ func runStatus() error {
 		}
 		fmt.Println()
 
-		// Installed apps
-		apps, err := cp.GetArray("/api/apps")
-		if err == nil && len(apps) > 0 {
-			fmt.Println("Installed Apps:")
-			for _, a := range apps {
-				if app, ok := a.(map[string]interface{}); ok {
-					name := firstOf(app, "name", "appId")
-					ver := firstOf(app, "version", "installedVersion")
-					health := firstOf(app, "healthStatus", "health", "status")
-					fmt.Printf("  %-16s %s (v%s)\n", name, health, ver)
+		// All apps from unified endpoint
+		if uData, uErr := cp.Get("/api/apps/unified"); uErr == nil {
+			if appsRaw, ok := uData["apps"].([]interface{}); ok && len(appsRaw) > 0 {
+				// Group by category
+				system := []map[string]interface{}{}
+				infra := []map[string]interface{}{}
+				user := []map[string]interface{}{}
+				for _, a := range appsRaw {
+					if app, ok := a.(map[string]interface{}); ok {
+						switch firstOf(app, "category") {
+						case "system":
+							system = append(system, app)
+						case "infrastructure":
+							infra = append(infra, app)
+						case "user":
+							user = append(user, app)
+						}
+					}
+				}
+				if len(infra) > 0 {
+					fmt.Println("Infrastructure:")
+					for _, app := range infra {
+						name := firstOf(app, "displayName", "id")
+						ver := firstOf(app, "version")
+						status := firstOf(app, "status")
+						if ver != "" {
+							fmt.Printf("  %-16s %s (v%s)\n", name, status, ver)
+						} else {
+							fmt.Printf("  %-16s %s\n", name, status)
+						}
+					}
+					fmt.Println()
+				}
+				if len(user) > 0 {
+					fmt.Println("Installed Apps:")
+					for _, app := range user {
+						name := firstOf(app, "displayName", "id")
+						ver := firstOf(app, "version")
+						status := firstOf(app, "status")
+						if ver != "" {
+							fmt.Printf("  %-16s %s (v%s)\n", name, status, ver)
+						} else {
+							fmt.Printf("  %-16s %s\n", name, status)
+						}
+					}
+					fmt.Println()
 				}
 			}
-			fmt.Println()
 		}
 	}
 
 	// Suggestions
 	if update, _ := checkSpineUpdate(cfg); update {
-		fmt.Println("Run 'spine update self' to update Spine.")
+		fmt.Println("Run 'youeye update self' to update.")
 	}
 	if upgrades > 0 {
-		fmt.Println("Run 'spine update system' to update host OS.")
+		fmt.Println("Run 'youeye update system' to update host OS.")
 	}
 
 	return nil

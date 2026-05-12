@@ -16,7 +16,7 @@ import (
 // Version and BuildDate are set at build time via ldflags:
 //   go build -ldflags "-X git.byka.wtf/potemsla/YouEye/spine/internal/cmd.Version=0.2.4.1 -X git.byka.wtf/potemsla/YouEye/spine/internal/cmd.BuildDate=2026-03-27"
 // Defaults here are used only for development builds.
-var Version = "0.3.2.6"
+var Version = "0.3.2.7"
 var BuildDate = "dev"
 
 // Global configuration
@@ -26,9 +26,9 @@ var cfg *config.Config
 var cfgFile string
 
 var rootCmd = &cobra.Command{
-	Use:   "spine",
-	Short: "YouEye Spine - Platform bootstrap and management",
-	Long: `Spine is the unified management tool for the YouEye platform.
+	Use:   "youeye",
+	Short: "YouEye - Platform management CLI",
+	Long: `YouEye is the unified management tool for the YouEye platform.
 
 It bootstraps infrastructure (Incus, Control Panel), manages apps,
 users, proxy routes, and provides an API for system integration.`,
@@ -69,7 +69,7 @@ func GetConfig() *config.Config {
 
 func init() {
 	// Persistent flags (available to all subcommands)
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: /etc/spine/config.yaml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: /etc/youeye/config.yaml)")
 
 	// Version command flags
 	versionCmd.Flags().BoolVar(&versionCheckFlag, "check", false, "Check for available updates")
@@ -97,6 +97,11 @@ func init() {
 	rootCmd.AddCommand(servicesCmd)
 	rootCmd.AddCommand(containerMgmtCmd)
 	rootCmd.AddCommand(setupCmd)
+	rootCmd.AddCommand(orphansCmd)
+	rootCmd.AddCommand(tlsCmd)
+	rootCmd.AddCommand(backupCmd)
+	rootCmd.AddCommand(restoreCmd)
+	rootCmd.AddCommand(settingsCmd)
 }
 
 // versionCmd shows version info
@@ -117,16 +122,17 @@ var versionCmd = &cobra.Command{
 		cpStatus := getControlPanelStatus(GetConfig())
 		output.StatusLine("Control Panel", cpStatus, "")
 
-		// App versions from CP
+		// App versions from unified endpoint
 		if cp != nil && cp.Available() && cp.HasToken() {
-			apps, err := cp.GetArray("/api/apps")
-			if err == nil {
-				for _, a := range apps {
-					if app, ok := a.(map[string]interface{}); ok {
-						name := firstOf(app, "name", "appId")
-						ver := firstOf(app, "version", "installedVersion")
-						if name != "" && ver != "" {
-							output.StatusLine(name, ver, "")
+			if data, err := cp.Get("/api/apps/unified"); err == nil {
+				if appsRaw, ok := data["apps"].([]interface{}); ok {
+					for _, a := range appsRaw {
+						if app, ok := a.(map[string]interface{}); ok {
+							name := firstOf(app, "displayName", "id")
+							ver := firstOf(app, "version")
+							if name != "" && ver != "" {
+								output.StatusLine(name, ver, "")
+							}
 						}
 					}
 				}
@@ -140,7 +146,7 @@ var versionCmd = &cobra.Command{
 				cmp := version.CompareVersions(newVer, Version)
 				if cmp > 0 {
 					fmt.Printf("Update available: v%s -> v%s\n", Version, newVer)
-					fmt.Println("Run 'spine update self' to update.")
+					fmt.Println("Run 'youeye update self' to update.")
 				} else {
 					fmt.Printf("Remote version v%s is not newer than current v%s\n", newVer, Version)
 				}
@@ -165,10 +171,10 @@ var logsCmd = &cobra.Command{
 	Use:   "logs [component]",
 	Short: "View logs (spine, control, ui, or app name)",
 	Long: `View logs for a component. Without arguments, shows Spine logs.
-  spine logs           Spine service logs
-  spine logs control   Control Panel logs
-  spine logs ui        UI logs
-  spine logs <app>     App container logs`,
+  youeye logs           Spine service logs
+  youeye logs control   Control Panel logs
+  youeye logs ui        UI logs
+  youeye logs <app>     App container logs`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		component := "spine"
@@ -177,8 +183,8 @@ var logsCmd = &cobra.Command{
 		}
 
 		switch component {
-		case "spine":
-			execCommand("journalctl", "-u", "spine", "-n", "100", "--no-pager")
+		case "spine", "youeye":
+			execCommand("journalctl", "-u", "youeye", "-n", "100", "--no-pager")
 		case "control", "control-panel", "cp":
 			execCommand("incus", "exec", "youeye-control", "--", "journalctl", "-u", "youeye-control", "-n", "100", "--no-pager")
 		case "ui":

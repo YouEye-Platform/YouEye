@@ -27,9 +27,11 @@ func Load() (*Config, error) {
 	v.SetConfigType("yaml")
 
 	// Add config file search paths (in priority order)
-	v.AddConfigPath("/etc/spine/")
+	v.AddConfigPath("/etc/youeye/")
+	v.AddConfigPath("/etc/spine/") // legacy fallback
 	if home, err := os.UserHomeDir(); err == nil {
-		v.AddConfigPath(filepath.Join(home, ".spine"))
+		v.AddConfigPath(filepath.Join(home, ".youeye"))
+		v.AddConfigPath(filepath.Join(home, ".spine")) // legacy fallback
 	}
 	v.AddConfigPath(".")
 

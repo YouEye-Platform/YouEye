@@ -142,13 +142,17 @@ func runCleanup() error {
 	}
 	step := 0
 
-	// Stop the spine systemd service first to prevent Restart=always from
+	// Stop the systemd service first to prevent Restart=always from
 	// respawning the API process after pkill. Best-effort — service may not
 	// exist on a fresh system or after a previous cleanup.
+	// Handle both old (spine) and new (youeye) service names.
+	exec.Command("systemctl", "stop", "youeye").Run()
+	exec.Command("systemctl", "disable", "youeye").Run()
 	exec.Command("systemctl", "stop", "spine").Run()
 	exec.Command("systemctl", "disable", "spine").Run()
 
-	// Kill any running Spine API processes first (fallback if service wasn't active)
+	// Kill any running API processes (fallback if service wasn't active)
+	exec.Command("pkill", "-9", "-f", "youeye api serve").Run()
 	exec.Command("pkill", "-9", "-f", "spine api serve").Run()
 
 	// Step 1: Stop all containers
@@ -313,7 +317,7 @@ func runCleanup() error {
 	// Step 15: Remove the Incus apt source and GPG key + spine's incus-startup
 	// systemd drop-in + residual files left by Incus/dnsmasq/dpkg.
 	step++
-	fmt.Printf("[%d/%d] Removing Incus apt repository + spine systemd drop-in + residuals...\n", step, totalSteps)
+	fmt.Printf("[%d/%d] Removing Incus apt repository + systemd drop-in + residuals...\n", step, totalSteps)
 	removeIncusAptRepo()
 	// BUG-008 (sebastian-v0.2.18.10): spine deploy adds an incus-startup
 	// systemd drop-in (configureIncusStartupDependency in deploy.go) that
@@ -323,11 +327,11 @@ func runCleanup() error {
 	// BUG-015 (alisa-v0.2.21.1): clean residual files that survived cleanup.
 	removeResidualFiles()
 
-	// Step 16: Remove spine.service so systemd no longer manages Spine.
+	// Step 16: Remove systemd service so systemd no longer manages YouEye.
 	// The service was already stopped and disabled at the top of cleanup;
 	// this step removes the unit file and reloads the daemon.
 	step++
-	fmt.Printf("[%d/%d] Removing spine systemd service...\n", step, totalSteps)
+	fmt.Printf("[%d/%d] Removing YouEye systemd service...\n", step, totalSteps)
 	removeSpineService()
 
 	// Step 17: Remove ZFS packages installed by spine deploy, but only if
@@ -366,10 +370,10 @@ func runCleanup() error {
 	fmt.Println("  - Incus nftables rules")
 	fmt.Println("  - /run/incus runtime dir")
 	fmt.Println("  - Zabbly apt source + GPG key")
-	fmt.Println("  - spine.service systemd unit")
-	fmt.Println("  - ZFS packages (if installed by spine deploy)")
+	fmt.Println("  - youeye.service systemd unit")
+	fmt.Println("  - ZFS packages (if installed by youeye deploy)")
 	fmt.Println()
-	fmt.Println("To reinstall, run: spine deploy")
+	fmt.Println("To reinstall, run: youeye deploy")
 
 	return nil
 }
@@ -456,33 +460,37 @@ func uninstallIncusPackages() error {
 // removeSpineIncusStartupDropIn removes /etc/systemd/system/incus-startup.service.d/
 // spine-dependency.conf and the parent directory if empty. Counterpart to
 // configureIncusStartupDependency() in deploy.go. Best-effort.
-// removeSpineService removes the spine.service systemd unit file and
-// reloads the daemon. The service was already stopped and disabled at the
-// top of cleanup; this just removes the leftover file.
+// removeSpineService removes the youeye.service (and legacy spine.service)
+// systemd unit files and reloads the daemon.
 func removeSpineService() {
-	const unitFile = "/etc/systemd/system/spine.service"
-	if err := os.Remove(unitFile); err == nil {
-		fmt.Println("  Removed /etc/systemd/system/spine.service")
+	removed := false
+	for _, unitFile := range []string{"/etc/systemd/system/youeye.service", "/etc/systemd/system/spine.service"} {
+		if err := os.Remove(unitFile); err == nil {
+			fmt.Printf("  Removed %s\n", unitFile)
+			removed = true
+		}
+	}
+	if removed {
 		exec.Command("systemctl", "daemon-reload").Run()
-	} else if !os.IsNotExist(err) {
-		fmt.Printf("  Warning: could not remove spine.service: %v\n", err)
 	} else {
-		fmt.Println("  spine.service not found, skipping")
+		fmt.Println("  No service file found, skipping")
 	}
 }
 
 func removeSpineIncusStartupDropIn() {
-	const dropIn = "/etc/systemd/system/incus-startup.service.d/spine-dependency.conf"
 	const dropInDir = "/etc/systemd/system/incus-startup.service.d"
 
-	if err := os.Remove(dropIn); err == nil {
-		fmt.Println("  Removed /etc/systemd/system/incus-startup.service.d/spine-dependency.conf")
-		// rmdir only succeeds if the directory is empty — exactly what we want.
-		// If something else is using the .d directory we leave it alone.
-		os.Remove(dropInDir)
-		// daemon-reload so systemd forgets about the override.
-		exec.Command("systemctl", "daemon-reload").Run()
+	// Remove both old (spine-dependency.conf) and new (youeye-dependency.conf)
+	for _, name := range []string{"youeye-dependency.conf", "spine-dependency.conf"} {
+		path := dropInDir + "/" + name
+		if err := os.Remove(path); err == nil {
+			fmt.Printf("  Removed %s\n", path)
+		}
 	}
+	// rmdir only succeeds if the directory is empty — exactly what we want.
+	// If something else is using the .d directory we leave it alone.
+	os.Remove(dropInDir)
+	exec.Command("systemctl", "daemon-reload").Run()
 }
 
 // removeIncusBridge deletes the incusbr0 kernel bridge if present.

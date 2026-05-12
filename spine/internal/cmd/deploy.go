@@ -113,10 +113,14 @@ func runDeploy() error {
 	// Restart=always respawns the old API after pkill, causing two
 	// concurrent `spine api serve` processes whose runHostIPCheck goroutines
 	// race with the CP's infrastructure deployment (BUG: Pi-Hole "already running").
+	// Stop old spine.service OR new youeye.service (handles migration)
+	exec.Command("systemctl", "stop", "youeye").Run()
+	exec.Command("systemctl", "disable", "youeye").Run()
 	exec.Command("systemctl", "stop", "spine").Run()
 	exec.Command("systemctl", "disable", "spine").Run()
 
-	// Kill any remaining Spine API processes (fallback if service wasn't active)
+	// Kill any remaining API processes (fallback if service wasn't active)
+	exec.Command("pkill", "-9", "-f", "youeye api serve").Run()
 	exec.Command("pkill", "-9", "-f", "spine api serve").Run()
 
 	// Create base data directories
@@ -130,12 +134,12 @@ func runDeploy() error {
 	fmt.Println("")
 
 	// Step 2: Start API server (as detached process)
-	fmt.Println("[2/4] Starting Spine API server...")
+	fmt.Println("[2/4] Starting YouEye API server...")
 
-	socketDir := "/var/run/spine"
+	socketDir := "/var/run/youeye"
 	os.MkdirAll(socketDir, 0755)
 
-	apiCmd := exec.Command("spine", "api", "serve")
+	apiCmd := exec.Command("youeye", "api", "serve")
 	apiCmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid: true,
 	}
@@ -493,35 +497,38 @@ func enableSpineService() {
 	// goroutine after fixing the proxy device on a guaranteed-stopped
 	// container.
 	serviceContent := `[Unit]
-Description=YouEye Spine - System Management Service
+Description=YouEye Platform Management Service
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=simple
-ExecStartPre=/bin/mkdir -p /var/run/spine
-ExecStart=/usr/local/bin/spine api serve
+ExecStartPre=/bin/mkdir -p /var/run/youeye
+ExecStart=/usr/local/bin/youeye api serve
 # Wait for socket to be ready before service is considered started
 # This ensures dependent services (incus-startup) start after socket exists
-ExecStartPost=/bin/bash -c 'for i in {1..50}; do [ -S /var/run/spine/spine.sock ] && exit 0; sleep 0.1; done; exit 1'
+ExecStartPost=/bin/bash -c 'for i in {1..50}; do [ -S /var/run/youeye/youeye.sock ] && exit 0; sleep 0.1; done; exit 1'
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 `
-	if err := os.WriteFile("/etc/systemd/system/spine.service", []byte(serviceContent), 0644); err != nil {
+	// Remove old spine.service if it exists (migration)
+	os.Remove("/etc/systemd/system/spine.service")
+
+	if err := os.WriteFile("/etc/systemd/system/youeye.service", []byte(serviceContent), 0644); err != nil {
 		fmt.Printf("Warning: could not create service file: %v\n", err)
 		return
 	}
 
 	// Reload systemd and enable service
 	exec.Command("systemctl", "daemon-reload").Run()
-	if err := exec.Command("systemctl", "enable", "--now", "spine").Run(); err != nil {
-		fmt.Printf("Warning: could not enable spine service: %v\n", err)
+	if err := exec.Command("systemctl", "enable", "--now", "youeye").Run(); err != nil {
+		fmt.Printf("Warning: could not enable youeye service: %v\n", err)
 		return
 	}
-	fmt.Println("✓ Spine API enabled on boot")
+	fmt.Println("✓ YouEye service enabled on boot")
 
 	// Configure Incus startup to wait for Spine socket
 	configureIncusStartupDependency()
@@ -532,7 +539,10 @@ WantedBy=multi-user.target
 // exists before containers with spine-socket proxy devices try to start.
 func configureIncusStartupDependency() {
 	overrideDir := "/etc/systemd/system/incus-startup.service.d"
-	overrideFile := overrideDir + "/spine-dependency.conf"
+	overrideFile := overrideDir + "/youeye-dependency.conf"
+
+	// Remove old spine-dependency.conf if present (migration)
+	os.Remove(overrideDir + "/spine-dependency.conf")
 
 	// Check if override already exists
 	if _, err := os.Stat(overrideFile); err == nil {
@@ -547,10 +557,10 @@ func configureIncusStartupDependency() {
 
 	// Create override file that makes incus-startup wait for spine
 	overrideContent := `[Unit]
-# Wait for Spine API socket before starting containers
-# This ensures containers with spine-socket proxy device can start successfully
-After=spine.service
-Wants=spine.service
+# Wait for YouEye API socket before starting containers
+# This ensures containers with youeye-socket proxy device can start successfully
+After=youeye.service
+Wants=youeye.service
 `
 	if err := os.WriteFile(overrideFile, []byte(overrideContent), 0644); err != nil {
 		fmt.Printf("Warning: could not create systemd override: %v\n", err)
@@ -559,7 +569,7 @@ Wants=spine.service
 
 	// Reload systemd to pick up the new override
 	exec.Command("systemctl", "daemon-reload").Run()
-	fmt.Println("✓ Incus configured to wait for Spine")
+	fmt.Println("✓ Incus configured to wait for YouEye")
 }
 
 // createDataDirectories creates the base directory structure for app persistent storage.
