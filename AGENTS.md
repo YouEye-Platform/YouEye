@@ -1,3 +1,44 @@
+## spine-v0.3.2.7 — sebastian — 2026-05-12
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Rename spine CLI to youeye, fix broken app/container visibility, add new commands
+
+### Changes
+- `spine/cmd/spine/` → `spine/cmd/youeye/` — binary renamed from `spine` to `youeye`
+- `spine/internal/cmd/root.go` — cobra Use changed to "youeye", version bumped to 0.3.2.7
+- `spine/internal/cmd/app.go` — SECURITY FIX: `app list` and `app info` now use `/api/apps/unified` (shows all 15 apps, was only showing 4 infra)
+- `spine/internal/cmd/container_mgmt.go` — SECURITY FIX: `container list` now uses `/api/apps/unified` (shows all 13 containers, was only showing 3)
+- `spine/internal/cmd/status.go` — Shows categorized apps (infrastructure + installed), uses unified endpoint
+- `spine/internal/cmd/orphans.go` — NEW: `youeye orphans` detects untracked containers/routes/DBs
+- `spine/internal/cmd/tls.go` — NEW: `youeye tls status` shows TLS cert mode and subjects
+- `spine/internal/cmd/backup.go` — NEW: `youeye backup create/list/status`, `youeye restore`, `youeye settings`
+- `spine/internal/cmd/deploy.go` — systemd service renamed to youeye.service, socket to /var/run/youeye/
+- `spine/internal/cmd/cleanup.go` — handles both old spine.service and new youeye.service
+- `spine/internal/cmd/uninstall.go` — handles both old and new service/binary names
+- `spine/internal/cmd/update.go` — restarts youeye.service (falls back to spine.service)
+- `spine/internal/config/defaults.go` — socket/binary paths updated to youeye
+- `spine/internal/config/load.go` — config search paths include /etc/youeye/ (with /etc/spine/ fallback)
+- `spine/internal/api/server.go` — service identifier changed to "youeye"
+- `spine/internal/container/ui.go` — socket proxy device renamed
+- `spine/internal/backup/scheduler.go` — socket path updated
+
+### Test Results
+- `youeye app list` — shows all 15 apps (was 4)
+- `youeye container list` — shows all 13 containers (was 3)
+- `youeye status` — full platform status with categorized apps
+- `youeye orphans` — detects 7 orphaned resources
+- `youeye tls status` — shows TLS mode and subjects
+- `youeye app info ye-wiki` — detailed app info with containers
+- `youeye version` — shows all component versions
+
+### Notes for Iris
+- Binary renamed from `spine` to `youeye` — CI/CD and deploy scripts need updating
+- systemd service renamed from `spine.service` to `youeye.service`
+- Socket path changed from `/var/run/spine/spine.sock` to `/var/run/youeye/youeye.sock`
+- All changes are backward compatible (cleanup/uninstall handle both old and new names)
+- Release artifact is still named `spine-linux-amd64` for Spine's release discovery compatibility
+
 ## spine-v0.3.2.6 — sebastian — 2026-05-12
 **Branch:** sebastian
 **VM:** ye-sebastian
