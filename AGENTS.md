@@ -1,3 +1,18 @@
+## ui-v0.3.4.39 — sebastian — 2026-05-13
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix search widget — Enter key does nothing (missing iframe sandbox permission)
+
+### Changes
+- `ui/src/components/widgets/app-widget.tsx` — Added `allow-top-navigation-by-user-activation` to iframe sandbox attribute. Without this, `target="_top"` form submissions from app widgets (like Search's quick-search) were silently blocked by the browser.
+
+### Test Results
+- Operator testing
+
+### Notes for Iris
+- One-line sandbox fix. No Search app changes needed — the widget's `target="_top"` form was already correct, the UI just wasn't permitting top-frame navigation.
+
 ## ui-v0.3.4.38 — sebastian — 2026-05-13
 **Branch:** sebastian
 **VM:** ye-sebastian
