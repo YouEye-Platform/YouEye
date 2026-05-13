@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getSession, createSession, setSessionCookies, generateCSRFToken } from "@/lib/auth";
 import { findUserById, updateUserProfile } from "@/lib/db/queries/users";
 
 export async function GET() {
@@ -71,6 +71,21 @@ export async function PATCH(request: NextRequest) {
   const updated = await updateUserProfile(session.userId, patch);
   if (!updated) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+
+  // Refresh JWT session when name changes so navbar/header reflect it immediately
+  if (patch.name && patch.name !== session.name) {
+    const newToken = await createSession({
+      userId: session.userId,
+      authentikId: session.authentikId,
+      username: session.username,
+      name: patch.name,
+      email: session.email,
+      isAdmin: session.isAdmin,
+      groups: session.groups,
+    });
+    const csrfToken = generateCSRFToken();
+    await setSessionCookies(newToken, csrfToken);
   }
 
   return NextResponse.json({

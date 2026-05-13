@@ -34,6 +34,7 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
   const { theme, setTheme } = useTheme();
   const [systemPref, setSystemPref] = useState<"light" | "dark">("light");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState(username);
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -44,12 +45,13 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
     return () => mq.removeEventListener("change", handler);
   }, []);
 
-  // Fetch avatar from profile
+  // Fetch avatar and name from profile
   useEffect(() => {
     fetch("/api/v1/user/profile")
       .then((r) => r.json())
       .then((data) => {
         if (data.image) setAvatarUrl(data.image);
+        if (data.name) setDisplayName(data.name);
       })
       .catch(() => {});
   }, []);
@@ -64,7 +66,17 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
     return () => window.removeEventListener("avatar-updated", handler);
   }, []);
 
-  const initials = username
+  // Listen for name updates from profile page
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.name) setDisplayName(detail.name);
+    };
+    window.addEventListener("name-updated", handler);
+    return () => window.removeEventListener("name-updated", handler);
+  }, []);
+
+  const initials = displayName
     .split(" ")
     .map((n) => n[0])
     .join("")
@@ -81,7 +93,7 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
       <DropdownMenuTrigger asChild>
         <button className="inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent transition-colors outline-none">
           <Avatar className="size-7">
-            {avatarUrl && <AvatarImage src={avatarUrl} alt={username} />}
+            {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
             <AvatarFallback className="text-xs">{initials}</AvatarFallback>
           </Avatar>
         </button>
@@ -89,7 +101,7 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuLabel className="flex flex-col gap-0.5">
           <span className="flex items-center gap-1.5">
-            {username}
+            {displayName}
             {isAdmin && <Shield className="size-3 text-primary" />}
           </span>
           <span className="text-xs font-normal text-muted-foreground">

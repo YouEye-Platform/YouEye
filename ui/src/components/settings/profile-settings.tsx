@@ -108,7 +108,13 @@ export function ProfileSettings({
           firstName: e.data.firstName || null,
           lastName: e.data.lastName || null,
         }),
-      }).catch((err) => console.warn("[profile] Name sync failed:", err));
+      })
+        .then(() => {
+          if (newName) {
+            window.dispatchEvent(new CustomEvent("name-updated", { detail: { name: newName } }));
+          }
+        })
+        .catch((err) => console.warn("[profile] Name sync failed:", err));
     }
     if (e.data?.type === "youeye-avatar-updated") {
       if (e.data.dataUrl) {
