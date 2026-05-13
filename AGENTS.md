@@ -1,3 +1,26 @@
+## ui-v0.3.4.37 — sebastian — 2026-05-13
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix profile name not updating in navbar after name change
+
+### Changes
+- `ui/src/app/api/v1/user/profile/route.ts` — Re-sign JWT session cookie with updated name when firstName/lastName change via PATCH
+- `ui/src/components/layout/user-menu.tsx` — Read name from profile API on mount (same fetch as avatar); listen for `name-updated` custom event
+- `ui/src/components/settings/profile-settings.tsx` — Dispatch `name-updated` event after successful name PATCH
+
+### Root Cause
+JWT session cookie stored the user's name at login time and was never refreshed. Navbar read `session.name` from the stale JWT, so name changes only appeared after re-login.
+
+### Test Results
+- Manual verification by user on sebos.app
+
+### Notes for Iris
+- No new endpoints. Only behavioral fix to existing PATCH /api/v1/user/profile (now refreshes JWT on name change)
+- UserMenu now uses live profile data for name display instead of relying on server-rendered session prop
+
+---
+
 ## ui-v0.3.4.36 + cp-v0.3.6.29 — sebastian — 2026-05-12
 **Branch:** sebastian
 **VM:** ye-sebastian

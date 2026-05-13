@@ -49,7 +49,7 @@ Each component is built and released independently using **component-prefixed ta
 |-----------|------|-----|
 | Spine | 0.3.2 | 0.3.2.11 |
 | Control Panel | 0.3.6 | 0.3.6.29 |
-| UI | 0.3.4 | 0.3.4.36 |
+| UI | 0.3.4 | 0.3.4.37 |
 
 ## Related Repos
 
