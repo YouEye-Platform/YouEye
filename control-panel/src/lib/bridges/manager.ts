@@ -96,9 +96,14 @@ async function pushConnectionsToUI(appId: string): Promise<void> {
       activeBridges.map(async (b) => {
         const targetId = b.from === appId ? b.to : b.from;
         const meta = await readInstallMetadata(targetId);
-        const containerName = meta?.containers?.[0]?.containerName || `app-${targetId}`;
+        // For multi-container apps, find the primary container (named "main" or "server"),
+        // not just the first one (which may be a sidecar like Redis).
+        const primary = meta?.containers && meta.containers.length > 1
+          ? (meta.containers.find((c: any) => c.name === 'main' || c.name === 'server') || meta.containers[0])
+          : meta?.containers?.[0];
+        const containerName = primary?.containerName || `app-${targetId}`;
         const ip = await getIncusContainerIP(containerName);
-        const port = meta?.containers?.find((c: any) => c.port)?.port || 8080;
+        const port = primary?.port || 8080;
         return {
           appId: targetId,
           name: targetId,

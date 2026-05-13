@@ -1,3 +1,20 @@
+## cp-v0.3.6.32 — sebastian — 2026-05-13
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix bridge IP resolution for multi-container apps (SearXNG connection bug)
+
+### Changes
+- `control-panel/src/lib/bridges/manager.ts` — `pushConnectionsToUI()` now uses primary-container logic (find container named "main" or "server") instead of blindly taking `containers[0]`, which picked up Redis instead of the SearXNG web server for multi-container apps
+
+### Test Results
+- Verified `/api/v1/my-connections` returns correct IP (10.76.1.101 = app-searxng-main) instead of Redis IP (10.76.1.127)
+- Verified SearXNG search returns results through the corrected bridge
+
+### Notes for Iris
+- One-line fix in `pushConnectionsToUI()` — same pattern already existed in `resolveContainerName()` but wasn't used in the push function
+- No schema changes, no new dependencies
+
 ## cp-v0.3.6.31 — sebastian — 2026-05-13
 **Branch:** sebastian
 **VM:** ye-sebastian
