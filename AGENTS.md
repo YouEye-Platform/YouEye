@@ -1,3 +1,23 @@
+## cp-v0.3.6.31 — sebastian — 2026-05-13
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Provider Selection UI — Phase 2a of App Connections Discovery
+
+### Changes
+- `control-panel/src/app/api/market/app/[appId]/provider-options/route.ts` — NEW: Returns type-based wants with available providers and current connection status
+- `control-panel/src/app/embed/app-network/[appId]/client.tsx` — Added "Service Providers" section with connect/switch/disconnect buttons per provider
+- `control-panel/src/lib/bridges/manager.ts` — Enhanced pushConnectionsToUI() to include `available` backends list
+
+### Test Results
+- API verified: `GET /api/market/app/search/provider-options` returns SearXNG as connected search-engine provider
+- `sudo spine status` — 16 running, 0 stopped
+
+### Notes for Iris
+- Search manifest updated with `type: search-engine` want (in YE-App-Search repo)
+- Canvas template updated with retry-once and `provides` section (in Main Branch/YouEye-Canvas)
+- No UI build needed — UI code unchanged from Phase 1
+
 ## cp-v0.3.6.30 / ui-v0.3.4.40 — sebastian — 2026-05-13
 **Branch:** sebastian
 **VM:** ye-sebastian
