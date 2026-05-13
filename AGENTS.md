@@ -1,3 +1,23 @@
+## ui-v0.3.4.38 — sebastian — 2026-05-13
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Unify notification system — remove legacy Sonner toasts, fix bell click-outside
+
+### Changes
+- `ui/src/components/layout/notification-bell.tsx` — Converted from manual backdrop div to Radix Popover for proper click-outside closing. Added postMessage listener for app install events that creates notifications via the API instead of ephemeral toasts.
+- `ui/src/components/providers.tsx` — Removed Toaster and AppInstallListener imports/mounts
+- `ui/src/components/app-install-listener.tsx` — Deleted (logic merged into NotificationBell)
+- `ui/src/components/ui/sonner.tsx` — Deleted (Sonner dependency removed)
+- `ui/package.json` — Removed `sonner` dependency, bumped to 0.3.4.38
+
+### Test Results
+- Manual verification by operator
+
+### Notes for Iris
+- Sonner dependency fully removed — no migration needed, just `pnpm install` to clean lockfile
+- App install notifications now use the persistent notifications API instead of ephemeral toasts
+
 ## ui-v0.3.4.37 — sebastian — 2026-05-13
 **Branch:** sebastian
 **VM:** ye-sebastian
