@@ -18,7 +18,8 @@ import {
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
 import { execShell } from '../incus/server';
 import { CONTAINER_DOMAIN } from '../market/constants';
-import { readInstallMetadata } from '../market/metadata';
+import { readInstallMetadata, listInstalledApps } from '../market/metadata';
+import { fetchManifest } from '../market/catalog';
 import { readFile } from 'fs/promises';
 import { listInternetGrants } from './internet-store';
 
@@ -30,6 +31,52 @@ const TOKEN_FILE = '/etc/youeye/ui-bridge-token';
 const UI_CONTAINER = 'youeye-ui';
 let _bridgeToken: string | null = null;
 let _uiIP: string | null = null;
+
+/**
+ * Compute the list of available backends for an app based on its manifest wants.
+ * Used by pushConnectionsToUI to populate the `available` field so Canvas
+ * NeedsBackend components can show which backends exist.
+ */
+async function computeAvailableBackends(appId: string): Promise<Array<{ appId: string; name: string; installed: boolean }>> {
+  const available: Array<{ appId: string; name: string; installed: boolean }> = [];
+  try {
+    const manifest = await fetchManifest(appId);
+    const wants = manifest.wants ?? [];
+    const allMeta = await listInstalledApps();
+    const installedIds = new Set(allMeta.map(m => m.appId));
+
+    for (const want of wants) {
+      if (want.appId) {
+        // Direct appId want — check if installed
+        available.push({
+          appId: want.appId,
+          name: want.name,
+          installed: installedIds.has(want.appId),
+        });
+      } else if (want.type) {
+        // Type-based want — find all providers of this type
+        for (const meta of allMeta) {
+          if (meta.appId === appId) continue;
+          // Check install metadata provides
+          if (meta.provides?.some(p => p.type === want.type)) {
+            available.push({ appId: meta.appId, name: meta.appId, installed: true });
+            continue;
+          }
+          // Fallback: check manifest
+          try {
+            const m = await fetchManifest(meta.appId);
+            if (m.provides?.some((p: any) => p.type === want.type)) {
+              available.push({ appId: meta.appId, name: m.metadata.name, installed: true });
+            }
+          } catch { /* skip */ }
+        }
+      }
+    }
+  } catch {
+    // App may not have a manifest — return empty
+  }
+  return available;
+}
 
 async function pushConnectionsToUI(appId: string): Promise<void> {
   try {
@@ -67,6 +114,9 @@ async function pushConnectionsToUI(appId: string): Promise<void> {
     const grants = await listInternetGrants();
     const grant = grants.find(g => g.appId === appId);
 
+    // Build available backends list from the app's wants
+    const available = await computeAvailableBackends(appId);
+
     const payload = {
       appId,
       bridges: resolved,
@@ -74,6 +124,7 @@ async function pushConnectionsToUI(appId: string): Promise<void> {
         granted: !!grant,
         hosts: grant?.hosts ?? [],
       },
+      available,
     };
 
     await fetch(`http://${_uiIP}:3000/api/ui-bridge/app-connections`, {

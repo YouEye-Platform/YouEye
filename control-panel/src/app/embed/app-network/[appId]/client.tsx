@@ -33,21 +33,41 @@ interface Suggestion {
   dismissed: boolean;
 }
 
+interface ProviderOption {
+  appId: string;
+  name: string;
+  description?: string;
+  port?: number;
+  installed: boolean;
+}
+
+interface TypeWant {
+  type: string;
+  name: string;
+  description?: string;
+  defaultPort?: number;
+  providers: ProviderOption[];
+  connectedProvider: string | null;
+}
+
 export function AppNetworkClient({ appId }: { appId: string }) {
   const [bridges, setBridges] = useState<Bridge[]>([]);
   const [grants, setGrants] = useState<InternetGrant[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [typeWants, setTypeWants] = useState<TypeWant[]>([]);
   const [loading, setLoading] = useState(true);
   const [newTarget, setNewTarget] = useState("");
   const [approving, setApproving] = useState<string | null>(null);
+  const [switching, setSwitching] = useState<string | null>(null);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [bridgesRes, grantsRes, suggestionsRes] = await Promise.all([
+      const [bridgesRes, grantsRes, suggestionsRes, providerRes] = await Promise.all([
         fetch(`/api/bridges?appId=${appId}`),
         fetch("/api/internet-grants"),
         fetch("/api/suggestions"),
+        fetch(`/api/market/app/${appId}/provider-options`),
       ]);
 
       if (bridgesRes.ok) {
@@ -66,6 +86,10 @@ export function AppNetworkClient({ appId }: { appId: string }) {
         setSuggestions(
           all.filter((s: Suggestion) => !s.dismissed && (s.fromAppId === appId || s.targetAppId === appId))
         );
+      }
+      if (providerRes.ok) {
+        const data = await providerRes.json();
+        setTypeWants(data.typeWants ?? []);
       }
     } catch {
       // silent
@@ -143,6 +167,55 @@ export function AppNetworkClient({ appId }: { appId: string }) {
     setSuggestions(suggestions.filter((s) => s.id !== id));
   }
 
+  async function handleConnectProvider(providerId: string, currentProvider: string | null) {
+    setSwitching(providerId);
+    try {
+      // Disconnect old provider if one is connected
+      if (currentProvider) {
+        const oldBridge = bridges.find(
+          (b) => b.from === appId && b.to === currentProvider && b.active
+        );
+        if (oldBridge) {
+          await fetch(`/api/bridges/${oldBridge.id}`, { method: "DELETE" });
+        }
+      }
+
+      // Connect new provider
+      await fetch("/api/bridges", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: appId,
+          to: providerId,
+          direction: "one-way",
+          activate: true,
+          approvedBy: "admin",
+        }),
+      });
+
+      await fetchAll();
+      notifyParent();
+    } finally {
+      setSwitching(null);
+    }
+  }
+
+  async function handleDisconnectProvider(providerId: string) {
+    setSwitching(providerId);
+    try {
+      const bridge = bridges.find(
+        (b) => b.from === appId && b.to === providerId && b.active
+      );
+      if (bridge) {
+        await fetch(`/api/bridges/${bridge.id}`, { method: "DELETE" });
+      }
+      await fetchAll();
+      notifyParent();
+    } finally {
+      setSwitching(null);
+    }
+  }
+
   function notifyParent() {
     window.parent.postMessage({ type: "youeye-network-changed", appId }, "*");
   }
@@ -162,8 +235,105 @@ export function AppNetworkClient({ appId }: { appId: string }) {
   const activeGrants = grants.filter((g) => g.active);
   const pendingSuggestions = suggestions.filter((s) => !s.dismissed);
 
+  // Filter out provider-managed bridges from the manual bridges section
+  const providerAppIds = new Set(typeWants.flatMap(tw => tw.providers.map(p => p.appId)));
+  const manualOutgoing = outgoing.filter((b) => !providerAppIds.has(b.to));
+
   return (
     <div style={{ padding: 16 }}>
+      {/* Service Providers (type-based wants) */}
+      {typeWants.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--embed-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+            Service Providers
+          </div>
+
+          {typeWants.map((tw) => (
+            <div key={tw.type} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 500, color: "var(--embed-text)", marginBottom: 6 }}>
+                {tw.name}
+                {tw.description && (
+                  <span className="embed-muted" style={{ fontWeight: 400, marginLeft: 6, fontSize: 12 }}>
+                    {tw.description}
+                  </span>
+                )}
+              </div>
+
+              {tw.providers.length === 0 ? (
+                <div className="embed-muted" style={{ fontSize: 12, padding: "8px 14px", textAlign: "center", border: "1px dashed var(--embed-border)", borderRadius: 6 }}>
+                  No providers installed. Install a compatible app from the marketplace.
+                </div>
+              ) : (
+                tw.providers.map((p) => {
+                  const isConnected = tw.connectedProvider === p.appId;
+                  const isSwitching = switching === p.appId;
+
+                  return (
+                    <div key={p.appId} className="embed-card" style={{
+                      marginBottom: 4, padding: "8px 14px",
+                      borderColor: isConnected
+                        ? "color-mix(in srgb, var(--embed-success) 40%, var(--embed-border))"
+                        : undefined,
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{
+                          width: 14, height: 14, borderRadius: "50%",
+                          border: `2px solid ${isConnected ? "var(--embed-success)" : "var(--embed-border)"}`,
+                          background: isConnected ? "var(--embed-success)" : "transparent",
+                          display: "inline-flex", alignItems: "center", justifyContent: "center",
+                          flexShrink: 0,
+                        }}>
+                          {isConnected && (
+                            <span style={{ color: "#fff", fontSize: 9, lineHeight: 1 }}>{"\u2713"}</span>
+                          )}
+                        </span>
+
+                        <span style={{ flex: 1, fontSize: 13 }}>
+                          {p.name}
+                          {p.description && (
+                            <span className="embed-muted" style={{ marginLeft: 6, fontSize: 11 }}>
+                              {p.description}
+                            </span>
+                          )}
+                        </span>
+
+                        {isConnected ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ color: "var(--embed-success)", fontSize: 11, fontWeight: 500 }}>
+                              Connected
+                            </span>
+                            <button
+                              className="embed-btn"
+                              style={{ padding: "2px 8px", fontSize: 11, color: "var(--embed-danger)" }}
+                              onClick={() => handleDisconnectProvider(p.appId)}
+                              disabled={!!switching}
+                            >
+                              {isSwitching ? "..." : "Disconnect"}
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            className="embed-btn"
+                            style={{
+                              padding: "2px 10px", fontSize: 11,
+                              borderColor: "var(--embed-success)", color: "var(--embed-success)",
+                            }}
+                            onClick={() => handleConnectProvider(p.appId, tw.connectedProvider)}
+                            disabled={!!switching}
+                          >
+                            {isSwitching ? "..." : tw.connectedProvider ? "Switch" : "Connect"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Pending Suggestions */}
       {pendingSuggestions.length > 0 && (
         <div style={{ marginBottom: 20 }}>
@@ -212,19 +382,19 @@ export function AppNetworkClient({ appId }: { appId: string }) {
         </div>
       )}
 
-      {/* Bridges */}
+      {/* Bridges (manual, non-provider) */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--embed-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
           App Connections (Bridges)
         </div>
 
-        {outgoing.length === 0 && incoming.length === 0 && (
+        {manualOutgoing.length === 0 && incoming.length === 0 && (
           <div className="embed-muted" style={{ fontSize: 13, marginBottom: 12, padding: "12px 0", textAlign: "center" }}>
             No bridges configured for this app.
           </div>
         )}
 
-        {outgoing.map((b) => (
+        {manualOutgoing.map((b) => (
           <div key={b.id} className="embed-card" style={{ marginBottom: 6, padding: "8px 14px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ flex: 1, fontSize: 13 }}>
