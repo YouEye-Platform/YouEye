@@ -88,8 +88,11 @@ export async function generateSuggestionsForApp(
   const appName = manifest.metadata.name;
 
   // 1. Check this app's wants against installed apps
+  //    Only appId-based wants generate suggestions; type-based wants are
+  //    resolved dynamically via the providers endpoint.
   const wants = manifest.wants ?? [];
   for (const want of wants) {
+    if (!want.appId) continue; // Type-based wants don't generate suggestions
     // Skip targets already approved at install time
     if (skipTargetIds?.has(want.appId)) continue;
 

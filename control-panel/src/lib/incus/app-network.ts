@@ -492,6 +492,24 @@ export async function grantBridgeAccess(
       await new Promise((r) => setTimeout(r, 1500));
       await execShell(containerName, `ip link set ${ifName} up && dhclient ${ifName} 2>/dev/null || udhcpc -i ${ifName} 2>/dev/null || true`, { timeout: 15000 });
       console.log(`[app-network] Activated ${ifName} in ${containerName}`);
+
+      // Configure DNS scope on the new interface so container names resolve
+      // across bridges. The bridge gateway runs dnsmasq — point resolvectl at it.
+      // The ~youeye tilde prefix makes it a routing domain: queries for *.youeye
+      // go to the bridge gateway DNS, everything else uses default DNS.
+      try {
+        await execShell(
+          containerName,
+          `GATEWAY=$(ip -4 route | grep "dev ${ifName}" | grep via | awk '{print $3}' | head -1); ` +
+          `[ -z "$GATEWAY" ] && GATEWAY=$(ip -4 addr show ${ifName} | grep inet | awk '{print $2}' | cut -d/ -f1 | awk -F. '{print $1"."$2"."$3".1"}'); ` +
+          `resolvectl dns ${ifName} $GATEWAY 2>/dev/null && ` +
+          `resolvectl domain ${ifName} ~youeye 2>/dev/null || true`,
+          { timeout: 10000 },
+        );
+        console.log(`[app-network] Configured DNS scope for ${ifName} in ${containerName}`);
+      } catch (dnsErr) {
+        console.warn(`[app-network] DNS scope config failed for ${ifName} in ${containerName}:`, dnsErr);
+      }
     } catch (activateErr) {
       console.warn(`[app-network] NIC activation failed for ${ifName} in ${containerName}:`, activateErr);
     }

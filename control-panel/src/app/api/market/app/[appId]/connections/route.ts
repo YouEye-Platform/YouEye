@@ -42,24 +42,30 @@ export async function GET(
     const installedApps = await getAllInstalledApps().catch(() => []);
     const installedIds = new Set(installedApps.map(a => a.appId));
 
-    // Outgoing: this app's wants
-    const outgoing: ConnectionInfo[] = (manifest.wants ?? []).map(w => ({
-      targetAppId: w.appId,
-      targetAppName: w.name,
-      description: w.description,
-      installed: installedIds.has(w.appId),
-      defaultPort: w.defaultPort,
-    }));
+    // Outgoing: this app's wants (appId-based only — type-based resolved via /api/market/providers)
+    const outgoing: ConnectionInfo[] = (manifest.wants ?? [])
+      .filter(w => !!w.appId)
+      .map(w => ({
+        targetAppId: w.appId!,
+        targetAppName: w.name,
+        description: w.description,
+        installed: installedIds.has(w.appId!),
+        defaultPort: w.defaultPort,
+      }));
 
-    // Incoming: other apps whose wants include this app
+    // Incoming: other apps whose wants include this app (by appId or by matching provides.type)
     const incoming: ConnectionInfo[] = [];
+    const thisProvides = manifest.provides ?? [];
+    const thisProvideTypes = new Set(thisProvides.map(p => p.type));
     try {
       const allApps = await fetchAvailableApps();
       for (const app of allApps) {
         if (app.id === appId) continue;
         try {
           const otherManifest = await fetchManifest(app.id);
-          const wantsThis = (otherManifest.wants ?? []).find(w => w.appId === appId);
+          const wantsThis = (otherManifest.wants ?? []).find(
+            w => w.appId === appId || (w.type && thisProvideTypes.has(w.type))
+          );
           if (wantsThis) {
             incoming.push({
               targetAppId: app.id,

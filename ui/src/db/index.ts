@@ -91,6 +91,9 @@ export async function ensureSchema() {
     await queryClient`ALTER TABLE apps ADD COLUMN IF NOT EXISTS branding_wordart JSONB`;
     await queryClient`ALTER TABLE apps ADD COLUMN IF NOT EXISTS header_display_mode TEXT DEFAULT 'logo-text'`;
 
+    // Bridge/connection state (pushed from CP)
+    await queryClient`ALTER TABLE apps ADD COLUMN IF NOT EXISTS connections JSONB`;
+
     await queryClient`
       CREATE TABLE IF NOT EXISTS user_settings (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

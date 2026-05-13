@@ -972,6 +972,7 @@ export async function installApp(
       : undefined,
     databaseMode: manifest.database?.mode ?? 'none',
     hasSSO: ssoEnabled,
+    provides: manifest.provides?.length ? manifest.provides : undefined,
     usePerAppBridge: !!appBridgeName,
   };
   await saveInstallMetadata(meta);
@@ -1064,7 +1065,7 @@ export async function installApp(
           const targetMeta = await readInstallMetadata(targetId);
           if (targetMeta) {
             const targetContainer = targetMeta.containers?.[0]?.containerName || `app-${targetId}`;
-            const targetPort = manifest.wants?.find(w => w.appId === targetId)?.defaultPort || 8080;
+            const targetPort = manifest.wants?.find(w => w.appId === targetId || w.type)?.defaultPort || 8080;
             const targetSub = targetMeta.subdomain || targetId;
 
             const resolved = await resolveBridgeMappings(

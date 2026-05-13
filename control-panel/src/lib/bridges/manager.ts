@@ -19,6 +19,76 @@ import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
 import { execShell } from '../incus/server';
 import { CONTAINER_DOMAIN } from '../market/constants';
 import { readInstallMetadata } from '../market/metadata';
+import { readFile } from 'fs/promises';
+import { listInternetGrants } from './internet-store';
+
+// ─── UI Connection Push ──────────────────────────────────────
+// Push bridge/connection state to YE-UI whenever bridges change.
+// UI stores this locally so /api/v1/my-connections can serve apps.
+
+const TOKEN_FILE = '/etc/youeye/ui-bridge-token';
+const UI_CONTAINER = 'youeye-ui';
+let _bridgeToken: string | null = null;
+let _uiIP: string | null = null;
+
+async function pushConnectionsToUI(appId: string): Promise<void> {
+  try {
+    if (!_bridgeToken) {
+      _bridgeToken = (await readFile(TOKEN_FILE, 'utf-8')).trim();
+    }
+    if (!_uiIP) {
+      _uiIP = await getIncusContainerIP(UI_CONTAINER);
+    }
+    if (!_uiIP || !_bridgeToken) return;
+
+    const bridges = await getBridgesForApp(appId);
+    const activeBridges = bridges.filter(b => b.active);
+
+    // Resolve IPs for active bridges
+    const resolved = await Promise.all(
+      activeBridges.map(async (b) => {
+        const targetId = b.from === appId ? b.to : b.from;
+        const meta = await readInstallMetadata(targetId);
+        const containerName = meta?.containers?.[0]?.containerName || `app-${targetId}`;
+        const ip = await getIncusContainerIP(containerName);
+        const port = meta?.containers?.find((c: any) => c.port)?.port || 8080;
+        return {
+          appId: targetId,
+          name: targetId,
+          host: ip || containerName,
+          port,
+          direction: b.direction,
+          active: b.active,
+        };
+      }),
+    );
+
+    // Get internet grants for this app
+    const grants = await listInternetGrants();
+    const grant = grants.find(g => g.appId === appId);
+
+    const payload = {
+      appId,
+      bridges: resolved,
+      internet: {
+        granted: !!grant,
+        hosts: grant?.hosts ?? [],
+      },
+    };
+
+    await fetch(`http://${_uiIP}:3000/api/ui-bridge/app-connections`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-UI-Bridge-Token': _bridgeToken,
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    // Non-fatal — UI might not have the endpoint yet during upgrades
+    console.warn(`[bridges] Failed to push connections to UI for ${appId}:`, err);
+  }
+}
 
 /**
  * Resolve an app ID to its primary Incus container name.
@@ -201,10 +271,18 @@ export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
     }
   }
 
-  return updateBridge(bridgeId, {
+  const updated = await updateBridge(bridgeId, {
     active: true,
     activatedAt: new Date().toISOString(),
   });
+
+  // Push updated connection state to UI (non-blocking)
+  pushConnectionsToUI(bridge.from).catch(() => {});
+  if (bridge.direction === 'both-ways') {
+    pushConnectionsToUI(bridge.to).catch(() => {});
+  }
+
+  return updated;
 }
 
 /**
@@ -226,7 +304,17 @@ export async function deactivateBridge(bridgeId: string): Promise<Bridge | null>
     console.warn(`[bridges] Network access revocation failed for ${bridgeId}:`, err);
   }
 
-  return updateBridge(bridgeId, { active: false });
+  const updated = await updateBridge(bridgeId, { active: false });
+
+  // Push updated connection state to UI (non-blocking)
+  if (bridge) {
+    pushConnectionsToUI(bridge.from).catch(() => {});
+    if (bridge.direction === 'both-ways') {
+      pushConnectionsToUI(bridge.to).catch(() => {});
+    }
+  }
+
+  return updated;
 }
 
 /**
@@ -250,7 +338,17 @@ export async function deleteBridge(bridgeId: string): Promise<boolean> {
     }
   }
 
-  return removeBridge(bridgeId);
+  const removed = await removeBridge(bridgeId);
+
+  // Push updated connection state to UI (non-blocking)
+  if (bridge) {
+    pushConnectionsToUI(bridge.from).catch(() => {});
+    if (bridge.direction === 'both-ways') {
+      pushConnectionsToUI(bridge.to).catch(() => {});
+    }
+  }
+
+  return removed;
 }
 
 /**

@@ -1,3 +1,36 @@
+## cp-v0.3.6.30 / ui-v0.3.4.40 — sebastian — 2026-05-13
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** App Connections Discovery — full pipeline implementation
+
+### Changes
+- `control-panel/src/lib/incus/app-network.ts` — DNS scope config on bridge NICs (resolvectl dns/domain with ~youeye routing)
+- `control-panel/src/lib/market/schema.ts` — Added ProvidesSchema, made WantSchema.appId optional, added type field for capability matching
+- `control-panel/src/lib/market/types.ts` — Added ProvidesSpec type, provides field on InstallMetadata
+- `control-panel/src/lib/market/engine.ts` — Store provides in install metadata, type-aware want matching
+- `control-panel/src/app/api/market/app/[appId]/connections/route.ts` — Type-based incoming connection matching
+- `control-panel/src/lib/bridges/suggestions.ts` — Skip type-only wants in suggestion generation
+- `control-panel/src/app/api/market/providers/route.ts` — NEW: provider discovery API (GET ?type=)
+- `control-panel/src/lib/bridges/manager.ts` — Auto-push connection state to UI on bridge activate/deactivate/delete
+- `ui/src/db/schema.ts` — Added connections JSONB column to apps table
+- `ui/src/db/index.ts` — Migration: ALTER TABLE apps ADD COLUMN IF NOT EXISTS connections JSONB
+- `ui/src/app/api/ui-bridge/app-connections/route.ts` — NEW: CP→UI push endpoint for connection state
+- `ui/src/app/api/v1/my-connections/route.ts` — NEW: App-facing discovery API (GET, auth via X-YouEye-App)
+- `ui/src/middleware.ts` — Added /api/v1/my-connections to public routes
+
+### Test Results
+- End-to-end verified: bridge toggle → CP auto-push → UI storage → my-connections returns correct ConnectionStatus
+- curl from Search container returns {bridges: [{host: "10.76.1.127", port: 8080, appId: "searxng"}]}
+
+### Notes for Iris
+- New DB column on apps table (auto-migrated via ensureSchema)
+- New UI bridge endpoint /api/ui-bridge/app-connections — CP must have bridge token
+- New public route /api/v1/my-connections — auth via X-YouEye-App header, not session
+- WantSchema.appId is now optional — existing manifests with appId still work unchanged
+
+---
+
 ## ui-v0.3.4.39 — sebastian — 2026-05-13
 **Branch:** sebastian
 **VM:** ye-sebastian

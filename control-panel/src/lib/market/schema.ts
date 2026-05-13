@@ -220,6 +220,14 @@ export const CapabilitiesSchema = z.object({
   link_handlers: z.array(LinkHandlerSchema).optional(),
 }).optional();
 
+// ─── Provides (capability declarations) ──────────────────
+
+export const ProvidesSchema = z.object({
+  type: z.string().min(1),
+  description: z.string().optional(),
+  port: z.number().int().positive().optional(),
+});
+
 // ─── Wants (app-to-app connection declarations) ──────────
 
 /** System container IDs — never valid bridge/want targets */
@@ -229,12 +237,16 @@ const SYSTEM_APP_IDS = [
 ];
 
 export const WantSchema = z.object({
-  appId: z.string().min(1),
+  appId: z.string().min(1).optional(),
+  type: z.string().min(1).optional(),
   name: z.string().min(1),
   description: z.string().optional(),
   defaultPort: z.number().int().positive().optional(),
 }).refine(
-  (data) => !SYSTEM_APP_IDS.includes(data.appId),
+  (data) => !!(data.appId || data.type),
+  { message: 'wants must specify appId or type' }
+).refine(
+  (data) => !(data.appId && SYSTEM_APP_IDS.includes(data.appId)),
   { message: 'wants cannot target system containers' }
 );
 
@@ -368,6 +380,7 @@ export const AppManifestSchema = z
     credentials: z.array(CredentialSchema).optional().default([]),
     configFiles: z.array(ConfigFileSchema).optional().default([]),
     capabilities: CapabilitiesSchema,
+    provides: z.array(ProvidesSchema).optional().default([]),
     wants: z.array(WantSchema).optional().default([]),
     internet: InternetSchema,
     installParams: z.array(InstallParamSchema).optional().default([]),

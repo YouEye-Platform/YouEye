@@ -32,6 +32,7 @@ import type {
   DetailSchema,
   DetailScreenshotSchema,
   InstallParamSchema,
+  ProvidesSchema,
   WantSchema,
   InternetSchema,
   PostDeployStepSchema,
@@ -67,6 +68,7 @@ export type SystemCatalogEntry = z.infer<typeof SystemCatalogEntrySchema>;
 export type AppDetail = z.infer<typeof DetailSchema>;
 export type DetailScreenshot = z.infer<typeof DetailScreenshotSchema>;
 export type InstallParam = z.infer<typeof InstallParamSchema>;
+export type ProvidesSpec = z.infer<typeof ProvidesSchema>;
 export type WantSpec = z.infer<typeof WantSchema>;
 export type InternetSpec = z.infer<typeof InternetSchema>;
 export type PostDeployStep = z.infer<typeof PostDeployStepSchema>;
@@ -146,6 +148,8 @@ export interface InstallMetadata {
   databaseMode?: 'shared' | 'own' | 'none';
   /** Whether this app has SSO configured — used by ACL migration to determine authentik access */
   hasSSO?: boolean;
+  /** Capability types this app provides (from manifest `provides` field) */
+  provides?: ProvidesSpec[];
   /** @deprecated All apps use per-app bridge networking now. Kept for install.json compat. */
   usePerAppBridge?: boolean;
 }
