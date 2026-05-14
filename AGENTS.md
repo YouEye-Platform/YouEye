@@ -1,3 +1,64 @@
+## Session 86 — sebastian — 2026-05-14
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Beta cleanup session 1 — dead code deletion, bug fixes, error handling
+
+### Changes
+
+#### Dead Code Deletion (~7,300 lines)
+- `control-panel/src/app/(dashboard)/backup/` — removed entire backup UI page (1,077 lines)
+- `control-panel/src/app/api/backup/` — removed 7 backup API routes (516 lines)
+- `control-panel/src/app/api/restore/` — removed 2 restore routes (185 lines)
+- `control-panel/src/app/api/ui-bridge/backup/` — removed 2 bridge backup routes (179 lines)
+- `control-panel/src/app/embed/backup/` — removed 2 backup embed files (206 lines)
+- `control-panel/src/components/layout/sidebar.tsx` — removed backup nav entry + HardDrive import
+- `control-panel/scripts/setup-wizard.mjs` — deleted (hardcoded credentials)
+- `control-panel/scripts/verify-https*.mjs` — deleted (dev scripts)
+- `control-panel/test-https.mjs` — deleted (dev script)
+- `control-panel/tests/` — deleted 8 spec files (1,130 lines)
+- `control-panel/screenshots/` — deleted 14 PNG screenshots
+- `control-panel/playwright.config.ts` — deleted
+- `ui/scripts/deploy.sh, setup_authentik.sh, *.sql` — deleted (hardcoded creds)
+- `ui/tests/` — deleted 16 spec files (2,522 lines)
+- `ui/playwright.config.ts` — deleted
+- `ui/src/components/backgrounds/shader-gradient.tsx` — deleted (known crash)
+- `ui/src/components/backgrounds/index.ts` — unregistered shader gradient
+- `spine/internal/releases/client.go` — deleted (zero callers), extracted Release/Asset types to types.go
+- `spine/internal/api/server.go` — removed downloadFile, getPackageUpgradeAvailable, getSystemUpgradeableCount, runtime.GOARCH
+- `spine/internal/incus/install.go` — removed configureProjectRestrictions
+- `control-panel/src/lib/market/platform-env.ts` — removed deprecated buildPlatformEnv + buildVariableContext (103 lines)
+- `control-panel/src/lib/market/updater.ts` — migrated to buildCanonicalContext
+- `control-panel/package.json` — removed @hookform/resolvers
+- `ui/package.json` — removed @playwright/test
+
+#### Bug Fixes
+- `spine/internal/incus/install.go:432` — added --yes to gpg --dearmor (fixes Zabbly GPG prompt)
+- `spine/internal/incus/install.go:219,366` — ipv6.address none -> "" (fixes "Unknown parameter" warning)
+- `control-panel/src/lib/apps/definitions.ts` — removed 6 native apps from APP_DEFINITIONS (fixes "Not Installed" bug)
+- `spine/internal/container/control.go`, `ui.go`, `api/server.go` — fixed package manager references to pnpm
+- `control-panel/package.json` — fixed build script to use pnpm
+- `spine/internal/api/server_test.go` — fixed service name assertion
+
+#### Security & Error Handling
+- `control-panel/.gitignore` — fixed binary corruption (UTF-16 null bytes)
+- `control-panel/src/lib/market/engine.ts` — added logging to 8 critical rollback catch blocks
+- `control-panel/src/lib/market/platform-env.ts` — added logging to settings/version/gateway catches
+- `spine/internal/container/ui.go`, `api/server.go` — added logging to silent .Run() calls
+
+#### Misc
+- `README.md` — fixed CLI name (spine -> youeye), updated version table, fixed build command
+
+### Test Results
+- Spine: `go build ./cmd/youeye` — clean build verified after all changes
+- No deployment/runtime tests (code-only session, build deferred to next session)
+
+### Notes for Iris
+- This is session 1 of a 3-session cleanup. Sessions 2-3 will cover native apps, naming, and AppMarket.
+- lib/backup/ is intentionally kept (library code for future reimplementation)
+- backup sidebar translation key still exists in i18n files — harmless, can clean later
+- releases/client.go was deleted but Release/Asset types extracted to types.go (required by releases.go)
+
 ## cp-v0.3.6.37 + ui-v0.3.4.43 — sebastian — 2026-05-14
 **Branch:** sebastian
 **VM:** ye-sebastian
