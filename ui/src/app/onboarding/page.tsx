@@ -158,9 +158,11 @@ const DEFAULT_STYLE: SiteNameStyle = {
   textTransform: 'none',
 };
 
-function getAvatarEmbedUrl(theme: string): string {
+function getAvatarEmbedUrl(theme: string, username?: string): string {
   const cpBase = `${window.location.protocol}//control.${window.location.host}`;
-  return `${cpBase}/embed/avatar?theme=${theme}`;
+  const params = new URLSearchParams({ theme });
+  if (username) params.set('username', username);
+  return `${cpBase}/embed/avatar?${params.toString()}`;
 }
 
 export default function OnboardingPage() {
@@ -176,22 +178,27 @@ export default function OnboardingPage() {
   const [avatarEmbedReady, setAvatarEmbedReady] = useState(false);
   const [avatarEmbedHeight, setAvatarEmbedHeight] = useState(280);
   const [avatarEmbedSrc, setAvatarEmbedSrc] = useState<string | undefined>(undefined);
+  const [username, setUsername] = useState<string>('');
 
   const isDark = resolvedTheme === 'dark';
   const theme = resolvedTheme || 'system';
 
-  // Fetch branding config
+  // Fetch branding config and user profile
   useEffect(() => {
     Promise.all([
       fetch('/api/v1/branding').then(r => r.json()).catch(() => null),
       fetch('/api/v1/onboarding').then(r => r.json()).catch(() => ({ completed: false })),
-    ]).then(([brandingData, onboardingData]) => {
+      fetch('/api/v1/user/profile').then(r => r.json()).catch(() => null),
+    ]).then(([brandingData, onboardingData, profileData]) => {
       if (onboardingData?.completed) {
         router.replace('/');
         return;
       }
       if (brandingData) {
         setBranding(brandingData);
+      }
+      if (profileData?.username) {
+        setUsername(profileData.username);
       }
       setLoading(false);
     });
@@ -232,8 +239,8 @@ export default function OnboardingPage() {
 
   // Set avatar embed src client-side (window is unavailable during SSR)
   useEffect(() => {
-    setAvatarEmbedSrc(getAvatarEmbedUrl(theme));
-  }, [theme]);
+    setAvatarEmbedSrc(getAvatarEmbedUrl(theme, username));
+  }, [theme, username]);
 
   // Send theme updates to avatar embed
   useEffect(() => {

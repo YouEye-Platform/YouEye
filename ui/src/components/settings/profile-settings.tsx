@@ -79,10 +79,15 @@ export function ProfileSettings({
       origin
     );
     // Also send the current avatar URL so the embed can display it
-    // even if Authentik doesn't have the avatar synced yet
+    // even if Authentik doesn't have the avatar synced yet.
+    // Convert relative URLs to absolute — the embed runs on the CP domain
+    // so a relative path like /api/v1/user/avatar/... would 404 there.
     if (avatarUrl) {
+      const absoluteUrl = avatarUrl.startsWith("/")
+        ? `${window.location.origin}${avatarUrl}`
+        : avatarUrl;
       embedRef.current.contentWindow.postMessage(
-        { type: "youeye-embed-avatar", avatarUrl },
+        { type: "youeye-embed-avatar", avatarUrl: absoluteUrl },
         origin
       );
     }
