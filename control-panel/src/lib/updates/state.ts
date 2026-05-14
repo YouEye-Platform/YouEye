@@ -130,6 +130,12 @@ export async function getUnifiedStatuses(): Promise<UpdateStatusRecord[]> {
   const result = new Map<string, UpdateStatusRecord>();
 
   for (const s of dbStatuses) {
+    // Skip stale terminal statuses — same logic as Spine statuses below
+    const isTerminal = s.status === 'completed' || s.status === 'failed';
+    if (isTerminal && s.updated_at) {
+      const age = Date.now() - new Date(s.updated_at).getTime();
+      if (age > 60_000) continue;
+    }
     result.set(s.component, s);
   }
 
