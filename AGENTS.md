@@ -1,3 +1,26 @@
+## spine v0.3.2.13 — sebastian — 2026-05-14
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix system container DNS on incusbr0 — native app widgets missing from Add Widget dialog
+
+### Changes
+- `spine/internal/incus/static_ips.go` — Added `ConfigureSystemDNS()`: writes `host-record` entries into `raw.dnsmasq` for all system containers so Alpine-based containers (caddy, postgres, pihole) are resolvable by hostname
+- `spine/internal/incus/install.go` — Call `ConfigureSystemDNS()` after `ConfigureSystemDHCP()` at both Incus init paths
+- `spine/internal/cmd/root.go` — Version bump to 0.3.2.13
+
+### Test Results
+- Verified on live VM: `getent hosts youeye-caddy.youeye` returned FAIL before fix, returns `10.67.179.13` after
+- All 7 system containers resolve after applying `raw.dnsmasq`
+- Widget API returns 16 native app widgets (from 6 apps) after DNS fix
+- Hot-patched UI container to confirm end-to-end: reverted hot-patch after applying proper DNS fix
+
+### Notes for Iris
+- Spine-only change, additive — no UI or CP code changes needed
+- Only affects fresh `spine deploy` (writes raw.dnsmasq during Incus init)
+- Existing VMs need manual one-liner: `incus network set incusbr0 raw.dnsmasq=...` (documented in wiki)
+- The raw.dnsmasq value is regenerated from SystemContainerIPOffsets — same offsets used by static IP assignment
+
 ## v0.3.6.40 — sebastian — 2026-05-14
 **Branch:** sebastian
 **VM:** ye-sebastian
