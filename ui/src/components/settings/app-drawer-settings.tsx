@@ -117,7 +117,7 @@ function SortableAppItem({
       <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sm overflow-hidden shrink-0">
         {displayIcon?.startsWith("emoji:") ? (
           <span className="text-base">{displayIcon.slice(6)}</span>
-        ) : displayIcon?.startsWith("http") || displayIcon?.startsWith("/") ? (
+        ) : displayIcon?.startsWith("http") || displayIcon?.startsWith("/") || displayIcon?.startsWith("data:") ? (
           <img
             src={app.custom_icon_url ?? displayIcon}
             alt=""

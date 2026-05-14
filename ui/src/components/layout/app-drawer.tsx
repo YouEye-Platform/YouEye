@@ -124,7 +124,7 @@ function AppIcon({
   if (displayIcon && displayIcon.startsWith("emoji:")) {
     return <span className="text-xl leading-none" style={size ? { fontSize: size * 0.5 } : undefined}>{displayIcon.slice(6)}</span>;
   }
-  if (displayIcon && !imgError && (displayIcon.startsWith("http") || displayIcon.startsWith("/"))) {
+  if (displayIcon && !imgError && (displayIcon.startsWith("http") || displayIcon.startsWith("/") || displayIcon.startsWith("data:"))) {
     return (
       <img
         src={displayIcon}

@@ -101,7 +101,7 @@ function AppHeaderIcon({ name, icon }: { name: string; icon: string | null }) {
       </div>
     );
   }
-  if (icon && (icon.startsWith("http") || icon.startsWith("/"))) {
+  if (icon && (icon.startsWith("http") || icon.startsWith("/") || icon.startsWith("data:"))) {
     return (
       <div className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center">
         <img src={icon} alt={name} className="w-10 h-10 rounded-xl object-cover" />

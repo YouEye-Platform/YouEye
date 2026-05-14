@@ -66,7 +66,7 @@ function AppIcon({ name, icon, customIconUrl }: { name: string; icon: string | n
       </div>
     );
   }
-  if (displayIcon && (displayIcon.startsWith("http") || displayIcon.startsWith("/"))) {
+  if (displayIcon && (displayIcon.startsWith("http") || displayIcon.startsWith("/") || displayIcon.startsWith("data:"))) {
     return (
       <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 flex items-center justify-center">
         <img src={displayIcon} alt={name} className="w-9 h-9 rounded-lg object-cover" />
