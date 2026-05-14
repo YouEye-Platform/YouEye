@@ -6,7 +6,7 @@ Self-hosted personal cloud platform. One command to deploy on any Debian/Ubuntu 
 
 ```bash
 curl -sSL https://git.byka.wtf/potemsla/YouEye/raw/branch/main/spine/install.sh | sh
-spine deploy
+youeye deploy
 ```
 
 This installs Spine (the bootstrap tool), then deploys the full stack: Control Panel, UI, Authentik SSO, Caddy reverse proxy, Pi-Hole DNS, and PostgreSQL.
@@ -39,17 +39,17 @@ Each component is built and released independently using **component-prefixed ta
 
 | Component | Main tag | Dev tag |
 |-----------|----------|---------|
-| Spine | `spine-v0.3.2` | `spine-dev-v0.3.1.5` |
-| Control Panel | `cp-v0.3.6` | `cp-dev-v0.3.5.11` |
-| UI | `ui-v0.3.4` | `ui-dev-v0.3.3.2` |
+| Spine | `spine-v0.3.2` | `spine-dev-v0.3.2.x` |
+| Control Panel | `cp-v0.3.6` | `cp-dev-v0.3.6.x` |
+| UI | `ui-v0.3.4` | `ui-dev-v0.3.4.x` |
 
-## Current Versions
+## Current Versions (main)
 
-| Component | Main | Dev |
-|-----------|------|-----|
-| Spine | 0.3.2 | 0.3.2.11 |
-| Control Panel | 0.3.6 | 0.3.6.29 |
-| UI | 0.3.4 | 0.3.4.37 |
+| Component | Version |
+|-----------|---------|
+| Spine | 0.3.2 |
+| Control Panel | 0.3.6 |
+| UI | 0.3.4 |
 
 ## Related Repos
 
@@ -73,14 +73,12 @@ Native apps and other platform components live in their own repositories:
 Spine is the single CLI for managing the entire platform:
 
 ```bash
-spine status          # Full platform status (infra + services + apps)
-spine app install wiki  # Install an app from the marketplace
-spine user list       # List users
-spine services        # Service health
-spine update check    # Check all components for updates
-spine proxy list      # Caddy reverse proxy routes
-spine domain show     # Current base domain
-spine market search   # Browse app marketplace
+youeye status          # Full platform status
+youeye deploy          # Deploy the full stack
+youeye update self     # Update Spine itself
+youeye update control  # Update Control Panel
+youeye cleanup         # Clean uninstall
+youeye branch set dev  # Switch to dev release channel
 ```
 
 Requires `sudo` for full functionality.
@@ -89,7 +87,7 @@ Requires `sudo` for full functionality.
 
 ```bash
 # Spine (Go)
-cd spine && go build ./cmd/spine
+cd spine && go build ./cmd/youeye
 
 # Control Panel (Next.js 16)
 cd control-panel && pnpm install && pnpm dev

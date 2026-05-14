@@ -108,10 +108,14 @@ async function rollbackInstall(
       try {
         await incusRequest('PUT', `/1.0/instances/${name}/state`, { action: 'stop', force: true, timeout: 10 });
         await new Promise((r) => setTimeout(r, 2000));
-      } catch {}
+      } catch (stopErr) {
+        console.warn(`[engine] Rollback: failed to stop container ${name} (may already be stopped):`, stopErr);
+      }
       const result = await incusRequest('DELETE', `/1.0/instances/${name}`);
       if (result.type === 'async' && result.operation) {
-        try { await incusRequest('GET', `${result.operation}/wait?timeout=30`, undefined, { timeout: 40_000 }); } catch {}
+        try { await incusRequest('GET', `${result.operation}/wait?timeout=30`, undefined, { timeout: 40_000 }); } catch (waitErr) {
+          console.warn(`[engine] Rollback: timeout waiting for container ${name} deletion:`, waitErr);
+        }
       }
     } catch (err) {
       console.error(`[engine] Rollback: failed to remove container ${name}:`, err);
@@ -165,15 +169,21 @@ async function rollbackInstall(
   }
 
   // 5. Remove metadata and secrets
-  try { await removeInstallMetadata(ctx.appId); } catch {}
-  try { await removeInstalledApp(ctx.appId); } catch {}
+  try { await removeInstallMetadata(ctx.appId); } catch (err) {
+    console.warn(`[engine] Rollback: failed to remove install metadata for ${ctx.appId}:`, err);
+  }
+  try { await removeInstalledApp(ctx.appId); } catch (err) {
+    console.warn(`[engine] Rollback: failed to remove installed app record for ${ctx.appId}:`, err);
+  }
 
   // 6. Clean up per-app bridge network
   try {
     const { removeCaddyFromAppNetwork, deleteAppNetwork } = await import('../incus/app-network');
     await removeCaddyFromAppNetwork(ctx.appId);
     await deleteAppNetwork(ctx.appId);
-  } catch {}
+  } catch (err) {
+    console.warn(`[engine] Rollback: failed to clean up app network for ${ctx.appId}:`, err);
+  }
 
   onEvent({ step: 0, totalSteps, status: 'running', message: 'Rollback complete — all resources cleaned up' });
 }

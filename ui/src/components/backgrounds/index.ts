@@ -17,7 +17,7 @@ import { DotParticles } from "./dot-particles";
 import { SmoothWavy } from "./smooth-wavy";
 import { FlowingRibbons } from "./flowing-ribbons";
 import { FlowingDots } from "./flowing-dots";
-import { ShaderGradient } from "./shader-gradient";
+
 
 // ============================================
 // Color Presets
@@ -215,13 +215,6 @@ export const ANIMATED_BACKGROUNDS = {
     description: "Dots that flow in noise-based patterns",
     icon: "⁘",
     component: FlowingDots,
-  },
-  "shader-gradient": {
-    id: "shader-gradient",
-    name: "Shader Gradient",
-    description: "3D animated gradient with cursor-reactive colors",
-    icon: "🌈",
-    component: ShaderGradient,
   },
 } as const;
 

@@ -227,11 +227,15 @@ func DeployUIApp(containerName, appDir string, cfg *config.Config) error {
 	}
 
 	// Next.js standalone builds don't include .next/static — copy from tarball root if present
-	exec.Command("incus", "exec", containerName, "--",
-		"bash", "-c", fmt.Sprintf("if [ -d %s/.next/static ]; then echo 'Static files already present'; else echo 'Warning: .next/static missing from standalone output'; fi", appDir)).Run()
+	if out, err := exec.Command("incus", "exec", containerName, "--",
+		"bash", "-c", fmt.Sprintf("if [ -d %s/.next/static ]; then echo 'Static files already present'; else echo 'Warning: .next/static missing from standalone output'; fi", appDir)).CombinedOutput(); err != nil {
+		fmt.Printf("[ui] Static files check: %s (%v)\n", strings.TrimSpace(string(out)), err)
+	}
 
-	exec.Command("incus", "exec", containerName, "--",
-		"bash", "-c", fmt.Sprintf("cd %s && npm install styled-jsx --silent 2>/dev/null || true", appDir)).Run()
+	if out, err := exec.Command("incus", "exec", containerName, "--",
+		"bash", "-c", fmt.Sprintf("cd %s && pnpm install styled-jsx --silent 2>/dev/null || true", appDir)).CombinedOutput(); err != nil {
+		fmt.Printf("[ui] Warning: styled-jsx install issue: %s (%v)\n", strings.TrimSpace(string(out)), err)
+	}
 
 	exec.Command("incus", "exec", containerName, "--", "rm", "-f", "/tmp/ui-standalone.tar").Run()
 

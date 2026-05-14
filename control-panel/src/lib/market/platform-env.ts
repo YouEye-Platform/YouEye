@@ -61,19 +61,25 @@ export async function getPlatformContext(): Promise<PlatformContext> {
   try {
     const spineVersion = await spineClient.version();
     version = spineVersion.version || version;
-  } catch {}
+  } catch (err) {
+    console.warn('[platform-env] Failed to fetch Spine version, using default:', err);
+  }
 
   try {
     const settings = await settingsService.getAll();
     siteName = settings.siteName || siteName;
     domain = settings.domain || domain;
     language = settings.language || language;
-  } catch {}
+  } catch (err) {
+    console.warn('[platform-env] Failed to fetch platform settings, using defaults:', err);
+  }
 
   try {
     const { readFileSync } = await import('fs');
     timezone = readFileSync('/etc/timezone', 'utf-8').trim() || timezone;
-  } catch {}
+  } catch {
+    // Non-critical — defaults to UTC
+  }
 
   _platformCtx = { version, domain, siteName, timezone, locale: language };
   _platformCtxTimestamp = now;
@@ -102,7 +108,9 @@ async function getGatewaySecret(): Promise<string> {
     try {
       fs.mkdirSync('/var/lib/youeye/config', { recursive: true });
       fs.writeFileSync('/var/lib/youeye/config/gateway-secret', _gatewaySecret, { mode: 0o600 });
-    } catch {}
+    } catch (persistErr) {
+      console.error('[platform-env] Failed to persist gateway secret — apps may lose auth on restart:', persistErr);
+    }
   }
   return _gatewaySecret!;
 }
@@ -378,106 +386,3 @@ export function envToString(env: Record<string, string>): string {
   );
 }
 
-// ─── Legacy buildPlatformEnv (delegates to v2 for compat) ──
-
-export interface PlatformEnvConfig {
-  appId: string;
-  subdomain: string;
-  domain: string;
-  port?: number;
-  sso?: { clientId: string; clientSecret: string };
-  jwtSecret?: string;
-  databaseUrl?: string;
-  extra?: Record<string, string>;
-}
-
-/**
- * @deprecated Use buildCanonicalContext() + resolveEnvMapping() instead.
- * Kept for any code paths that haven't migrated yet.
- */
-export async function buildPlatformEnv(
-  config: PlatformEnvConfig,
-  manifest?: AppManifest,
-): Promise<Record<string, string>> {
-  const platform = await getPlatformContext();
-  const appUrl = `https://${config.subdomain}.${config.domain}`;
-  const appIdUpper = config.appId.replace(/-/g, '_').toUpperCase();
-
-  const env: Record<string, string> = {};
-  env.NODE_ENV = 'production';
-  env.PORT = String(config.port || 3000);
-  env.HOSTNAME = '0.0.0.0';
-  env.YOUEYE_APP_ID = config.appId;
-  env[`${appIdUpper}_EXTERNAL_URL`] = appUrl;
-  env.NEXT_PUBLIC_APP_URL = appUrl;
-  env.YOUEYE_API_URL = `http://youeye-ui.${CONTAINER_DOMAIN}:3000/api/v1`;
-  env.YOUEYE_UI_URL = `https://${config.domain}`;
-  env.CP_API_URL = `http://youeye-control.${CONTAINER_DOMAIN}:3000/api`;
-  env.YOUEYE_PLATFORM_VERSION = platform.version;
-  env.YOUEYE_DOMAIN = platform.domain || config.domain;
-  env.YOUEYE_SITE_NAME = platform.siteName;
-  env.YOUEYE_TIMEZONE = platform.timezone;
-  env.YOUEYE_LOCALE = platform.locale;
-  env.SECURE_COOKIES = 'false';
-
-  if (config.sso) {
-    const authentikExternalUrl = await getAuthentikExternalUrl();
-    const authentikIP = await getContainerIP('youeye-authentik');
-    const authentikInternalUrl = authentikIP
-      ? `http://${authentikIP}:9000`
-      : `http://youeye-authentik.${CONTAINER_DOMAIN}:9000`;
-    env.AUTHENTIK_URL = authentikExternalUrl || '';
-    env.AUTHENTIK_INTERNAL_URL = authentikInternalUrl;
-    env.AUTHENTIK_CLIENT_ID = config.sso.clientId;
-    env.AUTHENTIK_CLIENT_SECRET = config.sso.clientSecret;
-  }
-
-  if (config.jwtSecret) env.JWT_SECRET = config.jwtSecret;
-  if (config.databaseUrl) env.DATABASE_URL = config.databaseUrl;
-
-  if (config.extra) {
-    for (const [key, value] of Object.entries(config.extra)) {
-      env[key] = value;
-    }
-  }
-
-  return env;
-}
-
-/**
- * @deprecated Use buildCanonicalContext() instead.
- */
-export async function buildVariableContext(
-  config: PlatformEnvConfig,
-  manifest?: AppManifest,
-): Promise<Partial<VariableContext>> {
-  // Delegate to the new canonical context builder with a shim config
-  const shimConfig: InstallConfig = {
-    appId: config.appId,
-    subdomain: config.subdomain,
-    domain: config.domain,
-  };
-
-  // Create a minimal manifest if not provided
-  if (!manifest) {
-    return buildCanonicalContext({
-      apiVersion: 'v1',
-      kind: 'app',
-      integration: 'basic',
-      metadata: { id: config.appId, name: config.appId, description: '', icon: '', category: 'utilities', defaultSubdomain: config.subdomain, tags: [] },
-      containers: [],
-      env_mapping: {},
-      secrets: [],
-      credentials: [],
-      configFiles: [],
-      installParams: [],
-      wants: [],
-    } as AppManifest, shimConfig);
-  }
-
-  return buildCanonicalContext(manifest, shimConfig, config.sso ? {
-    clientId: config.sso.clientId,
-    clientSecret: config.sso.clientSecret,
-    slug: `youeye-app-${config.appId}`,
-  } : undefined);
-}

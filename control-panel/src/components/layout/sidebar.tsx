@@ -14,7 +14,6 @@ import {
   Settings,
   Store,
   HeartPulse,
-  HardDrive,
 } from 'lucide-react';
 
 /** Sidebar navigation items — labels come from the "sidebar" translation namespace */
@@ -26,7 +25,6 @@ const navItems = [
   { href: '/proxy', labelKey: 'reverseProxy' as const, icon: Globe },
   { href: '/dns', labelKey: 'dns' as const, icon: Shield },
   { href: '/people', labelKey: 'people' as const, icon: Users },
-  { href: '/backup', labelKey: 'backup' as const, icon: HardDrive },
   { href: '/settings', labelKey: 'settings' as const, icon: Settings },
 ];
 

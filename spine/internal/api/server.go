@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"runtime"
+
 	"strings"
 	"sync"
 	"time"
@@ -407,30 +407,6 @@ func (s *Server) handleUpdatesCheck(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, updates)
 }
 
-// getPackageUpgradeAvailable checks if a specific apt package has an upgrade available.
-func getPackageUpgradeAvailable(pkg string) bool {
-	out, err := exec.Command("apt", "list", "--upgradeable").CombinedOutput()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(out), pkg+"/")
-}
-
-// getSystemUpgradeableCount returns the number of packages with available upgrades.
-func getSystemUpgradeableCount() int {
-	out, err := exec.Command("apt", "list", "--upgradeable").CombinedOutput()
-	if err != nil {
-		return 0
-	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	count := 0
-	for _, line := range lines {
-		if strings.Contains(line, "/") && !strings.HasPrefix(line, "Listing") {
-			count++
-		}
-	}
-	return count
-}
 
 // getAppContainerStatus returns the status of an Incus container.
 func getAppContainerStatus(containerName string) string {
@@ -686,8 +662,10 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Install dependencies (styled-jsx fix)
-	exec.Command("incus", "exec", containerName, "--",
-		"bash", "-c", fmt.Sprintf("cd %s && npm install styled-jsx --silent 2>/dev/null || true", appDir)).Run()
+	if out, err := exec.Command("incus", "exec", containerName, "--",
+		"bash", "-c", fmt.Sprintf("cd %s && pnpm install styled-jsx --silent 2>/dev/null || true", appDir)).CombinedOutput(); err != nil {
+		fmt.Printf("[update] Warning: styled-jsx install issue: %s (%v)\n", strings.TrimSpace(string(out)), err)
+	}
 
 	// Clean up
 	exec.Command("incus", "exec", containerName, "--", "rm", "/tmp/update.tar").Run()
@@ -1064,28 +1042,6 @@ func (s *Server) getControlVersion() string {
 	return "unknown"
 }
 
-// downloadFile downloads a file from URL to local path
-func downloadFile(url, filepath string) error {
-	client := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := client.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("download failed with status: %d", resp.StatusCode)
-	}
-
-	out, err := os.Create(filepath)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, resp.Body)
-	return err
-}
 
 // handlePiholeCredentials handles GET/POST for Pi-Hole web interface credentials.
 // GET: reads the password from the file saved during deployment.
@@ -1171,8 +1127,6 @@ func (s *Server) migratePiholePassword(passwordFile string) string {
 	return password
 }
 
-// unused but keeping for reference
-var _ = runtime.GOARCH
 
 // handleControlSSO manages SSO environment variables for the Control Panel container.
 // GET: Check if SSO is configured

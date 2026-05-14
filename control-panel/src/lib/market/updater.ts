@@ -39,7 +39,7 @@ import { readInstallMetadata } from './metadata';
 import { getInstalledApp, updateInstalledVersion } from './installed-apps';
 import { getContainerName } from './engine-helpers';
 import { resolveVariables, resolveEnvironment } from './variables';
-import { buildVariableContext } from './platform-env';
+import { buildCanonicalContext } from './platform-env';
 import { getOrCreateSecret } from '../infrastructure/secrets';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
 import { settingsService } from '@/lib/settings';
@@ -529,9 +529,9 @@ export async function updateMarketplaceApp(
     `Updating ${appId} from v${installedVersion} to v${targetVersion} (containers: ${containerTypes}, strategy: ${strategy})`);
 
   // Build variable context — preserves existing secrets
-  const ctx = await buildVariableContext(
+  const ctx = await buildCanonicalContext(
+    manifest,
     { appId, subdomain: installMeta.subdomain, domain: installMeta.domain },
-    manifest
   );
   if (!ctx.secrets) ctx.secrets = {};
 

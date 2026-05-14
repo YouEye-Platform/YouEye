@@ -56,8 +56,8 @@ func TestHandleVersion(t *testing.T) {
 	if body["version"] != "0.2.6.1" {
 		t.Errorf("version = %q, want %q", body["version"], "0.2.6.1")
 	}
-	if body["service"] != "spine" {
-		t.Errorf("service = %q, want %q", body["service"], "spine")
+	if body["service"] != "youeye" {
+		t.Errorf("service = %q, want %q", body["service"], "youeye")
 	}
 }
 

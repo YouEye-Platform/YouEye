@@ -358,7 +358,7 @@ func DeployControlPanelApp(cfg *config.Config) error {
 	util.RunIncusExec(containerName, "rm", "/tmp/app.tar")
 
 	util.LogSubStep("Installing styled-jsx dependency...")
-	if err := util.RunIncusExec(containerName, "bash", "-c", fmt.Sprintf("cd %s && npm install styled-jsx --silent", appDir)); err != nil {
+	if err := util.RunIncusExec(containerName, "bash", "-c", fmt.Sprintf("cd %s && pnpm install styled-jsx --silent", appDir)); err != nil {
 		util.LogDebug("Warning: failed to install styled-jsx, service may not start")
 	}
 

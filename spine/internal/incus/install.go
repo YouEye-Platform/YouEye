@@ -216,7 +216,7 @@ func initializeWithPreseed(zfsAvailable bool) error {
 networks:
 - config:
     ipv4.address: auto
-    ipv6.address: none
+    ipv6.address: ""
     dns.domain: youeye
   description: ""
   name: incusbr0
@@ -363,7 +363,7 @@ func initializeManually(preseedErr error, zfsAvailable bool) error {
 	}
 	time.Sleep(1 * time.Second)
 	
-	if out, err := util.RunCmdCapture("incus", "network", "create", "incusbr0", "ipv4.address=auto", "ipv6.address=none", "dns.domain=youeye"); err != nil {
+	if out, err := util.RunCmdCapture("incus", "network", "create", "incusbr0", "ipv4.address=auto", "ipv6.address=", "dns.domain=youeye"); err != nil {
 		util.LogError(fmt.Sprintf("Failed to create network: %s", strings.TrimSpace(out)))
 		return fmt.Errorf("failed to create network: %w", err)
 	}
@@ -429,7 +429,7 @@ func configureZabblyRepository() error {
 
 	// Download and install GPG key
 	fmt.Println("Downloading Zabbly GPG key...")
-	gpgCmd := exec.Command("sh", "-c", "curl -fsSL https://pkgs.zabbly.com/key.asc | gpg --dearmor -o /etc/apt/keyrings/zabbly.gpg")
+	gpgCmd := exec.Command("sh", "-c", "curl -fsSL https://pkgs.zabbly.com/key.asc | gpg --yes --dearmor -o /etc/apt/keyrings/zabbly.gpg")
 	if out, err := gpgCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to install GPG key: %w (output: %s)", err, string(out))
 	}
@@ -535,24 +535,3 @@ func installZFS() error {
 
 // configureProjectRestrictions configures Incus project to block privileged containers.
 // NOTE: This function is currently NOT used because:
-// - Setting restricted=true blocks ZFS snapshots (incremental backups)
-// - On VMs where ZFS works, we don't need LXC-specific privilege restrictions
-// - On LXC where dir driver is used, we may need privileged container fallback
-// Kept for reference/future use if security model changes.
-func configureProjectRestrictions() {
-	fmt.Println("Configuring security restrictions...")
-	
-	// Enable project restrictions
-	util.RunCmdQuiet("incus", "project", "set", "default", "restricted=true")
-	
-	// Block privileged containers (this is the key security enforcement)
-	util.RunCmdQuiet("incus", "project", "set", "default", "restricted.containers.privilege=unprivileged")
-	
-	// Allow nesting (required for Control Panel to run containers)
-	util.RunCmdQuiet("incus", "project", "set", "default", "restricted.containers.nesting=allow")
-	
-	// Allow proxy devices (required for socket and port proxies)
-	util.RunCmdQuiet("incus", "project", "set", "default", "restricted.devices.proxy=allow")
-	
-	fmt.Println("✓ Privileged containers blocked")
-}
