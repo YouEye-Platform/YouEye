@@ -8,9 +8,6 @@ importers:
 
   control-panel:
     dependencies:
-      '@hookform/resolvers':
-        specifier: ^5.2.2
-        version: 5.2.2(react-hook-form@7.72.1(react@19.2.3))
       '@radix-ui/react-label':
         specifier: ^2.1.8
         version: 2.1.8(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -193,9 +190,6 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
-      '@playwright/test':
-        specifier: ^1.58.2
-        version: 1.59.1
       '@tailwindcss/postcss':
         specifier: ^4
         version: 4.2.2
@@ -935,11 +929,6 @@ packages:
     engines: {node: '>=18.14.1'}
     peerDependencies:
       hono: ^4
-
-  '@hookform/resolvers@5.2.2':
-    resolution: {integrity: sha512-A/IxlMLShx3KjV/HeTcTfaMxdwy690+L/ZADoeaTltLx+CVuzkeVIPuybK3jrRfw7YZnmdKsVVHAlEPIAEUNlA==}
-    peerDependencies:
-      react-hook-form: ^7.55.0
 
   '@humanfs/core@0.19.1':
     resolution: {integrity: sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA==}
@@ -2353,9 +2342,6 @@ packages:
   '@sindresorhus/merge-streams@4.0.0':
     resolution: {integrity: sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ==}
     engines: {node: '>=18'}
-
-  '@standard-schema/utils@0.3.0':
-    resolution: {integrity: sha512-e7Mew686owMaPJVNNLs55PUvgz371nKgwsc4vxE49zsODpJEnxgxRo2y/OKrqueavXgZNMDVj3DdHFlaSAeU8g==}
 
   '@swc/core-darwin-arm64@1.15.24':
     resolution: {integrity: sha512-uM5ZGfFXjtvtJ+fe448PVBEbn/CSxS3UAyLj3O9xOqKIWy3S6hPTXSPbszxkSsGDYKi+YFhzAsR4r/eXLxEQ0g==}
@@ -5806,11 +5792,6 @@ snapshots:
     dependencies:
       hono: 4.12.12
 
-  '@hookform/resolvers@5.2.2(react-hook-form@7.72.1(react@19.2.3))':
-    dependencies:
-      '@standard-schema/utils': 0.3.0
-      react-hook-form: 7.72.1(react@19.2.3)
-
   '@humanfs/core@0.19.1': {}
 
   '@humanfs/node@0.16.7':
@@ -6319,6 +6300,7 @@ snapshots:
   '@playwright/test@1.59.1':
     dependencies:
       playwright: 1.59.1
+    optional: true
 
   '@radix-ui/number@1.1.1': {}
 
@@ -7203,8 +7185,6 @@ snapshots:
       - browserslist
 
   '@sindresorhus/merge-streams@4.0.0': {}
-
-  '@standard-schema/utils@0.3.0': {}
 
   '@swc/core-darwin-arm64@1.15.24':
     optional: true
@@ -9401,13 +9381,15 @@ snapshots:
 
   pkce-challenge@5.0.1: {}
 
-  playwright-core@1.59.1: {}
+  playwright-core@1.59.1:
+    optional: true
 
   playwright@1.59.1:
     dependencies:
       playwright-core: 1.59.1
     optionalDependencies:
       fsevents: 2.3.2
+    optional: true
 
   po-parser@2.1.1: {}
 
