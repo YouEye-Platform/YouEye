@@ -166,19 +166,24 @@ export function AppsEmbedClient() {
       setRestartOverlay(appId === "control-panel" ? "Control Panel" : "YouEye UI");
     }
 
-    try {
-      const res = await fetch(`/api/ui-bridge/updates/${component}`, { method: "POST" });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({ error: "Update failed" }));
-        console.error("Update failed:", body.error);
-      }
-      fetchStatuses();
-      if (!pollingRef.current) {
-        pollingRef.current = setInterval(fetchStatuses, 2000);
-      }
-    } catch (err) {
-      console.error(`Update ${appId} failed:`, err);
+    // Start polling BEFORE the POST so intermediate progress states are visible
+    if (!pollingRef.current) {
+      pollingRef.current = setInterval(fetchStatuses, 2000);
     }
+
+    // Fire POST without awaiting — progress comes from polling /status
+    fetch(`/api/ui-bridge/updates/${component}`, { method: "POST" })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({ error: "Update failed" }));
+          console.error("Update failed:", body.error);
+        }
+        fetchStatuses();
+      })
+      .catch((err) => {
+        console.error(`Update ${appId} failed:`, err);
+        fetchStatuses();
+      });
   };
 
   if (loading) {

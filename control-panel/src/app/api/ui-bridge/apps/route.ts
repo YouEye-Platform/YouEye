@@ -21,6 +21,7 @@ import {
 import { listInstalledApps } from '@/lib/market/metadata';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
 import { fetchManifest } from '@/lib/market/catalog';
+import { refreshVersionCheck } from '@/lib/market/version-checker';
 import { getAllCachedLxdUpdates } from '@/lib/apps/lxd-updates';
 
 function extractIP(stateMetadata: Record<string, unknown>): string | undefined {
@@ -57,7 +58,10 @@ export async function GET(request: NextRequest) {
     // Optional force refresh
     const refresh = request.nextUrl.searchParams.get('refresh') === 'true';
     if (refresh) {
-      await refreshAllUpdates();
+      await Promise.all([
+        refreshAllUpdates(),
+        refreshVersionCheck(),
+      ]);
     }
 
     // Parallel data fetches
@@ -145,6 +149,14 @@ export async function GET(request: NextRequest) {
           if (def.id === 'control-panel' && updates.control?.available) {
             updateAvailable = true;
             updateInfo = `${updates.control.current} → ${updates.control.latest}`;
+          }
+          if (def.id === 'host-system' && updates.system?.upgradeable_count) {
+            updateAvailable = true;
+            updateInfo = `${updates.system.upgradeable_count} package${updates.system.upgradeable_count !== 1 ? 's' : ''} upgradeable`;
+          }
+          if (def.id === 'incus' && updates.incus?.upgradeable) {
+            updateAvailable = true;
+            updateInfo = `${updates.incus.current} → newer version available`;
           }
         }
 

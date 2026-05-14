@@ -32,28 +32,50 @@ export async function POST(
     // Check if this is an LXD native app (UI, Search, Cinema, Weather, etc.)
     const appDef = getAppDefinition(component);
     if (appDef?.lxdConfig) {
-      let lastEvent: { message?: string } = {};
-      await updateLXDApp(appDef, (event) => { lastEvent = event; });
+      let lastMessage = '';
+      await updateLXDApp(appDef, (event) => {
+        lastMessage = event.message;
+        const stageToStatus: Record<string, string> = {
+          starting: 'checking', snapshot: 'downloading', stopping: 'installing',
+          rebuilding: 'downloading', 'starting-container': 'restarting',
+          verifying: 'verifying', completed: 'completed', failed: 'failed',
+        };
+        const status = (stageToStatus[event.stage] || 'installing') as Parameters<typeof writeStatus>[1];
+        writeStatus(component, status, event.progress ?? 0, event.message).catch(() => {});
+      });
       await completeUpdate(component, '', '').catch(() => {});
       return NextResponse.json({
         status: 'success',
-        message: lastEvent.message || `${appDef.displayName} updated`,
+        message: lastMessage || `${appDef.displayName} updated`,
       });
     }
 
     // Check if this is a marketplace-installed app (native apps like Weather, Notes, etc.)
     const installedApp = await getInstalledApp(component);
     if (installedApp) {
-      let lastEvent: { message?: string } = {};
+      let lastMessage = '';
       const result = await updateMarketplaceApp(
         { appId: component, force: true },
-        (event) => { lastEvent = event; }
+        (event) => {
+          lastMessage = event.message;
+          const progress = event.totalSteps > 0
+            ? Math.round((event.step / event.totalSteps) * 100)
+            : 0;
+          const status = event.status === 'error'
+            ? 'failed' as const
+            : 'installing' as const;
+          writeStatus(component, status, progress, event.message).catch(() => {});
+        }
       );
       const newVer = result.newVersion || '';
-      await completeUpdate(component, '', newVer).catch(() => {});
+      if (result.success) {
+        await completeUpdate(component, '', newVer).catch(() => {});
+      } else {
+        await failUpdate(component, '', result.error || 'Update failed').catch(() => {});
+      }
       return NextResponse.json({
         status: result.success ? 'success' : 'error',
-        message: lastEvent.message || `${component} updated to v${newVer}`,
+        message: lastMessage || `${component} updated to v${newVer}`,
         previous_version: result.previousVersion,
         new_version: newVer,
       });
@@ -63,21 +85,23 @@ export async function POST(
 
     switch (component) {
       case 'spine':
+        await writeStatus(component, 'downloading', 20, 'Downloading Spine update...').catch(() => {});
         result = await spineClient.updateSelf();
         break;
       case 'control':
+        await writeStatus(component, 'downloading', 20, 'Downloading Control Panel update...').catch(() => {});
         result = await spineClient.updateControl();
         break;
       case 'incus':
-        await writeStatus(component, 'installing', 50, 'Updating Incus...').catch(() => {});
+        await writeStatus(component, 'installing', 30, 'Updating Incus...').catch(() => {});
         result = await spineClient.updateIncus();
         break;
       case 'system':
-        await writeStatus(component, 'installing', 50, 'Updating system packages...').catch(() => {});
+        await writeStatus(component, 'installing', 30, 'Updating system packages...').catch(() => {});
         result = await spineClient.updateSystem();
         break;
       default:
-        await writeStatus(component, 'installing', 50, `Updating ${component}...`).catch(() => {});
+        await writeStatus(component, 'installing', 30, `Updating ${component}...`).catch(() => {});
         result = await spineClient.updateApp(component);
         break;
     }

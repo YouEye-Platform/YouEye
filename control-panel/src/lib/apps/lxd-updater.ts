@@ -25,6 +25,7 @@ import {
 import { type AppDefinition } from './definitions';
 import { markAppUpdated } from './update-cache';
 import type { UpdateEvent } from './updater';
+export type { UpdateEvent };
 import { settingsService } from '@/lib/settings';
 import { isNewer, sortVersionsDesc } from '@/lib/version';
 

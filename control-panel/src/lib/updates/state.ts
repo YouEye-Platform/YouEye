@@ -11,14 +11,9 @@ import { spineClient } from '@/lib/spine/client';
 
 const STORE_PATH = statePath('update-status.json');
 
-/** Known update components — allowlist prevents injection via component param */
-const ALLOWED_COMPONENTS = new Set([
-  'spine', 'control', 'ui', 'incus', 'system',
-  'caddy', 'pihole', 'postgres', 'authentik', 'wiki', 'search',
-]);
-
+/** Validate component ID format — prevents path injection while allowing dynamic app IDs */
 function validateComponent(component: string): void {
-  if (!ALLOWED_COMPONENTS.has(component)) {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(component) || component.length > 64) {
     throw new Error(`Invalid component: ${component}`);
   }
 }
