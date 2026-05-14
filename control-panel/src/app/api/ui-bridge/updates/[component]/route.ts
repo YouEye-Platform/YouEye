@@ -14,6 +14,8 @@ import { spineClient } from '@/lib/spine/client';
 import { startUpdate, writeStatus, completeUpdate, failUpdate } from '@/lib/updates/state';
 import { getAppDefinition } from '@/lib/apps/definitions';
 import { updateLXDApp } from '@/lib/apps/lxd-updater';
+import { getInstalledApp } from '@/lib/market/installed-apps';
+import { updateMarketplaceApp } from '@/lib/market/updater';
 
 export async function POST(
   request: NextRequest,
@@ -36,6 +38,24 @@ export async function POST(
       return NextResponse.json({
         status: 'success',
         message: lastEvent.message || `${appDef.displayName} updated`,
+      });
+    }
+
+    // Check if this is a marketplace-installed app (native apps like Weather, Notes, etc.)
+    const installedApp = await getInstalledApp(component);
+    if (installedApp) {
+      let lastEvent: { message?: string } = {};
+      const result = await updateMarketplaceApp(
+        { appId: component, force: true },
+        (event) => { lastEvent = event; }
+      );
+      const newVer = result.newVersion || '';
+      await completeUpdate(component, '', newVer).catch(() => {});
+      return NextResponse.json({
+        status: result.success ? 'success' : 'error',
+        message: lastEvent.message || `${component} updated to v${newVer}`,
+        previous_version: result.previousVersion,
+        new_version: newVer,
       });
     }
 
