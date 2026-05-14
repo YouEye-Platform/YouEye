@@ -1,3 +1,15 @@
+## cp-v0.3.6.36 — sebastian — 2026-05-14
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix stale update status messages persisting in settings page
+
+### Changes
+- `control-panel/src/lib/updates/state.ts` — Added 60-second staleness filter to CP-managed statuses in `getUnifiedStatuses()`, matching the existing Spine-side filter. Terminal states (completed/failed) older than 60s are now skipped.
+
+### Notes for Iris
+- This only affects the display of update statuses. No schema or data changes.
+
 ## cp-v0.3.6.35 + ui-v0.3.4.42 — sebastian — 2026-05-14
 **Branch:** sebastian
 **VM:** ye-sebastian
