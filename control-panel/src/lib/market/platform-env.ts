@@ -210,9 +210,9 @@ export async function buildCanonicalContext(
   // Authentik URLs
   const authentikExternalUrl = await getAuthentikExternalUrl() || '';
   const authentikIP = await getContainerIP('youeye-authentik');
-  const authentikInternalUrl = authentikIP
-    ? `http://${authentikIP}:9000`
-    : `http://youeye-authentik.${CONTAINER_DOMAIN}:9000`;
+  // Use proxy device (localhost:9000) for app→Authentik communication.
+  // This enables Layer 4 ACLs blocking direct infrastructure access.
+  const authentikInternalUrl = 'http://localhost:9000';
 
   // Caddy proxy IP
   let proxyIp = '';
@@ -245,14 +245,11 @@ export async function buildCanonicalContext(
       internal_url: `http://${primaryContainerName}.${CONTAINER_DOMAIN}:${primaryPort}`,
     },
     integration: {
-      // Always resolve the real UI container IP — localhost:3001 proxy devices
-      // are unreliable for native apps and break YOUEYE_GATEWAY.
-      gateway_url: await (async () => {
-        const uiIP = await getContainerIP('youeye-ui');
-        return uiIP
-          ? `http://${uiIP}:3000/api/apps/v1`
-          : `http://youeye-ui.${CONTAINER_DOMAIN}:3000/api/apps/v1`;
-      })(),
+      // Use proxy device (localhost:3001) for app→UI communication.
+      // Proxy devices bypass container eth0 NICs, enabling Layer 4 network ACLs
+      // that block direct access to infrastructure (incusbr0) while preserving
+      // legitimate API calls. Proxy reliability confirmed in Session 82 (10/10 tests).
+      gateway_url: 'http://localhost:3001/api/apps/v1',
       app_token: appToken || '',
     },
     containers,

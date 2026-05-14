@@ -318,6 +318,13 @@ export async function POST(request: NextRequest) {
               // Non-critical — Spine can still use IP-based access
             }
 
+            // Security: Strip service-auth headers from all external requests
+            try {
+              await caddy.ensureHeaderStrippingRoute();
+            } catch {
+              // Non-critical — internal traffic is unaffected
+            }
+
             if (routeErrors.length > 0) {
               stepUpdate('caddy', 'done', `Routes created with ${routeErrors.length} error(s): ${routeErrors.join('; ')}`);
             } else {

@@ -74,35 +74,26 @@ function validateBridgeAuth(request: NextRequest): boolean {
   return expected !== null && provided === expected;
 }
 
-/**
- * Validate app-slug auth from native apps on the Incus internal network.
- * Native apps send X-App-Slug to identify themselves (trust boundary: Incus network).
- */
-function validateAppSlugAuth(request: NextRequest): string | null {
-  const slug = request.headers.get("X-App-Slug") ?? request.headers.get("x-app-slug");
-  if (!slug) return null;
-  // Accept any slug — trust boundary is Incus internal network
-  return slug;
-}
-
 export async function POST(request: NextRequest) {
-  // Support session auth, bridge token auth (CP→UI), or app-slug auth (native/marketplace apps)
+  // Support session auth, bridge token auth (CP→UI), or service auth (native apps with token)
   let session: Awaited<ReturnType<typeof getSession>> = null;
   try {
     session = await getSession();
   } catch {
     // getSession() throws if JWT_SECRET is not configured — that's fine for
-    // non-session auth paths (bridge token, app-slug)
+    // non-session auth paths (bridge token, service auth)
   }
   const isBridgeAuth = validateBridgeAuth(request);
-  const appSlug = validateAppSlugAuth(request);
+  const serviceUser = !session && !isBridgeAuth
+    ? await resolveServiceAuth(request)
+    : null;
 
-  if (!session && !isBridgeAuth && !appSlug) {
+  if (!session && !isBridgeAuth && !serviceUser) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   // Rate limit inter-app notification ingest (skip for bridge auth — that's CP system calls)
-  if (!isBridgeAuth) {
+  if (!isBridgeAuth && !session) {
     const appSlug = request.headers.get("x-youeye-app") ?? "unknown";
     const rlResult = checkRateLimit(appSlug, "notifications", RATE_LIMITS.notifications);
     if (!rlResult.allowed) {
@@ -124,8 +115,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Bridge/app-slug auth requires explicit user_id; session auth defaults to current user
-    const userId = body.user_id ?? session?.userId;
+    // Service/bridge auth requires explicit user_id; session auth defaults to current user
+    const userId = body.user_id ?? session?.userId ?? serviceUser?.id;
     if (!userId) {
       return NextResponse.json(
         { error: "Missing user_id for non-session-authenticated request" },
@@ -133,8 +124,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Derive app_id from slug if provided via app-slug auth
-    const appId = body.app_id ?? (appSlug ? `ye-${appSlug.replace("ye-", "")}` : undefined);
+    // Derive app_id from service auth or request body
+    const rawAppId = request.headers.get("x-youeye-app");
+    const appId = body.app_id ?? (rawAppId ? `ye-${rawAppId.replace("ye-", "")}` : undefined);
 
     const notif = await createNotification({
       userId,

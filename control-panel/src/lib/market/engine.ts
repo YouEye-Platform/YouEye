@@ -807,6 +807,46 @@ export async function installApp(
       // Hot-plug Caddy NIC onto the app bridge (Docker/Traefik model)
       await addCaddyToAppNetwork(appId);
 
+      // Layer 4: Attach infrastructure-blocking ACL to each app container.
+      // Blocks direct access to incusbr0 infrastructure (CP, PG, Authentik, Caddy admin).
+      // Legitimate access goes through proxy devices (which bypass eth0 NICs).
+      try {
+        // Ensure the ACL exists (idempotent — 409 means already exists)
+        try {
+          await incusRequest('POST', '/1.0/network-acls', {
+            name: 'ye-app-infra-block',
+            description: 'Block app containers from reaching infrastructure subnet',
+            egress: [{
+              action: 'reject',
+              destination: '10.0.0.0/8',
+              description: 'Block apps from reaching incusbr0 infrastructure',
+            }],
+            ingress: [],
+          });
+        } catch {
+          // ACL likely already exists — fine
+        }
+
+        // Attach ACL to each container's eth0
+        for (const cn of containerNames) {
+          try {
+            const deviceResp = await incusRequest<{ metadata: Record<string, unknown> }>('GET', `/1.0/instances/${cn}`);
+            const instance = deviceResp?.metadata as Record<string, unknown> | undefined;
+            const devices = (instance?.devices ?? {}) as Record<string, Record<string, string>>;
+            if (devices.eth0) {
+              devices.eth0['security.acls'] = 'ye-app-infra-block';
+              devices.eth0['security.acls.default.egress.action'] = 'allow';
+              devices.eth0['security.acls.default.ingress.action'] = 'allow';
+              await incusRequest('PATCH', `/1.0/instances/${cn}`, { devices });
+            }
+          } catch (aclErr) {
+            console.warn(`[engine] Failed to attach ACL to ${cn}:`, aclErr);
+          }
+        }
+      } catch (aclErr) {
+        console.warn('[engine] ACL setup warning:', aclErr);
+      }
+
       emit(onEvent, step, totalSteps, 'success', `Network isolation configured for ${containerNames.length} containers`);
     } catch (netErr) {
       console.warn('[engine] Network configuration warning:', netErr);

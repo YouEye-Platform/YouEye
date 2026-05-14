@@ -2,17 +2,22 @@
  * Service-to-Service Authentication
  *
  * Resolves user identity from X-YouEye-App + X-YouEye-User headers.
- * Trust boundary: Incus container network (not externally exposed).
+ * Layer 2 security: verifies app identity via Bearer token (YOUEYE_APP_TOKEN).
  *
  * When a native app (like Wiki) makes server-side calls to YE-UI,
- * it forwards user identity via these headers. YE-UI validates
- * that the calling app is registered and the user exists.
+ * it sends: Authorization: Bearer <token>, X-YouEye-App, X-YouEye-User.
+ * YE-UI validates the token hash matches the stored hash in the apps table,
+ * then verifies the app is registered and the user exists.
+ *
+ * Grace period: apps without tokens are warned but allowed through.
+ * Strict mode: uncomment the return-null lines after all apps are updated.
  */
 
 import type { NextRequest } from "next/server";
 import { db, ensureSchema } from "@/db";
 import { users, apps } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { validateAppToken } from "./app-token";
 
 interface ServiceUser {
   id: string;
@@ -47,6 +52,40 @@ export async function resolveServiceAuth(
 
   try {
     await ensureSchema();
+
+    // === Layer 2: Verify app token ===
+    const authHeader = request.headers.get("authorization");
+    const tokenResult = await validateAppToken(request);
+
+    if (tokenResult) {
+      // Token provided and valid — verify it matches the claimed app
+      const tokenAppId = tokenResult.appId.replace(/^ye-/, "");
+      if (tokenAppId !== appId && tokenResult.appId !== rawAppId) {
+        console.warn(`[Service Auth] Token/app mismatch: token=${tokenResult.appId}, header=${rawAppId}`);
+        return null;
+      }
+    } else if (authHeader?.startsWith("Bearer ")) {
+      // Token provided but validation failed — check if app has no hash yet
+      const appCheck = await db
+        .select({ id: apps.id, tokenHash: apps.tokenHash })
+        .from(apps)
+        .where(eq(apps.id, appId))
+        .limit(1);
+
+      if (appCheck.length > 0 && appCheck[0].tokenHash === null) {
+        console.warn(`[Service Auth] App ${rawAppId} has no token_hash registered — grace period`);
+      } else {
+        console.warn(`[Service Auth] Invalid token from ${rawAppId} — grace period`);
+        // TODO: After all apps updated and verified, uncomment to enforce:
+        // return null;
+      }
+    } else {
+      // No token at all — grace period
+      console.warn(`[Service Auth] No app token from ${rawAppId} — grace period`);
+      // TODO: After all apps updated and verified, uncomment to enforce:
+      // return null;
+    }
+    // === End Layer 2 ===
 
     // Verify the app is registered in the apps table (dynamic — no hardcoded list)
     let appRows = await db

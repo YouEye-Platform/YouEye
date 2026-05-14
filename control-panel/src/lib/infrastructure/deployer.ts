@@ -21,7 +21,7 @@ import { deployLXDContainer } from './lxd-deployer';
 import { waitForPostgres, waitForAuthentik, waitForCaddy, waitForPiHole } from './health-checks';
 import { setupAuthentikDatabase } from './postgres-setup';
 import { createAuthentikAPIToken, setupCaddyAuthentikRoute } from './authentik-setup';
-import { setDefaultRoute, ensurePingRoute, setContainerRoute } from '../caddy/client';
+import { setDefaultRoute, ensurePingRoute, ensureHeaderStrippingRoute, setContainerRoute } from '../caddy/client';
 import { settingsService } from '../settings';
 import { execShell } from '../incus/server';
 import { applyResourcePolicy } from './resource-policy';
@@ -217,6 +217,12 @@ export async function deployInfrastructure(
         await ensurePingRoute('youeye-control', 3000);
       } catch (err) {
         console.error('Failed to set /api/ping route:', err);
+      }
+      // Security: Strip service-auth headers from all external requests
+      try {
+        await ensureHeaderStrippingRoute();
+      } catch (err) {
+        console.error('Failed to set header-stripping route:', err);
       }
     }
   } catch (err) {

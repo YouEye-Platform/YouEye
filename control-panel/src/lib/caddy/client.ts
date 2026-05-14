@@ -1134,6 +1134,71 @@ export async function setDefaultRoute(containerName: string, port: number): Prom
 }
 
 /**
+ * Security: Ensure a global header-stripping route exists at position 0.
+ *
+ * Strips service-auth headers (X-YouEye-App, X-YouEye-User, X-App-Slug,
+ * X-UI-Bridge-Token, X-Authentik-*) from ALL external requests that enter
+ * through Caddy. Internal traffic (app→UI via proxy devices) does NOT go
+ * through Caddy, so this only affects browser/internet traffic.
+ *
+ * The route has NO match clause (matches all requests) and uses a non-terminal
+ * "headers" handler, so it strips the headers and falls through to the next
+ * route that actually proxies the request.
+ */
+export async function ensureHeaderStrippingRoute(): Promise<void> {
+  const config = await getConfig();
+
+  if (!config.apps) config.apps = {};
+  if (!config.apps.http) config.apps.http = {};
+  if (!config.apps.http.servers) config.apps.http.servers = {};
+
+  const serverName = Object.keys(config.apps.http.servers)[0] || 'srv0';
+  if (!config.apps.http.servers[serverName]) {
+    config.apps.http.servers[serverName] = {
+      listen: [':443'],
+      routes: [],
+      tls_connection_policies: [{}],
+    };
+  }
+
+  const routes = config.apps.http.servers[serverName].routes || [];
+
+  // Already exists? Skip.
+  if (routes.some(r => r['@id'] === 'security-header-strip')) {
+    return;
+  }
+
+  // Non-terminal route: strips headers, then falls through to next route.
+  // No "match" = matches ALL requests.
+  const stripRoute: CaddyRoute = {
+    '@id': 'security-header-strip',
+    handle: [{
+      handler: 'headers',
+      request: {
+        delete: [
+          'X-Youeye-App',
+          'X-Youeye-User',
+          'X-App-Slug',
+          'X-Ui-Bridge-Token',
+          'X-Authentik-Username',
+          'X-Authentik-Email',
+          'X-Authentik-Groups',
+          'X-Authentik-Name',
+          'X-Authentik-Uid',
+        ],
+      },
+    }],
+  };
+
+  // Insert at position 0 (before api-ping-route and all host-matched routes)
+  routes.unshift(stripRoute);
+  config.apps.http.servers[serverName].routes = routes;
+
+  await setConfig(config);
+  console.log('[Caddy] Security header-stripping route ensured at position 0');
+}
+
+/**
  * BUG-022: Ensure a /api/ping route exists that proxies to the Control Panel.
  *
  * When the root domain (e.g. johnvm.test) is routed to YE-UI, requests to

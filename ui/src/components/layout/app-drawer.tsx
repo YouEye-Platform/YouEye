@@ -117,23 +117,25 @@ function AppIcon({
   className?: string;
   size?: number;
 }) {
+  const [imgError, setImgError] = useState(false);
   const sizeStyle = size ? { width: size, height: size } : undefined;
   // Resolve display icon: customIconUrl overrides icon
   const displayIcon = customIconUrl ?? icon;
   if (displayIcon && displayIcon.startsWith("emoji:")) {
     return <span className="text-xl leading-none" style={size ? { fontSize: size * 0.5 } : undefined}>{displayIcon.slice(6)}</span>;
   }
-  if (displayIcon && (displayIcon.startsWith("http") || displayIcon.startsWith("/"))) {
+  if (displayIcon && !imgError && (displayIcon.startsWith("http") || displayIcon.startsWith("/"))) {
     return (
       <img
         src={displayIcon}
         alt={name}
         className={`${size ? "" : className} rounded-xl object-cover`}
         style={sizeStyle}
+        onError={() => setImgError(true)}
       />
     );
   }
-  if (displayIcon) {
+  if (displayIcon && !imgError) {
     const IconComponent = getLucideIcon(displayIcon);
     if (IconComponent) {
       return <IconComponent className="text-foreground/80" style={size ? { width: size * 0.5, height: size * 0.5 } : { width: 20, height: 20 }} />;
