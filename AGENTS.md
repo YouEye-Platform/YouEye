@@ -1,3 +1,22 @@
+## v0.3.6.39 — sebastian — 2026-05-14
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix native app update detection — all 6 native apps invisible to version checker
+
+### Changes
+- `control-panel/src/lib/market/installed-apps.ts` — Fixed `checkForUpdates()` to handle empty `installedVersion`. Previously required both `catalogVersion` AND `installedVersion` to be truthy; now marks update available when installedVersion is empty (self-heals after one update cycle).
+- `control-panel/package.json` — Version bump to 0.3.6.39
+
+### Test Results
+- Code analysis verified: traced full update detection chain through 6 files
+- Verified on live VM via CLI/API: all 6 native apps had `installedVersion: ""` and `catalogVersion: null`
+
+### Notes for Iris
+- Safe change — only affects the falsy-installedVersion code path
+- All 6 native app repos also got `version:` field in `youeye-app.yaml` (manifest-only, no code change)
+- After CP update, all native apps will show "update available" once (expected one-time self-healing)
+
 ## Session 88 — sebastian — 2026-05-14
 **Branch:** sebastian
 **VM:** ye-sebastian
