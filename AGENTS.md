@@ -1,3 +1,27 @@
+## cp-v0.3.6.34 + ui-v0.3.4.41 — sebastian — 2026-05-14
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Native apps API security hardening (Layers 1, 2, 4) + UX fixes + bug fix
+
+### Changes
+- `control-panel/src/lib/caddy/client.ts` — new ensureHeaderStrippingRoute() strips 9 service-auth headers from external requests
+- `control-panel/src/lib/infrastructure/deployer.ts` — calls header stripping route during deployment
+- `control-panel/src/app/api/setup/run/route.ts` — calls header stripping route during setup wizard
+- `control-panel/src/lib/market/platform-env.ts` — YOUEYE_GATEWAY → localhost:3001, AUTHENTIK_INTERNAL_URL → localhost:9000
+- `control-panel/src/lib/market/engine.ts` — ye-app-infra-block ACL creation + attachment to app containers
+- `ui/src/lib/auth/service.ts` — Bearer token verification in resolveServiceAuth() with grace period
+- `ui/src/middleware.ts` — removed X-App-Slug bypass
+- `ui/src/app/api/v1/notifications/route.ts` — rewrote POST to use resolveServiceAuth()
+- `ui/src/components/layout/app-drawer.tsx` — AppIcon onError handler for broken SVG favicons
+
+### Notes for Iris
+- Grace period is active: token failures are logged but not rejected. To enable strict mode, uncomment `return null` lines in `ui/src/lib/auth/service.ts`.
+- All 6 native apps + Canvas template updated with matching Bearer token + UX changes in their repos.
+- Deploy CP first (header stripping + ACL), then UI, then apps.
+
+---
+
 ## cp-v0.3.6.33 — sebastian — 2026-05-14
 **Branch:** sebastian
 **VM:** ye-sebastian
