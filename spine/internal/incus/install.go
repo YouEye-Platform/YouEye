@@ -125,6 +125,9 @@ func Install() error {
 	if err := ConfigureSystemDHCP(); err != nil {
 		fmt.Printf("Warning: could not configure static IP DHCP range: %v\n", err)
 	}
+	if err := ConfigureSystemDNS(); err != nil {
+		fmt.Printf("Warning: could not configure system DNS records: %v\n", err)
+	}
 
 	// Configure OCI remote for Docker Hub images
 	configureOCIRemote()
@@ -393,6 +396,9 @@ func initializeManually(preseedErr error, zfsAvailable bool) error {
 	// Restrict DHCP range for static system IPs
 	if err := ConfigureSystemDHCP(); err != nil {
 		fmt.Printf("Warning: could not configure static IP DHCP range: %v\n", err)
+	}
+	if err := ConfigureSystemDNS(); err != nil {
+		fmt.Printf("Warning: could not configure system DNS records: %v\n", err)
 	}
 
 	return nil

@@ -80,6 +80,39 @@ func ConfigureSystemDHCP() error {
 	return nil
 }
 
+// ConfigureSystemDNS writes host-record entries into incusbr0's raw.dnsmasq
+// config so that all system containers are resolvable by name (e.g.
+// youeye-caddy.youeye) regardless of whether the container OS runs a DHCP
+// client. Alpine-based containers (caddy, postgres, pihole) don't send DHCP
+// requests, so dnsmasq never creates a lease and the hostname stays
+// unresolvable without explicit host-record entries.
+//
+// Called alongside ConfigureSystemDHCP — both are needed for static IPs to
+// be fully functional (reachable by IP AND by name).
+func ConfigureSystemDNS() error {
+	base, err := GetSubnetBase()
+	if err != nil {
+		return err
+	}
+
+	domain := "youeye" // must match incusbr0 dns.domain
+
+	var lines []string
+	for name, offset := range SystemContainerIPOffsets {
+		lines = append(lines, fmt.Sprintf("host-record=%s.%s,%s.%d", name, domain, base, offset))
+	}
+
+	raw := strings.Join(lines, "\n")
+
+	if err := exec.Command("incus", "network", "set", "incusbr0",
+		"raw.dnsmasq="+raw).Run(); err != nil {
+		return fmt.Errorf("failed to set raw.dnsmasq host records: %w", err)
+	}
+
+	fmt.Printf("✓ DNS host-records set for %d system containers\n", len(SystemContainerIPOffsets))
+	return nil
+}
+
 // SetContainerStaticIP sets a static IP device override on a system container's
 // eth0 NIC. Works on both running and stopped containers. Idempotent.
 func SetContainerStaticIP(containerName string) error {
