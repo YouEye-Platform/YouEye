@@ -1,3 +1,21 @@
+## cp-v0.3.6.37 + ui-v0.3.4.43 — sebastian — 2026-05-14
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix profile picture display bugs in settings embed and onboarding avatar
+
+### Changes
+- `ui/src/components/settings/profile-settings.tsx` — Convert relative avatar URL to absolute before sending to CP embed via postMessage (fixes broken image in profile settings)
+- `ui/src/app/onboarding/page.tsx` — Fetch username from profile API and pass to avatar embed URL param (fixes "?" initials during onboarding)
+- `control-panel/src/app/embed/avatar/page.tsx` — Read username from URL searchParams as fallback when no CP session exists
+
+### Test Results
+- Manual verification of code changes; operator will test on live VM
+
+### Notes for Iris
+- No DB migrations, no new dependencies
+- Both bugs stem from CP embed running on different subdomain without access to UI-side data
+
 ## cp-v0.3.6.36 — sebastian — 2026-05-14
 **Branch:** sebastian
 **VM:** ye-sebastian
