@@ -256,6 +256,88 @@ async function readBridgeToken(): Promise<string | null> {
   }
 }
 
+/**
+ * Fetch an icon image and return it as a base64 data URI.
+ * This inlines the icon at install time so it works on all domains
+ * (UI, native app subdomains) without needing a runtime image proxy.
+ * Returns null on failure — caller should fall back to the Lucide icon name.
+ */
+async function fetchIconAsDataUri(iconRef: string): Promise<string | null> {
+  // Extract the real URL from proxy wrapper if present
+  let url = iconRef;
+  if (iconRef.startsWith('/api/market/image?url=')) {
+    const encoded = iconRef.replace('/api/market/image?url=', '');
+    url = decodeURIComponent(encoded);
+  }
+
+  if (!url.startsWith('http')) return null;
+
+  try {
+    const https = await import('https');
+    const parsed = new URL(url);
+    const isInsecure = parsed.hostname === 'git.byka.wtf';
+
+    const buffer: Buffer = await new Promise((resolve, reject) => {
+      const options = {
+        hostname: parsed.hostname,
+        port: parsed.port || 443,
+        path: parsed.pathname + parsed.search,
+        method: 'GET',
+        rejectUnauthorized: !isInsecure,
+        timeout: 10_000,
+      };
+
+      const req = https.request(options, (res) => {
+        // Follow redirects
+        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          const redirectUrl = new URL(res.headers.location, url).href;
+          fetchIconAsDataUri(redirectUrl).then(r => {
+            if (r) {
+              // Return the data URI as a Buffer trick — unwrap in caller
+              resolve(Buffer.from(r, 'utf-8'));
+            } else {
+              reject(new Error('Redirect failed'));
+            }
+          }).catch(reject);
+          return;
+        }
+        if (res.statusCode && res.statusCode >= 400) {
+          reject(new Error(`HTTP ${res.statusCode}`));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+      req.end();
+    });
+
+    // Determine MIME type from URL extension or content
+    const ext = parsed.pathname.split('.').pop()?.toLowerCase();
+    const mimeMap: Record<string, string> = {
+      svg: 'image/svg+xml',
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      webp: 'image/webp',
+      gif: 'image/gif',
+      ico: 'image/x-icon',
+    };
+    const mime = mimeMap[ext ?? ''] ?? 'image/png';
+
+    // Check if we got a data URI back from redirect handling
+    const asString = buffer.toString('utf-8');
+    if (asString.startsWith('data:')) return asString;
+
+    return `data:${mime};base64,${buffer.toString('base64')}`;
+  } catch (err) {
+    console.warn(`[engine] Failed to inline icon from ${url}:`, err);
+    return null;
+  }
+}
+
 async function registerAppWithUI(
   appId: string,
   name: string,
@@ -1049,7 +1131,16 @@ export async function installApp(
   emit(onEvent, step, totalSteps, 'running', 'Registering with dashboard...');
   try {
     const displayName = config.customName || manifest.metadata.name;
-    const displayIcon = config.customIcon || manifest.metadata.iconUrl || manifest.metadata.icon || null;
+    // Inline icon as base64 data URI so it works on all subdomains
+    const iconRef = config.customIcon || manifest.metadata.iconUrl || null;
+    let displayIcon: string | null = null;
+    if (iconRef) {
+      displayIcon = await fetchIconAsDataUri(iconRef);
+    }
+    // Fall back to Lucide icon name if inlining failed or no URL available
+    if (!displayIcon) {
+      displayIcon = manifest.metadata.icon || null;
+    }
     const ssoEntryUrl = manifest.sso?.entry_url
       ? resolveVariables(manifest.sso.entry_url, ctx)
       : undefined;
