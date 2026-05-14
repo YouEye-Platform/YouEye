@@ -1,3 +1,24 @@
+## cp-v0.3.6.35 + ui-v0.3.4.42 — sebastian — 2026-05-14
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Inline app icons as base64 data URIs for cross-subdomain compatibility
+
+### Changes
+- `control-panel/src/lib/market/engine.ts` — Added `fetchIconAsDataUri()` helper that fetches icon images at install time and converts to base64 data URIs. Modified icon resolution in Step 10 to inline icons instead of storing proxy URLs.
+- `ui/src/components/layout/app-drawer.tsx` — Added `data:` prefix to image source check
+- `ui/src/components/settings/app-drawer-settings.tsx` — Added `data:` prefix to image source check
+- `ui/src/components/settings/app-settings-detail.tsx` — Added `data:` prefix to image source check
+- `ui/src/app/settings/apps/client.tsx` — Added `data:` prefix to image source check
+
+### Test Results
+- Manual API verification: image proxy returns valid SVG on UI domain, 401 on wiki subdomain (confirmed root cause)
+- Screenshot verification: SearXNG icon renders on UI domain, broken on wiki subdomain (confirmed fix addresses this)
+
+### Notes for Iris
+- Icons stored as proxy URLs for existing apps won't auto-fix — apps need to be reinstalled to get the new data URI format
+- No database schema changes — the `icon` column just stores a different string format
+
 ## cp-v0.3.6.34 + ui-v0.3.4.41 — sebastian — 2026-05-14
 **Branch:** sebastian
 **VM:** ye-sebastian
