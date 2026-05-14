@@ -252,11 +252,17 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
     }
 
     let hasUpdate = false;
-    if (catalogVersion && app.installedVersion) {
-      try {
-        hasUpdate = isNewer(catalogVersion, app.installedVersion);
-      } catch {
-        hasUpdate = false;
+    if (catalogVersion) {
+      if (app.installedVersion) {
+        try {
+          hasUpdate = isNewer(catalogVersion, app.installedVersion);
+        } catch {
+          hasUpdate = false;
+        }
+      } else {
+        // App installed without version tracking — flag as update available.
+        // After one update cycle, installedVersion gets recorded and future checks work normally.
+        hasUpdate = true;
       }
     }
 
