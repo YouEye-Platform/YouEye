@@ -1,3 +1,24 @@
+## cp v0.3.6.41 — sebastian — 2026-05-14
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix CP update embed — progress feedback, marketplace check, host/incus updates
+
+### Changes
+- `src/app/api/ui-bridge/apps/route.ts` — Check for Updates now also calls refreshVersionCheck() for marketplace apps; added host-system and incus update detection mapping
+- `src/app/api/ui-bridge/updates/[component]/route.ts` — LXD and marketplace app updates now write intermediate writeStatus() from onEvent callbacks for real-time progress; spine/control get initial downloading status
+- `src/app/embed/apps/client.tsx` — Client starts polling before POST fires (fire-and-forget pattern) so intermediate progress states are visible in the UI
+- `src/lib/updates/state.ts` — Changed component validation from hardcoded allowlist to regex format check, supporting dynamic marketplace app IDs
+- `src/lib/apps/lxd-updater.ts` — Re-export UpdateEvent type for route handler usage
+
+### Test Results
+- No Playwright testing (per operator instructions)
+
+### Notes for Iris
+- No breaking changes, all additive
+- Host-system and incus update display depends on Spine's checkUpdates API returning system/incus fields
+- Component validation now uses regex `/^[a-z0-9][a-z0-9-]*$/` instead of Set — any valid app ID works
+
 ## spine v0.3.2.13 — sebastian — 2026-05-14
 **Branch:** sebastian
 **VM:** ye-sebastian
