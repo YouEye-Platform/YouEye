@@ -1,3 +1,44 @@
+## cp-v0.3.6.33 — sebastian — 2026-05-14
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Decouple CP from PostgreSQL + Settings Unification
+
+### Changes
+
+**Plan 1 — Decouple CP from PostgreSQL:**
+- `control-panel/src/lib/storage/json-store.ts` — NEW: atomic JSON read/write utility for state files
+- `control-panel/src/lib/market/installed-apps.ts` — REWRITE: replaced psql operations with JSON store at `/var/lib/youeye/state/installed-apps.json`
+- `control-panel/src/lib/updates/state.ts` — REWRITE: replaced psql with JSON store at `/var/lib/youeye/state/update-status.json`
+- `control-panel/src/lib/updates/queue.ts` — REWRITE: replaced psql with JSON store at `/var/lib/youeye/state/update-queue.json`
+- `control-panel/src/lib/postgres/client.ts` — wrapped monitoring APIs in try/catch for graceful degradation
+- `control-panel/src/lib/market/engine.ts` — added pg_isready pre-check before database operations
+- `control-panel/src/lib/market/uninstaller.ts` — added pg_isready pre-check for database cleanup
+
+**Plan 2 — Settings Unification:**
+- `control-panel/src/components/settings/profile-card.tsx` — NEW: profile editing (name + avatar with 32 emoji presets)
+- `control-panel/src/components/settings/tls-card.tsx` — NEW: TLS cert management (status, ACME, upload)
+- `control-panel/src/components/settings/icon-creator.tsx` — NEW: 4-tab icon picker + shape/bg controls + accent color
+- `control-panel/src/app/api/user/language/route.ts` — NEW: dashboard-compatible per-user language sync
+- `control-panel/src/components/settings/language-card.tsx` — added fire-and-forget user language sync call
+- `control-panel/src/app/(dashboard)/settings/page.tsx` — added ProfileCard, TlsCard, IconCreator; removed WebhooksCard
+- `control-panel/src/lib/events/emitter.ts` — removed all webhook code (kept app event delivery)
+- `control-panel/src/components/layout/sidebar.tsx` — removed Apps Legacy nav item
+- Deleted: `apps-legacy/page.tsx`, `api/settings/webhooks/route.ts`, `embed/proxy/*`
+
+### Test Results
+- Build passes (pnpm build, Next.js 16.1.4)
+- No Playwright testing (per operator instruction — fresh install testing planned)
+
+### Notes for Iris
+- JSON state files are created on first use at `/var/lib/youeye/state/`
+- PostgreSQL is still used by apps for shared databases — only CP internal tables are migrated
+- All existing API route signatures preserved — no breaking changes
+- Webhooks feature fully removed — any webhook configs in `/var/lib/youeye/control/webhooks.json` will be orphaned
+- New settings components use authenticatedFetch() for CSRF compatibility
+
+---
+
 ## cp-v0.3.6.32 — sebastian — 2026-05-13
 **Branch:** sebastian
 **VM:** ye-sebastian
