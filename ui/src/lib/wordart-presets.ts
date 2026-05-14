@@ -1,7 +1,7 @@
 /**
  * WordArt Building Blocks for YE-UI
  *
- * Mirrors the CP's wordart-presets.ts. Users pick from four categories:
+ * Mirrors the the Control Panel's wordart-presets.ts. Users pick from four categories:
  * Font, Effect, Shape, Colour — each with intensity controls.
  */
 

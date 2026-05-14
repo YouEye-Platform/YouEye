@@ -3,7 +3,7 @@
  *
  * POST /api/ui-bridge/branding/upload
  *
- * Receives file uploads from CP bridge and saves them like the public upload endpoint.
+ * Receives file uploads from the Control Panel bridge and saves them like the public upload endpoint.
  */
 
 import { NextRequest, NextResponse } from "next/server";

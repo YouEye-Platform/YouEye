@@ -36,7 +36,7 @@ export default function OfflinePage() {
           color: "#fff",
         }}
       >
-        CP
+        Control
       </div>
       <h1 style={{ fontSize: "1.5rem", fontWeight: 600, margin: "0 0 0.5rem" }}>
         You&apos;re offline

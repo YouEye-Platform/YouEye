@@ -3,7 +3,7 @@
  *
  * POST /api/ui-bridge/branding/icon
  *
- * Receives multipart (icon_config + icon_blob) from CP bridge and
+ * Receives multipart (icon_config + icon_blob) from the Control Panel bridge and
  * processes them identically to the public icon endpoint.
  */
 

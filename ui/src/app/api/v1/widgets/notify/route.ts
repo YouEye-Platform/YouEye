@@ -18,11 +18,9 @@ export async function POST(request: Request) {
     );
   }
 
-  // For now, acknowledge the notification
-  // In future, this could trigger SSE/WebSocket push to connected clients
-  console.log(
-    `Widget notify: app=${app_id} widget=${widget_id ?? "all"} event=${event ?? "update"}`
-  );
+  // TODO: implement real-time push to connected clients (SSE/WebSocket)
+  // For now, acknowledge the notification so apps don't get errors.
+  // Widget data is still refreshed on the next client-side poll cycle.
 
   return NextResponse.json({
     success: true,

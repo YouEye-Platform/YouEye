@@ -313,7 +313,7 @@ func provisionBridgeToken() {
 	} else if out, err := exec.Command("incus", "exec", "youeye-control", "--",
 		"cat", containerTokenPath).Output(); err == nil && len(strings.TrimSpace(string(out))) == 64 {
 		token = strings.TrimSpace(string(out))
-		fmt.Println("  Using existing bridge token from CP container")
+		fmt.Println("  Using existing bridge token from Control Panel container")
 	} else {
 		token = util.GenerateBridgeToken()
 		fmt.Println("  Generated new bridge token")
@@ -416,7 +416,7 @@ func provisionCLIToken() {
 	// Push to CP container
 	out, err := exec.Command("incus", "list", "youeye-control", "--format", "csv", "-c", "s").Output()
 	if err != nil || !strings.Contains(strings.ToUpper(string(out)), "RUNNING") {
-		fmt.Println("  Skipping CP push (not running)")
+		fmt.Println("  Skipping Control Panel push (not running)")
 		return
 	}
 
@@ -424,7 +424,7 @@ func provisionCLIToken() {
 
 	existingOut, _ := exec.Command("incus", "exec", "youeye-control", "--", "cat", containerTokenPath).Output()
 	if strings.TrimSpace(string(existingOut)) == token {
-		fmt.Println("  ✓ CP already has correct CLI token")
+		fmt.Println("  ✓ Control Panel already has correct CLI token")
 	} else {
 		tmpFile := "/tmp/.ye-cli-token"
 		if err := os.WriteFile(tmpFile, []byte(token), 0600); err != nil {
@@ -434,11 +434,11 @@ func provisionCLIToken() {
 		defer os.Remove(tmpFile)
 
 		if err := util.RunCmdQuiet("incus", "file", "push", tmpFile, "youeye-control"+containerTokenPath); err != nil {
-			fmt.Printf("  Warning: could not push CLI token to CP: %v\n", err)
+			fmt.Printf("  Warning: could not push CLI token to Control Panel: %v\n", err)
 			return
 		}
 		exec.Command("incus", "exec", "youeye-control", "--", "chmod", "600", containerTokenPath).Run()
-		fmt.Println("  ✓ CLI token pushed to CP")
+		fmt.Println("  ✓ CLI token pushed to Control Panel")
 	}
 
 	fmt.Println("✓ CLI token provisioned")

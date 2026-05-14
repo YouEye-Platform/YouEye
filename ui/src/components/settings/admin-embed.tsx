@@ -93,7 +93,7 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
         sendThemeToEmbed();
         // For self-collapsing embeds (minHeight=0), defer ready until we
         // know the embed has non-zero content — otherwise the iframe briefly
-        // shows the CP embed's own loading skeleton before collapsing to 0.
+        // shows the Control Panel embed's own loading skeleton before collapsing to 0.
         if (minHeight > 0) setReady(true);
       }
 

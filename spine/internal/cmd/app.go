@@ -19,7 +19,7 @@ var appListCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		data, err := cp.Get("/api/apps/unified")
+		data, err := controlClient.Get("/api/apps/unified")
 		if err != nil {
 			return err
 		}
@@ -121,7 +121,7 @@ var appInstallCmd = &cobra.Command{
 
 		if appInstallURL != "" {
 			output.Info("Installing from URL: " + appInstallURL)
-			return cp.PostSSE("/api/market/install-url", map[string]interface{}{
+			return controlClient.PostSSE("/api/market/install-url", map[string]interface{}{
 				"url": appInstallURL,
 			}, sseHandler)
 		}
@@ -131,7 +131,7 @@ var appInstallCmd = &cobra.Command{
 		}
 
 		output.Info("Installing " + args[0] + "...")
-		return cp.PostSSE("/api/market/install", map[string]interface{}{
+		return controlClient.PostSSE("/api/market/install", map[string]interface{}{
 			"appId": args[0],
 		}, sseHandler)
 	},
@@ -150,7 +150,7 @@ var appUpdateCmd = &cobra.Command{
 
 		if appUpdateAll {
 			output.Info("Checking for app updates...")
-			updates, err := cp.Get("/api/market/updates")
+			updates, err := controlClient.Get("/api/market/updates")
 			if err != nil {
 				return err
 			}
@@ -161,7 +161,7 @@ var appUpdateCmd = &cobra.Command{
 						if updateAvail, _ := app["updateAvailable"].(bool); updateAvail {
 							name := firstOf(app, "appId", "name")
 							output.Info("Updating " + name + "...")
-							if err := cp.PostSSE("/api/market/update", map[string]interface{}{
+							if err := controlClient.PostSSE("/api/market/update", map[string]interface{}{
 								"appId": name,
 							}, sseHandler); err != nil {
 								output.Error("Failed to update " + name + ": " + err.Error())
@@ -182,7 +182,7 @@ var appUpdateCmd = &cobra.Command{
 		}
 
 		output.Info("Updating " + args[0] + "...")
-		return cp.PostSSE("/api/market/update", map[string]interface{}{
+		return controlClient.PostSSE("/api/market/update", map[string]interface{}{
 			"appId": args[0],
 		}, sseHandler)
 	},
@@ -199,7 +199,7 @@ var appRemoveCmd = &cobra.Command{
 			return nil
 		}
 		output.Info("Removing " + args[0] + "...")
-		result, err := cp.Post("/api/market/uninstall", map[string]interface{}{
+		result, err := controlClient.Post("/api/market/uninstall", map[string]interface{}{
 			"appId":    args[0],
 			"keepData": appRemoveKeepData,
 		})
@@ -224,7 +224,7 @@ func newAppControlCmd(action string) *cobra.Command {
 			if !requireCP() {
 				return nil
 			}
-			result, err := cp.Post("/api/apps/"+args[0]+"/control", map[string]interface{}{
+			result, err := controlClient.Post("/api/apps/"+args[0]+"/control", map[string]interface{}{
 				"action": action,
 			})
 			if err != nil {
@@ -248,7 +248,7 @@ var appCredentialsCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		data, err := cp.Get("/api/market/credentials?appId=" + args[0])
+		data, err := controlClient.Get("/api/market/credentials?appId=" + args[0])
 		if err != nil {
 			return err
 		}
@@ -274,7 +274,7 @@ var appCheckUpdatesCmd = &cobra.Command{
 			return nil
 		}
 		output.Info("Checking for updates...")
-		data, err := cp.Post("/api/apps/check-updates", nil)
+		data, err := controlClient.Post("/api/apps/check-updates", nil)
 		if err != nil {
 			return err
 		}

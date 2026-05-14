@@ -17,7 +17,7 @@ var setupStatusCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		data, err := cp.Get("/api/setup/config")
+		data, err := controlClient.Get("/api/setup/config")
 		if err != nil {
 			return err
 		}
@@ -30,7 +30,7 @@ var setupStatusCmd = &cobra.Command{
 			output.Info("Open the web UI to complete setup")
 		}
 
-		if steps, err := cp.Get("/api/setup/steps"); err == nil {
+		if steps, err := controlClient.Get("/api/setup/steps"); err == nil {
 			if stepList, ok := steps["steps"].([]interface{}); ok {
 				for _, s := range stepList {
 					if step, ok := s.(map[string]interface{}); ok {
@@ -52,7 +52,7 @@ var setupReconfigureCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		_, err := cp.Post("/api/setup/reconfigure", nil)
+		_, err := controlClient.Post("/api/setup/reconfigure", nil)
 		if err != nil {
 			return err
 		}

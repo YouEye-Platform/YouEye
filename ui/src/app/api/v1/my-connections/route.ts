@@ -7,7 +7,7 @@
  * Auth: X-YouEye-App header must match a registered app in the DB.
  * No user context needed — this is app-level, not user-level.
  *
- * Data source: `apps.connections` JSONB column, pushed by CP via
+ * Data source: `apps.connections` JSONB column, pushed by the Control Panel via
  * POST /api/ui-bridge/app-connections whenever bridge state changes.
  */
 

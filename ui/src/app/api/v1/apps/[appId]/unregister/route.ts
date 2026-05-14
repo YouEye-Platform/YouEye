@@ -2,7 +2,7 @@
  * App Unregister API
  *
  * DELETE /api/v1/apps/[appId]/unregister — Remove a native app from YE-UI
- * Used by CP during native app uninstall to clean up dashboard state.
+ * Used by the Control Panel during native app uninstall to clean up dashboard state.
  */
 
 import { NextResponse } from "next/server";

@@ -2,8 +2,8 @@
  * Bridge Token Reader
  *
  * Reads the shared bridge token from /etc/youeye/ui-bridge-token.
- * Used by CP→UI api routes to validate incoming requests from the
- * Control Panel. The UI no longer makes outbound bridge calls to CP.
+ * Used by the Control Panel→UI api routes to validate incoming requests from the
+ * Control Panel. The UI no longer makes outbound bridge calls to the Control Panel.
  */
 
 import { readFileSync } from "fs";

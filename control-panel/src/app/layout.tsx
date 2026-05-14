@@ -38,7 +38,7 @@ export async function generateMetadata(): Promise<Metadata> {
     appleWebApp: {
       capable: true,
       statusBarStyle: "default",
-      title: `${config.site_name} CP`,
+      title: `${config.site_name} Control Panel`,
     },
   };
 }

@@ -104,7 +104,7 @@ export function AppsListClient({
   const router = useRouter();
   const t = useTranslations("appsSettings");
 
-  // Listen for postMessage from CP apps embed (admin app navigation)
+  // Listen for postMessage from the Control Panel apps embed (admin app navigation)
   useEffect(() => {
     function handleMessage(e: MessageEvent) {
       if (e.data?.type === "youeye-app-navigate" && e.data.appId) {

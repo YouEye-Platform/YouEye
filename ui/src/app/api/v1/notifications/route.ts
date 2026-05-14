@@ -75,7 +75,7 @@ function validateBridgeAuth(request: NextRequest): boolean {
 }
 
 export async function POST(request: NextRequest) {
-  // Support session auth, bridge token auth (CP→UI), or service auth (native apps with token)
+  // Support session auth, bridge token auth (Control Panel→UI), or service auth (native apps with token)
   let session: Awaited<ReturnType<typeof getSession>> = null;
   try {
     session = await getSession();
@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Rate limit inter-app notification ingest (skip for bridge auth — that's CP system calls)
+  // Rate limit inter-app notification ingest (skip for bridge auth — that's Control Panel system calls)
   if (!isBridgeAuth && !session) {
     const appSlug = request.headers.get("x-youeye-app") ?? "unknown";
     const rlResult = checkRateLimit(appSlug, "notifications", RATE_LIMITS.notifications);

@@ -5,8 +5,8 @@
  *
  * Apps publish their widget declarations to YE-UI.
  * Accepts both app tokens (Bearer) and bridge tokens (X-UI-Bridge-Token).
- * This endpoint replaces the old CP-hosted equivalent —
- * apps now talk to YE-UI directly instead of through CP.
+ * This endpoint replaces the old Control Panel-hosted equivalent —
+ * apps now talk to YE-UI directly instead of through the Control Panel.
  */
 
 import { NextResponse } from "next/server";

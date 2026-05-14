@@ -7,8 +7,8 @@
  *   3. Fallback: "en"
  *
  * One-Way Bridge: Language is now stored locally in UI's database.
- * CP pushes changes via PUT /api/ui-bridge/language (CP → UI direction).
- * UI never fetches from CP.
+ * Control Panel pushes changes via PUT /api/ui-bridge/language (CP → UI direction).
+ * UI never fetches from the Control Panel.
  */
 
 import { getRequestConfig } from "next-intl/server";

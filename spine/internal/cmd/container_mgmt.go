@@ -21,7 +21,7 @@ var containerMgmtListCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		data, err := cp.Get("/api/apps/unified")
+		data, err := controlClient.Get("/api/apps/unified")
 		if err != nil {
 			return err
 		}
@@ -100,7 +100,7 @@ var containerMgmtExecCmd = &cobra.Command{
 		}
 
 		command := strings.Join(cmdArgs, " ")
-		result, err := cp.Post("/api/incus/"+container+"/exec", map[string]interface{}{
+		result, err := controlClient.Post("/api/incus/"+container+"/exec", map[string]interface{}{
 			"command": command,
 		})
 		if err != nil {
@@ -124,7 +124,7 @@ var containerMgmtLogsCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		data, err := cp.Get("/api/incus/" + args[0] + "/logs")
+		data, err := controlClient.Get("/api/incus/" + args[0] + "/logs")
 		if err != nil {
 			return err
 		}

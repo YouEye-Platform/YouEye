@@ -299,10 +299,10 @@ export default function SettingsPage() {
       { id: 'yaml', label: 'Updating site configuration', status: 'pending' },
       { id: 'caddy', label: 'Updating reverse proxy', status: 'pending' },
       { id: 'dns', label: 'Updating DNS', status: 'pending' },
-      { id: 'sso_cp', label: 'Updating CP SSO', status: 'pending' },
+      { id: 'sso_cp', label: 'Updating Control Panel SSO', status: 'pending' },
       { id: 'sso_ui', label: 'Updating UI SSO', status: 'pending' },
       { id: 'ui_db', label: 'Updating UI branding', status: 'pending' },
-      { id: 'cp_env', label: 'Updating CP environment', status: 'pending' },
+      { id: 'cp_env', label: 'Updating Control Panel environment', status: 'pending' },
     ]);
 
     try {

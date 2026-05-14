@@ -5,8 +5,8 @@
  *
  * Returns platform metadata to authenticated apps.
  * Apps authenticate with Bearer token (validated by hash lookup).
- * This endpoint replaces the old CP-hosted equivalent —
- * apps now talk to YE-UI, never to CP.
+ * This endpoint replaces the old Control Panel-hosted equivalent —
+ * apps now talk to YE-UI, never to the Control Panel.
  */
 
 import { NextResponse } from "next/server";

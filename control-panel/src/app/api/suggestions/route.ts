@@ -76,7 +76,10 @@ export async function POST(request: Request) {
         const targetContainer = targetMeta.containers?.[0]?.containerName || `app-${suggestion.targetAppId}`;
         const targetSub = targetMeta.subdomain || suggestion.targetAppId;
         const config = await settingsService.getRaw();
-        const domain = config.domain || 'localhost';
+        if (!config.domain) {
+          return NextResponse.json({ error: 'Domain not configured in settings' }, { status: 500 });
+        }
+        const domain = config.domain;
 
         // Get target port from manifest wants
         let targetPort = 8080;

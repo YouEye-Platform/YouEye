@@ -1,7 +1,7 @@
 /**
  * UI Bridge: User Profile Sync
  *
- * POST /api/ui-bridge/user-profile — CP pushes name changes after Authentik save
+ * POST /api/ui-bridge/user-profile — Control Panel pushes name changes after Authentik save
  *
  * Auth: X-UI-Bridge-Token (shared service token).
  *

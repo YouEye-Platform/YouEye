@@ -61,7 +61,7 @@ func DeployUIContainer(cfg *config.Config) error {
 		}
 
 		// Block UI→CP traffic at the network level (one-way bridge enforcement)
-		fmt.Println("Enforcing UI→CP egress block...")
+		fmt.Println("Enforcing UI→Control Panel egress block...")
 		EnforceUIEgressBlock()
 
 		// Install Node.js
@@ -303,7 +303,7 @@ WantedBy=multi-user.target
 func EnforceUIEgressBlock() {
 	cpIP, err := incus.GetSystemContainerIP("youeye-control")
 	if err != nil {
-		fmt.Printf("  Warning: could not resolve CP IP for egress block: %v\n", err)
+		fmt.Printf("  Warning: could not resolve Control Panel IP for egress block: %v\n", err)
 		return
 	}
 
@@ -311,14 +311,14 @@ func EnforceUIEgressBlock() {
 
 	// Create ACL if it doesn't exist (idempotent — Incus returns error if exists)
 	createErr := exec.Command("incus", "network", "acl", "create", aclName,
-		"--description", "Block UI container from reaching CP container").Run()
+		"--description", "Block UI container from reaching Control Panel container").Run()
 	if createErr == nil {
 		fmt.Printf("  Created network ACL: %s\n", aclName)
 		// Add the egress reject rule
 		if err := exec.Command("incus", "network", "acl", "rule", "add", aclName,
 			"egress", "action=reject",
 			fmt.Sprintf("destination=%s/32", cpIP),
-			"description=Block UI from reaching CP",
+			"description=Block UI from reaching Control Panel",
 		).Run(); err != nil {
 			fmt.Printf("  Warning: could not add egress rule to %s: %v\n", aclName, err)
 			return
@@ -339,5 +339,5 @@ func EnforceUIEgressBlock() {
 		return
 	}
 
-	fmt.Printf("  ✓ UI→CP egress block enforced (ACL: %s, blocked: %s)\n", aclName, cpIP)
+	fmt.Printf("  ✓ UI→Control Panel egress block enforced (ACL: %s, blocked: %s)\n", aclName, cpIP)
 }

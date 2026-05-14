@@ -2,7 +2,7 @@
  * Network Settings Page (Admin Only)
  *
  * Tabbed page combining DNS (Pi-Hole) and TLS certificate management.
- * Each tab embeds the respective CP embed via iframe.
+ * Each tab embeds the respective Control Panel embed via iframe.
  */
 
 import { redirect } from "next/navigation";

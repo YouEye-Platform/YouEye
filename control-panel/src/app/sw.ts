@@ -33,7 +33,7 @@ const serwist = new Serwist({
       urlPattern: /\/_next\/static\/.*/i,
       handler: "CacheFirst",
       options: {
-        cacheName: "cp-static-assets",
+        cacheName: "control-static-assets",
         expiration: {
           maxEntries: 200,
           maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days
@@ -45,7 +45,7 @@ const serwist = new Serwist({
       urlPattern: /\/api\/branding\/favicon.*/i,
       handler: "StaleWhileRevalidate",
       options: {
-        cacheName: "cp-branding",
+        cacheName: "control-branding",
         expiration: {
           maxEntries: 10,
           maxAgeSeconds: 60 * 60 * 24, // 1 day
@@ -57,7 +57,7 @@ const serwist = new Serwist({
       urlPattern: /\/api\/.*/i,
       handler: "NetworkFirst",
       options: {
-        cacheName: "cp-api-cache",
+        cacheName: "control-api-cache",
         networkTimeoutSeconds: 5,
         expiration: {
           maxEntries: 50,

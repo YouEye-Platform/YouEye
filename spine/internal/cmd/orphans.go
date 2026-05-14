@@ -17,7 +17,7 @@ app, Caddy routes pointing to unknown upstreams, and orphaned database entries.`
 		if !requireCP() {
 			return nil
 		}
-		data, err := cp.Get("/api/admin/orphans")
+		data, err := controlClient.Get("/api/admin/orphans")
 		if err != nil {
 			return err
 		}
@@ -67,7 +67,7 @@ var orphansCleanCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		result, err := cp.Post("/api/admin/orphans", nil)
+		result, err := controlClient.Post("/api/admin/orphans", nil)
 		if err != nil {
 			return err
 		}

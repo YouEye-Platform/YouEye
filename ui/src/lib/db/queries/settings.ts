@@ -171,7 +171,7 @@ export async function getSystemLanguage(): Promise<string> {
 
 /**
  * Set system-wide default language.
- * Called by CP via PUT /api/ui-bridge/language when admin changes system language.
+ * Called by the Control Panel via PUT /api/ui-bridge/language when admin changes system language.
  */
 export async function setSystemLanguage(language: string): Promise<void> {
   await ensureSchema();

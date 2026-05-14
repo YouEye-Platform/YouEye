@@ -4,7 +4,7 @@
  * Apps authenticate to YE-UI by presenting a Bearer token.
  * YE-UI validates by SHA-256 hashing the token and comparing
  * against the stored hash in the apps table. No shared crypto
- * secrets needed — CP sends the hash at registration time.
+ * secrets needed — Control Panel sends the hash at registration time.
  */
 
 import { db, ensureSchema } from "@/db";

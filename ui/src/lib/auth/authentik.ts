@@ -5,7 +5,7 @@
  * YouEye-UI only supports SSO login through Authentik.
  *
  * Flow:
- * 1. User visits https://skibidi.wtf
+ * 1. User visits https://yourdomain.com
  * 2. Middleware redirects unauthenticated user to /login
  * 3. Login page redirects to /api/auth/sso → Authentik authorize URL
  * 4. User authenticates in Authentik
@@ -13,7 +13,7 @@
  * 6. We exchange code for tokens, extract user info, create JWT session
  *
  * Environment Variables Required:
- * - AUTHENTIK_URL: External Authentik URL (e.g., https://skibidi.wtf/authentik)
+ * - AUTHENTIK_URL: External Authentik URL (e.g., https://yourdomain.com/authentik)
  * - AUTHENTIK_INTERNAL_URL: Internal URL for server-side calls (avoids TLS issues)
  * - AUTHENTIK_CLIENT_ID: OAuth2 client ID
  * - AUTHENTIK_CLIENT_SECRET: OAuth2 client secret

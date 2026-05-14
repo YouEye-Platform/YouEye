@@ -1,7 +1,7 @@
 /**
  * Profile Settings
  *
- * Account name and avatar are handled by the CP embed (synced to Authentik).
+ * Account name and avatar are handled by the Control Panel embed (synced to Authentik).
  * Bio and timezone are UI-local fields.
  */
 
@@ -80,7 +80,7 @@ export function ProfileSettings({
     );
     // Also send the current avatar URL so the embed can display it
     // even if Authentik doesn't have the avatar synced yet.
-    // Convert relative URLs to absolute — the embed runs on the CP domain
+    // Convert relative URLs to absolute — the embed runs on the Control Panel domain
     // so a relative path like /api/v1/user/avatar/... would 404 there.
     if (avatarUrl) {
       const absoluteUrl = avatarUrl.startsWith("/")
@@ -93,7 +93,7 @@ export function ProfileSettings({
     }
   }, [resolvedTheme, profileEmbedUrl, avatarUrl]);
 
-  // Listen for updates from the CP embed
+  // Listen for updates from the Control Panel embed
   const handleMessage = useCallback((e: MessageEvent) => {
     if (e.data?.type === "youeye-embed-ready" || e.data?.type === "youeye-embed-resize") {
       setEmbedReady(true);
@@ -123,8 +123,8 @@ export function ProfileSettings({
     }
     if (e.data?.type === "youeye-avatar-updated") {
       if (e.data.dataUrl) {
-        // CP embed uploaded avatar — update browser state immediately.
-        // Server-side persistence is handled by CP→UI bridge push.
+        // Control Panel embed uploaded avatar — update browser state immediately.
+        // Server-side persistence is handled by the Control Panel→UI bridge push.
         // Client-side upload is a fallback in case the bridge push hasn't landed yet.
         setAvatarUrl(e.data.dataUrl);
         window.dispatchEvent(new CustomEvent("avatar-updated", { detail: { url: e.data.dataUrl } }));
@@ -217,7 +217,7 @@ export function ProfileSettings({
         </p>
       </div>
 
-      {/* Profile embed — avatar + account name (from CP, synced to Authentik) */}
+      {/* Profile embed — avatar + account name (from the Control Panel, synced to Authentik) */}
       <div className="max-w-lg">
         <div className="relative">
           {!embedReady && (

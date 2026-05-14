@@ -6,7 +6,7 @@ import (
 	"os/exec"
 
 	"git.byka.wtf/potemsla/YouEye/spine/internal/config"
-	"git.byka.wtf/potemsla/YouEye/spine/internal/cpapi"
+	"git.byka.wtf/potemsla/YouEye/spine/internal/controlapi"
 	"git.byka.wtf/potemsla/YouEye/spine/internal/logging"
 	"git.byka.wtf/potemsla/YouEye/spine/internal/output"
 	"git.byka.wtf/potemsla/YouEye/spine/internal/version"
@@ -47,8 +47,8 @@ users, proxy routes, and provides an API for system integration.`,
 		// Initialize structured logging based on config
 		logging.Init(cfg.Logging.Level, cfg.Logging.Format)
 
-		// Initialize CP client (lazy — commands that need it call requireCP())
-		cp = cpapi.NewClient()
+		// Initialize Control Panel client (lazy — commands that need it call requireCP())
+		controlClient = controlapi.NewClient()
 
 		return nil
 	},
@@ -118,13 +118,13 @@ var versionCmd = &cobra.Command{
 		incusVer := getIncusVersion()
 		output.StatusLine("Incus", incusVer, "")
 
-		// CP version
+		// Control Panel version
 		cpStatus := getControlPanelStatus(GetConfig())
 		output.StatusLine("Control Panel", cpStatus, "")
 
 		// App versions from unified endpoint
-		if cp != nil && cp.Available() && cp.HasToken() {
-			if data, err := cp.Get("/api/apps/unified"); err == nil {
+		if controlClient != nil && controlClient.Available() && controlClient.HasToken() {
+			if data, err := controlClient.Get("/api/apps/unified"); err == nil {
 				if appsRaw, ok := data["apps"].([]interface{}); ok {
 					for _, a := range appsRaw {
 						if app, ok := a.(map[string]interface{}); ok {

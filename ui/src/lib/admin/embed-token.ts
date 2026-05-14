@@ -1,10 +1,10 @@
 /**
  * Embed URL Generator — server-side only.
  *
- * One-way bridge: CP embeds now use session-based auth (same SSO session
- * as main CP). UI no longer needs the bridge token for embed URLs.
+ * One-way bridge: Control Panel embeds now use session-based auth (same SSO session
+ * as main Control Panel). UI no longer needs the bridge token for embed URLs.
  *
- * The CP validates the user's session cookie when loading embed pages.
+ * The Control Panel validates the user's session cookie when loading embed pages.
  * If not logged in, CP shows a sign-in prompt within the iframe.
  */
 

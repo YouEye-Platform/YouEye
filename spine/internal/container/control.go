@@ -367,15 +367,15 @@ func DeployControlPanelApp(cfg *config.Config) error {
 	jwtSecret := util.GenerateJWTSecret()
 	util.LogSubStep("Generated secure JWT_SECRET for this deployment")
 	
-	// Generate TEST_ADMIN_SECRET for automated testing
-	testAdminSecret := util.GenerateJWTSecret()
-	util.LogSubStep("Generated secure TEST_ADMIN_SECRET for automated testing")
+	// Generate deploy secret for Spine→CP authenticated calls
+	deploySecret := util.GenerateJWTSecret()
+	util.LogSubStep("Generated secure deploy secret for Spine→CP communication")
 
 	// Save deploy secret to host filesystem so Spine can read it later
 	// when calling the CP infrastructure deployment endpoint
 	deploySecretDir := "/var/lib/youeye/control"
 	os.MkdirAll(deploySecretDir, 0700)
-	if err := os.WriteFile(deploySecretDir+"/.deploy_secret", []byte(testAdminSecret), 0600); err != nil {
+	if err := os.WriteFile(deploySecretDir+"/.deploy_secret", []byte(deploySecret), 0600); err != nil {
 		util.LogDebug(fmt.Sprintf("Warning: could not save deploy secret: %v", err))
 	}
 	
@@ -403,7 +403,7 @@ RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
-`, appDir, port, jwtSecret, hostIP, testAdminSecret, appDir)
+`, appDir, port, jwtSecret, hostIP, deploySecret, appDir)
 
 	util.RunIncusExec(containerName, "bash", "-c",
 		fmt.Sprintf("cat > /etc/systemd/system/youeye-control.service << 'EOF'\n%sEOF", serviceContent))

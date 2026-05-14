@@ -3,7 +3,7 @@
  *
  * POST /api/ui-bridge/app-connections
  *
- * Called by CP whenever bridge state changes (activate/deactivate/create/delete).
+ * Called by the Control Panel whenever bridge state changes (activate/deactivate/create/delete).
  * Stores connection data in the apps table so /api/v1/my-connections can serve it
  * without calling CP (UI cannot call CP — one-way bridge).
  */

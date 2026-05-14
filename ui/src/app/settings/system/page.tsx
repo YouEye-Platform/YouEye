@@ -1,8 +1,8 @@
 /**
  * System Settings Page (Admin Only)
  *
- * Embeds CP's system dashboard via iframe.
- * Auth via session-based SSO — CP validates user's session cookie.
+ * Embeds the Control Panel's system dashboard via iframe.
+ * Auth via session-based SSO — Control Panel validates user's session cookie.
  */
 
 import { redirect } from "next/navigation";
@@ -15,7 +15,7 @@ export default async function SystemSettingsPage() {
   if (!session) redirect("/login");
   if (!session.isAdmin) redirect("/settings");
 
-  // Embed now uses session-based auth — CP validates user's SSO session cookie
+  // Embed now uses session-based auth — Control Panel validates user's SSO session cookie
   const embedUrl = getSignedEmbedUrl("system", session.username, true);
 
   return <AdminEmbed signedUrl={embedUrl} title="System Settings" />;

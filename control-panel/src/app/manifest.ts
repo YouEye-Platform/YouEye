@@ -20,7 +20,7 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
 
   return {
     name: `${siteName} Control Panel`,
-    short_name: `${siteName} CP`,
+    short_name: `${siteName} Control`,
     description: "Manage your self-hosted infrastructure",
     start_url: "/",
     display: "standalone",

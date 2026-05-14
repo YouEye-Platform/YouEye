@@ -1,13 +1,13 @@
 /**
  * UI Bridge: User Avatar Sync
  *
- * POST   /api/ui-bridge/user-avatar — CP pushes avatar data after Authentik save
- * DELETE /api/ui-bridge/user-avatar — CP notifies avatar removal
+ * POST   /api/ui-bridge/user-avatar — Control Panel pushes avatar data after Authentik save
+ * DELETE /api/ui-bridge/user-avatar — Control Panel notifies avatar removal
  *
  * Auth: X-UI-Bridge-Token (shared service token).
  *
  * This is the server-to-server path for avatar persistence. When a user
- * changes their avatar via the CP embed, CP saves to Authentik and then
+ * changes their avatar via the Control Panel embed, Control Panel saves to Authentik and then
  * pushes the image data here so UI can persist it locally (disk + DB).
  * This ensures the avatar survives page navigation and browser refresh.
  */

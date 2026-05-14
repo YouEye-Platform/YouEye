@@ -4,7 +4,7 @@
  * POST   /api/v1/user/avatar — upload/save avatar locally
  * DELETE /api/v1/user/avatar — remove current avatar
  *
- * Local storage only. Authentik sync is handled by the CP embed.
+ * Local storage only. Authentik sync is handled by the Control Panel embed.
  */
 
 import { NextRequest, NextResponse } from "next/server";

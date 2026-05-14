@@ -5,7 +5,7 @@
  *
  * Returns a specific user's language preference from userSettings.
  * Auth: X-UI-Bridge-Token (shared service token).
- * Called by CP and native apps to resolve per-user language.
+ * Called by the Control Panel and native apps to resolve per-user language.
  *
  * Returns { language: "ru" } or { language: null } if no override set.
  */

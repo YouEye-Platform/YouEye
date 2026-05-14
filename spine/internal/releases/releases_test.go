@@ -105,9 +105,9 @@ func TestBuildTag(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := BuildTag(tt.ver, tt.branch)
+			got := BuildTag(tt.ver, tt.branch, "")
 			if got != tt.want {
-				t.Errorf("BuildTag(%q, %q) = %q, want %q", tt.ver, tt.branch, got, tt.want)
+				t.Errorf("BuildTag(%q, %q, \"\") = %q, want %q", tt.ver, tt.branch, got, tt.want)
 			}
 		})
 	}
@@ -117,7 +117,7 @@ func TestBuildDownloadURL(t *testing.T) {
 	cfg := config.Default()
 
 	url := BuildDownloadURL(cfg, "YE-Spine", "v0.2.5", "spine-linux-amd64")
-	expected := "https://git.byka.wtf/potemsla/YouEye/spine/releases/download/v0.2.5/spine-linux-amd64"
+	expected := "https://git.byka.wtf/potemsla/YE-Spine/releases/download/v0.2.5/spine-linux-amd64"
 	if url != expected {
 		t.Errorf("BuildDownloadURL() = %q, want %q", url, expected)
 	}
@@ -197,7 +197,7 @@ func TestGetLatestVersionForBranch_MainBranch(t *testing.T) {
 
 	cfg := testConfig(server.URL)
 
-	got := GetLatestVersionForBranch(cfg, "YE-Spine", "main")
+	got := GetLatestVersionForBranch(cfg, "YE-Spine", "main", "")
 	if got != "0.2.5" {
 		t.Errorf("GetLatestVersionForBranch(main) = %q, want %q", got, "0.2.5")
 	}
@@ -214,7 +214,7 @@ func TestGetLatestVersionForBranch_EmptyBranch(t *testing.T) {
 
 	cfg := testConfig(server.URL)
 
-	got := GetLatestVersionForBranch(cfg, "YE-Spine", "")
+	got := GetLatestVersionForBranch(cfg, "YE-Spine", "", "")
 	if got != "0.2.5" {
 		t.Errorf("GetLatestVersionForBranch('') = %q, want %q", got, "0.2.5")
 	}
@@ -232,7 +232,7 @@ func TestGetLatestVersionForBranch_BranchNewerThanMain(t *testing.T) {
 
 	cfg := testConfig(server.URL)
 
-	got := GetLatestVersionForBranch(cfg, "YE-Spine", "john")
+	got := GetLatestVersionForBranch(cfg, "YE-Spine", "john", "")
 	if got != "0.2.5.2" {
 		t.Errorf("GetLatestVersionForBranch(john) = %q, want %q", got, "0.2.5.2")
 	}
@@ -249,7 +249,7 @@ func TestGetLatestVersionForBranch_MainNewerThanBranch(t *testing.T) {
 
 	cfg := testConfig(server.URL)
 
-	got := GetLatestVersionForBranch(cfg, "YE-Spine", "john")
+	got := GetLatestVersionForBranch(cfg, "YE-Spine", "john", "")
 	if got != "0.2.6" {
 		t.Errorf("GetLatestVersionForBranch(john, main newer) = %q, want %q", got, "0.2.6")
 	}
@@ -266,7 +266,7 @@ func TestGetLatestVersionForBranch_NoBranchReleases(t *testing.T) {
 
 	cfg := testConfig(server.URL)
 
-	got := GetLatestVersionForBranch(cfg, "YE-Spine", "john")
+	got := GetLatestVersionForBranch(cfg, "YE-Spine", "john", "")
 	if got != "0.2.5" {
 		t.Errorf("GetLatestVersionForBranch(john, no john releases) = %q, want %q", got, "0.2.5")
 	}
@@ -278,7 +278,7 @@ func TestGetLatestVersionForBranch_EmptyReleases(t *testing.T) {
 
 	cfg := testConfig(server.URL)
 
-	got := GetLatestVersionForBranch(cfg, "YE-Spine", "main")
+	got := GetLatestVersionForBranch(cfg, "YE-Spine", "main", "")
 	if got != "unknown" {
 		t.Errorf("GetLatestVersionForBranch(empty) = %q, want %q", got, "unknown")
 	}
@@ -295,7 +295,7 @@ func TestGetLatestVersionForBranch_OnlyBranchReleases(t *testing.T) {
 
 	cfg := testConfig(server.URL)
 
-	got := GetLatestVersionForBranch(cfg, "YE-Spine", "john")
+	got := GetLatestVersionForBranch(cfg, "YE-Spine", "john", "")
 	if got != "0.2.5.2" {
 		t.Errorf("GetLatestVersionForBranch(john only) = %q, want %q", got, "0.2.5.2")
 	}
@@ -309,159 +309,12 @@ func TestGetLatestVersionForBranch_ServerError(t *testing.T) {
 
 	cfg := testConfig(server.URL)
 
-	got := GetLatestVersionForBranch(cfg, "YE-Spine", "main")
+	got := GetLatestVersionForBranch(cfg, "YE-Spine", "main", "")
 	if got != "unknown" {
 		t.Errorf("GetLatestVersionForBranch(server error) = %q, want %q", got, "unknown")
 	}
 }
 
-func TestClientGetReleases(t *testing.T) {
-	mockReleases := []Release{
-		{TagName: "v0.2.5", Assets: []Asset{{Name: "spine-linux-amd64", Size: 1024}}},
-		{TagName: "v0.2.4"},
-		{TagName: "v0.2.3"},
-	}
-
-	server := mockGiteaServer(t, mockReleases)
-	defer server.Close()
-
-	cfg := testConfig(server.URL)
-	client := NewClient(cfg)
-
-	t.Run("all releases", func(t *testing.T) {
-		rels, err := client.GetReleases("YE-Spine", 0)
-		if err != nil {
-			t.Fatalf("GetReleases() error: %v", err)
-		}
-		if len(rels) != 3 {
-			t.Errorf("expected 3 releases, got %d", len(rels))
-		}
-	})
-
-	t.Run("limited releases", func(t *testing.T) {
-		rels, err := client.GetReleases("YE-Spine", 1)
-		if err != nil {
-			t.Fatalf("GetReleases() error: %v", err)
-		}
-		if len(rels) != 1 {
-			t.Errorf("expected 1 release, got %d", len(rels))
-		}
-	})
-
-	t.Run("version parsed", func(t *testing.T) {
-		rels, err := client.GetReleases("YE-Spine", 1)
-		if err != nil {
-			t.Fatalf("GetReleases() error: %v", err)
-		}
-		if rels[0].Version != "0.2.5" {
-			t.Errorf("expected version 0.2.5, got %s", rels[0].Version)
-		}
-	})
-}
-
-func TestClientGetLatestRelease(t *testing.T) {
-	mockReleases := []Release{
-		{TagName: "v0.2.5"},
-	}
-
-	server := mockGiteaServer(t, mockReleases)
-	defer server.Close()
-
-	cfg := testConfig(server.URL)
-	client := NewClient(cfg)
-
-	t.Run("success", func(t *testing.T) {
-		rel, err := client.GetLatestRelease("YE-Spine")
-		if err != nil {
-			t.Fatalf("GetLatestRelease() error: %v", err)
-		}
-		if rel.TagName != "v0.2.5" {
-			t.Errorf("expected tag v0.2.5, got %s", rel.TagName)
-		}
-	})
-
-	t.Run("empty releases", func(t *testing.T) {
-		emptyServer := mockGiteaServer(t, []Release{})
-		defer emptyServer.Close()
-
-		emptyCfg := testConfig(emptyServer.URL)
-		emptyClient := NewClient(emptyCfg)
-
-		_, err := emptyClient.GetLatestRelease("YE-Spine")
-		if err == nil {
-			t.Error("expected error for empty releases")
-		}
-	})
-}
-
-func TestClientGetLatestVersion(t *testing.T) {
-	mockReleases := []Release{
-		{TagName: "v0.2.5"},
-	}
-
-	server := mockGiteaServer(t, mockReleases)
-	defer server.Close()
-
-	cfg := testConfig(server.URL)
-	client := NewClient(cfg)
-
-	ver, err := client.GetLatestVersion("YE-Spine")
-	if err != nil {
-		t.Fatalf("GetLatestVersion() error: %v", err)
-	}
-	if ver != "0.2.5" {
-		t.Errorf("expected 0.2.5, got %s", ver)
-	}
-}
-
-func TestClientDownloadURLs(t *testing.T) {
-	cfg := config.Default()
-	client := NewClient(cfg)
-
-	t.Run("spine download URL", func(t *testing.T) {
-		url := client.GetSpineDownloadURL("0.2.5", "amd64")
-		expected := "https://git.byka.wtf/potemsla/YouEye/spine/releases/download/v0.2.5/spine-linux-amd64"
-		if url != expected {
-			t.Errorf("GetSpineDownloadURL() = %q, want %q", url, expected)
-		}
-	})
-
-	t.Run("control panel download URL", func(t *testing.T) {
-		url := client.GetControlPanelDownloadURL("0.2.5")
-		expected := "https://git.byka.wtf/potemsla/YE-ControlPanel/releases/download/v0.2.5/standalone.tar"
-		if url != expected {
-			t.Errorf("GetControlPanelDownloadURL() = %q, want %q", url, expected)
-		}
-	})
-}
-
-func TestClientServerError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(500)
-	}))
-	defer server.Close()
-
-	cfg := testConfig(server.URL)
-	client := NewClient(cfg)
-
-	_, err := client.GetReleases("YE-Spine", 0)
-	if err == nil {
-		t.Error("expected error for 500 response")
-	}
-}
-
-func TestClientInvalidJSON(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("not valid json"))
-	}))
-	defer server.Close()
-
-	cfg := testConfig(server.URL)
-	client := NewClient(cfg)
-
-	_, err := client.GetReleases("YE-Spine", 0)
-	if err == nil {
-		t.Error("expected error for invalid JSON")
-	}
-}
+// Client tests removed — releases.Client was deleted in session 86.
+// The release-fetching functions (GetLatestVersionForBranch, BuildTag, etc.)
+// are tested above via the package-level function tests.

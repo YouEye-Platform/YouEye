@@ -68,10 +68,10 @@ func runStatus() error {
 	fmt.Printf("API Server:      %s\n", apiStatus)
 	fmt.Println("")
 
-	// Services (from CP)
-	if cp != nil && cp.Available() && cp.HasToken() {
+	// Services (from Control Panel)
+	if controlClient != nil && controlClient.Available() && controlClient.HasToken() {
 		fmt.Println("Services:")
-		svcList, err := cp.GetArray("/api/health/services")
+		svcList, err := controlClient.GetArray("/api/health/services")
 		if err == nil && len(svcList) > 0 {
 			for _, s := range svcList {
 				if svc, ok := s.(map[string]interface{}); ok {
@@ -89,7 +89,7 @@ func runStatus() error {
 		fmt.Println()
 
 		// All apps from unified endpoint
-		if uData, uErr := cp.Get("/api/apps/unified"); uErr == nil {
+		if uData, uErr := controlClient.Get("/api/apps/unified"); uErr == nil {
 			if appsRaw, ok := uData["apps"].([]interface{}); ok && len(appsRaw) > 0 {
 				// Group by category
 				system := []map[string]interface{}{}

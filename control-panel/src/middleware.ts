@@ -172,7 +172,7 @@ export async function middleware(request: NextRequest) {
       if (completed) {
         // After setup, IP access shows the DNS explainer page so users learn
         // how to configure DNS and access YouEye via its domain name.
-        // Direct CP access on :3000 still works for admin use.
+        // Direct Control Panel access on :3000 still works for admin use.
         return NextResponse.redirect(new URL('/setup-complete', request.url));
       } else {
         return NextResponse.redirect(new URL('/login', request.url));

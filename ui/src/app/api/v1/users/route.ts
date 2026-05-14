@@ -3,7 +3,7 @@
  *
  * GET /api/v1/users?role=admin — List admin users
  *
- * Authentication: X-UI-Bridge-Token (for CP→UI system calls)
+ * Authentication: X-UI-Bridge-Token (for Control Panel→UI system calls)
  * Used by the notification bridge to find admin user IDs for system notifications.
  */
 

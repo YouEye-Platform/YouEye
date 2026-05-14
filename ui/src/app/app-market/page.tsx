@@ -3,7 +3,7 @@
  *
  * Embeds the Control Panel's marketplace UI via iframe.
  * Layout provides the YouEye navbar and auth gate.
- * Auth via session-based SSO — CP validates user's session cookie.
+ * Auth via session-based SSO — Control Panel validates user's session cookie.
  */
 
 import { getSession } from "@/lib/auth";
@@ -14,7 +14,7 @@ export default async function AppMarketPage() {
   // Layout already gates auth — session is guaranteed here
   const session = await getSession();
 
-  // Embed now uses session-based auth — CP validates user's SSO session cookie
+  // Embed now uses session-based auth — Control Panel validates user's SSO session cookie
   const embedUrl = session
     ? getSignedEmbedUrl("market", session.username, true)
     : "";

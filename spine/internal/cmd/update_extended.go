@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"git.byka.wtf/potemsla/YouEye/spine/internal/cpapi"
+	"git.byka.wtf/potemsla/YouEye/spine/internal/controlapi"
 	"git.byka.wtf/potemsla/YouEye/spine/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -16,7 +16,7 @@ var updateUICmd = &cobra.Command{
 			return nil
 		}
 		output.Info("Updating UI...")
-		return cp.PostSSE("/api/updates/ui", nil, func(event cpapi.SSEEvent) {
+		return controlClient.PostSSE("/api/updates/ui", nil, func(event controlapi.SSEEvent) {
 			output.SSEProgress(event.Step, event.TotalSteps, event.Status, event.Message)
 		})
 	},
@@ -42,10 +42,10 @@ var updateCheckCmd = &cobra.Command{
 			output.StatusLine("System", "up to date", output.Green)
 		}
 
-		// CP + app updates
-		if cp != nil && cp.Available() {
+		// Control Panel + app updates
+		if controlClient != nil && controlClient.Available() {
 			output.Section("Apps")
-			if data, err := cp.Get("/api/updates/status"); err == nil {
+			if data, err := controlClient.Get("/api/updates/status"); err == nil {
 				if updates, ok := data["updates"].([]interface{}); ok {
 					hasUpdates := false
 					for _, u := range updates {

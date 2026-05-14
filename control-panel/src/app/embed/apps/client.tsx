@@ -161,7 +161,7 @@ export function AppsEmbedClient() {
     const component = COMPONENT_MAP[appId] || appId;
 
     if (SELF_DESTRUCTIVE.has(appId)) {
-      const action = appId === "control-panel" ? "cp-restarting" : "ui-restarting";
+      const action = appId === "control-panel" ? "control-restarting" : "ui-restarting";
       window.parent.postMessage({ type: "youeye-embed-action", action }, "*");
       setRestartOverlay(appId === "control-panel" ? "Control Panel" : "YouEye UI");
     }

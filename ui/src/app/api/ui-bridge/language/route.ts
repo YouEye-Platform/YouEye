@@ -4,8 +4,8 @@
  * PUT /api/ui-bridge/language
  * Body: { language: "en" }
  *
- * Receives system language updates pushed from CP.
- * One-Way Bridge: CP pushes to UI, UI never fetches from CP.
+ * Receives system language updates pushed from the Control Panel.
+ * One-Way Bridge: Control Panel pushes to UI, UI never fetches from the Control Panel.
  *
  * Auth: X-UI-Bridge-Token (shared service token).
  */
@@ -60,7 +60,7 @@ export async function PUT(request: NextRequest) {
 /**
  * GET /api/ui-bridge/language
  *
- * Returns current system language. Used by CP to sync state.
+ * Returns current system language. Used by the Control Panel to sync state.
  */
 export async function GET(request: NextRequest) {
   if (!validateToken(request)) {

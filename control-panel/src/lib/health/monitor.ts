@@ -285,7 +285,7 @@ async function checkDiskSpace(): Promise<void> {
     const { execShell } = await import('@/lib/incus/server');
 
     // Check host disk from within the control panel container
-    // The CP shares /var/lib/youeye as a volume from host
+    // The Control Panel shares /var/lib/youeye as a volume from host
     const result = await execShell(
       'youeye-control',
       "df -h / | tail -1 | awk '{print $5}'",
@@ -342,7 +342,7 @@ async function checkDiskSpace(): Promise<void> {
 async function checkMemory(): Promise<void> {
   try {
     // Read host memory from bind-mounted /host/proc/meminfo (same source as throttle).
-    // Previously used `free -m` inside the CP container, which showed cgroup values.
+    // Previously used `free -m` inside the Control Panel container, which showed cgroup values.
     let meminfo: string;
     try {
       meminfo = readFileSync('/host/proc/meminfo', 'utf-8');
@@ -395,9 +395,9 @@ async function checkMemoryThrottle(): Promise<void> {
 
   try {
     // Read host /proc/meminfo mounted at /host/proc/meminfo.
-    // The CP container's own /proc/meminfo shows cgroup-limited values (~8 GB)
+    // The Control Panel container's own /proc/meminfo shows cgroup-limited values (~8 GB)
     // regardless of actual host memory state. The host meminfo is bind-mounted
-    // by Spine during CP deployment.
+    // by Spine during Control Panel deployment.
     let meminfo: string;
     try {
       meminfo = readFileSync('/host/proc/meminfo', 'utf-8');

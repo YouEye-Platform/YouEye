@@ -19,7 +19,7 @@ var tlsStatusCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		data, err := cp.Get("/api/tls/status")
+		data, err := controlClient.Get("/api/tls/status")
 		if err != nil {
 			return err
 		}

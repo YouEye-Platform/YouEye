@@ -2,7 +2,7 @@
  * Settings Page — Profile Section (Default)
  *
  * Shows profile information with:
- * - CP embed for account name editing (synced to Authentik)
+ * - Control Panel embed for account name editing (synced to Authentik)
  * - Local fields for bio, timezone, avatar
  */
 

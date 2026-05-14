@@ -20,7 +20,7 @@ var backupCreateCmd = &cobra.Command{
 			return nil
 		}
 		output.Info("Creating backup...")
-		return cp.PostSSE("/api/backup/core", nil, sseHandler)
+		return controlClient.PostSSE("/api/backup/core", nil, sseHandler)
 	},
 }
 
@@ -31,7 +31,7 @@ var backupStatusCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		data, err := cp.Get("/api/backup/status")
+		data, err := controlClient.Get("/api/backup/status")
 		if err != nil {
 			return err
 		}
@@ -58,7 +58,7 @@ var backupListCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		data, err := cp.Get("/api/backup/list?target_path=/var/lib/youeye/backups")
+		data, err := controlClient.Get("/api/backup/list?target_path=/var/lib/youeye/backups")
 		if err != nil {
 			return err
 		}
@@ -93,7 +93,7 @@ var restoreCmd = &cobra.Command{
 			return nil
 		}
 		output.Info("Restoring from " + args[0] + "...")
-		return cp.PostSSE("/api/restore/full", map[string]interface{}{
+		return controlClient.PostSSE("/api/restore/full", map[string]interface{}{
 			"backup": args[0],
 		}, sseHandler)
 	},
@@ -113,7 +113,7 @@ var settingsCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		data, err := cp.Get("/api/settings")
+		data, err := controlClient.Get("/api/settings")
 		if err != nil {
 			return err
 		}

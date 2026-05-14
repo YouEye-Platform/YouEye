@@ -23,7 +23,7 @@ var marketSearchCmd = &cobra.Command{
 		}
 		query := strings.ToLower(args[0])
 
-		catalog, err := cp.GetArray("/api/market/catalog")
+		catalog, err := controlClient.GetArray("/api/market/catalog")
 		if err != nil {
 			return err
 		}
@@ -63,7 +63,7 @@ var marketInfoCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		data, err := cp.Get("/api/market/app/" + args[0])
+		data, err := controlClient.Get("/api/market/app/" + args[0])
 		if err != nil {
 			return err
 		}

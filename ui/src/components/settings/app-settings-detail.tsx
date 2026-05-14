@@ -5,7 +5,7 @@
  * 1. App Settings — Iframe embed of the app's own settings page (native apps only)
  * 2. Overview — App info, status, version, subdomain (local DB)
  * 3. Permissions — Per-app user permission management (local DB)
- * 4. Network (admin only) — CP embed iframe for bridges + grants
+ * 4. Network (admin only) — Control Panel embed iframe for bridges + grants
  * 5. Link Handling — URL rewrite handlers (local DB)
  */
 
@@ -159,7 +159,7 @@ export function AppSettingsDetail({
       if (res.ok) {
         const data = await res.json();
         const allApps = data.apps ?? [];
-        // Try exact match first, then strip common prefixes (CP sends "ye-search", DB has "search")
+        // Try exact match first, then strip common prefixes (Control Panel sends "ye-search", DB has "search")
         const found = allApps.find((a: { id: string }) => a.id === appId)
           ?? allApps.find((a: { id: string }) => a.id === appId.replace(/^(ye-|app-)/, ""));
         if (found) {

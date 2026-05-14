@@ -1,7 +1,7 @@
 /**
  * User Language API
  *
- * GET  /api/user/language — Get user's language preference (called by CP bridge)
+ * GET  /api/user/language — Get user's language preference (called by the Control Panel bridge)
  * POST /api/user/language — Set user's language preference (called by UI settings)
  */
 
@@ -16,7 +16,7 @@ const SUPPORTED_LOCALES = ["en", "ru", "es", "de", "fr"];
 
 /**
  * GET — Returns the authenticated user's language preference.
- * Called by CP's /api/ui-bridge/language to resolve per-user overrides.
+ * Called by the Control Panel's /api/ui-bridge/language to resolve per-user overrides.
  * Returns { language: "ru" } or { language: null } if no override.
  */
 export async function GET() {

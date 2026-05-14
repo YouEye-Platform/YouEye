@@ -19,7 +19,7 @@ var proxyListCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		routes, err := cp.GetArray("/api/caddy/routes")
+		routes, err := controlClient.GetArray("/api/caddy/routes")
 		if err != nil {
 			return err
 		}
@@ -49,7 +49,7 @@ var proxyAddCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		result, err := cp.Post("/api/caddy/routes", map[string]interface{}{
+		result, err := controlClient.Post("/api/caddy/routes", map[string]interface{}{
 			"hostname": args[0],
 			"upstream": args[1],
 		})
@@ -72,7 +72,7 @@ var proxyRemoveCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		routes, err := cp.GetArray("/api/caddy/routes")
+		routes, err := controlClient.GetArray("/api/caddy/routes")
 		if err != nil {
 			return err
 		}
@@ -92,7 +92,7 @@ var proxyRemoveCmd = &cobra.Command{
 			return fmt.Errorf("route for '%s' not found", args[0])
 		}
 
-		_, err = cp.Delete("/api/caddy/routes/" + routeID)
+		_, err = controlClient.Delete("/api/caddy/routes/" + routeID)
 		if err != nil {
 			return err
 		}
@@ -108,7 +108,7 @@ var proxyStatusCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		data, err := cp.Get("/api/caddy/status")
+		data, err := controlClient.Get("/api/caddy/status")
 		if err != nil {
 			return err
 		}

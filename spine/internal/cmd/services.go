@@ -12,7 +12,7 @@ var servicesCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		services, err := cp.GetArray("/api/health/services")
+		services, err := controlClient.GetArray("/api/health/services")
 		if err != nil {
 			return err
 		}
@@ -41,7 +41,7 @@ var servicesRestartCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		_, err := cp.Post("/api/health/services/"+args[0]+"/restart", nil)
+		_, err := controlClient.Post("/api/health/services/"+args[0]+"/restart", nil)
 		if err != nil {
 			return err
 		}

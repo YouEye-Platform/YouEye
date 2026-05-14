@@ -108,7 +108,7 @@ export const apps = pgTable("apps", {
   version: text("version"),
   /** Internal container URL */
   containerUrl: text("container_url"),
-  /** Subdomain for this app (e.g., "notes" → notes.skibidi.wtf) */
+  /** Subdomain for this app (e.g., "notes" → notes.example.com) */
   subdomain: text("subdomain"),
   /** Lucide icon name */
   icon: text("icon"),
@@ -128,7 +128,7 @@ export const apps = pgTable("apps", {
   brandingWordart: jsonb("branding_wordart").$type<Record<string, unknown>>(),
   /** Admin-set default header display mode: logo-text, text-only, logo-only */
   headerDisplayMode: text("header_display_mode").default("logo-text"),
-  /** Bridge/connection state pushed from CP — used by /api/v1/my-connections */
+  /** Bridge/connection state pushed from the Control Panel — used by /api/v1/my-connections */
   connections: jsonb("connections").$type<Record<string, unknown>>(),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),

@@ -1,7 +1,7 @@
 /**
  * Embed Status — receives CP restart notifications.
  *
- * CP calls this before restarting so UI can show skeleton loaders.
+ * Control Panel calls this before restarting so UI can show skeleton loaders.
  * Validates via bridge token (same as other ui-bridge endpoints).
  */
 

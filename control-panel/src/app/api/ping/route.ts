@@ -10,8 +10,8 @@
  * frame.  Used by the setup-complete page's iframe-based connectivity check
  * to detect whether the user's device can actually reach the configured
  * domain (DNS + cert).  Caddy's path-only /api/ping route forwards ALL
- * hosts to CP, so https://devvm.test/api/ping?verify=1 hits this handler
- * even though devvm.test normally routes to YE-UI.
+ * hosts to the Control Panel, so https://<domain>/api/ping?verify=1 hits
+ * this handler even though the main domain normally routes to YE-UI.
  */
 
 import { NextRequest, NextResponse } from 'next/server';

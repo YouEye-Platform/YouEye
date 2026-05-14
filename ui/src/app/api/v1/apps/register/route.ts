@@ -24,7 +24,7 @@ function validateBridgeAuth(request: Request): boolean {
 }
 
 export async function POST(request: Request) {
-  // Allow CP bridge token auth for automated registration (server-to-server)
+  // Allow Control Panel bridge token auth for automated registration (server-to-server)
   const isBridgeAuth = validateBridgeAuth(request);
 
   if (!isBridgeAuth) {
@@ -63,7 +63,7 @@ export async function POST(request: Request) {
     ssoEntryUrl: sso_entry_url,
   });
 
-  // Cache the manifest if we have one from either source. Merge in link_handlers from CP registration.
+  // Cache the manifest if we have one from either source. Merge in link_handlers from the Control Panel registration.
   const manifestToStore = manifest
     ? (manifest as unknown as Record<string, unknown>)
     : {};

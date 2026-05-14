@@ -17,7 +17,7 @@ var domainShowCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		data, err := cp.Get("/api/domain")
+		data, err := controlClient.Get("/api/domain")
 		if err != nil {
 			return err
 		}
@@ -35,7 +35,7 @@ var domainSetCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		_, err := cp.Post("/api/domain", map[string]interface{}{
+		_, err := controlClient.Post("/api/domain", map[string]interface{}{
 			"domain": args[0],
 		})
 		if err != nil {

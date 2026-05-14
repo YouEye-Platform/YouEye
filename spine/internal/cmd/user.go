@@ -23,7 +23,7 @@ var userListCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		users, err := cp.GetArray("/api/people")
+		users, err := controlClient.GetArray("/api/people")
 		if err != nil {
 			return err
 		}
@@ -67,7 +67,7 @@ var userCreateCmd = &cobra.Command{
 
 		password := readPassword("Password: ")
 
-		result, err := cp.Post("/api/people", map[string]interface{}{
+		result, err := controlClient.Post("/api/people", map[string]interface{}{
 			"username": username,
 			"email":    userCreateEmail,
 			"password": password,
@@ -88,7 +88,7 @@ var userDeleteCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		users, err := cp.GetArray("/api/people")
+		users, err := controlClient.GetArray("/api/people")
 		if err != nil {
 			return err
 		}
@@ -108,7 +108,7 @@ var userDeleteCmd = &cobra.Command{
 			return fmt.Errorf("user '%s' not found", args[0])
 		}
 
-		_, err = cp.Delete("/api/people/" + userID)
+		_, err = controlClient.Delete("/api/people/" + userID)
 		if err != nil {
 			return err
 		}
@@ -125,7 +125,7 @@ var userPasswordCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		users, err := cp.GetArray("/api/people")
+		users, err := controlClient.GetArray("/api/people")
 		if err != nil {
 			return err
 		}
@@ -147,7 +147,7 @@ var userPasswordCmd = &cobra.Command{
 
 		password := readPassword("New password: ")
 
-		_, err = cp.Post("/api/people/"+userID+"/password", map[string]interface{}{
+		_, err = controlClient.Post("/api/people/"+userID+"/password", map[string]interface{}{
 			"password": password,
 		})
 		if err != nil {
@@ -166,7 +166,7 @@ var userInfoCmd = &cobra.Command{
 		if !requireCP() {
 			return nil
 		}
-		users, err := cp.GetArray("/api/people")
+		users, err := controlClient.GetArray("/api/people")
 		if err != nil {
 			return err
 		}

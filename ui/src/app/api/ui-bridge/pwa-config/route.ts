@@ -4,8 +4,8 @@
  * PUT /api/ui-bridge/pwa-config
  * Body: { theme_color?, background_color?, maskable_bg_color?, display?, orientation? }
  *
- * Receives PWA configuration pushed from CP. Stores in system_settings
- * so the dynamic manifest can read it. One-way bridge: CP pushes, UI stores.
+ * Receives PWA configuration pushed from the Control Panel. Stores in system_settings
+ * so the dynamic manifest can read it. One-way bridge: Control Panel pushes, UI stores.
  *
  * Auth: X-UI-Bridge-Token (shared service token).
  */
