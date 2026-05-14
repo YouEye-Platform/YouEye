@@ -1,3 +1,21 @@
+## v0.3.6.40 — sebastian — 2026-05-14
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix native app update routing — marketplace apps routed to Spine instead of marketplace updater
+
+### Changes
+- `control-panel/src/app/api/ui-bridge/updates/[component]/route.ts` — Added marketplace app update path. Before falling through to Spine API, checks `getInstalledApp()` and routes through `updateMarketplaceApp()` for marketplace-installed native apps.
+- `control-panel/package.json` — Version bump to 0.3.6.40
+
+### Test Results
+- Verified on live VM: pressing "Update" on Notes produced `Error: unknown app: notes` (Spine doesn't know about marketplace apps)
+- Code trace confirmed: bridge route had no path between static APP_DEFINITIONS and Spine API for marketplace-installed apps
+
+### Notes for Iris
+- Additive change — new code path before the existing `default` Spine fallback
+- Uses `force: true` on marketplace updates to handle the 0.0.0 → current version case
+
 ## v0.3.6.39 — sebastian — 2026-05-14
 **Branch:** sebastian
 **VM:** ye-sebastian
