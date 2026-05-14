@@ -1,3 +1,37 @@
+## Session 88 — sebastian — 2026-05-14
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Beta cleanup session 3 — naming cleanup, dead code fixes, comment hygiene
+
+### Changes
+- `spine/internal/cpapi/` → `spine/internal/controlapi/` — package rename + all imports
+- `spine/internal/cmd/cp_helpers.go` → `control_helpers.go` — file rename
+- `spine/internal/cmd/*.go` (15 files) — `var cp` → `controlClient`
+- `spine/internal/container/control.go` — `testAdminSecret` → `deploySecret`
+- `spine/internal/releases/releases_test.go` — fixed stale function signatures and deleted Client tests
+- `spine/internal/container/ui.go` — CP→Control Panel in user-facing strings
+- `control-panel/src/app/api/suggestions/approve/route.ts` — DELETED (duplicate route)
+- `control-panel/src/app/api/suggestions/route.ts` — fixed localhost fallback
+- `control-panel/src/app/manifest.ts` — "CP" → "Control" in PWA short_name
+- `control-panel/src/app/layout.tsx` — "CP" → "Control Panel" in apple web app title
+- `control-panel/src/app/(dashboard)/settings/page.tsx` — "CP SSO" → "Control Panel SSO"
+- `control-panel/src/app/sw.ts` — cache names cp-* → control-*
+- `control-panel/src/app/embed/apps/client.tsx` — cp-restarting → control-restarting
+- `ui/src/db/schema.ts` — cleaned skibidi.wtf placeholder
+- `ui/src/lib/auth/authentik.ts` — cleaned skibidi.wtf from OAuth flow docs
+- 30+ UI files — CP→Control Panel in comments
+- 5 native apps — CP→Control Panel in comments
+
+### Test Results
+- Spine: `go test ./...` all pass (api, config, releases, update, version)
+- No Playwright tests (cleanup-only session, operator testing)
+
+### Notes for Iris
+- `spine/internal/controlapi/` is a rename from `cpapi/` — merge may conflict if other agents touched the old path
+- `control-panel/src/app/api/suggestions/approve/` was deleted — duplicate of main suggestions route
+- No functional changes to CP/UI behavior — all naming-only except the suggestion route localhost fix
+
 ## Session 86 — sebastian — 2026-05-14
 **Branch:** sebastian
 **VM:** ye-sebastian
