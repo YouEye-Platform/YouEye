@@ -96,27 +96,31 @@ export async function listDatabases(): Promise<
     tablespace: string;
   }>
 > {
-  const { rows } = await psqlQuery(`
-    SELECT
-      d.datname,
-      r.rolname AS owner,
-      pg_encoding_to_char(d.encoding) AS encoding,
-      pg_size_pretty(pg_database_size(d.datname)) AS size,
-      t.spcname AS tablespace
-    FROM pg_database d
-    LEFT JOIN pg_roles r ON d.datdba = r.oid
-    LEFT JOIN pg_tablespace t ON d.dattablespace = t.oid
-    WHERE d.datistemplate = false
-    ORDER BY d.datname
-  `);
+  try {
+    const { rows } = await psqlQuery(`
+      SELECT
+        d.datname,
+        r.rolname AS owner,
+        pg_encoding_to_char(d.encoding) AS encoding,
+        pg_size_pretty(pg_database_size(d.datname)) AS size,
+        t.spcname AS tablespace
+      FROM pg_database d
+      LEFT JOIN pg_roles r ON d.datdba = r.oid
+      LEFT JOIN pg_tablespace t ON d.dattablespace = t.oid
+      WHERE d.datistemplate = false
+      ORDER BY d.datname
+    `);
 
-  return rows.map(([name, owner, encoding, size, tablespace]) => ({
-    name,
-    owner,
-    encoding,
-    size,
-    tablespace,
-  }));
+    return rows.map(([name, owner, encoding, size, tablespace]) => ({
+      name,
+      owner,
+      encoding,
+      size,
+      tablespace,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -131,39 +135,50 @@ export async function getStats(): Promise<{
   totalSize: string;
   databases: Array<{ name: string; size: string; connections: number }>;
 }> {
-  // Run all queries in a single psql call for efficiency
-  const { rows: versionRows } = await psqlQuery('SELECT version()');
-  const { rows: uptimeRows } = await psqlQuery(
-    "SELECT date_trunc('second', current_timestamp - pg_postmaster_start_time())::text AS uptime"
-  );
-  const { rows: connRows } = await psqlQuery(
-    'SELECT count(*)::text FROM pg_stat_activity WHERE state IS NOT NULL'
-  );
-  const { rows: maxConnRows } = await psqlQuery('SHOW max_connections');
-  const { rows: dbRows } = await psqlQuery(`
-    SELECT
-      d.datname,
-      pg_size_pretty(pg_database_size(d.datname)) AS size,
-      (SELECT count(*) FROM pg_stat_activity WHERE datname = d.datname)::text AS connections
-    FROM pg_database d
-    WHERE d.datistemplate = false
-    ORDER BY pg_database_size(d.datname) DESC
-  `);
-  const { rows: totalRows } = await psqlQuery(
-    "SELECT pg_size_pretty(sum(pg_database_size(datname))) AS total FROM pg_database WHERE datistemplate = false"
-  );
+  try {
+    const { rows: versionRows } = await psqlQuery('SELECT version()');
+    const { rows: uptimeRows } = await psqlQuery(
+      "SELECT date_trunc('second', current_timestamp - pg_postmaster_start_time())::text AS uptime"
+    );
+    const { rows: connRows } = await psqlQuery(
+      'SELECT count(*)::text FROM pg_stat_activity WHERE state IS NOT NULL'
+    );
+    const { rows: maxConnRows } = await psqlQuery('SHOW max_connections');
+    const { rows: dbRows } = await psqlQuery(`
+      SELECT
+        d.datname,
+        pg_size_pretty(pg_database_size(d.datname)) AS size,
+        (SELECT count(*) FROM pg_stat_activity WHERE datname = d.datname)::text AS connections
+      FROM pg_database d
+      WHERE d.datistemplate = false
+      ORDER BY pg_database_size(d.datname) DESC
+    `);
+    const { rows: totalRows } = await psqlQuery(
+      "SELECT pg_size_pretty(sum(pg_database_size(datname))) AS total FROM pg_database WHERE datistemplate = false"
+    );
 
-  return {
-    version: versionRows[0]?.[0] || 'unknown',
-    uptime: uptimeRows[0]?.[0] || 'unknown',
-    activeConnections: parseInt(connRows[0]?.[0] || '0', 10),
-    maxConnections: parseInt(maxConnRows[0]?.[0] || '0', 10),
-    databaseCount: dbRows.length,
-    totalSize: totalRows[0]?.[0] || '0 bytes',
-    databases: dbRows.map(([name, size, connections]) => ({
-      name,
-      size,
-      connections: parseInt(connections, 10),
-    })),
-  };
+    return {
+      version: versionRows[0]?.[0] || 'unknown',
+      uptime: uptimeRows[0]?.[0] || 'unknown',
+      activeConnections: parseInt(connRows[0]?.[0] || '0', 10),
+      maxConnections: parseInt(maxConnRows[0]?.[0] || '0', 10),
+      databaseCount: dbRows.length,
+      totalSize: totalRows[0]?.[0] || '0 bytes',
+      databases: dbRows.map(([name, size, connections]) => ({
+        name,
+        size,
+        connections: parseInt(connections, 10),
+      })),
+    };
+  } catch {
+    return {
+      version: 'unavailable',
+      uptime: 'N/A',
+      activeConnections: 0,
+      maxConnections: 0,
+      databaseCount: 0,
+      totalSize: 'N/A',
+      databases: [],
+    };
+  }
 }

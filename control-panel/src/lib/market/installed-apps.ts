@@ -1,28 +1,29 @@
 /**
- * Installed Apps — PostgreSQL-backed tracking of installed app versions.
+ * Installed Apps — JSON-backed tracking of installed app versions.
  *
- * Creates and manages the `installed_apps` table in the shared PostgreSQL
- * instance. Used for version tracking, update detection, and app inventory.
+ * Stores app inventory, version tracking, and update detection in a local
+ * JSON file at /var/lib/youeye/state/installed-apps.json. This decouples
+ * CP's own operational data from PostgreSQL, allowing CP to function fully
+ * when PostgreSQL is down (e.g., for troubleshooting).
  *
- * The table lives in the same PostgreSQL as other CP data. On first use,
- * the table is created if it doesn't exist. Existing install.json files
- * are migrated into the table automatically.
+ * All external consumers import functions by name — the storage swap is
+ * invisible to callers.
  */
 
-import { execShell } from '@/lib/incus/server';
+import { readJSON, writeJSON, statePath } from '@/lib/storage/json-store';
 import { listInstalledApps, readInstallMetadata } from './metadata';
 import { fetchCatalog, fetchRepoFile, getEffectiveBranch } from './catalog';
 import { parse as parseYAML } from 'yaml';
 import { isNewer } from '@/lib/version';
 
-const POSTGRES_CONTAINER = 'youeye-postgres';
+const STORE_PATH = statePath('installed-apps.json');
 
 // ─── Types ────────────────────────────────────────────────────
 
 export interface InstalledApp {
   id: number;
   appId: string;
-  type: 'native' | 'basic' | 'marketplace'; // v2: native|basic; legacy: marketplace
+  type: 'native' | 'basic' | 'marketplace';
   installedVersion: string;
   catalogVersion: string | null;
   updateAvailable: boolean;
@@ -36,160 +37,120 @@ export interface InstalledApp {
   sourceUrl: string | null;
 }
 
-// ─── Table Management ─────────────────────────────────────────
-
-let tableCreated = false;
-
-async function psql(sql: string): Promise<string> {
-  const escaped = sql.replace(/'/g, "'\\''");
-  // BUG-025: Use 'psql -U youeye' directly instead of 'su - postgres -c "psql ..."'.
-  // BusyBox's su (used in Alpine-based containers) has limited flag support and
-  // mangles the nested quoting, causing the command to fail and preventing the
-  // installed_apps table from being created. Using -U youeye works because the
-  // youeye superuser is always created during PostgreSQL setup.
-  const result = await execShell(
-    POSTGRES_CONTAINER,
-    `psql -U youeye -t -A -c '${escaped}'`,
-    { timeout: 10_000 }
-  );
-  if (result.exitCode !== 0) {
-    throw new Error(`psql failed: ${result.stderr || result.stdout}`);
-  }
-  return result.stdout.trim();
+interface InstalledAppsStore {
+  apps: Record<string, InstalledApp>;
+  nextId: number;
 }
 
-async function ensureTable(): Promise<void> {
-  if (tableCreated) return;
+// ─── Store Management ─────────────────────────────────────────
 
-  await psql(`
-    CREATE TABLE IF NOT EXISTS installed_apps (
-      id SERIAL PRIMARY KEY,
-      app_id TEXT UNIQUE NOT NULL,
-      type TEXT NOT NULL DEFAULT 'marketplace',
-      installed_version TEXT NOT NULL DEFAULT '',
-      catalog_version TEXT,
-      update_available BOOLEAN NOT NULL DEFAULT FALSE,
-      installed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      subdomain TEXT NOT NULL DEFAULT '',
-      sso_slug TEXT,
-      forward_auth_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-      health_status TEXT NOT NULL DEFAULT 'unknown',
-      health_checked_at TIMESTAMPTZ
-    )
-  `);
+let store: InstalledAppsStore | null = null;
 
-  // Schema migration: add new columns to existing tables
-  try {
-    await psql(`ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS forward_auth_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
-    await psql(`ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS health_status TEXT NOT NULL DEFAULT 'unknown'`);
-    await psql(`ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS health_checked_at TIMESTAMPTZ`);
-    await psql(`ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'catalog'`);
-    await psql(`ALTER TABLE installed_apps ADD COLUMN IF NOT EXISTS source_url TEXT`);
-  } catch {
-    // Columns may already exist
-  }
+async function loadStore(): Promise<InstalledAppsStore> {
+  if (store) return store;
+  store = await readJSON<InstalledAppsStore>(STORE_PATH) ?? { apps: {}, nextId: 1 };
+  return store;
+}
 
-  tableCreated = true;
+async function saveStore(): Promise<void> {
+  if (!store) return;
+  await writeJSON(STORE_PATH, store);
 }
 
 // ─── CRUD Operations ──────────────────────────────────────────
 
-function parseRows(raw: string): InstalledApp[] {
-  if (!raw) return [];
-  return raw.split('\n').filter(Boolean).map((line) => {
-    const [id, appId, type, installedVersion, catalogVersion, updateAvailable, installedAt, subdomain, ssoSlug, forwardAuthEnabled, healthStatus, healthCheckedAt, source, sourceUrl] = line.split('|');
-    return {
-      id: parseInt(id, 10),
-      appId,
-      type: type as 'native' | 'basic' | 'marketplace',
-      installedVersion,
-      catalogVersion: catalogVersion || null,
-      updateAvailable: updateAvailable === 't',
-      installedAt,
-      subdomain,
-      ssoSlug: ssoSlug || null,
-      forwardAuthEnabled: forwardAuthEnabled === 't',
-      healthStatus: (healthStatus as 'healthy' | 'unhealthy' | 'unknown') || 'unknown',
-      healthCheckedAt: healthCheckedAt || null,
-      source: (source as 'catalog' | 'url') || 'catalog',
-      sourceUrl: sourceUrl || null,
-    };
-  });
-}
-
-const SELECT_ALL = 'SELECT id, app_id, type, installed_version, catalog_version, update_available, installed_at, subdomain, sso_slug, forward_auth_enabled, health_status, health_checked_at, source, source_url FROM installed_apps';
-
 export async function getAllInstalledApps(): Promise<InstalledApp[]> {
-  await ensureTable();
-  const raw = await psql(`${SELECT_ALL} ORDER BY installed_at DESC`);
-  return parseRows(raw);
+  const s = await loadStore();
+  return Object.values(s.apps).sort(
+    (a, b) => new Date(b.installedAt).getTime() - new Date(a.installedAt).getTime()
+  );
 }
 
 export async function getInstalledApp(appId: string): Promise<InstalledApp | null> {
-  await ensureTable();
-  const raw = await psql(`${SELECT_ALL} WHERE app_id = '${appId}' LIMIT 1`);
-  const rows = parseRows(raw);
-  return rows[0] ?? null;
+  const s = await loadStore();
+  return s.apps[appId] ?? null;
 }
 
 export async function upsertInstalledApp(data: {
   appId: string;
-  type: string; // 'native' | 'basic' | 'marketplace' (v2 uses native/basic)
+  type: string;
   installedVersion: string;
   subdomain: string;
   ssoSlug?: string | null;
   forwardAuthEnabled?: boolean;
 }): Promise<void> {
-  await ensureTable();
-  const ssoSlug = data.ssoSlug ? `'${data.ssoSlug}'` : 'NULL';
-  const faEnabled = data.forwardAuthEnabled ? 'TRUE' : 'FALSE';
-  await psql(`
-    INSERT INTO installed_apps (app_id, type, installed_version, subdomain, sso_slug, forward_auth_enabled)
-    VALUES ('${data.appId}', '${data.type}', '${data.installedVersion}', '${data.subdomain}', ${ssoSlug}, ${faEnabled})
-    ON CONFLICT (app_id) DO UPDATE SET
-      type = EXCLUDED.type,
-      installed_version = EXCLUDED.installed_version,
-      subdomain = EXCLUDED.subdomain,
-      sso_slug = EXCLUDED.sso_slug,
-      forward_auth_enabled = EXCLUDED.forward_auth_enabled
-  `);
+  const s = await loadStore();
+  const existing = s.apps[data.appId];
+
+  if (existing) {
+    existing.type = data.type as InstalledApp['type'];
+    existing.installedVersion = data.installedVersion;
+    existing.subdomain = data.subdomain;
+    existing.ssoSlug = data.ssoSlug ?? existing.ssoSlug;
+    existing.forwardAuthEnabled = data.forwardAuthEnabled ?? existing.forwardAuthEnabled;
+  } else {
+    s.apps[data.appId] = {
+      id: s.nextId++,
+      appId: data.appId,
+      type: data.type as InstalledApp['type'],
+      installedVersion: data.installedVersion,
+      catalogVersion: null,
+      updateAvailable: false,
+      installedAt: new Date().toISOString(),
+      subdomain: data.subdomain,
+      ssoSlug: data.ssoSlug ?? null,
+      forwardAuthEnabled: data.forwardAuthEnabled ?? false,
+      healthStatus: 'unknown',
+      healthCheckedAt: null,
+      source: 'catalog',
+      sourceUrl: null,
+    };
+  }
+
+  await saveStore();
 }
 
 export async function removeInstalledApp(appId: string): Promise<void> {
-  await ensureTable();
-  await psql(`DELETE FROM installed_apps WHERE app_id = '${appId}'`);
+  const s = await loadStore();
+  delete s.apps[appId];
+  await saveStore();
 }
 
 export async function updateInstalledAppSubdomain(appId: string, subdomain: string): Promise<void> {
-  await ensureTable();
-  await psql(`UPDATE installed_apps SET subdomain = '${subdomain}' WHERE app_id = '${appId}'`);
+  const s = await loadStore();
+  if (s.apps[appId]) {
+    s.apps[appId].subdomain = subdomain;
+    await saveStore();
+  }
 }
 
 export async function updateInstalledVersion(appId: string, version: string): Promise<void> {
-  await ensureTable();
-  await psql(`UPDATE installed_apps SET installed_version = '${version}', update_available = FALSE WHERE app_id = '${appId}'`);
+  const s = await loadStore();
+  if (s.apps[appId]) {
+    s.apps[appId].installedVersion = version;
+    s.apps[appId].updateAvailable = false;
+    await saveStore();
+  }
 }
 
-/**
- * Update the source tracking for a URL-installed app.
- */
 export async function updateInstalledAppSource(
   appId: string,
   source: 'catalog' | 'url',
   sourceUrl?: string
 ): Promise<void> {
-  await ensureTable();
-  const urlSql = sourceUrl ? `'${sourceUrl.replace(/'/g, "''")}'` : 'NULL';
-  await psql(`UPDATE installed_apps SET source = '${source}', source_url = ${urlSql} WHERE app_id = '${appId}'`);
+  const s = await loadStore();
+  if (s.apps[appId]) {
+    s.apps[appId].source = source;
+    s.apps[appId].sourceUrl = sourceUrl ?? null;
+    await saveStore();
+  }
 }
 
 // ─── Migration from install.json ──────────────────────────────
 
 export async function migrateFromInstallJson(): Promise<number> {
-  await ensureTable();
-
-  const existing = await getAllInstalledApps();
-  const existingIds = new Set(existing.map((a) => a.appId));
+  const s = await loadStore();
+  const existingIds = new Set(Object.keys(s.apps));
 
   const jsonApps = await listInstalledApps();
   let migrated = 0;
@@ -208,17 +169,13 @@ export async function migrateFromInstallJson(): Promise<number> {
   }
 
   if (migrated > 0) {
-    console.log(`[installed-apps] Migrated ${migrated} apps from install.json to DB`);
+    console.log(`[installed-apps] Migrated ${migrated} apps from install.json to JSON store`);
   }
   return migrated;
 }
 
 // ─── Update Detection ─────────────────────────────────────────
 
-/**
- * Fetch the latest version for an app by reading its manifest from its repo.
- * v2: repo is e.g. "potemsla/YE-App-Wiki", manifest is "youeye-app.yaml".
- */
 async function fetchNativeAppVersion(
   repo: string,
   manifestFile: string,
@@ -235,10 +192,6 @@ async function fetchNativeAppVersion(
   }
 }
 
-/**
- * Fetch latest version from a URL-installed app's manifest.
- * Re-fetches the manifest from the original source_url.
- */
 async function fetchUrlAppVersion(sourceUrl: string): Promise<string | null> {
   try {
     const controller = new AbortController();
@@ -263,17 +216,10 @@ async function fetchUrlAppVersion(sourceUrl: string): Promise<string | null> {
 
 /**
  * Compare each installed app's version against the latest available version.
- *
- * For apps with `repo`: fetches `youeye-app.yaml` from the app's own repo.
- * For apps with `latestVersion`: uses the catalog-specified version directly.
- * For URL-installed apps without catalog entries: re-fetches the manifest from source_url.
- *
- * Updates the `catalog_version` and `update_available` columns in the DB.
- * Returns the list of apps with available updates.
+ * Updates catalogVersion and updateAvailable in the JSON store.
+ * Single load + single save instead of N psql roundtrips.
  */
 export async function checkForUpdates(): Promise<InstalledApp[]> {
-  await ensureTable();
-
   let catalog;
   try {
     catalog = await fetchCatalog();
@@ -283,7 +229,8 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
   }
 
   const branch = await getEffectiveBranch();
-  const installed = await getAllInstalledApps();
+  const s = await loadStore();
+  const installed = Object.values(s.apps);
   const appsWithUpdates: InstalledApp[] = [];
 
   const entryMap = new Map<string, { file?: string; repo?: string; manifest?: string; latestVersion?: string; integration?: string }>();
@@ -301,7 +248,6 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
     } else if (entry?.latestVersion) {
       catalogVersion = entry.latestVersion;
     } else if (!entry && app.source === 'url' && app.sourceUrl) {
-      // URL-installed custom app — no catalog entry, fetch version from source URL
       catalogVersion = await fetchUrlAppVersion(app.sourceUrl);
     }
 
@@ -310,45 +256,35 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
       try {
         hasUpdate = isNewer(catalogVersion, app.installedVersion);
       } catch {
-        // Version comparison failed — treat as no update
         hasUpdate = false;
       }
     }
 
-    // Update DB with current catalog version and update status
-    const cvSql = catalogVersion ? `'${catalogVersion}'` : 'NULL';
-    await psql(`
-      UPDATE installed_apps
-      SET catalog_version = ${cvSql}, update_available = ${hasUpdate}
-      WHERE app_id = '${app.appId}'
-    `);
+    app.catalogVersion = catalogVersion;
+    app.updateAvailable = hasUpdate;
 
     if (hasUpdate) {
-      appsWithUpdates.push({
-        ...app,
-        catalogVersion,
-        updateAvailable: true,
-      });
+      appsWithUpdates.push({ ...app });
     }
   }
 
+  await saveStore();
   return appsWithUpdates;
 }
 
-/**
- * Get all apps that have updates available.
- */
 export async function getAppsWithUpdatesAvailable(): Promise<InstalledApp[]> {
-  await ensureTable();
-  const raw = await psql(`${SELECT_ALL} WHERE update_available = TRUE ORDER BY app_id`);
-  return parseRows(raw);
+  const s = await loadStore();
+  return Object.values(s.apps).filter(a => a.updateAvailable).sort((a, b) => a.appId.localeCompare(b.appId));
 }
 
 // ─── Forward-Auth Toggle ─────────────────────────────────────
 
 export async function updateForwardAuthEnabled(appId: string, enabled: boolean): Promise<void> {
-  await ensureTable();
-  await psql(`UPDATE installed_apps SET forward_auth_enabled = ${enabled} WHERE app_id = '${appId}'`);
+  const s = await loadStore();
+  if (s.apps[appId]) {
+    s.apps[appId].forwardAuthEnabled = enabled;
+    await saveStore();
+  }
 }
 
 // ─── Health Status ───────────────────────────────────────────
@@ -357,6 +293,10 @@ export async function updateHealthStatus(
   appId: string,
   status: 'healthy' | 'unhealthy' | 'unknown',
 ): Promise<void> {
-  await ensureTable();
-  await psql(`UPDATE installed_apps SET health_status = '${status}', health_checked_at = NOW() WHERE app_id = '${appId}'`);
+  const s = await loadStore();
+  if (s.apps[appId]) {
+    s.apps[appId].healthStatus = status;
+    s.apps[appId].healthCheckedAt = new Date().toISOString();
+    await saveStore();
+  }
 }

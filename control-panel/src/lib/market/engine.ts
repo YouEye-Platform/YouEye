@@ -327,6 +327,17 @@ async function setupSharedPostgres(
 ): Promise<void> {
   const POSTGRES_CONTAINER = 'youeye-postgres';
 
+  // Verify postgres container is reachable before proceeding
+  try {
+    const check = await execShell(POSTGRES_CONTAINER, 'pg_isready -U youeye', { timeout: 5_000 });
+    if (check.exitCode !== 0) {
+      throw new Error('PostgreSQL is not running. Cannot install apps that require a database.');
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('PostgreSQL is not running')) throw err;
+    throw new Error(`PostgreSQL is unreachable: ${err}. Cannot install apps that require a database.`);
+  }
+
   const checkUser = await execShell(
     POSTGRES_CONTAINER,
     `psql -U youeye -tAc "SELECT 1 FROM pg_roles WHERE rolname='${dbUser}'"`,

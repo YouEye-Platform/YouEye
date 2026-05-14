@@ -1,7 +1,10 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, CSSProperties } from 'react';
+import { ProfileCard } from '@/components/settings/profile-card';
 import { LanguageCard } from '@/components/settings/language-card';
+import { TlsCard } from '@/components/settings/tls-card';
+import { IconCreator, renderLucideToBlob, renderIconCanvas } from '@/components/settings/icon-creator';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,7 +25,6 @@ import {
   ExternalLink,
   Power,
   PowerOff,
-  Paintbrush,
   ChevronDown,
   ChevronUp,
   CheckCircle2,
@@ -32,12 +34,6 @@ import {
   Send,
   Eye,
   EyeOff,
-  Webhook,
-  Plus,
-  Trash2,
-  Copy,
-  ToggleLeft,
-  ToggleRight,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { authenticatedFetch } from '@/lib/api-client';
@@ -46,6 +42,8 @@ import {
   type SiteNameStyle,
   DEFAULT_STYLE,
 } from '@/lib/wordart-presets';
+import type { IconConfig } from '@/lib/icon-config';
+import { DEFAULT_ICON_CONFIG } from '@/lib/icon-config';
 import SetupWordArtInline from '@/components/setup/WordArtPickerInline';
 
 interface SSOStatus {
@@ -154,6 +152,8 @@ export default function SettingsPage() {
   const [rcDomain, setRcDomain] = useState('');
   const [rcSubdomains, setRcSubdomains] = useState({ control: '', auth: '', dns: '' });
   const [rcNameStyle, setRcNameStyle] = useState<SiteNameStyle>(DEFAULT_STYLE);
+  const [rcIconConfig, setRcIconConfig] = useState<IconConfig>(DEFAULT_ICON_CONFIG);
+  const [rcAccentColor, setRcAccentColor] = useState('#8B5CF6');
   const [rcShowAdvanced, setRcShowAdvanced] = useState(false);
   const [rcRunning, setRcRunning] = useState(false);
   const [rcSteps, setRcSteps] = useState<ReconfigStep[]>([]);
@@ -233,6 +233,15 @@ export default function SettingsPage() {
         if (cfg.site_name_style) {
           setRcNameStyle(cfg.site_name_style);
         }
+        // Load icon config + accent from branding API (proxied to UI)
+        try {
+          const brandRes = await authenticatedFetch('/api/ui/branding');
+          if (brandRes.ok) {
+            const brand = await brandRes.json();
+            if (brand.icon_config) setRcIconConfig(brand.icon_config);
+            if (brand.accent_color) setRcAccentColor(brand.accent_color);
+          }
+        } catch { /* branding may not be available */ }
       }
     } catch { /* ignore */ }
   }, []);
@@ -297,6 +306,39 @@ export default function SettingsPage() {
     ]);
 
     try {
+      // Save icon + accent via branding API (fire-and-forget, non-blocking)
+      const brandingPromise = (async () => {
+        try {
+          await authenticatedFetch('/api/ui/branding', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              site_name: rcSiteName,
+              site_name_style: rcNameStyle,
+              accent_color: rcAccentColor,
+              icon_config: rcIconConfig,
+            }),
+          });
+          // Render and upload icon blob for non-letter modes
+          if (rcIconConfig.mode !== 'letter') {
+            let blob: Blob | null = null;
+            if (rcIconConfig.mode === 'lucide') {
+              blob = await renderLucideToBlob(rcIconConfig, rcSiteName, rcNameStyle, 512);
+            } else {
+              const offscreen = document.createElement('canvas');
+              renderIconCanvas(offscreen, rcIconConfig, rcSiteName, rcNameStyle, 512);
+              blob = await new Promise<Blob | null>(resolve => offscreen.toBlob(resolve, 'image/png'));
+            }
+            if (blob) {
+              const formData = new FormData();
+              formData.append('icon_config', JSON.stringify(rcIconConfig));
+              formData.append('icon_blob', blob, 'icon.png');
+              await fetch('/api/ui/branding/icon', { method: 'POST', body: formData });
+            }
+          }
+        } catch { /* branding save is best-effort */ }
+      })();
+
       const res = await authenticatedFetch('/api/setup/reconfigure', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -307,6 +349,9 @@ export default function SettingsPage() {
           site_name_style: rcNameStyle,
         }),
       });
+
+      // Wait for branding to finish (best-effort)
+      await brandingPromise.catch(() => {});
 
       if (!res.ok) {
         const text = await res.text().catch(() => '');
@@ -364,7 +409,7 @@ export default function SettingsPage() {
     } finally {
       setRcRunning(false);
     }
-  }, [rcSiteName, rcDomain, rcSubdomains, rcNameStyle]);
+  }, [rcSiteName, rcDomain, rcSubdomains, rcNameStyle, rcIconConfig, rcAccentColor]);
 
   const handleEnableUI = async () => {
     setShowUIConfirm(null);
@@ -511,6 +556,9 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* Profile */}
+      <ProfileCard />
+
       {/* Language Settings */}
       <LanguageCard />
 
@@ -651,6 +699,16 @@ export default function SettingsPage() {
                   setStyle={setRcNameStyle}
                 />
               </div>
+
+              {/* Icon Creator + Accent Color */}
+              <IconCreator
+                siteName={rcSiteName}
+                style={rcNameStyle}
+                iconConfig={rcIconConfig}
+                onIconConfigChange={setRcIconConfig}
+                accentColor={rcAccentColor}
+                onAccentColorChange={setRcAccentColor}
+              />
 
               {/* Domain */}
               <div className="space-y-2">
@@ -1087,11 +1145,11 @@ export default function SettingsPage() {
         </Card>
       )}
 
+      {/* TLS Certificates */}
+      <TlsCard />
+
       {/* SMTP Email */}
       <SmtpCard />
-
-      {/* Webhooks */}
-      <WebhooksCard />
 
       {/* Release Channel */}
       <ReleaseChannelCard />
@@ -1478,348 +1536,3 @@ function SmtpCard() {
   );
 }
 
-// ─── Webhook Event Types ─────────────────────────────────
-
-const WEBHOOK_EVENT_TYPES = [
-  { value: 'app.installed', label: 'App Installed', group: 'Apps' },
-  { value: 'app.uninstalled', label: 'App Uninstalled', group: 'Apps' },
-  { value: 'app.updated', label: 'App Updated', group: 'Apps' },
-  { value: 'user.created', label: 'User Created', group: 'Users' },
-  { value: 'user.login', label: 'User Login', group: 'Users' },
-  { value: 'settings.changed', label: 'Settings Changed', group: 'System' },
-  { value: 'backup.completed', label: 'Backup Completed', group: 'System' },
-  { value: 'backup.failed', label: 'Backup Failed', group: 'System' },
-  { value: 'system.health.changed', label: 'Health Changed', group: 'System' },
-] as const;
-
-interface WebhookEntry {
-  id: string;
-  url: string;
-  events: string[];
-  enabled: boolean;
-  hasSecret: boolean;
-  description?: string;
-  createdAt: string;
-}
-
-function WebhooksCard() {
-  const tc = useTranslations('common');
-  const [webhooks, setWebhooks] = useState<WebhookEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-
-  // Create form state
-  const [showForm, setShowForm] = useState(false);
-  const [formUrl, setFormUrl] = useState('');
-  const [formDescription, setFormDescription] = useState('');
-  const [formEvents, setFormEvents] = useState<string[]>([]);
-  const [creating, setCreating] = useState(false);
-  const [newSecret, setNewSecret] = useState('');
-
-  // Delete confirmation
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
-
-  const fetchWebhooks = useCallback(async () => {
-    try {
-      const res = await authenticatedFetch('/api/settings/webhooks');
-      if (res.ok) {
-        const data = await res.json();
-        setWebhooks(data.webhooks || []);
-      }
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { fetchWebhooks(); }, [fetchWebhooks]);
-
-  const toggleEvent = (event: string) => {
-    setFormEvents(prev =>
-      prev.includes(event) ? prev.filter(e => e !== event) : [...prev, event]
-    );
-  };
-
-  const handleCreate = async () => {
-    if (!formUrl.trim()) { setError('URL is required'); return; }
-    if (formEvents.length === 0) { setError('Select at least one event'); return; }
-
-    setCreating(true);
-    setError('');
-    setNewSecret('');
-    try {
-      const res = await authenticatedFetch('/api/settings/webhooks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: formUrl.trim(),
-          events: formEvents,
-          description: formDescription.trim() || undefined,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to create webhook');
-
-      setNewSecret(data.webhook.secret);
-      setSuccess('Webhook created. Copy the signing secret — it won\'t be shown again.');
-      setFormUrl('');
-      setFormDescription('');
-      setFormEvents([]);
-      await fetchWebhooks();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to create');
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    setDeleting(true);
-    setError('');
-    try {
-      const res = await authenticatedFetch('/api/settings/webhooks', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Failed to delete');
-      }
-      setDeleteId(null);
-      setSuccess('Webhook deleted');
-      setTimeout(() => setSuccess(''), 3000);
-      await fetchWebhooks();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to delete');
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const handleToggle = async (wh: WebhookEntry) => {
-    try {
-      const res = await authenticatedFetch('/api/settings/webhooks', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: wh.id, enabled: !wh.enabled }),
-      });
-      if (res.ok) await fetchWebhooks();
-    } catch {
-      // ignore
-    }
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setSuccess('Secret copied to clipboard');
-    setTimeout(() => setSuccess(''), 2000);
-  };
-
-  if (loading) {
-    return (
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Webhook className="h-5 w-5 text-gray-600" />
-            <CardTitle className="text-lg">Webhooks</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            {tc('loading')}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Webhook className="h-5 w-5 text-gray-600" />
-            <CardTitle className="text-lg">Webhooks</CardTitle>
-            {webhooks.length > 0 && (
-              <span className="inline-flex items-center px-2 py-0.5 bg-gray-100 text-gray-600 text-xs font-medium rounded-full">
-                {webhooks.length}
-              </span>
-            )}
-          </div>
-          {!showForm && (
-            <Button size="sm" onClick={() => { setShowForm(true); setNewSecret(''); setError(''); setSuccess(''); }}>
-              <Plus className="h-4 w-4 mr-1" />
-              Add Webhook
-            </Button>
-          )}
-        </div>
-        <CardDescription>
-          Receive HTTP POST notifications when platform events occur. Payloads are HMAC-SHA256 signed.
-        </CardDescription>
-      </CardHeader>
-
-      <CardContent className="space-y-4">
-        {/* Secret display (after creation) */}
-        {newSecret && (
-          <div className="p-3 rounded-lg border-2 border-amber-200 bg-amber-50 space-y-2">
-            <div className="flex items-center gap-2 text-amber-800 text-sm font-medium">
-              <AlertCircle className="h-4 w-4" />
-              Signing Secret — copy now, it won&apos;t be shown again
-            </div>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 text-xs bg-white px-3 py-2 rounded border font-mono break-all">
-                {newSecret}
-              </code>
-              <Button size="sm" variant="outline" onClick={() => copyToClipboard(newSecret)}>
-                <Copy className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Create form */}
-        {showForm && (
-          <div className="p-4 rounded-lg border border-blue-200 bg-blue-50/50 space-y-3">
-            <div className="text-sm font-medium text-gray-800">New Webhook</div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="wh-url">Payload URL</Label>
-              <Input
-                id="wh-url"
-                value={formUrl}
-                onChange={e => setFormUrl(e.target.value)}
-                placeholder="https://example.com/webhook"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="wh-desc">Description (optional)</Label>
-              <Input
-                id="wh-desc"
-                value={formDescription}
-                onChange={e => setFormDescription(e.target.value)}
-                placeholder="Slack notifications, monitoring, etc."
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label>Events</Label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['Apps', 'Users', 'System'] as const).map(group => (
-                  <div key={group} className="space-y-1">
-                    <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">{group}</div>
-                    {WEBHOOK_EVENT_TYPES.filter(e => e.group === group).map(evt => (
-                      <label key={evt.value} className="flex items-center gap-2 text-sm cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={formEvents.includes(evt.value)}
-                          onChange={() => toggleEvent(evt.value)}
-                          className="rounded"
-                        />
-                        {evt.label}
-                      </label>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 pt-1">
-              <Button size="sm" onClick={handleCreate} disabled={creating}>
-                {creating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Check className="h-4 w-4 mr-1" />}
-                Create
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => { setShowForm(false); setError(''); }}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Webhook list */}
-        {webhooks.length === 0 && !showForm && (
-          <div className="text-sm text-muted-foreground py-4 text-center">
-            No webhooks configured. Add one to receive platform event notifications.
-          </div>
-        )}
-
-        {webhooks.map(wh => (
-          <div key={wh.id} className={`p-3 rounded-lg border ${wh.enabled ? 'bg-white' : 'bg-gray-50 opacity-75'} space-y-2`}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 min-w-0">
-                <button
-                  onClick={() => handleToggle(wh)}
-                  className="shrink-0 text-gray-500 hover:text-gray-700"
-                  title={wh.enabled ? 'Disable' : 'Enable'}
-                >
-                  {wh.enabled
-                    ? <ToggleRight className="h-5 w-5 text-green-600" />
-                    : <ToggleLeft className="h-5 w-5 text-gray-400" />
-                  }
-                </button>
-                <code className="text-sm font-mono truncate">{wh.url}</code>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                {deleteId === wh.id ? (
-                  <>
-                    <Button size="xs" variant="destructive" onClick={() => handleDelete(wh.id)} disabled={deleting}>
-                      {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Confirm'}
-                    </Button>
-                    <Button size="xs" variant="outline" onClick={() => setDeleteId(null)}>
-                      Cancel
-                    </Button>
-                  </>
-                ) : (
-                  <Button size="xs" variant="ghost" onClick={() => setDeleteId(wh.id)}>
-                    <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                  </Button>
-                )}
-              </div>
-            </div>
-
-            {wh.description && (
-              <div className="text-xs text-muted-foreground pl-7">{wh.description}</div>
-            )}
-
-            <div className="flex flex-wrap gap-1 pl-7">
-              {wh.events.map(evt => (
-                <span key={evt} className="inline-flex px-1.5 py-0.5 text-xs bg-blue-50 text-blue-700 rounded font-mono">
-                  {evt}
-                </span>
-              ))}
-            </div>
-
-            <div className="flex items-center gap-3 pl-7 text-xs text-muted-foreground">
-              <span>Created {new Date(wh.createdAt).toLocaleDateString()}</span>
-              {wh.hasSecret && (
-                <span className="inline-flex items-center gap-1">
-                  <Shield className="h-3 w-3" />
-                  HMAC signed
-                </span>
-              )}
-            </div>
-          </div>
-        ))}
-
-        {/* Feedback messages */}
-        {error && (
-          <div className="text-sm text-red-600 flex items-center gap-1">
-            <AlertCircle className="h-3 w-3" />
-            {error}
-          </div>
-        )}
-        {success && !newSecret && (
-          <div className="text-sm text-green-600 flex items-center gap-1">
-            <Check className="h-3 w-3" />
-            {success}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}

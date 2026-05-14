@@ -331,6 +331,18 @@ async function removePiholeDNSForApp(subdomain: string, domain: string): Promise
 async function dropSharedPostgresDatabase(appId: string): Promise<void> {
   const { execShell } = await import('../incus/server');
 
+  // Check if postgres is reachable first
+  try {
+    const check = await execShell(POSTGRES_CONTAINER, 'pg_isready -U youeye', { timeout: 5_000 });
+    if (check.exitCode !== 0) {
+      console.warn(`[uninstaller] PostgreSQL unreachable — skipping DB cleanup for ${appId}.`);
+      return;
+    }
+  } catch {
+    console.warn(`[uninstaller] PostgreSQL unreachable — skipping DB cleanup for ${appId}.`);
+    return;
+  }
+
   try {
     // Terminate active connections first
     await execShell(

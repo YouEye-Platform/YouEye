@@ -12,7 +12,6 @@ import {
   Shield,
   Users,
   Settings,
-  Archive,
   Store,
   HeartPulse,
   HardDrive,
@@ -29,7 +28,6 @@ const navItems = [
   { href: '/people', labelKey: 'people' as const, icon: Users },
   { href: '/backup', labelKey: 'backup' as const, icon: HardDrive },
   { href: '/settings', labelKey: 'settings' as const, icon: Settings },
-  { href: '/apps-legacy', labelKey: 'appsLegacy' as const, icon: Archive },
 ];
 
 export function Sidebar() {

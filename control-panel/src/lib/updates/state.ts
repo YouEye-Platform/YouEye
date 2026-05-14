@@ -1,17 +1,17 @@
 /**
  * Update State Manager
  *
- * Persists update status in PostgreSQL via psql (same pattern as postgres/client.ts).
- * Aggregates Spine status (from Spine API) with CP-managed updates (from DB).
+ * Persists update status in a local JSON file at
+ * /var/lib/youeye/state/update-status.json.
+ * Aggregates Spine status (from Spine API) with CP-managed updates.
  */
 
-import { execShell } from '@/lib/incus/server';
-import { POSTGRES_MANIFEST } from '@/lib/apps/manifest';
+import { readJSON, writeJSON, statePath } from '@/lib/storage/json-store';
 import { spineClient } from '@/lib/spine/client';
 
-const CONTAINER = POSTGRES_MANIFEST.containerName;
+const STORE_PATH = statePath('update-status.json');
 
-/** Known update components — allowlist prevents SQL/shell injection via component param */
+/** Known update components — allowlist prevents injection via component param */
 const ALLOWED_COMPONENTS = new Set([
   'spine', 'control', 'ui', 'incus', 'system',
   'caddy', 'pihole', 'postgres', 'authentik', 'wiki', 'search',
@@ -45,49 +45,27 @@ type UpdateStatus =
   | 'completed'
   | 'failed';
 
-/**
- * Run a raw psql command (not read-only) inside the postgres container.
- */
-async function psqlExec(sql: string): Promise<string> {
-  const escaped = sql.replace(/'/g, "'\\''");
-  const { exitCode, stdout, stderr } = await execShell(
-    CONTAINER,
-    `su - postgres -c "psql -U youeye -d youeye --csv -c '${escaped}'"`,
-    { timeout: 15000 }
-  );
+// ─── Store Management ─────────────────────────────────────────
 
-  if (exitCode !== 0) {
-    throw new Error(`psql error: ${stderr}`);
-  }
-  return stdout;
+interface UpdateStatusStore {
+  statuses: Record<string, UpdateStatusRecord>;
 }
 
-/**
- * Ensure the update_status table exists. Called once on first use.
- */
-let tableEnsured = false;
-async function ensureTable(): Promise<void> {
-  if (tableEnsured) return;
+let store: UpdateStatusStore | null = null;
 
-  await psqlExec(`
-    CREATE TABLE IF NOT EXISTS update_status (
-      component    TEXT PRIMARY KEY,
-      status       TEXT NOT NULL DEFAULT 'idle',
-      progress     INTEGER DEFAULT 0,
-      message      TEXT DEFAULT '',
-      version_before TEXT,
-      version_after  TEXT,
-      error        TEXT,
-      started_at   TIMESTAMP WITH TIME ZONE,
-      updated_at   TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-    )
-  `);
-  tableEnsured = true;
+async function loadStore(): Promise<UpdateStatusStore> {
+  if (store) return store;
+  store = await readJSON<UpdateStatusStore>(STORE_PATH) ?? { statuses: {} };
+  return store;
 }
 
-/**
- * Write or update the status for a component.
- */
+async function saveStore(): Promise<void> {
+  if (!store) return;
+  await writeJSON(STORE_PATH, store);
+}
+
+// ─── Status Operations ────────────────────────────────────────
+
 export async function writeStatus(
   component: string,
   status: UpdateStatus,
@@ -101,99 +79,47 @@ export async function writeStatus(
   }
 ): Promise<void> {
   validateComponent(component);
-  await ensureTable();
+  const s = await loadStore();
+  const existing = s.statuses[component];
 
-  const vb = opts?.versionBefore ? `'${opts.versionBefore}'` : 'NULL';
-  const va = opts?.versionAfter ? `'${opts.versionAfter}'` : 'NULL';
-  const err = opts?.error ? `'${opts.error.replace(/'/g, "''")}'` : 'NULL';
-  const sa = opts?.startedAt ? `'${opts.startedAt}'` : 'NOW()';
+  s.statuses[component] = {
+    component,
+    status,
+    progress,
+    message,
+    version_before: opts?.versionBefore ?? existing?.version_before ?? null,
+    version_after: opts?.versionAfter ?? null,
+    error: opts?.error ?? null,
+    started_at: opts?.startedAt ?? existing?.started_at ?? new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
 
-  await psqlExec(`
-    INSERT INTO update_status (component, status, progress, message, version_before, version_after, error, started_at, updated_at)
-    VALUES ('${component}', '${status}', ${progress}, '${message.replace(/'/g, "''")}', ${vb}, ${va}, ${err}, ${sa}, NOW())
-    ON CONFLICT (component) DO UPDATE SET
-      status = EXCLUDED.status,
-      progress = EXCLUDED.progress,
-      message = EXCLUDED.message,
-      version_before = COALESCE(EXCLUDED.version_before, update_status.version_before),
-      version_after = EXCLUDED.version_after,
-      error = EXCLUDED.error,
-      started_at = COALESCE(EXCLUDED.started_at, update_status.started_at),
-      updated_at = NOW()
-  `);
+  await saveStore();
 }
 
-/**
- * Read the status for a single component from the DB.
- */
 export async function readStatus(component: string): Promise<UpdateStatusRecord | null> {
   validateComponent(component);
-  await ensureTable();
-
-  const stdout = await psqlExec(
-    `SELECT component, status, progress, message, version_before, version_after, error, started_at::text, updated_at::text FROM update_status WHERE component = '${component}'`
-  );
-
-  const lines = stdout.trim().split('\n').filter(l => l.length > 0);
-  // First line is header, second is data
-  if (lines.length < 2) return null;
-
-  const fields = parseCSVLine(lines[1]);
-  return {
-    component: fields[0],
-    status: fields[1],
-    progress: parseInt(fields[2] || '0', 10),
-    message: fields[3] || '',
-    version_before: fields[4] || null,
-    version_after: fields[5] || null,
-    error: fields[6] || null,
-    started_at: fields[7] || null,
-    updated_at: fields[8] || '',
-  };
+  const s = await loadStore();
+  return s.statuses[component] ?? null;
 }
 
-/**
- * Read all active/recent update statuses from the DB.
- */
 export async function readAllStatuses(): Promise<UpdateStatusRecord[]> {
-  await ensureTable();
-
-  const stdout = await psqlExec(
-    `SELECT component, status, progress, message, version_before, version_after, error, started_at::text, updated_at::text FROM update_status ORDER BY updated_at DESC`
+  const s = await loadStore();
+  return Object.values(s.statuses).sort(
+    (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
   );
-
-  const lines = stdout.trim().split('\n').filter(l => l.length > 0);
-  if (lines.length < 2) return [];
-
-  // Skip header line
-  return lines.slice(1).map(line => {
-    const fields = parseCSVLine(line);
-    return {
-      component: fields[0],
-      status: fields[1],
-      progress: parseInt(fields[2] || '0', 10),
-      message: fields[3] || '',
-      version_before: fields[4] || null,
-      version_after: fields[5] || null,
-      error: fields[6] || null,
-      started_at: fields[7] || null,
-      updated_at: fields[8] || '',
-    };
-  });
 }
 
-/**
- * Clear the status for a component (delete the row).
- */
 export async function clearStatus(component: string): Promise<void> {
   validateComponent(component);
-  await ensureTable();
-  await psqlExec(`DELETE FROM update_status WHERE component = '${component}'`);
+  const s = await loadStore();
+  delete s.statuses[component];
+  await saveStore();
 }
 
 /**
  * Get a unified view of all update statuses — aggregating
- * Spine's status file (via API) with CP-managed statuses (from DB).
+ * Spine's status (via API) with CP-managed statuses (from JSON store).
  */
 export async function getUnifiedStatuses(): Promise<UpdateStatusRecord[]> {
   const [dbStatuses, spineStatus] = await Promise.all([
@@ -203,7 +129,6 @@ export async function getUnifiedStatuses(): Promise<UpdateStatusRecord[]> {
 
   const result = new Map<string, UpdateStatusRecord>();
 
-  // Add DB statuses first
   for (const s of dbStatuses) {
     result.set(s.component, s);
   }
@@ -237,18 +162,12 @@ export async function getUnifiedStatuses(): Promise<UpdateStatusRecord[]> {
   return Array.from(result.values());
 }
 
-/**
- * Convenience: start an update for a component.
- */
 export async function startUpdate(component: string, versionBefore: string): Promise<void> {
   await writeStatus(component, 'checking', 0, 'Checking for updates...', {
     versionBefore,
   });
 }
 
-/**
- * Convenience: mark an update as completed.
- */
 export async function completeUpdate(component: string, versionBefore: string, versionAfter: string): Promise<void> {
   await writeStatus(component, 'completed', 100, 'Update completed successfully', {
     versionBefore,
@@ -256,46 +175,9 @@ export async function completeUpdate(component: string, versionBefore: string, v
   });
 }
 
-/**
- * Convenience: mark an update as failed.
- */
 export async function failUpdate(component: string, versionBefore: string, errorMsg: string): Promise<void> {
   await writeStatus(component, 'failed', 0, 'Update failed', {
     versionBefore,
     error: errorMsg,
   });
-}
-
-/**
- * Parse a single CSV line, handling quoted fields.
- */
-function parseCSVLine(line: string): string[] {
-  const fields: string[] = [];
-  let current = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQuotes) {
-      if (ch === '"' && line[i + 1] === '"') {
-        current += '"';
-        i++;
-      } else if (ch === '"') {
-        inQuotes = false;
-      } else {
-        current += ch;
-      }
-    } else {
-      if (ch === '"') {
-        inQuotes = true;
-      } else if (ch === ',') {
-        fields.push(current);
-        current = '';
-      } else {
-        current += ch;
-      }
-    }
-  }
-  fields.push(current);
-  return fields;
 }
