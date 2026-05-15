@@ -497,6 +497,8 @@
   "appsSettings": {
     "title": "Apps",
     "description": "Gérez les préférences des apps, les permissions et le tiroir d'apps.",
+    "installedApps": "Apps installées",
+    "installedAppsDescription": "Vos applications et services installés",
     "drawerNote": "La personnalisation du tiroir d'apps est disponible depuis le bouton Apps dans l'en-tête."
   },
   "privacySettings": {

@@ -41,7 +41,8 @@ export async function GET(request: NextRequest) {
       visible: a.visible,
       order: a.displayOrder,
       section_id: a.sectionId,
-      status: a.status,
+      // Registered apps (have containerUrl) with "unknown" status are assumed running
+      status: (a.status === "unknown" || !a.status) && a.containerUrl ? "running" : (a.status ?? "unknown"),
       version: a.version ?? null,
       subdomain: a.subdomain ?? null,
       containerUrl: a.containerUrl ?? null,

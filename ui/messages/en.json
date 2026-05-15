@@ -498,6 +498,8 @@
   "appsSettings": {
     "title": "Apps",
     "description": "Manage your app preferences, permissions, and drawer customization.",
+    "installedApps": "Installed Apps",
+    "installedAppsDescription": "Your installed applications and services",
     "drawerNote": "App drawer customization is available from the Apps button in the header. Per-app settings will appear here when apps declare them in their manifest."
   },
   "privacySettings": {

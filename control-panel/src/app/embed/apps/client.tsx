@@ -219,17 +219,20 @@ export function AppsEmbedClient() {
     return acc;
   }, {});
 
-  // section="updates" → only show updates available banner
+  // section="updates" → always show "Check for Updates" button; title/cards only when updates exist
   if (section === "updates") {
-    if (appsWithUpdates.length === 0) return <div />;
     return (
       <div style={{ padding: 16 }}>
         {restartOverlay && <RestartOverlay name={restartOverlay} />}
         <div className="embed-header">
-          <div>
-            <div className="embed-title">Updates Available</div>
-            <div className="embed-subtitle">{appsWithUpdates.length} update{appsWithUpdates.length !== 1 ? "s" : ""} available</div>
-          </div>
+          {appsWithUpdates.length > 0 ? (
+            <div>
+              <div className="embed-title">Updates Available</div>
+              <div className="embed-subtitle">{appsWithUpdates.length} update{appsWithUpdates.length !== 1 ? "s" : ""} available</div>
+            </div>
+          ) : (
+            <div />
+          )}
           <button className="embed-btn" onClick={() => { setChecking(true); fetchApps(true); }} disabled={checking}>
             {checking ? "Checking..." : "Check for Updates"}
           </button>

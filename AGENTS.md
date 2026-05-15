@@ -1,3 +1,25 @@
+## cp v0.3.6.42 + ui v0.3.4.45 — sebastian — 2026-05-15
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Apps settings page design cohesion — section headers, card layout, status indicators
+
+### Changes
+- `control-panel/src/app/embed/apps/client.tsx` — Updates embed (section=updates) now always renders the "Check for Updates" button even when no updates exist; title/subtitle text only shown when updates are available
+- `control-panel/package.json` — Bumped to 0.3.6.42
+- `ui/src/app/settings/apps/client.tsx` — Added "Installed Apps" section header with subtitle (matching System Components embed header style); redesigned native app list from bordered divided list to individual card items matching CP embed card layout; added status text labels (Running/Stopped/etc.) alongside colored dots
+- `ui/src/app/api/v1/apps/drawer/route.ts` — Registered apps with "unknown" status and a containerUrl are now returned as "running" (they were registered by CP so they are running; fixes perpetually gray status dots)
+- `ui/messages/{en,ru,de,fr,es}.json` — Added installedApps and installedAppsDescription i18n keys
+- `ui/package.json` — Bumped to 0.3.4.45
+
+### Test Results
+- No Playwright tests (user will test manually)
+
+### Notes for Iris
+- CP embed change is backwards-compatible — the button was already there, just now always visible
+- UI status fix is display-only; the DB still stores "unknown" but the API response maps it to "running" for registered apps
+- Both releases have standalone.tar uploaded
+
 ## cp v0.3.6.41 — sebastian — 2026-05-14
 **Branch:** sebastian
 **VM:** ye-sebastian

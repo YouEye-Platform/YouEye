@@ -41,20 +41,36 @@ function getLucideIcon(name: string): ComponentType<{ className?: string }> | un
   return undefined;
 }
 
-/* ── Subcomponents ── */
+/* ── Status Maps ── */
 
-function StatusDot({ status }: { status: string | null }) {
-  const s = status ?? "unknown";
-  const colors: Record<string, string> = {
-    running: "bg-green-500",
-    healthy: "bg-green-500",
-    stopped: "bg-red-500",
-    partial: "bg-yellow-500",
-    unhealthy: "bg-yellow-500",
-    unknown: "bg-gray-400",
-  };
-  return <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${colors[s] ?? colors.unknown}`} />;
-}
+const STATUS_DOT_COLORS: Record<string, string> = {
+  running: "bg-green-500",
+  healthy: "bg-green-500",
+  stopped: "bg-red-500",
+  partial: "bg-yellow-500",
+  unhealthy: "bg-yellow-500",
+  unknown: "bg-gray-400",
+};
+
+const STATUS_TEXT_COLORS: Record<string, string> = {
+  running: "text-green-500",
+  healthy: "text-green-500",
+  stopped: "text-red-500",
+  partial: "text-yellow-500",
+  unhealthy: "text-yellow-500",
+  unknown: "text-muted-foreground",
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  running: "Running",
+  healthy: "Running",
+  stopped: "Stopped",
+  partial: "Partial",
+  unhealthy: "Unhealthy",
+  unknown: "Unknown",
+};
+
+/* ── Subcomponents ── */
 
 function AppIcon({ name, icon, customIconUrl }: { name: string; icon: string | null; customIconUrl?: string | null }) {
   // Resolve display icon: customIconUrl overrides icon
@@ -126,12 +142,16 @@ export function AppsListClient({
         <p className="text-sm text-muted-foreground mt-1">{t("description")}</p>
       </div>
 
-      {/* Admin: Updates available banner (self-collapses when no updates) */}
+      {/* Admin: Updates available (always shows button, text only when updates exist) */}
       {isAdmin && updatesEmbedUrl && (
         <AdminEmbed signedUrl={updatesEmbedUrl} title="Updates Available" minHeight={0} />
       )}
 
-      {/* App list (everyone) — personalized icons + names */}
+      {/* Installed Apps section header + app list */}
+      <div>
+        <h3 className="text-base font-semibold">{t("installedApps")}</h3>
+        <p className="text-[13px] text-muted-foreground mt-0.5">{t("installedAppsDescription")}</p>
+      </div>
       <UserAppList />
 
       {/* Admin: System components (infrastructure, system services) */}
@@ -199,26 +219,34 @@ function UserAppList() {
   }
 
   return (
-    <div className="border rounded-xl divide-y">
-      {apps.map((app) => (
-        <button
-          key={app.id}
-          onClick={() => router.push(`/settings/apps/${app.id}`)}
-          className="w-full flex items-center gap-3 px-4 py-3 hover:bg-accent/40 transition-colors text-left"
-        >
-          <AppIcon name={app.name} icon={app.icon} customIconUrl={app.custom_icon_url} />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium truncate">{app.name}</span>
-              <StatusDot status={app.status} />
+    <div className="space-y-1.5">
+      {apps.map((app) => {
+        const s = app.status ?? "unknown";
+        return (
+          <button
+            key={app.id}
+            onClick={() => router.push(`/settings/apps/${app.id}`)}
+            className="w-full flex items-center gap-3 border rounded-lg px-3.5 py-2.5 hover:bg-accent/40 transition-colors text-left"
+          >
+            <AppIcon name={app.name} icon={app.icon} customIconUrl={app.custom_icon_url} />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[13px] font-medium truncate">{app.name}</span>
+                {app.version && (
+                  <span className="text-xs text-muted-foreground font-mono">v{app.version}</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1 mt-0.5">
+                <span className={`w-[5px] h-[5px] rounded-full shrink-0 ${STATUS_DOT_COLORS[s] ?? STATUS_DOT_COLORS.unknown}`} />
+                <span className={`text-xs ${STATUS_TEXT_COLORS[s] ?? STATUS_TEXT_COLORS.unknown}`}>
+                  {STATUS_LABELS[s] ?? s}
+                </span>
+              </div>
             </div>
-            {app.version && (
-              <span className="text-xs text-muted-foreground font-mono">{app.version}</span>
-            )}
-          </div>
-          <ChevronRight className="w-4 h-4 text-muted-foreground/50 shrink-0" />
-        </button>
-      ))}
+            <ChevronRight className="w-4 h-4 text-muted-foreground/50 shrink-0" />
+          </button>
+        );
+      })}
     </div>
   );
 }

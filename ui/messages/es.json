@@ -497,6 +497,8 @@
   "appsSettings": {
     "title": "Apps",
     "description": "Gestiona preferencias de apps, permisos y el cajón de apps.",
+    "installedApps": "Apps instaladas",
+    "installedAppsDescription": "Tus aplicaciones y servicios instalados",
     "drawerNote": "La personalización del cajón de apps está disponible desde el botón de Apps en el encabezado."
   },
   "privacySettings": {
