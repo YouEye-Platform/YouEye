@@ -2,8 +2,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { getUserSettings } from "@/lib/db/queries/settings";
 import { getSignedEmbedUrl } from "@/lib/admin/embed-token";
-import { UserLanguageSettings } from "@/components/settings/user-language-settings";
-import { AdminEmbed } from "@/components/settings/admin-embed";
+import { LanguageTabs } from "@/components/settings/language-tabs";
 
 export default async function LanguagePage() {
   const session = await getSession();
@@ -12,20 +11,15 @@ export default async function LanguagePage() {
   const settings = await getUserSettings(session.userId);
   const currentUserLang = (settings.language as string) || null;
 
-  // Embed now uses session-based auth — only generate URL for admins
   const systemLangUrl = session.isAdmin
     ? getSignedEmbedUrl("language", session.username, true)
     : null;
 
   return (
-    <div className="space-y-8">
-      <UserLanguageSettings currentLanguage={currentUserLang} />
-
-      {session.isAdmin && systemLangUrl && (
-        <div className="border-t pt-8">
-          <AdminEmbed signedUrl={systemLangUrl} title="System Language" minHeight={300} />
-        </div>
-      )}
-    </div>
+    <LanguageTabs
+      currentLanguage={currentUserLang}
+      isAdmin={session.isAdmin}
+      serverLanguageUrl={systemLangUrl}
+    />
   );
 }

@@ -78,16 +78,27 @@ export function ProfileSettings({
       { type: "youeye-embed-theme", theme: resolvedTheme },
       origin
     );
-    // Also send the current avatar URL so the embed can display it
-    // even if Authentik doesn't have the avatar synced yet.
-    // Convert relative URLs to absolute — the embed runs on the Control Panel domain
-    // so a relative path like /api/v1/user/avatar/... would 404 there.
-    if (avatarUrl) {
-      const absoluteUrl = avatarUrl.startsWith("/")
-        ? `${window.location.origin}${avatarUrl}`
-        : avatarUrl;
+    // Send the avatar as a data URL so the CP iframe can display it
+    // without cross-origin issues. Relative URLs point to the UI domain
+    // which the CP iframe can't load.
+    if (avatarUrl && !avatarUrl.startsWith("data:")) {
+      const url = avatarUrl.startsWith("/") ? `${window.location.origin}${avatarUrl}` : avatarUrl;
+      fetch(url)
+        .then(r => r.blob())
+        .then(blob => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            embedRef.current?.contentWindow?.postMessage(
+              { type: "youeye-embed-avatar", avatarUrl: reader.result as string },
+              origin
+            );
+          };
+          reader.readAsDataURL(blob);
+        })
+        .catch(() => {}); // Avatar sync is best-effort
+    } else if (avatarUrl) {
       embedRef.current.contentWindow.postMessage(
-        { type: "youeye-embed-avatar", avatarUrl: absoluteUrl },
+        { type: "youeye-embed-avatar", avatarUrl },
         origin
       );
     }
@@ -238,7 +249,7 @@ export function ProfileSettings({
               } catch { return profileEmbedUrl; }
             })()}
             title="Profile Settings"
-            sandbox="allow-scripts allow-same-origin allow-forms"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
             style={{
               width: "100%",
               height: embedHeight,

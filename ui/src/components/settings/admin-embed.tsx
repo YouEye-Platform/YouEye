@@ -198,7 +198,7 @@ export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProp
         ref={iframeRef}
         src={embedSrc}
         title={title || "Admin Settings"}
-        sandbox="allow-scripts allow-same-origin allow-forms"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
         style={{
           width: "100%",
           height,

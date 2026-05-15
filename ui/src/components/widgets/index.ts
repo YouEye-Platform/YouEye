@@ -9,7 +9,6 @@ import { GreetingWidget } from "./greeting-widget";
 import { ServerNameWidget } from "./server-name-widget";
 import { BookmarksWidget } from "./bookmarks-widget";
 import { ClockWidget } from "./clock-widget";
-import { TimelinePreviewWidget } from "./timeline-preview-widget";
 import { AppWidget } from "./app-widget";
 import type { ComponentType } from "react";
 
@@ -108,62 +107,18 @@ export const WIDGET_CATALOG: WidgetMeta[] = [
   {
     id: "bookmarks",
     name: "Bookmarks",
-    description: "Quick-access bookmark tiles organized into pages",
+    description: "Quick-access bookmarks organized into pages",
     category: "built-in",
     component: BookmarksWidget,
-    defaultSize: { width: 45, height: 14 },
+    defaultSize: { width: 25, height: 14 },
     minSize: { width: 15, height: 8 },
     settingsSchema: [
       {
         key: "showLabels",
         type: "boolean",
         label: "Show labels",
-        description: "Display titles below bookmark icons",
+        description: "Display bookmark titles",
         default: true,
-      },
-      {
-        key: "iconSize",
-        type: "select",
-        label: "Icon size",
-        default: "medium",
-        options: [
-          { label: "Small", value: "small" },
-          { label: "Medium", value: "medium" },
-          { label: "Large", value: "large" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "timeline-preview",
-    name: "Timeline Preview",
-    description: "Recent entries from your encrypted timeline",
-    category: "built-in",
-    component: TimelinePreviewWidget,
-    defaultSize: { width: 25, height: 25 },
-    minSize: { width: 18, height: 18 },
-    maxSize: { width: 50, height: 60 },
-    settingsSchema: [
-      {
-        key: "maxItems",
-        type: "number",
-        label: "Maximum items",
-        description: "Number of entries to show",
-        default: 5,
-        min: 1,
-        max: 20,
-      },
-      {
-        key: "collection",
-        type: "select",
-        label: "Collection",
-        default: "all",
-        options: [
-          { label: "All", value: "all" },
-          { label: "History", value: "history" },
-          { label: "Upcoming", value: "upcoming" },
-          { label: "Imported", value: "imported" },
-        ],
       },
     ],
   },
