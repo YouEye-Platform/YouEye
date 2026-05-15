@@ -1,5 +1,29 @@
 # AGENTS.md — YouEye Monorepo
 
+## v0.4.0 — sebastian — 2026-05-15
+**Branch:** main (merged from sebastian)
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** v0.4.0 not-so-public beta release — merge all components to main, unified version bump
+
+### Changes
+- `spine/internal/cmd/root.go` — Version bump to 0.4.0
+- `control-panel/package.json` — Version bump to 0.4.0
+- `ui/package.json` — Version bump to 0.4.0
+- `README.md` — Rewritten for public beta: Gitea install URLs, TUI installer docs, breaking changes warning, GitHub migration reference, "not so public beta" branding
+
+### Releases Created
+- `spine-v0.4.0` (Gitea release ID: 1540) — spine-linux-amd64, 12.7MB
+- `cp-v0.4.0` (Gitea release ID: 1541) — standalone.tar, 105MB
+- `ui-v0.4.0` (Gitea release ID: 1542) — standalone.tar, 204MB
+
+### Notes for Iris
+- All repos merged sebastian → main directly (bypassing dev)
+- Dev branch NOT updated — left as-is per user instruction
+- All 9 component releases + AppMarket/Canvas/Wiki merges done in one session
+
+---
+
 ## v0.3.2.16 — sebastian — 2026-05-15
 **Branch:** sebastian
 **VM:** ye-sebastian
