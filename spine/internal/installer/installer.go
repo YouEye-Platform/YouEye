@@ -127,13 +127,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// Bare OS (not Proxmox): skip wizard entirely, go straight to install
-			// with autoStart=true so it begins immediately without "Press Enter"
+			// Bare OS (not Proxmox): skip wizard entirely, go straight to install.
+			// Start the engine HERE on the real model — Init() is a value receiver
+			// so it cannot set engineCh (changes would be lost on the copy).
 			cfg := newConfigFromEnv(m.detect.env)
 			cfg.Mode = modeHost
 			m.progress = newProgressModel(cfg)
 			m.progress.autoStart = true
 			m.progress.ready = false
+			m.progress.engineCh = startEngine(cfg)
 			m.progress.width, m.progress.height = m.width, m.height
 			m.phase = phaseProgress
 			return m, m.progress.Init()

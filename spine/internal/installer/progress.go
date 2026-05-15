@@ -97,10 +97,11 @@ func newProgressModel(config installConfig) progressModel {
 }
 
 func (p progressModel) Init() tea.Cmd {
-	if p.autoStart {
-		// Skip the readyView — start engine immediately
-		p.ready = false
-		p.engineCh = startEngine(p.config)
+	// When autoStart is true, the caller must have already started the
+	// engine and set p.engineCh before calling Init(). We only return
+	// the listener command here — we cannot set engineCh ourselves
+	// because Init() is a value receiver and changes would be lost.
+	if p.autoStart && p.engineCh != nil {
 		return listenEngine(p.engineCh)
 	}
 	return nil // engine starts when user presses Enter
