@@ -1128,7 +1128,7 @@ export function MarketEmbedClient() {
   }
 
   return (
-    <div style={{ padding: "28px 40px", minHeight: "100vh" }}>
+    <div style={{ padding: "28px 40px" }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
         <div>

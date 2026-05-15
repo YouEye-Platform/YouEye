@@ -569,7 +569,7 @@ function DomainRow({ domain, kind, onRemove }: { domain: string; kind: string; o
         <span className="embed-mono" style={{ fontSize: 13 }}>{domain}</span>
         {kind === "regex" && <span className="embed-badge" style={{ fontSize: 9, color: "var(--embed-warning)" }}>regex</span>}
       </div>
-      <button className="embed-btn" style={{ padding: "2px 8px", color: "var(--embed-danger)", borderColor: "var(--embed-danger)", fontSize: 11 }} onClick={onRemove}>\u2715</button>
+      <button className="embed-btn" style={{ padding: "2px 8px", color: "var(--embed-danger)", borderColor: "var(--embed-danger)", fontSize: 11 }} onClick={onRemove}>{"\u2715"}</button>
     </div>
   );
 }
@@ -699,7 +699,7 @@ function LocalDnsTab() {
                     <td className="embed-mono">{r.ip}</td>
                     <td>
                       <button className="embed-btn" style={{ padding: "2px 8px", color: "var(--embed-danger)", borderColor: "var(--embed-danger)", fontSize: 11 }}
-                        onClick={() => handleRemoveRecord(r.ip, r.domain)}>\u2715</button>
+                        onClick={() => handleRemoveRecord(r.ip, r.domain)}>{"\u2715"}</button>
                     </td>
                   </tr>
                 ))}
@@ -733,7 +733,7 @@ function LocalDnsTab() {
                     <td className="embed-mono">{c.target}</td>
                     <td>
                       <button className="embed-btn" style={{ padding: "2px 8px", color: "var(--embed-danger)", borderColor: "var(--embed-danger)", fontSize: 11 }}
-                        onClick={() => handleRemoveCname(c.domain, c.target)}>\u2715</button>
+                        onClick={() => handleRemoveCname(c.domain, c.target)}>{"\u2715"}</button>
                     </td>
                   </tr>
                 ))}
@@ -874,7 +874,7 @@ function BlocklistsTab() {
                   </td>
                   <td>
                     <button className="embed-btn" style={{ padding: "2px 8px", color: "var(--embed-danger)", borderColor: "var(--embed-danger)", fontSize: 11 }}
-                      onClick={() => handleRemove(l.address)}>\u2715</button>
+                      onClick={() => handleRemove(l.address)}>{"\u2715"}</button>
                   </td>
                 </tr>
               ))}
@@ -988,7 +988,7 @@ function SettingsTab() {
                   style={{ flex: 1, padding: "4px 8px", fontSize: 13, border: "1px solid var(--embed-border)", borderRadius: 4, background: "transparent", color: "inherit" }} />
                 {upstreamDraft.length > 1 && (
                   <button className="embed-btn" style={{ padding: "2px 8px", color: "var(--embed-danger)", borderColor: "var(--embed-danger)" }}
-                    onClick={() => setUpstreamDraft(upstreamDraft.filter((_, j) => j !== i))}>\u2715</button>
+                    onClick={() => setUpstreamDraft(upstreamDraft.filter((_, j) => j !== i))}>{"\u2715"}</button>
                 )}
               </div>
             ))}
