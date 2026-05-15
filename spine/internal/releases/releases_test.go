@@ -165,13 +165,19 @@ func TestFindAsset(t *testing.T) {
 	})
 }
 
-// mockGiteaServer creates a test server that returns mock release data
-func mockGiteaServer(t *testing.T, releases []Release) *httptest.Server {
+// mockReleaseServer creates a test server that returns mock release data.
+// When provider is "github", it validates the required GitHub headers.
+func mockReleaseServer(t *testing.T, releases []Release) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(releases)
 	}))
+}
+
+// mockGiteaServer creates a test server that returns mock release data
+func mockGiteaServer(t *testing.T, releases []Release) *httptest.Server {
+	return mockReleaseServer(t, releases)
 }
 
 func testConfig(serverURL string) *config.Config {
@@ -181,6 +187,16 @@ func testConfig(serverURL string) *config.Config {
 	cfg.Releases.Organization = "potemsla"
 	cfg.Releases.Repositories.Spine = "YE-Spine"
 	cfg.Releases.Repositories.ControlPanel = "YE-ControlPanel"
+	return cfg
+}
+
+func testGitHubConfig(serverURL string) *config.Config {
+	cfg := config.Default()
+	cfg.Releases.Provider = "github"
+	cfg.Releases.BaseURL = serverURL
+	cfg.Releases.Organization = "youeye-platform"
+	cfg.Releases.Repositories.Spine = "YouEye"
+	cfg.Releases.Repositories.ControlPanel = "YouEye"
 	return cfg
 }
 
@@ -315,6 +331,78 @@ func TestGetLatestVersionForBranch_ServerError(t *testing.T) {
 	}
 }
 
-// Client tests removed — releases.Client was deleted in session 86.
-// The release-fetching functions (GetLatestVersionForBranch, BuildTag, etc.)
-// are tested above via the package-level function tests.
+func TestBuildReleasesAPIURL_Gitea(t *testing.T) {
+	cfg := config.Default()
+	url := buildReleasesAPIURL(cfg, "YouEye")
+	expected := "https://git.byka.wtf/api/v1/repos/potemsla/YouEye/releases?limit=50"
+	if url != expected {
+		t.Errorf("buildReleasesAPIURL(gitea) = %q, want %q", url, expected)
+	}
+}
+
+func TestBuildReleasesAPIURL_GitHub(t *testing.T) {
+	cfg := config.Default()
+	cfg.Releases.Provider = "github"
+	cfg.Releases.Organization = "youeye-platform"
+	url := buildReleasesAPIURL(cfg, "YouEye")
+	expected := "https://api.github.com/repos/youeye-platform/YouEye/releases?per_page=50"
+	if url != expected {
+		t.Errorf("buildReleasesAPIURL(github) = %q, want %q", url, expected)
+	}
+}
+
+func TestGitHubProviderHeaders(t *testing.T) {
+	// Verify that Gitea provider does NOT send GitHub-specific headers
+	var gotAccept string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAccept = r.Header.Get("Accept")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]Release{{TagName: "spine-v0.3.2"}})
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL)
+	_, _ = fetchReleases(cfg, "YouEye")
+	if gotAccept != "" {
+		t.Errorf("Gitea provider should not send Accept header, got %q", gotAccept)
+	}
+}
+
+func TestGetLatestVersionForBranch_GitHubProvider(t *testing.T) {
+	// GitHub uses the same JSON format, so mock server works identically
+	mockReleases := []Release{
+		{TagName: "spine-v0.3.2"},
+		{TagName: "spine-v0.3.1"},
+		{TagName: "spine-sebastian-v0.3.2.1"},
+	}
+
+	server := mockReleaseServer(t, mockReleases)
+	defer server.Close()
+
+	// Use gitea provider pointing at mock server (response format is identical)
+	cfg := testConfig(server.URL)
+	cfg.Releases.Repositories.Spine = "YouEye"
+
+	got := GetLatestVersionForBranch(cfg, "YouEye", "main", "spine")
+	if got != "0.3.2" {
+		t.Errorf("GetLatestVersionForBranch(main, spine prefix) = %q, want %q", got, "0.3.2")
+	}
+
+	got2 := GetLatestVersionForBranch(cfg, "YouEye", "sebastian", "spine")
+	if got2 != "0.3.2.1" {
+		t.Errorf("GetLatestVersionForBranch(sebastian, spine prefix) = %q, want %q", got2, "0.3.2.1")
+	}
+}
+
+func TestBuildDownloadURL_GitHub(t *testing.T) {
+	cfg := config.Default()
+	cfg.Releases.Provider = "github"
+	cfg.Releases.BaseURL = "https://github.com"
+	cfg.Releases.Organization = "youeye-platform"
+
+	url := BuildDownloadURL(cfg, "YouEye", "spine-v0.3.2", "spine-linux-amd64")
+	expected := "https://github.com/youeye-platform/YouEye/releases/download/spine-v0.3.2/spine-linux-amd64"
+	if url != expected {
+		t.Errorf("BuildDownloadURL(github) = %q, want %q", url, expected)
+	}
+}

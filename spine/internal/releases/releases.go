@@ -2,11 +2,16 @@
 // Used by both the deploy path (container/) and update path (cmd/) to ensure
 // consistent branch-aware release selection across all Spine operations.
 //
+// Supports both Gitea and GitHub as release providers, controlled by the
+// releases.provider config field ("gitea" or "github"). The JSON response
+// format is compatible (tag_name, assets[].name, assets[].browser_download_url)
+// and the download URL format is identical for both providers.
+//
 // In the YouEye monorepo, Spine, Control Panel, and UI all publish releases
-// to the same Gitea repo ("YouEye") with component-prefixed tags:
-//   spine-v0.2.21, cp-v0.2.21, ui-v0.2.21
-//   spine-dev-v0.2.21.1, cp-dev-v0.2.21.1
-//   spine-dev-v0.2.21.1
+// to the same repo ("YouEye") with component-prefixed tags:
+//
+//	spine-v0.2.21, cp-v0.2.21, ui-v0.2.21
+//	spine-dev-v0.2.21.1, cp-dev-v0.2.21.1
 //
 // The tagPrefix parameter in all public functions filters releases to a
 // specific component. When tagPrefix is empty, functions behave as before
@@ -134,6 +139,9 @@ func BuildTag(ver, branch, tagPrefix string) string {
 }
 
 // BuildDownloadURL constructs the direct download URL for a release asset.
+// The URL format is identical for Gitea and GitHub:
+//
+//	{BaseURL}/{org}/{repo}/releases/download/{tag}/{asset}
 func BuildDownloadURL(cfg *config.Config, repo, tag, assetName string) string {
 	return fmt.Sprintf("%s/%s/%s/releases/download/%s/%s",
 		cfg.Releases.BaseURL,
@@ -143,21 +151,44 @@ func BuildDownloadURL(cfg *config.Config, repo, tag, assetName string) string {
 		assetName)
 }
 
-// fetchReleases fetches releases from the Gitea API for a given repo.
-// Retries up to 3 times with backoff on network errors. Uses IPv4-only
-// client to avoid IPv6 hangs on fresh VMs without IPv6 routes.
-func fetchReleases(cfg *config.Config, repo string) ([]Release, error) {
-	client := NewIPv4Client(30 * time.Second)
-
-	apiURL := fmt.Sprintf("%s%s/repos/%s/%s/releases?limit=50",
+// buildReleasesAPIURL constructs the API URL for fetching releases based on provider.
+// Gitea:  {BaseURL}/api/v1/repos/{org}/{repo}/releases?limit=50
+// GitHub: https://api.github.com/repos/{org}/{repo}/releases?per_page=50
+func buildReleasesAPIURL(cfg *config.Config, repo string) string {
+	if cfg.Releases.Provider == "github" {
+		return fmt.Sprintf("https://api.github.com/repos/%s/%s/releases?per_page=50",
+			cfg.Releases.Organization, repo)
+	}
+	return fmt.Sprintf("%s%s/repos/%s/%s/releases?limit=50",
 		cfg.Releases.BaseURL,
 		cfg.Releases.APIPath,
 		cfg.Releases.Organization,
 		repo)
+}
+
+// fetchReleases fetches releases from the configured provider's API.
+// Supports both Gitea and GitHub providers. Retries up to 3 times with
+// backoff on network errors. Uses IPv4-only client to avoid IPv6 hangs
+// on fresh VMs without IPv6 routes.
+func fetchReleases(cfg *config.Config, repo string) ([]Release, error) {
+	client := NewIPv4Client(30 * time.Second)
+
+	apiURL := buildReleasesAPIURL(cfg, repo)
 
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
-		resp, err := client.Get(apiURL)
+		req, err := http.NewRequest("GET", apiURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		// GitHub API requires Accept and User-Agent headers
+		if cfg.Releases.Provider == "github" {
+			req.Header.Set("Accept", "application/vnd.github+json")
+			req.Header.Set("User-Agent", "youeye-spine")
+		}
+
+		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
 			if attempt < 3 {
