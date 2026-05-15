@@ -366,8 +366,8 @@ export function UsersEmbedClient() {
 function Overlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
     <div style={{
-      position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
-      background: "rgba(0,0,0,0.5)", zIndex: 100,
+      position: "fixed", inset: 0, display: "flex", alignItems: "flex-start", justifyContent: "center",
+      paddingTop: 80, zIndex: 100,
     }} onClick={onClose}>
       <div className="embed-card" style={{ maxWidth: 420, width: "90%" }} onClick={e => e.stopPropagation()}>
         {children}

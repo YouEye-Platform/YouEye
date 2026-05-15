@@ -56,7 +56,14 @@ async function authentikRequest<T>(
     throw new Error(`Authentik API error ${res.status}: ${text}`);
   }
 
-  return res.json() as Promise<T>;
+  // Some Authentik endpoints (e.g. set_password) return 204 No Content
+  if (res.status === 204 || res.headers.get('content-length') === '0') {
+    return undefined as T;
+  }
+
+  const text = await res.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
 }
 
 // --- Types ---

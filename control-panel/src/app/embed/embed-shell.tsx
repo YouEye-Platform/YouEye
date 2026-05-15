@@ -34,7 +34,8 @@ export function EmbedShell({ children }: { children: React.ReactNode }) {
     // Height reporting
     let lastHeight = 0;
     function reportHeight() {
-      const h = document.body.scrollHeight;
+      // Add small buffer to prevent scrollbars from rounding/margin issues
+      const h = document.body.scrollHeight + 8;
       if (h !== lastHeight) {
         lastHeight = h;
         window.parent.postMessage({ type: "youeye-embed-resize", height: h }, "*");

@@ -159,6 +159,13 @@ export function AppsListClient({
         <p className="text-sm text-muted-foreground mt-1">{t("description")}</p>
       </div>
 
+      {/* Installed Apps section */}
+      <div>
+        <h3 className="text-base font-semibold">{t("installedApps")}</h3>
+        <p className="text-[13px] text-muted-foreground mt-0.5">{t("installedAppsDescription")}</p>
+      </div>
+      <UserAppList />
+
       {/* Updates section — header rendered here, cards in embed */}
       {isAdmin && updatesEmbedUrl && (
         <div>
@@ -186,13 +193,6 @@ export function AppsListClient({
           </div>
         </div>
       )}
-
-      {/* Installed Apps section */}
-      <div>
-        <h3 className="text-base font-semibold">{t("installedApps")}</h3>
-        <p className="text-[13px] text-muted-foreground mt-0.5">{t("installedAppsDescription")}</p>
-      </div>
-      <UserAppList />
 
       {/* System Components section — header rendered here, cards in embed */}
       {isAdmin && systemEmbedUrl && (

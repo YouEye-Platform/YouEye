@@ -1,3 +1,20 @@
+## cp v0.3.6.45 + ui v0.3.4.49 — sebastian — 2026-05-15
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix user creation error, embed overlay styling, apps page layout
+
+### Changes
+- `control-panel/src/lib/authentik/client.ts` — Fix `authentikRequest()` to handle 204 No Content / empty body responses (was throwing `SyntaxError: Unexpected end of JSON input` on `setUserPassword` which returns 204)
+- `control-panel/src/app/embed/users/client.tsx` — Remove dark overlay background from dialog, position form lower from top with paddingTop
+- `control-panel/src/app/embed/embed-shell.tsx` — Add +8px buffer to height reporting to prevent scrollbars in embeds
+- `ui/src/app/settings/users/page.tsx` — Increase users embed minHeight from 400 to 600
+- `ui/src/app/settings/apps/client.tsx` — Reorder sections: Installed Apps first, Updates Available second, System Components third
+
+### Notes for Iris
+- The user creation bug was caused by Authentik returning 204 No Content for set_password, which `authentikRequest()` tried to JSON.parse
+- All embed pages benefit from the scrollbar fix (height buffer in embed-shell.tsx)
+
 ## ui v0.3.4.48 — sebastian — 2026-05-15
 **Branch:** sebastian
 **VM:** ye-sebastian

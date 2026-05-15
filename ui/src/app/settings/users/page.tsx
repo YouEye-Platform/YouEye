@@ -11,5 +11,5 @@ export default async function UsersSettingsPage() {
   // Embed now uses session-based auth — Control Panel validates user's SSO session cookie
   const embedUrl = getSignedEmbedUrl("users", session.username, true);
 
-  return <AdminEmbed signedUrl={embedUrl} title="User Management" minHeight={400} />;
+  return <AdminEmbed signedUrl={embedUrl} title="User Management" minHeight={600} />;
 }
