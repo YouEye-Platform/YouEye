@@ -97,6 +97,7 @@ export async function POST(
         result = await spineClient.updateIncus();
         break;
       case 'system':
+      case 'host-system':
         await writeStatus(component, 'installing', 30, 'Updating system packages...').catch(() => {});
         result = await spineClient.updateSystem();
         break;

@@ -88,6 +88,7 @@ const SELF_DESTRUCTIVE = new Set(["control-panel", "youeye-ui"]);
 const COMPONENT_MAP: Record<string, string> = {
   "control-panel": "control",
   "youeye-ui": "ui",
+  "host-system": "system",
   spine: "spine",
 };
 
@@ -118,8 +119,21 @@ export function AppsEmbedClient() {
     } finally {
       setLoading(false);
       setChecking(false);
+      window.parent.postMessage({ type: "youeye-embed-check-complete" }, "*");
     }
   }, []);
+
+  // Listen for parent UI to trigger a refresh (Check for Updates button is in UI)
+  useEffect(() => {
+    function handleParentMessage(e: MessageEvent) {
+      if (e.data?.type === "youeye-embed-check-updates") {
+        setChecking(true);
+        fetchApps(true);
+      }
+    }
+    window.addEventListener("message", handleParentMessage);
+    return () => window.removeEventListener("message", handleParentMessage);
+  }, [fetchApps]);
 
   const fetchStatuses = useCallback(async () => {
     try {
@@ -209,6 +223,12 @@ export function AppsEmbedClient() {
     );
   }
 
+  // Notify parent of update count whenever apps change
+  useEffect(() => {
+    const count = apps.filter(a => a.updateAvailable).length;
+    window.parent.postMessage({ type: "youeye-embed-update-count", count }, "*");
+  }, [apps]);
+
   if (error) return <div className="embed-error">{error}</div>;
 
   const appsWithUpdates = apps.filter(a => a.updateAvailable);
@@ -219,24 +239,12 @@ export function AppsEmbedClient() {
     return acc;
   }, {});
 
-  // section="updates" → always show "Check for Updates" button; title/cards only when updates exist
+  // section="updates" → headerless: parent UI renders the header + button
   if (section === "updates") {
+    if (appsWithUpdates.length === 0) return <div />;
     return (
-      <div style={{ padding: 16 }}>
+      <div>
         {restartOverlay && <RestartOverlay name={restartOverlay} />}
-        <div className="embed-header">
-          {appsWithUpdates.length > 0 ? (
-            <div>
-              <div className="embed-title">Updates Available</div>
-              <div className="embed-subtitle">{appsWithUpdates.length} update{appsWithUpdates.length !== 1 ? "s" : ""} available</div>
-            </div>
-          ) : (
-            <div />
-          )}
-          <button className="embed-btn" onClick={() => { setChecking(true); fetchApps(true); }} disabled={checking}>
-            {checking ? "Checking..." : "Check for Updates"}
-          </button>
-        </div>
         {appsWithUpdates.map(app => (
           <AppCard key={app.id} app={app} statuses={statuses} confirmId={confirmId}
             onUpdate={handleUpdate} onCancelConfirm={() => setConfirmId(null)} onEdit={setEditingApp} />
@@ -248,20 +256,14 @@ export function AppsEmbedClient() {
     );
   }
 
-  // section="system" → only show system + infrastructure categories
+  // section="system" → headerless: parent UI renders the section header
   if (section === "system") {
     const systemCats = ["infrastructure", "system"];
     const hasAny = systemCats.some(cat => grouped[cat]?.length);
     if (!hasAny) return <div />;
     return (
-      <div style={{ padding: 16 }}>
+      <div>
         {restartOverlay && <RestartOverlay name={restartOverlay} />}
-        <div className="embed-header">
-          <div>
-            <div className="embed-title">System Components</div>
-            <div className="embed-subtitle">Infrastructure and system services</div>
-          </div>
-        </div>
         {systemCats.map(cat => {
           const catApps = grouped[cat];
           if (!catApps?.length) return null;

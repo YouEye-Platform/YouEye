@@ -154,19 +154,11 @@ export async function GET(request: NextRequest) {
             updateAvailable = true;
             updateInfo = `${updates.system.upgradeable_count} package${updates.system.upgradeable_count !== 1 ? 's' : ''} upgradeable`;
           }
-          if (def.id === 'incus' && updates.incus?.upgradeable) {
-            updateAvailable = true;
-            updateInfo = `${updates.incus.current} → newer version available`;
-          }
+          // Incus updates disabled for now
         }
 
-        if (def.updatedBy === 'control-panel') {
-          const ociResult = ociUpdates.get(def.id);
-          if (ociResult?.hasUpdate) {
-            updateAvailable = true;
-            updateInfo = 'New image available';
-          }
-        }
+        // OCI container updates disabled for infrastructure (caddy, postgres, authentik, pihole)
+        // until the update pipeline is stable
 
         // Check LXD native app updates (Search, Cinema, Weather, etc.)
         if (def.lxdConfig && !updateAvailable) {

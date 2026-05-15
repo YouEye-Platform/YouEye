@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
@@ -119,21 +119,38 @@ export function AppsListClient({
 }) {
   const router = useRouter();
   const t = useTranslations("appsSettings");
+  const updatesContainerRef = useRef<HTMLDivElement>(null);
+  const [updateCount, setUpdateCount] = useState(0);
+  const [checking, setChecking] = useState(false);
 
-  // Listen for postMessage from the Control Panel apps embed (admin app navigation)
+  // Listen for postMessage from the Control Panel apps embed
   useEffect(() => {
     function handleMessage(e: MessageEvent) {
       if (e.data?.type === "youeye-app-navigate" && e.data.appId) {
         router.push(`/settings/apps/${e.data.appId}`);
+      }
+      if (e.data?.type === "youeye-embed-update-count" && typeof e.data.count === "number") {
+        setUpdateCount(e.data.count);
+      }
+      if (e.data?.type === "youeye-embed-check-complete") {
+        setChecking(false);
       }
     }
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [router]);
 
+  function handleCheckUpdates() {
+    setChecking(true);
+    const iframe = updatesContainerRef.current?.querySelector("iframe");
+    if (iframe?.contentWindow) {
+      iframe.contentWindow.postMessage({ type: "youeye-embed-check-updates" }, "*");
+    }
+  }
+
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Page header */}
       <div>
         <h2 className="text-xl font-semibold flex items-center gap-2">
           <LayoutGrid className="h-5 w-5" />
@@ -142,21 +159,50 @@ export function AppsListClient({
         <p className="text-sm text-muted-foreground mt-1">{t("description")}</p>
       </div>
 
-      {/* Admin: Updates available (always shows button, text only when updates exist) */}
+      {/* Updates section — header rendered here, cards in embed */}
       {isAdmin && updatesEmbedUrl && (
-        <AdminEmbed signedUrl={updatesEmbedUrl} title="Updates Available" minHeight={0} />
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            {updateCount > 0 ? (
+              <div>
+                <h3 className="text-base font-semibold">{t("updatesAvailable")}</h3>
+                <p className="text-[13px] text-muted-foreground mt-0.5">
+                  {updateCount} {updateCount === 1 ? t("updateSingular") : t("updatePlural")}
+                </p>
+              </div>
+            ) : (
+              <div />
+            )}
+            <button
+              onClick={handleCheckUpdates}
+              disabled={checking}
+              className="px-3 py-1.5 rounded-md border text-[13px] bg-background hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {checking ? t("checking") : t("checkForUpdates")}
+            </button>
+          </div>
+          <div ref={updatesContainerRef}>
+            <AdminEmbed signedUrl={updatesEmbedUrl} title="Updates" minHeight={0} />
+          </div>
+        </div>
       )}
 
-      {/* Installed Apps section header + app list */}
+      {/* Installed Apps section */}
       <div>
         <h3 className="text-base font-semibold">{t("installedApps")}</h3>
         <p className="text-[13px] text-muted-foreground mt-0.5">{t("installedAppsDescription")}</p>
       </div>
       <UserAppList />
 
-      {/* Admin: System components (infrastructure, system services) */}
+      {/* System Components section — header rendered here, cards in embed */}
       {isAdmin && systemEmbedUrl && (
-        <AdminEmbed signedUrl={systemEmbedUrl} title="System Components" minHeight={200} />
+        <div>
+          <div className="mb-4">
+            <h3 className="text-base font-semibold">{t("systemComponents")}</h3>
+            <p className="text-[13px] text-muted-foreground mt-0.5">{t("systemComponentsDescription")}</p>
+          </div>
+          <AdminEmbed signedUrl={systemEmbedUrl} title="System Components" minHeight={200} />
+        </div>
       )}
     </div>
   );

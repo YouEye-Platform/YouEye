@@ -497,8 +497,15 @@
   "appsSettings": {
     "title": "Apps",
     "description": "Verwalten Sie App-Einstellungen, Berechtigungen und die App-Schublade.",
+    "updatesAvailable": "Updates verfügbar",
+    "updateSingular": "Update verfügbar",
+    "updatePlural": "Updates verfügbar",
+    "checkForUpdates": "Nach Updates suchen",
+    "checking": "Wird geprüft...",
     "installedApps": "Installierte Apps",
     "installedAppsDescription": "Ihre installierten Anwendungen und Dienste",
+    "systemComponents": "Systemkomponenten",
+    "systemComponentsDescription": "Infrastruktur und Systemdienste",
     "drawerNote": "Die App-Schublade kann über die Apps-Schaltfläche in der Kopfzeile angepasst werden."
   },
   "privacySettings": {

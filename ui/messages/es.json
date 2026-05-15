@@ -497,8 +497,15 @@
   "appsSettings": {
     "title": "Apps",
     "description": "Gestiona preferencias de apps, permisos y el cajón de apps.",
+    "updatesAvailable": "Actualizaciones disponibles",
+    "updateSingular": "actualización disponible",
+    "updatePlural": "actualizaciones disponibles",
+    "checkForUpdates": "Buscar actualizaciones",
+    "checking": "Verificando...",
     "installedApps": "Apps instaladas",
     "installedAppsDescription": "Tus aplicaciones y servicios instalados",
+    "systemComponents": "Componentes del sistema",
+    "systemComponentsDescription": "Infraestructura y servicios del sistema",
     "drawerNote": "La personalización del cajón de apps está disponible desde el botón de Apps en el encabezado."
   },
   "privacySettings": {

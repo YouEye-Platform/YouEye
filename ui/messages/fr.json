@@ -497,8 +497,15 @@
   "appsSettings": {
     "title": "Apps",
     "description": "Gérez les préférences des apps, les permissions et le tiroir d'apps.",
+    "updatesAvailable": "Mises à jour disponibles",
+    "updateSingular": "mise à jour disponible",
+    "updatePlural": "mises à jour disponibles",
+    "checkForUpdates": "Vérifier les mises à jour",
+    "checking": "Vérification...",
     "installedApps": "Apps installées",
     "installedAppsDescription": "Vos applications et services installés",
+    "systemComponents": "Composants système",
+    "systemComponentsDescription": "Infrastructure et services système",
     "drawerNote": "La personnalisation du tiroir d'apps est disponible depuis le bouton Apps dans l'en-tête."
   },
   "privacySettings": {

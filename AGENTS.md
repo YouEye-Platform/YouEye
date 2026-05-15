@@ -1,3 +1,28 @@
+## cp v0.3.6.43 + ui v0.3.4.46 — sebastian — 2026-05-15
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Design cohesion round 2, host-system update fix, disable infra updates
+
+### Changes
+- `control-panel/src/app/embed/embed-globals.css` — Font changed to match UI Tailwind default (ui-sans-serif), added antialiasing, card gap reduced to 6px
+- `control-panel/src/app/embed/apps/client.tsx` — Section renders (updates, system) now headerless (UI owns all headers); added postMessage listeners for parent-driven Check for Updates; update-count and check-complete messages sent to parent; host-system added to COMPONENT_MAP
+- `control-panel/src/app/api/ui-bridge/updates/[component]/route.ts` — Added host-system case routing to spineClient.updateSystem()
+- `control-panel/src/app/api/ui-bridge/apps/route.ts` — Disabled OCI container updates (caddy, postgres, authentik, pihole) and incus updates
+- `control-panel/package.json` — Bumped to 0.3.6.43
+- `ui/src/app/settings/apps/client.tsx` — Full rewrite: all section headers (Updates Available, Installed Apps, System Components) rendered by UI; Check for Updates button with postMessage bridge; update count display
+- `ui/messages/{en,ru,de,fr,es}.json` — Added updatesAvailable, updateSingular, updatePlural, checkForUpdates, checking i18n keys
+- `ui/package.json` — Bumped to 0.3.4.46
+
+### Test Results
+- No Playwright tests (user will test manually)
+
+### Notes for Iris
+- Embed renders are now headerless — all section labels come from the UI parent, ensuring consistent typography and layout
+- postMessage protocol: UI sends `youeye-embed-check-updates`, embed replies with `youeye-embed-update-count` and `youeye-embed-check-complete`
+- Infrastructure updates (caddy, postgres, authentik, pihole, incus) are disabled until update pipeline is stable
+- Both releases have standalone.tar uploaded
+
 ## cp v0.3.6.42 + ui v0.3.4.45 — sebastian — 2026-05-15
 **Branch:** sebastian
 **VM:** ye-sebastian
