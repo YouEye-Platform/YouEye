@@ -1,3 +1,26 @@
+## cp v0.3.6.46 + ui v0.3.4.50 — sebastian — 2026-05-15
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Batch 2 bug fixes — DNS, market scroll, avatar, language tabs, bookmarks redesign
+
+### Changes
+- `control-panel/src/app/embed/dns/client.tsx` — Fix ✕ rendered as literal `\u2715` text (5 instances wrapped in JSX expressions)
+- `control-panel/src/app/embed/market/client.tsx` — Remove `minHeight: "100vh"` causing infinite scrollbar growth in iframe
+- `ui/src/components/settings/admin-embed.tsx` — Add `allow-popups allow-downloads` to iframe sandbox for TLS cert download
+- `ui/src/components/settings/profile-settings.tsx` — Same sandbox fix + convert avatar URL to data URL before sending to CP iframe (fixes cross-origin broken image)
+- `ui/src/components/settings/language-tabs.tsx` — NEW: tabbed layout for language settings (My Language / Server Language for admins)
+- `ui/src/app/settings/language/page.tsx` — Use LanguageTabs component instead of flat layout
+- `ui/src/components/widgets/bookmarks-widget.tsx` — Redesigned: frosted glass background, traditional bookmark rows with favicon + title + domain
+- `ui/src/components/widgets/index.ts` — Removed timeline-preview widget from catalog, updated bookmarks metadata
+
+### Notes for Iris
+- DNS fix is JSX-specific: `>\u2715<` in JSX renders as literal text, needs `>{"\u2715"}<`
+- Market scroll fix: `100vh` in iframe creates feedback loop with parent height-sync
+- Avatar fix: onboarding saves to UI disk only, not Authentik — CP iframe can't load cross-origin URL, now receives data URL via postMessage
+- Language tabs follow same pattern as BrandingTabs (Appearance/WordArt settings)
+- Bookmarks widget now has built-in frosted glass background — widget container `backgroundStyle` still works as overlay
+
 ## cp v0.3.6.45 + ui v0.3.4.49 — sebastian — 2026-05-15
 **Branch:** sebastian
 **VM:** ye-sebastian
