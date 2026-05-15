@@ -12,7 +12,7 @@
 "use client";
 
 import { useRef, useCallback, useState } from "react";
-import { GripVertical, X, Settings2 } from "lucide-react";
+import { X, Settings2 } from "lucide-react";
 import { WidgetCard } from "./widget-card";
 import { getWidgetMeta } from "@/components/widgets";
 import { cn } from "@/lib/utils";
@@ -218,24 +218,25 @@ export function WidgetContainer({
         !isTransparent && "rounded-xl border shadow-lg",
         bgClasses,
         isDragging || isResizing ? "z-50 shadow-xl scale-[1.01]" : "z-10",
-        isEditMode && "ring-1 ring-border/50 hover:ring-primary/60",
       )}
       style={inlineStyle}
     >
-      {/* Drag handle — entire top bar in edit mode */}
+      {/* Edit-mode dashed outline — clear visual indicator that widget is editable */}
       {isEditMode && (
         <div
-          className="absolute -top-0.5 left-0 right-0 flex items-center justify-center h-7 cursor-grab active:cursor-grabbing z-20"
-          onMouseDown={handleDragStart}
-        >
-          <GripVertical className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
-        </div>
+          className={cn(
+            "absolute -inset-px rounded-xl border-2 border-dashed pointer-events-none z-20 transition-colors",
+            isDragging || isResizing
+              ? "border-primary"
+              : "border-muted-foreground/30 group-hover:border-primary/60",
+          )}
+        />
       )}
 
       {/* Remove button */}
       {isEditMode && (
         <button
-          className="absolute -top-2 -right-2 z-30 w-5 h-5 rounded-full bg-destructive text-white flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
+          className="absolute -top-2.5 -right-2.5 z-40 w-5 h-5 rounded-full bg-destructive text-white flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
           onClick={() => onRemove(widget.id)}
           title={t('removeWidget')}
         >
@@ -246,7 +247,7 @@ export function WidgetContainer({
       {/* Settings button */}
       {isEditMode && onSettingsOpen && (
         <button
-          className="absolute -top-2 -left-2 z-30 w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
+          className="absolute -top-2.5 -left-2.5 z-40 w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
           onClick={() => onSettingsOpen(widget.id)}
           title={t('widgetSettings')}
         >
@@ -266,50 +267,125 @@ export function WidgetContainer({
         />
       </div>
 
-      {/* Resize handles — visible in edit mode */}
+      {/* Edit-mode overlay — blocks iframe mouse capture during drag/resize.
+          Without this, iframes inside app widgets steal mousemove events,
+          making it impossible to resize or drag when cursor is over the iframe.
+          Also acts as the drag surface so the entire widget body is draggable. */}
+      {isEditMode && (
+        <div
+          className="absolute inset-0 z-[25] cursor-grab active:cursor-grabbing"
+          onMouseDown={handleDragStart}
+        />
+      )}
+
+      {/* Resize handles — visible in edit mode with corner dots */}
       {isEditMode && (
         <>
+          {/* Edge handles — invisible hit areas along each edge */}
           {/* Right edge */}
           <div
-            className="absolute top-0 -right-1 w-3 h-full cursor-e-resize z-20"
+            className="absolute top-2 -right-1.5 w-4 bottom-2 cursor-e-resize z-30"
             onMouseDown={(e) => handleResizeStart(e, { right: true })}
           />
           {/* Left edge */}
           <div
-            className="absolute top-0 -left-1 w-3 h-full cursor-w-resize z-20"
+            className="absolute top-2 -left-1.5 w-4 bottom-2 cursor-w-resize z-30"
             onMouseDown={(e) => handleResizeStart(e, { left: true })}
           />
-          {/* Bottom and top edges + corners — only for non-autoFit widgets */}
+
+          {/* Right edge midpoint dot */}
+          <div
+            className="absolute top-1/2 -right-1 -translate-y-1/2 w-2 h-2 rounded-full bg-primary/50 group-hover:bg-primary transition-colors pointer-events-none z-30"
+          />
+          {/* Left edge midpoint dot */}
+          <div
+            className="absolute top-1/2 -left-1 -translate-y-1/2 w-2 h-2 rounded-full bg-primary/50 group-hover:bg-primary transition-colors pointer-events-none z-30"
+          />
+
+          {/* Bottom, top edges + corners — only for non-autoFit widgets */}
           {!isAutoFit && (
             <>
+              {/* Bottom edge */}
               <div
-                className="absolute -bottom-1 left-0 w-full h-3 cursor-s-resize z-20"
+                className="absolute -bottom-1.5 left-2 right-2 h-4 cursor-s-resize z-30"
                 onMouseDown={(e) => handleResizeStart(e, { bottom: true })}
               />
+              {/* Top edge */}
               <div
-                className="absolute -top-1 left-0 w-full h-3 cursor-n-resize z-20"
+                className="absolute -top-1.5 left-2 right-2 h-4 cursor-n-resize z-30"
                 onMouseDown={(e) => handleResizeStart(e, { top: true })}
               />
+
+              {/* Bottom edge midpoint dot */}
               <div
-                className="absolute -bottom-1 -right-1 w-4 h-4 cursor-se-resize z-25"
+                className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-primary/50 group-hover:bg-primary transition-colors pointer-events-none z-30"
+              />
+              {/* Top edge midpoint dot */}
+              <div
+                className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-primary/50 group-hover:bg-primary transition-colors pointer-events-none z-30"
+              />
+
+              {/* Corner handles — visible dots with larger hit areas */}
+              {/* SE corner */}
+              <div
+                className="absolute -bottom-2 -right-2 w-5 h-5 cursor-se-resize z-40 flex items-center justify-center"
                 onMouseDown={(e) => handleResizeStart(e, { right: true, bottom: true })}
               >
-                <svg viewBox="0 0 16 16" className="w-full h-full text-muted-foreground/60 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <path d="M14 14L6 14M14 14L14 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none" />
-                </svg>
+                <div className="w-2.5 h-2.5 rounded-full bg-primary/50 group-hover:bg-primary transition-colors" />
+              </div>
+              {/* SW corner */}
+              <div
+                className="absolute -bottom-2 -left-2 w-5 h-5 cursor-sw-resize z-40 flex items-center justify-center"
+                onMouseDown={(e) => handleResizeStart(e, { left: true, bottom: true })}
+              >
+                <div className="w-2.5 h-2.5 rounded-full bg-primary/50 group-hover:bg-primary transition-colors" />
+              </div>
+              {/* NE corner */}
+              <div
+                className="absolute -top-2 -right-2 w-5 h-5 cursor-ne-resize z-40 flex items-center justify-center"
+                onMouseDown={(e) => handleResizeStart(e, { right: true, top: true })}
+              >
+                <div className="w-2.5 h-2.5 rounded-full bg-primary/50 group-hover:bg-primary transition-colors" />
+              </div>
+              {/* NW corner */}
+              <div
+                className="absolute -top-2 -left-2 w-5 h-5 cursor-nw-resize z-40 flex items-center justify-center"
+                onMouseDown={(e) => handleResizeStart(e, { left: true, top: true })}
+              >
+                <div className="w-2.5 h-2.5 rounded-full bg-primary/50 group-hover:bg-primary transition-colors" />
+              </div>
+            </>
+          )}
+
+          {/* AutoFit widgets still get left/right corner handles for horizontal resize */}
+          {isAutoFit && (
+            <>
+              {/* Right-side corners — horizontal resize only */}
+              <div
+                className="absolute -top-2 -right-2 w-5 h-5 cursor-e-resize z-40 flex items-center justify-center"
+                onMouseDown={(e) => handleResizeStart(e, { right: true })}
+              >
+                <div className="w-2.5 h-2.5 rounded-full bg-primary/50 group-hover:bg-primary transition-colors" />
               </div>
               <div
-                className="absolute -bottom-1 -left-1 w-4 h-4 cursor-sw-resize z-25"
-                onMouseDown={(e) => handleResizeStart(e, { left: true, bottom: true })}
-              />
+                className="absolute -bottom-2 -right-2 w-5 h-5 cursor-e-resize z-40 flex items-center justify-center"
+                onMouseDown={(e) => handleResizeStart(e, { right: true })}
+              >
+                <div className="w-2.5 h-2.5 rounded-full bg-primary/50 group-hover:bg-primary transition-colors" />
+              </div>
+              {/* Left-side corners — horizontal resize only */}
               <div
-                className="absolute -top-1 -right-1 w-4 h-4 cursor-ne-resize z-25"
-                onMouseDown={(e) => handleResizeStart(e, { right: true, top: true })}
-              />
+                className="absolute -top-2 -left-2 w-5 h-5 cursor-w-resize z-40 flex items-center justify-center"
+                onMouseDown={(e) => handleResizeStart(e, { left: true })}
+              >
+                <div className="w-2.5 h-2.5 rounded-full bg-primary/50 group-hover:bg-primary transition-colors" />
+              </div>
               <div
-                className="absolute -top-1 -left-1 w-4 h-4 cursor-nw-resize z-25"
-                onMouseDown={(e) => handleResizeStart(e, { left: true, top: true })}
-              />
+                className="absolute -bottom-2 -left-2 w-5 h-5 cursor-w-resize z-40 flex items-center justify-center"
+                onMouseDown={(e) => handleResizeStart(e, { left: true })}
+              >
+                <div className="w-2.5 h-2.5 rounded-full bg-primary/50 group-hover:bg-primary transition-colors" />
+              </div>
             </>
           )}
         </>

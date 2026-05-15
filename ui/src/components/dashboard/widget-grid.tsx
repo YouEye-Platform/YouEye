@@ -204,12 +204,12 @@ export function WidgetGrid({ widgets, username, initialBackground }: WidgetGridP
     (widgetType: string, appWidgetDef?: AppWidgetDef) => {
       setShowAddMenu(false);
       const meta = getWidgetMeta(widgetType);
+      // App manifests declare default_size directly in viewport percentages (0-100).
+      // Built-in widgets use WIDGET_CATALOG defaultSize (also in percentages).
       const defaultW = appWidgetDef?.default_size?.width
-        ? Math.min(appWidgetDef.default_size.width * 8, 40)
-        : (meta?.defaultSize.width ?? 25);
+        ?? (meta?.defaultSize.width ?? 25);
       const defaultH = appWidgetDef?.default_size?.height
-        ? Math.min(appWidgetDef.default_size.height * 8, 30)
-        : (meta?.defaultSize.height ?? 12);
+        ?? (meta?.defaultSize.height ?? 12);
       const settings: Record<string, unknown> = widgetType === "greeting"
         ? { name: username }
         : widgetType === "app-widget" && appWidgetDef
