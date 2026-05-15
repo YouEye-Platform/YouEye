@@ -242,6 +242,16 @@ download_spine() {
 
     chmod +x "${INSTALL_DIR}/youeye"
 
+    # Clean up old install locations (pre-0.4.0 installed to /usr/bin/)
+    if [ "${INSTALL_DIR}" != "/usr/bin" ]; then
+        for OLD_BIN in /usr/bin/youeye /usr/bin/spine; do
+            if [ -e "$OLD_BIN" ] || [ -L "$OLD_BIN" ]; then
+                rm -f "$OLD_BIN"
+                log_info "Removed old binary: $OLD_BIN"
+            fi
+        done
+    fi
+
     # Create backward-compatible 'spine' symlink
     ln -sf "${INSTALL_DIR}/youeye" "${INSTALL_DIR}/spine"
 
@@ -400,11 +410,13 @@ main() {
     echo "=================================="
     echo ""
 
-    # If running in an interactive terminal, launch the TUI installer
-    # which handles env detection, games during deploy, etc.
-    if [ -t 0 ] && [ -t 1 ]; then
+    # Launch the TUI installer if stdout is a terminal and /dev/tty is available.
+    # When run via 'curl | sh', stdin is the pipe but stdout is still the terminal
+    # and /dev/tty provides interactive input. Bubble Tea handles the /dev/tty
+    # fallback internally, but we redirect explicitly for belt-and-suspenders safety.
+    if [ -t 1 ] && [ -r /dev/tty ]; then
         log_info "Launching interactive installer..."
-        exec "${INSTALL_DIR}/youeye" installer
+        exec "${INSTALL_DIR}/youeye" installer < /dev/tty
     fi
 
     # Non-interactive fallback (piped install, CI, etc.)
