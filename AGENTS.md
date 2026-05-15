@@ -1,3 +1,20 @@
+## ui v0.3.4.47 — sebastian — 2026-05-15
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Widget edit-mode UX: iframe resize fix, visual indicators, default size system
+
+### Changes
+- `ui/src/components/dashboard/widget-container.tsx` — Added edit-mode overlay to block iframe mouse capture during drag/resize. Replaced narrow top-bar grip with full-surface drag. Added dashed outline border, corner dots on all 4 corners, edge midpoint dots.
+- `ui/src/components/dashboard/widget-grid.tsx` — Removed `*8` scaling on app widget default_size. Manifest values now used directly as viewport percentages.
+
+### Test Results
+- No Playwright testing (user testing manually)
+
+### Notes for Iris
+- All 6 native apps also updated with new percentage-based widget default_size values (manifest-only change)
+- UI + all apps must be deployed together for correct sizing behavior
+
 ## cp v0.3.6.43 + ui v0.3.4.46 — sebastian — 2026-05-15
 **Branch:** sebastian
 **VM:** ye-sebastian
