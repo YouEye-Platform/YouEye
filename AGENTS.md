@@ -1,5 +1,41 @@
 # AGENTS.md — YouEye Monorepo
 
+## v0.3.2.16 — sebastian — 2026-05-15
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Migrate YouEye-Installer TUI into Spine as `youeye installer` subcommand
+
+### Changes
+- `spine/internal/installer/theme/theme.go` — CRT-style terminal theme (Amber, Magenta, NeonGreen, etc.)
+- `spine/internal/installer/snake/snake.go` — Snake game with epoch-based tick invalidation
+- `spine/internal/installer/pong/pong.go` — Pong vs CPU with float64 ball physics and mouse support
+- `spine/internal/installer/tetris/tetris.go` — Classic Tetris, 10x20 board, NES scoring, wall-kick
+- `spine/internal/installer/twofortyeight/twofortyeight.go` — 2048 game, 4x4 grid, canonical slide
+- `spine/internal/installer/types.go` — Install mode/path/config types
+- `spine/internal/installer/detect.go` — Environment detection (OS, arch, Proxmox, container) with animated TUI
+- `spine/internal/installer/engine.go` — Installation engine (LXC/VM/Host paths), removed self-download for host mode
+- `spine/internal/installer/wizard.go` — Multi-step wizard (kept for future Proxmox support)
+- `spine/internal/installer/progress.go` — Progress screen with game picker; added autoStart for bare Linux
+- `spine/internal/installer/complete.go` — Success/error summary screens
+- `spine/internal/installer/installer.go` — Phase orchestrator; added phaseProxmoxNotReady, autoStart on bare Linux
+- `spine/internal/installer/tui.go` — Root Bubble Tea program wrapper with `Run()` entry point
+- `spine/internal/cmd/installer_cmd.go` — Cobra `youeye installer` subcommand
+- `spine/internal/cmd/root.go` — Version bump to 0.3.2.16
+- `spine/install.sh` — Auto-launch `youeye installer` when running interactively
+- `spine/go.mod` / `spine/go.sum` — Added bubbletea, lipgloss, bubbles as direct dependencies
+
+### Test Results
+- Build: compiles successfully (`go build ./cmd/youeye/`)
+- No Playwright testing (TUI-only, no web UI changes)
+
+### Notes for Iris
+- All 4 games (Snake, Pong, Tetris, 2048) migrated from YouEye-Installer repo with identical visuals
+- Proxmox detection now shows "not ready yet" message instead of entering wizard
+- Bare Linux skips "Press Enter" confirmation, goes straight to install with games
+- `engine.go` installHost() no longer downloads Spine binary (already installed by install.sh)
+- Game packages kept as separate sub-packages to avoid Model type name collisions
+
 ## v0.3.2.15 — sebastian — 2026-05-15
 **Branch:** sebastian
 **VM:** ye-sebastian
