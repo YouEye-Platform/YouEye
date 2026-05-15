@@ -11,12 +11,12 @@ import { userSettings, systemSettings } from "@/db/schema";
 import type { SiteNameStyle } from "@/lib/db/queries/branding";
 import { locales, defaultLocale } from "@/i18n/config";
 
-/** Default background: animated flowing-lines with purple preset */
+/** Default background: animated smooth-wavy with sunset preset */
 const DEFAULT_BACKGROUND = {
   type: "animated" as const,
   settings: {
-    animatedStyle: "flowing-lines",
-    animatedPreset: "purple",
+    animatedStyle: "smooth-wavy",
+    animatedPreset: "sunset",
   },
 };
 
