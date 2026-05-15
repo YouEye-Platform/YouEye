@@ -1,3 +1,21 @@
+## ui v0.3.4.51 — sebastian — 2026-05-15
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix default homepage layout and background for fresh installs
+
+### Changes
+- `ui/src/lib/db/queries/widgets.ts` — Replace search widget with greeting + bookmarks in DB DEFAULT_WIDGETS. Search was removed from catalog but still in defaults, causing "Unknown widget: search" for all new users.
+- `ui/src/lib/db/queries/settings.ts` — Change server-side default background from flowing-lines/purple to smooth-wavy/sunset, matching intended fresh-install experience.
+- `ui/src/components/widgets/search-widget.tsx` — Deleted orphaned file (not registered in WIDGET_CATALOG, dead code).
+
+### Test Results
+- No Playwright tests this session (user will test manually)
+
+### Notes for Iris
+- Only UI changed; CP and Spine untouched
+- Existing users who already have the "search" widget in their DB will still see "Unknown widget: search" until they click edit → reset. This is acceptable — only affects dev VMs with stale data, not fresh installs.
+
 ## cp v0.3.6.46 + ui v0.3.4.50 — sebastian — 2026-05-15
 **Branch:** sebastian
 **VM:** ye-sebastian
