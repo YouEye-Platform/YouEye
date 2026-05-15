@@ -1,0 +1,476 @@
+/**
+ * SSO configuration engine for youeye-file.yaml manifests.
+ * Executes declarative HTTP API steps to configure apps with Authentik SSO.
+ *
+ * This replaces the per-app TypeScript SSO functions (configureMemosSSO,
+ * configureImmichSSO) with a generic HTTP step executor driven by YAML.
+ *
+ * Re-exports Authentik CRUD operations from the existing sso-setup module.
+ */
+
+import type { SSOConfig, SSOStep, VariableContext, InstallEvent } from './types';
+import { resolveVariables, resolveVariablesDeep } from './variables';
+
+// ─── Error with structured context ────────────────────────────
+
+export class StepError extends Error {
+  errorContext: InstallEvent['errorContext'];
+  constructor(message: string, errorContext: InstallEvent['errorContext']) {
+    super(message);
+    this.name = 'StepError';
+    this.errorContext = errorContext;
+  }
+}
+
+function getSuggestion(status: number, url: string): string {
+  switch (status) {
+    case 401: case 403:
+      return 'Auth credentials may be wrong. Check the admin password secret in /var/lib/youeye/app-{id}/.admin_password';
+    case 404:
+      return `API endpoint not found at ${url}. The app version may use a different path.`;
+    case 500:
+      return 'Internal server error in the app. Check container logs: sudo incus exec {container} -- journalctl -n 50';
+    case 502: case 503:
+      return 'App may still be starting up. Try "Reconfigure SSO" after a few minutes.';
+    case 409:
+      return 'Resource already exists. This may happen on reinstall — the step may need ignoreError: true.';
+    default:
+      return `Unexpected HTTP ${status}. Check container logs for details.`;
+  }
+}
+
+function getNetworkSuggestion(err: Error): string {
+  const msg = err.message;
+  if (msg.includes('ECONNREFUSED'))
+    return 'Connection refused — container may not be listening on the expected port.';
+  if (msg.includes('timeout') || msg.includes('ETIMEDOUT') || msg.includes('AbortError'))
+    return 'Request timed out — app may be under heavy load or unresponsive. Check container health.';
+  if (msg.includes('ENOTFOUND'))
+    return 'DNS resolution failed — container hostname not found on the network.';
+  return 'Network error connecting to the app. Check that the container is running and reachable.';
+}
+
+/** Redact sensitive variable values for safe inclusion in error reports. */
+export function redactVars(vars: Record<string, string>): Record<string, string> {
+  const redacted: Record<string, string> = {};
+  const sensitive = /password|secret|token|key/i;
+  for (const [k, v] of Object.entries(vars)) {
+    redacted[k] = sensitive.test(k) && v.length > 4 ? `${v.slice(0, 4)}...` : v;
+  }
+  return redacted;
+}
+
+// Re-export Authentik CRUD operations
+export {
+  isAuthentikAvailable,
+  getAuthentikExternalUrl,
+  createAuthentikOAuth2App,
+  removeAuthentikOAuth2App,
+} from './authentik';
+
+/**
+ * Runtime context for SSO step execution.
+ * Tracks extracted tokens and saved responses across steps.
+ */
+interface StepContext {
+  variables: Partial<VariableContext>;
+  tokens: Record<string, string>;
+  saved: Record<string, unknown>;
+}
+
+/**
+ * Execute all SSO configure steps from a manifest.
+ * Steps run sequentially — each step can extract tokens used by later steps.
+ */
+export async function executeSSOSteps(
+  sso: SSOConfig,
+  baseCtx: Partial<VariableContext>
+): Promise<void> {
+  if (!sso.setup || sso.setup.method === 'none') return;
+  const steps = sso.setup.api?.steps ?? [];
+  if (steps.length === 0) return;
+
+  const ctx: StepContext = {
+    variables: baseCtx,
+    tokens: {},
+    saved: {},
+  };
+
+  for (const step of steps) {
+    await executeStep(step, ctx);
+  }
+}
+
+async function executeStep(step: SSOStep, ctx: StepContext): Promise<void> {
+  // Delay step — wait before proceeding (used for restart-and-wait flows)
+  if (step.delay) {
+    await new Promise(resolve => setTimeout(resolve, step.delay));
+  }
+
+  // Delay-only step (no method/url) — just wait, nothing else to do
+  if (!step.method || !step.url) {
+    return;
+  }
+
+  // Evaluate condition — but skip pre-evaluation for forEach steps where the
+  // condition references the iteration variable (e.g., "provider.title contains 'Authentik'").
+  // Those conditions are meant to filter each item, not gate the entire step.
+  if (step.condition && !step.forEach && !evaluateCondition(step.condition, ctx)) {
+    return;
+  }
+
+  // Handle forEach iteration
+  if (step.forEach && step.saveAs) {
+    const items = ctx.saved[step.saveAs];
+    if (Array.isArray(items)) {
+      for (const item of items) {
+        await executeIterationStep(step, ctx, item);
+      }
+      return;
+    }
+  }
+
+  // Handle forEach on a GET response
+  if (step.forEach) {
+    const result = await executeHTTPStep(step, ctx);
+    if (result === null) return;
+
+    const items = extractIterableItems(result.body, step.forEach);
+    if (step.action && items) {
+      for (const item of items) {
+        if (step.condition) {
+          const itemCtx = { ...ctx, saved: { ...ctx.saved, [step.forEach]: item } };
+          if (!evaluateCondition(step.condition, itemCtx)) continue;
+        }
+        await executeActionStep(step.action, ctx, item, step.forEach);
+      }
+    }
+    return;
+  }
+
+  // Standard step
+  const result = await executeHTTPStep(step, ctx);
+  if (result === null) return;
+
+  // Extract token from JSON response body
+  if (step.extractToken && result.body) {
+    const token = extractValueFromPath(result.body, step.extractToken.from);
+    if (token) {
+      ctx.tokens[step.extractToken.as] = String(token);
+    }
+  }
+
+  // Extract token from Set-Cookie response header.
+  // Also checks Grpc-Metadata-Set-Cookie (gRPC-gateway prefixes response metadata).
+  if (step.extractCookie && result.response) {
+    const setCookie = result.response.headers.get('set-cookie')
+      || result.response.headers.get('grpc-metadata-set-cookie')
+      || '';
+    const cookieMatch = setCookie.match(
+      new RegExp(`(?:^|[,;]\\s*)${escapeRegExp(step.extractCookie.name)}=([^;,]+)`)
+    );
+    if (cookieMatch) {
+      ctx.tokens[step.extractCookie.as] = cookieMatch[1];
+    }
+  }
+
+  // Save response body for later steps
+  if (step.saveAs && result.body) {
+    ctx.saved[step.saveAs] = result.body;
+  }
+}
+
+/** Result from an HTTP step — body + raw response for header extraction. */
+interface HTTPStepResult {
+  body: unknown;
+  response: Response;
+}
+
+async function executeHTTPStep(step: SSOStep, ctx: StepContext): Promise<HTTPStepResult | null> {
+  const url = resolveStepVariables(step.url!, ctx);
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  // Apply custom headers first (can override Content-Type, Authorization, etc.)
+  if (step.headers) {
+    for (const [key, value] of Object.entries(step.headers)) {
+      headers[key] = resolveStepVariables(value, ctx);
+    }
+  }
+
+  // Apply Bearer auth only if no custom Authorization header was set
+  if (step.auth && !step.headers?.['Authorization']) {
+    const token = resolveStepVariables(step.auth, ctx);
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const options: RequestInit = { method: step.method!, headers };
+
+  // Handle body with special merge/set logic
+  if (step.body !== undefined) {
+    const resolvedBody = resolveBodyWithMerge(step.body, ctx);
+    options.body = JSON.stringify(resolvedBody);
+  }
+
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      const truncated = text.slice(0, 500);
+      const errorCtx: InstallEvent['errorContext'] = {
+        url,
+        method: step.method!,
+        statusCode: res.status,
+        responseBody: truncated,
+        suggestion: getSuggestion(res.status, url),
+      };
+      if (step.ignoreError) return null;
+      throw new StepError(
+        `SSO step ${step.method} ${url} failed: ${res.status} ${res.statusText}`,
+        errorCtx
+      );
+    }
+
+    if (res.status === 204) return { body: {}, response: res };
+    const text = await res.text();
+    if (!text) return { body: {}, response: res };
+    return { body: JSON.parse(text), response: res };
+  } catch (err) {
+    if (step.ignoreError) return null;
+    if (err instanceof StepError) throw err;
+    const errorCtx: InstallEvent['errorContext'] = {
+      url,
+      method: step.method!,
+      suggestion: getNetworkSuggestion(err as Error),
+    };
+    throw new StepError(
+      `SSO step ${step.method} ${url}: ${(err as Error).message}`,
+      errorCtx
+    );
+  }
+}
+
+async function executeIterationStep(
+  step: SSOStep,
+  ctx: StepContext,
+  item: unknown
+): Promise<void> {
+  if (!step.forEach) return;
+  const itemCtx = { ...ctx, saved: { ...ctx.saved, [step.forEach]: item } };
+  if (step.condition && !evaluateCondition(step.condition, itemCtx)) return;
+  if (step.action) {
+    await executeActionStep(step.action, ctx, item, step.forEach);
+  }
+}
+
+async function executeActionStep(
+  action: NonNullable<SSOStep['action']>,
+  ctx: StepContext,
+  item: unknown,
+  itemKey: string
+): Promise<void> {
+  // Resolve URL with item context
+  let url = action.url;
+  // Replace ${itemKey.property} references with item values
+  url = url.replace(/\$\{([^}]+)\}/g, (match, path: string) => {
+    if (path.startsWith(`${itemKey}.`)) {
+      const prop = path.slice(itemKey.length + 1);
+      const value = extractValueFromPath(item, prop);
+      if (value !== undefined) return String(value);
+    }
+    return resolveStepVariables(match, ctx);
+  });
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (action.headers) {
+    for (const [key, value] of Object.entries(action.headers)) {
+      headers[key] = resolveStepVariables(value, ctx);
+    }
+  }
+
+  if (action.auth && !action.headers?.['Authorization']) {
+    headers['Authorization'] = `Bearer ${resolveStepVariables(action.auth, ctx)}`;
+  }
+
+  try {
+    await fetch(url, {
+      method: action.method,
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    // Actions during iteration are best-effort
+  }
+}
+
+/**
+ * Resolve a body object, handling the special merge/set pattern.
+ *
+ * If body contains "merge" and "set" keys:
+ * - "merge" is a reference to a saved value (spread as base)
+ * - "set" contains dot-separated paths to set on the merged result
+ *
+ * Otherwise, the body is resolved normally with variable substitution.
+ */
+function resolveBodyWithMerge(body: unknown, ctx: StepContext): unknown {
+  if (body === null || body === undefined || typeof body !== 'object') {
+    return resolveVariablesDeep(body, ctx.variables);
+  }
+
+  const bodyObj = body as Record<string, unknown>;
+
+  if ('merge' in bodyObj && 'set' in bodyObj) {
+    // Merge pattern: merge a saved response with new values
+    const mergeRef = String(bodyObj.merge);
+    const mergeRefResolved = resolveStepVariables(mergeRef, ctx);
+    let base: Record<string, unknown> = {};
+
+    // Check if it's a saved reference
+    for (const [key, saved] of Object.entries(ctx.saved)) {
+      if (mergeRefResolved === `\${${key}}` || mergeRef === `\${${key}}`) {
+        base = { ...(saved as Record<string, unknown>) };
+        break;
+      }
+      if (mergeRefResolved === key || mergeRef === key) {
+        base = { ...(saved as Record<string, unknown>) };
+        break;
+      }
+    }
+
+    // Apply set values using dot-separated paths
+    const setObj = bodyObj.set as Record<string, unknown>;
+    for (const [dotPath, value] of Object.entries(setObj)) {
+      const resolvedValue = resolveVariablesDeep(value, ctx.variables);
+      setNestedValue(base, dotPath, resolvedValue);
+    }
+
+    return base;
+  }
+
+  // Standard body resolution
+  return resolveVariablesDeep(body, ctx.variables);
+}
+
+/**
+ * Resolve variable references in a step string.
+ * Handles both manifest variables (${secrets.x}) and step context (${bearerToken}).
+ */
+function resolveStepVariables(str: string, ctx: StepContext): string {
+  return str.replace(/\$\{([^}]+)\}/g, (match, path: string) => {
+    // Check tokens first (step-local context like ${bearerToken})
+    if (ctx.tokens[path] !== undefined) {
+      return ctx.tokens[path];
+    }
+
+    // Try manifest variable resolution
+    try {
+      return resolveVariables(match, ctx.variables);
+    } catch {
+      return match;
+    }
+  });
+}
+
+/**
+ * Evaluate a simple condition expression.
+ * Supports: "!varName" (negation), "varName" (truthy), "var contains 'text'"
+ */
+function evaluateCondition(condition: string, ctx: StepContext): boolean {
+  const trimmed = condition.trim();
+
+  // Negation: !bearerToken
+  if (trimmed.startsWith('!')) {
+    const varName = trimmed.slice(1);
+    return !ctx.tokens[varName];
+  }
+
+  // Contains: "provider.title contains 'Authentik'"
+  const containsMatch = trimmed.match(/^(\S+)\s+contains\s+'([^']+)'$/);
+  if (containsMatch) {
+    const [, path, search] = containsMatch;
+    const parts = path.split('.');
+    if (parts.length >= 2) {
+      const itemKey = parts[0];
+      const prop = parts.slice(1).join('.');
+      const item = ctx.saved[itemKey];
+      if (item) {
+        const value = extractValueFromPath(item, prop);
+        return String(value || '').includes(search);
+      }
+    }
+    return false;
+  }
+
+  // Truthy: bearerToken
+  return !!ctx.tokens[trimmed];
+}
+
+/**
+ * Extract a value from an object using a dot-separated path.
+ * Supports "response.accessToken" style paths.
+ */
+function extractValueFromPath(obj: unknown, pathStr: string): unknown {
+  if (obj === null || obj === undefined) return undefined;
+
+  // Strip "response." prefix (common in extractToken.from)
+  const cleanPath = pathStr.startsWith('response.') ? pathStr.slice(9) : pathStr;
+  const parts = cleanPath.split('.');
+  let current: unknown = obj;
+
+  for (const part of parts) {
+    if (current === null || current === undefined || typeof current !== 'object') {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+
+  return current;
+}
+
+/**
+ * Extract iterable items from a response.
+ * Handles common patterns like { identityProviders: [...] } or direct arrays.
+ */
+function extractIterableItems(response: unknown, _key: string): unknown[] | null {
+  if (Array.isArray(response)) return response;
+  if (response && typeof response === 'object') {
+    // Try common patterns: results, items, data, or the key name
+    const obj = response as Record<string, unknown>;
+    for (const prop of Object.values(obj)) {
+      if (Array.isArray(prop)) return prop;
+    }
+  }
+  return null;
+}
+
+/**
+ * Set a nested value using a dot-separated path.
+ * "oauth.enabled" on obj creates obj.oauth.enabled = value
+ */
+function setNestedValue(obj: Record<string, unknown>, dotPath: string, value: unknown): void {
+  const parts = dotPath.split('.');
+  let current: Record<string, unknown> = obj;
+
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (!(part in current) || typeof current[part] !== 'object' || current[part] === null) {
+      current[part] = {};
+    }
+    current = current[part] as Record<string, unknown>;
+  }
+
+  current[parts[parts.length - 1]] = value;
+}
+
+/** Escape special regex characters in a string. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}

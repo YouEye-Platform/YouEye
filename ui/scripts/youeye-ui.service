@@ -1,0 +1,25 @@
+[Unit]
+Description=YouEye UI
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/app
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOSTNAME=0.0.0.0
+Environment=UI_EXTERNAL_URL=${UI_EXTERNAL_URL}
+Environment=AUTHENTIK_URL=${AUTHENTIK_URL}
+Environment=AUTHENTIK_INTERNAL_URL=${AUTHENTIK_INTERNAL_URL}
+Environment=AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}
+Environment=AUTHENTIK_CLIENT_SECRET=${AUTHENTIK_CLIENT_SECRET}
+Environment=JWT_SECRET=${JWT_SECRET}
+Environment=DATABASE_URL=${DATABASE_URL}
+Environment=SECURE_COOKIES=false
+ExecStart=/usr/bin/node /opt/app/server.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

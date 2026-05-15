@@ -1,0 +1,213 @@
+"use client";
+
+import { useEffect, useRef, useState, useCallback } from "react";
+import { useTheme } from "next-themes";
+import { useLocale } from "next-intl";
+
+const HEALTH_POLL_INTERVAL = 5000;
+
+function getCpOrigin(signedUrl: string): string {
+  try {
+    return new URL(signedUrl).origin;
+  } catch {
+    return '';
+  }
+}
+
+interface AdminEmbedProps {
+  signedUrl: string;
+  title?: string;
+  minHeight?: number;
+}
+
+export function AdminEmbed({ signedUrl, title, minHeight = 200 }: AdminEmbedProps) {
+  const cpOrigin = getCpOrigin(signedUrl);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const healthRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [height, setHeight] = useState(minHeight);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState(false);
+  const [restarting, setRestarting] = useState<string | null>(null);
+  const { resolvedTheme } = useTheme();
+  const locale = useLocale();
+
+  // Append theme and language to embed URL so the iframe SSR renders with
+  // correct theme and locale immediately, without waiting for postMessage.
+  const embedSrc = (() => {
+    try {
+      const url = new URL(signedUrl);
+      if (resolvedTheme) url.searchParams.set("theme", resolvedTheme);
+      if (locale) url.searchParams.set("locale", locale);
+      return url.toString();
+    } catch {
+      return signedUrl;
+    }
+  })();
+
+  const sendThemeToEmbed = useCallback(() => {
+    if (!iframeRef.current?.contentWindow || !resolvedTheme) return;
+    iframeRef.current.contentWindow.postMessage(
+      { type: "youeye-embed-theme", theme: resolvedTheme },
+      cpOrigin
+    );
+    if (locale) {
+      iframeRef.current.contentWindow.postMessage(
+        { type: "youeye-embed-locale", locale },
+        cpOrigin
+      );
+    }
+  }, [resolvedTheme, locale]);
+
+  const stopHealthPoll = useCallback(() => {
+    if (healthRef.current) {
+      clearInterval(healthRef.current);
+      healthRef.current = null;
+    }
+  }, []);
+
+  const startHealthPoll = useCallback(() => {
+    stopHealthPoll();
+    healthRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`${cpOrigin}/embed/health`, { signal: AbortSignal.timeout(3000) });
+        if (res.ok) {
+          stopHealthPoll();
+          setRestarting(null);
+          setReady(false);
+          setError(false);
+          if (iframeRef.current) {
+            iframeRef.current.src = embedSrc;
+          }
+        }
+      } catch { /* still down */ }
+    }, HEALTH_POLL_INTERVAL);
+  }, [signedUrl, stopHealthPoll]);
+
+  const handleMessage = useCallback(
+    (e: MessageEvent) => {
+      if (e.origin !== cpOrigin) return;
+      if (e.source !== iframeRef.current?.contentWindow) return;
+
+      if (e.data?.type === "youeye-embed-ready" || e.data?.type === "youeye-embed-resize") {
+        setError(false);
+        sendThemeToEmbed();
+        // For self-collapsing embeds (minHeight=0), defer ready until we
+        // know the embed has non-zero content — otherwise the iframe briefly
+        // shows the Control Panel embed's own loading skeleton before collapsing to 0.
+        if (minHeight > 0) setReady(true);
+      }
+
+      if (e.data?.type === "youeye-embed-resize" && typeof e.data.height === "number") {
+        const h = Math.max(e.data.height, minHeight);
+        setHeight(h);
+        if (minHeight === 0 && h > 0) setReady(true);
+      }
+
+      if (e.data?.type === "youeye-embed-action") {
+        const action = e.data.action as string;
+        if (action === "cp-restarting") {
+          setRestarting("Control Panel");
+          startHealthPoll();
+        } else if (action === "ui-restarting") {
+          setRestarting("YouEye UI");
+        }
+      }
+    },
+    [minHeight, startHealthPoll, sendThemeToEmbed]
+  );
+
+  useEffect(() => {
+    window.addEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      stopHealthPoll();
+    };
+  }, [handleMessage, stopHealthPoll]);
+
+  useEffect(() => {
+    if (ready) sendThemeToEmbed();
+  }, [resolvedTheme, ready, sendThemeToEmbed]);
+
+  useEffect(() => {
+    // Self-collapsing embeds (minHeight=0) stay invisible when empty —
+    // no need to show an error state if they never become ready.
+    if (minHeight === 0) return;
+    const timeout = setTimeout(() => {
+      if (!ready && !restarting) setError(true);
+    }, 8000);
+    return () => clearTimeout(timeout);
+  }, [ready, restarting, minHeight]);
+
+  const handleRetry = () => {
+    setError(false);
+    setReady(false);
+    if (iframeRef.current) {
+      iframeRef.current.src = embedSrc;
+    }
+  };
+
+  if (restarting) {
+    return (
+      <div
+        className="flex flex-col items-center justify-center gap-3 py-16 rounded-lg border border-border bg-background"
+        style={{ minHeight }}
+      >
+        <div className="h-6 w-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+        <p className="text-sm font-medium">{restarting} is restarting...</p>
+        <p className="text-xs text-muted-foreground">
+          This page will reload automatically when the service is back online.
+        </p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div
+        className="flex flex-col items-center justify-center gap-3 py-12 rounded-lg border border-border"
+        style={{ minHeight }}
+      >
+        <p className="text-sm text-muted-foreground">
+          Control Panel is not responding.
+        </p>
+        <button
+          onClick={handleRetry}
+          className="text-sm px-3 py-1.5 rounded-md border border-border bg-background hover:bg-accent transition-colors"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative">
+      {!ready && minHeight > 0 && (
+        <div
+          className="absolute inset-0 z-10 flex items-center justify-center rounded-lg border border-border bg-background"
+          style={{ minHeight }}
+        >
+          <div className="space-y-3 w-full max-w-md px-8">
+            <div className="h-4 w-3/4 rounded bg-muted animate-pulse" />
+            <div className="h-4 w-full rounded bg-muted animate-pulse" />
+            <div className="h-4 w-1/2 rounded bg-muted animate-pulse" />
+          </div>
+        </div>
+      )}
+      <iframe
+        ref={iframeRef}
+        src={embedSrc}
+        title={title || "Admin Settings"}
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
+        style={{
+          width: "100%",
+          height,
+          border: "none",
+          borderRadius: 8,
+          opacity: ready ? 1 : 0,
+          transition: "opacity 0.2s ease",
+        }}
+      />
+    </div>
+  );
+}
