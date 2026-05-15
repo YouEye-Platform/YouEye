@@ -165,6 +165,13 @@ export function AppsEmbedClient() {
     return () => { if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; } };
   }, [statuses, fetchStatuses, fetchApps]);
 
+  // Notify parent of update count whenever apps change
+  // (must be before any conditional returns to satisfy Rules of Hooks)
+  useEffect(() => {
+    const count = apps.filter(a => a.updateAvailable).length;
+    window.parent.postMessage({ type: "youeye-embed-update-count", count }, "*");
+  }, [apps]);
+
   const handleUpdate = async (appId: string) => {
     if (SELF_DESTRUCTIVE.has(appId) && confirmId !== appId) {
       setConfirmId(appId);
@@ -222,12 +229,6 @@ export function AppsEmbedClient() {
       </div>
     );
   }
-
-  // Notify parent of update count whenever apps change
-  useEffect(() => {
-    const count = apps.filter(a => a.updateAvailable).length;
-    window.parent.postMessage({ type: "youeye-embed-update-count", count }, "*");
-  }, [apps]);
 
   if (error) return <div className="embed-error">{error}</div>;
 

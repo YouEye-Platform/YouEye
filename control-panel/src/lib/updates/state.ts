@@ -125,11 +125,14 @@ export async function getUnifiedStatuses(): Promise<UpdateStatusRecord[]> {
   const result = new Map<string, UpdateStatusRecord>();
 
   for (const s of dbStatuses) {
-    // Skip stale terminal statuses — same logic as Spine statuses below
     const isTerminal = s.status === 'completed' || s.status === 'failed';
-    if (isTerminal && s.updated_at) {
+    if (s.updated_at) {
       const age = Date.now() - new Date(s.updated_at).getTime();
-      if (age > 60_000) continue;
+      // Prune terminal statuses after 60s
+      if (isTerminal && age > 60_000) continue;
+      // Prune non-terminal statuses after 5 minutes — they're stuck
+      // (e.g. CP self-update writes "downloading" then dies mid-request)
+      if (!isTerminal && age > 300_000) continue;
     }
     result.set(s.component, s);
   }

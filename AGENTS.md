@@ -1,3 +1,21 @@
+## cp v0.3.6.44 — sebastian — 2026-05-15
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Fix stuck update status + embed/apps crash
+
+### Changes
+- `control-panel/src/lib/updates/state.ts` — Added 5-minute TTL for non-terminal update statuses in `getUnifiedStatuses()`. Previously, non-terminal statuses (downloading, installing, etc.) were never pruned, causing CP self-updates to leave a permanent "Downloading..." state since the process dies mid-request and never writes a terminal status.
+- `control-panel/src/app/embed/apps/client.tsx` — Fixed React Rules of Hooks violation: `useEffect` for update-count postMessage was placed after `if (loading) return`, causing hook count mismatch between renders. Moved it before all conditional returns. This was the root cause of the "Application error: client-side exception" on the `/embed/apps` page (broke Updates Available and System Components sections).
+- `control-panel/package.json` — Bumped to 0.3.6.44
+
+### Test Results
+- No Playwright testing (user testing manually)
+
+### Notes for Iris
+- Both bugs were introduced in v0.3.6.43 (commit 992ea83). The hooks violation is a critical crash — all embed/apps views are broken until this fix is deployed.
+- The stuck status fix also applies to future self-updates — any non-terminal status older than 5 minutes is now auto-pruned.
+
 ## ui v0.3.4.47 — sebastian — 2026-05-15
 **Branch:** sebastian
 **VM:** ye-sebastian
