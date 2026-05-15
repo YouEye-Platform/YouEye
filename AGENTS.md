@@ -1,3 +1,25 @@
+## ui v0.3.4.48 — sebastian — 2026-05-15
+**Branch:** sebastian
+**VM:** ye-sebastian
+**Agent:** Sebastian
+**Task:** Bookmarks widget, remove search widget, homepage UX improvements
+
+### Changes
+- `ui/src/components/widgets/bookmarks-widget.tsx` — NEW: bookmarks widget with pages, favicon tiles, empty state
+- `ui/src/components/widgets/bookmarks-editor.tsx` — NEW: settings editor for managing bookmark pages and items
+- `ui/src/components/widgets/index.ts` — Added bookmarks to catalog, removed search from catalog
+- `ui/src/components/dashboard/widget-container.tsx` — Settings/remove buttons: bigger, inward from corners, z-50, stopPropagation
+- `ui/src/components/dashboard/widget-grid.tsx` — New DEFAULT_WIDGETS: greeting below logo, bookmarks at bottom, no search
+- `ui/src/components/dashboard/widget-settings-dialog.tsx` — BookmarksEditor custom section, wider dialog for bookmarks
+- `ui/src/lib/greeting-presets.ts` — Default greeting preset changed to Dancing Script cursive (2.5rem, welcoming)
+- `ui/src/components/backgrounds/homepage-background.tsx` — Default background: smooth-wavy + sunset (was flowing-lines + purple)
+- `ui/src/components/backgrounds/background-settings-dialog.tsx` — Removed image tab placeholder, 2-column type selector
+
+### Notes for Iris
+- Search widget component file kept for backward compat (users with existing search widgets won't crash)
+- Bookmarks widget stores data in widget settings (no new DB schema needed)
+- Default background change only affects new users or dashboard reset — existing users keep their preference
+
 ## cp v0.3.6.44 — sebastian — 2026-05-15
 **Branch:** sebastian
 **VM:** ye-sebastian

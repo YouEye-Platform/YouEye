@@ -56,13 +56,13 @@ export const GREETING_PRESETS: readonly GreetingPreset[] = [
     name: "Default",
     category: "classic",
     css: {
-      fontFamily: "inherit",
-      fontSize: "1.875rem",
-      fontWeight: 300,
-      letterSpacing: "-0.01em",
+      fontFamily: "'Dancing Script', cursive",
+      fontSize: "2.5rem",
+      fontWeight: 500,
+      letterSpacing: "0.01em",
       textTransform: "none",
       color: "var(--foreground)",
-      textShadow: "none",
+      textShadow: "0 1px 3px rgba(0,0,0,0.08)",
     },
   },
   {

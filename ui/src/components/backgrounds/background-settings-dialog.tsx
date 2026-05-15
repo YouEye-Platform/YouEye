@@ -39,8 +39,8 @@ interface BackgroundSettingsDialogProps {
 }
 
 // Background type options — icons are decorative, labels are translated below
-const BG_TYPE_IDS = ["solid", "animated", "image"] as const;
-const BG_TYPE_ICONS: Record<string, string> = { solid: "\u25A0", animated: "\u25B6", image: "\uD83D\uDDBC" };
+const BG_TYPE_IDS = ["solid", "animated"] as const;
+const BG_TYPE_ICONS: Record<string, string> = { solid: "\u25A0", animated: "\u25B6" };
 
 export function BackgroundSettingsDialog({
   open,
@@ -114,7 +114,7 @@ export function BackgroundSettingsDialog({
             <label className="text-sm font-medium text-foreground/70 mb-2 block">
               {t('type')}
             </label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {BG_TYPE_IDS.map((typeId) => (
                 <button
                   key={typeId}
@@ -375,15 +375,6 @@ export function BackgroundSettingsDialog({
             </>
           )}
 
-          {/* Image Background (placeholder for future) */}
-          {localConfig.type === "image" && (
-            <div className="text-center py-8 text-foreground/50">
-              <p className="text-sm">{t('imageComingSoon')}</p>
-              <p className="text-xs mt-1">
-                {t('imageComingDescription')}
-              </p>
-            </div>
-          )}
         </div>
       </DialogContent>
     </Dialog>

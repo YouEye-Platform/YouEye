@@ -233,25 +233,27 @@ export function WidgetContainer({
         />
       )}
 
-      {/* Remove button */}
+      {/* Remove button — above overlay and resize handles */}
       {isEditMode && (
         <button
-          className="absolute -top-2.5 -right-2.5 z-40 w-5 h-5 rounded-full bg-destructive text-white flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
+          className="absolute -top-2 right-2 z-50 w-6 h-6 rounded-full bg-destructive text-white flex items-center justify-center shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
           onClick={() => onRemove(widget.id)}
+          onMouseDown={(e) => e.stopPropagation()}
           title={t('removeWidget')}
         >
-          <X className="w-3 h-3" />
+          <X className="w-3.5 h-3.5" />
         </button>
       )}
 
-      {/* Settings button */}
+      {/* Settings button — above overlay and resize handles */}
       {isEditMode && onSettingsOpen && (
         <button
-          className="absolute -top-2.5 -left-2.5 z-40 w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
+          className="absolute -top-2 left-2 z-50 w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
           onClick={() => onSettingsOpen(widget.id)}
+          onMouseDown={(e) => e.stopPropagation()}
           title={t('widgetSettings')}
         >
-          <Settings2 className="w-3 h-3" />
+          <Settings2 className="w-3.5 h-3.5" />
         </button>
       )}
 

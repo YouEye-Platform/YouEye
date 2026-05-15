@@ -12,7 +12,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Paintbrush, Plus, RotateCcw, Check, Settings2, User, Search, Clock, List, Package, Type } from "lucide-react";
+import { Paintbrush, Plus, RotateCcw, Check, Settings2, User, Clock, List, Package, Type, Bookmark } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { WidgetContainer, type WidgetPosition } from "./widget-container";
 import {
@@ -50,16 +50,17 @@ interface WidgetGridProps {
 const WIDGET_PREVIEW_ICONS: Record<string, LucideIcon> = {
   "server-name": Type,
   greeting: User,
-  search: Search,
   clock: Clock,
   "timeline-preview": List,
+  bookmarks: Bookmark,
 };
 
 /** Default layout for the reset button */
 const DEFAULT_WIDGETS: Omit<WidgetData, "id">[] = [
   { widgetType: "server-name", positionX: 40, positionY: 18, width: 15, height: 4, settings: {}, order: 0 },
-  { widgetType: "search", positionX: 30, positionY: 40, width: 40, height: 10, settings: {}, order: 1 },
+  { widgetType: "greeting", positionX: 30, positionY: 32, width: 35, height: 8, settings: {}, order: 1 },
   { widgetType: "clock", positionX: 82, positionY: 5, width: 14, height: 6, settings: {}, order: 2 },
+  { widgetType: "bookmarks", positionX: 25, positionY: 80, width: 45, height: 14, settings: {}, order: 3 },
 ];
 
 export interface AppWidgetDef {

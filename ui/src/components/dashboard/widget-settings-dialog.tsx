@@ -14,6 +14,8 @@ import { X, Settings2 } from "lucide-react";
 import { getWidgetMeta, type SettingsField } from "@/components/widgets";
 import { GreetingPresetPicker } from "@/components/widgets/greeting-preset-picker";
 import { ClockThemePicker } from "@/components/widgets/clock-theme-picker";
+import { BookmarksEditor } from "@/components/widgets/bookmarks-editor";
+import type { BookmarkPage } from "@/components/widgets/bookmarks-widget";
 import { cn } from "@/lib/utils";
 
 interface WidgetSettingsDialogProps {
@@ -246,7 +248,7 @@ export function WidgetSettingsDialog({
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/50" onClick={() => onOpenChange(false)} />
-      <div className="relative bg-popover border rounded-xl shadow-xl w-80 max-h-[80vh] overflow-y-auto">
+      <div className={cn("relative bg-popover border rounded-xl shadow-xl max-h-[80vh] overflow-y-auto", widgetType === "bookmarks" ? "w-96" : "w-80")}>
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="flex items-center gap-2">
@@ -291,6 +293,16 @@ export function WidgetSettingsDialog({
             <ClockThemePicker
               selectedThemeId={(localSettings.clockTheme as string) ?? "gradient"}
               onSelect={(themeId) => handleChange("clockTheme", themeId)}
+            />
+          </div>
+        )}
+
+        {/* Bookmarks editor — only for bookmarks widget */}
+        {widgetType === "bookmarks" && (
+          <div className="px-4 py-3 border-b">
+            <BookmarksEditor
+              pages={(localSettings.pages as BookmarkPage[]) ?? []}
+              onChange={(pages) => handleChange("pages", pages)}
             />
           </div>
         )}

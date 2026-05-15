@@ -38,8 +38,8 @@ export interface BackgroundConfig {
 export const DEFAULT_BACKGROUND: BackgroundConfig = {
   type: "animated",
   settings: {
-    animatedStyle: "flowing-lines",
-    animatedPreset: "purple",
+    animatedStyle: "smooth-wavy",
+    animatedPreset: "sunset",
     customization: DEFAULT_CUSTOMIZATION,
   },
 };

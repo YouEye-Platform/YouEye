@@ -7,7 +7,7 @@
 
 import { GreetingWidget } from "./greeting-widget";
 import { ServerNameWidget } from "./server-name-widget";
-import { SearchWidget } from "./search-widget";
+import { BookmarksWidget } from "./bookmarks-widget";
 import { ClockWidget } from "./clock-widget";
 import { TimelinePreviewWidget } from "./timeline-preview-widget";
 import { AppWidget } from "./app-widget";
@@ -82,15 +82,6 @@ export const WIDGET_CATALOG: WidgetMeta[] = [
     ],
   },
   {
-    id: "search",
-    name: "Search",
-    description: "Quick search bar for apps and content",
-    category: "built-in",
-    component: SearchWidget,
-    defaultSize: { width: 35, height: 8 },
-    minSize: { width: 20, height: 6 },
-  },
-  {
     id: "clock",
     name: "Clock",
     description: "Digital clock with date display",
@@ -111,6 +102,35 @@ export const WIDGET_CATALOG: WidgetMeta[] = [
         type: "boolean",
         label: "24-hour format",
         default: true,
+      },
+    ],
+  },
+  {
+    id: "bookmarks",
+    name: "Bookmarks",
+    description: "Quick-access bookmark tiles organized into pages",
+    category: "built-in",
+    component: BookmarksWidget,
+    defaultSize: { width: 45, height: 14 },
+    minSize: { width: 15, height: 8 },
+    settingsSchema: [
+      {
+        key: "showLabels",
+        type: "boolean",
+        label: "Show labels",
+        description: "Display titles below bookmark icons",
+        default: true,
+      },
+      {
+        key: "iconSize",
+        type: "select",
+        label: "Icon size",
+        default: "medium",
+        options: [
+          { label: "Small", value: "small" },
+          { label: "Medium", value: "medium" },
+          { label: "Large", value: "large" },
+        ],
       },
     ],
   },
