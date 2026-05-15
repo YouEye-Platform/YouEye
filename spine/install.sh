@@ -399,9 +399,18 @@ main() {
     echo "  Installation Complete!"
     echo "=================================="
     echo ""
+
+    # If running in an interactive terminal, launch the TUI installer
+    # which handles env detection, games during deploy, etc.
+    if [ -t 0 ] && [ -t 1 ]; then
+        log_info "Launching interactive installer..."
+        exec "${INSTALL_DIR}/youeye" installer
+    fi
+
+    # Non-interactive fallback (piped install, CI, etc.)
     echo "Next steps:"
-    echo "  1. Run 'youeye status' to check system status"
-    echo "  2. Run 'youeye deploy' to install full YouEye stack"
+    echo "  1. Run 'youeye installer' for interactive setup with games"
+    echo "  2. Run 'youeye deploy' for non-interactive deployment"
     echo ""
     echo "For help: youeye --help"
     echo "  (The 'spine' command also works as a backward-compatible alias)"
