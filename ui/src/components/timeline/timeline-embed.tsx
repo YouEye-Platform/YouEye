@@ -150,7 +150,7 @@ interface TimelineEmbedProps {
     tags: Record<string, unknown>;
     data: Record<string, unknown>;
   };
-  /** Base domain for app subdomains (e.g. "devvm.test") */
+  /** Base domain for app subdomains (e.g. "yourdomain.com") */
   domain: string;
   /** App metadata from manifest (icon, accent_color, entry_icons) */
   appMeta?: AppMetaEntry;

@@ -538,6 +538,3 @@ func installZFS() error {
 	fmt.Println("✓ ZFS installed")
 	return nil
 }
-
-// configureProjectRestrictions configures Incus project to block privileged containers.
-// NOTE: This function is currently NOT used because:

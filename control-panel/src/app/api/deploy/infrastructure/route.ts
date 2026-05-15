@@ -4,7 +4,7 @@
  * 
  * POST /api/deploy/infrastructure
  * Headers: X-Deploy-Secret: <secret>
- * Body: { "host_ip": "192.168.31.190" }
+ * Body: { "host_ip": "192.168.1.100" }
  * Response: text/event-stream with DeploymentEvent JSON per line
  */
 

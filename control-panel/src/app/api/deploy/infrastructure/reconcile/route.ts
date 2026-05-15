@@ -5,7 +5,7 @@
  *
  * POST /api/deploy/infrastructure/reconcile
  * Headers: X-Deploy-Secret: <secret>
- * Body: { "host_ip": "192.168.31.44" }
+ * Body: { "host_ip": "192.168.1.100" }
  * Response: text/event-stream with DeploymentEvent JSON per line
  */
 

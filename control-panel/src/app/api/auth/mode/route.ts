@@ -3,7 +3,7 @@
  *
  * GET /api/auth/mode - Returns the auth mode for the current request context
  *
- * - IP access (e.g., 192.168.31.157:3000) → PAM login
+ * - IP access (e.g., 192.168.1.100:3000) → PAM login
  * - Subdomain access (e.g., control.youeye.local) → SSO redirect
  */
 

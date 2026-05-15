@@ -862,7 +862,7 @@ export type RouteType = 'subdomain' | 'path' | 'none';
  * 2. Static assets route (/_next/* -> app without stripping) for Next.js apps
  * 3. API route (/api/* -> app without stripping) if it's the primary app
  * 
- * @param domain - Base domain (e.g., skibidi.wtf)
+ * @param domain - Base domain (e.g., example.com)
  * @param containerName - Container name (e.g., youeye-control)
  * @param containerPort - Port inside the container
  * @param routeType - 'subdomain', 'path', or 'none'
@@ -893,7 +893,7 @@ export async function setContainerRoute(
     let warnings: string[] = [];
     
     if (routeType === 'subdomain') {
-      // Subdomain routing: control.skibidi.wtf -> container:port
+      // Subdomain routing: control.example.com -> container:port
       const hostname = routeValue ? `${routeValue}.${domain}` : domain;
       const result = await addRoute({
         hostname,
@@ -903,7 +903,7 @@ export async function setContainerRoute(
       });
       if (result.warning) warnings.push(result.warning);
     } else {
-      // Path routing: skibidi.wtf/control/* -> container:port
+      // Path routing: example.com/control/* -> container:port
       // This is complex because Next.js apps reference /_next/* with absolute paths
       
       const basePath = routeValue.startsWith('/') ? routeValue : `/${routeValue}`;
@@ -1019,7 +1019,7 @@ export async function getConfiguredDomain(): Promise<string | undefined> {
             // Extract base domain (remove subdomain if present)
             const parts = subject.split('.');
             if (parts.length >= 2) {
-              // Return the last two parts (e.g., skibidi.wtf from control.skibidi.wtf)
+              // Return the last two parts (e.g., example.com from control.example.com)
               return parts.slice(-2).join('.');
             }
             return subject;

@@ -6,7 +6,7 @@
 // to the same Gitea repo ("YouEye") with component-prefixed tags:
 //   spine-v0.2.21, cp-v0.2.21, ui-v0.2.21
 //   spine-dev-v0.2.21.1, cp-dev-v0.2.21.1
-//   spine-sebastian-v0.2.21.1
+//   spine-dev-v0.2.21.1
 //
 // The tagPrefix parameter in all public functions filters releases to a
 // specific component. When tagPrefix is empty, functions behave as before

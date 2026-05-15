@@ -59,7 +59,7 @@ interface TimelineEntry {
 
 interface TimelineEntryCardProps {
   entry: TimelineEntry;
-  /** Base domain for constructing app embed URLs (e.g. "devvm.test") */
+  /** Base domain for constructing app embed URLs (e.g. "yourdomain.com") */
   domain?: string;
   /** App metadata map: app_id → { icon, accent_color, entry_icons } */
   appMetaMap?: Record<string, AppMetaEntry>;

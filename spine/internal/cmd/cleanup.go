@@ -129,7 +129,7 @@ func runCleanup() error {
 	// Base steps: 11 + 6 new (bridge, nft, /run/incus, apt, zfs, runtime).
 	// Step 11 (remove /var/lib/youeye) is skipped with --keep-data.
 	//
-	// BUG-007 (sebastian-v0.2.18.9): the v0.2.18.1 cleanup also removed the
+	// BUG-007 (v0.2.18.9): the v0.2.18.1 cleanup also removed the
 	// `youeye` system user via pkill -u + userdel -r. This was wrong — the
 	// `youeye` user is created by VM provisioning (Proxmox template, manual
 	// adduser, etc.), NOT by Spine. There is no `useradd youeye` anywhere
@@ -207,7 +207,7 @@ func runCleanup() error {
 	exec.Command("systemctl", "stop", "incus.socket").Run()
 
 	// Step 7: Unmount busy filesystems
-	// BUG-009 (sebastian-v0.2.18.10): /var/lib/incus/devices is a tmpfs that
+	// BUG-009 (v0.2.18.10): /var/lib/incus/devices is a tmpfs that
 	// Incus mounts at runtime. After `apt purge incus` the systemd unit file
 	// is gone but the kernel mount table entry survives, leaving the directory
 	// open and undeletable. We must lazy-unmount it explicitly before the
@@ -234,7 +234,7 @@ func runCleanup() error {
 	if err := uninstallIncusPackages(); err != nil {
 		fmt.Printf("Warning: %v\n", err)
 	}
-	// BUG-011 (sebastian-v0.2.18.10): after purging units, systemd's in-memory
+	// BUG-011 (v0.2.18.10): after purging units, systemd's in-memory
 	// state still has stale references to incus.service / incus-lxcfs.service
 	// (showing as "not-found failed" in `systemctl list-units --all`). Clear
 	// them so the host has no orphaned unit references after cleanup.
@@ -286,7 +286,7 @@ func runCleanup() error {
 		}
 	}
 
-	// ── New cleanup steps (sebastian-v0.2.18.1, revised in 0.2.18.9) ────
+	// ── New cleanup steps (v0.2.18.1, revised in 0.2.18.9) ────
 	// These cover artifacts that the original cleanup left behind. Each
 	// step is best-effort and prints whether it actually did anything.
 	//
@@ -319,7 +319,7 @@ func runCleanup() error {
 	step++
 	fmt.Printf("[%d/%d] Removing Incus apt repository + systemd drop-in + residuals...\n", step, totalSteps)
 	removeIncusAptRepo()
-	// BUG-008 (sebastian-v0.2.18.10): spine deploy adds an incus-startup
+	// BUG-008 (v0.2.18.10): spine deploy adds an incus-startup
 	// systemd drop-in (configureIncusStartupDependency in deploy.go) that
 	// makes incus-startup wait for spine.service. Cleanup never removed it,
 	// leaving the file as a stray "YouEye was here" marker. Remove it now.
@@ -523,7 +523,7 @@ func removeIncusNftables() {
 // removeIncusAptRepo deletes the Zabbly apt source list, GPG key, and the
 // cached package indexes that apt downloaded for that source.
 //
-// BUG-010 (sebastian-v0.2.18.10): even after the .list source file is
+// BUG-010 (v0.2.18.10): even after the .list source file is
 // deleted, apt's per-source cache files in /var/lib/apt/lists/ remain
 // until `apt-get clean` or explicit removal. Cleanup runs `apt-get update`
 // at the end but `update` only refreshes lists for currently-configured
@@ -616,13 +616,13 @@ func removeZFSPackages() {
 		}
 	}
 
-	// BUG-012 (sebastian-v0.2.18.10): the v0.2.18.1 cleanup ran a bare
+	// BUG-012 (v0.2.18.10): the v0.2.18.1 cleanup ran a bare
 	// `apt-get autoremove -y` after the ZFS purge. autoremove with no
 	// package argument removes EVERY auto-marked package across the host
 	// that is no longer needed by anything currently installed — including
 	// totally unrelated packages that happened to be auto-marked years ago.
 	//
-	// Concretely on ye-sebastian, the bare autoremove deleted ~50 node-*
+	// Concretely, the bare autoremove deleted ~50 node-*
 	// Debian library packages plus session-migration, squashfs-tools,
 	// sshfs, xdelta3, xdg-utils, etc. — none of which Spine ever installed.
 	//

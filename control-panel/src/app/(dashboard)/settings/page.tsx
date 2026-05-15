@@ -837,7 +837,7 @@ export default function SettingsPage() {
               {/* How it works */}
               <div className="text-sm text-gray-600 space-y-1 border-l-2 border-blue-200 pl-3">
                 <p><strong>How SSO works:</strong></p>
-                <p>When accessed via <strong>IP address</strong> (e.g., 192.168.31.190), login uses <strong>Linux PAM</strong> credentials.</p>
+                <p>When accessed via <strong>IP address</strong> (e.g., 192.168.1.100), login uses <strong>Linux PAM</strong> credentials.</p>
                 <p>When accessed via <strong>subdomain</strong> (e.g., control.yourdomain.com), login uses <strong>Authentik SSO</strong> — no PAM option.</p>
               </div>
 
@@ -960,7 +960,7 @@ export default function SettingsPage() {
                 <h4 className="font-medium text-gray-900">PAM Login</h4>
               </div>
               <p className="text-sm text-gray-500">
-                Access via IP address (e.g., 192.168.31.190). Uses Linux system credentials.
+                Access via IP address (e.g., 192.168.1.100). Uses Linux system credentials.
                 Always available for local access.
               </p>
             </div>

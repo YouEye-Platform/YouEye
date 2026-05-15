@@ -74,7 +74,7 @@ export function TimelineFeed({
   const [offset, setOffset] = useState(0);
   const limit = 50;
 
-  // Derive base domain for embed iframe URLs (e.g. "devvm.test")
+  // Derive base domain for embed iframe URLs (e.g. "yourdomain.com")
   const baseDomain =
     typeof window !== "undefined"
       ? window.location.hostname
