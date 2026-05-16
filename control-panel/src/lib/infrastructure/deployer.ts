@@ -30,6 +30,15 @@ const TOTAL_STEPS = 8;
 const PIHOLE_CONTAINER = 'youeye-pihole';
 
 /**
+ * Deployment-in-progress flag. Background update checkers (update-cache,
+ * version-checker) skip their work while this is true to avoid exhausting
+ * GitHub's unauthenticated API rate limit (60 req/hr) before the UI
+ * download step can run.
+ */
+let _deploying = false;
+export function isDeploymentInProgress(): boolean { return _deploying; }
+
+/**
  * Set Pi-Hole password via CLI exec after container is healthy.
  * This avoids the FTL v6 env var lock that blocks `pihole setpassword`
  * when FTLCONF_webserver_api_password is set as a container env var.
@@ -53,6 +62,18 @@ function emit(cb: EventCallback, step: number, status: DeploymentEvent['status']
  * @param onEvent - Callback for each deployment progress event (sent as SSE).
  */
 export async function deployInfrastructure(
+  hostIP: string,
+  onEvent: EventCallback
+): Promise<void> {
+  _deploying = true;
+  try {
+    await _deployInfrastructureInner(hostIP, onEvent);
+  } finally {
+    _deploying = false;
+  }
+}
+
+async function _deployInfrastructureInner(
   hostIP: string,
   onEvent: EventCallback
 ): Promise<void> {

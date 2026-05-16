@@ -10,6 +10,7 @@
 import { checkForUpdates, migrateFromInstallJson, type InstalledApp } from './installed-apps';
 import { clearCatalogCache } from './catalog';
 import { refreshAllUpdates } from '@/lib/apps/update-cache';
+import { isDeploymentInProgress } from '@/lib/infrastructure/deployer';
 
 /** Whether a check is currently running */
 let isChecking = false;
@@ -51,6 +52,10 @@ export function isVersionCheckInProgress(): boolean {
  */
 export async function refreshVersionCheck(): Promise<InstalledApp[]> {
   if (isChecking) return lastResults;
+  if (isDeploymentInProgress()) {
+    console.log('[version-checker] Skipping — infrastructure deployment in progress');
+    return lastResults;
+  }
 
   isChecking = true;
   try {

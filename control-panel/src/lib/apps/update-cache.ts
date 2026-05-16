@@ -17,6 +17,7 @@ import {
   type UpdateCheckResult,
 } from './registry';
 import { checkAllLxdUpdates, clearLxdUpdateCache } from './lxd-updates';
+import { isDeploymentInProgress } from '@/lib/infrastructure/deployer';
 
 /** Cached update results keyed by appId */
 const updateResults = new Map<string, UpdateCheckResult>();
@@ -74,6 +75,10 @@ export function isCheckInProgress(): boolean {
  */
 export async function refreshAllUpdates(): Promise<Map<string, UpdateCheckResult>> {
   if (isChecking) {
+    return updateResults;
+  }
+  if (isDeploymentInProgress()) {
+    console.log('[update-cache] Skipping — infrastructure deployment in progress');
     return updateResults;
   }
 
