@@ -241,21 +241,20 @@ async function installNodeAndApp(
     }
 
     fetch_release_url() {
-      RESPONSE=\$(curl -sSL -w '\\n%{http_code}' -H 'Accept: application/vnd.github+json' -H 'User-Agent: YouEye-Installer' '${releasesURL}')
-      HTTP_CODE=\$(echo "\$RESPONSE" | tail -1)
-      BODY=\$(echo "\$RESPONSE" | sed '\$d')
+      HTTP_CODE=\$(curl -sSL -o /tmp/releases.json -w '%{http_code}' -H 'Accept: application/vnd.github+json' -H 'User-Agent: YouEye-Installer' '${releasesURL}')
 
       if [ "\$HTTP_CODE" != "200" ]; then
         echo "GitHub API returned HTTP \$HTTP_CODE" >&2
-        echo "\$BODY" | head -5 >&2
+        head -5 /tmp/releases.json >&2
         return 1
       fi
 
-      echo "\$BODY" | python3 -c "
-import sys, json, re
+      python3 -c "
+import json, re
 ${branchFilter}
 ${tagPrefixFilter}
-releases = json.load(sys.stdin)
+with open('/tmp/releases.json') as f:
+    releases = json.load(f)
 
 def parse_ver(v):
     return [int(x) for x in v.split('.')]
