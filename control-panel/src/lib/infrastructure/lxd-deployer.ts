@@ -215,6 +215,17 @@ async function installNodeAndApp(
   const downloadScript = `
     set -e
 
+    # Wait for DNS/network to be ready (GitHub API must resolve and respond)
+    echo "Waiting for network readiness..."
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      if curl -sSf -o /dev/null -w '' -H 'User-Agent: YouEye-Installer' 'https://api.github.com/rate_limit' 2>/dev/null; then
+        echo "Network ready (attempt \$i)"
+        break
+      fi
+      echo "Network not ready, waiting... (attempt \$i)"
+      sleep 3
+    done
+
     # Retry helper: retry <max_attempts> <delay_seconds> <command...>
     retry() {
       local max=\$1 delay=\$2; shift 2
@@ -230,8 +241,17 @@ async function installNodeAndApp(
     }
 
     fetch_release_url() {
-      curl -sSL -H 'Accept: application/vnd.github+json' -H 'User-Agent: YouEye-Installer' '${releasesURL}' | \
-        python3 -c "
+      RESPONSE=\$(curl -sSL -w '\\n%{http_code}' -H 'Accept: application/vnd.github+json' -H 'User-Agent: YouEye-Installer' '${releasesURL}')
+      HTTP_CODE=\$(echo "\$RESPONSE" | tail -1)
+      BODY=\$(echo "\$RESPONSE" | sed '\$d')
+
+      if [ "\$HTTP_CODE" != "200" ]; then
+        echo "GitHub API returned HTTP \$HTTP_CODE" >&2
+        echo "\$BODY" | head -5 >&2
+        return 1
+      fi
+
+      echo "\$BODY" | python3 -c "
 import sys, json, re
 ${branchFilter}
 ${tagPrefixFilter}
@@ -290,7 +310,15 @@ elif best_main_ver:
 if url:
     print(url)
 else:
-    print('No matching release found', file=sys.stderr)
+    print(f'No matching release found (tag_prefix={tag_prefix!r}, branch={branch!r}, total_releases={len(releases)}, type={type(releases).__name__})', file=sys.stderr)
+    if isinstance(releases, list):
+        for r in releases[:5]:
+            if isinstance(r, dict):
+                print(f'  tag={r.get(\"tag_name\",\"?\")}, assets={[a[\"name\"] for a in r.get(\"assets\",[])]}', file=sys.stderr)
+            else:
+                print(f'  unexpected item: {str(r)[:100]}', file=sys.stderr)
+    elif isinstance(releases, dict):
+        print(f'  API response is dict (rate limit?): {str(releases)[:200]}', file=sys.stderr)
     sys.exit(1)
 "
     }
