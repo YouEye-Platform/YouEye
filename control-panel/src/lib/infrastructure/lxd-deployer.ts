@@ -314,7 +314,9 @@ else:
     if isinstance(releases, list):
         for r in releases[:5]:
             if isinstance(r, dict):
-                print(f'  tag={r.get(\"tag_name\",\"?\")}, assets={[a[\"name\"] for a in r.get(\"assets\",[])]}', file=sys.stderr)
+                t = r.get('tag_name', '?')
+                a = [x['name'] for x in r.get('assets', [])]
+                print(f'  tag={t}, assets={a}', file=sys.stderr)
             else:
                 print(f'  unexpected item: {str(r)[:100]}', file=sys.stderr)
     elif isinstance(releases, dict):
