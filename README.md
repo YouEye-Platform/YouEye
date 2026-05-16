@@ -7,7 +7,7 @@
 One command installs a full platform: dashboard with widgets, six native apps, SSO, reverse proxy, DNS, and an app marketplace. Runs on any Debian/Ubuntu server or Proxmox LXC.
 
 <p align="center">
-  <img src="docs/assets/screenshots/homepage/dashboard-animated.gif" alt="YouEye Dashboard" width="800">
+  <img src="docs/assets/screenshots/homepage/dashboard.png" alt="YouEye Dashboard" width="800">
 </p>
 
 ## Quick Start
