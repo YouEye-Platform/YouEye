@@ -3,9 +3,10 @@
 # Works on minimal Debian/Ubuntu systems (Proxmox LXC, etc.)
 # Usage: curl -sSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/spine/install.sh | sh -s -- --branch sebastian
 #
-# Provider support:
+# Options:
 #   --provider github  (default) Fetch releases from GitHub
 #   --provider gitea   Fetch releases from Gitea
+#   --tui              Launch interactive TUI installer after download
 #
 # Override URLs via environment or flags:
 #   RELEASE_BASE_URL, RELEASE_ORG, RELEASE_REPO
@@ -35,6 +36,7 @@ TAG_PREFIX="spine"
 #   curl -sSL https://... | BRANCH=sebastian sh
 #   export BRANCH=sebastian && curl -sSL https://... | sh
 BRANCH="${BRANCH:-}"
+LAUNCH_TUI="${LAUNCH_TUI:-false}"
 
 # Parse command-line arguments (passed via `sh -s -- --branch <name>`)
 while [ $# -gt 0 ]; do
@@ -46,6 +48,10 @@ while [ $# -gt 0 ]; do
         --provider|-p)
             PROVIDER="$2"
             shift 2
+            ;;
+        --tui|--interactive)
+            LAUNCH_TUI=true
+            shift
             ;;
         *)
             shift
@@ -409,19 +415,16 @@ main() {
     echo "=================================="
     echo ""
 
-    # Launch the TUI installer if stdout is a terminal and /dev/tty is available.
-    # When run via 'curl | sh', stdin is the pipe but stdout is still the terminal
-    # and /dev/tty provides interactive input. Bubble Tea handles the /dev/tty
-    # fallback internally, but we redirect explicitly for belt-and-suspenders safety.
-    if [ -t 1 ] && [ -r /dev/tty ]; then
+    # Launch TUI only if explicitly requested via --tui flag.
+    if [ "$LAUNCH_TUI" = "true" ] && [ -t 1 ] && [ -r /dev/tty ]; then
         log_info "Launching interactive installer..."
         exec "${INSTALL_DIR}/youeye" installer < /dev/tty
     fi
 
-    # Non-interactive fallback (piped install, CI, etc.)
     echo "Next steps:"
-    echo "  1. Run 'youeye installer' for interactive setup"
-    echo "  2. Run 'youeye deploy' for non-interactive deployment"
+    echo "  1. Run 'youeye deploy' to deploy the platform"
+    echo "  2. Run 'youeye installer' for interactive setup with TUI"
+    echo "     (or re-run this script with --tui)"
     echo ""
     echo "For help: youeye --help"
     echo "  (The 'spine' command also works as a backward-compatible alias)"

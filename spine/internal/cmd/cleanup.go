@@ -136,9 +136,9 @@ func runCleanup() error {
 	// in the Spine codebase. Spine has no business removing a user it
 	// didn't create. The step has been deleted; total step count went
 	// 18 → 17 (and 17 → 16 with --keep-data).
-	totalSteps := 18
+	totalSteps := 19
 	if cleanupKeepData {
-		totalSteps = 17
+		totalSteps = 18
 	}
 	step := 0
 
@@ -334,7 +334,20 @@ func runCleanup() error {
 	fmt.Printf("[%d/%d] Removing YouEye systemd service...\n", step, totalSteps)
 	removeSpineService()
 
-	// Step 17: Remove ZFS packages installed by spine deploy, but only if
+	// Step 17: Remove /etc/youeye config directory. This contains
+	// config.yaml (provider, base_url, organization) written by the
+	// installer. Without this, a fresh install picks up stale config.
+	step++
+	fmt.Printf("[%d/%d] Removing YouEye config directory...\n", step, totalSteps)
+	if err := os.RemoveAll("/etc/youeye"); err == nil {
+		fmt.Println("  Removed /etc/youeye")
+	} else if !os.IsNotExist(err) {
+		fmt.Printf("  Warning: could not remove /etc/youeye: %v\n", err)
+	}
+	// Also remove legacy /etc/spine if it exists
+	os.RemoveAll("/etc/spine")
+
+	// Step 18: Remove ZFS packages installed by spine deploy, but only if
 	// no non-Incus zpools exist (otherwise we'd break someone else's setup).
 	step++
 	fmt.Printf("[%d/%d] Removing ZFS packages...\n", step, totalSteps)
@@ -371,6 +384,7 @@ func runCleanup() error {
 	fmt.Println("  - /run/incus runtime dir")
 	fmt.Println("  - Zabbly apt source + GPG key")
 	fmt.Println("  - youeye.service systemd unit")
+	fmt.Println("  - /etc/youeye (config directory)")
 	fmt.Println("  - ZFS packages (if installed by youeye deploy)")
 	fmt.Println()
 	fmt.Println("To reinstall, run: youeye deploy")
