@@ -93,8 +93,8 @@ Each component is versioned and released independently.
 
 | Component | Version |
 |-----------|---------|
-| Spine | 0.4.0 |
-| Control Panel | 0.4.0 |
+| Spine | 0.4.1 |
+| Control Panel | 0.4.8 |
 | UI | 0.4.0 |
 | Wiki | 0.4.0 |
 | Search | 0.4.0 |
@@ -146,7 +146,7 @@ youeye deploy      # Skip the TUI and deploy directly
 
 ```bash
 # Download Spine binary directly
-curl -LO https://github.com/YouEye-Platform/YouEye/releases/download/spine-v0.4.0/spine-linux-amd64
+curl -LO https://github.com/YouEye-Platform/YouEye/releases/download/spine-v0.4.1/spine-linux-amd64
 chmod +x spine-linux-amd64
 mv spine-linux-amd64 /usr/local/bin/youeye
 
