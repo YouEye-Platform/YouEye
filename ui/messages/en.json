@@ -85,7 +85,8 @@
       "apps": "Apps",
       "permissions": "Permissions",
       "appManagement": "App Management",
-      "appMarket": "App Market"
+      "appMarket": "App Market",
+      "about": "About & Usage"
     },
     "profile": {
       "title": "Profile",

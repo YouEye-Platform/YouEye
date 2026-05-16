@@ -16,6 +16,7 @@ Welcome to the YouEye platform documentation. These guides cover installation, d
 | [Settings](settings.md) | Profile, appearance, language, users, and system configuration |
 | [Control Panel](control-panel.md) | Infrastructure management, health monitoring, and DNS |
 | [Architecture](architecture.md) | System design, security model, and component overview |
+| [Telemetry](telemetry.md) | Anonymous usage tracking for beta testing (temporary) |
 
 ## Screenshots
 

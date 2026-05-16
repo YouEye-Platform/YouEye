@@ -336,6 +336,13 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
   const handleAppClick = (app: DrawerApp) => {
     if (editMode) return;
     if (app.url) {
+      // Track app launch for telemetry (anonymous usage data)
+      try {
+        navigator.sendBeacon(
+          "/api/v1/telemetry/record",
+          JSON.stringify({ events: [{ type: "app_launch", key: app.id || app.name }] })
+        );
+      } catch { /* best-effort */ }
       window.location.href = app.url;
       setOpen(false);
     }

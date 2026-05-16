@@ -8,6 +8,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
+import { countRoute } from '@/lib/telemetry/counter';
 
 // Public routes that don't require authentication
 const PUBLIC_ROUTES = [
@@ -35,6 +36,7 @@ const PUBLIC_ROUTES = [
   '/api/suggestions',     // Internal: UI server-side fetches connection suggestions
   '/api/market/app',      // Internal: app detail + connections endpoints
   '/api/branding/favicon', // Public favicon (proxied from UI)
+  '/api/telemetry/export', // Telemetry export (auth handled at route level)
   '/setup-complete',
   // Note: /embed routes now use session auth (same as main CP), not HMAC tokens
 ];
@@ -154,6 +156,9 @@ export async function middleware(request: NextRequest) {
   if (STATIC_PATTERNS.some(pattern => pathname.startsWith(pattern))) {
     return NextResponse.next();
   }
+
+  // Track route usage (Edge-safe, in-memory only, flushed by Node.js tracker)
+  countRoute(pathname);
 
   // --- IP-via-Caddy setup flow ---
   // When accessed via IP through Caddy (ports 80/443), redirect to setup flow

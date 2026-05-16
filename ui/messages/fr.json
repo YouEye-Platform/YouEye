@@ -84,7 +84,8 @@
       "apps": "Apps",
       "permissions": "Autorisations",
       "appManagement": "Gestion des apps",
-      "appMarket": "Boutique d'apps"
+      "appMarket": "Boutique d'apps",
+      "about": "A propos"
     },
     "profile": {
       "title": "Profil",
