@@ -213,8 +213,25 @@ async function installNodeAndApp(
   const tagPrefixFilter = `tag_prefix='${cfg.tagPrefix || ''}'`;
 
   const downloadScript = `
-    DOWNLOAD_URL=$(curl -sSL -H 'Accept: application/vnd.github+json' -H 'User-Agent: YouEye-Installer' '${releasesURL}' | \
-      python3 -c "
+    set -e
+
+    # Retry helper: retry <max_attempts> <delay_seconds> <command...>
+    retry() {
+      local max=\$1 delay=\$2; shift 2
+      local attempt=1
+      while true; do
+        if "$@"; then return 0; fi
+        if [ \$attempt -ge \$max ]; then return 1; fi
+        echo "Attempt \$attempt failed, retrying in \${delay}s..."
+        sleep \$delay
+        attempt=\$((attempt + 1))
+        delay=\$((delay * 2))
+      done
+    }
+
+    fetch_release_url() {
+      curl -sSL -H 'Accept: application/vnd.github+json' -H 'User-Agent: YouEye-Installer' '${releasesURL}' | \
+        python3 -c "
 import sys, json, re
 ${branchFilter}
 ${tagPrefixFilter}
@@ -231,7 +248,6 @@ def ver_gt(a, b):
         if va != vb: return va > vb
     return False
 
-# Find best branch release and best main release
 best_branch_url = None
 best_branch_ver = None
 best_main_url = None
@@ -239,12 +255,11 @@ best_main_ver = None
 
 for r in releases:
     tag = r['tag_name']
-    # Strip component tag prefix if set (e.g. 'ui-v0.2.21' -> 'v0.2.21')
     stripped = tag
     if tag_prefix:
         pfx = tag_prefix + '-'
         if not tag.startswith(pfx):
-            continue  # Not our component
+            continue
         stripped = tag[len(pfx):]
     tar_url = None
     for a in r['assets']:
@@ -264,7 +279,6 @@ for r in releases:
             best_main_ver = ver
             best_main_url = tar_url
 
-# Compare branch winner vs main winner — use whichever is newer
 url = None
 if best_branch_ver and best_main_ver:
     url = best_main_url if ver_gt(best_main_ver, best_branch_ver) else best_branch_url
@@ -276,19 +290,37 @@ elif best_main_ver:
 if url:
     print(url)
 else:
+    print('No matching release found', file=sys.stderr)
     sys.exit(1)
-" 2>/dev/null)
-    
+"
+    }
+
+    DOWNLOAD_URL=$(retry 3 5 fetch_release_url)
+
     if [ -z "$DOWNLOAD_URL" ]; then
-      echo "ERROR: Could not find standalone.tar in releases"
+      echo "ERROR: Could not find standalone.tar in releases after retries"
       exit 1
     fi
-    
-    curl -sSL "$DOWNLOAD_URL" -o /tmp/app.tar && \
-    tar -xf /tmp/app.tar -C ${spec.appDir} --no-same-owner && \
+
+    echo "Downloading from: $DOWNLOAD_URL"
+    curl -sSL "$DOWNLOAD_URL" -o /tmp/app.tar
+    tar -xf /tmp/app.tar -C ${spec.appDir} --no-same-owner
     rm /tmp/app.tar
+
+    # Verify the download actually produced the app
+    if [ ! -f "${spec.appDir}/${spec.entryFile ?? 'server.js'}" ]; then
+      echo "ERROR: Download completed but ${spec.entryFile ?? 'server.js'} not found in ${spec.appDir}"
+      ls -la ${spec.appDir}
+      exit 1
+    fi
+    echo "App downloaded and verified successfully"
   `;
-  await execShell(cn, downloadScript, { timeout: 300_000 });
+  const dlResult = await execShell(cn, downloadScript, { timeout: 300_000 });
+  if (dlResult.exitCode !== 0) {
+    throw new Error(
+      `App download failed for ${cn} (exit ${dlResult.exitCode}): ${dlResult.stdout} ${dlResult.stderr}`
+    );
+  }
 
   if (spec.postInstallCommands?.length) {
     for (const cmd of spec.postInstallCommands) {
