@@ -250,7 +250,7 @@ async function installNodeAndApp(
       fi
 
       python3 -c "
-import json, re
+import sys, json, re
 ${branchFilter}
 ${tagPrefixFilter}
 with open('/tmp/releases.json') as f:
