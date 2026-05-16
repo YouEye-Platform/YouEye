@@ -208,10 +208,6 @@ async function installNodeAndApp(
     ? releaseBranch
     : '';
 
-  // Build Python filter that respects release branch and tag prefix
-  const branchFilter = `branch='${safeBranch}'`;
-  const tagPrefixFilter = `tag_prefix='${cfg.tagPrefix || ''}'`;
-
   const downloadScript = `
     set -e
 
@@ -240,19 +236,13 @@ async function installNodeAndApp(
       done
     }
 
-    fetch_release_url() {
-      HTTP_CODE=\$(curl -sSL -o /tmp/releases.json -w '%{http_code}' -H 'Accept: application/vnd.github+json' -H 'User-Agent: YouEye-Installer' '${releasesURL}')
-
-      if [ "\$HTTP_CODE" != "200" ]; then
-        echo "GitHub API returned HTTP \$HTTP_CODE" >&2
-        head -5 /tmp/releases.json >&2
-        return 1
-      fi
-
-      python3 -c "
+    # Write the Python filter to a temp file to avoid shell quoting issues
+    cat > /tmp/filter_releases.py << 'PYEOF'
 import sys, json, re
-${branchFilter}
-${tagPrefixFilter}
+
+branch = sys.argv[1] if len(sys.argv) > 1 else ''
+tag_prefix = sys.argv[2] if len(sys.argv) > 2 else ''
+
 with open('/tmp/releases.json') as f:
     releases = json.load(f)
 
@@ -309,19 +299,25 @@ elif best_main_ver:
 if url:
     print(url)
 else:
-    print(f'No matching release found (tag_prefix={tag_prefix!r}, branch={branch!r}, total_releases={len(releases)}, type={type(releases).__name__})', file=sys.stderr)
-    if isinstance(releases, list):
-        for r in releases[:5]:
-            if isinstance(r, dict):
-                t = r.get('tag_name', '?')
-                a = [x['name'] for x in r.get('assets', [])]
-                print(f'  tag={t}, assets={a}', file=sys.stderr)
-            else:
-                print(f'  unexpected item: {str(r)[:100]}', file=sys.stderr)
-    elif isinstance(releases, dict):
-        print(f'  API response is dict (rate limit?): {str(releases)[:200]}', file=sys.stderr)
+    print(f'No matching release found (tag_prefix={tag_prefix!r}, branch={branch!r}, total={len(releases)})', file=sys.stderr)
+    for r in releases:
+        if isinstance(r, dict):
+            t = r.get('tag_name', '?')
+            a = [x['name'] for x in r.get('assets', [])]
+            print(f'  {t}: {a}', file=sys.stderr)
     sys.exit(1)
-"
+PYEOF
+
+    fetch_release_url() {
+      HTTP_CODE=\$(curl -sSL -o /tmp/releases.json -w '%{http_code}' -H 'Accept: application/vnd.github+json' -H 'User-Agent: YouEye-Installer' '${releasesURL}')
+
+      if [ "\$HTTP_CODE" != "200" ]; then
+        echo "GitHub API returned HTTP \$HTTP_CODE" >&2
+        head -5 /tmp/releases.json >&2
+        return 1
+      fi
+
+      python3 /tmp/filter_releases.py '${safeBranch}' '${cfg.tagPrefix || ''}'
     }
 
     DOWNLOAD_URL=$(retry 3 5 fetch_release_url)
