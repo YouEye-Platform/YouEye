@@ -282,7 +282,7 @@ for r in releases:
         if best_branch_ver is None or ver_gt(ver, best_branch_ver):
             best_branch_ver = ver
             best_branch_url = tar_url
-    elif re.match(r'^v\d', stripped):
+    elif re.match(r'^v\\d', stripped):
         ver = stripped[1:]
         if best_main_ver is None or ver_gt(ver, best_main_ver):
             best_main_ver = ver
