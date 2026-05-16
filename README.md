@@ -6,17 +6,19 @@
 
 One command installs a full platform: dashboard with widgets, six native apps, SSO, reverse proxy, DNS, and an app marketplace. Runs on any Debian/Ubuntu server or Proxmox LXC.
 
-![YouEye Dashboard](screenshot.png)
+<p align="center">
+  <img src="docs/assets/screenshots/homepage/dashboard-animated.gif" alt="YouEye Dashboard" width="800">
+</p>
 
 ## Quick Start
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/spine/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/spine/install.sh | sh && youeye deploy
 ```
 
-The installer downloads the `youeye` CLI and launches an interactive TUI with environment detection and guided setup. A progress bar tracks the installation. When it finishes, open `https://your-server-ip` in your browser and create your account.
+The installer downloads the `youeye` CLI and deploys the full platform. A progress bar tracks the installation. When it finishes, open `https://your-server-ip` in your browser and create your account.
 
-> Requires a fresh Debian 12+ or Ubuntu 24.04+ system with root access. See [full install guide](#install-options) for Proxmox LXC, branch installs, and manual setup.
+> Requires a fresh Debian 12+ or Ubuntu 24.04+ system with root access. See [full install guide](docs/getting-started.md) for Proxmox LXC, branch installs, and manual setup.
 
 ## Features
 
@@ -33,24 +35,71 @@ The installer downloads the `youeye` CLI and launches an interactive TUI with en
 | **Backups** | Multi-container backup engine with scheduled snapshots |
 | **PWA** | Install as a Progressive Web App on any device |
 
-<!-- TODO: add 4-6 screenshots showing dashboard, app drawer, control panel, setup wizard -->
+### Screenshots
+
+<table>
+  <tr>
+    <td><img src="docs/assets/screenshots/homepage/dashboard.png" alt="Dashboard" width="400"></td>
+    <td><img src="docs/assets/screenshots/homepage/app-drawer.png" alt="App Drawer" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center"><em>Dashboard with widgets</em></td>
+    <td align="center"><em>App drawer</em></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/screenshots/control-panel/dashboard.png" alt="Control Panel" width="400"></td>
+    <td><img src="docs/assets/screenshots/settings/appearance.png" alt="Themes" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center"><em>Control Panel</em></td>
+    <td align="center"><em>Theme customization</em></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/screenshots/apps/wiki/home.png" alt="Wiki App" width="400"></td>
+    <td><img src="docs/assets/screenshots/apps/weather/home.png" alt="Weather App" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center"><em>Wiki app</em></td>
+    <td align="center"><em>Weather app</em></td>
+  </tr>
+</table>
+
+> See [full documentation](docs/) for more screenshots and detailed guides.
 
 ## Architecture
 
-```
-Host (Debian/Ubuntu)
-  youeye (Spine CLI)  ── manages itself + Control Panel
-    Control Panel container (Incus)
-      PostgreSQL 17
-      Authentik (SSO/OIDC)
-      Caddy (reverse proxy, HTTPS)
-      Pi-Hole v6 (DNS)
-      YouEye UI (user dashboard)
-      Native apps (Wiki, Search, Notes, Cinema, Weather, Translate)
-      Marketplace apps
+```mermaid
+graph TD
+    User[User Browser] -->|HTTPS| Caddy
+
+    subgraph Host["Host (Debian/Ubuntu)"]
+        Spine["youeye CLI (Spine)"]
+    end
+
+    Spine -->|manages| Container
+
+    subgraph Container["Unprivileged Container (Incus)"]
+        CP[Control Panel]
+        Caddy[Caddy - Reverse Proxy]
+        Auth[Authentik - SSO]
+        DB[(PostgreSQL 17)]
+        DNS[Pi-Hole v6 - DNS]
+        UI[YouEye UI]
+        Apps[Native Apps]
+    end
+
+    Caddy --> UI
+    Caddy --> Apps
+    Caddy --> CP
+    CP --> DB
+    CP --> Auth
+    CP --> DNS
+    UI --> DB
 ```
 
 **Spine** is a Go binary that bootstraps the entire stack. It installs Incus, creates an unprivileged container, deploys the Control Panel inside it, and then gets out of the way. The Control Panel orchestrates everything else: database, SSO, reverse proxy, DNS, the UI, and all apps.
+
+> See [Architecture docs](docs/architecture.md) for the full security model and data flow diagrams.
 
 ## Tech Stack
 
@@ -59,7 +108,7 @@ Host (Debian/Ubuntu)
 | **Spine** | Go 1.21+, Cobra CLI, Bubble Tea TUI, Unix socket API |
 | **Control Panel** | Next.js 16, TypeScript, Incus API, Authentik API |
 | **UI** | Next.js 15, Drizzle ORM, Radix UI, DND-Kit, Framer Motion |
-| **Native Apps** | Next.js 15, YouEye Canvas SDK |
+| **Native Apps** | Next.js 15 |
 | **Infrastructure** | Incus (LXD), PostgreSQL 17, Authentik, Caddy, Pi-Hole v6 |
 
 ## Native Apps
@@ -75,7 +124,7 @@ Six apps ship with the platform, each running in its own container with full SSO
 | **Weather** | Multi-location weather with Open-Meteo, forecasts, and dashboard widgets |
 | **Translate** | Privacy-friendly translation with history, bookmarks, and auto-detect |
 
-Each app provides dashboard widgets and integrates with the platform's theme, language, and notification systems.
+Each app provides dashboard widgets and integrates with the platform's theme, language, and notification systems. See [Apps documentation](docs/apps.md) for screenshots and details.
 
 ## Monorepo Structure
 
@@ -115,31 +164,31 @@ Each component is versioned and released independently.
 | [Weather](https://github.com/YouEye-Platform/Weather) | Weather native app |
 | [Translate](https://github.com/YouEye-Platform/Translate) | Translate native app |
 
+## Documentation
+
+Full documentation lives in the [`docs/`](docs/) folder:
+
+- [Getting Started](docs/getting-started.md) — Installation, first login, CLI commands
+- [Dashboard](docs/dashboard.md) — Widgets, backgrounds, edit mode
+- [Apps](docs/apps.md) — Native apps and marketplace
+- [Settings](docs/settings.md) — All configuration options
+- [Control Panel](docs/control-panel.md) — Infrastructure administration
+- [Architecture](docs/architecture.md) — System design, security model, diagrams
+
 ## Install Options
 
 ### One-Line Install (recommended)
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/spine/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/spine/install.sh | sh && youeye deploy
 ```
 
-This downloads and installs the `youeye` CLI, then launches the interactive TUI installer. The installer detects your environment and guides you through setup with a live progress bar while the platform deploys.
+This downloads the `youeye` CLI and deploys the full platform. The installer detects your environment and deploys with a live progress bar.
 
 ### Install from a Branch
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/spine/install.sh | sh -s -- --branch dev
-```
-
-### Non-Interactive Install
-
-When piped without a terminal, the installer skips the TUI and prints next steps:
-
-```bash
-curl -sSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/spine/install.sh | sh
-youeye installer   # Launch the TUI manually
-# or
-youeye deploy      # Skip the TUI and deploy directly
+curl -sSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/spine/install.sh | sh -s -- --branch dev && youeye deploy
 ```
 
 ### Manual Install
@@ -163,7 +212,6 @@ Create an unprivileged Debian 12 LXC with nesting enabled, then run the one-line
 ```bash
 youeye status          # Full platform health check
 youeye deploy          # Deploy the entire stack
-youeye installer       # Launch the interactive TUI installer
 youeye update self     # Update Spine
 youeye update control  # Update Control Panel
 youeye cleanup         # Clean uninstall
