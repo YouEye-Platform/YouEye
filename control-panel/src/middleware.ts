@@ -2,13 +2,13 @@
  * Next.js Middleware for Server-Side Authentication
  *
  * Verifies JWT tokens before rendering protected pages.
- * Uses Node.js runtime (not Edge) so the telemetry tracker can write to disk.
+ * This runs in Edge runtime — telemetry is tracked via a fire-and-forget
+ * fetch to /api/telemetry/record (Node.js) to avoid the Edge/Node.js split.
  */
 
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
-import { trackRoute } from '@/lib/telemetry/tracker';
 
 // Public routes that don't require authentication
 const PUBLIC_ROUTES = [
@@ -36,7 +36,7 @@ const PUBLIC_ROUTES = [
   '/api/suggestions',     // Internal: UI server-side fetches connection suggestions
   '/api/market/app',      // Internal: app detail + connections endpoints
   '/api/branding/favicon', // Public favicon (proxied from UI)
-  '/api/telemetry/export', // Telemetry export (auth handled at route level)
+  '/api/telemetry',        // Telemetry record + export (internal tracking)
   '/setup-complete',
   // Note: /embed routes now use session auth (same as main CP), not HMAC tokens
 ];
@@ -157,8 +157,14 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Track route usage for beta telemetry (temporary)
-  trackRoute(pathname);
+  // Track route usage for beta telemetry (fire-and-forget, no latency impact)
+  if (!pathname.startsWith('/api/telemetry/')) {
+    void fetch(`http://localhost:3000/api/telemetry/record`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ route: pathname }),
+    }).catch(() => {});
+  }
 
   // --- IP-via-Caddy setup flow ---
   // When accessed via IP through Caddy (ports 80/443), redirect to setup flow
