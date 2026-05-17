@@ -1,14 +1,14 @@
 /**
  * Next.js Middleware for Server-Side Authentication
- * 
+ *
  * Verifies JWT tokens before rendering protected pages.
- * This runs at the edge, before the page is rendered.
+ * Uses Node.js runtime (not Edge) so the telemetry tracker can write to disk.
  */
 
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
-import { countRoute } from '@/lib/telemetry/counter';
+import { trackRoute } from '@/lib/telemetry/tracker';
 
 // Public routes that don't require authentication
 const PUBLIC_ROUTES = [
@@ -157,8 +157,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Track route usage (Edge-safe, in-memory only, flushed by Node.js tracker)
-  countRoute(pathname);
+  // Track route usage for beta telemetry (temporary)
+  trackRoute(pathname);
 
   // --- IP-via-Caddy setup flow ---
   // When accessed via IP through Caddy (ports 80/443), redirect to setup flow
