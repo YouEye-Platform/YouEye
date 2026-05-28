@@ -16,11 +16,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/YouEye-Platform/YouEye/spine/internal/backup"
-	"github.com/YouEye-Platform/YouEye/spine/internal/config"
-	"github.com/YouEye-Platform/YouEye/spine/internal/releases"
-	"github.com/YouEye-Platform/YouEye/spine/internal/update"
-	"github.com/YouEye-Platform/YouEye/spine/internal/util"
+	"git.potemk.in/potemsla/YouEye/spine/internal/backup"
+	"git.potemk.in/potemsla/YouEye/spine/internal/config"
+	"git.potemk.in/potemsla/YouEye/spine/internal/releases"
+	"git.potemk.in/potemsla/YouEye/spine/internal/update"
+	"git.potemk.in/potemsla/YouEye/spine/internal/util"
 	"gopkg.in/yaml.v3"
 )
 

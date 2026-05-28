@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/YouEye-Platform/YouEye/spine/internal/api"
+	"git.potemk.in/potemsla/YouEye/spine/internal/api"
 	"github.com/spf13/cobra"
 )
 

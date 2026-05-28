@@ -98,8 +98,8 @@ Switch channels with `youeye branch set <channel>`.
 cd spine
 
 # Build with version info
-go build -ldflags "-X github.com/YouEye-Platform/YouEye/spine/internal/cmd.Version=0.3.2 \
-  -X github.com/YouEye-Platform/YouEye/spine/internal/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+go build -ldflags "-X git.potemk.in/potemsla/YouEye/spine/internal/cmd.Version=0.3.2 \
+  -X git.potemk.in/potemsla/YouEye/spine/internal/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   -o youeye ./cmd/youeye
 
 # Cross-compile for ARM64

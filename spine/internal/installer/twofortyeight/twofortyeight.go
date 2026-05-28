@@ -14,7 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/YouEye-Platform/YouEye/spine/internal/installer/theme"
+	"git.potemk.in/potemsla/YouEye/spine/internal/installer/theme"
 )
 
 // QuitMsg returns to the menu.

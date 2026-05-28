@@ -3,8 +3,8 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/YouEye-Platform/YouEye/spine/internal/container"
-	"github.com/YouEye-Platform/YouEye/spine/internal/incus"
+	"git.potemk.in/potemsla/YouEye/spine/internal/container"
+	"git.potemk.in/potemsla/YouEye/spine/internal/incus"
 )
 
 var installCmd = &cobra.Command{

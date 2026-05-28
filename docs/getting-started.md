@@ -15,7 +15,7 @@ YouEye also runs inside a Proxmox LXC — create an unprivileged Debian 12 conta
 ### One-Line Install
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/spine/install.sh | sh && youeye deploy
+curl -sSL https://git.potemk.in/potemsla/YouEye/raw/branch/main/spine/install.sh | sh && youeye deploy
 ```
 
 This downloads the `youeye` CLI (called **Spine**) and deploys the full platform. The installer:
@@ -32,7 +32,7 @@ The entire process takes approximately 5 minutes depending on your connection.
 
 ```bash
 # Download Spine binary
-curl -LO https://github.com/YouEye-Platform/YouEye/releases/download/spine-v0.4.1/spine-linux-amd64
+curl -LO https://git.potemk.in/potemsla/YouEye/releases/download/spine-v0.4.1/spine-linux-amd64
 chmod +x spine-linux-amd64
 mv spine-linux-amd64 /usr/local/bin/youeye
 

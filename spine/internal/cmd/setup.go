@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/YouEye-Platform/YouEye/spine/internal/output"
+	"git.potemk.in/potemsla/YouEye/spine/internal/output"
 	"github.com/spf13/cobra"
 )
 

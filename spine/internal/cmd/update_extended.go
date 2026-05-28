@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/YouEye-Platform/YouEye/spine/internal/controlapi"
-	"github.com/YouEye-Platform/YouEye/spine/internal/output"
+	"git.potemk.in/potemsla/YouEye/spine/internal/controlapi"
+	"git.potemk.in/potemsla/YouEye/spine/internal/output"
 	"github.com/spf13/cobra"
 )
 

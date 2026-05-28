@@ -5,16 +5,16 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/YouEye-Platform/YouEye/spine/internal/config"
-	"github.com/YouEye-Platform/YouEye/spine/internal/controlapi"
-	"github.com/YouEye-Platform/YouEye/spine/internal/logging"
-	"github.com/YouEye-Platform/YouEye/spine/internal/output"
-	"github.com/YouEye-Platform/YouEye/spine/internal/version"
+	"git.potemk.in/potemsla/YouEye/spine/internal/config"
+	"git.potemk.in/potemsla/YouEye/spine/internal/controlapi"
+	"git.potemk.in/potemsla/YouEye/spine/internal/logging"
+	"git.potemk.in/potemsla/YouEye/spine/internal/output"
+	"git.potemk.in/potemsla/YouEye/spine/internal/version"
 	"github.com/spf13/cobra"
 )
 
 // Version and BuildDate are set at build time via ldflags:
-//   go build -ldflags "-X github.com/YouEye-Platform/YouEye/spine/internal/cmd.Version=0.2.4.1 -X github.com/YouEye-Platform/YouEye/spine/internal/cmd.BuildDate=2026-03-27"
+//   go build -ldflags "-X git.potemk.in/potemsla/YouEye/spine/internal/cmd.Version=0.2.4.1 -X git.potemk.in/potemsla/YouEye/spine/internal/cmd.BuildDate=2026-03-27"
 // Defaults here are used only for development builds.
 var Version = "0.4.1"
 var BuildDate = "dev"

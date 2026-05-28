@@ -357,7 +357,7 @@ func hasAsset(assets []struct{ Name string `json:"name"` }, name string) bool {
 }
 
 func spineDownloadURL(tag string) string {
-	return fmt.Sprintf("https://github.com/YouEye-Platform/YouEye/releases/download/%s/spine-linux-amd64", tag)
+	return fmt.Sprintf("https://git.potemk.in/potemsla/YouEye/releases/download/%s/spine-linux-amd64", tag)
 }
 
 // ---------------------------------------------------------------------------

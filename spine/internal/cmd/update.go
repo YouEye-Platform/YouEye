@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/YouEye-Platform/YouEye/spine/internal/container"
-	"github.com/YouEye-Platform/YouEye/spine/internal/releases"
-	"github.com/YouEye-Platform/YouEye/spine/internal/update"
-	"github.com/YouEye-Platform/YouEye/spine/internal/util"
-	"github.com/YouEye-Platform/YouEye/spine/internal/version"
+	"git.potemk.in/potemsla/YouEye/spine/internal/container"
+	"git.potemk.in/potemsla/YouEye/spine/internal/releases"
+	"git.potemk.in/potemsla/YouEye/spine/internal/update"
+	"git.potemk.in/potemsla/YouEye/spine/internal/util"
+	"git.potemk.in/potemsla/YouEye/spine/internal/version"
 	"github.com/spf13/cobra"
 )
 

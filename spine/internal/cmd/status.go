@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/YouEye-Platform/YouEye/spine/internal/config"
-	"github.com/YouEye-Platform/YouEye/spine/internal/releases"
-	"github.com/YouEye-Platform/YouEye/spine/internal/version"
+	"git.potemk.in/potemsla/YouEye/spine/internal/config"
+	"git.potemk.in/potemsla/YouEye/spine/internal/releases"
+	"git.potemk.in/potemsla/YouEye/spine/internal/version"
 )
 
 func runStatus() error {

@@ -8,11 +8,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/YouEye-Platform/YouEye/spine/internal/installer/pong"
-	"github.com/YouEye-Platform/YouEye/spine/internal/installer/snake"
-	"github.com/YouEye-Platform/YouEye/spine/internal/installer/tetris"
-	"github.com/YouEye-Platform/YouEye/spine/internal/installer/theme"
-	"github.com/YouEye-Platform/YouEye/spine/internal/installer/twofortyeight"
+	"git.potemk.in/potemsla/YouEye/spine/internal/installer/pong"
+	"git.potemk.in/potemsla/YouEye/spine/internal/installer/snake"
+	"git.potemk.in/potemsla/YouEye/spine/internal/installer/tetris"
+	"git.potemk.in/potemsla/YouEye/spine/internal/installer/theme"
+	"git.potemk.in/potemsla/YouEye/spine/internal/installer/twofortyeight"
 )
 
 // ---------------------------------------------------------------------------

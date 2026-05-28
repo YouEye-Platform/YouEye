@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/YouEye-Platform/YouEye/spine/internal/installer"
+	"git.potemk.in/potemsla/YouEye/spine/internal/installer"
 	"github.com/spf13/cobra"
 )
 

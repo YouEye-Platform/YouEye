@@ -29,8 +29,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/YouEye-Platform/YouEye/spine/internal/config"
-	"github.com/YouEye-Platform/YouEye/spine/internal/version"
+	"git.potemk.in/potemsla/YouEye/spine/internal/config"
+	"git.potemk.in/potemsla/YouEye/spine/internal/version"
 	"gopkg.in/yaml.v3"
 )
 

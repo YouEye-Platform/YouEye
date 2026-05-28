@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/YouEye-Platform/YouEye/spine/internal/config"
-	"github.com/YouEye-Platform/YouEye/spine/internal/incus"
-	"github.com/YouEye-Platform/YouEye/spine/internal/releases"
-	"github.com/YouEye-Platform/YouEye/spine/internal/util"
+	"git.potemk.in/potemsla/YouEye/spine/internal/config"
+	"git.potemk.in/potemsla/YouEye/spine/internal/incus"
+	"git.potemk.in/potemsla/YouEye/spine/internal/releases"
+	"git.potemk.in/potemsla/YouEye/spine/internal/util"
 )
 
 // DeployControlPanel deploys the Control Panel container with all dependencies.

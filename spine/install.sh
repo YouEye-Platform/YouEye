@@ -1,7 +1,7 @@
 #!/bin/sh
 # YouEye Spine Installer
 # Works on minimal Debian/Ubuntu systems (Proxmox LXC, etc.)
-# Usage: curl -sSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/spine/install.sh | sh -s -- --branch sebastian
+# Usage: curl -sSL https://git.potemk.in/potemsla/YouEye/raw/branch/main/spine/install.sh | sh -s -- --branch sebastian
 #
 # Options:
 #   --provider github  (default) Fetch releases from GitHub

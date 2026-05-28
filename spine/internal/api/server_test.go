@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/YouEye-Platform/YouEye/spine/internal/config"
+	"git.potemk.in/potemsla/YouEye/spine/internal/config"
 )
 
 func testServer() *Server {

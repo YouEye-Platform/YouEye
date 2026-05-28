@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/YouEye-Platform/YouEye/spine/internal/config"
+	"git.potemk.in/potemsla/YouEye/spine/internal/config"
 )
 
 func TestIsMainTag(t *testing.T) {
@@ -117,14 +117,14 @@ func TestBuildDownloadURL(t *testing.T) {
 	cfg := config.Default()
 
 	url := BuildDownloadURL(cfg, "TestSpine", "v0.2.5", "spine-linux-amd64")
-	expected := "https://github.com/YouEye-Platform/TestSpine/releases/download/v0.2.5/spine-linux-amd64"
+	expected := "https://git.potemk.in/potemsla/TestSpine/releases/download/v0.2.5/spine-linux-amd64"
 	if url != expected {
 		t.Errorf("BuildDownloadURL() = %q, want %q", url, expected)
 	}
 
 	// Branch tag
 	url2 := BuildDownloadURL(cfg, "TestCP", "john-v0.2.5.1", "standalone.tar")
-	expected2 := "https://github.com/YouEye-Platform/TestCP/releases/download/john-v0.2.5.1/standalone.tar"
+	expected2 := "https://git.potemk.in/potemsla/TestCP/releases/download/john-v0.2.5.1/standalone.tar"
 	if url2 != expected2 {
 		t.Errorf("BuildDownloadURL() = %q, want %q", url2, expected2)
 	}
@@ -403,7 +403,7 @@ func TestBuildDownloadURL_GitHub(t *testing.T) {
 	cfg.Releases.Organization = "youeye-platform"
 
 	url := BuildDownloadURL(cfg, "YouEye", "spine-v0.3.2", "spine-linux-amd64")
-	expected := "https://github.com/youeye-platform/YouEye/releases/download/spine-v0.3.2/spine-linux-amd64"
+	expected := "https://git.potemk.in/potemsla/YouEye/releases/download/spine-v0.3.2/spine-linux-amd64"
 	if url != expected {
 		t.Errorf("BuildDownloadURL(github) = %q, want %q", url, expected)
 	}

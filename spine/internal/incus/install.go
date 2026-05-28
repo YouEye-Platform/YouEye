@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/YouEye-Platform/YouEye/spine/internal/util"
+	"git.potemk.in/potemsla/YouEye/spine/internal/util"
 )
 
 // StorageDriver tracks the initialized storage driver type

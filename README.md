@@ -13,7 +13,7 @@ One command installs a full platform: dashboard with widgets, six native apps, S
 ## Quick Start
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/spine/install.sh | sh && youeye deploy
+curl -sSL https://git.potemk.in/potemsla/YouEye/raw/branch/main/spine/install.sh | sh && youeye deploy
 ```
 
 The installer downloads the `youeye` CLI and deploys the full platform. A progress bar tracks the installation. When it finishes, open `https://your-server-ip` in your browser and create your account.
@@ -156,13 +156,13 @@ Each component is versioned and released independently.
 
 | Repository | Description |
 |------------|-------------|
-| [Market](https://github.com/YouEye-Platform/Market) | App marketplace catalog (YAML manifests) |
-| [Wiki](https://github.com/YouEye-Platform/Wiki) | Wiki native app |
-| [Search](https://github.com/YouEye-Platform/Search) | Search native app |
-| [Notes](https://github.com/YouEye-Platform/Notes) | Notes native app |
-| [Cinema](https://github.com/YouEye-Platform/Cinema) | Cinema native app |
-| [Weather](https://github.com/YouEye-Platform/Weather) | Weather native app |
-| [Translate](https://github.com/YouEye-Platform/Translate) | Translate native app |
+| [Market](https://git.potemk.in/potemsla/YE-AppMarket) | App marketplace catalog (YAML manifests) |
+| [Wiki](https://git.potemk.in/potemsla/YE-App-Wiki) | Wiki native app |
+| [Search](https://git.potemk.in/potemsla/YE-App-Search) | Search native app |
+| [Notes](https://git.potemk.in/potemsla/YE-App-Notes) | Notes native app |
+| [Cinema](https://git.potemk.in/potemsla/YE-App-Cinema) | Cinema native app |
+| [Weather](https://git.potemk.in/potemsla/YE-App-Weather) | Weather native app |
+| [Translate](https://git.potemk.in/potemsla/YE-App-Translate) | Translate native app |
 
 ## Documentation
 
@@ -180,7 +180,7 @@ Full documentation lives in the [`docs/`](docs/) folder:
 ### One-Line Install (recommended)
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/spine/install.sh | sh && youeye deploy
+curl -sSL https://git.potemk.in/potemsla/YouEye/raw/branch/main/spine/install.sh | sh && youeye deploy
 ```
 
 This downloads the `youeye` CLI and deploys the full platform. The installer detects your environment and deploys with a live progress bar.
@@ -188,14 +188,14 @@ This downloads the `youeye` CLI and deploys the full platform. The installer det
 ### Install from a Branch
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/spine/install.sh | sh -s -- --branch dev && youeye deploy
+curl -sSL https://git.potemk.in/potemsla/YouEye/raw/branch/main/spine/install.sh | sh -s -- --branch dev && youeye deploy
 ```
 
 ### Manual Install
 
 ```bash
 # Download Spine binary directly
-curl -LO https://github.com/YouEye-Platform/YouEye/releases/download/spine-v0.4.1/spine-linux-amd64
+curl -LO https://git.potemk.in/potemsla/YouEye/releases/download/spine-v0.4.1/spine-linux-amd64
 chmod +x spine-linux-amd64
 mv spine-linux-amd64 /usr/local/bin/youeye
 
