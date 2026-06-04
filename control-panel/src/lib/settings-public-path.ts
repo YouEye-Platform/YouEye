@@ -20,6 +20,12 @@ export function getControlPublicUrl(request?: Request): string {
   }
 
   if (request) {
+    const host = request.headers.get("x-forwarded-host") || request.headers.get("host");
+    if (host && !host.startsWith("0.0.0.0")) {
+      const proto = request.headers.get("x-forwarded-proto") || "https";
+      return `${proto}://${host}`;
+    }
+
     const url = new URL(request.url);
     return `${url.protocol}//${url.host}`;
   }
@@ -37,6 +43,12 @@ export function getSettingsPublicUrl(request?: Request): string {
   }
 
   if (request) {
+    const host = request.headers.get("x-forwarded-host") || request.headers.get("host");
+    if (host && !host.startsWith("0.0.0.0")) {
+      const proto = request.headers.get("x-forwarded-proto") || "https";
+      return `${proto}://${host}${SETTINGS_BASE_PATH}`;
+    }
+
     const url = new URL(request.url);
     return `${url.protocol}//${url.host}${SETTINGS_BASE_PATH}`;
   }
