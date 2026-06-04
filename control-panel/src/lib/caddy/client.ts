@@ -1331,6 +1331,86 @@ export async function setDomain(domain: string): Promise<void> {
   await setConfig(config);
 }
 
+/**
+ * Ensure the root-domain /settings surface routes to Control Panel.
+ *
+ * UI and CP are both Next.js apps on the same host. CP settings pages emit
+ * root /_next asset requests and reuse CP API clients with root /api paths.
+ * To avoid stealing UI assets/APIs, the support route only matches requests
+ * whose Referer is the root-domain /settings surface.
+ */
+export async function ensureControlSettingsRoute(
+  domain: string,
+  containerName: string = 'youeye-control',
+  port: number = 3000
+): Promise<void> {
+  const config = await getConfig();
+
+  if (!config.apps) config.apps = {};
+  if (!config.apps.http) config.apps.http = {};
+  if (!config.apps.http.servers) config.apps.http.servers = {};
+
+  const serverName = Object.keys(config.apps.http.servers)[0] || 'srv0';
+  if (!config.apps.http.servers[serverName]) {
+    config.apps.http.servers[serverName] = {
+      listen: [':443'],
+      routes: [],
+      tls_connection_policies: [{}],
+    };
+  }
+
+  ensureHTTPSConfig(config.apps.http.servers[serverName]);
+  ensureTLSSubject(config, domain);
+
+  const upstreamDial = `${normalizeUpstream(containerName)}:${port}`;
+  const routes = (config.apps.http.servers[serverName].routes || [])
+    .filter(r => r['@id'] !== 'control-settings-route' && r['@id'] !== 'control-settings-support-route');
+
+  const settingsRoute: CaddyRoute = {
+    '@id': 'control-settings-route',
+    match: [{ host: [domain], path: ['/settings', '/settings/*'] }],
+    handle: [{
+      handler: 'reverse_proxy',
+      upstreams: [{ dial: upstreamDial }],
+    }],
+  };
+
+  const escapedDomain = domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const supportRoute: CaddyRoute = {
+    '@id': 'control-settings-support-route',
+    match: [{
+      host: [domain],
+      path: [
+        '/_next/*',
+        '/api/ui-bridge/*',
+        '/api/ui/*',
+        '/api/user/*',
+        '/api/tls/*',
+        '/api/branding/*',
+        '/api/bridges',
+        '/api/bridges/*',
+        '/api/internet-grants',
+        '/api/internet-grants/*',
+        '/api/suggestions',
+        '/api/suggestions/*',
+      ],
+      header_regexp: {
+        settings_referrer: {
+          field: 'Referer',
+          regexp: `^https?://${escapedDomain}/settings(?:/|$)`,
+        },
+      },
+    } as any],
+    handle: [{
+      handler: 'reverse_proxy',
+      upstreams: [{ dial: upstreamDial }],
+    }],
+  };
+
+  config.apps.http.servers[serverName].routes = [settingsRoute, supportRoute, ...routes];
+  await setConfig(config);
+}
+
 // ─── External Certificate Loading ────────────────────────
 
 /**

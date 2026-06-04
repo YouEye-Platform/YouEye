@@ -175,6 +175,17 @@ async function updateAuthentikProvider(
       return { ...uri, url };
     });
 
+    if (clientId === 'youeye-control') {
+      for (const url of [
+        `https://${newDomain}/settings/api/auth/callback`,
+        `http://${newDomain}/settings/api/auth/callback`,
+      ]) {
+        if (!newUris.some((uri) => uri.url === url)) {
+          newUris.push({ matching_mode: 'strict', url });
+        }
+      }
+    }
+
     await authentikAPI(akConfig, `/providers/oauth2/${provider.pk}/`, 'PATCH', {
       redirect_uris: newUris,
     });

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useTransition, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,6 +13,7 @@ import { useSiteConfig } from '@/hooks/use-site-config';
 
 function LoginContent() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(searchParams.get('error'));
@@ -21,21 +22,23 @@ function LoginContent() {
   const { site_name } = useSiteConfig();
   const t = useTranslations('login');
   const tc = useTranslations('common');
+  const authBase = pathname.startsWith('/settings') ? '/settings/api/auth' : '/api/auth';
+  const afterLoginPath = pathname.startsWith('/settings') ? '/settings' : '/';
 
   // Detect auth mode on mount
   useEffect(() => {
-    fetch('/api/auth/mode')
+    fetch(`${authBase}/mode`)
       .then(r => r.json())
       .then(data => {
         setAuthMode(data.mode);
         if (data.mode === 'sso') {
-          window.location.href = '/api/auth/sso';
+          window.location.href = `${authBase}/sso?redirect=${encodeURIComponent(afterLoginPath)}`;
         }
       })
       .catch(() => {
         setAuthMode('pam');
       });
-  }, []);
+  }, [afterLoginPath, authBase]);
 
   async function handleSubmit(formData: FormData) {
     setError(null);
@@ -50,7 +53,7 @@ function LoginContent() {
     }
 
     try {
-      const response = await fetch('/api/auth/login', {
+      const response = await fetch(`${authBase}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
@@ -76,6 +79,8 @@ function LoginContent() {
 
         if (isCaddyAccess) {
           router.push('/setup');
+        } else if (pathname.startsWith('/settings')) {
+          router.push('/settings');
         } else {
           router.push('/');
         }

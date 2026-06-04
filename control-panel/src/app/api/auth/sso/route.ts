@@ -10,16 +10,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { buildAuthorizeUrl, generateOAuthState, isSSOConfigured } from '@/lib/auth/authentik';
+import { isSettingsPath, getSettingsPublicUrl } from '@/lib/settings-public-path';
 
 export async function GET(request: NextRequest) {
   if (!isSSOConfigured()) {
     return NextResponse.json({ error: 'SSO not configured' }, { status: 503 });
   }
 
-  // Use CONTROL_EXTERNAL_URL env var for reliable redirect URI,
-  // falling back to request headers if not set
+  const settingsFlow = isSettingsPath(request.nextUrl.pathname);
+
+  // Use CONTROL_EXTERNAL_URL/CONTROL_PUBLIC_URL env vars for reliable redirect URI,
+  // falling back to request headers if not set.
   let redirectUri: string;
-  const controlUrl = process.env.CONTROL_EXTERNAL_URL;
+  const controlUrl = settingsFlow ? getSettingsPublicUrl(request) : process.env.CONTROL_EXTERNAL_URL;
   if (controlUrl) {
     redirectUri = `${controlUrl}/api/auth/callback`;
   } else {
@@ -43,7 +46,7 @@ export async function GET(request: NextRequest) {
   });
 
   // Store the post-login redirect destination (e.g. /embed/profile)
-  const postLoginRedirect = request.nextUrl.searchParams.get('redirect');
+  const postLoginRedirect = request.nextUrl.searchParams.get('redirect') || (settingsFlow ? '/settings' : null);
   if (postLoginRedirect) {
     // Only allow relative paths to prevent open redirect
     const sanitized = postLoginRedirect.startsWith('/') ? postLoginRedirect : '/';

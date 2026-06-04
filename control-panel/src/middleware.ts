@@ -9,10 +9,12 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
+import { isSettingsPath } from '@/lib/settings-public-path';
 
 // Public routes that don't require authentication
 const PUBLIC_ROUTES = [
   '/login',
+  '/settings/login',
   '/api/auth/login',
   '/api/auth/logout',
   '/api/auth/csrf',
@@ -38,12 +40,18 @@ const PUBLIC_ROUTES = [
   '/api/branding/favicon', // Public favicon (proxied from UI)
   '/api/telemetry',        // Telemetry record + export (internal tracking)
   '/setup-complete',
+  '/settings/api/auth/login',
+  '/settings/api/auth/logout',
+  '/settings/api/auth/csrf',
+  '/settings/api/auth/callback',
+  '/settings/api/auth/mode',
   // Note: /embed routes now use session auth (same as main CP), not HMAC tokens
 ];
 
 // Exact-match public routes (no prefix matching)
 const PUBLIC_ROUTES_EXACT = [
   '/api/auth/sso',
+  '/settings/api/auth/sso',
 ];
 
 // Static resources that should be skipped
@@ -244,7 +252,7 @@ export async function middleware(request: NextRequest) {
         { status: 401 }
       );
     }
-    return NextResponse.redirect(new URL('/login', request.url));
+    return NextResponse.redirect(new URL(isSettingsPath(pathname) ? '/settings/login' : '/login', request.url));
   }
 
   // Verify JWT
@@ -262,7 +270,7 @@ export async function middleware(request: NextRequest) {
 
     const response = pathname.startsWith('/api/')
       ? NextResponse.json({ error: 'Session expired' }, { status: 401 })
-      : NextResponse.redirect(new URL('/login', request.url));
+      : NextResponse.redirect(new URL(isSettingsPath(pathname) ? '/settings/login' : '/login', request.url));
 
     response.cookies.delete('ye-session');
     response.cookies.delete('ye-csrf');

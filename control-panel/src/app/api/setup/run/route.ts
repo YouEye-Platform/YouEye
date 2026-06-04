@@ -303,6 +303,15 @@ export async function POST(request: NextRequest) {
               }
             }
 
+            // Root domain /settings route to Control Panel. This must be separate from
+            // generic path routing because UI and CP both serve Next.js /_next assets.
+            try {
+              await caddy.ensureControlSettingsRoute(domain, 'youeye-control', 3000);
+            } catch (err) {
+              console.error('Failed to create root domain /settings CP route:', err);
+              routeErrors.push(`youeye-control (/settings): ${err instanceof Error ? err.message : String(err)}`);
+            }
+
             // Default catch-all
             try {
               await caddy.setDefaultRoute('youeye-control', 3000);
@@ -555,6 +564,8 @@ export async function POST(request: NextRequest) {
               redirect_uris: [
                 { matching_mode: 'strict', url: `https://${controlHost}/api/auth/callback` },
                 { matching_mode: 'strict', url: `http://${controlHost}/api/auth/callback` },
+                { matching_mode: 'strict', url: `https://${domain}/settings/api/auth/callback` },
+                { matching_mode: 'strict', url: `http://${domain}/settings/api/auth/callback` },
               ],
               property_mappings: scopePks,
             });
@@ -599,6 +610,8 @@ export async function POST(request: NextRequest) {
                   redirect_uris: [
                     { matching_mode: 'strict', url: `https://${controlHost}/api/auth/callback` },
                     { matching_mode: 'strict', url: `http://${controlHost}/api/auth/callback` },
+                    { matching_mode: 'strict', url: `https://${domain}/settings/api/auth/callback` },
+                    { matching_mode: 'strict', url: `http://${domain}/settings/api/auth/callback` },
                   ],
                   property_mappings: scopePks,
                   sub_mode: 'hashed_user_id',
@@ -642,6 +655,8 @@ export async function POST(request: NextRequest) {
                 redirect_uris: [
                   { matching_mode: 'strict', url: `https://${controlHost}/api/auth/callback` },
                   { matching_mode: 'strict', url: `http://${controlHost}/api/auth/callback` },
+                  { matching_mode: 'strict', url: `https://${domain}/settings/api/auth/callback` },
+                  { matching_mode: 'strict', url: `http://${domain}/settings/api/auth/callback` },
                 ],
                 property_mappings: scopePks,
                 sub_mode: 'hashed_user_id',
@@ -682,6 +697,8 @@ export async function POST(request: NextRequest) {
               redirect_uris: [
                 { matching_mode: 'strict', url: `https://${controlHost}/api/auth/callback` },
                 { matching_mode: 'strict', url: `http://${controlHost}/api/auth/callback` },
+                { matching_mode: 'strict', url: `https://${domain}/settings/api/auth/callback` },
+                { matching_mode: 'strict', url: `http://${domain}/settings/api/auth/callback` },
               ],
               property_mappings: scopePks,
               sub_mode: 'hashed_user_id',

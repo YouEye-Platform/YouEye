@@ -20,6 +20,17 @@ export async function findUserByAuthentikId(authentikId: string) {
   return result[0] ?? null;
 }
 
+/** Find a user by username. Used by the CP -> UI settings bridge. */
+export async function findUserByUsername(username: string) {
+  await ensureSchema();
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.username, username))
+    .limit(1);
+  return result[0] ?? null;
+}
+
 /**
  * Upsert a user on SSO login.
  * Creates the user if they don't exist, updates their profile if they do.

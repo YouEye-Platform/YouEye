@@ -20,6 +20,7 @@ import {
   setSessionCookies,
   generateCSRFToken,
 } from '@/lib/auth/session';
+import { isSettingsPath, getSettingsPublicUrl } from '@/lib/settings-public-path';
 
 const ADMIN_GROUP = 'authentik Admins';
 
@@ -29,7 +30,8 @@ export async function GET(request: NextRequest) {
   }
 
   // Determine the external base URL for all redirects.
-  const controlUrl = process.env.CONTROL_EXTERNAL_URL;
+  const settingsFlow = isSettingsPath(request.nextUrl.pathname);
+  const controlUrl = settingsFlow ? getSettingsPublicUrl(request) : process.env.CONTROL_EXTERNAL_URL;
   let baseUrl: string;
   if (controlUrl) {
     baseUrl = controlUrl;
@@ -42,16 +44,17 @@ export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get('code');
   const state = request.nextUrl.searchParams.get('state');
   const errorParam = request.nextUrl.searchParams.get('error');
+  const loginPath = settingsFlow ? '/settings/login' : '/login';
 
   // Handle Authentik errors
   if (errorParam) {
     const desc = request.nextUrl.searchParams.get('error_description') || errorParam;
     console.error(`OAuth2 error: ${desc}`);
-    return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(desc)}`, baseUrl));
+    return NextResponse.redirect(new URL(`${loginPath}?error=${encodeURIComponent(desc)}`, baseUrl));
   }
 
   if (!code || !state) {
-    return NextResponse.redirect(new URL('/login?error=Missing+code+or+state', baseUrl));
+    return NextResponse.redirect(new URL(`${loginPath}?error=Missing+code+or+state`, baseUrl));
   }
 
   // Verify state matches cookie
@@ -60,12 +63,12 @@ export async function GET(request: NextRequest) {
   cookieStore.delete('oauth-state');
 
   // Read and clear the post-login redirect destination
-  const postLoginRedirect = cookieStore.get('oauth-redirect')?.value || '/';
+  const postLoginRedirect = cookieStore.get('oauth-redirect')?.value || (settingsFlow ? '/settings' : '/');
   cookieStore.delete('oauth-redirect');
 
   if (!savedState || savedState !== state) {
     console.error('OAuth2 state mismatch');
-    return NextResponse.redirect(new URL('/login?error=Invalid+state', baseUrl));
+    return NextResponse.redirect(new URL(`${loginPath}?error=Invalid+state`, baseUrl));
   }
 
   try {
@@ -93,6 +96,6 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('OAuth2 callback error:', error);
     const msg = error instanceof Error ? error.message : 'Authentication failed';
-    return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(msg)}`, baseUrl));
+    return NextResponse.redirect(new URL(`${loginPath}?error=${encodeURIComponent(msg)}`, baseUrl));
   }
 }

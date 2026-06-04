@@ -256,6 +256,8 @@ export async function setupSSO(params: {
   const redirectUris = [
     { matching_mode: 'strict', url: `https://${new URL(params.controlExternalUrl).host}/api/auth/callback` },
     { matching_mode: 'strict', url: `http://${new URL(params.controlExternalUrl).host}/api/auth/callback` },
+    { matching_mode: 'strict', url: `https://${new URL(params.controlExternalUrl).host.replace(/^control\./, '')}/settings/api/auth/callback` },
+    { matching_mode: 'strict', url: `http://${new URL(params.controlExternalUrl).host.replace(/^control\./, '')}/settings/api/auth/callback` },
   ];
 
   // 7. Create OAuth2 Provider
