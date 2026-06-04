@@ -1375,7 +1375,6 @@ export async function ensureControlSettingsRoute(
     }],
   };
 
-  const escapedDomain = domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const supportRoute: CaddyRoute = {
     '@id': 'control-settings-support-route',
     match: [{
@@ -1387,18 +1386,12 @@ export async function ensureControlSettingsRoute(
         '/api/user/*',
         '/api/tls/*',
         '/api/branding/*',
-        '/api/bridges',
-        '/api/bridges/*',
-        '/api/internet-grants',
-        '/api/internet-grants/*',
-        '/api/suggestions',
-        '/api/suggestions/*',
+        '/api/bridges*',
+        '/api/internet-grants*',
+        '/api/suggestions*',
       ],
-      header_regexp: {
-        settings_referrer: {
-          field: 'Referer',
-          regexp: `^https?://${escapedDomain}/settings(?:/|$)`,
-        },
+      header: {
+        Referer: [`*://${domain}/settings*`],
       },
     } as any],
     handle: [{
