@@ -278,8 +278,8 @@ async function _deployInfrastructureInner(
     const spec = uiContainerSpec();
     await deployLXDContainer(spec, {
       spineSocketPath: '/var/run/youeye/youeye.sock',
-      giteaBaseURL: 'https://github.com',
-      giteaOrg: 'YouEye-Platform',
+      giteaBaseURL: 'https://git.potemk.in',
+      giteaOrg: 'potemsla',
       giteaRepo: 'YouEye',
       tagPrefix: 'ui',
     });
@@ -500,8 +500,8 @@ export async function reconcileInfrastructure(
       const spec = uiContainerSpec();
       await deployLXDContainer(spec, {
         spineSocketPath: '/var/run/youeye/youeye.sock',
-        giteaBaseURL: 'https://github.com',
-        giteaOrg: 'YouEye-Platform',
+        giteaBaseURL: 'https://git.potemk.in',
+        giteaOrg: 'potemsla',
         giteaRepo: 'YouEye',
         tagPrefix: 'ui',
       });

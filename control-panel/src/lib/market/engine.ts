@@ -492,13 +492,13 @@ function buildOCIManifest(
   };
 }
 
-// ─── GitHub Helpers ────────────────────────────────────────
+// ─── Gitea Helpers ─────────────────────────────────────────
 
-const GITHUB_BASE = 'https://github.com';
+const GITEA_BASE = 'https://git.potemk.in';
 
 function githubRepoFromSource(repo: string): { org: string; repo: string } {
   const parts = repo.split('/');
-  return { org: parts[0] || 'YouEye-Platform', repo: parts[parts.length - 1] };
+  return { org: parts[0] || 'potemsla', repo: parts[parts.length - 1] };
 }
 
 // ─── Main Install Function (v2: unified) ──────────────────
@@ -784,7 +784,7 @@ export async function installApp(
             },
             {
               spineSocketPath: '/var/run/youeye/youeye.sock',
-              giteaBaseURL: GITHUB_BASE,
+              giteaBaseURL: GITEA_BASE,
               giteaOrg: gitInfo.org,
               giteaRepo: gitInfo.repo,
               tagPrefix: source.tagPrefix,

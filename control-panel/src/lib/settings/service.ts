@@ -7,6 +7,8 @@
  */
 
 import { spineClient } from '../spine/client';
+import { existsSync, readFileSync } from 'fs';
+import { parse } from 'yaml';
 
 export interface PlatformSettings {
   siteName: string;
@@ -59,6 +61,18 @@ function fromRaw(raw: Record<string, unknown>): PlatformSettings {
   };
 }
 
+function readLocalRawConfig(): Record<string, unknown> | null {
+  const path = '/var/lib/youeye/config/youeye.yaml';
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = parse(readFileSync(path, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+  } catch (error) {
+    console.error('[settings] Failed to read local youeye.yaml fallback:', error);
+    return null;
+  }
+}
+
 /** Convert typed patch to raw snake_case for Spine API */
 function toRawPatch(patch: Partial<PlatformSettings>): Record<string, unknown> {
   const raw: Record<string, unknown> = {};
@@ -82,7 +96,14 @@ class SettingsService {
     if (this.cache && (now - this.cacheTimestamp) < this.CACHE_TTL_MS) {
       return this.cache;
     }
-    const raw = await spineClient.getConfig();
+    let raw: Record<string, unknown>;
+    try {
+      raw = await spineClient.getConfig();
+    } catch (error) {
+      const local = readLocalRawConfig();
+      if (!local) throw error;
+      raw = local;
+    }
     const settings = fromRaw(raw as unknown as Record<string, unknown>);
     this.cache = settings;
     this.cacheTimestamp = now;
@@ -136,7 +157,14 @@ class SettingsService {
         smtp_require_tls: this.cache.smtpRequireTls,
       };
     }
-    const raw = await spineClient.getConfig();
+    let raw: Record<string, unknown>;
+    try {
+      raw = await spineClient.getConfig();
+    } catch (error) {
+      const local = readLocalRawConfig();
+      if (!local) throw error;
+      raw = local;
+    }
     // Also populate the typed cache
     this.cache = fromRaw(raw as unknown as Record<string, unknown>);
     this.cacheTimestamp = Date.now();
