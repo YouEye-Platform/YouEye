@@ -1,3 +1,21 @@
+## v0.4.13.17 (CP) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Use browser-safe redirect after YouEye ID login
+
+### Changes
+- `control-panel/src/app/identity/login/route.ts` — Changed successful login redirect from default 307 to 303 so form POSTs continue the OAuth authorize flow as GET.
+- `control-panel/package.json`, `README.md` — Bumped CP branch release version and current-version table.
+
+### Test Results
+- Live CP `0.4.13.16` seeded the pilot user/client successfully and Notes redirected to YouEye ID.
+- Cookie/redirect test showed `ye-id-session` was set, then the preserved POST hit `/application/o/authorize` and returned 405.
+- CP release build pending in this session.
+
+### Notes for Iris
+- CP-only follow-up to `0.4.13.16`.
+
 ## v0.4.13.16 (CP) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc

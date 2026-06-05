@@ -72,8 +72,7 @@ export async function POST(request: NextRequest) {
   }
 
   const token = await createIdentityToken(user);
-  const response = NextResponse.redirect(returnTo);
+  const response = NextResponse.redirect(returnTo, { status: 303 });
   setIdentityCookie(response, token, config.cookieDomain);
   return response;
 }
-
