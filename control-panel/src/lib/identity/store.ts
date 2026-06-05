@@ -41,7 +41,11 @@ function sqlJson(value: unknown): string {
 }
 
 async function psql(command: string): Promise<string> {
-  const escaped = command.replace(/'/g, "'\\''");
+  const escaped = command
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, '\\$')
+    .replace(/'/g, "'\\''");
   const { exitCode, stdout, stderr } = await execShell(
     CONTAINER,
     `su - postgres -c "psql -U youeye -d youeye -tA -c '${escaped}'"`,

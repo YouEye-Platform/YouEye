@@ -1,3 +1,20 @@
+## v0.4.13.16 (CP) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Preserve JSON quoting in YouEye ID psql calls
+
+### Changes
+- `control-panel/src/lib/identity/store.ts` — Escaped double quotes, backslashes, and dollar signs before running identity SQL through the existing Incus/psql shell path so JSONB values survive correctly.
+- `control-panel/package.json`, `README.md` — Bumped CP branch release version and current-version table.
+
+### Test Results
+- Live CP `0.4.13.15` fixed writable CTE syntax, but pilot seeding still failed because JSONB arrays lost their double quotes in the shell command.
+- CP release build pending in this session.
+
+### Notes for Iris
+- CP-only follow-up to `0.4.13.15`.
+
 ## v0.4.13.15 (CP) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc
