@@ -1,3 +1,19 @@
+## v0.4.3.6 (UI) — artem — 2026-06-06
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Link existing UI accounts during the YouEye ID provider migration
+
+### Changes
+- `ui/src/lib/db/queries/users.ts` — When a new YouEye ID subject logs in, migrate an existing UI account matched by username or email before inserting a new user, and fail explicitly if username and email point at different users.
+- `ui/package.json`, `README.md` — Bumped the UI release version only.
+
+### Test Results
+- Pending in this iteration: UI build, release, live deploy, and OAuth retest on `192.168.31.160`.
+
+### Notes for Iris
+- This keeps existing Authentik-created UI accounts intact while changing their stored provider subject to YouEye ID on first login.
+
 ## v0.4.13.20 (CP) / v0.4.3.5 (UI) / v0.4.2.5 (Spine) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc

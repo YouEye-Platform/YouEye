@@ -2,7 +2,8 @@
  * User Database Queries
  *
  * Functions for creating and finding users in the database.
- * Users are upserted on each SSO login to keep profiles in sync with Authentik.
+ * Users are upserted on each SSO login to keep profiles in sync with the
+ * configured identity provider.
  */
 
 import { eq } from "drizzle-orm";
@@ -20,6 +21,17 @@ export async function findUserByAuthentikId(authentikId: string) {
   return result[0] ?? null;
 }
 
+/** Find a user by email address. Used for identity-provider migrations. */
+export async function findUserByEmail(email: string) {
+  await ensureSchema();
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1);
+  return result[0] ?? null;
+}
+
 /** Find a user by username. Used by the CP -> UI settings bridge. */
 export async function findUserByUsername(username: string) {
   await ensureSchema();
@@ -29,6 +41,47 @@ export async function findUserByUsername(username: string) {
     .where(eq(users.username, username))
     .limit(1);
   return result[0] ?? null;
+}
+
+type ExistingUser = NonNullable<
+  Awaited<ReturnType<typeof findUserByAuthentikId>>
+>;
+
+async function updateUserFromSSO(
+  existing: ExistingUser,
+  data: {
+    authentikId: string;
+    username: string;
+    name: string;
+    email: string;
+    image?: string;
+    isAdmin: boolean;
+    firstName?: string | null;
+    lastName?: string | null;
+  }
+) {
+  const preservedAdmin = data.isAdmin || existing.isAdmin;
+  const updateFields: Record<string, unknown> = {
+    authentikId: data.authentikId,
+    username: data.username,
+    name: data.name,
+    email: data.email,
+    isAdmin: preservedAdmin,
+    updatedAt: new Date(),
+  };
+  // Only overwrite image if explicitly provided — prevents login from
+  // clobbering avatars saved via bridge or client-side upload.
+  if (data.image !== undefined) updateFields.image = data.image;
+  // Sync firstName/lastName from the identity provider if provided.
+  if (data.firstName !== undefined) updateFields.firstName = data.firstName;
+  if (data.lastName !== undefined) updateFields.lastName = data.lastName;
+
+  await db
+    .update(users)
+    .set(updateFields)
+    .where(eq(users.id, existing.id));
+
+  return { ...existing, ...data, isAdmin: preservedAdmin, id: existing.id };
 }
 
 /**
@@ -49,28 +102,27 @@ export async function upsertUser(data: {
   const existing = await findUserByAuthentikId(data.authentikId);
 
   if (existing) {
-    // Update existing user's profile from Authentik
-    const preservedAdmin = data.isAdmin || existing.isAdmin;
-    const updateFields: Record<string, unknown> = {
-      username: data.username,
-      name: data.name,
-      email: data.email,
-      isAdmin: preservedAdmin,
-      updatedAt: new Date(),
-    };
-    // Only overwrite image if explicitly provided — prevents login from
-    // clobbering avatars saved via bridge or client-side upload
-    if (data.image !== undefined) updateFields.image = data.image;
-    // Sync firstName/lastName from Authentik if provided
-    if (data.firstName !== undefined) updateFields.firstName = data.firstName;
-    if (data.lastName !== undefined) updateFields.lastName = data.lastName;
+    return updateUserFromSSO(existing, data);
+  }
 
-    await db
-      .update(users)
-      .set(updateFields)
-      .where(eq(users.id, existing.id));
+  const existingByUsername = data.username
+    ? await findUserByUsername(data.username)
+    : null;
+  const existingByEmail = data.email ? await findUserByEmail(data.email) : null;
 
-    return { ...existing, ...data, isAdmin: preservedAdmin, id: existing.id };
+  if (
+    existingByUsername &&
+    existingByEmail &&
+    existingByUsername.id !== existingByEmail.id
+  ) {
+    throw new Error(
+      `Cannot migrate identity: username "${data.username}" and email "${data.email}" belong to different users`
+    );
+  }
+
+  const migrated = existingByUsername ?? existingByEmail;
+  if (migrated) {
+    return updateUserFromSSO(migrated, data);
   }
 
   // Check if this is the first user (auto-admin)
