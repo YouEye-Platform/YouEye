@@ -11,7 +11,11 @@
 - `README.md` — Updated the current Control Panel version table.
 
 ### Test Results
-- Pending: CP build, release, deploy, and live route/image recheck.
+- CP build: `pnpm build` passed for `0.4.13.5`.
+- Release: `cp-artem-v0.4.13.5` published with `standalone.tar` asset.
+- Deploy: `spine update control` updated `192.168.31.160` from CP `0.4.13.4` to `0.4.13.5`.
+- Live authenticated crawl: `/settings/profile`, all settings sidebar routes, `/market`, and `/market/wiki` returned non-404.
+- Live Market image audit: browser reported `broken-market-images []`; screenshot captured at `/tmp/youeye-shots/market-catalog-0.4.13.5.png`.
 
 ### Notes for Iris
 - CP-only release. Spine remains `0.4.2.1`; UI remains `0.4.3.1`.
