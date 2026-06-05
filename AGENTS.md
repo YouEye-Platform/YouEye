@@ -9,7 +9,13 @@
 - `control-panel/package.json`, `README.md` — Bumped CP branch release version and current-version table.
 
 ### Test Results
-- Live verification of CP `0.4.13.11` proved direct HTTP PAM cookies now persist, but root `/login` still landed on the old dashboard; this release fixes that landing path.
+- CP build: `pnpm -C control-panel build` passed for `0.4.13.12`.
+- Release: `cp-artem-v0.4.13.12` published with asset name exactly `standalone.tar`.
+- Deploy: `spine update control` updated `192.168.31.160` to CP `0.4.13.12`; UI remained `0.4.3.4`.
+- Route repair: `/api/setup/control-routes` returned success for `/settings` and `/market`.
+- Live direct PAM verification: `http://192.168.31.160:3000/login` landed at `/settings/system`, showed admin-only Settings sections, and hid user-specific header controls.
+- Screenshot verification: `/tmp/youeye-shots/plan4-pam-settings-system-0.4.13.12.png`.
+- Cleanup: temporary PAM test user `plan4pam` was removed after verification.
 
 ### Notes for Iris
 - CP-only follow-up to `0.4.13.11`; UI remains `0.4.3.4`.
