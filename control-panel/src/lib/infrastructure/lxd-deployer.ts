@@ -204,6 +204,7 @@ async function installNodeAndApp(
   const readinessURL = isGitHub ? 'https://api.github.com/rate_limit' : `${releaseSource.base_url}${releaseSource.api_path}/version`;
   const acceptHeader = isGitHub ? 'Accept: application/vnd.github+json' : 'Accept: application/json';
   const apiLabel = isGitHub ? 'GitHub' : 'Forgejo/Gitea';
+  const attachmentBaseURL = isGitHub ? '' : `${releaseSource.base_url}/attachments`;
   await execShell(cn, `mkdir -p ${spec.appDir}`, { timeout: 10_000 });
 
   // Read the configured release branch from Spine config
@@ -253,6 +254,7 @@ import sys, json, re
 
 branch = sys.argv[1] if len(sys.argv) > 1 else ''
 tag_prefix = sys.argv[2] if len(sys.argv) > 2 else ''
+attachment_base = sys.argv[3] if len(sys.argv) > 3 else ''
 
 with open('/tmp/releases.json') as f:
     releases = json.load(f)
@@ -284,7 +286,10 @@ for r in releases:
     tar_url = None
     for a in r['assets']:
         if a['name'] == 'standalone.tar':
-            tar_url = a['browser_download_url']
+            if attachment_base and a.get('uuid'):
+                tar_url = f"{attachment_base}/{a['uuid']}"
+            else:
+                tar_url = a.get('browser_download_url')
             break
     if not tar_url:
         continue
@@ -328,7 +333,7 @@ PYEOF
         return 1
       fi
 
-      python3 /tmp/filter_releases.py '${safeBranch}' '${cfg.tagPrefix || ''}'
+      python3 /tmp/filter_releases.py '${safeBranch}' '${cfg.tagPrefix || ''}' '${attachmentBaseURL}'
     }
 
     DOWNLOAD_URL=$(retry 3 5 fetch_release_url)

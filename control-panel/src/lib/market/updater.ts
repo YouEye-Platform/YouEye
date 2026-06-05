@@ -44,7 +44,7 @@ import { getOrCreateSecret } from '../infrastructure/secrets';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
 import { settingsService } from '@/lib/settings';
 import { isNewer, compareVersions, sortVersionsDesc } from '@/lib/version';
-import { buildReleasesAPIURL, getReleaseSource } from '@/lib/apps/release-source';
+import { buildReleasesAPIURL, getReleaseAssetDownloadURL, getReleaseSource, type ReleaseAsset } from '@/lib/apps/release-source';
 import type {
   AppManifest,
   InstallEventCallback,
@@ -303,11 +303,13 @@ async function getLatestGiteaRelease(
     }
 
     // Find standalone.tar in assets
-    const assets = matchedRelease.assets as Array<{ name: string; browser_download_url: string }>;
+    const assets = matchedRelease.assets as ReleaseAsset[];
     const tarAsset = assets?.find((a) => a.name === 'standalone.tar');
     if (!tarAsset || !version) return null;
+    const downloadURL = getReleaseAssetDownloadURL(releaseSource, tarAsset);
+    if (!downloadURL) return null;
 
-    return { version, downloadURL: tarAsset.browser_download_url };
+    return { version, downloadURL };
   } catch {
     return null;
   }

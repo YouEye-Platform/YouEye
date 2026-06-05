@@ -28,7 +28,7 @@ import type { UpdateEvent } from './updater';
 export type { UpdateEvent };
 import { settingsService } from '@/lib/settings';
 import { isNewer, sortVersionsDesc } from '@/lib/version';
-import { buildReleasesAPIURL, getReleaseSource } from './release-source';
+import { buildReleasesAPIURL, getReleaseAssetDownloadURL, getReleaseSource, type ReleaseAsset } from './release-source';
 
 type EventEmitter = (event: UpdateEvent) => void;
 
@@ -137,11 +137,13 @@ async function getLatestRelease(containerName: string, giteaRepo: string, branch
       version = strippedTag.replace(/^v/, '');
     }
 
-    const assets = matchedRelease.assets as Array<{ name: string; browser_download_url: string }>;
+    const assets = matchedRelease.assets as ReleaseAsset[];
     const tarAsset = assets?.find((a) => a.name === 'standalone.tar');
     if (!tarAsset || !version) return null;
+    const downloadURL = getReleaseAssetDownloadURL(releaseSource, tarAsset);
+    if (!downloadURL) return null;
 
-    return { version, downloadURL: tarAsset.browser_download_url };
+    return { version, downloadURL };
   } catch {
     return null;
   }

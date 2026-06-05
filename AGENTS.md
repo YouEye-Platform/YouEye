@@ -1,3 +1,22 @@
+## v0.4.13.24 (CP) — artem — 2026-06-06
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Use Forgejo attachment URLs for native app release assets
+
+### Changes
+- `control-panel/src/lib/apps/release-source.ts` — Added provider-aware release asset URL resolution, using Forgejo attachment UUID URLs when available.
+- `control-panel/src/lib/infrastructure/lxd-deployer.ts` — Made clean LXD app installs download `standalone.tar` from Forgejo attachment URLs instead of UI redirect URLs.
+- `control-panel/src/lib/apps/lxd-updater.ts`, `control-panel/src/lib/market/updater.ts` — Applied the same asset URL resolution to native app update paths.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to 0.4.13.24.
+
+### Test Results
+- CP build: `pnpm -C control-panel build` passed for 0.4.13.24.
+- Pending after release: deploy and clean Wiki install proof.
+
+### Notes for Iris
+- CP-only follow-up to 0.4.13.23. That release fixed release discovery, but Forgejo's release-list `browser_download_url` redirected to HTML on this instance; the asset UUID `/attachments/*` URL returns the actual tarball.
+
 ## v0.4.13.23 (CP) — artem — 2026-06-06
 **Branch:** artem
 **VM:** potempc

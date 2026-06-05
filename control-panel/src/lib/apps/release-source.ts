@@ -41,3 +41,21 @@ export function buildReleasesAPIURL(source: ReleaseSource, repo: string): string
   const apiPath = source.api_path || '/api/v1';
   return `${source.base_url}${apiPath}/repos/${source.organization}/${repo}/releases?limit=50`;
 }
+
+export interface ReleaseAsset {
+  name: string;
+  browser_download_url?: string;
+  uuid?: string;
+}
+
+export function getReleaseAssetDownloadURL(source: ReleaseSource, asset: ReleaseAsset): string | null {
+  if (
+    source.provider !== 'github' &&
+    source.base_url !== 'https://github.com' &&
+    asset.uuid
+  ) {
+    return `${source.base_url}/attachments/${asset.uuid}`;
+  }
+
+  return asset.browser_download_url || null;
+}
