@@ -1,3 +1,21 @@
+## v0.4.13.5 (CP) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Finish live route and Market icon verification fixes for CP-owned Settings/Market
+
+### Changes
+- `control-panel/src/app/settings/(shell)/profile/page.tsx` — Added an intentional `/settings/profile` alias redirect to the CP-owned profile settings root so route crawls and old links do not 404.
+- `control-panel/src/app/api/market/image/route.ts` — Added stable-branch fallback and SVG placeholder response for Market image proxy failures so missing agent-branch assets do not render broken images.
+- `control-panel/package.json` — Bumped CP to `0.4.13.5` before building the release artifact.
+- `README.md` — Updated the current Control Panel version table.
+
+### Test Results
+- Pending: CP build, release, deploy, and live route/image recheck.
+
+### Notes for Iris
+- CP-only release. Spine remains `0.4.2.1`; UI remains `0.4.3.1`.
+
 ## v0.4.13.4 (CP) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc
