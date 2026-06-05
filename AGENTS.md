@@ -1,3 +1,20 @@
+## v0.4.13.22 (CP) — artem — 2026-06-06
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fetch AppMarket and app manifests from the configured Forgejo release source
+
+### Changes
+- `control-panel/src/lib/market/catalog.ts` — Replaced hardcoded GitHub raw manifest URLs with release-source-aware raw fetching. Forgejo/Gitea sources now use `/api/v1/repos/{org}/{repo}/raw/{path}?ref={branch}` for AppMarket and app repo manifests.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to 0.4.13.22.
+
+### Test Results
+- CP build: `pnpm -C control-panel build` passed for 0.4.13.22.
+- Pending in this iteration: release, deploy, and clean native app install proof.
+
+### Notes for Iris
+- This is required for branch-local AppMarket/native manifest changes to be visible without pushing to GitHub.
+
 ## v0.4.13.21 (CP) — artem — 2026-06-06
 **Branch:** artem
 **VM:** potempc

@@ -12,6 +12,7 @@ import path from 'path';
 import { parseCatalog, parseManifest } from './parser';
 import type { AppManifest, Catalog, CatalogEntry, MarketApp } from './types';
 import { settingsService } from '@/lib/settings';
+import { getReleaseSource, type ReleaseSource } from '@/lib/apps/release-source';
 
 const CATALOG_CACHE_DIR = '/var/lib/youeye';
 const CATALOG_CACHE_PATH = path.join(CATALOG_CACHE_DIR, 'catalog-cache.json');
@@ -19,6 +20,7 @@ const CATALOG_CACHE_PATH = path.join(CATALOG_CACHE_DIR, 'catalog-cache.json');
 const GITHUB_RAW = 'https://raw.githubusercontent.com';
 const REPO_OWNER = 'YouEye-Platform';
 const REPO_NAME = 'Market';
+const FORGEJO_MARKET_REPO = 'YE-AppMarket';
 const DEFAULT_BRANCH = 'main';
 
 // ─── Branch Resolution ────────────────────────────────────
@@ -34,17 +36,33 @@ export async function getEffectiveBranch(): Promise<string> {
 
 // ─── File Fetching ────────────────────────────────────────
 
-function rawUrl(filePath: string, branch: string): string {
-  return `${GITHUB_RAW}/${REPO_OWNER}/${REPO_NAME}/${branch}/${filePath}`;
+function isGitHubSource(source: ReleaseSource): boolean {
+  return source.provider === 'github' || source.base_url === 'https://github.com';
+}
+
+function rawUrl(source: ReleaseSource, owner: string, repo: string, filePath: string, branch: string): string {
+  if (isGitHubSource(source)) {
+    return `${GITHUB_RAW}/${owner}/${repo}/${branch}/${filePath}`;
+  }
+
+  const apiPath = source.api_path || '/api/v1';
+  return `${source.base_url}${apiPath}/repos/${owner}/${repo}/raw/${filePath}?ref=${encodeURIComponent(branch)}`;
+}
+
+function marketRepoName(source: ReleaseSource): string {
+  return isGitHubSource(source) ? REPO_NAME : FORGEJO_MARKET_REPO;
 }
 
 export async function fetchFile(filePath: string, branch?: string): Promise<string> {
+  const source = await getReleaseSource();
+  const owner = source.organization || REPO_OWNER;
+  const repo = marketRepoName(source);
   const effectiveBranch = branch || DEFAULT_BRANCH;
-  const url = rawUrl(filePath, effectiveBranch);
+  const url = rawUrl(source, owner, repo, filePath, effectiveBranch);
   const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
 
   if (!res.ok && effectiveBranch !== DEFAULT_BRANCH) {
-    const fallbackUrl = rawUrl(filePath, DEFAULT_BRANCH);
+    const fallbackUrl = rawUrl(source, owner, repo, filePath, DEFAULT_BRANCH);
     const fallbackRes = await fetch(fallbackUrl, { signal: AbortSignal.timeout(15_000) });
     if (!fallbackRes.ok) throw new Error(`Failed to fetch ${filePath}: ${fallbackRes.status}`);
     return fallbackRes.text();
@@ -55,11 +73,12 @@ export async function fetchFile(filePath: string, branch?: string): Promise<stri
 }
 
 export async function fetchRepoFile(owner: string, repo: string, filePath: string, branch: string): Promise<string> {
-  const url = `${GITHUB_RAW}/${owner}/${repo}/${branch}/${filePath}`;
+  const source = await getReleaseSource();
+  const url = rawUrl(source, owner, repo, filePath, branch);
   const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
 
   if (!res.ok && branch !== DEFAULT_BRANCH) {
-    const fallbackUrl = `${GITHUB_RAW}/${owner}/${repo}/${DEFAULT_BRANCH}/${filePath}`;
+    const fallbackUrl = rawUrl(source, owner, repo, filePath, DEFAULT_BRANCH);
     const fallbackRes = await fetch(fallbackUrl, { signal: AbortSignal.timeout(15_000) });
     if (!fallbackRes.ok) throw new Error(`Failed to fetch ${owner}/${repo}/${filePath}: ${fallbackRes.status}`);
     return fallbackRes.text();
@@ -136,7 +155,7 @@ export async function fetchManifest(appId: string): Promise<AppManifest> {
     throw new Error(`Catalog entry for "${appId}" has neither repo nor file`);
   }
 
-  resolveManifestPaths(manifest, resolveOwner, resolveRepo, branch);
+  await resolveManifestPaths(manifest, resolveOwner, resolveRepo, branch);
   manifestCache.set(appId, { manifest, fetchedAt: Date.now() });
   return manifest;
 }
@@ -168,7 +187,7 @@ export async function fetchManifestFromRepo(
   const effectiveBranch = branch || await getEffectiveBranch();
   const yamlText = await fetchRepoFile(owner, repo, manifestFile, effectiveBranch);
   const manifest = parseManifest(yamlText);
-  resolveManifestPaths(manifest, owner, repo, effectiveBranch);
+  await resolveManifestPaths(manifest, owner, repo, effectiveBranch);
   return manifest;
 }
 
@@ -179,11 +198,16 @@ function proxyImageUrl(url: string): string {
   return `/api/market/image?url=${encodeURIComponent(url)}`;
 }
 
-function resolveManifestPaths(manifest: AppManifest, owner: string, repo: string, branch: string): void {
-  const baseUrl = `${GITHUB_RAW}/${owner}/${repo}/${branch}`;
+async function resolveManifestPaths(manifest: AppManifest, owner: string, repo: string, branch: string): Promise<void> {
+  const source = await getReleaseSource();
+  const baseUrl = isGitHubSource(source)
+    ? `${GITHUB_RAW}/${owner}/${repo}/${branch}`
+    : `${source.base_url}${source.api_path || '/api/v1'}/repos/${owner}/${repo}/raw`;
 
   if (manifest.metadata.iconUrl && !manifest.metadata.iconUrl.startsWith('http')) {
-    manifest.metadata.iconUrl = `${baseUrl}/${manifest.metadata.iconUrl}`;
+    manifest.metadata.iconUrl = isGitHubSource(source)
+      ? `${baseUrl}/${manifest.metadata.iconUrl}`
+      : `${baseUrl}/${manifest.metadata.iconUrl}?ref=${encodeURIComponent(branch)}`;
   }
   if (manifest.metadata.iconUrl) {
     manifest.metadata.iconUrl = proxyImageUrl(manifest.metadata.iconUrl);
@@ -192,7 +216,9 @@ function resolveManifestPaths(manifest: AppManifest, owner: string, repo: string
   if (manifest.detail?.screenshots) {
     for (const screenshot of manifest.detail.screenshots) {
       if (screenshot.path && !screenshot.path.startsWith('http')) {
-        screenshot.path = `${baseUrl}/${screenshot.path}`;
+        screenshot.path = isGitHubSource(source)
+          ? `${baseUrl}/${screenshot.path}`
+          : `${baseUrl}/${screenshot.path}?ref=${encodeURIComponent(branch)}`;
       }
       if (screenshot.path) {
         screenshot.path = proxyImageUrl(screenshot.path);
