@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"strings"
 	"sync"
@@ -291,9 +292,18 @@ func (s *Server) handleUpdatesCheck(w http.ResponseWriter, r *http.Request) {
 	wg.Add(5)
 	go func() { defer wg.Done(); controlVer = s.getControlVersion() }()
 	go func() { defer wg.Done(); uiVer = s.getUIVersion() }()
-	go func() { defer wg.Done(); spineLatestRel = s.getLatestRelease(s.cfg.Releases.Repositories.Spine, s.cfg.Releases.Repositories.SpineTagPrefix) }()
-	go func() { defer wg.Done(); controlLatestRel = s.getLatestRelease(s.cfg.Releases.Repositories.ControlPanel, s.cfg.Releases.Repositories.ControlPanelTagPrefix) }()
-	go func() { defer wg.Done(); uiLatestRel = s.getLatestRelease(s.cfg.Releases.Repositories.UI, s.cfg.Releases.Repositories.UITagPrefix) }()
+	go func() {
+		defer wg.Done()
+		spineLatestRel = s.getLatestRelease(s.cfg.Releases.Repositories.Spine, s.cfg.Releases.Repositories.SpineTagPrefix)
+	}()
+	go func() {
+		defer wg.Done()
+		controlLatestRel = s.getLatestRelease(s.cfg.Releases.Repositories.ControlPanel, s.cfg.Releases.Repositories.ControlPanelTagPrefix)
+	}()
+	go func() {
+		defer wg.Done()
+		uiLatestRel = s.getLatestRelease(s.cfg.Releases.Repositories.UI, s.cfg.Releases.Repositories.UITagPrefix)
+	}()
 	wg.Wait()
 
 	updates := map[string]interface{}{
@@ -407,7 +417,6 @@ func (s *Server) handleUpdatesCheck(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, updates)
 }
 
-
 // getAppContainerStatus returns the status of an Incus container.
 func getAppContainerStatus(containerName string) string {
 	out, err := exec.Command("incus", "list", containerName, "--format", "csv", "-c", "s").Output()
@@ -454,7 +463,7 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 
 	// Authenticate using PAM
 	authenticated := verifyPAM(req.Username, req.Password)
-	
+
 	// Get user groups if authenticated
 	var groups []string
 	if authenticated {
@@ -1042,7 +1051,6 @@ func (s *Server) getControlVersion() string {
 	return "unknown"
 }
 
-
 // handlePiholeCredentials handles GET/POST for Pi-Hole web interface credentials.
 // GET: reads the password from the file saved during deployment.
 // POST: updates the stored password file (called by Control Panel after pihole setpassword).
@@ -1126,7 +1134,6 @@ func (s *Server) migratePiholePassword(passwordFile string) string {
 	}
 	return password
 }
-
 
 // handleControlSSO manages SSO environment variables for the Control Panel container.
 // GET: Check if SSO is configured
@@ -1705,13 +1712,30 @@ type YouEyeConfig struct {
 	SetupCompleted bool              `yaml:"setup_completed" json:"setup_completed"`
 	ReleaseBranch  string            `yaml:"release_branch,omitempty" json:"release_branch"`
 	Language       string            `yaml:"language,omitempty" json:"language"`
+	ReleaseSource  *ReleaseSource    `yaml:"-" json:"release_source,omitempty"`
 	// Extra holds arbitrary key-value pairs that the Control Panel needs
 	// to persist (e.g. tls_acme_account_key, tls_cert_pem). Spine doesn't
 	// interpret these — it just stores and returns them.
-	Extra          map[string]string `yaml:"extra,omitempty" json:"extra,omitempty"`
+	Extra map[string]string `yaml:"extra,omitempty" json:"extra,omitempty"`
+}
+
+type ReleaseSource struct {
+	Provider     string `json:"provider"`
+	BaseURL      string `json:"base_url"`
+	APIPath      string `json:"api_path"`
+	Organization string `json:"organization"`
 }
 
 var youeyeConfigPath = "/var/lib/youeye/config/youeye.yaml"
+
+func (s *Server) releaseSource() *ReleaseSource {
+	return &ReleaseSource{
+		Provider:     s.cfg.Releases.Provider,
+		BaseURL:      s.cfg.Releases.BaseURL,
+		APIPath:      s.cfg.Releases.APIPath,
+		Organization: s.cfg.Releases.Organization,
+	}
+}
 
 // loadYouEyeConfig reads the youeye.yaml config file
 func loadYouEyeConfig() (*YouEyeConfig, error) {
@@ -1741,7 +1765,7 @@ func loadYouEyeConfig() (*YouEyeConfig, error) {
 
 // saveYouEyeConfig writes the youeye.yaml config file
 func saveYouEyeConfig(cfg *YouEyeConfig) error {
-	if err := os.MkdirAll("/var/lib/youeye/config", 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(youeyeConfigPath), 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -1767,6 +1791,7 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		cfg.ReleaseSource = s.releaseSource()
 		jsonResponse(w, cfg)
 
 	case "PUT":
@@ -1789,6 +1814,7 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		newCfg.ReleaseSource = s.releaseSource()
 		jsonResponse(w, map[string]interface{}{
 			"status": "saved",
 			"config": newCfg,
@@ -1855,6 +1881,7 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		existing.ReleaseSource = s.releaseSource()
 		jsonResponse(w, map[string]interface{}{
 			"status": "updated",
 			"config": existing,
@@ -2399,8 +2426,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result["cpu"] = map[string]interface{}{
-		"cores":        cpuCores,
-		"model":        cpuModel,
+		"cores":         cpuCores,
+		"model":         cpuModel,
 		"usage_percent": fmt.Sprintf("%.1f", cpuUsage),
 	}
 

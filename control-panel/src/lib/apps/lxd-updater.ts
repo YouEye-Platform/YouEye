@@ -28,14 +28,11 @@ import type { UpdateEvent } from './updater';
 export type { UpdateEvent };
 import { settingsService } from '@/lib/settings';
 import { isNewer, sortVersionsDesc } from '@/lib/version';
+import { buildReleasesAPIURL, getReleaseSource } from './release-source';
 
 type EventEmitter = (event: UpdateEvent) => void;
 
 const SNAPSHOT_NAME = 'pre-update';
-const GITHUB_BASE = 'https://github.com';
-const GITHUB_API = 'https://api.github.com';
-const GITHUB_ORG = 'YouEye-Platform';
-
 interface ReleaseInfo {
   version: string;
   downloadURL: string;
@@ -68,11 +65,12 @@ function isMainTag(tag: string): boolean {
 }
 
 async function getLatestRelease(containerName: string, giteaRepo: string, branch?: string, tagPrefix?: string): Promise<ReleaseInfo | null> {
-  const releasesURL = `${GITHUB_API}/repos/${GITHUB_ORG}/${giteaRepo}/releases?per_page=50`;
+  const releaseSource = await getReleaseSource();
+  const releasesURL = buildReleasesAPIURL(releaseSource, giteaRepo);
 
   const result = await execShell(
     containerName,
-    `curl -sSL '${releasesURL}'`,
+    `curl -sSL -H 'User-Agent: youeye-control' '${releasesURL}'`,
     { timeout: 30_000 }
   );
 

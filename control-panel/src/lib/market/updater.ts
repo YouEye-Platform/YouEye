@@ -44,6 +44,7 @@ import { getOrCreateSecret } from '../infrastructure/secrets';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
 import { settingsService } from '@/lib/settings';
 import { isNewer, compareVersions, sortVersionsDesc } from '@/lib/version';
+import { buildReleasesAPIURL, getReleaseSource } from '@/lib/apps/release-source';
 import type {
   AppManifest,
   InstallEventCallback,
@@ -197,9 +198,6 @@ async function executeMigrationStep(
 
 // ─── Gitea Release Helpers (for LXD tarball updates) ─────
 
-const GITHUB_API = 'https://api.github.com';
-const GITHUB_ORG = 'YouEye-Platform';
-
 interface ReleaseInfo {
   version: string;
   downloadURL: string;
@@ -228,12 +226,13 @@ async function getLatestGiteaRelease(
   branch?: string,
   tagPrefix?: string
 ): Promise<ReleaseInfo | null> {
-  const releasesURL = `${GITHUB_API}/repos/${GITHUB_ORG}/${giteaRepo}/releases?per_page=50`;
+  const releaseSource = await getReleaseSource();
+  const releasesURL = buildReleasesAPIURL(releaseSource, giteaRepo);
 
   // Fetch releases from inside the container (has internet access)
   const result = await execShell(
     containerName,
-    `curl -sSL '${releasesURL}'`,
+    `curl -sSL -H 'User-Agent: youeye-control' '${releasesURL}'`,
     { timeout: 30_000 }
   );
 

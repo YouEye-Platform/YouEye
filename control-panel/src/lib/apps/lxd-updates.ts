@@ -13,9 +13,8 @@ import { execShell } from '@/lib/incus/server';
 import { settingsService } from '@/lib/settings';
 import { isNewer, sortVersionsDesc } from '@/lib/version';
 import { APP_DEFINITIONS, type AppDefinition } from './definitions';
+import { buildReleasesAPIURL, getReleaseSource } from './release-source';
 
-const GITHUB_API = 'https://api.github.com';
-const GITHUB_ORG = 'YouEye-Platform';
 const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours (must exceed the 3-hour background check interval)
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -123,7 +122,8 @@ export async function getLxdAppLatestVersion(
   releaseBranch?: string,
   tagPrefix?: string
 ): Promise<string | undefined> {
-  const releasesURL = `${GITHUB_API}/repos/${GITHUB_ORG}/${giteaRepo}/releases?per_page=50`;
+  const releaseSource = await getReleaseSource();
+  const releasesURL = buildReleasesAPIURL(releaseSource, giteaRepo);
 
   let releasesJson: string | undefined;
 

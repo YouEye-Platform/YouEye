@@ -1,3 +1,27 @@
+## v0.4.2.1 (Spine) + v0.4.13.2 (CP) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix CP LXD updates to use configured Forgejo release source
+
+### Changes
+- `spine/internal/api/server.go` — Exposes configured release provider/base URL/API path/organization on `/api/config`.
+- `spine/internal/cmd/root.go` — Bumped Spine branch release version.
+- `control-panel/src/lib/apps/release-source.ts` — Added shared CP helper for building release API URLs from Spine release metadata.
+- `control-panel/src/lib/apps/lxd-updater.ts` and `control-panel/src/lib/apps/lxd-updates.ts` — Replaced GitHub-only release discovery with configured release-source discovery.
+- `control-panel/src/lib/market/updater.ts` — Uses the same configured release source for LXD market app updates.
+- `control-panel/package.json` and `README.md` — Bumped CP release version and current-version table.
+
+### Test Results
+- CP build: `pnpm build` passed for `0.4.13.2`.
+- Spine focused tests: `go test ./internal/api ./internal/config ./internal/version ./internal/update` passed.
+- Spine binary: built with ldflags and reported `0.4.2.1`.
+- Full `go test ./...` still has pre-existing `internal/releases` expectation failures around old default release URLs; the modified config API test now passes.
+
+### Notes for Iris
+- This fixes the live issue where UI update via CP reported `0.4.2.1` as up to date because CP still queried GitHub instead of `git.potemk.in`.
+- Deploy Spine before retrying CP-driven UI updates so CP can read release metadata from Spine.
+
 ## v0.4.13.1 (CP) + v0.4.3.1 (UI) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc
