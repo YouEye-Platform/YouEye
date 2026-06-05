@@ -21,7 +21,7 @@ export async function GET() {
     return NextResponse.json({
       site_name: 'YouEye',
       domain: '',
-      subdomains: { control: 'control', auth: 'auth', dns: 'dns' },
+      subdomains: { control: 'control', auth: 'auth', identity: 'id', dns: 'dns' },
       setup_completed: false,
     });
   }

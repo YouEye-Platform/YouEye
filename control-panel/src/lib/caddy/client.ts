@@ -1178,6 +1178,11 @@ export async function ensureHeaderStrippingRoute(): Promise<void> {
         delete: [
           'X-Youeye-App',
           'X-Youeye-User',
+          'X-Youeye-Username',
+          'X-Youeye-Groups',
+          'X-Youeye-Email',
+          'X-Youeye-Name',
+          'X-Youeye-Uid',
           'X-App-Slug',
           'X-Ui-Bridge-Token',
           'X-Authentik-Username',
@@ -1423,6 +1428,49 @@ export async function ensureControlSettingsRoute(
   };
 
   config.apps.http.servers[serverName].routes = [settingsRoute, marketRoute, supportRoute, ...routes];
+  await setConfig(config);
+}
+
+/**
+ * Ensure the YouEye ID hostname routes to the identity runtime without removing
+ * other routes that happen to point at the same container.
+ */
+export async function ensureIdentityRoute(
+  hostname: string,
+  containerName: string = 'youeye-control',
+  port: number = 3000
+): Promise<void> {
+  const config = await getConfig();
+
+  if (!config.apps) config.apps = {};
+  if (!config.apps.http) config.apps.http = {};
+  if (!config.apps.http.servers) config.apps.http.servers = {};
+
+  const serverName = Object.keys(config.apps.http.servers)[0] || 'srv0';
+  if (!config.apps.http.servers[serverName]) {
+    config.apps.http.servers[serverName] = {
+      listen: [':443'],
+      routes: [],
+      tls_connection_policies: [{}],
+    };
+  }
+
+  ensureHTTPSConfig(config.apps.http.servers[serverName]);
+  ensureTLSSubject(config, hostname);
+
+  const routes = (config.apps.http.servers[serverName].routes || [])
+    .filter(r => r['@id'] !== 'youeye-id-route');
+
+  const identityRoute: CaddyRoute = {
+    '@id': 'youeye-id-route',
+    match: [{ host: [hostname] }],
+    handle: [{
+      handler: 'reverse_proxy',
+      upstreams: [{ dial: `${normalizeUpstream(containerName)}:${port}` }],
+    }],
+  };
+
+  config.apps.http.servers[serverName].routes = sortRoutes([identityRoute, ...routes]);
   await setConfig(config);
 }
 

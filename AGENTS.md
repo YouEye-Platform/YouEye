@@ -1,3 +1,25 @@
+## v0.4.13.13 (CP) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add staged YouEye ID pilot beside Authentik
+
+### Changes
+- `control-panel/src/lib/identity/*` — Added database-backed YouEye ID users, OAuth clients, authorization codes, sessions, and signed token helpers.
+- `control-panel/src/app/application/o/*`, `control-panel/src/app/oauth/*`, `control-panel/src/app/identity/login/route.ts`, `control-panel/src/app/forward-auth/caddy/route.ts`, `control-panel/src/app/outpost.goauthentik.io/auth/caddy/route.ts` — Added Authentik-compatible and native YouEye ID OAuth/OIDC and forward-auth pilot endpoints.
+- `control-panel/src/app/api/identity/*` — Added admin-only pilot seeding and explicit identity-route activation endpoints.
+- `control-panel/src/app/setup/page.tsx`, `control-panel/src/components/setup/SetupServerName.tsx`, `control-panel/src/app/api/setup/config/route.ts`, `control-panel/src/app/api/setup/run/route.ts` — Split Authentik `auth` subdomain from YouEye ID `identity` subdomain and require explicit identity config during provisioning.
+- `control-panel/src/lib/caddy/client.ts` — Added `ensureIdentityRoute()` and stripped YouEye identity headers at the Caddy edge.
+- `control-panel/package.json`, `README.md` — Bumped CP branch release version and current-version table.
+
+### Test Results
+- CP build: `pnpm -C control-panel build` passed before version bump; final release build pending in this session.
+- Lint: `pnpm -C control-panel lint` currently fails on broad pre-existing project lint errors; this change cleaned its only new unused-variable warning.
+
+### Notes for Iris
+- This is the first coexistence slice only. Authentik remains at `auth.<domain>`; YouEye ID is introduced at configured `subdomains.identity` (`id.<domain>` by default).
+- The initial runtime is CP-owned and CP-hosted behind a distinct `id.<domain>` route for pilot testing. The service boundary still needs to become a separate process/container before full Authentik removal.
+
 ## v0.4.13.12 (CP) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc

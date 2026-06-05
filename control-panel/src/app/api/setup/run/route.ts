@@ -266,6 +266,10 @@ export async function POST(request: NextRequest) {
           }
 
           if (!hasError || retryStep === 'caddy') {
+            if (!subs.identity) {
+              throw new Error('YouEye ID subdomain is missing. Set subdomains.identity before provisioning.');
+            }
+
             // Route mappings — setContainerRoute is already idempotent (Caddy overwrites existing routes)
             const routeMap: Array<{ sub: string; container: string; port: number }> = [
               { sub: subs.control || 'control', container: 'youeye-control', port: 3000 },
@@ -288,6 +292,13 @@ export async function POST(request: NextRequest) {
               } catch (err) {
                 routeErrors.push(`${route.container}: ${err instanceof Error ? err.message : String(err)}`);
               }
+            }
+
+            try {
+              await caddy.ensureIdentityRoute(`${subs.identity}.${domain}`, 'youeye-control', 3000);
+            } catch (err) {
+              console.error('Failed to create YouEye ID route:', err);
+              routeErrors.push(`youeye-id: ${err instanceof Error ? err.message : String(err)}`);
             }
 
             // Root domain UI route

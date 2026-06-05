@@ -506,7 +506,8 @@ export default function SetupServerName({
                 <Label className="text-xs font-medium">{t('subdomains')}</Label>
                 {[
                   { key: 'control', label: t('controlPanel'), placeholder: 'control' },
-                  { key: 'auth', label: t('identityProvider'), placeholder: 'id' },
+                  { key: 'auth', label: 'Authentik', placeholder: 'auth' },
+                  { key: 'identity', label: t('identityProvider'), placeholder: 'id' },
                   { key: 'dns', label: t('dnsPanel'), placeholder: 'dns' },
                 ].map(({ key, label, placeholder }) => (
                   <div key={key} className="flex items-center gap-2">
