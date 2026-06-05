@@ -72,9 +72,19 @@ function kebabToPascal(value: string) {
 
 function getLucideIcon(name: string): ComponentType<{ className?: string; style?: CSSProperties }> | null {
   const direct = (LucideIcons as Record<string, unknown>)[name];
-  if (typeof direct === "function") return direct as ComponentType<{ className?: string; style?: CSSProperties }>;
+  if (
+    typeof direct === "function" ||
+    (typeof direct === "object" && direct !== null && "$$typeof" in direct)
+  ) {
+    return direct as ComponentType<{ className?: string; style?: CSSProperties }>;
+  }
   const pascal = (LucideIcons as Record<string, unknown>)[kebabToPascal(name)];
-  return typeof pascal === "function" ? pascal as ComponentType<{ className?: string; style?: CSSProperties }> : null;
+  return (
+    typeof pascal === "function" ||
+    (typeof pascal === "object" && pascal !== null && "$$typeof" in pascal)
+  )
+    ? pascal as ComponentType<{ className?: string; style?: CSSProperties }>
+    : null;
 }
 
 function AppIcon({ app }: { app: DrawerApp | UnifiedApp }) {

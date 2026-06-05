@@ -1,3 +1,19 @@
+## v0.4.13.11 (CP) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix Lucide icon rendering in CP Settings Apps tab
+
+### Changes
+- `control-panel/src/components/settings-shell/apps-client.tsx` — Accepted React/Lucide component objects as well as function exports when resolving symbolic app icons, restoring non-letter icons for apps and system components.
+- `control-panel/package.json`, `README.md` — Bumped CP branch release version and current-version table.
+
+### Test Results
+- Live verification of CP `0.4.13.10` showed Apps rows still falling back to letters, which this release fixes.
+
+### Notes for Iris
+- CP-only follow-up to `0.4.13.10`; UI remains `0.4.3.4`.
+
 ## v0.4.13.10 (CP) + v0.4.3.4 (UI) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc
