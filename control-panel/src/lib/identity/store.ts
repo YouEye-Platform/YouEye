@@ -54,7 +54,7 @@ async function psql(command: string): Promise<string> {
 }
 
 async function queryRows<T>(selectSql: string): Promise<T[]> {
-  const out = await psql(`SELECT COALESCE(json_agg(row_to_json(t)), '[]'::json)::text FROM (${selectSql}) t`);
+  const out = await psql(`WITH t AS (${selectSql}) SELECT COALESCE(json_agg(row_to_json(t)), '[]'::json)::text FROM t`);
   const line = out.split('\n').filter(Boolean).pop() || '[]';
   return JSON.parse(line) as T[];
 }

@@ -1,3 +1,21 @@
+## v0.4.13.15 (CP) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix YouEye ID writable SQL JSON wrapper
+
+### Changes
+- `control-panel/src/lib/identity/store.ts` — Switched identity row JSON wrapping to a writable CTE so `INSERT/UPDATE ... RETURNING` statements can be parsed the same way as `SELECT` statements.
+- `control-panel/package.json`, `README.md` — Bumped CP branch release version and current-version table.
+
+### Test Results
+- Live CP `0.4.13.14` exposed `https://id.potato.app/identity/login` and OIDC discovery correctly.
+- Pilot seeding returned HTTP 500 because PostgreSQL rejected the old `FROM (INSERT ... RETURNING)` wrapper.
+- CP release build pending in this session.
+
+### Notes for Iris
+- CP-only follow-up to `0.4.13.14`.
+
 ## v0.4.13.14 (CP) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc
