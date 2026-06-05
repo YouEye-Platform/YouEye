@@ -36,6 +36,45 @@ func getServiceWorkingDir(containerName, serviceName, fallback string) string {
 	return fallback
 }
 
+func ensureControlIdentityService(containerName, appDir string) error {
+	script := fmt.Sprintf(`set -e
+if [ ! -f /etc/systemd/system/youeye-id.service ]; then
+  JWT="$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
+  HOST_IP="$(hostname -I | awk '{print $1}')"
+  cat > /etc/systemd/system/youeye-id.service <<EOF
+[Unit]
+Description=YouEye ID
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=%s
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=YOUEYE_ID_SERVICE=true
+Environment=JWT_SECRET=${JWT}
+Environment=HOST_IP=${HOST_IP}
+Environment=SECURE_COOKIES=true
+ExecStart=/usr/bin/node %s/server.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+fi
+systemctl daemon-reload
+systemctl enable youeye-id
+systemctl restart youeye-id
+`, appDir, appDir)
+	out, err := exec.Command("incus", "exec", containerName, "--", "bash", "-c", script).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 var updateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update components",
@@ -328,7 +367,7 @@ func copyFile(src, dst string) error {
 
 func updateIncus() error {
 	fmt.Println("=== Updating Incus ===")
-	
+
 	// Get current version
 	out, _ := exec.Command("incus", "version").Output()
 	fmt.Printf("Current version:\n%s\n", string(out))
@@ -358,7 +397,7 @@ func updateSystem() error {
 	fmt.Println("⚠️  WARNING: This will update all system packages.")
 	fmt.Println("⚠️  Kernel updates may require a reboot.")
 	fmt.Println("")
-	
+
 	// Show upgradable packages
 	fmt.Println("Checking for updates...")
 	util.RunCmd("apt-get", "update")
@@ -390,7 +429,7 @@ func updateSystem() error {
 	}
 
 	fmt.Println("✓ System updated")
-	
+
 	// Check if reboot required
 	if _, err := os.Stat("/var/run/reboot-required"); err == nil {
 		fmt.Println("")
@@ -441,6 +480,9 @@ func updateControl() error {
 	fmt.Printf("Latest version: %s\n", latestVersion)
 
 	if !version.IsNewer(latestVersion, currentVersion) {
+		if err := ensureControlIdentityService(containerName, appDir); err != nil {
+			return fmt.Errorf("Control Panel is up to date, but YouEye ID service repair failed: %w", err)
+		}
 		fmt.Println("✓ Control Panel is already up to date")
 		return nil
 	}
@@ -506,6 +548,13 @@ func updateControl() error {
 	// Clean up
 	util.RunIncusExec(containerName, "rm", "/tmp/update.tar")
 	os.Remove(tmpFile)
+
+	if err := ensureControlIdentityService(containerName, appDir); err != nil {
+		fmt.Println("❌ Failed to ensure YouEye ID service, rolling back...")
+		util.RunCmd("incus", "snapshot", "restore", containerName, snapshotName)
+		util.RunIncusExec(containerName, "systemctl", "start", "youeye-control")
+		return fmt.Errorf("failed to ensure YouEye ID service: %w", err)
+	}
 
 	fmt.Println("Starting Control Panel...")
 	util.RunIncusExec(containerName, "systemctl", "start", "youeye-control")
@@ -641,5 +690,3 @@ func getControlPanelVersion() string {
 	}
 	return "unknown"
 }
-
-

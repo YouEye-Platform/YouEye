@@ -1,3 +1,20 @@
+## v0.4.2.4 (Spine) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add YouEye ID repair to the CLI update path
+
+### Changes
+- `spine/internal/cmd/update.go` — Added the checked `youeye-id.service` repair to the CLI `spine update control` path, including the up-to-date branch and the post-deploy branch.
+- `spine/internal/cmd/root.go`, `README.md` — Bumped Spine release version only.
+
+### Test Results
+- Live `spine update control` on `0.4.2.3` still short-circuited before the API repair and left `youeye-id.service` missing.
+- Spine release build/testing pending in this iteration.
+
+### Notes for Iris
+- Follow-up to `v0.4.2.3`; this fixes the operator-facing CLI path used on the live test host.
+
 ## v0.4.2.3 (Spine) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc
