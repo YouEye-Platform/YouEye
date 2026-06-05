@@ -11,6 +11,7 @@ import { incusRequest, execShell } from '../incus/server';
 import { applyStaticIP } from '../incus/static-ips';
 import type { LXDContainerSpec } from './types';
 import { containerExists } from './oci-deployer';
+import { buildReleasesAPIURL, type ReleaseSource } from '../apps/release-source';
 
 /**
  * Deploy an LXD container from a spec.
@@ -191,8 +192,18 @@ async function installNodeAndApp(
   });
   await execShell(cn, 'apt-get install -y nodejs', { timeout: 60_000 });
 
-  // Download and deploy app from GitHub release (branch-aware)
-  const releasesURL = `https://api.github.com/repos/${cfg.giteaOrg}/${cfg.giteaRepo}/releases?per_page=50`;
+  // Download and deploy app from the configured release source (branch-aware).
+  const releaseSource: ReleaseSource = {
+    provider: cfg.giteaBaseURL.includes('github.com') ? 'github' : 'gitea',
+    base_url: cfg.giteaBaseURL.replace(/\/$/, ''),
+    api_path: cfg.giteaBaseURL.includes('github.com') ? '' : '/api/v1',
+    organization: cfg.giteaOrg,
+  };
+  const releasesURL = buildReleasesAPIURL(releaseSource, cfg.giteaRepo);
+  const isGitHub = releaseSource.provider === 'github';
+  const readinessURL = isGitHub ? 'https://api.github.com/rate_limit' : `${releaseSource.base_url}${releaseSource.api_path}/version`;
+  const acceptHeader = isGitHub ? 'Accept: application/vnd.github+json' : 'Accept: application/json';
+  const apiLabel = isGitHub ? 'GitHub' : 'Forgejo/Gitea';
   await execShell(cn, `mkdir -p ${spec.appDir}`, { timeout: 10_000 });
 
   // Read the configured release branch from Spine config
@@ -211,10 +222,10 @@ async function installNodeAndApp(
   const downloadScript = `
     set -e
 
-    # Wait for DNS/network to be ready (GitHub API must resolve and respond)
+    # Wait for DNS/network to be ready (release API must resolve and respond)
     echo "Waiting for network readiness..."
     for i in 1 2 3 4 5 6 7 8 9 10; do
-      if curl -sSf -o /dev/null -w '' -H 'User-Agent: YouEye-Installer' 'https://api.github.com/rate_limit' 2>/dev/null; then
+      if curl -sSf -o /dev/null -w '' -H 'User-Agent: YouEye-Installer' '${readinessURL}' 2>/dev/null; then
         echo "Network ready (attempt \$i)"
         break
       fi
@@ -309,10 +320,10 @@ else:
 PYEOF
 
     fetch_release_url() {
-      HTTP_CODE=\$(curl -sSL -o /tmp/releases.json -w '%{http_code}' -H 'Accept: application/vnd.github+json' -H 'User-Agent: YouEye-Installer' '${releasesURL}')
+      HTTP_CODE=\$(curl -sSL -o /tmp/releases.json -w '%{http_code}' -H '${acceptHeader}' -H 'User-Agent: YouEye-Installer' '${releasesURL}')
 
       if [ "\$HTTP_CODE" != "200" ]; then
-        echo "GitHub API returned HTTP \$HTTP_CODE" >&2
+        echo "${apiLabel} API returned HTTP \$HTTP_CODE" >&2
         head -5 /tmp/releases.json >&2
         return 1
       fi

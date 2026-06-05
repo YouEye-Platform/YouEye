@@ -1,3 +1,20 @@
+## v0.4.13.23 (CP) — artem — 2026-06-06
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fetch native app install releases from the configured release source
+
+### Changes
+- `control-panel/src/lib/infrastructure/lxd-deployer.ts` — Switched clean LXD app installs from hardcoded GitHub release API calls to the configured release source, preserving GitHub support and enabling Forgejo-hosted native app releases.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to 0.4.13.23.
+
+### Test Results
+- CP build: `pnpm -C control-panel build` passed for 0.4.13.23.
+- Pending after release: deploy and clean Wiki install proof.
+
+### Notes for Iris
+- CP-only follow-up to 0.4.13.22; required because the catalog could see Forgejo AppMarket data but app install downloads still queried GitHub.
+
 ## v0.4.13.22 (CP) — artem — 2026-06-06
 **Branch:** artem
 **VM:** potempc
