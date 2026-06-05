@@ -1,3 +1,28 @@
+## v0.4.13.1 (CP) + v0.4.3.1 (UI) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Rebase root-domain settings work onto main and add CP-owned market
+
+### Changes
+- `control-panel/src/app/market/*` — Moved Market to first-class CP `/market` routes with a universal surface header.
+- `control-panel/src/components/control-surface/*` — Added shared header/shell for root-domain CP settings and market surfaces.
+- `control-panel/src/app/settings/(shell)/*` — Added missing settings routes, native CP page mappings, and redirects for legacy aliases.
+- `control-panel/src/app/settings/api/*` and `control-panel/src/app/market/api/*` — Added path-mounted branding and UI-settings aliases.
+- `control-panel/src/app/api/user/avatar/route.ts` — Made UI avatar mirror failures visible instead of silently accepting partial saves.
+- `control-panel/src/app/api/setup/control-routes/route.ts` — Added idempotent existing-install repair endpoint for `/settings` and `/market` Caddy routes.
+- `control-panel/src/lib/caddy/client.ts` — Ensured root-domain `/settings` and `/market` routes are installed before the root UI route.
+- `control-panel/package.json`, `ui/package.json`, `README.md` — Bumped CP/UI branch release versions and current-version table.
+
+### Test Results
+- CP build: `pnpm build` passed for `0.4.13.1`.
+- UI build: `pnpm build` passed for `0.4.3.1` using the live Postgres tunnel; existing schema notices and Edge Runtime warnings only.
+
+### Notes for Iris
+- This supersedes stale dev-based Artem releases `cp-artem-v0.4.12.4` and `ui-artem-v0.4.2.1`.
+- Existing installs should run `POST /api/setup/control-routes` after CP update to apply `/market` and refresh `/settings` route order.
+- Product settings/market paths are CP-owned; UI must not regain ownership or call CP directly.
+
 ## v0.4.12 (CP) + v0.4.2 (UI) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc

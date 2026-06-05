@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  ArrowLeft,
   ArrowLeftRight,
   Box,
   Clock,
@@ -43,8 +42,8 @@ const ADMIN_SECTIONS = [
   { id: "proxy", label: "Proxy", icon: ArrowLeftRight, href: "/settings/proxy" },
   { id: "tls", label: "TLS", icon: Lock, href: "/settings/tls" },
   { id: "backup", label: "Backup", icon: HardDrive, href: "/settings/backup" },
-  { id: "apps-list", label: "App Management", icon: PackageOpen, href: "/settings/apps-list" },
-  { id: "market", label: "App Market", icon: Store, href: "/settings/market" },
+  { id: "app-management", label: "App Management", icon: PackageOpen, href: "/settings/app-management" },
+  { id: "market", label: "App Market", icon: Store, href: "/market" },
 ];
 
 interface SettingsShellProps {
@@ -87,17 +86,7 @@ export function SettingsShell({ children, isAdmin, username }: SettingsShellProp
   return (
     <div className="mx-auto flex max-w-6xl gap-8 px-6 py-8">
       <nav className="w-52 shrink-0">
-        <div className="sticky top-8 space-y-1">
-          <Link
-            href="/"
-            className="mb-3 flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to Dashboard
-          </Link>
-
-          <div className="mb-3 border-t" />
-
+        <div className="sticky top-20 space-y-1">
           {USER_SECTIONS.map(renderItem)}
 
           {isAdmin && (

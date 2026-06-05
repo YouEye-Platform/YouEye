@@ -1332,12 +1332,12 @@ export async function setDomain(domain: string): Promise<void> {
 }
 
 /**
- * Ensure the root-domain /settings surface routes to Control Panel.
+ * Ensure root-domain Control Panel surfaces route to Control Panel.
  *
  * UI and CP are both Next.js apps on the same host. CP settings pages emit
  * root /_next asset requests and reuse CP API clients with root /api paths.
  * To avoid stealing UI assets/APIs, the support route only matches requests
- * whose Referer is the root-domain /settings surface.
+ * whose Referer is a root-domain Control Panel surface.
  */
 export async function ensureControlSettingsRoute(
   domain: string,
@@ -1364,11 +1364,24 @@ export async function ensureControlSettingsRoute(
 
   const upstreamDial = `${normalizeUpstream(containerName)}:${port}`;
   const routes = (config.apps.http.servers[serverName].routes || [])
-    .filter(r => r['@id'] !== 'control-settings-route' && r['@id'] !== 'control-settings-support-route');
+    .filter(r =>
+      r['@id'] !== 'control-settings-route' &&
+      r['@id'] !== 'control-market-route' &&
+      r['@id'] !== 'control-settings-support-route'
+    );
 
   const settingsRoute: CaddyRoute = {
     '@id': 'control-settings-route',
     match: [{ host: [domain], path: ['/settings', '/settings/*'] }],
+    handle: [{
+      handler: 'reverse_proxy',
+      upstreams: [{ dial: upstreamDial }],
+    }],
+  };
+
+  const marketRoute: CaddyRoute = {
+    '@id': 'control-market-route',
+    match: [{ host: [domain], path: ['/market', '/market/*'] }],
     handle: [{
       handler: 'reverse_proxy',
       upstreams: [{ dial: upstreamDial }],
@@ -1381,17 +1394,26 @@ export async function ensureControlSettingsRoute(
       host: [domain],
       path: [
         '/_next/*',
+        '/api/admin/*',
+        '/api/apps/*',
+        '/api/auth/session',
+        '/api/health/*',
+        '/api/market/*',
+        '/api/people/*',
+        '/api/people*',
+        '/api/setup/config',
         '/api/ui-bridge/*',
         '/api/ui/*',
         '/api/user/*',
         '/api/tls/*',
         '/api/branding/*',
         '/api/bridges*',
+        '/api/domain',
         '/api/internet-grants*',
         '/api/suggestions*',
       ],
       header: {
-        Referer: [`*://${domain}/settings*`],
+        Referer: [`*://${domain}/settings*`, `*://${domain}/market*`],
       },
     } as any],
     handle: [{
@@ -1400,7 +1422,7 @@ export async function ensureControlSettingsRoute(
     }],
   };
 
-  config.apps.http.servers[serverName].routes = [settingsRoute, supportRoute, ...routes];
+  config.apps.http.servers[serverName].routes = [settingsRoute, marketRoute, supportRoute, ...routes];
   await setConfig(config);
 }
 

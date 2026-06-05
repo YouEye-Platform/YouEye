@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
-import { TlsEmbedClient } from "@/app/embed/tls/client";
 import { PageHeader } from "@/components/settings-shell/page-header";
+import { TlsCard } from "@/components/settings/tls-card";
 import { getSession } from "@/lib/auth/session";
 
 export default async function TlsSettingsPage() {
@@ -10,7 +10,7 @@ export default async function TlsSettingsPage() {
   return (
     <>
       <PageHeader title="TLS" description="Review certificate status and HTTPS configuration." />
-      <TlsEmbedClient />
+      <TlsCard />
     </>
   );
 }

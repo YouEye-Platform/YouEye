@@ -1,5 +1,5 @@
-import { ProfileEmbedClient } from "@/app/embed/profile/client";
 import { PageHeader } from "@/components/settings-shell/page-header";
+import { ProfileIdentityClient } from "@/components/settings-shell/profile-identity-client";
 import { ProfileLocalClient } from "@/components/settings-shell/profile-local-client";
 import { getSession } from "@/lib/auth/session";
 
@@ -12,7 +12,7 @@ export default async function SettingsProfilePage() {
         title="Profile"
         description="Manage your account name and avatar."
       />
-      <ProfileEmbedClient
+      <ProfileIdentityClient
         username={session?.username ?? ""}
         isAdmin={session?.isAdmin ?? false}
       />

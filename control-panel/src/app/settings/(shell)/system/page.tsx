@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { SystemEmbedClient } from "@/app/embed/system/client";
+import HealthPage from "@/app/(dashboard)/health/page";
 import { PageHeader } from "@/components/settings-shell/page-header";
 import { getSession } from "@/lib/auth/session";
 
@@ -10,7 +10,7 @@ export default async function SystemSettingsPage() {
   return (
     <>
       <PageHeader title="System" description="Review server health and platform status." />
-      <SystemEmbedClient />
+      <HealthPage />
     </>
   );
 }

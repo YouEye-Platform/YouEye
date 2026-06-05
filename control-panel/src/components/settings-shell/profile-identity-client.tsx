@@ -1,11 +1,11 @@
 "use client";
 
 /**
- * Profile Embed Client
+ * Profile Identity Client
  *
  * Lets users edit their own first name, last name, and avatar.
  * Changes are saved to Authentik via CP backend routes.
- * Avatar updates are sent to the parent UI via postMessage.
+ * Avatar updates are pushed to UI storage by the CP backend.
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
@@ -88,7 +88,7 @@ function readAsDataUrl(blob: Blob): Promise<string> {
 
 // ─── Component ───────────────────────────────────────────
 
-interface ProfileEmbedClientProps {
+interface ProfileIdentityClientProps {
   username: string;
   isAdmin: boolean;
 }
@@ -100,7 +100,7 @@ interface ProfileData {
   avatarUrl?: string;
 }
 
-export function ProfileEmbedClient({ username, isAdmin }: ProfileEmbedClientProps) {
+export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClientProps) {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -136,30 +136,6 @@ export function ProfileEmbedClient({ username, isAdmin }: ProfileEmbedClientProp
     fetchProfile();
   }, [fetchProfile]);
 
-  // Report height to parent for auto-sizing
-  useEffect(() => {
-    const report = () => {
-      const h = document.body.scrollHeight;
-      window.parent.postMessage({ type: "youeye-embed-resize", height: h }, "*");
-    };
-    const observer = new ResizeObserver(report);
-    observer.observe(document.body);
-    window.parent.postMessage({ type: "youeye-embed-ready" }, "*");
-    return () => observer.disconnect();
-  }, []);
-
-  // Listen for avatar sync from parent UI
-  // If UI has an avatar locally but Authentik doesn't, use the UI's avatar
-  useEffect(() => {
-    const handleMessage = (e: MessageEvent) => {
-      if (e.data?.type === "youeye-embed-avatar" && e.data.avatarUrl && !avatarPreview) {
-        setAvatarPreview(e.data.avatarUrl);
-      }
-    };
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [avatarPreview]);
-
   // ─── Name Save ──────────────────────────────────────
 
   const handleSave = async () => {
@@ -183,12 +159,6 @@ export function ProfileEmbedClient({ username, isAdmin }: ProfileEmbedClientProp
       setProfile(updated);
       setSaved(true);
 
-      window.parent.postMessage({
-        type: "youeye-profile-updated",
-        firstName: updated.firstName,
-        lastName: updated.lastName,
-      }, "*");
-
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
@@ -204,7 +174,6 @@ export function ProfileEmbedClient({ username, isAdmin }: ProfileEmbedClientProp
     setAvatarError("");
 
     try {
-      // Read as data URL to send to parent
       const dataUrl = await readAsDataUrl(blob);
 
       // Upload to CP → Authentik
@@ -220,11 +189,6 @@ export function ProfileEmbedClient({ username, isAdmin }: ProfileEmbedClientProp
       setAvatarPreview(dataUrl);
       setShowPicker(false);
 
-      // Notify parent UI with the image data
-      window.parent.postMessage({
-        type: "youeye-avatar-updated",
-        dataUrl,
-      }, "*");
     } catch (err) {
       setAvatarError(err instanceof Error ? err.message : "Upload failed");
     } finally {
@@ -256,7 +220,6 @@ export function ProfileEmbedClient({ username, isAdmin }: ProfileEmbedClientProp
       }
 
       setAvatarPreview(null);
-      window.parent.postMessage({ type: "youeye-avatar-updated", dataUrl: null }, "*");
     } catch (err) {
       setAvatarError(err instanceof Error ? err.message : "Remove failed");
     } finally {

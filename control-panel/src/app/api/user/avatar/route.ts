@@ -21,7 +21,7 @@ const BRIDGE_TOKEN_PATH = "/etc/youeye/ui-bridge-token";
 
 /**
  * Push avatar data to YE-UI via the bridge so it persists in the UI database.
- * Non-fatal: if the bridge push fails, the avatar is still saved in Authentik.
+ * Avatar changes are not considered complete unless the UI mirror succeeds.
  */
 async function pushAvatarToUI(
   username: string,
@@ -30,7 +30,9 @@ async function pushAvatarToUI(
   try {
     const token = (await readFile(BRIDGE_TOKEN_PATH, "utf-8")).trim();
     const uiIP = await getContainerIP("youeye-ui");
-    if (!uiIP || !token) return;
+    if (!uiIP || !token) {
+      throw new Error("UI bridge unavailable");
+    }
 
     const baseUrl = `http://${uiIP}:3000`;
     const method = dataUrl ? "POST" : "DELETE";
@@ -50,10 +52,10 @@ async function pushAvatarToUI(
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      console.warn(`[Avatar] Bridge push failed: ${res.status} ${text}`);
+      throw new Error(`UI avatar sync failed: ${res.status} ${text}`);
     }
   } catch (err) {
-    console.warn("[Avatar] Bridge push failed (non-fatal):", err instanceof Error ? err.message : err);
+    throw new Error(err instanceof Error ? err.message : "UI avatar sync failed");
   }
 }
 
@@ -147,7 +149,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Push to UI via bridge (non-fatal — avatar is already in Authentik)
+    // Push to UI via bridge so the dashboard avatar persists after navigation.
     await pushAvatarToUI(session.username, dataUrl);
 
     return NextResponse.json({ success: true });

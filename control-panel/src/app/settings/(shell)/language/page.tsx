@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { LanguageEmbedClient } from "@/app/embed/language/client";
+import { LanguageCard } from "@/components/settings/language-card";
 import { LanguageClient } from "@/components/settings-shell/language-client";
 import { PageHeader } from "@/components/settings-shell/page-header";
 import { getSession } from "@/lib/auth/session";
@@ -17,7 +17,7 @@ export default async function LanguageSettingsPage() {
       {session.isAdmin && (
         <section className="border-t pt-8">
           <PageHeader title="System Language" description="Set the default language for the instance." />
-          <LanguageEmbedClient />
+          <LanguageCard />
         </section>
       )}
     </div>

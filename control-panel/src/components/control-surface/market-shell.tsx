@@ -1,22 +1,16 @@
 import { redirect } from "next/navigation";
 import { ControlHeader } from "@/components/control-surface/control-header";
 import { getSession } from "@/lib/auth/session";
-import { SettingsShell } from "@/components/settings-shell/settings-shell";
 
-export default async function SettingsLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export async function MarketShell({ children }: { children: React.ReactNode }) {
   const session = await getSession();
   if (!session) redirect("/settings/login");
+  if (!session.isAdmin) redirect("/settings");
 
   return (
     <div className="min-h-screen bg-background">
       <ControlHeader username={session.username} isAdmin={session.isAdmin} />
-      <SettingsShell isAdmin={session.isAdmin} username={session.username}>
-        {children}
-      </SettingsShell>
+      <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
     </div>
   );
 }

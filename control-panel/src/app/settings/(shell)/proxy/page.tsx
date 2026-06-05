@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { ProxyEmbedClient } from "@/app/embed/proxy/client";
+import ProxyPage from "@/app/(dashboard)/proxy/page";
 import { PageHeader } from "@/components/settings-shell/page-header";
 import { getSession } from "@/lib/auth/session";
 
@@ -10,7 +10,7 @@ export default async function ProxySettingsPage() {
   return (
     <>
       <PageHeader title="Proxy" description="Manage Caddy routes." />
-      <ProxyEmbedClient />
+      <ProxyPage />
     </>
   );
 }
