@@ -1,3 +1,22 @@
+## v0.4.13.24 verification (CP) — artem — 2026-06-06
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Verify Forgejo native release asset handling and clean Wiki install
+
+### Changes
+- `AGENTS.md` — Recorded live verification evidence for the already-released CP 0.4.13.24 asset URL fix.
+
+### Test Results
+- Deploy: `spine update control` updated `192.168.31.160` to CP 0.4.13.24 and reconfirmed UI -> CP egress ACL.
+- Clean install: Wiki installed from AppMarket, created YouEye ID client `youeye-app-wiki`, deployed `app-wiki`, added `wiki.potato.app`, saved config, and registered with the dashboard.
+- Runtime: `spine status` reports 11 running containers and Wiki `0.4.0.1`.
+- Env: `/etc/app-wiki.env` contains `YOUEYE_ID_URL`, `YOUEYE_ID_INTERNAL_URL`, `YOUEYE_ID_CLIENT_ID=youeye-app-wiki`, and `YOUEYE_ID_CLIENT_SECRET`.
+- Browser: `https://wiki.potato.app` redirected through YouEye ID and landed back on Wiki as `tester`; screenshot `/tmp/artem-wiki-oauth-041324.png`.
+
+### Notes for Iris
+- The earlier CP 0.4.13.24 AGENTS entry was written before deploy. This entry records the completed live proof without editing that prior entry.
+
 ## v0.4.13.24 (CP) — artem — 2026-06-06
 **Branch:** artem
 **VM:** potempc
