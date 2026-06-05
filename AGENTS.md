@@ -1,3 +1,26 @@
+## v0.4.13.10 (CP) + v0.4.3.4 (UI) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Plan4 follow-up for CP Settings app drawer, app settings iframe, icons, and direct PAM mode
+
+### Changes
+- `control-panel/src/app/api/ui-settings/[...path]/route.ts` — Forwarded the browser/public host and proto to the UI bridge so app drawer URLs are generated for the public domain instead of the internal UI container DNS name.
+- `ui/src/app/api/ui-bridge/settings/[...path]/route.ts`, `ui/src/app/api/v1/apps/drawer/route.ts` — Used the forwarded public host/proto for app URLs and detected app settings panels from both `capabilities.settings_panel` and runtime manifest `settings` blocks.
+- `control-panel/src/components/settings-shell/apps-client.tsx` — Restored app-owned settings iframes for the `App Settings` tab, improved app/system icon rendering with Lucide name support, and made Apps usable in no-user-context PAM mode.
+- `control-panel/src/lib/auth/session.ts`, `control-panel/src/app/api/auth/login/route.ts`, `control-panel/src/app/api/auth/callback/route.ts` — Added session `authMethod` and direct-HTTP-safe PAM cookies while keeping HTTPS/SSO cookies secure.
+- `control-panel/src/components/control-surface/control-header.tsx`, `control-panel/src/components/settings-shell/settings-shell.tsx`, `control-panel/src/app/settings/(shell)/*`, `control-panel/src/components/control-surface/market-shell.tsx` — Hid UI-user-specific controls in PAM/CLI mode and routed direct PAM `/settings` to admin System settings.
+- `control-panel/package.json`, `ui/package.json`, `README.md` — Bumped CP/UI branch release versions and current-version table.
+
+### Test Results
+- CP build: `pnpm -C control-panel build` passed for `0.4.13.10`.
+- UI build: `pnpm -C ui build` passed for `0.4.3.4` with a temporary SSH Postgres tunnel; existing Edge Runtime warnings and Postgres "already exists, skipping" notices were emitted.
+- Focused type check: no TypeScript diagnostics in the touched CP files. Full CP `tsc --noEmit` still reports pre-existing unrelated diagnostics in older routes/UI primitives.
+
+### Notes for Iris
+- The bridge direction remains CP -> UI only. UI still does not call Control Panel.
+- Direct PAM mode intentionally has no UI-user context, so Profile/Appearance/Language user pages redirect to `/settings/system` and the header suppresses drawer, notifications, and UI theme controls.
+
 ## v0.4.13.9 (CP) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc

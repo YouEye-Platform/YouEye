@@ -85,9 +85,9 @@ export async function GET(request: NextRequest) {
     const isAdmin = groups.includes(ADMIN_GROUP);
 
     // Create session
-    const sessionToken = await createSession(username, isAdmin, groups);
+    const sessionToken = await createSession(username, isAdmin, groups, 'sso');
     const csrfToken = generateCSRFToken();
-    await setSessionCookies(sessionToken, csrfToken);
+    await setSessionCookies(sessionToken, csrfToken, { request });
 
     console.log(`SSO login successful for "${username}" (admin: ${isAdmin})`);
 

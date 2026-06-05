@@ -49,6 +49,7 @@ export interface SessionPayload extends JWTPayload {
   username: string;
   isAdmin: boolean;
   groups: string[];
+  authMethod?: 'pam' | 'sso' | 'cli';
   iat: number;
   exp: number;
 }
@@ -59,7 +60,8 @@ export interface SessionPayload extends JWTPayload {
 export async function createSession(
   username: string,
   isAdmin: boolean,
-  groups: string[]
+  groups: string[],
+  authMethod: 'pam' | 'sso' = 'pam'
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   
@@ -67,6 +69,7 @@ export async function createSession(
     username,
     isAdmin,
     groups,
+    authMethod,
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt(now)
@@ -129,6 +132,7 @@ export async function getSession(): Promise<SessionPayload | null> {
       username: 'cli',
       isAdmin: true,
       groups: ['sudo', 'cli'],
+      authMethod: 'cli',
       iat: now,
       exp: now + 3600,
     };
@@ -147,15 +151,34 @@ export async function getSession(): Promise<SessionPayload | null> {
 /**
  * Set session cookies
  */
-export async function setSessionCookies(token: string, csrfToken: string): Promise<void> {
+function shouldUseSecureCookies(request?: Request): boolean {
+  if (process.env.SECURE_COOKIES === 'false') return false;
+  if (!request) return true;
+
+  const forwardedProto = request.headers.get('x-forwarded-proto');
+  if (forwardedProto) return forwardedProto === 'https';
+
+  try {
+    const url = new URL(request.url);
+    return url.protocol === 'https:';
+  } catch {
+    return true;
+  }
+}
+
+export async function setSessionCookies(
+  token: string,
+  csrfToken: string,
+  options: { request?: Request } = {}
+): Promise<void> {
   const cookieStore = await cookies();
+  const secure = shouldUseSecureCookies(options.request);
+  const sameSite = secure ? 'none' : 'lax';
   
-  // Always secure + SameSite=None — CP is always behind Caddy TLS,
-  // and embeds are loaded cross-origin from the UI.
   cookieStore.set(SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: true,
-    sameSite: 'none',
+    secure,
+    sameSite,
     maxAge: SESSION_DURATION,
     path: '/',
   });
@@ -163,8 +186,8 @@ export async function setSessionCookies(token: string, csrfToken: string): Promi
   // CSRF token cookie (readable by JavaScript)
   cookieStore.set(CSRF_COOKIE, csrfToken, {
     httpOnly: false,
-    secure: true,
-    sameSite: 'none',
+    secure,
+    sameSite,
     maxAge: SESSION_DURATION,
     path: '/',
   });

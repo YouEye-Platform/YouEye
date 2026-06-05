@@ -22,6 +22,14 @@ function buildAppUrl(
   return ssoEntryUrl ? `${baseUrl}${ssoEntryUrl}` : baseUrl;
 }
 
+function hasSettingsPanel(manifest: Record<string, unknown> | null | undefined): boolean {
+  if (!manifest) return false;
+  const capabilities = manifest.capabilities as Record<string, unknown> | undefined;
+  return capabilities?.settings_panel === true
+    || manifest.settings_panel === true
+    || typeof manifest.settings === "object";
+}
+
 export async function GET(request: NextRequest) {
   const session = await getSession();
   if (!session) {
@@ -46,7 +54,7 @@ export async function GET(request: NextRequest) {
       version: a.version ?? null,
       subdomain: a.subdomain ?? null,
       containerUrl: a.containerUrl ?? null,
-      hasSettingsPanel: !!(a.manifest as any)?.capabilities?.settings_panel,
+      hasSettingsPanel: hasSettingsPanel(a.manifest),
       url: buildAppUrl(a.subdomain, a.containerUrl, a.id, host, a.ssoEntryUrl),
     })),
     sections: data.sections.map((s) => ({

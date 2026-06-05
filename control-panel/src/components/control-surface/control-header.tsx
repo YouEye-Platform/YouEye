@@ -43,6 +43,7 @@ import type { SiteNameStyle } from "@/lib/wordart-presets";
 interface ControlHeaderProps {
   username: string;
   isAdmin: boolean;
+  hasUserContext?: boolean;
 }
 
 interface DrawerApp {
@@ -244,7 +245,7 @@ function useElementRect(ref: RefObject<HTMLDivElement | null>, enabled: boolean)
   return rect;
 }
 
-export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
+export function ControlHeader({ username, isAdmin, hasUserContext = true }: ControlHeaderProps) {
   const [config, setConfig] = useState<HeaderConfig | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editDrawer, setEditDrawer] = useState(false);
@@ -262,6 +263,33 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
   const drawerRect = useElementRect(drawerRef, editDrawer && drawerOpen);
 
   const loadConfig = useCallback(async () => {
+    if (!hasUserContext) {
+      const res = await fetch("/api/setup/config", { cache: "no-store" });
+      const data = res.ok ? await res.json() : {};
+      setConfig({
+        branding: {
+          site_name: data.site_name || "YouEye",
+          site_name_style: null,
+          logo_url: null,
+        },
+        navigation: { apps: [] },
+        drawer_prefs: DEFAULT_PREFS,
+        user: {
+          name: username,
+          username,
+          email: username,
+          is_admin: isAdmin,
+          avatar_url: null,
+        },
+        notifications: { unread_count: 0, items: [] },
+        theme: { mode: "system" },
+      });
+      setAllApps([]);
+      setDrawerPrefs(DEFAULT_PREFS);
+      setPrefsLoaded(true);
+      return;
+    }
+
     const res = await fetch(bridgeApi("header/config"), { cache: "no-store" });
     if (!res.ok) return;
     const data = await res.json();
@@ -269,7 +297,7 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
     setAllApps(data.navigation?.apps ?? []);
     setDrawerPrefs({ ...DEFAULT_PREFS, ...(data.drawer_prefs ?? {}) });
     setPrefsLoaded(true);
-  }, []);
+  }, [hasUserContext, isAdmin, username]);
 
   useEffect(() => {
     loadConfig().catch(() => {});
@@ -288,13 +316,18 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
   }, [drawerOpen]);
 
   const fetchDrawerApps = useCallback(async () => {
+    if (!hasUserContext) return;
     const res = await fetch(bridgeApi("apps/drawer"), { cache: "no-store" });
     if (!res.ok) return;
     const data = await res.json();
     setAllApps(data.apps ?? []);
-  }, []);
+  }, [hasUserContext]);
 
   const fetchDrawerPrefs = useCallback(async () => {
+    if (!hasUserContext) {
+      setPrefsLoaded(true);
+      return;
+    }
     try {
       const res = await fetch(bridgeApi("apps/drawer/prefs"), { cache: "no-store" });
       if (!res.ok) return;
@@ -303,7 +336,7 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
     } finally {
       setPrefsLoaded(true);
     }
-  }, []);
+  }, [hasUserContext]);
 
   useEffect(() => {
     if (!drawerOpen) return;
@@ -356,6 +389,7 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
   const draggingFromVisible = draggedAppId != null && visibleApps.some((app) => app.id === draggedAppId);
 
   const persistDrawerPrefs = useCallback((next: Required<DrawerPrefs>) => {
+    if (!hasUserContext) return;
     setDrawerPrefs(next);
     setConfig((current) => ({ ...(current ?? {}), drawer_prefs: next }));
     if (savePrefsTimeout.current) clearTimeout(savePrefsTimeout.current);
@@ -366,9 +400,10 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
         body: JSON.stringify(next),
       }).catch(() => {});
     }, 500);
-  }, []);
+  }, [hasUserContext]);
 
   const toggleVisibility = useCallback(async (appId: string, visible: boolean) => {
+    if (!hasUserContext) return;
     setAllApps((current) => current.map((app) => app.id === appId ? { ...app, visible } : app));
     try {
       await fetch(bridgeApi(`apps/drawer/${encodeURIComponent(appId)}`), {
@@ -379,7 +414,7 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
     } catch {
       setAllApps((current) => current.map((app) => app.id === appId ? { ...app, visible: !visible } : app));
     }
-  }, []);
+  }, [hasUserContext]);
 
   const reorderApp = useCallback((draggedId: string, targetId: string) => {
     if (draggedId === targetId) return;
@@ -458,6 +493,7 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
   }
 
   async function refreshNotifications() {
+    if (!hasUserContext) return;
     const res = await fetch(bridgeApi("notifications"), { cache: "no-store" });
     if (!res.ok) return;
     const data = await res.json();
@@ -471,6 +507,7 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
   }
 
   async function markRead(id: string) {
+    if (!hasUserContext) return;
     await fetch(bridgeApi(`notifications/${id}`), { method: "PUT" });
     setConfig((current) => {
       const items = current?.notifications?.items ?? [];
@@ -486,6 +523,7 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
   }
 
   async function markAllRead() {
+    if (!hasUserContext) return;
     await fetch(bridgeApi("notifications"), { method: "PUT" });
     setConfig((current) => ({
       ...(current ?? {}),
@@ -497,6 +535,7 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
   }
 
   async function dismiss(id: string) {
+    if (!hasUserContext) return;
     await fetch(bridgeApi(`notifications/${id}`), { method: "DELETE" });
     setConfig((current) => {
       const items = current?.notifications?.items ?? [];
@@ -512,6 +551,7 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
   }
 
   async function cycleTheme() {
+    if (!hasUserContext) return;
     const next = themeMode === "light" ? "dark" : themeMode === "dark" ? "system" : "light";
     setConfig((current) => ({ ...(current ?? {}), theme: { ...(current?.theme ?? {}), mode: next } }));
     document.documentElement.classList.toggle("dark", next === "dark" || (next === "system" && systemPref === "dark"));
@@ -541,6 +581,7 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
           </Link>
         </Button>
 
+        {hasUserContext && (
         <Popover open={drawerOpen} onOpenChange={setDrawerOpen}>
           <PopoverTrigger asChild>
             <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Apps">
@@ -672,8 +713,9 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
             </div>
           </PopoverContent>
         </Popover>
+        )}
 
-        {editDrawer && drawerRect && typeof document !== "undefined" && createPortal(
+        {hasUserContext && editDrawer && drawerRect && typeof document !== "undefined" && createPortal(
           <>
             <div
               className="fixed z-[60] w-64 rounded-xl border bg-popover p-3 text-popover-foreground shadow-lg"
@@ -761,6 +803,7 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
           document.body
         )}
 
+        {hasUserContext && (
         <Popover
           open={notificationsOpen}
           onOpenChange={(open) => {
@@ -828,6 +871,7 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
             </div>
           </PopoverContent>
         </Popover>
+        )}
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -847,20 +891,26 @@ export function ControlHeader({ username, isAdmin }: ControlHeaderProps) {
               <span className="text-xs font-normal text-muted-foreground">{email}</span>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => { window.location.href = "/timeline"; }}>
-              <Clock className="size-4" />
-              Timeline
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => { window.location.href = "/settings"; }}>
+            {hasUserContext && (
+              <DropdownMenuItem onClick={() => { window.location.href = "/timeline"; }}>
+                <Clock className="size-4" />
+                Timeline
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={() => { window.location.href = hasUserContext ? "/settings" : "/settings/system"; }}>
               <Settings className="size-4" />
               Settings
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={cycleTheme}>
-              {themeMode === "light" ? <Sun className="size-4" /> : themeMode === "dark" ? <Moon className="size-4" /> : <Monitor className="size-4" />}
-              {themeMode === "light" ? "Light theme" : themeMode === "dark" ? "Dark theme" : "System theme"}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
+            {hasUserContext && (
+              <>
+                <DropdownMenuItem onClick={cycleTheme}>
+                  {themeMode === "light" ? <Sun className="size-4" /> : themeMode === "dark" ? <Moon className="size-4" /> : <Monitor className="size-4" />}
+                  {themeMode === "light" ? "Light theme" : themeMode === "dark" ? "Dark theme" : "System theme"}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            )}
             <DropdownMenuItem onClick={logout} className="text-destructive">
               <LogOut className="size-4" />
               Sign out

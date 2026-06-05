@@ -89,11 +89,11 @@ export async function POST(request: NextRequest) {
     resetRateLimit(rateLimitKey);
 
     // Create session token
-    const sessionToken = await createSession(username, admin, groups);
+    const sessionToken = await createSession(username, admin, groups, 'pam');
     const csrfToken = generateCSRFToken();
 
     // Set cookies
-    await setSessionCookies(sessionToken, csrfToken);
+    await setSessionCookies(sessionToken, csrfToken, { request });
 
     // Log successful login
     console.log(`Successful login for user "${username}" from IP ${ip}`);

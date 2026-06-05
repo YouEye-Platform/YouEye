@@ -344,7 +344,7 @@ export async function GET() {
         id: meta.appId,
         displayName: manifest?.metadata.name || meta.appId,
         description: manifest?.metadata.description || 'Marketplace app',
-        icon: manifest?.metadata.icon || 'Package',
+        icon: manifest?.metadata.iconUrl || manifest?.metadata.icon || 'Package',
         category: 'user' as const,
         type: 'docker-lxd',
         containers,

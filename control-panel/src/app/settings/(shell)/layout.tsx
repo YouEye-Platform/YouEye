@@ -10,11 +10,12 @@ export default async function SettingsLayout({
 }) {
   const session = await getSession();
   if (!session) redirect("/settings/login");
+  const hasUserContext = session.authMethod !== "pam" && session.authMethod !== "cli";
 
   return (
     <div className="min-h-screen bg-background">
-      <ControlHeader username={session.username} isAdmin={session.isAdmin} />
-      <SettingsShell isAdmin={session.isAdmin} username={session.username}>
+      <ControlHeader username={session.username} isAdmin={session.isAdmin} hasUserContext={hasUserContext} />
+      <SettingsShell isAdmin={session.isAdmin} username={session.username} hasUserContext={hasUserContext}>
         {children}
       </SettingsShell>
     </div>

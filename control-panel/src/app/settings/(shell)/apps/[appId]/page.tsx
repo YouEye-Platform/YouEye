@@ -8,5 +8,6 @@ export default async function AppSettingsDetailPage({
 }) {
   const { appId } = await params;
   const session = await getSession();
-  return <AppsClient isAdmin={session?.isAdmin ?? false} initialAppId={appId} />;
+  const hasUserContext = session?.authMethod !== "pam" && session?.authMethod !== "cli";
+  return <AppsClient isAdmin={session?.isAdmin ?? false} hasUserContext={hasUserContext} initialAppId={appId} />;
 }

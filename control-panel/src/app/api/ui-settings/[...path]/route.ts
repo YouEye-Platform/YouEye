@@ -39,6 +39,11 @@ async function proxy(request: NextRequest, path: string[]) {
     "X-YouEye-Is-Admin": session.isAdmin ? "true" : "false",
   };
 
+  const publicHost = request.headers.get("x-forwarded-host") || request.headers.get("host");
+  const publicProto = request.headers.get("x-forwarded-proto") || new URL(request.url).protocol.replace(":", "") || "https";
+  if (publicHost) headers["X-YouEye-Public-Host"] = publicHost;
+  if (publicProto) headers["X-YouEye-Public-Proto"] = publicProto;
+
   const contentType = request.headers.get("content-type");
   if (contentType) headers["Content-Type"] = contentType;
 

@@ -67,10 +67,38 @@ async function getActiveThemePayload(userId: string) {
   };
 }
 
-function buildAppUrl(subdomain: string | null, containerUrl: string | null, appId: string, host: string, ssoEntryUrl: string | null): string {
+function getPublicHost(request: NextRequest): string {
+  return request.headers.get("X-YouEye-Public-Host")
+    || request.headers.get("x-forwarded-host")
+    || request.headers.get("host")
+    || "";
+}
+
+function getPublicProto(request: NextRequest): string {
+  return request.headers.get("X-YouEye-Public-Proto")
+    || request.headers.get("x-forwarded-proto")
+    || "https";
+}
+
+function hasSettingsPanel(manifest: Record<string, unknown> | null | undefined): boolean {
+  if (!manifest) return false;
+  const capabilities = manifest.capabilities as Record<string, unknown> | undefined;
+  return capabilities?.settings_panel === true
+    || manifest.settings_panel === true
+    || typeof manifest.settings === "object";
+}
+
+function buildAppUrl(
+  subdomain: string | null,
+  containerUrl: string | null,
+  appId: string,
+  host: string,
+  ssoEntryUrl: string | null,
+  proto = "https"
+): string {
   if (!subdomain) return containerUrl ?? `/app/${appId}`;
   const baseDomain = host.replace(/:\d+$/, "");
-  const baseUrl = `https://${subdomain}.${baseDomain}`;
+  const baseUrl = `${proto}://${subdomain}.${baseDomain}`;
   return ssoEntryUrl ? `${baseUrl}${ssoEntryUrl}` : baseUrl;
 }
 
@@ -98,7 +126,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
 
   if (path === "header/config") {
-    const host = request.headers.get("host") ?? "";
+    const host = getPublicHost(request);
+    const proto = getPublicProto(request);
     const [branding, wordartOverride, appsData, drawerPrefs, settings, unreadCount, notifications] = await Promise.all([
       getBranding(),
       getUserWordartOverride(user.id),
@@ -129,7 +158,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
           order: a.displayOrder,
           section_id: a.sectionId,
           status: a.status,
-          url: buildAppUrl(a.subdomain, a.containerUrl, a.id, host, a.ssoEntryUrl),
+          url: buildAppUrl(a.subdomain, a.containerUrl, a.id, host, a.ssoEntryUrl, proto),
+          subdomain: a.subdomain ?? null,
+          containerUrl: a.containerUrl ?? null,
+          hasSettingsPanel: hasSettingsPanel(a.manifest),
         })),
         sections: appsData.sections.map((s) => ({
           id: s.sectionId,
@@ -207,7 +239,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
 
   if (path === "apps/drawer") {
-    const host = request.headers.get("host") ?? "";
+    const host = getPublicHost(request);
+    const proto = getPublicProto(request);
     const data = await getUserAppsWithConfig(user.id);
     return NextResponse.json({
       apps: data.apps.map((a) => ({
@@ -220,7 +253,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
         order: a.displayOrder,
         section_id: a.sectionId,
         status: a.status,
-        url: buildAppUrl(a.subdomain, a.containerUrl, a.id, host, a.ssoEntryUrl),
+        url: buildAppUrl(a.subdomain, a.containerUrl, a.id, host, a.ssoEntryUrl, proto),
+        subdomain: a.subdomain ?? null,
+        containerUrl: a.containerUrl ?? null,
+        hasSettingsPanel: hasSettingsPanel(a.manifest),
       })),
       sections: data.sections.map((s) => ({
         id: s.sectionId,

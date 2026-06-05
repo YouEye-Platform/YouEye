@@ -2,6 +2,8 @@
 
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ComponentType, CSSProperties } from "react";
+import * as LucideIcons from "lucide-react";
 import { AlertCircle, ArrowLeft, ChevronRight, ExternalLink, Info, Loader2, Network, Palette, RefreshCw, RotateCcw, Shield, Sliders, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +20,9 @@ interface DrawerApp {
   visible: boolean;
   status: string | null;
   url?: string | null;
+  subdomain?: string | null;
+  containerUrl?: string | null;
+  hasSettingsPanel?: boolean;
 }
 
 interface UnifiedApp {
@@ -61,16 +66,32 @@ function StatusDot({ status }: { status?: string | null }) {
   return <span className={`h-[5px] w-[5px] shrink-0 rounded-full ${color}`} />;
 }
 
+function kebabToPascal(value: string) {
+  return value.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join("");
+}
+
+function getLucideIcon(name: string): ComponentType<{ className?: string; style?: CSSProperties }> | null {
+  const direct = (LucideIcons as Record<string, unknown>)[name];
+  if (typeof direct === "function") return direct as ComponentType<{ className?: string; style?: CSSProperties }>;
+  const pascal = (LucideIcons as Record<string, unknown>)[kebabToPascal(name)];
+  return typeof pascal === "function" ? pascal as ComponentType<{ className?: string; style?: CSSProperties }> : null;
+}
+
 function AppIcon({ app }: { app: DrawerApp | UnifiedApp }) {
+  const [imgError, setImgError] = useState(false);
   const name = "name" in app ? app.name : app.displayName;
   const icon = "custom_icon_url" in app ? app.custom_icon_url || app.icon : app.icon;
+  const Icon = icon && !imgError ? getLucideIcon(icon) : null;
+
   return (
     <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-accent">
       {icon?.startsWith("emoji:") ? (
         <span className="text-lg">{icon.slice(6)}</span>
       ) : icon && (icon.startsWith("/") || icon.startsWith("http") || icon.startsWith("data:")) ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={icon} alt="" className="h-9 w-9 rounded-lg object-cover" />
+        !imgError ? <img src={icon} alt="" className="h-9 w-9 rounded-lg object-cover" onError={() => setImgError(true)} /> : <span className="text-sm font-bold text-muted-foreground">{name.charAt(0).toUpperCase()}</span>
+      ) : Icon ? (
+        <Icon className="h-5 w-5 text-foreground/80" />
       ) : (
         <span className="text-sm font-bold text-muted-foreground">{name.charAt(0).toUpperCase()}</span>
       )}
@@ -213,7 +234,48 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
   );
 }
 
-function AppDetail({ appId, isAdmin, onBack }: { appId: string; isAdmin: boolean; onBack: () => void }) {
+function AppSettingsEmbed({ app }: { app: DrawerApp }) {
+  const [iframeHeight, setIframeHeight] = useState(420);
+  const settingsUrl = useMemo(() => {
+    if (app.url) {
+      try {
+        return `${new URL(app.url).origin}/settings?embed=true`;
+      } catch {}
+    }
+    if (app.subdomain && typeof window !== "undefined") {
+      return `${window.location.protocol}//${app.subdomain}.${window.location.hostname}/settings?embed=true`;
+    }
+    return "";
+  }, [app.subdomain, app.url]);
+
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      if (event.data?.type === "youeye-app-settings-resize" && typeof event.data.height === "number") {
+        setIframeHeight(Math.max(220, event.data.height));
+      }
+    }
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
+
+  if (!settingsUrl) {
+    return <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">No app settings URL is available.</div>;
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border">
+      <iframe
+        src={settingsUrl}
+        className="w-full border-0"
+        style={{ height: iframeHeight, minHeight: 220 }}
+        title={`${app.name} Settings`}
+        allow="clipboard-write"
+      />
+    </div>
+  );
+}
+
+function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; isAdmin: boolean; hasUserContext: boolean; onBack: () => void }) {
   const [tab, setTab] = useState<AppTab>("overview");
   const [drawerApps, setDrawerApps] = useState<DrawerApp[]>([]);
   const [unifiedApps, setUnifiedApps] = useState<UnifiedApp[]>([]);
@@ -225,13 +287,13 @@ function AppDetail({ appId, isAdmin, onBack }: { appId: string; isAdmin: boolean
 
   const load = useCallback(async () => {
       const [drawerRes, unifiedRes, permissionRes] = await Promise.all([
-        fetch(uiSettingsApi("apps/drawer")),
+        hasUserContext ? fetch(uiSettingsApi("apps/drawer")) : Promise.resolve(null),
         fetch("/api/apps/unified"),
-        fetch(uiSettingsApi(`permissions/app/${encodeURIComponent(appId)}`)),
+        hasUserContext ? fetch(uiSettingsApi(`permissions/app/${encodeURIComponent(appId)}`)) : Promise.resolve(null),
       ]);
-      if (drawerRes.ok) setDrawerApps((await drawerRes.json()).apps || []);
+      if (drawerRes?.ok) setDrawerApps((await drawerRes.json()).apps || []);
       if (unifiedRes.ok) setUnifiedApps((await unifiedRes.json()).apps || []);
-      if (permissionRes.ok) setPermissions((await permissionRes.json()).permissions || []);
+      if (permissionRes?.ok) setPermissions((await permissionRes.json()).permissions || []);
       setLoading(false);
   }, [appId]);
 
@@ -255,14 +317,16 @@ function AppDetail({ appId, isAdmin, onBack }: { appId: string; isAdmin: boolean
     if (res.ok) setPermissions([]);
   }
 
-  const tabs: Array<{ id: AppTab; label: string; icon: React.ReactNode; adminOnly?: boolean }> = [
-    { id: "app-settings", label: "App Settings", icon: <Sliders className="h-4 w-4" /> },
+  const hasAppSettings = hasUserContext && !!drawerApp?.hasSettingsPanel && (!!drawerApp.url || !!drawerApp.subdomain);
+  const tabs = [
+    { id: "app-settings", label: "App Settings", icon: <Sliders className="h-4 w-4" />, userOnly: true, hide: !hasAppSettings },
     { id: "overview", label: "Overview", icon: <Info className="h-4 w-4" /> },
-    { id: "branding", label: "Branding", icon: <Palette className="h-4 w-4" /> },
-    { id: "permissions", label: "Permissions", icon: <Shield className="h-4 w-4" /> },
+    { id: "branding", label: "Branding", icon: <Palette className="h-4 w-4" />, userOnly: true },
+    { id: "permissions", label: "Permissions", icon: <Shield className="h-4 w-4" />, userOnly: true },
     { id: "network", label: "Network", icon: <Network className="h-4 w-4" />, adminOnly: true },
-    { id: "link-handling", label: "Link Handling", icon: <Unplug className="h-4 w-4" /> },
-  ].filter((item) => !item.adminOnly || isAdmin);
+    { id: "link-handling", label: "Link Handling", icon: <Unplug className="h-4 w-4" />, userOnly: true },
+  ] satisfies Array<{ id: AppTab; label: string; icon: React.ReactNode; adminOnly?: boolean; userOnly?: boolean; hide?: boolean }>;
+  const visibleTabs = tabs.filter((item) => (!item.adminOnly || isAdmin) && (!item.userOnly || hasUserContext) && !item.hide);
 
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
 
@@ -283,14 +347,14 @@ function AppDetail({ appId, isAdmin, onBack }: { appId: string; isAdmin: boolean
 
       <div className="border-b">
         <nav className="flex flex-wrap gap-6" aria-label="App settings tabs">
-          {tabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} className={tabClass(tab === item.id)}>{item.icon}{item.label}</button>)}
+          {visibleTabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} className={tabClass(tab === item.id)}>{item.icon}{item.label}</button>)}
         </nav>
       </div>
 
       {tab === "app-settings" && (
-        <div className="rounded-lg border p-6 text-sm text-muted-foreground">
-          App-provided settings panels stay owned by the app. Open the app from the drawer to manage app-native settings when available.
-        </div>
+        drawerApp && hasAppSettings
+          ? <AppSettingsEmbed app={drawerApp} />
+          : <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">No app settings panel is available.</div>
       )}
 
       {tab === "overview" && (
@@ -462,7 +526,7 @@ function AppBrandingEditor({ appId, appName, scope }: { appId: string; appName: 
   );
 }
 
-export function AppsClient({ isAdmin, initialAppId }: { isAdmin: boolean; initialAppId?: string }) {
+export function AppsClient({ isAdmin, hasUserContext = true, initialAppId }: { isAdmin: boolean; hasUserContext?: boolean; initialAppId?: string }) {
   const [selectedApp, setSelectedApp] = useState<string | null>(initialAppId || null);
 
   const urlApp = useMemo(() => {
@@ -475,7 +539,7 @@ export function AppsClient({ isAdmin, initialAppId }: { isAdmin: boolean; initia
   }, [urlApp]);
 
   if (selectedApp) {
-    return <AppDetail appId={selectedApp} isAdmin={isAdmin} onBack={() => setSelectedApp(null)} />;
+    return <AppDetail appId={selectedApp} isAdmin={isAdmin} hasUserContext={hasUserContext} onBack={() => setSelectedApp(null)} />;
   }
 
   return (
@@ -484,13 +548,15 @@ export function AppsClient({ isAdmin, initialAppId }: { isAdmin: boolean; initia
         <h2 className="flex items-center gap-2 text-xl font-semibold">Apps</h2>
         <p className="mt-1 text-sm text-muted-foreground">Manage installed apps, updates, and app-specific settings.</p>
       </div>
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-base font-semibold">Installed Apps</h3>
-          <p className="text-[13px] text-muted-foreground">Open an app to view its settings, branding, permissions, and links.</p>
-        </div>
-        <InstalledAppsList onOpen={setSelectedApp} />
-      </section>
+      {hasUserContext && (
+        <section className="space-y-3">
+          <div>
+            <h3 className="text-base font-semibold">Installed Apps</h3>
+            <p className="text-[13px] text-muted-foreground">Open an app to view its settings, branding, permissions, and links.</p>
+          </div>
+          <InstalledAppsList onOpen={setSelectedApp} />
+        </section>
+      )}
       {isAdmin && <AdminAppSections onOpen={setSelectedApp} />}
     </div>
   );

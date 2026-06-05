@@ -34,9 +34,10 @@ interface SettingsShellProps {
   children: React.ReactNode;
   isAdmin: boolean;
   username: string;
+  hasUserContext?: boolean;
 }
 
-export function SettingsShell({ children, isAdmin, username }: SettingsShellProps) {
+export function SettingsShell({ children, isAdmin, username, hasUserContext = true }: SettingsShellProps) {
   const pathname = usePathname();
 
   const isActive = (href: string) => {
@@ -71,11 +72,11 @@ export function SettingsShell({ children, isAdmin, username }: SettingsShellProp
     <div className="mx-auto flex max-w-6xl gap-8 px-6 py-8">
       <nav className="w-52 shrink-0">
         <div className="sticky top-20 space-y-1">
-          {USER_SECTIONS.map(renderItem)}
+          {hasUserContext && USER_SECTIONS.map(renderItem)}
 
           {isAdmin && (
             <>
-              <div className="my-3 border-t" />
+              {hasUserContext && <div className="my-3 border-t" />}
               <p className="px-3 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Admin
               </p>
