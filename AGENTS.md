@@ -9,12 +9,15 @@
 - `control-panel/package.json`, `README.md` — Bumped CP branch release version and current-version table.
 
 ### Test Results
-- Curl-style Notes OAuth succeeded when `return_to` was explicitly external.
-- Playwright browser flow reached YouEye ID but failed after login because generated `return_to` pointed at `https://0.0.0.0:3000/application/o/authorize...`.
-- CP release build pending in this session.
+- CP build: `pnpm -C control-panel build` passed for `0.4.13.18`.
+- Release: `cp-artem-v0.4.13.18` published with asset name exactly `standalone.tar`.
+- Deploy: `spine update control` updated `192.168.31.160` to CP `0.4.13.18`; UI remained `0.4.3.4`.
+- Notes OIDC pilot: Playwright browser flow signed in through `https://id.potato.app` and landed on `https://notes.potato.app/` with `ye-id-session` and `ye-notes-session`; screenshot `/tmp/youeye-id-notes-pilot.png`.
+- SearXNG forward-auth pilot: unauthenticated `https://searx.potato.app/` redirected to YouEye ID, browser login landed on SearXNG with `ye-id-session`; screenshot `/tmp/youeye-id-searxng-forward-auth.png`.
+- UI -> Control Panel egress block was reconfirmed by `spine update control`.
 
 ### Notes for Iris
-- CP-only follow-up to `0.4.13.17`.
+- CP-only follow-up to `0.4.13.17`. The pilot remains CP-hosted; service separation is still required before Authentik removal.
 
 ## v0.4.13.17 (CP) — artem — 2026-06-05
 **Branch:** artem
