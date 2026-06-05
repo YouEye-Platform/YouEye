@@ -45,6 +45,29 @@ interface SpineStatusResponse {
   };
 }
 
+export interface SpineMetricsResponse {
+  hostname: string;
+  os: string;
+  kernel: string;
+  uptime: string;
+  load_average?: string;
+  cpu: {
+    cores: number;
+    model: string;
+    usage_percent?: string;
+  };
+  memory: {
+    total_mb: number;
+    used_mb: number;
+    free_mb: number;
+  };
+  disk: {
+    total_gb: number;
+    used_gb: number;
+    free_gb: number;
+  };
+}
+
 interface SpineUpdateResponse {
   status: string;
   message: string;
@@ -195,6 +218,13 @@ export class SpineClient {
    */
   async status(): Promise<SpineStatusResponse> {
     return this.request('/api/status');
+  }
+
+  /**
+   * Get host metrics
+   */
+  async getMetrics(): Promise<SpineMetricsResponse> {
+    return this.request('/api/metrics');
   }
 
   /**

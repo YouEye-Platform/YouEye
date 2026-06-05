@@ -1,3 +1,19 @@
+## v0.4.13.9 (CP) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Restore Spine metrics client used by System settings
+
+### Changes
+- `control-panel/src/lib/spine/client.ts` — Added the missing `getMetrics()` client method and metrics response type used by native System settings and the existing UI bridge system route.
+- `control-panel/package.json`, `README.md` — Bumped CP branch release version and current-version table.
+
+### Test Results
+- CP build: `pnpm -C control-panel build` passed for `0.4.13.9`.
+
+### Notes for Iris
+- CP-only follow-up to `0.4.13.8`; no UI release needed.
+
 ## v0.4.13.8 (CP) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc
