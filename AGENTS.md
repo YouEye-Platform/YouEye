@@ -1,3 +1,25 @@
+## v0.4.13.6 (CP) + v0.4.3.2 (UI) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Match CP Settings header to UI header and fix immediate avatar sync
+
+### Changes
+- `control-panel/src/components/control-surface/control-header.tsx` — Reworked the CP root-surface header to load UI-owned branding, WordArt, app drawer, notifications, user avatar, and theme state through the CP -> UI bridge.
+- `control-panel/src/components/control-surface/site-name.tsx` — Added a CP-side renderer for UI WordArt site names so Settings/Market branding matches the dashboard header.
+- `control-panel/src/components/ui/avatar.tsx`, `dropdown-menu.tsx`, `popover.tsx`, `scroll-area.tsx` — Added Radix primitives needed for the UI-style header controls.
+- `control-panel/src/components/settings-shell/profile-identity-client.tsx` — Broadcasts avatar upload/delete updates immediately and clears stale profile-card previews.
+- `ui/src/app/api/ui-bridge/settings/[...path]/route.ts` — Added bridge endpoints for header config and notification actions consumed by CP.
+- `control-panel/package.json`, `ui/package.json`, `README.md` — Bumped CP/UI branch release versions and current-version table.
+
+### Test Results
+- CP build: `pnpm -C control-panel build` passed for `0.4.13.6`.
+- UI build: `pnpm -C ui build` passed for `0.4.3.2` with a temporary SSH Postgres tunnel; existing schema "already exists" notices were emitted during static generation.
+
+### Notes for Iris
+- UI server still does not call Control Panel. The new header data flow is CP browser -> CP `/api/ui-settings/*` proxy -> UI bridge with bridge token.
+- Release/deploy verification should include screenshots of Settings header, app drawer, notification popover, immediate avatar sync, and dashboard return state.
+
 ## v0.4.13.5 (CP) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc

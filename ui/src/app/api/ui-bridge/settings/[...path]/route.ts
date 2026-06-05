@@ -6,6 +6,8 @@ import { listThemes, createTheme, getUserActiveTheme, setUserActiveTheme, getDef
 import { generateCSSVariables } from "@/lib/themes/css-generator";
 import { getUserAppsWithConfig, updateAppConfig, updateDrawerSections } from "@/lib/db/queries/apps";
 import { getDrawerPrefs, saveDrawerPrefs, saveUserWordartOverride, getUserWordartOverride, deleteUserWordartOverride } from "@/lib/db/queries/settings";
+import { getBranding } from "@/lib/db/queries/branding";
+import { deleteNotification, getUnreadCount, getUserNotifications, markAllNotificationsRead, markNotificationRead } from "@/lib/db/queries/notifications";
 import { hasPIN, hasActivePINSession, createPIN, changePIN, endPINSession } from "@/lib/crypto/pin-session";
 import { db, ensureSchema } from "@/db";
 import { userSettings } from "@/db/schema";
@@ -91,6 +93,93 @@ export async function GET(request: NextRequest, context: RouteContext) {
       email: user.email,
       isAdmin: user.isAdmin,
       image: user.image,
+    });
+  }
+
+  if (path === "header/config") {
+    const host = request.headers.get("host") ?? "";
+    const [branding, wordartOverride, appsData, drawerPrefs, settings, unreadCount, notifications] = await Promise.all([
+      getBranding(),
+      getUserWordartOverride(user.id),
+      getUserAppsWithConfig(user.id),
+      getDrawerPrefs(user.id),
+      getUserSettings(user.id),
+      getUnreadCount(user.id),
+      getUserNotifications(user.id, 20),
+    ]);
+
+    return NextResponse.json({
+      branding: {
+        site_name: branding.site_name,
+        site_name_style: wordartOverride ?? branding.site_name_style,
+        logo_url: branding.logo_url,
+        favicon_url: branding.favicon_url,
+        accent_color: branding.accent_color,
+      },
+      navigation: {
+        home_url: "/",
+        apps: appsData.apps.map((a) => ({
+          id: a.id,
+          name: a.customName ?? a.name,
+          original_name: a.name,
+          icon: a.icon,
+          custom_icon_url: a.customIconUrl,
+          visible: a.visible,
+          order: a.displayOrder,
+          section_id: a.sectionId,
+          status: a.status,
+          url: buildAppUrl(a.subdomain, a.containerUrl, a.id, host, a.ssoEntryUrl),
+        })),
+        sections: appsData.sections.map((s) => ({
+          id: s.sectionId,
+          name: s.name,
+          order: s.displayOrder,
+          collapsed: s.collapsed,
+        })),
+      },
+      drawer_prefs: drawerPrefs,
+      user: {
+        id: user.id,
+        username: user.username,
+        name: user.name,
+        email: user.email,
+        is_admin: user.isAdmin,
+        avatar_url: user.image,
+      },
+      notifications: {
+        unread_count: unreadCount,
+        items: notifications.map((n) => ({
+          id: n.id,
+          type: n.type,
+          title: n.title,
+          message: n.message,
+          appId: n.appId,
+          read: n.read,
+          createdAt: n.createdAt,
+          action: n.action,
+        })),
+      },
+      theme: {
+        mode: (settings.themeMode as string) ?? "system",
+      },
+    });
+  }
+
+  if (path === "notifications") {
+    const notifications = await getUserNotifications(user.id, 20);
+    const unreadCount = await getUnreadCount(user.id);
+    return NextResponse.json({
+      unread_count: unreadCount,
+      notifications: notifications.map((n) => ({
+        id: n.id,
+        type: n.type,
+        title: n.title,
+        message: n.message,
+        appId: n.appId,
+        read: n.read,
+        createdAt: n.createdAt,
+        action: n.action,
+      })),
     });
   }
 
@@ -185,6 +274,19 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
   if (path === "language") return setUserLanguage(user.id, body.language ?? null);
 
+  if (path === "notifications") {
+    await markAllNotificationsRead(user.id);
+    return NextResponse.json({ success: true });
+  }
+
+  if (path.startsWith("notifications/")) {
+    const notificationId = path.slice("notifications/".length);
+    const updated = await markNotificationRead(notificationId, user.id);
+    return updated
+      ? NextResponse.json({ success: true, notification: updated })
+      : NextResponse.json({ error: "Notification not found" }, { status: 404 });
+  }
+
   if (path === "wordart") {
     if (!body.wordart || typeof body.wordart !== "object") return NextResponse.json({ error: "Invalid wordart data" }, { status: 400 });
     await saveUserWordartOverride(user.id, body.wordart);
@@ -265,6 +367,12 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   if (path === "wordart") {
     await deleteUserWordartOverride(auth.user.id);
     return NextResponse.json({ wordart: null });
+  }
+
+  if (path.startsWith("notifications/")) {
+    const notificationId = path.slice("notifications/".length);
+    await deleteNotification(notificationId, auth.user.id);
+    return NextResponse.json({ success: true });
   }
 
   if (path === "pin/session") {

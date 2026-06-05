@@ -97,7 +97,11 @@ interface ProfileData {
   firstName: string;
   lastName: string;
   email: string;
-  avatarUrl?: string;
+  avatarUrl?: string | null;
+}
+
+function broadcastAvatarUpdate(url: string | null) {
+  window.dispatchEvent(new CustomEvent("avatar-updated", { detail: { url } }));
 }
 
 export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClientProps) {
@@ -124,7 +128,7 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
       setProfile(data);
       setFirstName(data.firstName || "");
       setLastName(data.lastName || "");
-      if (data.avatarUrl) setAvatarPreview(data.avatarUrl);
+      setAvatarPreview(data.avatarUrl || null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
@@ -135,6 +139,15 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
   useEffect(() => {
     fetchProfile();
   }, [fetchProfile]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { url?: string | null } | undefined;
+      setAvatarPreview(detail?.url || null);
+    };
+    window.addEventListener("avatar-updated", handler);
+    return () => window.removeEventListener("avatar-updated", handler);
+  }, []);
 
   // ─── Name Save ──────────────────────────────────────
 
@@ -187,6 +200,7 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
       }
 
       setAvatarPreview(dataUrl);
+      broadcastAvatarUpdate(dataUrl);
       setShowPicker(false);
 
     } catch (err) {
@@ -220,6 +234,7 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
       }
 
       setAvatarPreview(null);
+      broadcastAvatarUpdate(null);
     } catch (err) {
       setAvatarError(err instanceof Error ? err.message : "Remove failed");
     } finally {
