@@ -1,3 +1,20 @@
+## v0.4.2.3 (Spine) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Repair YouEye ID service creation during up-to-date CP updates
+
+### Changes
+- `spine/internal/api/server.go` — Made `youeye-id.service` creation a checked repair step, removed the unavailable `openssl` dependency, restarted the service after repair, and run the repair even when Control Panel is already at the latest version.
+- `spine/internal/cmd/root.go`, `README.md` — Bumped Spine release version only.
+
+### Test Results
+- Live CP `0.4.13.19` update exposed that `youeye-id.service` was not created on the existing host because the repair script failed and the old updater ignored the error.
+- Spine release build/testing pending in this iteration.
+
+### Notes for Iris
+- Follow-up to `v0.4.2.2`; CP artifact does not need to change for this repair.
+
 ## v0.4.13.19 (CP) / v0.4.2.2 (Spine) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc

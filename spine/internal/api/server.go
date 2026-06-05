@@ -583,6 +583,10 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if currentVersion == latestVersion {
+		if err := s.ensureControlIdentityService(containerName, appDir); err != nil {
+			errorResponse(w, fmt.Sprintf("Control Panel is up to date, but YouEye ID service repair failed: %v", err), http.StatusInternalServerError)
+			return
+		}
 		jsonResponse(w, map[string]string{
 			"status":  "up-to-date",
 			"message": fmt.Sprintf("Control Panel is already at version %s", currentVersion),
@@ -682,40 +686,14 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 
 	update.Emit("control", update.StatusRestarting, 70, "Starting Control Panel...")
 
-	// Ensure the identity-owned runtime exists before starting services. Older
-	// installs only have youeye-control.service, so updates must repair this
-	// persistently rather than relying on a live hand patch.
-	identityServiceScript := fmt.Sprintf(`set -e
-if [ ! -f /etc/systemd/system/youeye-id.service ]; then
-  JWT="$(openssl rand -hex 32)"
-  HOST_IP="$(hostname -I | awk '{print $1}')"
-  cat > /etc/systemd/system/youeye-id.service <<EOF
-[Unit]
-Description=YouEye ID
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=%s
-Environment=NODE_ENV=production
-Environment=PORT=3001
-Environment=YOUEYE_ID_SERVICE=true
-Environment=JWT_SECRET=${JWT}
-Environment=HOST_IP=${HOST_IP}
-Environment=SECURE_COOKIES=true
-ExecStart=/usr/bin/node %s/server.js
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOF
-fi
-systemctl daemon-reload
-systemctl enable youeye-id >/dev/null 2>&1 || true
-`, appDir, appDir)
-	exec.Command("incus", "exec", containerName, "--", "bash", "-c", identityServiceScript).Run()
+	if err := s.ensureControlIdentityService(containerName, appDir); err != nil {
+		exec.Command("incus", "exec", containerName, "--", "systemctl", "stop", "youeye-control").Run()
+		exec.Command("incus", "snapshot", "restore", containerName, "pre-update").Run()
+		exec.Command("incus", "exec", containerName, "--", "systemctl", "start", "youeye-control").Run()
+		update.Fail("control", currentVersion, fmt.Sprintf("failed to ensure YouEye ID service: %v", err))
+		errorResponse(w, fmt.Sprintf("failed to ensure YouEye ID service: %v", err), http.StatusInternalServerError)
+		return
+	}
 
 	// Start service
 	exec.Command("incus", "exec", containerName, "--", "systemctl", "start", "youeye-control").Run()
@@ -762,6 +740,45 @@ systemctl enable youeye-id >/dev/null 2>&1 || true
 	// without touching existing ones. Run in a goroutine so the API response
 	// returns immediately — reconciliation can take several minutes.
 	go s.reconcileInfrastructure()
+}
+
+func (s *Server) ensureControlIdentityService(containerName, appDir string) error {
+	identityServiceScript := fmt.Sprintf(`set -e
+if [ ! -f /etc/systemd/system/youeye-id.service ]; then
+  JWT="$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
+  HOST_IP="$(hostname -I | awk '{print $1}')"
+  cat > /etc/systemd/system/youeye-id.service <<EOF
+[Unit]
+Description=YouEye ID
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=%s
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=YOUEYE_ID_SERVICE=true
+Environment=JWT_SECRET=${JWT}
+Environment=HOST_IP=${HOST_IP}
+Environment=SECURE_COOKIES=true
+ExecStart=/usr/bin/node %s/server.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+fi
+systemctl daemon-reload
+systemctl enable youeye-id
+systemctl restart youeye-id
+`, appDir, appDir)
+	out, err := exec.Command("incus", "exec", containerName, "--", "bash", "-c", identityServiceScript).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // reconcileInfrastructure calls the CP reconcile endpoint to deploy missing
