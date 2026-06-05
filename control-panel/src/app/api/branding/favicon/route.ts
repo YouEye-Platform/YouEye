@@ -15,6 +15,17 @@ const UI_BASE = `http://youeye-ui.${CONTAINER_DOMAIN}:3000`;
 
 let cachedToken: string | null = null;
 
+function fallbackIcon(size: string): NextResponse {
+  const px = Math.max(16, Math.min(512, Number.parseInt(size, 10) || 32));
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#111827"/><path d="M19 14h8l5 15 5-15h8L35.8 39v11h-7.6V39L19 14Z" fill="#f8fafc"/></svg>`;
+  return new NextResponse(svg, {
+    headers: {
+      'Content-Type': 'image/svg+xml',
+      'Cache-Control': 'public, max-age=3600, s-maxage=3600',
+    },
+  });
+}
+
 function getBridgeToken(): string | null {
   if (cachedToken) return cachedToken;
   try {
@@ -31,7 +42,7 @@ export async function GET(request: NextRequest) {
   const token = getBridgeToken();
 
   if (!token) {
-    return new NextResponse(null, { status: 503 });
+    return fallbackIcon(size);
   }
 
   try {
@@ -43,7 +54,7 @@ export async function GET(request: NextRequest) {
     );
 
     if (!res.ok) {
-      return new NextResponse(null, { status: res.status });
+      return fallbackIcon(size);
     }
 
     const buf = Buffer.from(await res.arrayBuffer());
@@ -54,6 +65,6 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch {
-    return new NextResponse(null, { status: 502 });
+    return fallbackIcon(size);
   }
 }

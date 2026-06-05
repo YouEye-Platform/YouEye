@@ -1,3 +1,19 @@
+## v0.4.13.4 (CP) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add reliable fallback favicon for CP root surfaces
+
+### Changes
+- `control-panel/src/app/api/branding/favicon/route.ts` — Returns a built-in SVG fallback when UI has no rendered branding icon yet.
+- `control-panel/package.json` and `README.md` — Bumped CP branch release version.
+
+### Test Results
+- CP build: `pnpm build` passed for `0.4.13.4`.
+
+### Notes for Iris
+- This prevents `/settings/api/branding/favicon` and `/market/api/branding/favicon` from returning 404 on fresh/default branding.
+
 ## v0.4.13.3 (CP) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc
