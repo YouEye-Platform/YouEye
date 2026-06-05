@@ -1,3 +1,20 @@
+## v0.4.13.14 (CP) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Expose YouEye ID routes through middleware
+
+### Changes
+- `control-panel/src/middleware.ts` — Marked YouEye ID login, OAuth/OIDC, forward-auth, and discovery endpoints as public auth-system routes so they are not redirected to the Control Panel PAM login.
+- `control-panel/package.json`, `README.md` — Bumped CP branch release version and current-version table.
+
+### Test Results
+- Live CP `0.4.13.13` update succeeded, but `https://id.potato.app/identity/login` redirected to `/login` because middleware still required a CP session.
+- CP release build pending in this session.
+
+### Notes for Iris
+- CP-only follow-up to `0.4.13.13`. Authentik remains live at `auth.<domain>`.
+
 ## v0.4.13.13 (CP) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc

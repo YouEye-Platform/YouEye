@@ -38,6 +38,12 @@ const PUBLIC_ROUTES = [
   '/api/suggestions',     // Internal: UI server-side fetches connection suggestions
   '/api/market/app',      // Internal: app detail + connections endpoints
   '/api/branding/favicon', // Public favicon (proxied from UI)
+  '/identity/login',
+  '/application/o',
+  '/oauth',
+  '/forward-auth/caddy',
+  '/outpost.goauthentik.io/auth/caddy',
+  '/.well-known/openid-configuration',
   '/settings/api/branding/favicon',
   '/market/api/branding/favicon',
   '/api/telemetry',        // Telemetry record + export (internal tracking)
