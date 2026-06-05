@@ -1,3 +1,21 @@
+## v0.4.13.18 (CP) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Build external YouEye ID authorize return URLs
+
+### Changes
+- `control-panel/src/app/application/o/authorize/route.ts` — Builds login `return_to` from configured YouEye ID external URL plus the request path/query instead of Next's internal `0.0.0.0:3000` URL.
+- `control-panel/package.json`, `README.md` — Bumped CP branch release version and current-version table.
+
+### Test Results
+- Curl-style Notes OAuth succeeded when `return_to` was explicitly external.
+- Playwright browser flow reached YouEye ID but failed after login because generated `return_to` pointed at `https://0.0.0.0:3000/application/o/authorize...`.
+- CP release build pending in this session.
+
+### Notes for Iris
+- CP-only follow-up to `0.4.13.17`.
+
 ## v0.4.13.17 (CP) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc

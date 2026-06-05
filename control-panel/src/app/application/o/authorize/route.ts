@@ -7,7 +7,8 @@ export async function GET(request: NextRequest) {
   const config = await getIdentityConfig();
   const user = await getIdentitySession(request);
   if (!user) {
-    const returnTo = encodeURIComponent(request.nextUrl.toString());
+    const returnUrl = new URL(request.nextUrl.pathname + request.nextUrl.search, config.externalUrl);
+    const returnTo = encodeURIComponent(returnUrl.toString());
     return NextResponse.redirect(`${config.externalUrl}/identity/login?return_to=${returnTo}`);
   }
 
@@ -35,4 +36,3 @@ export async function GET(request: NextRequest) {
   if (state) redirect.searchParams.set('state', state);
   return NextResponse.redirect(redirect);
 }
-
