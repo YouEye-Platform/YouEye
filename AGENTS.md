@@ -10,6 +10,12 @@
 
 ### Test Results
 - CP build: `pnpm -C control-panel build` passed for `0.4.13.9`.
+- Release: `cp-artem-v0.4.13.9` published with `standalone.tar`.
+- Deploy: `spine update control` updated `192.168.31.160` to CP `0.4.13.9`; UI remained `0.4.3.3`.
+- Route repair: `/api/setup/control-routes` returned success for `/settings` and `/market`.
+- Playwright/browser route pass: `/settings`, `/settings/appearance`, `/settings/apps`, `/settings/language`, `/settings/users`, `/settings/system`, `/settings/network`, `/settings/about`, and `/market` all rendered without 404s.
+- Screenshot verification: final screenshots under `/tmp/youeye-shots/plan3-*-0.4.13.9.png`; System now renders host metrics and container summary.
+- Boundary: CP update reconfirmed UI -> CP egress block enforcement.
 
 ### Notes for Iris
 - CP-only follow-up to `0.4.13.8`; no UI release needed.
