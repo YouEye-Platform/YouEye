@@ -1,3 +1,25 @@
+## v0.4.13.7 (CP) + v0.4.3.3 (UI) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Reshape CP-owned Settings to match main UI settings structure
+
+### Changes
+- `control-panel/src/components/settings-shell/settings-shell.tsx` — Collapsed Settings navigation to main-style Profile, Appearance, Apps, Language plus admin Users, System, Network, About, and App Market.
+- `control-panel/src/app/settings/(shell)/*` — Redirected legacy Settings routes into the new main-shaped sections and added native Network/About pages.
+- `control-panel/src/components/settings-shell/profile-client.tsx`, `appearance-client.tsx`, `apps-client.tsx`, `language-client.tsx`, `users-client.tsx`, `system-client.tsx`, `network-client.tsx`, `about-client.tsx` — Replaced embed/dashboard-style settings content with compact native CP settings pages.
+- `control-panel/src/app/api/settings/system/route.ts` — Added an admin system summary endpoint for the native Settings System page.
+- `ui/src/app/api/ui-bridge/settings/[...path]/route.ts` — Added bridge-backed app branding and permission revoke support for CP-rendered app settings.
+- `control-panel/package.json`, `ui/package.json`, `README.md` — Bumped CP/UI branch release versions and current-version table.
+
+### Test Results
+- CP build: `pnpm -C control-panel build` passed for `0.4.13.7`.
+- UI build: `pnpm -C ui build` passed for `0.4.3.3` with a temporary SSH Postgres tunnel; existing schema "already exists" notices were emitted during static generation.
+
+### Notes for Iris
+- Settings and Market remain Control Panel-owned. UI still does not call CP; CP renders settings and uses CP -> UI bridge calls for UI-owned user/dashboard data.
+- Legacy CP embed routes remain present for now, but the visible Settings routes no longer depend on embeds for these sections.
+
 ## v0.4.13.6 (CP) + v0.4.3.2 (UI) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc

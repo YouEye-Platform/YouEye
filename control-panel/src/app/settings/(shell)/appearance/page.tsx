@@ -1,11 +1,7 @@
 import { AppearanceClient } from "@/components/settings-shell/appearance-client";
-import { PageHeader } from "@/components/settings-shell/page-header";
+import { getSession } from "@/lib/auth/session";
 
-export default function AppearanceSettingsPage() {
-  return (
-    <>
-      <PageHeader title="Appearance" description="Choose your theme and display mode." />
-      <AppearanceClient />
-    </>
-  );
+export default async function AppearanceSettingsPage() {
+  const session = await getSession();
+  return <AppearanceClient isAdmin={session?.isAdmin ?? false} />;
 }

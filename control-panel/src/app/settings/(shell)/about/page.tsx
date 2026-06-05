@@ -1,10 +1,9 @@
 import { redirect } from "next/navigation";
-import { UsersClient } from "@/components/settings-shell/users-client";
+import { AboutClient } from "@/components/settings-shell/about-client";
 import { getSession } from "@/lib/auth/session";
 
-export default async function UsersSettingsPage() {
+export default async function AboutSettingsPage() {
   const session = await getSession();
   if (!session?.isAdmin) redirect("/settings");
-
-  return <UsersClient />;
+  return <AboutClient />;
 }

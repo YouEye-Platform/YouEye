@@ -1,11 +1,7 @@
 import { AppsClient } from "@/components/settings-shell/apps-client";
-import { PageHeader } from "@/components/settings-shell/page-header";
+import { getSession } from "@/lib/auth/session";
 
-export default function AppsSettingsPage() {
-  return (
-    <>
-      <PageHeader title="Apps" description="Choose which apps appear in your drawer." />
-      <AppsClient />
-    </>
-  );
+export default async function AppsSettingsPage() {
+  const session = await getSession();
+  return <AppsClient isAdmin={session?.isAdmin ?? false} />;
 }

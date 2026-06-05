@@ -3,23 +3,15 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  ArrowLeftRight,
-  Box,
-  Clock,
   Globe,
-  HardDrive,
-  KeyRound,
   Languages,
   LayoutGrid,
-  Lock,
-  PackageOpen,
-  Paintbrush,
+  Info,
   Palette,
-  Server,
-  Shield,
   Store,
   User,
   Users,
+  Server,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -27,22 +19,14 @@ const USER_SECTIONS = [
   { id: "profile", label: "Profile", icon: User, href: "/settings" },
   { id: "appearance", label: "Appearance", icon: Palette, href: "/settings/appearance" },
   { id: "apps", label: "Apps", icon: LayoutGrid, href: "/settings/apps" },
-  { id: "accounts", label: "Accounts", icon: KeyRound, href: "/settings/accounts" },
-  { id: "timeline", label: "Timeline", icon: Clock, href: "/timeline", external: true },
-  { id: "privacy", label: "Privacy", icon: Shield, href: "/settings/privacy" },
   { id: "language", label: "Language", icon: Languages, href: "/settings/language" },
-  { id: "branding", label: "Branding", icon: Paintbrush, href: "/settings/branding" },
 ];
 
 const ADMIN_SECTIONS = [
   { id: "users", label: "Users", icon: Users, href: "/settings/users" },
   { id: "system", label: "System", icon: Server, href: "/settings/system" },
-  { id: "containers", label: "Containers", icon: Box, href: "/settings/containers" },
-  { id: "dns", label: "DNS", icon: Globe, href: "/settings/dns" },
-  { id: "proxy", label: "Proxy", icon: ArrowLeftRight, href: "/settings/proxy" },
-  { id: "tls", label: "TLS", icon: Lock, href: "/settings/tls" },
-  { id: "backup", label: "Backup", icon: HardDrive, href: "/settings/backup" },
-  { id: "app-management", label: "App Management", icon: PackageOpen, href: "/settings/app-management" },
+  { id: "network", label: "Network", icon: Globe, href: "/settings/network" },
+  { id: "about", label: "About", icon: Info, href: "/settings/about" },
   { id: "market", label: "App Market", icon: Store, href: "/market" },
 ];
 

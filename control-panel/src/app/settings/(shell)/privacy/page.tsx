@@ -1,11 +1,5 @@
-import { PageHeader } from "@/components/settings-shell/page-header";
-import { PinClient } from "@/components/settings-shell/pin-client";
+import { redirect } from "next/navigation";
 
 export default function PrivacySettingsPage() {
-  return (
-    <>
-      <PageHeader title="Privacy" description="Manage your encryption PIN." />
-      <PinClient />
-    </>
-  );
+  redirect("/settings");
 }

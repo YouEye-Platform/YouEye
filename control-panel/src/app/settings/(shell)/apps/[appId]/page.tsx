@@ -1,4 +1,5 @@
-import { redirect } from "next/navigation";
+import { AppsClient } from "@/components/settings-shell/apps-client";
+import { getSession } from "@/lib/auth/session";
 
 export default async function AppSettingsDetailPage({
   params,
@@ -6,5 +7,6 @@ export default async function AppSettingsDetailPage({
   params: Promise<{ appId: string }>;
 }) {
   const { appId } = await params;
-  redirect(`/settings/apps?app=${encodeURIComponent(appId)}`);
+  const session = await getSession();
+  return <AppsClient isAdmin={session?.isAdmin ?? false} initialAppId={appId} />;
 }

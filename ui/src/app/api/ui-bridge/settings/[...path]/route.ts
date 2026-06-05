@@ -4,10 +4,11 @@ import { findUserByUsername, updateUserProfile } from "@/lib/db/queries/users";
 import { getUserSettings } from "@/lib/db/queries/settings";
 import { listThemes, createTheme, getUserActiveTheme, setUserActiveTheme, getDefaultTheme } from "@/lib/db/queries/themes";
 import { generateCSSVariables } from "@/lib/themes/css-generator";
-import { getUserAppsWithConfig, updateAppConfig, updateDrawerSections } from "@/lib/db/queries/apps";
+import { getUserAppsWithConfig, updateAppBranding, updateAppConfig, updateDrawerSections, updateUserAppBranding } from "@/lib/db/queries/apps";
 import { getDrawerPrefs, saveDrawerPrefs, saveUserWordartOverride, getUserWordartOverride, deleteUserWordartOverride } from "@/lib/db/queries/settings";
 import { getBranding } from "@/lib/db/queries/branding";
 import { deleteNotification, getUnreadCount, getUserNotifications, markAllNotificationsRead, markNotificationRead } from "@/lib/db/queries/notifications";
+import { getAppPermissions, revokePermission } from "@/lib/db/queries/permissions";
 import { hasPIN, hasActivePINSession, createPIN, changePIN, endPINSession } from "@/lib/crypto/pin-session";
 import { db, ensureSchema } from "@/db";
 import { userSettings } from "@/db/schema";
@@ -242,6 +243,55 @@ export async function GET(request: NextRequest, context: RouteContext) {
     });
   }
 
+  if (path.startsWith("permissions/app/")) {
+    const appId = decodeURIComponent(path.slice("permissions/app/".length));
+    const permissions = await getAppPermissions(user.id, appId);
+    return NextResponse.json({
+      app_id: appId,
+      permissions: permissions.map((permission) => ({
+        id: `${appId}:${permission.permission}`,
+        appId,
+        permission: permission.permission,
+        granted: permission.granted,
+        grantType: permission.grant_type,
+        grantedAt: permission.granted_at,
+      })),
+    });
+  }
+
+  if (path.startsWith("apps/branding/user/")) {
+    const appId = decodeURIComponent(path.slice("apps/branding/user/".length));
+    const data = await getUserAppsWithConfig(user.id);
+    const app = data.apps.find((item) => item.id === appId);
+    if (!app) return NextResponse.json({ error: "App not found" }, { status: 404 });
+    return NextResponse.json({
+      appId,
+      brandingWordart: app.brandingWordart,
+      headerDisplayMode: app.headerDisplayMode,
+      customName: app.customName,
+      customIconUrl: app.customIconUrl,
+      originalName: app.name,
+      originalIcon: app.icon,
+      adminBrandingWordart: app.adminBrandingWordart,
+      adminHeaderDisplayMode: app.adminHeaderDisplayMode,
+    });
+  }
+
+  if (path.startsWith("apps/branding/server/")) {
+    if (!auth.isAdmin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const appId = decodeURIComponent(path.slice("apps/branding/server/".length));
+    const data = await getUserAppsWithConfig(user.id);
+    const app = data.apps.find((item) => item.id === appId);
+    if (!app) return NextResponse.json({ error: "App not found" }, { status: 404 });
+    return NextResponse.json({
+      appId,
+      brandingWordart: app.adminBrandingWordart,
+      headerDisplayMode: app.adminHeaderDisplayMode,
+      originalName: app.name,
+      originalIcon: app.icon,
+    });
+  }
+
   if (path === "accounts") {
     return NextResponse.json({ oauthAccounts: [] });
   }
@@ -331,6 +381,28 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     return NextResponse.json(updated);
   }
 
+  if (path.startsWith("apps/branding/user/")) {
+    const appId = decodeURIComponent(path.slice("apps/branding/user/".length));
+    await updateUserAppBranding(user.id, appId, {
+      brandingWordart: body.brandingWordart,
+      headerDisplayMode: body.headerDisplayMode,
+      customName: body.customName,
+      customIconUrl: body.customIconUrl,
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (path.startsWith("apps/branding/server/")) {
+    if (!isAdmin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const appId = decodeURIComponent(path.slice("apps/branding/server/".length));
+    const row = await updateAppBranding(appId, {
+      brandingWordart: body.brandingWordart,
+      headerDisplayMode: body.headerDisplayMode,
+    });
+    if (!row) return NextResponse.json({ error: "App not found" }, { status: 404 });
+    return NextResponse.json({ ok: true });
+  }
+
   if (path === "themes") {
     if (!isAdmin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     const theme = await createTheme({ name: body.name, colors: body.colors, createdBy: user.id });
@@ -373,6 +445,31 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     const notificationId = path.slice("notifications/".length);
     await deleteNotification(notificationId, auth.user.id);
     return NextResponse.json({ success: true });
+  }
+
+  if (path.startsWith("permissions/app/")) {
+    const appId = decodeURIComponent(path.slice("permissions/app/".length));
+    const body = await request.json().catch(() => ({}));
+    if (body.permission) {
+      await revokePermission(auth.user.id, appId, body.permission);
+      return NextResponse.json({ success: true });
+    }
+    const permissions = await getAppPermissions(auth.user.id, appId);
+    for (const permission of permissions) {
+      await revokePermission(auth.user.id, appId, permission.permission);
+    }
+    return NextResponse.json({ success: true, revoked: permissions.length });
+  }
+
+  if (path.startsWith("apps/branding/user/")) {
+    const appId = decodeURIComponent(path.slice("apps/branding/user/".length));
+    await updateUserAppBranding(auth.user.id, appId, {
+      brandingWordart: null,
+      headerDisplayMode: null,
+      customName: null,
+      customIconUrl: null,
+    });
+    return NextResponse.json({ ok: true });
   }
 
   if (path === "pin/session") {
