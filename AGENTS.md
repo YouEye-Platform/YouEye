@@ -1,3 +1,20 @@
+## v0.4.13.8 (CP) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix Settings System API alias on root-domain CP surface
+
+### Changes
+- `control-panel/src/app/settings/api/settings/system/route.ts` — Added a Settings-scoped API alias for the native System settings endpoint.
+- `control-panel/src/components/settings-shell/system-client.tsx` — Fetches the System summary through `/settings/api/settings/system` so root-domain Caddy routing stays on CP.
+- `control-panel/package.json`, `README.md` — Bumped CP branch release version and current-version table.
+
+### Test Results
+- CP build: `pnpm -C control-panel build` passed for `0.4.13.8`; build route table includes `/settings/api/settings/system`.
+
+### Notes for Iris
+- CP-only follow-up to `0.4.13.7`; no UI release needed.
+
 ## v0.4.13.7 (CP) + v0.4.3.3 (UI) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc

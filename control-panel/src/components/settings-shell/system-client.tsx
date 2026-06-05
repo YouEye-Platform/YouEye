@@ -36,7 +36,7 @@ export function SystemClient() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    const res = await fetch("/api/settings/system");
+    const res = await fetch("/settings/api/settings/system");
     if (res.ok) setData(await res.json());
     else setError((await res.json().catch(() => ({}))).error || "Failed to load system information");
     setLoading(false);
