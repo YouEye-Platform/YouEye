@@ -4,12 +4,13 @@
  * GET  /api/ui-bridge/users         — list all users
  * POST /api/ui-bridge/users         — create a new user
  *
- * Reuses the existing Authentik client library.
+ * Reuses the provider-neutral identity layer. The route path is stable for
+ * the UI bridge; the backend provider is YouEye ID during this migration.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { validateBridgeToken } from '@/lib/ui-bridge/auth';
-import { listUsers, createUser, setUserPassword, listGroups } from '@/lib/authentik/client';
+import { createUser, listUsers } from '@/lib/identity/provider';
 
 export async function GET(request: NextRequest) {
   const authError = await validateBridgeToken(request);
@@ -27,7 +28,6 @@ export async function GET(request: NextRequest) {
       is_superuser: user.is_superuser,
       last_login: user.last_login || null,
       type: user.type,
-      path: user.path,
     }));
 
     return NextResponse.json({ users });
@@ -55,11 +55,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create user in Authentik
-    const user = await createUser({ username, name, email: email || '' });
-
-    // Set password
-    await setUserPassword(user.pk, password);
+    const user = await createUser({ username, name, email: email || '', password });
 
     return NextResponse.json({
       id: user.pk,

@@ -1,7 +1,7 @@
 /**
  * User Language Sync API
  *
- * PATCH /api/user/language — Propagate language to Authentik user profile + apps
+ * PATCH /api/user/language — Propagate language to system/app settings
  *
  * Dashboard-compatible alternative to /api/ui-bridge/user/language (which
  * requires bridge token + embed Referer). Uses session auth instead.
@@ -9,7 +9,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { listUsers } from '@/lib/authentik/client';
 import { propagateLanguageToAll } from '@/lib/language/service';
 
 export async function PATCH(req: NextRequest) {
@@ -30,22 +29,9 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'locale is required' }, { status: 400 });
   }
 
-  // Find the Authentik user to get their PK for locale sync
-  let authentikUserId: number | undefined;
-  try {
-    const users = await listUsers();
-    const user = users.find(
-      (u) => u.username?.toLowerCase() === session.username?.toLowerCase()
-    );
-    if (user) {
-      authentikUserId = user.pk;
-    }
-  } catch {
-    // Authentik may be unreachable — continue without user-level sync
-  }
-
-  // Propagate: system + authentik user + apps (non-blocking for apps)
-  const result = await propagateLanguageToAll(locale, authentikUserId);
+  // Propagate: system + apps. YouEye ID does not store per-user language in
+  // Authentik attributes; the UI profile path persists user-facing language.
+  const result = await propagateLanguageToAll(locale);
 
   return NextResponse.json({
     success: true,

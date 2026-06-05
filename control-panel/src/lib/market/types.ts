@@ -238,6 +238,7 @@ export interface VariableContext {
     password: string;
   };
   sso: {
+    slug: string;
     issuer: string;
     discovery_url: string;
     client_id: string;

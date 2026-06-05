@@ -1,10 +1,13 @@
 /**
- * Authentik Set Password API
+ * Identity Set Password API
  * POST /api/apps/authentik/users/[id]/password
+ *
+ * The URL is kept for compatibility with the current Settings UI. During the
+ * YouEye ID migration it is backed by the provider-neutral identity layer.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { setUserPassword } from '@/lib/authentik/client';
+import { setPassword } from '@/lib/identity/provider';
 import { getSession } from '@/lib/auth';
 
 interface RouteParams {
@@ -29,7 +32,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    await setUserPassword(Number(id), password);
+    await setPassword(id, password);
     return NextResponse.json({ status: 'password_set' });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

@@ -1,8 +1,8 @@
 /**
  * User Self-Profile API
  *
- * GET  /api/user/profile — Get current user's profile from Authentik
- * PATCH /api/user/profile — Update current user's own name in Authentik
+ * GET  /api/user/profile — Get current user's profile from YouEye ID
+ * PATCH /api/user/profile — Update current user's own name in YouEye ID
  *
  * This endpoint is available to ALL authenticated users (not admin-only).
  * Users can only modify their own profile — the username comes from the
@@ -11,16 +11,16 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { listUsers, updateUser } from "@/lib/authentik/client";
+import { listUsers, updateUser } from "@/lib/identity/provider";
 import { getContainerIP } from "@/lib/incus/container-ip";
 import { readFile } from "fs/promises";
 
 const BRIDGE_TOKEN_PATH = "/etc/youeye/ui-bridge-token";
 
 /**
- * Find an Authentik user by their username (exact match).
+ * Find an identity user by their username (exact match).
  */
-async function findAuthentikUser(username: string) {
+async function findIdentityUser(username: string) {
   const result = await listUsers({ search: username, page_size: 10 });
   return result.results?.find((u) => u.username === username) ?? null;
 }
@@ -32,9 +32,9 @@ export async function GET() {
   }
 
   try {
-    const user = await findAuthentikUser(session.username);
+    const user = await findIdentityUser(session.username);
     if (!user) {
-      return NextResponse.json({ error: "User not found in Authentik" }, { status: 404 });
+      return NextResponse.json({ error: "User not found in YouEye ID" }, { status: 404 });
     }
 
     // Split the "name" field into first/last for the UI
@@ -42,18 +42,12 @@ export async function GET() {
     const firstName = nameParts[0] || "";
     const lastName = nameParts.length > 1 ? user.name.substring(firstName.length + 1) : "";
 
-    // Extract avatar from Authentik user attributes (stored as data URL)
-    const avatarUrl = typeof user.attributes?.avatar === "string"
-      ? user.attributes.avatar
-      : undefined;
-
     return NextResponse.json({
       username: user.username,
       firstName,
       lastName,
       email: user.email,
       isAdmin: session.isAdmin,
-      avatarUrl,
     });
   } catch (error) {
     console.error("Failed to fetch user profile:", error);
@@ -83,12 +77,12 @@ export async function PATCH(request: NextRequest) {
   }
 
   try {
-    const user = await findAuthentikUser(session.username);
+    const user = await findIdentityUser(session.username);
     if (!user) {
-      return NextResponse.json({ error: "User not found in Authentik" }, { status: 404 });
+      return NextResponse.json({ error: "User not found in YouEye ID" }, { status: 404 });
     }
 
-    // Build the combined "name" field for Authentik
+    // Build the combined "name" field for the identity provider.
     // Preserve existing parts if only one field is being updated
     const currentParts = (user.name || "").split(" ", 2);
     const currentFirst = currentParts[0] || "";
@@ -98,7 +92,7 @@ export async function PATCH(request: NextRequest) {
     const newLast = lastName !== undefined ? lastName : currentLast;
     const fullName = [newFirst, newLast].filter(Boolean).join(" ") || user.username;
 
-    await updateUser(user.pk, { name: fullName });
+    await updateUser(String(user.pk), { name: fullName });
 
     // Push name change to UI via bridge (server-to-server, non-fatal)
     pushNameToUI(session.username, newFirst, newLast).catch((err) =>

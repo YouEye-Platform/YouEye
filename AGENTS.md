@@ -1,3 +1,25 @@
+## v0.4.13.21 (CP) — artem — 2026-06-06
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Finish provider-neutral YouEye ID user and app wiring for OAuth Plan 2
+
+### Changes
+- `control-panel/src/lib/identity/*` — Added the provider-neutral user management layer backed by YouEye ID users.
+- `control-panel/src/app/api/people/*`, `control-panel/src/app/api/apps/authentik/users/*`, `control-panel/src/app/api/ui-bridge/users/*` — Routed user list/create/update/delete/password/admin actions through the identity provider layer while preserving existing endpoint paths.
+- `control-panel/src/app/api/user/*` — Moved self-profile/avatar/language sync off direct Authentik user mutation; avatars now persist through the UI bridge.
+- `control-panel/src/lib/market/*` — Added `identity.*` and runtime `sso.slug` manifest variables so app installs can target YouEye ID without display-name path bugs.
+- `README.md`, `control-panel/package.json` — Bumped Control Panel to 0.4.13.21 and updated the current version table.
+
+### Test Results
+- CP build: `pnpm -C control-panel build` passed for 0.4.13.21 after the final market/user changes.
+- Strict TS: `pnpm -C control-panel exec tsc --noEmit --pretty false` still fails only on known unrelated backlog files (`api/market/validate-url`, `api/suggestions`, `app/sw.ts`, several `components/ui/*`, `lib/auth/sso-setup.ts`).
+- Live pre-release regression: UI OAuth, CP `/settings` OAuth, direct PAM rescue, Notes OIDC, and SearXNG forward-auth all verified on `192.168.31.160` after UI 0.4.3.6.
+
+### Notes for Iris
+- Authentik compatibility route names remain intentionally stable, but the changed user APIs no longer require Authentik numeric IDs.
+- `${identity.name}` is for display labels; `${sso.slug}` is now available for URL-safe provider path segments.
+
 ## v0.4.3.6 (UI) — artem — 2026-06-06
 **Branch:** artem
 **VM:** potempc

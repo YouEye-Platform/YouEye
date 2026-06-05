@@ -1,12 +1,15 @@
 /**
- * Authentik User Detail API
+ * Identity User Detail API
  * GET /api/apps/authentik/users/[id] — Get user
  * PATCH /api/apps/authentik/users/[id] — Update user
  * DELETE /api/apps/authentik/users/[id] — Delete user
+ *
+ * The URL is kept for compatibility with the current Settings UI. During the
+ * YouEye ID migration it is backed by the provider-neutral identity layer.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getUser, updateUser, deleteUser } from '@/lib/authentik/client';
+import { deleteUser, getUser, updateUser } from '@/lib/identity/provider';
 import { getSession } from '@/lib/auth';
 
 interface RouteParams {
@@ -21,7 +24,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   try {
     const { id } = await params;
-    const user = await getUser(Number(id));
+    const user = await getUser(id);
     return NextResponse.json(user);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -38,7 +41,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const user = await updateUser(Number(id), body);
+    const user = await updateUser(id, body);
     return NextResponse.json(user);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -54,7 +57,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
   try {
     const { id } = await params;
-    await deleteUser(Number(id));
+    await deleteUser(id);
     return NextResponse.json({ status: 'deleted' });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

@@ -5,9 +5,9 @@ import { Loader2, RefreshCw, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
-interface AuthentikUser {
-  pk?: number;
-  id?: number;
+interface IdentityUser {
+  pk?: string | number;
+  id?: string | number;
   username: string;
   name: string;
   email: string;
@@ -18,14 +18,14 @@ interface AuthentikUser {
   path?: string;
 }
 
-function isSystemUser(user: AuthentikUser) {
+function isSystemUser(user: IdentityUser) {
   if (user.username === "akadmin") return true;
   if (user.type === "service_account" || user.type === "internal_service_account") return true;
   return !!user.path?.includes("goauthentik.io");
 }
 
 export function UsersClient() {
-  const [users, setUsers] = useState<AuthentikUser[]>([]);
+  const [users, setUsers] = useState<IdentityUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [showSystem, setShowSystem] = useState(false);
   const [error, setError] = useState("");

@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
-import { updateUser, deleteUser, getUser, listGroups } from '@/lib/authentik/client';
+import { deleteUser, getUser, updateUser } from '@/lib/identity/provider';
 
 export async function PATCH(
   request: NextRequest,
@@ -25,11 +25,6 @@ export async function PATCH(
     }
 
     const { id } = await params;
-    const userId = parseInt(id, 10);
-    if (isNaN(userId)) {
-      return NextResponse.json({ error: 'Invalid user ID' }, { status: 400 });
-    }
-
     const body = await request.json();
     const { isActive, isAdmin, name, email } = body as {
       isActive?: boolean;
@@ -42,24 +37,16 @@ export async function PATCH(
     if (typeof name === 'string') patch.name = name;
     if (typeof email === 'string') patch.email = email;
     if (typeof isActive === 'boolean') patch.is_active = isActive;
-
-    // Handle admin toggle via group membership
     if (typeof isAdmin === 'boolean') {
-      const currentUser = await getUser(userId);
-      const groups = await listGroups({ search: 'authentik Admins', page_size: 5 });
-      const adminGroup = groups.results.find(g => g.name === 'authentik Admins');
-
-      if (adminGroup) {
-        const currentGroups = currentUser.groups || [];
-        if (isAdmin && !currentGroups.includes(adminGroup.pk)) {
-          patch.groups = [...currentGroups, adminGroup.pk];
-        } else if (!isAdmin) {
-          patch.groups = currentGroups.filter((g: string) => g !== adminGroup.pk);
-        }
-      }
+      const currentUser = await getUser(id);
+      const currentGroups = currentUser.groups || [];
+      patch.groups = isAdmin
+        ? Array.from(new Set([...currentGroups, 'admin']))
+        : currentGroups.filter((g: string) => g !== 'admin' && g !== 'authentik Admins');
+      patch.isAdmin = isAdmin;
     }
 
-    const updated = await updateUser(userId, patch as Parameters<typeof updateUser>[1]);
+    const updated = await updateUser(id, patch as Parameters<typeof updateUser>[1]);
     return NextResponse.json({ user: updated, success: true });
   } catch (error) {
     console.error('Error updating user:', error);
@@ -86,12 +73,7 @@ export async function DELETE(
     }
 
     const { id } = await params;
-    const userId = parseInt(id, 10);
-    if (isNaN(userId)) {
-      return NextResponse.json({ error: 'Invalid user ID' }, { status: 400 });
-    }
-
-    await deleteUser(userId);
+    await deleteUser(id);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error deleting user:', error);

@@ -1,11 +1,14 @@
 /**
- * Authentik Users API
+ * Identity Users API
  * GET /api/apps/authentik/users — List users
  * POST /api/apps/authentik/users — Create user
+ *
+ * The URL is kept for compatibility with the current Settings UI. During the
+ * YouEye ID migration it is backed by the provider-neutral identity layer.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { listUsers, createUser } from '@/lib/authentik/client';
+import { createUser, listUsers } from '@/lib/identity/provider';
 import { getSession } from '@/lib/auth';
 
 export async function GET(request: NextRequest) {
@@ -35,7 +38,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { username, name, email, is_active, groups } = body;
+    const { username, name, email, password, is_active, groups, isAdmin } = body;
 
     if (!username || !name) {
       return NextResponse.json(
@@ -44,7 +47,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const user = await createUser({ username, name, email, is_active, groups });
+    const user = await createUser({ username, name, email, password, is_active, groups, isAdmin });
     return NextResponse.json(user, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

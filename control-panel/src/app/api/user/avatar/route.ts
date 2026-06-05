@@ -1,17 +1,15 @@
 /**
- * User Avatar API — CP-owned
+ * User Avatar API — CP-owned bridge to UI
  *
- * POST   /api/user/avatar — upload avatar to Authentik + push to UI via bridge
- * DELETE /api/user/avatar — remove avatar from Authentik + push removal to UI
+ * POST   /api/user/avatar — upload avatar to UI via bridge
+ * DELETE /api/user/avatar — remove avatar from UI via bridge
  *
- * Available to all authenticated users. The avatar is stored in Authentik
- * and pushed to YE-UI via the bridge so it persists in the UI database.
+ * Available to all authenticated users. YouEye ID does not store profile
+ * images; the UI database is the durable user-facing profile store.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { listUsers } from "@/lib/authentik/client";
-import { spineClient } from "@/lib/spine/client";
 import { getContainerIP } from "@/lib/incus/container-ip";
 import { readFile } from "fs/promises";
 
@@ -59,35 +57,6 @@ async function pushAvatarToUI(
   }
 }
 
-async function findAuthentikUser(username: string) {
-  const result = await listUsers({ search: username, page_size: 10 });
-  return result.results?.find((u) => u.username === username) ?? null;
-}
-
-async function getAuthentikUrl(): Promise<{ url: string; token: string }> {
-  const creds = await spineClient.getAuthentikCredentials();
-  const ip = await getContainerIP("youeye-authentik");
-  const url = ip ? `http://${ip}:9000` : creds.internal_url;
-  return { url, token: creds.bootstrap_token };
-}
-
-async function getExistingAttributes(
-  authentikUrl: string,
-  token: string,
-  pk: number
-): Promise<Record<string, unknown>> {
-  try {
-    const res = await fetch(`${authentikUrl}/api/v3/core/users/${pk}/`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-    });
-    if (!res.ok) return {};
-    const user = await res.json();
-    return user.attributes || {};
-  } catch {
-    return {};
-  }
-}
-
 export async function POST(request: NextRequest) {
   const session = await getSession();
   if (!session) {
@@ -116,45 +85,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const user = await findAuthentikUser(session.username);
-    if (!user) {
-      return NextResponse.json({ error: "User not found in Authentik" }, { status: 404 });
-    }
-
-    const { url: authentikUrl, token } = await getAuthentikUrl();
-
-    // Convert file to base64 data URL and store in Authentik user attributes
+    // Convert file to base64 data URL and store it in the UI profile mirror.
     const buffer = Buffer.from(await file.arrayBuffer());
     const dataUrl = `data:${file.type};base64,${buffer.toString("base64")}`;
 
-    const res = await fetch(
-      `${authentikUrl}/api/v3/core/users/${user.pk}/`,
-      {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          attributes: { ...((await getExistingAttributes(authentikUrl, token, user.pk)) || {}), avatar: dataUrl },
-        }),
-      }
-    );
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      return NextResponse.json(
-        { error: `Authentik avatar upload failed: ${res.status} ${text}` },
-        { status: 502 }
-      );
-    }
-
-    // Push to UI via bridge so the dashboard avatar persists after navigation.
     await pushAvatarToUI(session.username, dataUrl);
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("[Avatar] Upload to Authentik failed:", error);
+    console.error("[Avatar] Upload failed:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Upload failed" },
       { status: 500 }
@@ -169,43 +108,11 @@ export async function DELETE() {
   }
 
   try {
-    const user = await findAuthentikUser(session.username);
-    if (!user) {
-      return NextResponse.json({ error: "User not found in Authentik" }, { status: 404 });
-    }
-
-    const { url: authentikUrl, token } = await getAuthentikUrl();
-
-    // Remove avatar from user attributes (falls back to initials)
-    const existing = await getExistingAttributes(authentikUrl, token, user.pk);
-    delete existing.avatar;
-
-    const res = await fetch(
-      `${authentikUrl}/api/v3/core/users/${user.pk}/`,
-      {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ attributes: existing }),
-      }
-    );
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      return NextResponse.json(
-        { error: `Authentik avatar removal failed: ${res.status} ${text}` },
-        { status: 502 }
-      );
-    }
-
-    // Push removal to UI via bridge
     await pushAvatarToUI(session.username, null);
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("[Avatar] Removal from Authentik failed:", error);
+    console.error("[Avatar] Removal failed:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Delete failed" },
       { status: 500 }

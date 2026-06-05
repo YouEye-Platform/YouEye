@@ -266,6 +266,7 @@ export async function buildCanonicalContext(
       password: '',
     },
     sso: {
+      slug: ssoSlug,
       issuer: ssoResult ? `${identity.externalUrl}/application/o/${ssoSlug}/` : '',
       discovery_url: ssoResult ? `${identity.externalUrl}/application/o/${ssoSlug}/.well-known/openid-configuration` : '',
       client_id: ssoResult?.clientId || '',
@@ -273,6 +274,8 @@ export async function buildCanonicalContext(
       callback_url: manifest.sso
         ? `${appUrl}${manifest.sso.callback_path
             .replace(/\$\{authentik\.name\}/g, identityDisplayName)
+            .replace(/\$\{identity\.name\}/g, identityDisplayName)
+            .replace(/\$\{sso\.slug\}/g, ssoSlug)
             .replace(/\$\{app\.id\}/g, config.appId)}`
         : '',
       logout_url: ssoResult ? `${identity.externalUrl}/application/o/${ssoSlug}/end-session/` : '',

@@ -19,6 +19,7 @@
  *   ${containers.NAME.internal_url}   - Container URL with port
  *   ${sso.issuer}               - OIDC issuer URL
  *   ${sso.discovery_url}        - OIDC discovery endpoint
+ *   ${sso.slug}                 - Stable app OIDC provider/client slug
  *   ${sso.client_id}            - OAuth2 client ID
  *   ${sso.client_secret}        - OAuth2 client secret
  *   ${sso.callback_url}         - OAuth2 callback URL

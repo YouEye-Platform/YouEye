@@ -11,9 +11,8 @@ import {
   getUser,
   updateUser,
   deleteUser,
-  setUserPassword,
-  listGroups,
-} from '@/lib/authentik/client';
+  setPassword,
+} from '@/lib/identity/provider';
 
 export async function PUT(
   request: NextRequest,
@@ -23,10 +22,6 @@ export async function PUT(
   if (authError) return authError;
 
   const { id } = await params;
-  const userId = parseInt(id, 10);
-  if (isNaN(userId)) {
-    return NextResponse.json({ error: 'Invalid user ID' }, { status: 400 });
-  }
 
   try {
     const body = await request.json();
@@ -37,43 +32,26 @@ export async function PUT(
         if (!password) {
           return NextResponse.json({ error: 'password is required' }, { status: 400 });
         }
-        await setUserPassword(userId, password);
+        await setPassword(id, password);
         return NextResponse.json({ success: true });
       }
 
       case 'toggle-active': {
-        const user = await getUser(userId);
-        await updateUser(userId, { is_active: !user.is_active });
+        const user = await getUser(id);
+        await updateUser(id, { is_active: !user.is_active });
         return NextResponse.json({ success: true, is_active: !user.is_active });
       }
 
       case 'toggle-admin': {
-        const user = await getUser(userId);
-        // Find or create Admins group
-        const groupsResult = await listGroups({ search: 'Admins', page_size: 50 });
-        const adminsGroup = groupsResult.results.find((g) => g.name === 'Admins');
+        const user = await getUser(id);
+        const currentGroups = user.groups || [];
+        const isAdmin = !user.is_superuser;
+        const groups = isAdmin
+          ? Array.from(new Set([...currentGroups, 'admin']))
+          : currentGroups.filter((g) => g !== 'admin' && g !== 'authentik Admins');
 
-        if (!adminsGroup) {
-          return NextResponse.json(
-            { error: 'Admins group not found in Authentik' },
-            { status: 500 }
-          );
-        }
-
-        if (user.is_superuser) {
-          // Remove from Admins group
-          const newUsers = adminsGroup.users.filter((uid) => uid !== userId);
-          await updateUser(userId, { groups: [adminsGroup.pk] });
-          // Use PATCH to remove user from group by updating user's groups
-          const currentGroups = user.groups.filter((g) => g !== adminsGroup.pk);
-          await updateUser(userId, { groups: currentGroups });
-        } else {
-          // Add to Admins group
-          const currentGroups = [...user.groups, adminsGroup.pk];
-          await updateUser(userId, { groups: currentGroups });
-        }
-
-        return NextResponse.json({ success: true, is_superuser: !user.is_superuser });
+        await updateUser(id, { groups, isAdmin });
+        return NextResponse.json({ success: true, is_superuser: isAdmin });
       }
 
       default:
@@ -97,13 +75,9 @@ export async function DELETE(
   if (authError) return authError;
 
   const { id } = await params;
-  const userId = parseInt(id, 10);
-  if (isNaN(userId)) {
-    return NextResponse.json({ error: 'Invalid user ID' }, { status: 400 });
-  }
 
   try {
-    await deleteUser(userId);
+    await deleteUser(id);
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error('[UI Bridge] Delete user error:', err);

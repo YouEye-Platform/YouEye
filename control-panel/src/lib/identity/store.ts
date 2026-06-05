@@ -173,6 +173,68 @@ export async function getUserById(id: string): Promise<IdentityUser | null> {
   return rows[0] || null;
 }
 
+export async function listIdentityUsers(search?: string): Promise<IdentityUser[]> {
+  await ensureIdentitySchema();
+  const where = search
+    ? `WHERE username ILIKE '%' || ${sql(search)} || '%' OR name ILIKE '%' || ${sql(search)} || '%' OR email ILIKE '%' || ${sql(search)} || '%'`
+    : '';
+  return queryRows<IdentityUser>(`
+    SELECT id::text, username, name, email, groups, is_admin
+    FROM identity_users
+    ${where}
+    ORDER BY username ASC
+  `);
+}
+
+export async function createIdentityUser(input: {
+  username: string;
+  password: string;
+  name: string;
+  email?: string;
+  groups?: string[];
+  isAdmin?: boolean;
+}): Promise<IdentityUser> {
+  await ensureIdentitySchema();
+  const passwordHash = hashPassword(input.password);
+  const groups = input.groups || (input.isAdmin ? ['admin'] : ['youeye-users']);
+  const rows = await queryRows<IdentityUser>(`
+    INSERT INTO identity_users (username, password_hash, name, email, groups, is_admin)
+    VALUES (${sql(input.username)}, ${sql(passwordHash)}, ${sql(input.name)}, ${sql(input.email || '')}, ${sqlJson(groups)}, ${sql(Boolean(input.isAdmin))})
+    RETURNING id::text, username, name, email, groups, is_admin
+  `);
+  return rows[0];
+}
+
+export async function updateIdentityUser(id: string, patch: {
+  name?: string;
+  email?: string;
+  groups?: string[];
+  isAdmin?: boolean;
+  password?: string;
+}): Promise<IdentityUser> {
+  await ensureIdentitySchema();
+  const assignments: string[] = ['updated_at = now()'];
+  if (typeof patch.name === 'string') assignments.push(`name = ${sql(patch.name)}`);
+  if (typeof patch.email === 'string') assignments.push(`email = ${sql(patch.email)}`);
+  if (Array.isArray(patch.groups)) assignments.push(`groups = ${sqlJson(patch.groups)}`);
+  if (typeof patch.isAdmin === 'boolean') assignments.push(`is_admin = ${sql(patch.isAdmin)}`);
+  if (typeof patch.password === 'string') assignments.push(`password_hash = ${sql(hashPassword(patch.password))}`);
+
+  const rows = await queryRows<IdentityUser>(`
+    UPDATE identity_users
+    SET ${assignments.join(', ')}
+    WHERE id = ${sql(id)}
+    RETURNING id::text, username, name, email, groups, is_admin
+  `);
+  if (!rows[0]) throw new Error(`Identity user not found: ${id}`);
+  return rows[0];
+}
+
+export async function deleteIdentityUser(id: string): Promise<void> {
+  await ensureIdentitySchema();
+  await psql(`DELETE FROM identity_users WHERE id = ${sql(id)}`);
+}
+
 export async function ensureClient(input: {
   clientId: string;
   clientSecret: string;

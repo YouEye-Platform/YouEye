@@ -1,27 +1,17 @@
 /**
  * People API
  *
- * GET  /api/people - List Authentik users
+ * GET  /api/people - List identity users
  * POST /api/people - Create a new user
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
-import { listUsers, createUser, listGroups, type AuthentikGroup } from '@/lib/authentik/client';
+import { createUser, listUsers } from '@/lib/identity/provider';
 
 /** Usernames / types hidden by default */
 const HIDDEN_USERNAMES = ['akadmin'];
 const HIDDEN_TYPES = ['service_account', 'internal_service_account'];
-
-let adminGroupCache: AuthentikGroup | null = null;
-
-/** Resolve the "authentik Admins" group PK (cached) */
-async function getAdminGroup(): Promise<AuthentikGroup | null> {
-  if (adminGroupCache) return adminGroupCache;
-  const groups = await listGroups({ search: 'authentik Admins', page_size: 5 });
-  adminGroupCache = groups.results.find(g => g.name === 'authentik Admins') ?? null;
-  return adminGroupCache;
-}
 
 export async function GET(request: NextRequest) {
   try {
@@ -34,7 +24,6 @@ export async function GET(request: NextRequest) {
     const search = request.nextUrl.searchParams.get('search') || undefined;
 
     const data = await listUsers({ search, page_size: 200 });
-    const adminGroup = await getAdminGroup();
 
     let users = data.results.map(u => ({
       pk: u.pk,
@@ -42,9 +31,7 @@ export async function GET(request: NextRequest) {
       name: u.name,
       email: u.email,
       isActive: u.is_active,
-      isAdmin: adminGroup
-        ? u.groups_obj?.some(g => g.name === 'authentik Admins') ?? false
-        : u.is_superuser,
+      isAdmin: u.is_superuser,
       type: u.type,
       lastLogin: u.last_login || null,
       hidden: HIDDEN_USERNAMES.includes(u.username) || HIDDEN_TYPES.includes(u.type),
@@ -54,7 +41,7 @@ export async function GET(request: NextRequest) {
       users = users.filter(u => !u.hidden);
     }
 
-    return NextResponse.json({ users, adminGroupPk: adminGroup?.pk ?? null });
+    return NextResponse.json({ users, adminGroupPk: 'admin' });
   } catch (error) {
     console.error('Error listing users:', error);
     return NextResponse.json(
@@ -89,28 +76,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Username and name are required' }, { status: 400 });
     }
 
-    // Resolve admin group if making admin
-    const groups: string[] = [];
-    if (makeAdmin) {
-      const adminGroup = await getAdminGroup();
-      if (adminGroup) groups.push(adminGroup.pk);
-    }
+    const user = await createUser({ username, name, email, password, isAdmin: makeAdmin });
 
-    const user = await createUser({ username, name, email, groups });
-
-    // Set password if provided (don't fail the whole request if password-set fails)
-    let passwordWarning: string | undefined;
-    if (password) {
-      try {
-        const { setUserPassword } = await import('@/lib/authentik/client');
-        await setUserPassword(user.pk, password);
-      } catch (pwError) {
-        console.error('Failed to set password for new user:', pwError);
-        passwordWarning = pwError instanceof Error ? pwError.message : 'Failed to set password';
-      }
-    }
-
-    return NextResponse.json({ user, success: true, passwordWarning });
+    return NextResponse.json({ user, success: true });
   } catch (error) {
     console.error('Error creating user:', error);
     return NextResponse.json(

@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
-import { setUserPassword } from '@/lib/authentik/client';
+import { setPassword } from '@/lib/identity/provider';
 
 export async function POST(
   request: NextRequest,
@@ -24,11 +24,6 @@ export async function POST(
     }
 
     const { id } = await params;
-    const userId = parseInt(id, 10);
-    if (isNaN(userId)) {
-      return NextResponse.json({ error: 'Invalid user ID' }, { status: 400 });
-    }
-
     const body = await request.json();
     const { password } = body as { password: string };
 
@@ -36,7 +31,7 @@ export async function POST(
       return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
     }
 
-    await setUserPassword(userId, password);
+    await setPassword(id, password);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error setting password:', error);
