@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { settingsService } from '@/lib/settings';
 import * as caddy from '@/lib/caddy/client';
+import { getIdentityConfig } from '@/lib/identity/config';
 
 function validSubdomain(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -31,7 +32,8 @@ export async function POST(request: NextRequest) {
     identity,
   };
   await settingsService.setRaw({ subdomains });
-  await caddy.ensureIdentityRoute(`${identity}.${raw.domain}`, 'youeye-control', 3000);
+  const identityConfig = await getIdentityConfig();
+  await caddy.ensureIdentityRoute(`${identity}.${raw.domain}`, identityConfig.containerName, identityConfig.port);
 
   return NextResponse.json({
     ok: true,
@@ -39,4 +41,3 @@ export async function POST(request: NextRequest) {
     subdomains,
   });
 }
-

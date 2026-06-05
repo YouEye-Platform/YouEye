@@ -333,6 +333,8 @@ func TestGetLatestVersionForBranch_ServerError(t *testing.T) {
 
 func TestBuildReleasesAPIURL_GitHub(t *testing.T) {
 	cfg := config.Default()
+	cfg.Releases.Provider = "github"
+	cfg.Releases.Organization = "YouEye-Platform"
 	url := buildReleasesAPIURL(cfg, "YouEye")
 	expected := "https://api.github.com/repos/YouEye-Platform/YouEye/releases?per_page=50"
 	if url != expected {
@@ -403,7 +405,7 @@ func TestBuildDownloadURL_GitHub(t *testing.T) {
 	cfg.Releases.Organization = "youeye-platform"
 
 	url := BuildDownloadURL(cfg, "YouEye", "spine-v0.3.2", "spine-linux-amd64")
-	expected := "https://git.potemk.in/potemsla/YouEye/releases/download/spine-v0.3.2/spine-linux-amd64"
+	expected := "https://github.com/youeye-platform/YouEye/releases/download/spine-v0.3.2/spine-linux-amd64"
 	if url != expected {
 		t.Errorf("BuildDownloadURL(github) = %q, want %q", url, expected)
 	}

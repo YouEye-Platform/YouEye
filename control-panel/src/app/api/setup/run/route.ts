@@ -21,6 +21,7 @@ import * as caddy from '@/lib/caddy/client';
 import { setDomainDNS } from '@/lib/apps/pihole-api';
 import { generateSetupAuthentikCSS } from '@/lib/authentik/setup-css';
 import { generateWordArtSVG } from '@/lib/authentik/wordart-svg';
+import { getIdentityConfig } from '@/lib/identity/config';
 import { execShell } from '@/lib/incus/server';
 import { tlsStorage } from '@/lib/acme/storage';
 import { readFileSync, readdirSync, existsSync } from 'fs';
@@ -223,6 +224,7 @@ export async function POST(request: NextRequest) {
             site_name: body.site_name || 'YouEye',
             domain: body.domain,
             subdomains: body.subdomains,
+            identity: { provider: 'youeye-id' },
             authentik_name: authentikName,
             setup_completed: false,
           });
@@ -295,7 +297,8 @@ export async function POST(request: NextRequest) {
             }
 
             try {
-              await caddy.ensureIdentityRoute(`${subs.identity}.${domain}`, 'youeye-control', 3000);
+              const identity = await getIdentityConfig();
+              await caddy.ensureIdentityRoute(`${subs.identity}.${domain}`, identity.containerName, identity.port);
             } catch (err) {
               console.error('Failed to create YouEye ID route:', err);
               routeErrors.push(`youeye-id: ${err instanceof Error ? err.message : String(err)}`);

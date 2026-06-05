@@ -22,6 +22,7 @@ export interface PlatformSettings {
   smtpUsername?: string;
   smtpFrom?: string;
   smtpRequireTls?: boolean;
+  identity?: { provider?: string };
 }
 
 /** Maps PlatformSettings keys to youeye.yaml snake_case keys */
@@ -37,6 +38,7 @@ const KEY_MAP: Record<keyof PlatformSettings, string> = {
   smtpUsername: 'smtp_username',
   smtpFrom: 'smtp_from',
   smtpRequireTls: 'smtp_require_tls',
+  identity: 'identity',
 };
 
 /** Maps youeye.yaml snake_case keys back to PlatformSettings keys */
@@ -58,6 +60,7 @@ function fromRaw(raw: Record<string, unknown>): PlatformSettings {
     smtpUsername: raw.smtp_username as string | undefined,
     smtpFrom: raw.smtp_from as string | undefined,
     smtpRequireTls: raw.smtp_require_tls as boolean | undefined,
+    identity: raw.identity as { provider?: string } | undefined,
   };
 }
 
@@ -155,6 +158,7 @@ class SettingsService {
         smtp_username: this.cache.smtpUsername,
         smtp_from: this.cache.smtpFrom,
         smtp_require_tls: this.cache.smtpRequireTls,
+        identity: this.cache.identity,
       };
     }
     let raw: Record<string, unknown>;

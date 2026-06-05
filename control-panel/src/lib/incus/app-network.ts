@@ -348,17 +348,14 @@ export async function getSystemServices(options: {
     });
   }
 
-  // Authentik SSO
+  // YouEye ID SSO. Apps access the identity-owned service through a localhost
+  // proxy device rather than by reaching the Control Panel dashboard port.
   if (options.needsSSO) {
     services.push({
-      name: 'auth-proxy',
-      containerName: 'youeye-authentik',
-      port: 9000,
-    });
-    services.push({
-      name: 'auth-proxy-tls',
-      containerName: 'youeye-authentik',
-      port: 9443,
+      name: 'identity-proxy',
+      containerName: 'youeye-control',
+      port: 3001,
+      listenPort: 3002,
     });
   }
 

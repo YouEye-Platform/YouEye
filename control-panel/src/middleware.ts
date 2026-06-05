@@ -62,6 +62,15 @@ const PUBLIC_ROUTES_EXACT = [
   '/settings/api/auth/sso',
 ];
 
+const IDENTITY_SERVICE_ROUTES = [
+  '/identity/login',
+  '/application/o',
+  '/oauth',
+  '/forward-auth/caddy',
+  '/outpost.goauthentik.io/auth/caddy',
+  '/.well-known/openid-configuration',
+];
+
 // Static resources that should be skipped
 const STATIC_PATTERNS = [
   '/_next/',
@@ -167,6 +176,14 @@ function applySecurityHeaders(response: NextResponse, pathname: string): NextRes
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  if (process.env.YOUEYE_ID_SERVICE === 'true') {
+    const allowed = IDENTITY_SERVICE_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
+    if (!allowed) {
+      return new NextResponse('Not Found', { status: 404 });
+    }
+    return applySecurityHeaders(NextResponse.next(), pathname);
+  }
 
   // Skip static resources
   if (STATIC_PATTERNS.some(pattern => pathname.startsWith(pattern))) {

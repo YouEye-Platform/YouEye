@@ -22,6 +22,7 @@ export async function GET() {
       site_name: 'YouEye',
       domain: '',
       subdomains: { control: 'control', auth: 'auth', identity: 'id', dns: 'dns' },
+      identity: { provider: 'youeye-id' },
       setup_completed: false,
     });
   }

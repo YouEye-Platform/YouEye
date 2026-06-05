@@ -9,11 +9,11 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := Default()
 
-	if cfg.Releases.BaseURL != "https://github.com" {
-		t.Errorf("default BaseURL = %q, want %q", cfg.Releases.BaseURL, "https://github.com")
+	if cfg.Releases.BaseURL != "https://git.potemk.in" {
+		t.Errorf("default BaseURL = %q, want %q", cfg.Releases.BaseURL, "https://git.potemk.in")
 	}
-	if cfg.Releases.Organization != "YouEye-Platform" {
-		t.Errorf("default Organization = %q, want %q", cfg.Releases.Organization, "YouEye-Platform")
+	if cfg.Releases.Organization != "potemsla" {
+		t.Errorf("default Organization = %q, want %q", cfg.Releases.Organization, "potemsla")
 	}
 	if cfg.Releases.Repositories.Spine != "YouEye" {
 		t.Errorf("default Spine repo = %q, want %q", cfg.Releases.Repositories.Spine, "YouEye")
@@ -196,7 +196,7 @@ func TestValidateValidLogFormats(t *testing.T) {
 func TestGetReleasesAPIURL(t *testing.T) {
 	cfg := Default()
 	url := cfg.GetReleasesAPIURL()
-	expected := "https://github.com"
+	expected := "https://git.potemk.in/api/v1"
 	if url != expected {
 		t.Errorf("GetReleasesAPIURL() = %q, want %q", url, expected)
 	}
@@ -205,13 +205,13 @@ func TestGetReleasesAPIURL(t *testing.T) {
 func TestGetRepoPath(t *testing.T) {
 	cfg := Default()
 
-	if path := cfg.GetSpineRepoPath(); path != "YouEye-Platform/YouEye" {
+	if path := cfg.GetSpineRepoPath(); path != "potemsla/YouEye" {
 		t.Errorf("GetSpineRepoPath() = %q", path)
 	}
-	if path := cfg.GetControlPanelRepoPath(); path != "YouEye-Platform/YouEye" {
+	if path := cfg.GetControlPanelRepoPath(); path != "potemsla/YouEye" {
 		t.Errorf("GetControlPanelRepoPath() = %q", path)
 	}
-	if path := cfg.GetUIRepoPath(); path != "YouEye-Platform/YouEye" {
+	if path := cfg.GetUIRepoPath(); path != "potemsla/YouEye" {
 		t.Errorf("GetUIRepoPath() = %q", path)
 	}
 }
@@ -342,7 +342,7 @@ func TestGetReturnsDefault(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("Get() should never return nil")
 	}
-	if cfg.Releases.BaseURL != "https://github.com" {
+	if cfg.Releases.BaseURL != "https://git.potemk.in" {
 		t.Errorf("Get() should return defaults when loading fails, got BaseURL=%q", cfg.Releases.BaseURL)
 	}
 }

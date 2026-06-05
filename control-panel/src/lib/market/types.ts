@@ -245,6 +245,13 @@ export interface VariableContext {
     callback_url: string;
     logout_url: string;
   };
+  identity: {
+    externalUrl: string;
+    internalUrl: string;
+    name: string;
+    issuer: string;
+    discoveryUrl: string;
+  };
   smtp: {
     host: string;
     port: string;

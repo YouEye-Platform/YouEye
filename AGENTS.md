@@ -1,3 +1,27 @@
+## v0.4.13.19 (CP) / v0.4.2.2 (Spine) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Move YouEye ID toward an identity-owned runtime and wire app installs to it
+
+### Changes
+- `control-panel/src/middleware.ts` — Added `YOUEYE_ID_SERVICE=true` mode so the identity runtime serves only login/OIDC/forward-auth/discovery routes and returns 404 for generic CP routes.
+- `control-panel/src/lib/identity/*` — Added explicit identity internal port/config, provider-neutral client/forward-auth helpers, and OAuth client removal for rollback.
+- `control-panel/src/lib/market/*`, `control-panel/src/lib/incus/app-network.ts`, `control-panel/src/app/api/market/forward-auth/route.ts` — New native SSO and forward-auth app wiring now targets YouEye ID and exposes `${identity.*}` variables while keeping temporary legacy aliases.
+- `control-panel/src/app/api/setup/*`, `control-panel/src/app/api/identity/route/route.ts` — Persist explicit `identity.provider=youeye-id` and route `id.<domain>` to the identity-owned port.
+- `spine/internal/api/server.go`, `spine/internal/container/control.go` — Install and update a managed `youeye-id` systemd service on port `3001` alongside `youeye-control`.
+- `spine/internal/config/defaults.go`, `spine/internal/config/config_test.go`, `spine/internal/releases/releases_test.go` — Aligned default release source with Forgejo (`git.potemk.in/potemsla`) and repaired stale tests.
+- `control-panel/package.json`, `spine/internal/cmd/root.go`, `README.md` — Bumped only the changed component versions.
+
+### Test Results
+- CP build: `pnpm -C control-panel build` passed for `0.4.13.19`.
+- Spine tests/build: `go test ./...` passed; `youeye` binary built with `Version=0.4.2.2`.
+- CP lint and full `tsc --noEmit` still expose pre-existing project-wide lint/type debt outside this change; production build passed.
+
+### Notes for Iris
+- This is the first service-boundary phase: YouEye ID is now a distinct managed process/port in the CP container, not a generic CP dashboard route. A later phase can split it into its own package/container if desired.
+- Authentik remains installed for coexistence, but new app install wiring now targets YouEye ID by default.
+
 ## v0.4.13.18 (CP) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc

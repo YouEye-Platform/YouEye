@@ -4,20 +4,14 @@
  *
  * Body: { appId: string, enabled: boolean }
  *
- * When enabling: creates Authentik forward-auth proxy + adds forward_auth handler to Caddy route.
- * When disabling: removes Authentik forward-auth proxy + strips forward_auth handler from Caddy route.
+ * When enabling: adds a YouEye ID forward-auth handler to the Caddy route.
+ * When disabling: strips the forward-auth handler from the Caddy route.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getInstalledApp, updateForwardAuthEnabled } from '@/lib/market/installed-apps';
 import { readInstallMetadata, saveInstallMetadata } from '@/lib/market/metadata';
-import {
-  createAuthentikForwardAuthApp,
-  removeAuthentikForwardAuthApp,
-  isAuthentikAvailable,
-} from '@/lib/market/authentik';
-import { addForwardAuthToRoute, removeForwardAuthFromRoute } from '@/lib/caddy/client';
-import { getContainerIP } from '@/lib/incus/container-ip';
+import { configureForwardAuth, getIdentityProviderConfig, removeForwardAuth } from '@/lib/identity/provider';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,35 +38,9 @@ export async function POST(request: NextRequest) {
 
     if (enabled) {
       // Enable forward-auth
-      if (!(await isAuthentikAvailable())) {
-        return NextResponse.json({ error: 'Authentik not available' }, { status: 503 });
-      }
-
+      const identity = await getIdentityProviderConfig();
       const faSlug = `youeye-fa-${appId}`;
-      const externalHost = `https://${hostname}`;
-
-      // Create Authentik forward-auth proxy provider
-      await createAuthentikForwardAuthApp({
-        slug: faSlug,
-        name: `YouEye - ${metadata.appId}`,
-        externalHost,
-      });
-
-      // Add forward-auth handler to existing Caddy route
-      const authentikIP = await getContainerIP('youeye-authentik');
-      if (authentikIP) {
-        await addForwardAuthToRoute(hostname, {
-          upstreamDial: `${authentikIP}:9000`,
-          uri: '/outpost.goauthentik.io/auth/caddy',
-          copyHeaders: [
-            'X-authentik-username',
-            'X-authentik-groups',
-            'X-authentik-email',
-            'X-authentik-name',
-            'X-authentik-uid',
-          ],
-        });
-      }
+      await configureForwardAuth({ hostname });
 
       // Update DB + metadata
       await updateForwardAuthEnabled(appId, true);
@@ -80,21 +48,12 @@ export async function POST(request: NextRequest) {
       metadata.forwardAuthSlug = faSlug;
       await saveInstallMetadata(metadata);
 
-      return NextResponse.json({ success: true, forwardAuthEnabled: true });
+      return NextResponse.json({ success: true, forwardAuthEnabled: true, provider: identity.provider });
     } else {
       // Disable forward-auth
-      const faSlug = metadata.forwardAuthSlug || `youeye-fa-${appId}`;
-
-      // Remove Authentik forward-auth proxy
-      try {
-        await removeAuthentikForwardAuthApp(faSlug);
-      } catch {
-        // May not exist
-      }
-
       // Remove forward_auth handler from Caddy route
       try {
-        await removeForwardAuthFromRoute(hostname);
+        await removeForwardAuth({ hostname });
       } catch {
         // Route may not have forward-auth
       }

@@ -408,6 +408,31 @@ WantedBy=multi-user.target
 	util.RunIncusExec(containerName, "bash", "-c",
 		fmt.Sprintf("cat > /etc/systemd/system/youeye-control.service << 'EOF'\n%sEOF", serviceContent))
 
+	identityServiceContent := fmt.Sprintf(`[Unit]
+Description=YouEye ID
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=%s
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=YOUEYE_ID_SERVICE=true
+Environment=JWT_SECRET=%s
+Environment=HOST_IP=%s
+Environment=SECURE_COOKIES=true
+ExecStart=/usr/bin/node %s/server.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+`, appDir, util.GenerateJWTSecret(), hostIP, appDir)
+
+	util.RunIncusExec(containerName, "bash", "-c",
+		fmt.Sprintf("cat > /etc/systemd/system/youeye-id.service << 'EOF'\n%sEOF", identityServiceContent))
+
 	// Start service
 	util.LogStep(7, 7, "Starting Control Panel service...")
 	util.LogSubStep("Reloading systemd...")
@@ -415,9 +440,11 @@ WantedBy=multi-user.target
 	
 	util.LogSubStep("Enabling service...")
 	util.RunIncusExec(containerName, "systemctl", "enable", "youeye-control")
+	util.RunIncusExec(containerName, "systemctl", "enable", "youeye-id")
 	
 	util.LogSubStep("Starting service...")
 	util.RunIncusExec(containerName, "systemctl", "start", "youeye-control")
+	util.RunIncusExec(containerName, "systemctl", "start", "youeye-id")
 
 	// Health check
 	util.LogSubStep(fmt.Sprintf("Waiting for health check (http://127.0.0.1:%d/login)...", port))

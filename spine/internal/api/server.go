@@ -643,6 +643,7 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 	update.Emit("control", update.StatusInstalling, 40, "Stopping Control Panel...")
 
 	// Stop service
+	exec.Command("incus", "exec", containerName, "--", "systemctl", "stop", "youeye-id").Run()
 	exec.Command("incus", "exec", containerName, "--", "systemctl", "stop", "youeye-control").Run()
 
 	// Clear old files and deploy new ones
@@ -681,8 +682,44 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 
 	update.Emit("control", update.StatusRestarting, 70, "Starting Control Panel...")
 
+	// Ensure the identity-owned runtime exists before starting services. Older
+	// installs only have youeye-control.service, so updates must repair this
+	// persistently rather than relying on a live hand patch.
+	identityServiceScript := fmt.Sprintf(`set -e
+if [ ! -f /etc/systemd/system/youeye-id.service ]; then
+  JWT="$(openssl rand -hex 32)"
+  HOST_IP="$(hostname -I | awk '{print $1}')"
+  cat > /etc/systemd/system/youeye-id.service <<EOF
+[Unit]
+Description=YouEye ID
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=%s
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=YOUEYE_ID_SERVICE=true
+Environment=JWT_SECRET=${JWT}
+Environment=HOST_IP=${HOST_IP}
+Environment=SECURE_COOKIES=true
+ExecStart=/usr/bin/node %s/server.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+fi
+systemctl daemon-reload
+systemctl enable youeye-id >/dev/null 2>&1 || true
+`, appDir, appDir)
+	exec.Command("incus", "exec", containerName, "--", "bash", "-c", identityServiceScript).Run()
+
 	// Start service
 	exec.Command("incus", "exec", containerName, "--", "systemctl", "start", "youeye-control").Run()
+	exec.Command("incus", "exec", containerName, "--", "systemctl", "start", "youeye-id").Run()
 
 	update.Emit("control", update.StatusVerifying, 80, "Checking health...")
 
@@ -700,9 +737,11 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 
 	if !healthy {
 		// Rollback
+		exec.Command("incus", "exec", containerName, "--", "systemctl", "stop", "youeye-id").Run()
 		exec.Command("incus", "exec", containerName, "--", "systemctl", "stop", "youeye-control").Run()
 		exec.Command("incus", "snapshot", "restore", containerName, "pre-update").Run()
 		exec.Command("incus", "exec", containerName, "--", "systemctl", "start", "youeye-control").Run()
+		exec.Command("incus", "exec", containerName, "--", "systemctl", "start", "youeye-id").Run()
 
 		update.Fail("control", currentVersion, "health check failed, rolled back")
 		errorResponse(w, "update failed, rolled back", http.StatusInternalServerError)

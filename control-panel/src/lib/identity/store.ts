@@ -206,6 +206,11 @@ export async function getClient(clientId: string): Promise<IdentityClient | null
   return rows[0] || null;
 }
 
+export async function removeClient(clientId: string): Promise<void> {
+  await ensureIdentitySchema();
+  await psql(`DELETE FROM identity_clients WHERE client_id = ${sql(clientId)}`);
+}
+
 export async function createAuthCode(input: {
   clientId: string;
   userId: string;

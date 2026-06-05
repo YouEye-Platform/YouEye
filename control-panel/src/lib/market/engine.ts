@@ -7,7 +7,7 @@
  * 2. Generate secrets
  * 3. Setup shared PostgreSQL (if database.mode === 'shared')
  * 4. Write config files
- * 5. Create Authentik SSO app (if sso section exists)
+ * 5. Create identity-provider SSO client (if sso section exists)
  * 6. Generate app token
  * 7. Build canonical context + resolve env_mapping
  * 8. Deploy containers (universal loop: lxd or oci per container)
@@ -49,16 +49,15 @@ import { addRoute, getRoutes, removeRoute, addAppRoutes } from '../caddy/client'
 import type { EntranceConfig } from '../caddy/client';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
 import {
-  isAuthentikAvailable,
-  createAuthentikOAuth2App,
-  removeAuthentikOAuth2App,
   executeSSOSteps,
   StepError,
 } from './sso-engine';
 import {
-  createAuthentikForwardAuthApp,
-  removeAuthentikForwardAuthApp,
-} from './authentik';
+  createOAuthClient,
+  getIdentityProviderConfig,
+  removeForwardAuth,
+  removeOAuthClient,
+} from '@/lib/identity/provider';
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
 import {
   buildCanonicalContext,
@@ -137,19 +136,21 @@ async function rollbackInstall(
     }
   }
 
-  // 3. Remove Authentik SSO app
+  // 3. Remove identity SSO client
   if (ctx.ssoSlug) {
     try {
-      await removeAuthentikOAuth2App(ctx.ssoSlug);
+      await removeOAuthClient(ctx.ssoSlug);
     } catch (err) {
       console.error('[engine] Rollback: failed to remove SSO app:', err);
     }
   }
 
-  // 3b. Remove Authentik forward-auth proxy app
+  // 3b. Remove identity forward-auth route
   if (ctx.forwardAuthSlug) {
     try {
-      await removeAuthentikForwardAuthApp(ctx.forwardAuthSlug);
+      if (ctx.subdomain && ctx.domain) {
+        await removeForwardAuth({ hostname: `${ctx.subdomain}.${ctx.domain}` });
+      }
     } catch (err) {
       console.error('[engine] Rollback: failed to remove forward-auth app:', err);
     }
@@ -515,7 +516,8 @@ export async function installApp(
 
   // Determine SSO support from manifest
   const hasSSOSection = !!manifest.sso;
-  const ssoEnabled = hasSSOSection && (await isAuthentikAvailable());
+  const identityConfig = await getIdentityProviderConfig();
+  const ssoEnabled = hasSSOSection;
   const totalSteps = countSteps(manifest, ssoEnabled);
   let step = 0;
 
@@ -602,7 +604,7 @@ export async function installApp(
     }
   }
 
-  // ── Step 4: Pre-deploy SSO — create Authentik app ───────
+  // ── Step 4: Pre-deploy SSO — create identity OAuth client ───────
 
   let ssoSlug: string | undefined;
   let ssoClientId: string | undefined;
@@ -611,39 +613,36 @@ export async function installApp(
   if (ssoEnabled && manifest.sso) {
     checkCancelled();
     step++;
-    emit(onEvent, step, totalSteps, 'running', 'Creating Authentik SSO application...');
+    emit(onEvent, step, totalSteps, 'running', `Creating ${identityConfig.name} SSO client...`);
     try {
       ssoSlug = `youeye-app-${appId}`;
       const appUrl = `https://${config.subdomain}.${config.domain}`;
 
       // Build redirect URIs from callback_path + additional_callbacks
-      const redirectUris: { matching_mode: 'strict'; url: string }[] = [];
+      const redirectUris: string[] = [];
       const prelimCtx = await buildCanonicalContext(manifest, config, undefined, dbPassword);
       prelimCtx.secrets = secrets;
 
       if (manifest.sso.callback_path) {
         const resolvedCallbackPath = resolveVariables(manifest.sso.callback_path, prelimCtx);
-        redirectUris.push({ matching_mode: 'strict', url: `${appUrl}${resolvedCallbackPath}` });
+        redirectUris.push(`${appUrl}${resolvedCallbackPath}`);
       }
 
       for (const cb of manifest.sso.additional_callbacks || []) {
-        redirectUris.push({ matching_mode: 'strict', url: cb });
+        redirectUris.push(cb);
       }
 
-      const result = await createAuthentikOAuth2App({
-        slug: ssoSlug,
+      const result = await createOAuthClient({
+        clientId: ssoSlug,
         name: manifest.metadata.name,
         redirectUris,
-        launchUrl: appUrl,
-        implicitConsent: true,
-        adminMapping: manifest.sso?.adminMapping,
       });
 
       ssoClientId = result.clientId;
       ssoResult = { clientId: result.clientId, clientSecret: result.clientSecret, slug: ssoSlug };
       rollbackCtx.ssoSlug = ssoSlug;
 
-      emit(onEvent, step, totalSteps, 'success', 'Authentik SSO application created');
+      emit(onEvent, step, totalSteps, 'success', `${identityConfig.name} SSO client created`);
     } catch (err) {
       emit(onEvent, step, totalSteps, 'error', 'Failed to create SSO application', String(err));
       await rollbackInstall(rollbackCtx, onEvent, totalSteps);
@@ -653,26 +652,21 @@ export async function installApp(
 
   // ── Step 4b: Forward-auth proxy (for apps without native SSO) ──
   // If the app has no `sso` section but forward-auth is not disabled,
-  // create an Authentik forward-auth proxy provider so Caddy can gate access.
+  // mark it for a YouEye ID forward-auth handler when Caddy is configured.
 
   let forwardAuthEnabled = false;
   const useForwardAuth = resolveForwardAuth(manifest, ssoEnabled);
 
-  if (useForwardAuth && (await isAuthentikAvailable())) {
+  if (useForwardAuth) {
     try {
       const faSlug = `youeye-fa-${appId}`;
-      const externalHost = `https://${config.subdomain}.${config.domain}`;
-      await createAuthentikForwardAuthApp({
-        slug: faSlug,
-        name: `YouEye - ${manifest.metadata.name}`,
-        externalHost,
-      });
       rollbackCtx.forwardAuthSlug = faSlug;
       forwardAuthEnabled = true;
-      emit(onEvent, step, totalSteps, 'success', 'Forward-auth proxy configured');
+      emit(onEvent, step, totalSteps, 'success', `${identityConfig.name} forward-auth selected`);
     } catch (err) {
-      // Forward-auth is non-fatal — app still works, just without SSO gating
-      console.warn('[engine] Forward-auth setup failed (non-fatal):', err);
+      emit(onEvent, step, totalSteps, 'error', 'Failed to prepare forward-auth', String(err));
+      await rollbackInstall(rollbackCtx, onEvent, totalSteps);
+      throw err;
     }
   }
 
@@ -1032,20 +1026,22 @@ export async function installApp(
     // Build forward-auth config for Caddy if enabled
     let forwardAuthConfig: { upstreamDial: string; uri: string; copyHeaders: string[] } | undefined;
     if (forwardAuthEnabled) {
-      const authentikIP = await getIncusContainerIP('youeye-authentik');
-      if (authentikIP) {
-        forwardAuthConfig = {
-          upstreamDial: `${authentikIP}:9000`,
-          uri: '/outpost.goauthentik.io/auth/caddy',
-          copyHeaders: [
-            'X-authentik-username',
-            'X-authentik-groups',
-            'X-authentik-email',
-            'X-authentik-name',
-            'X-authentik-uid',
-          ],
-        };
-      }
+      forwardAuthConfig = {
+        upstreamDial: `${identityConfig.containerName}.${CONTAINER_DOMAIN}:${identityConfig.port}`,
+        uri: '/forward-auth/caddy',
+        copyHeaders: [
+          'X-YouEye-Username',
+          'X-YouEye-Groups',
+          'X-YouEye-Email',
+          'X-YouEye-Name',
+          'X-YouEye-Uid',
+          'X-Authentik-Username',
+          'X-Authentik-Groups',
+          'X-Authentik-Email',
+          'X-Authentik-Name',
+          'X-Authentik-Uid',
+        ],
+      };
     }
 
     const hostname = `${config.subdomain}.${config.domain}`;

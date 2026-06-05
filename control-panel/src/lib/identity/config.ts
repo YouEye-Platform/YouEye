@@ -6,6 +6,8 @@ export interface IdentityConfig {
   subdomain: string;
   externalUrl: string;
   internalUrl: string;
+  containerName: string;
+  port: number;
   issuer: string;
   cookieDomain: string;
 }
@@ -33,14 +35,17 @@ export async function getIdentityConfig(): Promise<IdentityConfig> {
   const domain = normalizeDomain(raw.domain);
   const subdomain = normalizeSubdomain(raw.subdomains?.identity);
   const host = `${subdomain}.${domain}`;
+  const containerName = 'youeye-control';
+  const port = 3001;
 
   return {
     domain,
     subdomain,
     externalUrl: `https://${host}`,
-    internalUrl: `http://youeye-control.${CONTAINER_DOMAIN}:3000`,
+    internalUrl: `http://${containerName}.${CONTAINER_DOMAIN}:${port}`,
+    containerName,
+    port,
     issuer: `https://${host}`,
     cookieDomain: `.${domain}`,
   };
 }
-

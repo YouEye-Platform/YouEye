@@ -14,7 +14,7 @@
 import { settingsService } from '@/lib/settings';
 import { readSmtpPassword } from '@/lib/smtp/secrets';
 import { getContainerIP } from '@/lib/incus/container-ip';
-import { getAuthentikExternalUrl } from './authentik';
+import { getIdentityProviderConfig } from '@/lib/identity/provider';
 import { spineClient } from '@/lib/spine/client';
 import { CONTAINER_DOMAIN } from './constants';
 import { getContainerName } from './engine-helpers';
@@ -215,12 +215,8 @@ export async function buildCanonicalContext(
     };
   }
 
-  // Authentik URLs
-  const authentikExternalUrl = await getAuthentikExternalUrl() || '';
-  const authentikIP = await getContainerIP('youeye-authentik');
-  // Use proxy device (localhost:9000) for app→Authentik communication.
-  // This enables Layer 4 ACLs blocking direct infrastructure access.
-  const authentikInternalUrl = 'http://localhost:9000';
+  const identity = await getIdentityProviderConfig();
+  const identityInternalUrl = useProxyDevices ? 'http://localhost:3002' : identity.internalUrl;
 
   // Caddy proxy IP
   let proxyIp = '';
@@ -228,8 +224,7 @@ export async function buildCanonicalContext(
     proxyIp = await getContainerIP('youeye-caddy') || '';
   } catch {}
 
-  // Authentik display name
-  let authentikDisplayName = `${platform.siteName || 'YouEye'} ID`;
+  const identityDisplayName = identity.name || `${platform.siteName || 'YouEye'} ID`;
 
   // SSO slug
   const ssoSlug = ssoResult?.slug || `youeye-app-${config.appId}`;
@@ -271,16 +266,23 @@ export async function buildCanonicalContext(
       password: '',
     },
     sso: {
-      issuer: ssoResult ? `${authentikExternalUrl}/application/o/${ssoSlug}/` : '',
-      discovery_url: ssoResult ? `${authentikExternalUrl}/application/o/${ssoSlug}/.well-known/openid-configuration` : '',
+      issuer: ssoResult ? `${identity.externalUrl}/application/o/${ssoSlug}/` : '',
+      discovery_url: ssoResult ? `${identity.externalUrl}/application/o/${ssoSlug}/.well-known/openid-configuration` : '',
       client_id: ssoResult?.clientId || '',
       client_secret: ssoResult?.clientSecret || '',
       callback_url: manifest.sso
         ? `${appUrl}${manifest.sso.callback_path
-            .replace(/\$\{authentik\.name\}/g, authentikDisplayName)
+            .replace(/\$\{authentik\.name\}/g, identityDisplayName)
             .replace(/\$\{app\.id\}/g, config.appId)}`
         : '',
-      logout_url: ssoResult ? `${authentikExternalUrl}/application/o/${ssoSlug}/end-session/` : '',
+      logout_url: ssoResult ? `${identity.externalUrl}/application/o/${ssoSlug}/end-session/` : '',
+    },
+    identity: {
+      externalUrl: identity.externalUrl,
+      internalUrl: identityInternalUrl,
+      name: identityDisplayName,
+      issuer: identity.issuer,
+      discoveryUrl: identity.discoveryUrl,
     },
     secrets: {},
     installParams: config.installParams || {},
@@ -292,9 +294,9 @@ export async function buildCanonicalContext(
       domain,
     },
     authentik: {
-      externalUrl: authentikExternalUrl,
-      internalUrl: authentikInternalUrl,
-      name: authentikDisplayName,
+      externalUrl: identity.externalUrl,
+      internalUrl: identityInternalUrl,
+      name: identityDisplayName,
     },
     container: { ip: '', port: primaryPort },
   };
@@ -385,4 +387,3 @@ export function envToString(env: Record<string, string>): string {
       .join('\n') + '\n'
   );
 }
-
