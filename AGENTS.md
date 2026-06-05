@@ -1,3 +1,20 @@
+## v0.4.13.3 (CP) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix root-domain Market auth and favicon middleware handling
+
+### Changes
+- `control-panel/src/lib/settings-public-path.ts` — Treat `/market` as a root-domain Control Panel surface for auth redirects.
+- `control-panel/src/middleware.ts` — Mark settings/market favicon aliases public so tabs and header logo can load without session redirects.
+- `control-panel/package.json` and `README.md` — Bumped CP branch release version.
+
+### Test Results
+- CP build: `pnpm build` passed for `0.4.13.3`.
+
+### Notes for Iris
+- This fixes live `/market` redirecting to UI `/login` instead of the CP `/settings/login` SSO path.
+
 ## v0.4.2.1 (Spine) + v0.4.13.2 (CP) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc

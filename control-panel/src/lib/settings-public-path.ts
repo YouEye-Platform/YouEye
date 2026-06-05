@@ -1,7 +1,13 @@
 export const SETTINGS_BASE_PATH = "/settings";
+export const MARKET_BASE_PATH = "/market";
 
 export function isSettingsPath(pathname: string): boolean {
-  return pathname === SETTINGS_BASE_PATH || pathname.startsWith(`${SETTINGS_BASE_PATH}/`);
+  return (
+    pathname === SETTINGS_BASE_PATH ||
+    pathname.startsWith(`${SETTINGS_BASE_PATH}/`) ||
+    pathname === MARKET_BASE_PATH ||
+    pathname.startsWith(`${MARKET_BASE_PATH}/`)
+  );
 }
 
 export function withSettingsBase(path: string): string {

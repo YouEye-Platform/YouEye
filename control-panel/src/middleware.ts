@@ -38,6 +38,8 @@ const PUBLIC_ROUTES = [
   '/api/suggestions',     // Internal: UI server-side fetches connection suggestions
   '/api/market/app',      // Internal: app detail + connections endpoints
   '/api/branding/favicon', // Public favicon (proxied from UI)
+  '/settings/api/branding/favicon',
+  '/market/api/branding/favicon',
   '/api/telemetry',        // Telemetry record + export (internal tracking)
   '/setup-complete',
   '/settings/api/auth/login',
