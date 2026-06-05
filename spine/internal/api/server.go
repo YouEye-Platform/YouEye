@@ -1191,6 +1191,49 @@ func (s *Server) migratePiholePassword(passwordFile string) string {
 	return password
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func getInstanceIPv4(instanceName string) (string, error) {
+	out, err := exec.Command("incus", "list", "^"+instanceName+"$", "--format", "csv", "-c", "4").Output()
+	if err != nil {
+		return "", err
+	}
+	ipLine := strings.TrimSpace(string(out))
+	if idx := strings.Index(ipLine, " "); idx > 0 {
+		ipLine = ipLine[:idx]
+	}
+	if ipLine == "" {
+		return "", fmt.Errorf("%s has no IPv4 address", instanceName)
+	}
+	return ipLine, nil
+}
+
+func ensureUIIdentityProxy(uiContainerName string) error {
+	controlIP, err := getInstanceIPv4("youeye-control")
+	if err != nil {
+		return fmt.Errorf("resolve youeye-control IP: %w", err)
+	}
+
+	exec.Command("incus", "config", "device", "remove", uiContainerName, "identity-proxy").Run()
+	out, err := exec.Command(
+		"incus", "config", "device", "add", uiContainerName, "identity-proxy", "proxy",
+		"bind=instance",
+		"listen=tcp:0.0.0.0:3002",
+		"connect=tcp:"+controlIP+":3001",
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("add identity-proxy: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // handleControlSSO manages SSO environment variables for the Control Panel container.
 // GET: Check if SSO is configured
 // POST: Write SSO env vars, create systemd drop-in, daemon-reload, restart (delayed)
@@ -1222,25 +1265,38 @@ func (s *Server) handleControlSSO(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]interface{}{
 			"configured":             true,
 			"authentik_url":          envVars["AUTHENTIK_URL"],
+			"identity_url":           envVars["YOUEYE_ID_URL"],
 			"authentik_client_id":    envVars["AUTHENTIK_CLIENT_ID"],
 			"authentik_internal_url": envVars["AUTHENTIK_INTERNAL_URL"],
+			"identity_internal_url":  envVars["YOUEYE_ID_INTERNAL_URL"],
 		})
 
 	case "POST":
 		var req struct {
-			AuthentikURL string `json:"authentik_url"`
-			ClientID     string `json:"client_id"`
-			ClientSecret string `json:"client_secret"`
-			InternalURL  string `json:"internal_url"`
-			ControlURL   string `json:"control_url"`
+			AuthentikURL        string `json:"authentik_url"`
+			IdentityURL         string `json:"identity_url"`
+			ClientID            string `json:"client_id"`
+			ClientSecret        string `json:"client_secret"`
+			InternalURL         string `json:"internal_url"`
+			IdentityInternalURL string `json:"identity_internal_url"`
+			ControlURL          string `json:"control_url"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			errorResponse(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
 		if req.AuthentikURL == "" || req.ClientSecret == "" {
-			errorResponse(w, "authentik_url and client_secret are required", http.StatusBadRequest)
+			errorResponse(w, "identity_url/authentik_url and client_secret are required", http.StatusBadRequest)
 			return
+		}
+		if req.IdentityURL == "" {
+			req.IdentityURL = req.AuthentikURL
+		}
+		if req.InternalURL == "" {
+			req.InternalURL = req.IdentityInternalURL
+		}
+		if req.IdentityInternalURL == "" {
+			req.IdentityInternalURL = req.InternalURL
 		}
 		if req.ClientID == "" {
 			req.ClientID = "youeye-control"
@@ -1248,7 +1304,8 @@ func (s *Server) handleControlSSO(w http.ResponseWriter, r *http.Request) {
 
 		// Write env file content
 		envContent := fmt.Sprintf(
-			"AUTHENTIK_URL=%s\nAUTHENTIK_CLIENT_ID=%s\nAUTHENTIK_CLIENT_SECRET=%s\nAUTHENTIK_INTERNAL_URL=%s\nCONTROL_EXTERNAL_URL=%s\n",
+			"YOUEYE_ID_URL=%s\nYOUEYE_ID_CLIENT_ID=%s\nYOUEYE_ID_CLIENT_SECRET=%s\nYOUEYE_ID_INTERNAL_URL=%s\nAUTHENTIK_URL=%s\nAUTHENTIK_CLIENT_ID=%s\nAUTHENTIK_CLIENT_SECRET=%s\nAUTHENTIK_INTERNAL_URL=%s\nCONTROL_EXTERNAL_URL=%s\n",
+			req.IdentityURL, req.ClientID, req.ClientSecret, req.IdentityInternalURL,
 			req.AuthentikURL, req.ClientID, req.ClientSecret, req.InternalURL, req.ControlURL,
 		)
 
@@ -1546,7 +1603,7 @@ func (s *Server) handleUISSO(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Check if it has real SSO config (not just placeholder)
-		configured := envVars["AUTHENTIK_CLIENT_ID"] != ""
+		configured := envVars["YOUEYE_ID_CLIENT_ID"] != "" || envVars["AUTHENTIK_CLIENT_ID"] != ""
 
 		serviceOut, _ := exec.Command("incus", "exec", containerName, "--",
 			"systemctl", "is-active", "youeye-ui").Output()
@@ -1555,14 +1612,16 @@ func (s *Server) handleUISSO(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]interface{}{
 			"configured":     configured,
 			"service_active": serviceActive,
-			"client_id":      envVars["AUTHENTIK_CLIENT_ID"],
+			"client_id":      firstNonEmpty(envVars["YOUEYE_ID_CLIENT_ID"], envVars["AUTHENTIK_CLIENT_ID"]),
 			"domain":         envVars["UI_EXTERNAL_URL"],
 		})
 
 	case "POST":
 		var req struct {
 			AuthentikURL      string `json:"authentik_url"`
+			IdentityURL       string `json:"identity_url"`
 			AuthentikInternal string `json:"authentik_internal_url"`
+			IdentityInternal  string `json:"identity_internal_url"`
 			ClientID          string `json:"client_id"`
 			ClientSecret      string `json:"client_secret"`
 			JWTSecret         string `json:"jwt_secret"`
@@ -1578,9 +1637,34 @@ func (s *Server) handleUISSO(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, "client_id, client_secret, and database_url are required", http.StatusBadRequest)
 			return
 		}
+		if req.IdentityURL == "" {
+			req.IdentityURL = req.AuthentikURL
+		}
+		if req.AuthentikURL == "" {
+			req.AuthentikURL = req.IdentityURL
+		}
+		if req.IdentityInternal == "" {
+			req.IdentityInternal = req.AuthentikInternal
+		}
+		if req.AuthentikInternal == "" {
+			req.AuthentikInternal = req.IdentityInternal
+		}
+		if req.IdentityURL == "" || req.IdentityInternal == "" {
+			errorResponse(w, "identity_url/authentik_url and identity_internal_url/authentik_internal_url are required", http.StatusBadRequest)
+			return
+		}
+
+		if err := ensureUIIdentityProxy(containerName); err != nil {
+			errorResponse(w, "failed to configure UI identity proxy: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		// Build env file content
 		envContent := fmt.Sprintf(`# YouEye UI Environment - configured by Control Panel
+YOUEYE_ID_URL=%s
+YOUEYE_ID_INTERNAL_URL=%s
+YOUEYE_ID_CLIENT_ID=%s
+YOUEYE_ID_CLIENT_SECRET=%s
 AUTHENTIK_URL=%s
 AUTHENTIK_INTERNAL_URL=%s
 AUTHENTIK_CLIENT_ID=%s
@@ -1593,6 +1677,10 @@ NODE_ENV=production
 PORT=3000
 HOSTNAME=0.0.0.0
 `,
+			req.IdentityURL,
+			req.IdentityInternal,
+			req.ClientID,
+			req.ClientSecret,
 			req.AuthentikURL,
 			req.AuthentikInternal,
 			req.ClientID,

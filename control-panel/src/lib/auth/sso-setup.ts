@@ -7,6 +7,7 @@
 
 import { spineClient } from '@/lib/spine/client';
 import { getContainerIP } from '@/lib/incus/container-ip';
+import { configureControlPanelIdentitySSO } from '@/lib/identity/core-clients';
 
 interface AuthentikConfig {
   url: string;
@@ -175,6 +176,12 @@ export async function setupSSO(params: {
   authentikExternalUrl: string;
   controlExternalUrl: string;
 }): Promise<{ clientId: string; clientSecret: string }> {
+  const controlUrl = new URL(params.controlExternalUrl);
+  return configureControlPanelIdentitySSO({
+    controlExternalUrl: params.controlExternalUrl,
+    settingsExternalUrl: `${controlUrl.protocol}//${controlUrl.host.replace(/^control\./, '')}/settings`,
+  });
+
   const config = await getAuthentikConfig();
   const clientId = 'youeye-control';
 

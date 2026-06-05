@@ -3,7 +3,7 @@
  *
  * Handles the complete lifecycle of enabling/disabling the YouEye UI:
  * 1. Check UI container status via Spine  
- * 2. Create OAuth2 provider/application in Authentik for UI
+ * 2. Create OAuth2 client in YouEye ID for UI
  * 3. Generate environment variables
  * 4. Configure Caddy route for UI subdomain
  * 5. Start/stop UI service via Spine
@@ -11,6 +11,7 @@
 
 import { spineClient } from '@/lib/spine/client';
 import { getContainerIP } from '@/lib/incus/container-ip';
+import { configureUIIdentitySSO } from '@/lib/identity/core-clients';
 
 interface AuthentikConfig {
   url: string;
@@ -112,146 +113,13 @@ export async function getUIStatus(): Promise<UIStatus> {
 }
 
 /**
- * Enable UI: Create Authentik OAuth2, configure Caddy, start service
+ * Enable UI: Create YouEye ID OAuth2 client, configure Caddy, start service
  */
 export async function enableUI(params: {
   domain: string;
   authentikExternalUrl: string;
 }): Promise<{ success: boolean; message: string }> {
-  const clientId = 'youeye-ui';
   const uiDomain = params.domain;
-  const authentikConfig = await getAuthentikConfig();
-
-  console.log('[UI] Step 1: Finding authorization flow...');
-  // 1. Find authorization flow
-  const flows = await authentikAPI<{ results: Array<{ pk: string; slug: string }> }>(
-    authentikConfig, '/flows/instances/?designation=authorization'
-  );
-  if (!flows.results?.length) {
-    throw new Error('No authorization flow found in Authentik');
-  }
-  const authFlowPk = flows.results[0].pk;
-  console.log(`[UI] Found authorization flow: ${flows.results[0].slug}`);
-
-  // 1b. Find invalidation flow
-  const invalidationFlows = await authentikAPI<{ results: Array<{ pk: string; slug: string }> }>(
-    authentikConfig, '/flows/instances/?designation=invalidation'
-  );
-  const invalidationFlow = invalidationFlows.results?.find(f => f.slug === 'default-provider-invalidation-flow')
-    || invalidationFlows.results?.[0];
-  if (!invalidationFlow) {
-    throw new Error('No invalidation flow found in Authentik');
-  }
-  console.log(`[UI] Found invalidation flow: ${invalidationFlow.slug}`);
-
-  console.log('[UI] Step 2: Getting scope mappings...');
-  // 2. Get existing scope mappings
-  const mappings = await authentikAPI<{ results: Array<{ pk: string; scope_name: string; managed: string }> }>(
-    authentikConfig, '/propertymappings/provider/scope/?page_size=100'
-  );
-  const scopeMappingPks: string[] = [];
-  for (const m of mappings.results || []) {
-    if (m.managed?.startsWith('goauthentik.io/providers/oauth2/scope-')) {
-      scopeMappingPks.push(m.pk);
-    }
-  }
-  console.log(`[UI] Found ${scopeMappingPks.length} scope mappings`);
-
-  console.log('[UI] Step 3: Ensuring groups scope mapping...');
-  // 3. Ensure groups scope mapping exists
-  let groupsMappingPk: string | null = null;
-  for (const m of mappings.results || []) {
-    if (m.scope_name === 'groups') {
-      groupsMappingPk = m.pk;
-      break;
-    }
-  }
-  if (!groupsMappingPk) {
-    const groupsMapping = await authentikAPI<{ pk: string }>(
-      authentikConfig, '/propertymappings/provider/scope/', 'POST', {
-        name: 'YouEye Groups',
-        scope_name: 'groups',
-        description: 'Returns user group memberships',
-        expression: 'groups = [group.name for group in request.user.ak_groups.all()]\nif "authentik Admins" in groups:\n    groups.append("admin")\nreturn {"groups": groups}',
-      }
-    );
-    groupsMappingPk = groupsMapping.pk;
-    console.log('[UI] Created groups scope mapping');
-  } else {
-    console.log('[UI] Groups scope mapping already exists');
-  }
-  scopeMappingPks.push(groupsMappingPk);
-
-  // 4. Generate client secret
-  const secretBytes = new Uint8Array(32);
-  crypto.getRandomValues(secretBytes);
-  const clientSecret = Array.from(secretBytes, b => b.toString(16).padStart(2, '0')).join('');
-
-  console.log('[UI] Step 5: Cleaning up existing Authentik resources...');
-  // 5. Clean up any existing provider/application
-  // Delete providers FIRST (search by client_id), then delete application.
-  // This ensures orphaned providers are removed even if the app was already deleted.
-  try {
-    const existingProviders = await authentikAPI<{ results: Array<{ pk: number; client_id: string }> }>(
-      authentikConfig, `/providers/oauth2/?search=${encodeURIComponent(clientId)}`
-    );
-    for (const p of existingProviders.results || []) {
-      await authentikAPI(authentikConfig, `/providers/oauth2/${p.pk}/`, 'DELETE');
-      console.log(`[UI] Deleted provider pk=${p.pk}`);
-    }
-  } catch { /* providers may not exist */ }
-
-  try {
-    await authentikAPI(authentikConfig, `/core/applications/${clientId}/`, 'DELETE');
-    console.log('[UI] Deleted existing application');
-  } catch { /* may not exist */ }
-
-  // 6. Build redirect URIs
-  console.log('[UI] Step 6: Building redirect URIs...');
-  const redirectUris = [
-    { matching_mode: 'strict', url: `https://${uiDomain}/api/auth/callback` },
-    { matching_mode: 'strict', url: `http://${uiDomain}/api/auth/callback` },
-  ];
-
-  // 7. Create OAuth2 Provider
-  console.log('[UI] Step 7: Creating OAuth2 provider...');
-  const provider = await authentikAPI<{ pk: number }>(
-    authentikConfig, '/providers/oauth2/', 'POST', {
-      name: 'YouEye UI',
-      authorization_flow: authFlowPk,
-      invalidation_flow: invalidationFlow.pk,
-      client_type: 'confidential',
-      client_id: clientId,
-      client_secret: clientSecret,
-      redirect_uris: redirectUris,
-      property_mappings: scopeMappingPks,
-      sub_mode: 'hashed_user_id',
-      include_claims_in_id_token: true,
-      issuer_mode: 'per_provider',
-      access_code_validity: 'minutes=1',
-      access_token_validity: 'minutes=5',
-      refresh_token_validity: 'days=30',
-    }
-  );
-  console.log(`[UI] Created OAuth2 provider pk=${provider.pk}`);
-
-  // 8. Create Application
-  console.log('[UI] Step 8: Creating Authentik application...');
-  await authentikAPI(
-    authentikConfig, '/core/applications/', 'POST', {
-      name: 'YouEye UI',
-      slug: clientId,
-      provider: provider.pk,
-      meta_launch_url: `https://${uiDomain}`,
-      open_in_new_tab: false,
-    }
-  );
-  console.log('[UI] Created Authentik application');
-
-  // 9. Generate JWT secret
-  const jwtBytes = new Uint8Array(48);
-  crypto.getRandomValues(jwtBytes);
-  const jwtSecret = Array.from(jwtBytes, b => b.toString(16).padStart(2, '0')).join('');
 
   // 10. Get PostgreSQL credentials for DATABASE_URL
   console.log('[UI] Step 10: Getting PostgreSQL credentials...');
@@ -281,15 +149,9 @@ export async function enableUI(params: {
 
   // 12. Configure Spine to set env vars and start UI service
   console.log('[UI] Step 12: Configuring Spine env vars and starting service...');
-  await spineClient.setUISSO({
-    authentik_url: params.authentikExternalUrl,
-    authentik_internal_url: authentikConfig.url,
-    client_id: clientId,
-    client_secret: clientSecret,
-    jwt_secret: jwtSecret,
-    database_url: databaseUrl,
-    domain: uiDomain,
-    base_url: `https://${uiDomain}`,
+  await configureUIIdentitySSO({
+    uiExternalUrl: `https://${uiDomain}`,
+    databaseUrl,
   });
   console.log('[UI] Spine SSO configured and service started');
 

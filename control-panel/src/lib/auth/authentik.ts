@@ -1,8 +1,10 @@
 /**
- * Authentik OAuth2 Helper
+ * OAuth2 Helper
  *
  * Handles the OAuth2 Authorization Code flow for SSO login
  * when the Control Panel is accessed via subdomain (through Caddy).
+ * YouEye ID env names are preferred. Authentik env names remain temporary
+ * aliases during the staged migration.
  *
  * Flow:
  * 1. User visits control.youeye.local (subdomain → Caddy → CP)
@@ -17,18 +19,18 @@
  * These values must be provisioned by Spine when setting up Authentik.
  */
 export function getOAuthConfig() {
-  const clientId = process.env.AUTHENTIK_CLIENT_ID || 'youeye-control';
-  const clientSecret = process.env.AUTHENTIK_CLIENT_SECRET || '';
-  const authentikUrl = process.env.AUTHENTIK_URL || '';
+  const clientId = process.env.YOUEYE_ID_CLIENT_ID || process.env.AUTHENTIK_CLIENT_ID || 'youeye-control';
+  const clientSecret = process.env.YOUEYE_ID_CLIENT_SECRET || process.env.AUTHENTIK_CLIENT_SECRET || '';
+  const identityUrl = process.env.YOUEYE_ID_URL || process.env.AUTHENTIK_URL || '';
   // Internal URL is used for server-side calls (token exchange, userinfo)
   // to avoid TLS issues with self-signed certs from Caddy
-  const internalUrl = process.env.AUTHENTIK_INTERNAL_URL || authentikUrl;
+  const internalUrl = process.env.YOUEYE_ID_INTERNAL_URL || process.env.AUTHENTIK_INTERNAL_URL || identityUrl;
 
   return {
     clientId,
     clientSecret,
-    authentikUrl,
-    authorizeUrl: `${authentikUrl}/application/o/authorize/`,
+    identityUrl,
+    authorizeUrl: `${identityUrl}/application/o/authorize/`,
     tokenUrl: `${internalUrl}/application/o/token/`,
     userinfoUrl: `${internalUrl}/application/o/userinfo/`,
   };
@@ -91,6 +93,7 @@ export async function fetchUserInfo(
   name: string;
   email: string;
   groups: string[];
+  is_admin?: boolean;
 }> {
   const config = getOAuthConfig();
 
@@ -119,5 +122,6 @@ export function generateOAuthState(): string {
  * Determine if OAuth/SSO is configured (has the required env vars)
  */
 export function isSSOConfigured(): boolean {
-  return !!(process.env.AUTHENTIK_URL && process.env.AUTHENTIK_CLIENT_SECRET);
+  const config = getOAuthConfig();
+  return !!(config.identityUrl && config.clientId && config.clientSecret);
 }

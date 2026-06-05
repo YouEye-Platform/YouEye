@@ -1,8 +1,9 @@
 /**
- * Authentik OAuth2 Client
+ * OAuth2 Client
  *
  * Handles the OAuth2 Authorization Code flow for SSO login.
- * YouEye-UI only supports SSO login through Authentik.
+ * YouEye-UI supports YouEye ID first. Authentik env names remain temporary
+ * compatibility aliases during the migration.
  *
  * Flow:
  * 1. User visits https://yourdomain.com
@@ -13,25 +14,25 @@
  * 6. We exchange code for tokens, extract user info, create JWT session
  *
  * Environment Variables Required:
- * - AUTHENTIK_URL: External Authentik URL (e.g., https://yourdomain.com/authentik)
- * - AUTHENTIK_INTERNAL_URL: Internal URL for server-side calls (avoids TLS issues)
- * - AUTHENTIK_CLIENT_ID: OAuth2 client ID
- * - AUTHENTIK_CLIENT_SECRET: OAuth2 client secret
+ * - YOUEYE_ID_URL: External YouEye ID URL
+ * - YOUEYE_ID_INTERNAL_URL: Internal/proxy URL for token/userinfo calls
+ * - YOUEYE_ID_CLIENT_ID: OAuth2 client ID
+ * - YOUEYE_ID_CLIENT_SECRET: OAuth2 client secret
  */
 
 /** OAuth2 configuration from environment variables */
 export function getOAuthConfig() {
-  const clientId = process.env.AUTHENTIK_CLIENT_ID || "";
-  const clientSecret = process.env.AUTHENTIK_CLIENT_SECRET || "";
-  const authentikUrl = process.env.AUTHENTIK_URL || "";
+  const clientId = process.env.YOUEYE_ID_CLIENT_ID || process.env.AUTHENTIK_CLIENT_ID || "";
+  const clientSecret = process.env.YOUEYE_ID_CLIENT_SECRET || process.env.AUTHENTIK_CLIENT_SECRET || "";
+  const identityUrl = process.env.YOUEYE_ID_URL || process.env.AUTHENTIK_URL || "";
   // Internal URL for server→server calls (bypasses TLS/self-signed cert issues)
-  const internalUrl = process.env.AUTHENTIK_INTERNAL_URL || authentikUrl;
+  const internalUrl = process.env.YOUEYE_ID_INTERNAL_URL || process.env.AUTHENTIK_INTERNAL_URL || identityUrl;
 
   return {
     clientId,
     clientSecret,
-    authentikUrl,
-    authorizeUrl: `${authentikUrl}/application/o/authorize/`,
+    identityUrl,
+    authorizeUrl: `${identityUrl}/application/o/authorize/`,
     tokenUrl: `${internalUrl}/application/o/token/`,
     userinfoUrl: `${internalUrl}/application/o/userinfo/`,
   };
@@ -112,5 +113,6 @@ export function generateOAuthState(): string {
 
 /** Check if SSO is configured (required env vars are present) */
 export function isSSOConfigured(): boolean {
-  return !!(process.env.AUTHENTIK_URL && process.env.AUTHENTIK_CLIENT_SECRET);
+  const config = getOAuthConfig();
+  return !!(config.identityUrl && config.clientId && config.clientSecret);
 }

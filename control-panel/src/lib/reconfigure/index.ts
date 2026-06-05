@@ -19,6 +19,10 @@ import { resolveVariables, resolveEnvironment } from '@/lib/market/variables';
 import { writeAllConfigFiles } from '@/lib/market/config-writer';
 import { incusRequest } from '@/lib/incus/server';
 import type { InstallMetadata } from '@/lib/market/types';
+import {
+  configureControlPanelIdentitySSO,
+  configureUIIdentitySSO,
+} from '@/lib/identity/core-clients';
 
 export interface ReconfigureRequest {
   site_name?: string;
@@ -543,33 +547,18 @@ export async function reconfigure(
     }
   }
 
-  // 6. Update Authentik CP OAuth2
+  // 6. Defer Control Panel OAuth update until the final env/restart step.
   if (domainChanged || subdomainsChanged) {
     onEvent({ step: 'sso_cp', status: 'running', message: 'Updating Control Panel SSO...' });
-    try {
-      // Build hostname map for subdomain changes (e.g., control.old → controlpanel.new)
-      const cpHostMap = new Map<string, string>();
-      const oldControlSub = oldSubdomains.control || 'control';
-      const newControlSub = newSubdomains.control || 'control';
-      cpHostMap.set(`${oldControlSub}.${oldDomain}`, `${newControlSub}.${newDomain}`);
-      await updateAuthentikProvider(akConfig, 'youeye-control', oldDomain, newDomain, cpHostMap);
-      onEvent({ step: 'sso_cp', status: 'done', message: 'Control Panel SSO updated' });
-    } catch (err) {
-      console.error('[Reconfigure] CP SSO update failed:', err);
-      onEvent({ step: 'sso_cp', status: 'error', message: `CP SSO update failed: ${err}` });
-    }
+    onEvent({ step: 'sso_cp', status: 'done', message: 'Control Panel SSO update deferred until restart step' });
   }
 
-  // 7. Update Authentik UI OAuth2 + UI env vars
+  // 7. Update YouEye ID UI OAuth2 + UI env vars
   if (domainChanged || subdomainsChanged) {
     onEvent({ step: 'sso_ui', status: 'running', message: 'Updating UI SSO...' });
     try {
-      await updateAuthentikProvider(akConfig, 'youeye-ui', oldDomain, newDomain);
-
-      // Update UI env vars via Spine
       const uiSub = newSubdomains.ui || '';
       const uiHost = uiSub ? `${uiSub}.${newDomain}` : newDomain;
-      const authSub = newSubdomains.auth || 'auth';
 
       // Get existing UI SSO config to preserve secrets
       const uiSSOStatus = await spineClient.getUISSO();
@@ -580,15 +569,10 @@ export async function reconfigure(
         // We need to read the existing secrets from env file
         const existingSecrets = await getExistingUISecrets();
 
-        await spineClient.setUISSO({
-          authentik_url: `https://${authSub}.${newDomain}`,
-          authentik_internal_url: akConfig.url,
-          client_id: existingSecrets.clientId || 'youeye-ui',
-          client_secret: existingSecrets.clientSecret || '',
-          jwt_secret: existingSecrets.jwtSecret || '',
-          database_url: dbUrl,
-          domain: uiHost,
-          base_url: `https://${uiHost}`,
+        await configureUIIdentitySSO({
+          uiExternalUrl: `https://${uiHost}`,
+          databaseUrl: dbUrl,
+          jwtSecret: existingSecrets.jwtSecret || undefined,
         });
       }
       onEvent({ step: 'sso_ui', status: 'done', message: 'UI SSO updated' });
@@ -701,13 +685,9 @@ export async function reconfigure(
   if (domainChanged || subdomainsChanged) {
     onEvent({ step: 'cp_env', status: 'running', message: 'Updating Control Panel environment (will restart)...' });
     const controlSub = newSubdomains.control || 'control';
-    const authSub = newSubdomains.auth || 'auth';
-    await spineClient.setControlSSO({
-      authentik_url: `https://${authSub}.${newDomain}`,
-      client_id: 'youeye-control',
-      client_secret: await getCurrentCPSecret(),
-      internal_url: akConfig.url,
-      control_url: `https://${controlSub}.${newDomain}`,
+    await configureControlPanelIdentitySSO({
+      controlExternalUrl: `https://${controlSub}.${newDomain}`,
+      settingsExternalUrl: `https://${newDomain}/settings`,
     });
     onEvent({ step: 'cp_env', status: 'done', message: 'Control Panel environment updated — restarting in 2s' });
   }
@@ -719,13 +699,6 @@ export async function reconfigure(
   onEvent({ step: 'complete', status: 'done', message: 'Reconfiguration complete' });
 
   return { newUrl };
-}
-
-// ─── Helper: Get current CP SSO client secret ─────────────
-
-async function getCurrentCPSecret(): Promise<string> {
-  // Read from current environment
-  return process.env.AUTHENTIK_CLIENT_SECRET || '';
 }
 
 // ─── Helper: Get existing UI SSO secrets ──────────────────
@@ -748,8 +721,8 @@ async function getExistingUISecrets(): Promise<{
       }
     }
     return {
-      clientId: vars.AUTHENTIK_CLIENT_ID || 'youeye-ui',
-      clientSecret: vars.AUTHENTIK_CLIENT_SECRET || '',
+      clientId: vars.YOUEYE_ID_CLIENT_ID || vars.AUTHENTIK_CLIENT_ID || 'youeye-ui',
+      clientSecret: vars.YOUEYE_ID_CLIENT_SECRET || vars.AUTHENTIK_CLIENT_SECRET || '',
       jwtSecret: vars.JWT_SECRET || '',
     };
   } catch {

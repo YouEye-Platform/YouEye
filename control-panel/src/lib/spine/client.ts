@@ -333,7 +333,15 @@ export class SpineClient {
   /**
    * Set SSO environment variables for Control Panel (triggers restart)
    */
-  async setControlSSO(params: { authentik_url: string; client_id: string; client_secret: string; internal_url: string; control_url: string }): Promise<{ status: string; message: string }> {
+  async setControlSSO(params: {
+    authentik_url: string;
+    identity_url?: string;
+    client_id: string;
+    client_secret: string;
+    internal_url: string;
+    identity_internal_url?: string;
+    control_url: string;
+  }): Promise<{ status: string; message: string }> {
     return this.request('/api/control/sso', 'POST', params);
   }
 
@@ -361,7 +369,9 @@ export class SpineClient {
    */
   async setUISSO(params: {
     authentik_url: string;
+    identity_url?: string;
     authentik_internal_url: string;
+    identity_internal_url?: string;
     client_id: string;
     client_secret: string;
     jwt_secret: string;

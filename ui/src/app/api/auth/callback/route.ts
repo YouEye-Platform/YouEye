@@ -21,8 +21,11 @@ import {
 } from "@/lib/auth";
 import { upsertUser } from "@/lib/db/queries/users";
 
-const ADMIN_GROUP = "authentik Admins";
 const SESSION_DURATION = 60 * 60 * 24 * 7; // 7 days
+
+function hasAdminClaim(groups: string[], isAdminClaim?: boolean): boolean {
+  return isAdminClaim === true || groups.includes("admin") || groups.includes("authentik Admins");
+}
 
 export async function GET(request: NextRequest) {
   if (!isSSOConfigured()) {
@@ -101,7 +104,7 @@ export async function GET(request: NextRequest) {
 
     const username = userInfo.preferred_username || userInfo.sub;
     const groups = userInfo.groups || [];
-    const isAdmin = groups.includes(ADMIN_GROUP);
+    const isAdmin = hasAdminClaim(groups, (userInfo as { is_admin?: boolean }).is_admin);
 
     // Upsert user in database (sync name fields from Authentik)
     const firstName = userInfo.given_name || null;

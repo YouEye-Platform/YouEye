@@ -22,6 +22,11 @@ import { setDomainDNS } from '@/lib/apps/pihole-api';
 import { generateSetupAuthentikCSS } from '@/lib/authentik/setup-css';
 import { generateWordArtSVG } from '@/lib/authentik/wordart-svg';
 import { getIdentityConfig } from '@/lib/identity/config';
+import {
+  configureControlPanelIdentitySSO,
+  configureUIIdentitySSO,
+  ensureIdentityAdminUser,
+} from '@/lib/identity/core-clients';
 import { execShell } from '@/lib/incus/server';
 import { tlsStorage } from '@/lib/acme/storage';
 import { readFileSync, readdirSync, existsSync } from 'fs';
@@ -90,12 +95,6 @@ async function authentikAPI<T>(
   }
   if (res.status === 204) return {} as T;
   return res.json() as Promise<T>;
-}
-
-function generateSecret(length: number = 32): string {
-  const bytes = new Uint8Array(length);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /** Retry a function up to maxAttempts with delays */
@@ -478,6 +477,13 @@ export async function POST(request: NextRequest) {
               // Non-critical
             }
 
+            await ensureIdentityAdminUser({
+              username: body.admin_username,
+              password: body.admin_password,
+              name: [body.admin_first_name, body.admin_last_name].filter(Boolean).join(' ') || body.admin_username,
+              email: body.admin_email,
+            });
+
             await saveStepState('admin', 'done');
           }
         } else {
@@ -487,262 +493,15 @@ export async function POST(request: NextRequest) {
         // ── Step 4: SSO for Control Panel (idempotent) ───────────────
         if (shouldRunStep('sso_control')) {
           stepUpdate('sso_control', 'running');
-          const akConfig = await getAuthentikConfig();
           const domain = body.domain;
           const subs = body.subdomains || {};
           const controlHost = `${subs.control || 'control'}.${domain}`;
-          const authentikHost = `${subs.auth || 'auth'}.${domain}`;
-
-          // Get flows — prefer implicit consent flow to skip consent screen
-          const flows = await authentikAPI<{ results: Array<{ pk: string; slug: string }> }>(
-            akConfig, '/flows/instances/?designation=authorization'
-          );
-          const authFlowPk = (
-            flows.results.find(f => f.slug === 'default-provider-authorization-implicit-consent')
-            || flows.results[0]
-          )?.pk;
-          if (!authFlowPk) throw new Error('No authorization flow found');
-
-          const invFlows = await authentikAPI<{ results: Array<{ pk: string; slug: string }> }>(
-            akConfig, '/flows/instances/?designation=invalidation'
-          );
-          const invFlowPk = (invFlows.results?.find(f => f.slug === 'default-provider-invalidation-flow') || invFlows.results?.[0])?.pk;
-          if (!invFlowPk) throw new Error('No invalidation flow found');
-
-          // Get scope mappings
-          const mappings = await authentikAPI<{ results: Array<{ pk: string; scope_name: string; managed: string; name: string }> }>(
-            akConfig, '/propertymappings/provider/scope/?page_size=100'
-          );
-
-          // Start with all default managed scope mappings EXCEPT the default profile one
-          // (we replace it with our custom split-name version below)
-          const defaultProfileManaged = 'goauthentik.io/providers/oauth2/scope-profile';
-          const scopePks = mappings.results
-            ?.filter(m => m.managed?.startsWith('goauthentik.io/providers/oauth2/scope-') && m.managed !== defaultProfileManaged)
-            .map(m => m.pk) || [];
-
-          // Ensure custom profile scope mapping that splits "name" into given_name/family_name.
-          // Authentik only stores a single "name" field; the default mapping returns the full
-          // name as given_name (breaking first/last name split). Our mapping fixes this.
-          const profileExpression = [
-            'name_parts = request.user.name.split(" ", 1) if request.user.name else [""]',
-            'given = name_parts[0] if name_parts else ""',
-            'family = name_parts[1] if len(name_parts) > 1 else ""',
-            '',
-            'return {',
-            '    "name": request.user.name,',
-            '    "given_name": given,',
-            '    "family_name": family,',
-            '    "preferred_username": request.user.username,',
-            '    "nickname": request.user.username,',
-            '    "groups": [group.name for group in request.user.ak_groups.all()],',
-            '}',
-          ].join('\n');
-
-          let profileMappingPk = mappings.results?.find(m => m.name === 'YouEye: OpenID profile (split name)')?.pk;
-          if (!profileMappingPk) {
-            const pm = await authentikAPI<{ pk: string }>(akConfig, '/propertymappings/provider/scope/', 'POST', {
-              name: 'YouEye: OpenID profile (split name)',
-              scope_name: 'profile',
-              description: 'Profile scope with first/last name split from full name',
-              expression: profileExpression,
-            });
-            profileMappingPk = pm.pk;
-          }
-          scopePks.push(profileMappingPk);
-
-          // Ensure groups scope mapping (idempotent)
-          let groupsMappingPk = mappings.results?.find(m => m.scope_name === 'groups')?.pk;
-          if (!groupsMappingPk) {
-            const gm = await authentikAPI<{ pk: string }>(akConfig, '/propertymappings/provider/scope/', 'POST', {
-              name: 'YouEye Groups',
-              scope_name: 'groups',
-              description: 'Returns user group memberships',
-              expression: 'groups = [group.name for group in request.user.ak_groups.all()]\nif "authentik Admins" in groups:\n    groups.append("admin")\nreturn {"groups": groups}',
-            });
-            groupsMappingPk = gm.pk;
-          }
-          scopePks.push(groupsMappingPk);
-
-          // Check if CP OAuth2 provider already exists (idempotent)
-          const cpClientId = 'youeye-control';
-          const existingCpProviders = await authentikAPI<{ results: Array<{ pk: number; client_id: string }> }>(
-            akConfig, `/providers/oauth2/?client_id=${encodeURIComponent(cpClientId)}`
-          );
-          const existingCpProvider = existingCpProviders.results?.find(p => p.client_id === cpClientId);
-
-          let cpSecret: string;
-          if (existingCpProvider) {
-            // Provider exists — update redirect URIs if needed, keep existing secret
-            await authentikAPI(akConfig, `/providers/oauth2/${existingCpProvider.pk}/`, 'PATCH', {
-              redirect_uris: [
-                { matching_mode: 'strict', url: `https://${controlHost}/api/auth/callback` },
-                { matching_mode: 'strict', url: `http://${controlHost}/api/auth/callback` },
-                { matching_mode: 'strict', url: `https://${domain}/settings/api/auth/callback` },
-                { matching_mode: 'strict', url: `http://${domain}/settings/api/auth/callback` },
-              ],
-              property_mappings: scopePks,
-            });
-
-            // Ensure application exists
-            try {
-              await authentikAPI(akConfig, `/core/applications/${cpClientId}/`);
-            } catch {
-              // Application doesn't exist — create it
-              await authentikAPI(akConfig, '/core/applications/', 'POST', {
-                name: `${body.site_name} Control Panel`,
-                slug: cpClientId,
-                provider: existingCpProvider.pk,
-                meta_launch_url: `https://${controlHost}`,
-                open_in_new_tab: false,
-                policy_engine_mode: 'any',
-              });
-            }
-
-            // Re-read secret from Spine SSO config (it was stored when first created)
-            try {
-              const ssoConfig = await spineClient.getControlSSO();
-              if (ssoConfig.configured) {
-                // SSO already configured with existing provider — skip Spine reconfiguration
-                await saveStepState('sso_control', 'done');
-                stepUpdate('sso_control', 'done', 'SSO already configured for Control Panel (idempotent skip)');
-                // Skip the Spine SSO call below
-                cpSecret = ''; // unused
-              } else {
-                // Provider exists in Authentik but Spine SSO not configured — need to recreate
-                // Delete and recreate provider to get a known secret
-                await authentikAPI(akConfig, `/providers/oauth2/${existingCpProvider.pk}/`, 'DELETE');
-                try { await authentikAPI(akConfig, `/core/applications/${cpClientId}/`, 'DELETE'); } catch { /* ok */ }
-                cpSecret = generateSecret();
-                const cpProvider = await authentikAPI<{ pk: number }>(akConfig, '/providers/oauth2/', 'POST', {
-                  name: `${body.site_name} Control Panel`,
-                  authorization_flow: authFlowPk,
-                  invalidation_flow: invFlowPk,
-                  client_type: 'confidential',
-                  client_id: cpClientId,
-                  client_secret: cpSecret,
-                  redirect_uris: [
-                    { matching_mode: 'strict', url: `https://${controlHost}/api/auth/callback` },
-                    { matching_mode: 'strict', url: `http://${controlHost}/api/auth/callback` },
-                    { matching_mode: 'strict', url: `https://${domain}/settings/api/auth/callback` },
-                    { matching_mode: 'strict', url: `http://${domain}/settings/api/auth/callback` },
-                  ],
-                  property_mappings: scopePks,
-                  sub_mode: 'hashed_user_id',
-                  include_claims_in_id_token: true,
-                  issuer_mode: 'per_provider',
-                  access_code_validity: 'minutes=1',
-                  access_token_validity: 'minutes=5',
-                  refresh_token_validity: 'days=30',
-                });
-                await authentikAPI(akConfig, '/core/applications/', 'POST', {
-                  name: `${body.site_name} Control Panel`,
-                  slug: cpClientId,
-                  provider: cpProvider.pk,
-                  meta_launch_url: `https://${controlHost}`,
-                  open_in_new_tab: false,
-                  policy_engine_mode: 'any',
-                });
-                await spineClient.setControlSSO({
-                  authentik_url: `https://${authentikHost}`,
-                  client_id: cpClientId,
-                  client_secret: cpSecret,
-                  internal_url: akConfig.url,
-                  control_url: `https://${controlHost}`,
-                });
-                await saveStepState('sso_control', 'done');
-                stepUpdate('sso_control', 'done', 'SSO configured for Control Panel');
-              }
-            } catch {
-              // Spine SSO check failed — recreate to be safe
-              cpSecret = generateSecret();
-              await authentikAPI(akConfig, `/providers/oauth2/${existingCpProvider.pk}/`, 'DELETE');
-              try { await authentikAPI(akConfig, `/core/applications/${cpClientId}/`, 'DELETE'); } catch { /* ok */ }
-              // Fall through to create new below
-              const cpProvider = await authentikAPI<{ pk: number }>(akConfig, '/providers/oauth2/', 'POST', {
-                name: `${body.site_name} Control Panel`,
-                authorization_flow: authFlowPk,
-                invalidation_flow: invFlowPk,
-                client_type: 'confidential',
-                client_id: cpClientId,
-                client_secret: cpSecret,
-                redirect_uris: [
-                  { matching_mode: 'strict', url: `https://${controlHost}/api/auth/callback` },
-                  { matching_mode: 'strict', url: `http://${controlHost}/api/auth/callback` },
-                  { matching_mode: 'strict', url: `https://${domain}/settings/api/auth/callback` },
-                  { matching_mode: 'strict', url: `http://${domain}/settings/api/auth/callback` },
-                ],
-                property_mappings: scopePks,
-                sub_mode: 'hashed_user_id',
-                include_claims_in_id_token: true,
-                issuer_mode: 'per_provider',
-                access_code_validity: 'minutes=1',
-                access_token_validity: 'minutes=5',
-                refresh_token_validity: 'days=30',
-              });
-              await authentikAPI(akConfig, '/core/applications/', 'POST', {
-                name: `${body.site_name} Control Panel`,
-                slug: cpClientId,
-                provider: cpProvider.pk,
-                meta_launch_url: `https://${controlHost}`,
-                open_in_new_tab: false,
-                policy_engine_mode: 'any',
-              });
-              await spineClient.setControlSSO({
-                authentik_url: `https://${authentikHost}`,
-                client_id: cpClientId,
-                client_secret: cpSecret,
-                internal_url: akConfig.url,
-                control_url: `https://${controlHost}`,
-              });
-              await saveStepState('sso_control', 'done');
-              stepUpdate('sso_control', 'done', 'SSO configured for Control Panel');
-            }
-          } else {
-            // Provider doesn't exist — create fresh
-            cpSecret = generateSecret();
-            const cpProvider = await authentikAPI<{ pk: number }>(akConfig, '/providers/oauth2/', 'POST', {
-              name: `${body.site_name} Control Panel`,
-              authorization_flow: authFlowPk,
-              invalidation_flow: invFlowPk,
-              client_type: 'confidential',
-              client_id: cpClientId,
-              client_secret: cpSecret,
-              redirect_uris: [
-                { matching_mode: 'strict', url: `https://${controlHost}/api/auth/callback` },
-                { matching_mode: 'strict', url: `http://${controlHost}/api/auth/callback` },
-                { matching_mode: 'strict', url: `https://${domain}/settings/api/auth/callback` },
-                { matching_mode: 'strict', url: `http://${domain}/settings/api/auth/callback` },
-              ],
-              property_mappings: scopePks,
-              sub_mode: 'hashed_user_id',
-              include_claims_in_id_token: true,
-              issuer_mode: 'per_provider',
-              access_code_validity: 'minutes=1',
-              access_token_validity: 'minutes=5',
-              refresh_token_validity: 'days=30',
-            });
-
-            await authentikAPI(akConfig, '/core/applications/', 'POST', {
-              name: `${body.site_name} Control Panel`,
-              slug: cpClientId,
-              provider: cpProvider.pk,
-              meta_launch_url: `https://${controlHost}`,
-              open_in_new_tab: false,
-              policy_engine_mode: 'any',
-            });
-
-            await spineClient.setControlSSO({
-              authentik_url: `https://${authentikHost}`,
-              client_id: cpClientId,
-              client_secret: cpSecret,
-              internal_url: akConfig.url,
-              control_url: `https://${controlHost}`,
-            });
-
-            await saveStepState('sso_control', 'done');
-            stepUpdate('sso_control', 'done', 'SSO configured for Control Panel');
-          }
+          await configureControlPanelIdentitySSO({
+            controlExternalUrl: `https://${controlHost}`,
+            settingsExternalUrl: `https://${domain}/settings`,
+          });
+          await saveStepState('sso_control', 'done');
+          stepUpdate('sso_control', 'done', 'YouEye ID configured for Control Panel');
         } else {
           stepUpdate('sso_control', 'done', 'Already completed');
         }
@@ -750,11 +509,9 @@ export async function POST(request: NextRequest) {
         // ── Step 5: SSO for UI + enable (idempotent) ─────────────────
         if (shouldRunStep('sso_ui')) {
           stepUpdate('sso_ui', 'running');
-          const akConfig = await getAuthentikConfig();
           const domain = body.domain;
           const subs = body.subdomains || {};
           const uiSub = subs.ui || '';
-          const authentikHost = `${subs.auth || 'auth'}.${domain}`;
 
           let uiInstalled = false;
           try {
@@ -763,96 +520,16 @@ export async function POST(request: NextRequest) {
           } catch { /* not installed */ }
 
           if (uiInstalled) {
-            const uiClientId = 'youeye-ui';
             const uiHost = uiSub ? `${uiSub}.${domain}` : domain;
 
-            // Check if UI SSO is already configured in Spine
             try {
-              const uiSsoConfig = await spineClient.getUISSO();
-              if (uiSsoConfig.configured && uiSsoConfig.service_active) {
-                // Already configured and running — skip
-                await saveStepState('sso_ui', 'done');
-                stepUpdate('sso_ui', 'done', 'UI SSO already configured (idempotent skip)');
-              } else {
-                // Need to configure — check if Authentik provider exists
-                const existingUiProviders = await authentikAPI<{ results: Array<{ pk: number; client_id: string }> }>(
-                  akConfig, `/providers/oauth2/?client_id=${encodeURIComponent(uiClientId)}`
-                );
-                const existingUiProvider = existingUiProviders.results?.find(p => p.client_id === uiClientId);
+              const pgCreds = await spineClient.getPostgresCredentials();
+              const dbUrl = `postgresql://${pgCreds.user}:${pgCreds.password}@${pgCreds.host}:${pgCreds.port}/youeye_ui`;
 
-                // Clean up existing to create fresh with known secrets
-                if (existingUiProvider) {
-                  await authentikAPI(akConfig, `/providers/oauth2/${existingUiProvider.pk}/`, 'DELETE');
-                }
-                try { await authentikAPI(akConfig, `/core/applications/${uiClientId}/`, 'DELETE'); } catch { /* ok */ }
-
-                // Get flows — prefer implicit consent flow
-                const flows = await authentikAPI<{ results: Array<{ pk: string; slug: string }> }>(
-                  akConfig, '/flows/instances/?designation=authorization'
-                );
-                const authFlowPk = (
-                  flows.results.find(f => f.slug === 'default-provider-authorization-implicit-consent')
-                  || flows.results[0]
-                )?.pk;
-                const invFlows = await authentikAPI<{ results: Array<{ pk: string; slug: string }> }>(
-                  akConfig, '/flows/instances/?designation=invalidation'
-                );
-                const invFlowPk = (invFlows.results?.find(f => f.slug === 'default-provider-invalidation-flow') || invFlows.results?.[0])?.pk;
-
-                const mappings = await authentikAPI<{ results: Array<{ pk: string; scope_name: string; managed: string }> }>(
-                  akConfig, '/propertymappings/provider/scope/?page_size=100'
-                );
-                const scopePks = mappings.results
-                  ?.filter(m => m.managed?.startsWith('goauthentik.io/providers/oauth2/scope-'))
-                  .map(m => m.pk) || [];
-                const groupsPk = mappings.results?.find(m => m.scope_name === 'groups')?.pk;
-                if (groupsPk) scopePks.push(groupsPk);
-
-                const uiSecret = generateSecret();
-                const uiJwtSecret = generateSecret();
-
-                const uiProvider = await authentikAPI<{ pk: number }>(akConfig, '/providers/oauth2/', 'POST', {
-                  name: body.site_name || 'YouEye',
-                  authorization_flow: authFlowPk,
-                  invalidation_flow: invFlowPk,
-                  client_type: 'confidential',
-                  client_id: uiClientId,
-                  client_secret: uiSecret,
-                  redirect_uris: [
-                    { matching_mode: 'strict', url: `https://${uiHost}/api/auth/callback` },
-                    { matching_mode: 'strict', url: `http://${uiHost}/api/auth/callback` },
-                  ],
-                  property_mappings: scopePks,
-                  sub_mode: 'hashed_user_id',
-                  include_claims_in_id_token: true,
-                  issuer_mode: 'per_provider',
-                  access_code_validity: 'minutes=1',
-                  access_token_validity: 'minutes=5',
-                  refresh_token_validity: 'days=30',
-                });
-
-                await authentikAPI(akConfig, '/core/applications/', 'POST', {
-                  name: body.site_name || 'YouEye',
-                  slug: uiClientId,
-                  provider: uiProvider.pk,
-                  meta_launch_url: `https://${uiHost}`,
-                  open_in_new_tab: false,
-                  policy_engine_mode: 'any',
-                });
-
-                const pgCreds = await spineClient.getPostgresCredentials();
-                const dbUrl = `postgresql://${pgCreds.user}:${pgCreds.password}@${pgCreds.host}:${pgCreds.port}/youeye_ui`;
-
-                await spineClient.setUISSO({
-                  authentik_url: `https://${authentikHost}`,
-                  authentik_internal_url: akConfig.url,
-                  client_id: uiClientId,
-                  client_secret: uiSecret,
-                  jwt_secret: uiJwtSecret,
-                  database_url: dbUrl,
-                  domain: uiHost,
-                  base_url: `https://${uiHost}`,
-                });
+              await configureUIIdentitySSO({
+                uiExternalUrl: `https://${uiHost}`,
+                databaseUrl: dbUrl,
+              });
 
                 // Write site_name to UI database (idempotent via ON CONFLICT)
                 try {
@@ -910,8 +587,7 @@ export async function POST(request: NextRequest) {
                 }
 
                 await saveStepState('sso_ui', 'done');
-                stepUpdate('sso_ui', 'done', 'UI enabled and SSO configured');
-              }
+                stepUpdate('sso_ui', 'done', 'UI enabled and YouEye ID configured');
             } catch (err) {
               console.error('UI SSO setup failed:', err);
               await saveStepState('sso_ui', 'error');

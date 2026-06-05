@@ -1,3 +1,25 @@
+## v0.4.13.20 (CP) / v0.4.3.5 (UI) / v0.4.2.5 (Spine) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Switch core UI and Control Panel OAuth wiring to YouEye ID
+
+### Changes
+- `control-panel/src/lib/identity/core-clients.ts`, `control-panel/src/app/api/identity/core-clients/route.ts` — Added shared core-client setup and an admin repair endpoint for `youeye-control` and `youeye-ui`.
+- `control-panel/src/app/api/setup/run/route.ts`, `control-panel/src/lib/reconfigure/index.ts`, `control-panel/src/lib/ui/manager.ts`, `control-panel/src/lib/auth/sso-setup.ts` — Fresh setup, reconfigure, UI enable, and CP SSO setup now create YouEye ID clients and write YouEye ID env, while Authentik remains installed for coexistence.
+- `control-panel/src/lib/auth/authentik.ts`, `ui/src/lib/auth/authentik.ts`, callback routes — Prefer `YOUEYE_ID_*` env vars and accept native `admin` / `is_admin` claims while keeping temporary Authentik env aliases.
+- `spine/internal/api/server.go` — `/api/control/sso` and `/api/ui/sso` write `YOUEYE_ID_*` env vars and compatibility aliases; UI SSO now reconciles a checked `identity-proxy` to YouEye ID port `3001`.
+- `control-panel/package.json`, `ui/package.json`, `spine/internal/cmd/root.go`, `README.md` — Bumped only changed component versions.
+
+### Test Results
+- CP build: `pnpm -C control-panel build` passed for `0.4.13.20`.
+- UI build: `pnpm -C ui build` passed for `0.4.3.5` with the existing local Postgres static-generation warnings.
+- Spine tests: `go test ./...` passed for `0.4.2.5`.
+
+### Notes for Iris
+- Authentik is still deployed and Authentik-shaped env names are still written as temporary aliases. New core OAuth wiring uses YouEye ID.
+- UI receives YouEye ID through a narrow Incus `identity-proxy` on localhost `3002`; generic UI to CP access remains blocked.
+
 ## v0.4.2.4 (Spine) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc

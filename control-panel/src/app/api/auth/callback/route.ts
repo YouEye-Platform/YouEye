@@ -22,7 +22,9 @@ import {
 } from '@/lib/auth/session';
 import { isSettingsPath, getSettingsPublicUrl } from '@/lib/settings-public-path';
 
-const ADMIN_GROUP = 'authentik Admins';
+function hasAdminClaim(groups: string[], isAdminClaim?: boolean): boolean {
+  return isAdminClaim === true || groups.includes('admin') || groups.includes('authentik Admins');
+}
 
 export async function GET(request: NextRequest) {
   if (!isSSOConfigured()) {
@@ -82,7 +84,7 @@ export async function GET(request: NextRequest) {
 
     const username = userInfo.preferred_username || userInfo.sub;
     const groups = userInfo.groups || [];
-    const isAdmin = groups.includes(ADMIN_GROUP);
+    const isAdmin = hasAdminClaim(groups, userInfo.is_admin);
 
     // Create session
     const sessionToken = await createSession(username, isAdmin, groups, 'sso');
