@@ -15,10 +15,15 @@
 ### Test Results
 - CP build: `pnpm -C control-panel build` passed for `0.4.13.6`.
 - UI build: `pnpm -C ui build` passed for `0.4.3.2` with a temporary SSH Postgres tunnel; existing schema "already exists" notices were emitted during static generation.
+- Releases: `cp-artem-v0.4.13.6` and `ui-artem-v0.4.3.2` published with `standalone.tar`.
+- Deploy: live host `192.168.31.160` updated to CP `0.4.13.6` and UI `0.4.3.2`.
+- Route repair: `/api/setup/control-routes` returned success for `/settings` and `/market`.
+- Playwright screenshots verified Settings/dashboard header parity, app drawer, drawer edit mode, notifications, immediate avatar upload/remove sync, dashboard avatar persistence, and fresh fallback state.
+- Boundary: UI container request to Control Panel timed out, preserving the one-way bridge rule.
 
 ### Notes for Iris
 - UI server still does not call Control Panel. The new header data flow is CP browser -> CP `/api/ui-settings/*` proxy -> UI bridge with bridge token.
-- Release/deploy verification should include screenshots of Settings header, app drawer, notification popover, immediate avatar sync, and dashboard return state.
+- Screenshot evidence is under `/tmp/youeye-shots/` with `0.4.13.6` / `0.4.3.2` suffixes.
 
 ## v0.4.13.5 (CP) — artem — 2026-06-05
 **Branch:** artem
