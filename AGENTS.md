@@ -1,3 +1,19 @@
+## v0.4.13.12 (CP) — artem — 2026-06-05
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Route direct PAM login to Settings admin mode
+
+### Changes
+- `control-panel/src/app/login/page.tsx` — Redirect direct `ip:3000`, `localhost:3000`, and `127.0.0.1:3000` PAM logins to `/settings/system` instead of the legacy CP dashboard.
+- `control-panel/package.json`, `README.md` — Bumped CP branch release version and current-version table.
+
+### Test Results
+- Live verification of CP `0.4.13.11` proved direct HTTP PAM cookies now persist, but root `/login` still landed on the old dashboard; this release fixes that landing path.
+
+### Notes for Iris
+- CP-only follow-up to `0.4.13.11`; UI remains `0.4.3.4`.
+
 ## v0.4.13.11 (CP) — artem — 2026-06-05
 **Branch:** artem
 **VM:** potempc

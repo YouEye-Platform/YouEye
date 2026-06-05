@@ -75,10 +75,13 @@ function LoginContent() {
         const hostname = host.split(':')[0];
         const port = host.split(':')[1];
         const isIP = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
+        const isDirectControlAccess = (isIP || hostname === 'localhost' || hostname === '127.0.0.1') && port === '3000';
         const isCaddyAccess = isIP && port !== '3000';
 
         if (isCaddyAccess) {
           router.push('/setup');
+        } else if (isDirectControlAccess) {
+          router.push('/settings/system');
         } else if (pathname.startsWith('/settings')) {
           router.push('/settings');
         } else {
