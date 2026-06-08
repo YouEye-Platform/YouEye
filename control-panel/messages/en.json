@@ -97,12 +97,12 @@
     },
     "sso": {
       "title": "Authentication",
-      "description": "Configure Single Sign-On (SSO) via Authentik for subdomain access",
+      "description": "Configure Single Sign-On (SSO) via YouEye ID for subdomain access",
       "status": "SSO Status",
       "configured": "Enabled",
       "notConfigured": "Not Configured",
       "domain": "Domain",
-      "authentikUrl": "Authentik URL",
+      "authentikUrl": "YouEye ID URL",
       "controlUrl": "Control Panel URL",
       "prerequisitesMet": "Prerequisites met",
       "configure": "Configure SSO",
@@ -151,7 +151,7 @@
       "title": "Identity Provider",
       "description": "The name shown on the login page and in app sign-in flows",
       "name": "Provider Name",
-      "helper": "Shown on the Authentik login page (e.g. \"HomeCloud ID\")",
+      "helper": "Shown on the YouEye ID login page (e.g. \"HomeCloud ID\")",
       "saved": "Identity provider name updated"
     },
     "smtp": {
@@ -167,7 +167,7 @@
       "notConfigured": "Not configured",
       "testEmail": "Send Test Email",
       "testSuccess": "Test email sent successfully!",
-      "saved": "SMTP settings saved. Authentik email backend updated.",
+      "saved": "SMTP settings saved.",
       "gmailHint": "Gmail requires an app password, not your account password."
     },
     "updates": {
@@ -216,7 +216,7 @@
     "subdomainAuth": "Auth",
     "subdomainDns": "DNS",
     "subdomainPanel": "Panel",
-    "subdomainHint": "Customize subdomains for Control Panel, Authentik, and Pi-Hole.",
+    "subdomainHint": "Customize subdomains for Control Panel, YouEye ID, and Pi-Hole.",
     "domainRequired": "Domain is required",
     "adminDescription": "This creates a new admin user in the authentication system. You'll use these credentials to log in via SSO.",
     "firstName": "First Name",
@@ -243,7 +243,7 @@
     "retrying": "Retrying...",
     "stepOf": "Step {current} of {total}",
     "serverSetupHelp": "Enter your domain name (e.g. 'home.example.com'). DNS must point to this server's IP address. The homepage will be served on the root domain, and services will use subdomains.",
-    "adminAccountHelp": "This creates your admin account in the identity provider (Authentik). Use a strong password — this is the master key to your server. You'll use these credentials for all apps.",
+    "adminAccountHelp": "This creates your admin account in YouEye ID. Use a strong password — this is the master key to your server. You'll use these credentials for all apps.",
     "installationHelp": "The wizard is now configuring your server. This includes setting up HTTPS, DNS, authentication, and the YouEye dashboard. If a step fails, you can retry it individually.",
     "nameYourServer": "Name your server",
     "nameYourServerDesc": "Give your server a name and choose a web address",

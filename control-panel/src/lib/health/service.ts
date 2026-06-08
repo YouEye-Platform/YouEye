@@ -2,13 +2,12 @@
  * Platform Health Service
  *
  * Queries Incus container state + per-service health endpoints to build
- * a unified health snapshot of the five core platform services:
- * Authentik, Pi-Hole, Caddy, PostgreSQL, and Spine.
+ * a unified health snapshot of the core platform services:
+ * Pi-Hole, Caddy, PostgreSQL, and Spine.
  */
 
-import { incusRequest, getInstanceState, execShell } from '@/lib/incus/server';
+import { getInstanceState, execShell } from '@/lib/incus/server';
 import { spineClient } from '@/lib/spine/client';
-import { getContainerIP } from '@/lib/incus/container-ip';
 
 export type ServiceStatus = 'running' | 'stopped' | 'error' | 'degraded' | 'unknown';
 
@@ -74,7 +73,6 @@ const SERVICE_MAP: ReadonlyArray<{
   container: string;
   restartable: boolean;
 }> = [
-  { name: 'Authentik', slug: 'authentik', container: 'youeye-authentik', restartable: true },
   { name: 'Pi-Hole', slug: 'pihole', container: 'youeye-pihole', restartable: true },
   { name: 'Caddy', slug: 'caddy', container: 'youeye-caddy', restartable: true },
   { name: 'PostgreSQL', slug: 'postgres', container: 'youeye-postgres', restartable: true },
@@ -135,23 +133,6 @@ async function getContainerHealth(container: string): Promise<{
   } catch {
     return { status: 'unknown', cpu: 0, cpuPercent: -1, memory: 0, uptime: '—' };
   }
-}
-
-async function checkAuthentikHealth(ip: string): Promise<ServiceStatus> {
-  // BUG-024: Authentik is heavy and /health/ready/ can return 503 transiently.
-  // Retry once after a short delay to reduce false positives.
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const res = await fetch(`http://${ip}:9000/-/health/ready/`, { signal: AbortSignal.timeout(5000) });
-      if (res.ok) return 'running';
-    } catch {
-      // Network error — try again
-    }
-    if (attempt === 0) {
-      await new Promise(r => setTimeout(r, 1000));
-    }
-  }
-  return 'degraded';
 }
 
 async function checkPiholeHealth(container: string): Promise<{ status: ServiceStatus; version: string }> {
@@ -291,14 +272,6 @@ export async function getAllServicesHealth(): Promise<ServiceHealth[]> {
       // If container is running, check the service-level health
       if (containerHealth.status === 'running') {
         switch (svc.slug) {
-          case 'authentik': {
-            // Network-based: Authentik exposes /health/ready endpoint
-            const ip = await getContainerIP(svc.container);
-            if (ip) {
-              appStatus = await checkAuthentikHealth(ip);
-            }
-            break;
-          }
           case 'caddy': {
             // FIX-3: Exec-based check inside the Caddy container (no IP fetch needed)
             appStatus = await checkCaddyHealth(svc.container);

@@ -145,9 +145,6 @@ async function buildBackupPlan(): Promise<{
     apps.push(plan);
   }
 
-  // Always include Authentik database
-  sharedDbNames.push('authentik');
-
   return { configs, apps, sharedDbNames };
 }
 

@@ -27,7 +27,7 @@ The installer downloads the `youeye` CLI and deploys the full platform. A progre
 | **Dashboard** | Customizable home screen with drag-and-drop widgets (clock, weather, notes, bookmarks, search, word art, and more) |
 | **Native Apps** | Six built-in apps: Wiki, Search, Notes, Cinema, Weather, Translate |
 | **App Marketplace** | Install third-party apps from the catalog with one click |
-| **Single Sign-On** | Authentik-powered SSO across all apps and services |
+| **Single Sign-On** | YouEye ID powers SSO across all apps and services |
 | **Themes** | OKLCH color system with light/dark mode and animated backgrounds |
 | **Internationalization** | Full i18n support with language propagation across all apps |
 | **Reverse Proxy** | Caddy with automatic HTTPS and domain routing |
@@ -142,8 +142,8 @@ Each component is versioned and released independently.
 
 | Component | Version |
 |-----------|---------|
-| Spine | 0.4.2.5 |
-| Control Panel | 0.4.13.24 |
+| Spine | 0.4.2.6 |
+| Control Panel | 0.4.13.25 |
 | UI | 0.4.3.6 |
 | Wiki | 0.4.0 |
 | Search | 0.4.0 |

@@ -1,3 +1,28 @@
+## v0.4.13.25 / v0.4.2.6 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Remove Authentik from fresh installs and infrastructure reconciliation
+
+### Changes
+- `control-panel/src/lib/infrastructure/deployer.ts` — Removed Authentik DB/server/worker/token/route deployment and stopped reconcile from recreating missing Authentik containers.
+- `control-panel/src/app/api/setup/run/route.ts` — Removed Authentik route/admin/branding setup; fresh setup now creates the admin user only in YouEye ID.
+- `control-panel/src/components/setup/SetupServerName.tsx`, `control-panel/src/app/setup/page.tsx`, `control-panel/src/app/api/setup/config/route.ts` — Removed the Authentik subdomain from fresh setup defaults and advanced settings.
+- `control-panel/src/lib/apps/definitions.ts`, `control-panel/src/lib/health/service.ts`, `control-panel/src/app/api/health/services/[slug]/restart/route.ts`, `control-panel/src/lib/backup/service.ts`, `control-panel/src/lib/incus/*`, `control-panel/src/lib/market/schema.ts` — Removed Authentik from CP system inventory, health, restart, backup, reserved names, and static IP maps.
+- `spine/internal/cmd/deploy.go`, `spine/internal/cmd/cleanup.go`, `spine/internal/incus/static_ips.go`, `spine/internal/api/server.go`, `spine/internal/installer/engine.go` — Removed Authentik data directory creation, static IP reservations, OCI update listing, and old install progress parsing.
+- `control-panel/tests/authentik-removal.spec.ts` — Added a focused regression spec for no-Authentik deploy/reconcile/setup/catalog invariants.
+- `control-panel/package.json`, `spine/internal/cmd/root.go`, `README.md` — Bumped CP to `0.4.13.25` and Spine to `0.4.2.6`.
+
+### Test Results
+- CP build: `pnpm -C control-panel build` passed.
+- Spine: `go test ./...` passed.
+- Spine build: `spine-linux-amd64 version` reports `0.4.2.6`.
+- Authentik removal scan: deploy/reconcile/setup/AppMarket invariant checks passed.
+
+### Notes for Iris
+- This intentionally keeps YouEye ID Authentik-compatible OAuth/forward-auth paths and `AUTHENTIK_*` app env compatibility. It only removes Authentik as an installed infrastructure component.
+- Existing upgraded hosts must deploy CP `0.4.13.25` before deleting `youeye-authentik*`; older CP releases would recreate those containers during reconcile.
+
 ## v0.4.13.24 verification (CP) — artem — 2026-06-06
 **Branch:** artem
 **VM:** potempc

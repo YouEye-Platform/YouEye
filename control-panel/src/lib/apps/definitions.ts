@@ -108,22 +108,6 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     updatedBy: 'control-panel',
   },
   {
-    id: 'authentik',
-    displayName: 'Authentik',
-    description: 'Identity provider and user management',
-    icon: 'ShieldCheck',
-    category: 'infrastructure',
-    type: 'oci-multi',
-    containers: [
-      { name: 'youeye-authentik', canControl: true },
-      { name: 'youeye-authentik-worker', canControl: true },
-    ],
-    imageRef: 'ghcr.io/goauthentik/server:2025.12',
-    webPort: 9000,
-    updatedBy: 'control-panel',
-    managementLinks: [{ label: 'People', href: '/people' }],
-  },
-  {
     id: 'caddy',
     displayName: 'Caddy',
     description: 'Reverse proxy with automatic HTTPS',

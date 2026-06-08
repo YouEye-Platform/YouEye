@@ -204,7 +204,7 @@ func runDeploy() error {
 }
 
 // deployInfrastructureViaCP calls the Control Panel SSE endpoint to deploy
-// all infrastructure apps (PostgreSQL, Authentik, Caddy, Pi-Hole, UI).
+// all infrastructure apps (PostgreSQL, Caddy, Pi-Hole, UI).
 func deployInfrastructureViaCP() error {
 	hostIP := util.GetPrimaryIP()
 
@@ -582,9 +582,6 @@ func createDataDirectories() {
 		basePath + "/caddy/config",
 		basePath + "/caddy/data",
 		basePath + "/postgres/data",
-		basePath + "/authentik/media",
-		basePath + "/authentik/certs",
-		basePath + "/authentik/templates",
 		basePath + "/pihole/etc",
 		basePath + "/pihole/dnsmasq",
 		basePath + "/config",

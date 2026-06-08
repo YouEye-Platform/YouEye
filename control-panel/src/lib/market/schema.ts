@@ -232,8 +232,7 @@ export const ProvidesSchema = z.object({
 
 /** System container IDs — never valid bridge/want targets */
 const SYSTEM_APP_IDS = [
-  'postgres', 'authentik', 'caddy', 'pihole', 'control', 'ui',
-  'authentik-worker',
+  'postgres', 'caddy', 'pihole', 'control', 'ui',
 ];
 
 export const WantSchema = z.object({

@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
-  RefreshCw, Activity, Shield, Globe, Database, Server,
+  RefreshCw, Activity, Globe, Database, Server,
   RotateCcw, Clock, Cpu, MemoryStick, AlertTriangle,
 } from 'lucide-react';
 import { authenticatedFetch } from '@/lib/api-client';
@@ -27,7 +27,6 @@ interface ServiceHealth {
 }
 
 const SERVICE_ICONS: Record<string, typeof Activity> = {
-  authentik: Shield,
   pihole: Globe,
   caddy: Globe,
   postgres: Database,

@@ -14,8 +14,6 @@ import { incusRequest } from './server';
 /** Static IP offsets within the incusbr0 /24 subnet. */
 export const SYSTEM_IP_OFFSETS: Record<string, number> = {
   'youeye-postgres': 10,
-  'youeye-authentik': 11,
-  'youeye-authentik-worker': 12,
   'youeye-caddy': 13,
   'youeye-pihole': 14,
   'youeye-ui': 15,

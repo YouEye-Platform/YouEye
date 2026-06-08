@@ -506,7 +506,6 @@ export default function SetupServerName({
                 <Label className="text-xs font-medium">{t('subdomains')}</Label>
                 {[
                   { key: 'control', label: t('controlPanel'), placeholder: 'control' },
-                  { key: 'auth', label: 'Authentik', placeholder: 'auth' },
                   { key: 'identity', label: t('identityProvider'), placeholder: 'id' },
                   { key: 'dns', label: t('dnsPanel'), placeholder: 'dns' },
                 ].map(({ key, label, placeholder }) => (
@@ -527,7 +526,7 @@ export default function SetupServerName({
                 ))}
               </div>
 
-              {/* Authentik Name */}
+              {/* Identity Provider Name */}
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium">{t('identityProviderName')}</Label>
                 <Input

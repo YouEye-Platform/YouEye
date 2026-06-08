@@ -95,76 +95,6 @@ export function postgresManifest(password: string): OCIManifest {
   };
 }
 
-export function authentikServerManifest(
-  postgresIP: string,
-  dbPassword: string,
-  secretKey: string,
-  bootstrapPassword: string,
-  bootstrapToken: string
-): OCIManifest {
-  return {
-    name: 'authentik',
-    displayName: 'Authentik',
-    image: 'ghcr.io/goauthentik/server:2025.12',
-    containerName: 'youeye-authentik',
-    command: 'dumb-init -- ak server',
-    ports: [], // Internal only — accessed via Caddy
-    environment: {
-      AUTHENTIK_POSTGRESQL__HOST: postgresIP,
-      AUTHENTIK_POSTGRESQL__PORT: '5432',
-      AUTHENTIK_POSTGRESQL__USER: 'authentik',
-      AUTHENTIK_POSTGRESQL__PASSWORD: dbPassword,
-      AUTHENTIK_POSTGRESQL__NAME: 'authentik',
-      AUTHENTIK_SECRET_KEY: secretKey,
-      AUTHENTIK_BOOTSTRAP_PASSWORD: bootstrapPassword,
-      AUTHENTIK_BOOTSTRAP_TOKEN: bootstrapToken,
-      AUTHENTIK_BOOTSTRAP_EMAIL: 'admin@youeye.local',
-      AUTHENTIK_LOG_LEVEL: 'info',
-      AUTHENTIK_DISABLE_UPDATE_CHECK: 'true',
-      'AUTHENTIK_ERROR_REPORTING__ENABLED': 'false',
-    },
-    volumes: [
-      { host: '/var/lib/youeye/authentik/media', container: '/media' },
-      { host: '/var/lib/youeye/authentik/templates', container: '/templates' },
-    ],
-  };
-}
-
-export function authentikWorkerManifest(
-  postgresIP: string,
-  dbPassword: string,
-  secretKey: string,
-  bootstrapPassword: string,
-  bootstrapToken: string
-): OCIManifest {
-  return {
-    name: 'authentik-worker',
-    displayName: 'Authentik Worker',
-    image: 'ghcr.io/goauthentik/server:2025.12',
-    containerName: 'youeye-authentik-worker',
-    command: 'dumb-init -- ak worker',
-    ports: [],
-    environment: {
-      AUTHENTIK_POSTGRESQL__HOST: postgresIP,
-      AUTHENTIK_POSTGRESQL__PORT: '5432',
-      AUTHENTIK_POSTGRESQL__USER: 'authentik',
-      AUTHENTIK_POSTGRESQL__PASSWORD: dbPassword,
-      AUTHENTIK_POSTGRESQL__NAME: 'authentik',
-      AUTHENTIK_SECRET_KEY: secretKey,
-      AUTHENTIK_BOOTSTRAP_PASSWORD: bootstrapPassword,
-      AUTHENTIK_BOOTSTRAP_TOKEN: bootstrapToken,
-      AUTHENTIK_BOOTSTRAP_EMAIL: 'admin@youeye.local',
-      AUTHENTIK_LOG_LEVEL: 'info',
-      AUTHENTIK_DISABLE_UPDATE_CHECK: 'true',
-      'AUTHENTIK_ERROR_REPORTING__ENABLED': 'false',
-    },
-    volumes: [
-      { host: '/var/lib/youeye/authentik/media', container: '/media' },
-      { host: '/var/lib/youeye/authentik/templates', container: '/templates' },
-    ],
-  };
-}
-
 export function uiContainerSpec(): LXDContainerSpec {
   return {
     name: 'ui',
@@ -178,4 +108,3 @@ export function uiContainerSpec(): LXDContainerSpec {
     port: 3000,
   };
 }
-

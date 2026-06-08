@@ -11,7 +11,6 @@ import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { updateInstanceState, getInstanceState } from '@/lib/incus/server';
 
 const SLUG_TO_CONTAINER: Record<string, string> = {
-  authentik: 'youeye-authentik',
   pihole: 'youeye-pihole',
   caddy: 'youeye-caddy',
   postgres: 'youeye-postgres',

@@ -168,14 +168,10 @@ func streamPctExec(ch chan<- engineMsg, stepName string, ctid string, args ...st
 //	[2/4] Starting API server      → 40-45%
 //	[3/4] Deploying Control Panel  → 45-65%
 //	[4/4] Infrastructure apps      → 65-95%
-//	  - [1/8] PostgreSQL           → 68%
-//	  - [2/8] Authentik DB         → 72%
-//	  - [3/8] Authentik server     → 76%
-//	  - [4/8] Authentik worker     → 79%
-//	  - [5/8] Authentik token      → 82%
-//	  - [6/8] Caddy                → 85%
-//	  - [7/8] Pi-Hole              → 88%
-//	  - [8/8] YouEye UI            → 91%
+//	  - [1/4] PostgreSQL           → 68%
+//	  - [2/4] Caddy                → 78%
+//	  - [3/4] Pi-Hole              → 86%
+//	  - [4/4] YouEye UI            → 91%
 //	Bridge/CLI tokens              → 94%
 //	Deployment Complete            → 97%
 func parseDeployProgress(line string) float64 {
@@ -241,25 +237,16 @@ func parseDeployProgress(line string) float64 {
 		return 0.65
 
 	// Phase 4: Infrastructure apps (65-95%)
-	case strings.Contains(lower, "[4/4]"),
-		strings.Contains(lower, "deploying infrastructure"):
+	case strings.Contains(lower, "deploying infrastructure"):
 		return 0.66
-	case strings.Contains(lower, "[1/8]") && strings.Contains(lower, "postgres"):
+	case strings.Contains(lower, "[1/4]") && strings.Contains(lower, "postgres"):
 		return 0.68
-	case strings.Contains(lower, "[2/8]") && strings.Contains(lower, "authentik"):
-		return 0.72
-	case strings.Contains(lower, "[3/8]") && strings.Contains(lower, "authentik"):
-		return 0.76
-	case strings.Contains(lower, "[4/8]") && strings.Contains(lower, "worker"):
-		return 0.79
-	case strings.Contains(lower, "[5/8]") && strings.Contains(lower, "token"):
-		return 0.82
-	case strings.Contains(lower, "[6/8]") && strings.Contains(lower, "caddy"):
-		return 0.85
-	case strings.Contains(lower, "[7/8]") && strings.Contains(lower, "pi-hole"),
-		strings.Contains(lower, "[7/8]") && strings.Contains(lower, "pihole"):
-		return 0.88
-	case strings.Contains(lower, "[8/8]") && strings.Contains(lower, "ui"):
+	case strings.Contains(lower, "[2/4]") && strings.Contains(lower, "caddy"):
+		return 0.78
+	case strings.Contains(lower, "[3/4]") && strings.Contains(lower, "pi-hole"),
+		strings.Contains(lower, "[3/4]") && strings.Contains(lower, "pihole"):
+		return 0.86
+	case strings.Contains(lower, "[4/4]") && strings.Contains(lower, "ui"):
 		return 0.91
 	case strings.Contains(lower, "infrastructure deployment complete"):
 		return 0.93

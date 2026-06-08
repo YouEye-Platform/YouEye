@@ -29,7 +29,7 @@ var cleanupCmd = &cobra.Command{
 This action CANNOT be undone!
 
 Use -y or --yes to skip confirmation prompt.
-Use --keep-data to preserve app data (PostgreSQL, Authentik, etc.)`,
+Use --keep-data to preserve app data (PostgreSQL, Pi-Hole, app volumes, etc.)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runCleanup()
 	},

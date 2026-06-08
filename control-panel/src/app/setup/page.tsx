@@ -60,7 +60,6 @@ export default function SetupPage() {
   const [tld, setTld] = useState('.local');
   const [subdomains, setSubdomains] = useState({
     control: 'control',
-    auth: 'auth',
     identity: 'id',
     dns: 'dns',
   });

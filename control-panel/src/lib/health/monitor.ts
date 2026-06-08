@@ -6,7 +6,7 @@
  * (running → degraded, degraded → running, etc.) — never on every tick.
  *
  * Monitors:
- * - Container service health (Authentik, Pi-Hole, Caddy, PostgreSQL, Spine)
+ * - Container service health (Pi-Hole, Caddy, PostgreSQL, Spine)
  * - Container watchdog — auto-restarts crashed containers, detects crash loops
  * - Disk space (every 5 minutes via Spine API)
  * - Memory pressure (via Spine API)

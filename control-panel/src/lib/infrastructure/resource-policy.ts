@@ -2,7 +2,7 @@
  * Resource Policy — sets OOM scores and CPU priority on Incus containers.
  *
  * Two priority levels:
- *   critical — infrastructure (CP, Authentik, Caddy, PG, Pi-Hole, UI)
+ *   critical — infrastructure (CP, Caddy, PG, Pi-Hole, UI)
  *   normal   — all user-installed apps (native and marketplace)
  *
  * Under CPU contention, critical containers get ~2x the CPU share.

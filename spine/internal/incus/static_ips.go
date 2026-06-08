@@ -20,13 +20,11 @@ import (
 // SystemContainerIPOffsets maps system container names to their static IP offset
 // within the incusbr0 /24 subnet. Full IP = {subnet_base}.{offset}.
 var SystemContainerIPOffsets = map[string]int{
-	"youeye-postgres":         10,
-	"youeye-authentik":        11,
-	"youeye-authentik-worker": 12,
-	"youeye-caddy":            13,
-	"youeye-pihole":           14,
-	"youeye-ui":               15,
-	"youeye-control":          16,
+	"youeye-postgres": 10,
+	"youeye-caddy":    13,
+	"youeye-pihole":   14,
+	"youeye-ui":       15,
+	"youeye-control":  16,
 }
 
 // GetSubnetBase reads the incusbr0 bridge configuration and returns the subnet

@@ -5,7 +5,7 @@
  * Isolation is structural: bridges can't communicate by default.
  * Permissions are NIC links: hot-plug a NIC onto the target bridge = access granted.
  *
- * System services (postgres, authentik, UI API) are exposed to app containers
+ * System services (postgres, UI API) are exposed to app containers
  * via Incus proxy devices at localhost:{port} — no shared bridge needed.
  *
  * Caddy joins every app bridge (Docker/Traefik model) so reverse proxy routes
@@ -38,7 +38,7 @@ const REGISTRY_PATH = '/var/lib/youeye/networks/subnets.json';
 /** System containers that live on incusbr0 (never moved to per-app bridges) */
 const SYSTEM_CONTAINERS = [
   'youeye-control', 'youeye-ui', 'youeye-caddy',
-  'youeye-postgres', 'youeye-authentik', 'youeye-authentik-worker',
+  'youeye-postgres',
   'youeye-pihole',
 ];
 
@@ -707,8 +707,7 @@ export async function listAppNetworks(): Promise<Array<{
 // System app IDs — the short names used in manifests and bridge records.
 // Used by bridges/manager.ts and bridges/route.ts to reject bridges to system containers.
 export const SYSTEM_APP_IDS = [
-  'postgres', 'authentik', 'caddy', 'pihole', 'control', 'ui',
-  'authentik-worker',
+  'postgres', 'caddy', 'pihole', 'control', 'ui',
 ];
 
 export { SYSTEM_CONTAINERS, BRIDGE_PREFIX };

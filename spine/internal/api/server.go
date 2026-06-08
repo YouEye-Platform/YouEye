@@ -386,7 +386,6 @@ func (s *Server) handleUpdatesCheck(w http.ResponseWriter, r *http.Request) {
 		{"caddy", "Caddy", "youeye-caddy", "docker.io/library/caddy"},
 		{"pihole", "Pi-Hole", "youeye-pihole", "docker.io/pihole/pihole:latest"},
 		{"postgres", "PostgreSQL", "youeye-postgres", "docker.io/library/postgres:17-alpine"},
-		{"authentik", "Authentik", "youeye-authentik", "ghcr.io/goauthentik/server:2025.12"},
 	}
 
 	for _, a := range ociApps {

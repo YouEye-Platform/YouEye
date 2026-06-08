@@ -28,30 +28,6 @@ export async function waitForPostgres(
 }
 
 /**
- * Wait for Authentik server health endpoint.
- * Authentik exposes /-/health/ready/ on port 9000.
- */
-export async function waitForAuthentik(
-  containerName = 'youeye-authentik',
-  timeoutMs = 180_000
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const ip = await getContainerIP(containerName);
-    if (ip) {
-      try {
-        const resp = await fetch(`http://${ip}:9000/-/health/ready/`, {
-          signal: AbortSignal.timeout(3000),
-        });
-        if (resp.ok) return true;
-      } catch { /* not healthy yet */ }
-    }
-    await new Promise((r) => setTimeout(r, 2000));
-  }
-  return false;
-}
-
-/**
  * Wait for Caddy admin API to respond.
  * Caddy admin API listens on port 2019 inside the container.
  */
