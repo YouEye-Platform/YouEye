@@ -4,10 +4,10 @@
  * Updates OCI containers managed by the Control Panel via the Incus REST API.
  * Uses snapshot → stop → rebuild → start → verify with automatic rollback on failure.
  *
- * For multi-container apps (Authentik), all containers are updated atomically:
+ * For multi-container infrastructure apps, all containers are updated atomically:
  * snapshot all → stop all → rebuild all → start all → verify all.
  *
- * NOTE: This handles INFRASTRUCTURE OCI apps (Authentik, Caddy, PiHole, Postgres).
+ * NOTE: This handles INFRASTRUCTURE OCI apps (Caddy, PiHole, Postgres).
  * Marketplace and native app updates go through market/updater.ts which supports
  * both OCI and LXD paths with migrations, variable context, and DB tracking.
  */

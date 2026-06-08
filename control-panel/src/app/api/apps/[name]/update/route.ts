@@ -5,7 +5,7 @@
  *
  * Streams real-time update progress via Server-Sent Events.
  * - Infrastructure LXD apps (UI) → apps/lxd-updater (tarball download + service restart)
- * - Infrastructure OCI apps (Authentik, Caddy, etc.) → apps/updater (Incus rebuild)
+ * - Infrastructure OCI apps (Caddy, Pi-Hole, Postgres) → apps/updater (Incus rebuild)
  * - Marketplace/native apps → market/updater (unified: OCI rebuild or LXD tarball + migrations)
  * - System components (Spine, Incus, host) → Spine API proxy
  */

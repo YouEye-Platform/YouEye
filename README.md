@@ -81,7 +81,7 @@ graph TD
     subgraph Container["Unprivileged Container (Incus)"]
         CP[Control Panel]
         Caddy[Caddy - Reverse Proxy]
-        Auth[Authentik - SSO]
+        ID[YouEye ID]
         DB[(PostgreSQL 17)]
         DNS[Pi-Hole v6 - DNS]
         UI[YouEye UI]
@@ -92,12 +92,12 @@ graph TD
     Caddy --> Apps
     Caddy --> CP
     CP --> DB
-    CP --> Auth
+    CP --> ID
     CP --> DNS
     UI --> DB
 ```
 
-**Spine** is a Go binary that bootstraps the entire stack. It installs Incus, creates an unprivileged container, deploys the Control Panel inside it, and then gets out of the way. The Control Panel orchestrates everything else: database, SSO, reverse proxy, DNS, the UI, and all apps.
+**Spine** is a Go binary that bootstraps the entire stack. It installs Incus, creates an unprivileged container, deploys the Control Panel inside it, and then gets out of the way. The Control Panel orchestrates everything else: database, YouEye ID, reverse proxy, DNS, the UI, and all apps.
 
 > See [Architecture docs](docs/architecture.md) for the full security model and data flow diagrams.
 
@@ -106,10 +106,10 @@ graph TD
 | Component | Stack |
 |-----------|-------|
 | **Spine** | Go 1.21+, Cobra CLI, Bubble Tea TUI, Unix socket API |
-| **Control Panel** | Next.js 16, TypeScript, Incus API, Authentik API |
+| **Control Panel** | Next.js 16, TypeScript, Incus API, YouEye ID |
 | **UI** | Next.js 15, Drizzle ORM, Radix UI, DND-Kit, Framer Motion |
 | **Native Apps** | Next.js 15 |
-| **Infrastructure** | Incus (LXD), PostgreSQL 17, Authentik, Caddy, Pi-Hole v6 |
+| **Infrastructure** | Incus (LXD), PostgreSQL 17, YouEye ID, Caddy, Pi-Hole v6 |
 
 ## Native Apps
 
@@ -143,7 +143,7 @@ Each component is versioned and released independently.
 | Component | Version |
 |-----------|---------|
 | Spine | 0.4.2.6 |
-| Control Panel | 0.4.13.25 |
+| Control Panel | 0.4.13.26 |
 | UI | 0.4.3.6 |
 | Wiki | 0.4.0 |
 | Search | 0.4.0 |

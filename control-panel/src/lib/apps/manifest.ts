@@ -54,20 +54,7 @@ export const POSTGRES_MANIFEST: AppManifest = {
   webPort: undefined,
 };
 
-/**
- * Authentik — deployed by Spine
- * Web UI on port 9000, accessed via Caddy reverse proxy at auth.youeye.local
- */
-export const AUTHENTIK_MANIFEST: AppManifest = {
-  name: 'authentik',
-  displayName: 'Authentik',
-  description: 'Identity provider & user management',
-  containerName: 'youeye-authentik',
-  category: 'security',
-  webPort: 9000,
-};
-
-const APP_MANIFESTS: AppManifest[] = [CADDY_MANIFEST, PIHOLE_MANIFEST, POSTGRES_MANIFEST, AUTHENTIK_MANIFEST];
+const APP_MANIFESTS: AppManifest[] = [CADDY_MANIFEST, PIHOLE_MANIFEST, POSTGRES_MANIFEST];
 
 export function getAppManifests(): AppManifest[] {
   return APP_MANIFESTS;

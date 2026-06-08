@@ -1,3 +1,21 @@
+## v0.4.13.26 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Remove remaining Authentik infrastructure manifest and README architecture references
+
+### Changes
+- `control-panel/src/lib/apps/manifest.ts` — Removed the legacy Authentik app manifest so CP status/control manifest helpers no longer expose Authentik as a managed infrastructure app.
+- `control-panel/src/lib/apps/updater.ts`, `control-panel/src/app/api/apps/[name]/update/route.ts` — Updated infrastructure updater comments to remove Authentik as an OCI update target.
+- `README.md`, `control-panel/package.json` — Bumped Control Panel to `0.4.13.26` and updated architecture/current-version docs for YouEye ID.
+
+### Test Results
+- CP build: `pnpm -C control-panel build` passed.
+- Live deploy verification pending after release.
+
+### Notes for Iris
+- CP-only follow-up after `0.4.13.25`; Spine remains `0.4.2.6`.
+
 ## v0.4.13.25 / v0.4.2.6 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc
