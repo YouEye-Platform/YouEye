@@ -13,6 +13,10 @@
 ### Test Results
 - Focused Control Panel tests passed: `node --test tests/market-migration-planner.spec.mjs tests/market-update-plans.spec.mjs tests/market-update-preview.spec.mjs`.
 - `pnpm build` passed for Control Panel `0.4.13.69`.
+- Released `cp-artem-v0.4.13.69` with exact `standalone.tar`, snapshotted core live containers as `pre-test-cp-0.4.13.69-20260610-061404`, and deployed through `spine update control`.
+- Final `spine status` reports CP `0.4.13.69`, UI `0.4.3.20`, 21 running containers, and 0 stopped.
+- Direct CP package check reports `0.4.13.69` and direct CP `/api/ping` returns OK.
+- Built-in Codex Browser loaded trusted `https://potato.app/market` after deploy and captured `/tmp/codex-browser-market-0.4.13.69.png`.
 
 ### Notes for Iris
 - This is a preview-only addition. It does not run migrations during update checks; execution still happens only through the app updater after snapshots.
