@@ -170,7 +170,9 @@ export async function createAppNetwork(
   // Use static IP for pihole DNS forwarding (deterministic, survives restarts)
   const piholeIP = await getSystemStaticIP('youeye-pihole') || await getContainerIP('youeye-pihole');
   if (!piholeIP) {
-    console.warn('[app-network] Pihole IP not found — DNS forwarding will not work');
+    throw new Error(
+      'Cannot create app network: Pi-Hole IP was not found, so app DNS forwarding cannot be configured'
+    );
   }
 
   const config: Record<string, string> = {
@@ -181,10 +183,9 @@ export async function createAppNetwork(
     'dns.domain': 'youeye',
   };
 
-  // Forward unresolved DNS queries to pihole
-  if (piholeIP) {
-    config['raw.dnsmasq'] = `server=${piholeIP}`;
-  }
+  // Forward unresolved DNS queries to Pi-Hole. This is a hard invariant for
+  // app networks so per-app DNS policy and local rewrites are always applied.
+  config['raw.dnsmasq'] = `server=${piholeIP}`;
 
   await incusRequest('POST', '/1.0/networks', {
     name: bridgeName,

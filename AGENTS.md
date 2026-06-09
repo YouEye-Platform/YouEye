@@ -1,3 +1,22 @@
+## v0.4.13.64 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Enforce Pi-Hole DNS for app networks
+
+### Changes
+- `control-panel/src/lib/incus/app-network.ts` — App bridge creation now fails if Pi-Hole DNS forwarding cannot be configured and always sets `raw.dnsmasq` for app networks.
+- `control-panel/src/lib/market/engine.ts` — Installer rolls back instead of falling back to `incusbr0` when app network creation fails.
+- `control-panel/tests/app-network-pihole-dns.spec.mjs` — Added focused regression coverage for the hard DNS invariant.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.64`.
+
+### Test Results
+- Focused Node test passed: `node --test tests/app-network-pihole-dns.spec.mjs`.
+- `pnpm --dir control-panel build` passed for Control Panel `0.4.13.64`.
+
+### Notes for Iris
+- This intentionally makes app network creation fail loud when Pi-Hole DNS cannot be resolved. Apps should not silently install onto a broad fallback bridge.
+
 ## v0.4.3.12 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

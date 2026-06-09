@@ -733,7 +733,9 @@ export async function installApp(
     appBridgeName = bridgeName;
     emit(onEvent, step, totalSteps, 'success', `App network created: ${bridgeName}`);
   } catch (err) {
-    console.warn('[engine] Failed to create app network, falling back to incusbr0:', err);
+    emit(onEvent, step, totalSteps, 'error', 'Failed to create Pi-Hole-backed app network', String(err));
+    await rollbackInstall(rollbackCtx, onEvent, totalSteps);
+    throw err;
   }
 
   const appToken = await generateAppToken(appId);
