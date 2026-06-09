@@ -11,7 +11,12 @@
 - `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.35`.
 
 ### Test Results
-- Pending final `0.4.13.35` build, release, deploy, browser verification, and live metadata checks.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.35`.
+- Release asset verified as `standalone.tar` with `server.js`, `package.json`, and embedded version `0.4.13.35`.
+- Live deploy on `192.168.31.160`: CP updated through `spine update control`; route repair returned `/settings` and `/market`; `spine status` reports CP `0.4.13.35`, 9 running containers, 0 stopped.
+- Live API checks: `/api/market/source` returns configured `sources` plus `enabledSources`; `/api/market/catalog` returns manifest path/repo/branch/SHA-256 digest fields.
+- Live updater check: forced Search refresh from `0.4.0.5` to `0.4.0.5` succeeded and backfilled `manifestPath`, `manifestRepo`, `manifestBranch`, and `manifestDigest` in `/var/lib/youeye/app-search/install.json`; Search health remained OK.
+- Codex Browser HTTPS check: logged in as `tester`, opened `/market`, and verified the Markets source controls, official source row, source badges, and catalog cards render.
 
 ### Notes for Iris
 - This is the UI/source-conflict/audit slice for Plan 3. It does not yet implement source switching for an already-installed app.
