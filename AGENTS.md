@@ -14,6 +14,10 @@
 ### Test Results
 - Focused Node test passed: `control-panel/tests/system-settings-market-updates.spec.ts`.
 - `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.60`.
+- Released `cp-artem-v0.4.13.60` with exact `standalone.tar`; deployed through `spine update control` on `192.168.31.160`.
+- Live `spine status` reports CP `0.4.13.60`, UI `0.4.3.8`, and 17 running containers / 0 stopped.
+- Built-in Codex Browser verified `https://potato.app/settings/system` shows the guarded Adopt/Recreate actions, opens the Caddy confirmation modal with the destructive button disabled until confirmation, and still runs Caddy dry-run successfully.
+- Live backend guard check refused a real Caddy rebuild without `confirmMaintenanceWindow` before stopping/rebuilding anything.
 
 ### Notes for Iris
 - Dry-run behavior is unchanged. Real system rebuilds now require both a checked maintenance-window confirmation and the exact target container name, and legacy/PostgreSQL gates still apply.
