@@ -153,8 +153,11 @@ export function normalizeAppSurfaces(manifest: Record<string, unknown> | null | 
     surfaces.push(...manifest.timeline_embeds.map(legacyTimelineEmbedToSurface).filter((item): item is AppSurface => item !== null));
   }
 
+  const hasCanonicalNotificationSurface = surfaces.some(
+    (surface) => surface.kind === "notification" && surface.placement === "notification-center" && surface.legacySource === "surfaces",
+  );
   const capabilities = asRecord(manifest.capabilities);
-  if (capabilities?.notifications === true || capabilities?.notifications === "push") {
+  if (!hasCanonicalNotificationSurface && (capabilities?.notifications === true || capabilities?.notifications === "push")) {
     surfaces.push({
       id: "default-notification",
       kind: "notification",

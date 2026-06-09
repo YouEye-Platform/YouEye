@@ -144,7 +144,7 @@ Each component is versioned and released independently.
 |-----------|---------|
 | Spine | 0.4.2.9 |
 | Control Panel | 0.4.13.80 |
-| UI | 0.4.3.21 |
+| UI | 0.4.3.22 |
 | Wiki | 0.4.0 |
 | Search | 0.4.0 |
 | Notes | 0.4.0 |

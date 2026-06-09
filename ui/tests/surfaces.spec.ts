@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeAppSurfaces } from '../src/lib/surfaces/normalize';
 
-const uiRoot = process.env.UI_ROOT || join(import.meta.dirname, '..');
+const testDir = dirname(fileURLToPath(import.meta.url));
+const uiRoot = process.env.UI_ROOT || join(testDir, '..');
 
 function read(path: string): string {
   return readFileSync(join(uiRoot, path), 'utf8');
@@ -108,4 +110,25 @@ test('surface normalizer maps new and legacy declarations into one model', () =>
   );
   assert.equal(surfaces.find((surface) => surface.id === 'quick-search')?.permissions[0], 'profile:read');
   assert.equal(surfaces.find((surface) => surface.id === 'legacy-clock')?.embedPath, '/embed/widget/legacy-clock');
+});
+
+test('canonical notification surfaces suppress legacy notification capability projection', () => {
+  const surfaces = normalizeAppSurfaces({
+    capabilities: {
+      notifications: true,
+    },
+    surfaces: [{
+      id: 'memo-alert',
+      kind: 'notification',
+      placement: 'notification-center',
+      name: 'Memos notification',
+      embedPath: '/embed/notification/memo-alert',
+      permissions: ['notifications:send'],
+    }],
+  });
+
+  assert.equal(surfaces.length, 1);
+  assert.equal(surfaces[0].id, 'memo-alert');
+  assert.equal(surfaces[0].legacySource, 'surfaces');
+  assert.equal(surfaces.some((surface) => surface.id === 'default-notification'), false);
 });
