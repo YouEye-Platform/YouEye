@@ -1,3 +1,21 @@
+## v0.4.3.18 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Render manifest-declared app preference forms
+
+### Changes
+- `ui/src/components/settings/app-settings-detail.tsx` — App Settings now renders and saves manifest-declared `preferences[]`, `launchPreferences[]`, and `settings.schema[]` fields while preserving embedded app settings panels.
+- `ui/tests/app-preference-settings.spec.mjs` — Added focused source regression coverage for schema-derived preference fields, defaults, required-field visibility, embedded settings coexistence, and boolean `false` persistence.
+- `ui/package.json`, `ui/public/sw.js`, `README.md` — Bumped UI to `0.4.3.18` and refreshed the generated service worker precache.
+
+### Test Results
+- Focused UI tests passed: `node --test tests/app-preference-settings.spec.mjs tests/launch-requirements.spec.mjs tests/permission-approval.spec.mjs tests/timeline-permission-approval.spec.mjs`.
+- `pnpm --dir ui build` passed for UI `0.4.3.18` with the known local `127.0.0.1:5432` static-generation noise.
+
+### Notes for Iris
+- This builds on UI `0.4.3.17` launch requirements: apps can declare first-launch preferences in the manifest and users can now set those values from the native App Settings tab.
+
 ## v0.4.13.67 / v0.4.3.17 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

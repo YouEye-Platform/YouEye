@@ -25,6 +25,9 @@ import {
   Info,
   Loader2,
   Sliders,
+  Save,
+  CheckCircle2,
+  AlertCircle,
   Search,
   BookOpen,
   StickyNote,
@@ -69,6 +72,78 @@ interface LinkHandler {
   description: string;
   endpoint: string;
   triggers: string[];
+}
+
+interface PreferenceChoice {
+  value: string;
+  label: string;
+}
+
+interface PreferenceField {
+  key: string;
+  type: "string" | "number" | "boolean" | "select" | "password";
+  label: string;
+  description?: string;
+  required?: boolean;
+  default?: unknown;
+  choices?: PreferenceChoice[];
+  source: "preferences" | "launchPreferences" | "settings.schema";
+}
+
+function preferenceArray(value: unknown, source: PreferenceField["source"]): PreferenceField[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    .filter((item) => typeof item.key === "string" && item.key.length > 0)
+    .map((item) => {
+      const rawType = typeof item.type === "string" ? item.type : "string";
+      const type = ["string", "number", "boolean", "select", "password"].includes(rawType)
+        ? (rawType as PreferenceField["type"])
+        : "string";
+      return {
+        key: item.key as string,
+        type,
+        label: typeof item.label === "string" && item.label.length > 0 ? item.label : item.key as string,
+        description: typeof item.description === "string" ? item.description : undefined,
+        required: item.required === true,
+        default: item.default,
+        choices: Array.isArray(item.choices)
+          ? item.choices
+              .filter((choice): choice is Record<string, unknown> => typeof choice === "object" && choice !== null)
+              .filter((choice) => typeof choice.value === "string" && typeof choice.label === "string")
+              .map((choice) => ({ value: choice.value as string, label: choice.label as string }))
+          : undefined,
+        source,
+      };
+    });
+}
+
+function collectPreferenceFields(manifest: Record<string, unknown> | null): PreferenceField[] {
+  const settings = manifest?.settings;
+  const settingsSchema = typeof settings === "object" && settings !== null
+    ? (settings as Record<string, unknown>).schema
+    : undefined;
+  const fields = [
+    ...preferenceArray(manifest?.preferences, "preferences"),
+    ...preferenceArray(manifest?.launchPreferences, "launchPreferences"),
+    ...preferenceArray(settingsSchema, "settings.schema"),
+  ];
+  const byKey = new Map<string, PreferenceField>();
+  for (const field of fields) {
+    if (!byKey.has(field.key)) byKey.set(field.key, field);
+  }
+  return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function withPreferenceDefaults(
+  fields: PreferenceField[],
+  settings: Record<string, unknown>
+): Record<string, unknown> {
+  const defaults: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (field.default !== undefined) defaults[field.key] = field.default;
+  }
+  return { ...defaults, ...settings };
 }
 
 /* ── Tab type ── */
@@ -149,8 +224,47 @@ export function AppSettingsDetail({
   );
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [permissionsLoading, setPermissionsLoading] = useState(false);
+  const [preferenceFields, setPreferenceFields] = useState<PreferenceField[]>([]);
+  const [settingsDraft, setSettingsDraft] = useState<Record<string, unknown>>({});
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const router = useRouter();
   const t = useTranslations("common");
+
+  const fetchPreferenceSettings = useCallback(async (targetAppId: string) => {
+    setSettingsLoading(true);
+    setSettingsError(null);
+    try {
+      const [manifestRes, settingsRes] = await Promise.all([
+        fetch(`/api/v1/apps/${encodeURIComponent(targetAppId)}/manifest`),
+        fetch(`/api/v1/apps/${encodeURIComponent(targetAppId)}/user-settings`),
+      ]);
+      const manifest = manifestRes.ok
+        ? await manifestRes.json().catch(() => null)
+        : null;
+      const settingsBody = settingsRes.ok
+        ? await settingsRes.json().catch(() => ({}))
+        : {};
+      const fields = collectPreferenceFields(
+        manifest && typeof manifest === "object" && !Array.isArray(manifest)
+          ? (manifest as Record<string, unknown>)
+          : null
+      );
+      const currentSettings = settingsBody?.settings && typeof settingsBody.settings === "object"
+        ? (settingsBody.settings as Record<string, unknown>)
+        : {};
+      setPreferenceFields(fields);
+      setSettingsDraft(withPreferenceDefaults(fields, currentSettings));
+    } catch {
+      setPreferenceFields([]);
+      setSettingsDraft({});
+      setSettingsError("Settings could not be loaded.");
+    } finally {
+      setSettingsLoading(false);
+    }
+  }, []);
 
   const fetchDetail = useCallback(async () => {
     setLoading(true);
@@ -163,7 +277,7 @@ export function AppSettingsDetail({
         const found = allApps.find((a: { id: string }) => a.id === appId)
           ?? allApps.find((a: { id: string }) => a.id === appId.replace(/^(ye-|app-)/, ""));
         if (found) {
-          setApp({
+          const detail = {
             id: found.id,
             name: found.name,
             icon: found.icon,
@@ -172,17 +286,21 @@ export function AppSettingsDetail({
             status: found.status ?? null,
             containerUrl: found.containerUrl ?? null,
             hasSettingsPanel: found.hasSettingsPanel ?? false,
-          });
+          };
+          setApp(detail);
+          await fetchPreferenceSettings(detail.id);
         } else {
           setApp({ id: appId, name: appId, icon: null, subdomain: null, version: null, status: null, containerUrl: null, hasSettingsPanel: false });
+          await fetchPreferenceSettings(appId);
         }
       } else {
         setApp({ id: appId, name: appId, icon: null, subdomain: null, version: null, status: null, containerUrl: null, hasSettingsPanel: false });
+        await fetchPreferenceSettings(appId);
       }
     } finally {
       setLoading(false);
     }
-  }, [appId]);
+  }, [appId, fetchPreferenceSettings]);
 
   const fetchLinkHandlers = useCallback(async () => {
     try {
@@ -212,16 +330,41 @@ export function AppSettingsDetail({
     }
   }, [appId]);
 
+  const savePreferenceSettings = useCallback(async () => {
+    if (!app) return;
+    setSettingsSaving(true);
+    setSettingsError(null);
+    setSettingsSaved(false);
+    try {
+      const res = await fetch(`/api/v1/apps/${encodeURIComponent(app.id)}/user-settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings: settingsDraft }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setSettingsError(data.error || "Settings could not be saved.");
+        return;
+      }
+      setSettingsSaved(true);
+      window.setTimeout(() => setSettingsSaved(false), 2000);
+    } catch {
+      setSettingsError("Settings could not be saved.");
+    } finally {
+      setSettingsSaving(false);
+    }
+  }, [app, settingsDraft]);
+
   useEffect(() => {
     fetchDetail();
   }, [fetchDetail]);
 
   // If app loaded and has no settings panel, switch away from app-settings tab
   useEffect(() => {
-    if (app && !app.hasSettingsPanel && activeTab === "app-settings") {
+    if (app && !app.hasSettingsPanel && preferenceFields.length === 0 && !settingsLoading && activeTab === "app-settings") {
       setActiveTab("overview");
     }
-  }, [app, activeTab]);
+  }, [app, activeTab, preferenceFields.length, settingsLoading]);
 
   useEffect(() => {
     if (activeTab === "permissions") fetchPermissions();
@@ -236,8 +379,9 @@ export function AppSettingsDetail({
     return <div className="py-8 text-center text-sm text-muted-foreground">App not found</div>;
   }
 
-  // Only show app-settings tab if the app declares settings_panel capability AND has a subdomain for the embed
-  const hasAppSettings = app.hasSettingsPanel && !!app.subdomain;
+  const hasEmbeddedSettings = app.hasSettingsPanel && !!app.subdomain;
+  const hasPreferenceSettings = preferenceFields.length > 0;
+  const hasAppSettings = hasEmbeddedSettings || hasPreferenceSettings;
 
   const tabs: { id: TabId; label: string; icon: React.ReactNode; adminOnly?: boolean; hide?: boolean }[] = [
     { id: "app-settings", label: "App Settings", icon: <Sliders className="w-4 h-4" />, hide: !hasAppSettings },
@@ -293,7 +437,20 @@ export function AppSettingsDetail({
       {/* Tab content */}
       {activeTab === "app-settings" && (
         hasAppSettings ? (
-          <AppSettingsEmbed subdomain={app.subdomain!} />
+          <AppSettingsTab
+            fields={preferenceFields}
+            settings={settingsDraft}
+            loading={settingsLoading}
+            saving={settingsSaving}
+            saved={settingsSaved}
+            error={settingsError}
+            embedSubdomain={hasEmbeddedSettings ? app.subdomain : null}
+            onChange={(key, value) => {
+              setSettingsSaved(false);
+              setSettingsDraft((prev) => ({ ...prev, [key]: value }));
+            }}
+            onSave={savePreferenceSettings}
+          />
         ) : (
           <div className="py-8 text-center border rounded-lg">
             <Sliders className="w-8 h-8 mx-auto mb-3 text-muted-foreground opacity-40" />
@@ -330,6 +487,193 @@ export function AppSettingsDetail({
           onRefresh={fetchLinkHandlers}
         />
       )}
+    </div>
+  );
+}
+
+/* ── App Settings Tab ── */
+
+function PreferenceFieldInput({
+  field,
+  value,
+  onChange,
+}: {
+  field: PreferenceField;
+  value: unknown;
+  onChange: (key: string, value: unknown) => void;
+}) {
+  if (field.type === "boolean") {
+    const checked = value === true;
+    return (
+      <label className="flex items-center justify-between gap-4 py-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">{field.label}</span>
+            {field.required && <span className="text-xs text-muted-foreground">Required</span>}
+          </div>
+          {field.description && (
+            <p className="text-xs text-muted-foreground mt-0.5">{field.description}</p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => onChange(field.key, !checked)}
+          className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
+            checked ? "bg-primary" : "bg-muted"
+          }`}
+          aria-pressed={checked}
+        >
+          <span
+            className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+              checked ? "translate-x-4" : "translate-x-0"
+            }`}
+          />
+        </button>
+      </label>
+    );
+  }
+
+  const commonLabel = (
+    <div className="flex items-center gap-2">
+      <span className="text-sm font-medium">{field.label}</span>
+      {field.required && <span className="text-xs text-muted-foreground">Required</span>}
+    </div>
+  );
+
+  if (field.type === "select") {
+    return (
+      <label className="block py-3">
+        {commonLabel}
+        {field.description && (
+          <p className="text-xs text-muted-foreground mt-0.5 mb-2">{field.description}</p>
+        )}
+        <select
+          value={typeof value === "string" ? value : ""}
+          onChange={(e) => onChange(field.key, e.target.value)}
+          className="w-full px-3 py-2 text-sm rounded-md border bg-background"
+        >
+          <option value="">Select...</option>
+          {field.choices?.map((choice) => (
+            <option key={choice.value} value={choice.value}>
+              {choice.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+
+  if (field.type === "number") {
+    return (
+      <label className="block py-3">
+        {commonLabel}
+        {field.description && (
+          <p className="text-xs text-muted-foreground mt-0.5 mb-2">{field.description}</p>
+        )}
+        <input
+          type="number"
+          value={typeof value === "number" ? value : ""}
+          onChange={(e) => onChange(field.key, e.target.value === "" ? "" : Number(e.target.value))}
+          className="w-full px-3 py-2 text-sm rounded-md border bg-background"
+        />
+      </label>
+    );
+  }
+
+  return (
+    <label className="block py-3">
+      {commonLabel}
+      {field.description && (
+        <p className="text-xs text-muted-foreground mt-0.5 mb-2">{field.description}</p>
+      )}
+      <input
+        type={field.type === "password" ? "password" : "text"}
+        value={typeof value === "string" ? value : ""}
+        onChange={(e) => onChange(field.key, e.target.value)}
+        className="w-full px-3 py-2 text-sm rounded-md border bg-background"
+      />
+    </label>
+  );
+}
+
+function AppSettingsTab({
+  fields,
+  settings,
+  loading,
+  saving,
+  saved,
+  error,
+  embedSubdomain,
+  onChange,
+  onSave,
+}: {
+  fields: PreferenceField[];
+  settings: Record<string, unknown>;
+  loading: boolean;
+  saving: boolean;
+  saved: boolean;
+  error: string | null;
+  embedSubdomain: string | null;
+  onChange: (key: string, value: unknown) => void;
+  onSave: () => void;
+}) {
+  return (
+    <div className="space-y-4">
+      {fields.length > 0 && (
+        <div className="border rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="text-sm font-medium">Preferences</h3>
+              <p className="text-xs text-muted-foreground">Saved for your account.</p>
+            </div>
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={saving || loading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              Save
+            </button>
+          </div>
+
+          {loading ? (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 mx-auto mb-2 animate-spin" />
+              Loading preferences
+            </div>
+          ) : (
+            <div className="px-4 divide-y">
+              {fields.map((field) => (
+                <PreferenceFieldInput
+                  key={field.key}
+                  field={field}
+                  value={settings[field.key]}
+                  onChange={onChange}
+                />
+              ))}
+            </div>
+          )}
+
+          {(error || saved) && (
+            <div className="px-4 py-2 border-t">
+              {error ? (
+                <p className="text-xs text-destructive flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  {error}
+                </p>
+              ) : (
+                <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Saved
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {embedSubdomain && <AppSettingsEmbed subdomain={embedSubdomain} />}
     </div>
   );
 }
