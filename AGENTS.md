@@ -1,3 +1,28 @@
+## v0.4.13.80 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Finish scoped app-token grant hardening and Search Caddy trust
+
+### Changes
+- `ui/src/app/api/v1/my-connections/route.ts` — Requires Bearer app-token auth and rejects `X-YouEye-App` spoofing before returning connection grants.
+- `control-panel/src/lib/caddy/client.ts` — Adds a terminal Caddy deny route for app-token requests that do not match an explicit scoped app grant.
+- `control-panel/src/lib/market/caddy-ca.ts` — Injects Caddy's root CA and writes service drop-ins that point runtimes at the persistent certificate path.
+- `control-panel/src/lib/bridges/manager.ts` — Injects the CA and restarts source app containers after scoped Caddy grant activation.
+- `control-panel/src/lib/bridges/atomic-json-store.ts` — Adds temp-file-plus-rename JSON writes for bridge, internet-grant, and suggestion stores.
+- `control-panel/tests/scoped-caddy-grants.spec.mjs`, `ui/tests/my-connections-auth.spec.mjs` — Added focused coverage for discovery auth, Caddy token deny, CA env, restart order, and atomic bridge writes.
+
+### Test Results
+- UI focused tests passed before release: `node --test ui/tests/my-connections-auth.spec.mjs ui/tests/timeline-permission-approval.spec.mjs ui/tests/launch-requirements.spec.mjs ui/tests/permission-approval.spec.mjs ui/tests/app-preference-settings.spec.mjs`.
+- Control Panel focused tests passed for the final slice: `node --test control-panel/tests/scoped-caddy-grants.spec.mjs control-panel/tests/app-network-pihole-dns.spec.mjs control-panel/tests/market-update-plans.spec.mjs`.
+- `pnpm --dir ui build` passed for UI `0.4.3.21`; `pnpm --dir control-panel build` passed for final CP `0.4.13.80`.
+- Released/deployed `ui-artem-v0.4.3.21`, Search `artem-v0.4.0.13`, and final `cp-artem-v0.4.13.80` with exact `standalone.tar` assets.
+- Live proof: discovery returns `401` without token, `403` on token/header mismatch, and only Search's SearXNG Caddy grant for a valid Search token. Caddy allows Search token traffic only to SearXNG `/search*` and `/autocompleter*`, denies SearXNG `/preferences` and Memos with `403`, Search server-side Node fetch to SearXNG returns `200`, and built-in Codex Browser verified Search results with no `Search unavailable` or `fetch failed`.
+
+### Notes for Iris
+- A live ENOSPC event truncated `/var/lib/youeye/bridges/bridges.json`; the test host LV was expanded, bridge state was restored, and CP `0.4.13.79` makes future bridge writes atomic.
+- CP `0.4.13.78` used `/tmp/caddy-root.crt` for runtime CA env; CP `0.4.13.80` supersedes it with `/usr/local/share/ca-certificates/caddy-root.crt` because `/tmp` disappears across container restarts.
+
 ## v0.4.13.78 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
