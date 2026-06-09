@@ -1,3 +1,27 @@
+## v0.4.13.82 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Read scoped Caddy grants from app manifests
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — Adds manifest schema support for `wants[].caddyGrant` with path and HTTP method declarations.
+- `control-panel/src/lib/market/types.ts` — Exposes typed Caddy grant specs for Market consumers.
+- `control-panel/src/lib/bridges/manager.ts` — Reads Search-to-SearXNG scoped grant paths/methods from the installed app's selected Market manifest, with the old hardcoded grant retained only as a transitional fallback.
+- `control-panel/tests/scoped-caddy-grants.spec.mjs` — Covers manifest-declared scoped grants, method defaults, and the fallback path.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.82` and current Search release to `0.4.0.14`.
+
+### Test Results
+- `node --test control-panel/tests/scoped-caddy-grants.spec.mjs control-panel/tests/app-network-pihole-dns.spec.mjs control-panel/tests/market-update-plans.spec.mjs control-panel/tests/market-migration-planner.spec.mjs` passed.
+- `pnpm --dir control-panel build` passed for Control Panel `0.4.13.82`.
+- Released `cp-artem-v0.4.13.82` with exact `standalone.tar`, snapshotted core containers as `pre-test-cp-0.4.13.82-20260609-224540`, and deployed with `spine update control`.
+- Live proof: Search `0.4.0.14` runtime/UI cached manifests include `wants[].caddyGrant` for SearXNG with `/search*`, `/autocompleter*`, and `GET`; bridge discovery reports the same `allowedPaths`/`allowedMethods`; local Caddy route `app-grant-search-to-searxng` matches the Search app token, host, methods, and paths; Caddy returns `200` for `GET /search` and `GET /autocompleter`, `403` for `POST /search`, `403` for `/preferences`, and `403` for Memos.
+- Built-in Codex Browser verified `https://search.potato.app/search?q=youeye` renders real results with no `Search unavailable` or `fetch failed`.
+
+### Notes for Iris
+- Screenshot capture in the built-in browser still timed out at `Page.captureScreenshot`; browser verification is DOM/state based.
+- The hardcoded Search/SearXNG scoped grant fallback remains intentionally as a transition guard for already-installed manifests that have not yet declared `wants[].caddyGrant`.
+
 ## v0.4.13.81 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
