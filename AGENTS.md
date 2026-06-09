@@ -11,6 +11,10 @@
 
 ### Test Results
 - Focused Control Panel tests passed: `node --test tests/market-sso-engine.spec.mjs tests/market-integration-remove.spec.mjs tests/market-filters.spec.mjs tests/market-update-preview.spec.mjs tests/market-migration-planner.spec.mjs tests/market-update-plans.spec.mjs`.
+- `pnpm build` passed for Control Panel `0.4.13.74`.
+- Released `cp-artem-v0.4.13.74` with exact `standalone.tar` asset id `1573`, snapshotted core live containers as `pre-test-cp-0.4.13.74-20260609-211237`, and deployed through `spine update control`.
+- Live teardown proof passed for Jellyfin, Immich, and Nextcloud after deploying `0.4.13.74`; final `spine status` reports CP `0.4.13.74`, UI `0.4.3.20`, 21 running containers, and 0 stopped.
+- Built-in Codex Browser verified all three updated Integration detail pages show the new versions, `Installed`, and concrete `Remove ... YouEye ID` actions. Screenshots: `/tmp/codex-browser-jellyfin-youeye-id-teardown-current-0.4.13.74.png`, `/tmp/codex-browser-immich-youeye-id-teardown-current-0.4.13.74.png`, `/tmp/codex-browser-nextcloud-youeye-id-teardown-current-0.4.13.74.png`.
 
 ### Notes for Iris
 - This supports real Integration teardown endpoints such as Jellyfin plugin routes that may return successful text/empty responses rather than JSON. HTTP failures remain fatal.
