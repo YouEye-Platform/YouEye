@@ -94,7 +94,9 @@ export async function uninstallApp(
 
   // 1b. Clean up per-app bridge network
   try {
-    const { removeCaddyFromAppNetwork, deleteAppNetwork } = await import('../incus/app-network');
+    const { removeCaddyFromAppNetwork, removeSystemProxyDevices, deleteAppNetwork } = await import('../incus/app-network');
+    // Remove Control-owned service proxies before deleting the bridge address they bind to
+    await removeSystemProxyDevices(appId);
     // Remove Caddy NIC first (before deleting the bridge)
     await removeCaddyFromAppNetwork(appId);
     // Delete the bridge (containers already deleted above, so bridge should be empty)

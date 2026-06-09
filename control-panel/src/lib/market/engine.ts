@@ -73,7 +73,8 @@ import {
   createAppNetwork,
   addCaddyToAppNetwork,
   getSystemServices,
-  addProxyDevices,
+  addSystemProxyDevices,
+  removeSystemProxyDevices,
   buildAppNIC,
   setAppNetworkNAT,
 } from '../incus/app-network';
@@ -180,6 +181,7 @@ async function rollbackInstall(
   // 6. Clean up per-app bridge network
   try {
     const { removeCaddyFromAppNetwork, deleteAppNetwork } = await import('../incus/app-network');
+    await removeSystemProxyDevices(ctx.appId);
     await removeCaddyFromAppNetwork(ctx.appId);
     await deleteAppNetwork(ctx.appId);
   } catch (err) {
@@ -851,7 +853,7 @@ export async function installApp(
             const needsSharedDb = (manifest.database?.mode ?? 'none') === 'shared';
             const needsSSO = ssoEnabled;
             const services = await getSystemServices({ needsSharedDb, needsSSO });
-            await addProxyDevices(containerName, services);
+            await addSystemProxyDevices(appId, services);
 
             const state = await incusRequest<{ status?: string }>('GET', `/1.0/instances/${containerName}/state`);
             if (state.metadata?.status !== 'Running') {
@@ -928,7 +930,7 @@ export async function installApp(
 
   // ── Step 6b: Network isolation — proxy devices + Caddy NIC ──────
   // Per-app bridge provides structural isolation.
-  // Proxy devices expose system services (postgres, authentik, UI) at localhost:{port}.
+  // Control-owned proxy devices expose system services on the app bridge gateway.
   // Caddy NIC lets the reverse proxy reach the app on its bridge.
 
   if (appBridgeName) {
@@ -936,11 +938,9 @@ export async function installApp(
       const needsSharedDb = (manifest.database?.mode ?? 'none') === 'shared';
       const needsSSO = ssoEnabled;
 
-      // Add proxy devices for system services to each container
+      // Ensure Control owns the system-service proxies for this app bridge.
       const services = await getSystemServices({ needsSharedDb, needsSSO });
-      for (const cn of containerNames) {
-        await addProxyDevices(cn, services);
-      }
+      await addSystemProxyDevices(appId, services);
 
       // Hot-plug Caddy NIC onto the app bridge (Docker/Traefik model)
       await addCaddyToAppNetwork(appId);

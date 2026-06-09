@@ -16,6 +16,7 @@ import { readSmtpPassword } from '@/lib/smtp/secrets';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import { getIdentityProviderConfig } from '@/lib/identity/provider';
 import { spineClient } from '@/lib/spine/client';
+import { getAppBridgeGatewayIP } from '@/lib/incus/app-network';
 import { CONTAINER_DOMAIN } from './constants';
 import { getContainerName } from './engine-helpers';
 import type { AppManifest, InstallConfig, VariableContext } from './types';
@@ -216,7 +217,14 @@ export async function buildCanonicalContext(
   }
 
   const identity = await getIdentityProviderConfig();
-  const identityInternalUrl = useProxyDevices ? 'http://localhost:3002' : identity.internalUrl;
+  let systemProxyHost = '';
+  if (useProxyDevices) {
+    systemProxyHost = await getAppBridgeGatewayIP(config.appId) || '';
+    if (!systemProxyHost) {
+      throw new Error(`Cannot build app network context for ${config.appId}: app bridge gateway not found`);
+    }
+  }
+  const identityInternalUrl = useProxyDevices ? `http://${systemProxyHost}:3002` : identity.internalUrl;
 
   // Caddy proxy IP
   let proxyIp = '';
@@ -248,18 +256,20 @@ export async function buildCanonicalContext(
       internal_url: `http://${primaryContainerName}.${CONTAINER_DOMAIN}:${primaryPort}`,
     },
     integration: {
-      // Use proxy device (localhost:3001) for app→UI communication.
-      // Proxy devices bypass container eth0 NICs, enabling Layer 4 network ACLs
-      // that block direct access to infrastructure (incusbr0) while preserving
-      // legitimate API calls. Proxy reliability confirmed in Session 82 (10/10 tests).
-      gateway_url: 'http://localhost:3001/api/apps/v1',
+      // Use the per-app bridge gateway for app→UI communication. Control Panel
+      // owns host-bound proxy devices on that gateway, avoiding direct app access
+      // to infrastructure networks while keeping OCI startup independent of
+      // bind=instance proxy races.
+      gateway_url: useProxyDevices
+        ? `http://${systemProxyHost}:3001/api/apps/v1`
+        : 'http://localhost:3001/api/apps/v1',
       app_token: appToken || '',
     },
     containers,
     database: {
       url: '',
       dsn: '',
-      host: useProxyDevices ? 'localhost' : `youeye-postgres.${CONTAINER_DOMAIN}`,
+      host: useProxyDevices ? systemProxyHost : `youeye-postgres.${CONTAINER_DOMAIN}`,
       port: '5432',
       name: '',
       user: '',
@@ -306,9 +316,9 @@ export async function buildCanonicalContext(
 
   // Database context
   if (manifest.database?.mode === 'shared' && manifest.database.name && manifest.database.user) {
-    // Per-app bridge model: proxy device exposes postgres at localhost:5432
-    // Legacy model: postgres reachable via DNS on shared bridge
-    const dbHost = useProxyDevices ? 'localhost' : `youeye-postgres.${CONTAINER_DOMAIN}`;
+    // Per-app bridge model: Control Panel owns host-bound proxies on the
+    // app bridge gateway. Legacy model: postgres reachable via shared DNS.
+    const dbHost = useProxyDevices ? systemProxyHost : `youeye-postgres.${CONTAINER_DOMAIN}`;
     const pw = dbPassword || '';
     ctx.database = {
       url: `postgresql://${manifest.database.user}:${pw}@${dbHost}:5432/${manifest.database.name}`,

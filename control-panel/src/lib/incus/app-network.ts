@@ -112,6 +112,16 @@ export async function getAppBridgeName(appId: string): Promise<string | null> {
   return `${BRIDGE_PREFIX}${n}`;
 }
 
+export async function getAppBridgeGatewayIP(appId: string): Promise<string | null> {
+  const bridgeName = await getAppBridgeName(appId);
+  if (!bridgeName) return null;
+
+  const res = await incusRequest<{ config?: Record<string, string> }>('GET', `/1.0/networks/${bridgeName}`);
+  const address = res.metadata.config?.['ipv4.address'];
+  if (!address || address === 'none') return null;
+  return address.split('/')[0] || null;
+}
+
 /** Build bridge name from a known subnet number. */
 function bridgeNameFromSubnet(n: number): string {
   return `${BRIDGE_PREFIX}${n}`;
@@ -407,6 +417,72 @@ export async function addProxyDevices(
     console.log(`[app-network] Added ${services.length} proxy devices to ${containerName}`);
   } catch (err) {
     console.warn(`[app-network] Failed to add proxy devices to ${containerName}:`, err);
+  }
+}
+
+function systemProxyDeviceName(appId: string, serviceName: string): string {
+  const safeAppId = appId.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 32);
+  return `app-${safeAppId}-${serviceName}`;
+}
+
+export async function addSystemProxyDevices(
+  appId: string,
+  services: ProxyService[],
+): Promise<void> {
+  if (services.length === 0) return;
+
+  const gatewayIP = await getAppBridgeGatewayIP(appId);
+  if (!gatewayIP) {
+    throw new Error(`Cannot add system proxies for ${appId}: app bridge gateway not found`);
+  }
+
+  const res = await incusRequest<{
+    devices: Record<string, Record<string, string>>;
+  }>('GET', '/1.0/instances/youeye-control');
+
+  const devices = { ...res.metadata.devices };
+
+  for (const svc of services) {
+    const serviceIP = await getSystemStaticIP(svc.containerName) || await getContainerIP(svc.containerName);
+    if (!serviceIP) {
+      throw new Error(`Cannot resolve IP for system service ${svc.containerName}`);
+    }
+
+    const listenPort = svc.listenPort ?? svc.port;
+    devices[systemProxyDeviceName(appId, svc.name)] = {
+      type: 'proxy',
+      listen: `tcp:${gatewayIP}:${listenPort}`,
+      connect: `tcp:${serviceIP}:${svc.port}`,
+    };
+  }
+
+  await incusRequest('PATCH', '/1.0/instances/youeye-control', { devices });
+  console.log(`[app-network] Added ${services.length} system proxy devices for ${appId} on ${gatewayIP}`);
+}
+
+export async function removeSystemProxyDevices(appId: string): Promise<void> {
+  try {
+    const res = await incusRequest<{
+      devices: Record<string, Record<string, string>>;
+    }>('GET', '/1.0/instances/youeye-control');
+
+    const devices = { ...res.metadata.devices };
+    let removed = 0;
+
+    const prefix = systemProxyDeviceName(appId, '');
+    for (const name of Object.keys(devices)) {
+      if (name.startsWith(prefix)) {
+        delete devices[name];
+        removed++;
+      }
+    }
+
+    if (removed > 0) {
+      await incusRequest('PATCH', '/1.0/instances/youeye-control', { devices });
+      console.log(`[app-network] Removed ${removed} system proxy devices for ${appId}`);
+    }
+  } catch (err) {
+    console.warn(`[app-network] Failed to remove system proxy devices for ${appId}:`, err);
   }
 }
 
