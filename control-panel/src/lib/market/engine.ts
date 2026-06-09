@@ -1,5 +1,5 @@
 /**
- * App Market deployment engine.
+ * Market deployment engine.
  * Unified YAML-driven installer — no more native/marketplace branching.
  *
  * Flow for ANY app:

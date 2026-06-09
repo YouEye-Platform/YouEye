@@ -261,7 +261,7 @@ export default function AppDetailPage() {
           className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to App Market
+          Back to Market
         </button>
         <div className="rounded-xl border border-red-200 bg-red-50 p-8 text-center">
           <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-3" />
@@ -274,7 +274,7 @@ export default function AppDetailPage() {
             className="mt-4"
             onClick={() => router.push('/market')}
           >
-            Return to App Market
+            Return to Market
           </Button>
         </div>
       </div>
@@ -297,7 +297,7 @@ export default function AppDetailPage() {
         className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
-        Back to App Market
+        Back to Market
       </button>
 
       {/* Header card */}

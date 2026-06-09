@@ -274,6 +274,11 @@ export interface VariableContext {
 
 export interface MarketApp {
   id: string;
+  catalogKey?: string;
+  itemKind?: 'app';
+  sourceId?: string;
+  sourceName?: string;
+  sourceRepoUrl?: string;
   name: string;
   description: string;
   icon: string;

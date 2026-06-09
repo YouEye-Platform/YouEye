@@ -1,5 +1,5 @@
 /**
- * App Market — YAML-driven deployment engine.
+ * Market — YAML-driven deployment engine.
  * Replaces the temp-market hardcoded installers with a generic engine
  * that deploys any app from a youeye-file.yaml manifest.
  */

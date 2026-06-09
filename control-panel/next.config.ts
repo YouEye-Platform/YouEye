@@ -19,7 +19,7 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
 
-  // Allow remote images from GitHub (App Market icons)
+  // Allow remote images from GitHub (Market icons)
   images: {
     remotePatterns: [
       {

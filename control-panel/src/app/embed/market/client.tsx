@@ -594,7 +594,7 @@ export function MarketEmbedClient() {
           }}
         >
           <ArrowLeftIcon size={16} />
-          Back to App Market
+          Back to Market
         </button>
 
         {/* Hero Card */}
@@ -1132,7 +1132,7 @@ export function MarketEmbedClient() {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
         <div>
-          <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.02em" }}>App Market</div>
+          <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.02em" }}>Market</div>
           <div style={{ fontSize: 14, color: "var(--embed-text-muted)", marginTop: 4 }}>
             Discover and install apps for your platform
           </div>

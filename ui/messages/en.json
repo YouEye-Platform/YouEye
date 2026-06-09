@@ -85,7 +85,7 @@
       "apps": "Apps",
       "permissions": "Permissions",
       "appManagement": "App Management",
-      "appMarket": "App Market",
+      "appMarket": "Market",
       "about": "About & Usage"
     },
     "profile": {
@@ -240,7 +240,7 @@
       "update": "Update"
     },
     "market": {
-      "title": "App Market",
+      "title": "Market",
       "install": "Install",
       "installed": "Installed",
       "uninstall": "Uninstall"
@@ -259,7 +259,7 @@
     "settings": "Settings"
   },
   "market": {
-    "title": "App Market",
+    "title": "Market",
     "description": "Browse and install applications",
     "install": "Install",
     "installed": "Installed",
@@ -270,7 +270,7 @@
     "title": "Timeline",
     "description": "Your encrypted chronological record of activities, events, and imports",
     "noEntries": "No entries yet",
-    "noEntriesDescription": "Timeline entries are created by native apps or imports. Install apps from the App Market to start building your timeline.",
+    "noEntriesDescription": "Timeline entries are created by native apps or imports. Install apps from Market to start building your timeline.",
     "addEntry": "Add Entry",
     "filters": "Filters",
     "viewAll": "View all",
@@ -395,8 +395,8 @@
     "custom": "Custom"
   },
   "appMarket": {
-    "title": "App Market",
-    "description": "Browse and install apps for your YouEye platform.",
+    "title": "Market",
+    "description": "Browse and install apps and other items for your YouEye platform.",
     "refresh": "Refresh",
     "noApps": "No apps available in the catalog",
     "open": "Open",
@@ -515,7 +515,7 @@
     "description": "Manage your encryption PIN, PIN sessions, and privacy preferences."
   },
   "marketSettings": {
-    "title": "App Market",
+    "title": "Market",
     "description": "Register and manage native apps, browse the catalog."
   },
   "accountSettings": {

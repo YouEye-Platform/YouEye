@@ -1,5 +1,5 @@
 /**
- * App Market Update API — SSE endpoint.
+ * Market Update API — SSE endpoint.
  * Updates an installed marketplace app to the latest catalog version.
  *
  * POST /api/market/update

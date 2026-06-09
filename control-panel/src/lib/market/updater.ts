@@ -49,6 +49,7 @@ import type {
   AppManifest,
   InstallEventCallback,
   InstallEvent,
+  MigrationSpec,
   MigrationStep,
   VariableContext,
 } from './types';
@@ -145,21 +146,36 @@ async function runUpdateHooks(
 // ─── Migration Helpers ────────────────────────────────────
 
 function findApplicableMigrations(
-  migrations: Array<{ fromVersion: string; toVersion: string; steps: MigrationStep[] }>,
+  migrations: MigrationSpec[],
   fromVersion: string,
   toVersion: string
-): Array<{ fromVersion: string; toVersion: string; steps: MigrationStep[] }> {
+): MigrationSpec[] {
   if (!migrations || migrations.length === 0) return [];
 
   return migrations
     .filter((m) => {
-      const fromCoversInstalled = compareVersions(m.fromVersion, fromVersion) <= 0
-        || compareVersions(fromVersion, m.fromVersion) >= 0;
-      const toIsUpgrade = isNewer(m.toVersion, fromVersion);
-      const toWithinTarget = compareVersions(m.toVersion, toVersion) <= 0;
-      return fromCoversInstalled && toIsUpgrade && toWithinTarget;
+      if (m.required === false) return false;
+
+      const startsAfterInstalled = compareVersions(m.fromVersion, fromVersion) >= 0;
+      const endsAfterInstalled = compareVersions(m.toVersion, fromVersion) > 0;
+      const endsAtOrBeforeTarget = compareVersions(m.toVersion, toVersion) <= 0;
+
+      return startsAfterInstalled && endsAfterInstalled && endsAtOrBeforeTarget;
     })
-    .sort((a, b) => compareVersions(a.toVersion, b.toVersion));
+    .sort((a, b) => {
+      const fromCmp = compareVersions(a.fromVersion, b.fromVersion);
+      if (fromCmp !== 0) return fromCmp;
+      return compareVersions(a.toVersion, b.toVersion);
+    });
+}
+
+function describeUpdatePath(fromVersion: string, targetVersion: string, migrations: MigrationSpec[]): string {
+  if (migrations.length === 0) return `${fromVersion} -> ${targetVersion}`;
+
+  const waypoints = [fromVersion, ...migrations.map((m) => m.toVersion), targetVersion]
+    .filter((version, index, versions) => index === 0 || version !== versions[index - 1]);
+
+  return waypoints.join(' -> ');
 }
 
 /**
@@ -501,6 +517,7 @@ export async function updateMarketplaceApp(
     ? findApplicableMigrations(manifest.update?.migrations || [], installedVersion, targetVersion)
     : [];
   const migrationStepCount = migrations.reduce((sum, m) => sum + m.steps.length, 0);
+  const updatePath = describeUpdatePath(installedVersion, targetVersion, migrations);
 
   const preUpdateHooks = manifest.update?.pre_update as UpdateHookStep[] | undefined;
   const postUpdateHooks = manifest.update?.post_update as UpdateHookStep[] | undefined;
@@ -527,7 +544,7 @@ export async function updateMarketplaceApp(
   const containerTypes = containerSpecs.map((c) => c.type).join(', ');
   step++;
   emit(onEvent, step, totalSteps, 'running',
-    `Updating ${appId} from v${installedVersion} to v${targetVersion} (containers: ${containerTypes}, strategy: ${strategy})`);
+    `Updating ${appId} from v${installedVersion} to v${targetVersion} (path: ${updatePath}; containers: ${containerTypes}; strategy: ${strategy})`);
 
   // Build variable context — preserves existing secrets
   const ctx = await buildCanonicalContext(
@@ -564,6 +581,8 @@ export async function updateMarketplaceApp(
 
     if (strategy === 'migrate' && migrations.length > 0) {
       for (const migration of migrations) {
+        emit(onEvent, step, totalSteps, 'running',
+          `Applying required migration gate ${migration.fromVersion} -> ${migration.toVersion}`);
         for (const migrationStep of migration.steps) {
           step++;
           const stepDesc = migrationStep.type === 'exec'

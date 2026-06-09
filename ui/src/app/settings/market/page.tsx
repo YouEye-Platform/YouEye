@@ -1,11 +1,11 @@
 /**
- * App Market Settings Page (Admin Only)
+ * Market Settings Page (Admin Only)
  *
- * Redirects to the full-page App Store experience at /app-store.
+ * Redirects to the Control Panel-owned Market surface.
  */
 
 import { redirect } from "next/navigation";
 
 export default function MarketSettingsPage() {
-  redirect("/app-market");
+  redirect("/market");
 }

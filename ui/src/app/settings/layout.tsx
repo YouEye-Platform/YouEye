@@ -3,7 +3,7 @@
  *
  * Unified settings page with sidebar navigation.
  * Includes the YouEye navbar at the top for consistent navigation.
- * Admin users see additional sections (Branding, Users, System, App Market).
+ * Admin users see additional sections (Branding, Users, System, Market).
  */
 
 import { redirect } from "next/navigation";

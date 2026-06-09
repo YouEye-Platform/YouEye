@@ -1,5 +1,5 @@
 /**
- * Unified App Market install API — SSE endpoint.
+ * Unified Market install API — SSE endpoint.
  * Handles both marketplace (OCI) and native (LXD) app installation
  * through the single manifest-driven engine.
  *

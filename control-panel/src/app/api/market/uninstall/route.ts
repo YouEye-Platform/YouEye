@@ -1,5 +1,5 @@
 /**
- * Unified App Market uninstall API.
+ * Unified Market uninstall API.
  * Removes an installed app (marketplace or native) and all its resources.
  *
  * POST /api/market/uninstall

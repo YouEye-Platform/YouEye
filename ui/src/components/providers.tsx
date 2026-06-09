@@ -15,7 +15,6 @@
 
 import { ThemeProvider } from "next-themes";
 import { ColorThemeProvider } from "@/components/color-theme-provider";
-import { InstallBanner } from "@/components/pwa/install-banner";
 import { TelemetryProvider } from "@/components/telemetry/telemetry-provider";
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -29,7 +28,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <ColorThemeProvider>
         <TelemetryProvider>
           {children}
-          <InstallBanner />
         </TelemetryProvider>
       </ColorThemeProvider>
     </ThemeProvider>

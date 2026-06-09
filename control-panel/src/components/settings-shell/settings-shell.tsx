@@ -27,7 +27,7 @@ const ADMIN_SECTIONS = [
   { id: "system", label: "System", icon: Server, href: "/settings/system" },
   { id: "network", label: "Network", icon: Globe, href: "/settings/network" },
   { id: "about", label: "About", icon: Info, href: "/settings/about" },
-  { id: "market", label: "App Market", icon: Store, href: "/market" },
+  { id: "market", label: "Market", icon: Store, href: "/market" },
 ];
 
 interface SettingsShellProps {

@@ -39,7 +39,7 @@
     "dashboard": "Dashboard",
     "health": "Health",
     "apps": "Apps",
-    "appMarket": "App Market",
+    "appMarket": "Market",
     "reverseProxy": "Reverse Proxy",
     "dns": "DNS",
     "people": "People",
@@ -399,8 +399,8 @@
     "partial": "Partial"
   },
   "market": {
-    "title": "App Market",
-    "description": "Install third-party apps with one click. Apps are deployed as containers and managed automatically.",
+    "title": "Market",
+    "description": "Install apps and other YouEye items with one click. Apps are deployed as containers and managed automatically.",
     "install": "Install",
     "installed": "Installed",
     "available": "Available",

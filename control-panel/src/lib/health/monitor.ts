@@ -567,7 +567,7 @@ async function checkAppUpdates(): Promise<void> {
     const appNames = updates.map((u) => u.appId).join(', ');
     await notify(
       `Updates available for ${updates.length} app${updates.length > 1 ? 's' : ''}`,
-      `Update available: ${appNames}. Visit the App Market to update.`,
+      `Update available: ${appNames}. Visit Market to update.`,
       'info',
       '/market'
     );

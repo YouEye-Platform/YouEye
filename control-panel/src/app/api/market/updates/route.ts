@@ -1,5 +1,5 @@
 /**
- * App Market Updates API — Check for available updates.
+ * Market Updates API — Check for available updates.
  *
  * GET /api/market/updates
  *   Returns list of installed apps with available updates.

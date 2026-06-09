@@ -515,7 +515,7 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
                   </p>
                   {isAdmin && (
                     <Link
-                      href="/app-market"
+                      href="/market"
                       className="text-sm text-primary hover:underline"
                       onClick={() => setOpen(false)}
                     >

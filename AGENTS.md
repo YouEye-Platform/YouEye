@@ -1,3 +1,26 @@
+## v0.4.13.29 / v0.4.3.7 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Start Plan 3 Market rename, multi-source catalog groundwork, update gates, and PWA prompt removal
+
+### Changes
+- `control-panel/src/lib/market/source.ts`, `control-panel/src/app/api/market/source/route.ts` — Added multi-source Market registry support while keeping backward-compatible single repo source reads/writes.
+- `control-panel/src/lib/market/catalog.ts`, `control-panel/src/lib/market/types.ts` — Fetch enabled Market sources into one catalog and annotate entries with source identity metadata.
+- `control-panel/src/lib/market/schema.ts`, `control-panel/src/lib/market/updater.ts` — Added required migration gate fields and update path descriptions so ordinary versions can be skipped while required migration edges still run.
+- `control-panel/src/components/settings-shell/settings-shell.tsx`, `control-panel/src/app/embed/market/client.tsx`, `control-panel/messages/en.json`, `control-panel/src/lib/health/monitor.ts` — Renamed active user-facing App Market copy to Market.
+- `ui/src/app/app-market/*`, `ui/src/app/app-store/*` — Deleted old UI Market iframe/redirect routes; `/app-market` intentionally has no redirect.
+- `ui/src/components/providers.tsx`, `ui/src/components/pwa/install-banner.tsx`, `ui/messages/en.json` — Removed the proactive PWA install prompt and renamed visible Market copy.
+- `README.md`, `control-panel/package.json`, `ui/package.json` — Bumped CP to `0.4.13.29`, UI to `0.4.3.7`, and updated current-version/product wording.
+
+### Test Results
+- Control Panel: `pnpm --dir YouEye/control-panel build` passed.
+- UI: `pnpm --dir YouEye/ui build` passed; local static generation still logs expected PostgreSQL `ECONNREFUSED` warnings when no local DB is running.
+
+### Notes for Iris
+- This is the first Plan 3 implementation slice, not the full architecture. Integrations, Caddy-scoped app grants, first-launch permissions, system-app manifests, and unified surfaces still need follow-up work.
+- Multi-source conflict grouping UI is not complete yet; catalog items now carry enough source metadata to build it.
+
 ## v0.4.2.9 / v0.4.13.28 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

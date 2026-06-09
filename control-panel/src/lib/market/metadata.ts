@@ -1,5 +1,5 @@
 /**
- * Install metadata persistence for the App Market.
+ * Install metadata persistence for the Market.
  * Stores install config at /var/lib/youeye/app-{appId}/install.json
  */
 

@@ -330,6 +330,9 @@ export const MigrationStepSchema = z.discriminatedUnion('type', [
 export const MigrationSchema = z.object({
   fromVersion: z.string().min(1),
   toVersion: z.string().min(1),
+  required: z.boolean().optional().default(true),
+  idempotencyKey: z.string().optional(),
+  description: z.string().optional(),
   steps: z.array(MigrationStepSchema).min(1),
 });
 

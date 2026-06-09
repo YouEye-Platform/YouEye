@@ -1,5 +1,5 @@
 /**
- * Unified app uninstaller for the App Market (v2 app engine).
+ * Unified app uninstaller for the Market (v2 app engine).
  * Handles all uninstall patterns driven by manifest + metadata.
  * Supports both OCI and LXD containers (determined by container.type).
  *
