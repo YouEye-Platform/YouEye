@@ -1,3 +1,25 @@
+## v0.4.13.81 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Scope Caddy app-token grants by HTTP method
+
+### Changes
+- `control-panel/src/lib/caddy/client.ts` — Adds an HTTP `method` matcher to scoped app-grant routes, defaulting existing grants to `GET`.
+- `control-panel/src/lib/bridges/manager.ts` — Persists and pushes `allowedMethods` for Caddy-mode bridge grants.
+- `control-panel/src/lib/bridges/store.ts` — Adds optional bridge `allowedMethods` metadata.
+- `control-panel/tests/scoped-caddy-grants.spec.mjs` — Extends focused coverage for method-scoped grants and discovery metadata.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.81`.
+
+### Test Results
+- `node --test control-panel/tests/scoped-caddy-grants.spec.mjs control-panel/tests/app-network-pihole-dns.spec.mjs control-panel/tests/market-update-plans.spec.mjs control-panel/tests/market-migration-planner.spec.mjs` passed.
+- `pnpm --dir control-panel build` passed for Control Panel `0.4.13.81`.
+- Released `cp-artem-v0.4.13.81` with exact `standalone.tar`, snapshotted core containers as `pre-test-cp-0.4.13.81-20260609-223200`, and deployed with `spine update control`.
+- Live proof: Search→SearXNG was reactivated through the bridge API; Caddy route has `method:["GET"]`; discovery reports `allowedMethods:["GET"]`; `GET /search` with Search token returns `200`; `POST /search`, `/preferences`, and Memos with the same token return `403`; built-in Codex Browser verified Search results render with no `Search unavailable` or `fetch failed`.
+
+### Notes for Iris
+- Screenshot capture in the built-in browser still timed out at `Page.captureScreenshot`; browser verification is DOM/state based.
+
 ## v0.4.3.22 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
@@ -1063,7 +1085,7 @@
 - `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.34`.
 - Release asset verified as `standalone.tar` with `server.js`, `package.json`, and embedded version `0.4.13.34`.
 - Live deploy on `192.168.31.160`: CP updated through `spine update control`; Search was updated to `0.4.0.5`; Caddy route now matches host `searx.potato.app`, paths `/search*` and `/autocompleter*`, and the Search app token.
-- Live access matrix: Search with its app token gets `200` for SearXNG `/search`; Search with the same token gets `307` for `/`; Search with a wrong token gets `307`; Notes with no token gets `307`; platform health remains OK.
+- Initial live access matrix: Search with its app token gets `200` for SearXNG `/search`; Search with the same token gets `307` for `/`; Search with a wrong token gets `307`; Notes with no token gets `307`; platform health remains OK. This prototype behavior was later superseded by the terminal app-token deny route and CP `0.4.13.81` method scoping, where missed app-token grants return `403`.
 - Codex Browser loaded `https://potato.app/api/health` and saw live `{"status":"ok"}` JSON.
 
 ### Notes for Iris
