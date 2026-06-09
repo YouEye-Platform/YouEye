@@ -1,3 +1,21 @@
+## v0.4.13.72 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix SSO cleanup condition handling
+
+### Changes
+- `control-panel/src/lib/market/sso-engine.ts` — Added support for `equals` conditions such as `provider.type equals 'OAUTH2'` and made iteration action steps fail loudly on non-OK HTTP responses instead of silently ignoring failed cleanup.
+- `control-panel/tests/market-sso-engine.spec.mjs` — Added focused regression coverage for `equals` condition support and non-OK action failure handling.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.72`.
+
+### Test Results
+- Focused Control Panel tests passed: `node --test tests/market-sso-engine.spec.mjs tests/market-integration-remove.spec.mjs tests/market-filters.spec.mjs tests/market-update-preview.spec.mjs tests/market-migration-planner.spec.mjs tests/market-update-plans.spec.mjs`.
+- `pnpm build` passed for Control Panel `0.4.13.72`.
+
+### Notes for Iris
+- Live Memos teardown testing exposed this bug: the manifest used `equals` conditions but the engine only implemented `contains`, so provider cleanup did not run and reapply created duplicate YouEye ID providers. CP `0.4.13.72` must be deployed before considering Integration teardown proof valid.
+
 ## v0.4.13.71 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

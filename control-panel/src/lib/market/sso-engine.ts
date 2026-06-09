@@ -301,13 +301,34 @@ async function executeActionStep(
   }
 
   try {
-    await fetch(url, {
+    const res = await fetch(url, {
       method: action.method,
       headers,
       signal: AbortSignal.timeout(10_000),
     });
-  } catch {
-    // Actions during iteration are best-effort
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new StepError(
+        `SSO action ${action.method} ${url} failed: ${res.status} ${res.statusText}`,
+        {
+          url,
+          method: action.method,
+          statusCode: res.status,
+          responseBody: text.slice(0, 500),
+          suggestion: getSuggestion(res.status, url),
+        }
+      );
+    }
+  } catch (err) {
+    if (err instanceof StepError) throw err;
+    throw new StepError(
+      `SSO action ${action.method} ${url}: ${(err as Error).message}`,
+      {
+        url,
+        method: action.method,
+        suggestion: getNetworkSuggestion(err as Error),
+      }
+    );
   }
 }
 
@@ -381,7 +402,8 @@ function resolveStepVariables(str: string, ctx: StepContext): string {
 
 /**
  * Evaluate a simple condition expression.
- * Supports: "!varName" (negation), "varName" (truthy), "var contains 'text'"
+ * Supports: "!varName" (negation), "varName" (truthy), "var contains 'text'",
+ * and "var equals 'text'".
  */
 function evaluateCondition(condition: string, ctx: StepContext): boolean {
   const trimmed = condition.trim();
@@ -404,6 +426,23 @@ function evaluateCondition(condition: string, ctx: StepContext): boolean {
       if (item) {
         const value = extractValueFromPath(item, prop);
         return String(value || '').includes(search);
+      }
+    }
+    return false;
+  }
+
+  // Equals: "provider.type equals 'OAUTH2'"
+  const equalsMatch = trimmed.match(/^(\S+)\s+equals\s+'([^']*)'$/);
+  if (equalsMatch) {
+    const [, path, expected] = equalsMatch;
+    const parts = path.split('.');
+    if (parts.length >= 2) {
+      const itemKey = parts[0];
+      const prop = parts.slice(1).join('.');
+      const item = ctx.saved[itemKey];
+      if (item) {
+        const value = extractValueFromPath(item, prop);
+        return String(value ?? '') === expected;
       }
     }
     return false;
