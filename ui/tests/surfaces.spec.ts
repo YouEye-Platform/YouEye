@@ -27,6 +27,9 @@ test('UI normalizes widgets, info cards, timeline cards, notifications, and surf
   assert.match(appManagement, /normalizeAppSurfaces/);
   assert.match(appManagement, /liveManifest/);
   assert.match(appManagement, /app\.manifest/);
+  assert.match(appManagement, /getInfoCardProviders/);
+  assert.match(appManagement, /surface\.kind === "info-card"/);
+  assert.match(appManagement, /endpoint: surface\.embedPath/);
 
   assert.match(widgetsRoute, /getAppSurfaceDeclarations/);
   assert.match(widgetsRoute, /surface\.kind === "widget"/);

@@ -281,7 +281,7 @@ export async function getAppMetaMap(): Promise<Record<string, AppMeta>> {
   return result;
 }
 
-/** Get all apps that provide info cards by live-fetching runtime manifests */
+/** Get all apps that provide info cards through unified surface declarations */
 export async function getInfoCardProviders(): Promise<
   Array<{
     appId: string;
@@ -304,28 +304,34 @@ export async function getInfoCardProviders(): Promise<
 
   const results = await Promise.allSettled(
     allApps
-      .filter((app) => app.containerUrl || app.subdomain)
+      .filter((app) => app.containerUrl || app.subdomain || app.manifest)
       .map(async (app) => {
         const upstream =
           (app.subdomain && upstreamMap.get(app.subdomain)) ||
           app.containerUrl;
-        if (!upstream) return null;
-
-        const manifest = await fetchAppManifest(upstream);
+        const manifest = upstream ? await fetchAppManifest(upstream) : null;
 
         // Fall back to DB manifest if live fetch fails
-        const effective = manifest ?? (app.manifest as AppManifest | null);
-        if (
-          effective?.info_cards &&
-          effective.info_cards.length > 0
-        ) {
+        const effective = (manifest as unknown as Record<string, unknown> | null)
+          ?? (app.manifest as Record<string, unknown> | null)
+          ?? null;
+        const infoCardSurfaces = normalizeAppSurfaces(effective)
+          .filter((surface) => surface.kind === "info-card");
+        if (infoCardSurfaces.length > 0) {
           return {
             appId: app.id,
             appName: app.name,
-            containerUrl: app.containerUrl ?? upstream,
+            containerUrl: app.containerUrl ?? upstream ?? "",
             subdomain: app.subdomain ?? null,
-            icon: app.icon ?? effective.icon ?? null,
-            cards: effective.info_cards,
+            icon: app.icon ?? (effective?.icon as string | undefined) ?? null,
+            cards: infoCardSurfaces.map((surface) => ({
+              type: surface.id,
+              description: surface.description ?? surface.name ?? surface.id,
+              endpoint: surface.embedPath,
+              triggers: surface.triggers ?? [],
+              embed_path: surface.embedPath,
+              label: surface.name,
+            })),
           };
         }
         return null;
