@@ -1,3 +1,22 @@
+## v0.4.13.76 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Deny unapproved app-token Caddy route fallthrough
+
+### Changes
+- `control-panel/src/lib/caddy/client.ts` — Adds a terminal `app-grant-token-deny` Caddy route so requests carrying `X-YouEye-App-Token` are denied unless an earlier scoped grant matched the caller token, target host, and allowed path.
+- `control-panel/src/app/api/setup/control-routes/route.ts` — Reapplies the app-token deny guard during existing-install route repair.
+- `control-panel/tests/scoped-caddy-grants.spec.mjs` — Added focused regression coverage for the deny route and repair wiring.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.76`.
+
+### Test Results
+- Focused Control Panel tests passed: `node --test control-panel/tests/scoped-caddy-grants.spec.mjs control-panel/tests/app-network-pihole-dns.spec.mjs control-panel/tests/market-integration-remove.spec.mjs control-panel/tests/market-filters.spec.mjs control-panel/tests/market-update-preview.spec.mjs control-panel/tests/market-migration-planner.spec.mjs control-panel/tests/market-update-plans.spec.mjs`.
+- `pnpm --dir control-panel build` passed for Control Panel `0.4.13.76`; the standalone artifact reports version `0.4.13.76`.
+
+### Notes for Iris
+- This pairs with UI `0.4.3.21` and Search `0.4.0.13`. Search's app token can discover and use only the explicit SearXNG grant; app-token traffic that falls through to other public app routes should receive `403`.
+
 ## v0.4.3.21 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

@@ -1872,6 +1872,63 @@ export interface ScopedAppGrantRoute {
   appToken?: string;
 }
 
+const SCOPED_APP_GRANT_DENY_ROUTE_ID = 'app-grant-token-deny';
+
+function upsertScopedAppGrantDenyRoute(routes: CaddyRoute[]): CaddyRoute[] {
+  const filtered = routes.filter((r: any) => r['@id'] !== SCOPED_APP_GRANT_DENY_ROUTE_ID);
+  const denyRoute: CaddyRoute = {
+    '@id': SCOPED_APP_GRANT_DENY_ROUTE_ID,
+    match: [{
+      header: { 'X-Youeye-App-Token': ['*'] },
+    } as any],
+    handle: [{
+      handler: 'static_response',
+      status_code: 403,
+      body: 'App token is not allowed for this route',
+    }],
+    terminal: true,
+  };
+
+  const lastGrantIndex = filtered.reduce((last, route, index) => {
+    const id = route['@id'];
+    return id?.startsWith('app-grant-') ? index : last;
+  }, -1);
+
+  if (lastGrantIndex >= 0) {
+    filtered.splice(lastGrantIndex + 1, 0, denyRoute);
+    return filtered;
+  }
+
+  const stripIndex = filtered.findIndex((r: any) => r['@id'] === 'security-header-strip');
+  if (stripIndex >= 0) {
+    filtered.splice(stripIndex, 0, denyRoute);
+    return filtered;
+  }
+
+  filtered.unshift(denyRoute);
+  return filtered;
+}
+
+/**
+ * Deny app-token Caddy requests unless an earlier scoped app grant route
+ * explicitly matched the caller, target host, and path.
+ */
+export async function ensureScopedAppGrantDenyRoute(): Promise<void> {
+  const cfg = await getConfig();
+  if (!cfg?.apps?.http?.servers) return;
+
+  let modified = false;
+  for (const server of Object.values(cfg.apps.http.servers)) {
+    const before = JSON.stringify(server.routes || []);
+    server.routes = upsertScopedAppGrantDenyRoute(server.routes || []);
+    if (JSON.stringify(server.routes) !== before) modified = true;
+  }
+
+  if (modified) {
+    await setConfig(cfg);
+  }
+}
+
 /**
  * Add a narrow app-to-app Caddy grant route.
  *
@@ -1914,6 +1971,7 @@ export async function addScopedAppGrantRoute(route: ScopedAppGrantRoute): Promis
   } else {
     server.routes.unshift(grantRoute);
   }
+  server.routes = upsertScopedAppGrantDenyRoute(server.routes);
 
   await setConfig(cfg);
 }

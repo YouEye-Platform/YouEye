@@ -11,6 +11,7 @@ import { settingsService } from '@/lib/settings';
 import {
   checkHealth,
   ensureControlSettingsRoute,
+  ensureScopedAppGrantDenyRoute,
   getConfiguredDomain,
 } from '@/lib/caddy/client';
 
@@ -50,11 +51,12 @@ export async function POST(request: NextRequest) {
     }
 
     await ensureControlSettingsRoute(domain, 'youeye-control', 3000);
+    await ensureScopedAppGrantDenyRoute();
 
     return NextResponse.json({
       success: true,
       domain,
-      routes: ['/settings', '/market'],
+      routes: ['/settings', '/market', 'app-grant-token-deny'],
     });
   } catch (error) {
     console.error('[Setup/ControlRoutes] Failed to repair root control routes:', error);
