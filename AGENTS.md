@@ -1,3 +1,24 @@
+## v0.4.13.51 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add durable Market update-plan artifacts
+
+### Changes
+- `control-panel/src/lib/market/schema.ts`, `control-panel/src/lib/market/parser.ts`, `control-panel/src/lib/market/types.ts` — Added `kind: update-plan` manifest/catalog schemas and installed migration metadata.
+- `control-panel/src/lib/market/catalog.ts` — Added source-specific fetching of durable update-plan migration gates.
+- `control-panel/src/lib/market/updater.ts` — Merges manifest and durable update-plan migrations, skips already-applied idempotency keys, and records completed gates.
+- `control-panel/tests/market-update-plans.spec.ts` — Added focused regression coverage for update-plan schema support and idempotency recording.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.51`.
+
+### Test Results
+- Focused Node test passed: `control-panel/tests/market-update-plans.spec.ts` verifies catalog update-plan parsing and updater idempotency behavior.
+- Market artifact parse passed for 31 apps, 4 integrations, 1 update plan, and 3 system entries.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.51`.
+
+### Notes for Iris
+- Most app versions still skip directly to newest. Add durable migration gates only for required one-time data/container changes; each required gate should include an `idempotencyKey` so old-version updates can retry safely.
+
 ## v0.4.13.49 / v0.4.13.50 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

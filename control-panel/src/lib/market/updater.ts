@@ -34,7 +34,7 @@ import {
   healthCheckViaExec,
   waitForContainerExec,
 } from '@/lib/incus/snapshot';
-import { fetchManifestFromSource, fetchManifestReferenceFromSource, clearCatalogCache } from './catalog';
+import { fetchManifestFromSource, fetchManifestReferenceFromSource, fetchUpdatePlanMigrationsFromSource, clearCatalogCache } from './catalog';
 import { readInstallMetadata, saveInstallMetadata } from './metadata';
 import { getInstalledApp, updateInstalledVersion } from './installed-apps';
 import { getContainerName } from './engine-helpers';
@@ -51,6 +51,7 @@ import type {
   InstallEvent,
   MigrationSpec,
   MigrationStep,
+  InstallMetadata,
   VariableContext,
 } from './types';
 
@@ -118,6 +119,10 @@ interface UpdateHookStep {
   timeout: number;
 }
 
+type MigrationWithSource = MigrationSpec & {
+  source?: 'manifest' | 'update-plan';
+};
+
 async function runUpdateHooks(
   hooks: UpdateHookStep[] | undefined,
   appId: string,
@@ -146,15 +151,18 @@ async function runUpdateHooks(
 // ─── Migration Helpers ────────────────────────────────────
 
 function findApplicableMigrations(
-  migrations: MigrationSpec[],
+  migrations: MigrationWithSource[],
   fromVersion: string,
-  toVersion: string
-): MigrationSpec[] {
+  toVersion: string,
+  appliedMigrations: InstallMetadata['appliedMigrations'] = [],
+): MigrationWithSource[] {
   if (!migrations || migrations.length === 0) return [];
+  const appliedKeys = new Set((appliedMigrations ?? []).map((item) => item.key));
 
   return migrations
     .filter((m) => {
       if (m.required === false) return false;
+      if (m.idempotencyKey && appliedKeys.has(m.idempotencyKey)) return false;
 
       const startsAfterInstalled = compareVersions(m.fromVersion, fromVersion) >= 0;
       const endsAfterInstalled = compareVersions(m.toVersion, fromVersion) > 0;
@@ -167,6 +175,51 @@ function findApplicableMigrations(
       if (fromCmp !== 0) return fromCmp;
       return compareVersions(a.toVersion, b.toVersion);
     });
+}
+
+function migrationIdentity(migration: MigrationSpec): string {
+  return migration.idempotencyKey
+    || `${migration.fromVersion}->${migration.toVersion}:${migration.description || ''}:${JSON.stringify(migration.steps)}`;
+}
+
+function mergeMigrationSources(
+  manifestMigrations: MigrationSpec[],
+  updatePlanMigrations: MigrationSpec[],
+): MigrationWithSource[] {
+  const byKey = new Map<string, MigrationWithSource>();
+
+  for (const migration of manifestMigrations) {
+    byKey.set(migrationIdentity(migration), { ...migration, source: 'manifest' });
+  }
+
+  for (const migration of updatePlanMigrations) {
+    const key = migrationIdentity(migration);
+    byKey.set(key, { ...migration, source: 'update-plan' });
+  }
+
+  return [...byKey.values()];
+}
+
+async function recordAppliedMigration(
+  installMeta: InstallMetadata,
+  migration: MigrationWithSource,
+): Promise<void> {
+  if (!migration.idempotencyKey) return;
+
+  const existing = installMeta.appliedMigrations ?? [];
+  if (existing.some((item) => item.key === migration.idempotencyKey)) return;
+
+  installMeta.appliedMigrations = [
+    ...existing,
+    {
+      key: migration.idempotencyKey,
+      fromVersion: migration.fromVersion,
+      toVersion: migration.toVersion,
+      appliedAt: new Date().toISOString(),
+      source: migration.source,
+    },
+  ];
+  await saveInstallMetadata(installMeta);
 }
 
 function describeUpdatePath(fromVersion: string, targetVersion: string, migrations: MigrationSpec[]): string {
@@ -482,6 +535,13 @@ export async function updateMarketplaceApp(
   const installedVersion = installedApp.installedVersion || '0.0.0';
   const targetVersion = manifest.version || '0.0.0';
   const containerSpecs = manifest.containers || [];
+  const sourceId = installMeta.sourceId || installedApp.sourceId || undefined;
+  let durableMigrationPlan: Awaited<ReturnType<typeof fetchUpdatePlanMigrationsFromSource>> = { migrations: [], references: [] };
+  try {
+    durableMigrationPlan = await fetchUpdatePlanMigrationsFromSource(appId, sourceId);
+  } catch (err) {
+    throw new Error(`Failed to fetch durable update plan for "${appId}": ${err}`);
+  }
 
   if (!config.force && !isNewer(targetVersion, installedVersion)) {
     emit(onEvent, 1, 1, 'success', `${appId} is already up to date (v${installedVersion})`);
@@ -504,7 +564,8 @@ export async function updateMarketplaceApp(
 
   // ── Determine update path ──────────────────────────────
 
-  const strategy = manifest.update?.strategy || 'replace';
+  const allMigrations = mergeMigrationSources(manifest.update?.migrations || [], durableMigrationPlan.migrations);
+  const strategy = (manifest.update?.strategy === 'migrate' || allMigrations.length > 0) ? 'migrate' : 'replace';
 
   // v2: each container has an explicit type ('lxd' | 'oci')
   const containerNames = containerSpecs.map((c) => getContainerName(appId, c.name, containerSpecs.length));
@@ -514,7 +575,7 @@ export async function updateMarketplaceApp(
   // ── Count total steps ──────────────────────────────────
 
   const migrations = strategy === 'migrate'
-    ? findApplicableMigrations(manifest.update?.migrations || [], installedVersion, targetVersion)
+    ? findApplicableMigrations(allMigrations, installedVersion, targetVersion, installMeta.appliedMigrations)
     : [];
   const migrationStepCount = migrations.reduce((sum, m) => sum + m.steps.length, 0);
   const updatePath = describeUpdatePath(installedVersion, targetVersion, migrations);
@@ -592,6 +653,7 @@ export async function updateMarketplaceApp(
           await executeMigrationStep(migrationStep, appId, containerSpecs.length, ctx);
           emit(onEvent, step, totalSteps, 'success', stepDesc);
         }
+        await recordAppliedMigration(installMeta, migration);
       }
     }
 

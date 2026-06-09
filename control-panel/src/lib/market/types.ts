@@ -32,6 +32,8 @@ import type {
   CatalogEntrySchema,
   SystemCatalogEntrySchema,
   IntegrationCatalogEntrySchema,
+  UpdatePlanSchema,
+  UpdatePlanCatalogEntrySchema,
   DetailSchema,
   DetailScreenshotSchema,
   InstallParamSchema,
@@ -71,6 +73,8 @@ export type Catalog = z.infer<typeof CatalogSchema>;
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
 export type SystemCatalogEntry = z.infer<typeof SystemCatalogEntrySchema>;
 export type IntegrationCatalogEntry = z.infer<typeof IntegrationCatalogEntrySchema>;
+export type UpdatePlan = z.infer<typeof UpdatePlanSchema>;
+export type UpdatePlanCatalogEntry = z.infer<typeof UpdatePlanCatalogEntrySchema>;
 export type AppDetail = z.infer<typeof DetailSchema>;
 export type DetailScreenshot = z.infer<typeof DetailScreenshotSchema>;
 export type InstallParam = z.infer<typeof InstallParamSchema>;
@@ -184,6 +188,17 @@ export interface InstallMetadata {
   credentials?: CredentialMeta[];
   /** Optional Market integrations selected during install */
   selectedIntegrations?: string[];
+  /** Optional Market integrations successfully applied to this install */
+  installedIntegrations?: {
+    id: string;
+    sourceId?: string;
+    sourceName?: string;
+    manifestPath?: string;
+    manifestRepo?: string;
+    manifestBranch?: string;
+    manifestDigest?: string;
+    installedAt: string;
+  }[];
   /** SSO entry URL path (e.g. /sso/OID/start/authentik) — appended to app URL for direct login */
   ssoEntryUrl?: string;
   /** Database mode from manifest — used by ACL migration to determine postgres access */
@@ -194,6 +209,14 @@ export interface InstallMetadata {
   provides?: ProvidesSpec[];
   /** @deprecated All apps use per-app bridge networking now. Kept for install.json compat. */
   usePerAppBridge?: boolean;
+  /** Required migration gates already completed for this install. */
+  appliedMigrations?: {
+    key: string;
+    fromVersion: string;
+    toVersion: string;
+    appliedAt: string;
+    source?: 'manifest' | 'update-plan';
+  }[];
 }
 
 // ─── Install Events (SSE) ──────────────────────────────────

@@ -10,8 +10,8 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
-import { parseCatalog, parseIntegrationManifest, parseManifest } from './parser';
-import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp } from './types';
+import { parseCatalog, parseIntegrationManifest, parseManifest, parseUpdatePlan } from './parser';
+import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp, MigrationSpec, UpdatePlanCatalogEntry } from './types';
 import { settingsService } from '@/lib/settings';
 import { buildMarketRawURL, getMarketSource, getMarketSources, isGitHubMarketSource, type MarketSource } from './source';
 
@@ -35,6 +35,11 @@ export interface ManifestFetchResult {
 export interface IntegrationManifestFetchResult {
   manifest: IntegrationManifest;
   reference: ManifestReference;
+}
+
+export interface UpdatePlanFetchResult {
+  migrations: MigrationSpec[];
+  references: ManifestReference[];
 }
 
 // ─── Branch Resolution ────────────────────────────────────
@@ -222,6 +227,27 @@ export async function fetchIntegrationManifestReferenceFromSource(integrationId:
   return (await fetchIntegrationManifestFromCatalogEntry(entry, branch, source)).reference;
 }
 
+export async function fetchUpdatePlanMigrationsFromSource(appId: string, sourceId?: string): Promise<UpdatePlanFetchResult> {
+  const source = sourceId
+    ? (await getMarketSources()).find((s) => s.id === sourceId)
+    : await getMarketSource();
+  if (!source) throw new Error(`Market source "${sourceId}" not found`);
+
+  const catalog = await fetchCatalog(source);
+  const branch = await getEffectiveBranch();
+  const entries = (catalog.updatePlans ?? []).filter((entry) => entry.appId === appId);
+  const migrations: MigrationSpec[] = [];
+  const references: ManifestReference[] = [];
+
+  for (const entry of entries) {
+    const result = await fetchUpdatePlanFromCatalogEntry(entry, branch, source);
+    migrations.push(...result.migrations);
+    references.push(result.reference);
+  }
+
+  return { migrations, references };
+}
+
 async function fetchManifestFromCatalogEntry(
   entry: CatalogEntry,
   branch: string,
@@ -292,6 +318,28 @@ async function fetchIntegrationManifestFromCatalogEntry(
     reference: {
       path: manifestPath,
       repo: `${resolveOwner}/${resolveRepo}`,
+      branch,
+      digest: digestManifest(yamlText),
+    },
+  };
+}
+
+async function fetchUpdatePlanFromCatalogEntry(
+  entry: UpdatePlanCatalogEntry,
+  branch: string,
+  source: MarketSource
+): Promise<{ migrations: MigrationSpec[]; reference: ManifestReference }> {
+  const yamlText = await fetchFile(entry.file, branch, source);
+  const plan = parseUpdatePlan(yamlText);
+  if (plan.appId !== entry.appId) {
+    throw new Error(`Update plan "${entry.id}" appId mismatch: catalog=${entry.appId}, plan=${plan.appId}`);
+  }
+
+  return {
+    migrations: plan.migrations,
+    reference: {
+      path: entry.file,
+      repo: `${source.organization}/${source.repository}`,
       branch,
       digest: digestManifest(yamlText),
     },

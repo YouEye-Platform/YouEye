@@ -397,6 +397,15 @@ export const UpdateSchema = z.object({
   migrations: z.array(MigrationSchema).optional().default([]),
 });
 
+export const UpdatePlanSchema = z.object({
+  apiVersion: z.literal('v1'),
+  kind: z.literal('update-plan'),
+  appId: z.string().min(1),
+  version: z.string().optional(),
+  minPlatformVersion: z.string().optional(),
+  migrations: z.array(MigrationSchema).optional().default([]),
+});
+
 // ─── Detail (app detail page) ─────────────────────────────
 
 export const DetailScreenshotSchema = z.object({
@@ -503,10 +512,18 @@ export const IntegrationCatalogEntrySchema = z.object({
   targetAppId: z.string().optional(),
 });
 
+export const UpdatePlanCatalogEntrySchema = z.object({
+  id: z.string().min(1),
+  appId: z.string().min(1),
+  file: z.string().min(1),
+  latestVersion: z.string().optional(),
+});
+
 export const CatalogSchema = z.object({
   apiVersion: z.literal('v1'),
   kind: z.literal('catalog'),
   apps: z.array(CatalogEntrySchema).default([]),
   system: z.array(SystemCatalogEntrySchema).default([]),
   integrations: z.array(IntegrationCatalogEntrySchema).default([]),
+  updatePlans: z.array(UpdatePlanCatalogEntrySchema).default([]),
 });
