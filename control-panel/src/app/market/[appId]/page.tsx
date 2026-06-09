@@ -27,6 +27,7 @@ import {
   EyeOff,
   Copy,
   Plug,
+  RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -70,6 +71,8 @@ export default function AppDetailPage() {
   const [installDone, setInstallDone] = useState(false);
   const [switchingSource, setSwitchingSource] = useState(false);
   const [sourceSwitchMessage, setSourceSwitchMessage] = useState<string | null>(null);
+  const [syncingManifest, setSyncingManifest] = useState(false);
+  const [manifestSyncMessage, setManifestSyncMessage] = useState<string | null>(null);
   const [applyingIntegration, setApplyingIntegration] = useState(false);
   const [integrationMessage, setIntegrationMessage] = useState<string | null>(null);
 
@@ -254,6 +257,29 @@ export default function AppDetailPage() {
       setSourceSwitchMessage(err instanceof Error ? err.message : 'Failed to switch source');
     } finally {
       setSwitchingSource(false);
+    }
+  };
+
+  const handleSyncManifest = async () => {
+    if (!app || app.itemKind === 'integration') return;
+    setSyncingManifest(true);
+    setManifestSyncMessage(null);
+    try {
+      const res = await authenticatedFetch(`/api/market/app/${encodeURIComponent(app.id)}/manifest-sync`, {
+        method: 'POST',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.status !== 'ok') throw new Error(data.error || 'Failed to sync manifest');
+      const source = data.sourceId || status?.sourceName || status?.sourceId || app.sourceName || app.sourceId || 'selected Market source';
+      const surfaceCopy = Number.isFinite(data.surfaces)
+        ? `${data.surfaces} surface${data.surfaces === 1 ? '' : 's'}`
+        : 'manifest surfaces';
+      setManifestSyncMessage(`Synced ${app.name} from ${source}; ${surfaceCopy} are now available to UI.`);
+      await Promise.all([fetchApp(), fetchStatus()]);
+    } catch (err) {
+      setManifestSyncMessage(err instanceof Error ? err.message : 'Failed to sync manifest');
+    } finally {
+      setSyncingManifest(false);
     }
   };
 
@@ -487,6 +513,19 @@ export default function AppDetailPage() {
               <Button
                 size="lg"
                 variant="outline"
+                onClick={handleSyncManifest}
+                disabled={syncingManifest}
+              >
+                {syncingManifest ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                )}
+                Sync manifest
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
                 className="text-red-600 hover:bg-red-50 hover:text-red-700"
                 onClick={() => setShowUninstallDialog(true)}
                 disabled={uninstalling}
@@ -661,6 +700,12 @@ export default function AppDetailPage() {
         {sourceSwitchMessage && (
           <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
             {sourceSwitchMessage}
+          </div>
+        )}
+
+        {manifestSyncMessage && (
+          <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+            {manifestSyncMessage}
           </div>
         )}
 

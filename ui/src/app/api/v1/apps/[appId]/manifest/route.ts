@@ -6,11 +6,19 @@
 
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { getBridgeToken } from "@/lib/admin/bridge-client";
 import {
   getApp,
   fetchAppManifest,
   updateAppManifest,
 } from "@/lib/db/queries/app-management";
+
+function validateBridgeAuth(request: Request): boolean {
+  const provided = request.headers.get("X-UI-Bridge-Token") ?? request.headers.get("x-ui-bridge-token");
+  if (!provided) return false;
+  const expected = getBridgeToken();
+  return expected !== null && provided === expected;
+}
 
 export async function GET(
   request: Request,
@@ -59,4 +67,38 @@ export async function GET(
     { error: "No manifest available" },
     { status: 404 }
   );
+}
+
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ appId: string }> }
+) {
+  if (!validateBridgeAuth(request)) {
+    const session = await getSession();
+    if (!session?.isAdmin) {
+      return NextResponse.json({ error: "Admin required" }, { status: 403 });
+    }
+  }
+
+  const { appId } = await params;
+  const app = await getApp(appId);
+  if (!app) {
+    return NextResponse.json({ error: "App not found" }, { status: 404 });
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const manifest = body?.manifest;
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    return NextResponse.json(
+      { error: "manifest object is required" },
+      { status: 400 }
+    );
+  }
+
+  await updateAppManifest(appId, manifest as Record<string, unknown>);
+  return NextResponse.json({
+    success: true,
+    app_id: appId,
+    manifest_updated: true,
+  });
 }

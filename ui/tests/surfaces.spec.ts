@@ -15,6 +15,7 @@ test('UI normalizes widgets, info cards, timeline cards, notifications, and surf
   const appManagement = read('src/lib/db/queries/app-management.ts');
   const widgetsRoute = read('src/app/api/v1/apps/widgets/route.ts');
   const surfacesRoute = read('src/app/api/v1/apps/surfaces/route.ts');
+  const manifestRoute = read('src/app/api/v1/apps/[appId]/manifest/route.ts');
   const timelineRoute = read('src/app/api/v1/timeline/route.ts');
   const notificationsRoute = read('src/app/api/v1/notifications/route.ts');
   const notificationBell = read('src/components/layout/notification-bell.tsx');
@@ -45,6 +46,11 @@ test('UI normalizes widgets, info cards, timeline cards, notifications, and surf
 
   assert.match(surfacesRoute, /surfaces: declarations\.flatMap/);
   assert.match(surfacesRoute, /legacy_source: surface\.legacySource/);
+
+  assert.match(manifestRoute, /validateBridgeAuth/);
+  assert.match(manifestRoute, /X-UI-Bridge-Token/);
+  assert.match(manifestRoute, /export async function POST/);
+  assert.match(manifestRoute, /updateAppManifest\(appId, manifest/);
 
   assert.match(timelineRoute, /entriesWithSurfaceEmbeds/);
   assert.match(timelineRoute, /timeline_cards/);

@@ -3764,3 +3764,22 @@ pnpm hoists sharp to workspace root with symlinks. Next.js standalone copies the
 - The native installer refactor is additive (writeNativeEnvFile wraps buildPlatformEnv); per-app install functions are unchanged structurally
 - Manifest schema additions are optional fields — existing manifests validate without update block
 - Phase 2 (native installer manifest-driven refactor) is deferred — needs individual app install testing
+## v0.4.13.63 / v0.4.3.13 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Sync installed app manifests from selected Market source into UI cache
+
+### Changes
+- `control-panel/src/lib/market/ui-manifest-sync.ts` — added Market-source manifest refresh that fetches the installed app's selected source manifest, updates install audit metadata, and pushes the manifest to UI through the bridge token.
+- `control-panel/src/app/api/market/app/[appId]/manifest-sync/route.ts` — added an admin-only Market API endpoint for manifest-only sync.
+- `control-panel/src/app/market/[appId]/page.tsx` — added an installed-app `Sync manifest` action with status messaging.
+- `ui/src/app/api/v1/apps/[appId]/manifest/route.ts` — added a bridge-authenticated POST path for CP to update UI's cached app manifest.
+- `control-panel/tests/market-surfaces.spec.ts` and `ui/tests/surfaces.spec.ts` — added focused coverage for manifest sync and bridge manifest updates.
+
+### Test Results
+- Focused CP: `CONTROL_PANEL_ROOT=$PWD/control-panel ./node_modules/.bin/tsx --test control-panel/tests/market-surfaces.spec.ts` — passed.
+- Focused UI: `UI_ROOT=$PWD/ui ./node_modules/.bin/tsx --test ui/tests/surfaces.spec.ts` — passed.
+
+### Notes for Iris
+- Sync is manifest-only. It does not recreate containers, switch sources, or mutate app runtime settings; it refreshes UI surface/widget metadata from the installed app's selected Market manifest and records the manifest digest/path/repo/branch in install metadata.

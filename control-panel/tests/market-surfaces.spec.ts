@@ -25,6 +25,28 @@ test('Market app manifests support unified app surfaces', () => {
   assert.match(catalog, /surfaces: manifest\.surfaces/);
 });
 
+test('installed app manifests can be synced from Market into UI', () => {
+  const sync = read('src/lib/market/ui-manifest-sync.ts');
+  const route = read('src/app/api/market/app/[appId]/manifest-sync/route.ts');
+  const detailPage = read('src/app/market/[appId]/page.tsx');
+
+  assert.match(sync, /fetchManifestFromSource/);
+  assert.match(sync, /fetchManifestReferenceFromSource/);
+  assert.match(sync, /readInstallMetadata/);
+  assert.match(sync, /\/api\/v1\/apps\/\$\{encodeURIComponent\(appId\)\}\/manifest/);
+  assert.match(sync, /X-UI-Bridge-Token/);
+  assert.match(sync, /metadata\.manifestDigest = reference\.digest/);
+  assert.match(sync, /surfaces: manifest\.surfaces\?\.length \?\? 0/);
+
+  assert.match(route, /getSession/);
+  assert.match(route, /session\?\.isAdmin/);
+  assert.match(route, /syncInstalledAppManifestToUI\(appId\)/);
+
+  assert.match(detailPage, /handleSyncManifest/);
+  assert.match(detailPage, /\/api\/market\/app\/\$\{encodeURIComponent\(app\.id\)\}\/manifest-sync/);
+  assert.match(detailPage, /Sync manifest/);
+});
+
 test('Market schema parses dashboard, timeline, and notification surfaces', () => {
   const parsed = AppManifestSchema.parse({
     apiVersion: 'v1',
