@@ -6,8 +6,8 @@ export async function GET() {
   return NextResponse.json({
     issuer: config.issuer,
     authorization_endpoint: `${config.externalUrl}/application/o/authorize/`,
-    token_endpoint: `${config.externalUrl}/application/o/token/`,
-    userinfo_endpoint: `${config.externalUrl}/application/o/userinfo/`,
+    token_endpoint: `${config.externalUrl}/application/o/token`,
+    userinfo_endpoint: `${config.externalUrl}/application/o/userinfo`,
     jwks_uri: `${config.externalUrl}/oauth/jwks`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code'],
@@ -17,4 +17,3 @@ export async function GET() {
     token_endpoint_auth_methods_supported: ['client_secret_post'],
   });
 }
-

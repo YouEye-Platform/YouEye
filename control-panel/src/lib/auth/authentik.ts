@@ -31,8 +31,8 @@ export function getOAuthConfig() {
     clientSecret,
     identityUrl,
     authorizeUrl: `${identityUrl}/application/o/authorize/`,
-    tokenUrl: `${internalUrl}/application/o/token/`,
-    userinfoUrl: `${internalUrl}/application/o/userinfo/`,
+    tokenUrl: `${internalUrl}/application/o/token`,
+    userinfoUrl: `${internalUrl}/application/o/userinfo`,
   };
 }
 
