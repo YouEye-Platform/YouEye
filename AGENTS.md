@@ -1,3 +1,20 @@
+## v0.4.13.34 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Match scoped Caddy app grants by app token
+
+### Changes
+- `control-panel/src/lib/caddy/client.ts` — Scoped app-grant routes now match the approved app token header instead of the app container source IP.
+- `control-panel/src/lib/bridges/manager.ts` — Reads the source app's injected `YOUEYE_APP_TOKEN` when creating Search to SearXNG scoped Caddy grants.
+- `README.md`, `control-panel/package.json` — Bumped Control Panel to `0.4.13.34`.
+
+### Test Results
+- Pending build, Search patch release, and live scoped-grant verification.
+
+### Notes for Iris
+- CP `0.4.13.33` proved source-IP matching was too strict for live app-to-Caddy traffic; `0.4.13.34` keeps host/path scoping and uses the per-app secret token as the app identity proof.
+
 ## v0.4.13.33 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

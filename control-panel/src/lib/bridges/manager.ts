@@ -291,8 +291,13 @@ async function createScopedCaddyGrant(bridge: Bridge): Promise<{ url: string; pa
 
   const fromContainer = await resolveContainerName(bridge.from);
   const toContainer = await resolveContainerName(bridge.to);
-  const fromIp = await getIncusContainerIP(fromContainer);
-  if (!fromIp) throw new Error(`Could not resolve source IP for ${fromContainer}`);
+  const tokenResult = await execShell(
+    fromContainer,
+    `awk -F= '$1=="YOUEYE_APP_TOKEN"{print $2}' /etc/${fromContainer}.env 2>/dev/null | tail -n 1`,
+    { timeout: 5_000 },
+  );
+  const appToken = tokenResult.stdout.trim();
+  if (!appToken) throw new Error(`Could not resolve app token for ${fromContainer}`);
 
   const targetMeta = await readInstallMetadata(bridge.to);
   if (!targetMeta?.subdomain || !targetMeta.domain) {
@@ -311,10 +316,10 @@ async function createScopedCaddyGrant(bridge: Bridge): Promise<{ url: string; pa
 
   await addScopedAppGrantRoute({
     id: getScopedGrantRouteId(bridge.from, bridge.to),
-    fromIp,
     hostname,
     upstreamDial: `${targetIp}:${targetPort}`,
     paths,
+    appToken,
   });
 
   return {

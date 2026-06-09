@@ -1865,19 +1865,19 @@ export async function removeAppRoutes(appId: string): Promise<void> {
 
 export interface ScopedAppGrantRoute {
   id: string;
-  fromIp: string;
   hostname: string;
   upstreamDial: string;
   paths: string[];
+  appToken?: string;
 }
 
 /**
  * Add a narrow app-to-app Caddy grant route.
  *
  * This intentionally bypasses browser forward-auth only for traffic that:
- * - originates from the approved app container IP,
  * - targets the approved app hostname,
- * - matches the approved path list.
+ * - matches the approved path list,
+ * - presents the approved app token header.
  */
 export async function addScopedAppGrantRoute(route: ScopedAppGrantRoute): Promise<void> {
   const cfg = await getConfig();
@@ -1889,13 +1889,17 @@ export async function addScopedAppGrantRoute(route: ScopedAppGrantRoute): Promis
 
   server.routes = server.routes.filter((r: any) => r['@id'] !== route.id);
 
+  const match: Record<string, unknown> = {
+    host: [route.hostname],
+    path: route.paths,
+  };
+  if (route.appToken) {
+    match.header = { 'X-Youeye-App-Token': [route.appToken] };
+  }
+
   const grantRoute: CaddyRoute = {
     '@id': route.id,
-    match: [{
-      host: [route.hostname],
-      path: route.paths,
-      remote_ip: { ranges: [route.fromIp] },
-    }],
+    match: [match],
     handle: [{
       handler: 'reverse_proxy',
       upstreams: [{ dial: route.upstreamDial }],
@@ -1905,7 +1909,7 @@ export async function addScopedAppGrantRoute(route: ScopedAppGrantRoute): Promis
 
   const stripIndex = server.routes.findIndex((r: any) => r['@id'] === 'security-header-strip');
   if (stripIndex >= 0) {
-    server.routes.splice(stripIndex + 1, 0, grantRoute);
+    server.routes.splice(stripIndex, 0, grantRoute);
   } else {
     server.routes.unshift(grantRoute);
   }
