@@ -1,3 +1,22 @@
+## v0.4.3.15 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Require explicit timeline permission approval for app writes
+
+### Changes
+- `ui/src/lib/permissions/approval.ts` — Added shared approval-response helpers with relative and absolute approval URLs plus service app-id matching.
+- `ui/src/app/api/v1/permissions/request/route.ts`, `ui/src/app/api/v1/permissions/check/route.ts` — Service-auth apps can request and check only their own app permissions and receive approval metadata, but only a browser session can approve grants.
+- `ui/src/app/api/v1/timeline/route.ts` — Removed native-app `timeline:write` auto-grants; missing timeline permission now returns approval metadata instead of silently granting access.
+- `ui/tests/permission-approval.spec.mjs`, `ui/tests/timeline-permission-approval.spec.mjs` — Added focused regression coverage for explicit service-auth timeline permission consent.
+- `ui/package.json`, `README.md` — Bumped UI to `0.4.3.15`.
+
+### Test Results
+- Pending release verification.
+
+### Notes for Iris
+- Existing users with already-granted `timeline:write` keep working. New or revoked users now need explicit approval before app timeline writes are accepted.
+
 ## v0.4.3.14 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

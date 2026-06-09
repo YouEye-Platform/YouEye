@@ -6,12 +6,16 @@
  */
 
 import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 import { getSession } from "@/lib/auth";
+import { resolveServiceAuth } from "@/lib/auth/service";
 import { checkPermission } from "@/lib/db/queries/permissions";
+import { permissionAppMatches } from "@/lib/permissions/approval";
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   const session = await getSession();
-  if (!session) {
+  const serviceUser = session ? null : await resolveServiceAuth(request);
+  if (!session && !serviceUser) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -26,7 +30,16 @@ export async function GET(request: Request) {
     );
   }
 
-  const granted = await checkPermission(session.userId, appId, permission);
+  const serviceAppId = request.headers.get("x-youeye-app");
+  if (serviceUser && serviceAppId && !permissionAppMatches(appId, serviceAppId)) {
+    return NextResponse.json(
+      { error: "service app cannot check permissions for another app" },
+      { status: 403 }
+    );
+  }
+  const targetAppId = serviceUser && serviceAppId ? serviceAppId : appId;
 
-  return NextResponse.json({ permission, app_id: appId, granted });
+  const granted = await checkPermission((session?.userId ?? serviceUser?.id)!, targetAppId, permission);
+
+  return NextResponse.json({ permission, app_id: targetAppId, granted });
 }

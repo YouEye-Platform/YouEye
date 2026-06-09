@@ -21,11 +21,9 @@ import {
   processPendingEvents,
 } from "@/lib/db/queries/timeline";
 import type { TimelineEntryData } from "@/lib/db/queries/timeline";
-import { checkPermission, grantPermission } from "@/lib/db/queries/permissions";
+import { checkPermission } from "@/lib/db/queries/permissions";
 import { getAppMetaMap } from "@/lib/db/queries/app-management";
-
-/** Native app IDs that are auto-granted timeline:write */
-const NATIVE_APP_IDS = ["ye-wiki", "ye-search", "ye-notes", "ye-cinema", "ye-weather", "ye-translate"];
+import { buildPermissionApproval } from "@/lib/permissions/approval";
 
 export async function GET(request: Request) {
   const session = await getSession();
@@ -126,7 +124,7 @@ export async function GET(request: Request) {
  * POST — Ingest a timeline event from a native app.
  *
  * Requires X-YouEye-App and X-YouEye-User headers (service-to-service auth).
- * Checks timeline:write permission. Auto-grants for native apps.
+ * Checks timeline:write permission. Apps must receive explicit user approval.
  *
  * If the user has an active PIN session, encrypts immediately.
  * Otherwise, queues the event for encryption on next PIN unlock.
@@ -141,35 +139,19 @@ export async function POST(request: NextRequest) {
   if (serviceUser && appId) {
     userId = serviceUser.id;
 
-    // Auto-grant timeline:write for native apps
-    if (NATIVE_APP_IDS.includes(appId)) {
-      const hasPermission = await checkPermission(
-        userId,
-        appId,
-        "timeline:write"
+    const hasPermission = await checkPermission(
+      userId,
+      appId,
+      "timeline:write"
+    );
+    if (!hasPermission) {
+      return NextResponse.json(
+        {
+          error: "Permission denied: timeline:write required",
+          ...buildPermissionApproval(appId, ["timeline:write"], "persistent", request),
+        },
+        { status: 403 }
       );
-      if (!hasPermission) {
-        await grantPermission(
-          userId,
-          appId,
-          "timeline:write",
-          "persistent",
-          "system"
-        );
-      }
-    } else {
-      // Check permission for third-party apps
-      const hasPermission = await checkPermission(
-        userId,
-        appId,
-        "timeline:write"
-      );
-      if (!hasPermission) {
-        return NextResponse.json(
-          { error: "Permission denied: timeline:write required" },
-          { status: 403 }
-        );
-      }
     }
   } else {
     // Fall back to session auth (user creating entries directly)

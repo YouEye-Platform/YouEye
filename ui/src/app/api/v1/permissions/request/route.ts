@@ -5,13 +5,19 @@
  */
 
 import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 import { getSession } from "@/lib/auth";
+import { resolveServiceAuth } from "@/lib/auth/service";
 import { grantPermission } from "@/lib/db/queries/permissions";
-import { describePermission } from "@/lib/permissions/descriptors";
+import {
+  buildPermissionApproval,
+  permissionAppMatches,
+} from "@/lib/permissions/approval";
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   const session = await getSession();
-  if (!session) {
+  const serviceUser = session ? null : await resolveServiceAuth(request);
+  if (!session && !serviceUser) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -25,6 +31,15 @@ export async function POST(request: Request) {
     );
   }
 
+  const serviceAppId = request.headers.get("x-youeye-app");
+  if (serviceUser && serviceAppId && !permissionAppMatches(app_id, serviceAppId)) {
+    return NextResponse.json(
+      { error: "service app cannot request permissions for another app" },
+      { status: 403 }
+    );
+  }
+  const targetAppId = serviceUser && serviceAppId ? serviceAppId : app_id;
+
   const requested = permissions
     .filter((permission: unknown): permission is string => typeof permission === "string")
     .filter((permission: string) => permission.length > 0);
@@ -36,28 +51,16 @@ export async function POST(request: Request) {
     );
   }
 
-  const descriptors = requested.map((permission: string) => describePermission(permission));
+  const approval = buildPermissionApproval(targetAppId, requested, grant_type, request);
 
-  if (approved !== true) {
-    const params = new URLSearchParams();
-    params.set("app_id", app_id);
-    for (const permission of requested) params.append("permission", permission);
-    if (typeof grant_type === "string" && grant_type.length > 0) params.set("grant_type", grant_type);
-
-    return NextResponse.json({
-      success: false,
-      approval_required: true,
-      app_id,
-      requested: requested,
-      permissions: descriptors,
-      approval_url: `/permissions/approve?${params.toString()}`,
-    }, { status: 202 });
+  if (approved !== true || !session) {
+    return NextResponse.json(approval, { status: 202 });
   }
 
   for (const perm of requested) {
     await grantPermission(
       session.userId,
-      app_id,
+      targetAppId,
       perm,
       typeof grant_type === "string" && grant_type.length > 0 ? grant_type : "persistent",
       "user"
@@ -67,6 +70,6 @@ export async function POST(request: Request) {
   return NextResponse.json({
     success: true,
     granted: requested,
-    permissions: descriptors,
+    permissions: approval.permissions,
   });
 }
