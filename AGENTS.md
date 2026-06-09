@@ -12,9 +12,15 @@
 ### Test Results
 - Focused UI tests passed: `node --test tests/app-preference-settings.spec.mjs tests/launch-requirements.spec.mjs tests/permission-approval.spec.mjs tests/timeline-permission-approval.spec.mjs`.
 - `pnpm --dir ui build` passed for UI `0.4.3.20` with the known local `127.0.0.1:5432` static-generation noise.
+- Verified local release tarball contains flat `server.js` and package version `0.4.3.20`.
+- Released `ui-artem-v0.4.3.20` with exact `standalone.tar`, snapshotted live containers, and deployed through CP's UI update endpoint.
+- Final `spine status` reports UI `0.4.3.20`, CP `0.4.13.67`, 21 running containers, and 0 stopped.
+- Live smoke reused `plan3-preferences-smoke`: launch requirements reported missing `defaultNotebook` and `digestFrequency`, service-auth settings write saved `defaultNotebook:"Personal"`, `digestFrequency:"weekly"`, and `showHints:false`, launch requirements then returned `first_launch_complete:true`, and cleanup verified 0 app rows plus 0 settings namespaces remain.
+- Built-in Codex Browser opened the authenticated manifest API and captured that the stored manifest includes the preference schema. Browser visual route screenshots at `/tmp/codex-browser-plan3-preference-form-0.4.3.20-fresh-tab.png` still showed stale client chunks without the form; deployed chunk inspection confirmed the live app-specific bundle contains the `Preferences` form and `cache:"no-store"` fetches.
 
 ### Notes for Iris
 - This follows the live `0.4.3.19` verification path where the server manifest was correct but the browser-side form fetch needed cache-resistant reads.
+- If the visual settings route still lacks the App Settings preference tab in an existing browser session, clear/update the service worker or open a fresh browser profile; the built-in Codex browser held older route chunks during this verification.
 
 ## v0.4.3.19 — artem — 2026-06-10
 **Branch:** artem
