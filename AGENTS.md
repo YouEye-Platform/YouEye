@@ -1,3 +1,26 @@
+## v0.4.13.45 / v0.4.13.46 / v0.4.13.47 / v0.4.13.48 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Prove Jellyfin standalone YouEye ID Integration install
+
+### Changes
+- `control-panel/src/lib/market/caddy-ca.ts`, `control-panel/src/lib/market/engine.ts`, `control-panel/src/lib/market/integration-runner.ts` — Inject the Caddy root CA for selected/applied standalone identity Integrations so target apps can trust YouEye ID through Caddy.
+- `control-panel/src/lib/market/catalog.ts` — Fetch standalone Integration manifests fresh during apply/install so the executed manifest matches the recorded digest.
+- `control-panel/src/app/application/o/userinfo/route.ts` — Accept Bearer, POST form `access_token`, and query `access_token` userinfo requests.
+- `control-panel/src/app/application/o/[clientId]/.well-known/openid-configuration/route.ts`, `control-panel/src/lib/auth/authentik.ts` — Advertise/use no-slash token and userinfo endpoints to avoid POST redirects for stricter OAuth clients.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.48`.
+
+### Test Results
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.45`, `0.4.13.46`, `0.4.13.47`, and `0.4.13.48`.
+- Release assets verified as `standalone.tar` with `server.js`, `package.json`, and embedded versions through `0.4.13.48`.
+- Live deploy on `192.168.31.160`: CP updated through `spine update control` to `0.4.13.48`; `spine status` reports 11 running containers and 0 stopped.
+- Live Jellyfin clean install with `selectedIntegrations: ["jellyfin-youeye-id"]` installed the base app, applied the standalone Integration, recorded installed Integration metadata, and left `forwardAuthEnabled:false`.
+- Manual OAuth probe verified the no-slash YouEye ID token and userinfo endpoints with the Jellyfin client; Codex Browser verified Jellyfin SSO lands on `https://jellyfin.potato.app/web/index.html#/home` with no unauthorized/error text.
+
+### Notes for Iris
+- The no-slash token/userinfo discovery endpoints are important for OAuth clients that do not handle POST 308 redirects safely. Keep compatibility aliases, but avoid advertising slash-suffixed POST endpoints.
+
 ## v0.4.13.43 / v0.4.13.44 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc
