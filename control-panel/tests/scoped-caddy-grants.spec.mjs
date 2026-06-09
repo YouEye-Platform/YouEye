@@ -13,6 +13,7 @@ test('scoped app-token Caddy grants deny unapproved app-token fallthrough', () =
   const caddy = read('src/lib/caddy/client.ts');
   const manager = read('src/lib/bridges/manager.ts');
   const caddyCa = read('src/lib/market/caddy-ca.ts');
+  const schema = read('src/lib/market/schema.ts');
   const repairRoute = read('src/app/api/setup/control-routes/route.ts');
 
   assert.match(caddy, /SCOPED_APP_GRANT_DENY_ROUTE_ID = 'app-grant-token-deny'/);
@@ -36,7 +37,10 @@ test('scoped app-token Caddy grants deny unapproved app-token fallthrough', () =
   assert.match(repairRoute, /app-grant-token-deny/);
 
   assert.match(manager, /injectCaddyRootCA/);
-  assert.match(manager, /function getScopedCaddyGrantMethods/);
+  assert.match(manager, /async function getScopedCaddyGrantSpec/);
+  assert.match(manager, /fetchManifestFromSource\(from, sourceMeta\?\.sourceId\)/);
+  assert.match(manager, /w\.appId === to && w\.caddyGrant\?\.paths\?\.length/);
+  assert.match(manager, /predate manifest-declared Caddy grants/);
   assert.match(manager, /allowedMethods: b\.allowedMethods/);
   assert.match(manager, /allowedMethods: scopedGrant\?\.methods/);
   assert.match(manager, /action: 'restart'/);
@@ -51,6 +55,11 @@ test('scoped app-token Caddy grants deny unapproved app-token fallthrough', () =
   assert.match(caddyCa, /SSL_CERT_FILE=\/usr\/local\/share\/ca-certificates\/caddy-root\.crt/);
   assert.match(caddyCa, /REQUESTS_CA_BUNDLE=\/usr\/local\/share\/ca-certificates\/caddy-root\.crt/);
   assert.match(caddyCa, /youeye-caddy-ca\.conf/);
+
+  assert.match(schema, /CaddyGrantSchema/);
+  assert.match(schema, /paths: z\.array\(z\.string\(\)\.min\(1\)\)\.min\(1\)/);
+  assert.match(schema, /methods: z\.array\(z\.enum\(\['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'\]\)\)\.optional\(\)\.default\(\['GET'\]\)/);
+  assert.match(schema, /caddyGrant: CaddyGrantSchema\.optional\(\)/);
 });
 
 test('bridge JSON stores use atomic temp-file rename writes', () => {

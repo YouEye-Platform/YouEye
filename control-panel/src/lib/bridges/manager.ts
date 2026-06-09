@@ -19,7 +19,7 @@ import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
 import { execShell, incusRequest } from '../incus/server';
 import { CONTAINER_DOMAIN } from '../market/constants';
 import { readInstallMetadata, listInstalledApps } from '../market/metadata';
-import { fetchManifest } from '../market/catalog';
+import { fetchManifest, fetchManifestFromSource } from '../market/catalog';
 import { injectCaddyRootCA } from '../market/caddy-ca';
 import { readFile } from 'fs/promises';
 import { listInternetGrants } from './internet-store';
@@ -276,28 +276,38 @@ export async function resolveBridgeMappings(
   });
 }
 
-function getScopedCaddyGrantPaths(from: string, to: string): string[] | null {
-  if (from === 'search' && to === 'searxng') {
-    return ['/search*', '/autocompleter*'];
-  }
-  return null;
-}
-
-function getScopedCaddyGrantMethods(from: string, to: string): string[] {
-  if (from === 'search' && to === 'searxng') {
-    return ['GET'];
-  }
-  return ['GET'];
-}
-
 function getScopedGrantRouteId(from: string, to: string): string {
   return `app-grant-${from}-to-${to}`;
 }
 
+async function getScopedCaddyGrantSpec(from: string, to: string): Promise<{ paths: string[]; methods: string[] } | null> {
+  try {
+    const sourceMeta = await readInstallMetadata(from);
+    const manifest = await fetchManifestFromSource(from, sourceMeta?.sourceId);
+    const want = manifest.wants?.find((w) => w.appId === to && w.caddyGrant?.paths?.length);
+    if (want?.caddyGrant?.paths?.length) {
+      return {
+        paths: want.caddyGrant.paths,
+        methods: want.caddyGrant.methods?.length ? want.caddyGrant.methods : ['GET'],
+      };
+    }
+  } catch (err) {
+    console.warn(`[bridges] Could not resolve manifest scoped grant for ${from}->${to}:`, err);
+  }
+
+  // Transitional compatibility for already-installed Search manifests that
+  // predate manifest-declared Caddy grants.
+  if (from === 'search' && to === 'searxng') {
+    return { paths: ['/search*', '/autocompleter*'], methods: ['GET'] };
+  }
+
+  return null;
+}
+
 async function createScopedCaddyGrant(bridge: Bridge): Promise<{ url: string; paths: string[]; methods: string[] } | null> {
-  const paths = getScopedCaddyGrantPaths(bridge.from, bridge.to);
-  if (!paths) return null;
-  const methods = getScopedCaddyGrantMethods(bridge.from, bridge.to);
+  const grantSpec = await getScopedCaddyGrantSpec(bridge.from, bridge.to);
+  if (!grantSpec) return null;
+  const { paths, methods } = grantSpec;
 
   const fromContainer = await resolveContainerName(bridge.from);
   const toContainer = await resolveContainerName(bridge.to);

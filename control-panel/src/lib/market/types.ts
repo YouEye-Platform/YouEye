@@ -40,6 +40,7 @@ import type {
   InstallParamSchema,
   ProvidesSchema,
   WantSchema,
+  CaddyGrantSchema,
   InternetSchema,
   PostDeployStepSchema,
   VolumeSchema,
@@ -85,6 +86,7 @@ export type DetailScreenshot = z.infer<typeof DetailScreenshotSchema>;
 export type InstallParam = z.infer<typeof InstallParamSchema>;
 export type ProvidesSpec = z.infer<typeof ProvidesSchema>;
 export type WantSpec = z.infer<typeof WantSchema>;
+export type CaddyGrantSpec = z.infer<typeof CaddyGrantSchema>;
 export type InternetSpec = z.infer<typeof InternetSchema>;
 export type PostDeployStep = z.infer<typeof PostDeployStepSchema>;
 export type VolumeSpec = z.infer<typeof VolumeSchema>;

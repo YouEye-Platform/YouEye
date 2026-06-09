@@ -323,6 +323,11 @@ export const ProvidesSchema = z.object({
 
 // ─── Wants (app-to-app connection declarations) ──────────
 
+export const CaddyGrantSchema = z.object({
+  paths: z.array(z.string().min(1)).min(1),
+  methods: z.array(z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'])).optional().default(['GET']),
+});
+
 /** System container IDs — never valid bridge/want targets */
 const SYSTEM_APP_IDS = [
   'postgres', 'caddy', 'pihole', 'control', 'ui',
@@ -334,6 +339,7 @@ export const WantSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   defaultPort: z.number().int().positive().optional(),
+  caddyGrant: CaddyGrantSchema.optional(),
 }).refine(
   (data) => !!(data.appId || data.type),
   { message: 'wants must specify appId or type' }
