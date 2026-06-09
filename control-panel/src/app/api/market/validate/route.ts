@@ -12,8 +12,9 @@ import { validateManifest } from '@/lib/market/validator';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { appId, manifest: rawManifest, subdomain } = body as {
+    const { appId, sourceId, manifest: rawManifest, subdomain } = body as {
       appId?: string;
+      sourceId?: string;
       manifest?: unknown;
       subdomain?: string;
     };
@@ -25,8 +26,8 @@ export async function POST(request: Request) {
       manifestData = rawManifest;
     } else if (appId) {
       // Fetch from catalog by appId
-      const { fetchManifest } = await import('@/lib/market/catalog');
-      manifestData = await fetchManifest(appId);
+      const { fetchManifestFromSource } = await import('@/lib/market/catalog');
+      manifestData = await fetchManifestFromSource(appId, sourceId);
     } else {
       return NextResponse.json({ error: 'Provide appId or manifest' }, { status: 400 });
     }

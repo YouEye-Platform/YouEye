@@ -200,6 +200,24 @@ export const SSOSchema = z.object({
   setup: SSOSetupSchema.optional(),
 });
 
+// ─── Integrations ─────────────────────────────────────────
+
+export const IntegrationSchema = z.object({
+  id: z.string().regex(/^[a-z0-9-]+$/, 'Integration id must be lowercase alphanumeric with dashes'),
+  name: z.string().min(1),
+  description: z.string().optional(),
+  type: z.enum(['identity', 'plugin', 'addon', 'script']).default('addon'),
+  recommended: z.boolean().optional().default(false),
+  installByDefault: z.boolean().optional().default(false),
+  required: z.boolean().optional().default(false),
+  target: z.object({
+    appId: z.string().min(1).optional(),
+    version: z.string().optional(),
+  }).optional(),
+  permissions: z.array(z.string()).optional().default([]),
+  sso: SSOSchema.optional(),
+});
+
 // ─── Capabilities ─────────────────────────────────────────
 
 const LinkHandlerSchema = z.object({
@@ -389,6 +407,7 @@ export const AppManifestSchema = z
     forwardAuth: z.enum(['default', 'enabled', 'disabled']).optional(),
     entrances: z.array(EntranceSchema).optional(),
     sso: SSOSchema.optional(),
+    integrations: z.array(IntegrationSchema).optional().default([]),
     backup: BackupSchema.optional(),
     uninstall: UninstallSchema.optional(),
     update: UpdateSchema.optional(),

@@ -277,6 +277,39 @@ async function resolveManifestPaths(
 
 // ─── MarketApp Conversion ─────────────────────────────────
 
+function getDisplayIntegrations(manifest: AppManifest): NonNullable<MarketApp['integrations']> {
+  const integrations: NonNullable<MarketApp['integrations']> = (manifest.integrations ?? []).map((integration) => ({
+    id: integration.id,
+    name: integration.name,
+    description: integration.description,
+    type: integration.type,
+    recommended: integration.recommended,
+    installByDefault: integration.installByDefault,
+    required: integration.required,
+    permissions: integration.permissions,
+  }));
+
+  const setupMethod = manifest.sso?.setup?.method;
+  const hasSetupSteps =
+    (setupMethod === 'api' && (manifest.sso?.setup?.api?.steps?.length ?? 0) > 0) ||
+    (setupMethod === 'cli' && (manifest.sso?.setup?.cli?.steps?.length ?? 0) > 0);
+
+  if (hasSetupSteps && !integrations.some((integration) => integration.id === 'youeye-id')) {
+    integrations.unshift({
+      id: 'youeye-id',
+      name: 'YouEye ID',
+      description: 'Configure this app to use YouEye ID after the base app is installed.',
+      type: 'identity',
+      recommended: true,
+      installByDefault: true,
+      required: false,
+      permissions: ['identity:oauth-client:create'],
+    });
+  }
+
+  return integrations;
+}
+
 function manifestToMarketApp(manifest: AppManifest, source?: MarketSource): MarketApp {
   return {
     id: manifest.metadata.id,
@@ -313,6 +346,7 @@ function manifestToMarketApp(manifest: AppManifest, source?: MarketSource): Mark
       choices: p.choices,
       validation: p.validation,
     })),
+    integrations: getDisplayIntegrations(manifest),
     entrances: manifest.entrances,
     forwardAuth: manifest.forwardAuth,
     capabilities: manifest.capabilities ? {

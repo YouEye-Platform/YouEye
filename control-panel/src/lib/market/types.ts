@@ -19,6 +19,7 @@ import type {
   SSOStepSchema,
   SSOSetupSchema,
   SSOCliStepSchema,
+  IntegrationSchema,
   BackupSchema,
   UninstallSchema,
   UpdateSchema,
@@ -54,6 +55,7 @@ export type SSOConfig = z.infer<typeof SSOSchema>;
 export type SSOStep = z.infer<typeof SSOStepSchema>;
 export type SSOSetup = z.infer<typeof SSOSetupSchema>;
 export type SSOCliStep = z.infer<typeof SSOCliStepSchema>;
+export type IntegrationSpec = z.infer<typeof IntegrationSchema>;
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;
 export type BackupSpec = z.infer<typeof BackupSchema>;
 export type UninstallSpec = z.infer<typeof UninstallSchema>;
@@ -98,6 +100,8 @@ export interface InstallConfig {
   repoBranch?: string;
   /** Connections approved at install time (from manifest.wants) */
   approvedConnections?: ApprovedConnection[];
+  /** Optional Market integrations selected during install */
+  selectedIntegrations?: string[];
   /** User's explicit internet/LAN access choice at install time */
   allowInternet?: boolean;
 }
@@ -153,6 +157,8 @@ export interface InstallMetadata {
   manifestSource?: string;
   /** Admin-visible default credentials (references secrets by name) */
   credentials?: CredentialMeta[];
+  /** Optional Market integrations selected during install */
+  selectedIntegrations?: string[];
   /** SSO entry URL path (e.g. /sso/OID/start/authentik) — appended to app URL for direct login */
   ssoEntryUrl?: string;
   /** Database mode from manifest — used by ACL migration to determine postgres access */
@@ -319,6 +325,16 @@ export interface MarketApp {
       min?: number;
       max?: number;
     };
+  }[];
+  integrations?: {
+    id: string;
+    name: string;
+    description?: string;
+    type: 'identity' | 'plugin' | 'addon' | 'script';
+    recommended?: boolean;
+    installByDefault?: boolean;
+    required?: boolean;
+    permissions?: string[];
   }[];
   entrances?: {
     name: string;

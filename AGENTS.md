@@ -1,3 +1,24 @@
+## v0.4.13.32 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add optional Market integration install toggles
+
+### Changes
+- `control-panel/src/lib/market/schema.ts`, `control-panel/src/lib/market/types.ts` — Added manifest and install metadata support for optional Market integrations.
+- `control-panel/src/lib/market/catalog.ts` — Exposes declared integrations and synthesizes a default YouEye ID integration for legacy API/CLI SSO setup manifests.
+- `control-panel/src/lib/market/engine.ts` — Keeps legacy SSO setup default-on for old clients, but skips API/CLI SSO creation/configuration when the user explicitly deselects the YouEye ID integration.
+- `control-panel/src/components/market/install-dialog.tsx`, `control-panel/src/app/embed/market/client.tsx` — Added install-time integration toggles and send selected integration ids to the installer.
+- `control-panel/src/app/api/market/validate/route.ts` — Validates manifests from the selected Market source.
+- `control-panel/tests/market-integrations.spec.ts` — Added static regression coverage for integration schema, default legacy SSO integration behavior, and install UI payloads.
+- `README.md`, `control-panel/package.json` — Bumped Control Panel to `0.4.13.32`.
+
+### Test Results
+- Pending final build, release, and live deploy verification.
+
+### Notes for Iris
+- This is the first compatibility bridge from embedded `sso.setup` scripts to explicit Integrations. Existing manifests still work by default; app manifests can be migrated to first-class `integrations` incrementally.
+
 ## v0.4.13.31 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Key, Type, Globe, Eye, EyeOff, ChevronDown, ChevronRight, Settings2, Link2, Wifi } from 'lucide-react';
+import { X, Key, Type, Globe, Eye, EyeOff, ChevronDown, ChevronRight, Settings2, Link2, Wifi, Plug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -47,6 +47,7 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [connections, setConnections] = useState<ConnectionsResponse | null>(null);
   const [connectionToggles, setConnectionToggles] = useState<Record<string, boolean>>({});
+  const [integrationToggles, setIntegrationToggles] = useState<Record<string, boolean>>({});
   const [allowInternet, setAllowInternet] = useState(false);
 
   // Initialize defaults
@@ -59,6 +60,14 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
     }
     setInstallParamsState(defaults);
   }, [app.installParams]);
+
+  useEffect(() => {
+    const toggles: Record<string, boolean> = {};
+    for (const integration of app.integrations ?? []) {
+      toggles[integration.id] = integration.required || integration.installByDefault || integration.recommended || false;
+    }
+    setIntegrationToggles(toggles);
+  }, [app.integrations]);
 
   // Fetch connections
   useEffect(() => {
@@ -162,6 +171,9 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
       targetAppId: c.targetAppId,
       approved: connectionToggles[c.targetAppId] ?? false,
     })) ?? [];
+    const selectedIntegrations = (app.integrations ?? [])
+      .filter((integration) => integration.required || integrationToggles[integration.id])
+      .map((integration) => integration.id);
 
     onInstall({
       appId: app.id,
@@ -174,6 +186,7 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
       installParams: Object.keys(resolvedParams).length > 0 ? resolvedParams : undefined,
       customName: trimmedName !== app.name ? trimmedName : undefined,
       approvedConnections: approvedConnections.length > 0 ? approvedConnections : undefined,
+      selectedIntegrations: (app.integrations?.length ?? 0) > 0 ? selectedIntegrations : undefined,
       allowInternet,
     });
   };
@@ -294,6 +307,50 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Integrations */}
+          {(app.integrations?.length ?? 0) > 0 && (
+            <div className="space-y-3">
+              <Label className="flex items-center gap-1.5">
+                <Plug className="h-3.5 w-3.5 text-gray-500" />
+                Integrations
+              </Label>
+              <div className="space-y-2">
+                {app.integrations!.map(integration => (
+                  <div
+                    key={integration.id}
+                    className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-800 p-3"
+                  >
+                    <div>
+                      <p className="text-sm font-medium">{integration.name}</p>
+                      {integration.description && (
+                        <p className="text-xs text-gray-400">{integration.description}</p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={integration.required || (integrationToggles[integration.id] ?? false)}
+                      disabled={integration.required}
+                      onClick={() => setIntegrationToggles(prev => ({
+                        ...prev,
+                        [integration.id]: !prev[integration.id],
+                      }))}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-60 ${
+                        integration.required || integrationToggles[integration.id] ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                          integration.required || integrationToggles[integration.id] ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

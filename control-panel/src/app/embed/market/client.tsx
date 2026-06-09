@@ -38,6 +38,15 @@ interface MarketApp {
     choices?: string[];
     description?: string;
   }>;
+  integrations?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    type?: string;
+    recommended?: boolean;
+    installByDefault?: boolean;
+    required?: boolean;
+  }>;
   forwardAuth?: string;
   detail?: {
     longDescription?: string;
@@ -268,6 +277,7 @@ export function MarketEmbedClient() {
   // Connection toggles
   const [connections, setConnections] = useState<ConnectionsData | null>(null);
   const [connectionToggles, setConnectionToggles] = useState<Record<string, boolean>>({});
+  const [integrationToggles, setIntegrationToggles] = useState<Record<string, boolean>>({});
   const [allowInternet, setAllowInternet] = useState(false);
 
   // Uninstall state
@@ -377,6 +387,11 @@ export function MarketEmbedClient() {
     setValidationReport(null);
     setConnections(null);
     setConnectionToggles({});
+    const integrationDefaults: Record<string, boolean> = {};
+    for (const integration of app.integrations ?? []) {
+      integrationDefaults[integration.id] = integration.required || integration.installByDefault || integration.recommended || false;
+    }
+    setIntegrationToggles(integrationDefaults);
     setAllowInternet(false);
     setInstallTarget(app);
 
@@ -420,6 +435,9 @@ export function MarketEmbedClient() {
       targetAppId: c.targetAppId,
       approved: connectionToggles[c.targetAppId] ?? false,
     })) ?? [];
+    const selectedIntegrations = (target.integrations ?? [])
+      .filter((integration) => integration.required || integrationToggles[integration.id])
+      .map((integration) => integration.id);
 
     try {
       const res = await fetch("/api/ui-bridge/market?action=install", {
@@ -433,6 +451,7 @@ export function MarketEmbedClient() {
           sourceRepoUrl: target.sourceRepoUrl,
           installParams: Object.keys(form.params).length > 0 ? form.params : undefined,
           approvedConnections: approvedConnections.length > 0 ? approvedConnections : undefined,
+          selectedIntegrations: (target.integrations?.length ?? 0) > 0 ? selectedIntegrations : undefined,
           allowInternet,
         }),
       });
@@ -969,6 +988,37 @@ export function MarketEmbedClient() {
                 ))}
               </div>
             </details>
+          )}
+
+          {/* Integrations */}
+          {(installTarget.integrations?.length ?? 0) > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                {renderIcon("package", 14)} Integrations
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {installTarget.integrations!.map(integration => (
+                  <div key={integration.id} style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "8px 12px", borderRadius: 8, border: "1px solid var(--embed-border)",
+                  }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>{integration.name}</div>
+                      {integration.description && (
+                        <div style={{ fontSize: 11, color: "var(--embed-text-muted)" }}>{integration.description}</div>
+                      )}
+                    </div>
+                    <ToggleSwitch
+                      on={integration.required || (integrationToggles[integration.id] ?? false)}
+                      onChange={v => {
+                        if (integration.required) return;
+                        setIntegrationToggles(prev => ({ ...prev, [integration.id]: v }));
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
 
           {/* Connections */}

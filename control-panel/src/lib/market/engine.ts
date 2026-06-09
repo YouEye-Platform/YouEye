@@ -195,6 +195,42 @@ function getSecretsPath(appId: string): string {
   return `app-${appId}`;
 }
 
+const LEGACY_YOUEYE_ID_INTEGRATION = 'youeye-id';
+
+function hasLegacySSOConfigureIntegration(manifest: AppManifest): boolean {
+  const setupMethod = manifest.sso?.setup?.method;
+  return (
+    (setupMethod === 'api' && (manifest.sso?.setup?.api?.steps?.length ?? 0) > 0) ||
+    (setupMethod === 'cli' && (manifest.sso?.setup?.cli?.steps?.length ?? 0) > 0)
+  );
+}
+
+function getDefaultSelectedIntegrations(manifest: AppManifest): string[] {
+  const ids = new Set<string>();
+
+  for (const integration of manifest.integrations ?? []) {
+    if (integration.required || integration.installByDefault || integration.recommended) {
+      ids.add(integration.id);
+    }
+  }
+
+  if (hasLegacySSOConfigureIntegration(manifest)) {
+    ids.add(LEGACY_YOUEYE_ID_INTEGRATION);
+  }
+
+  return [...ids];
+}
+
+function getSelectedIntegrations(manifest: AppManifest, config: InstallConfig): string[] {
+  return config.selectedIntegrations ?? getDefaultSelectedIntegrations(manifest);
+}
+
+function shouldEnableSSO(manifest: AppManifest, selectedIntegrations: string[]): boolean {
+  if (!manifest.sso) return false;
+  if (!hasLegacySSOConfigureIntegration(manifest)) return true;
+  return selectedIntegrations.includes(LEGACY_YOUEYE_ID_INTEGRATION);
+}
+
 function countSteps(manifest: AppManifest, ssoEnabled: boolean): number {
   let steps = 1; // Generate secrets
 
@@ -515,9 +551,9 @@ export async function installApp(
   const secretsPath = getSecretsPath(appId);
 
   // Determine SSO support from manifest
-  const hasSSOSection = !!manifest.sso;
+  const selectedIntegrations = getSelectedIntegrations(manifest, config);
   const identityConfig = await getIdentityProviderConfig();
-  const ssoEnabled = hasSSOSection;
+  const ssoEnabled = shouldEnableSSO(manifest, selectedIntegrations);
   const totalSteps = countSteps(manifest, ssoEnabled);
   let step = 0;
 
@@ -1112,6 +1148,7 @@ export async function installApp(
     credentials: manifest.credentials?.length
       ? manifest.credentials.map((c) => ({ label: c.label, username: c.username, passwordSecret: c.passwordSecret }))
       : undefined,
+    selectedIntegrations,
     ssoEntryUrl: manifest.sso?.entry_url
       ? resolveVariables(manifest.sso.entry_url, ctx)
       : undefined,
