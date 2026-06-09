@@ -89,3 +89,26 @@ export async function syncInstalledAppManifestToUI(appId: string): Promise<{
     surfaces: manifest.surfaces?.length ?? 0,
   };
 }
+
+export async function syncAppManifestObjectToUI(
+  appId: string,
+  manifest: Record<string, unknown>,
+): Promise<void> {
+  const bridgeToken = readBridgeToken();
+  if (!bridgeToken) {
+    throw new Error('UI bridge token is not configured');
+  }
+
+  const res = await fetch(`${uiBaseUrl()}/api/v1/apps/${encodeURIComponent(appId)}/manifest`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-UI-Bridge-Token': bridgeToken,
+    },
+    body: JSON.stringify({ manifest }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`UI manifest sync failed: ${res.status} ${text}`);
+  }
+}

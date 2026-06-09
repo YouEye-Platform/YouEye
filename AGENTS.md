@@ -1,3 +1,20 @@
+## v0.4.13.66 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Sync UI manifest cache after app updates
+
+### Changes
+- `control-panel/src/lib/market/ui-manifest-sync.ts` — Added a direct bridge sync helper for the manifest object already selected by the updater.
+- `control-panel/src/lib/market/updater.ts` — App updates now sync the updated Market manifest into YouEye UI before version records are saved.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.66`.
+
+### Test Results
+- Pending release verification.
+
+### Notes for Iris
+- Live Search first-launch testing exposed a stale UI cached manifest after app update; launch requirements depend on UI seeing the updated manifest permissions and canonical surfaces.
+
 ## v0.4.3.16 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

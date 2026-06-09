@@ -45,6 +45,7 @@ import { waitForAppHealth, waitForPostgresHealth } from './health';
 import { settingsService } from '@/lib/settings';
 import { isNewer, compareVersions, sortVersionsDesc } from '@/lib/version';
 import { buildMarketReleasesAPIURL, getMarketReleaseAssetDownloadURL, getMarketSource, type MarketReleaseAsset } from './source';
+import { syncAppManifestObjectToUI } from './ui-manifest-sync';
 import type {
   AppManifest,
   InstallEventCallback,
@@ -596,7 +597,7 @@ export async function updateMarketplaceApp(
   totalSteps += ociContainers.filter((c) => c.healthCheck).length;
 
   totalSteps += (postUpdateHooks?.length || 0); // post-update hooks
-  totalSteps += 2; // save metadata + cleanup
+  totalSteps += 3; // sync UI manifest + save metadata + cleanup
 
   let step = 0;
 
@@ -720,6 +721,13 @@ export async function updateMarketplaceApp(
     // ── Step 6: Post-update hooks ────────────────────────
 
     step = await runUpdateHooks(postUpdateHooks, appId, containerSpecs, onEvent, step, totalSteps, 'Post-update');
+
+    // ── Step N-2: Sync manifest cache to UI ──────────────
+
+    step++;
+    emit(onEvent, step, totalSteps, 'running', 'Syncing app manifest to YouEye UI...');
+    await syncAppManifestObjectToUI(appId, manifest as unknown as Record<string, unknown>);
+    emit(onEvent, step, totalSteps, 'success', 'App manifest synced to YouEye UI');
 
     // ── Step N-1: Update version in DB ───────────────────
 
