@@ -1,3 +1,24 @@
+## v0.4.13.52 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Expose system app manifests through Market catalog
+
+### Changes
+- `control-panel/src/lib/market/schema.ts`, `control-panel/src/lib/market/parser.ts`, `control-panel/src/lib/market/types.ts` — Added first-class `kind: system-app` manifest parsing and display metadata types.
+- `control-panel/src/lib/market/catalog.ts` — Added source-aware system manifest fetching and conversion to Market metadata with image/container/version/audit fields.
+- `control-panel/src/app/api/market/catalog/route.ts`, `control-panel/src/app/api/market/route.ts` — Return `systemApps` separately from normal app/integration browsing.
+- `control-panel/tests/market-system-apps.spec.ts` — Added regression coverage for system manifest parsing/exposure and pinned Market system manifests.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.52`.
+
+### Test Results
+- Focused Node test passed: `control-panel/tests/market-system-apps.spec.ts`.
+- Existing durable update-plan focused test still passed.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.52`.
+
+### Notes for Iris
+- This does not redeploy infrastructure. It makes Market the source of truth for system app version/image/container metadata so follow-up infrastructure update control can compare live state against source-specific system manifests.
+
 ## v0.4.3.8 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

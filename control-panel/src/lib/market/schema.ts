@@ -29,6 +29,8 @@ export const MetadataSchema = z.object({
   defaultSubdomain: z.string().min(1),
 });
 
+export const SystemMetadataSchema = MetadataSchema.omit({ defaultSubdomain: true });
+
 // ─── Health Check ──────────────────────────────────────────
 
 export const HealthCheckSchema = z.discriminatedUnion('type', [
@@ -404,6 +406,18 @@ export const UpdatePlanSchema = z.object({
   version: z.string().optional(),
   minPlatformVersion: z.string().optional(),
   migrations: z.array(MigrationSchema).optional().default([]),
+});
+
+export const SystemAppManifestSchema = z.object({
+  apiVersion: z.literal('v1'),
+  kind: z.literal('system-app'),
+  version: z.string().min(1),
+  metadata: SystemMetadataSchema,
+  image: z.string().min(1),
+  containerName: z.string().optional(),
+  healthCheck: HealthCheckSchema.optional(),
+  minPlatformVersion: z.string().optional(),
+  update: UpdateSchema.optional(),
 });
 
 // ─── Detail (app detail page) ─────────────────────────────

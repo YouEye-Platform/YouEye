@@ -10,8 +10,8 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
-import { parseCatalog, parseIntegrationManifest, parseManifest, parseUpdatePlan } from './parser';
-import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp, MigrationSpec, UpdatePlanCatalogEntry } from './types';
+import { parseCatalog, parseIntegrationManifest, parseManifest, parseSystemManifest, parseUpdatePlan } from './parser';
+import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp, MigrationSpec, SystemAppManifest, SystemCatalogEntry, UpdatePlanCatalogEntry } from './types';
 import { settingsService } from '@/lib/settings';
 import { buildMarketRawURL, getMarketSource, getMarketSources, isGitHubMarketSource, type MarketSource } from './source';
 
@@ -40,6 +40,11 @@ export interface IntegrationManifestFetchResult {
 export interface UpdatePlanFetchResult {
   migrations: MigrationSpec[];
   references: ManifestReference[];
+}
+
+export interface SystemManifestFetchResult {
+  manifest: SystemAppManifest;
+  reference: ManifestReference;
 }
 
 // ─── Branch Resolution ────────────────────────────────────
@@ -346,6 +351,28 @@ async function fetchUpdatePlanFromCatalogEntry(
   };
 }
 
+async function fetchSystemManifestFromCatalogEntry(
+  entry: SystemCatalogEntry,
+  branch: string,
+  source: MarketSource
+): Promise<SystemManifestFetchResult> {
+  const yamlText = await fetchFile(entry.file, branch, source);
+  const manifest = parseSystemManifest(yamlText);
+  if (manifest.metadata.id !== entry.id) {
+    throw new Error(`System manifest "${entry.id}" id mismatch: catalog=${entry.id}, manifest=${manifest.metadata.id}`);
+  }
+
+  return {
+    manifest,
+    reference: {
+      path: entry.file,
+      repo: `${source.organization}/${source.repository}`,
+      branch,
+      digest: digestManifest(yamlText),
+    },
+  };
+}
+
 /**
  * Fetch a manifest from a repo URL (for custom/non-catalog installs).
  * Expects youeye-app.yaml at the repo root (or specified filename).
@@ -551,6 +578,38 @@ function integrationManifestToMarketApp(manifest: IntegrationManifest, source?: 
   };
 }
 
+function systemManifestToMarketApp(manifest: SystemAppManifest, source?: MarketSource, reference?: ManifestReference): MarketApp {
+  return {
+    id: manifest.metadata.id,
+    catalogKey: source ? `${source.id}:system:${manifest.metadata.id}` : undefined,
+    itemKind: 'system',
+    sourceId: source?.id,
+    sourceName: source?.name,
+    sourceRepoUrl: source?.repo_url,
+    manifestPath: reference?.path,
+    manifestRepo: reference?.repo,
+    manifestBranch: reference?.branch,
+    manifestDigest: reference?.digest,
+    name: manifest.metadata.name,
+    description: manifest.metadata.description,
+    icon: manifest.metadata.icon,
+    iconUrl: manifest.metadata.iconUrl,
+    category: manifest.metadata.category,
+    integration: 'basic',
+    version: manifest.version,
+    defaultSubdomain: '',
+    supportsSSO: false,
+    website: manifest.metadata.website,
+    tags: manifest.metadata.tags,
+    system: {
+      image: manifest.image,
+      containerName: manifest.containerName,
+      minPlatformVersion: manifest.minPlatformVersion,
+      managedBy: 'control-panel',
+    },
+  };
+}
+
 function integrationItemToAppToggle(item: MarketApp): NonNullable<MarketApp['integrations']>[number] {
   const integration = item.integrations?.[0];
   return {
@@ -630,6 +689,28 @@ export async function fetchAvailableApps(): Promise<MarketApp[]> {
   }
 
   return attachStandaloneIntegrations(apps);
+}
+
+export async function fetchAvailableSystemApps(): Promise<MarketApp[]> {
+  const sources = await getMarketSources();
+  const systemApps: MarketApp[] = [];
+
+  const results = await Promise.allSettled(sources.flatMap(async (source) => {
+    const catalog = await fetchCatalog(source);
+    const branch = await getEffectiveBranch();
+    return Promise.all((catalog.system ?? []).map(async (entry) => {
+      const result = await fetchSystemManifestFromCatalogEntry(entry, branch, source);
+      return systemManifestToMarketApp(result.manifest, source, result.reference);
+    }));
+  }));
+
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      systemApps.push(...result.value);
+    }
+  }
+
+  return systemApps;
 }
 
 export function clearCatalogCache(): void {

@@ -24,6 +24,7 @@ import type {
   BackupSchema,
   UninstallSchema,
   UpdateSchema,
+  SystemAppManifestSchema,
   UpdateHookStepSchema,
   MigrationSchema,
   MigrationStepSchema,
@@ -61,6 +62,7 @@ export type SSOSetup = z.infer<typeof SSOSetupSchema>;
 export type SSOCliStep = z.infer<typeof SSOCliStepSchema>;
 export type IntegrationSpec = z.infer<typeof IntegrationSchema>;
 export type IntegrationManifest = z.infer<typeof IntegrationManifestSchema>;
+export type SystemAppManifest = z.infer<typeof SystemAppManifestSchema>;
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;
 export type BackupSpec = z.infer<typeof BackupSchema>;
 export type UninstallSpec = z.infer<typeof UninstallSchema>;
@@ -358,7 +360,7 @@ export interface VariableContext {
 export interface MarketApp {
   id: string;
   catalogKey?: string;
-  itemKind?: 'app' | 'integration';
+  itemKind?: 'app' | 'integration' | 'system';
   sourceId?: string;
   sourceName?: string;
   sourceRepoUrl?: string;
@@ -434,6 +436,12 @@ export interface MarketApp {
     notifications?: boolean | 'push';
     smtp?: boolean;
     link_handlers?: Array<{ type: string; description: string; endpoint?: string; triggers: string[] }>;
+  };
+  system?: {
+    image: string;
+    containerName?: string;
+    minPlatformVersion?: string;
+    managedBy: 'control-panel';
   };
 }
 
