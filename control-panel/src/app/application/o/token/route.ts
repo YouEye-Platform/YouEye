@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'invalid_grant' }, { status: 400 });
   }
 
-  const accessToken = await createAccessToken(user, clientId);
+  const accessToken = await createAccessToken(user, clientId, authCode.scope);
   return NextResponse.json({
     access_token: accessToken,
     id_token: accessToken,
@@ -35,4 +35,3 @@ export async function POST(request: NextRequest) {
     scope: authCode.scope,
   });
 }
-

@@ -317,3 +317,20 @@ export async function getSigningSecret(): Promise<string> {
   `);
   return secret;
 }
+
+export async function getIdentitySecret(purpose: string): Promise<string | null> {
+  await ensureIdentitySchema();
+  const existing = await queryRows<{ secret: string }>(`
+    SELECT secret FROM identity_secrets WHERE purpose = ${sql(purpose)} LIMIT 1
+  `);
+  return existing[0]?.secret || null;
+}
+
+export async function setIdentitySecret(purpose: string, secret: string): Promise<void> {
+  await ensureIdentitySchema();
+  await psql(`
+    INSERT INTO identity_secrets (purpose, secret)
+    VALUES (${sql(purpose)}, ${sql(secret)})
+    ON CONFLICT (purpose) DO UPDATE SET secret = EXCLUDED.secret
+  `);
+}
