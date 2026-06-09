@@ -1,3 +1,19 @@
+## v0.4.13.39 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Attach app proxy devices before install health checks
+
+### Changes
+- `control-panel/src/lib/market/engine.ts` — Adds system-service proxy devices immediately after each app container deploys and before health checks, restarting the container if it exited before the proxy was available.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.39`.
+
+### Test Results
+- Pending final build, release, deploy, and Memos base install retry.
+
+### Notes for Iris
+- This fixes a pre-existing installer ordering bug exposed by Memos: shared-DB apps receive localhost PostgreSQL DSNs, so the PostgreSQL proxy must exist before the app's first health check.
+
 ## v0.4.13.38 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

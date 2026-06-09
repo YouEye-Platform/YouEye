@@ -846,6 +846,26 @@ export async function installApp(
 
         await applyResourcePolicy(containerName, 'normal');
 
+        if (appBridgeName) {
+          try {
+            const needsSharedDb = (manifest.database?.mode ?? 'none') === 'shared';
+            const needsSSO = ssoEnabled;
+            const services = await getSystemServices({ needsSharedDb, needsSSO });
+            await addProxyDevices(containerName, services);
+
+            const state = await incusRequest<{ metadata?: { status?: string } }>('GET', `/1.0/instances/${containerName}/state`);
+            if (state.metadata?.status && state.metadata.status !== 'Running') {
+              await incusRequest('PUT', `/1.0/instances/${containerName}/state`, {
+                action: 'start',
+                timeout: 30,
+                force: false,
+              });
+            }
+          } catch (proxyErr) {
+            console.warn(`[engine] Early proxy setup warning for ${containerName}:`, proxyErr);
+          }
+        }
+
         emit(onEvent, step, totalSteps, 'success', `${containerName} deployed`);
       } catch (err) {
         onEvent({
