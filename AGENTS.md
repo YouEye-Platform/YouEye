@@ -11,7 +11,13 @@
 - `ui/package.json`, `README.md` — Bumped UI to `0.4.3.14`.
 
 ### Test Results
-- Pending release verification.
+- Focused UI test passed: `node --test tests/permission-approval.spec.mjs`.
+- `pnpm --dir ui build` passed for UI `0.4.3.14` with the known local `127.0.0.1:5432` static-generation noise.
+- Released `ui-artem-v0.4.3.14` with exact `standalone.tar` containing flat `server.js` and `package.json` version `0.4.3.14`.
+- Snapshotted `youeye-ui` as `pre-ui-0.4.3.14-20260609165801`, then deployed UI through CP's UI update endpoint.
+- Live `spine status` reports CP `0.4.13.65`, UI `0.4.3.14`, 21 running containers, and 0 stopped.
+- Built-in Codex Browser verified `/permissions/approve` renders the approval page, `app:plan3-approval-smoke` checked `granted:false` before approval, `Permission granted.` appeared after Allow, the permission checked `granted:true`, and the smoke-test grant was deleted and verified back to `granted:false`.
+- Screenshots: `/tmp/codex-browser-permission-approval-before-0.4.3.14.png`, `/tmp/codex-browser-permission-approval-after-0.4.3.14.png`.
 
 ### Notes for Iris
 - Existing app flows that request permissions should use the returned `approval_url` for first-launch consent, then repost with `approved: true` after the user allows access.
