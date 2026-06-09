@@ -1,3 +1,24 @@
+## v0.4.3.12 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Consume unified timeline and notification surfaces
+
+### Changes
+- `ui/src/lib/db/queries/app-management.ts` — Adds timeline-card metadata to app meta and exposes notification-center surfaces keyed by app id.
+- `ui/src/app/api/v1/timeline/route.ts` — Uses canonical `timeline-card` surfaces to supply embed paths for entries that do not store one directly.
+- `ui/src/app/api/v1/notifications/route.ts` — Returns notification surface metadata alongside notification rows.
+- `ui/src/components/notifications/notification-surface-embed.tsx`, `ui/src/components/layout/notification-bell.tsx`, `ui/src/components/notifications/notifications-list.tsx` — Adds a readiness-gated notification embed consumer for app-provided notification surfaces.
+- `ui/tests/surfaces.spec.ts` — Extends focused coverage for timeline and notification surface consumers.
+- `ui/package.json`, `README.md` — Bumped UI to `0.4.3.12`.
+
+### Test Results
+- Focused Node test passed: `ui/tests/surfaces.spec.ts`.
+- `pnpm --dir YouEye/ui build` passed for UI `0.4.3.12` with the known local `127.0.0.1:5432` static-generation noise.
+
+### Notes for Iris
+- Notification embeds stay hidden unless an app endpoint posts `youeye-embed-ready`, so apps without a notification embed route keep the existing text notification behavior.
+
 ## v0.4.3.11 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

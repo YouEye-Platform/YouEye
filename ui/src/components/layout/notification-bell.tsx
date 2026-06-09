@@ -17,6 +17,14 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { NotificationSurfaceEmbed } from "@/components/notifications/notification-surface-embed";
+
+interface NotificationSurface {
+  surface_id: string;
+  embed_path: string;
+  name: string | null;
+  description: string | null;
+}
 
 interface Notification {
   id: string;
@@ -27,6 +35,7 @@ interface Notification {
   read: boolean;
   createdAt: string;
   action: { type?: string; url?: string } | null;
+  surface?: NotificationSurface;
 }
 
 export function NotificationBell() {
@@ -226,6 +235,12 @@ export function NotificationBell() {
                       {notif.message}
                     </p>
                   )}
+                  <NotificationSurfaceEmbed
+                    notificationId={notif.id}
+                    appId={notif.appId}
+                    surface={notif.surface}
+                    compact
+                  />
                   <p className="text-xs text-muted-foreground mt-1">
                     {timeAgo(notif.createdAt)}
                   </p>

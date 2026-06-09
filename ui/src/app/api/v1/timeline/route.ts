@@ -97,9 +97,21 @@ export async function GET(request: Request) {
     getTimelineCounts(session.userId),
     getAppMetaMap(),
   ]);
+  const entriesWithSurfaceEmbeds = entries.map((entry) => {
+    if (entry.entry.embed_path) return entry;
+    const surface = appMeta[entry.entry.app_id]?.timeline_cards?.[entry.entry.entry_type];
+    if (!surface?.embed_path) return entry;
+    return {
+      ...entry,
+      entry: {
+        ...entry.entry,
+        embed_path: surface.embed_path,
+      },
+    };
+  });
 
   return NextResponse.json({
-    entries,
+    entries: entriesWithSurfaceEmbeds,
     total,
     counts,
     app_meta: appMeta,

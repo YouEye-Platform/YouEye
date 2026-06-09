@@ -22,6 +22,7 @@ import {
   markAllNotificationsRead,
   deleteReadNotifications,
 } from "@/lib/db/queries/notifications";
+import { getNotificationSurfaceMap } from "@/lib/db/queries/app-management";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 
 async function resolveUserId(request: NextRequest): Promise<string | null> {
@@ -50,16 +51,30 @@ export async function GET(request: NextRequest) {
 
   const filters = { limit, offset, type, read, search };
 
-  const [notifs, unreadCount, totalCount] = await Promise.all([
+  const [notifs, unreadCount, totalCount, notificationSurfaces] = await Promise.all([
     getUserNotifications(userId, filters),
     getUnreadCount(userId),
     getNotificationCount(userId, { type, read, search }),
+    getNotificationSurfaceMap(),
   ]);
+  const notifications = notifs.map((notif) => {
+    const appId = notif.appId;
+    const surface = appId
+      ? notificationSurfaces[appId] ?? notificationSurfaces[appId.replace(/^ye-/, "")]
+      : undefined;
+    return surface
+      ? {
+          ...notif,
+          surface,
+        }
+      : notif;
+  });
 
   return NextResponse.json({
-    notifications: notifs,
+    notifications,
     unread_count: unreadCount,
     total: totalCount,
+    notification_surfaces: notificationSurfaces,
   });
 }
 

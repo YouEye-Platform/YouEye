@@ -21,6 +21,14 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { NotificationSurfaceEmbed } from "./notification-surface-embed";
+
+interface NotificationSurface {
+  surface_id: string;
+  embed_path: string;
+  name: string | null;
+  description: string | null;
+}
 
 interface Notification {
   id: string;
@@ -31,6 +39,7 @@ interface Notification {
   read: boolean;
   createdAt: string;
   action: { type?: string; url?: string } | null;
+  surface?: NotificationSurface;
 }
 
 type FilterType = "all" | "info" | "success" | "warning" | "error";
@@ -282,6 +291,11 @@ export function NotificationsList() {
                     {notif.message}
                   </p>
                 )}
+                <NotificationSurfaceEmbed
+                  notificationId={notif.id}
+                  appId={notif.appId}
+                  surface={notif.surface}
+                />
                 <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
                   <span>{timeAgo(notif.createdAt)}</span>
                   {notif.appId && (

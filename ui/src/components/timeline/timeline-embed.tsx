@@ -29,6 +29,7 @@ export interface AppMetaEntry {
   icon: string | null;
   accent_color: string | null;
   entry_icons: Record<string, string>;
+  timeline_cards?: Record<string, { embed_path: string; name: string | null; description: string | null }>;
 }
 
 // ─── Standard Card Fallback ──────────────────────────────────────────

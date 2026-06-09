@@ -242,8 +242,10 @@ export async function getApp(appId: string) {
 export interface AppMeta {
   icon: string | null;
   accent_color: string | null;
-  /** Map of entry_type → lucide icon name from timeline_embeds in manifest */
+  /** Map of entry_type -> lucide icon name from timeline declarations in manifest */
   entry_icons: Record<string, string>;
+  /** Map of entry_type -> timeline-card surface metadata */
+  timeline_cards: Record<string, { embed_path: string; name: string | null; description: string | null }>;
 }
 
 /** Get app metadata map for all enabled apps (used by timeline feed) */
@@ -264,6 +266,8 @@ export async function getAppMetaMap(): Promise<Record<string, AppMeta>> {
     const manifest = app.manifest as Record<string, unknown> | null;
     const accentColor = (manifest?.accent_color as string) ?? null;
     const timelineEmbeds = (manifest?.timeline_embeds as Array<{ entry_type: string; icon?: string }>) ?? [];
+    const timelineSurfaces = normalizeAppSurfaces(manifest)
+      .filter((surface) => surface.kind === "timeline-card" && surface.placement === "timeline");
 
     const entryIcons: Record<string, string> = {};
     for (const embed of timelineEmbeds) {
@@ -272,12 +276,48 @@ export async function getAppMetaMap(): Promise<Record<string, AppMeta>> {
       }
     }
 
+    const timelineCards: Record<string, { embed_path: string; name: string | null; description: string | null }> = {};
+    for (const surface of timelineSurfaces) {
+      for (const trigger of surface.triggers?.length ? surface.triggers : [surface.id]) {
+        timelineCards[trigger] = {
+          embed_path: surface.embedPath,
+          name: surface.name ?? null,
+          description: surface.description ?? null,
+        };
+      }
+    }
+
     result[app.id] = {
       icon: app.icon ?? null,
       accent_color: accentColor,
       entry_icons: entryIcons,
+      timeline_cards: timelineCards,
     };
   }
+  return result;
+}
+
+/** Get notification embed surfaces keyed by app id */
+export async function getNotificationSurfaceMap(): Promise<
+  Record<string, { surface_id: string; embed_path: string; name: string | null; description: string | null }>
+> {
+  const declarations = await getAppSurfaceDeclarations();
+  const result: Record<string, { surface_id: string; embed_path: string; name: string | null; description: string | null }> = {};
+
+  for (const declaration of declarations) {
+    const surface = declaration.surfaces.find(
+      (item) => item.kind === "notification" && item.placement === "notification-center"
+    );
+    if (!surface) continue;
+
+    result[declaration.appId] = {
+      surface_id: surface.id,
+      embed_path: surface.embedPath,
+      name: surface.name ?? null,
+      description: surface.description ?? null,
+    };
+  }
+
   return result;
 }
 

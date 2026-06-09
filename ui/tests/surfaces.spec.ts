@@ -15,6 +15,10 @@ test('UI normalizes widgets, info cards, timeline cards, notifications, and surf
   const appManagement = read('src/lib/db/queries/app-management.ts');
   const widgetsRoute = read('src/app/api/v1/apps/widgets/route.ts');
   const surfacesRoute = read('src/app/api/v1/apps/surfaces/route.ts');
+  const timelineRoute = read('src/app/api/v1/timeline/route.ts');
+  const notificationsRoute = read('src/app/api/v1/notifications/route.ts');
+  const notificationBell = read('src/components/layout/notification-bell.tsx');
+  const notificationsList = read('src/components/notifications/notifications-list.tsx');
 
   assert.match(normalizer, /export function normalizeAppSurfaces/);
   assert.match(normalizer, /legacyWidgetToSurface/);
@@ -30,6 +34,9 @@ test('UI normalizes widgets, info cards, timeline cards, notifications, and surf
   assert.match(appManagement, /getInfoCardProviders/);
   assert.match(appManagement, /surface\.kind === "info-card"/);
   assert.match(appManagement, /endpoint: surface\.embedPath/);
+  assert.match(appManagement, /timeline_cards/);
+  assert.match(appManagement, /getNotificationSurfaceMap/);
+  assert.match(appManagement, /item\.kind === "notification"/);
 
   assert.match(widgetsRoute, /getAppSurfaceDeclarations/);
   assert.match(widgetsRoute, /surface\.kind === "widget"/);
@@ -38,6 +45,16 @@ test('UI normalizes widgets, info cards, timeline cards, notifications, and surf
 
   assert.match(surfacesRoute, /surfaces: declarations\.flatMap/);
   assert.match(surfacesRoute, /legacy_source: surface\.legacySource/);
+
+  assert.match(timelineRoute, /entriesWithSurfaceEmbeds/);
+  assert.match(timelineRoute, /timeline_cards/);
+  assert.match(timelineRoute, /embed_path: surface\.embed_path/);
+
+  assert.match(notificationsRoute, /getNotificationSurfaceMap/);
+  assert.match(notificationsRoute, /notification_surfaces/);
+  assert.match(notificationsRoute, /surface/);
+  assert.match(notificationBell, /NotificationSurfaceEmbed/);
+  assert.match(notificationsList, /NotificationSurfaceEmbed/);
 });
 
 test('surface normalizer maps new and legacy declarations into one model', () => {
