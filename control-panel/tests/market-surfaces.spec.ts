@@ -29,6 +29,8 @@ test('Market app manifests support unified app surfaces', () => {
   assert.match(types, /export type AppSettingsSpec/);
   assert.match(types, /surfaces\?: SurfaceSpec\[\]/);
   assert.match(catalog, /surfaces: manifest\.surfaces/);
+  assert.match(catalog, /hasNotificationSurface/);
+  assert.match(catalog, /notifications: manifest\.capabilities\?\.notifications \|\| \(hasNotificationSurface \? true : undefined\)/);
 });
 
 test('installed app manifests can be synced from Market into UI', () => {

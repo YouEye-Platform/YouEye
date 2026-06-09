@@ -1,3 +1,21 @@
+## v0.4.13.75 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Derive catalog notification capability from canonical surfaces
+
+### Changes
+- `control-panel/src/lib/market/catalog.ts` — Derives catalog `capabilities.notifications` from canonical `kind: notification` / `placement: notification-center` surfaces so manifests no longer need legacy notification capability flags just to advertise notification support.
+- `control-panel/tests/market-canonical-surfaces.spec.mjs` — Added executable regression coverage for notification-capability derivation from canonical surfaces.
+- `control-panel/tests/market-surfaces.spec.ts` — Updated existing surface coverage for the same derivation.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.75`.
+
+### Test Results
+- Focused Control Panel tests passed: `node --test tests/market-canonical-surfaces.spec.mjs tests/market-sso-engine.spec.mjs tests/market-integration-remove.spec.mjs tests/market-filters.spec.mjs tests/market-update-preview.spec.mjs tests/market-migration-planner.spec.mjs tests/market-update-plans.spec.mjs`.
+
+### Notes for Iris
+- This pairs with the YE-AppMarket Memos manifest cleanup that removes legacy `capabilities.notifications` now that Memos has canonical notification surfaces.
+
 ## v0.4.13.74 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

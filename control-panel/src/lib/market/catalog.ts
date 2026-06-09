@@ -483,6 +483,16 @@ function getDisplayIntegrations(manifest: AppManifest): NonNullable<MarketApp['i
 }
 
 function manifestToMarketApp(manifest: AppManifest, source?: MarketSource, reference?: ManifestReference): MarketApp {
+  const hasNotificationSurface = manifest.surfaces.some(
+    (surface) => surface.kind === 'notification' && surface.placement === 'notification-center'
+  );
+  const capabilities = manifest.capabilities || hasNotificationSurface ? {
+    widgets: manifest.capabilities?.widgets,
+    notifications: manifest.capabilities?.notifications || (hasNotificationSurface ? true : undefined),
+    smtp: manifest.capabilities?.smtp,
+    link_handlers: manifest.capabilities?.link_handlers,
+  } : undefined;
+
   return {
     id: manifest.metadata.id,
     catalogKey: source ? `${source.id}:app:${manifest.metadata.id}` : undefined,
@@ -525,12 +535,7 @@ function manifestToMarketApp(manifest: AppManifest, source?: MarketSource, refer
     integrations: getDisplayIntegrations(manifest),
     entrances: manifest.entrances,
     forwardAuth: manifest.forwardAuth,
-    capabilities: manifest.capabilities ? {
-      widgets: manifest.capabilities.widgets,
-      notifications: manifest.capabilities.notifications,
-      smtp: manifest.capabilities.smtp,
-      link_handlers: manifest.capabilities.link_handlers,
-    } : undefined,
+    capabilities,
     surfaces: manifest.surfaces,
   };
 }
