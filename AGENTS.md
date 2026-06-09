@@ -12,7 +12,15 @@
 - `ui/package.json`, `README.md` — Bumped UI to `0.4.3.15`.
 
 ### Test Results
-- Pending release verification.
+- Focused UI tests passed: `node --test tests/permission-approval.spec.mjs tests/timeline-permission-approval.spec.mjs`.
+- `pnpm --dir ui build` passed for UI `0.4.3.15` with the known local `127.0.0.1:5432` static-generation noise.
+- Released `ui-artem-v0.4.3.15` with exact `standalone.tar` containing flat `server.js` and `package.json` version `0.4.3.15`.
+- Snapshotted `youeye-ui` as `pre-ui-0.4.3.15-20260609171614`, then deployed UI through CP's UI update endpoint.
+- Live `spine status` reports CP `0.4.13.65`, UI `0.4.3.15`, 21 running containers, and 0 stopped.
+- Live Search service-auth proof temporarily removed tester's existing `ye-search/timeline:write` grant, verified permission request returned `202` plus `approval_url_absolute` even with `approved:true`, permission check returned `granted:false`, and timeline POST returned `403` plus approval metadata.
+- Built-in Codex Browser verified the approval page for `ye-search/timeline:write`, clicked Allow, saw `Permission granted.`, and service-auth check then returned `granted:true`.
+- Cross-app service-auth request from `ye-search` for `wiki` returned `403`.
+- Screenshots: `/tmp/codex-browser-timeline-permission-approval-before-0.4.3.15.png`, `/tmp/codex-browser-timeline-permission-approval-after-0.4.3.15.png`.
 
 ### Notes for Iris
 - Existing users with already-granted `timeline:write` keep working. New or revoked users now need explicit approval before app timeline writes are accepted.
