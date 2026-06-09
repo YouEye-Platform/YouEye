@@ -11,7 +11,12 @@
 - `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.36`.
 
 ### Test Results
-- Pending build, release, deploy, and live source-switch verification.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.36`.
+- Release asset verified as `standalone.tar` with `server.js`, `package.json`, and embedded version `0.4.13.36`.
+- Live deploy on `192.168.31.160`: CP updated through `spine update control`; `spine status` reports CP `0.4.13.36`, 9 running containers, 0 stopped.
+- Live API check: `PATCH /api/market/app/search/source` with `sourceId: official` returned source/audit metadata; `/api/market/status?app=search` now echoes installed source and manifest audit fields.
+- Live health checks: Search and root platform health stayed OK; Market updates API returns zero pending updates.
+- Codex Browser HTTPS check: Search detail page shows `Market Source: Official YouEye Market` and no source-switch button when already viewing the current source.
 
 ### Notes for Iris
 - Source switching is metadata-only: it changes future update checks/updates, not the currently running containers.
