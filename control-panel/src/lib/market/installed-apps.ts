@@ -12,9 +12,11 @@
 
 import { readJSON, writeJSON, statePath } from '@/lib/storage/json-store';
 import { listInstalledApps, readInstallMetadata } from './metadata';
-import { fetchCatalog, fetchManifestFromSource, fetchRepoFile, getEffectiveBranch } from './catalog';
+import { fetchCatalog, fetchManifestFromSource, fetchRepoFile, fetchUpdatePlanMigrationsFromSource, getEffectiveBranch } from './catalog';
 import { parse as parseYAML } from 'yaml';
 import { isNewer } from '@/lib/version';
+import { describeUpdatePath, findApplicableMigrations, mergeMigrationSources } from './migration-planner';
+import type { AppManifest } from './types';
 
 const STORE_PATH = statePath('installed-apps.json');
 
@@ -39,6 +41,15 @@ export interface InstalledApp {
   sourceId?: string | null;
   sourceName?: string | null;
   sourceRepoUrl?: string | null;
+  updatePath?: string | null;
+  migrationsRequired?: number;
+  migrationGates?: Array<{
+    fromVersion: string;
+    toVersion: string;
+    idempotencyKey?: string;
+    description?: string;
+    source?: 'manifest' | 'update-plan';
+  }>;
 }
 
 interface InstalledAppsStore {
@@ -120,6 +131,9 @@ export async function upsertInstalledApp(data: {
       sourceId: data.sourceId ?? null,
       sourceName: data.sourceName ?? null,
       sourceRepoUrl: data.sourceRepoUrl ?? null,
+      updatePath: null,
+      migrationsRequired: 0,
+      migrationGates: [],
     };
   }
 
@@ -270,11 +284,12 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
     if (installMeta?.sourceRepoUrl && !app.sourceRepoUrl) app.sourceRepoUrl = installMeta.sourceRepoUrl;
 
     let catalogVersion: string | null = null;
+    let sourceManifest: AppManifest | null = null;
 
     if (app.sourceId) {
       try {
-        const manifest = await fetchManifestFromSource(app.appId, app.sourceId);
-        catalogVersion = manifest.version ?? null;
+        sourceManifest = await fetchManifestFromSource(app.appId, app.sourceId);
+        catalogVersion = sourceManifest.version ?? null;
       } catch (err) {
         console.warn('[installed-apps] Failed to fetch source-specific version:', app.appId, app.sourceId, err);
       }
@@ -307,6 +322,41 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
 
     app.catalogVersion = catalogVersion;
     app.updateAvailable = hasUpdate;
+    app.updatePath = null;
+    app.migrationsRequired = 0;
+    app.migrationGates = [];
+
+    if (hasUpdate && catalogVersion && app.installedVersion) {
+      try {
+        if (!sourceManifest && (app.sourceId || installMeta?.sourceId)) {
+          sourceManifest = await fetchManifestFromSource(app.appId, app.sourceId || installMeta?.sourceId);
+        }
+
+        if (sourceManifest) {
+          const durablePlan = await fetchUpdatePlanMigrationsFromSource(app.appId, app.sourceId || installMeta?.sourceId || undefined);
+          const allMigrations = mergeMigrationSources(sourceManifest.update?.migrations || [], durablePlan.migrations);
+          const applicableMigrations = findApplicableMigrations(
+            allMigrations,
+            app.installedVersion,
+            catalogVersion,
+            installMeta?.appliedMigrations,
+          );
+
+          app.updatePath = describeUpdatePath(app.installedVersion, catalogVersion, applicableMigrations);
+          app.migrationsRequired = applicableMigrations.length;
+          app.migrationGates = applicableMigrations.map((migration) => ({
+            fromVersion: migration.fromVersion,
+            toVersion: migration.toVersion,
+            idempotencyKey: migration.idempotencyKey,
+            description: migration.description,
+            source: migration.source,
+          }));
+        }
+      } catch (err) {
+        console.warn('[installed-apps] Failed to compute migration preview:', app.appId, err);
+        app.updatePath = `${app.installedVersion} -> ${catalogVersion}`;
+      }
+    }
 
     if (hasUpdate) {
       appsWithUpdates.push({ ...app });

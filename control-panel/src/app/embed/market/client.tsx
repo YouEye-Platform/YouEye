@@ -23,6 +23,15 @@ interface MarketApp {
   installedVersion?: string | null;
   updateAvailable?: boolean;
   catalogVersion?: string | null;
+  updatePath?: string | null;
+  migrationsRequired?: number;
+  migrationGates?: Array<{
+    fromVersion: string;
+    toVersion: string;
+    idempotencyKey?: string;
+    description?: string;
+    source?: string;
+  }>;
   catalogKey?: string;
   itemKind?: string;
   sourceId?: string;
@@ -691,6 +700,20 @@ export function MarketEmbedClient() {
                   </span>
                 )}
               </div>
+              {app.updateAvailable && app.updatePath && (
+                <div style={{
+                  marginTop: 8,
+                  fontSize: 12,
+                  color: "var(--embed-text-muted)",
+                }}>
+                  Path: {app.updatePath}
+                  {typeof app.migrationsRequired === "number" && app.migrationsRequired > 0 && (
+                    <span style={{ color: "var(--embed-warning)", fontWeight: 600 }}>
+                      {" "}• {app.migrationsRequired} required migration{app.migrationsRequired === 1 ? "" : "s"}
+                    </span>
+                  )}
+                </div>
+              )}
 
               {app.installed && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>

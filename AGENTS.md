@@ -1,3 +1,22 @@
+## v0.4.13.69 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Expose Market update migration previews
+
+### Changes
+- `control-panel/src/lib/market/installed-apps.ts` — Update checks now compute non-destructive migration previews from the installed app's Market source, including `updatePath`, `migrationsRequired`, and `migrationGates`.
+- `control-panel/src/app/embed/market/client.tsx` — Market cards can show the planned update path and required migration count when an installed app has an update.
+- `control-panel/tests/market-update-preview.spec.mjs` — Added focused coverage for update-check preview metadata and Market UI rendering hooks.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.69`.
+
+### Test Results
+- Focused Control Panel tests passed: `node --test tests/market-migration-planner.spec.mjs tests/market-update-plans.spec.mjs tests/market-update-preview.spec.mjs`.
+- `pnpm build` passed for Control Panel `0.4.13.69`.
+
+### Notes for Iris
+- This is a preview-only addition. It does not run migrations during update checks; execution still happens only through the app updater after snapshots.
+
 ## v0.4.13.68 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
