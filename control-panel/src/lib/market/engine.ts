@@ -34,7 +34,7 @@ import { resolveVariables, resolveEnvironment } from './variables';
 import { writeAllConfigFiles } from './config-writer';
 import { saveInstallMetadata, removeInstallMetadata, readInstallMetadata } from './metadata';
 import { upsertInstalledApp, removeInstalledApp } from './installed-apps';
-import { deployOCIContainer, getContainerIP, containerExists } from '../infrastructure/oci-deployer';
+import { deployOCIContainer, startOCIContainer, getContainerIP, containerExists } from '../infrastructure/oci-deployer';
 import { deployLXDContainer } from '../infrastructure/lxd-deployer';
 import { incusRequest } from '../incus/server';
 import { applyResourcePolicy } from '../infrastructure/resource-policy';
@@ -841,7 +841,7 @@ export async function installApp(
           const staticEnv = resolveEnvironment(containerSpec.environment || {}, ctx);
           const fullEnv = { ...envFromMapping, ...staticEnv };
           const ociManifest = buildOCIManifest(containerSpec, containerName, appId, fullEnv);
-          await deployOCIContainer(ociManifest, '', appNIC);
+          await deployOCIContainer(ociManifest, '', appNIC, { start: !appBridgeName });
         }
 
         await applyResourcePolicy(containerName, 'normal');
@@ -853,13 +853,9 @@ export async function installApp(
             const services = await getSystemServices({ needsSharedDb, needsSSO });
             await addProxyDevices(containerName, services);
 
-            const state = await incusRequest<{ metadata?: { status?: string } }>('GET', `/1.0/instances/${containerName}/state`);
-            if (state.metadata?.status && state.metadata.status !== 'Running') {
-              await incusRequest('PUT', `/1.0/instances/${containerName}/state`, {
-                action: 'start',
-                timeout: 30,
-                force: false,
-              });
+            const state = await incusRequest<{ status?: string }>('GET', `/1.0/instances/${containerName}/state`);
+            if (state.metadata?.status !== 'Running') {
+              await startOCIContainer(containerName);
             }
           } catch (proxyErr) {
             console.warn(`[engine] Early proxy setup warning for ${containerName}:`, proxyErr);

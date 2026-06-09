@@ -59,6 +59,30 @@ async function waitForIncusOperation(operationPath: string, timeoutSeconds = 600
   }
 }
 
+export async function startOCIContainer(containerName: string, timeoutSeconds = 60): Promise<void> {
+  const startResult = await incusRequest<Record<string, unknown>>(
+    'PUT',
+    `/1.0/instances/${containerName}/state`,
+    { action: 'start' }
+  );
+
+  if (startResult.type === 'async' && startResult.operation) {
+    await waitForIncusOperation(startResult.operation, timeoutSeconds);
+  }
+
+  for (let i = 0; i < timeoutSeconds; i++) {
+    const state = await incusRequest<Record<string, unknown>>(
+      'GET',
+      `/1.0/instances/${containerName}/state`
+    );
+    const meta = state.metadata as Record<string, unknown> | undefined;
+    if (meta && (meta.status as string) === 'Running') return;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+
+  throw new Error(`Container ${containerName} did not reach Running state`);
+}
+
 /**
  * Deploy an OCI container from a manifest.
  * If the container already exists (e.g. leftover from a failed install),
@@ -68,6 +92,7 @@ export async function deployOCIContainer(
   manifest: OCIManifest,
   hostIP: string,
   nicDevices?: Record<string, Record<string, string>>,
+  options?: { start?: boolean },
 ): Promise<void> {
   // Clean up any leftover container from a failed previous install
   if (await containerExists(manifest.containerName)) {
@@ -177,25 +202,7 @@ export async function deployOCIContainer(
     console.warn(`[oci-deployer] Could not apply static IP to ${manifest.containerName}:`, err);
   }
 
-  // Start the container
-  const startResult = await incusRequest<Record<string, unknown>>(
-    'PUT',
-    `/1.0/instances/${manifest.containerName}/state`,
-    { action: 'start' }
-  );
+  if (options?.start === false) return;
 
-  if (startResult.type === 'async' && startResult.operation) {
-    await waitForIncusOperation(startResult.operation, 60);
-  }
-
-  // Wait for container to be fully running
-  for (let i = 0; i < 30; i++) {
-    const state = await incusRequest<Record<string, unknown>>(
-      'GET',
-      `/1.0/instances/${manifest.containerName}/state`
-    );
-    const meta = state.metadata as Record<string, unknown> | undefined;
-    if (meta && (meta.status as string) === 'Running') return;
-    await new Promise((r) => setTimeout(r, 1000));
-  }
+  await startOCIContainer(manifest.containerName);
 }
