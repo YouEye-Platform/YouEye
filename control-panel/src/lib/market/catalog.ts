@@ -510,6 +510,58 @@ function integrationManifestToMarketApp(manifest: IntegrationManifest, source?: 
   };
 }
 
+function integrationItemToAppToggle(item: MarketApp): NonNullable<MarketApp['integrations']>[number] {
+  const integration = item.integrations?.[0];
+  return {
+    id: item.id,
+    name: item.name,
+    description: item.description,
+    type: integration?.type ?? 'addon',
+    recommended: integration?.recommended,
+    installByDefault: integration?.installByDefault,
+    required: integration?.required,
+    permissions: integration?.permissions,
+    itemKind: 'integration',
+    sourceId: item.sourceId,
+    sourceName: item.sourceName,
+    sourceRepoUrl: item.sourceRepoUrl,
+    manifestPath: item.manifestPath,
+    manifestRepo: item.manifestRepo,
+    manifestBranch: item.manifestBranch,
+    manifestDigest: item.manifestDigest,
+  };
+}
+
+function attachStandaloneIntegrations(items: MarketApp[]): MarketApp[] {
+  const integrationsByTarget = new Map<string, MarketApp[]>();
+  for (const item of items) {
+    if (item.itemKind !== 'integration' || !item.target?.appId) continue;
+    const key = `${item.sourceId || ''}:${item.target.appId}`;
+    integrationsByTarget.set(key, [...(integrationsByTarget.get(key) ?? []), item]);
+  }
+
+  return items.map((item) => {
+    if (item.itemKind === 'integration') return item;
+
+    const key = `${item.sourceId || ''}:${item.id}`;
+    const standalone = integrationsByTarget.get(key) ?? [];
+    if (standalone.length === 0) return item;
+
+    const standaloneToggles = standalone.map(integrationItemToAppToggle);
+    const standaloneIds = new Set(standaloneToggles.map((integration) => integration.id));
+    const hasStandaloneIdentity = standaloneToggles.some((integration) => integration.type === 'identity');
+    const embedded = (item.integrations ?? []).filter((integration) => (
+      !standaloneIds.has(integration.id) &&
+      !(hasStandaloneIdentity && integration.id === 'youeye-id')
+    ));
+
+    return {
+      ...item,
+      integrations: [...standaloneToggles, ...embedded],
+    };
+  });
+}
+
 // ─── Public API ───────────────────────────────────────────
 
 export async function fetchAvailableApps(): Promise<MarketApp[]> {
@@ -536,7 +588,7 @@ export async function fetchAvailableApps(): Promise<MarketApp[]> {
     }
   }
 
-  return apps;
+  return attachStandaloneIntegrations(apps);
 }
 
 export function clearCatalogCache(): void {

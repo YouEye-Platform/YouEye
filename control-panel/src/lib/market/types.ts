@@ -380,6 +380,14 @@ export interface MarketApp {
     installByDefault?: boolean;
     required?: boolean;
     permissions?: string[];
+    itemKind?: 'integration';
+    sourceId?: string;
+    sourceName?: string;
+    sourceRepoUrl?: string;
+    manifestPath?: string;
+    manifestRepo?: string;
+    manifestBranch?: string;
+    manifestDigest?: string;
   }[];
   target?: {
     appId: string;

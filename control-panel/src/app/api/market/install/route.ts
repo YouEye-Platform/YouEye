@@ -8,8 +8,9 @@
  */
 
 import { NextRequest } from 'next/server';
-import { fetchManifestFromRepo, fetchManifestFromSource, fetchManifestReferenceFromSource } from '@/lib/market/catalog';
+import { fetchAvailableApps, fetchManifestFromRepo, fetchManifestFromSource, fetchManifestReferenceFromSource } from '@/lib/market/catalog';
 import { installApp } from '@/lib/market/engine';
+import { applyIntegration } from '@/lib/market/integration-runner';
 import { startTracking, trackEvent, finishTracking } from '@/lib/market/install-tracker';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
 import { emitEvent } from '@/lib/events/emitter';
@@ -106,6 +107,14 @@ export async function POST(request: NextRequest) {
         // Unified install path — engine handles both native (LXD) and marketplace (OCI)
         await installApp(manifest, config, onEvent, abortController.signal);
 
+        const selectedStandaloneIntegrations = await getSelectedStandaloneIntegrations(config.appId, config.sourceId, config.selectedIntegrations);
+        for (const integrationId of selectedStandaloneIntegrations) {
+          await applyIntegration(
+            { integrationId, sourceId: config.sourceId },
+            onEvent
+          );
+        }
+
         // Install succeeded
         finishTracking(config.appId);
         emitEvent('app.installed', { appId: config.appId, appName, subdomain: config.subdomain });
@@ -160,4 +169,24 @@ export async function POST(request: NextRequest) {
       Connection: 'keep-alive',
     },
   });
+}
+
+async function getSelectedStandaloneIntegrations(
+  appId: string,
+  sourceId?: string,
+  selectedIntegrations?: string[],
+): Promise<string[]> {
+  if (!selectedIntegrations?.length) return [];
+
+  const selected = new Set(selectedIntegrations);
+  const apps = await fetchAvailableApps();
+
+  return apps
+    .filter((item) => (
+      item.itemKind === 'integration' &&
+      item.target?.appId === appId &&
+      selected.has(item.id) &&
+      (!sourceId || item.sourceId === sourceId)
+    ))
+    .map((item) => item.id);
 }
