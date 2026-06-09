@@ -10,7 +10,15 @@
 - `ui/package.json`, `README.md` — Bumped UI to `0.4.3.16`.
 
 ### Test Results
-- Pending release verification.
+- Focused UI tests passed: `node --test tests/permission-approval.spec.mjs tests/timeline-permission-approval.spec.mjs tests/launch-requirements.spec.mjs`.
+- `pnpm --dir ui build` passed for UI `0.4.3.16` with the known local `127.0.0.1:5432` static-generation noise.
+- Released `ui-artem-v0.4.3.16` with exact `standalone.tar` containing flat `server.js` and `package.json` version `0.4.3.16`.
+- Snapshotted `youeye-ui` as `pre-ui-0.4.3.16-20260609172724`, then deployed UI through CP's UI update endpoint.
+- Live `spine status` reports CP `0.4.13.65`, UI `0.4.3.16`, 21 running containers, and 0 stopped.
+- Built-in Codex Browser verified Memos launch requirements derive `notifications:send` from its cached `surfaces[]`, return `first_launch_complete:false`, and include `approval_url_absolute`.
+- Built-in Codex Browser approved the Memos notification permission, saw `Permission granted.`, and verified launch requirements flipped to `first_launch_complete:true`; the smoke grant was then deleted and the endpoint returned to approval-needed.
+- Live Search service-auth verified `GET /api/v1/apps/search/launch-requirements` returns `first_launch_complete:true` for its own app and `403` when the same token tries to inspect Wiki.
+- Screenshots: `/tmp/codex-browser-launch-requirements-memos-0.4.3.16.png`, `/tmp/codex-browser-launch-requirements-approval-before-0.4.3.16.png`, `/tmp/codex-browser-launch-requirements-approval-after-0.4.3.16.png`.
 
 ### Notes for Iris
 - This is the orchestration API for apps to call on first launch before using manifest-declared permissions. It does not add a new permission type; it reuses existing descriptors and `/permissions/approve`.
