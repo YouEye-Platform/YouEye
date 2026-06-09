@@ -9,7 +9,10 @@
 - `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.39`.
 
 ### Test Results
-- Pending final build, release, deploy, and Memos base install retry.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.39`.
+- Release asset verified as `standalone.tar` with `server.js`, `package.json`, and embedded version `0.4.13.39`.
+- Live deploy on `192.168.31.160`: CP updated through `spine update control`; route repair returned success; `spine status` reports CP `0.4.13.39`, 9 running containers, 0 stopped.
+- Memos base install retry progressed through secrets, shared PostgreSQL setup, app network creation, OCI deploy, and early proxy device setup before failing because `app-memos` itself stopped and failed health. Rollback completed and platform returned to 9 running, 0 stopped with Memos not installed.
 
 ### Notes for Iris
 - This fixes a pre-existing installer ordering bug exposed by Memos: shared-DB apps receive localhost PostgreSQL DSNs, so the PostgreSQL proxy must exist before the app's first health check.
@@ -28,7 +31,11 @@
 - `control-panel/src/lib/market/types.ts`, `control-panel/package.json`, `README.md` — Added installed integration metadata and bumped Control Panel to `0.4.13.38`.
 
 ### Test Results
-- Pending final build, release, deploy, and post-install Memos integration proof.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.38`.
+- Release asset verified as `standalone.tar` with `server.js`, `package.json`, and embedded version `0.4.13.38`.
+- Live deploy on `192.168.31.160`: CP updated through `spine update control`; route repair returned success; `spine status` reported CP `0.4.13.38`, 9 running containers, 0 stopped.
+- Apply endpoint was tested against `memos-youeye-id` before Memos install and correctly returned `Target app "memos" is not installed`.
+- Full post-install apply proof remains pending because Memos OCI base install fails before it can become a target app.
 
 ### Notes for Iris
 - This is the first execution path for standalone Integration manifests. Uninstall/rollback semantics for applied integrations are still future work.
