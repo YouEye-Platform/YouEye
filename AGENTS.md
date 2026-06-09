@@ -1,3 +1,21 @@
+## v0.4.13.56 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Clean YouEye ID consent browser smoke
+
+### Changes
+- `control-panel/src/app/application/o/authorize/route.ts` — Added an inline empty favicon to the first-launch consent page to avoid browser favicon 404 noise.
+- `control-panel/src/app/identity/login/route.ts` — Added the same inline empty favicon to the YouEye ID login page.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.56`.
+
+### Test Results
+- Focused Node test passed: `control-panel/tests/identity-consent.spec.ts`.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.56`.
+
+### Notes for Iris
+- No behavior change beyond removing favicon 404 noise from YouEye ID login/consent browser checks.
+
 ## v0.4.13.55 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc
