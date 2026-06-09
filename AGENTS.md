@@ -13,6 +13,9 @@
 ### Test Results
 - Focused Node test passed: `control-panel/tests/system-settings-market-updates.spec.ts`.
 - `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.59`.
+- Released `cp-artem-v0.4.13.59` with exact `standalone.tar`; deployed through `spine update control` on `192.168.31.160`.
+- Live `spine status` reports CP `0.4.13.59`, UI `0.4.3.8`, and 17 running containers / 0 stopped.
+- Built-in Codex Browser verified `https://potato.app/settings/system` loads `Market System Manifests` with no `Unauthorized` and Caddy dry-run returns `Dry run: youeye-caddy would rebuild to docker.io/library/caddy:2.11.4.` Screenshot: `/tmp/codex-browser-system-settings-0.4.13.59.png`.
 
 ### Notes for Iris
 - CP `0.4.13.58` rendered the section but the built-in Codex Browser proved the root API path was unauthorized under the settings session. This patch keeps the same planner behavior and fixes the browser-auth path.
