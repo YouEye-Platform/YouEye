@@ -9,7 +9,9 @@
 - `README.md`, `control-panel/package.json` — Bumped Control Panel to `0.4.13.31`.
 
 ### Test Results
-- Pending build and live update verification.
+- Control Panel: `pnpm --dir YouEye/control-panel build` passed for `0.4.13.31`.
+- Live practice on `192.168.31.160`: `spine update control` updated CP to `0.4.13.31`; `/api/setup/control-routes` returned success; `spine status` reported 9 running containers and 0 stopped.
+- Live forced Search update backfilled `/var/lib/youeye/app-search/install.json` to `installedVersion: 0.4.0.3`, `sourceId: official`, and `catalogKey: official:app:search`.
 
 ### Notes for Iris
 - This closes the gap found after `0.4.13.30`: installed-app state had source-aware versions, but per-app install metadata could remain stale until the next update.
