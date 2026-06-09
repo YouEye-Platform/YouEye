@@ -17,7 +17,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { validateBridgeToken } from '@/lib/ui-bridge/auth';
-import { fetchAvailableApps, fetchManifest, fetchManifestFromSource, clearCatalogCache } from '@/lib/market/catalog';
+import { fetchAvailableApps, fetchManifest, fetchManifestFromSource, fetchManifestReferenceFromSource, clearCatalogCache } from '@/lib/market/catalog';
 import { installApp } from '@/lib/market/engine';
 import { uninstallApp } from '@/lib/market/uninstaller';
 import { listInstalledApps, readInstallMetadata } from '@/lib/market/metadata';
@@ -254,6 +254,13 @@ export async function POST(request: NextRequest) {
   let manifest;
   try {
     manifest = await fetchManifestFromSource(config.appId, config.sourceId);
+    if (!config.manifestDigest) {
+      const reference = await fetchManifestReferenceFromSource(config.appId, config.sourceId);
+      config.manifestPath = reference.path;
+      config.manifestRepo = reference.repo;
+      config.manifestBranch = reference.branch;
+      config.manifestDigest = reference.digest;
+    }
   } catch (err) {
     return new Response(
       JSON.stringify({ error: `Failed to fetch manifest: ${err}` }),

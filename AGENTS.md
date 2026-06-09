@@ -1,3 +1,21 @@
+## v0.4.13.35 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add Market source management and manifest audit metadata
+
+### Changes
+- `control-panel/src/app/market/page.tsx` — Replaced the single Market repo input with multi-Market source controls and grouped duplicate app variants by source.
+- `control-panel/src/lib/market/source.ts`, `control-panel/src/app/api/market/source/route.ts` — Source management can now return configured disabled sources while catalog fetching still uses enabled sources only.
+- `control-panel/src/lib/market/catalog.ts`, `control-panel/src/lib/market/types.ts`, `control-panel/src/lib/market/engine.ts`, `control-panel/src/lib/market/updater.ts`, install APIs — Catalog entries now expose manifest repo/path/branch and SHA-256 digest, and installs/updates persist that audit metadata.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.35`.
+
+### Test Results
+- Pending final `0.4.13.35` build, release, deploy, browser verification, and live metadata checks.
+
+### Notes for Iris
+- This is the UI/source-conflict/audit slice for Plan 3. It does not yet implement source switching for an already-installed app.
+
 ## v0.4.13.34 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

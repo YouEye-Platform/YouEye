@@ -8,7 +8,7 @@
  */
 
 import { NextRequest } from 'next/server';
-import { fetchManifest, fetchManifestFromRepo, fetchManifestFromSource } from '@/lib/market/catalog';
+import { fetchManifestFromRepo, fetchManifestFromSource, fetchManifestReferenceFromSource } from '@/lib/market/catalog';
 import { installApp } from '@/lib/market/engine';
 import { startTracking, trackEvent, finishTracking } from '@/lib/market/install-tracker';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
@@ -46,6 +46,13 @@ export async function POST(request: NextRequest) {
       }
     } else {
       manifest = await fetchManifestFromSource(config.appId, config.sourceId);
+      if (!config.manifestDigest) {
+        const reference = await fetchManifestReferenceFromSource(config.appId, config.sourceId);
+        config.manifestPath = reference.path;
+        config.manifestRepo = reference.repo;
+        config.manifestBranch = reference.branch;
+        config.manifestDigest = reference.digest;
+      }
     }
   } catch (err) {
     return new Response(

@@ -94,7 +94,7 @@ export async function getMarketSource(): Promise<MarketSource> {
   return sources[0] || parseMarketRepoURL(DEFAULT_MARKET_REPO_URL);
 }
 
-export async function getMarketSources(): Promise<MarketSource[]> {
+export async function getConfiguredMarketSources(): Promise<MarketSource[]> {
   if (existsSync(MARKET_SOURCES_PATH)) {
     const raw = JSON.parse(await readFile(MARKET_SOURCES_PATH, 'utf8')) as StoredMarketSources;
     const sources = (raw.active_sources || [])
@@ -106,7 +106,6 @@ export async function getMarketSources(): Promise<MarketSource[]> {
         priority: entry.priority ?? index,
         trust: entry.trust || (index === 0 ? 'official' : 'custom'),
       }))
-      .filter((source) => source.enabled)
       .sort((a, b) => a.priority - b.priority);
 
     if (sources.length > 0) return sources;
@@ -124,6 +123,10 @@ export async function getMarketSources(): Promise<MarketSource[]> {
     priority: raw.priority ?? 0,
     trust: raw.trust || 'official',
   })];
+}
+
+export async function getMarketSources(): Promise<MarketSource[]> {
+  return (await getConfiguredMarketSources()).filter((source) => source.enabled);
 }
 
 export async function setMarketSource(repoUrl: string): Promise<MarketSource> {
@@ -148,7 +151,7 @@ export async function setMarketSources(sources: StoredMarketSource[]): Promise<M
   if (parsed[0]) {
     await writeFile(MARKET_SOURCE_PATH, JSON.stringify({ repo_url: parsed[0].repo_url }, null, 2) + '\n', 'utf8');
   }
-  return parsed.filter((source) => source.enabled).sort((a, b) => a.priority - b.priority);
+  return parsed.sort((a, b) => a.priority - b.priority);
 }
 
 export function isGitHubMarketSource(source: MarketSource): boolean {

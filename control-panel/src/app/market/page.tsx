@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, Store, AlertCircle, RefreshCw, Shield, Globe, Save } from 'lucide-react';
+import Link from 'next/link';
+import { Loader2, Store, AlertCircle, RefreshCw, Shield, Globe, Save, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AppCard } from '@/components/market/app-card';
 import { UninstallDialog } from '@/components/market/uninstall-dialog';
@@ -20,14 +21,100 @@ const CATEGORIES: Record<string, string> = {
   utilities: 'Utilities',
 };
 
-function groupByCategory(apps: MarketApp[]): Record<string, MarketApp[]> {
-  const groups: Record<string, MarketApp[]> = {};
+interface MarketSourceConfig {
+  id: string;
+  name: string;
+  repo_url: string;
+  enabled: boolean;
+  priority: number;
+  trust: 'official' | 'community' | 'custom';
+}
+
+interface MarketAppGroup {
+  key: string;
+  primary: MarketApp;
+  variants: MarketApp[];
+}
+
+function groupByCatalogIdentity(apps: MarketApp[]): MarketAppGroup[] {
+  const groups = new Map<string, MarketApp[]>();
   for (const app of apps) {
-    const cat = app.category || 'other';
-    if (!groups[cat]) groups[cat] = [];
-    groups[cat].push(app);
+    const key = `${app.itemKind || 'app'}:${app.id}`;
+    groups.set(key, [...(groups.get(key) ?? []), app]);
   }
-  return groups;
+  return Array.from(groups.entries()).map(([key, variants]) => ({
+    key,
+    primary: variants[0],
+    variants,
+  }));
+}
+
+function groupByCategory(groups: MarketAppGroup[]): Record<string, MarketAppGroup[]> {
+  const byCategory: Record<string, MarketAppGroup[]> = {};
+  for (const group of groups) {
+    const cat = group.primary.category || 'other';
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(group);
+  }
+  return byCategory;
+}
+
+function emptySource(index: number): MarketSourceConfig {
+  return {
+    id: `custom-${Date.now()}`,
+    name: `Market ${index + 1}`,
+    repo_url: '',
+    enabled: true,
+    priority: index,
+    trust: 'custom',
+  };
+}
+
+function variantHref(app: MarketApp): string {
+  return app.sourceId
+    ? `/market/${app.id}?source=${encodeURIComponent(app.sourceId)}`
+    : `/market/${app.id}`;
+}
+
+function MarketAppGroupCard({
+  group,
+  status,
+  installProgress,
+}: {
+  group: MarketAppGroup;
+  status?: AppStatusInfo;
+  installProgress?: { events: InstallEvent[]; done: boolean };
+}) {
+  const { primary, variants } = group;
+
+  return (
+    <div className="space-y-2">
+      <AppCard app={primary} status={status} installProgress={installProgress} />
+      {variants.length > 1 && (
+        <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+          <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+            Sources
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {variants.map((variant) => (
+              <Link
+                key={variant.catalogKey || `${variant.sourceId}-${variant.id}`}
+                href={variantHref(variant)}
+                className={`rounded-full border px-2 py-0.5 text-xs ${
+                  variant.catalogKey === primary.catalogKey
+                    ? 'border-blue-200 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                }`}
+              >
+                {variant.sourceName || variant.sourceId || 'Market'}
+                {variant.version ? ` v${variant.version}` : ''}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function MarketPage() {
@@ -35,7 +122,7 @@ export default function MarketPage() {
   const [statuses, setStatuses] = useState<Record<string, AppStatusInfo>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [marketRepoUrl, setMarketRepoUrl] = useState('');
+  const [marketSources, setMarketSources] = useState<MarketSourceConfig[]>([]);
   const [savingMarketRepo, setSavingMarketRepo] = useState(false);
 
   // Install progress (polled from install-status endpoint)
@@ -67,7 +154,14 @@ export default function MarketPage() {
       const res = await authenticatedFetch('/api/market/source');
       if (!res.ok) throw new Error('Failed to load Market source');
       const data = await res.json();
-      setMarketRepoUrl(data.source?.repo_url || '');
+      setMarketSources(data.sources?.length ? data.sources : [{
+        id: data.source?.id || 'official',
+        name: data.source?.name || 'Official YouEye Market',
+        repo_url: data.source?.repo_url || '',
+        enabled: data.source?.enabled ?? true,
+        priority: data.source?.priority ?? 0,
+        trust: data.source?.trust || 'official',
+      }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load Market source');
     }
@@ -115,20 +209,44 @@ export default function MarketPage() {
     return () => clearInterval(interval);
   }, [fetchMarketSource, fetchCatalog, fetchStatuses, fetchDomain]);
 
-  const saveMarketSource = async () => {
+  const updateMarketSource = (index: number, patch: Partial<MarketSourceConfig>) => {
+    setMarketSources((current) => current.map((source, i) => (
+      i === index ? { ...source, ...patch } : source
+    )));
+  };
+
+  const addMarketSource = () => {
+    setMarketSources((current) => [...current, emptySource(current.length)]);
+  };
+
+  const removeMarketSource = (index: number) => {
+    setMarketSources((current) => current.filter((_, i) => i !== index));
+  };
+
+  const saveMarketSources = async () => {
     setSavingMarketRepo(true);
     try {
+      const normalizedSources = marketSources
+        .map((source, index) => ({
+          ...source,
+          id: source.id.trim() || `source-${index + 1}`,
+          name: source.name.trim() || `Market ${index + 1}`,
+          repo_url: source.repo_url.trim(),
+          priority: Number.isFinite(Number(source.priority)) ? Number(source.priority) : index,
+        }))
+        .filter((source) => source.repo_url);
+
       const res = await authenticatedFetch('/api/market/source', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo_url: marketRepoUrl }),
+        body: JSON.stringify({ active_sources: normalizedSources }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || 'Failed to save Market source');
       }
       const data = await res.json();
-      setMarketRepoUrl(data.source?.repo_url || marketRepoUrl);
+      setMarketSources(data.sources?.length ? data.sources : normalizedSources);
       await fetchCatalog();
       await fetchStatuses();
       setError(null);
@@ -199,6 +317,9 @@ export default function MarketPage() {
   const availableApps = marketplaceApps.filter(
     (a) => !statuses[a.id]?.status || statuses[a.id]?.status === 'not-installed'
   );
+  const nativeGroups = groupByCatalogIdentity(nativeApps);
+  const installedGroups = groupByCatalogIdentity(installedApps);
+  const availableGroups = groupByCatalogIdentity(availableApps);
 
   return (
     <div className="space-y-6">
@@ -232,41 +353,100 @@ export default function MarketPage() {
         </div>
       )}
 
-      <div className="flex flex-col gap-2 border-y border-gray-200 py-3 md:flex-row md:items-center">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <Globe className="h-4 w-4 shrink-0 text-gray-500" />
-          <input
-            value={marketRepoUrl}
-            onChange={(event) => setMarketRepoUrl(event.target.value)}
-            className="h-9 min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            placeholder="https://github.com/youeye-platform/Market"
-          />
+      <div className="space-y-3 border-y border-gray-200 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+            <Globe className="h-4 w-4 text-gray-500" />
+            Markets
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={addMarketSource}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              Add
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={saveMarketSources}
+              disabled={savingMarketRepo || marketSources.every((source) => !source.repo_url.trim())}
+            >
+              {savingMarketRepo ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Save className="h-4 w-4 mr-1.5" />}
+              Save
+            </Button>
+          </div>
         </div>
-        <Button variant="outline" size="sm" onClick={saveMarketSource} disabled={savingMarketRepo || !marketRepoUrl.trim()}>
-          {savingMarketRepo ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Save className="h-4 w-4 mr-1.5" />}
-          Save
-        </Button>
+        <div className="space-y-2">
+          {marketSources.map((source, index) => (
+            <div key={`${source.id}-${index}`} className="grid grid-cols-1 gap-2 rounded-lg border border-gray-200 bg-white p-3 lg:grid-cols-[1fr_2fr_120px_90px_90px_auto] lg:items-center">
+              <input
+                value={source.name}
+                onChange={(event) => updateMarketSource(index, { name: event.target.value })}
+                className="h-9 rounded-md border border-gray-300 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                placeholder="Market name"
+              />
+              <input
+                value={source.repo_url}
+                onChange={(event) => updateMarketSource(index, { repo_url: event.target.value })}
+                className="h-9 rounded-md border border-gray-300 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                placeholder="https://github.com/youeye-platform/Market"
+              />
+              <select
+                value={source.trust}
+                onChange={(event) => updateMarketSource(index, { trust: event.target.value as MarketSourceConfig['trust'] })}
+                className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              >
+                <option value="official">Official</option>
+                <option value="community">Community</option>
+                <option value="custom">Custom</option>
+              </select>
+              <input
+                type="number"
+                value={source.priority}
+                onChange={(event) => updateMarketSource(index, { priority: Number(event.target.value) })}
+                className="h-9 rounded-md border border-gray-300 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                aria-label="Priority"
+              />
+              <label className="flex h-9 items-center gap-2 rounded-md border border-gray-200 px-3 text-sm text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={source.enabled}
+                  onChange={(event) => updateMarketSource(index, { enabled: event.target.checked })}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+                Enabled
+              </label>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => removeMarketSource(index)}
+                disabled={marketSources.length === 1}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Built for YouEye — native apps, grouped by category */}
-      {nativeApps.length > 0 && (
+      {nativeGroups.length > 0 && (
         <div className="space-y-4">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
             <Shield className="h-4 w-4" />
-            {t('builtForYouEye') ?? 'Built for YouEye'} ({nativeApps.length})
+            {t('builtForYouEye') ?? 'Built for YouEye'} ({nativeGroups.length})
           </h2>
-          {Object.entries(groupByCategory(nativeApps)).map(([cat, catApps]) => (
+          {Object.entries(groupByCategory(nativeGroups)).map(([cat, catApps]) => (
             <div key={cat} className="space-y-3">
               <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wider">
                 {CATEGORIES[cat] || cat}
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {catApps.map((app) => (
-                  <AppCard
-                    key={app.id}
-                    app={app}
-                    status={statuses[app.id]}
-                    installProgress={installProgresses[app.id]}
+                {catApps.map((group) => (
+                  <MarketAppGroupCard
+                    key={group.key}
+                    group={group}
+                    status={statuses[group.primary.id]}
+                    installProgress={installProgresses[group.primary.id]}
                   />
                 ))}
               </div>
@@ -284,18 +464,18 @@ export default function MarketPage() {
       )}
 
       {/* Installed marketplace apps (flat, no category grouping) */}
-      {installedApps.length > 0 && (
+      {installedGroups.length > 0 && (
         <div className="space-y-3">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-            {t('installed')} ({installedApps.length})
+            {t('installed')} ({installedGroups.length})
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {installedApps.map((app) => (
-              <AppCard
-                key={app.id}
-                app={app}
-                status={statuses[app.id]}
-                installProgress={installProgresses[app.id]}
+            {installedGroups.map((group) => (
+              <MarketAppGroupCard
+                key={group.key}
+                group={group}
+                status={statuses[group.primary.id]}
+                installProgress={installProgresses[group.primary.id]}
               />
             ))}
           </div>
@@ -303,23 +483,23 @@ export default function MarketPage() {
       )}
 
       {/* Available marketplace apps, grouped by category */}
-      {availableApps.length > 0 && (
+      {availableGroups.length > 0 && (
         <div className="space-y-4">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-            {t('available')} ({availableApps.length})
+            {t('available')} ({availableGroups.length})
           </h2>
-          {Object.entries(groupByCategory(availableApps)).map(([cat, catApps]) => (
+          {Object.entries(groupByCategory(availableGroups)).map(([cat, catApps]) => (
             <div key={cat} className="space-y-3">
               <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wider">
                 {CATEGORIES[cat] || cat}
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {catApps.map((app) => (
-                  <AppCard
-                    key={app.id}
-                    app={app}
-                    status={statuses[app.id]}
-                    installProgress={installProgresses[app.id]}
+                {catApps.map((group) => (
+                  <MarketAppGroupCard
+                    key={group.key}
+                    group={group}
+                    status={statuses[group.primary.id]}
+                    installProgress={installProgresses[group.primary.id]}
                   />
                 ))}
               </div>

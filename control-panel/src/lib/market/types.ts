@@ -86,6 +86,11 @@ export interface InstallConfig {
   sourceId?: string;
   sourceName?: string;
   sourceRepoUrl?: string;
+  /** Resolved manifest location and content hash used for catalog installs */
+  manifestPath?: string;
+  manifestRepo?: string;
+  manifestBranch?: string;
+  manifestDigest?: string;
   subdomain: string;
   domain: string;
   /** Optional app-specific install parameters */
@@ -143,6 +148,10 @@ export interface InstallMetadata {
   sourceId?: string;
   sourceName?: string;
   sourceRepoUrl?: string;
+  manifestPath?: string;
+  manifestRepo?: string;
+  manifestBranch?: string;
+  manifestDigest?: string;
   integration: 'native' | 'basic';
   subdomain: string;
   domain: string;
@@ -296,6 +305,10 @@ export interface MarketApp {
   sourceId?: string;
   sourceName?: string;
   sourceRepoUrl?: string;
+  manifestPath?: string;
+  manifestRepo?: string;
+  manifestBranch?: string;
+  manifestDigest?: string;
   name: string;
   description: string;
   icon: string;

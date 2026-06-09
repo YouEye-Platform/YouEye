@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { clearCatalogCache } from '@/lib/market/catalog';
-import { getMarketSource, getMarketSources, setMarketSource, setMarketSources } from '@/lib/market/source';
+import { getConfiguredMarketSources, getMarketSource, getMarketSources, setMarketSource, setMarketSources } from '@/lib/market/source';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,8 +13,9 @@ export async function GET() {
 
   try {
     const source = await getMarketSource();
-    const sources = await getMarketSources();
-    return NextResponse.json({ source, sources });
+    const sources = await getConfiguredMarketSources();
+    const enabledSources = await getMarketSources();
+    return NextResponse.json({ source, sources, enabledSources });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to read Market source' },
@@ -33,8 +34,9 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json();
     if (Array.isArray(body?.active_sources)) {
       const sources = await setMarketSources(body.active_sources);
+      const enabledSources = sources.filter((source) => source.enabled);
       clearCatalogCache();
-      return NextResponse.json({ status: 'ok', source: sources[0], sources });
+      return NextResponse.json({ status: 'ok', source: enabledSources[0] || sources[0], sources, enabledSources });
     }
 
     if (!body?.repo_url || typeof body.repo_url !== 'string') {

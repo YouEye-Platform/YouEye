@@ -28,6 +28,10 @@ interface MarketApp {
   sourceId?: string;
   sourceName?: string;
   sourceRepoUrl?: string;
+  manifestPath?: string;
+  manifestRepo?: string;
+  manifestBranch?: string;
+  manifestDigest?: string;
   entrances?: Array<{ name: string; subdomain?: string; path?: string; port?: number; authLevel?: string }>;
   installParams?: Array<{
     name: string;
@@ -449,6 +453,10 @@ export function MarketEmbedClient() {
           sourceId: target.sourceId,
           sourceName: target.sourceName,
           sourceRepoUrl: target.sourceRepoUrl,
+          manifestPath: target.manifestPath,
+          manifestRepo: target.manifestRepo,
+          manifestBranch: target.manifestBranch,
+          manifestDigest: target.manifestDigest,
           installParams: Object.keys(form.params).length > 0 ? form.params : undefined,
           approvedConnections: approvedConnections.length > 0 ? approvedConnections : undefined,
           selectedIntegrations: (target.integrations?.length ?? 0) > 0 ? selectedIntegrations : undefined,

@@ -34,7 +34,7 @@ import {
   healthCheckViaExec,
   waitForContainerExec,
 } from '@/lib/incus/snapshot';
-import { fetchManifestFromSource, clearCatalogCache } from './catalog';
+import { fetchManifestFromSource, fetchManifestReferenceFromSource, clearCatalogCache } from './catalog';
 import { readInstallMetadata, saveInstallMetadata } from './metadata';
 import { getInstalledApp, updateInstalledVersion } from './installed-apps';
 import { getContainerName } from './engine-helpers';
@@ -677,6 +677,15 @@ export async function updateMarketplaceApp(
       } catch {
         // Source metadata is best-effort for legacy installs.
       }
+    }
+    try {
+      const reference = await fetchManifestReferenceFromSource(appId, installMeta.sourceId || installedApp.sourceId || undefined);
+      installMeta.manifestPath = reference.path;
+      installMeta.manifestRepo = reference.repo;
+      installMeta.manifestBranch = reference.branch;
+      installMeta.manifestDigest = reference.digest;
+    } catch {
+      // Manifest audit metadata is best-effort for legacy or custom installs.
     }
     await saveInstallMetadata(installMeta);
     emit(onEvent, step, totalSteps, 'success', 'Version updated');

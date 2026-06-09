@@ -9,6 +9,7 @@
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 import { parseCatalog, parseManifest } from './parser';
 import type { AppManifest, Catalog, CatalogEntry, MarketApp } from './types';
 import { settingsService } from '@/lib/settings';
@@ -18,6 +19,18 @@ const CATALOG_CACHE_DIR = '/var/lib/youeye';
 const CATALOG_CACHE_PATH = path.join(CATALOG_CACHE_DIR, 'catalog-cache.json');
 
 const DEFAULT_BRANCH = 'main';
+
+export interface ManifestReference {
+  path: string;
+  repo: string;
+  branch: string;
+  digest: string;
+}
+
+export interface ManifestFetchResult {
+  manifest: AppManifest;
+  reference: ManifestReference;
+}
 
 // ─── Branch Resolution ────────────────────────────────────
 
@@ -73,7 +86,11 @@ let catalogCache: Catalog | null = null;
 let catalogCacheTime = 0;
 const CACHE_TTL = 5 * 60 * 1000;
 
-const manifestCache = new Map<string, { manifest: AppManifest; fetchedAt: number }>();
+const manifestCache = new Map<string, { manifest: AppManifest; reference?: ManifestReference; fetchedAt: number }>();
+
+function digestManifest(yamlText: string): string {
+  return `sha256:${createHash('sha256').update(yamlText).digest('hex')}`;
+}
 
 export async function fetchCatalog(marketSource?: MarketSource): Promise<Catalog> {
   if (marketSource) {
@@ -122,28 +139,11 @@ export async function fetchManifest(appId: string): Promise<AppManifest> {
 
   if (!entry) throw new Error(`App "${appId}" not found in catalog`);
 
-  let manifest: AppManifest;
   const source = await getMarketSource();
-  let resolveOwner = source.organization;
-  let resolveRepo = source.repository;
+  const result = await fetchManifestFromCatalogEntry(entry, branch, source);
 
-  if (entry.repo) {
-    const [owner, repoName] = entry.repo.split('/');
-    resolveOwner = owner;
-    resolveRepo = repoName;
-    const manifestFile = entry.manifest || 'youeye-app.yaml';
-    const yamlText = await fetchRepoFile(owner, repoName, manifestFile, branch);
-    manifest = parseManifest(yamlText);
-  } else if (entry.file) {
-    const yamlText = await fetchFile(entry.file, branch);
-    manifest = parseManifest(yamlText);
-  } else {
-    throw new Error(`Catalog entry for "${appId}" has neither repo nor file`);
-  }
-
-  await resolveManifestPaths(manifest, resolveOwner, resolveRepo, branch);
-  manifestCache.set(appId, { manifest, fetchedAt: Date.now() });
-  return manifest;
+  manifestCache.set(appId, { manifest: result.manifest, reference: result.reference, fetchedAt: Date.now() });
+  return result.manifest;
 }
 
 /**
@@ -169,36 +169,61 @@ export async function fetchManifestFromSource(appId: string, sourceId?: string):
   const entry = catalog.apps.find((e) => e.id === appId);
   if (!entry) throw new Error(`App "${appId}" not found in Market source "${sourceId}"`);
 
-  const manifest = await fetchManifestFromCatalogEntry(entry, branch, source);
-  manifestCache.set(cacheKey, { manifest, fetchedAt: Date.now() });
-  return manifest;
+  const result = await fetchManifestFromCatalogEntry(entry, branch, source);
+  manifestCache.set(cacheKey, { manifest: result.manifest, reference: result.reference, fetchedAt: Date.now() });
+  return result.manifest;
+}
+
+export async function fetchManifestReferenceFromSource(appId: string, sourceId?: string): Promise<ManifestReference> {
+  const source = sourceId
+    ? (await getMarketSources()).find((s) => s.id === sourceId)
+    : await getMarketSource();
+  if (!source) throw new Error(`Market source "${sourceId}" not found`);
+
+  const catalog = await fetchCatalog(source);
+  const branch = await getEffectiveBranch();
+  const entry = catalog.apps.find((e) => e.id === appId);
+  if (!entry) throw new Error(`App "${appId}" not found in Market source "${source.id}"`);
+
+  return (await fetchManifestFromCatalogEntry(entry, branch, source)).reference;
 }
 
 async function fetchManifestFromCatalogEntry(
   entry: CatalogEntry,
   branch: string,
   source: MarketSource
-): Promise<AppManifest> {
+): Promise<ManifestFetchResult> {
   let manifest: AppManifest;
   let resolveOwner = source.organization;
   let resolveRepo = source.repository;
+  let manifestPath: string;
+  let yamlText: string;
 
   if (entry.repo) {
     const [owner, repoName] = entry.repo.split('/');
     resolveOwner = owner;
     resolveRepo = repoName;
-    const manifestFile = entry.manifest || 'youeye-app.yaml';
-    const yamlText = await fetchRepoFile(owner, repoName, manifestFile, branch, source);
+    manifestPath = entry.manifest || 'youeye-app.yaml';
+    yamlText = await fetchRepoFile(owner, repoName, manifestPath, branch, source);
     manifest = parseManifest(yamlText);
   } else if (entry.file) {
-    const yamlText = await fetchFile(entry.file, branch, source);
+    manifestPath = entry.file;
+    yamlText = await fetchFile(manifestPath, branch, source);
     manifest = parseManifest(yamlText);
   } else {
     throw new Error(`Catalog entry for "${entry.id}" has neither repo nor file`);
   }
 
   await resolveManifestPaths(manifest, resolveOwner, resolveRepo, branch, source);
-  return manifest;
+  return {
+    manifest,
+    reference: {
+      path: manifestPath,
+      repo: `${resolveOwner}/${resolveRepo}`,
+      branch,
+      digest: digestManifest(yamlText),
+    },
+  };
 }
 
 /**
@@ -310,7 +335,7 @@ function getDisplayIntegrations(manifest: AppManifest): NonNullable<MarketApp['i
   return integrations;
 }
 
-function manifestToMarketApp(manifest: AppManifest, source?: MarketSource): MarketApp {
+function manifestToMarketApp(manifest: AppManifest, source?: MarketSource, reference?: ManifestReference): MarketApp {
   return {
     id: manifest.metadata.id,
     catalogKey: source ? `${source.id}:app:${manifest.metadata.id}` : undefined,
@@ -318,6 +343,10 @@ function manifestToMarketApp(manifest: AppManifest, source?: MarketSource): Mark
     sourceId: source?.id,
     sourceName: source?.name,
     sourceRepoUrl: source?.repo_url,
+    manifestPath: reference?.path,
+    manifestRepo: reference?.repo,
+    manifestBranch: reference?.branch,
+    manifestDigest: reference?.digest,
     name: manifest.metadata.name,
     description: manifest.metadata.description,
     icon: manifest.metadata.icon,
@@ -368,8 +397,8 @@ export async function fetchAvailableApps(): Promise<MarketApp[]> {
     const catalog = await fetchCatalog(source);
     const branch = await getEffectiveBranch();
     return Promise.all(catalog.apps.map(async (entry) => {
-      const manifest = await fetchManifestFromCatalogEntry(entry, branch, source);
-      return manifestToMarketApp(manifest, source);
+      const result = await fetchManifestFromCatalogEntry(entry, branch, source);
+      return manifestToMarketApp(result.manifest, source, result.reference);
     }));
   }));
 
