@@ -12,6 +12,9 @@
 ### Test Results
 - Focused Control Panel tests passed: `node --test tests/market-sso-engine.spec.mjs tests/market-integration-remove.spec.mjs tests/market-filters.spec.mjs tests/market-update-preview.spec.mjs tests/market-migration-planner.spec.mjs tests/market-update-plans.spec.mjs`.
 - `pnpm build` passed for Control Panel `0.4.13.73`.
+- Released `cp-artem-v0.4.13.73` with exact `standalone.tar`, snapshotted core live containers as `pre-test-cp-0.4.13.73-20260609-205410`, and deployed through `spine update control`.
+- Final Memos Integration proof passed after deploying `0.4.13.73`: reapplying Memos YouEye ID cleaned the duplicate providers and left exactly one Memos OAuth provider, `{"title":"YouEye ID","type":"OAUTH2","name":"identityProviders/3"}`. Memos install metadata again records `memos-youeye-id`, `enableSSO:true`, and `hasSSO:true`.
+- Built-in Codex Browser verified `https://potato.app/market/memos-youeye-id?source=official` shows `v0.1.1`, `Installed`, and `Remove Memos YouEye ID` after reapply. Screenshot: `/tmp/codex-browser-memos-integration-reapplied-0.1.1-cp-0.4.13.73.png`.
 
 ### Notes for Iris
 - CP `0.4.13.72` fixed literal `equals` support but did not resolve variables inside expected values. Memos teardown uses `${identity.name}`, so `0.4.13.73` supersedes `0.4.13.72` for valid Integration teardown proof.
