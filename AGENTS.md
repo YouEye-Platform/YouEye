@@ -10,7 +10,11 @@
 - `README.md`, `control-panel/package.json` — Bumped Control Panel to `0.4.13.34`.
 
 ### Test Results
-- Pending build, Search patch release, and live scoped-grant verification.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.34`.
+- Release asset verified as `standalone.tar` with `server.js`, `package.json`, and embedded version `0.4.13.34`.
+- Live deploy on `192.168.31.160`: CP updated through `spine update control`; Search was updated to `0.4.0.5`; Caddy route now matches host `searx.potato.app`, paths `/search*` and `/autocompleter*`, and the Search app token.
+- Live access matrix: Search with its app token gets `200` for SearXNG `/search`; Search with the same token gets `307` for `/`; Search with a wrong token gets `307`; Notes with no token gets `307`; platform health remains OK.
+- Codex Browser loaded `https://potato.app/api/health` and saw live `{"status":"ok"}` JSON.
 
 ### Notes for Iris
 - CP `0.4.13.33` proved source-IP matching was too strict for live app-to-Caddy traffic; `0.4.13.34` keeps host/path scoping and uses the per-app secret token as the app identity proof.
