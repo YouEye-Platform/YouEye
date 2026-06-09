@@ -1,3 +1,25 @@
+## v0.4.13.43 / v0.4.13.44 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Apply standalone Integrations during app install
+
+### Changes
+- `control-panel/src/lib/market/catalog.ts`, `control-panel/src/lib/market/types.ts` — Attached matching standalone Integration catalog items to their target app install options with source and manifest audit metadata.
+- `control-panel/src/app/api/market/install/route.ts` — Applies selected standalone Integrations after the base app install in the same install stream and rolls back the base install if a selected Integration apply fails.
+- `control-panel/src/lib/market/engine.ts` — Treats a selected standalone identity Integration as planned native SSO, preparing the identity proxy and suppressing Caddy forward-auth before the app first boots.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.44`.
+
+### Test Results
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.43` and `0.4.13.44`.
+- Release assets verified as `standalone.tar` with `server.js`, `package.json`, and embedded versions `0.4.13.43` and `0.4.13.44`.
+- Live deploy on `192.168.31.160`: CP updated through `spine update control` to `0.4.13.44`; route repair returned success; `spine status` reports 10 running containers and 0 stopped.
+- Live Memos clean reinstall with `selectedIntegrations: ["memos-youeye-id"]` installed the base app, applied the standalone Integration, recorded installed Integration metadata, and left `forwardAuthEnabled:false`.
+- Codex Browser verified `/market/memos-youeye-id?source=official` shows `Installed` and `https://memos.potato.app/` renders the Memos Explore page without a forward-auth wall.
+
+### Notes for Iris
+- CP `0.4.13.43` exposed that selecting a standalone identity Integration must affect base install proxy/auth planning. CP `0.4.13.44` fixes that by planning identity service access before first boot and rolling back the base install if the selected standalone Integration fails.
+
 ## v0.4.13.40 / v0.4.13.41 / v0.4.13.42 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc
