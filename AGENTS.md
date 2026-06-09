@@ -1,3 +1,21 @@
+## v0.4.13.70 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add combined Market browsing filters
+
+### Changes
+- `control-panel/src/app/market/page.tsx` — Root Market now has combined catalog filters for search, Market source, item type, install/update status, and category, with clear/reset and visible result counts.
+- `control-panel/tests/market-filters.spec.mjs` — Added focused coverage for the root Market filter controls and filtered empty state.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.70`.
+
+### Test Results
+- Focused Control Panel tests passed: `node --test tests/market-filters.spec.mjs tests/market-update-preview.spec.mjs tests/market-migration-planner.spec.mjs tests/market-update-plans.spec.mjs`.
+- `pnpm build` passed for Control Panel `0.4.13.70`.
+
+### Notes for Iris
+- This implements the Plan 3 combined-catalog browsing requirement on the canonical root `/market` page. The older embed Market client still has its existing partial search/category filters.
+
 ## v0.4.13.69 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

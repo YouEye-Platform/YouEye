@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { Loader2, Store, AlertCircle, RefreshCw, Shield, Globe, Save, Plus, Trash2, Plug } from 'lucide-react';
+import { Loader2, Store, AlertCircle, RefreshCw, Shield, Globe, Save, Plus, Trash2, Plug, Search, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AppCard } from '@/components/market/app-card';
 import { UninstallDialog } from '@/components/market/uninstall-dialog';
@@ -124,6 +124,11 @@ export default function MarketPage() {
   const [error, setError] = useState<string | null>(null);
   const [marketSources, setMarketSources] = useState<MarketSourceConfig[]>([]);
   const [savingMarketRepo, setSavingMarketRepo] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
 
   // Install progress (polled from install-status endpoint)
   const [installProgresses, setInstallProgresses] = useState<Record<string, { events: InstallEvent[]; done: boolean }>>({});
@@ -307,10 +312,55 @@ export default function MarketPage() {
     );
   }
 
+  const sourceOptions = Array.from(new Map(
+    apps
+      .filter((app) => app.sourceId || app.sourceName)
+      .map((app) => [app.sourceId || app.sourceName || 'market', app.sourceName || app.sourceId || 'Market'])
+  ).entries()).sort((a, b) => a[1].localeCompare(b[1]));
+  const categoryOptions = Array.from(new Set(apps.map((app) => app.category).filter(Boolean))).sort();
+  const hasActiveFilters = !!searchQuery
+    || sourceFilter !== 'all'
+    || typeFilter !== 'all'
+    || statusFilter !== 'all'
+    || categoryFilter !== 'all';
+
+  const filteredApps = apps.filter((app) => {
+    const status = statuses[app.id]?.status || 'not-installed';
+    const itemKind = app.itemKind || 'app';
+    const itemType = itemKind === 'integration'
+      ? 'integration'
+      : app.integration === 'native'
+        ? 'native'
+        : 'external';
+
+    if (searchQuery.trim()) {
+      const query = searchQuery.trim().toLowerCase();
+      const haystack = [
+        app.name,
+        app.description,
+        app.category,
+        app.sourceName,
+        app.sourceId,
+        itemType,
+        ...(app.tags || []),
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (!haystack.includes(query)) return false;
+    }
+
+    if (sourceFilter !== 'all' && app.sourceId !== sourceFilter && app.sourceName !== sourceFilter) return false;
+    if (typeFilter !== 'all' && itemType !== typeFilter) return false;
+    if (categoryFilter !== 'all' && app.category !== categoryFilter) return false;
+    if (statusFilter === 'installed' && status === 'not-installed') return false;
+    if (statusFilter === 'available' && status !== 'not-installed') return false;
+    if (statusFilter === 'updates' && !statuses[app.id]?.updateAvailable) return false;
+
+    return true;
+  });
+
   // Separate native, external apps, and other Market item kinds.
-  const nativeApps = apps.filter((a) => (a.itemKind || 'app') === 'app' && a.integration === 'native');
-  const marketplaceApps = apps.filter((a) => (a.itemKind || 'app') === 'app' && a.integration !== 'native');
-  const integrationItems = apps.filter((a) => a.itemKind === 'integration');
+  const nativeApps = filteredApps.filter((a) => (a.itemKind || 'app') === 'app' && a.integration === 'native');
+  const marketplaceApps = filteredApps.filter((a) => (a.itemKind || 'app') === 'app' && a.integration !== 'native');
+  const integrationItems = filteredApps.filter((a) => a.itemKind === 'integration');
 
   const installedApps = marketplaceApps.filter(
     (a) => statuses[a.id]?.status && statuses[a.id]?.status !== 'not-installed'
@@ -430,6 +480,86 @@ export default function MarketPage() {
         </div>
       </div>
 
+      <div className="rounded-xl border border-gray-200 bg-white p-3">
+        <div className="mb-3 flex items-center gap-2 text-sm font-medium text-gray-700">
+          <SlidersHorizontal className="h-4 w-4 text-gray-500" />
+          Browse
+        </div>
+        <div className="grid grid-cols-1 gap-2 lg:grid-cols-[minmax(220px,2fr)_repeat(4,minmax(140px,1fr))_auto] lg:items-center">
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              className="h-9 w-full rounded-md border border-gray-300 pl-9 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              placeholder="Search Market"
+              aria-label="Search Market"
+            />
+          </label>
+          <select
+            value={sourceFilter}
+            onChange={(event) => setSourceFilter(event.target.value)}
+            className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            aria-label="Filter by Market source"
+          >
+            <option value="all">All Markets</option>
+            {sourceOptions.map(([id, name]) => (
+              <option key={id} value={id}>{name}</option>
+            ))}
+          </select>
+          <select
+            value={typeFilter}
+            onChange={(event) => setTypeFilter(event.target.value)}
+            className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            aria-label="Filter by item type"
+          >
+            <option value="all">All Types</option>
+            <option value="native">Native Apps</option>
+            <option value="external">External Apps</option>
+            <option value="integration">Integrations</option>
+          </select>
+          <select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+            className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            aria-label="Filter by install status"
+          >
+            <option value="all">All Statuses</option>
+            <option value="installed">Installed</option>
+            <option value="available">Available</option>
+            <option value="updates">Updates</option>
+          </select>
+          <select
+            value={categoryFilter}
+            onChange={(event) => setCategoryFilter(event.target.value)}
+            className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            aria-label="Filter by category"
+          >
+            <option value="all">All Categories</option>
+            {categoryOptions.map((category) => (
+              <option key={category} value={category}>{CATEGORIES[category] || category}</option>
+            ))}
+          </select>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setSearchQuery('');
+              setSourceFilter('all');
+              setTypeFilter('all');
+              setStatusFilter('all');
+              setCategoryFilter('all');
+            }}
+            disabled={!hasActiveFilters}
+          >
+            Clear
+          </Button>
+        </div>
+        <div className="mt-2 text-xs text-gray-400">
+          Showing {filteredApps.length} of {apps.length} Market items
+        </div>
+      </div>
+
       {/* Built for YouEye — native apps, grouped by category */}
       {nativeGroups.length > 0 && (
         <div className="space-y-4">
@@ -462,6 +592,14 @@ export default function MarketPage() {
           <Store className="h-12 w-12 mx-auto mb-3 opacity-40" />
           <p className="text-lg font-medium">{t('noApps')}</p>
           <p className="text-sm mt-1">{t('catalogEmpty')}</p>
+        </div>
+      )}
+
+      {apps.length > 0 && filteredApps.length === 0 && !error && (
+        <div className="text-center py-16 text-gray-400">
+          <Store className="h-12 w-12 mx-auto mb-3 opacity-40" />
+          <p className="text-lg font-medium">No Market items match these filters</p>
+          <p className="text-sm mt-1">Clear a filter or try a broader search.</p>
         </div>
       )}
 
