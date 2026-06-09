@@ -20,7 +20,7 @@ import { waitForPostgres, waitForCaddy, waitForPiHole } from './health-checks';
 import { setDefaultRoute, ensurePingRoute, ensureHeaderStrippingRoute } from '../caddy/client';
 import { execShell } from '../incus/server';
 import { applyResourcePolicy } from './resource-policy';
-import { applySystemImage, resolveSystemImageOverrides } from './system-market-manifests';
+import { applySystemImage, recordSystemContainerManifest, resolveSystemImageOverrides } from './system-market-manifests';
 
 const TOTAL_STEPS = 4;
 const PIHOLE_CONTAINER = 'youeye-pihole';
@@ -87,6 +87,7 @@ async function _deployInfrastructureInner(
     const pgPassword = await getOrCreateSecret('postgres', '.pg_password', () => generatePassword(32));
     const manifest = applySystemImage(postgresManifest(pgPassword), systemImages.postgresql);
     await deployOCIContainer(manifest, '');
+    await recordSystemContainerManifest('postgresql', systemImages.postgresql);
     await applyResourcePolicy('youeye-postgres', 'critical');
 
     const healthy = await waitForPostgres();
@@ -105,6 +106,7 @@ async function _deployInfrastructureInner(
   try {
     const manifest = applySystemImage(caddyManifest(), systemImages.caddy);
     await deployOCIContainer(manifest, hostIP);
+    await recordSystemContainerManifest('caddy', systemImages.caddy);
     await applyResourcePolicy('youeye-caddy', 'critical');
 
     const healthy = await waitForCaddy();
@@ -181,6 +183,7 @@ async function _deployInfrastructureInner(
     const webPassword = await getOrCreateSecret('pihole', '.web_password', () => generatePassword(24));
     const manifest = applySystemImage(piholeManifest(hostIP), systemImages.pihole);
     await deployOCIContainer(manifest, hostIP);
+    await recordSystemContainerManifest('pihole', systemImages.pihole);
     await applyResourcePolicy('youeye-pihole', 'critical');
 
     const healthy = await waitForPiHole();
@@ -273,6 +276,7 @@ export async function reconcileInfrastructure(
       const pgPassword = await getOrCreateSecret('postgres', '.pg_password', () => generatePassword(32));
       const manifest = applySystemImage(postgresManifest(pgPassword), systemImages.postgresql);
       await deployOCIContainer(manifest, '');
+      await recordSystemContainerManifest('postgresql', systemImages.postgresql);
       await applyResourcePolicy('youeye-postgres', 'critical');
       const healthy = await waitForPostgres();
       if (!healthy) {
@@ -294,6 +298,7 @@ export async function reconcileInfrastructure(
     try {
       const manifest = applySystemImage(caddyManifest(), systemImages.caddy);
       await deployOCIContainer(manifest, hostIP);
+      await recordSystemContainerManifest('caddy', systemImages.caddy);
       await applyResourcePolicy('youeye-caddy', 'critical');
       const healthy = await waitForCaddy();
       if (healthy) {
@@ -352,6 +357,7 @@ export async function reconcileInfrastructure(
       const webPassword = await getOrCreateSecret('pihole', '.web_password', () => generatePassword(24));
       const manifest = applySystemImage(piholeManifest(hostIP), systemImages.pihole);
       await deployOCIContainer(manifest, hostIP);
+      await recordSystemContainerManifest('pihole', systemImages.pihole);
       await applyResourcePolicy('youeye-pihole', 'critical');
       const healthy = await waitForPiHole();
       if (healthy) {

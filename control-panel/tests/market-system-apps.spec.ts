@@ -20,7 +20,9 @@ test('system app manifests are first-class Market artifacts', () => {
   const catalog = readControl('src/lib/market/catalog.ts');
   const api = readControl('src/app/api/market/catalog/route.ts');
   const systemManifestApi = readControl('src/app/api/deploy/infrastructure/system-manifests/route.ts');
+  const systemUpdatesApi = readControl('src/app/api/deploy/infrastructure/system-updates/route.ts');
   const resolver = readControl('src/lib/infrastructure/system-market-manifests.ts');
+  const updater = readControl('src/lib/infrastructure/system-updater.ts');
   const deployer = readControl('src/lib/infrastructure/deployer.ts');
 
   assert.match(schema, /SystemAppManifestSchema/);
@@ -31,12 +33,27 @@ test('system app manifests are first-class Market artifacts', () => {
   assert.match(api, /systemApps/);
   assert.match(systemManifestApi, /resolveSystemImageOverrides/);
   assert.match(systemManifestApi, /requireAdmin/);
+  assert.match(systemUpdatesApi, /planSystemUpdates/);
+  assert.match(systemUpdatesApi, /updateSystemFromMarket/);
+  assert.match(systemUpdatesApi, /forceLegacy/);
+  assert.match(systemUpdatesApi, /allowDatabaseUpdate/);
   assert.match(resolver, /resolveSystemImageOverrides/);
   assert.match(resolver, /Required Market system manifest/);
+  assert.match(resolver, /recordSystemContainerManifest/);
+  assert.match(resolver, /user\.youeye\.market\.image/);
+  assert.match(updater, /legacy-compatible/);
+  assert.match(updater, /legacy-untracked/);
+  assert.match(updater, /PostgreSQL system updates require allowDatabaseUpdate/);
+  assert.match(updater, /forceLegacy/);
+  assert.match(updater, /rebuildContainer/);
+  assert.match(updater, /recordSystemContainerManifest/);
   assert.match(deployer, /resolveSystemImageOverrides/);
   assert.match(deployer, /applySystemImage\(postgresManifest/);
   assert.match(deployer, /applySystemImage\(caddyManifest/);
   assert.match(deployer, /applySystemImage\(piholeManifest/);
+  assert.match(deployer, /recordSystemContainerManifest\('postgresql'/);
+  assert.match(deployer, /recordSystemContainerManifest\('caddy'/);
+  assert.match(deployer, /recordSystemContainerManifest\('pihole'/);
 });
 
 test('Market system catalog entries resolve to pinned system manifests', () => {

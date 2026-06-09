@@ -1,3 +1,24 @@
+## v0.4.13.57 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add Market-backed system app update planning
+
+### Changes
+- `control-panel/src/lib/infrastructure/system-market-manifests.ts` — Added required system ids/container lookup and records Market image/version/source/digest metadata on system containers.
+- `control-panel/src/lib/infrastructure/deployer.ts` — Stamps newly created Postgres, Caddy, and Pi-hole containers with the Market system manifest metadata that created them.
+- `control-panel/src/lib/infrastructure/system-updater.ts` — Added system update planning and guarded rebuild execution from Market system manifests, with legacy adoption and PostgreSQL maintenance gates.
+- `control-panel/src/app/api/deploy/infrastructure/system-updates/route.ts` — Added admin/CLI-token GET plan and POST SSE update endpoint for CP-managed system apps.
+- `control-panel/tests/market-system-apps.spec.ts` — Extended system-app regression coverage to the update planner/executor and tracking metadata.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.57`.
+
+### Test Results
+- Focused Node test passed: `control-panel/tests/market-system-apps.spec.ts`.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.57`.
+
+### Notes for Iris
+- Existing legacy system containers are not surprise-rebuilt. The new endpoint reports them as legacy-compatible or legacy-untracked and requires `forceLegacy`; PostgreSQL also requires `allowDatabaseUpdate`.
+
 ## v0.4.13.56 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

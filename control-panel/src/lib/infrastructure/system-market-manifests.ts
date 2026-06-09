@@ -1,6 +1,7 @@
 import { fetchAvailableSystemApps } from '@/lib/market/catalog';
 import type { MarketApp } from '@/lib/market/types';
 import type { OCIManifest } from './types';
+import { incusRequest } from '@/lib/incus/server';
 
 type RequiredSystemAppId = 'postgresql' | 'caddy' | 'pihole';
 
@@ -10,6 +11,8 @@ const REQUIRED_SYSTEM_APPS: Record<RequiredSystemAppId, { containerName: string 
   pihole: { containerName: 'youeye-pihole' },
 };
 
+export const REQUIRED_SYSTEM_APP_IDS = Object.keys(REQUIRED_SYSTEM_APPS) as RequiredSystemAppId[];
+
 export type SystemImageOverrides = Record<RequiredSystemAppId, {
   image: string;
   version: string;
@@ -17,6 +20,10 @@ export type SystemImageOverrides = Record<RequiredSystemAppId, {
   manifestPath?: string;
   manifestDigest?: string;
 }>;
+
+export function getRequiredSystemContainerName(id: RequiredSystemAppId): string {
+  return REQUIRED_SYSTEM_APPS[id].containerName;
+}
 
 function describeSystemItem(item: MarketApp): string {
   return `${item.sourceId || 'unknown-source'}:${item.itemKind || 'unknown'}:${item.id}`;
@@ -60,4 +67,32 @@ export function applySystemImage(manifest: OCIManifest, system: SystemImageOverr
     ...manifest,
     image: system.image,
   };
+}
+
+export async function recordSystemContainerManifest(
+  id: RequiredSystemAppId,
+  system: SystemImageOverrides[RequiredSystemAppId],
+): Promise<void> {
+  const containerName = getRequiredSystemContainerName(id);
+  const config: Record<string, string> = {
+    'user.youeye.market.system_id': id,
+    'user.youeye.market.image': system.image,
+    'user.youeye.market.version': system.version,
+    'user.youeye.market.updated_at': new Date().toISOString(),
+  };
+
+  if (system.sourceId) config['user.youeye.market.source_id'] = system.sourceId;
+  if (system.manifestPath) config['user.youeye.market.manifest_path'] = system.manifestPath;
+  if (system.manifestDigest) config['user.youeye.market.manifest_digest'] = system.manifestDigest;
+
+  const result = await incusRequest<Record<string, unknown>>(
+    'PATCH',
+    `/1.0/instances/${containerName}`,
+    { config },
+    { timeout: 30_000 },
+  );
+
+  if (result.error) {
+    throw new Error(`Failed to record Market metadata on ${containerName}: ${result.error}`);
+  }
 }
