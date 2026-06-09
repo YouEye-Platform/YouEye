@@ -5,8 +5,9 @@
  * Each grant specifies which hosts an app container can reach.
  */
 
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile, mkdir } from 'fs/promises';
 import { join } from 'path';
+import { writeJsonAtomically } from './atomic-json-store';
 
 const STORE_DIR = '/var/lib/youeye/bridges';
 const STORE_FILE = join(STORE_DIR, 'internet-grants.json');
@@ -34,7 +35,7 @@ async function readStore(): Promise<InternetGrant[]> {
 
 async function writeStore(grants: InternetGrant[]): Promise<void> {
   await mkdir(STORE_DIR, { recursive: true });
-  await writeFile(STORE_FILE, JSON.stringify(grants, null, 2));
+  await writeJsonAtomically(STORE_FILE, grants);
 }
 
 export async function listInternetGrants(appId?: string): Promise<InternetGrant[]> {

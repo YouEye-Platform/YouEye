@@ -47,3 +47,19 @@ test('scoped app-token Caddy grants deny unapproved app-token fallthrough', () =
   assert.match(caddyCa, /REQUESTS_CA_BUNDLE=\/tmp\/caddy-root\.crt/);
   assert.match(caddyCa, /youeye-caddy-ca\.conf/);
 });
+
+test('bridge JSON stores use atomic temp-file rename writes', () => {
+  const helper = read('src/lib/bridges/atomic-json-store.ts');
+  const bridgeStore = read('src/lib/bridges/store.ts');
+  const internetStore = read('src/lib/bridges/internet-store.ts');
+  const suggestionsStore = read('src/lib/bridges/suggestions.ts');
+
+  assert.match(helper, /const tmpPath = `\$\{filePath\}\.tmp-\$\{process\.pid\}-\$\{Date\.now\(\)\}`/);
+  assert.match(helper, /await writeFile\(tmpPath, JSON\.stringify\(value, null, 2\)\)/);
+  assert.match(helper, /await rename\(tmpPath, filePath\)/);
+  assert.match(helper, /await rm\(tmpPath, \{ force: true \}\)/);
+
+  assert.match(bridgeStore, /writeJsonAtomically\(BRIDGES_FILE, bridges\)/);
+  assert.match(internetStore, /writeJsonAtomically\(STORE_FILE, grants\)/);
+  assert.match(suggestionsStore, /writeJsonAtomically\(STORE_FILE, suggestions\)/);
+});

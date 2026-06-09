@@ -6,11 +6,12 @@
  * from `internet.hosts` declarations.
  */
 
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { getAllInstalledApps } from '../market/installed-apps';
 import { loadBridges } from './store';
 import { listInternetGrants } from './internet-store';
+import { writeJsonAtomically } from './atomic-json-store';
 import type { AppManifest } from '../market/types';
 
 const STORE_DIR = '/var/lib/youeye/bridges';
@@ -43,7 +44,7 @@ async function readStore(): Promise<Suggestion[]> {
 
 async function writeStore(suggestions: Suggestion[]): Promise<void> {
   await mkdir(STORE_DIR, { recursive: true });
-  await writeFile(STORE_FILE, JSON.stringify(suggestions, null, 2));
+  await writeJsonAtomically(STORE_FILE, suggestions);
 }
 
 export async function listSuggestions(includesDismissed = false): Promise<Suggestion[]> {

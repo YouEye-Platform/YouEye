@@ -6,8 +6,9 @@
  * that's otherwise blocked by default-deny ACLs.
  */
 
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
+import { writeJsonAtomically } from './atomic-json-store';
 
 const BRIDGES_DIR = '/var/lib/youeye/bridges';
 const BRIDGES_FILE = `${BRIDGES_DIR}/bridges.json`;
@@ -54,7 +55,7 @@ export async function loadBridges(): Promise<Bridge[]> {
 
 export async function saveBridges(bridges: Bridge[]): Promise<void> {
   await ensureDir();
-  await writeFile(BRIDGES_FILE, JSON.stringify(bridges, null, 2));
+  await writeJsonAtomically(BRIDGES_FILE, bridges);
 }
 
 export async function getBridge(id: string): Promise<Bridge | null> {
