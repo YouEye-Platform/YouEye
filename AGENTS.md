@@ -1,3 +1,21 @@
+## v0.4.13.65 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Reconcile installed app versions during update checks
+
+### Changes
+- `control-panel/src/lib/market/installed-apps.ts` — Update checks now reconcile existing installed-app records from install metadata before comparing catalog versions, preventing stale registry rows from reporting phantom updates.
+- `control-panel/tests/installed-apps-version-reconcile.spec.mjs` — Added focused regression coverage for metadata-before-comparison reconciliation.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.65`.
+
+### Test Results
+- Focused Node tests passed: `node --test tests/app-network-pihole-dns.spec.mjs tests/installed-apps-version-reconcile.spec.mjs`.
+- `pnpm --dir control-panel build` passed for Control Panel `0.4.13.65`.
+
+### Notes for Iris
+- Live verification of `0.4.13.64` found Notes/Search running the correct versions while `/api/market/updates` still reported stale installed versions. This release repairs that drift using CP's existing install metadata.
+
 ## v0.4.13.64 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

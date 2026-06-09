@@ -259,6 +259,16 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
   }
 
   for (const app of installed) {
+    const installMeta = await readInstallMetadata(app.appId);
+    if (installMeta?.installedVersion && installMeta.installedVersion !== app.installedVersion) {
+      app.installedVersion = installMeta.installedVersion;
+      app.updateAvailable = false;
+    }
+    if (installMeta?.catalogKey && !app.catalogKey) app.catalogKey = installMeta.catalogKey;
+    if (installMeta?.sourceId && !app.sourceId) app.sourceId = installMeta.sourceId;
+    if (installMeta?.sourceName && !app.sourceName) app.sourceName = installMeta.sourceName;
+    if (installMeta?.sourceRepoUrl && !app.sourceRepoUrl) app.sourceRepoUrl = installMeta.sourceRepoUrl;
+
     let catalogVersion: string | null = null;
 
     if (app.sourceId) {
