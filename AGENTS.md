@@ -1,3 +1,21 @@
+## v0.4.13.77 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Trust Caddy CA for scoped app grants
+
+### Changes
+- `control-panel/src/lib/bridges/manager.ts` — Injects the Caddy root CA into the source app container whenever a scoped Caddy grant is created, so app server runtimes can verify YouEye-managed HTTPS backend URLs.
+- `control-panel/tests/scoped-caddy-grants.spec.mjs` — Extended scoped-grant coverage to require source-app CA injection after grant creation.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.77`.
+
+### Test Results
+- Focused Control Panel tests passed: `node --test control-panel/tests/scoped-caddy-grants.spec.mjs control-panel/tests/app-network-pihole-dns.spec.mjs control-panel/tests/market-update-plans.spec.mjs`.
+- `pnpm --dir control-panel build` passed for Control Panel `0.4.13.77`; the standalone artifact reports version `0.4.13.77`.
+
+### Notes for Iris
+- This fixes the Search browser proof failure where server-side Node fetch rejected `https://searx.potato.app` with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` even though the Caddy scoped grant itself was correct.
+
 ## v0.4.13.76 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

@@ -11,6 +11,7 @@ function read(path) {
 
 test('scoped app-token Caddy grants deny unapproved app-token fallthrough', () => {
   const caddy = read('src/lib/caddy/client.ts');
+  const manager = read('src/lib/bridges/manager.ts');
   const repairRoute = read('src/app/api/setup/control-routes/route.ts');
 
   assert.match(caddy, /SCOPED_APP_GRANT_DENY_ROUTE_ID = 'app-grant-token-deny'/);
@@ -30,4 +31,10 @@ test('scoped app-token Caddy grants deny unapproved app-token fallthrough', () =
 
   assert.match(repairRoute, /ensureScopedAppGrantDenyRoute/);
   assert.match(repairRoute, /app-grant-token-deny/);
+
+  assert.match(manager, /injectCaddyRootCA/);
+  const addGrantIndex = manager.indexOf('await addScopedAppGrantRoute');
+  const injectCaIndex = manager.indexOf('await injectCaddyRootCA(fromContainer)');
+  assert.ok(addGrantIndex > -1);
+  assert.ok(injectCaIndex > addGrantIndex);
 });

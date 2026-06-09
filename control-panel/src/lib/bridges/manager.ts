@@ -20,6 +20,7 @@ import { execShell } from '../incus/server';
 import { CONTAINER_DOMAIN } from '../market/constants';
 import { readInstallMetadata, listInstalledApps } from '../market/metadata';
 import { fetchManifest } from '../market/catalog';
+import { injectCaddyRootCA } from '../market/caddy-ca';
 import { readFile } from 'fs/promises';
 import { listInternetGrants } from './internet-store';
 import { addScopedAppGrantRoute, removeScopedAppGrantRoute } from '../caddy/client';
@@ -321,6 +322,7 @@ async function createScopedCaddyGrant(bridge: Bridge): Promise<{ url: string; pa
     paths,
     appToken,
   });
+  await injectCaddyRootCA(fromContainer);
 
   return {
     url: `https://${hostname}`,
