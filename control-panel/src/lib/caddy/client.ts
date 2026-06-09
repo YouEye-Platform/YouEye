@@ -1862,3 +1862,69 @@ export async function removeAppRoutes(appId: string): Promise<void> {
     await setConfig(cfg);
   }
 }
+
+export interface ScopedAppGrantRoute {
+  id: string;
+  fromIp: string;
+  hostname: string;
+  upstreamDial: string;
+  paths: string[];
+}
+
+/**
+ * Add a narrow app-to-app Caddy grant route.
+ *
+ * This intentionally bypasses browser forward-auth only for traffic that:
+ * - originates from the approved app container IP,
+ * - targets the approved app hostname,
+ * - matches the approved path list.
+ */
+export async function addScopedAppGrantRoute(route: ScopedAppGrantRoute): Promise<void> {
+  const cfg = await getConfig();
+  if (!cfg?.apps?.http?.servers) return;
+
+  const serverName = Object.keys(cfg.apps.http.servers)[0];
+  const server = cfg.apps.http.servers[serverName];
+  server.routes = server.routes || [];
+
+  server.routes = server.routes.filter((r: any) => r['@id'] !== route.id);
+
+  const grantRoute: CaddyRoute = {
+    '@id': route.id,
+    match: [{
+      host: [route.hostname],
+      path: route.paths,
+      remote_ip: { ranges: [route.fromIp] },
+    }],
+    handle: [{
+      handler: 'reverse_proxy',
+      upstreams: [{ dial: route.upstreamDial }],
+    }],
+    terminal: true,
+  };
+
+  const stripIndex = server.routes.findIndex((r: any) => r['@id'] === 'security-header-strip');
+  if (stripIndex >= 0) {
+    server.routes.splice(stripIndex + 1, 0, grantRoute);
+  } else {
+    server.routes.unshift(grantRoute);
+  }
+
+  await setConfig(cfg);
+}
+
+export async function removeScopedAppGrantRoute(id: string): Promise<void> {
+  const cfg = await getConfig();
+  if (!cfg?.apps?.http?.servers) return;
+
+  let modified = false;
+  for (const server of Object.values(cfg.apps.http.servers)) {
+    const before = server.routes?.length ?? 0;
+    server.routes = (server.routes || []).filter((r: any) => r['@id'] !== id);
+    if ((server.routes?.length ?? 0) !== before) modified = true;
+  }
+
+  if (modified) {
+    await setConfig(cfg);
+  }
+}

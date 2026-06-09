@@ -28,6 +28,9 @@ export interface Bridge {
   active: boolean;
   envMappings: EnvMapping[];
   aclName?: string;
+  accessMode?: 'network' | 'caddy';
+  url?: string;
+  allowedPaths?: string[];
   approvedBy: string;
   approvedAt: string;
   activatedAt?: string;

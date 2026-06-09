@@ -1,3 +1,20 @@
+## v0.4.13.33 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Prototype scoped Caddy app grants for Search to SearXNG
+
+### Changes
+- `control-panel/src/lib/caddy/client.ts` — Added scoped app-grant Caddy routes matched by source app IP, target host, and approved path list.
+- `control-panel/src/lib/bridges/store.ts`, `control-panel/src/lib/bridges/manager.ts` — Search to SearXNG approved connections now create a Caddy-scoped grant instead of broad target network access, and UI discovery receives the scoped URL plus access metadata.
+- `README.md`, `control-panel/package.json` — Bumped Control Panel to `0.4.13.33`.
+
+### Test Results
+- Pending build, Search release, and live scoped-grant verification.
+
+### Notes for Iris
+- This first scoped grant is intentionally narrow: `search -> searxng` only, with SearXNG API paths `/search*` and `/autocompleter*`. Other bridge pairs still use the legacy network grant path until modeled.
+
 ## v0.4.13.32 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

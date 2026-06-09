@@ -22,6 +22,7 @@ import { readInstallMetadata, listInstalledApps } from '../market/metadata';
 import { fetchManifest } from '../market/catalog';
 import { readFile } from 'fs/promises';
 import { listInternetGrants } from './internet-store';
+import { addScopedAppGrantRoute, removeScopedAppGrantRoute } from '../caddy/client';
 
 // ─── UI Connection Push ──────────────────────────────────────
 // Push bridge/connection state to YE-UI whenever bridges change.
@@ -109,6 +110,9 @@ async function pushConnectionsToUI(appId: string): Promise<void> {
           name: targetId,
           host: ip || containerName,
           port,
+          url: b.url,
+          accessMode: b.accessMode || 'network',
+          allowedPaths: b.allowedPaths,
           direction: b.direction,
           active: b.active,
         };
@@ -270,6 +274,55 @@ export async function resolveBridgeMappings(
   });
 }
 
+function getScopedCaddyGrantPaths(from: string, to: string): string[] | null {
+  if (from === 'search' && to === 'searxng') {
+    return ['/search*', '/autocompleter*'];
+  }
+  return null;
+}
+
+function getScopedGrantRouteId(from: string, to: string): string {
+  return `app-grant-${from}-to-${to}`;
+}
+
+async function createScopedCaddyGrant(bridge: Bridge): Promise<{ url: string; paths: string[] } | null> {
+  const paths = getScopedCaddyGrantPaths(bridge.from, bridge.to);
+  if (!paths) return null;
+
+  const fromContainer = await resolveContainerName(bridge.from);
+  const toContainer = await resolveContainerName(bridge.to);
+  const fromIp = await getIncusContainerIP(fromContainer);
+  if (!fromIp) throw new Error(`Could not resolve source IP for ${fromContainer}`);
+
+  const targetMeta = await readInstallMetadata(bridge.to);
+  if (!targetMeta?.subdomain || !targetMeta.domain) {
+    throw new Error(`Could not resolve target hostname for ${bridge.to}`);
+  }
+
+  const targetPrimary = targetMeta.containers && targetMeta.containers.length > 1
+    ? (targetMeta.containers.find((c: any) => c.name === 'main' || c.name === 'server') || targetMeta.containers[0])
+    : targetMeta.containers?.[0];
+  const targetContainer = targetPrimary?.containerName || toContainer;
+  const targetIp = await getIncusContainerIP(targetContainer);
+  if (!targetIp) throw new Error(`Could not resolve target IP for ${targetContainer}`);
+
+  const targetPort = targetPrimary?.port || 8080;
+  const hostname = `${targetMeta.subdomain}.${targetMeta.domain}`;
+
+  await addScopedAppGrantRoute({
+    id: getScopedGrantRouteId(bridge.from, bridge.to),
+    fromIp,
+    hostname,
+    upstreamDial: `${targetIp}:${targetPort}`,
+    paths,
+  });
+
+  return {
+    url: `https://${hostname}`,
+    paths,
+  };
+}
+
 /**
  * Activate a bridge: grant network access + inject env vars + restart source container.
  *
@@ -283,14 +336,17 @@ export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
   // Resolve actual container names (handles multi-container apps)
   const fromContainer = await resolveContainerName(bridge.from);
   const toContainer = await resolveContainerName(bridge.to);
+  const scopedGrant = await createScopedCaddyGrant(bridge);
 
-  try {
-    await grantBridgeAccess(fromContainer, bridge.to);
-    if (bridge.direction === 'both-ways') {
-      await grantBridgeAccess(toContainer, bridge.from);
+  if (!scopedGrant) {
+    try {
+      await grantBridgeAccess(fromContainer, bridge.to);
+      if (bridge.direction === 'both-ways') {
+        await grantBridgeAccess(toContainer, bridge.from);
+      }
+    } catch (err) {
+      console.warn(`[bridges] Network access grant failed for ${bridgeId}:`, err);
     }
-  } catch (err) {
-    console.warn(`[bridges] Network access grant failed for ${bridgeId}:`, err);
   }
 
   // Inject resolved env vars into source container
@@ -330,6 +386,9 @@ export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
   const updated = await updateBridge(bridgeId, {
     active: true,
     activatedAt: new Date().toISOString(),
+    accessMode: scopedGrant ? 'caddy' : 'network',
+    url: scopedGrant?.url,
+    allowedPaths: scopedGrant?.paths,
   });
 
   // Push updated connection state to UI (non-blocking)
@@ -352,9 +411,13 @@ export async function deactivateBridge(bridgeId: string): Promise<Bridge | null>
   const toContainer = await resolveContainerName(bridge.to);
 
   try {
-    await revokeBridgeAccess(fromContainer, bridge.to);
-    if (bridge.direction === 'both-ways') {
-      await revokeBridgeAccess(toContainer, bridge.from);
+    if (bridge.accessMode === 'caddy') {
+      await removeScopedAppGrantRoute(getScopedGrantRouteId(bridge.from, bridge.to));
+    } else {
+      await revokeBridgeAccess(fromContainer, bridge.to);
+      if (bridge.direction === 'both-ways') {
+        await revokeBridgeAccess(toContainer, bridge.from);
+      }
     }
   } catch (err) {
     console.warn(`[bridges] Network access revocation failed for ${bridgeId}:`, err);
@@ -385,9 +448,13 @@ export async function deleteBridge(bridgeId: string): Promise<boolean> {
     const toContainer = await resolveContainerName(bridge.to);
 
     try {
-      await revokeBridgeAccess(fromContainer, bridge.to);
-      if (bridge.direction === 'both-ways') {
-        await revokeBridgeAccess(toContainer, bridge.from);
+      if (bridge.accessMode === 'caddy') {
+        await removeScopedAppGrantRoute(getScopedGrantRouteId(bridge.from, bridge.to));
+      } else {
+        await revokeBridgeAccess(fromContainer, bridge.to);
+        if (bridge.direction === 'both-ways') {
+          await revokeBridgeAccess(toContainer, bridge.from);
+        }
       }
     } catch (err) {
       console.warn(`[bridges] Network access cleanup failed during delete for ${bridge.id}:`, err);
