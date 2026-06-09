@@ -86,7 +86,53 @@ var marketInfoCmd = &cobra.Command{
 	},
 }
 
+var marketRepoCmd = &cobra.Command{
+	Use:   "repo",
+	Short: "Manage the Control Panel-owned AppMarket repository",
+}
+
+var marketRepoGetCmd = &cobra.Command{
+	Use:   "get",
+	Short: "Show the AppMarket repository",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if !requireCP() {
+			return nil
+		}
+		data, err := controlClient.Get("/api/market/source")
+		if err != nil {
+			return err
+		}
+		source, _ := data["source"].(map[string]interface{})
+		output.StatusLine("Market repository", firstOf(source, "repo_url"), "")
+		output.StatusLine("Provider", firstOf(source, "provider"), "")
+		return nil
+	},
+}
+
+var marketRepoSetCmd = &cobra.Command{
+	Use:   "set <url>",
+	Short: "Set the AppMarket repository",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if !requireCP() {
+			return nil
+		}
+		data, err := controlClient.Patch("/api/market/source", map[string]interface{}{
+			"repo_url": args[0],
+		})
+		if err != nil {
+			return err
+		}
+		source, _ := data["source"].(map[string]interface{})
+		output.Success("Market repository set to " + firstOf(source, "repo_url"))
+		return nil
+	},
+}
+
 func init() {
+	marketRepoCmd.AddCommand(marketRepoGetCmd)
+	marketRepoCmd.AddCommand(marketRepoSetCmd)
+	marketCmd.AddCommand(marketRepoCmd)
 	marketCmd.AddCommand(marketSearchCmd)
 	marketCmd.AddCommand(marketInfoCmd)
 }

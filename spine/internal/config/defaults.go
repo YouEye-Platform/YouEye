@@ -1,14 +1,15 @@
 package config
 
 // Default returns a Config with all default values.
-// These defaults point at the canonical Forgejo release host.
+// The public default points at the canonical GitHub release repository.
 func Default() *Config {
 	return &Config{
 		Releases: ReleasesConfig{
-			Provider:     "gitea",
-			BaseURL:      "https://git.potemk.in",
-			APIPath:      "/api/v1",
-			Organization: "potemsla",
+			RepoURL:      "https://github.com/youeye-platform/YouEye",
+			Provider:     "github",
+			BaseURL:      "https://github.com",
+			APIPath:      "",
+			Organization: "youeye-platform",
 			Repositories: RepositoriesConfig{
 				Spine:                 "YouEye",
 				ControlPanel:          "YouEye",

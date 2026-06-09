@@ -1,3 +1,27 @@
+## v0.4.2.7 / v0.4.13.27 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Split core release repo ownership from CP-owned AppMarket repo ownership
+
+### Changes
+- `spine/internal/config/*`, `spine/internal/releases/releases.go` — Added canonical `releases.repo_url` for the core YouEye monorepo while preserving old multi-field config as a migration fallback.
+- `spine/internal/cmd/repo.go`, `spine/internal/cmd/market.go`, `spine/install.sh` — Added `youeye repo get/set`, changed installer repo selection to `--repo`, and added `youeye market repo get/set` as a Control Panel API proxy.
+- `control-panel/src/lib/market/source.ts`, `control-panel/src/app/api/market/source/route.ts` — Added CP-owned AppMarket repo source persisted in `market-source.json`.
+- `control-panel/src/lib/market/catalog.ts`, `control-panel/src/lib/market/updater.ts` — Moved Market catalog, manifest, and native app release lookup off Spine's core release source.
+- `control-panel/src/app/market/page.tsx` — Added a Market repo URL control in the CP Market UI.
+- `control-panel/tests/release-source-ownership.spec.ts` — Added a focused ownership regression scan.
+- `README.md`, `control-panel/package.json`, `spine/internal/cmd/root.go` — Bumped Spine to `0.4.2.7` and Control Panel to `0.4.13.27`.
+
+### Test Results
+- Spine: `go test ./...` passed.
+- Control Panel: `pnpm -C control-panel build` passed.
+- Ownership scan: Market catalog/API/UI paths no longer import or read Spine core release source helpers.
+- Release verification: Spine binary reports `0.4.2.7`; CP standalone package contains `0.4.13.27`.
+
+### Notes for Iris
+- Spine owns only the core monorepo release repo. Control Panel owns AppMarket source. Market code intentionally has no fallback to Spine `release_source`.
+
 ## v0.4.13.26 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

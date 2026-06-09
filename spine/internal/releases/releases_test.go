@@ -115,6 +115,11 @@ func TestBuildTag(t *testing.T) {
 
 func TestBuildDownloadURL(t *testing.T) {
 	cfg := config.Default()
+	cfg.Releases.RepoURL = ""
+	cfg.Releases.Provider = "gitea"
+	cfg.Releases.BaseURL = "https://git.potemk.in"
+	cfg.Releases.APIPath = "/api/v1"
+	cfg.Releases.Organization = "potemsla"
 
 	url := BuildDownloadURL(cfg, "TestSpine", "v0.2.5", "spine-linux-amd64")
 	expected := "https://git.potemk.in/potemsla/TestSpine/releases/download/v0.2.5/spine-linux-amd64"
@@ -182,6 +187,8 @@ func mockGiteaServer(t *testing.T, releases []Release) *httptest.Server {
 
 func testConfig(serverURL string) *config.Config {
 	cfg := config.Default()
+	cfg.Releases.RepoURL = ""
+	cfg.Releases.Provider = "gitea"
 	cfg.Releases.BaseURL = serverURL
 	cfg.Releases.APIPath = "/api/v1"
 	cfg.Releases.Organization = "testorg"
@@ -192,6 +199,7 @@ func testConfig(serverURL string) *config.Config {
 
 func testGitHubConfig(serverURL string) *config.Config {
 	cfg := config.Default()
+	cfg.Releases.RepoURL = ""
 	cfg.Releases.Provider = "github"
 	cfg.Releases.BaseURL = serverURL
 	cfg.Releases.Organization = "youeye-platform"
@@ -333,8 +341,7 @@ func TestGetLatestVersionForBranch_ServerError(t *testing.T) {
 
 func TestBuildReleasesAPIURL_GitHub(t *testing.T) {
 	cfg := config.Default()
-	cfg.Releases.Provider = "github"
-	cfg.Releases.Organization = "YouEye-Platform"
+	cfg.Releases.RepoURL = "https://github.com/YouEye-Platform/YouEye"
 	url := buildReleasesAPIURL(cfg, "YouEye")
 	expected := "https://api.github.com/repos/YouEye-Platform/YouEye/releases?per_page=50"
 	if url != expected {
@@ -344,6 +351,7 @@ func TestBuildReleasesAPIURL_GitHub(t *testing.T) {
 
 func TestBuildReleasesAPIURL_Gitea(t *testing.T) {
 	cfg := config.Default()
+	cfg.Releases.RepoURL = ""
 	cfg.Releases.Provider = "gitea"
 	cfg.Releases.BaseURL = "https://gitea.example.com"
 	cfg.Releases.APIPath = "/api/v1"
@@ -400,9 +408,7 @@ func TestGetLatestVersionForBranch_GitHubProvider(t *testing.T) {
 
 func TestBuildDownloadURL_GitHub(t *testing.T) {
 	cfg := config.Default()
-	cfg.Releases.Provider = "github"
-	cfg.Releases.BaseURL = "https://github.com"
-	cfg.Releases.Organization = "youeye-platform"
+	cfg.Releases.RepoURL = "https://github.com/youeye-platform/YouEye"
 
 	url := BuildDownloadURL(cfg, "YouEye", "spine-v0.3.2", "spine-linux-amd64")
 	expected := "https://github.com/youeye-platform/YouEye/releases/download/spine-v0.3.2/spine-linux-amd64"

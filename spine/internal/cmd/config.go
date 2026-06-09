@@ -98,7 +98,7 @@ func runConfigInit(cmd *cobra.Command, args []string) error {
 #   4. Default values
 #
 # To use environment variables, replace dots with underscores and prefix with SPINE_
-# Example: releases.base_url -> SPINE_RELEASES_BASE_URL
+# Example: releases.repo_url -> SPINE_RELEASES_REPO_URL
 #
 
 `
@@ -130,8 +130,7 @@ func runConfigInit(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Configuration file created: %s\n", configOutputPath)
 	fmt.Println("\nYou can now edit this file to customize your installation.")
 	fmt.Println("Common customizations:")
-	fmt.Println("  - releases.base_url: Change to your Gitea/GitHub server")
-	fmt.Println("  - releases.organization: Your username or organization")
+	fmt.Println("  - releases.repo_url: Change the core platform release repository")
 	fmt.Println("  - deployment.control_panel.port: Change from default 3000")
 	fmt.Println("  - deployment.container.name: For multi-instance setups")
 
@@ -194,8 +193,7 @@ func runConfigValidate(cmd *cobra.Command, args []string) error {
 	fmt.Println("\nChecking configuration values...")
 
 	// Check releases URL is reachable (optional)
-	fmt.Printf("  ✓ releases.base_url: %s\n", testCfg.Releases.BaseURL)
-	fmt.Printf("  ✓ releases.organization: %s\n", testCfg.Releases.Organization)
+	fmt.Printf("  ✓ releases.repo_url: %s\n", testCfg.CoreReleaseRepo().RepoURL)
 	fmt.Printf("  ✓ deployment.container.name: %s\n", testCfg.Deployment.Container.Name)
 	fmt.Printf("  ✓ deployment.control_panel.port: %d\n", testCfg.Deployment.ControlPanel.Port)
 	fmt.Printf("  ✓ api.socket_path: %s\n", testCfg.API.SocketPath)

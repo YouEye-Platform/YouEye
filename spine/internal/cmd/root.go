@@ -87,6 +87,7 @@ func init() {
 	rootCmd.AddCommand(cleanupCmd)
 	rootCmd.AddCommand(uninstallCmd)
 	rootCmd.AddCommand(configCmd)
+	rootCmd.AddCommand(repoCmd)
 	rootCmd.AddCommand(branchCmd)
 	rootCmd.AddCommand(languageCmd)
 

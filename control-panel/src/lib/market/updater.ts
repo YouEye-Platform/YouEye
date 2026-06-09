@@ -44,7 +44,7 @@ import { getOrCreateSecret } from '../infrastructure/secrets';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
 import { settingsService } from '@/lib/settings';
 import { isNewer, compareVersions, sortVersionsDesc } from '@/lib/version';
-import { buildReleasesAPIURL, getReleaseAssetDownloadURL, getReleaseSource, type ReleaseAsset } from '@/lib/apps/release-source';
+import { buildMarketReleasesAPIURL, getMarketReleaseAssetDownloadURL, getMarketSource, type MarketReleaseAsset } from './source';
 import type {
   AppManifest,
   InstallEventCallback,
@@ -217,7 +217,7 @@ function isMainTag(tag: string): boolean {
 }
 
 /**
- * Get the latest release from Gitea for an LXD app.
+ * Get the latest release from the CP-owned Market source for an LXD app.
  * Branch-aware: checks branch-prefixed tags first, falls back to main.
  */
 async function getLatestGiteaRelease(
@@ -226,8 +226,8 @@ async function getLatestGiteaRelease(
   branch?: string,
   tagPrefix?: string
 ): Promise<ReleaseInfo | null> {
-  const releaseSource = await getReleaseSource();
-  const releasesURL = buildReleasesAPIURL(releaseSource, giteaRepo);
+  const releaseSource = await getMarketSource();
+  const releasesURL = buildMarketReleasesAPIURL(releaseSource, giteaRepo);
 
   // Fetch releases from inside the container (has internet access)
   const result = await execShell(
@@ -303,10 +303,10 @@ async function getLatestGiteaRelease(
     }
 
     // Find standalone.tar in assets
-    const assets = matchedRelease.assets as ReleaseAsset[];
+    const assets = matchedRelease.assets as MarketReleaseAsset[];
     const tarAsset = assets?.find((a) => a.name === 'standalone.tar');
     if (!tarAsset || !version) return null;
-    const downloadURL = getReleaseAssetDownloadURL(releaseSource, tarAsset);
+    const downloadURL = getMarketReleaseAssetDownloadURL(releaseSource, tarAsset);
     if (!downloadURL) return null;
 
     return { version, downloadURL };

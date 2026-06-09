@@ -2,10 +2,10 @@
 // Used by both the deploy path (container/) and update path (cmd/) to ensure
 // consistent branch-aware release selection across all Spine operations.
 //
-// Supports both Gitea and GitHub as release providers, controlled by the
-// releases.provider config field ("gitea" or "github"). The JSON response
-// format is compatible (tag_name, assets[].name, assets[].browser_download_url)
-// and the download URL format is identical for both providers.
+// Supports both Forgejo/Gitea and GitHub release repositories, derived from the
+// releases.repo_url config field. The JSON response format is compatible
+// (tag_name, assets[].name, assets[].browser_download_url) and the download URL
+// format is identical for both providers.
 //
 // In the YouEye monorepo, Spine, Control Panel, and UI all publish releases
 // to the same repo ("YouEye") with component-prefixed tags:
@@ -143,9 +143,13 @@ func BuildTag(ver, branch, tagPrefix string) string {
 //
 //	{BaseURL}/{org}/{repo}/releases/download/{tag}/{asset}
 func BuildDownloadURL(cfg *config.Config, repo, tag, assetName string) string {
+	source := cfg.CoreReleaseRepo()
+	if cfg.Releases.RepoURL != "" || repo == "" {
+		repo = source.Repository
+	}
 	return fmt.Sprintf("%s/%s/%s/releases/download/%s/%s",
-		cfg.Releases.BaseURL,
-		cfg.Releases.Organization,
+		source.BaseURL,
+		source.Organization,
 		repo,
 		tag,
 		assetName)
@@ -155,14 +159,18 @@ func BuildDownloadURL(cfg *config.Config, repo, tag, assetName string) string {
 // Gitea:  {BaseURL}/api/v1/repos/{org}/{repo}/releases?limit=50
 // GitHub: https://api.github.com/repos/{org}/{repo}/releases?per_page=50
 func buildReleasesAPIURL(cfg *config.Config, repo string) string {
-	if cfg.Releases.Provider == "github" {
+	source := cfg.CoreReleaseRepo()
+	if cfg.Releases.RepoURL != "" || repo == "" {
+		repo = source.Repository
+	}
+	if source.Provider == "github" {
 		return fmt.Sprintf("https://api.github.com/repos/%s/%s/releases?per_page=50",
-			cfg.Releases.Organization, repo)
+			source.Organization, repo)
 	}
 	return fmt.Sprintf("%s%s/repos/%s/%s/releases?limit=50",
-		cfg.Releases.BaseURL,
-		cfg.Releases.APIPath,
-		cfg.Releases.Organization,
+		source.BaseURL,
+		source.APIPath,
+		source.Organization,
 		repo)
 }
 
@@ -183,7 +191,7 @@ func fetchReleases(cfg *config.Config, repo string) ([]Release, error) {
 		}
 
 		// GitHub API requires Accept and User-Agent headers
-		if cfg.Releases.Provider == "github" {
+		if cfg.CoreReleaseRepo().Provider == "github" {
 			req.Header.Set("Accept", "application/vnd.github+json")
 			req.Header.Set("User-Agent", "youeye-spine")
 		}

@@ -1863,20 +1863,25 @@ type YouEyeConfig struct {
 }
 
 type ReleaseSource struct {
+	RepoURL      string `json:"repo_url"`
 	Provider     string `json:"provider"`
 	BaseURL      string `json:"base_url"`
 	APIPath      string `json:"api_path"`
 	Organization string `json:"organization"`
+	Repository   string `json:"repository"`
 }
 
 var youeyeConfigPath = "/var/lib/youeye/config/youeye.yaml"
 
 func (s *Server) releaseSource() *ReleaseSource {
+	repo := s.cfg.CoreReleaseRepo()
 	return &ReleaseSource{
-		Provider:     s.cfg.Releases.Provider,
-		BaseURL:      s.cfg.Releases.BaseURL,
-		APIPath:      s.cfg.Releases.APIPath,
-		Organization: s.cfg.Releases.Organization,
+		RepoURL:      repo.RepoURL,
+		Provider:     repo.Provider,
+		BaseURL:      repo.BaseURL,
+		APIPath:      repo.APIPath,
+		Organization: repo.Organization,
+		Repository:   repo.Repository,
 	}
 }
 

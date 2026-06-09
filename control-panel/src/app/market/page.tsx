@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, Store, AlertCircle, RefreshCw, Shield, Globe } from 'lucide-react';
+import { Loader2, Store, AlertCircle, RefreshCw, Shield, Globe, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AppCard } from '@/components/market/app-card';
 import { UninstallDialog } from '@/components/market/uninstall-dialog';
@@ -35,6 +35,8 @@ export default function MarketPage() {
   const [statuses, setStatuses] = useState<Record<string, AppStatusInfo>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [marketRepoUrl, setMarketRepoUrl] = useState('');
+  const [savingMarketRepo, setSavingMarketRepo] = useState(false);
 
   // Install progress (polled from install-status endpoint)
   const [installProgresses, setInstallProgresses] = useState<Record<string, { events: InstallEvent[]; done: boolean }>>({});
@@ -57,6 +59,17 @@ export default function MarketPage() {
       setApps(data.apps);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load catalog');
+    }
+  }, []);
+
+  const fetchMarketSource = useCallback(async () => {
+    try {
+      const res = await authenticatedFetch('/api/market/source');
+      if (!res.ok) throw new Error('Failed to load Market source');
+      const data = await res.json();
+      setMarketRepoUrl(data.source?.repo_url || '');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load Market source');
     }
   }, []);
 
@@ -90,6 +103,7 @@ export default function MarketPage() {
 
   useEffect(() => {
     Promise.all([
+      fetchMarketSource(),
       fetchCatalog(),
       fetchStatuses(),
       fetchDomain(),
@@ -99,7 +113,31 @@ export default function MarketPage() {
       fetchStatuses();
     }, 10_000);
     return () => clearInterval(interval);
-  }, [fetchCatalog, fetchStatuses, fetchDomain]);
+  }, [fetchMarketSource, fetchCatalog, fetchStatuses, fetchDomain]);
+
+  const saveMarketSource = async () => {
+    setSavingMarketRepo(true);
+    try {
+      const res = await authenticatedFetch('/api/market/source', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo_url: marketRepoUrl }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to save Market source');
+      }
+      const data = await res.json();
+      setMarketRepoUrl(data.source?.repo_url || marketRepoUrl);
+      await fetchCatalog();
+      await fetchStatuses();
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save Market source');
+    } finally {
+      setSavingMarketRepo(false);
+    }
+  };
 
   // Poll install status for progress on cards
   useEffect(() => {
@@ -193,6 +231,22 @@ export default function MarketPage() {
           <span>{error}</span>
         </div>
       )}
+
+      <div className="flex flex-col gap-2 border-y border-gray-200 py-3 md:flex-row md:items-center">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Globe className="h-4 w-4 shrink-0 text-gray-500" />
+          <input
+            value={marketRepoUrl}
+            onChange={(event) => setMarketRepoUrl(event.target.value)}
+            className="h-9 min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            placeholder="https://github.com/youeye-platform/Market"
+          />
+        </div>
+        <Button variant="outline" size="sm" onClick={saveMarketSource} disabled={savingMarketRepo || !marketRepoUrl.trim()}>
+          {savingMarketRepo ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Save className="h-4 w-4 mr-1.5" />}
+          Save
+        </Button>
+      </div>
 
       {/* Built for YouEye — native apps, grouped by category */}
       {nativeApps.length > 0 && (

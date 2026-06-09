@@ -4,23 +4,22 @@
 # Usage: curl -sSL https://git.potemk.in/potemsla/YouEye/raw/branch/main/spine/install.sh | sh -s -- --branch sebastian
 #
 # Options:
-#   --provider github  (default) Fetch releases from GitHub
-#   --provider gitea   Fetch releases from Gitea
+#   --repo <url>       Core platform release repository
 #   --tui              Launch interactive TUI installer after download
 #
-# Override URLs via environment or flags:
-#   RELEASE_BASE_URL, RELEASE_ORG, RELEASE_REPO
+# Override URL via environment or flag:
+#   RELEASE_REPO_URL
 
 set -e
 
-# Defaults — set after provider parsing below
-RELEASE_BASE_URL="${RELEASE_BASE_URL:-}"
-RELEASE_API_URL="${RELEASE_API_URL:-}"
-RELEASE_ORG="${RELEASE_ORG:-}"
-RELEASE_REPO="${RELEASE_REPO:-YouEye}"
-PROVIDER="${PROVIDER:-gitea}"
+RELEASE_REPO_URL="${RELEASE_REPO_URL:-https://github.com/youeye-platform/YouEye}"
+RELEASE_BASE_URL=""
+RELEASE_API_URL=""
+RELEASE_ORG=""
+RELEASE_REPO=""
+PROVIDER=""
 
-REPO="${RELEASE_BASE_URL}/${RELEASE_ORG}/${RELEASE_REPO}"
+REPO="$RELEASE_REPO_URL"
 INSTALL_DIR="/usr/local/bin"
 SERVICE_DIR="/etc/systemd/system"
 SOCKET_DIR="/var/run/youeye"
@@ -45,8 +44,8 @@ while [ $# -gt 0 ]; do
             BRANCH="$2"
             shift 2
             ;;
-        --provider|-p)
-            PROVIDER="$2"
+        --repo|-r)
+            RELEASE_REPO_URL="$2"
             shift 2
             ;;
         --tui|--interactive)
@@ -59,17 +58,40 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# Apply provider-specific defaults if not overridden by environment
-if [ "$PROVIDER" = "gitea" ]; then
-    RELEASE_BASE_URL="${RELEASE_BASE_URL:-https://git.potemk.in}"
-    RELEASE_ORG="${RELEASE_ORG:-potemsla}"
-    RELEASE_API_URL="${RELEASE_API_URL:-${RELEASE_BASE_URL}/api/v1/repos/${RELEASE_ORG}/${RELEASE_REPO}/releases?limit=50}"
-else
-    RELEASE_BASE_URL="${RELEASE_BASE_URL:-https://github.com}"
-    RELEASE_ORG="${RELEASE_ORG:-YouEye-Platform}"
-    RELEASE_API_URL="${RELEASE_API_URL:-https://api.github.com/repos/${RELEASE_ORG}/${RELEASE_REPO}/releases?per_page=50}"
-fi
-REPO="${RELEASE_BASE_URL}/${RELEASE_ORG}/${RELEASE_REPO}"
+parse_repo_url() {
+    url="$1"
+    case "$url" in
+        http://*|https://*) ;;
+        *) printf "Repository URL must start with http:// or https://\\n" >&2; exit 1 ;;
+    esac
+    no_scheme="${url#http://}"
+    no_scheme="${no_scheme#https://}"
+    host="${no_scheme%%/*}"
+    rest="${no_scheme#*/}"
+    org="${rest%%/*}"
+    repo="${rest#*/}"
+    repo="${repo%%/*}"
+    repo="${repo%.git}"
+    if [ -z "$host" ] || [ -z "$org" ] || [ -z "$repo" ] || [ "$rest" = "$no_scheme" ]; then
+        printf "Repository URL must include host, owner, and repo\\n" >&2
+        exit 1
+    fi
+    if [ "$host" = "github.com" ]; then
+        PROVIDER="github"
+        RELEASE_BASE_URL="${url%%/$org/$repo*}"
+        RELEASE_API_URL="https://api.github.com/repos/${org}/${repo}/releases?per_page=50"
+    else
+        PROVIDER="gitea"
+        RELEASE_BASE_URL="${url%%/$org/$repo*}"
+        RELEASE_API_URL="${RELEASE_BASE_URL}/api/v1/repos/${org}/${repo}/releases?limit=50"
+    fi
+    RELEASE_ORG="$org"
+    RELEASE_REPO="$repo"
+    RELEASE_REPO_URL="${RELEASE_BASE_URL}/${RELEASE_ORG}/${RELEASE_REPO}"
+    REPO="$RELEASE_REPO_URL"
+}
+
+parse_repo_url "$RELEASE_REPO_URL"
 
 # Colors (if terminal supports it)
 RED='\033[0;31m'
@@ -305,7 +327,7 @@ EOF
     log_success "YouEye service created and started"
 }
 
-# Write release branch and provider config to youeye.yaml
+# Write release branch and core repo config.
 set_release_branch() {
     mkdir -p /var/lib/youeye/config
     CONFIG_FILE="/var/lib/youeye/config/youeye.yaml"
@@ -336,34 +358,43 @@ EOFCFG
         log_success "Release branch set to: $BRANCH"
     fi
 
-    # Persist release provider config to Spine config
+    # Persist core release repository config to Spine config
     SPINE_CONFIG_DIR="/etc/youeye"
     mkdir -p "$SPINE_CONFIG_DIR"
     SPINE_CONFIG="$SPINE_CONFIG_DIR/config.yaml"
 
     if [ -f "$SPINE_CONFIG" ]; then
-        if grep -q "^releases:" "$SPINE_CONFIG"; then
-            log_info "releases section exists in $SPINE_CONFIG — update manually if needed" >&2
-        else
-            cat >> "$SPINE_CONFIG" << EOFREL
-
-releases:
-  provider: "${PROVIDER}"
-  base_url: "${RELEASE_BASE_URL}"
-  organization: "${RELEASE_ORG}"
-EOFREL
-        fi
+        TMP_CONFIG="$(mktemp)"
+        awk -v repo="$RELEASE_REPO_URL" '
+            BEGIN { done = 0; skipping = 0 }
+            /^[^[:space:]#][^:]*:/ && skipping { skipping = 0 }
+            !done && /^releases:/ {
+                print "releases:"
+                print "  repo_url: \"" repo "\""
+                done = 1
+                skipping = 1
+                next
+            }
+            skipping { next }
+            { print }
+            END {
+                if (!done) {
+                    print ""
+                    print "releases:"
+                    print "  repo_url: \"" repo "\""
+                }
+            }
+        ' "$SPINE_CONFIG" > "$TMP_CONFIG"
+        mv "$TMP_CONFIG" "$SPINE_CONFIG"
     else
         cat > "$SPINE_CONFIG" << EOFREL
 # Spine configuration — generated by installer
 releases:
-  provider: "${PROVIDER}"
-  base_url: "${RELEASE_BASE_URL}"
-  organization: "${RELEASE_ORG}"
+  repo_url: "${RELEASE_REPO_URL}"
 EOFREL
     fi
 
-    log_success "Release provider set to: ${PROVIDER} (${RELEASE_BASE_URL}/${RELEASE_ORG})" >&2
+    log_success "Core release repository set to: ${RELEASE_REPO_URL}" >&2
 }
 
 # Verify installation

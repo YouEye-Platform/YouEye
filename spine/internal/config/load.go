@@ -190,17 +190,23 @@ func setDefaults(v *viper.Viper) {
 // Validate checks the configuration for errors.
 func (c *Config) Validate() error {
 	// Validate releases configuration
-	if c.Releases.BaseURL == "" {
-		return fmt.Errorf("releases.base_url cannot be empty")
-	}
-	if c.Releases.Organization == "" {
-		return fmt.Errorf("releases.organization cannot be empty")
-	}
-	if c.Releases.Repositories.Spine == "" {
-		return fmt.Errorf("releases.repositories.spine cannot be empty")
-	}
-	if c.Releases.Repositories.ControlPanel == "" {
-		return fmt.Errorf("releases.repositories.control_panel cannot be empty")
+	if c.Releases.RepoURL != "" {
+		if _, err := ParseReleaseRepoURL(c.Releases.RepoURL); err != nil {
+			return fmt.Errorf("releases.repo_url is invalid: %w", err)
+		}
+	} else {
+		if c.Releases.BaseURL == "" {
+			return fmt.Errorf("releases.base_url cannot be empty")
+		}
+		if c.Releases.Organization == "" {
+			return fmt.Errorf("releases.organization cannot be empty")
+		}
+		if c.Releases.Repositories.Spine == "" {
+			return fmt.Errorf("releases.repositories.spine cannot be empty")
+		}
+		if c.Releases.Repositories.ControlPanel == "" {
+			return fmt.Errorf("releases.repositories.control_panel cannot be empty")
+		}
 	}
 
 	// Validate deployment configuration

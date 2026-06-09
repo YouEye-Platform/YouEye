@@ -6,6 +6,12 @@
 // 4. Default values (lowest priority)
 package config
 
+import (
+	"fmt"
+	"net/url"
+	"strings"
+)
+
 // Config is the root configuration structure for Spine.
 type Config struct {
 	// Releases configures where to fetch updates from
@@ -29,20 +35,38 @@ type Config struct {
 
 // ReleasesConfig configures the release source for updates.
 type ReleasesConfig struct {
+	// RepoURL is the canonical core monorepo URL for Spine, Control Panel, and UI releases.
+	RepoURL string `mapstructure:"repo_url" yaml:"repo_url"`
+
 	// Provider is the release provider type: "gitea", "github", or "custom"
+	// Deprecated: derived from RepoURL. Kept for old config files.
 	Provider string `mapstructure:"provider" yaml:"provider"`
 
 	// BaseURL is the base URL of the release server
+	// Deprecated: derived from RepoURL. Kept for old config files.
 	BaseURL string `mapstructure:"base_url" yaml:"base_url"`
 
 	// APIPath is the API path prefix (e.g., "/api/v1" for Gitea)
+	// Deprecated: derived from RepoURL. Kept for old config files.
 	APIPath string `mapstructure:"api_path" yaml:"api_path"`
 
 	// Organization is the owner/organization name
+	// Deprecated: derived from RepoURL. Kept for old config files.
 	Organization string `mapstructure:"organization" yaml:"organization"`
 
 	// Repositories maps component names to repository names
+	// Deprecated: core components now share RepoURL. Kept for old config files.
 	Repositories RepositoriesConfig `mapstructure:"repositories" yaml:"repositories"`
+}
+
+// ReleaseRepo describes the normalized core release repository.
+type ReleaseRepo struct {
+	Provider     string
+	BaseURL      string
+	APIPath      string
+	Organization string
+	Repository   string
+	RepoURL      string
 }
 
 // RepositoriesConfig maps components to their repository names and tag prefixes.
@@ -202,20 +226,125 @@ type LoggingConfig struct {
 
 // GetReleasesAPIURL returns the full API URL for releases.
 func (c *Config) GetReleasesAPIURL() string {
-	return c.Releases.BaseURL + c.Releases.APIPath
+	repo := c.CoreReleaseRepo()
+	if repo.Provider == "github" {
+		return "https://api.github.com/repos/" + repo.Organization + "/" + repo.Repository + "/releases?per_page=50"
+	}
+	return repo.BaseURL + repo.APIPath + "/repos/" + repo.Organization + "/" + repo.Repository + "/releases?limit=50"
 }
 
 // GetSpineRepoPath returns the full repository path for Spine.
 func (c *Config) GetSpineRepoPath() string {
-	return c.Releases.Organization + "/" + c.Releases.Repositories.Spine
+	repo := c.CoreReleaseRepo()
+	return repo.Organization + "/" + repo.Repository
 }
 
 // GetControlPanelRepoPath returns the full repository path for Control Panel.
 func (c *Config) GetControlPanelRepoPath() string {
-	return c.Releases.Organization + "/" + c.Releases.Repositories.ControlPanel
+	repo := c.CoreReleaseRepo()
+	return repo.Organization + "/" + repo.Repository
 }
 
 // GetUIRepoPath returns the full repository path for YE-UI.
 func (c *Config) GetUIRepoPath() string {
-	return c.Releases.Organization + "/" + c.Releases.Repositories.UI
+	repo := c.CoreReleaseRepo()
+	return repo.Organization + "/" + repo.Repository
+}
+
+// CoreReleaseRepo returns the normalized core monorepo release source.
+// RepoURL is canonical; old multi-field config is accepted as a migration fallback.
+func (c *Config) CoreReleaseRepo() ReleaseRepo {
+	repo, err := ParseReleaseRepoURL(c.Releases.RepoURL)
+	if err == nil {
+		return repo
+	}
+
+	base := strings.TrimRight(c.Releases.BaseURL, "/")
+	org := strings.Trim(c.Releases.Organization, "/")
+	repoName := c.Releases.Repositories.Spine
+	if repoName == "" {
+		repoName = c.Releases.Repositories.ControlPanel
+	}
+	if repoName == "" {
+		repoName = c.Releases.Repositories.UI
+	}
+	if repoName == "" {
+		repoName = "YouEye"
+	}
+	if base == "" {
+		base = "https://github.com"
+	}
+	if org == "" {
+		org = "youeye-platform"
+	}
+
+	provider := c.Releases.Provider
+	if provider == "" {
+		provider = detectReleaseProvider(base)
+	}
+	apiPath := c.Releases.APIPath
+	if apiPath == "" && provider != "github" {
+		apiPath = "/api/v1"
+	}
+	return ReleaseRepo{
+		Provider:     provider,
+		BaseURL:      base,
+		APIPath:      apiPath,
+		Organization: org,
+		Repository:   repoName,
+		RepoURL:      base + "/" + org + "/" + repoName,
+	}
+}
+
+// ParseReleaseRepoURL validates and normalizes a core release repository URL.
+func ParseReleaseRepoURL(raw string) (ReleaseRepo, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ReleaseRepo{}, fmt.Errorf("repo URL is empty")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ReleaseRepo{}, fmt.Errorf("invalid repo URL: %w", err)
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return ReleaseRepo{}, fmt.Errorf("repo URL must start with http:// or https://")
+	}
+	if u.Host == "" {
+		return ReleaseRepo{}, fmt.Errorf("repo URL host is required")
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return ReleaseRepo{}, fmt.Errorf("repo URL must include owner and repository")
+	}
+	org := parts[0]
+	repo := strings.TrimSuffix(parts[1], ".git")
+	baseURL := u.Scheme + "://" + u.Host
+	provider := detectReleaseProvider(baseURL)
+	apiPath := ""
+	if provider != "github" {
+		apiPath = "/api/v1"
+	}
+	return ReleaseRepo{
+		Provider:     provider,
+		BaseURL:      baseURL,
+		APIPath:      apiPath,
+		Organization: org,
+		Repository:   repo,
+		RepoURL:      baseURL + "/" + org + "/" + repo,
+	}, nil
+}
+
+func detectReleaseProvider(baseURL string) string {
+	u, err := url.Parse(baseURL)
+	host := ""
+	if err == nil {
+		host = strings.ToLower(u.Host)
+	}
+	if host == "" {
+		host = strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://"))
+	}
+	if host == "github.com" || strings.HasSuffix(host, ".github.com") {
+		return "github"
+	}
+	return "gitea"
 }

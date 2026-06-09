@@ -9,11 +9,11 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := Default()
 
-	if cfg.Releases.BaseURL != "https://git.potemk.in" {
-		t.Errorf("default BaseURL = %q, want %q", cfg.Releases.BaseURL, "https://git.potemk.in")
+	if cfg.Releases.RepoURL != "https://github.com/youeye-platform/YouEye" {
+		t.Errorf("default RepoURL = %q, want %q", cfg.Releases.RepoURL, "https://github.com/youeye-platform/YouEye")
 	}
-	if cfg.Releases.Organization != "potemsla" {
-		t.Errorf("default Organization = %q, want %q", cfg.Releases.Organization, "potemsla")
+	if cfg.CoreReleaseRepo().Organization != "youeye-platform" {
+		t.Errorf("default Organization = %q, want %q", cfg.CoreReleaseRepo().Organization, "youeye-platform")
 	}
 	if cfg.Releases.Repositories.Spine != "YouEye" {
 		t.Errorf("default Spine repo = %q, want %q", cfg.Releases.Repositories.Spine, "YouEye")
@@ -48,6 +48,7 @@ func TestValidateDefaultConfig(t *testing.T) {
 
 func TestValidateEmptyBaseURL(t *testing.T) {
 	cfg := Default()
+	cfg.Releases.RepoURL = ""
 	cfg.Releases.BaseURL = ""
 	err := cfg.Validate()
 	if err == nil {
@@ -57,6 +58,7 @@ func TestValidateEmptyBaseURL(t *testing.T) {
 
 func TestValidateEmptyOrganization(t *testing.T) {
 	cfg := Default()
+	cfg.Releases.RepoURL = ""
 	cfg.Releases.Organization = ""
 	err := cfg.Validate()
 	if err == nil {
@@ -66,6 +68,7 @@ func TestValidateEmptyOrganization(t *testing.T) {
 
 func TestValidateEmptySpineRepo(t *testing.T) {
 	cfg := Default()
+	cfg.Releases.RepoURL = ""
 	cfg.Releases.Repositories.Spine = ""
 	err := cfg.Validate()
 	if err == nil {
@@ -75,6 +78,7 @@ func TestValidateEmptySpineRepo(t *testing.T) {
 
 func TestValidateEmptyControlPanelRepo(t *testing.T) {
 	cfg := Default()
+	cfg.Releases.RepoURL = ""
 	cfg.Releases.Repositories.ControlPanel = ""
 	err := cfg.Validate()
 	if err == nil {
@@ -196,7 +200,7 @@ func TestValidateValidLogFormats(t *testing.T) {
 func TestGetReleasesAPIURL(t *testing.T) {
 	cfg := Default()
 	url := cfg.GetReleasesAPIURL()
-	expected := "https://git.potemk.in/api/v1"
+	expected := "https://api.github.com/repos/youeye-platform/YouEye/releases?per_page=50"
 	if url != expected {
 		t.Errorf("GetReleasesAPIURL() = %q, want %q", url, expected)
 	}
@@ -205,14 +209,51 @@ func TestGetReleasesAPIURL(t *testing.T) {
 func TestGetRepoPath(t *testing.T) {
 	cfg := Default()
 
-	if path := cfg.GetSpineRepoPath(); path != "potemsla/YouEye" {
+	if path := cfg.GetSpineRepoPath(); path != "youeye-platform/YouEye" {
 		t.Errorf("GetSpineRepoPath() = %q", path)
 	}
-	if path := cfg.GetControlPanelRepoPath(); path != "potemsla/YouEye" {
+	if path := cfg.GetControlPanelRepoPath(); path != "youeye-platform/YouEye" {
 		t.Errorf("GetControlPanelRepoPath() = %q", path)
 	}
-	if path := cfg.GetUIRepoPath(); path != "potemsla/YouEye" {
+	if path := cfg.GetUIRepoPath(); path != "youeye-platform/YouEye" {
 		t.Errorf("GetUIRepoPath() = %q", path)
+	}
+}
+
+func TestParseReleaseRepoURLForgejo(t *testing.T) {
+	repo, err := ParseReleaseRepoURL("https://git.potemk.in/potemsla/YouEye.git")
+	if err != nil {
+		t.Fatalf("ParseReleaseRepoURL() error: %v", err)
+	}
+	if repo.Provider != "gitea" {
+		t.Errorf("Provider = %q, want gitea", repo.Provider)
+	}
+	if repo.BaseURL != "https://git.potemk.in" {
+		t.Errorf("BaseURL = %q", repo.BaseURL)
+	}
+	if repo.Organization != "potemsla" || repo.Repository != "YouEye" {
+		t.Errorf("repo = %s/%s, want potemsla/YouEye", repo.Organization, repo.Repository)
+	}
+	if repo.APIPath != "/api/v1" {
+		t.Errorf("APIPath = %q, want /api/v1", repo.APIPath)
+	}
+}
+
+func TestCoreReleaseRepoLegacyFallback(t *testing.T) {
+	cfg := Default()
+	cfg.Releases.RepoURL = ""
+	cfg.Releases.Provider = "gitea"
+	cfg.Releases.BaseURL = "https://git.potemk.in"
+	cfg.Releases.APIPath = "/api/v1"
+	cfg.Releases.Organization = "potemsla"
+	cfg.Releases.Repositories.Spine = "YouEye"
+
+	repo := cfg.CoreReleaseRepo()
+	if repo.RepoURL != "https://git.potemk.in/potemsla/YouEye" {
+		t.Errorf("RepoURL = %q", repo.RepoURL)
+	}
+	if repo.Provider != "gitea" {
+		t.Errorf("Provider = %q", repo.Provider)
 	}
 }
 
@@ -222,11 +263,7 @@ func TestLoadFromFile(t *testing.T) {
 	cfgPath := filepath.Join(dir, "config.yaml")
 	content := `
 releases:
-  base_url: "https://custom.example.com"
-  organization: "testorg"
-  repositories:
-    spine: "TestSpine"
-    control_panel: "TestCP"
+  repo_url: "https://custom.example.com/testorg/TestSpine"
 deployment:
   container:
     name: "test-container"
@@ -251,11 +288,11 @@ logging:
 		t.Fatalf("LoadFromFile() error: %v", err)
 	}
 
-	if cfg.Releases.BaseURL != "https://custom.example.com" {
-		t.Errorf("BaseURL = %q, want custom URL", cfg.Releases.BaseURL)
+	if cfg.CoreReleaseRepo().BaseURL != "https://custom.example.com" {
+		t.Errorf("BaseURL = %q, want custom URL", cfg.CoreReleaseRepo().BaseURL)
 	}
-	if cfg.Releases.Organization != "testorg" {
-		t.Errorf("Organization = %q, want testorg", cfg.Releases.Organization)
+	if cfg.CoreReleaseRepo().Organization != "testorg" {
+		t.Errorf("Organization = %q, want testorg", cfg.CoreReleaseRepo().Organization)
 	}
 	if cfg.Deployment.ControlPanel.Port != 8080 {
 		t.Errorf("Port = %d, want 8080", cfg.Deployment.ControlPanel.Port)
@@ -293,14 +330,10 @@ func TestLoadFromFileNotFound(t *testing.T) {
 func TestLoadFromFileInvalidConfig(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
-	// Valid YAML but invalid config (empty base_url)
+	// Valid YAML but invalid config (empty repo_url)
 	content := `
 releases:
-  base_url: ""
-  organization: "test"
-  repositories:
-    spine: "s"
-    control_panel: "cp"
+  repo_url: "not-a-url"
 deployment:
   container:
     name: "c"
@@ -322,7 +355,7 @@ logging:
 	Reset()
 	_, err := LoadFromFile(cfgPath)
 	if err == nil {
-		t.Error("expected validation error for empty base_url")
+		t.Error("expected validation error for invalid repo_url")
 	}
 }
 
@@ -342,7 +375,7 @@ func TestGetReturnsDefault(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("Get() should never return nil")
 	}
-	if cfg.Releases.BaseURL != "https://git.potemk.in" {
+	if cfg.CoreReleaseRepo().RepoURL != "https://github.com/youeye-platform/YouEye" {
 		t.Errorf("Get() should return defaults when loading fails, got BaseURL=%q", cfg.Releases.BaseURL)
 	}
 }
