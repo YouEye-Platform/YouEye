@@ -18,6 +18,10 @@
 - Focused Node test passed: `control-panel/tests/identity-consent.spec.ts`.
 - `pnpm --dir YouEye/ui build` passed for UI `0.4.3.9`.
 - `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.61`.
+- Released `cp-artem-v0.4.13.61` and `ui-artem-v0.4.3.9`, each with exact `standalone.tar`.
+- Deployed CP through `spine update control`; deployed UI through CP's UI update endpoint.
+- Live `spine status` reports CP `0.4.13.61`, UI `0.4.3.9`, and 17 running containers / 0 stopped.
+- Built-in Codex Browser verified `https://potato.app/settings/apps/ye-search` renders friendly permission descriptor copy, badges, grant type, and raw audit string. Screenshot: `/tmp/codex-browser-permission-descriptors-0.4.13.61-0.4.3.9.png`.
 
 ### Notes for Iris
 - This is the descriptor/copy foundation for broader first-launch permissions. It does not yet add a modal prompt for every non-identity permission request.
