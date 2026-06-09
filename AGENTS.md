@@ -1,3 +1,24 @@
+## v0.4.13.54 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add YouEye ID first-launch app consent
+
+### Changes
+- `control-panel/src/lib/identity/store.ts` — Added per-user/per-client `identity_app_consents` storage plus list/upsert/revoke helpers.
+- `control-panel/src/app/application/o/authorize/route.ts` — Added first-launch consent gating for app OAuth clients before issuing authorization codes, while skipping first-party Control Panel/UI clients.
+- `control-panel/src/app/api/identity/consents/app/[appId]/route.ts` — Added an authenticated settings-compatible API to list/revoke an app's YouEye ID consent grant.
+- `control-panel/src/components/settings-shell/apps-client.tsx` — Merged YouEye ID first-launch consent into the app Permissions tab and revoke-all flow.
+- `control-panel/tests/identity-consent.spec.ts` — Added focused regression coverage for consent storage, OAuth gating, and settings revoke wiring.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.54`.
+
+### Test Results
+- Focused Node test passed: `control-panel/tests/identity-consent.spec.ts`.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.54`.
+
+### Notes for Iris
+- This is the first YouEye ID launch-time permission foundation. It gates app OAuth clients on first launch and exposes the grant in app settings; richer per-permission preference prompts still need follow-up manifest/UI work.
+
 ## v0.4.13.53 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

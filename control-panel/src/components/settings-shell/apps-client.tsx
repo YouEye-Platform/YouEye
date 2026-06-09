@@ -45,6 +45,8 @@ interface Permission {
   permission: string;
   granted: boolean;
   grantType: string | null;
+  grantedAt?: string | null;
+  scopes?: string[];
 }
 
 type AppTab = "app-settings" | "overview" | "branding" | "permissions" | "network" | "link-handling";
@@ -296,14 +298,17 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
   const title = drawerApp?.name || unifiedApp?.displayName || appId;
 
   const load = useCallback(async () => {
-      const [drawerRes, unifiedRes, permissionRes] = await Promise.all([
+      const [drawerRes, unifiedRes, permissionRes, identityPermissionRes] = await Promise.all([
         hasUserContext ? fetch(uiSettingsApi("apps/drawer")) : Promise.resolve(null),
         fetch("/api/apps/unified"),
         hasUserContext ? fetch(uiSettingsApi(`permissions/app/${encodeURIComponent(appId)}`)) : Promise.resolve(null),
+        hasUserContext ? fetch(`/api/identity/consents/app/${encodeURIComponent(appId)}`) : Promise.resolve(null),
       ]);
       if (drawerRes?.ok) setDrawerApps((await drawerRes.json()).apps || []);
       if (unifiedRes.ok) setUnifiedApps((await unifiedRes.json()).apps || []);
-      if (permissionRes?.ok) setPermissions((await permissionRes.json()).permissions || []);
+      const uiPermissions = permissionRes?.ok ? ((await permissionRes.json()).permissions || []) : [];
+      const identityPermissions = identityPermissionRes?.ok ? ((await identityPermissionRes.json()).permissions || []) : [];
+      setPermissions([...identityPermissions, ...uiPermissions]);
       setLoading(false);
   }, [appId]);
 
@@ -312,19 +317,25 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
   }, [load]);
 
   async function revokeAppPermission(permission: string) {
-    const res = await fetch(uiSettingsApi(`permissions/app/${encodeURIComponent(appId)}`), {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ permission }),
-    });
+    const isIdentityConsent = permission === "identity:youeye-id:sign-in";
+    const res = isIdentityConsent
+      ? await fetch(`/api/identity/consents/app/${encodeURIComponent(appId)}`, { method: "DELETE" })
+      : await fetch(uiSettingsApi(`permissions/app/${encodeURIComponent(appId)}`), {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ permission }),
+        });
     if (res.ok) {
       setPermissions((items) => items.filter((item) => item.permission !== permission));
     }
   }
 
   async function revokeAllPermissions() {
-    const res = await fetch(uiSettingsApi(`permissions/app/${encodeURIComponent(appId)}`), { method: "DELETE" });
-    if (res.ok) setPermissions([]);
+    const [uiRes, identityRes] = await Promise.all([
+      fetch(uiSettingsApi(`permissions/app/${encodeURIComponent(appId)}`), { method: "DELETE" }),
+      fetch(`/api/identity/consents/app/${encodeURIComponent(appId)}`, { method: "DELETE" }),
+    ]);
+    if (uiRes.ok || identityRes.ok) setPermissions([]);
   }
 
   const hasAppSettings = hasUserContext && !!drawerApp?.hasSettingsPanel && (!!drawerApp.url || !!drawerApp.subdomain);

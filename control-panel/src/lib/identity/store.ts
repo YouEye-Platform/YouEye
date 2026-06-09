@@ -21,6 +21,14 @@ export interface IdentityClient {
   scopes: string[];
 }
 
+export interface IdentityAppConsent {
+  user_id: string;
+  client_id: string;
+  scopes: string[];
+  granted_at: string;
+  updated_at: string;
+}
+
 export interface AuthCode {
   code: string;
   client_id: string;
@@ -98,6 +106,14 @@ export async function ensureIdentitySchema(): Promise<void> {
       purpose text PRIMARY KEY,
       secret text NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS identity_app_consents (
+      user_id uuid NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
+      client_id text NOT NULL REFERENCES identity_clients(client_id) ON DELETE CASCADE,
+      scopes jsonb NOT NULL DEFAULT '[]'::jsonb,
+      granted_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, client_id)
     );
   `);
 }
@@ -301,6 +317,45 @@ export async function consumeAuthCode(code: string, clientId: string, redirectUr
     RETURNING code, client_id, user_id::text, redirect_uri, scope
   `);
   return rows[0] || null;
+}
+
+export async function getAppConsent(userId: string, clientId: string): Promise<IdentityAppConsent | null> {
+  await ensureIdentitySchema();
+  const rows = await queryRows<IdentityAppConsent>(`
+    SELECT user_id::text, client_id, scopes, granted_at::text, updated_at::text
+    FROM identity_app_consents
+    WHERE user_id = ${sql(userId)}
+      AND client_id = ${sql(clientId)}
+    LIMIT 1
+  `);
+  return rows[0] || null;
+}
+
+export async function upsertAppConsent(input: {
+  userId: string;
+  clientId: string;
+  scopes: string[];
+}): Promise<IdentityAppConsent> {
+  await ensureIdentitySchema();
+  const scopes = Array.from(new Set(input.scopes.filter(Boolean)));
+  const rows = await queryRows<IdentityAppConsent>(`
+    INSERT INTO identity_app_consents (user_id, client_id, scopes)
+    VALUES (${sql(input.userId)}, ${sql(input.clientId)}, ${sqlJson(scopes)})
+    ON CONFLICT (user_id, client_id) DO UPDATE SET
+      scopes = EXCLUDED.scopes,
+      updated_at = now()
+    RETURNING user_id::text, client_id, scopes, granted_at::text, updated_at::text
+  `);
+  return rows[0];
+}
+
+export async function revokeAppConsent(userId: string, clientId: string): Promise<void> {
+  await ensureIdentitySchema();
+  await psql(`
+    DELETE FROM identity_app_consents
+    WHERE user_id = ${sql(userId)}
+      AND client_id = ${sql(clientId)}
+  `);
 }
 
 export async function getSigningSecret(): Promise<string> {
