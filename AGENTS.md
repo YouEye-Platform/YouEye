@@ -1,3 +1,25 @@
+## v0.4.13.55 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix app consent settings route
+
+### Changes
+- `control-panel/src/app/api/identity/consents/app/[appId]/route.ts` — Accepts the existing CP SSO settings session as well as a direct YouEye ID session when resolving the user for consent list/revoke.
+- `control-panel/src/app/settings/api/identity/consents/app/[appId]/route.ts` — Added a settings-surface API alias for the app consent endpoint.
+- `control-panel/src/components/settings-shell/apps-client.tsx` — Uses a settings-aware consent API path so app settings can reliably list/revoke the first-launch grant.
+- `control-panel/src/lib/identity/store.ts` — Added username lookup for resolving CP sessions back to YouEye ID users.
+- `control-panel/src/lib/caddy/client.ts` — Added `/api/identity/*` to the root settings/market support route for existing installs after route repair.
+- `control-panel/tests/identity-consent.spec.ts` — Extended consent regression coverage for CP session fallback and settings-aware routing.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.55`.
+
+### Test Results
+- Focused Node test passed: `control-panel/tests/identity-consent.spec.ts`.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.55`.
+
+### Notes for Iris
+- CP `0.4.13.54` introduced the consent table and OAuth gate; `0.4.13.55` makes the app settings revoke path match the real settings auth/routing model.
+
 ## v0.4.13.54 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

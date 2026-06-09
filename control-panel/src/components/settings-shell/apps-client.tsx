@@ -119,6 +119,14 @@ function tabClass(active: boolean) {
   }`;
 }
 
+function identityConsentApi(appId: string): string {
+  const path = `/identity/consents/app/${encodeURIComponent(appId)}`;
+  if (typeof window !== "undefined" && window.location.pathname.startsWith("/settings")) {
+    return `/settings/api${path}`;
+  }
+  return `/api${path}`;
+}
+
 function InstalledAppsList({ onOpen }: { onOpen: (id: string) => void }) {
   const [apps, setApps] = useState<DrawerApp[]>([]);
   const [loading, setLoading] = useState(true);
@@ -302,7 +310,7 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
         hasUserContext ? fetch(uiSettingsApi("apps/drawer")) : Promise.resolve(null),
         fetch("/api/apps/unified"),
         hasUserContext ? fetch(uiSettingsApi(`permissions/app/${encodeURIComponent(appId)}`)) : Promise.resolve(null),
-        hasUserContext ? fetch(`/api/identity/consents/app/${encodeURIComponent(appId)}`) : Promise.resolve(null),
+        hasUserContext ? fetch(identityConsentApi(appId)) : Promise.resolve(null),
       ]);
       if (drawerRes?.ok) setDrawerApps((await drawerRes.json()).apps || []);
       if (unifiedRes.ok) setUnifiedApps((await unifiedRes.json()).apps || []);
@@ -319,7 +327,7 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
   async function revokeAppPermission(permission: string) {
     const isIdentityConsent = permission === "identity:youeye-id:sign-in";
     const res = isIdentityConsent
-      ? await fetch(`/api/identity/consents/app/${encodeURIComponent(appId)}`, { method: "DELETE" })
+      ? await fetch(identityConsentApi(appId), { method: "DELETE" })
       : await fetch(uiSettingsApi(`permissions/app/${encodeURIComponent(appId)}`), {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
@@ -333,7 +341,7 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
   async function revokeAllPermissions() {
     const [uiRes, identityRes] = await Promise.all([
       fetch(uiSettingsApi(`permissions/app/${encodeURIComponent(appId)}`), { method: "DELETE" }),
-      fetch(`/api/identity/consents/app/${encodeURIComponent(appId)}`, { method: "DELETE" }),
+      fetch(identityConsentApi(appId), { method: "DELETE" }),
     ]);
     if (uiRes.ok || identityRes.ok) setPermissions([]);
   }

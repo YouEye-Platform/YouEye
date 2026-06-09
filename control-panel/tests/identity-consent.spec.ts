@@ -17,6 +17,7 @@ test('YouEye ID stores first-launch app consent per user and client', () => {
   assert.match(store, /getAppConsent/);
   assert.match(store, /upsertAppConsent/);
   assert.match(store, /revokeAppConsent/);
+  assert.match(store, /getUserByUsername/);
 });
 
 test('OAuth authorize requires consent for app clients before issuing codes', () => {
@@ -35,10 +36,13 @@ test('App settings can list and revoke YouEye ID first-launch consent', () => {
   const appSettings = read('src/components/settings-shell/apps-client.tsx');
 
   assert.match(consentRoute, /getIdentitySession/);
+  assert.match(consentRoute, /getSession/);
+  assert.match(consentRoute, /getUserByUsername/);
   assert.match(consentRoute, /getAppConsent/);
   assert.match(consentRoute, /revokeAppConsent/);
   assert.match(consentRoute, /identity:youeye-id:sign-in/);
   assert.match(consentRoute, /first-launch/);
-  assert.match(appSettings, /api\/identity\/consents\/app/);
+  assert.match(appSettings, /identityConsentApi/);
+  assert.match(appSettings, /settings\/api/);
   assert.match(appSettings, /identity:youeye-id:sign-in/);
 });

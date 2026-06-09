@@ -1,6 +1,6 @@
 {
   "name": "ye-controlpanel",
-  "version": "0.4.13.54",
+  "version": "0.4.13.55",
   "private": true,
   "scripts": {
     "dev": "next dev",

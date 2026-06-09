@@ -189,6 +189,17 @@ export async function getUserById(id: string): Promise<IdentityUser | null> {
   return rows[0] || null;
 }
 
+export async function getUserByUsername(username: string): Promise<IdentityUser | null> {
+  await ensureIdentitySchema();
+  const rows = await queryRows<IdentityUser>(`
+    SELECT id::text, username, name, email, groups, is_admin
+    FROM identity_users
+    WHERE username = ${sql(username)}
+    LIMIT 1
+  `);
+  return rows[0] || null;
+}
+
 export async function listIdentityUsers(search?: string): Promise<IdentityUser[]> {
   await ensureIdentitySchema();
   const where = search

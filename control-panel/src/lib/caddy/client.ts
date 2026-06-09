@@ -1502,6 +1502,7 @@ export async function ensureControlSettingsRoute(
         '/api/apps/*',
         '/api/auth/session',
         '/api/health/*',
+        '/api/identity/*',
         '/api/market/*',
         '/api/people/*',
         '/api/people*',
