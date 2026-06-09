@@ -1,3 +1,23 @@
+## v0.4.3.22 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Suppress legacy notification projection when canonical surface exists
+
+### Changes
+- `ui/src/lib/surfaces/normalize.ts` — Stops synthesizing `default-notification` from `capabilities.notifications` when a canonical notification-center surface is already declared.
+- `ui/tests/surfaces.spec.ts` — Adds regression coverage for canonical notification surfaces suppressing legacy projection and fixes the test harness path resolution for the current Node/tsx runner.
+- `ui/package.json`, `README.md`, `ui/public/sw.js` — Bumped UI to `0.4.3.22` and regenerated build output.
+
+### Test Results
+- `node --import tsx --test ui/tests/surfaces.spec.ts` passed.
+- `node --test ui/tests/app-preference-settings.spec.mjs ui/tests/launch-requirements.spec.mjs ui/tests/my-connections-auth.spec.mjs` passed.
+- `pnpm --dir ui build` passed with the known local Postgres static-generation warnings.
+- Released `ui-artem-v0.4.3.22` with exact `standalone.tar`, deployed through CP's UI update endpoint, and verified live `/api/v1/apps/surfaces` returns only canonical Memos surfaces with no `default-notification`.
+
+### Notes for Iris
+- This keeps compatibility for legacy notification-only manifests while preventing duplicate notification embeds once an app declares canonical `surfaces[]`.
+
 ## v0.4.13.80 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
