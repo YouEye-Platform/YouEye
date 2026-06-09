@@ -1869,6 +1869,7 @@ export interface ScopedAppGrantRoute {
   hostname: string;
   upstreamDial: string;
   paths: string[];
+  methods?: string[];
   appToken?: string;
 }
 
@@ -1935,6 +1936,7 @@ export async function ensureScopedAppGrantDenyRoute(): Promise<void> {
  * This intentionally bypasses browser forward-auth only for traffic that:
  * - targets the approved app hostname,
  * - matches the approved path list,
+ * - uses an approved HTTP method,
  * - presents the approved app token header.
  */
 export async function addScopedAppGrantRoute(route: ScopedAppGrantRoute): Promise<void> {
@@ -1950,6 +1952,7 @@ export async function addScopedAppGrantRoute(route: ScopedAppGrantRoute): Promis
   const match: Record<string, unknown> = {
     host: [route.hostname],
     path: route.paths,
+    method: route.methods?.length ? route.methods : ['GET'],
   };
   if (route.appToken) {
     match.header = { 'X-Youeye-App-Token': [route.appToken] };

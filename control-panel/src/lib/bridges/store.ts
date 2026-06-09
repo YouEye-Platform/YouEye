@@ -32,6 +32,7 @@ export interface Bridge {
   accessMode?: 'network' | 'caddy';
   url?: string;
   allowedPaths?: string[];
+  allowedMethods?: string[];
   approvedBy: string;
   approvedAt: string;
   activatedAt?: string;

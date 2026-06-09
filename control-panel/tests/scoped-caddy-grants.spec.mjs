@@ -22,6 +22,8 @@ test('scoped app-token Caddy grants deny unapproved app-token fallthrough', () =
   assert.match(caddy, /terminal: true/);
   assert.match(caddy, /server\.routes = upsertScopedAppGrantDenyRoute\(server\.routes\)/);
   assert.match(caddy, /export async function ensureScopedAppGrantDenyRoute/);
+  assert.match(caddy, /methods\?: string\[\]/);
+  assert.match(caddy, /method: route\.methods\?\.length \? route\.methods : \['GET'\]/);
 
   const grantInsertIndex = caddy.indexOf('server.routes.splice(stripIndex, 0, grantRoute)');
   const denyInsertIndex = caddy.indexOf('server.routes = upsertScopedAppGrantDenyRoute(server.routes)');
@@ -34,6 +36,9 @@ test('scoped app-token Caddy grants deny unapproved app-token fallthrough', () =
   assert.match(repairRoute, /app-grant-token-deny/);
 
   assert.match(manager, /injectCaddyRootCA/);
+  assert.match(manager, /function getScopedCaddyGrantMethods/);
+  assert.match(manager, /allowedMethods: b\.allowedMethods/);
+  assert.match(manager, /allowedMethods: scopedGrant\?\.methods/);
   assert.match(manager, /action: 'restart'/);
   const addGrantIndex = manager.indexOf('await addScopedAppGrantRoute');
   const injectCaIndex = manager.indexOf('await injectCaddyRootCA(fromContainer)');

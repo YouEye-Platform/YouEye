@@ -114,6 +114,7 @@ async function pushConnectionsToUI(appId: string): Promise<void> {
           url: b.url,
           accessMode: b.accessMode || 'network',
           allowedPaths: b.allowedPaths,
+          allowedMethods: b.allowedMethods,
           direction: b.direction,
           active: b.active,
         };
@@ -282,13 +283,21 @@ function getScopedCaddyGrantPaths(from: string, to: string): string[] | null {
   return null;
 }
 
+function getScopedCaddyGrantMethods(from: string, to: string): string[] {
+  if (from === 'search' && to === 'searxng') {
+    return ['GET'];
+  }
+  return ['GET'];
+}
+
 function getScopedGrantRouteId(from: string, to: string): string {
   return `app-grant-${from}-to-${to}`;
 }
 
-async function createScopedCaddyGrant(bridge: Bridge): Promise<{ url: string; paths: string[] } | null> {
+async function createScopedCaddyGrant(bridge: Bridge): Promise<{ url: string; paths: string[]; methods: string[] } | null> {
   const paths = getScopedCaddyGrantPaths(bridge.from, bridge.to);
   if (!paths) return null;
+  const methods = getScopedCaddyGrantMethods(bridge.from, bridge.to);
 
   const fromContainer = await resolveContainerName(bridge.from);
   const toContainer = await resolveContainerName(bridge.to);
@@ -320,6 +329,7 @@ async function createScopedCaddyGrant(bridge: Bridge): Promise<{ url: string; pa
     hostname,
     upstreamDial: `${targetIp}:${targetPort}`,
     paths,
+    methods,
     appToken,
   });
   await injectCaddyRootCA(fromContainer);
@@ -332,6 +342,7 @@ async function createScopedCaddyGrant(bridge: Bridge): Promise<{ url: string; pa
   return {
     url: `https://${hostname}`,
     paths,
+    methods,
   };
 }
 
@@ -401,6 +412,7 @@ export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
     accessMode: scopedGrant ? 'caddy' : 'network',
     url: scopedGrant?.url,
     allowedPaths: scopedGrant?.paths,
+    allowedMethods: scopedGrant?.methods,
   });
 
   // Push updated connection state to UI (non-blocking)
