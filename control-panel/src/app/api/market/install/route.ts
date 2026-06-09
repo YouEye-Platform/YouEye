@@ -11,6 +11,7 @@ import { NextRequest } from 'next/server';
 import { fetchAvailableApps, fetchManifestFromRepo, fetchManifestFromSource, fetchManifestReferenceFromSource } from '@/lib/market/catalog';
 import { installApp } from '@/lib/market/engine';
 import { applyIntegration } from '@/lib/market/integration-runner';
+import { uninstallApp } from '@/lib/market/uninstaller';
 import { startTracking, trackEvent, finishTracking } from '@/lib/market/install-tracker';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
 import { emitEvent } from '@/lib/events/emitter';
@@ -104,15 +105,41 @@ export async function POST(request: NextRequest) {
       };
 
       try {
+        const selectedStandaloneIntegrations = await getSelectedStandaloneIntegrations(config.appId, config.sourceId, config.selectedIntegrations);
+        config.plannedNativeIdentityIntegration = selectedStandaloneIntegrations.some((integration) => integration.type === 'identity');
+        let baseInstallComplete = false;
+
         // Unified install path — engine handles both native (LXD) and marketplace (OCI)
         await installApp(manifest, config, onEvent, abortController.signal);
+        baseInstallComplete = true;
 
-        const selectedStandaloneIntegrations = await getSelectedStandaloneIntegrations(config.appId, config.sourceId, config.selectedIntegrations);
         for (const integrationId of selectedStandaloneIntegrations) {
-          await applyIntegration(
-            { integrationId, sourceId: config.sourceId },
-            onEvent
-          );
+          try {
+            await applyIntegration(
+              { integrationId: integrationId.id, sourceId: config.sourceId },
+              onEvent
+            );
+          } catch (integrationErr) {
+            if (baseInstallComplete) {
+              onEvent({
+                step: 0,
+                totalSteps: 0,
+                status: 'running',
+                message: 'Rolling back failed install after integration error...',
+                detail: String(integrationErr),
+              });
+              await uninstallApp(config.appId, { keepData: false, dropSharedDatabase: true }).catch((rollbackErr) => {
+                onEvent({
+                  step: 0,
+                  totalSteps: 0,
+                  status: 'warning',
+                  message: 'Rollback after integration error did not fully complete',
+                  detail: String(rollbackErr),
+                });
+              });
+            }
+            throw integrationErr;
+          }
         }
 
         // Install succeeded
@@ -175,7 +202,7 @@ async function getSelectedStandaloneIntegrations(
   appId: string,
   sourceId?: string,
   selectedIntegrations?: string[],
-): Promise<string[]> {
+): Promise<{ id: string; type?: string }[]> {
   if (!selectedIntegrations?.length) return [];
 
   const selected = new Set(selectedIntegrations);
@@ -188,5 +215,5 @@ async function getSelectedStandaloneIntegrations(
       selected.has(item.id) &&
       (!sourceId || item.sourceId === sourceId)
     ))
-    .map((item) => item.id);
+    .map((item) => ({ id: item.id, type: item.integrations?.[0]?.type }));
 }

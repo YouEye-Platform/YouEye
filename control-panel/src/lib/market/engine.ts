@@ -556,6 +556,7 @@ export async function installApp(
   const selectedIntegrations = getSelectedIntegrations(manifest, config);
   const identityConfig = await getIdentityProviderConfig();
   const ssoEnabled = shouldEnableSSO(manifest, selectedIntegrations);
+  const nativeIdentityIntegrationPlanned = config.plannedNativeIdentityIntegration === true;
   const totalSteps = countSteps(manifest, ssoEnabled);
   let step = 0;
 
@@ -693,7 +694,7 @@ export async function installApp(
   // mark it for a YouEye ID forward-auth handler when Caddy is configured.
 
   let forwardAuthEnabled = false;
-  const useForwardAuth = resolveForwardAuth(manifest, ssoEnabled);
+  const useForwardAuth = resolveForwardAuth(manifest, ssoEnabled || nativeIdentityIntegrationPlanned);
 
   if (useForwardAuth) {
     try {
@@ -851,7 +852,7 @@ export async function installApp(
         if (appBridgeName) {
           try {
             const needsSharedDb = (manifest.database?.mode ?? 'none') === 'shared';
-            const needsSSO = ssoEnabled;
+            const needsSSO = ssoEnabled || nativeIdentityIntegrationPlanned;
             const services = await getSystemServices({ needsSharedDb, needsSSO });
             await addSystemProxyDevices(appId, services);
 
@@ -936,7 +937,7 @@ export async function installApp(
   if (appBridgeName) {
     try {
       const needsSharedDb = (manifest.database?.mode ?? 'none') === 'shared';
-      const needsSSO = ssoEnabled;
+      const needsSSO = ssoEnabled || nativeIdentityIntegrationPlanned;
 
       // Ensure Control owns the system-service proxies for this app bridge.
       const services = await getSystemServices({ needsSharedDb, needsSSO });

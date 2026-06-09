@@ -111,6 +111,8 @@ export interface InstallConfig {
   approvedConnections?: ApprovedConnection[];
   /** Optional Market integrations selected during install */
   selectedIntegrations?: string[];
+  /** True when a selected standalone identity Integration will provide app-native SSO after base install */
+  plannedNativeIdentityIntegration?: boolean;
   installedIntegrations?: {
     id: string;
     sourceId?: string;
