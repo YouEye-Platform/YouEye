@@ -15,6 +15,9 @@
 ### Test Results
 - Focused Control Panel tests passed: `node --test tests/market-integration-remove.spec.mjs tests/market-filters.spec.mjs tests/market-update-preview.spec.mjs tests/market-migration-planner.spec.mjs tests/market-update-plans.spec.mjs`.
 - `pnpm build` passed for Control Panel `0.4.13.71`.
+- Released `cp-artem-v0.4.13.71` with exact `standalone.tar`, snapshotted core live containers as `pre-test-cp-0.4.13.71-20260609-203642`, and deployed through `spine update control`.
+- Final `spine status` reports CP `0.4.13.71`, UI `0.4.3.20`, 21 running containers, and 0 stopped.
+- Built-in Codex Browser verified `https://potato.app/market/memos-youeye-id?source=official` shows the installed Memos Integration with the new `Remove record` action. Screenshot: `/tmp/codex-browser-integration-remove-0.4.13.71.png`.
 
 ### Notes for Iris
 - Existing Integration manifests do not yet declare app-specific teardown steps, so live removal of those items should use the explicit metadata-only path until each manifest gains safe uninstall steps.
