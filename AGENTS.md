@@ -1,3 +1,21 @@
+## v0.4.13.73 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Resolve variables in SSO cleanup conditions
+
+### Changes
+- `control-panel/src/lib/market/sso-engine.ts` — Resolves manifest variables inside `contains`/`equals` condition expected values, so conditions such as `provider.title equals '${identity.name}'` compare against the configured YouEye ID display name instead of the literal placeholder.
+- `control-panel/tests/market-sso-engine.spec.mjs` — Extended SSO engine regression coverage for variable-resolved condition values.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.73`.
+
+### Test Results
+- Focused Control Panel tests passed: `node --test tests/market-sso-engine.spec.mjs tests/market-integration-remove.spec.mjs tests/market-filters.spec.mjs tests/market-update-preview.spec.mjs tests/market-migration-planner.spec.mjs tests/market-update-plans.spec.mjs`.
+- `pnpm build` passed for Control Panel `0.4.13.73`.
+
+### Notes for Iris
+- CP `0.4.13.72` fixed literal `equals` support but did not resolve variables inside expected values. Memos teardown uses `${identity.name}`, so `0.4.13.73` supersedes `0.4.13.72` for valid Integration teardown proof.
+
 ## v0.4.13.72 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

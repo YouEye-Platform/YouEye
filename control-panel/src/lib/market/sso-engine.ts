@@ -418,6 +418,7 @@ function evaluateCondition(condition: string, ctx: StepContext): boolean {
   const containsMatch = trimmed.match(/^(\S+)\s+contains\s+'([^']+)'$/);
   if (containsMatch) {
     const [, path, search] = containsMatch;
+    const expected = resolveStepVariables(search, ctx);
     const parts = path.split('.');
     if (parts.length >= 2) {
       const itemKey = parts[0];
@@ -425,7 +426,7 @@ function evaluateCondition(condition: string, ctx: StepContext): boolean {
       const item = ctx.saved[itemKey];
       if (item) {
         const value = extractValueFromPath(item, prop);
-        return String(value || '').includes(search);
+        return String(value || '').includes(expected);
       }
     }
     return false;
@@ -435,6 +436,7 @@ function evaluateCondition(condition: string, ctx: StepContext): boolean {
   const equalsMatch = trimmed.match(/^(\S+)\s+equals\s+'([^']*)'$/);
   if (equalsMatch) {
     const [, path, expected] = equalsMatch;
+    const resolvedExpected = resolveStepVariables(expected, ctx);
     const parts = path.split('.');
     if (parts.length >= 2) {
       const itemKey = parts[0];
@@ -442,7 +444,7 @@ function evaluateCondition(condition: string, ctx: StepContext): boolean {
       const item = ctx.saved[itemKey];
       if (item) {
         const value = extractValueFromPath(item, prop);
-        return String(value ?? '') === expected;
+        return String(value ?? '') === resolvedExpected;
       }
     }
     return false;

@@ -14,7 +14,9 @@ test('SSO engine supports equals conditions used by Integration cleanup steps', 
 
   assert.ok(engine.includes('const equalsMatch = trimmed.match'));
   assert.ok(engine.includes("\\s+equals\\s+'([^']*)'"));
-  assert.ok(engine.includes("String(value ?? '') === expected"));
+  assert.ok(engine.includes('const resolvedExpected = resolveStepVariables(expected, ctx)'));
+  assert.ok(engine.includes("String(value ?? '') === resolvedExpected"));
+  assert.ok(engine.includes('const expected = resolveStepVariables(search, ctx)'));
 });
 
 test('SSO action steps fail loudly on non-OK responses', () => {
