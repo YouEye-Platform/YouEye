@@ -26,8 +26,7 @@ function hasSettingsPanel(manifest: Record<string, unknown> | null | undefined):
   if (!manifest) return false;
   const capabilities = manifest.capabilities as Record<string, unknown> | undefined;
   return capabilities?.settings_panel === true
-    || manifest.settings_panel === true
-    || typeof manifest.settings === "object";
+    || manifest.settings_panel === true;
 }
 
 export async function GET(request: NextRequest) {

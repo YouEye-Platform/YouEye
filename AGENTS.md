@@ -1,3 +1,21 @@
+## v0.4.3.19 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix schema-only preferences opening an empty app-settings iframe
+
+### Changes
+- `ui/src/app/api/v1/apps/drawer/route.ts`, `ui/src/app/api/ui-bridge/settings/[...path]/route.ts` — Embedded app settings panel detection now requires explicit `capabilities.settings_panel` or root `settings_panel`; schema-only `settings.schema[]` manifests no longer trigger an iframe.
+- `ui/tests/app-preference-settings.spec.mjs` — Added regression coverage for schema-only settings not implying an embedded settings panel.
+- `ui/package.json`, `ui/public/sw.js`, `README.md` — Bumped UI to `0.4.3.19` and refreshed the generated service worker precache.
+
+### Test Results
+- Focused UI tests passed: `node --test tests/app-preference-settings.spec.mjs tests/launch-requirements.spec.mjs tests/permission-approval.spec.mjs tests/timeline-permission-approval.spec.mjs`.
+- `pnpm --dir ui build` passed for UI `0.4.3.19` with the known local `127.0.0.1:5432` static-generation noise.
+
+### Notes for Iris
+- Live testing of UI `0.4.3.18` caught this before completion: the preference tab existed, but schema-only manifests rendered an empty iframe. This patch keeps explicit native app settings panels working while letting manifest preference forms render natively.
+
 ## v0.4.3.18 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
