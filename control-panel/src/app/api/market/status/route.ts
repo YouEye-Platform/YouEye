@@ -93,6 +93,14 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
       healthStatus,
       healthCheckedAt,
       forwardAuthEnabled,
+      catalogKey: metadata.catalogKey,
+      sourceId: metadata.sourceId,
+      sourceName: metadata.sourceName,
+      sourceRepoUrl: metadata.sourceRepoUrl,
+      manifestPath: metadata.manifestPath,
+      manifestRepo: metadata.manifestRepo,
+      manifestBranch: metadata.manifestBranch,
+      manifestDigest: metadata.manifestDigest,
     };
   }
 

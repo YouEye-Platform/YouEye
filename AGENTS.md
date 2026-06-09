@@ -1,3 +1,21 @@
+## v0.4.13.36 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add installed app Market source switching
+
+### Changes
+- `control-panel/src/app/api/market/status/route.ts`, `control-panel/src/lib/market/types.ts` — Status responses now expose installed source and manifest audit metadata.
+- `control-panel/src/app/api/market/app/[appId]/source/route.ts` — Added an admin-only source switch endpoint that updates install metadata and installed-app source records for future updates.
+- `control-panel/src/app/market/[appId]/page.tsx` — App detail pages now offer a source switch action when viewing a non-current source variant for an installed app.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.36`.
+
+### Test Results
+- Pending build, release, deploy, and live source-switch verification.
+
+### Notes for Iris
+- Source switching is metadata-only: it changes future update checks/updates, not the currently running containers.
+
 ## v0.4.13.35 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

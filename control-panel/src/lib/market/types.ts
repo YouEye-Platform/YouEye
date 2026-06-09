@@ -217,6 +217,14 @@ export interface AppStatusInfo {
   healthStatus?: 'healthy' | 'unhealthy' | 'unknown';
   healthCheckedAt?: string | null;
   forwardAuthEnabled?: boolean;
+  catalogKey?: string;
+  sourceId?: string;
+  sourceName?: string;
+  sourceRepoUrl?: string;
+  manifestPath?: string;
+  manifestRepo?: string;
+  manifestBranch?: string;
+  manifestDigest?: string;
 }
 
 export interface ContainerStatusInfo {

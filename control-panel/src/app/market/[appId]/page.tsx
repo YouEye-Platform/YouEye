@@ -65,6 +65,8 @@ export default function AppDetailPage() {
   const [installing, setInstalling] = useState(false);
   const [installEvents, setInstallEvents] = useState<InstallEvent[]>([]);
   const [installDone, setInstallDone] = useState(false);
+  const [switchingSource, setSwitchingSource] = useState(false);
+  const [sourceSwitchMessage, setSourceSwitchMessage] = useState<string | null>(null);
 
   // Uninstall state
   const [showUninstallDialog, setShowUninstallDialog] = useState(false);
@@ -225,6 +227,27 @@ export default function AppDetailPage() {
     setPollingAppId(config.appId);
   };
 
+  const handleSwitchSource = async () => {
+    if (!app?.sourceId) return;
+    setSwitchingSource(true);
+    setSourceSwitchMessage(null);
+    try {
+      const res = await authenticatedFetch(`/api/market/app/${encodeURIComponent(app.id)}/source`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceId: app.sourceId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to switch source');
+      setSourceSwitchMessage(`Future updates will use ${data.sourceName || app.sourceName || app.sourceId}.`);
+      await fetchStatus();
+    } catch (err) {
+      setSourceSwitchMessage(err instanceof Error ? err.message : 'Failed to switch source');
+    } finally {
+      setSwitchingSource(false);
+    }
+  };
+
   // ── Uninstall handler ──────────────────────────────────────
 
   const handleUninstall = async (appIdToUninstall: string, keepData: boolean) => {
@@ -291,6 +314,7 @@ export default function AppDetailPage() {
   const FallbackIcon = ICON_MAP[app.icon] ?? Package;
   const longDescription = app.detail?.longDescription || app.description;
   const screenshots = app.detail?.screenshots ?? [];
+  const isDifferentSourceVariant = isInstalled && !!app.sourceId && !!status?.sourceId && app.sourceId !== status.sourceId;
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -494,7 +518,53 @@ export default function AppDetailPage() {
               </div>
             </div>
           )}
+
+          {/* Market Source */}
+          {app.sourceName && (
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-gray-50">
+                <Package className="h-4 w-4 text-gray-500" />
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Market Source</p>
+                <p className="text-sm font-medium text-gray-700">
+                  {isInstalled && status?.sourceName ? status.sourceName : app.sourceName}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
+
+        {isDifferentSourceVariant && (
+          <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-medium text-blue-900">
+                  This variant is from {app.sourceName || app.sourceId}.
+                </p>
+                <p className="mt-1 text-sm text-blue-700">
+                  Current install source is {status?.sourceName || status?.sourceId}. Switching changes the source used for future update checks and updates.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleSwitchSource}
+                disabled={switchingSource}
+                className="border-blue-200 bg-white text-blue-700 hover:bg-blue-100"
+              >
+                {switchingSource ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : null}
+                Use this source
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {sourceSwitchMessage && (
+          <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+            {sourceSwitchMessage}
+          </div>
+        )}
 
         {/* Tags */}
         {app.tags.length > 0 && (
