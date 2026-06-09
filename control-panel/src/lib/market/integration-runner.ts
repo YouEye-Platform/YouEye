@@ -67,6 +67,14 @@ function integrationContextManifest(appManifest: AppManifest, integration: Integ
   };
 }
 
+function oauthScopesForSSO(sso: IntegrationManifest['sso']): string[] {
+  const scopes = new Set(['openid', 'profile', 'email', 'groups']);
+  if (sso?.adminMapping?.type === 'roleClaim') {
+    scopes.add(sso.adminMapping.claimName);
+  }
+  return [...scopes];
+}
+
 async function ensureIntegrationOAuthClient(
   contextManifest: AppManifest,
   integration: IntegrationManifest,
@@ -92,6 +100,7 @@ async function ensureIntegrationOAuthClient(
     clientId: slug,
     name: `${contextManifest.metadata.name} ${integration.metadata.name}`,
     redirectUris,
+    scopes: oauthScopesForSSO(sso),
   });
 
   return { clientId: result.clientId, clientSecret: result.clientSecret, slug };

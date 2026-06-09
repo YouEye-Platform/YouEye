@@ -234,6 +234,14 @@ function shouldEnableSSO(manifest: AppManifest, selectedIntegrations: string[]):
   return selectedIntegrations.includes(LEGACY_YOUEYE_ID_INTEGRATION);
 }
 
+function oauthScopesForManifest(manifest: AppManifest): string[] {
+  const scopes = new Set(['openid', 'profile', 'email', 'groups']);
+  if (manifest.sso?.adminMapping?.type === 'roleClaim') {
+    scopes.add(manifest.sso.adminMapping.claimName);
+  }
+  return [...scopes];
+}
+
 function countSteps(manifest: AppManifest, ssoEnabled: boolean): number {
   let steps = 1; // Generate secrets
 
@@ -676,6 +684,7 @@ export async function installApp(
         clientId: ssoSlug,
         name: manifest.metadata.name,
         redirectUris,
+        scopes: oauthScopesForManifest(manifest),
       });
 
       ssoClientId = result.clientId;
