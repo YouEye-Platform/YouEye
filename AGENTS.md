@@ -10,7 +10,14 @@
 - `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.66`.
 
 ### Test Results
-- Pending release verification.
+- Focused: `node --test tests/market-update-manifest-sync.spec.mjs` — passed.
+- Build: `pnpm build` from `control-panel/` — passed for Control Panel `0.4.13.66`.
+- Released `cp-artem-v0.4.13.66` with exact `standalone.tar`; verified flat `server.js`, `package.json`, and package version `0.4.13.66`.
+- Snapshotted `youeye-control` as `pre-cp-0.4.13.66-20260609175441`, then deployed through `spine update control`.
+- Live `spine status` reports Control Panel `0.4.13.66`, UI `0.4.3.16`, Search `0.4.0.11`, 21 running containers, and 0 stopped after the follow-up Search update.
+- Live Search update through CP `0.4.13.66` refreshed UI's cached Search manifest to version `0.4.0.11` with 3 canonical surfaces.
+- Built-in Codex Browser verified the Search launch-requirements prompt appears from the synced manifest, the approval page grants `timeline:write`, and Search reloads without the prompt.
+- Screenshots: `/tmp/codex-browser-search-launch-requirements-before-0.4.0.11.png`, `/tmp/codex-browser-search-launch-requirements-approval-0.4.0.11.png`, `/tmp/codex-browser-search-launch-requirements-granted-0.4.0.11.png`, `/tmp/codex-browser-search-launch-requirements-after-0.4.0.11.png`.
 
 ### Notes for Iris
 - Live Search first-launch testing exposed a stale UI cached manifest after app update; launch requirements depend on UI seeing the updated manifest permissions and canonical surfaces.
