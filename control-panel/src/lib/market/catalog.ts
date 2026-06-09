@@ -193,6 +193,42 @@ export async function fetchManifestReferenceFromSource(appId: string, sourceId?:
   return (await fetchManifestFromCatalogEntry(entry, branch, source)).reference;
 }
 
+export async function fetchIntegrationManifestFromSource(integrationId: string, sourceId?: string): Promise<IntegrationManifest> {
+  const source = sourceId
+    ? (await getMarketSources()).find((s) => s.id === sourceId)
+    : await getMarketSource();
+  if (!source) throw new Error(`Market source "${sourceId}" not found`);
+
+  const cacheKey = `${source.id}:integration:${integrationId}`;
+  const cached = manifestCache.get(cacheKey) as { manifest: IntegrationManifest; reference?: ManifestReference; fetchedAt: number } | undefined;
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
+    return cached.manifest;
+  }
+
+  const catalog = await fetchCatalog(source);
+  const branch = await getEffectiveBranch();
+  const entry = (catalog.integrations ?? []).find((e) => e.id === integrationId);
+  if (!entry) throw new Error(`Integration "${integrationId}" not found in Market source "${source.id}"`);
+
+  const result = await fetchIntegrationManifestFromCatalogEntry(entry, branch, source);
+  manifestCache.set(cacheKey, { manifest: result.manifest as unknown as AppManifest, reference: result.reference, fetchedAt: Date.now() });
+  return result.manifest;
+}
+
+export async function fetchIntegrationManifestReferenceFromSource(integrationId: string, sourceId?: string): Promise<ManifestReference> {
+  const source = sourceId
+    ? (await getMarketSources()).find((s) => s.id === sourceId)
+    : await getMarketSource();
+  if (!source) throw new Error(`Market source "${sourceId}" not found`);
+
+  const catalog = await fetchCatalog(source);
+  const branch = await getEffectiveBranch();
+  const entry = (catalog.integrations ?? []).find((e) => e.id === integrationId);
+  if (!entry) throw new Error(`Integration "${integrationId}" not found in Market source "${source.id}"`);
+
+  return (await fetchIntegrationManifestFromCatalogEntry(entry, branch, source)).reference;
+}
+
 async function fetchManifestFromCatalogEntry(
   entry: CatalogEntry,
   branch: string,

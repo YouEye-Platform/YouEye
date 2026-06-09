@@ -111,6 +111,16 @@ export interface InstallConfig {
   approvedConnections?: ApprovedConnection[];
   /** Optional Market integrations selected during install */
   selectedIntegrations?: string[];
+  installedIntegrations?: {
+    id: string;
+    sourceId?: string;
+    sourceName?: string;
+    manifestPath?: string;
+    manifestRepo?: string;
+    manifestBranch?: string;
+    manifestDigest?: string;
+    installedAt: string;
+  }[];
   /** User's explicit internet/LAN access choice at install time */
   allowInternet?: boolean;
 }

@@ -58,6 +58,7 @@ export default function AppDetailPage() {
 
   const [app, setApp] = useState<MarketApp | null>(null);
   const [status, setStatus] = useState<AppStatusInfo | null>(null);
+  const [targetStatus, setTargetStatus] = useState<AppStatusInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [domain, setDomain] = useState('');
@@ -69,6 +70,8 @@ export default function AppDetailPage() {
   const [installDone, setInstallDone] = useState(false);
   const [switchingSource, setSwitchingSource] = useState(false);
   const [sourceSwitchMessage, setSourceSwitchMessage] = useState<string | null>(null);
+  const [applyingIntegration, setApplyingIntegration] = useState(false);
+  const [integrationMessage, setIntegrationMessage] = useState<string | null>(null);
 
   // Uninstall state
   const [showUninstallDialog, setShowUninstallDialog] = useState(false);
@@ -90,6 +93,10 @@ export default function AppDetailPage() {
       if (!res.ok) throw new Error('Failed to fetch app details');
       const data = await res.json();
       setApp(data.app);
+      if (data.app?.itemKind === 'integration' && data.app.target?.appId) {
+        const targetRes = await fetch(`/api/market/status?app=${encodeURIComponent(data.app.target.appId)}`);
+        if (targetRes.ok) setTargetStatus(await targetRes.json());
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load app details');
     }
@@ -250,6 +257,30 @@ export default function AppDetailPage() {
     }
   };
 
+  const handleApplyIntegration = async () => {
+    if (!app || app.itemKind !== 'integration') return;
+    setApplyingIntegration(true);
+    setIntegrationMessage(null);
+    try {
+      const res = await authenticatedFetch('/api/market/integrations/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ integrationId: app.id, sourceId: app.sourceId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to apply integration');
+      setIntegrationMessage(`${app.name} applied to ${app.target?.appName || app.target?.appId}.`);
+      if (app.target?.appId) {
+        const targetRes = await fetch(`/api/market/status?app=${encodeURIComponent(app.target.appId)}`);
+        if (targetRes.ok) setTargetStatus(await targetRes.json());
+      }
+    } catch (err) {
+      setIntegrationMessage(err instanceof Error ? err.message : 'Failed to apply integration');
+    } finally {
+      setApplyingIntegration(false);
+    }
+  };
+
   // ── Uninstall handler ──────────────────────────────────────
 
   const handleUninstall = async (appIdToUninstall: string, keepData: boolean) => {
@@ -314,6 +345,7 @@ export default function AppDetailPage() {
   const appStatus = status?.status ?? 'not-installed';
   const isIntegration = app.itemKind === 'integration';
   const isInstalled = !isIntegration && appStatus !== 'not-installed';
+  const targetIsInstalled = !!targetStatus?.status && targetStatus.status !== 'not-installed';
   const FallbackIcon = ICON_MAP[app.icon] ?? Package;
   const longDescription = app.detail?.longDescription || app.description;
   const screenshots = app.detail?.screenshots ?? [];
@@ -411,11 +443,20 @@ export default function AppDetailPage() {
           {isIntegration ? (
             <Button
               size="lg"
-              variant="outline"
-              disabled
+              onClick={handleApplyIntegration}
+              disabled={!targetIsInstalled || applyingIntegration}
               className="px-8"
             >
-              Available after {app.target?.appName || app.target?.appId || 'target app'} install
+              {applyingIntegration ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Applying {app.name}
+                </>
+              ) : targetIsInstalled ? (
+                `Apply ${app.name}`
+              ) : (
+                `Available after ${app.target?.appName || app.target?.appId || 'target app'} install`
+              )}
             </Button>
           ) : !isInstalled ? (
             <Button
@@ -453,6 +494,12 @@ export default function AppDetailPage() {
             </>
           )}
         </div>
+
+        {integrationMessage && (
+          <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+            {integrationMessage}
+          </div>
+        )}
       </div>
 
       {/* Description section */}

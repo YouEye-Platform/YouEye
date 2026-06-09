@@ -1,3 +1,22 @@
+## v0.4.13.38 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add post-install Market Integration runner
+
+### Changes
+- `control-panel/src/lib/market/catalog.ts` — Added source-specific standalone Integration manifest/reference fetch helpers.
+- `control-panel/src/lib/market/integration-runner.ts` — Added a runner that reconstructs the installed target app context, creates/reuses the YouEye ID OAuth client, executes the standalone Integration SSO setup, and records installed integration metadata.
+- `control-panel/src/app/api/market/integrations/apply/route.ts` — Added an API endpoint to apply standalone Integration manifests.
+- `control-panel/src/app/market/[appId]/page.tsx` — Integration detail pages can apply an integration when the target app is installed and keep the unavailable state when it is not.
+- `control-panel/src/lib/market/types.ts`, `control-panel/package.json`, `README.md` — Added installed integration metadata and bumped Control Panel to `0.4.13.38`.
+
+### Test Results
+- Pending final build, release, deploy, and post-install Memos integration proof.
+
+### Notes for Iris
+- This is the first execution path for standalone Integration manifests. Uninstall/rollback semantics for applied integrations are still future work.
+
 ## v0.4.13.37 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc
