@@ -1,3 +1,23 @@
+## v0.4.13.68 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Make durable update migration planning directly testable
+
+### Changes
+- `control-panel/src/lib/market/migration-planner.ts` — Extracted the pure update migration planner so durable update-plan behavior can be tested directly without invoking live container updates.
+- `control-panel/src/lib/market/updater.ts` — Uses the extracted planner for migration source merging, required-gate selection, and user-visible update path descriptions.
+- `control-panel/tests/market-migration-planner.spec.mjs` — Added behavioral coverage proving normal version skips, required durable gates, optional migration skips, idempotency-key skips, and update-plan override precedence.
+- `control-panel/tests/market-update-plans.spec.mjs` — Converted the existing durable update-plan wiring check from an un-runnable `.ts` test to an executable Node test.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.68`.
+
+### Test Results
+- Focused Control Panel tests passed: `node --test tests/market-migration-planner.spec.mjs tests/market-update-plans.spec.mjs`.
+- `pnpm build` passed for Control Panel `0.4.13.68`.
+
+### Notes for Iris
+- This preserves the existing updater behavior but strengthens the proof for Plan 3 updates: servers can skip ordinary versions directly to latest, while only required durable migration gates inside the installed Market source are selected and recorded by idempotency key.
+
 ## v0.4.3.20 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

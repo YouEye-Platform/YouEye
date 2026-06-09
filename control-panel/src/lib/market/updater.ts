@@ -46,6 +46,12 @@ import { settingsService } from '@/lib/settings';
 import { isNewer, compareVersions, sortVersionsDesc } from '@/lib/version';
 import { buildMarketReleasesAPIURL, getMarketReleaseAssetDownloadURL, getMarketSource, type MarketReleaseAsset } from './source';
 import { syncAppManifestObjectToUI } from './ui-manifest-sync';
+import {
+  describeUpdatePath,
+  findApplicableMigrations,
+  mergeMigrationSources,
+  type MigrationWithSource,
+} from './migration-planner';
 import type {
   AppManifest,
   InstallEventCallback,
@@ -120,10 +126,6 @@ interface UpdateHookStep {
   timeout: number;
 }
 
-type MigrationWithSource = MigrationSpec & {
-  source?: 'manifest' | 'update-plan';
-};
-
 async function runUpdateHooks(
   hooks: UpdateHookStep[] | undefined,
   appId: string,
@@ -151,56 +153,6 @@ async function runUpdateHooks(
 
 // ─── Migration Helpers ────────────────────────────────────
 
-function findApplicableMigrations(
-  migrations: MigrationWithSource[],
-  fromVersion: string,
-  toVersion: string,
-  appliedMigrations: InstallMetadata['appliedMigrations'] = [],
-): MigrationWithSource[] {
-  if (!migrations || migrations.length === 0) return [];
-  const appliedKeys = new Set((appliedMigrations ?? []).map((item) => item.key));
-
-  return migrations
-    .filter((m) => {
-      if (m.required === false) return false;
-      if (m.idempotencyKey && appliedKeys.has(m.idempotencyKey)) return false;
-
-      const startsAfterInstalled = compareVersions(m.fromVersion, fromVersion) >= 0;
-      const endsAfterInstalled = compareVersions(m.toVersion, fromVersion) > 0;
-      const endsAtOrBeforeTarget = compareVersions(m.toVersion, toVersion) <= 0;
-
-      return startsAfterInstalled && endsAfterInstalled && endsAtOrBeforeTarget;
-    })
-    .sort((a, b) => {
-      const fromCmp = compareVersions(a.fromVersion, b.fromVersion);
-      if (fromCmp !== 0) return fromCmp;
-      return compareVersions(a.toVersion, b.toVersion);
-    });
-}
-
-function migrationIdentity(migration: MigrationSpec): string {
-  return migration.idempotencyKey
-    || `${migration.fromVersion}->${migration.toVersion}:${migration.description || ''}:${JSON.stringify(migration.steps)}`;
-}
-
-function mergeMigrationSources(
-  manifestMigrations: MigrationSpec[],
-  updatePlanMigrations: MigrationSpec[],
-): MigrationWithSource[] {
-  const byKey = new Map<string, MigrationWithSource>();
-
-  for (const migration of manifestMigrations) {
-    byKey.set(migrationIdentity(migration), { ...migration, source: 'manifest' });
-  }
-
-  for (const migration of updatePlanMigrations) {
-    const key = migrationIdentity(migration);
-    byKey.set(key, { ...migration, source: 'update-plan' });
-  }
-
-  return [...byKey.values()];
-}
-
 async function recordAppliedMigration(
   installMeta: InstallMetadata,
   migration: MigrationWithSource,
@@ -221,15 +173,6 @@ async function recordAppliedMigration(
     },
   ];
   await saveInstallMetadata(installMeta);
-}
-
-function describeUpdatePath(fromVersion: string, targetVersion: string, migrations: MigrationSpec[]): string {
-  if (migrations.length === 0) return `${fromVersion} -> ${targetVersion}`;
-
-  const waypoints = [fromVersion, ...migrations.map((m) => m.toVersion), targetVersion]
-    .filter((version, index, versions) => index === 0 || version !== versions[index - 1]);
-
-  return waypoints.join(' -> ');
 }
 
 /**
