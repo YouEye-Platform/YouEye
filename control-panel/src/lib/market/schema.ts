@@ -218,6 +218,33 @@ export const IntegrationSchema = z.object({
   sso: SSOSchema.optional(),
 });
 
+export const IntegrationManifestSchema = z.object({
+  apiVersion: z.literal('v1'),
+  kind: z.literal('integration'),
+  version: z.string().min(1).optional(),
+  type: z.enum(['identity', 'plugin', 'addon', 'script']).default('addon'),
+  recommended: z.boolean().optional().default(false),
+  installByDefault: z.boolean().optional().default(false),
+  required: z.boolean().optional().default(false),
+  metadata: MetadataSchema.extend({
+    defaultSubdomain: z.string().optional().default(''),
+  }),
+  target: z.object({
+    appId: z.string().min(1),
+    appName: z.string().optional(),
+    version: z.string().optional(),
+  }),
+  permissions: z.array(z.string()).optional().default([]),
+  sso: SSOSchema.optional(),
+  detail: z.object({
+    longDescription: z.string().min(1),
+    screenshots: z.array(z.object({
+      path: z.string().min(1),
+      caption: z.string().optional(),
+    })).default([]),
+  }).optional(),
+});
+
 // ─── Capabilities ─────────────────────────────────────────
 
 const LinkHandlerSchema = z.object({
@@ -467,9 +494,19 @@ export const SystemCatalogEntrySchema = z.object({
   latestVersion: z.string().optional(),
 });
 
+export const IntegrationCatalogEntrySchema = z.object({
+  id: z.string().min(1),
+  file: z.string().optional(),
+  repo: z.string().optional(),
+  manifest: z.string().default('youeye-integration.yaml'),
+  latestVersion: z.string().optional(),
+  targetAppId: z.string().optional(),
+});
+
 export const CatalogSchema = z.object({
   apiVersion: z.literal('v1'),
   kind: z.literal('catalog'),
   apps: z.array(CatalogEntrySchema).default([]),
   system: z.array(SystemCatalogEntrySchema).default([]),
+  integrations: z.array(IntegrationCatalogEntrySchema).default([]),
 });

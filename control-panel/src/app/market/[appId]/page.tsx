@@ -26,6 +26,7 @@ import {
   Eye,
   EyeOff,
   Copy,
+  Plug,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -45,6 +46,7 @@ const ICON_MAP: Record<string, typeof Search> = {
   camera: Camera,
   package: Package,
   'bell-ring': BellRing,
+  plug: Plug,
 };
 
 export default function AppDetailPage() {
@@ -310,7 +312,8 @@ export default function AppDetailPage() {
   // ── Derived state ──────────────────────────────────────────
 
   const appStatus = status?.status ?? 'not-installed';
-  const isInstalled = appStatus !== 'not-installed';
+  const isIntegration = app.itemKind === 'integration';
+  const isInstalled = !isIntegration && appStatus !== 'not-installed';
   const FallbackIcon = ICON_MAP[app.icon] ?? Package;
   const longDescription = app.detail?.longDescription || app.description;
   const screenshots = app.detail?.screenshots ?? [];
@@ -355,7 +358,12 @@ export default function AppDetailPage() {
                   v{app.version}
                 </Badge>
               )}
-              {app.integration === 'native' ? (
+              {isIntegration ? (
+                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-100">
+                  <Plug className="h-3 w-3" />
+                  Integration
+                </span>
+              ) : app.integration === 'native' ? (
                 <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100">
                   <Shield className="h-3 w-3" />
                   Native
@@ -400,7 +408,16 @@ export default function AppDetailPage() {
 
         {/* Action buttons */}
         <div className="mt-5 flex items-center gap-3">
-          {!isInstalled ? (
+          {isIntegration ? (
+            <Button
+              size="lg"
+              variant="outline"
+              disabled
+              className="px-8"
+            >
+              Available after {app.target?.appName || app.target?.appId || 'target app'} install
+            </Button>
+          ) : !isInstalled ? (
             <Button
               size="lg"
               onClick={() => setShowInstallDialog(true)}
@@ -465,7 +482,20 @@ export default function AppDetailPage() {
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* SSO / Forward-Auth */}
-          {isInstalled ? (
+          {isIntegration ? (
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-violet-50">
+                <Plug className="h-4 w-4 text-violet-600" />
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Target App</p>
+                <p className="text-sm font-medium text-gray-700">
+                  {app.target?.appName || app.target?.appId || 'Unknown'}
+                  {app.target?.version ? ` ${app.target.version}` : ''}
+                </p>
+              </div>
+            </div>
+          ) : isInstalled ? (
             <ForwardAuthToggle
               appId={app.id}
               hasNativeSSO={app.supportsSSO}
@@ -491,6 +521,20 @@ export default function AppDetailPage() {
               </div>
             </div>
           )}
+
+          {isIntegration && app.integrations?.[0]?.permissions?.length ? (
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-gray-50">
+                <Shield className="h-4 w-4 text-gray-500" />
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Permissions</p>
+                <p className="text-sm font-medium text-gray-700">
+                  {app.integrations[0].permissions.join(', ')}
+                </p>
+              </div>
+            </div>
+          ) : null}
 
           {/* Website */}
           {app.website && (

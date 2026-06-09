@@ -10,8 +10,8 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
-import { parseCatalog, parseManifest } from './parser';
-import type { AppManifest, Catalog, CatalogEntry, MarketApp } from './types';
+import { parseCatalog, parseIntegrationManifest, parseManifest } from './parser';
+import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp } from './types';
 import { settingsService } from '@/lib/settings';
 import { buildMarketRawURL, getMarketSource, getMarketSources, isGitHubMarketSource, type MarketSource } from './source';
 
@@ -29,6 +29,11 @@ export interface ManifestReference {
 
 export interface ManifestFetchResult {
   manifest: AppManifest;
+  reference: ManifestReference;
+}
+
+export interface IntegrationManifestFetchResult {
+  manifest: IntegrationManifest;
   reference: ManifestReference;
 }
 
@@ -226,6 +231,44 @@ async function fetchManifestFromCatalogEntry(
   };
 }
 
+async function fetchIntegrationManifestFromCatalogEntry(
+  entry: IntegrationCatalogEntry,
+  branch: string,
+  source: MarketSource
+): Promise<IntegrationManifestFetchResult> {
+  let manifest: IntegrationManifest;
+  let resolveOwner = source.organization;
+  let resolveRepo = source.repository;
+  let manifestPath: string;
+  let yamlText: string;
+
+  if (entry.repo) {
+    const [owner, repoName] = entry.repo.split('/');
+    resolveOwner = owner;
+    resolveRepo = repoName;
+    manifestPath = entry.manifest || 'youeye-integration.yaml';
+    yamlText = await fetchRepoFile(owner, repoName, manifestPath, branch, source);
+    manifest = parseIntegrationManifest(yamlText);
+  } else if (entry.file) {
+    manifestPath = entry.file;
+    yamlText = await fetchFile(manifestPath, branch, source);
+    manifest = parseIntegrationManifest(yamlText);
+  } else {
+    throw new Error(`Integration catalog entry for "${entry.id}" has neither repo nor file`);
+  }
+
+  await resolveManifestPaths(manifest as unknown as AppManifest, resolveOwner, resolveRepo, branch, source);
+  return {
+    manifest,
+    reference: {
+      path: manifestPath,
+      repo: `${resolveOwner}/${resolveRepo}`,
+      branch,
+      digest: digestManifest(yamlText),
+    },
+  };
+}
+
 /**
  * Fetch a manifest from a repo URL (for custom/non-catalog installs).
  * Expects youeye-app.yaml at the repo root (or specified filename).
@@ -387,6 +430,50 @@ function manifestToMarketApp(manifest: AppManifest, source?: MarketSource, refer
   };
 }
 
+function integrationManifestToMarketApp(manifest: IntegrationManifest, source?: MarketSource, reference?: ManifestReference): MarketApp {
+  return {
+    id: manifest.metadata.id,
+    catalogKey: source ? `${source.id}:integration:${manifest.metadata.id}` : undefined,
+    itemKind: 'integration',
+    sourceId: source?.id,
+    sourceName: source?.name,
+    sourceRepoUrl: source?.repo_url,
+    manifestPath: reference?.path,
+    manifestRepo: reference?.repo,
+    manifestBranch: reference?.branch,
+    manifestDigest: reference?.digest,
+    name: manifest.metadata.name,
+    description: manifest.metadata.description,
+    icon: manifest.metadata.icon,
+    iconUrl: manifest.metadata.iconUrl,
+    category: manifest.metadata.category,
+    integration: 'basic',
+    version: manifest.version,
+    defaultSubdomain: '',
+    supportsSSO: !!manifest.sso,
+    website: manifest.metadata.website,
+    tags: manifest.metadata.tags,
+    detail: manifest.detail ? {
+      longDescription: manifest.detail.longDescription,
+      screenshots: manifest.detail.screenshots.map((s) => ({
+        url: s.path,
+        caption: s.caption,
+      })),
+    } : undefined,
+    target: manifest.target,
+    integrations: [{
+      id: manifest.metadata.id,
+      name: manifest.metadata.name,
+      description: manifest.metadata.description,
+      type: manifest.type,
+      recommended: manifest.recommended,
+      installByDefault: manifest.installByDefault,
+      required: manifest.required,
+      permissions: manifest.permissions,
+    }],
+  };
+}
+
 // ─── Public API ───────────────────────────────────────────
 
 export async function fetchAvailableApps(): Promise<MarketApp[]> {
@@ -396,10 +483,15 @@ export async function fetchAvailableApps(): Promise<MarketApp[]> {
   const results = await Promise.allSettled(sources.flatMap(async (source) => {
     const catalog = await fetchCatalog(source);
     const branch = await getEffectiveBranch();
-    return Promise.all(catalog.apps.map(async (entry) => {
+    const appItems = await Promise.all(catalog.apps.map(async (entry) => {
       const result = await fetchManifestFromCatalogEntry(entry, branch, source);
       return manifestToMarketApp(result.manifest, source, result.reference);
     }));
+    const integrationItems = await Promise.all((catalog.integrations ?? []).map(async (entry) => {
+      const result = await fetchIntegrationManifestFromCatalogEntry(entry, branch, source);
+      return integrationManifestToMarketApp(result.manifest, source, result.reference);
+    }));
+    return [...appItems, ...integrationItems];
   }));
 
   for (const result of results) {

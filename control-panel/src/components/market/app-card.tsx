@@ -18,6 +18,7 @@ import {
   Package,
   BellRing,
   Shield,
+  Plug,
 } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -38,6 +39,7 @@ const ICON_MAP: Record<string, typeof Search> = {
   languages: Languages,
   package: Package,
   'bell-ring': BellRing,
+  plug: Plug,
 };
 
 const STATUS_CONFIG: Record<
@@ -86,6 +88,7 @@ export function AppCard({ app, status, installProgress }: AppCardProps) {
   const t = useTranslations('market');
   const FallbackIcon = ICON_MAP[app.icon] ?? Package;
   const appStatus = status?.status ?? 'not-installed';
+  const isIntegration = app.itemKind === 'integration';
   const isInstalled = appStatus !== 'not-installed';
   const isStopped = appStatus === 'stopped';
   const statusCfg = STATUS_CONFIG[appStatus] ?? STATUS_CONFIG['not-installed'];
@@ -146,19 +149,24 @@ export function AppCard({ app, status, installProgress }: AppCardProps) {
             </div>
           </div>
           <div className="flex items-center gap-1.5">
-            {isInstalled && (
+            {isInstalled && !isIntegration && (
               <SSOIndicator
                 hasNativeSSO={app.supportsSSO}
                 forwardAuthEnabled={status?.forwardAuthEnabled}
               />
             )}
-            <Badge variant="outline" className={statusCfg.className}>
-              {appStatus === 'installing' ? (
+            <Badge
+              variant="outline"
+              className={isIntegration ? 'bg-violet-50 text-violet-700 border-violet-100' : statusCfg.className}
+            >
+              {isIntegration ? (
+                <Plug className="h-3 w-3" />
+              ) : appStatus === 'installing' ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
                 <StatusIcon className="h-3 w-3" />
               )}
-              {statusCfg.label}
+              {isIntegration ? 'Integration' : statusCfg.label}
             </Badge>
           </div>
         </div>
@@ -168,6 +176,11 @@ export function AppCard({ app, status, installProgress }: AppCardProps) {
 
         {/* Tags */}
         <div className="flex flex-wrap gap-1.5">
+          {app.target?.appName || app.target?.appId ? (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-violet-50 text-violet-600">
+              For {app.target.appName || app.target.appId}
+            </span>
+          ) : null}
           {app.tags.map((tag) => (
             <span
               key={tag}

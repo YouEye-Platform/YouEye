@@ -4,8 +4,8 @@
  */
 
 import { parse as parseYAML } from 'yaml';
-import { AppManifestSchema, CatalogSchema } from './schema';
-import type { AppManifest, Catalog } from './types';
+import { AppManifestSchema, CatalogSchema, IntegrationManifestSchema } from './schema';
+import type { AppManifest, Catalog, IntegrationManifest } from './types';
 
 /**
  * Parse and validate a youeye-app.yaml manifest.
@@ -14,6 +14,11 @@ import type { AppManifest, Catalog } from './types';
 export function parseManifest(yamlText: string): AppManifest {
   const raw = parseYAML(yamlText);
   return AppManifestSchema.parse(raw);
+}
+
+export function parseIntegrationManifest(yamlText: string): IntegrationManifest {
+  const raw = parseYAML(yamlText);
+  return IntegrationManifestSchema.parse(raw);
 }
 
 /**

@@ -20,6 +20,7 @@ import type {
   SSOSetupSchema,
   SSOCliStepSchema,
   IntegrationSchema,
+  IntegrationManifestSchema,
   BackupSchema,
   UninstallSchema,
   UpdateSchema,
@@ -30,6 +31,7 @@ import type {
   CatalogSchema,
   CatalogEntrySchema,
   SystemCatalogEntrySchema,
+  IntegrationCatalogEntrySchema,
   DetailSchema,
   DetailScreenshotSchema,
   InstallParamSchema,
@@ -56,6 +58,7 @@ export type SSOStep = z.infer<typeof SSOStepSchema>;
 export type SSOSetup = z.infer<typeof SSOSetupSchema>;
 export type SSOCliStep = z.infer<typeof SSOCliStepSchema>;
 export type IntegrationSpec = z.infer<typeof IntegrationSchema>;
+export type IntegrationManifest = z.infer<typeof IntegrationManifestSchema>;
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;
 export type BackupSpec = z.infer<typeof BackupSchema>;
 export type UninstallSpec = z.infer<typeof UninstallSchema>;
@@ -67,6 +70,7 @@ export type HealthCheckSpec = z.infer<typeof HealthCheckSchema>;
 export type Catalog = z.infer<typeof CatalogSchema>;
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
 export type SystemCatalogEntry = z.infer<typeof SystemCatalogEntrySchema>;
+export type IntegrationCatalogEntry = z.infer<typeof IntegrationCatalogEntrySchema>;
 export type AppDetail = z.infer<typeof DetailSchema>;
 export type DetailScreenshot = z.infer<typeof DetailScreenshotSchema>;
 export type InstallParam = z.infer<typeof InstallParamSchema>;
@@ -309,7 +313,7 @@ export interface VariableContext {
 export interface MarketApp {
   id: string;
   catalogKey?: string;
-  itemKind?: 'app';
+  itemKind?: 'app' | 'integration';
   sourceId?: string;
   sourceName?: string;
   sourceRepoUrl?: string;
@@ -357,6 +361,11 @@ export interface MarketApp {
     required?: boolean;
     permissions?: string[];
   }[];
+  target?: {
+    appId: string;
+    appName?: string;
+    version?: string;
+  };
   entrances?: {
     name: string;
     path: string;

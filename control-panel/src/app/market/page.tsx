@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { Loader2, Store, AlertCircle, RefreshCw, Shield, Globe, Save, Plus, Trash2 } from 'lucide-react';
+import { Loader2, Store, AlertCircle, RefreshCw, Shield, Globe, Save, Plus, Trash2, Plug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AppCard } from '@/components/market/app-card';
 import { UninstallDialog } from '@/components/market/uninstall-dialog';
@@ -307,9 +307,10 @@ export default function MarketPage() {
     );
   }
 
-  // Separate native and marketplace, then split installed/available
-  const nativeApps = apps.filter((a) => a.integration === 'native');
-  const marketplaceApps = apps.filter((a) => a.integration !== 'native');
+  // Separate native, external apps, and other Market item kinds.
+  const nativeApps = apps.filter((a) => (a.itemKind || 'app') === 'app' && a.integration === 'native');
+  const marketplaceApps = apps.filter((a) => (a.itemKind || 'app') === 'app' && a.integration !== 'native');
+  const integrationItems = apps.filter((a) => a.itemKind === 'integration');
 
   const installedApps = marketplaceApps.filter(
     (a) => statuses[a.id]?.status && statuses[a.id]?.status !== 'not-installed'
@@ -320,6 +321,7 @@ export default function MarketPage() {
   const nativeGroups = groupByCatalogIdentity(nativeApps);
   const installedGroups = groupByCatalogIdentity(installedApps);
   const availableGroups = groupByCatalogIdentity(availableApps);
+  const integrationGroups = groupByCatalogIdentity(integrationItems);
 
   return (
     <div className="space-y-6">
@@ -460,6 +462,30 @@ export default function MarketPage() {
           <Store className="h-12 w-12 mx-auto mb-3 opacity-40" />
           <p className="text-lg font-medium">{t('noApps')}</p>
           <p className="text-sm mt-1">{t('catalogEmpty')}</p>
+        </div>
+      )}
+
+      {integrationGroups.length > 0 && (
+        <div className="space-y-4">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+            <Plug className="h-4 w-4" />
+            Integrations ({integrationGroups.length})
+          </h2>
+          {Object.entries(groupByCategory(integrationGroups)).map(([cat, catApps]) => (
+            <div key={cat} className="space-y-3">
+              <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wider">
+                {CATEGORIES[cat] || cat}
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {catApps.map((group) => (
+                  <MarketAppGroupCard
+                    key={group.key}
+                    group={group}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

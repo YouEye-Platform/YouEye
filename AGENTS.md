@@ -1,3 +1,21 @@
+## v0.4.13.37 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add standalone Market integration catalog items
+
+### Changes
+- `control-panel/src/lib/market/schema.ts`, `control-panel/src/lib/market/types.ts`, `control-panel/src/lib/market/parser.ts` — Added `kind: integration` manifests and `catalog.integrations[]` parsing.
+- `control-panel/src/lib/market/catalog.ts` — Fetches integration manifests from all enabled Market sources and exposes source/audit metadata just like app manifests.
+- `control-panel/src/app/market/page.tsx`, `control-panel/src/app/market/[appId]/page.tsx`, `control-panel/src/components/market/app-card.tsx` — Displays standalone integration items in their own Market section with target app and permission details.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.37`.
+
+### Test Results
+- Pending final build, release, deploy, and browser verification.
+
+### Notes for Iris
+- This slice makes integration scripts first-class Market artifacts. Execution is still routed through the existing app install compatibility path until the follow-up post-install Integration runner slice.
+
 ## v0.4.13.36 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc
