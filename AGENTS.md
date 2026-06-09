@@ -11,7 +11,12 @@
 - `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.37`.
 
 ### Test Results
-- Pending final build, release, deploy, and browser verification.
+- Local YAML parse of YE-AppMarket verified 31 apps, 2 integrations, and 3 system entries.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.37`.
+- Release asset verified as `standalone.tar` with `server.js`, `package.json`, and embedded version `0.4.13.37`.
+- Live deploy on `192.168.31.160`: CP updated through `spine update control`; `spine status` reports CP `0.4.13.37`, 9 running containers, 0 stopped.
+- Route repair returned success for `/settings` and `/market`; root health endpoint returned OK.
+- Codex Browser HTTPS check: `/market` shows `INTEGRATIONS (2)` with Memos and Jellyfin YouEye ID; `/market/memos-youeye-id?source=official` shows target app, permissions, Market source, and disabled post-install action.
 
 ### Notes for Iris
 - This slice makes integration scripts first-class Market artifacts. Execution is still routed through the existing app install compatibility path until the follow-up post-install Integration runner slice.
