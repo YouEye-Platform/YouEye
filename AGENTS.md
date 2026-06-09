@@ -1,3 +1,24 @@
+## v0.4.13.71 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add Integration removal foundation
+
+### Changes
+- `control-panel/src/lib/market/schema.ts`, `control-panel/src/lib/market/types.ts` — Added Integration manifest `uninstall`/`rollback` step fields and catalog metadata that indicates whether an Integration declares teardown.
+- `control-panel/src/lib/market/integration-runner.ts` — Added `removeIntegration()` with optional manifest-declared teardown execution and explicit metadata-only removal for Integrations that do not yet provide app teardown steps.
+- `control-panel/src/app/api/market/integrations/remove/route.ts` — Added a Market API endpoint for removing an installed Integration and returning install-style events.
+- `control-panel/src/app/market/[appId]/page.tsx` — Added a remove action for installed Integration detail pages, using teardown when available and clearly labeling metadata-only removal when not.
+- `control-panel/tests/market-integration-remove.spec.mjs` — Added focused regression coverage for schema, catalog, runner, API, and UI hooks.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.71`.
+
+### Test Results
+- Focused Control Panel tests passed: `node --test tests/market-integration-remove.spec.mjs tests/market-filters.spec.mjs tests/market-update-preview.spec.mjs tests/market-migration-planner.spec.mjs tests/market-update-plans.spec.mjs`.
+- `pnpm build` passed for Control Panel `0.4.13.71`.
+
+### Notes for Iris
+- Existing Integration manifests do not yet declare app-specific teardown steps, so live removal of those items should use the explicit metadata-only path until each manifest gains safe uninstall steps.
+
 ## v0.4.13.70 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

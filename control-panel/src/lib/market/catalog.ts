@@ -575,6 +575,7 @@ function integrationManifestToMarketApp(manifest: IntegrationManifest, source?: 
       installByDefault: manifest.installByDefault,
       required: manifest.required,
       permissions: manifest.permissions,
+      hasUninstall: !!manifest.uninstall,
     }],
   };
 }

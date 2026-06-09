@@ -74,6 +74,7 @@ export default function AppDetailPage() {
   const [syncingManifest, setSyncingManifest] = useState(false);
   const [manifestSyncMessage, setManifestSyncMessage] = useState<string | null>(null);
   const [applyingIntegration, setApplyingIntegration] = useState(false);
+  const [removingIntegration, setRemovingIntegration] = useState(false);
   const [integrationMessage, setIntegrationMessage] = useState<string | null>(null);
 
   // Uninstall state
@@ -307,6 +308,37 @@ export default function AppDetailPage() {
     }
   };
 
+  const handleRemoveIntegration = async () => {
+    if (!app || app.itemKind !== 'integration') return;
+    setRemovingIntegration(true);
+    setIntegrationMessage(null);
+    const hasUninstall = !!app.integrations?.[0]?.hasUninstall;
+    try {
+      const res = await authenticatedFetch('/api/market/integrations/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          integrationId: app.id,
+          sourceId: app.sourceId,
+          metadataOnly: !hasUninstall,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to remove integration');
+      setIntegrationMessage(hasUninstall
+        ? `${app.name} removed from ${app.target?.appName || app.target?.appId}.`
+        : `${app.name} record removed. This Integration does not yet declare app teardown steps.`);
+      if (app.target?.appId) {
+        const targetRes = await fetch(`/api/market/status?app=${encodeURIComponent(app.target.appId)}`);
+        if (targetRes.ok) setTargetStatus(await targetRes.json());
+      }
+    } catch (err) {
+      setIntegrationMessage(err instanceof Error ? err.message : 'Failed to remove integration');
+    } finally {
+      setRemovingIntegration(false);
+    }
+  };
+
   // ── Uninstall handler ──────────────────────────────────────
 
   const handleUninstall = async (appIdToUninstall: string, keepData: boolean) => {
@@ -469,28 +501,50 @@ export default function AppDetailPage() {
         {/* Action buttons */}
         <div className="mt-5 flex items-center gap-3">
           {isIntegration ? (
-            <Button
-              size="lg"
-              onClick={handleApplyIntegration}
-              disabled={!targetIsInstalled || applyingIntegration || integrationInstalled}
-              className="px-8"
-            >
-              {applyingIntegration ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Applying {app.name}
-                </>
-              ) : integrationInstalled ? (
-                <>
+            integrationInstalled ? (
+              <>
+                <Button
+                  size="lg"
+                  disabled
+                  className="px-8"
+                >
                   <CheckCircle2 className="h-4 w-4 mr-2" />
                   Installed
-                </>
-              ) : targetIsInstalled ? (
-                `Apply ${app.name}`
-              ) : (
-                `Available after ${app.target?.appName || app.target?.appId || 'target app'} install`
-              )}
-            </Button>
+                </Button>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  onClick={handleRemoveIntegration}
+                  disabled={removingIntegration}
+                  className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                >
+                  {removingIntegration ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4 mr-2" />
+                  )}
+                  {app.integrations?.[0]?.hasUninstall ? `Remove ${app.name}` : 'Remove record'}
+                </Button>
+              </>
+            ) : (
+              <Button
+                size="lg"
+                onClick={handleApplyIntegration}
+                disabled={!targetIsInstalled || applyingIntegration}
+                className="px-8"
+              >
+                {applyingIntegration ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Applying {app.name}
+                  </>
+                ) : targetIsInstalled ? (
+                  `Apply ${app.name}`
+                ) : (
+                  `Available after ${app.target?.appName || app.target?.appId || 'target app'} install`
+                )}
+              </Button>
+            )
           ) : !isInstalled ? (
             <Button
               size="lg"

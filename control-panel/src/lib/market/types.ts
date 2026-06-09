@@ -421,6 +421,7 @@ export interface MarketApp {
     manifestRepo?: string;
     manifestBranch?: string;
     manifestDigest?: string;
+    hasUninstall?: boolean;
   }[];
   target?: {
     appId: string;

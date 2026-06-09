@@ -23,6 +23,21 @@ export interface ApplyIntegrationResult {
   manifestDigest?: string;
 }
 
+export interface RemoveIntegrationInput {
+  integrationId: string;
+  sourceId?: string;
+  metadataOnly?: boolean;
+}
+
+export interface RemoveIntegrationResult {
+  integrationId: string;
+  targetAppId: string;
+  sourceId?: string;
+  metadataOnly: boolean;
+  teardownRun: boolean;
+  removed: boolean;
+}
+
 function emit(
   onEvent: (event: InstallEvent) => void,
   step: number,
@@ -139,6 +154,41 @@ async function executeIntegrationSetup(
   await executeSSOSteps(sso, ctx);
 }
 
+async function executeIntegrationTeardown(
+  contextManifest: AppManifest,
+  integration: IntegrationManifest,
+  ctx: Partial<VariableContext>,
+  targetMeta: NonNullable<Awaited<ReturnType<typeof readInstallMetadata>>>
+): Promise<boolean> {
+  const setup = integration.uninstall;
+  if (!setup || setup.method === 'none' || setup.method === 'env') return false;
+
+  const primaryMeta = targetMeta.containers.find((container) => container.port) ?? targetMeta.containers[0];
+  if (!primaryMeta) throw new Error(`Installed app ${targetMeta.appId} has no containers`);
+
+  const primaryContainerName = primaryMeta.containerName || getContainerName(targetMeta.appId, primaryMeta.name, targetMeta.containers.length);
+  const primaryPort = primaryMeta.port || contextManifest.containers.find((container) => container.primary)?.port || contextManifest.containers[0]?.port || 3000;
+  const primaryIP = await getContainerIP(primaryContainerName);
+  if (!primaryIP) throw new Error(`Could not resolve IP for ${primaryContainerName}`);
+  ctx.container = { ip: primaryIP, port: primaryPort };
+
+  if (setup.method === 'cli') {
+    for (const cliStep of setup.cli?.steps ?? []) {
+      const command = resolveVariables(cliStep.exec, ctx);
+      await execShell(primaryContainerName, command, { timeout: cliStep.timeout });
+    }
+    return true;
+  }
+
+  await executeSSOSteps({
+    type: integration.sso?.type ?? 'oauth2',
+    callback_path: integration.sso?.callback_path ?? '/',
+    additional_callbacks: integration.sso?.additional_callbacks ?? [],
+    setup,
+  }, ctx);
+  return true;
+}
+
 export async function applyIntegration(
   input: ApplyIntegrationInput,
   onEvent: (event: InstallEvent) => void
@@ -218,5 +268,76 @@ export async function applyIntegration(
     targetAppId,
     sourceId: input.sourceId,
     manifestDigest: reference.digest,
+  };
+}
+
+export async function removeIntegration(
+  input: RemoveIntegrationInput,
+  onEvent: (event: InstallEvent) => void
+): Promise<RemoveIntegrationResult> {
+  const integration = await fetchIntegrationManifestFromSource(input.integrationId, input.sourceId);
+  const targetAppId = integration.target.appId;
+  const targetMeta = await readInstallMetadata(targetAppId);
+  if (!targetMeta) throw new Error(`Target app "${targetAppId}" is not installed`);
+
+  const installed = (targetMeta.installedIntegrations ?? []).find((item) => item.id === integration.metadata.id);
+  if (!installed) throw new Error(`Integration "${integration.metadata.id}" is not installed on ${targetAppId}`);
+
+  const hasTeardown = !!integration.uninstall && integration.uninstall.method !== 'none' && integration.uninstall.method !== 'env';
+  const runTeardown = hasTeardown && !input.metadataOnly;
+  if (!hasTeardown && !input.metadataOnly) {
+    throw new Error(`Integration "${integration.metadata.id}" does not declare uninstall steps. Retry with metadataOnly to remove only YouEye's installed-integration record.`);
+  }
+
+  const totalSteps = runTeardown ? 3 : 2;
+  let step = 1;
+  emit(onEvent, step, totalSteps, 'running', `Loading ${integration.metadata.name} removal plan...`);
+
+  const appManifest = await fetchManifestFromSource(targetAppId, targetMeta.sourceId || input.sourceId);
+  const contextManifest = integrationContextManifest(appManifest, integration);
+  const config = makeConfig(contextManifest, targetMeta);
+  const secrets = await readAppSecrets(appManifest, targetAppId);
+  emit(onEvent, step, totalSteps, 'success', 'Integration removal plan loaded');
+
+  let teardownRun = false;
+  if (runTeardown) {
+    step++;
+    emit(onEvent, step, totalSteps, 'running', `Removing ${integration.metadata.name} from ${contextManifest.metadata.name}...`);
+    const appToken = await generateAppToken(targetAppId);
+    const ctx = await buildCanonicalContext(
+      contextManifest,
+      config,
+      targetMeta.ssoClientId ? { clientId: targetMeta.ssoClientId, clientSecret: '', slug: targetMeta.ssoSlug || `youeye-app-${targetAppId}` } : undefined,
+      secrets.db_password,
+      appToken,
+      true
+    );
+    ctx.secrets = secrets;
+    teardownRun = await executeIntegrationTeardown(contextManifest, integration, ctx, targetMeta);
+    emit(onEvent, step, totalSteps, 'success', `${integration.metadata.name} removal steps completed`);
+  }
+
+  step++;
+  emit(onEvent, step, totalSteps, 'running', 'Updating integration metadata...');
+  const remaining = (targetMeta.installedIntegrations ?? []).filter((item) => item.id !== integration.metadata.id);
+  targetMeta.installedIntegrations = remaining;
+  targetMeta.selectedIntegrations = (targetMeta.selectedIntegrations ?? []).filter((id) => id !== integration.metadata.id);
+
+  const removedIdentity = integration.type === 'identity';
+  if (removedIdentity && remaining.length === 0) {
+    targetMeta.enableSSO = false;
+    targetMeta.hasSSO = false;
+  }
+
+  await saveInstallMetadata(targetMeta);
+  emit(onEvent, step, totalSteps, 'success', 'Integration metadata updated');
+
+  return {
+    integrationId: integration.metadata.id,
+    targetAppId,
+    sourceId: input.sourceId,
+    metadataOnly: !runTeardown,
+    teardownRun,
+    removed: true,
   };
 }

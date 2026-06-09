@@ -238,6 +238,8 @@ export const IntegrationManifestSchema = z.object({
   }),
   permissions: z.array(z.string()).optional().default([]),
   sso: SSOSchema.optional(),
+  uninstall: SSOSetupSchema.optional(),
+  rollback: SSOSetupSchema.optional(),
   detail: z.object({
     longDescription: z.string().min(1),
     screenshots: z.array(z.object({
