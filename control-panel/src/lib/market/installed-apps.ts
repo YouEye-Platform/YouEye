@@ -12,7 +12,7 @@
 
 import { readJSON, writeJSON, statePath } from '@/lib/storage/json-store';
 import { listInstalledApps, readInstallMetadata } from './metadata';
-import { fetchCatalog, fetchRepoFile, getEffectiveBranch } from './catalog';
+import { fetchCatalog, fetchManifestFromSource, fetchRepoFile, getEffectiveBranch } from './catalog';
 import { parse as parseYAML } from 'yaml';
 import { isNewer } from '@/lib/version';
 
@@ -35,6 +35,10 @@ export interface InstalledApp {
   healthCheckedAt: string | null;
   source: 'catalog' | 'url';
   sourceUrl: string | null;
+  catalogKey?: string | null;
+  sourceId?: string | null;
+  sourceName?: string | null;
+  sourceRepoUrl?: string | null;
 }
 
 interface InstalledAppsStore {
@@ -78,6 +82,10 @@ export async function upsertInstalledApp(data: {
   subdomain: string;
   ssoSlug?: string | null;
   forwardAuthEnabled?: boolean;
+  catalogKey?: string | null;
+  sourceId?: string | null;
+  sourceName?: string | null;
+  sourceRepoUrl?: string | null;
 }): Promise<void> {
   const s = await loadStore();
   const existing = s.apps[data.appId];
@@ -88,6 +96,10 @@ export async function upsertInstalledApp(data: {
     existing.subdomain = data.subdomain;
     existing.ssoSlug = data.ssoSlug ?? existing.ssoSlug;
     existing.forwardAuthEnabled = data.forwardAuthEnabled ?? existing.forwardAuthEnabled;
+    existing.catalogKey = data.catalogKey ?? existing.catalogKey ?? null;
+    existing.sourceId = data.sourceId ?? existing.sourceId ?? null;
+    existing.sourceName = data.sourceName ?? existing.sourceName ?? null;
+    existing.sourceRepoUrl = data.sourceRepoUrl ?? existing.sourceRepoUrl ?? null;
   } else {
     s.apps[data.appId] = {
       id: s.nextId++,
@@ -104,6 +116,10 @@ export async function upsertInstalledApp(data: {
       healthCheckedAt: null,
       source: 'catalog',
       sourceUrl: null,
+      catalogKey: data.catalogKey ?? null,
+      sourceId: data.sourceId ?? null,
+      sourceName: data.sourceName ?? null,
+      sourceRepoUrl: data.sourceRepoUrl ?? null,
     };
   }
 
@@ -164,6 +180,10 @@ export async function migrateFromInstallJson(): Promise<number> {
       installedVersion: meta.installedVersion ?? '',
       subdomain: meta.subdomain,
       ssoSlug: meta.ssoSlug,
+      catalogKey: meta.catalogKey,
+      sourceId: meta.sourceId,
+      sourceName: meta.sourceName,
+      sourceRepoUrl: meta.sourceRepoUrl,
     });
     migrated++;
   }
@@ -241,7 +261,16 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
   for (const app of installed) {
     let catalogVersion: string | null = null;
 
-    const entry = entryMap.get(app.appId);
+    if (app.sourceId) {
+      try {
+        const manifest = await fetchManifestFromSource(app.appId, app.sourceId);
+        catalogVersion = manifest.version ?? null;
+      } catch (err) {
+        console.warn('[installed-apps] Failed to fetch source-specific version:', app.appId, app.sourceId, err);
+      }
+    }
+
+    const entry = catalogVersion ? undefined : entryMap.get(app.appId);
 
     if (entry?.repo) {
       catalogVersion = await fetchNativeAppVersion(entry.repo, entry.manifest || 'youeye-app.yaml', branch);

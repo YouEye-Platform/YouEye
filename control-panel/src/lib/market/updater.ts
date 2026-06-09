@@ -34,7 +34,7 @@ import {
   healthCheckViaExec,
   waitForContainerExec,
 } from '@/lib/incus/snapshot';
-import { fetchManifest, clearCatalogCache } from './catalog';
+import { fetchManifestFromSource, clearCatalogCache } from './catalog';
 import { readInstallMetadata } from './metadata';
 import { getInstalledApp, updateInstalledVersion } from './installed-apps';
 import { getContainerName } from './engine-helpers';
@@ -474,7 +474,7 @@ export async function updateMarketplaceApp(
 
   let manifest: AppManifest;
   try {
-    manifest = await fetchManifest(appId);
+    manifest = await fetchManifestFromSource(appId, installMeta.sourceId || installedApp.sourceId || undefined);
   } catch (err) {
     throw new Error(`Failed to fetch manifest for "${appId}": ${err}`);
   }

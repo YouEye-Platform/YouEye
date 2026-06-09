@@ -1092,6 +1092,11 @@ export async function installApp(
 
   const meta: InstallMetadata = {
     appId,
+    catalogKey: config.catalogKey || (config.sourceId ? `${config.sourceId}:app:${appId}` : undefined),
+    itemKind: 'app',
+    sourceId: config.sourceId,
+    sourceName: config.sourceName,
+    sourceRepoUrl: config.sourceRepoUrl,
     integration: manifest.integration,
     subdomain: config.subdomain,
     domain: config.domain,
@@ -1103,7 +1108,7 @@ export async function installApp(
     ssoSlug,
     ssoClientId,
     forwardAuthSlug: rollbackCtx.forwardAuthSlug,
-    manifestSource: config.repoUrl || 'appmarket',
+    manifestSource: config.repoUrl || config.sourceRepoUrl || 'appmarket',
     credentials: manifest.credentials?.length
       ? manifest.credentials.map((c) => ({ label: c.label, username: c.username, passwordSecret: c.passwordSecret }))
       : undefined,
@@ -1125,6 +1130,10 @@ export async function installApp(
       subdomain: config.subdomain,
       ssoSlug,
       forwardAuthEnabled,
+      catalogKey: meta.catalogKey,
+      sourceId: config.sourceId,
+      sourceName: config.sourceName,
+      sourceRepoUrl: config.sourceRepoUrl,
     });
   } catch (err) {
     console.error('[engine] Failed to track installed app in DB:', err);

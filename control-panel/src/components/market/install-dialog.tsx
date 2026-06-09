@@ -165,6 +165,10 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
 
     onInstall({
       appId: app.id,
+      catalogKey: app.catalogKey,
+      sourceId: app.sourceId,
+      sourceName: app.sourceName,
+      sourceRepoUrl: app.sourceRepoUrl,
       subdomain: subdomain.trim().toLowerCase(),
       domain,
       installParams: Object.keys(resolvedParams).length > 0 ? resolvedParams : undefined,

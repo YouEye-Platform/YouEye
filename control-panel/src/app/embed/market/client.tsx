@@ -23,6 +23,11 @@ interface MarketApp {
   installedVersion?: string | null;
   updateAvailable?: boolean;
   catalogVersion?: string | null;
+  catalogKey?: string;
+  itemKind?: string;
+  sourceId?: string;
+  sourceName?: string;
+  sourceRepoUrl?: string;
   entrances?: Array<{ name: string; subdomain?: string; path?: string; port?: number; authLevel?: string }>;
   installParams?: Array<{
     name: string;
@@ -379,7 +384,7 @@ export function MarketEmbedClient() {
     fetch("/api/ui-bridge/market?action=validate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ appId: app.id, checkImages: true, checkUrls: false }),
+      body: JSON.stringify({ appId: app.id, sourceId: app.sourceId, checkImages: true, checkUrls: false }),
     })
       .then(r => r.json())
       .then(report => setValidationReport(report))
@@ -422,6 +427,10 @@ export function MarketEmbedClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           appId: target.id, subdomain: form.subdomain, domain, enableSSO: true,
+          catalogKey: target.catalogKey,
+          sourceId: target.sourceId,
+          sourceName: target.sourceName,
+          sourceRepoUrl: target.sourceRepoUrl,
           installParams: Object.keys(form.params).length > 0 ? form.params : undefined,
           approvedConnections: approvedConnections.length > 0 ? approvedConnections : undefined,
           allowInternet,
@@ -608,6 +617,15 @@ export function MarketEmbedClient() {
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
                 <span style={{ fontSize: 24, fontWeight: 700 }}>{app.name}</span>
                 {app.version && <span className="embed-badge" style={{ fontSize: 11 }}>v{app.version}</span>}
+                {app.sourceName && (
+                  <span style={{
+                    display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 500,
+                    padding: "3px 10px", borderRadius: 9999,
+                    color: "var(--embed-text-muted)", border: "1px solid var(--embed-border)",
+                  }}>
+                    {app.sourceName}
+                  </span>
+                )}
                 {isNative ? (
                   <span style={{
                     display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600,

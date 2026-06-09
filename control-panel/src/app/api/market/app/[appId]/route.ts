@@ -7,15 +7,16 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchManifest, fetchAvailableApps } from '@/lib/market/catalog';
+import { fetchManifest, fetchManifestFromSource, fetchAvailableApps } from '@/lib/market/catalog';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ appId: string }> }
 ) {
   const { appId } = await params;
+  const sourceId = request.nextUrl.searchParams.get('source') || undefined;
 
   if (!appId) {
     return NextResponse.json({ error: 'Missing appId' }, { status: 400 });
@@ -24,14 +25,14 @@ export async function GET(
   try {
     // Try to find the app in the full catalog first (gives us the MarketApp shape)
     const allApps = await fetchAvailableApps();
-    const app = allApps.find((a) => a.id === appId);
+    const app = allApps.find((a) => a.id === appId && (!sourceId || a.sourceId === sourceId));
 
     if (app) {
       return NextResponse.json({ app });
     }
 
     // Fallback: try fetching the manifest directly
-    const manifest = await fetchManifest(appId);
+    const manifest = await fetchManifestFromSource(appId, sourceId);
     return NextResponse.json({
       app: {
         id: manifest.metadata.id,

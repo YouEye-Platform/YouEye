@@ -146,6 +146,34 @@ export async function fetchManifest(appId: string): Promise<AppManifest> {
   return manifest;
 }
 
+/**
+ * Fetch a manifest from a specific Market source.
+ * Used when duplicate app IDs exist across sources and install/update must
+ * follow the exact source selected by the user.
+ */
+export async function fetchManifestFromSource(appId: string, sourceId?: string): Promise<AppManifest> {
+  if (!sourceId) return fetchManifest(appId);
+
+  const sources = await getMarketSources();
+  const source = sources.find((s) => s.id === sourceId);
+  if (!source) throw new Error(`Market source "${sourceId}" not found`);
+
+  const cacheKey = `${source.id}:app:${appId}`;
+  const cached = manifestCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
+    return cached.manifest;
+  }
+
+  const catalog = await fetchCatalog(source);
+  const branch = await getEffectiveBranch();
+  const entry = catalog.apps.find((e) => e.id === appId);
+  if (!entry) throw new Error(`App "${appId}" not found in Market source "${sourceId}"`);
+
+  const manifest = await fetchManifestFromCatalogEntry(entry, branch, source);
+  manifestCache.set(cacheKey, { manifest, fetchedAt: Date.now() });
+  return manifest;
+}
+
 async function fetchManifestFromCatalogEntry(
   entry: CatalogEntry,
   branch: string,

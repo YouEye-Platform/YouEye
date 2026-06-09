@@ -17,7 +17,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { validateBridgeToken } from '@/lib/ui-bridge/auth';
-import { fetchAvailableApps, fetchManifest, clearCatalogCache } from '@/lib/market/catalog';
+import { fetchAvailableApps, fetchManifest, fetchManifestFromSource, clearCatalogCache } from '@/lib/market/catalog';
 import { installApp } from '@/lib/market/engine';
 import { uninstallApp } from '@/lib/market/uninstaller';
 import { listInstalledApps, readInstallMetadata } from '@/lib/market/metadata';
@@ -174,7 +174,9 @@ export async function POST(request: NextRequest) {
       if (body.manifest) {
         manifestData = body.manifest;
       } else if (body.appId) {
-        manifestData = await fetchMan(body.appId);
+        manifestData = body.sourceId
+          ? await fetchManifestFromSource(body.appId, body.sourceId)
+          : await fetchMan(body.appId);
       } else {
         return NextResponse.json({ error: 'Provide appId or manifest' }, { status: 400 });
       }
@@ -251,7 +253,7 @@ export async function POST(request: NextRequest) {
 
   let manifest;
   try {
-    manifest = await fetchManifest(config.appId);
+    manifest = await fetchManifestFromSource(config.appId, config.sourceId);
   } catch (err) {
     return new Response(
       JSON.stringify({ error: `Failed to fetch manifest: ${err}` }),

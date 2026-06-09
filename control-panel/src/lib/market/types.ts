@@ -78,6 +78,12 @@ export type VolumeSpec = z.infer<typeof VolumeSchema>;
 
 export interface InstallConfig {
   appId: string;
+  /** Stable catalog identity, currently sourceId:itemKind:itemId */
+  catalogKey?: string;
+  /** Market source selected by the user for catalog installs */
+  sourceId?: string;
+  sourceName?: string;
+  sourceRepoUrl?: string;
   subdomain: string;
   domain: string;
   /** Optional app-specific install parameters */
@@ -128,6 +134,11 @@ export interface CredentialMeta {
 
 export interface InstallMetadata {
   appId: string;
+  catalogKey?: string;
+  itemKind?: 'app' | string;
+  sourceId?: string;
+  sourceName?: string;
+  sourceRepoUrl?: string;
   integration: 'native' | 'basic';
   subdomain: string;
   domain: string;

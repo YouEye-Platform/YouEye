@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import {
   ArrowLeft,
@@ -50,7 +50,9 @@ const ICON_MAP: Record<string, typeof Search> = {
 export default function AppDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const appId = params.appId as string;
+  const sourceId = searchParams.get('source') || undefined;
 
   const [app, setApp] = useState<MarketApp | null>(null);
   const [status, setStatus] = useState<AppStatusInfo | null>(null);
@@ -75,7 +77,8 @@ export default function AppDetailPage() {
 
   const fetchApp = useCallback(async () => {
     try {
-      const res = await fetch(`/api/market/app/${encodeURIComponent(appId)}`);
+      const suffix = sourceId ? `?source=${encodeURIComponent(sourceId)}` : '';
+      const res = await fetch(`/api/market/app/${encodeURIComponent(appId)}${suffix}`);
       if (res.status === 404) {
         setError('App not found');
         return;
@@ -86,7 +89,7 @@ export default function AppDetailPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load app details');
     }
-  }, [appId]);
+  }, [appId, sourceId]);
 
   const fetchStatus = useCallback(async () => {
     try {

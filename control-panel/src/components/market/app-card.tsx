@@ -91,8 +91,12 @@ export function AppCard({ app, status, installProgress }: AppCardProps) {
   const statusCfg = STATUS_CONFIG[appStatus] ?? STATUS_CONFIG['not-installed'];
   const StatusIcon = statusCfg.Icon;
 
+  const href = app.sourceId
+    ? `/market/${app.id}?source=${encodeURIComponent(app.sourceId)}`
+    : `/market/${app.id}`;
+
   return (
-    <Link href={`/market/${app.id}`} className="block">
+    <Link href={href} className="block">
       <div
         className={`rounded-xl border border-gray-200 bg-white p-5 flex flex-col gap-3 hover:shadow-md transition-all cursor-pointer ${
           isStopped ? 'opacity-60 grayscale' : ''
@@ -130,6 +134,11 @@ export function AppCard({ app, status, installProgress }: AppCardProps) {
                   <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100">
                     <Shield className="h-2.5 w-2.5" />
                     YouEye
+                  </span>
+                )}
+                {app.sourceName && (
+                  <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-gray-50 text-gray-500 border border-gray-100">
+                    {app.sourceName}
                   </span>
                 )}
               </div>

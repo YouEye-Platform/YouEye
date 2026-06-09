@@ -1,3 +1,23 @@
+## v0.4.13.30 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Persist Market source identity for installs and updates
+
+### Changes
+- `control-panel/src/lib/market/catalog.ts` — Added source-specific manifest fetching so duplicate app ids can resolve through the selected Market source.
+- `control-panel/src/lib/market/types.ts`, `control-panel/src/lib/market/engine.ts`, `control-panel/src/lib/market/installed-apps.ts` — Persist catalog key, source id/name/repo URL, and use the installed source for update detection.
+- `control-panel/src/lib/market/updater.ts` — Updates now fetch manifests from the originally installed source when source metadata exists.
+- `control-panel/src/app/api/market/install/route.ts`, `control-panel/src/app/api/ui-bridge/market/route.ts`, `control-panel/src/app/api/market/app/[appId]/route.ts` — Accept and honor source identity for install, validate, and detail lookups.
+- `control-panel/src/app/embed/market/client.tsx`, `control-panel/src/components/market/app-card.tsx`, `control-panel/src/app/market/[appId]/page.tsx`, `control-panel/src/components/market/install-dialog.tsx` — Carry source identity through UI install flows and show source badges/links for variants.
+- `README.md`, `control-panel/package.json` — Bumped Control Panel to `0.4.13.30`.
+
+### Test Results
+- Control Panel: `pnpm --dir YouEye/control-panel build` passed for `0.4.13.30`.
+
+### Notes for Iris
+- This does not yet build the full add/remove source management UI. It establishes install/update identity so that UI can safely expose source variants without silently merging duplicate app ids.
+
 ## v0.4.13.29 / v0.4.3.7 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

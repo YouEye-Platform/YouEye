@@ -8,7 +8,7 @@
  */
 
 import { NextRequest } from 'next/server';
-import { fetchManifest, fetchManifestFromRepo } from '@/lib/market/catalog';
+import { fetchManifest, fetchManifestFromRepo, fetchManifestFromSource } from '@/lib/market/catalog';
 import { installApp } from '@/lib/market/engine';
 import { startTracking, trackEvent, finishTracking } from '@/lib/market/install-tracker';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
         config.appId = manifest.metadata.id;
       }
     } else {
-      manifest = await fetchManifest(config.appId);
+      manifest = await fetchManifestFromSource(config.appId, config.sourceId);
     }
   } catch (err) {
     return new Response(
