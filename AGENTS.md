@@ -1,3 +1,26 @@
+## v0.4.2.9 / v0.4.13.28 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Stabilize Caddy upstream generation for core routes and forward-auth apps
+
+### Changes
+- `control-panel/src/lib/caddy/client.ts` — Added Caddy-safe upstream resolution to deterministic IPv4 for YouEye-managed containers, applied it to core route writers, and added active-config migration for legacy hostname dials.
+- `control-panel/src/lib/market/engine.ts`, `control-panel/src/lib/identity/provider.ts` — Resolved YouEye ID forward-auth upstreams to IPv4 so SearXNG-style routes no longer hit IPv6-first container DNS.
+- `control-panel/src/app/api/setup/run/route.ts` — Runs the Caddy upstream migration after setup route generation.
+- `spine/internal/api/server.go` — Changed fresh setup defaults from Authentik `auth` to YouEye ID `identity`.
+- `spine/internal/api/server_test.go` — Added regression coverage for the fresh identity subdomain default.
+- `README.md`, `control-panel/package.json`, `spine/internal/cmd/root.go` — Bumped Spine to `0.4.2.9` and Control Panel to `0.4.13.28`.
+
+### Test Results
+- Spine: `go test ./...` passed.
+- Control Panel: `pnpm -C control-panel build` passed.
+- Live practice on `192.168.31.160`: root UI, UI SSO, YouEye ID, Control Panel SSO, Notes native SSO, SearXNG forward-auth, and Pi-Hole route verified after active Caddy config migration.
+
+### Notes for Iris
+- The durable fix is in CP route generation. Existing Caddy configs with `youeye-control.youeye:*` need the migration helper to run once, or a manual active-config migration before updating.
+- This intentionally keeps user-entered LAN IP/FQDN proxy targets unchanged; only YouEye-managed container names are resolved to IPv4.
+
 ## v0.4.2.8 / v0.4.13.27 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

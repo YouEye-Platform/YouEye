@@ -45,7 +45,7 @@ import {
   generateSecretKey,
   generateHexToken,
 } from '../infrastructure/secrets';
-import { addRoute, getRoutes, removeRoute, addAppRoutes } from '../caddy/client';
+import { addRoute, getRoutes, removeRoute, addAppRoutes, migrateSystemUpstreamsToIPv4, resolveCaddyUpstreamDial } from '../caddy/client';
 import type { EntranceConfig } from '../caddy/client';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
 import {
@@ -1027,7 +1027,7 @@ export async function installApp(
     let forwardAuthConfig: { upstreamDial: string; uri: string; copyHeaders: string[] } | undefined;
     if (forwardAuthEnabled) {
       forwardAuthConfig = {
-        upstreamDial: `${identityConfig.containerName}.${CONTAINER_DOMAIN}:${identityConfig.port}`,
+        upstreamDial: await resolveCaddyUpstreamDial(identityConfig.containerName, identityConfig.port),
         uri: '/forward-auth/caddy',
         copyHeaders: [
           'X-YouEye-Username',
@@ -1078,6 +1078,7 @@ export async function installApp(
       });
       emit(onEvent, step, totalSteps, 'success', `Route added: ${hostname}`);
     }
+    await migrateSystemUpstreamsToIPv4();
   } catch (err) {
     emit(onEvent, step, totalSteps, 'error', 'Failed to configure route', String(err));
     throw err;

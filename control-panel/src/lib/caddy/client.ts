@@ -220,6 +220,102 @@ function normalizeUpstream(upstream: string): string {
   return `${upstream}.${CONTAINER_DOMAIN}`;
 }
 
+function stripContainerDomain(upstream: string): string {
+  if (upstream.endsWith(`.${CONTAINER_DOMAIN}`)) {
+    return upstream.slice(0, -(`.${CONTAINER_DOMAIN}`).length);
+  }
+  if (upstream.endsWith('.incus')) {
+    return upstream.slice(0, -'.incus'.length);
+  }
+  return upstream;
+}
+
+/**
+ * Resolve an upstream into a Caddy-safe dial host.
+ *
+ * YouEye-managed containers should use IPv4 addresses instead of Incus DNS
+ * names. Incus may return IPv6 first for names like youeye-control.youeye,
+ * while the Node services are only reachable over IPv4 from Caddy.
+ */
+export async function resolveCaddyUpstream(upstream: string): Promise<string> {
+  if (isIPAddress(upstream)) {
+    return upstream;
+  }
+
+  if (upstream.includes('.') && !upstream.endsWith(`.${CONTAINER_DOMAIN}`) && !upstream.endsWith('.incus')) {
+    return upstream;
+  }
+
+  const containerName = stripContainerDomain(upstream);
+  try {
+    const { getContainerIP } = await import('../incus/container-ip');
+    const ip = await getContainerIP(containerName);
+    if (ip) {
+      return ip;
+    }
+  } catch (error) {
+    console.warn(`[Caddy] Failed to resolve ${containerName} to IPv4:`, error);
+  }
+
+  console.warn(`[Caddy] Falling back to DNS upstream for ${containerName}`);
+  return normalizeUpstream(containerName);
+}
+
+export async function resolveCaddyUpstreamDial(upstream: string, port: number): Promise<string> {
+  return `${await resolveCaddyUpstream(upstream)}:${port}`;
+}
+
+function rewriteDial(value: unknown, replacements: Map<string, string>): number {
+  let changed = 0;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      changed += rewriteDial(item, replacements);
+    }
+    return changed;
+  }
+  if (!value || typeof value !== 'object') {
+    return changed;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (typeof record.dial === 'string') {
+    const replacement = replacements.get(record.dial);
+    if (replacement) {
+      record.dial = replacement;
+      changed++;
+    }
+  }
+
+  for (const child of Object.values(record)) {
+    changed += rewriteDial(child, replacements);
+  }
+  return changed;
+}
+
+export async function migrateSystemUpstreamsToIPv4(): Promise<number> {
+  const config = await getConfig();
+  const systemUpstreams: Array<[string, number]> = [
+    ['youeye-control', 3000],
+    ['youeye-control', 3001],
+    ['youeye-ui', 3000],
+    ['youeye-pihole', 80],
+  ];
+
+  const replacements = new Map<string, string>();
+  for (const [containerName, port] of systemUpstreams) {
+    const dial = await resolveCaddyUpstreamDial(containerName, port);
+    replacements.set(`${containerName}.${CONTAINER_DOMAIN}:${port}`, dial);
+    replacements.set(`${containerName}.incus:${port}`, dial);
+  }
+
+  const changed = rewriteDial(config, replacements);
+  if (changed > 0) {
+    await setConfig(config);
+    console.log(`[Caddy] Migrated ${changed} system upstream(s) to IPv4`);
+  }
+  return changed;
+}
+
 /**
  * Normalize a path pattern for Caddy matching
  * Ensures paths are in the correct format: /path/* for prefix matching
@@ -336,7 +432,7 @@ export function buildForwardAuthHandler(
  * Convert form data to Caddy route
  * Includes path stripping when path is not root
  */
-export function formDataToRoute(data: RouteFormData): { route: CaddyRoute; warning?: string } {
+export async function formDataToRoute(data: RouteFormData): Promise<{ route: CaddyRoute; warning?: string }> {
   // Build handlers array
   const handlers: CaddyRoute['handle'] = [];
 
@@ -365,15 +461,14 @@ export function formDataToRoute(data: RouteFormData): { route: CaddyRoute; warni
     });
   }
 
-  // Normalize upstream for Incus DNS resolution
-  const normalizedUpstream = normalizeUpstream(data.upstream);
+  const upstreamDial = await resolveCaddyUpstreamDial(data.upstream, data.port);
 
   // Add reverse proxy handler
   handlers.push({
     handler: 'reverse_proxy',
     upstreams: [
       {
-        dial: `${normalizedUpstream}:${data.port}`,
+        dial: upstreamDial,
       },
     ],
   });
@@ -682,7 +777,7 @@ export async function addRoute(data: RouteFormData): Promise<{ route: ProxyRoute
     throw new Error(`A route for ${data.hostname || '*'}${normalizedPath} already exists`);
   }
   
-  const { route, warning } = formDataToRoute(data);
+  const { route, warning } = await formDataToRoute(data);
   
   if (warning) {
     console.log(`[Caddy] ${warning}`);
@@ -981,6 +1076,7 @@ async function addRouteWithoutStripping(
 
   if (exists) return;
 
+  const upstreamDial = await resolveCaddyUpstreamDial(containerName, port);
   const routeId = `route-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
   const newRoute: CaddyRoute = {
     '@id': routeId,
@@ -990,7 +1086,7 @@ async function addRouteWithoutStripping(
     }],
     handle: [{
       handler: 'reverse_proxy',
-      upstreams: [{ dial: `${normalizeUpstream(containerName)}:${port}` }],
+      upstreams: [{ dial: upstreamDial }],
     }],
   };
 
@@ -1069,6 +1165,7 @@ export async function setDefaultRoute(containerName: string, port: number): Prom
   ensureHTTPSConfig(config.apps.http.servers.srv0);
 
   const routes = config.apps.http.servers.srv0.routes || [];
+  const upstreamDial = await resolveCaddyUpstreamDial(containerName, port);
 
   // Remove any existing default (host-less) catch-all routes
   // This includes Caddy's built-in file_server and any prior reverse_proxy catch-alls
@@ -1087,7 +1184,7 @@ export async function setDefaultRoute(containerName: string, port: number): Prom
     '@id': 'default-catchall',
     handle: [{
       handler: 'reverse_proxy',
-      upstreams: [{ dial: `${normalizeUpstream(containerName)}:${port}` }],
+      upstreams: [{ dial: upstreamDial }],
     }],
     // No match = catches all requests not matched by other routes
   };
@@ -1124,7 +1221,7 @@ export async function setDefaultRoute(containerName: string, port: number): Prom
     config.apps.tls.automation.on_demand = {
       permission: {
         module: 'http',
-        endpoint: `http://${normalizeUpstream(containerName)}:${port}/api/setup/config`,
+        endpoint: `http://${upstreamDial}/api/setup/config`,
       },
     };
   }
@@ -1235,6 +1332,7 @@ export async function ensurePingRoute(containerName: string = 'youeye-control', 
 
   // Remove any existing ping route
   const filtered = routes.filter(r => r['@id'] !== 'api-ping-route');
+  const upstreamDial = await resolveCaddyUpstreamDial(containerName, port);
 
   // Create the /api/ping route (no host matcher = matches all hosts).
   // CRITICAL: This route must be FIRST in the array so it's evaluated BEFORE
@@ -1245,7 +1343,7 @@ export async function ensurePingRoute(containerName: string = 'youeye-control', 
     match: [{ path: ['/api/ping'] }],
     handle: [{
       handler: 'reverse_proxy',
-      upstreams: [{ dial: `${normalizeUpstream(containerName)}:${port}` }],
+      upstreams: [{ dial: upstreamDial }],
     }],
   };
 
@@ -1325,10 +1423,11 @@ export async function setDomain(domain: string): Promise<void> {
 
   // Ensure on_demand TLS permission is set (required by Caddy v2.7+)
   if (!config.apps.tls.automation.on_demand) {
+    const controlDial = await resolveCaddyUpstreamDial('youeye-control', 3000);
     config.apps.tls.automation.on_demand = {
       permission: {
         module: 'http',
-        endpoint: `http://youeye-control.${CONTAINER_DOMAIN}:3000/api/setup/config`,
+        endpoint: `http://${controlDial}/api/setup/config`,
       },
     };
   }
@@ -1367,7 +1466,7 @@ export async function ensureControlSettingsRoute(
   ensureHTTPSConfig(config.apps.http.servers[serverName]);
   ensureTLSSubject(config, domain);
 
-  const upstreamDial = `${normalizeUpstream(containerName)}:${port}`;
+  const upstreamDial = await resolveCaddyUpstreamDial(containerName, port);
   const routes = (config.apps.http.servers[serverName].routes || [])
     .filter(r =>
       r['@id'] !== 'control-settings-route' &&
@@ -1460,13 +1559,14 @@ export async function ensureIdentityRoute(
 
   const routes = (config.apps.http.servers[serverName].routes || [])
     .filter(r => r['@id'] !== 'youeye-id-route');
+  const upstreamDial = await resolveCaddyUpstreamDial(containerName, port);
 
   const identityRoute: CaddyRoute = {
     '@id': 'youeye-id-route',
     match: [{ host: [hostname] }],
     handle: [{
       handler: 'reverse_proxy',
-      upstreams: [{ dial: `${normalizeUpstream(containerName)}:${port}` }],
+      upstreams: [{ dial: upstreamDial }],
     }],
   };
 
@@ -1684,9 +1784,9 @@ export async function addAppRoutes(
     if (appBridgeName) {
       const { getContainerIP } = await import('../incus/container-ip');
       const ip = await getContainerIP(containerName);
-      resolvedUpstream = ip || normalizeUpstream(containerName);
+      resolvedUpstream = ip || await resolveCaddyUpstream(containerName);
     } else {
-      resolvedUpstream = normalizeUpstream(containerName);
+      resolvedUpstream = await resolveCaddyUpstream(containerName);
     }
 
     const handlers: any[] = [];

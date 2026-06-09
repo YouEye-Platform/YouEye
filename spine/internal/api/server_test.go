@@ -472,6 +472,16 @@ func TestHandleYouEyeConfig_GET_DefaultsWhenNoFile(t *testing.T) {
 	if body["site_name"] != "YouEye" {
 		t.Errorf("default site_name = %v, want %q", body["site_name"], "YouEye")
 	}
+	subdomains, ok := body["subdomains"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("subdomains missing or invalid: %v", body["subdomains"])
+	}
+	if subdomains["identity"] != "id" {
+		t.Errorf("default identity subdomain = %v, want %q", subdomains["identity"], "id")
+	}
+	if subdomains["auth"] == "auth" {
+		t.Errorf("default auth subdomain should not be restored after Authentik removal")
+	}
 }
 
 func TestHandleYouEyeConfig_PATCH_UpdatesSiteName(t *testing.T) {

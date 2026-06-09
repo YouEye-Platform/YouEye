@@ -303,6 +303,13 @@ export async function POST(request: NextRequest) {
               // Non-critical — internal traffic is unaffected
             }
 
+            try {
+              await caddy.migrateSystemUpstreamsToIPv4();
+            } catch (err) {
+              console.error('Failed to migrate Caddy system upstreams to IPv4:', err);
+              routeErrors.push(`caddy-upstream-migration: ${err instanceof Error ? err.message : String(err)}`);
+            }
+
             if (routeErrors.length > 0) {
               stepUpdate('caddy', 'done', `Routes created with ${routeErrors.length} error(s): ${routeErrors.join('; ')}`);
             } else {

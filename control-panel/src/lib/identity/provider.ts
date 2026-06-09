@@ -9,9 +9,8 @@ import {
   removeClient,
   updateIdentityUser,
 } from './store';
-import { addForwardAuthToRoute, removeForwardAuthFromRoute } from '@/lib/caddy/client';
+import { addForwardAuthToRoute, removeForwardAuthFromRoute, resolveCaddyUpstreamDial } from '@/lib/caddy/client';
 import { settingsService } from '@/lib/settings';
-import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 
 export type IdentityProvider = 'youeye-id' | 'authentik';
 
@@ -110,7 +109,7 @@ export async function configureForwardAuth(params: {
 }): Promise<void> {
   const config = await getIdentityProviderConfig();
   await addForwardAuthToRoute(params.hostname, {
-    upstreamDial: `${config.containerName}.${CONTAINER_DOMAIN}:${config.port}`,
+    upstreamDial: await resolveCaddyUpstreamDial(config.containerName, config.port),
     uri: '/forward-auth/caddy',
     copyHeaders: [
       'X-YouEye-Username',

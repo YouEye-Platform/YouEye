@@ -1890,9 +1890,9 @@ func loadYouEyeConfig() (*YouEyeConfig, error) {
 	cfg := &YouEyeConfig{
 		SiteName: "YouEye",
 		Subdomains: map[string]string{
-			"control": "control",
-			"auth":    "auth",
-			"dns":     "dns",
+			"control":  "control",
+			"identity": "id",
+			"dns":      "dns",
 		},
 	}
 
@@ -1953,9 +1953,9 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if newCfg.Subdomains == nil {
 			newCfg.Subdomains = map[string]string{
-				"control": "control",
-				"auth":    "auth",
-				"dns":     "dns",
+				"control":  "control",
+				"identity": "id",
+				"dns":      "dns",
 			}
 		}
 		if err := saveYouEyeConfig(&newCfg); err != nil {
