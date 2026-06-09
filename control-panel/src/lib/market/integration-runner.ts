@@ -7,6 +7,7 @@ import { fetchIntegrationManifestReferenceFromSource, fetchIntegrationManifestFr
 import { buildCanonicalContext, generateAppToken } from './platform-env';
 import { executeSSOSteps, StepError } from './sso-engine';
 import { getContainerName } from './engine-helpers';
+import { injectCaddyRootCA } from './caddy-ca';
 import { resolveVariables } from './variables';
 import type { AppManifest, InstallConfig, InstallEvent, IntegrationManifest, VariableContext } from './types';
 
@@ -113,6 +114,10 @@ async function executeIntegrationSetup(
   const primaryIP = await getContainerIP(primaryContainerName);
   if (!primaryIP) throw new Error(`Could not resolve IP for ${primaryContainerName}`);
   ctx.container = { ip: primaryIP, port: primaryPort };
+
+  if (sso.type === 'oauth2') {
+    await injectCaddyRootCA(primaryContainerName);
+  }
 
   if (sso.setup.method === 'cli') {
     for (const cliStep of sso.setup.cli?.steps ?? []) {
