@@ -15,6 +15,9 @@
 ### Test Results
 - Focused Node test passed: `control-panel/tests/market-system-apps.spec.ts`.
 - `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.57`.
+- Released `cp-artem-v0.4.13.57` with exact `standalone.tar`; deployed through `spine update control` on `192.168.31.160`.
+- Live `/api/deploy/infrastructure/system-updates` reports Postgres/Caddy as `legacy-compatible`, Pi-hole as `legacy-untracked`, refuses Caddy dry-run without `forceLegacy`, and succeeds forced Caddy dry-run to `docker.io/library/caddy:2.11.4`.
+- Browser smoke over trusted HTTPS loaded `/api/health` and routed `/market` to YouEye ID login with no console errors or failed responses. Screenshot: `/tmp/youeye-market-login-0.4.13.57.png`.
 
 ### Notes for Iris
 - Existing legacy system containers are not surprise-rebuilt. The new endpoint reports them as legacy-compatible or legacy-untracked and requires `forceLegacy`; PostgreSQL also requires `allowDatabaseUpdate`.
