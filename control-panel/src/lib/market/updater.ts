@@ -35,7 +35,7 @@ import {
   waitForContainerExec,
 } from '@/lib/incus/snapshot';
 import { fetchManifestFromSource, clearCatalogCache } from './catalog';
-import { readInstallMetadata } from './metadata';
+import { readInstallMetadata, saveInstallMetadata } from './metadata';
 import { getInstalledApp, updateInstalledVersion } from './installed-apps';
 import { getContainerName } from './engine-helpers';
 import { resolveVariables, resolveEnvironment } from './variables';
@@ -664,6 +664,21 @@ export async function updateMarketplaceApp(
     step++;
     emit(onEvent, step, totalSteps, 'running', 'Updating version records...');
     await updateInstalledVersion(appId, targetVersion);
+    installMeta.installedVersion = targetVersion;
+    if (!installMeta.sourceId) {
+      try {
+        const source = await getMarketSource();
+        installMeta.catalogKey = `${source.id}:app:${appId}`;
+        installMeta.itemKind = 'app';
+        installMeta.sourceId = source.id;
+        installMeta.sourceName = source.name;
+        installMeta.sourceRepoUrl = source.repo_url;
+        installMeta.manifestSource = source.repo_url;
+      } catch {
+        // Source metadata is best-effort for legacy installs.
+      }
+    }
+    await saveInstallMetadata(installMeta);
     emit(onEvent, step, totalSteps, 'success', 'Version updated');
 
     // ── Step N: Cleanup snapshots ────────────────────────

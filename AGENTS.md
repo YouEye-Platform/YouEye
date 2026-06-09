@@ -1,3 +1,19 @@
+## v0.4.13.31 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Backfill Market install metadata after app updates
+
+### Changes
+- `control-panel/src/lib/market/updater.ts` — Writes successful update version records back to each app's `install.json` and backfills source metadata for legacy installs.
+- `README.md`, `control-panel/package.json` — Bumped Control Panel to `0.4.13.31`.
+
+### Test Results
+- Pending build and live update verification.
+
+### Notes for Iris
+- This closes the gap found after `0.4.13.30`: installed-app state had source-aware versions, but per-app install metadata could remain stale until the next update.
+
 ## v0.4.13.30 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc
