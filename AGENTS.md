@@ -1,3 +1,21 @@
+## v0.4.3.21 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Require app tokens for connection discovery
+
+### Changes
+- `ui/src/app/api/v1/my-connections/route.ts` — Requires a valid Bearer `YOUEYE_APP_TOKEN` and verifies it matches `X-YouEye-App` before returning app connection grants.
+- `ui/tests/my-connections-auth.spec.mjs` — Added focused executable coverage for missing-token and token/app mismatch enforcement.
+- `ui/package.json`, `README.md`, `ui/public/sw.js` — Bumped UI to `0.4.3.21` and regenerated build output.
+
+### Test Results
+- Focused UI tests passed: `node --test ui/tests/my-connections-auth.spec.mjs ui/tests/timeline-permission-approval.spec.mjs ui/tests/launch-requirements.spec.mjs ui/tests/permission-approval.spec.mjs ui/tests/app-preference-settings.spec.mjs`.
+- `pnpm --dir ui build` passed for UI `0.4.3.21`; the standalone artifact package reports version `0.4.3.21`.
+
+### Notes for Iris
+- This hardens Plan 3 scoped Caddy grants: apps can no longer discover another app's granted backends by spoofing `X-YouEye-App`.
+
 ## v0.4.13.75 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

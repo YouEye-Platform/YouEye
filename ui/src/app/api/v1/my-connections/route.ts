@@ -4,7 +4,7 @@
  * Called by native apps (via Canvas getConnections()) to discover their
  * active bridges, internet access, and available backends.
  *
- * Auth: X-YouEye-App header must match a registered app in the DB.
+ * Auth: Authorization: Bearer <YOUEYE_APP_TOKEN> must match X-YouEye-App.
  * No user context needed — this is app-level, not user-level.
  *
  * Data source: `apps.connections` JSONB column, pushed by the Control Panel via
@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, ensureSchema } from "@/db";
 import { apps } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { validateAppToken } from "@/lib/auth/app-token";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,22 @@ export async function GET(request: NextRequest) {
 
   // Accept "ye-search" or "search" — strip "ye-" prefix
   const appId = rawAppId.replace(/^ye-/, "");
+
+  const tokenResult = await validateAppToken(request);
+  if (!tokenResult) {
+    return NextResponse.json(
+      { error: "Invalid or missing app token" },
+      { status: 401 },
+    );
+  }
+
+  const tokenAppId = tokenResult.appId.replace(/^ye-/, "");
+  if (tokenAppId !== appId && tokenResult.appId !== rawAppId) {
+    return NextResponse.json(
+      { error: "App token does not match X-YouEye-App" },
+      { status: 403 },
+    );
+  }
 
   try {
     await ensureSchema();
