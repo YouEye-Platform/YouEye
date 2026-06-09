@@ -12,6 +12,9 @@
 
 ### Test Results
 - Focused Control Panel tests passed: `node --test tests/market-canonical-surfaces.spec.mjs tests/market-sso-engine.spec.mjs tests/market-integration-remove.spec.mjs tests/market-filters.spec.mjs tests/market-update-preview.spec.mjs tests/market-migration-planner.spec.mjs tests/market-update-plans.spec.mjs`.
+- `pnpm build` passed for Control Panel `0.4.13.75`.
+- Released `cp-artem-v0.4.13.75` with exact `standalone.tar` asset id `1574`, snapshotted core live containers as `pre-test-cp-0.4.13.75-20260609-212755`, and deployed through `spine update control`.
+- Live proof: CP catalog for Memos still reports `capabilities.notifications:true` derived from canonical surfaces; after syncing the installed Memos manifest into UI, authenticated `/api/v1/apps/surfaces` returns exactly `memos:timeline` and `memos:memo-alert`, both with `legacy_source:"surfaces"`, and no `default-notification` row.
 
 ### Notes for Iris
 - This pairs with the YE-AppMarket Memos manifest cleanup that removes legacy `capabilities.notifications` now that Memos has canonical notification surfaces.
