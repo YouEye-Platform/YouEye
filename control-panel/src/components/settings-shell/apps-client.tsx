@@ -43,6 +43,13 @@ interface Permission {
   id: string;
   appId: string;
   permission: string;
+  descriptor?: {
+    permission: string;
+    title: string;
+    description: string;
+    category: string;
+    risk: string;
+  };
   granted: boolean;
   grantType: string | null;
   grantedAt?: string | null;
@@ -125,6 +132,15 @@ function identityConsentApi(appId: string): string {
     return `/settings/api${path}`;
   }
   return `/api${path}`;
+}
+
+function permissionTitle(permission: Permission) {
+  return permission.descriptor?.title || permission.permission;
+}
+
+function permissionDescription(permission: Permission) {
+  if (permission.descriptor?.description) return permission.descriptor.description;
+  return "This app has this YouEye permission.";
 }
 
 function InstalledAppsList({ onOpen }: { onOpen: (id: string) => void }) {
@@ -415,10 +431,16 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
           {permissions.length === 0 ? (
             <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">No permissions granted.</div>
           ) : permissions.map((permission) => (
-            <div key={permission.id || permission.permission} className="flex items-center justify-between gap-3 rounded-md bg-accent/30 px-3 py-2 text-sm">
+            <div key={permission.id || permission.permission} className="flex items-start justify-between gap-3 rounded-md bg-accent/30 px-3 py-2.5 text-sm">
               <div className="min-w-0">
-                <p className="truncate font-medium">{permission.permission}</p>
-                <p className="text-xs text-muted-foreground">{permission.grantType || "granted"}</p>
+                <p className="truncate font-medium">{permissionTitle(permission)}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{permissionDescription(permission)}</p>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {permission.descriptor?.category && <Badge variant="outline">{permission.descriptor.category}</Badge>}
+                  {permission.descriptor?.risk && <Badge variant="outline">{permission.descriptor.risk} risk</Badge>}
+                  <Badge variant="outline">{permission.grantType || "granted"}</Badge>
+                </div>
+                <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{permission.permission}</p>
               </div>
               <Button variant="outline" size="sm" onClick={() => revokeAppPermission(permission.permission)}>Revoke</Button>
             </div>

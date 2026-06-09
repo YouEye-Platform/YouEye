@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { grantPermission } from "@/lib/db/queries/permissions";
+import { describePermission } from "@/lib/permissions/descriptors";
 
 export async function POST(request: Request) {
   const session = await getSession();
@@ -34,5 +35,9 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json({ success: true, granted: permissions });
+  return NextResponse.json({
+    success: true,
+    granted: permissions,
+    permissions: permissions.map((permission: string) => describePermission(permission)),
+  });
 }

@@ -1,3 +1,27 @@
+## v0.4.13.61 / v0.4.3.9 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add user-visible permission descriptors
+
+### Changes
+- `ui/src/lib/permissions/descriptors.ts` — Added the first shared descriptor registry for YouEye user permissions.
+- `ui/src/app/api/ui-bridge/settings/[...path]/route.ts` — Returns permission descriptors through the CP settings bridge.
+- `ui/src/app/api/v1/permissions/app/[appId]/route.ts`, `ui/src/app/api/v1/permissions/request/route.ts` — Return descriptors from direct permission list/request APIs.
+- `control-panel/src/app/api/identity/consents/app/[appId]/route.ts` — Adds descriptor metadata to YouEye ID first-launch consent grants.
+- `control-panel/src/components/settings-shell/apps-client.tsx` — Renders friendly permission title, description, category, risk, grant type, and raw audit string in app settings.
+- `ui/tests/permission-descriptors.spec.ts`, `control-panel/tests/identity-consent.spec.ts` — Added/extended focused regression coverage.
+- `control-panel/package.json`, `ui/package.json`, `README.md` — Bumped Control Panel to `0.4.13.61` and UI to `0.4.3.9`.
+
+### Test Results
+- Focused Node test passed: `ui/tests/permission-descriptors.spec.ts`.
+- Focused Node test passed: `control-panel/tests/identity-consent.spec.ts`.
+- `pnpm --dir YouEye/ui build` passed for UI `0.4.3.9`.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.61`.
+
+### Notes for Iris
+- This is the descriptor/copy foundation for broader first-launch permissions. It does not yet add a modal prompt for every non-identity permission request.
+
 ## v0.4.13.60 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

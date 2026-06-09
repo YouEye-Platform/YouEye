@@ -13,6 +13,13 @@ function permissionRow(appId: string, consent: Awaited<ReturnType<typeof getAppC
     id: `identity-consent:${consent.client_id}`,
     appId,
     permission: 'identity:youeye-id:sign-in',
+    descriptor: {
+      permission: 'identity:youeye-id:sign-in',
+      title: 'Sign in with YouEye ID',
+      description: 'Lets this app use your YouEye ID profile to sign you in.',
+      category: 'identity',
+      risk: 'low',
+    },
     granted: true,
     grantType: 'first-launch',
     grantedAt: consent.granted_at,

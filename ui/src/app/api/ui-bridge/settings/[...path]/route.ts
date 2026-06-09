@@ -9,6 +9,7 @@ import { getDrawerPrefs, saveDrawerPrefs, saveUserWordartOverride, getUserWordar
 import { getBranding } from "@/lib/db/queries/branding";
 import { deleteNotification, getUnreadCount, getUserNotifications, markAllNotificationsRead, markNotificationRead } from "@/lib/db/queries/notifications";
 import { getAppPermissions, revokePermission } from "@/lib/db/queries/permissions";
+import { describePermission } from "@/lib/permissions/descriptors";
 import { hasPIN, hasActivePINSession, createPIN, changePIN, endPINSession } from "@/lib/crypto/pin-session";
 import { db, ensureSchema } from "@/db";
 import { userSettings } from "@/db/schema";
@@ -288,6 +289,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
         id: `${appId}:${permission.permission}`,
         appId,
         permission: permission.permission,
+        descriptor: describePermission(permission.permission),
         granted: permission.granted,
         grantType: permission.grant_type,
         grantedAt: permission.granted_at,

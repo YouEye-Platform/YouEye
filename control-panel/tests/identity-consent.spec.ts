@@ -41,8 +41,13 @@ test('App settings can list and revoke YouEye ID first-launch consent', () => {
   assert.match(consentRoute, /getAppConsent/);
   assert.match(consentRoute, /revokeAppConsent/);
   assert.match(consentRoute, /identity:youeye-id:sign-in/);
+  assert.match(consentRoute, /Sign in with YouEye ID/);
+  assert.match(consentRoute, /descriptor/);
   assert.match(consentRoute, /first-launch/);
   assert.match(appSettings, /identityConsentApi/);
   assert.match(appSettings, /settings\/api/);
   assert.match(appSettings, /identity:youeye-id:sign-in/);
+  assert.match(appSettings, /permissionTitle/);
+  assert.match(appSettings, /permissionDescription/);
+  assert.match(appSettings, /risk/);
 });

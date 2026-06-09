@@ -11,6 +11,7 @@ import {
   getAppPermissions,
   revokePermission,
 } from "@/lib/db/queries/permissions";
+import { describePermission } from "@/lib/permissions/descriptors";
 
 export async function GET(
   _request: Request,
@@ -24,7 +25,13 @@ export async function GET(
   const { appId } = await params;
   const permissions = await getAppPermissions(session.userId, appId);
 
-  return NextResponse.json({ app_id: appId, permissions });
+  return NextResponse.json({
+    app_id: appId,
+    permissions: permissions.map((permission) => ({
+      ...permission,
+      descriptor: describePermission(permission.permission),
+    })),
+  });
 }
 
 export async function DELETE(
