@@ -9,7 +9,7 @@ export function permissionAppMatches(left: string, right: string): boolean {
   return normalizePermissionAppId(left) === normalizePermissionAppId(right);
 }
 
-function publicBaseUrl(request?: Request | NextRequest): string {
+export function publicBaseUrl(request?: Request | NextRequest): string {
   if (process.env.UI_EXTERNAL_URL) return process.env.UI_EXTERNAL_URL.replace(/\/$/, "");
 
   const headers = request?.headers;

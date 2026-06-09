@@ -1,3 +1,27 @@
+## v0.4.13.67 / v0.4.3.17 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add manifest-declared launch preferences foundation
+
+### Changes
+- `control-panel/src/lib/market/schema.ts`, `control-panel/src/lib/market/types.ts` — Added manifest schema/types for required user preferences through root `preferences[]`, `launchPreferences[]`, and `settings.schema[]`.
+- `ui/src/app/api/v1/apps/[appId]/launch-requirements/route.ts` — Launch requirements now also evaluate required manifest preferences against per-user app settings and return app-settings URLs/API paths when first launch needs user choices.
+- `ui/src/app/api/v1/apps/[appId]/user-settings/route.ts` — Normalized native app settings namespaces so service-auth callers can use either bare installed app ids or `ye-*` OAuth app ids.
+- `ui/src/lib/permissions/approval.ts` — Exported public base URL helper for shared approval/settings response metadata.
+- `control-panel/tests/market-preferences.spec.mjs`, `control-panel/tests/market-surfaces.spec.ts`, `ui/tests/launch-requirements.spec.mjs` — Added focused regression coverage for manifest preference declarations and launch-requirements preference responses.
+- `control-panel/package.json`, `ui/package.json`, `ui/public/sw.js`, `README.md` — Bumped Control Panel to `0.4.13.67`, UI to `0.4.3.17`, and refreshed the generated UI service worker precache.
+
+### Test Results
+- Focused UI tests passed: `node --test tests/launch-requirements.spec.mjs tests/permission-approval.spec.mjs tests/timeline-permission-approval.spec.mjs`.
+- Focused Control Panel tests passed: `node --test tests/market-preferences.spec.mjs tests/market-update-manifest-sync.spec.mjs`.
+- `pnpm --dir control-panel build` passed for Control Panel `0.4.13.67`.
+- `pnpm --dir ui build` passed for UI `0.4.3.17` with the known local `127.0.0.1:5432` static-generation noise.
+- Verified local release tarballs contain flat `server.js` and matching `package.json` versions for CP `0.4.13.67` and UI `0.4.3.17`.
+
+### Notes for Iris
+- This is the API/schema foundation for first-launch user preferences. It returns settings metadata and detects missing required preferences, but a richer app-settings preference form can build on the stored manifest schema in a later UI slice.
+
 ## v0.4.13.66 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

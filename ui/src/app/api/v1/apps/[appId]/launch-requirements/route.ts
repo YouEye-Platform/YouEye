@@ -14,9 +14,11 @@ import {
   buildPermissionApproval,
   normalizePermissionAppId,
   permissionAppMatches,
+  publicBaseUrl,
 } from "@/lib/permissions/approval";
 import { describePermission } from "@/lib/permissions/descriptors";
 import { normalizeAppSurfaces } from "@/lib/surfaces/normalize";
+import { getUserSettings } from "@/lib/db/queries/settings";
 
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -34,6 +36,85 @@ function collectLaunchPermissions(manifest: Record<string, unknown> | null): str
     }
   }
   return [...permissions].sort();
+}
+
+interface LaunchPreference {
+  key: string;
+  type: string;
+  label: string;
+  description?: string;
+  required: boolean;
+  default?: unknown;
+  choices?: Array<{ value: string; label: string }>;
+  source: "preferences" | "launchPreferences" | "settings.schema";
+}
+
+function preferenceArray(value: unknown, source: LaunchPreference["source"]): LaunchPreference[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    .filter((item) => typeof item.key === "string" && item.key.length > 0)
+    .map((item) => ({
+      key: item.key as string,
+      type: typeof item.type === "string" && item.type.length > 0 ? item.type : "string",
+      label: typeof item.label === "string" && item.label.length > 0 ? item.label : item.key as string,
+      description: typeof item.description === "string" ? item.description : undefined,
+      required: item.required === true,
+      default: item.default,
+      choices: Array.isArray(item.choices)
+        ? item.choices
+            .filter((choice): choice is Record<string, unknown> => typeof choice === "object" && choice !== null)
+            .filter((choice) => typeof choice.value === "string" && typeof choice.label === "string")
+            .map((choice) => ({ value: choice.value as string, label: choice.label as string }))
+        : undefined,
+      source,
+    }));
+}
+
+function collectLaunchPreferences(manifest: Record<string, unknown> | null): LaunchPreference[] {
+  const settings = manifest?.settings;
+  const settingsSchema = typeof settings === "object" && settings !== null
+    ? (settings as Record<string, unknown>).schema
+    : undefined;
+  const preferences = [
+    ...preferenceArray(manifest?.preferences, "preferences"),
+    ...preferenceArray(manifest?.launchPreferences, "launchPreferences"),
+    ...preferenceArray(settingsSchema, "settings.schema"),
+  ];
+  const byKey = new Map<string, LaunchPreference>();
+  for (const preference of preferences) {
+    if (!byKey.has(preference.key)) byKey.set(preference.key, preference);
+  }
+  return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function hasPreferenceValue(settings: Record<string, unknown>, preference: LaunchPreference): boolean {
+  const value = settings[preference.key];
+  if (value === undefined || value === null) return preference.default !== undefined;
+  if (typeof value === "string") return value.trim().length > 0;
+  return true;
+}
+
+function buildPreferencesResponse(
+  appId: string,
+  manifestAppId: string,
+  requiredPreferences: LaunchPreference[],
+  missingPreferences: LaunchPreference[],
+  request: NextRequest
+) {
+  const settingsPath = `/settings/apps/${encodeURIComponent(manifestAppId)}?tab=app-settings`;
+  const settingsApiPath = `/api/v1/apps/${encodeURIComponent(manifestAppId)}/user-settings`;
+  const base = publicBaseUrl(request);
+  return {
+    preferences_required: missingPreferences.length > 0,
+    app_settings_url: settingsPath,
+    app_settings_url_absolute: base ? `${base}${settingsPath}` : settingsPath,
+    app_settings_api: settingsApiPath,
+    app_settings_api_absolute: base ? `${base}${settingsApiPath}` : settingsApiPath,
+    required_preferences: requiredPreferences,
+    missing_preferences: missingPreferences,
+    app_id: appId,
+  };
 }
 
 export async function GET(
@@ -64,16 +145,32 @@ export async function GET(
 
   const manifest = (app.manifest as Record<string, unknown> | null) ?? null;
   const required = collectLaunchPermissions(manifest);
+  const requiredPreferences = collectLaunchPreferences(manifest).filter((preference) => preference.required);
   const userId = (session?.userId ?? serviceUser?.id)!;
-  const checks = await Promise.all(
+  const [checks, allUserSettings] = await Promise.all([
+    Promise.all(
     required.map(async (permission) => ({
       permission,
       granted: await checkPermission(userId, grantAppId, permission),
     }))
-  );
+    ),
+    getUserSettings(userId),
+  ]);
+  const appSettings = (allUserSettings[manifestAppId] as Record<string, unknown> | undefined) ?? {};
   const missing = checks.filter((check) => !check.granted).map((check) => check.permission);
+  const missingPreferences = requiredPreferences.filter((preference) => !hasPreferenceValue(appSettings, preference));
 
-  if (missing.length > 0) {
+  if (missing.length > 0 || missingPreferences.length > 0) {
+    const preferences = buildPreferencesResponse(
+      grantAppId,
+      manifestAppId,
+      requiredPreferences,
+      missingPreferences,
+      request
+    );
+    const approval = missing.length > 0
+      ? buildPermissionApproval(grantAppId, missing, "persistent", request)
+      : { success: false, approval_required: false };
     return NextResponse.json(
       {
         first_launch_complete: false,
@@ -83,7 +180,8 @@ export async function GET(
         granted_permissions: checks
           .filter((check) => check.granted)
           .map((check) => describePermission(check.permission)),
-        ...buildPermissionApproval(grantAppId, missing, "persistent", request),
+        ...preferences,
+        ...approval,
       },
       { status: 202 }
     );
@@ -97,5 +195,8 @@ export async function GET(
     required_permissions: required.map((permission) => describePermission(permission)),
     granted_permissions: required.map((permission) => describePermission(permission)),
     missing_permissions: [],
+    preferences_required: false,
+    required_preferences: requiredPreferences,
+    missing_preferences: [],
   });
 }

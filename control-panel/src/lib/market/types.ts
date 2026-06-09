@@ -44,6 +44,8 @@ import type {
   PostDeployStepSchema,
   VolumeSchema,
   SurfaceSchema,
+  UserPreferenceFieldSchema,
+  AppSettingsSchema,
 } from './schema';
 
 // ─── Manifest Types (from Zod) ─────────────────────────────
@@ -87,6 +89,8 @@ export type InternetSpec = z.infer<typeof InternetSchema>;
 export type PostDeployStep = z.infer<typeof PostDeployStepSchema>;
 export type VolumeSpec = z.infer<typeof VolumeSchema>;
 export type SurfaceSpec = z.infer<typeof SurfaceSchema>;
+export type UserPreferenceField = z.infer<typeof UserPreferenceFieldSchema>;
+export type AppSettingsSpec = z.infer<typeof AppSettingsSchema>;
 
 // ─── Install Config ────────────────────────────────────────
 

@@ -26,6 +26,7 @@ import { getUserSettings } from "@/lib/db/queries/settings";
 import { db, ensureSchema } from "@/db";
 import { userSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { permissionAppMatches, normalizePermissionAppId } from "@/lib/permissions/approval";
 
 interface RouteContext {
   params: Promise<{ appId: string }>;
@@ -47,8 +48,9 @@ async function resolveUser(
 
   // Try service-to-service auth
   const callingApp = request.headers.get("x-youeye-app");
-  // Apps can only access their own namespace
-  if (callingApp && callingApp !== appId) {
+  // Apps can only access their own namespace. Accept either ye-* OAuth ids
+  // or bare installed ids because native apps use both across boundaries.
+  if (callingApp && !permissionAppMatches(callingApp, appId)) {
     return null;
   }
 
@@ -63,15 +65,16 @@ async function resolveUser(
 /** GET — Read app-specific settings */
 export async function GET(request: NextRequest, context: RouteContext) {
   const { appId } = await context.params;
+  const settingsAppId = normalizePermissionAppId(appId);
 
-  const user = await resolveUser(request, appId);
+  const user = await resolveUser(request, settingsAppId);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const allSettings = await getUserSettings(user.userId);
   const appSettings =
-    (allSettings[appId] as Record<string, unknown>) ?? {};
+    (allSettings[settingsAppId] as Record<string, unknown>) ?? {};
 
   return NextResponse.json({ settings: appSettings });
 }
@@ -79,8 +82,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
 /** PUT — Write app-specific settings */
 export async function PUT(request: NextRequest, context: RouteContext) {
   const { appId } = await context.params;
+  const settingsAppId = normalizePermissionAppId(appId);
 
-  const user = await resolveUser(request, appId);
+  const user = await resolveUser(request, settingsAppId);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -99,7 +103,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
   // Read existing settings, merge the app namespace
   const existing = await getUserSettings(user.userId);
-  const merged = { ...existing, [appId]: newAppSettings };
+  const merged = { ...existing, [settingsAppId]: newAppSettings };
 
   // Upsert
   const rows = await db

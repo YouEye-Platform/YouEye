@@ -19,8 +19,14 @@ test('Market app manifests support unified app surfaces', () => {
   assert.match(schema, /kind: z\.enum\(\['widget', 'info-card', 'timeline-card', 'notification'\]\)/);
   assert.match(schema, /placement: z\.enum\(\['dashboard', 'timeline', 'notification-center', 'app-settings', 'app-detail'\]\)/);
   assert.match(schema, /surfaces: z\.array\(SurfaceSchema\)\.optional\(\)\.default\(\[\]\)/);
+  assert.match(schema, /UserPreferenceFieldSchema/);
+  assert.match(schema, /preferences: z\.array\(UserPreferenceFieldSchema\)\.optional\(\)\.default\(\[\]\)/);
+  assert.match(schema, /launchPreferences: z\.array\(UserPreferenceFieldSchema\)\.optional\(\)\.default\(\[\]\)/);
+  assert.match(schema, /settings: AppSettingsSchema/);
 
   assert.match(types, /export type SurfaceSpec/);
+  assert.match(types, /export type UserPreferenceField/);
+  assert.match(types, /export type AppSettingsSpec/);
   assert.match(types, /surfaces\?: SurfaceSpec\[\]/);
   assert.match(catalog, /surfaces: manifest\.surfaces/);
 });
@@ -94,4 +100,64 @@ test('Market schema parses dashboard, timeline, and notification surfaces', () =
 
   assert.equal(parsed.surfaces.length, 3);
   assert.equal(parsed.surfaces[0].permissions[0], 'profile:read');
+});
+
+test('Market schema preserves manifest-declared first-launch preferences', () => {
+  const parsed = AppManifestSchema.parse({
+    apiVersion: 'v1',
+    kind: 'app',
+    integration: 'basic',
+    version: '1.0.0',
+    metadata: {
+      id: 'preference-demo',
+      name: 'Preference Demo',
+      description: 'Demo app',
+      icon: 'sliders',
+      category: 'demo',
+      defaultSubdomain: 'preference-demo',
+    },
+    containers: [{
+      name: 'main',
+      type: 'oci',
+      image: 'docker.io/library/nginx:latest',
+      port: 80,
+    }],
+    preferences: [
+      {
+        key: 'defaultNotebook',
+        type: 'string',
+        label: 'Default notebook',
+        description: 'Notebook selected during first launch.',
+        required: true,
+      },
+    ],
+    launchPreferences: [
+      {
+        key: 'digestFrequency',
+        type: 'select',
+        label: 'Digest frequency',
+        required: true,
+        choices: [
+          { value: 'daily', label: 'Daily' },
+          { value: 'weekly', label: 'Weekly' },
+        ],
+      },
+    ],
+    settings: {
+      schema: [
+        {
+          key: 'showHints',
+          type: 'boolean',
+          label: 'Show hints',
+          required: true,
+          default: true,
+        },
+      ],
+    },
+  });
+
+  assert.equal(parsed.preferences.length, 1);
+  assert.equal(parsed.preferences[0].key, 'defaultNotebook');
+  assert.equal(parsed.launchPreferences[0].choices?.[1].value, 'weekly');
+  assert.equal(parsed.settings?.schema[0].default, true);
 });

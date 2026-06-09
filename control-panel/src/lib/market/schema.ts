@@ -278,9 +278,22 @@ const SurfaceSettingsFieldSchema = z.object({
   key: z.string().min(1),
   type: z.string().min(1),
   label: z.string().min(1),
+  description: z.string().optional(),
   required: z.boolean().optional(),
   default: z.unknown().optional(),
+  choices: z.array(z.object({
+    value: z.string(),
+    label: z.string(),
+  })).optional(),
 });
+
+export const UserPreferenceFieldSchema = SurfaceSettingsFieldSchema.extend({
+  type: z.enum(['string', 'number', 'boolean', 'select', 'password']).optional().default('string'),
+});
+
+export const AppSettingsSchema = z.object({
+  schema: z.array(UserPreferenceFieldSchema).optional().default([]),
+}).optional();
 
 export const SurfaceSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/, 'Surface id must be lowercase alphanumeric with dashes'),
@@ -481,6 +494,9 @@ export const AppManifestSchema = z
     credentials: z.array(CredentialSchema).optional().default([]),
     configFiles: z.array(ConfigFileSchema).optional().default([]),
     capabilities: CapabilitiesSchema,
+    settings: AppSettingsSchema,
+    preferences: z.array(UserPreferenceFieldSchema).optional().default([]),
+    launchPreferences: z.array(UserPreferenceFieldSchema).optional().default([]),
     surfaces: z.array(SurfaceSchema).optional().default([]),
     provides: z.array(ProvidesSchema).optional().default([]),
     wants: z.array(WantSchema).optional().default([]),
