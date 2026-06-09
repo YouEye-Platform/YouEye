@@ -14,6 +14,9 @@
 ### Test Results
 - Focused Node test passed: `control-panel/tests/market-system-apps.spec.ts`.
 - `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.53`.
+- Released `cp-artem-v0.4.13.53` with exact `standalone.tar`; deployed through `spine update control` on `192.168.31.160`.
+- Live audit endpoint returned official Postgres `17.10`, Caddy `2.11.4`, and Pi-hole `2026.05.0` Market images with manifest digests.
+- Codex Browser verified `https://potato.app/market` renders the current Market UI over trusted HTTPS with no console errors.
 
 ### Notes for Iris
 - CP still owns ports, volumes, secrets, health checks, and reconciliation. Market system manifests now provide image/version metadata for CP-managed infrastructure. Spine still manages only itself and the Control Panel container.
