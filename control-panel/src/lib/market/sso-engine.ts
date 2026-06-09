@@ -239,7 +239,11 @@ async function executeHTTPStep(step: SSOStep, ctx: StepContext): Promise<HTTPSte
     if (res.status === 204) return { body: {}, response: res };
     const text = await res.text();
     if (!text) return { body: {}, response: res };
-    return { body: JSON.parse(text), response: res };
+    try {
+      return { body: JSON.parse(text), response: res };
+    } catch {
+      return { body: { raw: text }, response: res };
+    }
   } catch (err) {
     if (step.ignoreError) return null;
     if (err instanceof StepError) throw err;

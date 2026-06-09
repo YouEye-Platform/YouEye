@@ -27,3 +27,10 @@ test('SSO action steps fail loudly on non-OK responses', () => {
   assert.ok(engine.includes('SSO action ${action.method} ${url} failed'));
   assert.ok(engine.includes('statusCode: res.status'));
 });
+
+test('SSO API steps tolerate successful non-JSON responses', () => {
+  const engine = read('src/lib/market/sso-engine.ts');
+
+  assert.ok(engine.includes('return { body: JSON.parse(text), response: res }'));
+  assert.ok(engine.includes('return { body: { raw: text }, response: res }'));
+});

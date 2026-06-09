@@ -1,3 +1,20 @@
+## v0.4.13.74 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Harden Integration teardown API response parsing
+
+### Changes
+- `control-panel/src/lib/market/sso-engine.ts` — Successful API steps with non-JSON response bodies now return `{ raw }` instead of failing JSON parsing, while non-OK responses still fail loudly.
+- `control-panel/tests/market-sso-engine.spec.mjs` — Added focused coverage for successful non-JSON SSO API responses.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.74`.
+
+### Test Results
+- Focused Control Panel tests passed: `node --test tests/market-sso-engine.spec.mjs tests/market-integration-remove.spec.mjs tests/market-filters.spec.mjs tests/market-update-preview.spec.mjs tests/market-migration-planner.spec.mjs tests/market-update-plans.spec.mjs`.
+
+### Notes for Iris
+- This supports real Integration teardown endpoints such as Jellyfin plugin routes that may return successful text/empty responses rather than JSON. HTTP failures remain fatal.
+
 ## v0.4.13.73 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
