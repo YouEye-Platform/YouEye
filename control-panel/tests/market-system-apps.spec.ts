@@ -19,6 +19,9 @@ test('system app manifests are first-class Market artifacts', () => {
   const parser = readControl('src/lib/market/parser.ts');
   const catalog = readControl('src/lib/market/catalog.ts');
   const api = readControl('src/app/api/market/catalog/route.ts');
+  const systemManifestApi = readControl('src/app/api/deploy/infrastructure/system-manifests/route.ts');
+  const resolver = readControl('src/lib/infrastructure/system-market-manifests.ts');
+  const deployer = readControl('src/lib/infrastructure/deployer.ts');
 
   assert.match(schema, /SystemAppManifestSchema/);
   assert.match(schema, /kind:\s*z\.literal\('system-app'\)/);
@@ -26,6 +29,14 @@ test('system app manifests are first-class Market artifacts', () => {
   assert.match(catalog, /fetchAvailableSystemApps/);
   assert.match(catalog, /systemManifestToMarketApp/);
   assert.match(api, /systemApps/);
+  assert.match(systemManifestApi, /resolveSystemImageOverrides/);
+  assert.match(systemManifestApi, /requireAdmin/);
+  assert.match(resolver, /resolveSystemImageOverrides/);
+  assert.match(resolver, /Required Market system manifest/);
+  assert.match(deployer, /resolveSystemImageOverrides/);
+  assert.match(deployer, /applySystemImage\(postgresManifest/);
+  assert.match(deployer, /applySystemImage\(caddyManifest/);
+  assert.match(deployer, /applySystemImage\(piholeManifest/);
 });
 
 test('Market system catalog entries resolve to pinned system manifests', () => {

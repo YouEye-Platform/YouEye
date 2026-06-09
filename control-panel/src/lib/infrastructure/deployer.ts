@@ -20,6 +20,7 @@ import { waitForPostgres, waitForCaddy, waitForPiHole } from './health-checks';
 import { setDefaultRoute, ensurePingRoute, ensureHeaderStrippingRoute } from '../caddy/client';
 import { execShell } from '../incus/server';
 import { applyResourcePolicy } from './resource-policy';
+import { applySystemImage, resolveSystemImageOverrides } from './system-market-manifests';
 
 const TOTAL_STEPS = 4;
 const PIHOLE_CONTAINER = 'youeye-pihole';
@@ -72,11 +73,19 @@ async function _deployInfrastructureInner(
   hostIP: string,
   onEvent: EventCallback
 ): Promise<void> {
+  let systemImages: Awaited<ReturnType<typeof resolveSystemImageOverrides>>;
+  try {
+    systemImages = await resolveSystemImageOverrides();
+  } catch (err) {
+    emit(onEvent, 1, 'error', 'Failed to load Market system app manifests', String(err));
+    return;
+  }
+
   // ─── Step 1: PostgreSQL ─────────────────────────────────────
   emit(onEvent, 1, 'running', 'Deploying PostgreSQL database...');
   try {
     const pgPassword = await getOrCreateSecret('postgres', '.pg_password', () => generatePassword(32));
-    const manifest = postgresManifest(pgPassword);
+    const manifest = applySystemImage(postgresManifest(pgPassword), systemImages.postgresql);
     await deployOCIContainer(manifest, '');
     await applyResourcePolicy('youeye-postgres', 'critical');
 
@@ -94,7 +103,7 @@ async function _deployInfrastructureInner(
   // ─── Step 2: Caddy reverse proxy ─────────────────────────
   emit(onEvent, 2, 'running', 'Deploying Caddy reverse proxy...');
   try {
-    const manifest = caddyManifest();
+    const manifest = applySystemImage(caddyManifest(), systemImages.caddy);
     await deployOCIContainer(manifest, hostIP);
     await applyResourcePolicy('youeye-caddy', 'critical');
 
@@ -170,7 +179,7 @@ async function _deployInfrastructureInner(
   emit(onEvent, 3, 'running', 'Deploying Pi-Hole DNS...');
   try {
     const webPassword = await getOrCreateSecret('pihole', '.web_password', () => generatePassword(24));
-    const manifest = piholeManifest(hostIP);
+    const manifest = applySystemImage(piholeManifest(hostIP), systemImages.pihole);
     await deployOCIContainer(manifest, hostIP);
     await applyResourcePolicy('youeye-pihole', 'critical');
 
@@ -249,12 +258,20 @@ export async function reconcileInfrastructure(
 
   console.log(`[reconcile] Missing containers: ${missing.join(', ')}`);
 
+  let systemImages: Awaited<ReturnType<typeof resolveSystemImageOverrides>>;
+  try {
+    systemImages = await resolveSystemImageOverrides();
+  } catch (err) {
+    remit(1, 'error', 'Failed to load Market system app manifests', String(err));
+    return;
+  }
+
   // ─── Step 1: PostgreSQL ─────────────────────────────────────
   if (missing.includes('youeye-postgres')) {
     remit(1, 'running', 'Deploying missing PostgreSQL database...');
     try {
       const pgPassword = await getOrCreateSecret('postgres', '.pg_password', () => generatePassword(32));
-      const manifest = postgresManifest(pgPassword);
+      const manifest = applySystemImage(postgresManifest(pgPassword), systemImages.postgresql);
       await deployOCIContainer(manifest, '');
       await applyResourcePolicy('youeye-postgres', 'critical');
       const healthy = await waitForPostgres();
@@ -275,7 +292,7 @@ export async function reconcileInfrastructure(
   if (missing.includes('youeye-caddy')) {
     remit(2, 'running', 'Deploying missing Caddy reverse proxy...');
     try {
-      const manifest = caddyManifest();
+      const manifest = applySystemImage(caddyManifest(), systemImages.caddy);
       await deployOCIContainer(manifest, hostIP);
       await applyResourcePolicy('youeye-caddy', 'critical');
       const healthy = await waitForCaddy();
@@ -333,7 +350,7 @@ export async function reconcileInfrastructure(
     remit(3, 'running', 'Deploying missing Pi-Hole DNS...');
     try {
       const webPassword = await getOrCreateSecret('pihole', '.web_password', () => generatePassword(24));
-      const manifest = piholeManifest(hostIP);
+      const manifest = applySystemImage(piholeManifest(hostIP), systemImages.pihole);
       await deployOCIContainer(manifest, hostIP);
       await applyResourcePolicy('youeye-pihole', 'critical');
       const healthy = await waitForPiHole();

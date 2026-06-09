@@ -1,3 +1,23 @@
+## v0.4.13.53 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Consume Market system app manifests during infrastructure deploy/reconcile
+
+### Changes
+- `control-panel/src/lib/infrastructure/system-market-manifests.ts` — Added required Market system manifest resolution for Postgres, Caddy, and Pi-hole images with fail-loud container-name validation.
+- `control-panel/src/lib/infrastructure/deployer.ts` — Infrastructure deploy/reconcile now applies Market-pinned system images before creating missing system containers.
+- `control-panel/src/app/api/deploy/infrastructure/system-manifests/route.ts` — Added an admin/CLI-token audit endpoint for verifying the resolved Market system manifests without rebuilding live infrastructure.
+- `control-panel/tests/market-system-apps.spec.ts` — Extended regression coverage so system manifests are not only exposed by API, but consumed by infrastructure deploy/reconcile.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.53`.
+
+### Test Results
+- Focused Node test passed: `control-panel/tests/market-system-apps.spec.ts`.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.53`.
+
+### Notes for Iris
+- CP still owns ports, volumes, secrets, health checks, and reconciliation. Market system manifests now provide image/version metadata for CP-managed infrastructure. Spine still manages only itself and the Control Panel container.
+
 ## v0.4.13.52 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc
