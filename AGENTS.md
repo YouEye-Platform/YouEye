@@ -1,3 +1,22 @@
+## v0.4.13.78 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Set runtime CA env for scoped Caddy grants
+
+### Changes
+- `control-panel/src/lib/market/caddy-ca.ts` — Writes a systemd drop-in for app services with `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, and `REQUESTS_CA_BUNDLE` pointing at the injected Caddy root certificate.
+- `control-panel/src/lib/bridges/manager.ts` — Restarts the source app container after scoped grant CA injection so the runtime picks up the trust environment.
+- `control-panel/tests/scoped-caddy-grants.spec.mjs` — Extended coverage for runtime CA env vars and restart order.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.78`.
+
+### Test Results
+- Focused Control Panel tests passed: `node --test control-panel/tests/scoped-caddy-grants.spec.mjs control-panel/tests/app-network-pihole-dns.spec.mjs control-panel/tests/market-update-plans.spec.mjs`.
+- `pnpm --dir control-panel build` passed for Control Panel `0.4.13.78`; the standalone artifact reports version `0.4.13.78`.
+
+### Notes for Iris
+- Node-based apps need `NODE_EXTRA_CA_CERTS` for Caddy internal CA trust. Installing the CA into the OS store alone was not enough for Search's server-side fetch to SearXNG.
+
 ## v0.4.13.77 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

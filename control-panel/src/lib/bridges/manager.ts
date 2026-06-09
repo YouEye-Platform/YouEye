@@ -16,7 +16,7 @@ import {
   SYSTEM_APP_IDS,
 } from '../incus/app-network';
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
-import { execShell } from '../incus/server';
+import { execShell, incusRequest } from '../incus/server';
 import { CONTAINER_DOMAIN } from '../market/constants';
 import { readInstallMetadata, listInstalledApps } from '../market/metadata';
 import { fetchManifest } from '../market/catalog';
@@ -323,6 +323,11 @@ async function createScopedCaddyGrant(bridge: Bridge): Promise<{ url: string; pa
     appToken,
   });
   await injectCaddyRootCA(fromContainer);
+  await incusRequest('PUT', `/1.0/instances/${fromContainer}/state`, {
+    action: 'restart',
+    force: false,
+    timeout: 30,
+  });
 
   return {
     url: `https://${hostname}`,
