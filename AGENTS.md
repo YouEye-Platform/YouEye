@@ -1,3 +1,26 @@
+## v0.4.3.11 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Use unified surfaces for info-card providers
+
+### Changes
+- `ui/src/lib/db/queries/app-management.ts` — `getInfoCardProviders()` now discovers provider rows from normalized `kind: info-card` surfaces instead of directly reading legacy `info_cards`.
+- `ui/tests/surfaces.spec.ts` — Extended focused coverage to assert info-card providers use the surface normalizer and map `embedPath` back to the compatibility endpoint shape.
+- `ui/package.json`, `README.md` — Bumped UI to `0.4.3.11`.
+
+### Test Results
+- Focused Node test passed: `ui/tests/surfaces.spec.ts`.
+- `pnpm --dir YouEye/ui build` passed for UI `0.4.3.11` with the known local `127.0.0.1:5432` static-generation noise.
+- Released `ui-artem-v0.4.3.11` with exact `standalone.tar`.
+- Snapshotted `youeye-ui`, then deployed UI through CP's UI update endpoint.
+- Live `spine status` reports CP `0.4.13.62`, UI `0.4.3.11`, and 17 running containers / 0 stopped.
+- Built-in Codex Browser verified `/api/v1/apps/info-cards` returns `{"providers":[]}` cleanly on the current live install. That install currently has no installed `info-card` surfaces, so runtime mapping is covered by the focused test rather than a populated live provider.
+- UI service logs after deploy show only expected schema "already exists" notices.
+
+### Notes for Iris
+- This migrates info-card provider discovery to the surface model while preserving the public endpoint. A later slice should add/refresh installed apps with actual `kind: info-card` surfaces for populated live proof.
+
 ## v0.4.13.62 / v0.4.3.10 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
