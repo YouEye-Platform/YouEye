@@ -22,9 +22,9 @@ export async function injectCaddyRootCA(containerName: string): Promise<void> {
     `if command -v systemctl >/dev/null 2>&1 && systemctl cat '${escapedService}.service' >/dev/null 2>&1; then ` +
     `mkdir -p /etc/systemd/system/${escapedService}.service.d && ` +
     `printf '%s\\n' '[Service]' ` +
-    `'Environment=NODE_EXTRA_CA_CERTS=/tmp/caddy-root.crt' ` +
-    `'Environment=SSL_CERT_FILE=/tmp/caddy-root.crt' ` +
-    `'Environment=REQUESTS_CA_BUNDLE=/tmp/caddy-root.crt' ` +
+    `'Environment=NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/caddy-root.crt' ` +
+    `'Environment=SSL_CERT_FILE=/usr/local/share/ca-certificates/caddy-root.crt' ` +
+    `'Environment=REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/caddy-root.crt' ` +
     `> /etc/systemd/system/${escapedService}.service.d/youeye-caddy-ca.conf && ` +
     `systemctl daemon-reload; ` +
     `fi`,

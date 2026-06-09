@@ -42,9 +42,9 @@ test('scoped app-token Caddy grants deny unapproved app-token fallthrough', () =
   assert.ok(injectCaIndex > addGrantIndex);
   assert.ok(restartIndex > injectCaIndex);
 
-  assert.match(caddyCa, /NODE_EXTRA_CA_CERTS=\/tmp\/caddy-root\.crt/);
-  assert.match(caddyCa, /SSL_CERT_FILE=\/tmp\/caddy-root\.crt/);
-  assert.match(caddyCa, /REQUESTS_CA_BUNDLE=\/tmp\/caddy-root\.crt/);
+  assert.match(caddyCa, /NODE_EXTRA_CA_CERTS=\/usr\/local\/share\/ca-certificates\/caddy-root\.crt/);
+  assert.match(caddyCa, /SSL_CERT_FILE=\/usr\/local\/share\/ca-certificates\/caddy-root\.crt/);
+  assert.match(caddyCa, /REQUESTS_CA_BUNDLE=\/usr\/local\/share\/ca-certificates\/caddy-root\.crt/);
   assert.match(caddyCa, /youeye-caddy-ca\.conf/);
 });
 
