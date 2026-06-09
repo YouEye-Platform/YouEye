@@ -346,6 +346,8 @@ export default function AppDetailPage() {
   const isIntegration = app.itemKind === 'integration';
   const isInstalled = !isIntegration && appStatus !== 'not-installed';
   const targetIsInstalled = !!targetStatus?.status && targetStatus.status !== 'not-installed';
+  const integrationInstalled = isIntegration
+    && !!targetStatus?.installedIntegrations?.some((integration) => integration.id === app.id);
   const FallbackIcon = ICON_MAP[app.icon] ?? Package;
   const longDescription = app.detail?.longDescription || app.description;
   const screenshots = app.detail?.screenshots ?? [];
@@ -444,13 +446,18 @@ export default function AppDetailPage() {
             <Button
               size="lg"
               onClick={handleApplyIntegration}
-              disabled={!targetIsInstalled || applyingIntegration}
+              disabled={!targetIsInstalled || applyingIntegration || integrationInstalled}
               className="px-8"
             >
               {applyingIntegration ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   Applying {app.name}
+                </>
+              ) : integrationInstalled ? (
+                <>
+                  <CheckCircle2 className="h-4 w-4 mr-2" />
+                  Installed
                 </>
               ) : targetIsInstalled ? (
                 `Apply ${app.name}`

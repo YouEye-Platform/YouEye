@@ -101,6 +101,7 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
       manifestRepo: metadata.manifestRepo,
       manifestBranch: metadata.manifestBranch,
       manifestDigest: metadata.manifestDigest,
+      installedIntegrations: metadata.installedIntegrations,
     };
   }
 

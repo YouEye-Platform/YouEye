@@ -239,6 +239,16 @@ export interface AppStatusInfo {
   manifestRepo?: string;
   manifestBranch?: string;
   manifestDigest?: string;
+  installedIntegrations?: {
+    id: string;
+    sourceId?: string;
+    sourceName?: string;
+    manifestPath?: string;
+    manifestRepo?: string;
+    manifestBranch?: string;
+    manifestDigest?: string;
+    installedAt: string;
+  }[];
 }
 
 export interface ContainerStatusInfo {
