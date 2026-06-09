@@ -267,6 +267,37 @@ export const CapabilitiesSchema = z.object({
   link_handlers: z.array(LinkHandlerSchema).optional(),
 }).optional();
 
+// ─── Surfaces (unified app embeds) ────────────────────────
+
+const SurfaceSizeSchema = z.object({
+  width: z.number().positive(),
+  height: z.number().positive(),
+});
+
+const SurfaceSettingsFieldSchema = z.object({
+  key: z.string().min(1),
+  type: z.string().min(1),
+  label: z.string().min(1),
+  required: z.boolean().optional(),
+  default: z.unknown().optional(),
+});
+
+export const SurfaceSchema = z.object({
+  id: z.string().regex(/^[a-z0-9-]+$/, 'Surface id must be lowercase alphanumeric with dashes'),
+  kind: z.enum(['widget', 'info-card', 'timeline-card', 'notification']),
+  placement: z.enum(['dashboard', 'timeline', 'notification-center', 'app-settings', 'app-detail']),
+  name: z.string().min(1).optional(),
+  description: z.string().optional(),
+  embedPath: z.string().min(1),
+  permissions: z.array(z.string()).optional().default([]),
+  defaultSize: SurfaceSizeSchema.optional(),
+  minSize: SurfaceSizeSchema.optional(),
+  maxSize: SurfaceSizeSchema.optional(),
+  refreshInterval: z.number().int().positive().optional(),
+  settingsSchema: z.array(SurfaceSettingsFieldSchema).optional().default([]),
+  triggers: z.array(z.string().min(1)).optional().default([]),
+});
+
 // ─── Provides (capability declarations) ──────────────────
 
 export const ProvidesSchema = z.object({
@@ -450,6 +481,7 @@ export const AppManifestSchema = z
     credentials: z.array(CredentialSchema).optional().default([]),
     configFiles: z.array(ConfigFileSchema).optional().default([]),
     capabilities: CapabilitiesSchema,
+    surfaces: z.array(SurfaceSchema).optional().default([]),
     provides: z.array(ProvidesSchema).optional().default([]),
     wants: z.array(WantSchema).optional().default([]),
     internet: InternetSchema,

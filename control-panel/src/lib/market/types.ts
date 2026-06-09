@@ -43,6 +43,7 @@ import type {
   InternetSchema,
   PostDeployStepSchema,
   VolumeSchema,
+  SurfaceSchema,
 } from './schema';
 
 // ─── Manifest Types (from Zod) ─────────────────────────────
@@ -85,6 +86,7 @@ export type WantSpec = z.infer<typeof WantSchema>;
 export type InternetSpec = z.infer<typeof InternetSchema>;
 export type PostDeployStep = z.infer<typeof PostDeployStepSchema>;
 export type VolumeSpec = z.infer<typeof VolumeSchema>;
+export type SurfaceSpec = z.infer<typeof SurfaceSchema>;
 
 // ─── Install Config ────────────────────────────────────────
 
@@ -437,6 +439,7 @@ export interface MarketApp {
     smtp?: boolean;
     link_handlers?: Array<{ type: string; description: string; endpoint?: string; triggers: string[] }>;
   };
+  surfaces?: SurfaceSpec[];
   system?: {
     image: string;
     containerName?: string;

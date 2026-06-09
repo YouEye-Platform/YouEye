@@ -16,6 +16,7 @@ import {
   userAppConfig,
 } from "@/db/schema";
 import { eq, or } from "drizzle-orm";
+import { normalizeAppSurfaces, type AppSurface } from "@/lib/surfaces/normalize";
 
 export interface AppManifest {
   id: string;
@@ -26,6 +27,7 @@ export interface AppManifest {
   /** Accent color for timeline cards, badges, etc. (hex, e.g. "#a855f7") */
   accent_color?: string;
   permissions?: string[];
+  surfaces?: AppSurfaceDeclaration[];
   widgets?: AppWidgetDeclaration[];
   info_cards?: InfoCardDeclaration[];
   timeline_embeds?: TimelineEmbedDeclaration[];
@@ -34,6 +36,22 @@ export interface AppManifest {
     provides?: { type: string; description: string }[];
     consumes?: { app: string; types: string[] }[];
   };
+}
+
+export interface AppSurfaceDeclaration {
+  id: string;
+  kind: "widget" | "info-card" | "timeline-card" | "notification";
+  placement: "dashboard" | "timeline" | "notification-center" | "app-settings" | "app-detail";
+  name?: string;
+  description?: string;
+  embedPath: string;
+  permissions?: string[];
+  defaultSize?: { width: number; height: number };
+  minSize?: { width: number; height: number };
+  maxSize?: { width: number; height: number };
+  refreshInterval?: number;
+  settingsSchema?: SettingField[];
+  triggers?: string[];
 }
 
 export interface AppWidgetDeclaration {
@@ -369,6 +387,50 @@ export async function getAppWidgetDeclarations(): Promise<
   );
 
   const out: Array<{ appId: string; appName: string; widgets: AppWidgetDeclaration[] }> = [];
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value) out.push(r.value);
+  }
+  return out;
+}
+
+/** Get all unified app surface declarations from live manifests with cached fallback */
+export async function getAppSurfaceDeclarations(): Promise<
+  Array<{
+    appId: string;
+    appName: string;
+    surfaces: AppSurface[];
+  }>
+> {
+  await ensureSchema();
+
+  const allApps = await db
+    .select()
+    .from(apps)
+    .where(eq(apps.enabled, true));
+
+  const upstreamMap = await discoverAppUpstreams();
+
+  const results = await Promise.allSettled(
+    allApps
+      .filter((app) => app.containerUrl || app.subdomain || app.manifest)
+      .map(async (app) => {
+        const upstream = (app.subdomain && upstreamMap.get(app.subdomain))
+          || app.containerUrl;
+        const liveManifest = upstream ? await fetchAppManifest(upstream) : null;
+        const manifest = (liveManifest as unknown as Record<string, unknown> | null)
+          ?? (app.manifest as Record<string, unknown> | null)
+          ?? null;
+        const surfaces = normalizeAppSurfaces(manifest);
+        if (surfaces.length === 0) return null;
+        return {
+          appId: app.id,
+          appName: app.name,
+          surfaces,
+        };
+      })
+  );
+
+  const out: Array<{ appId: string; appName: string; surfaces: AppSurface[] }> = [];
   for (const r of results) {
     if (r.status === "fulfilled" && r.value) out.push(r.value);
   }

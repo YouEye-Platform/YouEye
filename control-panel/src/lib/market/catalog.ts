@@ -531,6 +531,7 @@ function manifestToMarketApp(manifest: AppManifest, source?: MarketSource, refer
       smtp: manifest.capabilities.smtp,
       link_handlers: manifest.capabilities.link_handlers,
     } : undefined,
+    surfaces: manifest.surfaces,
   };
 }
 
