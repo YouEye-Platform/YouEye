@@ -1,3 +1,33 @@
+## v0.4.13.62 / v0.4.3.10 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add unified app surfaces foundation
+
+### Changes
+- `control-panel/src/lib/market/schema.ts`, `control-panel/src/lib/market/types.ts` — Added the canonical `surfaces[]` manifest schema for widgets, info cards, timeline cards, and notification embeds.
+- `control-panel/src/lib/market/catalog.ts` — Exposes app surface declarations in Market catalog/detail responses.
+- `ui/src/lib/surfaces/normalize.ts` — Added shared UI normalizer for new `surfaces[]` plus legacy `widgets`, `info_cards`, `timeline_embeds`, and notification capabilities.
+- `ui/src/lib/db/queries/app-management.ts` — Added unified surface discovery from live manifests with cached manifest fallback.
+- `ui/src/app/api/v1/apps/surfaces/route.ts` — Added the first unified installed-app surfaces API.
+- `ui/src/app/api/v1/apps/widgets/route.ts` — Keeps dashboard widget compatibility by projecting dashboard/widget surfaces into the old response shape.
+- `control-panel/tests/market-surfaces.spec.ts`, `ui/tests/surfaces.spec.ts` — Added focused runtime/static regression coverage.
+- `control-panel/package.json`, `ui/package.json`, `README.md` — Bumped Control Panel to `0.4.13.62` and UI to `0.4.3.10`.
+
+### Test Results
+- Focused Node test passed: `control-panel/tests/market-surfaces.spec.ts`.
+- Focused Node test passed: `ui/tests/surfaces.spec.ts`.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.62`.
+- `pnpm --dir YouEye/ui build` passed for UI `0.4.3.10` with the known local `127.0.0.1:5432` static-generation noise.
+- Released `cp-artem-v0.4.13.62` and `ui-artem-v0.4.3.10`, each with exact `standalone.tar`.
+- Snapshotted `youeye-control`, `youeye-ui`, `youeye-caddy`, and `youeye-postgres` before deploy.
+- Deployed CP through `spine update control`; deployed UI through CP's UI update endpoint.
+- Live `spine status` reports CP `0.4.13.62`, UI `0.4.3.10`, and 17 running containers / 0 stopped.
+- Built-in Codex Browser verified `/api/v1/apps/surfaces` returns normalized notification/widget/timeline surfaces and `/api/v1/apps/widgets` still returns legacy dashboard widget shape. Dashboard visual smoke passed. Screenshots: `/tmp/codex-browser-surfaces-widgets-compat-0.4.13.62-0.4.3.10.png`, `/tmp/codex-browser-surfaces-dashboard-smoke-0.4.13.62-0.4.3.10.png`.
+
+### Notes for Iris
+- This is the manifest/API foundation for unified surfaces. It does not yet migrate timeline rendering or notification rendering to consume the new surface API.
+
 ## v0.4.13.61 / v0.4.3.9 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
