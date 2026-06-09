@@ -34,6 +34,8 @@ export async function POST(request: NextRequest) {
     hostIP?: string;
     forceLegacy?: boolean;
     allowDatabaseUpdate?: boolean;
+    confirmMaintenanceWindow?: boolean;
+    confirmContainerName?: string;
     dryRun?: boolean;
   };
 
@@ -47,7 +49,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Missing required field: systemId' }, { status: 400 });
   }
 
-  if (!body.dryRun && body.systemId === 'pihole' && !body.hostIP) {
+  const hostIP = body.hostIP || process.env.HOST_IP || '';
+
+  if (!body.dryRun && body.systemId === 'pihole' && !hostIP) {
     return NextResponse.json(
       { error: 'hostIP is required for Pi-hole updates because its DNS proxy binds to the host IP' },
       { status: 400 },
@@ -70,9 +74,11 @@ export async function POST(request: NextRequest) {
         const result = await updateSystemFromMarket(
           {
             systemId: body.systemId!,
-            hostIP: body.hostIP ?? '',
+            hostIP,
             forceLegacy: body.forceLegacy,
             allowDatabaseUpdate: body.allowDatabaseUpdate,
+            confirmMaintenanceWindow: body.confirmMaintenanceWindow,
+            confirmContainerName: body.confirmContainerName,
             dryRun: body.dryRun,
           },
           sendEvent,

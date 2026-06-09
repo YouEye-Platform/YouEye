@@ -49,6 +49,8 @@ export interface SystemUpdateOptions {
   hostIP: string;
   forceLegacy?: boolean;
   allowDatabaseUpdate?: boolean;
+  confirmMaintenanceWindow?: boolean;
+  confirmContainerName?: string;
   dryRun?: boolean;
 }
 
@@ -256,6 +258,20 @@ export async function updateSystemFromMarket(
       plan,
       error: plan.reason,
     };
+  }
+
+  if (!options.dryRun) {
+    if (!options.confirmMaintenanceWindow) {
+      const message = 'System rebuilds require confirmMaintenanceWindow because they stop and recreate critical infrastructure containers.';
+      emit(onEvent, 1, totalSteps, 'error', message);
+      return { success: false, systemId: plan.id, message, plan, error: message };
+    }
+
+    if (options.confirmContainerName !== plan.containerName) {
+      const message = `System rebuild confirmation must match ${plan.containerName}.`;
+      emit(onEvent, 1, totalSteps, 'error', message);
+      return { success: false, systemId: plan.id, message, plan, error: message };
+    }
   }
 
   if (plan.id === 'postgresql' && !options.allowDatabaseUpdate) {

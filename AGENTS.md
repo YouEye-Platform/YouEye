@@ -1,3 +1,23 @@
+## v0.4.13.60 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add guarded System settings system-update operator workflow
+
+### Changes
+- `control-panel/src/lib/infrastructure/system-updater.ts` — Requires explicit maintenance-window and exact container-name confirmation before any real system container rebuild.
+- `control-panel/src/app/api/deploy/infrastructure/system-updates/route.ts` — Passes confirmation fields through to the updater and uses server-side `HOST_IP` for Pi-hole rebuild requests.
+- `control-panel/src/components/settings-shell/system-client.tsx` — Adds a guarded Adopt/Recreate/Update action with a confirmation modal while keeping dry-runs one-click.
+- `control-panel/tests/system-settings-market-updates.spec.ts` — Extends regression coverage for the settings UI workflow, route fallback, and backend confirmation gates.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.60`.
+
+### Test Results
+- Focused Node test passed: `control-panel/tests/system-settings-market-updates.spec.ts`.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.60`.
+
+### Notes for Iris
+- Dry-run behavior is unchanged. Real system rebuilds now require both a checked maintenance-window confirmation and the exact target container name, and legacy/PostgreSQL gates still apply.
+
 ## v0.4.13.59 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc

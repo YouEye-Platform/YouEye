@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Cpu, Database, HardDrive, Loader2, MemoryStick, RefreshCw, Server, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface SystemInfo {
   hostname: string;
@@ -56,6 +57,10 @@ export function SystemClient() {
   const [error, setError] = useState("");
   const [planError, setPlanError] = useState("");
   const [dryRunStatus, setDryRunStatus] = useState<Record<string, string>>({});
+  const [updateStatus, setUpdateStatus] = useState<Record<string, string>>({});
+  const [confirmPlan, setConfirmPlan] = useState<SystemUpdatePlan | null>(null);
+  const [confirmName, setConfirmName] = useState("");
+  const [maintenanceConfirmed, setMaintenanceConfirmed] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -81,6 +86,33 @@ export function SystemClient() {
 
   useEffect(() => { load(); loadSystemPlans(); }, [load, loadSystemPlans]);
 
+  async function readSystemUpdateStream(response: Response, onMessage: (message: string) => void, fallback: string) {
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || "System update request failed");
+    }
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let latest = "";
+    if (!reader) throw new Error("No update stream returned");
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() ?? "";
+      for (const chunk of chunks) {
+        const line = chunk.split("\n").find((item) => item.startsWith("data: "));
+        if (!line) continue;
+        const event = JSON.parse(line.slice(6)) as { status: string; message: string };
+        latest = event.message;
+        onMessage(event.message);
+      }
+    }
+    if (!latest) onMessage(fallback);
+  }
+
   async function dryRun(plan: SystemUpdatePlan) {
     setDryRunStatus((current) => ({ ...current, [plan.id]: "Planning..." }));
     try {
@@ -94,32 +126,55 @@ export function SystemClient() {
           allowDatabaseUpdate: plan.id === "postgresql",
         }),
       });
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let latest = "";
-      if (!reader) throw new Error("No update stream returned");
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop() ?? "";
-        for (const chunk of chunks) {
-          const line = chunk.split("\n").find((item) => item.startsWith("data: "));
-          if (!line) continue;
-          const event = JSON.parse(line.slice(6)) as { status: string; message: string };
-          latest = event.message;
-          setDryRunStatus((current) => ({ ...current, [plan.id]: event.message }));
-        }
-      }
-      if (!latest) setDryRunStatus((current) => ({ ...current, [plan.id]: "Dry run complete" }));
+      await readSystemUpdateStream(
+        response,
+        (message) => setDryRunStatus((current) => ({ ...current, [plan.id]: message })),
+        "Dry run complete",
+      );
     } catch (err) {
       setDryRunStatus((current) => ({
         ...current,
         [plan.id]: err instanceof Error ? err.message : "Dry run failed",
       }));
     }
+  }
+
+  async function runConfirmedUpdate(plan: SystemUpdatePlan) {
+    setUpdateStatus((current) => ({ ...current, [plan.id]: "Starting..." }));
+    setConfirmPlan(null);
+    setConfirmName("");
+    setMaintenanceConfirmed(false);
+    try {
+      const response = await fetch("/settings/api/deploy/infrastructure/system-updates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemId: plan.id,
+          dryRun: false,
+          forceLegacy: plan.trackingStatus !== "tracked",
+          allowDatabaseUpdate: plan.id === "postgresql",
+          confirmMaintenanceWindow: true,
+          confirmContainerName: plan.containerName,
+        }),
+      });
+      await readSystemUpdateStream(
+        response,
+        (message) => setUpdateStatus((current) => ({ ...current, [plan.id]: message })),
+        "Update complete",
+      );
+      await loadSystemPlans();
+    } catch (err) {
+      setUpdateStatus((current) => ({
+        ...current,
+        [plan.id]: err instanceof Error ? err.message : "Update failed",
+      }));
+    }
+  }
+
+  function updateLabel(plan: SystemUpdatePlan) {
+    if (!plan.exists) return "Missing";
+    if (plan.trackingStatus !== "tracked") return "Adopt/Recreate";
+    return plan.updateAvailable ? "Update" : "No Update";
   }
 
   const refreshAll = useCallback(() => {
@@ -191,6 +246,8 @@ export function SystemClient() {
             {systemPlans.map((plan) => {
               const isTracked = plan.trackingStatus === "tracked";
               const needsAttention = plan.recreateRecommended || plan.updateAvailable || plan.trackingStatus === "missing";
+              const canUpdate = plan.exists && (plan.updateAvailable || plan.trackingStatus !== "tracked");
+              const updating = updateStatus[plan.id] === "Starting..." || updateStatus[plan.id]?.startsWith("Stopping") || updateStatus[plan.id]?.startsWith("Rebuilding") || updateStatus[plan.id]?.startsWith("Starting") || updateStatus[plan.id]?.startsWith("Verifying");
               return (
                 <div key={plan.id} className="space-y-3 rounded-lg border p-4">
                   <div className="flex items-start justify-between gap-3">
@@ -232,12 +289,72 @@ export function SystemClient() {
                   {dryRunStatus[plan.id] && dryRunStatus[plan.id] !== "Planning..." && (
                     <p className="text-xs text-muted-foreground">{dryRunStatus[plan.id]}</p>
                   )}
+                  <Button
+                    variant={canUpdate ? "destructive" : "outline"}
+                    size="sm"
+                    className="w-full"
+                    onClick={() => {
+                      setConfirmPlan(plan);
+                      setConfirmName("");
+                      setMaintenanceConfirmed(false);
+                    }}
+                    disabled={!canUpdate || updating}
+                  >
+                    {updating ? <Loader2 className="h-4 w-4 animate-spin" /> : updateLabel(plan)}
+                  </Button>
+                  {updateStatus[plan.id] && updateStatus[plan.id] !== "Starting..." && (
+                    <p className="text-xs text-muted-foreground">{updateStatus[plan.id]}</p>
+                  )}
                 </div>
               );
             })}
           </div>
         )}
       </div>
+
+      {confirmPlan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md space-y-4 rounded-lg border bg-background p-5 shadow-lg">
+            <div>
+              <h3 className="text-base font-semibold">{updateLabel(confirmPlan)} {confirmPlan.id}</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                This will stop and rebuild {confirmPlan.containerName} from the Market image {confirmPlan.desiredImage}.
+              </p>
+            </div>
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              System services affect sign-in, routing, DNS, and app data. Run this only during a maintenance window after a successful dry-run.
+            </div>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={maintenanceConfirmed}
+                onChange={(event) => setMaintenanceConfirmed(event.target.checked)}
+              />
+              <span>I have a maintenance window and understand this rebuild can temporarily interrupt YouEye.</span>
+            </label>
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="system-confirm-name">Type {confirmPlan.containerName} to continue</label>
+              <Input
+                id="system-confirm-name"
+                value={confirmName}
+                onChange={(event) => setConfirmName(event.target.value)}
+                placeholder={confirmPlan.containerName}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setConfirmPlan(null)}>Cancel</Button>
+              <Button
+                variant="destructive"
+                onClick={() => runConfirmedUpdate(confirmPlan)}
+                disabled={!maintenanceConfirmed || confirmName !== confirmPlan.containerName}
+              >
+                {updateLabel(confirmPlan)}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
