@@ -31,6 +31,11 @@ const PUBLIC_ROUTES = [
   "/api/v1/my-connections",  // Auth at route level via X-YouEye-App header (app-to-UI)
 ];
 
+const RETIRED_PUBLIC_404_ROUTES = [
+  "/app-market",
+  "/app-store",
+];
+
 /** Static resource patterns to skip */
 const STATIC_PATTERNS = ["/_next/", "/favicon.ico", "/icon", "/apple-icon", "/icons/", "/branding/", "/user-assets/", "/fonts/", "/sw.js", "/serwist-", "/manifest.webmanifest"];
 
@@ -50,6 +55,12 @@ export async function middleware(request: NextRequest) {
 
   // Allow public routes
   if (PUBLIC_ROUTES.some((r) => pathname === r || pathname.startsWith(r + "/"))) {
+    return NextResponse.next();
+  }
+
+  // Retired routes should fall through to Next.js not-found instead of sending
+  // users through an obsolete login/redirect path.
+  if (RETIRED_PUBLIC_404_ROUTES.some((r) => pathname === r || pathname.startsWith(r + "/"))) {
     return NextResponse.next();
   }
 

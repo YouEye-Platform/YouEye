@@ -1,3 +1,21 @@
+## v0.4.3.8 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Retire legacy UI Market routes without redirects
+
+### Changes
+- `ui/src/middleware.ts` — Added retired public-404 handling for `/app-market` and `/app-store` so old paths fall through to Next.js not-found instead of redirecting to login.
+- `ui/tests/retired-market-routes.spec.ts` — Added a focused regression check for the retired Market routes.
+- `ui/package.json`, `README.md` — Bumped UI to `0.4.3.8`.
+
+### Test Results
+- Focused Node test passed after ESM bundling: `ui/tests/retired-market-routes.spec.ts`.
+- `pnpm --dir YouEye/ui build` passed for UI `0.4.3.8`; local static generation still logged expected PostgreSQL connection warnings because no local UI database is running.
+
+### Notes for Iris
+- `/market` remains Control Panel-owned. `/app-market` and `/app-store` are intentionally not redirected; they should return not-found behavior.
+
 ## v0.4.13.51 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc
