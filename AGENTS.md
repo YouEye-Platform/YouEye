@@ -1,3 +1,26 @@
+## v0.4.13.49 / v0.4.13.50 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Prove Immich standalone YouEye ID Integration install
+
+### Changes
+- `control-panel/src/lib/identity/store.ts`, `control-panel/src/lib/identity/tokens.ts`, `control-panel/src/app/oauth/jwks/route.ts` — Added persisted RS256 OAuth token signing and a real JWKS endpoint for YouEye ID while keeping HS256 bearer verification fallback for compatibility.
+- `control-panel/src/app/application/o/token/route.ts`, `control-panel/src/app/application/o/[clientId]/.well-known/openid-configuration/route.ts` — Pass authorization scopes into token issuance and advertise RS256 discovery metadata including `immich_role`.
+- `control-panel/src/lib/market/engine.ts`, `control-panel/src/lib/market/integration-runner.ts` — Store app role-claim scopes on OAuth clients created during base install or standalone Integration apply.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.50`.
+
+### Test Results
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.49` and `0.4.13.50`.
+- Release assets verified as `standalone.tar` with `server.js`, `package.json`, and embedded versions `0.4.13.49` and `0.4.13.50`.
+- Live deploy on `192.168.31.160`: CP updated through `spine update control` to `0.4.13.50`; `spine status` reports 15 running containers and 0 stopped.
+- Manual OAuth probe verified RS256 token headers, JWKS publication, `immich_role: admin`, and userinfo success; Jellyfin SSO still completed after the RS256/JWKS change.
+- Live Immich install with `selectedIntegrations: ["immich-youeye-id"]` installed the base app, applied the standalone Integration, recorded installed Integration metadata, left `forwardAuthEnabled:false`, and created the SSO `Tester Dev` user as admin.
+- Codex Browser verified Immich SSO lands on `https://photos.potato.app/photos` with no login/error text.
+
+### Notes for Iris
+- Immich/openid-client requires real RS256/JWKS metadata. Keep session/internal identity tokens separate from OAuth signing behavior, and keep the HS256 bearer fallback only for compatibility.
+
 ## v0.4.13.45 / v0.4.13.46 / v0.4.13.47 / v0.4.13.48 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc
