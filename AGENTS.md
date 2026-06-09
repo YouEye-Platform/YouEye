@@ -18,6 +18,10 @@
 - `pnpm --dir control-panel build` passed for Control Panel `0.4.13.67`.
 - `pnpm --dir ui build` passed for UI `0.4.3.17` with the known local `127.0.0.1:5432` static-generation noise.
 - Verified local release tarballs contain flat `server.js` and matching `package.json` versions for CP `0.4.13.67` and UI `0.4.3.17`.
+- Released `cp-artem-v0.4.13.67` and `ui-artem-v0.4.3.17` with exact `standalone.tar` assets, snapshotted `youeye-control`, `youeye-ui`, `youeye-caddy`, and `youeye-postgres`, then deployed CP through `spine update control` and UI through CP's UI update endpoint.
+- Live smoke registered temporary `plan3-preferences-smoke`, verified launch requirements returned `202` with missing `defaultNotebook` and `digestFrequency`, wrote settings through `/api/v1/apps/ye-plan3-preferences-smoke/user-settings`, verified `first_launch_complete:true`, and cleaned up both app row and settings namespace.
+- Built-in Codex Browser opened the trusted live JSON endpoint and captured `/tmp/codex-browser-plan3-preferences-json-0.4.13.67-0.4.3.17.png`.
+- Final `spine status` reports CP `0.4.13.67`, UI `0.4.3.17`, 21 running containers, and 0 stopped.
 
 ### Notes for Iris
 - This is the API/schema foundation for first-launch user preferences. It returns settings metadata and detects missing required preferences, but a richer app-settings preference form can build on the stored manifest schema in a later UI slice.
