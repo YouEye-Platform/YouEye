@@ -14,7 +14,10 @@
 - `README.md`, `control-panel/package.json` — Bumped Control Panel to `0.4.13.32`.
 
 ### Test Results
-- Pending final build, release, and live deploy verification.
+- Static regression: `market-integrations.spec.ts` passed after temporary ESM transpilation with `CONTROL_PANEL_ROOT`.
+- Control Panel: `pnpm --dir YouEye/control-panel build` passed for `0.4.13.32`.
+- Live practice on `192.168.31.160`: `spine update control` updated CP to `0.4.13.32`; `/api/setup/control-routes` returned success; `spine status` reported 9 running containers and 0 stopped.
+- Live Market detail API returns default-on `youeye-id` integrations for Jellyfin and Memos from the official source.
 
 ### Notes for Iris
 - This is the first compatibility bridge from embedded `sso.setup` scripts to explicit Integrations. Existing manifests still work by default; app manifests can be migrated to first-class `integrations` incrementally.
