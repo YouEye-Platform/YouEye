@@ -1,3 +1,21 @@
+## v0.4.13.58 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Surface Market system update plans in System settings
+
+### Changes
+- `control-panel/src/components/settings-shell/system-client.tsx` — Added a Market System Manifests section showing Postgres, Caddy, and Pi-hole tracking state, desired Market image/version, safety reason, database maintenance warning, and dry-run action.
+- `control-panel/tests/system-settings-market-updates.spec.ts` — Added focused regression coverage for the System settings planner UI and safe dry-run request shape.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.58`.
+
+### Test Results
+- Focused Node test passed: `control-panel/tests/system-settings-market-updates.spec.ts`.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.58`.
+
+### Notes for Iris
+- This surfaces the CP `0.4.13.57` planner without adding a one-click destructive rebuild. Real adoption/recreate still requires the guarded API path and operator maintenance-window decision.
+
 ## v0.4.13.57 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc
