@@ -1,3 +1,26 @@
+## v0.4.13.40 / v0.4.13.41 / v0.4.13.42 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Complete post-install Integration proof for OCI app-network installs
+
+### Changes
+- `control-panel/src/lib/infrastructure/oci-deployer.ts`, `control-panel/src/lib/market/engine.ts` — Added stopped-start sequencing for OCI app-network containers so service access can be prepared before first boot.
+- `control-panel/src/lib/incus/app-network.ts`, `control-panel/src/lib/market/platform-env.ts`, `control-panel/src/lib/market/uninstaller.ts` — Moved system-service access to Control-owned host proxy devices on each app bridge gateway and clean them up on rollback/uninstall.
+- `control-panel/src/app/api/market/status/route.ts`, `control-panel/src/app/market/[appId]/page.tsx`, `control-panel/src/lib/market/types.ts` — Exposed installed Integration metadata and show applied Integration items as `Installed`.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.42`.
+
+### Test Results
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.40`, `0.4.13.41`, and `0.4.13.42`.
+- Release assets verified as `standalone.tar` with `server.js`, `package.json`, and embedded versions `0.4.13.40`, `0.4.13.41`, and `0.4.13.42`.
+- Live deploy on `192.168.31.160`: CP updated through `spine update control` to `0.4.13.42`; route repair returned success; `spine status` reports 10 running containers and 0 stopped.
+- Manual Incus probes proved OCI `bind=instance` proxy devices race/fail for immediate DB clients, while Control-owned host proxies are reachable from OCI containers.
+- Memos base install with `selectedIntegrations: []` succeeded; `memos-youeye-id` post-install apply succeeded; install metadata records selected and installed Integration state.
+- Codex Browser verified `/market/memos-youeye-id?source=official` shows `Installed` and `https://memos.potato.app/` renders Memos.
+
+### Notes for Iris
+- The live Memos proof depends on app-network service proxies being owned by `youeye-control`, listening on the per-app bridge gateway IP. Avoid moving OCI apps back to `bind=instance` service proxies unless Incus OCI proxy behavior is separately fixed and reverified.
+
 ## v0.4.13.39 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc
