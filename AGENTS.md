@@ -1,4 +1,4 @@
-## v0.4.2.7 / v0.4.13.27 — artem — 2026-06-09
+## v0.4.2.8 / v0.4.13.27 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc
 **Agent:** Artem
@@ -11,13 +11,13 @@
 - `control-panel/src/lib/market/catalog.ts`, `control-panel/src/lib/market/updater.ts` — Moved Market catalog, manifest, and native app release lookup off Spine's core release source.
 - `control-panel/src/app/market/page.tsx` — Added a Market repo URL control in the CP Market UI.
 - `control-panel/tests/release-source-ownership.spec.ts` — Added a focused ownership regression scan.
-- `README.md`, `control-panel/package.json`, `spine/internal/cmd/root.go` — Bumped Spine to `0.4.2.7` and Control Panel to `0.4.13.27`.
+- `README.md`, `control-panel/package.json`, `spine/internal/cmd/root.go` — Bumped Spine to `0.4.2.8` and Control Panel to `0.4.13.27`.
 
 ### Test Results
 - Spine: `go test ./...` passed.
 - Control Panel: `pnpm -C control-panel build` passed.
 - Ownership scan: Market catalog/API/UI paths no longer import or read Spine core release source helpers.
-- Release verification: Spine binary reports `0.4.2.7`; CP standalone package contains `0.4.13.27`.
+- Release verification: Spine binary reports `0.4.2.8`; CP standalone package contains `0.4.13.27`.
 
 ### Notes for Iris
 - Spine owns only the core monorepo release repo. Control Panel owns AppMarket source. Market code intentionally has no fallback to Spine `release_source`.

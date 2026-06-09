@@ -142,7 +142,7 @@ Each component is versioned and released independently.
 
 | Component | Version |
 |-----------|---------|
-| Spine | 0.4.2.7 |
+| Spine | 0.4.2.8 |
 | Control Panel | 0.4.13.27 |
 | UI | 0.4.3.6 |
 | Wiki | 0.4.0 |
