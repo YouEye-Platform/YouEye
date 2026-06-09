@@ -1,3 +1,20 @@
+## v0.4.3.16 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add manifest-derived first-launch requirements API
+
+### Changes
+- `ui/src/app/api/v1/apps/[appId]/launch-requirements/route.ts` — Added a first-launch requirements endpoint that reads cached manifest permissions and `surfaces[].permissions`, checks the current user's grants, and returns approval metadata for missing permissions.
+- `ui/tests/launch-requirements.spec.mjs` — Added focused regression coverage for manifest-derived launch requirements, service-auth ownership, and approval URL behavior.
+- `ui/package.json`, `README.md` — Bumped UI to `0.4.3.16`.
+
+### Test Results
+- Pending release verification.
+
+### Notes for Iris
+- This is the orchestration API for apps to call on first launch before using manifest-declared permissions. It does not add a new permission type; it reuses existing descriptors and `/permissions/approve`.
+
 ## v0.4.3.15 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
