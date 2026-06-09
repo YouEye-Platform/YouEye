@@ -1,3 +1,21 @@
+## v0.4.3.20 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Harden preference settings fetches against stale cache
+
+### Changes
+- `ui/src/components/settings/app-settings-detail.tsx` — Manifest preference and user-settings fetches now use `cache: "no-store"` and `credentials: "same-origin"` so live App Settings forms read the current manifest/settings for the signed-in user.
+- `ui/tests/app-preference-settings.spec.mjs` — Added source assertions for cache-resistant preference fetches.
+- `ui/package.json`, `ui/public/sw.js`, `README.md` — Bumped UI to `0.4.3.20` and refreshed the generated service worker precache.
+
+### Test Results
+- Focused UI tests passed: `node --test tests/app-preference-settings.spec.mjs tests/launch-requirements.spec.mjs tests/permission-approval.spec.mjs tests/timeline-permission-approval.spec.mjs`.
+- `pnpm --dir ui build` passed for UI `0.4.3.20` with the known local `127.0.0.1:5432` static-generation noise.
+
+### Notes for Iris
+- This follows the live `0.4.3.19` verification path where the server manifest was correct but the browser-side form fetch needed cache-resistant reads.
+
 ## v0.4.3.19 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

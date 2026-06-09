@@ -19,6 +19,8 @@ test('app settings page renders and saves manifest-declared preferences', () => 
   assert.ok(detail.includes('/api/v1/apps/${encodeURIComponent(targetAppId)}/manifest'));
   assert.ok(detail.includes('/api/v1/apps/${encodeURIComponent(targetAppId)}/user-settings'));
   assert.ok(detail.includes('/api/v1/apps/${encodeURIComponent(app.id)}/user-settings'));
+  assert.ok(detail.includes('cache: "no-store"'));
+  assert.ok(detail.includes('credentials: "same-origin"'));
   assert.match(detail, /PreferenceFieldInput/);
   assert.ok(detail.includes('field.type === "password" ? "password" : "text"'));
   assert.ok(detail.includes('field.type === "select"'));

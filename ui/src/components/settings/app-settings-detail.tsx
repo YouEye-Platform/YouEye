@@ -238,8 +238,14 @@ export function AppSettingsDetail({
     setSettingsError(null);
     try {
       const [manifestRes, settingsRes] = await Promise.all([
-        fetch(`/api/v1/apps/${encodeURIComponent(targetAppId)}/manifest`),
-        fetch(`/api/v1/apps/${encodeURIComponent(targetAppId)}/user-settings`),
+        fetch(`/api/v1/apps/${encodeURIComponent(targetAppId)}/manifest`, {
+          cache: "no-store",
+          credentials: "same-origin",
+        }),
+        fetch(`/api/v1/apps/${encodeURIComponent(targetAppId)}/user-settings`, {
+          cache: "no-store",
+          credentials: "same-origin",
+        }),
       ]);
       const manifest = manifestRes.ok
         ? await manifestRes.json().catch(() => null)
@@ -338,6 +344,8 @@ export function AppSettingsDetail({
     try {
       const res = await fetch(`/api/v1/apps/${encodeURIComponent(app.id)}/user-settings`, {
         method: "PUT",
+        cache: "no-store",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ settings: settingsDraft }),
       });
