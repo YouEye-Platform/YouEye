@@ -16,28 +16,57 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { app_id, permissions, grant_type } = body;
+  const { app_id, permissions, grant_type, approved } = body;
 
-  if (!app_id || !permissions || !Array.isArray(permissions)) {
+  if (typeof app_id !== "string" || app_id.length === 0 || !permissions || !Array.isArray(permissions)) {
     return NextResponse.json(
       { error: "app_id and permissions array are required" },
       { status: 400 }
     );
   }
 
-  for (const perm of permissions) {
+  const requested = permissions
+    .filter((permission: unknown): permission is string => typeof permission === "string")
+    .filter((permission: string) => permission.length > 0);
+
+  if (requested.length === 0) {
+    return NextResponse.json(
+      { error: "permissions must contain at least one permission string" },
+      { status: 400 }
+    );
+  }
+
+  const descriptors = requested.map((permission: string) => describePermission(permission));
+
+  if (approved !== true) {
+    const params = new URLSearchParams();
+    params.set("app_id", app_id);
+    for (const permission of requested) params.append("permission", permission);
+    if (typeof grant_type === "string" && grant_type.length > 0) params.set("grant_type", grant_type);
+
+    return NextResponse.json({
+      success: false,
+      approval_required: true,
+      app_id,
+      requested: requested,
+      permissions: descriptors,
+      approval_url: `/permissions/approve?${params.toString()}`,
+    }, { status: 202 });
+  }
+
+  for (const perm of requested) {
     await grantPermission(
       session.userId,
       app_id,
       perm,
-      grant_type ?? "persistent",
+      typeof grant_type === "string" && grant_type.length > 0 ? grant_type : "persistent",
       "user"
     );
   }
 
   return NextResponse.json({
     success: true,
-    granted: permissions,
-    permissions: permissions.map((permission: string) => describePermission(permission)),
+    granted: requested,
+    permissions: descriptors,
   });
 }

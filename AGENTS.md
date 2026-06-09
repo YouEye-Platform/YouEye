@@ -1,3 +1,21 @@
+## v0.4.3.14 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add user approval for app permission requests
+
+### Changes
+- `ui/src/app/api/v1/permissions/request/route.ts` — Permission requests now return an approval URL and descriptors unless explicitly approved, so app permissions are user-approved instead of silently granted.
+- `ui/src/app/permissions/approve/page.tsx`, `ui/src/app/permissions/approve/permission-approval-form.tsx` — Added a user-facing approval page with descriptor copy and Allow/Deny controls.
+- `ui/tests/permission-approval.spec.mjs` — Added focused regression coverage for approval-before-grant behavior.
+- `ui/package.json`, `README.md` — Bumped UI to `0.4.3.14`.
+
+### Test Results
+- Pending release verification.
+
+### Notes for Iris
+- Existing app flows that request permissions should use the returned `approval_url` for first-launch consent, then repost with `approved: true` after the user allows access.
+
 ## v0.4.13.65 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
