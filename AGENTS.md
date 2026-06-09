@@ -12,6 +12,10 @@
 ### Test Results
 - Focused Control Panel tests passed: `node --test tests/market-filters.spec.mjs tests/market-update-preview.spec.mjs tests/market-migration-planner.spec.mjs tests/market-update-plans.spec.mjs`.
 - `pnpm build` passed for Control Panel `0.4.13.70`.
+- Released `cp-artem-v0.4.13.70` with exact `standalone.tar`, snapshotted core live containers as `pre-test-cp-0.4.13.70-20260610-062250`, and deployed through `spine update control`.
+- Final `spine status` reports CP `0.4.13.70`, UI `0.4.3.20`, 21 running containers, and 0 stopped.
+- Built-in Codex Browser verified trusted `https://potato.app/market` shows the new Browse filter bar with search, Market source, type, status, category, clear, and result count.
+- Browser proof selected `Integrations`, reducing the catalog to 4 integration items, then selected `Installed`, reducing the catalog to 11 installed items. Screenshots: `/tmp/codex-browser-market-filters-0.4.13.70.png`, `/tmp/codex-browser-market-filters-integration-0.4.13.70.png`, `/tmp/codex-browser-market-filters-installed-0.4.13.70.png`.
 
 ### Notes for Iris
 - This implements the Plan 3 combined-catalog browsing requirement on the canonical root `/market` page. The older embed Market client still has its existing partial search/category filters.
