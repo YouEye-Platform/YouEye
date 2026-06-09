@@ -12,9 +12,10 @@ function readControl(path: string): string {
 test('settings system page surfaces Market system update plans safely', () => {
   const client = readControl('src/components/settings-shell/system-client.tsx');
   const api = readControl('src/app/api/deploy/infrastructure/system-updates/route.ts');
+  const settingsApi = readControl('src/app/settings/api/deploy/infrastructure/system-updates/route.ts');
 
   assert.match(client, /Market System Manifests/);
-  assert.ok(client.includes('/api/deploy/infrastructure/system-updates'));
+  assert.ok(client.includes('/settings/api/deploy/infrastructure/system-updates'));
   assert.match(client, /legacy-compatible/);
   assert.match(client, /legacy-untracked/);
   assert.match(client, /forceLegacy: plan\.trackingStatus !== "tracked"/);
@@ -24,4 +25,5 @@ test('settings system page surfaces Market system update plans safely', () => {
 
   assert.match(api, /planSystemUpdates/);
   assert.match(api, /updateSystemFromMarket/);
+  assert.match(settingsApi, /@\/app\/api\/deploy\/infrastructure\/system-updates\/route/);
 });

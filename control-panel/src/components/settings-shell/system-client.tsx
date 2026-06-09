@@ -69,7 +69,7 @@ export function SystemClient() {
   const loadSystemPlans = useCallback(async () => {
     setPlansLoading(true);
     setPlanError("");
-    const res = await fetch("/api/deploy/infrastructure/system-updates");
+    const res = await fetch("/settings/api/deploy/infrastructure/system-updates");
     if (res.ok) {
       const body = await res.json();
       setSystemPlans(body.systems ?? []);
@@ -84,7 +84,7 @@ export function SystemClient() {
   async function dryRun(plan: SystemUpdatePlan) {
     setDryRunStatus((current) => ({ ...current, [plan.id]: "Planning..." }));
     try {
-      const response = await fetch("/api/deploy/infrastructure/system-updates", {
+      const response = await fetch("/settings/api/deploy/infrastructure/system-updates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

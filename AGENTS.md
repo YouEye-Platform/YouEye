@@ -1,3 +1,22 @@
+## v0.4.13.59 — artem — 2026-06-09
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix System settings Market update-plan auth path
+
+### Changes
+- `control-panel/src/app/settings/api/deploy/infrastructure/system-updates/route.ts` — Added a settings-surface API alias for the Market system update planner.
+- `control-panel/src/components/settings-shell/system-client.tsx` — Uses the settings-scoped system update planner path so the existing settings session can load and dry-run plans.
+- `control-panel/tests/system-settings-market-updates.spec.ts` — Extended coverage for the settings API alias and settings-scoped fetch path.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.59`.
+
+### Test Results
+- Focused Node test passed: `control-panel/tests/system-settings-market-updates.spec.ts`.
+- `pnpm --dir YouEye/control-panel build` passed for CP `0.4.13.59`.
+
+### Notes for Iris
+- CP `0.4.13.58` rendered the section but the built-in Codex Browser proved the root API path was unauthorized under the settings session. This patch keeps the same planner behavior and fixes the browser-auth path.
+
 ## v0.4.13.58 — artem — 2026-06-09
 **Branch:** artem
 **VM:** potempc
