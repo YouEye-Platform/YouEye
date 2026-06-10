@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getBridgeToken } from "@/lib/admin/bridge-client";
 import { getApp } from "@/lib/db/queries/app-management";
 import { denyPermission, getPermissionDecision, grantPermission } from "@/lib/db/queries/permissions";
+import { findUserByAuthentikId, findUserByEmail, findUserById, findUserByUsername } from "@/lib/db/queries/users";
 import { describePermission } from "@/lib/permissions/descriptors";
 import { normalizeAppSurfaces } from "@/lib/surfaces/normalize";
 
@@ -80,6 +81,28 @@ async function permissionState(userId: string, appId: string) {
   };
 }
 
+async function resolveUiUser(input: {
+  identityUserId?: string;
+  username?: string;
+  email?: string;
+}) {
+  if (input.identityUserId) {
+    const user = await findUserByAuthentikId(input.identityUserId);
+    if (user) return user;
+    const legacyUser = await findUserById(input.identityUserId);
+    if (legacyUser) return legacyUser;
+  }
+  if (input.username) {
+    const user = await findUserByUsername(input.username);
+    if (user) return user;
+  }
+  if (input.email) {
+    const user = await findUserByEmail(input.email);
+    if (user) return user;
+  }
+  return null;
+}
+
 export async function POST(request: NextRequest) {
   if (!validateToken(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -87,13 +110,25 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => ({}));
   const appId = typeof body.appId === "string" ? body.appId.replace(/^ye-/, "") : "";
-  const userId = typeof body.userId === "string" ? body.userId : "";
+  const identityUserId = typeof body.identityUserId === "string"
+    ? body.identityUserId
+    : typeof body.userId === "string"
+      ? body.userId
+      : "";
+  const username = typeof body.username === "string" ? body.username : "";
+  const email = typeof body.email === "string" ? body.email : "";
   const selected = stringArray(body.grantPermissions);
   const denyUnselected = body.denyUnselected === true;
 
-  if (!appId || !userId) {
-    return NextResponse.json({ error: "appId and userId are required" }, { status: 400 });
+  if (!appId || (!identityUserId && !username && !email)) {
+    return NextResponse.json({ error: "appId and a user identity are required" }, { status: 400 });
   }
+
+  const user = await resolveUiUser({ identityUserId, username, email });
+  if (!user) {
+    return NextResponse.json({ error: "User not found in UI database" }, { status: 404 });
+  }
+  const userId = user.id;
 
   const before = await permissionState(userId, appId);
   if ("error" in before) return before.error;

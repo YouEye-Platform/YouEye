@@ -41,6 +41,11 @@ test('OAuth authorize can show and grant selected runtime app permissions', () =
   assert.match(authorize, /form\.getAll\('runtime_permission'\)/);
   assert.match(authorize, /grantPermissions: selectedRuntimePermissions/);
   assert.match(authorize, /denyUnselected: Array\.isArray\(input\.grantPermissions\)/);
+  assert.match(authorize, /identityUserId: input\.user\.id/);
+  assert.match(authorize, /username: input\.user\.username/);
+  assert.match(authorize, /email: input\.user\.email/);
+  assert.match(authorize, /NextResponse\.redirect\(redirect, \{ status: 303 \}\)/);
+  assert.match(authorize, /failed_to_update_app_permissions/);
 });
 
 test('Fresh installs push connection candidates to UI after dashboard registration', () => {

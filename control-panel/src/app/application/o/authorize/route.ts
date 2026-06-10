@@ -58,7 +58,7 @@ function uiBaseUrl(): string {
 
 async function fetchRuntimePermissions(input: {
   clientId: string;
-  userId: string;
+  user: IdentityUser;
   grantPermissions?: string[];
 }): Promise<{ appId: string; permissions: RuntimePermission[] } | null> {
   const appId = appIdFromClientId(input.clientId);
@@ -74,12 +74,17 @@ async function fetchRuntimePermissions(input: {
       },
       body: JSON.stringify({
         appId,
-        userId: input.userId,
+        identityUserId: input.user.id,
+        username: input.user.username,
+        email: input.user.email,
         grantPermissions: input.grantPermissions ?? [],
         denyUnselected: Array.isArray(input.grantPermissions),
       }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`UI bridge returned ${res.status}${detail ? `: ${detail.slice(0, 240)}` : ''}`);
+    }
     const data = await res.json();
     return {
       appId,
@@ -107,7 +112,7 @@ async function issueAuthRedirect(input: {
   const redirect = new URL(input.redirectUri);
   redirect.searchParams.set('code', code);
   if (input.state) redirect.searchParams.set('state', input.state);
-  return NextResponse.redirect(redirect);
+  return NextResponse.redirect(redirect, { status: 303 });
 }
 
 function denyRedirect(redirectUri: string, state: string) {
@@ -243,7 +248,7 @@ export async function GET(request: NextRequest) {
   if (!isFirstPartyClient(clientId)) {
     const requestedScopes = scopeList(scope);
     const consent = await getAppConsent(user.id, clientId);
-    const runtime = await fetchRuntimePermissions({ clientId, userId: user.id });
+    const runtime = await fetchRuntimePermissions({ clientId, user });
     if (!consent || !hasScopes(consent.scopes, requestedScopes) || (runtime?.permissions.length ?? 0) > 0) {
       return consentHtml({
         client,
@@ -277,11 +282,14 @@ export async function POST(request: NextRequest) {
   const selectedRuntimePermissions = form.getAll('runtime_permission')
     .map((value) => String(value))
     .filter(Boolean);
-  await fetchRuntimePermissions({
+  const runtime = await fetchRuntimePermissions({
     clientId,
-    userId: user.id,
+    user,
     grantPermissions: selectedRuntimePermissions,
   });
+  if (!runtime) {
+    return NextResponse.json({ error: 'failed_to_update_app_permissions' }, { status: 502 });
+  }
 
   await upsertAppConsent({ userId: user.id, clientId, scopes: scopeList(scope) });
   return issueAuthRedirect({ clientId, user, redirectUri, scope, state });

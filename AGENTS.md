@@ -1,3 +1,25 @@
+## v0.4.13.92 / v0.4.3.27 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix YouEye ID consent callback and runtime permission persistence
+
+### Changes
+- `control-panel/src/app/application/o/authorize/route.ts` — Sends identity user id, username, and email to UI's launch-permissions bridge, fails approval if runtime permission updates fail, and redirects OAuth authorization-code callbacks with `303` so app callbacks receive `GET` instead of the form `POST`.
+- `ui/src/app/api/ui-bridge/app-launch-permissions/route.ts` — Resolves CP/YouEye ID users to UI users by Authentik/identity subject, legacy UI id, username, or email before checking/granting `app_permissions`.
+- `control-panel/tests/identity-consent.spec.ts`, `ui/tests/launch-permissions-bridge.spec.mjs` — Add regression coverage for `303` consent redirects and identity-to-UI user mapping.
+- `control-panel/package.json`, `ui/package.json`, `README.md`, `ui/public/sw.js` — Bumped Control Panel to `0.4.13.92` and UI to `0.4.3.27`, including regenerated UI service worker output.
+
+### Test Results
+- `node --test control-panel/tests/*.mjs` passed.
+- `node --test ui/tests/launch-permissions-bridge.spec.mjs` passed.
+- `pnpm --dir control-panel build` passed for Control Panel `0.4.13.92`.
+- `pnpm --dir ui build` passed for UI `0.4.3.27` with known local `127.0.0.1:5432` static-generation warnings.
+
+### Notes for Iris
+- This fixes the live Search/Notes-style OAuth callback `405`: consent approval now uses `303 See Other`, so the app callback receives the expected OAuth `GET`.
+- This also fixes the user namespace mismatch where CP sent a YouEye ID UUID to UI's `app_permissions` table, which uses UI user ids.
+
 ## v0.4.13.91 / v0.4.3.26 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
