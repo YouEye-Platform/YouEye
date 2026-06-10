@@ -2,7 +2,7 @@ export interface PermissionDescriptor {
   permission: string;
   title: string;
   description: string;
-  category: "identity" | "timeline" | "notifications" | "widgets" | "profile" | "system" | "app" | "connection";
+  category: "identity" | "timeline" | "notifications" | "widgets" | "profile" | "system" | "app" | "connection" | "internet";
   risk: "low" | "medium" | "high";
 }
 
@@ -59,6 +59,23 @@ export function describePermission(permission: string): PermissionDescriptor {
       title: `Connect to ${appName}`,
       description: `Lets this app use ${appName} through the YouEye proxy for your account.`,
       category: "connection",
+      risk: "medium",
+    };
+  }
+
+  if (permission.startsWith("internet:")) {
+    const host = permission.replace(/^internet:/, "");
+    const title = host.startsWith("*.")
+      ? `Use ${titleFromPermission(host.slice(2))} sites`
+      : `Use ${host}`;
+    const description = host.startsWith("*.")
+      ? `Lets this app connect to matching ${host} sites through the YouEye proxy for your account.`
+      : `Lets this app connect to ${host} through the YouEye proxy for your account.`;
+    return {
+      permission,
+      title,
+      description,
+      category: "internet",
       risk: "medium",
     };
   }

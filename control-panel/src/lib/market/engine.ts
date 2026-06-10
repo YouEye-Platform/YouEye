@@ -1360,6 +1360,7 @@ export async function installApp(
   // Post-install: disable NAT on the app bridge if the app doesn't need internet/LAN.
   // NAT was enabled during install so containers could pull packages/images.
   // User's explicit choice (config.allowInternet) overrides manifest default.
+  // internet.proxy scopes are handled through the UI gateway, not bridge NAT.
   const grantInternet = config.allowInternet ?? wantsInternet;
   if (appBridgeName && !grantInternet) {
     await setAppNetworkNAT(appId, false);

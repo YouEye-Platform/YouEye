@@ -106,7 +106,11 @@ interface ConnectionInfo {
 interface ConnectionsData {
   outgoing: ConnectionInfo[];
   incoming: ConnectionInfo[];
-  internet: { hosts: string[]; needsInternet: boolean };
+  internet: {
+    hosts: string[];
+    proxy?: Array<{ host: string; paths: string[]; methods: string[]; scope: string }>;
+    needsInternet: boolean;
+  };
 }
 
 // ─── Icon Map (Lucide-style SVG icons for native apps) ────
@@ -1080,6 +1084,7 @@ export function MarketEmbedClient() {
           )}
 
           {/* Internet */}
+          {connections?.internet?.needsInternet && (
           <div style={{ marginBottom: 14 }}>
             <div style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -1097,6 +1102,7 @@ export function MarketEmbedClient() {
               <ToggleSwitch on={allowInternet} onChange={setAllowInternet} />
             </div>
           </div>
+          )}
 
           {(installTarget.supportsSSO || installTarget.sso !== false) && (
             <div style={{ marginBottom: 14, display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 500, padding: "4px 10px", borderRadius: 9999, color: "var(--embed-success)", border: "1px solid color-mix(in srgb, var(--embed-success) 30%, transparent)" }}>

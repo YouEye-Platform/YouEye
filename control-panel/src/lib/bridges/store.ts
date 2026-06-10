@@ -29,7 +29,7 @@ export interface Bridge {
   active: boolean;
   envMappings: EnvMapping[];
   aclName?: string;
-  accessMode?: 'network' | 'caddy';
+  accessMode?: 'network' | 'proxy' | 'caddy';
   url?: string;
   allowedPaths?: string[];
   allowedMethods?: string[];

@@ -9,7 +9,7 @@ function read(path) {
   return readFileSync(join(repoRoot, path), 'utf8');
 }
 
-test('scoped app-token Caddy grants deny unapproved app-token fallthrough', () => {
+test('scoped app-token proxy routes deny unapproved app-token fallthrough', () => {
   const caddy = read('src/lib/caddy/client.ts');
   const manager = read('src/lib/bridges/manager.ts');
   const caddyCa = read('src/lib/market/caddy-ca.ts');
@@ -37,10 +37,11 @@ test('scoped app-token Caddy grants deny unapproved app-token fallthrough', () =
   assert.match(repairRoute, /app-grant-token-deny/);
 
   assert.match(manager, /injectCaddyRootCA/);
-  assert.match(manager, /async function getScopedCaddyGrantSpec/);
+  assert.match(manager, /async function getProxyScopeSpec/);
   assert.match(manager, /fetchManifestFromSource\(from, sourceMeta\?\.sourceId\)/);
-  assert.match(manager, /w\.appId === to && w\.caddyGrant\?\.paths\?\.length/);
-  assert.match(manager, /predate manifest-declared Caddy grants/);
+  assert.match(manager, /w\.appId === to && w\.proxy\?\.paths\?\.length/);
+  assert.doesNotMatch(manager, /caddyGrant/);
+  assert.match(manager, /accessMode: scopedGrant \? 'proxy' : 'network'/);
   assert.match(manager, /allowedMethods: b\.allowedMethods/);
   assert.match(manager, /allowedMethods: scopedGrant\?\.methods/);
   assert.match(manager, /action: 'restart'/);
@@ -56,10 +57,10 @@ test('scoped app-token Caddy grants deny unapproved app-token fallthrough', () =
   assert.match(caddyCa, /REQUESTS_CA_BUNDLE=\/usr\/local\/share\/ca-certificates\/caddy-root\.crt/);
   assert.match(caddyCa, /youeye-caddy-ca\.conf/);
 
-  assert.match(schema, /CaddyGrantSchema/);
+  assert.match(schema, /ProxyScopeSchema/);
   assert.match(schema, /paths: z\.array\(z\.string\(\)\.min\(1\)\)\.min\(1\)/);
   assert.match(schema, /methods: z\.array\(z\.enum\(\['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'\]\)\)\.optional\(\)\.default\(\['GET'\]\)/);
-  assert.match(schema, /caddyGrant: CaddyGrantSchema\.optional\(\)/);
+  assert.match(schema, /proxy: ProxyScopeSchema\.optional\(\)/);
 });
 
 test('bridge JSON stores use atomic temp-file rename writes', () => {

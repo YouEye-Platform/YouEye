@@ -321,12 +321,19 @@ export const ProvidesSchema = z.object({
   port: z.number().int().positive().optional(),
 });
 
-// ─── Wants (app-to-app connection declarations) ──────────
+// ─── Proxy Scopes ────────────────────────────────────────
 
-export const CaddyGrantSchema = z.object({
+export const ProxyScopeSchema = z.object({
   paths: z.array(z.string().min(1)).min(1),
   methods: z.array(z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'])).optional().default(['GET']),
 });
+
+export const InternetProxyScopeSchema = ProxyScopeSchema.extend({
+  host: z.string().min(1),
+  scope: z.enum(['user', 'service']).optional().default('user'),
+});
+
+// ─── Wants (app-to-app connection declarations) ──────────
 
 /** System container IDs — never valid bridge/want targets */
 const SYSTEM_APP_IDS = [
@@ -339,7 +346,7 @@ export const WantSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   defaultPort: z.number().int().positive().optional(),
-  caddyGrant: CaddyGrantSchema.optional(),
+  proxy: ProxyScopeSchema.optional(),
 }).refine(
   (data) => !!(data.appId || data.type),
   { message: 'wants must specify appId or type' }
@@ -352,6 +359,7 @@ export const WantSchema = z.object({
 
 export const InternetSchema = z.object({
   hosts: z.array(z.string()).default([]),
+  proxy: z.array(InternetProxyScopeSchema).optional().default([]),
 }).optional();
 
 // ─── Install Parameters ───────────────────────────────────

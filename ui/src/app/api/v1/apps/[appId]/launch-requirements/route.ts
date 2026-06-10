@@ -19,6 +19,7 @@ import {
 import { describePermission } from "@/lib/permissions/descriptors";
 import { normalizeAppSurfaces } from "@/lib/surfaces/normalize";
 import { getUserSettings } from "@/lib/db/queries/settings";
+import { collectInternetPermissions } from "@/lib/internet/scopes";
 
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -34,6 +35,9 @@ function collectLaunchPermissions(manifest: Record<string, unknown> | null): str
     for (const permission of surface.permissions) {
       permissions.add(permission);
     }
+  }
+  for (const permission of collectInternetPermissions(manifest)) {
+    permissions.add(permission);
   }
   return [...permissions].sort();
 }

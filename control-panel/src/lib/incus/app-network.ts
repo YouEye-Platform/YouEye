@@ -238,7 +238,7 @@ export async function deleteAppNetwork(appId: string): Promise<void> {
 /**
  * Enable or disable NAT (internet access) on an app's bridge.
  * NAT is enabled during install so containers can pull packages/images,
- * then disabled post-install for apps that don't declare `network: internet`.
+ * then disabled post-install for apps that don't require blanket internet.
  */
 export async function setAppNetworkNAT(appId: string, enable: boolean): Promise<void> {
   const bridgeName = await getAppBridgeName(appId);

@@ -71,8 +71,8 @@ async function computeAvailableBackends(appId: string): Promise<Array<Record<str
           host: target.host,
           port: target.port,
           accessMode: 'proxy',
-          allowedPaths: want.caddyGrant?.paths,
-          allowedMethods: want.caddyGrant?.methods,
+          allowedPaths: want.proxy?.paths,
+          allowedMethods: want.proxy?.methods,
         });
       } else if (want.type) {
         // Type-based want — find all providers of this type
@@ -107,6 +107,29 @@ async function computeAvailableBackends(appId: string): Promise<Array<Record<str
     // App may not have a manifest — return empty
   }
   return available;
+}
+
+async function computeInternetProxyScopes(appId: string): Promise<Array<Record<string, unknown>>> {
+  try {
+    const manifest = await fetchManifest(appId);
+    const scopes = manifest.internet?.proxy ?? [];
+    if (scopes.length > 0) {
+      return scopes.map((scope) => ({
+        host: scope.host,
+        paths: scope.paths,
+        methods: scope.methods?.length ? scope.methods : ['GET'],
+        scope: scope.scope ?? 'user',
+      }));
+    }
+    return (manifest.internet?.hosts ?? []).map((host) => ({
+      host,
+      paths: ['/*'],
+      methods: ['GET'],
+      scope: 'user',
+    }));
+  } catch {
+    return [];
+  }
 }
 
 export async function pushConnectionsToUI(appId: string): Promise<void> {
@@ -153,6 +176,7 @@ export async function pushConnectionsToUI(appId: string): Promise<void> {
     // Get internet grants for this app
     const grants = await listInternetGrants();
     const grant = grants.find(g => g.appId === appId);
+    const internetScopes = await computeInternetProxyScopes(appId);
 
     // Build available backends list from the app's wants
     const available = await computeAvailableBackends(appId);
@@ -163,6 +187,7 @@ export async function pushConnectionsToUI(appId: string): Promise<void> {
       internet: {
         granted: !!grant,
         hosts: grant?.hosts ?? [],
+        proxy: internetScopes,
       },
       available,
     };
@@ -309,32 +334,26 @@ function getScopedGrantRouteId(from: string, to: string): string {
   return `app-grant-${from}-to-${to}`;
 }
 
-async function getScopedCaddyGrantSpec(from: string, to: string): Promise<{ paths: string[]; methods: string[] } | null> {
+async function getProxyScopeSpec(from: string, to: string): Promise<{ paths: string[]; methods: string[] } | null> {
   try {
     const sourceMeta = await readInstallMetadata(from);
     const manifest = await fetchManifestFromSource(from, sourceMeta?.sourceId);
-    const want = manifest.wants?.find((w) => w.appId === to && w.caddyGrant?.paths?.length);
-    if (want?.caddyGrant?.paths?.length) {
+    const want = manifest.wants?.find((w) => w.appId === to && w.proxy?.paths?.length);
+    if (want?.proxy?.paths?.length) {
       return {
-        paths: want.caddyGrant.paths,
-        methods: want.caddyGrant.methods?.length ? want.caddyGrant.methods : ['GET'],
+        paths: want.proxy.paths,
+        methods: want.proxy.methods?.length ? want.proxy.methods : ['GET'],
       };
     }
   } catch (err) {
     console.warn(`[bridges] Could not resolve manifest scoped grant for ${from}->${to}:`, err);
   }
 
-  // Transitional compatibility for already-installed Search manifests that
-  // predate manifest-declared Caddy grants.
-  if (from === 'search' && to === 'searxng') {
-    return { paths: ['/search*', '/autocompleter*'], methods: ['GET'] };
-  }
-
   return null;
 }
 
-async function createScopedCaddyGrant(bridge: Bridge): Promise<{ url: string; paths: string[]; methods: string[] } | null> {
-  const grantSpec = await getScopedCaddyGrantSpec(bridge.from, bridge.to);
+async function createScopedProxyGrant(bridge: Bridge): Promise<{ url: string; paths: string[]; methods: string[] } | null> {
+  const grantSpec = await getProxyScopeSpec(bridge.from, bridge.to);
   if (!grantSpec) return null;
   const { paths, methods } = grantSpec;
 
@@ -398,7 +417,7 @@ export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
   // Resolve actual container names (handles multi-container apps)
   const fromContainer = await resolveContainerName(bridge.from);
   const toContainer = await resolveContainerName(bridge.to);
-  const scopedGrant = await createScopedCaddyGrant(bridge);
+  const scopedGrant = await createScopedProxyGrant(bridge);
 
   if (!scopedGrant) {
     try {
@@ -448,7 +467,7 @@ export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
   const updated = await updateBridge(bridgeId, {
     active: true,
     activatedAt: new Date().toISOString(),
-    accessMode: scopedGrant ? 'caddy' : 'network',
+    accessMode: scopedGrant ? 'proxy' : 'network',
     url: scopedGrant?.url,
     allowedPaths: scopedGrant?.paths,
     allowedMethods: scopedGrant?.methods,
@@ -474,7 +493,7 @@ export async function deactivateBridge(bridgeId: string): Promise<Bridge | null>
   const toContainer = await resolveContainerName(bridge.to);
 
   try {
-    if (bridge.accessMode === 'caddy') {
+    if (bridge.accessMode === 'proxy' || bridge.accessMode === 'caddy') {
       await removeScopedAppGrantRoute(getScopedGrantRouteId(bridge.from, bridge.to));
     } else {
       await revokeBridgeAccess(fromContainer, bridge.to);
@@ -511,7 +530,7 @@ export async function deleteBridge(bridgeId: string): Promise<boolean> {
     const toContainer = await resolveContainerName(bridge.to);
 
     try {
-      if (bridge.accessMode === 'caddy') {
+      if (bridge.accessMode === 'proxy' || bridge.accessMode === 'caddy') {
         await removeScopedAppGrantRoute(getScopedGrantRouteId(bridge.from, bridge.to));
       } else {
         await revokeBridgeAccess(fromContainer, bridge.to);

@@ -12,6 +12,7 @@ import { denyPermission, getPermissionDecision, grantPermission } from "@/lib/db
 import { findUserByAuthentikId, findUserByEmail, findUserById, findUserByUsername } from "@/lib/db/queries/users";
 import { describePermission } from "@/lib/permissions/descriptors";
 import { normalizeAppSurfaces } from "@/lib/surfaces/normalize";
+import { collectInternetPermissions } from "@/lib/internet/scopes";
 
 function validateToken(request: NextRequest): boolean {
   const provided = request.headers.get("X-UI-Bridge-Token");
@@ -34,6 +35,9 @@ function collectManifestPermissions(manifest: Record<string, unknown> | null): s
     for (const permission of surface.permissions) {
       permissions.add(permission);
     }
+  }
+  for (const permission of collectInternetPermissions(manifest)) {
+    permissions.add(permission);
   }
   return [...permissions];
 }

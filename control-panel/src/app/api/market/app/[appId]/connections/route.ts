@@ -24,7 +24,11 @@ export interface ConnectionInfo {
 export interface ConnectionsResponse {
   outgoing: ConnectionInfo[];
   incoming: ConnectionInfo[];
-  internet: { hosts: string[]; needsInternet: boolean };
+  internet: {
+    hosts: string[];
+    proxy: Array<{ host: string; paths: string[]; methods: string[]; scope: string }>;
+    needsInternet: boolean;
+  };
 }
 
 export async function GET(
@@ -83,8 +87,15 @@ export async function GET(
     }
 
     // Internet access requirements
+    const proxy = (manifest.internet?.proxy ?? []).map((scope) => ({
+      host: scope.host,
+      paths: scope.paths,
+      methods: scope.methods?.length ? scope.methods : ['GET'],
+      scope: scope.scope ?? 'user',
+    }));
     const internet = {
       hosts: manifest.internet?.hosts ?? [],
+      proxy,
       needsInternet: (manifest.internet?.hosts?.length ?? 0) > 0
         || manifest.containers.some(c => c.network === 'internet'),
     };

@@ -1,3 +1,25 @@
+## v0.4.13.93 / v0.4.3.28 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add proxy-scoped internet permissions and canonical proxy manifest naming
+
+### Changes
+- `control-panel/src/lib/market/schema.ts`, `control-panel/src/lib/market/types.ts` — Replaced active `wants[].caddyGrant` schema with canonical `wants[].proxy` and added `internet.proxy` host/path/method scopes.
+- `control-panel/src/lib/bridges/manager.ts`, `control-panel/src/lib/bridges/store.ts` — Pushes app connection and internet proxy scope metadata to UI, stores proxy-scoped app-to-app grants as `accessMode:"proxy"`, and keeps legacy `caddy` cleanup compatibility.
+- `control-panel/src/app/api/market/app/[appId]/connections/route.ts`, `control-panel/src/lib/market/engine.ts`, `control-panel/src/app/embed/market/client.tsx` — Keeps broad Internet/LAN NAT decisions separate from `internet.proxy` scopes.
+- `ui/src/app/api/apps/v1/internet/route.ts`, `ui/src/lib/internet/scopes.ts` — Adds token-authenticated internet proxy enforcement with user permission, manifest scope, HTTPS, redirect, and SSRF/public-IP checks.
+- `ui/src/app/api/v1/apps/[appId]/launch-requirements/route.ts`, `ui/src/app/api/ui-bridge/app-launch-permissions/route.ts`, `ui/src/lib/permissions/descriptors.ts` — Derives and describes `internet:<host>` first-launch permissions.
+- `README.md`, `control-panel/package.json`, `ui/package.json`, `ui/public/sw.js` — Bumped CP to `0.4.13.93` and UI to `0.4.3.28`, including regenerated UI service worker output.
+
+### Test Results
+- `node --test control-panel/tests/scoped-caddy-grants.spec.mjs control-panel/tests/app-network-pihole-dns.spec.mjs ui/tests/internet-proxy.spec.mjs ui/tests/launch-permissions-bridge.spec.mjs ui/tests/launch-requirements.spec.mjs ui/tests/connection-proxy.spec.mjs` passed.
+- `pnpm --dir control-panel build` passed for CP `0.4.13.93`.
+- `pnpm --dir ui build` passed for UI `0.4.3.28` with known local `127.0.0.1:5432` static-generation warnings.
+
+### Notes for Iris
+- `internet.proxy` is intentionally not a broad NAT signal. Only `network: internet`, legacy `internet.hosts`, or the admin's explicit broad toggle should keep app bridge NAT enabled after install.
+
 ## v0.4.13.92 / v0.4.3.27 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
