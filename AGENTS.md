@@ -1,3 +1,21 @@
+## v0.4.13.83 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix Control Panel app drawer icon fallback and trigger sizing
+
+### Changes
+- `control-panel/src/components/control-surface/control-header.tsx` — Accepts Lucide object exports in the drawer icon resolver so fallback app icons render as icons, and shrinks the app-drawer trigger glyph to match UI/CP visual weight.
+- `control-panel/tests/control-header-drawer-icons.spec.mjs` — Adds focused coverage for the Lucide resolver and smaller trigger glyph.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.83`.
+
+### Test Results
+- `node --test control-panel/tests/control-header-drawer-icons.spec.mjs` passed.
+- `pnpm --dir control-panel build` passed for Control Panel `0.4.13.83`.
+
+### Notes for Iris
+- Pairs with native app releases that apply the same drawer-trigger and header-control contract across existing native apps.
+
 ## v0.4.13.82 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

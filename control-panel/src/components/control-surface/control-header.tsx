@@ -151,7 +151,13 @@ function kebabToPascal(value: string) {
 
 function getLucideIcon(name: string): ComponentType<{ className?: string; style?: CSSProperties }> | null {
   const icon = (LucideIcons as Record<string, unknown>)[kebabToPascal(name)];
-  return typeof icon === "function" ? icon as ComponentType<{ className?: string; style?: CSSProperties }> : null;
+  if (
+    typeof icon === "function" ||
+    (typeof icon === "object" && icon !== null && "$$typeof" in (icon as Record<string, unknown>))
+  ) {
+    return icon as ComponentType<{ className?: string; style?: CSSProperties }>;
+  }
+  return null;
 }
 
 function AppIcon({ app, size }: { app: DrawerApp; size: number }) {
@@ -585,7 +591,7 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
         <Popover open={drawerOpen} onOpenChange={setDrawerOpen}>
           <PopoverTrigger asChild>
             <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Apps">
-              <DotsIcon className="h-5 w-5" />
+              <DotsIcon className="h-4 w-4" />
             </Button>
           </PopoverTrigger>
           <PopoverContent
