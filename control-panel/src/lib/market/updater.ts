@@ -17,11 +17,15 @@
  *   - Secrets are ALWAYS preserved across updates (never regenerated)
  *   - Data volumes are preserved by default (configurable via manifest)
  *   - SSO configuration is preserved (Authentik app not recreated)
- *   - LXD updates include apt upgrade (base OS kept current)
  *   - Rollback via Incus snapshots on failure
  */
 
 import { execShell } from '@/lib/incus/server';
+import { execFile } from 'child_process';
+import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { promisify } from 'util';
 import {
   createSnapshot,
   restoreSnapshot,
@@ -29,7 +33,6 @@ import {
   stopContainer,
   startContainer,
   rebuildContainer,
-  upgradeContainerOS,
   getServiceWorkingDir,
   healthCheckViaExec,
   waitForContainerExec,
@@ -52,7 +55,6 @@ import {
   mergeMigrationSources,
   type MigrationWithSource,
 } from './migration-planner';
-import { setAppNetworkNAT } from '@/lib/incus/app-network';
 import type {
   AppManifest,
   InstallEventCallback,
@@ -94,7 +96,7 @@ function emit(
 
 // ─── Constants ───────────────────────────────────────────
 
-const CONTAINER_DOMAIN = '.youeye';
+const execFileAsync = promisify(execFile);
 
 // ─── Version Constraint Helpers ──────────────────────────
 
@@ -235,7 +237,6 @@ function isMainTag(tag: string): boolean {
  * Branch-aware: checks branch-prefixed tags first, falls back to main.
  */
 async function getLatestGiteaRelease(
-  containerName: string,
   giteaRepo: string,
   branch?: string,
   tagPrefix?: string
@@ -243,17 +244,13 @@ async function getLatestGiteaRelease(
   const releaseSource = await getMarketSource();
   const releasesURL = buildMarketReleasesAPIURL(releaseSource, giteaRepo);
 
-  // Fetch releases from inside the container (has internet access)
-  const result = await execShell(
-    containerName,
-    `curl -sSL -H 'User-Agent: youeye-control' '${releasesURL}'`,
-    { timeout: 30_000 }
-  );
-
-  if (result.exitCode !== 0 || !result.stdout) return null;
-
   try {
-    const allReleases = JSON.parse(result.stdout);
+    const res = await fetch(releasesURL, {
+      headers: { 'User-Agent': 'youeye-control' },
+    });
+    if (!res.ok) return null;
+
+    const allReleases = await res.json();
     if (!Array.isArray(allReleases) || allReleases.length === 0) return null;
 
     const pfx = tagPrefix ? `${tagPrefix}-` : '';
@@ -331,9 +328,44 @@ async function getLatestGiteaRelease(
 
 // ─── LXD Tarball Update ──────────────────────────────────
 
+async function downloadReleaseTarball(downloadURL: string): Promise<{ dir: string; tarPath: string }> {
+  const dir = await mkdtemp(join(tmpdir(), 'youeye-app-update-'));
+  const tarPath = join(dir, 'standalone.tar');
+  try {
+    const res = await fetch(downloadURL, {
+      headers: { 'User-Agent': 'youeye-control' },
+    });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const bytes = Buffer.from(await res.arrayBuffer());
+    await writeFile(tarPath, bytes);
+    return { dir, tarPath };
+  } catch (err) {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    throw new Error(`Download failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function pushFileToContainer(
+  localPath: string,
+  containerName: string,
+  remotePath: string,
+): Promise<void> {
+  try {
+    await execFileAsync('incus', ['file', 'push', localPath, `${containerName}${remotePath}`], {
+      timeout: 300_000,
+      maxBuffer: 1024 * 1024,
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to push update artifact into ${containerName}: ${detail}`);
+  }
+}
+
 /**
- * Update an LXD container by downloading a new release tarball.
- * Includes apt upgrade to keep base OS current.
+ * Update an LXD container with a CP-downloaded release tarball.
+ * The app container never receives broad internet/NAT for code updates.
  */
 async function updateLXDContainer(
   containerName: string,
@@ -357,21 +389,12 @@ async function updateLXDContainer(
 
   // Get latest release
   step++;
-  emit(onEvent, step, totalSteps, 'running', 'Fetching latest release from Gitea...');
-  const release = await getLatestGiteaRelease(containerName, giteaRepo, branch, tagPrefix);
+  emit(onEvent, step, totalSteps, 'running', 'Fetching latest release metadata...');
+  const release = await getLatestGiteaRelease(giteaRepo, branch, tagPrefix);
   if (!release) throw new Error('Could not fetch latest release from Gitea');
   emit(onEvent, step, totalSteps, 'success', `Latest version: v${release.version}`);
 
-  // Upgrade base OS packages
-  step++;
-  emit(onEvent, step, totalSteps, 'running', 'Upgrading system packages...');
-  try {
-    await upgradeContainerOS(containerName);
-    emit(onEvent, step, totalSteps, 'success', 'System packages upgraded');
-  } catch (err) {
-    // Non-fatal — log and continue (app update is more important)
-    emit(onEvent, step, totalSteps, 'success', `System upgrade skipped: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  let tempDir: string | null = null;
 
   // Stop systemd service (NOT the container)
   step++;
@@ -381,42 +404,32 @@ async function updateLXDContainer(
 
   // Download new tarball
   step++;
-  emit(onEvent, step, totalSteps, 'running', `Downloading v${release.version}...`);
-  await execShell(containerName, `rm -rf ${resolvedDir}`, { timeout: 30_000 });
-  await execShell(containerName, `mkdir -p ${resolvedDir}`, { timeout: 10_000 });
+  emit(onEvent, step, totalSteps, 'running', `Downloading v${release.version} via Control Panel...`);
+  try {
+    const artifact = await downloadReleaseTarball(release.downloadURL);
+    tempDir = artifact.dir;
+    await pushFileToContainer(artifact.tarPath, containerName, '/tmp/update.tar');
+    emit(onEvent, step, totalSteps, 'success', 'Artifact downloaded and staged');
 
-  const downloadResult = await execShell(
-    containerName,
-    `curl -sSL "${release.downloadURL}" -o /tmp/update.tar`,
-    { timeout: 300_000 }
-  );
-  if (downloadResult.exitCode !== 0) {
-    throw new Error(`Download failed: ${downloadResult.stderr}`);
+    // Extract tarball
+    step++;
+    emit(onEvent, step, totalSteps, 'running', 'Extracting files...');
+    await execShell(containerName, `rm -rf ${resolvedDir}`, { timeout: 30_000 });
+    await execShell(containerName, `mkdir -p ${resolvedDir}`, { timeout: 10_000 });
+    const extractResult = await execShell(
+      containerName,
+      `tar -xf /tmp/update.tar -C ${resolvedDir} --no-same-owner`,
+      { timeout: 60_000 }
+    );
+    if (extractResult.exitCode !== 0) {
+      throw new Error(`Extraction failed: ${extractResult.stderr}`);
+    }
+    await execShell(containerName, 'rm -f /tmp/update.tar', { timeout: 10_000 });
+  } finally {
+    if (tempDir) {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
-  emit(onEvent, step, totalSteps, 'success', 'Download complete');
-
-  // Extract tarball
-  step++;
-  emit(onEvent, step, totalSteps, 'running', 'Extracting files...');
-  const extractResult = await execShell(
-    containerName,
-    `tar -xf /tmp/update.tar -C ${resolvedDir} --no-same-owner`,
-    { timeout: 60_000 }
-  );
-  if (extractResult.exitCode !== 0) {
-    throw new Error(`Extraction failed: ${extractResult.stderr}`);
-  }
-  await execShell(containerName, 'rm -f /tmp/update.tar', { timeout: 10_000 });
-
-  // Install styled-jsx (required by Next.js standalone but sometimes missing)
-  await execShell(
-    containerName,
-    `cd ${resolvedDir} && mkdir -p node_modules/styled-jsx && ` +
-    `TARBALL=$(curl -sSL https://registry.npmjs.org/styled-jsx/latest | ` +
-    `grep -o '"tarball":"[^"]*"' | head -1 | cut -d'"' -f4) && ` +
-    `[ -n "$TARBALL" ] && curl -sSL "$TARBALL" | tar -xzf - -C node_modules/styled-jsx --strip-components=1 || true`,
-    { timeout: 30_000 }
-  );
   emit(onEvent, step, totalSteps, 'success', 'Files extracted');
 
   // Start service
@@ -448,7 +461,7 @@ const SNAPSHOT_PREFIX = 'pre-update';
  *   3. Snapshot container(s) — rollback point
  *   4. If strategy=migrate: run migration steps while containers are still running
  *   5a. OCI path: stop → rebuild with new image → start → health check
- *   5b. LXD path: apt upgrade → stop service → download tarball → start → health check
+ *   5b. LXD path: CP downloads tarball → stop service → push/extract artifact → start → health check
  *   6. Update installed version in DB
  *   7. Cleanup snapshots
  *
@@ -527,17 +540,14 @@ export async function updateMarketplaceApp(
 
   const preUpdateHooks = manifest.update?.pre_update as UpdateHookStep[] | undefined;
   const postUpdateHooks = manifest.update?.post_update as UpdateHookStep[] | undefined;
-  const hasLXDUpdate = lxdContainers.length > 0;
-  const keepPostUpdateNAT = manifest.containers.some(c => c.network === 'internet')
-    || (manifest.internet?.hosts?.length ?? 0) > 0;
 
   let totalSteps = 1; // preflight
   totalSteps += containerNames.length; // snapshots
   totalSteps += (preUpdateHooks?.length || 0); // pre-update hooks
   totalSteps += migrationStepCount; // migration steps
 
-  // LXD containers: fetch release + apt upgrade + stop service + download + extract + start + health each
-  totalSteps += lxdContainers.length * 7;
+  // LXD containers: fetch metadata + stop service + CP download/stage + extract + start + health each
+  totalSteps += lxdContainers.length * 6;
   // OCI containers: stop + rebuild + start per container
   totalSteps += ociContainers.length * 3;
   // Health checks for OCI containers that have them
@@ -606,13 +616,6 @@ export async function updateMarketplaceApp(
     }
 
     // ── Step 5: Update containers by type ────────────────
-
-    if (hasLXDUpdate) {
-      // Updates need temporary outbound access to fetch release metadata,
-      // tarballs, OS packages, and small runtime package repairs. Restore the
-      // manifest's steady-state NAT policy before returning.
-      await setAppNetworkNAT(appId, true);
-    }
 
     for (let i = 0; i < containerSpecs.length; i++) {
       const spec = containerSpecs[i];
@@ -723,10 +726,6 @@ export async function updateMarketplaceApp(
     }
     emit(onEvent, step, totalSteps, 'success', 'Snapshots cleaned up');
 
-    if (hasLXDUpdate) {
-      await setAppNetworkNAT(appId, keepPostUpdateNAT);
-    }
-
     emit(onEvent, step, totalSteps, 'success',
       `${appId} updated successfully from v${installedVersion} to v${targetVersion}`);
 
@@ -761,14 +760,6 @@ export async function updateMarketplaceApp(
       }
       // Clean up snapshot after rollback
       await deleteSnapshot(name, SNAPSHOT_PREFIX);
-    }
-
-    if (hasLXDUpdate) {
-      try {
-        await setAppNetworkNAT(appId, keepPostUpdateNAT);
-      } catch (natErr) {
-        console.error(`[updater] Failed to restore app network NAT for ${appId}:`, natErr);
-      }
     }
 
     return {

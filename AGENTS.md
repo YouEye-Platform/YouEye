@@ -1,3 +1,21 @@
+## v0.4.13.95 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Keep isolated app updates manager-downloaded
+
+### Changes
+- `control-panel/src/lib/market/updater.ts` — Downloads LXD native app release metadata and `standalone.tar` from Control Panel, pushes the artifact into the app container with `incus file push`, and removes temporary app bridge NAT plus runtime npm/package curls from the update path.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.95`.
+
+### Test Results
+- Focused CP tests passed: `node --test control-panel/tests/scoped-caddy-grants.spec.mjs control-panel/tests/app-network-pihole-dns.spec.mjs control-panel/tests/market-update-plans.spec.mjs control-panel/tests/market-migration-planner.spec.mjs`.
+- CP production build passed for `0.4.13.95`.
+- Artifact verification passed: `standalone.tar` contains top-level `server.js` and embedded package version `0.4.13.95`.
+
+### Notes for Iris
+- Supersedes the `0.4.13.94` temporary-NAT update workaround. App containers should remain isolated during updates; CP is the trusted manager that fetches and stages artifacts.
+
 ## v0.4.3.29 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

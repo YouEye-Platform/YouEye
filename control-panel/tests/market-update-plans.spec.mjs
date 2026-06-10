@@ -32,3 +32,15 @@ test('updater merges durable update-plan gates and records idempotency', () => {
   assert.match(updater, /recordAppliedMigration/);
   assert.match(updater, /source:\s*migration\.source/);
 });
+
+test('LXD app updates are downloaded by Control Panel without app NAT window', () => {
+  const updater = read('src/lib/market/updater.ts');
+
+  assert.match(updater, /downloadReleaseTarball/);
+  assert.match(updater, /pushFileToContainer/);
+  assert.match(updater, /incus', \['file', 'push'/);
+  assert.match(updater, /The app container never receives broad internet\/NAT for code updates/);
+  assert.doesNotMatch(updater, /setAppNetworkNAT/);
+  assert.doesNotMatch(updater, /execShell\(\s*containerName,\s*`curl -sSL/);
+  assert.doesNotMatch(updater, /registry\.npmjs\.org/);
+});
