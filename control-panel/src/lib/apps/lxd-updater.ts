@@ -199,6 +199,8 @@ export async function updateLXDApp(
   emit({ stage: 'starting', message: `Latest version: ${release.version}`, progress: 10 });
 
   if (currentVersion === release.version || (currentVersion !== 'unknown' && !isNewer(release.version, currentVersion))) {
+    emit({ stage: 'starting', message: `Restarting ${serviceName} to apply trust repairs`, container: containerName, progress: 95 });
+    await execShell(containerName, `systemctl restart ${serviceName}`, { timeout: 30_000 });
     emit({ stage: 'completed', message: `${appDef.displayName} is already up to date (${currentVersion})`, progress: 100 });
     return;
   }

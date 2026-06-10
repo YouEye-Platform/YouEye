@@ -25,5 +25,6 @@ test('LXD updater repairs Caddy root CA trust before no-op update exits', () => 
 
   assert.match(updater, /injectCaddyRootCA/);
   assert.match(updater, /Caddy root CA trusted in \$\{containerName\}/);
+  assert.match(updater, /systemctl restart \$\{serviceName\}/);
   assert.ok(updater.indexOf('await injectCaddyRootCA(containerName)') < updater.indexOf('if (currentVersion === release.version'));
 });
