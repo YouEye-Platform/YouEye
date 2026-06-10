@@ -13,9 +13,12 @@
 ### Test Results
 - Focused CP tests passed: `node --test control-panel/tests/settings-app-updates.spec.mjs control-panel/tests/market-canonical-surfaces.spec.mjs control-panel/tests/market-update-manifest-sync.spec.mjs`.
 - CP production build passed for `0.4.13.98`.
+- Release artifact verified: `standalone.tar` contains top-level `server.js` and embedded package version `0.4.13.98`.
+- Live deploy passed: `spine update control` updated CP from `0.4.13.97` to `0.4.13.98`; final `spine status` reports CP `0.4.13.98`, 12 running containers, 0 stopped.
 - TypeScript direct check still fails on pre-existing project-wide errors outside this change (`validate-url`, `suggestions`, `market/page`, service worker typings, shared UI component React type duplication, SSO setup, and system manifest typing).
 
 ### Notes for Iris
+- Forgejo release `cp-artem-v0.4.13.98` is published as release ID `1643` with exact `standalone.tar`.
 - The new Settings route mirrors the existing update orchestrators instead of inventing a second update path. It uses `/settings/api/auth/csrf` from the Settings shell before triggering updates.
 
 ## v0.4.13.97 — artem — 2026-06-10
