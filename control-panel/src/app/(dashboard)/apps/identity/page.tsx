@@ -22,7 +22,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { useTranslations } from 'next-intl';
 
-interface AuthentikUser {
+interface IdentityProviderUser {
   pk: number;
   username: string;
   name: string;
@@ -33,7 +33,7 @@ interface AuthentikUser {
   last_login?: string;
 }
 
-interface AuthentikGroup {
+interface IdentityProviderGroup {
   pk: string;
   name: string;
   is_superuser: boolean;
@@ -49,13 +49,13 @@ interface Stats {
 
 type TabType = 'overview' | 'users' | 'groups';
 
-export default function AuthentikPage() {
-  const t = useTranslations('authentik');
+export default function IdentityProviderPage() {
+  const t = useTranslations('identityProvider');
   const tc = useTranslations('common');
   const [tab, setTab] = useState<TabType>('overview');
   const [stats, setStats] = useState<Stats | null>(null);
-  const [users, setUsers] = useState<AuthentikUser[]>([]);
-  const [groups, setGroups] = useState<AuthentikGroup[]>([]);
+  const [users, setUsers] = useState<IdentityProviderUser[]>([]);
+  const [groups, setGroups] = useState<IdentityProviderGroup[]>([]);
   const [userCount, setUserCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -91,7 +91,7 @@ export default function AuthentikPage() {
 
   const fetchStats = useCallback(async () => {
     try {
-      const res = await fetch('/api/apps/authentik/stats');
+      const res = await fetch('/api/apps/identity/stats');
       if (!res.ok) throw new Error('Failed to fetch stats');
       setStats(await res.json());
     } catch (err) {
@@ -102,7 +102,7 @@ export default function AuthentikPage() {
   const fetchUsers = useCallback(async (search?: string) => {
     try {
       const qs = search ? `?search=${encodeURIComponent(search)}` : '';
-      const res = await fetch(`/api/apps/authentik/users${qs}`);
+      const res = await fetch(`/api/apps/identity/users${qs}`);
       if (!res.ok) throw new Error('Failed to fetch users');
       const data = await res.json();
       setUsers(data.results);
@@ -114,7 +114,7 @@ export default function AuthentikPage() {
 
   const fetchGroups = useCallback(async () => {
     try {
-      const res = await fetch('/api/apps/authentik/groups');
+      const res = await fetch('/api/apps/identity/groups');
       if (!res.ok) throw new Error('Failed to fetch groups');
       const data = await res.json();
       setGroups(data.results);
@@ -143,7 +143,7 @@ export default function AuthentikPage() {
     if (!csrfToken || !newUsername || !newName) return;
     setActionLoading(true);
     try {
-      const res = await fetch('/api/apps/authentik/users', {
+      const res = await fetch('/api/apps/identity/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({ username: newUsername, name: newName, email: newEmail }),
@@ -156,7 +156,7 @@ export default function AuthentikPage() {
 
       // Set password if provided
       if (newPassword) {
-        await fetch(`/api/apps/authentik/users/${user.pk}/password`, {
+        await fetch(`/api/apps/identity/users/${user.pk}/password`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
           body: JSON.stringify({ password: newPassword }),
@@ -180,7 +180,7 @@ export default function AuthentikPage() {
     if (!csrfToken || !confirm(`Delete user "${username}"? This cannot be undone.`)) return;
     setActionLoading(true);
     try {
-      const res = await fetch(`/api/apps/authentik/users/${pk}`, {
+      const res = await fetch(`/api/apps/identity/users/${pk}`, {
         method: 'DELETE',
         headers: { 'X-CSRF-Token': csrfToken },
       });
@@ -197,7 +197,7 @@ export default function AuthentikPage() {
     if (!csrfToken) return;
     setActionLoading(true);
     try {
-      const res = await fetch(`/api/apps/authentik/users/${pk}`, {
+      const res = await fetch(`/api/apps/identity/users/${pk}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({ is_active: !currentlyActive }),
@@ -215,7 +215,7 @@ export default function AuthentikPage() {
     if (!csrfToken || !passwordUserId || !passwordValue) return;
     setActionLoading(true);
     try {
-      const res = await fetch(`/api/apps/authentik/users/${passwordUserId}/password`, {
+      const res = await fetch(`/api/apps/identity/users/${passwordUserId}/password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({ password: passwordValue }),
@@ -238,7 +238,7 @@ export default function AuthentikPage() {
     if (!csrfToken || !newGroupName) return;
     setActionLoading(true);
     try {
-      const res = await fetch('/api/apps/authentik/groups', {
+      const res = await fetch('/api/apps/identity/groups', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({ name: newGroupName, is_superuser: newGroupSuperuser }),
@@ -262,7 +262,7 @@ export default function AuthentikPage() {
     if (!csrfToken || !confirm(`Delete group "${name}"?`)) return;
     setActionLoading(true);
     try {
-      const res = await fetch(`/api/apps/authentik/groups?id=${pk}`, {
+      const res = await fetch(`/api/apps/identity/groups?id=${pk}`, {
         method: 'DELETE',
         headers: { 'X-CSRF-Token': csrfToken },
       });
@@ -649,7 +649,7 @@ export default function AuthentikPage() {
                             {group.users_obj?.length ?? group.num_pk} members
                           </td>
                           <td className="px-4 py-2 text-right">
-                            {group.name !== 'authentik Admins' && (
+                            {group.name !== 'admin' && (
                               <Button
                                 size="sm"
                                 variant="ghost"

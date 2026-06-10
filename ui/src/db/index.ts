@@ -32,7 +32,7 @@ export async function ensureSchema() {
     await queryClient`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        authentik_id TEXT UNIQUE,
+        identity_id TEXT UNIQUE,
         username TEXT UNIQUE,
         name TEXT,
         email TEXT UNIQUE,
@@ -43,6 +43,20 @@ export async function ensureSchema() {
       )`;
 
     // Add new user identity columns (safe on existing installs)
+    await queryClient`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'users' AND column_name = 'authentik_id'
+        ) AND NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'users' AND column_name = 'identity_id'
+        ) THEN
+          ALTER TABLE users RENAME COLUMN authentik_id TO identity_id;
+        END IF;
+      END $$`;
+    await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS identity_id TEXT UNIQUE`;
     await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT`;
     await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT`;
     await queryClient`ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT`;

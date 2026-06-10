@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
   const errorParam = request.nextUrl.searchParams.get('error');
   const loginPath = settingsFlow ? '/settings/login' : '/login';
 
-  // Handle Authentik errors
+  // Handle identity provider errors
   if (errorParam) {
     const desc = request.nextUrl.searchParams.get('error_description') || errorParam;
     console.error(`OAuth2 error: ${desc}`);

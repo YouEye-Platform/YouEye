@@ -143,14 +143,14 @@ Each component is versioned and released independently.
 | Component | Version |
 |-----------|---------|
 | Spine | 0.4.2.9 |
-| Control Panel | 0.4.13.98 |
-| UI | 0.4.3.29 |
-| Wiki | 0.4.0.9 |
-| Search | 0.4.0.18 |
-| Notes | 0.4.0.13 |
-| Cinema | 0.4.0.11 |
-| Weather | 0.4.0.9 |
-| Translate | 0.4.0.9 |
+| Control Panel | 0.4.13.99 |
+| UI | 0.4.3.30 |
+| Wiki | 0.4.0.10 |
+| Search | 0.4.0.19 |
+| Notes | 0.4.0.14 |
+| Cinema | 0.4.0.12 |
+| Weather | 0.4.0.10 |
+| Translate | 0.4.0.10 |
 
 ## Related Repositories
 

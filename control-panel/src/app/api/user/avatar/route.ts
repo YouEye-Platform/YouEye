@@ -4,7 +4,7 @@
  * POST   /api/user/avatar — upload avatar to UI via bridge
  * DELETE /api/user/avatar — remove avatar from UI via bridge
  *
- * Available to all authenticated users. YouEye ID does not store profile
+ * Available to all authenticated users. The identity provider does not store profile
  * images; the UI database is the durable user-facing profile store.
  */
 

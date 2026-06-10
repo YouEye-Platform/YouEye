@@ -37,8 +37,8 @@ function getJWTSecret(): Uint8Array {
 export interface SessionPayload extends JWTPayload {
   /** Internal database user ID (UUID) */
   userId: string;
-  /** Authentik user ID (sub claim) — used for app-level user identity */
-  authentikId: string;
+  /** identity provider user ID (sub claim) — used for app-level user identity */
+  identityId: string;
   /** Display username */
   username: string;
   /** Display name */
@@ -47,14 +47,14 @@ export interface SessionPayload extends JWTPayload {
   email: string;
   /** Whether user is an admin (in 'authentik Admins' group) */
   isAdmin: boolean;
-  /** Authentik group memberships */
+  /** identity provider group memberships */
   groups: string[];
 }
 
 /** Create a signed JWT session token */
 export async function createSession(payload: {
   userId: string;
-  authentikId: string;
+  identityId: string;
   username: string;
   name: string;
   email: string;

@@ -45,7 +45,7 @@ export async function ensureIdentityAdminUser(params: {
     password: params.password,
     name: params.name || params.username,
     email: params.email,
-    groups: ['youeye-users', 'admin', 'authentik Admins'],
+    groups: ['youeye-users', 'admin'],
     isAdmin: true,
   });
 }
@@ -62,7 +62,6 @@ export async function configureControlPanelIdentitySSO(params: {
   });
 
   await spineClient.setControlSSO({
-    authentik_url: identity.externalUrl,
     identity_url: identity.externalUrl,
     client_id: client.clientId,
     client_secret: client.clientSecret,
@@ -88,9 +87,7 @@ export async function configureUIIdentitySSO(params: {
   const jwtSecret = params.jwtSecret || secret(48);
 
   await spineClient.setUISSO({
-    authentik_url: identity.externalUrl,
     identity_url: identity.externalUrl,
-    authentik_internal_url: 'http://localhost:3002',
     identity_internal_url: 'http://localhost:3002',
     client_id: client.clientId,
     client_secret: client.clientSecret,

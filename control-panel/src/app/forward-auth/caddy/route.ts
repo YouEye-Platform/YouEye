@@ -25,11 +25,5 @@ export async function GET(request: NextRequest) {
   response.headers.set('X-YouEye-Email', info.email);
   response.headers.set('X-YouEye-Name', info.name);
   response.headers.set('X-YouEye-Uid', info.sub);
-  response.headers.set('X-Authentik-Username', info.preferred_username);
-  response.headers.set('X-Authentik-Groups', info.groups.join(','));
-  response.headers.set('X-Authentik-Email', info.email);
-  response.headers.set('X-Authentik-Name', info.name);
-  response.headers.set('X-Authentik-Uid', info.sub);
   return response;
 }
-

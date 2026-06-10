@@ -335,7 +335,7 @@ export function IconCreator({
             ))}
           </div>
           <p className="text-[10px] text-muted-foreground">
-            Used as favicon across UI, Control Panel, and Authentik login.
+            Used as favicon across UI, Control Panel, and the sign-in screen.
           </p>
         </div>
       </div>

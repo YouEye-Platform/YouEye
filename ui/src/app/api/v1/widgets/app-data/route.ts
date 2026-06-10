@@ -45,7 +45,7 @@ export async function GET(request: Request) {
 
     const response = await fetch(`${app.containerUrl}${endpoint}`, {
       headers: {
-        "X-YouEye-User": session.authentikId ?? session.userId,
+        "X-YouEye-User": session.identityId ?? session.userId,
         "X-YouEye-Username": session.username,
       },
       signal: controller.signal,

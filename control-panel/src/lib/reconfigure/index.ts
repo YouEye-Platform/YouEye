@@ -29,7 +29,7 @@ export interface ReconfigureRequest {
   domain?: string;
   subdomains?: Record<string, string>;
   site_name_style?: Record<string, unknown>;
-  authentik_name?: string;
+  identity_name?: string;
 }
 
 export interface ReconfigureEvent {
@@ -518,8 +518,12 @@ export async function reconfigure(
     subdomains: newSubdomains,
     setup_completed: true,
   };
-  if (req.authentik_name) {
-    patchData.authentik_name = req.authentik_name;
+  if (req.identity_name) {
+    patchData.identity = {
+      ...(typeof currentConfig.identity === 'object' && currentConfig.identity ? currentConfig.identity : {}),
+      provider: 'youeye-id',
+      name: req.identity_name,
+    };
   }
   await settingsService.setRaw(patchData);
   onEvent({ step: 'yaml', status: 'done', message: 'Site configuration updated' });
@@ -721,8 +725,8 @@ async function getExistingUISecrets(): Promise<{
       }
     }
     return {
-      clientId: vars.YOUEYE_ID_CLIENT_ID || vars.AUTHENTIK_CLIENT_ID || 'youeye-ui',
-      clientSecret: vars.YOUEYE_ID_CLIENT_SECRET || vars.AUTHENTIK_CLIENT_SECRET || '',
+      clientId: vars.IDENTITY_CLIENT_ID || 'youeye-ui',
+      clientSecret: vars.IDENTITY_CLIENT_SECRET || '',
       jwtSecret: vars.JWT_SECRET || '',
     };
   } catch {

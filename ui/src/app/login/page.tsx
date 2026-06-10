@@ -1,7 +1,7 @@
 /**
  * Login Page
  *
- * Redirects immediately to Authentik SSO unless there's an error param.
+ * Redirects immediately to identity SSO unless there's an error param.
  * Error param prevents infinite redirect loops when SSO callback fails.
  */
 
@@ -36,6 +36,6 @@ export default async function LoginPage({
     );
   }
 
-  // Happy path — go directly to Authentik
+  // Happy path — go directly to identity sign-in
   redirect("/api/auth/sso");
 }

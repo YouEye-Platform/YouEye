@@ -6,7 +6,7 @@
  * Called by YE-UI when a user changes their language in settings.
  * Triggers the full language propagation pipeline:
  *   1. Update youeye.yaml system language
- *   2. Sync Authentik user locale
+ *   2. Sync identity provider user locale
  *   3. Update language env vars on all app containers
  *
  * The response returns immediately with the count of apps being updated.
@@ -44,7 +44,7 @@ export async function PATCH(request: NextRequest) {
       authentikUserId ? Number(authentikUserId) : undefined
     );
 
-    // Wait briefly for system + authentik (fast operations)
+    // Wait briefly for system + identity provider (fast operations)
     // Then respond while apps continue updating
     const result = await Promise.race([
       resultPromise,
@@ -57,7 +57,7 @@ export async function PATCH(request: NextRequest) {
         ok: true,
         locale,
         systemUpdated: result.systemUpdated,
-        authentikUpdated: result.authentikUpdated,
+        identityUpdated: result.identityUpdated,
         appsUpdated: result.appsUpdated,
         appsFailed: result.appsFailed,
         propagatingToApps: 0,

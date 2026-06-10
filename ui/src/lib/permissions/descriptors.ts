@@ -8,8 +8,8 @@ export interface PermissionDescriptor {
 
 const KNOWN_PERMISSIONS: Record<string, Omit<PermissionDescriptor, "permission">> = {
   "identity:youeye-id:sign-in": {
-    title: "Sign in with YouEye ID",
-    description: "Lets this app use your YouEye ID profile to sign you in.",
+    title: "Sign in with your identity provider",
+    description: "Lets this app use your account profile to sign you in.",
     category: "identity",
     risk: "low",
   },

@@ -2,31 +2,30 @@
  * OAuth2 Client
  *
  * Handles the OAuth2 Authorization Code flow for SSO login.
- * YouEye-UI supports YouEye ID first. Authentik env names remain temporary
- * compatibility aliases during the migration.
+ * YouEye UI uses the configured white-label identity provider.
  *
  * Flow:
  * 1. User visits https://yourdomain.com
  * 2. Middleware redirects unauthenticated user to /login
- * 3. Login page redirects to /api/auth/sso → Authentik authorize URL
- * 4. User authenticates in Authentik
- * 5. Authentik redirects back to /api/auth/callback with code
+ * 3. Login page redirects to /api/auth/sso → identity authorize URL
+ * 4. User authenticates with the identity provider
+ * 5. The identity provider redirects back to /api/auth/callback with code
  * 6. We exchange code for tokens, extract user info, create JWT session
  *
  * Environment Variables Required:
- * - YOUEYE_ID_URL: External YouEye ID URL
- * - YOUEYE_ID_INTERNAL_URL: Internal/proxy URL for token/userinfo calls
- * - YOUEYE_ID_CLIENT_ID: OAuth2 client ID
- * - YOUEYE_ID_CLIENT_SECRET: OAuth2 client secret
+ * - IDENTITY_URL: External identity URL
+ * - IDENTITY_INTERNAL_URL: Internal/proxy URL for token/userinfo calls
+ * - IDENTITY_CLIENT_ID: OAuth2 client ID
+ * - IDENTITY_CLIENT_SECRET: OAuth2 client secret
  */
 
 /** OAuth2 configuration from environment variables */
 export function getOAuthConfig() {
-  const clientId = process.env.YOUEYE_ID_CLIENT_ID || process.env.AUTHENTIK_CLIENT_ID || "";
-  const clientSecret = process.env.YOUEYE_ID_CLIENT_SECRET || process.env.AUTHENTIK_CLIENT_SECRET || "";
-  const identityUrl = process.env.YOUEYE_ID_URL || process.env.AUTHENTIK_URL || "";
+  const clientId = process.env.IDENTITY_CLIENT_ID || "";
+  const clientSecret = process.env.IDENTITY_CLIENT_SECRET || "";
+  const identityUrl = process.env.IDENTITY_URL || "";
   // Internal URL for server→server calls (bypasses TLS/self-signed cert issues)
-  const internalUrl = process.env.YOUEYE_ID_INTERNAL_URL || process.env.AUTHENTIK_INTERNAL_URL || identityUrl;
+  const internalUrl = process.env.IDENTITY_INTERNAL_URL || identityUrl;
 
   return {
     clientId,
@@ -80,7 +79,7 @@ export async function exchangeCodeForToken(
   return res.json();
 }
 
-/** Fetch user profile from Authentik userinfo endpoint */
+/** Fetch user profile from the identity userinfo endpoint */
 export async function fetchUserInfo(accessToken: string): Promise<{
   sub: string;
   preferred_username: string;

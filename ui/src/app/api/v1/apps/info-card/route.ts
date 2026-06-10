@@ -70,7 +70,7 @@ export async function POST(request: Request) {
 
     const response = await fetch(cardUrl, {
       headers: {
-        "X-YouEye-User": session.authentikId ?? session.userId,
+        "X-YouEye-User": session.identityId ?? session.userId,
         "X-YouEye-Internal": "true",
       },
       signal: controller.signal,

@@ -361,7 +361,7 @@ export function IconPickerBranding({
         </div>
         <div className="text-xs text-muted-foreground">
           <p className="font-medium text-foreground">Server Icon</p>
-          <p>Used as favicon across UI, Control Panel, and Authentik login</p>
+          <p>Used as favicon across UI, Control Panel, and sign-in screen</p>
         </div>
       </div>
 

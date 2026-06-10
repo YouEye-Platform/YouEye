@@ -38,7 +38,7 @@ interface SetupRequest {
   admin_password: string;
   site_name_style?: Record<string, unknown>;
   icon_config?: Record<string, unknown>;
-  authentik_name?: string;
+  identity_name?: string;
   /** TLS mode chosen during setup (letsencrypt, selfsigned, upload) */
   tls_choice?: string;
   /** If set, only run this specific step (retry mode) */
@@ -175,13 +175,12 @@ export async function POST(request: NextRequest) {
         // ── Step 1: Save config ──────────────────────────────────────
         if (shouldRunStep('config')) {
           stepUpdate('config', 'running');
-          const authentikName = body.authentik_name || `${body.site_name || 'YouEye'} ID`;
+          const identityName = body.identity_name || `${body.site_name || 'YouEye'} ID`;
           await settingsService.setRaw({
             site_name: body.site_name || 'YouEye',
             domain: body.domain,
             subdomains: body.subdomains,
-            identity: { provider: 'youeye-id' },
-            authentik_name: authentikName,
+            identity: { provider: 'youeye-id', name: identityName },
             setup_completed: false,
           });
           await saveStepState('config', 'done');
@@ -225,7 +224,7 @@ export async function POST(request: NextRequest) {
 
           if (!hasError || retryStep === 'caddy') {
             if (!subs.identity) {
-              throw new Error('YouEye ID subdomain is missing. Set subdomains.identity before provisioning.');
+              throw new Error('Identity provider subdomain is missing. Set subdomains.identity before provisioning.');
             }
 
             // Route mappings — setContainerRoute is already idempotent (Caddy overwrites existing routes)
@@ -255,7 +254,7 @@ export async function POST(request: NextRequest) {
               const identity = await getIdentityConfig();
               await caddy.ensureIdentityRoute(`${subs.identity}.${domain}`, identity.containerName, identity.port);
             } catch (err) {
-              console.error('Failed to create YouEye ID route:', err);
+              console.error('Failed to create identity provider route:', err);
               routeErrors.push(`youeye-id: ${err instanceof Error ? err.message : String(err)}`);
             }
 
@@ -350,7 +349,7 @@ export async function POST(request: NextRequest) {
           stepUpdate('dns', 'done', 'Already completed');
         }
 
-        // ── Step 3: Admin user in YouEye ID (idempotent) ─────────────
+        // ── Step 3: Admin user in identity provider (idempotent) ─────
         if (shouldRunStep('admin')) {
           stepUpdate('admin', 'running');
 
@@ -361,7 +360,7 @@ export async function POST(request: NextRequest) {
             email: body.admin_email,
           });
           await saveStepState('admin', 'done');
-          stepUpdate('admin', 'done', `YouEye ID admin user "${body.admin_username}" is ready`);
+          stepUpdate('admin', 'done', `Identity provider admin user "${body.admin_username}" is ready`);
         } else {
           stepUpdate('admin', 'done', 'Already completed');
         }
@@ -377,7 +376,7 @@ export async function POST(request: NextRequest) {
             settingsExternalUrl: `https://${domain}/settings`,
           });
           await saveStepState('sso_control', 'done');
-          stepUpdate('sso_control', 'done', 'YouEye ID configured for Control Panel');
+          stepUpdate('sso_control', 'done', 'Identity provider configured for Control Panel');
         } else {
           stepUpdate('sso_control', 'done', 'Already completed');
         }
@@ -463,7 +462,7 @@ export async function POST(request: NextRequest) {
                 }
 
                 await saveStepState('sso_ui', 'done');
-                stepUpdate('sso_ui', 'done', 'UI enabled and YouEye ID configured');
+                stepUpdate('sso_ui', 'done', 'UI enabled and identity provider configured');
             } catch (err) {
               console.error('UI SSO setup failed:', err);
               await saveStepState('sso_ui', 'error');

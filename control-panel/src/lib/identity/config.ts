@@ -14,18 +14,18 @@ export interface IdentityConfig {
 
 function normalizeSubdomain(value: unknown): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error('YouEye ID subdomain is not configured. Set subdomains.identity in setup or repair config.');
+    throw new Error('Identity provider subdomain is not configured. Set subdomains.identity in setup or repair config.');
   }
   const subdomain = value.trim().replace(/^\.+|\.+$/g, '');
   if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(subdomain)) {
-    throw new Error(`Invalid YouEye ID subdomain "${value}". Use a single DNS label.`);
+    throw new Error(`Invalid identity provider subdomain "${value}". Use a single DNS label.`);
   }
   return subdomain;
 }
 
 function normalizeDomain(value: unknown): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error('Platform domain is not configured. YouEye ID cannot derive its issuer.');
+    throw new Error('Platform domain is not configured. The identity provider cannot derive its issuer.');
   }
   return value.trim().replace(/\.+$/g, '');
 }

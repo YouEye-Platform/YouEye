@@ -1,14 +1,12 @@
 /**
  * Identity Provider Settings API
  *
- * POST /api/settings/identity-provider — Update the Authentik display name.
- * Updates youeye.yaml and the Authentik brand title.
+ * POST /api/settings/identity-provider — Update the identity provider display name.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { spineClient } from '@/lib/spine/client';
-import { listBrands, updateBrand } from '@/lib/authentik/client';
+import { settingsService } from '@/lib/settings';
 
 export async function POST(request: NextRequest) {
   const session = await getSession();
@@ -17,28 +15,23 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const authentikName = body.authentik_name;
+  const identityName = body.identity_name;
 
-  if (!authentikName || typeof authentikName !== 'string' || authentikName.trim().length === 0) {
-    return NextResponse.json({ error: 'authentik_name is required' }, { status: 400 });
+  if (!identityName || typeof identityName !== 'string' || identityName.trim().length === 0) {
+    return NextResponse.json({ error: 'identity_name is required' }, { status: 400 });
   }
 
-  // 1. Save to youeye.yaml
-  await spineClient.patchConfig({ authentik_name: authentikName.trim() });
-
-  // 2. Update Authentik brand title
-  try {
-    const brands = await listBrands();
-    const defaultBrand = brands.results?.find(b => b.default) || brands.results?.[0];
-    if (defaultBrand) {
-      await updateBrand(defaultBrand.brand_uuid, {
-        branding_title: authentikName.trim(),
-      });
-    }
-  } catch (err) {
-    console.error('Failed to update Authentik brand title:', err);
-    // Non-fatal — config is saved, Authentik branding will catch up on next deploy
-  }
+  const raw = await settingsService.getRaw();
+  const identity = raw.identity && typeof raw.identity === 'object'
+    ? raw.identity as Record<string, unknown>
+    : {};
+  await settingsService.setRaw({
+    identity: {
+      ...identity,
+      provider: 'youeye-id',
+      name: identityName.trim(),
+    },
+  });
 
   return NextResponse.json({ success: true });
 }

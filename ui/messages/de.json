@@ -307,7 +307,7 @@
   },
   "login": {
     "signInDescription": "Melden Sie sich bei Ihrem Dashboard an",
-    "signInWithAuthentik": "Mit Authentik anmelden",
+    "signInWithIdentity": "Anmelden",
     "ssoNotConfigured": "SSO ist nicht konfiguriert. Bitte kontaktieren Sie Ihren Administrator."
   },
   "appDrawer": {
@@ -405,7 +405,7 @@
     "installTitle": "{name} installieren",
     "installDescription": "Konfigurieren und installieren Sie {name} auf Ihrer YouEye-Plattform.",
     "subdomain": "Subdomain",
-    "enableSSO": "SSO aktivieren (Einmalanmeldung via Authentik)",
+    "enableSSO": "SSO aktivieren (Anmeldung über den Identitätsanbieter)",
     "resources": "Ressourcen: {memory} RAM, {cpu} CPU",
     "url": "URL: https://{subdomain}.{domain}",
     "uninstallConfirm": "{name} deinstallieren?",

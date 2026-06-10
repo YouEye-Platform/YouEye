@@ -1,10 +1,10 @@
 /**
  * Identity Users API
- * GET /api/apps/authentik/users — List users
- * POST /api/apps/authentik/users — Create user
+ * GET /api/apps/identity/users — List users
+ * POST /api/apps/identity/users — Create user
  *
  * The URL is kept for compatibility with the current Settings UI. During the
- * YouEye ID migration it is backed by the provider-neutral identity layer.
+ * It is backed by the provider-neutral identity layer.
  */
 
 import { NextRequest, NextResponse } from 'next/server';

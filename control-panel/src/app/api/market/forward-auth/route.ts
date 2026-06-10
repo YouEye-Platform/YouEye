@@ -4,7 +4,7 @@
  *
  * Body: { appId: string, enabled: boolean }
  *
- * When enabling: adds a YouEye ID forward-auth handler to the Caddy route.
+ * When enabling: adds an identity provider forward-auth handler to the Caddy route.
  * When disabling: strips the forward-auth handler from the Caddy route.
  */
 

@@ -10,13 +10,13 @@ import { eq } from "drizzle-orm";
 import { db, ensureSchema } from "@/db";
 import { users } from "@/db/schema";
 
-/** Find a user by their Authentik subject ID */
-export async function findUserByAuthentikId(authentikId: string) {
+/** Find a user by their identity provider subject ID */
+export async function findUserByIdentityId(identityId: string) {
   await ensureSchema();
   const result = await db
     .select()
     .from(users)
-    .where(eq(users.authentikId, authentikId))
+    .where(eq(users.identityId, identityId))
     .limit(1);
   return result[0] ?? null;
 }
@@ -44,13 +44,13 @@ export async function findUserByUsername(username: string) {
 }
 
 type ExistingUser = NonNullable<
-  Awaited<ReturnType<typeof findUserByAuthentikId>>
+  Awaited<ReturnType<typeof findUserByIdentityId>>
 >;
 
 async function updateUserFromSSO(
   existing: ExistingUser,
   data: {
-    authentikId: string;
+    identityId: string;
     username: string;
     name: string;
     email: string;
@@ -62,7 +62,7 @@ async function updateUserFromSSO(
 ) {
   const preservedAdmin = data.isAdmin || existing.isAdmin;
   const updateFields: Record<string, unknown> = {
-    authentikId: data.authentikId,
+    identityId: data.identityId,
     username: data.username,
     name: data.name,
     email: data.email,
@@ -90,7 +90,7 @@ async function updateUserFromSSO(
  * First user to sign in automatically becomes admin.
  */
 export async function upsertUser(data: {
-  authentikId: string;
+  identityId: string;
   username: string;
   name: string;
   email: string;
@@ -99,7 +99,7 @@ export async function upsertUser(data: {
   firstName?: string | null;
   lastName?: string | null;
 }) {
-  const existing = await findUserByAuthentikId(data.authentikId);
+  const existing = await findUserByIdentityId(data.identityId);
 
   if (existing) {
     return updateUserFromSSO(existing, data);
@@ -132,7 +132,7 @@ export async function upsertUser(data: {
   const [newUser] = await db
     .insert(users)
     .values({
-      authentikId: data.authentikId,
+      identityId: data.identityId,
       username: data.username,
       name: data.name,
       firstName: data.firstName ?? null,

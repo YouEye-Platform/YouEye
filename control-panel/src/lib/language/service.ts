@@ -3,7 +3,7 @@
  *
  * Handles cascading language changes across the platform:
  *   1. Update youeye.yaml (system language via SettingsService)
- *   2. Sync Authentik user locale
+ *   2. Sync identity provider user locale
  *   3. Update app container env vars for language-supporting apps
  *
  * All app operations are non-blocking — they run asynchronously
@@ -17,7 +17,7 @@ import type { AppManifest } from '../market/types';
 
 export interface LanguagePropagationResult {
   systemUpdated: boolean;
-  authentikUpdated: boolean;
+  identityUpdated: boolean;
   appsUpdated: string[];
   appsFailed: string[];
   errors: string[];
@@ -38,8 +38,8 @@ const FULL_LANG_NAMES: Record<string, string> = {
   fr: 'french',
 };
 
-/** Map ISO 639-1 code to Authentik locale format */
-const AUTHENTIK_LOCALE_MAP: Record<string, string> = {
+/** Map ISO 639-1 code to identity provider locale format */
+const IDENTITY_LOCALE_MAP: Record<string, string> = {
   en: 'en',
   ru: 'ru',
   es: 'es',
@@ -47,33 +47,33 @@ const AUTHENTIK_LOCALE_MAP: Record<string, string> = {
   fr: 'fr',
 };
 
-// ─── Authentik Locale Sync ────────────────────────────────────
+// ─── Identity Provider Locale Sync ────────────────────────────
 
 /**
- * Update a user's locale in Authentik.
- * Uses the Authentik API v3 PATCH /core/users/{pk}/ with settings.locale.
+ * Update a user's locale in the identity provider.
+ * Uses the upstream API v3 PATCH /core/users/{pk}/ with settings.locale.
  */
-async function syncAuthentikUserLocale(
-  authentikUserId: number,
+async function syncIdentityUserLocale(
+  identityUserId: number,
   locale: string
 ): Promise<boolean> {
   try {
     const { updateUser } = await import('../authentik/client');
-    // Authentik stores locale in the user's attributes/settings
+    // The upstream provider stores locale in the user's attributes/settings.
     // The PATCH endpoint accepts arbitrary fields including settings
-    const authentikLocale = AUTHENTIK_LOCALE_MAP[locale] || locale;
-    await updateUser(authentikUserId, {
-      // Authentik uses 'attributes' for custom user data
+    const identityLocale = IDENTITY_LOCALE_MAP[locale] || locale;
+    await updateUser(identityUserId, {
+      // The provider uses 'attributes' for custom user data.
     } as Record<string, unknown>);
 
-    // Directly call Authentik API with settings field
+    // Directly call the provider API with settings field.
     const { spineClient } = await import('../spine/client');
     const { getContainerIP } = await import('../incus/container-ip');
     const creds = await spineClient.getAuthentikCredentials();
     const ip = await getContainerIP('youeye-authentik');
     const baseUrl = ip ? `http://${ip}:9000` : creds.internal_url;
 
-    const res = await fetch(`${baseUrl}/api/v3/core/users/${authentikUserId}/`, {
+    const res = await fetch(`${baseUrl}/api/v3/core/users/${identityUserId}/`, {
       method: 'PATCH',
       headers: {
         'Authorization': `Bearer ${creds.bootstrap_token}`,
@@ -81,14 +81,14 @@ async function syncAuthentikUserLocale(
       },
       body: JSON.stringify({
         attributes: {
-          settings: { locale: authentikLocale },
+          settings: { locale: identityLocale },
         },
       }),
     });
 
     return res.ok;
   } catch (err) {
-    console.error('[LanguageService] Authentik locale sync failed:', err);
+    console.error('[LanguageService] Identity provider locale sync failed:', err);
     return false;
   }
 }
@@ -270,18 +270,18 @@ function formatLangValue(lang: string, format: 'iso639' | 'full'): string {
  *
  * Steps:
  *   1. Update youeye.yaml via SettingsService
- *   2. Sync Authentik user locale (if userId provided)
+ *   2. Sync identity provider user locale (if userId provided)
  *   3. Update all language-supporting app containers
  *
  * Returns immediately for the UI — app updates run in the background.
  */
 export async function propagateLanguageToAll(
   locale: string,
-  authentikUserId?: number
+  identityUserId?: number
 ): Promise<LanguagePropagationResult> {
   const result: LanguagePropagationResult = {
     systemUpdated: false,
-    authentikUpdated: false,
+    identityUpdated: false,
     appsUpdated: [],
     appsFailed: [],
     errors: [],
@@ -295,12 +295,12 @@ export async function propagateLanguageToAll(
     result.errors.push(`System language update failed: ${err}`);
   }
 
-  // Step 2: Sync Authentik locale (non-blocking)
-  if (authentikUserId) {
+  // Step 2: Sync identity provider locale (non-blocking)
+  if (identityUserId) {
     try {
-      result.authentikUpdated = await syncAuthentikUserLocale(authentikUserId, locale);
+      result.identityUpdated = await syncIdentityUserLocale(identityUserId, locale);
     } catch (err) {
-      result.errors.push(`Authentik sync failed: ${err}`);
+      result.errors.push(`Identity provider sync failed: ${err}`);
     }
   }
 

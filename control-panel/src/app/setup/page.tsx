@@ -63,7 +63,7 @@ export default function SetupPage() {
     identity: 'id',
     dns: 'dns',
   });
-  const [authentikName, setAuthentikName] = useState('');
+  const [identityName, setIdentityName] = useState('');
   const [customTld, setCustomTld] = useState('');
   const [tlsChoice, setTlsChoice] = useState<TlsChoice>('selfsigned');
   const [acmeCertIssued, setAcmeCertIssued] = useState(false);
@@ -220,7 +220,7 @@ export default function SetupPage() {
           admin_password: adminPassword,
           site_name_style: nameStyle,
           icon_config: iconConfig,
-          authentik_name: authentikName || `${siteName} ID`,
+          identity_name: identityName || `${siteName} ID`,
           language: selectedLanguage || 'en',
           tls_choice: tlsChoice,
         }),
@@ -274,7 +274,7 @@ export default function SetupPage() {
     } catch (err) {
       setSetupError(err instanceof Error ? err.message : 'Setup failed');
     }
-  }, [siteName, domain, subdomains, nameStyle, iconConfig, adminUsername, adminEmail, adminPassword, authentikName, adminFirstName, adminLastName, selectedLanguage, t]);
+  }, [siteName, domain, subdomains, nameStyle, iconConfig, adminUsername, adminEmail, adminPassword, identityName, adminFirstName, adminLastName, selectedLanguage, t]);
 
   // Start provisioning when we enter step 4
   const provisioningStarted = useRef(false);
@@ -366,8 +366,8 @@ export default function SetupPage() {
             setCustomTld={setCustomTld}
             subdomains={subdomains}
             setSubdomains={(v) => setSubdomains(prev => ({ ...prev, ...v }))}
-            authentikName={authentikName}
-            setAuthentikName={setAuthentikName}
+            identityName={identityName}
+            setIdentityName={setIdentityName}
             tlsChoice={tlsChoice}
             setTlsChoice={setTlsChoice}
             acmeCertIssued={acmeCertIssued}

@@ -224,7 +224,7 @@ export async function applyIntegration(
   emit(onEvent, step, totalSteps, 'success', 'Integration manifest loaded');
 
   step++;
-  emit(onEvent, step, totalSteps, 'running', 'Creating YouEye ID OAuth client...');
+  emit(onEvent, step, totalSteps, 'running', 'Creating identity provider OAuth client...');
   const identity = await getIdentityProviderConfig();
   if ((integration.type === 'identity' || integration.sso) && contextManifest.sso) {
     await ensureIdentityGatewayProxy(contextManifest, targetMeta);

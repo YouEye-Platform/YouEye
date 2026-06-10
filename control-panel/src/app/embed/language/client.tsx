@@ -75,7 +75,7 @@ export function LanguageEmbedClient() {
       <div style={{ marginBottom: 12 }}>
         <div className="embed-title" style={{ fontSize: 14 }}>System Default Language</div>
         <div className="embed-subtitle">
-          Sets the default language for all users who haven&apos;t chosen their own. Also propagates to Authentik and app containers.
+          Sets the default language for all users who haven&apos;t chosen their own. Also propagates to identity provider and app containers.
         </div>
       </div>
 

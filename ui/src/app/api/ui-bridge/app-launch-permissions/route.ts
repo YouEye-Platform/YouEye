@@ -1,7 +1,7 @@
 /**
  * UI Bridge — App launch permission preview/grant endpoint.
  *
- * Called by Control Panel's YouEye ID authorize page so the first-launch
+ * Called by Control Panel's identity provider authorize page so the first-launch
  * identity consent can show runtime app permissions without CP owning them.
  */
 
@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getBridgeToken } from "@/lib/admin/bridge-client";
 import { getApp } from "@/lib/db/queries/app-management";
 import { denyPermission, getPermissionDecision, grantPermission } from "@/lib/db/queries/permissions";
-import { findUserByAuthentikId, findUserByEmail, findUserById, findUserByUsername } from "@/lib/db/queries/users";
+import { findUserByIdentityId, findUserByEmail, findUserById, findUserByUsername } from "@/lib/db/queries/users";
 import { describePermission } from "@/lib/permissions/descriptors";
 import { normalizeAppSurfaces } from "@/lib/surfaces/normalize";
 import { collectInternetPermissions } from "@/lib/internet/scopes";
@@ -91,7 +91,7 @@ async function resolveUiUser(input: {
   email?: string;
 }) {
   if (input.identityUserId) {
-    const user = await findUserByAuthentikId(input.identityUserId);
+    const user = await findUserByIdentityId(input.identityUserId);
     if (user) return user;
     const legacyUser = await findUserById(input.identityUserId);
     if (legacyUser) return legacyUser;

@@ -9,8 +9,8 @@ import type { OrphanResource } from '@/lib/market/types';
 
 const TYPE_LABELS: Record<string, string> = {
   'caddy-route': 'Caddy Route',
-  'authentik-app': 'Authentik App',
-  'authentik-provider': 'Authentik Provider',
+  'authentik-app': 'identity provider App',
+  'authentik-provider': 'identity provider Provider',
   'postgres-db': 'PostgreSQL Database',
   'dns-entry': 'DNS Entry',
   'volume-dir': 'Volume Directory',

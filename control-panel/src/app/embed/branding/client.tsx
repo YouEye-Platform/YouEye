@@ -516,7 +516,7 @@ export function BrandingEmbedClient() {
               ))}
             </div>
             <p className="embed-muted" style={{ fontSize: 10, margin: 0 }}>
-              Used as favicon across UI, Control Panel, and Authentik login.
+              Used as favicon across UI, Control Panel, and the sign-in screen.
             </p>
           </div>
         </div>

@@ -29,14 +29,14 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'locale is required' }, { status: 400 });
   }
 
-  // Propagate: system + apps. YouEye ID does not store per-user language in
-  // Authentik attributes; the UI profile path persists user-facing language.
+  // Propagate: system + apps. The identity provider does not store per-user language in
+  // identity provider attributes; the UI profile path persists user-facing language.
   const result = await propagateLanguageToAll(locale);
 
   return NextResponse.json({
     success: true,
     systemUpdated: result.systemUpdated,
-    authentikUpdated: result.authentikUpdated,
+    identityUpdated: result.identityUpdated,
     appsUpdated: result.appsUpdated,
     appsFailed: result.appsFailed,
   });

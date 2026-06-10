@@ -26,19 +26,19 @@ import {
 
 /**
  * Users table — stores authenticated users.
- * Users are created on first SSO login from Authentik.
+ * Users are created on first SSO login from the configured identity provider.
  */
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
-  /** Authentik subject ID (unique per user in Authentik) */
-  authentikId: text("authentik_id").unique(),
-  /** Username from Authentik */
+  /** Identity provider subject ID (unique per user in the provider) */
+  identityId: text("identity_id").unique(),
+  /** Username from the identity provider */
   username: text("username").unique(),
   /** Display name */
   name: text("name"),
-  /** First name (synced from Authentik given_name claim) */
+  /** First name (synced from the identity provider given_name claim) */
   firstName: text("first_name"),
-  /** Last name (synced from Authentik family_name claim) */
+  /** Last name (synced from the identity provider family_name claim) */
   lastName: text("last_name"),
   /** User bio (free text) */
   bio: text("bio"),
@@ -122,7 +122,7 @@ export const apps = pgTable("apps", {
   displayOrder: integer("display_order").default(0),
   /** SHA-256 hash of the app's gateway token (for app-to-UI API auth) */
   tokenHash: text("token_hash"),
-  /** SSO entry URL path (e.g. /sso/OID/start/authentik) — appended to subdomain URL for auto-SSO login */
+  /** SSO entry URL path — appended to subdomain URL for auto-SSO login */
   ssoEntryUrl: text("sso_entry_url"),
   /** Admin-set default WordArt branding for this app's header */
   brandingWordart: jsonb("branding_wordart").$type<Record<string, unknown>>(),

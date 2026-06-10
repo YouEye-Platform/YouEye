@@ -113,16 +113,16 @@ export async function resolveServiceAuth(
       isAdmin: users.isAdmin,
     };
 
-    // Always try authentikId first (TEXT column — no type casting issues),
+    // Always try identityId first (TEXT column — no type casting issues),
     // then fall back to id (UUID column) only if userId looks like a UUID.
     let row = null;
 
-    const byAuth = await db
+    const byIdentity = await db
       .select(selectUser)
       .from(users)
-      .where(eq(users.authentikId, userId))
+      .where(eq(users.identityId, userId))
       .limit(1);
-    if (byAuth.length > 0) row = byAuth[0];
+    if (byIdentity.length > 0) row = byIdentity[0];
 
     if (!row && UUID_RE.test(userId)) {
       const byId = await db

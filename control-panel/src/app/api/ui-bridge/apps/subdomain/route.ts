@@ -7,7 +7,7 @@
  * that updates all systems that reference the subdomain:
  *
  * 1. Caddy reverse proxy route (remove old hostname, add new hostname)
- * 2. Authentik OAuth2 redirect URIs (if app uses SSO)
+ * 2. identity provider OAuth2 redirect URIs (if app uses SSO)
  * 3. Install metadata (/var/lib/youeye/app-{id}/install.json)
  * 4. installed_apps DB table (subdomain column)
  *
@@ -21,7 +21,7 @@
  * If any step fails, the app may become unreachable or SSO may break.
  * The operation attempts all steps and reports which ones succeeded/failed.
  * Caddy route update is the most critical — without it the app is unreachable.
- * Authentik update is only needed if the app has SSO enabled.
+ * identity provider update is only needed if the app has SSO enabled.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -111,7 +111,7 @@ export async function PUT(request: NextRequest) {
     results.caddy = { success: false, error: String(err) };
   }
 
-  // ── Step 2: Update Authentik OAuth2 redirect URIs ───────
+  // ── Step 2: Update identity provider OAuth2 redirect URIs ───────
 
   if (meta.enableSSO && meta.ssoSlug) {
     try {
@@ -158,7 +158,7 @@ export async function PUT(request: NextRequest) {
           };
         }
       } else {
-        results.authentik = { success: false, error: 'Authentik not available' };
+        results.authentik = { success: false, error: 'identity provider not available' };
       }
     } catch (err) {
       results.authentik = { success: false, error: String(err) };

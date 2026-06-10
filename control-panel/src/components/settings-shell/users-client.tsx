@@ -33,7 +33,7 @@ export function UsersClient() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    const res = await fetch("/api/apps/authentik/users");
+    const res = await fetch("/api/apps/identity/users");
     if (res.ok) {
       const data = await res.json();
       setUsers(data.results || data.users || []);

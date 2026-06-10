@@ -2,21 +2,23 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getIdentitySession } from '@/lib/identity/http';
 import { getSession } from '@/lib/auth/session';
 import { getAppConsent, getUserByUsername, revokeAppConsent, type IdentityUser } from '@/lib/identity/store';
+import { getIdentityProviderConfig } from '@/lib/identity/provider';
 
 function clientIdForApp(appId: string): string {
   return appId.startsWith('youeye-app-') ? appId : `youeye-app-${appId}`;
 }
 
-function permissionRow(appId: string, consent: Awaited<ReturnType<typeof getAppConsent>>) {
+async function permissionRow(appId: string, consent: Awaited<ReturnType<typeof getAppConsent>>) {
   if (!consent) return [];
+  const provider = await getIdentityProviderConfig();
   return [{
     id: `identity-consent:${consent.client_id}`,
     appId,
     permission: 'identity:youeye-id:sign-in',
     descriptor: {
       permission: 'identity:youeye-id:sign-in',
-      title: 'Sign in with YouEye ID',
-      description: 'Lets this app use your YouEye ID profile to sign you in.',
+      title: `Sign in with ${provider.name}`,
+      description: `Lets this app use your ${provider.name} profile to sign you in.`,
       category: 'identity',
       risk: 'low',
     },
@@ -47,7 +49,7 @@ export async function GET(
 
   const { appId } = await params;
   const consent = await getAppConsent(user.id, clientIdForApp(appId));
-  return NextResponse.json({ app_id: appId, permissions: permissionRow(appId, consent) });
+  return NextResponse.json({ app_id: appId, permissions: await permissionRow(appId, consent) });
 }
 
 export async function DELETE(

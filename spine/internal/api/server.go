@@ -583,7 +583,7 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 
 	if currentVersion == latestVersion {
 		if err := s.ensureControlIdentityService(containerName, appDir); err != nil {
-			errorResponse(w, fmt.Sprintf("Control Panel is up to date, but YouEye ID service repair failed: %v", err), http.StatusInternalServerError)
+			errorResponse(w, fmt.Sprintf("Control Panel is up to date, but identity provider service repair failed: %v", err), http.StatusInternalServerError)
 			return
 		}
 		jsonResponse(w, map[string]string{
@@ -689,8 +689,8 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 		exec.Command("incus", "exec", containerName, "--", "systemctl", "stop", "youeye-control").Run()
 		exec.Command("incus", "snapshot", "restore", containerName, "pre-update").Run()
 		exec.Command("incus", "exec", containerName, "--", "systemctl", "start", "youeye-control").Run()
-		update.Fail("control", currentVersion, fmt.Sprintf("failed to ensure YouEye ID service: %v", err))
-		errorResponse(w, fmt.Sprintf("failed to ensure YouEye ID service: %v", err), http.StatusInternalServerError)
+		update.Fail("control", currentVersion, fmt.Sprintf("failed to ensure identity provider service: %v", err))
+		errorResponse(w, fmt.Sprintf("failed to ensure identity provider service: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -748,7 +748,7 @@ if [ ! -f /etc/systemd/system/youeye-id.service ]; then
   HOST_IP="$(hostname -I | awk '{print $1}')"
   cat > /etc/systemd/system/youeye-id.service <<EOF
 [Unit]
-Description=YouEye ID
+Description=Identity Provider
 After=network.target
 
 [Service]
@@ -757,7 +757,7 @@ User=root
 WorkingDirectory=%s
 Environment=NODE_ENV=production
 Environment=PORT=3001
-Environment=YOUEYE_ID_SERVICE=true
+Environment=IDENTITY_SERVICE=true
 Environment=JWT_SECRET=${JWT}
 Environment=HOST_IP=${HOST_IP}
 Environment=SECURE_COOKIES=true
@@ -1263,16 +1263,13 @@ func (s *Server) handleControlSSO(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonResponse(w, map[string]interface{}{
 			"configured":             true,
-			"authentik_url":          envVars["AUTHENTIK_URL"],
-			"identity_url":           envVars["YOUEYE_ID_URL"],
-			"authentik_client_id":    envVars["AUTHENTIK_CLIENT_ID"],
-			"authentik_internal_url": envVars["AUTHENTIK_INTERNAL_URL"],
-			"identity_internal_url":  envVars["YOUEYE_ID_INTERNAL_URL"],
+			"identity_url":          envVars["IDENTITY_URL"],
+			"client_id":             envVars["IDENTITY_CLIENT_ID"],
+			"identity_internal_url": envVars["IDENTITY_INTERNAL_URL"],
 		})
 
 	case "POST":
 		var req struct {
-			AuthentikURL        string `json:"authentik_url"`
 			IdentityURL         string `json:"identity_url"`
 			ClientID            string `json:"client_id"`
 			ClientSecret        string `json:"client_secret"`
@@ -1284,12 +1281,9 @@ func (s *Server) handleControlSSO(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
-		if req.AuthentikURL == "" || req.ClientSecret == "" {
-			errorResponse(w, "identity_url/authentik_url and client_secret are required", http.StatusBadRequest)
+		if req.IdentityURL == "" || req.ClientSecret == "" {
+			errorResponse(w, "identity_url and client_secret are required", http.StatusBadRequest)
 			return
-		}
-		if req.IdentityURL == "" {
-			req.IdentityURL = req.AuthentikURL
 		}
 		if req.InternalURL == "" {
 			req.InternalURL = req.IdentityInternalURL
@@ -1303,9 +1297,9 @@ func (s *Server) handleControlSSO(w http.ResponseWriter, r *http.Request) {
 
 		// Write env file content
 		envContent := fmt.Sprintf(
-			"YOUEYE_ID_URL=%s\nYOUEYE_ID_CLIENT_ID=%s\nYOUEYE_ID_CLIENT_SECRET=%s\nYOUEYE_ID_INTERNAL_URL=%s\nAUTHENTIK_URL=%s\nAUTHENTIK_CLIENT_ID=%s\nAUTHENTIK_CLIENT_SECRET=%s\nAUTHENTIK_INTERNAL_URL=%s\nCONTROL_EXTERNAL_URL=%s\n",
+			"IDENTITY_URL=%s\nIDENTITY_CLIENT_ID=%s\nIDENTITY_CLIENT_SECRET=%s\nIDENTITY_INTERNAL_URL=%s\nCONTROL_EXTERNAL_URL=%s\n",
 			req.IdentityURL, req.ClientID, req.ClientSecret, req.IdentityInternalURL,
-			req.AuthentikURL, req.ClientID, req.ClientSecret, req.InternalURL, req.ControlURL,
+			req.ControlURL,
 		)
 
 		// Save on host for persistence across container rebuilds
@@ -1519,7 +1513,7 @@ func getUIStatus(cfg *config.Config) map[string]interface{} {
 			defer wg.Done()
 			envOut, err := exec.Command("incus", "exec", containerName, "--",
 				"cat", "/etc/youeye-ui.env").CombinedOutput()
-			ssoConfigured = err == nil && strings.Contains(string(envOut), "AUTHENTIK_CLIENT_ID")
+			ssoConfigured = err == nil && strings.Contains(string(envOut), "IDENTITY_CLIENT_ID")
 		}()
 		wg.Wait()
 
@@ -1602,7 +1596,7 @@ func (s *Server) handleUISSO(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Check if it has real SSO config (not just placeholder)
-		configured := envVars["YOUEYE_ID_CLIENT_ID"] != "" || envVars["AUTHENTIK_CLIENT_ID"] != ""
+		configured := envVars["IDENTITY_CLIENT_ID"] != ""
 
 		serviceOut, _ := exec.Command("incus", "exec", containerName, "--",
 			"systemctl", "is-active", "youeye-ui").Output()
@@ -1611,15 +1605,13 @@ func (s *Server) handleUISSO(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]interface{}{
 			"configured":     configured,
 			"service_active": serviceActive,
-			"client_id":      firstNonEmpty(envVars["YOUEYE_ID_CLIENT_ID"], envVars["AUTHENTIK_CLIENT_ID"]),
+			"client_id":      envVars["IDENTITY_CLIENT_ID"],
 			"domain":         envVars["UI_EXTERNAL_URL"],
 		})
 
 	case "POST":
 		var req struct {
-			AuthentikURL      string `json:"authentik_url"`
 			IdentityURL       string `json:"identity_url"`
-			AuthentikInternal string `json:"authentik_internal_url"`
 			IdentityInternal  string `json:"identity_internal_url"`
 			ClientID          string `json:"client_id"`
 			ClientSecret      string `json:"client_secret"`
@@ -1636,20 +1628,8 @@ func (s *Server) handleUISSO(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, "client_id, client_secret, and database_url are required", http.StatusBadRequest)
 			return
 		}
-		if req.IdentityURL == "" {
-			req.IdentityURL = req.AuthentikURL
-		}
-		if req.AuthentikURL == "" {
-			req.AuthentikURL = req.IdentityURL
-		}
-		if req.IdentityInternal == "" {
-			req.IdentityInternal = req.AuthentikInternal
-		}
-		if req.AuthentikInternal == "" {
-			req.AuthentikInternal = req.IdentityInternal
-		}
 		if req.IdentityURL == "" || req.IdentityInternal == "" {
-			errorResponse(w, "identity_url/authentik_url and identity_internal_url/authentik_internal_url are required", http.StatusBadRequest)
+			errorResponse(w, "identity_url and identity_internal_url are required", http.StatusBadRequest)
 			return
 		}
 
@@ -1660,14 +1640,10 @@ func (s *Server) handleUISSO(w http.ResponseWriter, r *http.Request) {
 
 		// Build env file content
 		envContent := fmt.Sprintf(`# YouEye UI Environment - configured by Control Panel
-YOUEYE_ID_URL=%s
-YOUEYE_ID_INTERNAL_URL=%s
-YOUEYE_ID_CLIENT_ID=%s
-YOUEYE_ID_CLIENT_SECRET=%s
-AUTHENTIK_URL=%s
-AUTHENTIK_INTERNAL_URL=%s
-AUTHENTIK_CLIENT_ID=%s
-AUTHENTIK_CLIENT_SECRET=%s
+IDENTITY_URL=%s
+IDENTITY_INTERNAL_URL=%s
+IDENTITY_CLIENT_ID=%s
+IDENTITY_CLIENT_SECRET=%s
 JWT_SECRET=%s
 DATABASE_URL=%s
 UI_EXTERNAL_URL=%s
@@ -1678,10 +1654,6 @@ HOSTNAME=0.0.0.0
 `,
 			req.IdentityURL,
 			req.IdentityInternal,
-			req.ClientID,
-			req.ClientSecret,
-			req.AuthentikURL,
-			req.AuthentikInternal,
 			req.ClientID,
 			req.ClientSecret,
 			req.JWTSecret,
@@ -1722,7 +1694,7 @@ HOSTNAME=0.0.0.0
 		schemaSQL := `
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  authentik_id TEXT UNIQUE,
+  identity_id TEXT UNIQUE,
   username TEXT UNIQUE,
   name TEXT,
   email TEXT UNIQUE,

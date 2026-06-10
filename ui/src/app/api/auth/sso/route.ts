@@ -2,7 +2,7 @@
  * SSO Initiation Route
  *
  * GET /api/auth/sso
- * Redirects the user to Authentik's OAuth2 authorize endpoint.
+ * Redirects the user to the identity provider OAuth2 authorize endpoint.
  * Stores a random state parameter in a cookie for CSRF protection.
  *
  * IMPORTANT: The oauth-state cookie MUST be set directly on the
@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
     process.env.SECURE_COOKIES !== "false" &&
     redirectUri.startsWith("https://");
 
-  // Build redirect to Authentik authorize URL
+  // Build redirect to identity provider authorize URL
   const authorizeUrl = buildAuthorizeUrl(redirectUri, state);
   const response = NextResponse.redirect(authorizeUrl);
 

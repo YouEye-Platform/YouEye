@@ -1,7 +1,7 @@
 /**
  * SSO Setup API
  *
- * POST /api/auth/sso/setup — Execute SSO setup (create Authentik provider, application, configure env)
+ * POST /api/auth/sso/setup — Execute SSO setup (create identity provider, application, configure env)
  */
 
 import { NextResponse } from 'next/server';
@@ -22,13 +22,13 @@ export async function POST() {
       return NextResponse.json({ error: 'Domain not configured' }, { status: 400 });
     }
     if (!status.authentikSubdomain) {
-      return NextResponse.json({ error: 'Authentik subdomain not configured in Caddy' }, { status: 400 });
+      return NextResponse.json({ error: 'Identity provider subdomain not configured in Caddy' }, { status: 400 });
     }
     if (!status.controlSubdomain) {
       return NextResponse.json({ error: 'Control Panel subdomain not configured in Caddy' }, { status: 400 });
     }
     if (!status.authentikHealthy) {
-      return NextResponse.json({ error: 'Authentik is not responding' }, { status: 400 });
+      return NextResponse.json({ error: 'Identity provider is not responding' }, { status: 400 });
     }
 
     // Execute setup

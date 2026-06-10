@@ -97,12 +97,12 @@
     },
     "sso": {
       "title": "Autenticación",
-      "description": "Configura SSO a través de Authentik",
+      "description": "Configura SSO a través del proveedor de identidad",
       "status": "Estado SSO",
       "configured": "Activado",
       "notConfigured": "No configurado",
       "domain": "Dominio",
-      "authentikUrl": "URL de Authentik",
+      "authentikUrl": "URL del proveedor de identidad",
       "controlUrl": "URL del panel",
       "prerequisitesMet": "Requisitos cumplidos",
       "configure": "Configurar SSO",
@@ -151,7 +151,7 @@
       "title": "Proveedor de Identidad",
       "description": "El nombre que aparece en la página de inicio de sesión y en los flujos de inicio de sesión de aplicaciones",
       "name": "Nombre del proveedor",
-      "helper": "Se muestra en la página de inicio de sesión de Authentik (p. ej., \"HomeCloud ID\")",
+      "helper": "Se muestra en la página de inicio de sesión (p. ej., \"HomeCloud ID\")",
       "saved": "Nombre del proveedor de identidad actualizado"
     },
     "smtp": {
@@ -167,7 +167,7 @@
       "notConfigured": "No configurado",
       "testEmail": "Enviar correo de prueba",
       "testSuccess": "¡Correo de prueba enviado correctamente!",
-      "saved": "Configuración SMTP guardada. Backend de correo de Authentik actualizado.",
+      "saved": "Configuración SMTP guardada. ",
       "gmailHint": "Gmail requiere una contraseña de aplicación, no la contraseña de tu cuenta."
     },
     "updates": {
@@ -197,8 +197,8 @@
     "createAdminAccount": "Crea tu cuenta de administrador",
     "settingEverythingUp": "Configurando todo...",
     "instanceName": "Nombre de instancia",
-    "authentikName": "Nombre del proveedor de identidad",
-    "authentikNameHelper": "Se muestra en la página de inicio de sesión y en los flujos de inicio de sesión de aplicaciones",
+    "identityName": "Nombre del proveedor de identidad",
+    "identityNameHelper": "Se muestra en la página de inicio de sesión y en los flujos de inicio de sesión de aplicaciones",
     "logoStyle": "Estilo del logo",
     "hideCustomization": "Ocultar personalización",
     "customizeStyle": "Personalizar estilo",
@@ -216,7 +216,7 @@
     "subdomainAuth": "Auth",
     "subdomainDns": "DNS",
     "subdomainPanel": "Panel",
-    "subdomainHint": "Personaliza subdominios para Panel de control, Authentik y Pi-Hole.",
+    "subdomainHint": "Personaliza subdominios para Panel de control, proveedor de identidad y Pi-Hole.",
     "domainRequired": "El dominio es obligatorio",
     "adminDescription": "Esto crea un nuevo administrador en el sistema de autenticación. Usarás estas credenciales para iniciar sesión vía SSO.",
     "firstName": "Nombre",
@@ -243,7 +243,7 @@
     "retrying": "Reintentando...",
     "stepOf": "Paso {current} de {total}",
     "serverSetupHelp": "Introduce tu nombre de dominio (por ejemplo, 'home.example.com'). El DNS debe apuntar a la IP de este servidor. La página principal se servirá en el dominio raíz y los servicios usarán subdominios.",
-    "adminAccountHelp": "Esto creará tu cuenta de administrador en el proveedor de identidad (Authentik). Usa una contraseña segura — es la clave maestra de tu servidor.",
+    "adminAccountHelp": "Esto creará tu cuenta de administrador en el proveedor de identidad . Usa una contraseña segura — es la clave maestra de tu servidor.",
     "installationHelp": "El asistente está configurando tu servidor. Esto incluye HTTPS, DNS, autenticación y el panel de YouEye. Si un paso falla, puedes reintentarlo individualmente.",
     "nameYourServer": "Nombra tu servidor",
     "nameYourServerDesc": "Dale un nombre a tu servidor y elige una dirección web",
@@ -550,11 +550,11 @@
     "stopContainer": "Detener contenedor",
     "restartContainer": "Reiniciar contenedor"
   },
-  "authentik": {
-    "title": "Authentik",
+  "identityProvider": {
+    "title": "Identity Provider",
     "subtitle": "Proveedor de identidad y gestión de usuarios",
     "backToApps": "Volver a Apps",
-    "deployHint": "Asegúrate de que Authentik esté desplegado. Ejecuta spine deploy.",
+    "deployHint": "Asegúrate de que identity provider esté desplegado. Ejecuta spine deploy.",
     "overview": "Resumen",
     "users": "Usuarios",
     "groups": "Grupos",

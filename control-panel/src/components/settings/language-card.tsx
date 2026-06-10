@@ -63,7 +63,7 @@ export function LanguageCard() {
       if (res.ok) {
         setCurrentLang(code);
         setStatus('saved');
-        // Fire-and-forget: sync language to Authentik user profile + apps
+        // Fire-and-forget: sync language to identity provider user profile + apps
         fetch('/api/user/language', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },

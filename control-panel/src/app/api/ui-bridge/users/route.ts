@@ -5,7 +5,7 @@
  * POST /api/ui-bridge/users         — create a new user
  *
  * Reuses the provider-neutral identity layer. The route path is stable for
- * the UI bridge; the backend provider is YouEye ID during this migration.
+ * the UI bridge; the backend provider is exposed through the identity layer.
  */
 
 import { NextRequest, NextResponse } from 'next/server';

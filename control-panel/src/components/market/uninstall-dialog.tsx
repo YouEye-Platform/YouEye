@@ -19,7 +19,7 @@ export function UninstallDialog({ app, onUninstall, onClose }: UninstallDialogPr
   const items = [
     { icon: Package, label: 'Container and services', removed: true },
     { icon: Globe, label: 'Caddy reverse proxy route', removed: true },
-    { icon: Shield, label: 'Authentik SSO application', removed: app.supportsSSO },
+    { icon: Shield, label: 'identity provider SSO application', removed: app.supportsSSO },
     { icon: Globe, label: 'Pi-Hole DNS entry', removed: true },
     { icon: Database, label: 'Shared database', removed: mode === 'delete' },
     { icon: HardDrive, label: 'App data and volumes', removed: mode === 'delete' },

@@ -1,3 +1,23 @@
+## v0.4.13.99 / v0.4.3.30 / v0.4.2.9 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** White-label identity provider login, consent, routes, and env contract
+
+### Changes
+- `control-panel/src/app/identity/login/route.ts`, `control-panel/src/app/application/o/authorize/route.ts` — Render configured provider name and WordArt, with friendlier login and Allow/Not now consent.
+- `control-panel/src/app/api/setup/run/route.ts`, `control-panel/src/lib/identity/provider.ts`, `spine/internal/api/server.go` — Persist `identity.name`, keep `subdomains.identity` configurable, and emit `IDENTITY_*` service env vars.
+- `control-panel/src/app/(dashboard)/apps/identity`, `control-panel/src/app/api/apps/identity/*` — Move visible identity management routes off Authentik names.
+- `ui/src/db/*`, `ui/src/lib/auth/*`, `ui/src/lib/permissions/descriptors.ts` — Use `identity_id`, migrate old `authentik_id`, read `IDENTITY_*`, and improve permission descriptors.
+
+### Test Results
+- Spine: `go test ./...` passed; binary build passed.
+- CP: `pnpm build` passed.
+- UI: `pnpm build` passed with known local `127.0.0.1:5432` static-generation warnings.
+
+### Notes for Iris
+- Not deployed. Existing dev deployments should move config to `identity.name` and regenerate CP/UI env files with `IDENTITY_*`.
+
 ## v0.4.13.98 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

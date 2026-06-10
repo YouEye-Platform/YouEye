@@ -1,7 +1,7 @@
 /**
  * Profile Settings
  *
- * Account name and avatar are handled by the Control Panel embed (synced to Authentik).
+ * Account name and avatar are handled by the Control Panel embed (synced from your identity provider).
  * Bio and timezone are UI-local fields.
  */
 
@@ -228,7 +228,7 @@ export function ProfileSettings({
         </p>
       </div>
 
-      {/* Profile embed — avatar + account name (from the Control Panel, synced to Authentik) */}
+      {/* Profile embed — avatar + account name (from the Control Panel, synced from your identity provider) */}
       <div className="max-w-lg">
         <div className="relative">
           {!embedReady && (

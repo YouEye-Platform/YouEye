@@ -1,8 +1,8 @@
 /**
  * User Self-Profile API
  *
- * GET  /api/user/profile — Get current user's profile from YouEye ID
- * PATCH /api/user/profile — Update current user's own name in YouEye ID
+ * GET  /api/user/profile — Get current user's profile from the identity provider
+ * PATCH /api/user/profile — Update current user's own name in the identity provider
  *
  * This endpoint is available to ALL authenticated users (not admin-only).
  * Users can only modify their own profile — the username comes from the
@@ -34,7 +34,7 @@ export async function GET() {
   try {
     const user = await findIdentityUser(session.username);
     if (!user) {
-      return NextResponse.json({ error: "User not found in YouEye ID" }, { status: 404 });
+      return NextResponse.json({ error: "User not found in the identity provider" }, { status: 404 });
     }
 
     // Split the "name" field into first/last for the UI
@@ -79,7 +79,7 @@ export async function PATCH(request: NextRequest) {
   try {
     const user = await findIdentityUser(session.username);
     if (!user) {
-      return NextResponse.json({ error: "User not found in YouEye ID" }, { status: 404 });
+      return NextResponse.json({ error: "User not found in the identity provider" }, { status: 404 });
     }
 
     // Build the combined "name" field for the identity provider.

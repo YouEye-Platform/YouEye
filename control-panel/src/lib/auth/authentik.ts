@@ -3,28 +3,27 @@
  *
  * Handles the OAuth2 Authorization Code flow for SSO login
  * when the Control Panel is accessed via subdomain (through Caddy).
- * YouEye ID env names are preferred. Authentik env names remain temporary
- * aliases during the staged migration.
+ * Uses the configured white-label identity provider.
  *
  * Flow:
  * 1. User visits control.youeye.local (subdomain → Caddy → CP)
- * 2. Middleware redirects to /api/auth/sso which redirects to Authentik authorize URL
- * 3. User authenticates in Authentik
- * 4. Authentik redirects back to /api/auth/callback with code
+ * 2. Middleware redirects to /api/auth/sso which redirects to the identity authorize URL
+ * 3. User authenticates with the identity provider
+ * 4. The identity provider redirects back to /api/auth/callback with code
  * 5. We exchange code for tokens, extract user info, create JWT session
  */
 
 /**
  * Get OAuth2 configuration from environment.
- * These values must be provisioned by Spine when setting up Authentik.
+ * These values must be provisioned by Spine during setup.
  */
 export function getOAuthConfig() {
-  const clientId = process.env.YOUEYE_ID_CLIENT_ID || process.env.AUTHENTIK_CLIENT_ID || 'youeye-control';
-  const clientSecret = process.env.YOUEYE_ID_CLIENT_SECRET || process.env.AUTHENTIK_CLIENT_SECRET || '';
-  const identityUrl = process.env.YOUEYE_ID_URL || process.env.AUTHENTIK_URL || '';
+  const clientId = process.env.IDENTITY_CLIENT_ID || 'youeye-control';
+  const clientSecret = process.env.IDENTITY_CLIENT_SECRET || '';
+  const identityUrl = process.env.IDENTITY_URL || '';
   // Internal URL is used for server-side calls (token exchange, userinfo)
   // to avoid TLS issues with self-signed certs from Caddy
-  const internalUrl = process.env.YOUEYE_ID_INTERNAL_URL || process.env.AUTHENTIK_INTERNAL_URL || identityUrl;
+  const internalUrl = process.env.IDENTITY_INTERNAL_URL || identityUrl;
 
   return {
     clientId,

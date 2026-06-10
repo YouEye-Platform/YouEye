@@ -2,7 +2,7 @@
  * Login Card Component
  *
  * Displays the SSO login button and any error messages.
- * Only authentication method is Authentik SSO.
+ * Uses the configured identity provider for SSO.
  */
 
 "use client";
@@ -39,7 +39,7 @@ export function LoginCard({ error, ssoConfigured, siteName = 'YouEye' }: LoginCa
           <Button asChild size="lg" className="w-full">
             <a href="/api/auth/sso">
               <LogIn className="size-4" />
-              {t('signInWithAuthentik')}
+              {t('signInWithIdentity')}
             </a>
           </Button>
         ) : (

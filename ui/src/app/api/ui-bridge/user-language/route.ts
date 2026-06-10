@@ -11,7 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { findUserByAuthentikId } from "@/lib/db/queries/users";
+import { findUserByIdentityId } from "@/lib/db/queries/users";
 import { getUserSettings } from "@/lib/db/queries/settings";
 import { getBridgeToken } from "@/lib/admin/bridge-client";
 import { locales } from "@/i18n/config";
@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const user = await findUserByAuthentikId(userId);
+    const user = await findUserByIdentityId(userId);
     if (!user) {
       return NextResponse.json({ language: null });
     }

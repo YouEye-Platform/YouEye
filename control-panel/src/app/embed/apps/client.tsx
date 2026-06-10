@@ -593,7 +593,7 @@ function EditAppDialog({ app, onSaved, onClose }: {
                 border: "1px solid color-mix(in srgb, var(--embed-warning) 20%, transparent)",
                 color: "var(--embed-warning)",
               }}>
-                This will update Caddy routing, Authentik SSO redirects, and all bookmark URLs.
+                This will update routing, sign-in redirects, and all bookmark URLs.
               </div>
             </div>
           )}

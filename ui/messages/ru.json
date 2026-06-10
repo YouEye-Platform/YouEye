@@ -308,7 +308,7 @@
   },
   "login": {
     "signInDescription": "Войдите в панель управления",
-    "signInWithAuthentik": "Войти через Authentik",
+    "signInWithIdentity": "Войти",
     "ssoNotConfigured": "SSO не настроен. Обратитесь к администратору."
   },
   "appDrawer": {
@@ -406,7 +406,7 @@
     "installTitle": "Установить {name}",
     "installDescription": "Настройте и установите {name} на вашу платформу YouEye.",
     "subdomain": "Поддомен",
-    "enableSSO": "Включить SSO (единый вход через Authentik)",
+    "enableSSO": "Включить SSO (единый вход через провайдера идентификации)",
     "resources": "Ресурсы: {memory} ОЗУ, {cpu} ЦПУ",
     "url": "URL: https://{subdomain}.{domain}",
     "uninstallConfirm": "Удалить {name}?",

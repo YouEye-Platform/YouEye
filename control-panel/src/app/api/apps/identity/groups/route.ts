@@ -1,7 +1,7 @@
 /**
- * Authentik Groups API
- * GET /api/apps/authentik/groups — List groups
- * POST /api/apps/authentik/groups — Create group
+ * identity provider Groups API
+ * GET /api/apps/identity/groups — List groups
+ * POST /api/apps/identity/groups — Create group
  */
 
 import { NextRequest, NextResponse } from 'next/server';

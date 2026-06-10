@@ -307,7 +307,7 @@
   },
   "login": {
     "signInDescription": "Inicia sesión en tu panel",
-    "signInWithAuthentik": "Iniciar sesión con Authentik",
+    "signInWithIdentity": "Iniciar sesión",
     "ssoNotConfigured": "SSO no está configurado. Contacta a tu administrador."
   },
   "appDrawer": {
@@ -405,7 +405,7 @@
     "installTitle": "Instalar {name}",
     "installDescription": "Configura e instala {name} en tu plataforma YouEye.",
     "subdomain": "Subdominio",
-    "enableSSO": "Activar SSO (inicio de sesión único vía Authentik)",
+    "enableSSO": "Activar SSO (inicio de sesión con proveedor de identidad)",
     "resources": "Recursos: {memory} RAM, {cpu} CPU",
     "url": "URL: https://{subdomain}.{domain}",
     "uninstallConfirm": "¿Desinstalar {name}?",

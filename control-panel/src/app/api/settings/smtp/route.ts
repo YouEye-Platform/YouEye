@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
         useTls: requireTls ?? true,
       });
     } catch (err) {
-      console.error('[SMTP] Authentik sync failed (non-blocking):', err);
+      console.error('[SMTP] identity provider sync failed (non-blocking):', err);
     }
 
     // Emit settings change event

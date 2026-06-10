@@ -97,12 +97,12 @@
     },
     "sso": {
       "title": "Authentifizierung",
-      "description": "Single Sign-On (SSO) über Authentik konfigurieren",
+      "description": "Single Sign-On (SSO) über den Identitätsanbieter konfigurieren",
       "status": "SSO-Status",
       "configured": "Aktiviert",
       "notConfigured": "Nicht konfiguriert",
       "domain": "Domain",
-      "authentikUrl": "Authentik-URL",
+      "authentikUrl": "Identitätsanbieter-URL",
       "controlUrl": "Systemsteuerungs-URL",
       "prerequisitesMet": "Voraussetzungen erfüllt",
       "configure": "SSO konfigurieren",
@@ -151,7 +151,7 @@
       "title": "Identitätsanbieter",
       "description": "Der Name, der auf der Anmeldeseite und in App-Anmeldeflüssen angezeigt wird",
       "name": "Anbietername",
-      "helper": "Wird auf der Authentik-Anmeldeseite angezeigt (z.B. \"HomeCloud ID\")",
+      "helper": "Wird auf der Anmeldeseite angezeigt (z.B. \"HomeCloud ID\")",
       "saved": "Name des Identitätsanbieters aktualisiert"
     },
     "smtp": {
@@ -167,7 +167,7 @@
       "notConfigured": "Nicht konfiguriert",
       "testEmail": "Test-E-Mail senden",
       "testSuccess": "Test-E-Mail wurde erfolgreich gesendet!",
-      "saved": "SMTP-Einstellungen gespeichert. Authentik-E-Mail-Backend aktualisiert.",
+      "saved": "SMTP-Einstellungen gespeichert. ",
       "gmailHint": "Gmail erfordert ein App-Passwort, nicht Ihr Kontopasswort."
     },
     "updates": {
@@ -197,8 +197,8 @@
     "createAdminAccount": "Erstellen Sie Ihr Admin-Konto",
     "settingEverythingUp": "Alles wird eingerichtet...",
     "instanceName": "Instanzname",
-    "authentikName": "Name des Identitätsanbieters",
-    "authentikNameHelper": "Wird auf der Anmeldeseite und in App-Anmeldeflüssen angezeigt",
+    "identityName": "Name des Identitätsanbieters",
+    "identityNameHelper": "Wird auf der Anmeldeseite und in App-Anmeldeflüssen angezeigt",
     "logoStyle": "Logo-Stil",
     "hideCustomization": "Anpassung ausblenden",
     "customizeStyle": "Stil anpassen",
@@ -216,7 +216,7 @@
     "subdomainAuth": "Auth",
     "subdomainDns": "DNS",
     "subdomainPanel": "Panel",
-    "subdomainHint": "Subdomains für Systemsteuerung, Authentik und Pi-Hole anpassen.",
+    "subdomainHint": "Subdomains für Systemsteuerung, Identitätsanbieter und Pi-Hole anpassen.",
     "domainRequired": "Domain ist erforderlich",
     "adminDescription": "Dies erstellt einen Admin-Benutzer im Authentifizierungssystem. Verwenden Sie diese Zugangsdaten für SSO.",
     "firstName": "Vorname",
@@ -243,7 +243,7 @@
     "retrying": "Wird wiederholt...",
     "stepOf": "Schritt {current} von {total}",
     "serverSetupHelp": "Geben Sie Ihren Domainnamen ein (z.B. 'home.example.com'). DNS muss auf die IP-Adresse dieses Servers zeigen. Die Startseite wird auf der Hauptdomain bereitgestellt, Dienste nutzen Subdomains.",
-    "adminAccountHelp": "Dies erstellt Ihr Administratorkonto im Identitätsanbieter (Authentik). Verwenden Sie ein sicheres Passwort — dies ist der Hauptschlüssel zu Ihrem Server.",
+    "adminAccountHelp": "Dies erstellt Ihr Administratorkonto im Identitätsanbieter . Verwenden Sie ein sicheres Passwort — dies ist der Hauptschlüssel zu Ihrem Server.",
     "installationHelp": "Der Assistent konfiguriert Ihren Server. Dies umfasst HTTPS, DNS, Authentifizierung und das YouEye-Dashboard. Falls ein Schritt fehlschlägt, können Sie ihn einzeln wiederholen.",
     "nameYourServer": "Benennen Sie Ihren Server",
     "nameYourServerDesc": "Geben Sie Ihrem Server einen Namen und wählen Sie eine Webadresse",
@@ -550,11 +550,11 @@
     "stopContainer": "Container stoppen",
     "restartContainer": "Container neustarten"
   },
-  "authentik": {
-    "title": "Authentik",
+  "identityProvider": {
+    "title": "Identity Provider",
     "subtitle": "Identitätsanbieter & Benutzerverwaltung",
     "backToApps": "Zurück zu Apps",
-    "deployHint": "Stellen Sie sicher, dass Authentik bereitgestellt ist. Führen Sie spine deploy aus.",
+    "deployHint": "Stellen Sie sicher, dass identity provider bereitgestellt ist. Führen Sie spine deploy aus.",
     "overview": "Übersicht",
     "users": "Benutzer",
     "groups": "Gruppen",

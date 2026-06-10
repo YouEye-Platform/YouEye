@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
   const body: ReconfigureRequest = await request.json();
 
   // Validate at least one field is being changed
-  if (!body.site_name && !body.domain && !body.subdomains && !body.site_name_style && !body.authentik_name) {
+  if (!body.site_name && !body.domain && !body.subdomains && !body.site_name_style && !body.identity_name) {
     return new Response(JSON.stringify({ error: 'At least one field must be provided' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },

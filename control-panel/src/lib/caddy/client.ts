@@ -1234,7 +1234,7 @@ export async function setDefaultRoute(containerName: string, port: number): Prom
  * Security: Ensure a global header-stripping route exists at position 0.
  *
  * Strips service-auth headers (X-YouEye-App, X-YouEye-User, X-App-Slug,
- * X-UI-Bridge-Token, X-Authentik-*) from ALL external requests that enter
+ * X-UI-Bridge-Token) from ALL external requests that enter
  * through Caddy. Internal traffic (app→UI via proxy devices) does NOT go
  * through Caddy, so this only affects browser/internet traffic.
  *
@@ -1282,11 +1282,6 @@ export async function ensureHeaderStrippingRoute(): Promise<void> {
           'X-Youeye-Uid',
           'X-App-Slug',
           'X-Ui-Bridge-Token',
-          'X-Authentik-Username',
-          'X-Authentik-Email',
-          'X-Authentik-Groups',
-          'X-Authentik-Name',
-          'X-Authentik-Uid',
         ],
       },
     }],

@@ -1,8 +1,8 @@
 /**
- * Authentik Stats API
- * GET /api/apps/authentik/stats
+ * identity provider Stats API
+ * GET /api/apps/identity/stats
  * 
- * Returns Authentik system config (version, etc.)
+ * Returns identity provider system config (version, etc.)
  */
 
 import { NextResponse } from 'next/server';
@@ -14,7 +14,7 @@ export async function GET() {
     const ip = await getContainerIP('youeye-authentik');
     if (!ip) {
       return NextResponse.json(
-        { error: 'Authentik container not running' },
+        { error: 'identity provider container not running' },
         { status: 503 }
       );
     }

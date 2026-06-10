@@ -1,7 +1,7 @@
 /**
  * SSO Disable API
  *
- * POST /api/auth/sso/disable — Disable SSO (remove Authentik provider, application, clear env)
+ * POST /api/auth/sso/disable — Disable SSO (remove identity provider, application, clear env)
  */
 
 import { NextResponse } from 'next/server';

@@ -42,7 +42,6 @@ const PUBLIC_ROUTES = [
   '/application/o',
   '/oauth',
   '/forward-auth/caddy',
-  '/outpost.goauthentik.io/auth/caddy',
   '/.well-known/openid-configuration',
   '/settings/api/branding/favicon',
   '/market/api/branding/favicon',
@@ -67,7 +66,6 @@ const IDENTITY_SERVICE_ROUTES = [
   '/application/o',
   '/oauth',
   '/forward-auth/caddy',
-  '/outpost.goauthentik.io/auth/caddy',
   '/.well-known/openid-configuration',
 ];
 
@@ -177,7 +175,7 @@ function applySecurityHeaders(response: NextResponse, pathname: string): NextRes
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (process.env.YOUEYE_ID_SERVICE === 'true') {
+  if (process.env.IDENTITY_SERVICE === 'true') {
     const allowed = IDENTITY_SERVICE_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
     if (!allowed) {
       return new NextResponse('Not Found', { status: 404 });

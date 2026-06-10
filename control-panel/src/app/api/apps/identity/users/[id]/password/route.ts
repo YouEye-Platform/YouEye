@@ -1,9 +1,9 @@
 /**
  * Identity Set Password API
- * POST /api/apps/authentik/users/[id]/password
+ * POST /api/apps/identity/users/[id]/password
  *
  * The URL is kept for compatibility with the current Settings UI. During the
- * YouEye ID migration it is backed by the provider-neutral identity layer.
+ * It is backed by the provider-neutral identity layer.
  */
 
 import { NextRequest, NextResponse } from 'next/server';

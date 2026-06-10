@@ -33,8 +33,8 @@ interface Props {
   setCustomTld: (v: string) => void;
   subdomains: Record<string, string>;
   setSubdomains: (v: Record<string, string>) => void;
-  authentikName: string;
-  setAuthentikName: (v: string) => void;
+  identityName: string;
+  setIdentityName: (v: string) => void;
   tlsChoice: TlsChoice;
   setTlsChoice: (v: TlsChoice) => void;
   acmeCertIssued: boolean;
@@ -56,14 +56,14 @@ export default function SetupServerName({
   tld, setTld,
   customTld, setCustomTld,
   subdomains, setSubdomains,
-  authentikName, setAuthentikName,
+  identityName, setIdentityName,
   tlsChoice, setTlsChoice,
   acmeCertIssued, setAcmeCertIssued,
   onNext,
 }: Props) {
   const t = useTranslations('setup');
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [authentikEdited, setAuthentikEdited] = useState(false);
+  const [identityEdited, setIdentityEdited] = useState(false);
   const [slugEdited, setSlugEdited] = useState(false);
   const isCustomTld = tld === '__custom__';
 
@@ -83,12 +83,12 @@ export default function SetupServerName({
     }
   }, [siteName, slugEdited, setDomainSlug]);
 
-  // Auto-fill authentik name
+  // Auto-fill identity provider name.
   useEffect(() => {
-    if (!authentikEdited) {
-      setAuthentikName(siteName ? `${siteName} ID` : 'YouEye ID');
+    if (!identityEdited) {
+      setIdentityName(siteName ? `${siteName} ID` : 'Identity Provider');
     }
-  }, [siteName, authentikEdited, setAuthentikName]);
+  }, [siteName, identityEdited, setIdentityName]);
 
   const effectiveTld = isCustomTld ? (customTld.startsWith('.') ? customTld : `.${customTld}`) : tld;
   const domain = `${domainSlug}${effectiveTld}`;
@@ -530,15 +530,15 @@ export default function SetupServerName({
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium">{t('identityProviderName')}</Label>
                 <Input
-                  value={authentikName}
+                  value={identityName}
                   onChange={e => {
-                    setAuthentikEdited(true);
-                    setAuthentikName(e.target.value);
+                    setIdentityEdited(true);
+                    setIdentityName(e.target.value);
                   }}
                   placeholder={`${siteName || 'YouEye'} ID`}
                   className="h-8 text-xs"
                 />
-                <p className="text-[10px] text-muted-foreground">{t('authentikNameHelper')}</p>
+                <p className="text-[10px] text-muted-foreground">{t('identityNameHelper')}</p>
               </div>
             </div>
           )}

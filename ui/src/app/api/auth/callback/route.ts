@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
   const state = request.nextUrl.searchParams.get("state");
   const errorParam = request.nextUrl.searchParams.get("error");
 
-  // Handle Authentik errors
+  // Handle identity provider errors
   if (errorParam) {
     const desc =
       request.nextUrl.searchParams.get("error_description") || errorParam;
@@ -99,18 +99,18 @@ export async function GET(request: NextRequest) {
     // Exchange code for access token
     const tokenData = await exchangeCodeForToken(code, redirectUri);
 
-    // Fetch user profile from Authentik
+    // Fetch user profile from identity provider
     const userInfo = await fetchUserInfo(tokenData.access_token);
 
     const username = userInfo.preferred_username || userInfo.sub;
     const groups = userInfo.groups || [];
     const isAdmin = hasAdminClaim(groups, (userInfo as { is_admin?: boolean }).is_admin);
 
-    // Upsert user in database (sync name fields from Authentik)
+    // Upsert user in database (sync name fields from identity provider)
     const firstName = userInfo.given_name || null;
     const lastName = userInfo.family_name || null;
     const user = await upsertUser({
-      authentikId: userInfo.sub,
+      identityId: userInfo.sub,
       username,
       name: userInfo.name || username,
       email: userInfo.email || "",
@@ -122,7 +122,7 @@ export async function GET(request: NextRequest) {
     // Create JWT session
     const sessionToken = await createSession({
       userId: user.id,
-      authentikId: userInfo.sub,
+      identityId: userInfo.sub,
       username,
       name: userInfo.name || username,
       email: userInfo.email || "",

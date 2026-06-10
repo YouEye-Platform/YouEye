@@ -469,8 +469,8 @@ function getDisplayIntegrations(manifest: AppManifest): NonNullable<MarketApp['i
   if (hasSetupSteps && !integrations.some((integration) => integration.id === 'youeye-id')) {
     integrations.unshift({
       id: 'youeye-id',
-      name: 'YouEye ID',
-      description: 'Configure this app to use YouEye ID after the base app is installed.',
+      name: 'Identity Sign-In',
+      description: 'Configure this app to use the identity provider after the base app is installed.',
       type: 'identity',
       recommended: true,
       installByDefault: true,

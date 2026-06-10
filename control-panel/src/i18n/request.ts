@@ -6,7 +6,7 @@
  *   2. System language (from youeye.yaml via Spine)
  *   3. Fallback: "en"
  *
- * CP sessions use PAM auth (username-based JWT, no Authentik sub).
+ * CP sessions use PAM auth (username-based JWT, no identity provider sub).
  * Per-user resolution only works for SSO-authenticated sessions.
  * PAM sessions fall back to system default.
  */
@@ -20,7 +20,7 @@ import { CONTAINER_DOMAIN } from "@/lib/market/constants";
 let cachedSystemLang: { locale: string; expiresAt: number } | null = null;
 const CACHE_TTL_MS = 60_000;
 
-/** Per-user language cache (keyed by Authentik sub) */
+/** Per-user language cache (keyed by identity provider sub) */
 const userLangCache = new Map<
   string,
   { locale: string | null; expiresAt: number }
@@ -118,7 +118,7 @@ async function getUserLanguage(authentikSub: string): Promise<string | null> {
 
 /**
  * Try to extract user identity from the CP session JWT.
- * CP PAM sessions have `username` but no Authentik sub.
+ * CP PAM sessions have `username` but no identity provider sub.
  * Returns null for PAM sessions (no per-user language available).
  */
 async function getSessionUserId(): Promise<string | null> {
@@ -135,8 +135,8 @@ async function getSessionUserId(): Promise<string | null> {
       Buffer.from(parts[1], "base64url").toString("utf-8")
     );
 
-    // CP PAM sessions don't have an Authentik sub — they have username only.
-    return payload.sub || payload.authentikId || null;
+    // CP PAM sessions don't have an identity provider sub — they have username only.
+    return payload.sub || payload.identityId || null;
   } catch {
     return null;
   }

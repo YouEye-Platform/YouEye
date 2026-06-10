@@ -326,7 +326,7 @@ export class SpineClient {
   /**
    * Get SSO configuration status from Spine
    */
-  async getControlSSO(): Promise<{ configured: boolean; authentik_url?: string; authentik_client_id?: string; authentik_internal_url?: string }> {
+  async getControlSSO(): Promise<{ configured: boolean; identity_url?: string; client_id?: string; identity_internal_url?: string }> {
     return this.request('/api/control/sso');
   }
 
@@ -334,8 +334,7 @@ export class SpineClient {
    * Set SSO environment variables for Control Panel (triggers restart)
    */
   async setControlSSO(params: {
-    authentik_url: string;
-    identity_url?: string;
+    identity_url: string;
     client_id: string;
     client_secret: string;
     internal_url: string;
@@ -368,10 +367,8 @@ export class SpineClient {
    * Configure UI SSO and start service
    */
   async setUISSO(params: {
-    authentik_url: string;
-    identity_url?: string;
-    authentik_internal_url: string;
-    identity_internal_url?: string;
+    identity_url: string;
+    identity_internal_url: string;
     client_id: string;
     client_secret: string;
     jwt_secret: string;

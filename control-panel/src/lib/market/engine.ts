@@ -198,7 +198,7 @@ function getSecretsPath(appId: string): string {
   return `app-${appId}`;
 }
 
-const LEGACY_YOUEYE_ID_INTEGRATION = 'youeye-id';
+const LEGACY_IDENTITY_PROVIDER_INTEGRATION = 'youeye-id';
 
 function hasLegacySSOConfigureIntegration(manifest: AppManifest): boolean {
   const setupMethod = manifest.sso?.setup?.method;
@@ -218,7 +218,7 @@ function getDefaultSelectedIntegrations(manifest: AppManifest): string[] {
   }
 
   if (hasLegacySSOConfigureIntegration(manifest)) {
-    ids.add(LEGACY_YOUEYE_ID_INTEGRATION);
+    ids.add(LEGACY_IDENTITY_PROVIDER_INTEGRATION);
   }
 
   return [...ids];
@@ -231,7 +231,7 @@ function getSelectedIntegrations(manifest: AppManifest, config: InstallConfig): 
 function shouldEnableSSO(manifest: AppManifest, selectedIntegrations: string[]): boolean {
   if (!manifest.sso) return false;
   if (!hasLegacySSOConfigureIntegration(manifest)) return true;
-  return selectedIntegrations.includes(LEGACY_YOUEYE_ID_INTEGRATION);
+  return selectedIntegrations.includes(LEGACY_IDENTITY_PROVIDER_INTEGRATION);
 }
 
 function oauthScopesForManifest(manifest: AppManifest): string[] {
@@ -1100,11 +1100,6 @@ export async function installApp(
           'X-YouEye-Email',
           'X-YouEye-Name',
           'X-YouEye-Uid',
-          'X-Authentik-Username',
-          'X-Authentik-Groups',
-          'X-Authentik-Email',
-          'X-Authentik-Name',
-          'X-Authentik-Uid',
         ],
       };
     }

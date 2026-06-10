@@ -4,7 +4,7 @@
  * Generates CSS custom properties from ThemeColors for:
  * 1. Inline injection into <html> (runtime theme switching)
  * 2. shadcn/ui CSS variable override strings
- * 3. Authentik login page styling
+ * 3. Identity provider login page styling
  */
 
 import type { ThemeColors } from "@/db/schema";
@@ -130,11 +130,11 @@ export function generateCompactCSS(colors: ThemeColors): string {
 }
 
 /**
- * Authentik Branding CSS Configuration
+ * Identity Provider Branding CSS Configuration
  *
  * Passed alongside ThemeColors to generate the login page CSS.
  */
-export interface AuthentikBrandingConfig {
+export interface IdentityBrandingConfig {
   siteNameStyle?: SiteNameStyle | null;
   fontUrl?: string;
   /** Site name to render via ::after pseudo-element (replaces SVG logo) */
@@ -166,22 +166,22 @@ interface SiteNameStyle {
 }
 
 /**
- * Generate Authentik login page custom CSS.
+ * Generate identity provider login page custom CSS.
  *
- * Uses ::part() selectors to pierce Shadow DOM (Authentik 2025.12.x Lit components)
- * and PatternFly/Authentik CSS variables for form elements inside Shadow DOM.
+ * Uses ::part() selectors to pierce Shadow DOM in the upstream provider's Lit components
+ * and PatternFly/provider CSS variables for form elements inside Shadow DOM.
  * Uses [data-theme='dark'] / [data-theme='light'] for mode switching (NOT @media prefers-color-scheme).
  */
-export function generateAuthentikCSS(
+export function generateIdentityProviderCSS(
   colors: ThemeColors,
-  branding?: AuthentikBrandingConfig
+  branding?: IdentityBrandingConfig
 ): string {
   const s = branding?.siteNameStyle;
   const fontFamily = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
   // Inline @font-face declarations directly in the CSS.
-  // Font files must be copied into Authentik's /web/dist/assets/fonts/ directory
-  // by the bridge endpoint — see ui-bridge/authentik/branding/route.ts.
+  // Font files must be copied into the provider's /web/dist/assets/fonts/ directory
+  // by the bridge endpoint.
   const fontFaces: string[] = [];
 
   // Always include Inter (ships as .ttf)
@@ -206,7 +206,7 @@ export function generateAuthentikCSS(
   const imports = fontFaces;
 
   // Build WordArt / branding CSS for ::part(branding)::after pseudo-element.
-  // Authentik renders branding_logo as an <img> inside ::part(branding).
+  // The provider renders branding_logo as an <img> inside ::part(branding).
   // We can't target the <img> child through ::part(), so we:
   //   1. Make the branding container hide its children (font-size: 0, the img is transparent)
   //   2. Use ::after with content: "SiteName" to render the WordArt via pure CSS
@@ -215,7 +215,7 @@ export function generateAuthentikCSS(
 
   return `${imports.join('\n')}
 
-/* ─── YouEye Authentik Theme (2025.12.x) ─── */
+/* ─── Identity Provider Theme ─── */
 /* CSS variables that pierce Shadow DOM — LIGHT mode */
 :root {
   --pf-global--FontFamily--sans-serif: ${fontFamily} !important;

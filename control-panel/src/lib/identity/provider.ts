@@ -60,13 +60,20 @@ export async function getIdentityProviderConfig(): Promise<IdentityProviderConfi
   }
 
   const config = await getIdentityConfig();
+  const raw = await settingsService.getRaw();
+  const identitySettings = raw.identity && typeof raw.identity === 'object'
+    ? raw.identity as Record<string, unknown>
+    : {};
+  const configuredName = typeof identitySettings.name === 'string' && identitySettings.name.trim()
+    ? identitySettings.name.trim()
+    : `${raw.site_name || 'YouEye'} ID`;
   return {
     provider,
     externalUrl: config.externalUrl,
     internalUrl: config.internalUrl,
     issuer: config.issuer,
     discoveryUrl: `${config.externalUrl}/.well-known/openid-configuration`,
-    name: 'YouEye ID',
+    name: configuredName,
     containerName: config.containerName,
     port: config.port,
   };
@@ -117,11 +124,6 @@ export async function configureForwardAuth(params: {
       'X-YouEye-Email',
       'X-YouEye-Name',
       'X-YouEye-Uid',
-      'X-Authentik-Username',
-      'X-Authentik-Groups',
-      'X-Authentik-Email',
-      'X-Authentik-Name',
-      'X-Authentik-Uid',
     ],
   });
 }
@@ -276,7 +278,6 @@ export async function listGroups(): Promise<{ results: IdentityGroup[] }> {
     results: [
       { pk: 'youeye-users', name: 'youeye-users' },
       { pk: 'admin', name: 'admin' },
-      { pk: 'authentik Admins', name: 'authentik Admins' },
     ],
   };
 }

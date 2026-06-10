@@ -5,17 +5,17 @@
  *
  * When a user loads a CP embed without a session, this component
  * automatically triggers a silent SSO redirect. Since the user is
- * already authenticated with Authentik (they logged into YE-UI via SSO),
- * Authentik grants immediately — no login form shown.
+ * already authenticated with identity provider (they logged into YE-UI via SSO),
+ * identity provider grants immediately — no login form shown.
  *
  * The redirect chain (all inside the iframe):
  *   1. /embed/... → no session → this component renders
  *   2. Auto-redirect to /api/auth/sso?redirect=/embed/...
- *   3. → Authentik authorize (instant grant, user already has session)
+ *   3. → identity provider authorize (instant grant, user already has session)
  *   4. → /api/auth/callback → creates ye-session cookie
  *   5. → Redirects back to /embed/... → now has session, renders content
  *
- * If the user is NOT authenticated with Authentik at all (e.g. PAM-only
+ * If the user is NOT authenticated with identity provider at all (e.g. PAM-only
  * login on localhost), falls back to a manual sign-in button.
  */
 
@@ -45,7 +45,7 @@ export function EmbedAuthError({ reason, showSignIn = true }: EmbedAuthErrorProp
     const ssoUrl = `${controlUrl}/api/auth/sso?redirect=${encodeURIComponent(currentPath)}`;
 
     // Set a timeout — if we're still here after 8s, SSO didn't work
-    // (e.g. user is PAM-only, or Authentik is down)
+    // (e.g. user is PAM-only, or identity provider is down)
     const timeout = setTimeout(() => {
       setAutoRedirectFailed(true);
     }, 8000);

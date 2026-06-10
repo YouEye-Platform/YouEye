@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAuthCode, getAppConsent, getClient, upsertAppConsent, type IdentityClient, type IdentityUser } from '@/lib/identity/store';
 import { getIdentityConfig } from '@/lib/identity/config';
+import { getIdentityProviderConfig } from '@/lib/identity/provider';
 import { getIdentitySession } from '@/lib/identity/http';
 import { readFileSync } from 'fs';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
@@ -128,13 +129,14 @@ function consentHtml(params: {
   user: IdentityUser;
   scope: string;
   query: string;
+  providerName: string;
   runtimePermissions?: RuntimePermission[];
 }) {
   const scopes = scopeList(params.scope);
   const appName = params.client.name || params.client.client_id;
   const permissionRows = scopes.map((scope) => {
     const label = scope === 'openid'
-      ? 'Sign you in with YouEye ID'
+      ? `Sign you in with ${params.providerName}`
       : scope === 'profile'
         ? 'Read your profile name'
         : scope === 'email'
@@ -166,24 +168,24 @@ function consentHtml(params: {
   <title>Allow ${escapeHtml(appName)}?</title>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: Canvas; color: CanvasText; }
-    main { width: min(440px, calc(100vw - 32px)); }
-    h1 { font-size: 24px; line-height: 1.15; margin: 0 0 8px; }
-    p { margin: 0 0 20px; color: color-mix(in srgb, CanvasText 68%, transparent); line-height: 1.45; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: linear-gradient(145deg, #f8faf9, #edf6f3 52%, #f6f1ea); color: #15171a; }
+    main { width: min(500px, calc(100vw - 32px)); border: 1px solid rgba(21, 23, 26, .12); border-radius: 12px; background: rgba(255,255,255,.82); box-shadow: 0 24px 70px rgba(25, 42, 55, .13); padding: 22px; }
+    h1 { font-size: 1.55rem; line-height: 1.15; margin: 0 0 8px; }
+    p { margin: 0 0 18px; color: rgba(21, 23, 26, .68); line-height: 1.45; }
     .section-label { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: CanvasText; }
     ul { list-style: none; margin: 0 0 22px; padding: 0; display: grid; gap: 8px; }
-    li { display: flex; justify-content: space-between; gap: 12px; align-items: center; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 8px; padding: 10px 12px; }
-    code { color: color-mix(in srgb, CanvasText 58%, transparent); font-size: 12px; }
+    li { display: flex; justify-content: space-between; gap: 12px; align-items: center; border: 1px solid rgba(21, 23, 26, .12); border-radius: 8px; padding: 10px 12px; background: rgba(255,255,255,.62); }
+    code { color: rgba(21, 23, 26, .58); font-size: 12px; }
     .runtime-list { display: grid; gap: 8px; margin: 0 0 22px; }
-    .runtime-permission { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: start; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+    .runtime-permission { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: start; border: 1px solid rgba(21, 23, 26, .12); border-radius: 8px; padding: 10px 12px; cursor: pointer; background: rgba(255,255,255,.62); }
     .runtime-permission input { margin-top: 3px; accent-color: #111; }
     .runtime-permission strong { display: block; font-weight: 600; }
     .runtime-permission small { display: block; margin-top: 3px; color: color-mix(in srgb, CanvasText 62%, transparent); line-height: 1.35; }
     form { display: grid; gap: 0; }
     .actions { display: flex; gap: 10px; }
     button { height: 42px; border-radius: 8px; font: inherit; font-weight: 700; cursor: pointer; padding: 0 16px; }
-    .approve { border: 0; background: #111; color: #fff; flex: 1; }
-    .deny { border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); background: Canvas; color: CanvasText; }
+    .approve { border: 0; background: #15171a; color: #fff; flex: 1; }
+    .deny { border: 1px solid rgba(21, 23, 26, .16); background: rgba(255,255,255,.7); color: #15171a; }
     .account { font-size: 13px; margin-bottom: 16px; }
   </style>
 </head>
@@ -191,16 +193,16 @@ function consentHtml(params: {
   <main>
     <h1>Allow ${escapeHtml(appName)}?</h1>
     <p class="account">Signed in as ${escapeHtml(params.user.name || params.user.username)}.</p>
-    <p>This app wants to use YouEye ID for your account. You can revoke this later from app settings.</p>
+    <p>This app wants to use ${escapeHtml(params.providerName)} for your account. You can change this later from app settings.</p>
     <form method="post" action="/application/o/authorize?${escapeHtml(params.query)}">
       <div>
-        <p class="section-label">YouEye ID</p>
+        <p class="section-label">${escapeHtml(params.providerName)}</p>
         <ul>${permissionRows}</ul>
         ${runtimeSection}
       </div>
       <div class="actions">
-        <button class="deny" type="submit" name="decision" value="deny">Deny</button>
-        <button class="approve" type="submit" name="decision" value="approve">Allow selected</button>
+        <button class="deny" type="submit" name="decision" value="deny">Not now</button>
+        <button class="approve" type="submit" name="decision" value="approve">Allow</button>
       </div>
     </form>
   </main>
@@ -234,6 +236,7 @@ async function validateAuthorizeRequest(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   const config = await getIdentityConfig();
+  const provider = await getIdentityProviderConfig();
   const user = await getIdentitySession(request);
   if (!user) {
     const returnUrl = new URL(request.nextUrl.pathname + request.nextUrl.search, config.externalUrl);
@@ -255,6 +258,7 @@ export async function GET(request: NextRequest) {
         user,
         scope,
         query: request.nextUrl.searchParams.toString(),
+        providerName: provider.name,
         runtimePermissions: runtime?.permissions,
       });
     }

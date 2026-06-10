@@ -196,7 +196,7 @@ export function UsersEmbedClient() {
       <div className="embed-header">
         <div>
           <div className="embed-title">Users</div>
-          <div className="embed-subtitle">Manage users and permissions via Authentik</div>
+          <div className="embed-subtitle">Manage users and sign-in permissions</div>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
           <button className="embed-btn" onClick={() => setShowSystem(!showSystem)}>
@@ -301,7 +301,7 @@ export function UsersEmbedClient() {
         <Overlay onClose={() => setDialog({ type: "none" })}>
           <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Add User</div>
           <div className="embed-muted" style={{ fontSize: 13, marginBottom: 16 }}>
-            Create a new user in Authentik. They can sign in via SSO.
+            Create a new sign-in user for this server.
           </div>
           <div style={{ display: "grid", gap: 12 }}>
             <Field label="Username" value={createForm.username} placeholder="johndoe"
