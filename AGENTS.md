@@ -15,6 +15,9 @@
 - `node --test ui/tests/launch-permissions-bridge.spec.mjs` passed.
 - `pnpm --dir control-panel build` passed for Control Panel `0.4.13.92`.
 - `pnpm --dir ui build` passed for UI `0.4.3.27` with known local `127.0.0.1:5432` static-generation warnings.
+- Artifact verification passed: CP and UI `standalone.tar` files contain top-level `server.js`; embedded package versions are `0.4.13.92` / `0.4.3.27`.
+- Released `cp-artem-v0.4.13.92` and `ui-artem-v0.4.3.27` with exact `standalone.tar` assets, deployed CP through `spine update control`, and deployed UI through CP's update endpoint.
+- Live proof on `192.168.31.160`: `spine status` reports CP `0.4.13.92`, UI `0.4.3.27`, 10 running containers, 0 stopped. A bridge call using the YouEye ID UUID wrote Search permission rows under UI user `8c0e0421-1786-4687-bb5b-5f5dfbf2c379`; the controlled OAuth consent POST returned `HTTP/2 303` to `https://search.potato.app/api/auth/callback?...`; following that callback set `ye-search-session` and redirected to `https://search.potato.app/`. Tester Search consent and permission rows were cleaned after verification.
 
 ### Notes for Iris
 - This fixes the live Search/Notes-style OAuth callback `405`: consent approval now uses `303 See Other`, so the app callback receives the expected OAuth `GET`.
