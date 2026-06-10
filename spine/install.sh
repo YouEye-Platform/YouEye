@@ -350,7 +350,7 @@ release_branch: ${BRANCH}
 setup_completed: false
 subdomains:
   control: control
-  auth: auth
+  identity: id
   dns: dns
 EOFCFG
         fi

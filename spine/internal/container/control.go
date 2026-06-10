@@ -409,7 +409,7 @@ WantedBy=multi-user.target
 		fmt.Sprintf("cat > /etc/systemd/system/youeye-control.service << 'EOF'\n%sEOF", serviceContent))
 
 	identityServiceContent := fmt.Sprintf(`[Unit]
-Description=YouEye ID
+Description=Identity Provider
 After=network.target
 
 [Service]
@@ -418,7 +418,7 @@ User=root
 WorkingDirectory=%s
 Environment=NODE_ENV=production
 Environment=PORT=3001
-Environment=YOUEYE_ID_SERVICE=true
+Environment=IDENTITY_SERVICE=true
 Environment=JWT_SECRET=%s
 Environment=HOST_IP=%s
 Environment=SECURE_COOKIES=true

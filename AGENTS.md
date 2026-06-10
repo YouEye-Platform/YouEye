@@ -1,3 +1,22 @@
+## v0.4.2.11 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix fresh-deploy identity service mode
+
+### Changes
+- `spine/internal/cmd/update.go`, `spine/internal/container/control.go` — Write the identity provider systemd unit with `IDENTITY_SERVICE=true` and generic Identity Provider description so fresh deploys serve OAuth JSON endpoints instead of the Control Panel setup redirect.
+- `spine/install.sh` — Seed new branch installs with `subdomains.identity: id` instead of the obsolete `auth` subdomain key.
+- `spine/internal/cmd/root.go`, `README.md` — Bumped Spine to `0.4.2.11`.
+
+### Test Results
+- Spine: `go test ./...` passed.
+- Spine release binary build passed; `/tmp/spine-linux-amd64 version` reports `0.4.2.11`.
+- Live `bykapc` hotfix verified: identity discovery returns JSON and token endpoint returns JSON `401 invalid_client` for an intentionally incomplete test request instead of HTML.
+
+### Notes for Iris
+- This fixes the `Unexpected token '<'` OAuth callback loop seen on a white-labelled fresh deployment when the token endpoint returned HTML from the normal Control Panel runtime.
+
 ## v0.4.13.99 / v0.4.3.30 / v0.4.2.10 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

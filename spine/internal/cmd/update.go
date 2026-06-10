@@ -43,7 +43,7 @@ if [ ! -f /etc/systemd/system/youeye-id.service ]; then
   HOST_IP="$(hostname -I | awk '{print $1}')"
   cat > /etc/systemd/system/youeye-id.service <<EOF
 [Unit]
-Description=YouEye ID
+Description=Identity Provider
 After=network.target
 
 [Service]
@@ -52,7 +52,7 @@ User=root
 WorkingDirectory=%s
 Environment=NODE_ENV=production
 Environment=PORT=3001
-Environment=YOUEYE_ID_SERVICE=true
+Environment=IDENTITY_SERVICE=true
 Environment=JWT_SECRET=${JWT}
 Environment=HOST_IP=${HOST_IP}
 Environment=SECURE_COOKIES=true
