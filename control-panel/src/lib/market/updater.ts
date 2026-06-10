@@ -52,6 +52,7 @@ import {
   mergeMigrationSources,
   type MigrationWithSource,
 } from './migration-planner';
+import { setAppNetworkNAT } from '@/lib/incus/app-network';
 import type {
   AppManifest,
   InstallEventCallback,
@@ -526,6 +527,9 @@ export async function updateMarketplaceApp(
 
   const preUpdateHooks = manifest.update?.pre_update as UpdateHookStep[] | undefined;
   const postUpdateHooks = manifest.update?.post_update as UpdateHookStep[] | undefined;
+  const hasLXDUpdate = lxdContainers.length > 0;
+  const keepPostUpdateNAT = manifest.containers.some(c => c.network === 'internet')
+    || (manifest.internet?.hosts?.length ?? 0) > 0;
 
   let totalSteps = 1; // preflight
   totalSteps += containerNames.length; // snapshots
@@ -602,6 +606,13 @@ export async function updateMarketplaceApp(
     }
 
     // ── Step 5: Update containers by type ────────────────
+
+    if (hasLXDUpdate) {
+      // Updates need temporary outbound access to fetch release metadata,
+      // tarballs, OS packages, and small runtime package repairs. Restore the
+      // manifest's steady-state NAT policy before returning.
+      await setAppNetworkNAT(appId, true);
+    }
 
     for (let i = 0; i < containerSpecs.length; i++) {
       const spec = containerSpecs[i];
@@ -712,6 +723,10 @@ export async function updateMarketplaceApp(
     }
     emit(onEvent, step, totalSteps, 'success', 'Snapshots cleaned up');
 
+    if (hasLXDUpdate) {
+      await setAppNetworkNAT(appId, keepPostUpdateNAT);
+    }
+
     emit(onEvent, step, totalSteps, 'success',
       `${appId} updated successfully from v${installedVersion} to v${targetVersion}`);
 
@@ -746,6 +761,14 @@ export async function updateMarketplaceApp(
       }
       // Clean up snapshot after rollback
       await deleteSnapshot(name, SNAPSHOT_PREFIX);
+    }
+
+    if (hasLXDUpdate) {
+      try {
+        await setAppNetworkNAT(appId, keepPostUpdateNAT);
+      } catch (natErr) {
+        console.error(`[updater] Failed to restore app network NAT for ${appId}:`, natErr);
+      }
     }
 
     return {

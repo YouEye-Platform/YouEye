@@ -1,3 +1,19 @@
+## v0.4.13.94 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Let isolated native apps update without retaining broad internet
+
+### Changes
+- `control-panel/src/lib/market/updater.ts` — Temporarily enables app bridge NAT during LXD native app updates so isolated apps can fetch Forgejo release metadata/tarballs and package repairs, then restores the manifest's steady-state NAT policy after success or rollback.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.94`.
+
+### Test Results
+- Pending rebuild/release/deploy in this slice.
+
+### Notes for Iris
+- This is required by the proxy-scoped internet model: app containers should be isolated at runtime, but the updater still needs a controlled download window.
+
 ## v0.4.13.93 / v0.4.3.28 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
