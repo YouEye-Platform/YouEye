@@ -230,7 +230,7 @@ export async function incusUploadFile(
 
     socket.connect(socketPath, () => {
       const headers = [
-        `PUT ${path} HTTP/1.1`,
+        `POST ${path} HTTP/1.1`,
         'Host: localhost',
         'Content-Type: application/octet-stream',
         `Content-Length: ${data.length}`,

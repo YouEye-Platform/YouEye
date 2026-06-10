@@ -1,3 +1,21 @@
+## v0.4.13.97 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Use the correct Incus file upload method
+
+### Changes
+- `control-panel/src/lib/incus/server.ts` — Uses `POST /instances/{name}/files?path=...` for Incus file uploads, matching Incus 7.1 behavior.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.97`.
+
+### Test Results
+- Focused CP tests passed: `node --test control-panel/tests/scoped-caddy-grants.spec.mjs control-panel/tests/app-network-pihole-dns.spec.mjs control-panel/tests/market-update-plans.spec.mjs control-panel/tests/market-migration-planner.spec.mjs`.
+- CP production build passed for `0.4.13.97`.
+- Artifact verification passed: `standalone.tar` contains top-level `server.js` and embedded package version `0.4.13.97`.
+
+### Notes for Iris
+- Supersedes `0.4.13.96`, whose Incus API upload helper used `PUT` and hit `501 not implemented` on live Incus.
+
 ## v0.4.13.96 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
