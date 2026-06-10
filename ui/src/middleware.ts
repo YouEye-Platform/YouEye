@@ -29,6 +29,7 @@ const PUBLIC_ROUTES = [
   "/api/v1/telemetry/record",  // Accepts sendBeacon (no custom headers), validates session in route
   "/api/v1/notifications",  // Auth handled at route level (session, bridge token, app-slug)
   "/api/v1/my-connections",  // Auth at route level via X-YouEye-App header (app-to-UI)
+  "/api/apps/v1/proxy",  // Auth at route level via app token and active connection grants
 ];
 
 const RETIRED_PUBLIC_404_ROUTES = [

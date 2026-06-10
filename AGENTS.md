@@ -1,4 +1,4 @@
-## v0.4.13.85 / v0.4.3.23 — artem — 2026-06-10
+## v0.4.13.85 / v0.4.3.24 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
 **Agent:** Artem
@@ -6,17 +6,17 @@
 
 ### Changes
 - `control-panel/src/lib/market/integration-runner.ts` — Ensures identity gateway proxy devices are present before post-install identity Integration setup so apps like Memos can reach YouEye ID at gateway port `3002`.
-- `ui/src/app/api/apps/v1/proxy/[targetAppId]/[...path]/route.ts` — Adds token-authenticated, route-scoped app-to-app connection proxying through YE-UI.
+- `ui/src/app/api/apps/v1/proxy/[targetAppId]/[...path]/route.ts`, `ui/src/middleware.ts` — Adds token-authenticated, route-scoped app-to-app connection proxying through YE-UI and allows the proxy API to reach route-level app-token auth.
 - `ui/src/app/api/ui-bridge/app-connections/route.ts`, `ui/src/app/api/v1/my-connections/route.ts` — Preserve pushed `available` backend suggestions in connection discovery.
 - `ui/src/lib/permissions/approval.ts`, `ui/src/app/api/v1/permissions/request/route.ts`, `ui/src/app/permissions/approve/*`, `ui/src/app/api/v1/apps/[appId]/launch-requirements/route.ts`, `ui/src/app/api/v1/timeline/route.ts` — Carry safe `return_to` values into permission approvals and redirect after Allow/Deny.
 - `control-panel/tests/identity-integration-proxy.spec.mjs`, `ui/tests/connection-proxy.spec.mjs`, `ui/tests/permission-return-to.spec.mjs`, `ui/tests/launch-requirements.spec.mjs`, `ui/tests/timeline-permission-approval.spec.mjs` — Add/update focused regression coverage.
-- `control-panel/package.json`, `ui/package.json`, `ui/public/sw.js`, `README.md` — Bumped Control Panel to `0.4.13.85`, UI to `0.4.3.23`, and updated current version records.
+- `control-panel/package.json`, `ui/package.json`, `ui/public/sw.js`, `README.md` — Bumped Control Panel to `0.4.13.85`, UI to `0.4.3.24`, and updated current version records.
 
 ### Test Results
 - `node --test control-panel/tests/identity-integration-proxy.spec.mjs ui/tests/permission-return-to.spec.mjs ui/tests/connection-proxy.spec.mjs ui/tests/launch-requirements.spec.mjs ui/tests/timeline-permission-approval.spec.mjs ui/tests/my-connections-auth.spec.mjs` passed.
 - `pnpm --dir control-panel build` passed for Control Panel `0.4.13.85`.
-- `pnpm --dir ui build` passed for UI `0.4.3.23`; local static generation logged expected `127.0.0.1:5432` schema-init warnings but exited successfully.
-- Artifact verification passed: CP and UI `standalone.tar` files contain top-level `server.js` and package versions `0.4.13.85` / `0.4.3.23`.
+- `pnpm --dir ui build` passed for UI `0.4.3.24`; local static generation logged expected `127.0.0.1:5432` schema-init warnings but exited successfully.
+- Artifact verification passed: CP and UI `standalone.tar` files contain top-level `server.js` and package versions `0.4.13.85` / `0.4.3.24`.
 - Lint note: `pnpm --dir control-panel lint` still fails on existing repo-wide lint debt; `pnpm --dir ui lint` is blocked by missing ESLint v9 flat config.
 
 ### Notes for Iris

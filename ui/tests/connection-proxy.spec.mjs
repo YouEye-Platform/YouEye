@@ -11,6 +11,7 @@ function read(path) {
 
 test('app connection proxy validates app token and enforces approved route scope', () => {
   const route = read('src/app/api/apps/v1/proxy/[targetAppId]/[...path]/route.ts');
+  const middleware = read('src/middleware.ts');
   const bridge = read('src/app/api/ui-bridge/app-connections/route.ts');
   const discovery = read('src/app/api/v1/my-connections/route.ts');
 
@@ -21,6 +22,7 @@ test('app connection proxy validates app token and enforces approved route scope
   assert.match(route, /Connection to "\$\{targetAppId\}" is not approved or active/);
   assert.match(route, /X-YouEye-App-Token/);
   assert.match(route, /fetch\(upstreamUrl, init\)/);
+  assert.match(middleware, /"\/api\/apps\/v1\/proxy"/);
   assert.match(bridge, /available: available \?\? \[\]/);
   assert.match(discovery, /available: \(connData\?\.available as unknown\[\]\) \?\? \[\]/);
 });
