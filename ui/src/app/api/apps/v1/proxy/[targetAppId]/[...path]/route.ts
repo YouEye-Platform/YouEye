@@ -3,6 +3,8 @@ import { db, ensureSchema } from "@/db";
 import { apps } from "@/db/schema";
 import { validateAppToken } from "@/lib/auth/app-token";
 import { eq } from "drizzle-orm";
+import { resolveServiceAuth } from "@/lib/auth/service";
+import { checkPermission } from "@/lib/db/queries/permissions";
 
 export const dynamic = "force-dynamic";
 
@@ -103,6 +105,10 @@ async function proxy(request: NextRequest, context: { params: Promise<{ targetAp
   if (normalizeAppId(tokenResult.appId) !== sourceAppId) {
     return NextResponse.json({ error: "App token does not match X-YouEye-App" }, { status: 403 });
   }
+  const serviceUser = await resolveServiceAuth(request);
+  if (!serviceUser) {
+    return NextResponse.json({ error: "Connection proxy requires current user identity" }, { status: 401 });
+  }
 
   const { targetAppId, path = [] } = await context.params;
   const targetPath = `/${path.join("/")}`;
@@ -128,9 +134,20 @@ async function proxy(request: NextRequest, context: { params: Promise<{ targetAp
 
   const connData = rows[0].connections as Record<string, unknown> | null;
   const bridges = ((connData?.bridges as unknown[]) ?? []) as Connection[];
-  const connection = bridges.find((bridge) => bridge.active !== false && appMatches(bridge.appId, targetAppId));
+  const available = ((connData?.available as unknown[]) ?? []) as Connection[];
+  const connection = [
+    ...bridges.filter((bridge) => bridge.active !== false),
+    ...available.filter((candidate) => candidate.active !== false),
+  ].find((bridge) => appMatches(bridge.appId, targetAppId));
   if (!connection) {
     return NextResponse.json({ error: `Connection to "${targetAppId}" is not approved or active` }, { status: 403 });
+  }
+
+  const normalizedTarget = normalizeAppId(targetAppId);
+  const permission = `connection:${normalizedTarget}`;
+  const granted = await checkPermission(serviceUser.id, sourceAppId, permission);
+  if (!granted) {
+    return NextResponse.json({ error: `Connection to "${targetAppId}" is not allowed for this user` }, { status: 403 });
   }
 
   if (!allowedByMethod(connection, request.method)) {

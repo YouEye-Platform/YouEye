@@ -19,10 +19,15 @@ test('app connection proxy validates app token and enforces approved route scope
   assert.match(route, /App token does not match X-YouEye-App/);
   assert.match(route, /allowedByMethod/);
   assert.match(route, /allowedByPath/);
+  assert.match(route, /resolveServiceAuth\(request\)/);
+  assert.match(route, /Connection proxy requires current user identity/);
+  assert.match(route, /checkPermission\(serviceUser\.id, sourceAppId, permission\)/);
   assert.match(route, /Connection to "\$\{targetAppId\}" is not approved or active/);
   assert.match(route, /X-YouEye-App-Token/);
   assert.match(route, /fetch\(upstreamUrl, init\)/);
   assert.match(middleware, /"\/api\/apps\/v1\/proxy"/);
   assert.match(bridge, /available: available \?\? \[\]/);
-  assert.match(discovery, /available: \(connData\?\.available as unknown\[\]\) \?\? \[\]/);
+  assert.match(discovery, /resolveServiceAuth\(request\)/);
+  assert.match(discovery, /checkPermission\(serviceUser\.id, appId, permission\)/);
+  assert.match(discovery, /available,/);
 });

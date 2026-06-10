@@ -16,6 +16,8 @@ import { db, ensureSchema } from "@/db";
 import { apps } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { validateAppToken } from "@/lib/auth/app-token";
+import { resolveServiceAuth } from "@/lib/auth/service";
+import { checkPermission } from "@/lib/db/queries/permissions";
 
 export const dynamic = "force-dynamic";
 
@@ -49,6 +51,7 @@ export async function GET(request: NextRequest) {
 
   try {
     await ensureSchema();
+    const serviceUser = await resolveServiceAuth(request);
 
     // Look up the app and its connections data
     let rows = await db
@@ -74,16 +77,49 @@ export async function GET(request: NextRequest) {
     }
 
     const connData = rows[0].connections as Record<string, unknown> | null;
+    const available = ((connData?.available as unknown[]) ?? []) as Array<Record<string, unknown>>;
+    const globalBridges = ((connData?.bridges as unknown[]) ?? []) as Array<Record<string, unknown>>;
+    const grantedCandidates: Array<Record<string, unknown>> = [];
+
+    if (serviceUser) {
+      for (const candidate of available) {
+        const targetAppId = typeof candidate.appId === "string" ? candidate.appId : "";
+        if (!targetAppId || candidate.installed !== true) continue;
+        const permission = `connection:${targetAppId.replace(/^app-/, "").replace(/^ye-/, "")}`;
+        const granted = await checkPermission(serviceUser.id, appId, permission);
+        if (!granted) continue;
+        grantedCandidates.push({
+          ...candidate,
+          direction: candidate.direction ?? "one-way",
+          active: true,
+        });
+      }
+    }
+
+    const byTarget = new Map<string, Record<string, unknown>>();
+    if (serviceUser) {
+      for (const bridge of globalBridges) {
+        const target = typeof bridge.appId === "string" ? bridge.appId : "";
+        if (!target || bridge.active === false) continue;
+        const permission = `connection:${target.replace(/^app-/, "").replace(/^ye-/, "")}`;
+        const granted = await checkPermission(serviceUser.id, appId, permission);
+        if (granted) byTarget.set(target, bridge);
+      }
+      for (const candidate of grantedCandidates) {
+        const target = typeof candidate.appId === "string" ? candidate.appId : "";
+        if (target) byTarget.set(target, candidate);
+      }
+    }
 
     // Return the ConnectionStatus shape Canvas expects
     return NextResponse.json({
-      bridges: (connData?.bridges as unknown[]) ?? [],
+      bridges: [...byTarget.values()],
       internet: (connData?.internet as Record<string, unknown>) ?? {
         granted: false,
         hosts: [],
         blanket: false,
       },
-      available: (connData?.available as unknown[]) ?? [],
+      available,
     });
   } catch (err) {
     console.error("[my-connections] Error:", err);

@@ -16,6 +16,8 @@ test('launch requirements derive manifest permissions and require user approval'
   assert.match(route, /normalizeAppSurfaces\(manifest\)/);
   assert.match(route, /manifest\?\.permissions/);
   assert.match(route, /collectLaunchPreferences\(manifest\)/);
+  assert.match(route, /collectLaunchConnections/);
+  assert.match(route, /connection:\$\{record\.appId/);
   assert.match(route, /manifest\?\.preferences/);
   assert.match(route, /manifest\?\.launchPreferences/);
   assert.match(route, /settings.schema/);

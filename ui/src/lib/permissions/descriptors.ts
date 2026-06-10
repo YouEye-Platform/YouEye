@@ -2,7 +2,7 @@ export interface PermissionDescriptor {
   permission: string;
   title: string;
   description: string;
-  category: "identity" | "timeline" | "notifications" | "widgets" | "profile" | "system" | "app";
+  category: "identity" | "timeline" | "notifications" | "widgets" | "profile" | "system" | "app" | "connection";
   risk: "low" | "medium" | "high";
 }
 
@@ -51,6 +51,17 @@ function titleFromPermission(permission: string): string {
 export function describePermission(permission: string): PermissionDescriptor {
   const known = KNOWN_PERMISSIONS[permission];
   if (known) return { permission, ...known };
+
+  if (permission.startsWith("connection:")) {
+    const appName = titleFromPermission(permission.replace(/^connection:/, ""));
+    return {
+      permission,
+      title: `Connect to ${appName}`,
+      description: `Lets this app use ${appName} through the YouEye proxy for your account.`,
+      category: "connection",
+      risk: "medium",
+    };
+  }
 
   const category = permission.split(":")[0] || "app";
   return {

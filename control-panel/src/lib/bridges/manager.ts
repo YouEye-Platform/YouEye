@@ -39,38 +39,54 @@ let _uiIP: string | null = null;
  * Used by pushConnectionsToUI to populate the `available` field so Canvas
  * NeedsBackend components can show which backends exist.
  */
-async function computeAvailableBackends(appId: string): Promise<Array<{ appId: string; name: string; installed: boolean }>> {
-  const available: Array<{ appId: string; name: string; installed: boolean }> = [];
+async function computeAvailableBackends(appId: string): Promise<Array<Record<string, unknown>>> {
+  const available: Array<Record<string, unknown>> = [];
   try {
     const manifest = await fetchManifest(appId);
     const wants = manifest.wants ?? [];
     const allMeta = await listInstalledApps();
-    const installedIds = new Set(allMeta.map(m => m.appId));
+    const installedById = new Map(allMeta.map(m => [m.appId, m]));
 
     for (const want of wants) {
       if (want.appId) {
-        // Direct appId want — check if installed
+        const meta = installedById.get(want.appId);
+        const installed = !!meta;
         available.push({
           appId: want.appId,
           name: want.name,
-          installed: installedIds.has(want.appId),
+          description: want.description,
+          installed,
+          url: installed && meta?.subdomain && meta?.domain ? `https://${meta.subdomain}.${meta.domain}` : undefined,
+          accessMode: 'caddy',
+          allowedPaths: want.caddyGrant?.paths,
+          allowedMethods: want.caddyGrant?.methods,
+          port: want.defaultPort,
         });
       } else if (want.type) {
         // Type-based want — find all providers of this type
         for (const meta of allMeta) {
           if (meta.appId === appId) continue;
-          // Check install metadata provides
-          if (meta.provides?.some(p => p.type === want.type)) {
-            available.push({ appId: meta.appId, name: meta.appId, installed: true });
-            continue;
-          }
-          // Fallback: check manifest
-          try {
-            const m = await fetchManifest(meta.appId);
-            if (m.provides?.some((p: any) => p.type === want.type)) {
-              available.push({ appId: meta.appId, name: m.metadata.name, installed: true });
+          let name = meta.appId;
+          let providesType = meta.provides?.some(p => p.type === want.type) ?? false;
+          if (!providesType) {
+            try {
+              const m = await fetchManifest(meta.appId);
+              providesType = m.provides?.some((p: any) => p.type === want.type) ?? false;
+              name = m.metadata.name;
+            } catch {
+              // skip unknown manifests
             }
-          } catch { /* skip */ }
+          }
+          if (!providesType) continue;
+          available.push({
+            appId: meta.appId,
+            name,
+            description: want.description,
+            installed: true,
+            url: meta.subdomain && meta.domain ? `https://${meta.subdomain}.${meta.domain}` : undefined,
+            accessMode: 'caddy',
+            port: want.defaultPort,
+          });
         }
       }
     }

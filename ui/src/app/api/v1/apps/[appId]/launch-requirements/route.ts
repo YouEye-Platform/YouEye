@@ -38,6 +38,19 @@ function collectLaunchPermissions(manifest: Record<string, unknown> | null): str
   return [...permissions].sort();
 }
 
+function collectLaunchConnections(connections: Record<string, unknown> | null): string[] {
+  const available = Array.isArray(connections?.available) ? connections.available : [];
+  const permissions = new Set<string>();
+  for (const item of available) {
+    if (typeof item !== "object" || item === null) continue;
+    const record = item as Record<string, unknown>;
+    if (record.installed !== true) continue;
+    if (typeof record.appId !== "string" || record.appId.length === 0) continue;
+    permissions.add(`connection:${record.appId.replace(/^app-/, "").replace(/^ye-/, "")}`);
+  }
+  return [...permissions].sort();
+}
+
 interface LaunchPreference {
   key: string;
   type: string;
@@ -144,7 +157,10 @@ export async function GET(
   }
 
   const manifest = (app.manifest as Record<string, unknown> | null) ?? null;
-  const required = collectLaunchPermissions(manifest);
+  const required = [
+    ...collectLaunchPermissions(manifest),
+    ...collectLaunchConnections((app.connections as Record<string, unknown> | null) ?? null),
+  ].sort();
   const requiredPreferences = collectLaunchPreferences(manifest).filter((preference) => preference.required);
   const userId = (session?.userId ?? serviceUser?.id)!;
   const [checks, allUserSettings] = await Promise.all([
