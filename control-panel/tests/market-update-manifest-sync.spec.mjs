@@ -23,4 +23,9 @@ test("market updater syncs updated manifests into YouEye UI", () => {
   assert.match(sync, /\/api\/v1\/apps\/.+\/manifest/);
   assert.match(sync, /pushConnectionsToUI/);
   assert.match(sync, /await pushConnectionsToUI\(appId\)/);
+
+  const manager = read("src/lib/bridges/manager.ts");
+  assert.match(manager, /accessMode: 'proxy'/);
+  assert.match(manager, /host: target\.host/);
+  assert.doesNotMatch(manager, /https:\/\/\$\{meta\.subdomain\}/);
 });

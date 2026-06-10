@@ -41,6 +41,17 @@ let _uiIP: string | null = null;
  */
 async function computeAvailableBackends(appId: string): Promise<Array<Record<string, unknown>>> {
   const available: Array<Record<string, unknown>> = [];
+  async function installedTarget(meta: any, fallbackPort?: number): Promise<{ host?: string; port?: number }> {
+    const primary = meta?.containers && meta.containers.length > 1
+      ? (meta.containers.find((c: any) => c.name === 'main' || c.name === 'server') || meta.containers[0])
+      : meta?.containers?.[0];
+    const containerName = primary?.containerName || (meta?.appId ? `app-${meta.appId}` : undefined);
+    const host = containerName ? await getIncusContainerIP(containerName) : undefined;
+    return {
+      host: host || containerName,
+      port: primary?.port || fallbackPort,
+    };
+  }
   try {
     const manifest = await fetchManifest(appId);
     const wants = manifest.wants ?? [];
@@ -51,16 +62,17 @@ async function computeAvailableBackends(appId: string): Promise<Array<Record<str
       if (want.appId) {
         const meta = installedById.get(want.appId);
         const installed = !!meta;
+        const target = installed ? await installedTarget(meta, want.defaultPort) : {};
         available.push({
           appId: want.appId,
           name: want.name,
           description: want.description,
           installed,
-          url: installed && meta?.subdomain && meta?.domain ? `https://${meta.subdomain}.${meta.domain}` : undefined,
-          accessMode: 'caddy',
+          host: target.host,
+          port: target.port,
+          accessMode: 'proxy',
           allowedPaths: want.caddyGrant?.paths,
           allowedMethods: want.caddyGrant?.methods,
-          port: want.defaultPort,
         });
       } else if (want.type) {
         // Type-based want — find all providers of this type
@@ -78,14 +90,15 @@ async function computeAvailableBackends(appId: string): Promise<Array<Record<str
             }
           }
           if (!providesType) continue;
+          const target = await installedTarget(meta, want.defaultPort);
           available.push({
             appId: meta.appId,
             name,
             description: want.description,
             installed: true,
-            url: meta.subdomain && meta.domain ? `https://${meta.subdomain}.${meta.domain}` : undefined,
-            accessMode: 'caddy',
-            port: want.defaultPort,
+            host: target.host,
+            port: target.port,
+            accessMode: 'proxy',
           });
         }
       }
