@@ -6,7 +6,7 @@ const MARKET_STATE_DIR = '/var/lib/youeye';
 const MARKET_SOURCE_PATH = path.join(MARKET_STATE_DIR, 'market-source.json');
 const MARKET_SOURCES_PATH = path.join(MARKET_STATE_DIR, 'market-sources.json');
 
-export const DEFAULT_MARKET_REPO_URL = 'https://github.com/youeye-platform/Market';
+export const DEFAULT_MARKET_REPO_URL = 'https://git.potemk.in/potemsla/YE-AppMarket';
 
 export interface MarketSource {
   id: string;

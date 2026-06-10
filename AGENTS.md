@@ -1,3 +1,21 @@
+## v0.4.13.84 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Seed Artem fresh installs from Forgejo AppMarket
+
+### Changes
+- `control-panel/src/lib/market/source.ts` — Temporarily points the default Market source at Forgejo `potemsla/YE-AppMarket` so fresh Artem installs can resolve required Postgres/Caddy/Pi-hole system manifests before infrastructure deploy.
+- `control-panel/tests/market-system-apps.spec.ts` — Adds regression coverage that the fresh-install Market default matches the branch-local system manifest source.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.84`.
+
+### Test Results
+- `node --import tsx --test control-panel/tests/market-system-apps.spec.ts` passed.
+- `pnpm --dir control-panel build` passed for Control Panel `0.4.13.84`.
+
+### Notes for Iris
+- This is an Artem-branch recovery default for the current test cycle. Before promotion, either sync system manifests to the public GitHub Market or replace this with channel-aware Market source seeding from Spine/install config.
+
 ## v0.4.13.83 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

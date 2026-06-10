@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const controlRoot = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..');
+const testDir = dirname(fileURLToPath(import.meta.url));
+const controlRoot = process.env.CONTROL_PANEL_ROOT || join(testDir, '..');
 const marketRoot = process.env.MARKET_ROOT || join(controlRoot, '..', '..', 'YE-AppMarket');
 
 function readControl(path: string): string {
@@ -21,6 +23,7 @@ test('system app manifests are first-class Market artifacts', () => {
   const api = readControl('src/app/api/market/catalog/route.ts');
   const systemManifestApi = readControl('src/app/api/deploy/infrastructure/system-manifests/route.ts');
   const systemUpdatesApi = readControl('src/app/api/deploy/infrastructure/system-updates/route.ts');
+  const source = readControl('src/lib/market/source.ts');
   const resolver = readControl('src/lib/infrastructure/system-market-manifests.ts');
   const updater = readControl('src/lib/infrastructure/system-updater.ts');
   const deployer = readControl('src/lib/infrastructure/deployer.ts');
@@ -37,6 +40,7 @@ test('system app manifests are first-class Market artifacts', () => {
   assert.match(systemUpdatesApi, /updateSystemFromMarket/);
   assert.match(systemUpdatesApi, /forceLegacy/);
   assert.match(systemUpdatesApi, /allowDatabaseUpdate/);
+  assert.match(source, /DEFAULT_MARKET_REPO_URL = 'https:\/\/git\.potemk\.in\/potemsla\/YE-AppMarket'/);
   assert.match(resolver, /resolveSystemImageOverrides/);
   assert.match(resolver, /Required Market system manifest/);
   assert.match(resolver, /recordSystemContainerManifest/);
