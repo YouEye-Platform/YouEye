@@ -29,6 +29,7 @@ export type { UpdateEvent };
 import { settingsService } from '@/lib/settings';
 import { isNewer, sortVersionsDesc } from '@/lib/version';
 import { buildReleasesAPIURL, getReleaseAssetDownloadURL, getReleaseSource, type ReleaseAsset } from './release-source';
+import { injectCaddyRootCA } from '@/lib/market/caddy-ca';
 
 type EventEmitter = (event: UpdateEvent) => void;
 
@@ -180,11 +181,19 @@ export async function updateLXDApp(
     emit({ stage: 'starting', message: `Release branch: ${branch}`, progress: 2 });
   }
 
-  // 3. Get current version
+  // 3. Ensure managed HTTPS URLs are trusted before health checks or early no-op exits.
+  try {
+    await injectCaddyRootCA(containerName);
+    emit({ stage: 'starting', message: `Caddy root CA trusted in ${containerName}`, progress: 4 });
+  } catch (err) {
+    emit({ stage: 'starting', message: `Caddy root CA trust repair skipped: ${err instanceof Error ? err.message : String(err)}`, progress: 4 });
+  }
+
+  // 4. Get current version
   const currentVersion = await getCurrentVersion(containerName, appDir);
   emit({ stage: 'starting', message: `Current version: ${currentVersion}`, progress: 5 });
 
-  // 4. Get latest release
+  // 5. Get latest release
   const release = await getLatestRelease(containerName, giteaRepo, branch, tagPrefix);
   if (!release) throw new Error('Could not fetch latest release from Gitea');
   emit({ stage: 'starting', message: `Latest version: ${release.version}`, progress: 10 });

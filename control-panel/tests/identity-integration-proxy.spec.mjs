@@ -19,3 +19,11 @@ test('post-install identity integrations repair the app identity gateway proxy b
   assert.match(runner, /integration\.type === 'identity' \|\| integration\.sso/);
   assert.match(runner, /buildCanonicalContext\(contextManifest, config, undefined, secrets\.db_password, undefined, true\)/);
 });
+
+test('LXD updater repairs Caddy root CA trust before no-op update exits', () => {
+  const updater = read('src/lib/apps/lxd-updater.ts');
+
+  assert.match(updater, /injectCaddyRootCA/);
+  assert.match(updater, /Caddy root CA trusted in \$\{containerName\}/);
+  assert.ok(updater.indexOf('await injectCaddyRootCA(containerName)') < updater.indexOf('if (currentVersion === release.version'));
+});
