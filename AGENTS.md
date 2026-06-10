@@ -18,9 +18,12 @@
 - `pnpm --dir control-panel build` passed for Control Panel `0.4.13.91`.
 - `pnpm --dir ui build` passed for UI `0.4.3.26` with known local `127.0.0.1:5432` static-generation warnings.
 - Artifact verification passed: CP and UI `standalone.tar` files contain top-level `server.js`; source package versions are `0.4.13.91` / `0.4.3.26`.
+- Released `cp-artem-v0.4.13.91` and `ui-artem-v0.4.3.26` with exact `standalone.tar` assets, deployed CP through `spine update control`, and deployed UI through CP's update endpoint.
+- Live smoke on `192.168.31.160` passed: UI bridge preview returned `connection:searxng` and `timeline:write`; denying both made launch requirements return `first_launch_complete:true` with `denied_permissions`; granting only `connection:searxng` made `/api/v1/my-connections` return SearXNG while Timeline remained denied. Smoke rows were cleaned up afterward.
 
 ### Notes for Iris
 - Users can now uncheck optional runtime permissions such as `connection:searxng` while still approving YouEye ID sign-in. Unchecked permissions are stored as explicit denials, so the app will not be repeatedly prompted but the proxy still blocks access.
+- Existing installs need a manifest sync/update once to populate the new connection candidate cache; fresh installs do this automatically through CP `0.4.13.91`.
 
 ## v0.4.13.90 / v0.4.3.25 — artem — 2026-06-10
 **Branch:** artem
