@@ -20,12 +20,10 @@
  *   - Rollback via Incus snapshots on failure
  */
 
-import { execShell } from '@/lib/incus/server';
-import { execFile } from 'child_process';
-import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { execShell, incusUploadFile } from '@/lib/incus/server';
+import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { promisify } from 'util';
 import {
   createSnapshot,
   restoreSnapshot,
@@ -93,10 +91,6 @@ function emit(
 ) {
   cb({ step, totalSteps, status, message, detail });
 }
-
-// ─── Constants ───────────────────────────────────────────
-
-const execFileAsync = promisify(execFile);
 
 // ─── Version Constraint Helpers ──────────────────────────
 
@@ -353,10 +347,8 @@ async function pushFileToContainer(
   remotePath: string,
 ): Promise<void> {
   try {
-    await execFileAsync('incus', ['file', 'push', localPath, `${containerName}${remotePath}`], {
-      timeout: 300_000,
-      maxBuffer: 1024 * 1024,
-    });
+    const data = await readFile(localPath);
+    await incusUploadFile(containerName, remotePath, data, { timeout: 300_000 });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     throw new Error(`Failed to push update artifact into ${containerName}: ${detail}`);

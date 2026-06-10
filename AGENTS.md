@@ -1,3 +1,22 @@
+## v0.4.13.96 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Use Incus API for manager-downloaded app update artifacts
+
+### Changes
+- `control-panel/src/lib/incus/server.ts` — Added `incusUploadFile()` for raw file uploads over the Incus Unix socket.
+- `control-panel/src/lib/market/updater.ts` — Uses the Incus files API to stage CP-downloaded native app update tarballs, avoiding a dependency on an `incus` CLI inside the Control Panel container.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.96`.
+
+### Test Results
+- Focused CP tests passed: `node --test control-panel/tests/scoped-caddy-grants.spec.mjs control-panel/tests/app-network-pihole-dns.spec.mjs control-panel/tests/market-update-plans.spec.mjs control-panel/tests/market-migration-planner.spec.mjs`.
+- CP production build passed for `0.4.13.96`.
+- Artifact verification passed: `standalone.tar` contains top-level `server.js` and embedded package version `0.4.13.96`.
+
+### Notes for Iris
+- Supersedes `0.4.13.95`, which had the right no-NAT design but attempted to shell out to `incus file push` from inside Control Panel where the CLI is not installed.
+
 ## v0.4.13.95 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

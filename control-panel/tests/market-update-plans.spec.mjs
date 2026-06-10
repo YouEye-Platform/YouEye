@@ -38,7 +38,7 @@ test('LXD app updates are downloaded by Control Panel without app NAT window', (
 
   assert.match(updater, /downloadReleaseTarball/);
   assert.match(updater, /pushFileToContainer/);
-  assert.match(updater, /incus', \['file', 'push'/);
+  assert.match(updater, /incusUploadFile/);
   assert.match(updater, /The app container never receives broad internet\/NAT for code updates/);
   assert.doesNotMatch(updater, /setAppNetworkNAT/);
   assert.doesNotMatch(updater, /execShell\(\s*containerName,\s*`curl -sSL/);

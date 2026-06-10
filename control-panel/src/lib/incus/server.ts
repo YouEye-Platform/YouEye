@@ -211,6 +211,75 @@ export async function incusRequest<T = unknown>(
 }
 
 /**
+ * Upload raw file bytes into a container via the Incus files API.
+ * Used when Control Panel must stage artifacts without giving the target
+ * container outbound internet access.
+ */
+export async function incusUploadFile(
+  instanceName: string,
+  remotePath: string,
+  data: Buffer,
+  options?: { timeout?: number }
+): Promise<void> {
+  const socketPath = process.env.INCUS_SOCKET || '/var/lib/incus/unix.socket';
+  const path = `/1.0/instances/${encodeURIComponent(instanceName)}/files?path=${encodeURIComponent(remotePath)}`;
+
+  return new Promise((resolve, reject) => {
+    const socket = new Socket();
+    const chunks: Buffer[] = [];
+
+    socket.connect(socketPath, () => {
+      const headers = [
+        `PUT ${path} HTTP/1.1`,
+        'Host: localhost',
+        'Content-Type: application/octet-stream',
+        `Content-Length: ${data.length}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n');
+      socket.write(headers);
+      socket.write(data);
+    });
+
+    socket.on('data', (chunk) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+
+    socket.on('end', () => {
+      try {
+        const raw = Buffer.concat(chunks).toString();
+        const bodyStart = raw.indexOf('\r\n\r\n');
+        const headerSection = bodyStart === -1 ? '' : raw.substring(0, bodyStart).toLowerCase();
+        let body = bodyStart === -1 ? raw : raw.substring(bodyStart + 4);
+        if (headerSection.includes('transfer-encoding: chunked')) {
+          body = parseChunkedBody(body);
+        }
+        const response = JSON.parse(body) as IncusResponse;
+        if (response.type === 'error' || response.error) {
+          reject(new Error(response.error || `Incus upload failed with status ${response.status}`));
+          return;
+        }
+        resolve();
+      } catch (error) {
+        reject(new Error(`Failed to parse Incus upload response: ${error}`));
+      }
+    });
+
+    socket.on('error', (error) => {
+      reject(new Error(`Socket error: ${error.message}`));
+    });
+
+    socket.on('timeout', () => {
+      socket.destroy();
+      reject(new Error('Socket timeout'));
+    });
+
+    socket.setTimeout(options?.timeout ?? 300_000);
+  });
+}
+
+/**
  * Get server information
  */
 export async function getServerInfo() {
