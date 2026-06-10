@@ -17,7 +17,7 @@
 - `node --test control-panel/tests/identity-integration-proxy.spec.mjs ui/tests/permission-return-to.spec.mjs ui/tests/connection-proxy.spec.mjs ui/tests/launch-requirements.spec.mjs ui/tests/timeline-permission-approval.spec.mjs ui/tests/my-connections-auth.spec.mjs` passed.
 - `pnpm --dir control-panel build` passed for Control Panel `0.4.13.87`.
 - `pnpm --dir ui build` passed for UI `0.4.3.24`; local static generation logged expected `127.0.0.1:5432` schema-init warnings but exited successfully.
-- Artifact verification passed: CP and UI `standalone.tar` files contain top-level `server.js` and package versions `0.4.13.87` / `0.4.3.24`.
+- Artifact verification passed: CP and UI `standalone.tar` files contain top-level `server.js`; source package versions are `0.4.13.87` / `0.4.3.24`.
 - Lint note: `pnpm --dir control-panel lint` still fails on existing repo-wide lint debt; `pnpm --dir ui lint` is blocked by missing ESLint v9 flat config.
 
 ### Notes for Iris
