@@ -3,6 +3,7 @@ import { CONTAINER_DOMAIN } from './constants';
 import { fetchManifestFromSource, fetchManifestReferenceFromSource } from './catalog';
 import { readInstallMetadata, saveInstallMetadata } from './metadata';
 import { upsertInstalledApp } from './installed-apps';
+import { pushConnectionsToUI } from '../bridges/manager';
 
 function readBridgeToken(): string | null {
   try {
@@ -78,6 +79,8 @@ export async function syncInstalledAppManifestToUI(appId: string): Promise<{
     sourceRepoUrl: metadata.sourceRepoUrl,
   });
 
+  await pushConnectionsToUI(appId);
+
   return {
     appId,
     sourceId: metadata.sourceId ?? null,
@@ -111,4 +114,5 @@ export async function syncAppManifestObjectToUI(
     const text = await res.text().catch(() => '');
     throw new Error(`UI manifest sync failed: ${res.status} ${text}`);
   }
+  await pushConnectionsToUI(appId);
 }

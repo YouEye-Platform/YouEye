@@ -21,4 +21,6 @@ test("market updater syncs updated manifests into YouEye UI", () => {
   assert.match(sync, /export async function syncAppManifestObjectToUI/);
   assert.match(sync, /X-UI-Bridge-Token/);
   assert.match(sync, /\/api\/v1\/apps\/.+\/manifest/);
+  assert.match(sync, /pushConnectionsToUI/);
+  assert.match(sync, /await pushConnectionsToUI\(appId\)/);
 });

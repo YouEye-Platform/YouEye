@@ -96,7 +96,7 @@ async function computeAvailableBackends(appId: string): Promise<Array<Record<str
   return available;
 }
 
-async function pushConnectionsToUI(appId: string): Promise<void> {
+export async function pushConnectionsToUI(appId: string): Promise<void> {
   try {
     if (!_bridgeToken) {
       _bridgeToken = (await readFile(TOKEN_FILE, 'utf-8')).trim();

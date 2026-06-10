@@ -1,4 +1,4 @@
-## v0.4.13.88 / v0.4.3.25 — artem — 2026-06-10
+## v0.4.13.89 / v0.4.3.25 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
 **Agent:** Artem
@@ -6,13 +6,14 @@
 
 ### Changes
 - `control-panel/src/components/market/install-dialog.tsx` — Removes app-to-app connection toggles from the Market install modal and only shows Internet/LAN when the app truly needs broad egress.
-- `control-panel/src/lib/bridges/manager.ts` — Pushes installed connection candidates with proxy URL and route-scope metadata so UI can offer them as per-user permissions.
+- `control-panel/src/lib/bridges/manager.ts`, `control-panel/src/lib/market/ui-manifest-sync.ts` — Pushes installed connection candidates with proxy URL and route-scope metadata during bridge changes and manifest sync/update so UI can offer them as per-user permissions.
 - `ui/src/app/api/v1/apps/[appId]/launch-requirements/route.ts`, `ui/src/lib/permissions/descriptors.ts` — Adds installed app connection candidates as first-launch permissions like `connection:searxng`.
 - `ui/src/app/api/v1/my-connections/route.ts`, `ui/src/app/api/apps/v1/proxy/[targetAppId]/[...path]/route.ts` — Filters discovered/proxied app connections by the current user's `connection:*` permission.
-- `ui/tests/connection-proxy.spec.mjs`, `ui/tests/launch-requirements.spec.mjs`, `control-panel/package.json`, `ui/package.json`, `README.md` — Adds focused coverage and bumps CP/UI versions.
+- `ui/tests/connection-proxy.spec.mjs`, `ui/tests/launch-requirements.spec.mjs`, `control-panel/tests/market-update-manifest-sync.spec.mjs`, `control-panel/package.json`, `ui/package.json`, `README.md` — Adds focused coverage and bumps CP/UI versions.
 
 ### Test Results
 - `node --test ui/tests/connection-proxy.spec.mjs ui/tests/launch-requirements.spec.mjs ui/tests/permission-return-to.spec.mjs ui/tests/my-connections-auth.spec.mjs` passed.
+- `node --test control-panel/tests/market-update-manifest-sync.spec.mjs` passed.
 - Preliminary `pnpm --dir ui build` passed with known local `127.0.0.1:5432` static-generation warnings; final release builds follow after the version bump.
 
 ### Notes for Iris
