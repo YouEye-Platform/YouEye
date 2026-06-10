@@ -1,3 +1,27 @@
+## v0.4.13.91 / v0.4.3.26 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Combine YouEye ID consent with selectable first-launch app permissions
+
+### Changes
+- `control-panel/src/app/application/o/authorize/route.ts` — Shows pending UI-owned runtime app permissions on the YouEye ID consent page and submits only the permissions the user leaves selected.
+- `control-panel/src/lib/market/engine.ts` — Pushes connection candidates to UI immediately after fresh app installs register with the dashboard, fixing reinstall cases where Search lost its SearXNG prompt.
+- `ui/src/app/api/ui-bridge/app-launch-permissions/route.ts` — Adds a bridge-only endpoint for CP to preview pending launch permissions and grant/deny the selected runtime permissions.
+- `ui/src/lib/db/queries/permissions.ts`, `ui/src/app/api/v1/apps/[appId]/launch-requirements/route.ts` — Store explicit permission denials and treat denied permissions as decided while keeping access blocked.
+- `control-panel/tests/identity-consent.spec.ts`, `ui/tests/launch-permissions-bridge.spec.mjs`, `ui/tests/launch-requirements.spec.mjs` — Add focused coverage for selectable runtime permissions and denial handling.
+- `control-panel/package.json`, `ui/package.json`, `README.md` — Bumped Control Panel to `0.4.13.91` and UI to `0.4.3.26`.
+
+### Test Results
+- `node --test ui/tests/launch-permissions-bridge.spec.mjs ui/tests/launch-requirements.spec.mjs ui/tests/connection-proxy.spec.mjs ui/tests/permission-approval.spec.mjs ui/tests/permission-return-to.spec.mjs` passed.
+- `node --test control-panel/tests/market-update-manifest-sync.spec.mjs` passed.
+- `pnpm --dir control-panel build` passed for Control Panel `0.4.13.91`.
+- `pnpm --dir ui build` passed for UI `0.4.3.26` with known local `127.0.0.1:5432` static-generation warnings.
+- Artifact verification passed: CP and UI `standalone.tar` files contain top-level `server.js`; source package versions are `0.4.13.91` / `0.4.3.26`.
+
+### Notes for Iris
+- Users can now uncheck optional runtime permissions such as `connection:searxng` while still approving YouEye ID sign-in. Unchecked permissions are stored as explicit denials, so the app will not be repeatedly prompted but the proxy still blocks access.
+
 ## v0.4.13.90 / v0.4.3.25 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

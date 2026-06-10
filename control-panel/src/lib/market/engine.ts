@@ -79,7 +79,7 @@ import {
   setAppNetworkNAT,
 } from '../incus/app-network';
 import { injectCaddyRootCA } from './caddy-ca';
-import { activatePendingBridges, detectBridgeDependencies, createBridge, resolveBridgeMappings, activateBridge } from '../bridges/manager';
+import { activatePendingBridges, detectBridgeDependencies, createBridge, resolveBridgeMappings, activateBridge, pushConnectionsToUI } from '../bridges/manager';
 import { generateSuggestionsForApp } from '../bridges/suggestions';
 
 // ─── Install Rollback ─────────────────────────────────────
@@ -1232,6 +1232,7 @@ export async function installApp(
       : undefined;
     const linkHandlers = manifest.capabilities?.link_handlers ?? [];
     await registerAppWithUI(appId, displayName, config.subdomain, primaryContainerName, primaryPort, displayIcon, appToken, ssoEntryUrl, linkHandlers, manifest as unknown as Record<string, unknown>);
+    await pushConnectionsToUI(appId);
     emit(onEvent, step, totalSteps, 'success', 'Registered with dashboard');
   } catch (err) {
     emit(onEvent, step, totalSteps, 'success', `Dashboard registration skipped: ${err}`);

@@ -26,7 +26,8 @@ test('launch requirements derive manifest permissions and require user approval'
   assert.match(route, /preferences_required/);
   assert.match(route, /app_settings_url_absolute/);
   assert.match(route, /app_settings_api_absolute/);
-  assert.match(route, /checkPermission\(userId, grantAppId, permission\)/);
+  assert.match(route, /getPermissionDecision\(userId, grantAppId, permission\)/);
+  assert.match(route, /denied_permissions/);
   assert.match(route, /request\.nextUrl\.searchParams\.get\("return_to"\)/);
   assert.match(route, /buildPermissionApproval\(grantAppId, missing, "persistent", request, returnTo\)/);
   assert.match(route, /first_launch_complete: false/);

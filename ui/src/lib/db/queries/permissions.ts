@@ -35,6 +35,29 @@ export async function checkPermission(
   return row?.granted ?? false;
 }
 
+/** Return true/false when the user has made a decision, or null when undecided. */
+export async function getPermissionDecision(
+  userId: string,
+  appId: string,
+  permission: string
+): Promise<boolean | null> {
+  await ensureSchema();
+
+  const [row] = await db
+    .select({ granted: appPermissions.granted })
+    .from(appPermissions)
+    .where(
+      and(
+        eq(appPermissions.userId, userId),
+        eq(appPermissions.appId, appId),
+        eq(appPermissions.permission, permission)
+      )
+    )
+    .limit(1);
+
+  return typeof row?.granted === "boolean" ? row.granted : null;
+}
+
 /** Grant a permission to an app */
 export async function grantPermission(
   userId: string,
@@ -74,6 +97,45 @@ export async function grantPermission(
   }
 
   await logPermissionAction(userId, appId, permission, "granted", actor);
+}
+
+/** Store an explicit user denial without granting access. */
+export async function denyPermission(
+  userId: string,
+  appId: string,
+  permission: string,
+  actor: string = "user"
+): Promise<void> {
+  await ensureSchema();
+
+  const existing = await db
+    .select({ id: appPermissions.id })
+    .from(appPermissions)
+    .where(
+      and(
+        eq(appPermissions.userId, userId),
+        eq(appPermissions.appId, appId),
+        eq(appPermissions.permission, permission)
+      )
+    )
+    .limit(1);
+
+  if (existing.length > 0) {
+    await db
+      .update(appPermissions)
+      .set({ granted: false, grantType: "persistent", grantedAt: new Date() })
+      .where(eq(appPermissions.id, existing[0].id));
+  } else {
+    await db.insert(appPermissions).values({
+      userId,
+      appId,
+      permission,
+      granted: false,
+      grantType: "persistent",
+    });
+  }
+
+  await logPermissionAction(userId, appId, permission, "denied", actor);
 }
 
 /** Revoke a permission from an app */

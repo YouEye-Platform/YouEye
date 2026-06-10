@@ -9,7 +9,7 @@ import type { NextRequest } from "next/server";
 import { getSession } from "@/lib/auth";
 import { resolveServiceAuth } from "@/lib/auth/service";
 import { getApp } from "@/lib/db/queries/app-management";
-import { checkPermission } from "@/lib/db/queries/permissions";
+import { getPermissionDecision } from "@/lib/db/queries/permissions";
 import {
   buildPermissionApproval,
   normalizePermissionAppId,
@@ -167,13 +167,14 @@ export async function GET(
     Promise.all(
     required.map(async (permission) => ({
       permission,
-      granted: await checkPermission(userId, grantAppId, permission),
+      decision: await getPermissionDecision(userId, grantAppId, permission),
     }))
     ),
     getUserSettings(userId),
   ]);
   const appSettings = (allUserSettings[manifestAppId] as Record<string, unknown> | undefined) ?? {};
-  const missing = checks.filter((check) => !check.granted).map((check) => check.permission);
+  const missing = checks.filter((check) => check.decision === null).map((check) => check.permission);
+  const denied = checks.filter((check) => check.decision === false).map((check) => check.permission);
   const missingPreferences = requiredPreferences.filter((preference) => !hasPreferenceValue(appSettings, preference));
 
   if (missing.length > 0 || missingPreferences.length > 0) {
@@ -195,8 +196,9 @@ export async function GET(
         manifest_app_id: app.id,
         required_permissions: required.map((permission) => describePermission(permission)),
         granted_permissions: checks
-          .filter((check) => check.granted)
+          .filter((check) => check.decision === true)
           .map((check) => describePermission(check.permission)),
+        denied_permissions: denied.map((permission) => describePermission(permission)),
         ...preferences,
         ...approval,
       },
@@ -210,7 +212,10 @@ export async function GET(
     app_id: grantAppId,
     manifest_app_id: app.id,
     required_permissions: required.map((permission) => describePermission(permission)),
-    granted_permissions: required.map((permission) => describePermission(permission)),
+    granted_permissions: checks
+      .filter((check) => check.decision === true)
+      .map((check) => describePermission(check.permission)),
+    denied_permissions: denied.map((permission) => describePermission(permission)),
     missing_permissions: [],
     preferences_required: false,
     required_preferences: requiredPreferences,

@@ -31,6 +31,26 @@ test('OAuth authorize requires consent for app clients before issuing codes', ()
   assert.match(authorize, /issueAuthRedirect/);
 });
 
+test('OAuth authorize can show and grant selected runtime app permissions', () => {
+  const authorize = read('src/app/application/o/authorize/route.ts');
+
+  assert.match(authorize, /appIdFromClientId/);
+  assert.match(authorize, /\/api\/ui-bridge\/app-launch-permissions/);
+  assert.match(authorize, /name="runtime_permission"/);
+  assert.match(authorize, /Allow selected/);
+  assert.match(authorize, /form\.getAll\('runtime_permission'\)/);
+  assert.match(authorize, /grantPermissions: selectedRuntimePermissions/);
+  assert.match(authorize, /denyUnselected: Array\.isArray\(input\.grantPermissions\)/);
+});
+
+test('Fresh installs push connection candidates to UI after dashboard registration', () => {
+  const engine = read('src/lib/market/engine.ts');
+
+  assert.match(engine, /pushConnectionsToUI/);
+  assert.match(engine, /await registerAppWithUI/);
+  assert.match(engine, /await pushConnectionsToUI\(appId\)/);
+});
+
 test('App settings can list and revoke YouEye ID first-launch consent', () => {
   const consentRoute = read('src/app/api/identity/consents/app/[appId]/route.ts');
   const appSettings = read('src/components/settings-shell/apps-client.tsx');

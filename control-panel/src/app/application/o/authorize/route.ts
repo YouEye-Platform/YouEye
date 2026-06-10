@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAuthCode, getAppConsent, getClient, upsertAppConsent, type IdentityClient, type IdentityUser } from '@/lib/identity/store';
 import { getIdentityConfig } from '@/lib/identity/config';
 import { getIdentitySession } from '@/lib/identity/http';
+import { readFileSync } from 'fs';
+import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 
 const FIRST_PARTY_CLIENTS = new Set(['youeye-control', 'youeye-ui']);
 const DEFAULT_SCOPE = 'openid profile email';
@@ -26,6 +28,67 @@ function isFirstPartyClient(clientId: string): boolean {
 function hasScopes(consented: string[], requested: string[]): boolean {
   const granted = new Set(consented);
   return requested.every((scope) => granted.has(scope));
+}
+
+interface RuntimePermission {
+  permission: string;
+  title: string;
+  description?: string;
+  category?: string;
+  risk?: string;
+}
+
+function appIdFromClientId(clientId: string): string | null {
+  if (clientId.startsWith('youeye-app-')) return clientId.slice('youeye-app-'.length).replace(/^ye-/, '');
+  if (clientId.startsWith('ye-')) return clientId.slice('ye-'.length);
+  return null;
+}
+
+function readBridgeToken(): string | null {
+  try {
+    return readFileSync('/etc/youeye/ui-bridge-token', 'utf-8').trim();
+  } catch {
+    return process.env.UI_BRIDGE_TOKEN ?? null;
+  }
+}
+
+function uiBaseUrl(): string {
+  return process.env.UI_INTERNAL_URL || `http://youeye-ui.${CONTAINER_DOMAIN}:3000`;
+}
+
+async function fetchRuntimePermissions(input: {
+  clientId: string;
+  userId: string;
+  grantPermissions?: string[];
+}): Promise<{ appId: string; permissions: RuntimePermission[] } | null> {
+  const appId = appIdFromClientId(input.clientId);
+  const token = readBridgeToken();
+  if (!appId || !token) return null;
+
+  try {
+    const res = await fetch(`${uiBaseUrl()}/api/ui-bridge/app-launch-permissions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-UI-Bridge-Token': token,
+      },
+      body: JSON.stringify({
+        appId,
+        userId: input.userId,
+        grantPermissions: input.grantPermissions ?? [],
+        denyUnselected: Array.isArray(input.grantPermissions),
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      appId,
+      permissions: Array.isArray(data.permissions) ? data.permissions : [],
+    };
+  } catch (err) {
+    console.warn('[identity] Failed to fetch runtime launch permissions:', err);
+    return null;
+  }
 }
 
 async function issueAuthRedirect(input: {
@@ -60,6 +123,7 @@ function consentHtml(params: {
   user: IdentityUser;
   scope: string;
   query: string;
+  runtimePermissions?: RuntimePermission[];
 }) {
   const scopes = scopeList(params.scope);
   const appName = params.client.name || params.client.client_id;
@@ -73,6 +137,20 @@ function consentHtml(params: {
           : `Use ${scope}`;
     return `<li><span>${escapeHtml(label)}</span><code>${escapeHtml(scope)}</code></li>`;
   }).join('');
+  const runtimeRows = (params.runtimePermissions ?? []).map((permission) => {
+    const risk = permission.risk ? `<code>${escapeHtml(permission.risk)}</code>` : '';
+    return `<label class="runtime-permission">
+      <input type="checkbox" name="runtime_permission" value="${escapeHtml(permission.permission)}" checked />
+      <span>
+        <strong>${escapeHtml(permission.title || permission.permission)}</strong>
+        ${permission.description ? `<small>${escapeHtml(permission.description)}</small>` : ''}
+      </span>
+      ${risk}
+    </label>`;
+  }).join('');
+  const runtimeSection = runtimeRows
+    ? `<p class="section-label">Optional app permissions</p><div class="runtime-list">${runtimeRows}</div>`
+    : '';
 
   return new Response(`<!doctype html>
 <html lang="en">
@@ -87,10 +165,17 @@ function consentHtml(params: {
     main { width: min(440px, calc(100vw - 32px)); }
     h1 { font-size: 24px; line-height: 1.15; margin: 0 0 8px; }
     p { margin: 0 0 20px; color: color-mix(in srgb, CanvasText 68%, transparent); line-height: 1.45; }
+    .section-label { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: CanvasText; }
     ul { list-style: none; margin: 0 0 22px; padding: 0; display: grid; gap: 8px; }
     li { display: flex; justify-content: space-between; gap: 12px; align-items: center; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 8px; padding: 10px 12px; }
     code { color: color-mix(in srgb, CanvasText 58%, transparent); font-size: 12px; }
-    form { display: flex; gap: 10px; }
+    .runtime-list { display: grid; gap: 8px; margin: 0 0 22px; }
+    .runtime-permission { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: start; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+    .runtime-permission input { margin-top: 3px; accent-color: #111; }
+    .runtime-permission strong { display: block; font-weight: 600; }
+    .runtime-permission small { display: block; margin-top: 3px; color: color-mix(in srgb, CanvasText 62%, transparent); line-height: 1.35; }
+    form { display: grid; gap: 0; }
+    .actions { display: flex; gap: 10px; }
     button { height: 42px; border-radius: 8px; font: inherit; font-weight: 700; cursor: pointer; padding: 0 16px; }
     .approve { border: 0; background: #111; color: #fff; flex: 1; }
     .deny { border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); background: Canvas; color: CanvasText; }
@@ -102,10 +187,16 @@ function consentHtml(params: {
     <h1>Allow ${escapeHtml(appName)}?</h1>
     <p class="account">Signed in as ${escapeHtml(params.user.name || params.user.username)}.</p>
     <p>This app wants to use YouEye ID for your account. You can revoke this later from app settings.</p>
-    <ul>${permissionRows}</ul>
     <form method="post" action="/application/o/authorize?${escapeHtml(params.query)}">
-      <button class="deny" type="submit" name="decision" value="deny">Deny</button>
-      <button class="approve" type="submit" name="decision" value="approve">Allow</button>
+      <div>
+        <p class="section-label">YouEye ID</p>
+        <ul>${permissionRows}</ul>
+        ${runtimeSection}
+      </div>
+      <div class="actions">
+        <button class="deny" type="submit" name="decision" value="deny">Deny</button>
+        <button class="approve" type="submit" name="decision" value="approve">Allow selected</button>
+      </div>
     </form>
   </main>
 </body>
@@ -152,12 +243,14 @@ export async function GET(request: NextRequest) {
   if (!isFirstPartyClient(clientId)) {
     const requestedScopes = scopeList(scope);
     const consent = await getAppConsent(user.id, clientId);
-    if (!consent || !hasScopes(consent.scopes, requestedScopes)) {
+    const runtime = await fetchRuntimePermissions({ clientId, userId: user.id });
+    if (!consent || !hasScopes(consent.scopes, requestedScopes) || (runtime?.permissions.length ?? 0) > 0) {
       return consentHtml({
         client,
         user,
         scope,
         query: request.nextUrl.searchParams.toString(),
+        runtimePermissions: runtime?.permissions,
       });
     }
   }
@@ -180,6 +273,15 @@ export async function POST(request: NextRequest) {
   if (decision !== 'approve') {
     return denyRedirect(redirectUri, state);
   }
+
+  const selectedRuntimePermissions = form.getAll('runtime_permission')
+    .map((value) => String(value))
+    .filter(Boolean);
+  await fetchRuntimePermissions({
+    clientId,
+    userId: user.id,
+    grantPermissions: selectedRuntimePermissions,
+  });
 
   await upsertAppConsent({ userId: user.id, clientId, scopes: scopeList(scope) });
   return issueAuthRedirect({ clientId, user, redirectUri, scope, state });
