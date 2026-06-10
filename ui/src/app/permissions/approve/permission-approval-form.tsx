@@ -6,10 +6,15 @@ interface PermissionApprovalFormProps {
   appId: string;
   permissions: string[];
   grantType: string;
+  returnTo?: string;
 }
 
-export function PermissionApprovalForm({ appId, permissions, grantType }: PermissionApprovalFormProps) {
+export function PermissionApprovalForm({ appId, permissions, grantType, returnTo }: PermissionApprovalFormProps) {
   const [status, setStatus] = useState<"idle" | "approving" | "approved" | "denied" | "error">("idle");
+
+  function finish() {
+    if (returnTo) window.location.assign(returnTo);
+  }
 
   async function approve() {
     setStatus("approving");
@@ -21,9 +26,15 @@ export function PermissionApprovalForm({ appId, permissions, grantType }: Permis
         permissions,
         grant_type: grantType,
         approved: true,
+        return_to: returnTo,
       }),
     });
-    setStatus(res.ok ? "approved" : "error");
+    if (!res.ok) {
+      setStatus("error");
+      return;
+    }
+    setStatus("approved");
+    finish();
   }
 
   return (
@@ -40,7 +51,10 @@ export function PermissionApprovalForm({ appId, permissions, grantType }: Permis
       <button
         type="button"
         className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-accent"
-        onClick={() => setStatus("denied")}
+        onClick={() => {
+          setStatus("denied");
+          finish();
+        }}
         disabled={status === "approving" || status === "approved"}
       >
         Deny

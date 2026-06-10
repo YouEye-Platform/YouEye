@@ -8,6 +8,7 @@ interface PermissionApprovalPageProps {
     app_id?: string;
     permission?: string | string[];
     grant_type?: string;
+    return_to?: string;
   }>;
 }
 
@@ -56,6 +57,7 @@ export default async function PermissionApprovalPage({ searchParams }: Permissio
           appId={appId}
           permissions={permissions}
           grantType={params.grant_type ?? "persistent"}
+          returnTo={params.return_to}
         />
       </div>
     </main>

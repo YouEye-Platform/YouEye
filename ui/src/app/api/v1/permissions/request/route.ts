@@ -12,6 +12,7 @@ import { grantPermission } from "@/lib/db/queries/permissions";
 import {
   buildPermissionApproval,
   permissionAppMatches,
+  sanitizePermissionReturnTo,
 } from "@/lib/permissions/approval";
 
 export async function POST(request: NextRequest) {
@@ -22,7 +23,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { app_id, permissions, grant_type, approved } = body;
+  const { app_id, permissions, grant_type, approved, return_to } = body;
 
   if (typeof app_id !== "string" || app_id.length === 0 || !permissions || !Array.isArray(permissions)) {
     return NextResponse.json(
@@ -51,7 +52,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const approval = buildPermissionApproval(targetAppId, requested, grant_type, request);
+  const safeReturnTo = sanitizePermissionReturnTo(return_to);
+  const approval = buildPermissionApproval(targetAppId, requested, grant_type, request, safeReturnTo);
 
   if (approved !== true || !session) {
     return NextResponse.json(approval, { status: 202 });
@@ -71,5 +73,6 @@ export async function POST(request: NextRequest) {
     success: true,
     granted: requested,
     permissions: approval.permissions,
+    return_to: safeReturnTo,
   });
 }

@@ -168,8 +168,9 @@ export async function GET(
       missingPreferences,
       request
     );
+    const returnTo = request.nextUrl.searchParams.get("return_to");
     const approval = missing.length > 0
-      ? buildPermissionApproval(grantAppId, missing, "persistent", request)
+      ? buildPermissionApproval(grantAppId, missing, "persistent", request, returnTo)
       : { success: false, approval_required: false };
     return NextResponse.json(
       {

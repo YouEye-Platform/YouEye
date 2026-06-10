@@ -25,7 +25,8 @@ test('launch requirements derive manifest permissions and require user approval'
   assert.match(route, /app_settings_url_absolute/);
   assert.match(route, /app_settings_api_absolute/);
   assert.match(route, /checkPermission\(userId, grantAppId, permission\)/);
-  assert.match(route, /buildPermissionApproval\(grantAppId, missing, "persistent", request\)/);
+  assert.match(route, /request\.nextUrl\.searchParams\.get\("return_to"\)/);
+  assert.match(route, /buildPermissionApproval\(grantAppId, missing, "persistent", request, returnTo\)/);
   assert.match(route, /first_launch_complete: false/);
   assert.match(route, /first_launch_complete: true/);
   assert.match(route, /service app cannot inspect launch requirements for another app/);

@@ -83,7 +83,7 @@ export async function GET(request: NextRequest) {
         hosts: [],
         blanket: false,
       },
-      available: [],
+      available: (connData?.available as unknown[]) ?? [],
     });
   } catch (err) {
     console.error("[my-connections] Error:", err);

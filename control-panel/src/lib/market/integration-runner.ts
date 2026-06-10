@@ -10,6 +10,7 @@ import { getContainerName } from './engine-helpers';
 import { injectCaddyRootCA } from './caddy-ca';
 import { resolveVariables } from './variables';
 import type { AppManifest, InstallConfig, InstallEvent, IntegrationManifest, VariableContext } from './types';
+import { addSystemProxyDevices, getSystemServices } from '@/lib/incus/app-network';
 
 export interface ApplyIntegrationInput {
   integrationId: string;
@@ -189,6 +190,19 @@ async function executeIntegrationTeardown(
   return true;
 }
 
+async function ensureIdentityGatewayProxy(
+  appManifest: AppManifest,
+  targetMeta: NonNullable<Awaited<ReturnType<typeof readInstallMetadata>>>,
+): Promise<void> {
+  if (targetMeta.usePerAppBridge === false) return;
+
+  const services = await getSystemServices({
+    needsSharedDb: appManifest.database?.mode === 'shared',
+    needsSSO: true,
+  });
+  await addSystemProxyDevices(targetMeta.appId, services);
+}
+
 export async function applyIntegration(
   input: ApplyIntegrationInput,
   onEvent: (event: InstallEvent) => void
@@ -211,10 +225,14 @@ export async function applyIntegration(
 
   step++;
   emit(onEvent, step, totalSteps, 'running', 'Creating YouEye ID OAuth client...');
+  const identity = await getIdentityProviderConfig();
+  if ((integration.type === 'identity' || integration.sso) && contextManifest.sso) {
+    await ensureIdentityGatewayProxy(contextManifest, targetMeta);
+  }
   const prelimCtx = await buildCanonicalContext(contextManifest, config, undefined, secrets.db_password, undefined, true);
   prelimCtx.secrets = secrets;
   const ssoResult = await ensureIntegrationOAuthClient(contextManifest, integration, config, prelimCtx);
-  emit(onEvent, step, totalSteps, 'success', `${(await getIdentityProviderConfig()).name} OAuth client ready`);
+  emit(onEvent, step, totalSteps, 'success', `${identity.name} OAuth client ready`);
 
   step++;
   emit(onEvent, step, totalSteps, 'running', `Configuring ${contextManifest.metadata.name}...`);

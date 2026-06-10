@@ -15,7 +15,7 @@ test('timeline writes require explicit permission approval', () => {
 
   assert.doesNotMatch(route, /NATIVE_APP_IDS/);
   assert.doesNotMatch(route, /grantPermission/);
-  assert.match(route, /buildPermissionApproval\(appId, \["timeline:write"\], "persistent", request\)/);
+  assert.match(route, /buildPermissionApproval\(appId, \["timeline:write"\], "persistent", request, request\.headers\.get\("referer"\)\)/);
   assert.match(approvalHelper, /approval_required: true/);
   assert.match(route, /Permission denied: timeline:write required/);
 

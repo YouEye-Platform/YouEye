@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { appId, bridges, internet } = body;
+    const { appId, bridges, internet, available } = body;
 
     if (!appId || typeof appId !== "string") {
       return NextResponse.json({ error: "Missing appId" }, { status: 400 });
@@ -37,6 +37,7 @@ export async function POST(request: NextRequest) {
     const connectionData = {
       bridges: bridges ?? [],
       internet: internet ?? { granted: false, hosts: [] },
+      available: available ?? [],
       updatedAt: new Date().toISOString(),
     };
 

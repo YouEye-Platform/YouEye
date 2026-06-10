@@ -148,7 +148,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           error: "Permission denied: timeline:write required",
-          ...buildPermissionApproval(appId, ["timeline:write"], "persistent", request),
+          ...buildPermissionApproval(appId, ["timeline:write"], "persistent", request, request.headers.get("referer")),
         },
         { status: 403 }
       );
