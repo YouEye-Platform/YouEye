@@ -39,6 +39,15 @@ interface UnifiedApp {
   updateInfo?: string;
 }
 
+interface UpdateStatus {
+  component: string;
+  status: string;
+  message: string;
+  progress: number;
+  version_after?: string | null;
+  error?: string | null;
+}
+
 interface Permission {
   id: string;
   appId: string;
@@ -134,6 +143,12 @@ function identityConsentApi(appId: string): string {
   return `/api${path}`;
 }
 
+function updateStatusComponent(appId: string): string {
+  if (appId === "control-panel") return "control";
+  if (appId === "host-system") return "system";
+  return appId;
+}
+
 function permissionTitle(permission: Permission) {
   return permission.descriptor?.title || permission.permission;
 }
@@ -194,6 +209,7 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
   const [apps, setApps] = useState<UnifiedApp[]>([]);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
+  const [statuses, setStatuses] = useState<Map<string, UpdateStatus>>(new Map());
   const updates = apps.filter((app) => app.updateAvailable);
   const systemApps = apps.filter((app) => app.category !== "user");
 
@@ -205,13 +221,105 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const loadStatuses = useCallback(async () => {
+    const res = await fetch("/api/updates/status");
+    if (!res.ok) return;
+    const data = await res.json();
+    const next = new Map<string, UpdateStatus>();
+    for (const status of data.statuses || []) {
+      next.set(status.component, status);
+    }
+    setStatuses(next);
+  }, []);
+
+  useEffect(() => { load(); loadStatuses(); }, [load, loadStatuses]);
+
+  useEffect(() => {
+    const active = Array.from(statuses.values()).some((status) => !["idle", "completed", "failed"].includes(status.status));
+    if (!active) return;
+    const timer = window.setInterval(() => {
+      loadStatuses().catch((err) => console.warn("Failed to refresh update status", err));
+      load().catch((err) => console.warn("Failed to refresh apps while updating", err));
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [load, loadStatuses, statuses]);
 
   async function checkUpdates() {
     setChecking(true);
     await fetch("/api/apps/check-updates", { method: "POST" }).catch(() => {});
     await load();
     setChecking(false);
+  }
+
+  async function updateApp(appId: string) {
+    const component = updateStatusComponent(appId);
+    setStatuses((prev) => {
+      const next = new Map(prev);
+      next.set(component, {
+        component,
+        status: "checking",
+        progress: 0,
+        message: "Starting update...",
+      });
+      return next;
+    });
+
+    let csrfToken: string;
+    try {
+      csrfToken = await fetch("/settings/api/auth/csrf")
+        .then((res) => res.ok ? res.json() : Promise.reject(new Error("Could not start update")))
+        .then((body) => body.csrfToken as string);
+    } catch (err) {
+      setStatuses((prev) => {
+        const next = new Map(prev);
+        const message = err instanceof Error ? err.message : "Could not start update";
+        next.set(component, {
+          component,
+          status: "failed",
+          progress: 100,
+          message,
+          error: message,
+        });
+        return next;
+      });
+      return;
+    }
+
+    fetch(`/settings/api/apps/${encodeURIComponent(appId)}/update`, {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({ error: "Update failed" }));
+          setStatuses((prev) => {
+            const next = new Map(prev);
+            next.set(component, {
+              component,
+              status: "failed",
+              progress: 100,
+              message: body.error || "Update failed",
+              error: body.error || "Update failed",
+            });
+            return next;
+          });
+        }
+        await loadStatuses();
+        await load();
+      })
+      .catch((err) => {
+        setStatuses((prev) => {
+          const next = new Map(prev);
+          next.set(component, {
+            component,
+            status: "failed",
+            progress: 100,
+            message: err instanceof Error ? err.message : "Update failed",
+            error: err instanceof Error ? err.message : "Update failed",
+          });
+          return next;
+        });
+      });
   }
 
   if (loading) return <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
@@ -231,16 +339,43 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
         </div>
         {updates.length > 0 && (
           <div className="space-y-1.5">
-            {updates.map((app) => (
-              <button key={app.id} onClick={() => onOpen(app.id)} className="flex w-full items-center gap-3 rounded-lg border px-3.5 py-2.5 text-left hover:bg-accent/40">
-                <AppIcon app={app} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-medium">{app.displayName}</p>
-                  <p className="text-xs text-muted-foreground">{app.updateInfo || "Update available"}</p>
+            {updates.map((app) => {
+              const component = updateStatusComponent(app.id);
+              const status = statuses.get(component);
+              const isUpdating = !!status && !["idle", "completed", "failed"].includes(status.status);
+              return (
+                <div key={app.id} className="rounded-lg border px-3.5 py-2.5">
+                  <div className="flex w-full items-center gap-3">
+                    <button type="button" onClick={() => onOpen(app.id)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+                      <AppIcon app={app} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-medium">{app.displayName}</p>
+                        <p className="text-xs text-muted-foreground">{app.updateInfo || "Update available"}</p>
+                      </div>
+                    </button>
+                    <Button size="sm" onClick={() => updateApp(app.id)} disabled={isUpdating}>
+                      {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                      {isUpdating ? "Updating" : "Update"}
+                    </Button>
+                  </div>
+                  {status && status.status !== "idle" && (
+                    <div className="mt-2 space-y-1">
+                      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <span className="truncate">{status.message}</span>
+                        <span>{Math.max(0, Math.min(100, status.progress || 0))}%</span>
+                      </div>
+                      {isUpdating && (
+                        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                          <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.max(4, Math.min(100, status.progress || 0))}%` }} />
+                        </div>
+                      )}
+                      {status.status === "failed" && status.error && <p className="text-xs text-destructive">{status.error}</p>}
+                      {status.status === "completed" && <p className="text-xs text-green-600">Update complete{status.version_after ? `: v${status.version_after}` : ""}</p>}
+                    </div>
+                  )}
                 </div>
-                <Badge variant="secondary">Update</Badge>
-              </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>

@@ -1,3 +1,23 @@
+## v0.4.13.98 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Make Settings app updates actionable
+
+### Changes
+- `control-panel/src/components/settings-shell/apps-client.tsx` — Replaced the update badge-only row with a real per-app Update button, CSRF-backed POST, progress polling, and inline status/error/completion display.
+- `control-panel/src/app/settings/api/apps/[appId]/update/route.ts` — Added an admin-only Settings update endpoint that reuses existing Spine, LXD, OCI, and Marketplace update engines.
+- `control-panel/tests/settings-app-updates.spec.mjs` — Added regression coverage that Settings exposes a real update action and the route stays admin/CSRF scoped.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.13.98`.
+
+### Test Results
+- Focused CP tests passed: `node --test control-panel/tests/settings-app-updates.spec.mjs control-panel/tests/market-canonical-surfaces.spec.mjs control-panel/tests/market-update-manifest-sync.spec.mjs`.
+- CP production build passed for `0.4.13.98`.
+- TypeScript direct check still fails on pre-existing project-wide errors outside this change (`validate-url`, `suggestions`, `market/page`, service worker typings, shared UI component React type duplication, SSO setup, and system manifest typing).
+
+### Notes for Iris
+- The new Settings route mirrors the existing update orchestrators instead of inventing a second update path. It uses `/settings/api/auth/csrf` from the Settings shell before triggering updates.
+
 ## v0.4.13.97 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
