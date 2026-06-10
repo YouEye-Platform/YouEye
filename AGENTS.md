@@ -1,3 +1,20 @@
+## v0.4.3.29 — artem — 2026-06-10
+**Branch:** artem
+**VM:** potempc
+**Agent:** Artem
+**Task:** Sync UI app display versions from pushed manifests
+
+### Changes
+- `ui/src/lib/db/queries/app-management.ts` — Updates `apps.version` from `manifest.version` whenever CP pushes a cached app manifest.
+- `ui/package.json`, `README.md` — Bumped UI to `0.4.3.29`.
+
+### Test Results
+- Focused UI tests passed: `node --test ui/tests/internet-proxy.spec.mjs ui/tests/launch-permissions-bridge.spec.mjs ui/tests/launch-requirements.spec.mjs ui/tests/connection-proxy.spec.mjs`.
+- UI production build passed for `0.4.3.29` with the known local `127.0.0.1:5432` static-generation warnings.
+
+### Notes for Iris
+- App updates already synced manifest JSON, but UI app rows could still display stale `version` values. This keeps UI display data aligned with the cached manifest.
+
 ## v0.4.13.94 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc

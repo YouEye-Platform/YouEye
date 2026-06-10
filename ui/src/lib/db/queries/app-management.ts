@@ -206,9 +206,15 @@ export async function updateAppManifest(
 ): Promise<void> {
   await ensureSchema();
 
+  const version = typeof manifest.version === "string" ? manifest.version : undefined;
+
   await db
     .update(apps)
-    .set({ manifest, updatedAt: new Date() })
+    .set({
+      manifest,
+      ...(version ? { version } : {}),
+      updatedAt: new Date(),
+    })
     .where(eq(apps.id, appId));
 }
 
