@@ -1,3 +1,27 @@
+## cp-v0.4.15 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Make Settings SSO redirect silent and server-side
+
+### Changes
+- `control-panel/src/app/login/page.tsx` — Converted login entry to a server component that redirects domain SSO users before rendering the PAM form.
+- `control-panel/src/app/settings/login/page.tsx` — Added Settings-specific server redirect to `/settings/api/auth/sso` with `/settings` return path.
+- `control-panel/src/components/auth/login-form.tsx` — Moved the PAM login form into a client component and removed client-side SSO mode detection.
+- `control-panel/src/lib/auth/mode.ts` — Added shared auth-mode helper for host/IP vs SSO decisions.
+- `control-panel/src/app/api/auth/mode/route.ts` — Reused the shared auth-mode helper so API reporting matches server routing.
+- `control-panel/tests/silent-settings-sso.spec.ts` — Added regression checks for server-side Settings SSO redirect and removal of the old client interstitial path.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.15`.
+
+### Test Results
+- Build: `pnpm build` passed in `control-panel/`; `control-panel/.next/standalone.tar` contains package version `0.4.15`.
+- Static assertions: focused `rg` checks passed for server-side Settings SSO redirect and absence of `redirectingToSSO`/client `window.location` path.
+- TypeScript/lint: `pnpm exec tsc --noEmit` and `pnpm lint` remain blocked by pre-existing unrelated errors across market, suggestions, service worker, backup, Caddy, and setup files.
+
+### Notes for Iris
+- CP-only release; Spine remains `0.4.8`, UI remains `0.4.4`.
+- User asked to update and test manually, so no deployment was performed from this session.
+
 ## spine-v0.4.8 — mythos — 2026-06-11
 **Branch:** main
 **VM:** potempc / youeye-pc
