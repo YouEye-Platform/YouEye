@@ -1,3 +1,23 @@
+## cp-v0.4.21 — mythos — 2026-06-12
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Simplify identity consent to account handoff
+
+### Changes
+- `control-panel/src/app/application/o/authorize/route.ts` — Reworked the consent screen into a Google-like account handoff: provider mark, `Sign in to <app>`, selected account row, short sharing copy, quiet revoke note, optional runtime permission toggles only when needed, and no technical details/scope chips/diagram/risk pills.
+- `control-panel/tests/identity-consent.spec.ts` — Updated static regressions to lock in the simplified account handoff and prevent raw technical scope UI from returning.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.21`.
+
+### Test Results
+- Static assertions: `CONTROL_PANEL_ROOT="$PWD/control-panel" node --import tsx --test control-panel/tests/identity-consent.spec.ts` passed for provider mark, account row, sharing copy, cancel/continue actions, optional runtime toggles, white-label provider naming, and absence of technical details/basic-access scope UI.
+- Build: `pnpm build` passed in `control-panel/`; `/tmp/standalone.tar` contains package version `0.4.21`.
+- TypeScript/lint: full-project checks remain blocked by pre-existing unrelated errors noted in `cp-v0.4.15`.
+
+### Notes for Iris
+- CP-only release; Spine remains `0.4.8`, UI remains `0.4.4`.
+- User explicitly asked not to update/deploy from this session; they will test the release manually.
+
 ## cp-v0.4.20 — mythos — 2026-06-12
 **Branch:** main
 **VM:** potempc / bykapc
