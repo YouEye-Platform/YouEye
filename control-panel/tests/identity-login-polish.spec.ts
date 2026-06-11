@@ -22,6 +22,8 @@ test('identity login renders the server WordArt style and font assets', () => {
   const route = read('src/app/identity/login/route.ts');
   const middleware = read('src/middleware.ts');
 
+  assert.match(route, /api\/ui-bridge\/branding/);
+  assert.match(route, /identityBranding/);
   assert.match(route, /DEFAULT_STYLE/);
   assert.match(route, /CHARACTER_SHAPE_PRESETS/);
   assert.match(route, /raw\.site_name_style/);
@@ -37,6 +39,8 @@ test('identity login derives app context from OAuth client or return host', () =
   const route = read('src/app/identity/login/route.ts');
 
   assert.match(route, /resolveLoginContext/);
+  assert.match(route, /CORE_CLIENT_IDS/);
+  assert.match(route, /if \(CORE_CLIENT_IDS\.has\(clientId\)\) return serverName/);
   assert.match(route, /getClient\(clientId\)/);
   assert.match(route, /appNameFromClientId/);
   assert.match(route, /appNameFromHost/);

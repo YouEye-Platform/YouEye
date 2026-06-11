@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readFileSync } from 'fs';
 import { getIdentityConfig } from '@/lib/identity/config';
 import { getClient, verifyUser } from '@/lib/identity/store';
 import { createIdentityToken } from '@/lib/identity/tokens';
 import { setIdentityCookie } from '@/lib/identity/http';
 import { getIdentityProviderConfig } from '@/lib/identity/provider';
 import { settingsService } from '@/lib/settings';
+import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import { CHARACTER_SHAPE_PRESETS, DEFAULT_STYLE, type SiteNameStyle } from '@/lib/wordart-presets';
+
+const TOKEN_FILE_PATH = '/etc/youeye/ui-bridge-token';
+const UI_BASE = `http://youeye-ui.${CONTAINER_DOMAIN}:3000`;
+const CORE_CLIENT_IDS = new Set(['youeye-ui', 'youeye-control']);
+
+let cachedBridgeToken: string | null = null;
 
 function escapeHtml(value: string): string {
   return value
@@ -18,6 +26,17 @@ function escapeHtml(value: string): string {
 
 function safeCss(value: unknown, fallback = ''): string {
   return typeof value === 'string' && !/[;{}<>]/.test(value) ? value : fallback;
+}
+
+function bridgeToken(): string | null {
+  if (cachedBridgeToken) return cachedBridgeToken;
+  try {
+    cachedBridgeToken = readFileSync(TOKEN_FILE_PATH, 'utf-8').trim();
+    return cachedBridgeToken || null;
+  } catch (err) {
+    console.warn('[identity-login] UI bridge token unavailable; falling back to Control Panel branding settings.', err);
+    return null;
+  }
 }
 
 const FONT_CSS_MAP: Record<string, string> = {
@@ -80,6 +99,47 @@ function normalizeWordArt(value: unknown): SiteNameStyle {
   };
 }
 
+type IdentityBranding = {
+  siteName: string;
+  siteNameStyle: SiteNameStyle;
+};
+
+async function controlPanelBrandingFallback(): Promise<IdentityBranding> {
+  const raw = await settingsService.getRaw();
+  return {
+    siteName: typeof raw.site_name === 'string' && raw.site_name.trim() ? raw.site_name.trim() : 'YouEye',
+    siteNameStyle: normalizeWordArt(raw.site_name_style),
+  };
+}
+
+async function identityBranding(): Promise<IdentityBranding> {
+  const token = bridgeToken();
+  if (!token) return controlPanelBrandingFallback();
+
+  try {
+    const res = await fetch(`${UI_BASE}/api/ui-bridge/branding`, {
+      headers: { 'X-UI-Bridge-Token': token },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) {
+      console.warn(`[identity-login] UI branding bridge returned ${res.status}; falling back to Control Panel branding settings.`);
+      return controlPanelBrandingFallback();
+    }
+
+    const branding = await res.json() as { site_name?: unknown; site_name_style?: unknown };
+    return {
+      siteName: typeof branding.site_name === 'string' && branding.site_name.trim()
+        ? branding.site_name.trim()
+        : (await controlPanelBrandingFallback()).siteName,
+      siteNameStyle: normalizeWordArt(branding.site_name_style),
+    };
+  } catch (err) {
+    console.warn('[identity-login] UI branding bridge unreachable; falling back to Control Panel branding settings.', err);
+    return controlPanelBrandingFallback();
+  }
+}
+
 function wordmarkStyle(style: SiteNameStyle): string {
   const gradientCss = style.gradient?.enabled
     ? [
@@ -131,9 +191,7 @@ function renderWordmark(name: string, style: SiteNameStyle): string {
   return `<span class="wordmark wordmark-shaped" style="${escapeHtml(css)}">${chars}</span>`;
 }
 
-async function wordmarkMarkup(providerName: string): Promise<{ fontLink: string; html: string }> {
-  const raw = await settingsService.getRaw();
-  const style = normalizeWordArt(raw.site_name_style);
+function wordmarkMarkup(providerName: string, style: SiteNameStyle): { fontLink: string; html: string } {
   const fontHref = FONT_CSS_MAP[style.fontFamily];
   return {
     fontLink: fontHref ? `<link rel="stylesheet" href="${escapeHtml(fontHref)}" />` : '',
@@ -165,13 +223,14 @@ function appNameFromHost(hostname: string): string | null {
   return titleCase(subdomain);
 }
 
-async function resolveLoginContext(returnTo: string): Promise<string | null> {
+async function resolveLoginContext(returnTo: string, serverName: string): Promise<string | null> {
   try {
     const url = new URL(returnTo);
     const isAuthorize = url.pathname === '/application/o/authorize' || url.pathname === '/oauth/authorize';
     if (isAuthorize) {
       const clientId = url.searchParams.get('client_id') || '';
       if (clientId) {
+        if (CORE_CLIENT_IDS.has(clientId)) return serverName;
         const client = await getClient(clientId).catch(() => null);
         const name = client?.name?.trim() || appNameFromClientId(clientId);
         return name || null;
@@ -184,9 +243,12 @@ async function resolveLoginContext(returnTo: string): Promise<string | null> {
 }
 
 async function html(returnTo: string, error = ''): Promise<Response> {
-  const provider = await getIdentityProviderConfig();
-  const wordmark = await wordmarkMarkup(provider.name);
-  const appName = await resolveLoginContext(returnTo);
+  const [provider, branding] = await Promise.all([
+    getIdentityProviderConfig(),
+    identityBranding(),
+  ]);
+  const wordmark = wordmarkMarkup(provider.name, branding.siteNameStyle);
+  const appName = await resolveLoginContext(returnTo, branding.siteName);
   const contextTitle = appName ? `Continue to ${appName}` : `Continue with ${provider.name}`;
   const contextDescription = appName
     ? `Sign in with ${provider.name} to keep going.`

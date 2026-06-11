@@ -1,3 +1,23 @@
+## cp-v0.4.18 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Use server branding WordArt on identity login
+
+### Changes
+- `control-panel/src/app/identity/login/route.ts` — Reads server branding from the UI branding bridge for identity login WordArt, falls back to CP config only when the bridge is unavailable, and maps built-in YouEye UI/Control Panel clients to `Continue to <Server name>`.
+- `control-panel/tests/identity-login-polish.spec.ts` — Expanded regression checks for UI bridge branding and built-in client context naming.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.18`.
+
+### Test Results
+- Build: `pnpm build` passed in `control-panel/`; `/tmp/standalone.tar` contains package version `0.4.18`.
+- Static assertions: focused identity-login assertions passed for UI bridge branding, WordArt rendering, built-in client context, loading transition, and hidden protocol copy.
+- TypeScript/lint: full-project checks remain blocked by pre-existing unrelated errors noted in `cp-v0.4.15`.
+
+### Notes for Iris
+- CP-only release; Spine remains `0.4.8`, UI remains `0.4.4`.
+- User explicitly asked not to update/deploy from this session; they will test the release manually.
+
 ## cp-v0.4.17 — mythos — 2026-06-11
 **Branch:** main
 **VM:** potempc / bykapc
