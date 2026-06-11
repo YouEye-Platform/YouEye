@@ -51,26 +51,23 @@ interface HomepageBackgroundProps {
 export function HomepageBackground({ config }: HomepageBackgroundProps) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
-  const [reduceMotion, setReduceMotion] = useState(false);
+  const [systemPrefersReducedMotion, setSystemPrefersReducedMotion] =
+    useState(false);
 
   useEffect(() => {
-    // Respect OS-level reduce motion preference
     const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-    if (motionQuery.matches) {
-      setReduceMotion(true);
-      return;
-    }
+    const updateMotionPreference = () => {
+      setSystemPrefersReducedMotion(motionQuery.matches);
+    };
 
-    // Detect low-powered devices
-    const cores = navigator.hardwareConcurrency || 2;
-    if (cores <= 2) {
-      setReduceMotion(true);
-    }
+    updateMotionPreference();
+    motionQuery.addEventListener("change", updateMotionPreference);
+    return () => motionQuery.removeEventListener("change", updateMotionPreference);
   }, []);
 
-  // User manual toggle or auto-detected
+  const userDisabledAnimations = config.settings.disableAnimations === true;
   const shouldDisableAnimations =
-    config.settings.disableAnimations || reduceMotion;
+    userDisabledAnimations || systemPrefersReducedMotion;
 
   const content = useMemo(() => {
     switch (config.type) {

@@ -1,3 +1,30 @@
+## spine-v0.4.9 / cp-v0.4.24 / ui-v0.4.7 — mythos — 2026-06-12
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Merge Mythos Settings/update-source work into current identity-polished main
+
+### Changes
+- `control-panel/src/components/settings-shell/system-client.tsx`, `control-panel/src/lib/settings/service.ts` — Added CP-native Core Update Source controls for release branch and repo URL while keeping Settings/System in the Control Panel shell.
+- `control-panel/src/components/settings-shell/users-client.tsx`, `control-panel/src/app/api/apps/identity/users/route.ts` — Added admin-only user creation with role selection and protected the identity users API with admin checks.
+- `control-panel/src/app/embed/system/*`, `control-panel/src/app/embed/users/*`, `ui/src/app/settings/system/page.tsx`, `ui/src/app/settings/users/page.tsx` — Removed retired embed/settings routes so System and Users are no longer mistaken for UI iframe surfaces.
+- `spine/internal/api/server.go`, `spine/internal/config/repo_file.go`, `spine/internal/cmd/repo.go`, `spine/internal/config/defaults.go` — Persisted core release repo changes to `/etc/youeye/config.yaml`, clear update caches when release source changes, and corrected UI app-dir/version detection.
+- `ui/src/components/backgrounds/homepage-background.tsx`, `ui/scripts/postbuild.js` — Restored animated backgrounds unless the user/OS disables motion and added a sharp `@img` nested-binding fallback for standalone builds.
+- `README.md`, `docs/settings.md`, `spine/docs/configuration.md`, `ui/README.md` — Updated current versions and settings/update-source documentation for the combined main release.
+- `control-panel/package.json`, `ui/package.json`, `spine/internal/cmd/root.go` — Bumped stable releases to Spine `0.4.9`, Control Panel `0.4.24`, and UI `0.4.7`.
+
+### Test Results
+- Go: `go test ./...` passed in `spine/`.
+- Control Panel focused tests passed: `CONTROL_PANEL_ROOT="$PWD/control-panel" node --import tsx --test control-panel/tests/identity-consent.spec.ts control-panel/tests/settings-update-source-users.spec.mjs control-panel/tests/settings-app-updates.spec.mjs`.
+- UI focused tests passed: `UI_ROOT="$PWD/ui" node --test ui/tests/launch-permissions-bridge.spec.mjs ui/tests/background-animation-gating.spec.mjs ui/tests/internet-proxy.spec.mjs`.
+- Builds passed: `pnpm build` in `control-panel/`; `pnpm build` in `ui/`; Spine built with `Version=0.4.9` and `BuildDate=2026-06-12`.
+- Artifact verification passed: CP `standalone.tar` contains top-level `server.js` and package version `0.4.24`; UI `standalone.tar` contains top-level `server.js` and package version `0.4.7`; `spine-linux-amd64 version` reports `0.4.9`.
+- UI build printed the known local `127.0.0.1:5432` schema-initialization warnings during static generation but exited successfully.
+
+### Notes for Iris
+- Combined the older `mythos` branch work with the current main identity releases; no identity login/consent source conflicts occurred.
+- User asked not to deploy/update from this session; they will update and test manually.
+
 ## cp-v0.4.23 / ui-v0.4.6 — mythos — 2026-06-12
 **Branch:** main
 **VM:** potempc / bykapc

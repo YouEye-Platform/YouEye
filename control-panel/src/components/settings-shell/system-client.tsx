@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Cpu, Database, HardDrive, Loader2, MemoryStick, RefreshCw, Server, ShieldAlert } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Cpu, Database, GitBranch, HardDrive, Loader2, MemoryStick, RefreshCw, Save, Server, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 interface SystemInfo {
   hostname: string;
@@ -17,6 +18,19 @@ interface SystemInfo {
   disk: null | { total_gb: number; used_gb: number; free_gb: number };
   incus: { version: string; storage_pool: string };
   containers: { total: number; running: number; stopped: number; items: Array<{ name: string; status: string }> };
+}
+
+interface ReleaseSource {
+  repo_url?: string;
+  provider?: string;
+  base_url?: string;
+  organization?: string;
+  repository?: string;
+}
+
+interface PlatformSettings {
+  releaseBranch?: string;
+  releaseSource?: ReleaseSource;
 }
 
 type TrackingStatus = "tracked" | "legacy-compatible" | "legacy-untracked" | "missing";
@@ -61,6 +75,12 @@ export function SystemClient() {
   const [confirmPlan, setConfirmPlan] = useState<SystemUpdatePlan | null>(null);
   const [confirmName, setConfirmName] = useState("");
   const [maintenanceConfirmed, setMaintenanceConfirmed] = useState(false);
+  const [releaseBranch, setReleaseBranch] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [sourceLoading, setSourceLoading] = useState(true);
+  const [sourceSaving, setSourceSaving] = useState(false);
+  const [sourceError, setSourceError] = useState("");
+  const [sourceMessage, setSourceMessage] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -69,6 +89,21 @@ export function SystemClient() {
     if (res.ok) setData(await res.json());
     else setError((await res.json().catch(() => ({}))).error || "Failed to load system information");
     setLoading(false);
+  }, []);
+
+  const loadUpdateSource = useCallback(async () => {
+    setSourceLoading(true);
+    setSourceError("");
+    setSourceMessage("");
+    const res = await fetch("/api/settings");
+    if (res.ok) {
+      const settings = await res.json() as PlatformSettings;
+      setReleaseBranch(settings.releaseBranch || "main");
+      setRepoUrl(settings.releaseSource?.repo_url || "");
+    } else {
+      setSourceError((await res.json().catch(() => ({}))).error || "Failed to load update source");
+    }
+    setSourceLoading(false);
   }, []);
 
   const loadSystemPlans = useCallback(async () => {
@@ -84,7 +119,56 @@ export function SystemClient() {
     setPlansLoading(false);
   }, []);
 
-  useEffect(() => { load(); loadSystemPlans(); }, [load, loadSystemPlans]);
+  useEffect(() => { load(); loadSystemPlans(); loadUpdateSource(); }, [load, loadSystemPlans, loadUpdateSource]);
+
+  async function saveUpdateSource() {
+    const branch = releaseBranch.trim();
+    const normalizedRepoUrl = repoUrl.trim().replace(/\/$/, "").replace(/\.git$/, "");
+    setSourceError("");
+    setSourceMessage("");
+
+    if (!branch) {
+      setSourceError("Release branch is required");
+      return;
+    }
+    if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.includes("..")) {
+      setSourceError("Release branch contains unsupported characters");
+      return;
+    }
+    try {
+      const parsed = new URL(normalizedRepoUrl);
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      if (!["http:", "https:"].includes(parsed.protocol) || parts.length < 2) {
+        throw new Error("Repo URL must include an owner and repository");
+      }
+    } catch (err) {
+      setSourceError(err instanceof Error ? err.message : "Repo URL is invalid");
+      return;
+    }
+
+    setSourceSaving(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          releaseBranch: branch,
+          releaseSource: { repo_url: normalizedRepoUrl },
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Failed to save update source");
+      const updated = body as PlatformSettings;
+      setReleaseBranch(updated.releaseBranch || branch);
+      setRepoUrl(updated.releaseSource?.repo_url || normalizedRepoUrl);
+      setSourceMessage("Update source saved");
+      await loadSystemPlans();
+    } catch (err) {
+      setSourceError(err instanceof Error ? err.message : "Failed to save update source");
+    } finally {
+      setSourceSaving(false);
+    }
+  }
 
   async function readSystemUpdateStream(response: Response, onMessage: (message: string) => void, fallback: string) {
     if (!response.ok) {
@@ -180,7 +264,8 @@ export function SystemClient() {
   const refreshAll = useCallback(() => {
     load();
     loadSystemPlans();
-  }, [load, loadSystemPlans]);
+    loadUpdateSource();
+  }, [load, loadSystemPlans, loadUpdateSource]);
 
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
   if (error) return <div className="rounded-lg border p-6 text-sm text-destructive">{error}</div>;
@@ -188,7 +273,7 @@ export function SystemClient() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="flex items-center gap-2 text-xl font-semibold"><Server className="h-5 w-5" />System</h2>
           <p className="mt-1 text-sm text-muted-foreground">Host info, resource usage, and container summary.</p>
@@ -203,6 +288,43 @@ export function SystemClient() {
           <div><span className="text-muted-foreground">Kernel</span><p className="font-medium">{data.kernel}</p></div>
           <div><span className="text-muted-foreground">Uptime</span><p className="font-medium">{data.uptime}</p></div>
         </div>
+      </div>
+
+      <div className="space-y-4 rounded-lg border p-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="flex items-center gap-2 text-base font-semibold"><GitBranch className="h-4 w-4" />Core Update Source</h3>
+            <p className="mt-1 text-sm text-muted-foreground">Release source for Spine, Control Panel, and YouEye UI.</p>
+          </div>
+          <Button size="sm" onClick={saveUpdateSource} disabled={sourceLoading || sourceSaving}>
+            {sourceSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            Save
+          </Button>
+        </div>
+        <div className="grid gap-4 md:grid-cols-[minmax(180px,240px)_1fr]">
+          <div className="space-y-2">
+            <Label htmlFor="release-branch">Release Branch</Label>
+            <Input
+              id="release-branch"
+              value={releaseBranch}
+              onChange={(event) => setReleaseBranch(event.target.value)}
+              disabled={sourceLoading || sourceSaving}
+              placeholder="main"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="release-repo-url">Repo URL</Label>
+            <Input
+              id="release-repo-url"
+              value={repoUrl}
+              onChange={(event) => setRepoUrl(event.target.value)}
+              disabled={sourceLoading || sourceSaving}
+              placeholder="https://git.potemk.in/potemsla/YouEye"
+            />
+          </div>
+        </div>
+        {sourceError && <p className="text-sm text-destructive">{sourceError}</p>}
+        {sourceMessage && <p className="text-sm text-muted-foreground">{sourceMessage}</p>}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
