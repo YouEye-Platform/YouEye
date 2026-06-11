@@ -463,40 +463,71 @@ func restartIncusIfDnsmasqStale() error {
 	time.Sleep(2 * time.Second)
 
 	out, _ = exec.Command("pgrep", "-a", "-u", "incus", "dnsmasq").Output()
-	active := 0
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if strings.Contains(line, "--interface=incusbr0") {
-			active++
-			if !strings.Contains(line, "--listen-address="+expected) {
-				return fmt.Errorf("stale incusbr0 dnsmasq still active after restart: %s", line)
+	stale := staleIncusBridgeDnsmasqPIDs(string(out), expected)
+	if len(stale) > 0 {
+		fmt.Printf("Killing %d stale incusbr0 dnsmasq process(es)...\n", len(stale))
+		for _, pid := range stale {
+			if err := exec.Command("kill", "-TERM", pid).Run(); err != nil {
+				return fmt.Errorf("failed to terminate stale incusbr0 dnsmasq process %s: %w", pid, err)
 			}
 		}
+		time.Sleep(1 * time.Second)
+
+		out, _ = exec.Command("pgrep", "-a", "-u", "incus", "dnsmasq").Output()
+		stale = staleIncusBridgeDnsmasqPIDs(string(out), expected)
+		for _, pid := range stale {
+			if err := exec.Command("kill", "-KILL", pid).Run(); err != nil {
+				return fmt.Errorf("failed to kill stale incusbr0 dnsmasq process %s: %w", pid, err)
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+		out, _ = exec.Command("pgrep", "-a", "-u", "incus", "dnsmasq").Output()
 	}
-	if active > 1 {
-		return fmt.Errorf("multiple incusbr0 dnsmasq processes still active after restart")
+
+	active := activeIncusBridgeDnsmasqCount(string(out), expected)
+	if remaining := staleIncusBridgeDnsmasqPIDs(string(out), expected); len(remaining) > 0 {
+		return fmt.Errorf("stale incusbr0 dnsmasq still active after cleanup: %s", strings.Join(remaining, ", "))
+	}
+	if active != 1 {
+		return fmt.Errorf("expected exactly one current incusbr0 dnsmasq process, found %d", active)
 	}
 	fmt.Println("✓ Incus dnsmasq state is clean")
 	return nil
 }
 
 func incusBridgeDnsmasqStale(processList, expectedIPv4 string) bool {
-	var bridgeDnsmasq []string
+	if len(staleIncusBridgeDnsmasqPIDs(processList, expectedIPv4)) > 0 {
+		return true
+	}
+	return activeIncusBridgeDnsmasqCount(processList, expectedIPv4) > 1
+}
+
+func staleIncusBridgeDnsmasqPIDs(processList, expectedIPv4 string) []string {
+	var pids []string
 	for _, line := range strings.Split(strings.TrimSpace(processList), "\n") {
-		if line == "" {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
 			continue
 		}
-		if strings.Contains(line, "--interface=incusbr0") {
-			bridgeDnsmasq = append(bridgeDnsmasq, line)
+		if !strings.Contains(line, "--interface=incusbr0") {
+			continue
+		}
+		if strings.Contains(line, "--listen-address="+expectedIPv4) {
+			continue
+		}
+		pids = append(pids, fields[0])
+	}
+	return pids
+}
+
+func activeIncusBridgeDnsmasqCount(processList, expectedIPv4 string) int {
+	active := 0
+	for _, line := range strings.Split(strings.TrimSpace(processList), "\n") {
+		if strings.Contains(line, "--interface=incusbr0") && strings.Contains(line, "--listen-address="+expectedIPv4) {
+			active++
 		}
 	}
-
-	if len(bridgeDnsmasq) > 1 {
-		return true
-	}
-	if len(bridgeDnsmasq) == 1 && !strings.Contains(bridgeDnsmasq[0], "--listen-address="+expectedIPv4) {
-		return true
-	}
-	return false
+	return active
 }
 
 // configureZabblyRepository sets up the official Zabbly repository for latest Incus packages.

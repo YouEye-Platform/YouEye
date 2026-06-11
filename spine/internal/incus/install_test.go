@@ -47,3 +47,32 @@ func TestIncusBridgeDnsmasqStale(t *testing.T) {
 		})
 	}
 }
+
+func TestStaleIncusBridgeDnsmasqPIDs(t *testing.T) {
+	processList := "18825 dnsmasq --interface=incusbr0 --listen-address=10.47.104.1\n" +
+		"25770 dnsmasq --interface=incusbr0 --listen-address=10.85.229.1\n" +
+		"283406 dnsmasq --interface=incusbr0 --listen-address=10.49.153.1\n" +
+		"99999 dnsmasq --interface=otherbr0 --listen-address=10.10.10.1"
+
+	got := staleIncusBridgeDnsmasqPIDs(processList, "10.49.153.1")
+	want := []string{"18825", "25770"}
+	if len(got) != len(want) {
+		t.Fatalf("staleIncusBridgeDnsmasqPIDs() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("staleIncusBridgeDnsmasqPIDs() = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestActiveIncusBridgeDnsmasqCount(t *testing.T) {
+	processList := "18825 dnsmasq --interface=incusbr0 --listen-address=10.47.104.1\n" +
+		"283406 dnsmasq --interface=incusbr0 --listen-address=10.49.153.1\n" +
+		"283500 dnsmasq --interface=incusbr0 --listen-address=10.49.153.1"
+
+	got := activeIncusBridgeDnsmasqCount(processList, "10.49.153.1")
+	if got != 2 {
+		t.Fatalf("activeIncusBridgeDnsmasqCount() = %d, want 2", got)
+	}
+}

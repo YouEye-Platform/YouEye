@@ -1,3 +1,21 @@
+## spine-v0.4.5 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / youeye-pc
+**Agent:** Mythos
+**Task:** Clean orphaned Incus dnsmasq processes after fresh deploy bridge recreation
+
+### Changes
+- `spine/internal/incus/install.go` — After restarting Incus for stale `incusbr0` dnsmasq state, Spine now terminates only stale Incus-owned bridge dnsmasq processes whose `--listen-address` does not match the current bridge IP, then verifies exactly one current dnsmasq remains.
+- `spine/internal/incus/install_test.go` — Adds regression coverage for stale PID extraction and duplicate-current dnsmasq counting.
+- `spine/internal/cmd/root.go`, `README.md` — Bumped Spine to `0.4.5` and updated current versions.
+
+### Test Results
+- Go: `go test ./...` passed in `spine/`.
+
+### Notes for Iris
+- Follow-up to `spine-v0.4.4`: restart alone did not reap old dnsmasq children parented to PID 1 on `youeye-pc`; this release performs targeted cleanup before container creation.
+- Spine-only release; CP remains `0.4.14`, UI remains `0.4.4`.
+
 ## spine-v0.4.4 — mythos — 2026-06-11
 **Branch:** main
 **VM:** potempc / youeye-pc
