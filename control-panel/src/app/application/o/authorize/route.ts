@@ -124,6 +124,29 @@ function denyRedirect(redirectUri: string, state: string) {
   return NextResponse.redirect(redirect, { status: 303 });
 }
 
+function initials(value: string): string {
+  const letters = value
+    .split(/[\s._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join('');
+  return letters || 'A';
+}
+
+function basicAccessRows(scopes: string[]): string {
+  const requested = new Set(scopes);
+  const rows = [
+    requested.has('openid') ? 'Sign you in' : null,
+    requested.has('profile') ? 'Use your basic profile' : null,
+    requested.has('email') ? 'Use your email address' : null,
+    requested.has('groups') ? 'See your account groups' : null,
+  ].filter(Boolean) as string[];
+
+  const visibleRows = rows.length > 0 ? rows : ['Sign you in'];
+  return visibleRows.map((label) => `<li><span class="check">&#10003;</span><span>${escapeHtml(label)}</span></li>`).join('');
+}
+
 function consentHtml(params: {
   client: IdentityClient;
   user: IdentityUser;
@@ -134,20 +157,11 @@ function consentHtml(params: {
 }) {
   const scopes = scopeList(params.scope);
   const appName = params.client.name || params.client.client_id;
-  const permissionRows = scopes.map((scope) => {
-    const label = scope === 'openid'
-      ? `Sign you in with ${params.providerName}`
-      : scope === 'profile'
-        ? 'Read your profile name'
-        : scope === 'email'
-          ? 'Read your email address'
-          : `Use ${scope}`;
-    return `<li><span>${escapeHtml(label)}</span><code>${escapeHtml(scope)}</code></li>`;
-  }).join('');
   const runtimeRows = (params.runtimePermissions ?? []).map((permission) => {
-    const risk = permission.risk ? `<code>${escapeHtml(permission.risk)}</code>` : '';
+    const risk = permission.risk ? `<span class="risk">${escapeHtml(permission.risk)} risk</span>` : '';
     return `<label class="runtime-permission">
       <input type="checkbox" name="runtime_permission" value="${escapeHtml(permission.permission)}" checked />
+      <span class="switch" aria-hidden="true"></span>
       <span>
         <strong>${escapeHtml(permission.title || permission.permission)}</strong>
         ${permission.description ? `<small>${escapeHtml(permission.description)}</small>` : ''}
@@ -156,8 +170,11 @@ function consentHtml(params: {
     </label>`;
   }).join('');
   const runtimeSection = runtimeRows
-    ? `<p class="section-label">Optional app permissions</p><div class="runtime-list">${runtimeRows}</div>`
+    ? `<section class="section optional"><div class="section-heading"><p>Optional permissions</p><span>You can turn these off now.</span></div><div class="runtime-list">${runtimeRows}</div></section>`
     : '';
+  const technicalDetails = scopes.map((scope) => `<code>${escapeHtml(scope)}</code>`).join('');
+  const accountLabel = params.user.name || params.user.username;
+  const accountEmail = params.user.email || params.user.username;
 
   return new Response(`<!doctype html>
 <html lang="en">
@@ -167,42 +184,171 @@ function consentHtml(params: {
   <link rel="icon" href="data:," />
   <title>Allow ${escapeHtml(appName)}?</title>
   <style>
-    :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: linear-gradient(145deg, #f8faf9, #edf6f3 52%, #f6f1ea); color: #15171a; }
-    main { width: min(500px, calc(100vw - 32px)); border: 1px solid rgba(21, 23, 26, .12); border-radius: 12px; background: rgba(255,255,255,.82); box-shadow: 0 24px 70px rgba(25, 42, 55, .13); padding: 22px; }
-    h1 { font-size: 1.55rem; line-height: 1.15; margin: 0 0 8px; }
-    p { margin: 0 0 18px; color: rgba(21, 23, 26, .68); line-height: 1.45; }
-    .section-label { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: CanvasText; }
-    ul { list-style: none; margin: 0 0 22px; padding: 0; display: grid; gap: 8px; }
-    li { display: flex; justify-content: space-between; gap: 12px; align-items: center; border: 1px solid rgba(21, 23, 26, .12); border-radius: 8px; padding: 10px 12px; background: rgba(255,255,255,.62); }
-    code { color: rgba(21, 23, 26, .58); font-size: 12px; }
-    .runtime-list { display: grid; gap: 8px; margin: 0 0 22px; }
-    .runtime-permission { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: start; border: 1px solid rgba(21, 23, 26, .12); border-radius: 8px; padding: 10px 12px; cursor: pointer; background: rgba(255,255,255,.62); }
-    .runtime-permission input { margin-top: 3px; accent-color: #111; }
-    .runtime-permission strong { display: block; font-weight: 600; }
-    .runtime-permission small { display: block; margin-top: 3px; color: color-mix(in srgb, CanvasText 62%, transparent); line-height: 1.35; }
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.62), rgba(255,255,255,.86)),
+        linear-gradient(135deg, #eaf8f6 0%, #eff7ff 48%, #f8fbff 100%);
+      color: #17191c;
+    }
+    main {
+      width: min(520px, 100%);
+      border: 1px solid rgba(24, 36, 48, .12);
+      border-radius: 8px;
+      background: rgba(255,255,255,.94);
+      box-shadow: 0 22px 54px rgba(28, 52, 70, .14);
+      padding: 22px;
+    }
+    h1 { margin: 0; font-size: 1.45rem; line-height: 1.18; letter-spacing: 0; text-align: center; }
+    p { margin: 0; color: #627183; line-height: 1.45; }
+    .relationship {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .identity-node {
+      display: grid;
+      justify-items: center;
+      gap: 7px;
+      min-width: 0;
+      color: #2c3440;
+      font-size: 13px;
+      font-weight: 800;
+      text-align: center;
+    }
+    .mark {
+      display: grid;
+      place-items: center;
+      width: 52px;
+      height: 52px;
+      border-radius: 16px;
+      border: 1px solid #d8e6ef;
+      background: linear-gradient(135deg, #f7fcfb 0%, #eef7ff 100%);
+      color: #126cc6;
+      font-size: 18px;
+      font-weight: 900;
+    }
+    .connector {
+      width: 34px;
+      height: 1px;
+      background: #cfdde8;
+      position: relative;
+    }
+    .connector::after {
+      content: "";
+      position: absolute;
+      right: -1px;
+      top: -4px;
+      width: 8px;
+      height: 8px;
+      border-top: 1px solid #cfdde8;
+      border-right: 1px solid #cfdde8;
+      transform: rotate(45deg);
+    }
+    .intro { display: grid; gap: 8px; margin-bottom: 18px; text-align: center; }
+    .account {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid #e1e8ef;
+      border-radius: 8px;
+      background: #fbfdff;
+      padding: 10px 12px;
+      margin-bottom: 18px;
+    }
+    .avatar {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      border-radius: 999px;
+      background: #e8f3ff;
+      color: #126cc6;
+      font-size: 13px;
+      font-weight: 900;
+      flex: 0 0 auto;
+    }
+    .account-main { min-width: 0; flex: 1; }
+    .account-main strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+    .account-main span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #64717f; font-size: 12px; margin-top: 2px; }
+    .signed-in { border-radius: 999px; background: #e8f8ee; color: #16713a; padding: 4px 8px; font-size: 12px; font-weight: 800; }
+    .section { margin-bottom: 18px; }
+    .section-heading { display: grid; gap: 2px; margin-bottom: 9px; }
+    .section-heading p { color: #2c3440; font-size: 13px; font-weight: 800; }
+    .section-heading span { color: #718093; font-size: 12px; }
+    ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+    li { display: flex; gap: 10px; align-items: center; border: 1px solid #e1e8ef; border-radius: 8px; padding: 10px 12px; background: #fff; font-size: 14px; }
+    .check { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 999px; background: #e8f8ee; color: #16713a; font-size: 13px; font-weight: 900; flex: 0 0 auto; }
+    .runtime-list { display: grid; gap: 8px; }
+    .runtime-permission { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; border: 1px solid #e1e8ef; border-radius: 8px; padding: 10px 12px; cursor: pointer; background: #fff; }
+    .runtime-permission input { position: absolute; opacity: 0; pointer-events: none; }
+    .switch { width: 38px; height: 22px; border-radius: 999px; background: #cbd5e1; position: relative; transition: background .16s ease; }
+    .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 999px; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.2); transition: transform .16s ease; }
+    .runtime-permission input:checked + .switch { background: #0b84ff; }
+    .runtime-permission input:checked + .switch::after { transform: translateX(16px); }
+    .runtime-permission strong { display: block; color: #2c3440; font-size: 14px; font-weight: 800; }
+    .runtime-permission small { display: block; margin-top: 3px; color: #64717f; font-size: 12px; line-height: 1.35; }
+    .risk { border: 1px solid #dbe5ee; border-radius: 999px; color: #64717f; padding: 3px 7px; font-size: 11px; font-weight: 800; text-transform: capitalize; }
+    details { border: 1px solid #e1e8ef; border-radius: 8px; background: #fbfdff; margin-bottom: 18px; }
+    summary { cursor: pointer; padding: 10px 12px; color: #405061; font-size: 13px; font-weight: 800; }
+    .scope-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 12px; }
+    code { border: 1px solid #dbe5ee; border-radius: 999px; background: #fff; color: #64717f; padding: 3px 7px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
     form { display: grid; gap: 0; }
     .actions { display: flex; gap: 10px; }
     button { height: 42px; border-radius: 8px; font: inherit; font-weight: 700; cursor: pointer; padding: 0 16px; }
-    .approve { border: 0; background: #15171a; color: #fff; flex: 1; }
-    .deny { border: 1px solid rgba(21, 23, 26, .16); background: rgba(255,255,255,.7); color: #15171a; }
-    .account { font-size: 13px; margin-bottom: 16px; }
+    .approve { border: 0; background: #0b84ff; color: #fff; flex: 1; }
+    .deny { border: 1px solid #d6e1ea; background: #fff; color: #405061; }
+    @media (max-width: 460px) {
+      main { padding: 18px; }
+      .relationship { grid-template-columns: 1fr; }
+      .connector { width: 1px; height: 18px; justify-self: center; }
+      .connector::after { right: -4px; top: 10px; transform: rotate(135deg); }
+      .actions { flex-direction: column-reverse; }
+      .runtime-permission { grid-template-columns: auto 1fr; }
+      .risk { grid-column: 2; width: fit-content; }
+    }
   </style>
 </head>
 <body>
   <main>
-    <h1>Allow ${escapeHtml(appName)}?</h1>
-    <p class="account">Signed in as ${escapeHtml(params.user.name || params.user.username)}.</p>
-    <p>This app wants to use ${escapeHtml(params.providerName)} for your account. You can change this later from app settings.</p>
-    <form method="post" action="/application/o/authorize?${escapeHtml(params.query)}">
-      <div>
-        <p class="section-label">${escapeHtml(params.providerName)}</p>
-        <ul>${permissionRows}</ul>
-        ${runtimeSection}
+    <div class="relationship" aria-label="${escapeHtml(appName)} wants to use ${escapeHtml(params.providerName)}">
+      <div class="identity-node"><div class="mark">${escapeHtml(initials(appName))}</div><span>${escapeHtml(appName)}</span></div>
+      <div class="connector" aria-hidden="true"></div>
+      <div class="identity-node"><div class="mark">${escapeHtml(initials(params.providerName))}</div><span>${escapeHtml(params.providerName)}</span></div>
+    </div>
+    <div class="intro">
+      <h1>Allow ${escapeHtml(appName)} to use ${escapeHtml(params.providerName)}?</h1>
+      <p>This lets the app use your account login on this server.</p>
+    </div>
+    <div class="account">
+      <div class="avatar">${escapeHtml(initials(accountLabel))}</div>
+      <div class="account-main">
+        <strong>${escapeHtml(accountLabel)}</strong>
+        <span>${escapeHtml(accountEmail)}</span>
       </div>
+      <span class="signed-in">Signed in</span>
+    </div>
+    <form method="post" action="/application/o/authorize?${escapeHtml(params.query)}">
+      <section class="section">
+        <div class="section-heading"><p>Basic access</p><span>${escapeHtml(appName)} will be able to:</span></div>
+        <ul>${basicAccessRows(scopes)}</ul>
+      </section>
+      ${runtimeSection}
+      <details>
+        <summary>Technical details</summary>
+        <div class="scope-chips">${technicalDetails}</div>
+      </details>
       <div class="actions">
         <button class="deny" type="submit" name="decision" value="deny">Not now</button>
-        <button class="approve" type="submit" name="decision" value="approve">Allow</button>
+        <button class="approve" type="submit" name="decision" value="approve">Continue</button>
       </div>
     </form>
   </main>

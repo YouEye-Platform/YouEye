@@ -37,7 +37,8 @@ test('OAuth authorize can show and grant selected runtime app permissions', () =
   assert.match(authorize, /appIdFromClientId/);
   assert.match(authorize, /\/api\/ui-bridge\/app-launch-permissions/);
   assert.match(authorize, /name="runtime_permission"/);
-  assert.match(authorize, /Allow selected/);
+  assert.match(authorize, /class="switch"/);
+  assert.match(authorize, /Optional permissions/);
   assert.match(authorize, /form\.getAll\('runtime_permission'\)/);
   assert.match(authorize, /grantPermissions: selectedRuntimePermissions/);
   assert.match(authorize, /denyUnselected: Array\.isArray\(input\.grantPermissions\)/);
@@ -46,6 +47,23 @@ test('OAuth authorize can show and grant selected runtime app permissions', () =
   assert.match(authorize, /email: input\.user\.email/);
   assert.match(authorize, /NextResponse\.redirect\(redirect, \{ status: 303 \}\)/);
   assert.match(authorize, /failed_to_update_app_permissions/);
+});
+
+test('OAuth consent presents human access first and raw scopes only in technical details', () => {
+  const authorize = read('src/app/application/o/authorize/route.ts');
+
+  assert.match(authorize, /Allow \$\{escapeHtml\(appName\)\} to use \$\{escapeHtml\(params\.providerName\)\}\?/);
+  assert.match(authorize, /class="relationship"/);
+  assert.match(authorize, /class="account"/);
+  assert.match(authorize, /Signed in/);
+  assert.match(authorize, /Basic access/);
+  assert.match(authorize, /Sign you in/);
+  assert.match(authorize, /Use your basic profile/);
+  assert.match(authorize, /Use your email address/);
+  assert.match(authorize, /<details>/);
+  assert.match(authorize, /Technical details/);
+  assert.match(authorize, /scope-chips/);
+  assert.doesNotMatch(authorize, /<li><span>\$\{escapeHtml\(label\)\}<\/span><code>/);
 });
 
 test('Fresh installs push connection candidates to UI after dashboard registration', () => {

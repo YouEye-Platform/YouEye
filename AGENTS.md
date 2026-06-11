@@ -1,3 +1,23 @@
+## cp-v0.4.20 — mythos — 2026-06-12
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Redesign identity consent screen
+
+### Changes
+- `control-panel/src/app/application/o/authorize/route.ts` — Redesigned the raw consent HTML around the app-to-identity relationship, signed-in account row, simple basic-access bullets, optional permission switches, and collapsed technical OAuth scope details.
+- `control-panel/tests/identity-consent.spec.ts` — Updated static regressions for the human consent layout, optional permission switches, and technical-details scope placement.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.20`.
+
+### Test Results
+- Static assertions: focused identity-consent assertions passed for relationship header, signed-in row, basic access bullets, optional switches, technical details, runtime permission grant flow, and OAuth redirect behavior.
+- Build: `pnpm build` passed in `control-panel/`; `/tmp/standalone.tar` contains package version `0.4.20`.
+- TypeScript/lint: full-project checks remain blocked by pre-existing unrelated errors noted in `cp-v0.4.15`.
+
+### Notes for Iris
+- CP-only release; Spine remains `0.4.8`, UI remains `0.4.4`.
+- User explicitly asked not to update/deploy from this session; they will test the release manually.
+
 ## cp-v0.4.19 — mythos — 2026-06-12
 **Branch:** main
 **VM:** potempc / bykapc
