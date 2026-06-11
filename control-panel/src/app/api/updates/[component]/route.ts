@@ -19,9 +19,11 @@ export async function POST(
     );
   }
 
-  // CSRF token verification
+  // CSRF token verification. verifyCSRFToken handles the missing-header case
+  // itself, including the CLI-token bypass — a `!csrfToken` pre-check here
+  // would 403 `spine update ui` before the bypass can run.
   const csrfToken = request.headers.get('X-CSRF-Token');
-  if (!csrfToken || !(await verifyCSRFToken(csrfToken))) {
+  if (!(await verifyCSRFToken(csrfToken ?? ''))) {
     return NextResponse.json(
       { error: 'Invalid CSRF token' },
       { status: 403 }
