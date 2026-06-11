@@ -97,6 +97,9 @@ func Install() error {
 			if err := ensureIncusBridgeReady(); err != nil {
 				return err
 			}
+			if err := EnsureSystemBaseImage(); err != nil {
+				return err
+			}
 			configureOCIRemote()
 			if err := util.RunCmd("incus", "version"); err != nil {
 				return fmt.Errorf("failed to verify Incus: %w", err)
@@ -107,6 +110,9 @@ func Install() error {
 			StorageDriver = "dir"
 			fmt.Println("✓ Incus is already initialized with dir storage")
 			if err := ensureIncusBridgeReady(); err != nil {
+				return err
+			}
+			if err := EnsureSystemBaseImage(); err != nil {
 				return err
 			}
 			configureOCIRemote()
@@ -137,6 +143,9 @@ func Install() error {
 	fmt.Println("✓ Incus initialized")
 
 	if err := ensureIncusBridgeReady(); err != nil {
+		return err
+	}
+	if err := EnsureSystemBaseImage(); err != nil {
 		return err
 	}
 

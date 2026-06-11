@@ -101,7 +101,9 @@ func createContainer(containerName string) error {
 	util.LogDebug(fmt.Sprintf("Storage driver detected: %s", storageDriver))
 
 	// Try unprivileged first (preferred) — init only, don't start yet
-	cmdOut, err := util.RunCmdCapture("incus", "init", "images:debian/12", containerName,
+	baseImage := "local:" + incus.SystemBaseImageAlias
+
+	cmdOut, err := util.RunCmdCapture("incus", "init", baseImage, containerName,
 		"-c", "security.privileged=false",
 		"-c", "security.nesting=true")
 
@@ -114,7 +116,7 @@ func createContainer(containerName string) error {
 			exec.Command("incus", "delete", containerName, "--force").Run()
 
 			// Try privileged as fallback
-			cmdOut2, err2 := util.RunCmdCapture("incus", "init", "images:debian/12", containerName,
+			cmdOut2, err2 := util.RunCmdCapture("incus", "init", baseImage, containerName,
 				"-c", "security.privileged=true",
 				"-c", "security.nesting=true")
 

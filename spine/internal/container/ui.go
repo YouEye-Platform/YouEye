@@ -17,7 +17,7 @@ import (
 // The Control Panel will start it after configuring SSO and Caddy.
 func DeployUIContainer(cfg *config.Config) error {
 	containerName := cfg.Deployment.UI.ContainerName
-	image := cfg.Deployment.Container.Image // Same Debian 12 base
+	image := "local:" + incus.SystemBaseImageAlias
 	nodeVersion := cfg.Deployment.UI.NodeVersion
 	appDir := cfg.Deployment.UI.AppDir
 

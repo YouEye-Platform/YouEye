@@ -1,3 +1,23 @@
+## spine-v0.4.6 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / youeye-pc
+**Agent:** Mythos
+**Task:** Add verified local base-image manager for system containers
+
+### Changes
+- `spine/internal/incus/images.go` — Adds a base-image manager that ensures official Debian 12 is available as local alias `youeye-debian-12`, validates Debian/bookworm/amd64/container metadata, and records verified image metadata under `/var/lib/youeye/images/debian-12.json`.
+- `spine/internal/container/control.go`, `spine/internal/container/ui.go` — Create system containers from `local:youeye-debian-12` instead of reaching directly to `images:debian/12` during container creation.
+- `spine/internal/incus/install.go` — Runs base-image bootstrap after Incus bridge hygiene and before CP/UI container creation, including reused-Incus install paths.
+- `spine/internal/incus/images_test.go` — Adds validation coverage for Debian 12 image metadata.
+- `spine/internal/cmd/root.go`, `README.md` — Bumped Spine to `0.4.6` and updated current versions.
+
+### Test Results
+- Go: `go test ./...` passed in `spine/`.
+
+### Notes for Iris
+- Spine-only release; CP remains `0.4.14`, UI remains `0.4.4`.
+- This does not raw-download arbitrary mirror URLs. It uses official Incus image copy first, then creates system containers from the verified local alias so retry deploys are deterministic once the image exists.
+
 ## spine-v0.4.5 — mythos — 2026-06-11
 **Branch:** main
 **VM:** potempc / youeye-pc
