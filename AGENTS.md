@@ -1,3 +1,23 @@
+## cp-v0.4.19 — mythos — 2026-06-12
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Float server WordArt above identity login panel
+
+### Changes
+- `control-panel/src/app/identity/login/route.ts` — Changed `/identity/login` to render the server name WordArt outside the white login panel, removed the inner WordArt box, removed the private account pill and help footer, widened the WordArt area, and kept the login panel starting at the `Continue to <app/server>` copy.
+- `control-panel/tests/identity-login-polish.spec.ts` — Updated static regressions for server-name WordArt, outside-panel placement, and removed footer/pill copy.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.19`.
+
+### Test Results
+- Static assertions: focused identity-login layout assertions passed for server-name WordArt, outside-panel placement, removed pill/footer, app context, loading transition, and hidden protocol copy.
+- Build: `pnpm build` passed in `control-panel/`; `/tmp/standalone.tar` contains package version `0.4.19`.
+- TypeScript/lint: full-project checks remain blocked by pre-existing unrelated errors noted in `cp-v0.4.15`.
+
+### Notes for Iris
+- CP-only release; Spine remains `0.4.8`, UI remains `0.4.4`.
+- User explicitly asked not to update/deploy from this session; they will test the release manually.
+
 ## cp-v0.4.18 — mythos — 2026-06-11
 **Branch:** main
 **VM:** potempc / bykapc

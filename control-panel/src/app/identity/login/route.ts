@@ -159,7 +159,7 @@ function wordmarkStyle(style: SiteNameStyle): string {
 
   return [
     `font-family: "${safeCss(style.fontFamily, 'Montserrat')}", system-ui, sans-serif`,
-    `font-size: clamp(2.15rem, 9vw, 4.4rem)`,
+    `font-size: clamp(3.1rem, 14vw, 8rem)`,
     `font-weight: ${Number(style.fontWeight) || DEFAULT_STYLE.fontWeight}`,
     `letter-spacing: ${safeCss(style.letterSpacing, DEFAULT_STYLE.letterSpacing)}`,
     `text-transform: ${safeCss(style.textTransform, DEFAULT_STYLE.textTransform)}`,
@@ -191,11 +191,11 @@ function renderWordmark(name: string, style: SiteNameStyle): string {
   return `<span class="wordmark wordmark-shaped" style="${escapeHtml(css)}">${chars}</span>`;
 }
 
-function wordmarkMarkup(providerName: string, style: SiteNameStyle): { fontLink: string; html: string } {
+function wordmarkMarkup(siteName: string, style: SiteNameStyle): { fontLink: string; html: string } {
   const fontHref = FONT_CSS_MAP[style.fontFamily];
   return {
     fontLink: fontHref ? `<link rel="stylesheet" href="${escapeHtml(fontHref)}" />` : '',
-    html: renderWordmark(providerName, style),
+    html: renderWordmark(siteName, style),
   };
 }
 
@@ -247,7 +247,7 @@ async function html(returnTo: string, error = ''): Promise<Response> {
     getIdentityProviderConfig(),
     identityBranding(),
   ]);
-  const wordmark = wordmarkMarkup(provider.name, branding.siteNameStyle);
+  const wordmark = wordmarkMarkup(branding.siteName, branding.siteNameStyle);
   const appName = await resolveLoginContext(returnTo, branding.siteName);
   const contextTitle = appName ? `Continue to ${appName}` : `Continue with ${provider.name}`;
   const contextDescription = appName
@@ -275,49 +275,41 @@ async function html(returnTo: string, error = ''): Promise<Response> {
         linear-gradient(135deg, #eaf8f6 0%, #eff7ff 46%, #f8fbff 100%);
       color: #17191c;
     }
-    main { width: min(430px, 100%); }
+    main {
+      display: grid;
+      justify-items: center;
+      gap: 18px;
+      width: min(760px, 100%);
+    }
+    .brand {
+      display: grid;
+      place-items: center;
+      width: min(760px, calc(100vw - 28px));
+      padding: 0 8px;
+      overflow: visible;
+      text-align: center;
+    }
     .panel {
       display: grid;
       gap: 20px;
+      width: min(430px, 100%);
       border: 1px solid rgba(24, 36, 48, .12);
       border-radius: 8px;
       background: rgba(255, 255, 255, .94);
       box-shadow: 0 22px 54px rgba(28, 52, 70, .14);
       padding: 22px;
     }
-    .identity {
-      display: grid;
-      gap: 10px;
-      place-items: center;
-      border: 1px solid #dce8f0;
-      border-radius: 8px;
-      background: linear-gradient(135deg, #f7fcfb 0%, #eef7ff 100%);
-      padding: 22px 18px 18px;
-      overflow: hidden;
-      text-align: center;
-    }
     .wordmark {
-      max-width: 100%;
-      overflow-wrap: anywhere;
-      filter: drop-shadow(0 2px 2px rgba(16, 42, 67, .10));
+      max-width: min(720px, calc(100vw - 28px));
+      overflow: visible;
+      overflow-wrap: normal;
+      filter: drop-shadow(0 8px 18px rgba(16, 42, 67, .10));
     }
     .wordmark-shaped {
       display: inline-flex !important;
       align-items: baseline;
       justify-content: center;
       flex-wrap: wrap;
-    }
-    .identity-pill {
-      display: inline-flex;
-      align-items: center;
-      min-height: 24px;
-      border: 1px solid #d4e5ee;
-      border-radius: 999px;
-      background: rgba(255,255,255,.78);
-      padding: 0 10px;
-      color: #536477;
-      font-size: 12px;
-      font-weight: 700;
     }
     .copy { display: grid; gap: 6px; text-align: center; }
     h1 { font-size: 1.35rem; line-height: 1.2; margin: 0; letter-spacing: 0; }
@@ -357,18 +349,14 @@ async function html(returnTo: string, error = ''): Promise<Response> {
       line-height: 1.35;
       text-align: center;
     }
-    .help { border-top: 1px solid #e6edf3; padding-top: 14px; text-align: center; font-size: 12px; color: #748292; }
-    .help a { color: #216db8; text-decoration: none; font-weight: 700; }
-    .help a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
   <main>
+    <header class="brand" aria-label="${escapeHtml(branding.siteName)}">
+      ${wordmark.html}
+    </header>
     <section class="panel">
-      <header class="identity">
-        ${wordmark.html}
-        <div class="identity-pill">Private account login</div>
-      </header>
       <div class="copy">
         <h1>${escapeHtml(contextTitle)}</h1>
         <p>${escapeHtml(contextDescription)}</p>
@@ -383,7 +371,6 @@ async function html(returnTo: string, error = ''): Promise<Response> {
         </label>
         <button type="submit" id="continue-button" data-loading-text="Continuing...">Continue</button>
         <div class="error">${escapeHtml(error)}</div>
-        <div class="help">Need help? Ask the person who runs this server.</div>
       </form>
     </section>
   </main>

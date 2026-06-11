@@ -9,12 +9,12 @@ function read(path: string): string {
   return readFileSync(join(repoRoot, path), 'utf8');
 }
 
-test('identity login uses configured provider name as the visible wordmark', () => {
+test('identity login uses the server name as the visible wordmark', () => {
   const route = read('src/app/identity/login/route.ts');
 
   assert.match(route, /getIdentityProviderConfig/);
-  assert.match(route, /wordmarkMarkup\(provider\.name\)/);
-  assert.match(route, /renderWordmark\(providerName, style\)/);
+  assert.match(route, /wordmarkMarkup\(branding\.siteName, branding\.siteNameStyle\)/);
+  assert.match(route, /renderWordmark\(siteName, style\)/);
   assert.doesNotMatch(route, />YouEye ID</);
 });
 
@@ -32,7 +32,19 @@ test('identity login renders the server WordArt style and font assets', () => {
   assert.match(route, /background-image: linear-gradient/);
   assert.match(route, /-webkit-text-stroke/);
   assert.match(route, /charShape\.charTransform/);
+  assert.match(route, /<header class="brand"/);
+  assert.match(route, /width: min\(760px, 100%\)/);
   assert.match(middleware, /white-label login can load its local WordArt font CSS\/assets/);
+});
+
+test('identity login keeps the WordArt outside the form panel', () => {
+  const route = read('src/app/identity/login/route.ts');
+
+  assert.match(route, /<header class="brand"[\s\S]*\$\{wordmark\.html\}[\s\S]*<\/header>\s*<section class="panel">/);
+  assert.doesNotMatch(route, /class="identity"/);
+  assert.doesNotMatch(route, /identity-pill/);
+  assert.doesNotMatch(route, /Private account login/);
+  assert.doesNotMatch(route, /Need help/);
 });
 
 test('identity login derives app context from OAuth client or return host', () => {
