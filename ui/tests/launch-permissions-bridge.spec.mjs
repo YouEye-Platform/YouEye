@@ -26,7 +26,15 @@ test('UI bridge exposes launch permission preview and selected grants for YouEye
   assert.match(route, /User not found in UI database/);
   assert.match(route, /getUserAppsWithConfig\(user\.id\)/);
   assert.match(route, /customIconUrl/);
+  assert.match(route, /siteNameStyleToCSS/);
+  assert.match(route, /CHARACTER_SHAPE_PRESETS/);
+  assert.match(route, /branding_css: brandingCss/);
+  assert.match(route, /branding_font_url: brandingFontUrl/);
+  assert.match(route, /branding_css_chars: brandingCssChars/);
+  assert.match(route, /brandingFontUrl = fontUrl \? \(publicUrl\(fontUrl\) \?\? fontUrl\) : null/);
   assert.match(route, /avatar_url: publicUrl\(user\.image\)/);
+  assert.match(route, /avatar_path: user\.image/);
+  assert.match(route, /base \? `\$\{base\}\$\{value\}` : null/);
   assert.match(route, /display: await consentDisplay\(user, appId\)/);
   assert.match(route, /grantPermissions/);
   assert.match(route, /denyUnselected/);

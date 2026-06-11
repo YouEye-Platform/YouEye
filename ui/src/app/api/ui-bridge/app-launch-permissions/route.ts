@@ -14,6 +14,9 @@ import { findUserByIdentityId, findUserByEmail, findUserById, findUserByUsername
 import { describePermission } from "@/lib/permissions/descriptors";
 import { normalizeAppSurfaces } from "@/lib/surfaces/normalize";
 import { collectInternetPermissions } from "@/lib/internet/scopes";
+import type { SiteNameStyle } from "@/lib/db/queries/branding";
+import { siteNameStyleToCSS } from "@/lib/site-name-utils";
+import { CHARACTER_SHAPE_PRESETS } from "@/lib/wordart-presets";
 
 function validateToken(request: NextRequest): boolean {
   const provided = request.headers.get("X-UI-Bridge-Token");
@@ -117,7 +120,7 @@ function publicUrl(value: string | null | undefined): string | null {
   if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("data:")) return value;
   if (value.startsWith("/")) {
     const base = uiBaseUrl();
-    return base ? `${base}${value}` : value;
+    return base ? `${base}${value}` : null;
   }
   return null;
 }
@@ -130,6 +133,23 @@ async function consentDisplay(user: NonNullable<Awaited<ReturnType<typeof resolv
   const { apps } = await getUserAppsWithConfig(user.id);
   const app = apps.find((candidate) => normalizeAppId(candidate.id) === normalizeAppId(appId));
   const displayIcon = app?.customIconUrl ?? app?.icon ?? null;
+  const brandingWordart = app?.brandingWordart as SiteNameStyle | null | undefined;
+  let brandingCss: Record<string, string | number | undefined> | null = null;
+  let brandingFontUrl: string | null = null;
+  let brandingCssChars: string[] | null = null;
+  if (brandingWordart) {
+    const { css, fontUrl } = siteNameStyleToCSS(brandingWordart);
+    brandingCss = css;
+    brandingFontUrl = fontUrl ? (publicUrl(fontUrl) ?? fontUrl) : null;
+    if (brandingWordart.charShapeId) {
+      const shape = CHARACTER_SHAPE_PRESETS.find((preset) => preset.id === brandingWordart.charShapeId);
+      if (shape) {
+        const intensity = brandingWordart.charShapeIntensity ?? 1;
+        brandingCssChars = Array.from({ length: 30 }, (_, i) => shape.charTransform(i, 30, intensity));
+      }
+    }
+  }
+
   return {
     app: {
       id: app?.id ?? appId,
@@ -137,7 +157,10 @@ async function consentDisplay(user: NonNullable<Awaited<ReturnType<typeof resolv
       icon: displayIcon,
       icon_url: publicUrl(displayIcon),
       header_display_mode: app?.headerDisplayMode ?? "logo-text",
-      has_branding_override: Boolean(app?.brandingWordart),
+      branding_css: brandingCss,
+      branding_font_url: brandingFontUrl,
+      branding_css_chars: brandingCssChars,
+      has_branding_override: Boolean(brandingWordart),
     },
     user: {
       id: user.id,
@@ -145,6 +168,7 @@ async function consentDisplay(user: NonNullable<Awaited<ReturnType<typeof resolv
       username: user.username,
       email: user.email,
       avatar_url: publicUrl(user.image),
+      avatar_path: user.image,
     },
   };
 }

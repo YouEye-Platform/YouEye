@@ -5,6 +5,7 @@ import { getIdentityProviderConfig } from '@/lib/identity/provider';
 import { getIdentitySession } from '@/lib/identity/http';
 import { readFileSync } from 'fs';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
+import { settingsService } from '@/lib/settings';
 
 const FIRST_PARTY_CLIENTS = new Set(['youeye-control', 'youeye-ui']);
 const DEFAULT_SCOPE = 'openid profile email';
@@ -46,6 +47,9 @@ interface ConsentDisplay {
     icon?: string | null;
     icon_url?: string | null;
     header_display_mode?: string | null;
+    branding_css?: Record<string, string | number | undefined> | null;
+    branding_font_url?: string | null;
+    branding_css_chars?: string[] | null;
     has_branding_override?: boolean;
   };
   user?: {
@@ -54,6 +58,7 @@ interface ConsentDisplay {
     username?: string | null;
     email?: string | null;
     avatar_url?: string | null;
+    avatar_path?: string | null;
   };
 }
 
@@ -73,6 +78,17 @@ function readBridgeToken(): string | null {
 
 function uiBaseUrl(): string {
   return process.env.UI_INTERNAL_URL || `http://youeye-ui.${CONTAINER_DOMAIN}:3000`;
+}
+
+async function uiExternalUrl(): Promise<string | null> {
+  const env = process.env.UI_EXTERNAL_URL || process.env.BASE_URL || process.env.NEXTAUTH_URL;
+  if (env) return env.replace(/\/$/, '');
+  const raw = await settingsService.getRaw().catch(() => null);
+  const domain = typeof raw?.domain === 'string' ? raw.domain.trim() : '';
+  if (!domain) return null;
+  const subdomains = raw?.subdomains && typeof raw.subdomains === 'object' ? raw.subdomains as Record<string, unknown> : {};
+  const uiSub = typeof subdomains.ui === 'string' ? subdomains.ui.trim() : '';
+  return `https://${uiSub ? `${uiSub}.` : ''}${domain}`;
 }
 
 async function fetchRuntimePermissions(input: {
@@ -178,25 +194,77 @@ function svgIcon(icon: string | null | undefined): string | null {
   }
 }
 
-function appMark(display: ConsentDisplay['app'] | undefined, appName: string): string {
-  const iconUrl = display?.icon_url;
+function absoluteAssetUrl(value: string | null | undefined, baseUrl: string | null): string | null {
+  if (!value) return null;
+  if (value.startsWith('http://') || value.startsWith('https://') || value.startsWith('data:')) return value;
+  if (value.startsWith('/') && baseUrl) return `${baseUrl}${value}`;
+  return null;
+}
+
+function appIcon(display: ConsentDisplay['app'] | undefined, appName: string, baseUrl: string | null): string {
+  const iconUrl = absoluteAssetUrl(display?.icon_url || display?.icon, baseUrl);
   if (iconUrl) {
-    return `<div class="app-mark app-mark-image"><img src="${escapeHtml(iconUrl)}" alt="" /></div>`;
+    return `<span class="app-icon app-icon-image"><img src="${escapeHtml(iconUrl)}" alt="" /></span>`;
   }
   const icon = display?.icon || '';
   if (icon.startsWith('emoji:')) {
-    return `<div class="app-mark app-mark-emoji" aria-hidden="true">${escapeHtml(icon.slice(6))}</div>`;
+    return `<span class="app-icon app-icon-emoji" aria-hidden="true">${escapeHtml(icon.slice(6))}</span>`;
   }
   const svg = svgIcon(icon);
   if (svg) {
-    return `<div class="app-mark app-mark-svg">${svg}</div>`;
+    return `<span class="app-icon app-icon-svg">${svg}</span>`;
   }
-  return `<div class="app-mark">${escapeHtml(initials(appName))}</div>`;
+  return `<span class="app-icon app-icon-fallback">${escapeHtml(initials(appName).charAt(0))}</span>`;
 }
 
-function accountAvatar(display: ConsentDisplay['user'] | undefined, accountLabel: string): string {
-  if (display?.avatar_url) {
-    return `<div class="avatar avatar-image"><img src="${escapeHtml(display.avatar_url)}" alt="" /></div>`;
+function safeCssName(name: string): string {
+  return name.replace(/([A-Z])/g, '-$1').toLowerCase();
+}
+
+function safeCssValue(value: unknown): string | null {
+  if (typeof value === 'number') return String(value);
+  if (typeof value !== 'string') return null;
+  if (/[;{}<>]/.test(value)) return null;
+  return value;
+}
+
+function styleObjectToInline(style: Record<string, string | number | undefined> | null | undefined): string {
+  if (!style) return '';
+  return Object.entries(style)
+    .map(([key, value]) => {
+      const safeValue = safeCssValue(value);
+      return safeValue ? `${safeCssName(key)}:${safeValue}` : '';
+    })
+    .filter(Boolean)
+    .join(';');
+}
+
+function appNameMarkup(display: ConsentDisplay['app'] | undefined, appName: string): string {
+  const css = styleObjectToInline(display?.branding_css);
+  const chars = display?.branding_css_chars;
+  if (!css) return `<span class="app-name">${escapeHtml(appName)}</span>`;
+  if (Array.isArray(chars) && chars.length > 0) {
+    const parts = appName.split('').map((ch, index) => {
+      const transform = safeCssValue(chars[index]) || 'none';
+      const text = ch === ' ' ? '&nbsp;' : escapeHtml(ch);
+      return `<span style="display:inline-block;transform:${escapeHtml(transform)}">${text}</span>`;
+    }).join('');
+    return `<span class="app-name app-name-branded" style="${escapeHtml(css)}">${parts}</span>`;
+  }
+  return `<span class="app-name app-name-branded" style="${escapeHtml(css)}">${escapeHtml(appName)}</span>`;
+}
+
+function appBrand(display: ConsentDisplay['app'] | undefined, appName: string, baseUrl: string | null): string {
+  const mode = display?.header_display_mode || 'logo-text';
+  const icon = mode === 'text-only' ? '' : appIcon(display, appName, baseUrl);
+  const name = mode === 'logo-only' ? '' : appNameMarkup(display, appName);
+  return `<div class="app-brand" aria-label="${escapeHtml(appName)}">${icon}${name}</div>`;
+}
+
+function accountAvatar(display: ConsentDisplay['user'] | undefined, accountLabel: string, baseUrl: string | null): string {
+  const avatarUrl = absoluteAssetUrl(display?.avatar_url || display?.avatar_path, baseUrl);
+  if (avatarUrl) {
+    return `<div class="avatar avatar-image"><img src="${escapeHtml(avatarUrl)}" alt="" /></div>`;
   }
   return `<div class="avatar">${escapeHtml(initials(accountLabel))}</div>`;
 }
@@ -209,6 +277,7 @@ function consentHtml(params: {
   providerName: string;
   runtimePermissions?: RuntimePermission[];
   display?: ConsentDisplay;
+  uiExternalUrl?: string | null;
 }) {
   const scopes = scopeList(params.scope);
   const appName = params.display?.app?.name || params.client.name || params.client.client_id;
@@ -234,6 +303,8 @@ function consentHtml(params: {
   const shareText = shares.length > 0
     ? `${params.providerName} will share your ${shares.join(' and ')} with ${appName}.`
     : `${params.providerName} will let ${appName} confirm this is your account.`;
+  const appFontLink = absoluteAssetUrl(params.display?.app?.branding_font_url, params.uiExternalUrl ?? null);
+  const appBrandMarkup = appBrand(params.display?.app, appName, params.uiExternalUrl ?? null);
 
   return new Response(`<!doctype html>
 <html lang="en">
@@ -241,6 +312,7 @@ function consentHtml(params: {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="icon" href="data:," />
+  ${appFontLink ? `<link rel="stylesheet" href="${escapeHtml(appFontLink)}" />` : ''}
   <title>Allow ${escapeHtml(appName)}?</title>
   <style>
     :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
@@ -267,27 +339,33 @@ function consentHtml(params: {
     h1 { margin: 0; font-size: 1.55rem; line-height: 1.18; letter-spacing: 0; text-align: center; }
     p { margin: 0; color: #627183; line-height: 1.45; }
     .app-brand {
-      display: grid;
-      justify-items: center;
-      margin-bottom: 18px;
-      text-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      min-height: 24px;
+      color: #111827;
+      font-size: 15px;
+      font-weight: 800;
     }
-    .app-mark {
+    .app-icon {
       display: grid;
       place-items: center;
-      width: 52px;
-      height: 52px;
-      border-radius: 16px;
-      border: 1px solid #d8e6ef;
-      background: linear-gradient(135deg, #f7fcfb 0%, #eef7ff 100%);
-      color: #126cc6;
+      width: 20px;
+      height: 20px;
+      color: #111827;
       font-size: 18px;
-      font-weight: 900;
+      font-weight: 800;
       overflow: hidden;
+      flex: 0 0 auto;
     }
-    .app-mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .app-mark svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.85; stroke-linecap: round; stroke-linejoin: round; }
-    .app-mark-emoji { font-size: 25px; line-height: 1; }
+    .app-icon img { width: 20px; height: 20px; border-radius: 4px; object-fit: cover; display: block; }
+    .app-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .app-icon-emoji { font-size: 18px; line-height: 1; }
+    .app-icon-fallback { font-size: 13px; }
+    .app-name { display: inline-block; line-height: 1.2; }
+    .app-name-branded { font-size: 1rem; }
     .intro { display: grid; gap: 8px; margin-bottom: 18px; text-align: center; }
     .account {
       display: flex;
@@ -343,14 +421,12 @@ function consentHtml(params: {
 </head>
 <body>
   <main>
-    <div class="app-brand" aria-label="${escapeHtml(appName)}">
-      ${appMark(params.display?.app, appName)}
-    </div>
+    ${appBrandMarkup}
     <div class="intro">
       <h1>Sign in to ${escapeHtml(appName)}</h1>
     </div>
     <div class="account">
-      ${accountAvatar(params.display?.user, accountLabel)}
+      ${accountAvatar(params.display?.user, accountLabel, params.uiExternalUrl ?? null)}
       <div class="account-main">
         <strong>${escapeHtml(accountLabel)}</strong>
         <span>${escapeHtml(accountEmail)}</span>
@@ -415,6 +491,7 @@ export async function GET(request: NextRequest) {
     const consent = await getAppConsent(user.id, clientId);
     const runtime = await fetchRuntimePermissions({ clientId, user });
     if (!consent || !hasScopes(consent.scopes, requestedScopes) || (runtime?.permissions.length ?? 0) > 0) {
+      const externalUiUrl = await uiExternalUrl();
       return consentHtml({
         client,
         user,
@@ -423,6 +500,7 @@ export async function GET(request: NextRequest) {
         providerName: provider.name,
         runtimePermissions: runtime?.permissions,
         display: runtime?.display,
+        uiExternalUrl: externalUiUrl,
       });
     }
   }

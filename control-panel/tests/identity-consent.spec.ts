@@ -54,14 +54,22 @@ test('OAuth consent presents a simple account handoff without technical scope UI
 
   assert.match(authorize, /<h1>Sign in to \$\{escapeHtml\(appName\)\}<\/h1>/);
   assert.match(authorize, /class="app-brand"/);
-  assert.match(authorize, /appMark\(params\.display\?\.app, appName\)/);
+  assert.match(authorize, /appBrand\(params\.display\?\.app, appName, params\.uiExternalUrl \?\? null\)/);
+  assert.match(authorize, /class="app-icon/);
+  assert.match(authorize, /appNameMarkup/);
+  assert.match(authorize, /branding_css/);
+  assert.match(authorize, /branding_font_url/);
   assert.match(authorize, /class="account"/);
-  assert.match(authorize, /accountAvatar\(params\.display\?\.user, accountLabel\)/);
+  assert.match(authorize, /uiExternalUrl: externalUiUrl/);
+  assert.match(authorize, /accountAvatar\(params\.display\?\.user, accountLabel, params\.uiExternalUrl \?\? null\)/);
+  assert.match(authorize, /avatar_path/);
   assert.match(authorize, /will share your/);
   assert.match(authorize, /You can revoke access later in app settings/);
   assert.match(authorize, />Cancel<\/button>/);
   assert.match(authorize, />Continue<\/button>/);
   assert.match(authorize, /display: runtime\?\.display/);
+  assert.doesNotMatch(authorize, /appMark/);
+  assert.doesNotMatch(authorize, /app-mark/);
   assert.doesNotMatch(authorize, /class="relationship"/);
   assert.doesNotMatch(authorize, /class="provider"/);
   assert.doesNotMatch(authorize, /provider-name/);
