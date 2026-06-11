@@ -1,3 +1,21 @@
+## spine-v0.4.7 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / youeye-pc
+**Agent:** Mythos
+**Task:** Add verified public-mirror fallback for first base-image acquisition
+
+### Changes
+- `spine/internal/incus/images.go` — When `incus image copy images:debian/12` fails, Spine now fetches official Linux Containers simplestreams metadata, selects Debian bookworm amd64 default, downloads image files from public mirror candidates, verifies metadata/rootfs/combined hashes, imports the image as `local:youeye-debian-12`, and validates the imported fingerprint.
+- `spine/internal/incus/images_test.go` — Adds regression coverage for latest metadata selection, incomplete-version fallback, combined fingerprint hashing, and mirror URL construction.
+- `spine/internal/cmd/root.go`, `README.md`, `current-state.yaml` — Bumped Spine to `0.4.7` and updated current versions.
+
+### Test Results
+- Go: `go test ./...` passed in `spine/`.
+
+### Notes for Iris
+- Spine-only release; CP remains `0.4.14`, UI remains `0.4.4`.
+- This does not require YouEye to host images. Official simplestreams metadata remains the trust source; public mirrors are accepted only when the downloaded bytes match official hashes.
+
 ## spine-v0.4.6 — mythos — 2026-06-11
 **Branch:** main
 **VM:** potempc / youeye-pc
