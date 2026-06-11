@@ -1,3 +1,20 @@
+## ui-v0.4.3.31 / cp-v0.4.13.100 — mythos — 2026-06-11
+**Branch:** mythos
+**VM:** potempc (host, Artem-style)
+**Agent:** Mythos
+**Task:** Fix app internet/inter-app proxy gzip corruption + spine update ui CSRF rejection
+
+### Changes
+- `ui/src/app/api/apps/v1/internet/route.ts`, `ui/src/app/api/apps/v1/proxy/[targetAppId]/[...path]/route.ts` — strip `content-encoding`/`content-length` from proxied responses; fetch() decompresses upstream bodies, so forwarding the original headers made compliant app clients inflate plain bytes (Z_DATA_ERROR → Weather geocode/forecast 500 since the proxy internet migration; same latent bug under Wiki/Cinema/Translate media).
+- `control-panel/src/app/api/updates/[component]/route.ts` — the `!csrfToken ||` short-circuit 403'd CLI calls before verifyCSRFToken's CLI-token bypass could run, breaking `spine update ui` entirely. Route now lets verifyCSRFToken decide.
+- `pnpm-lock.yaml` — sync with control-panel radix deps (inherited stale from the artem merge; broke frozen-lockfile builds).
+
+### Test Results
+- Live on lemon: CP 0.4.13.100 deployed via `spine update control`; UI 0.4.3.31 via the now-working `spine update ui`; Weather geocode/forecast verified working in browser (operator-confirmed), proxy returns clean headers.
+
+### Notes for Iris
+- Same `!csrfToken ||` short-circuit pattern exists in ~10 more CP routes (caddy/*, incus, ui, pihole, settings app-update, setup/control-routes, people/password, containers/lan-port) — browser flows work, CLI-token flows would 403. Brief in `Plans/To Plan/`.
+- ye-builder (LXC 418) checkout migrated git.byka.wtf → git.potemk.in (was frozen pre-migration).
 ## v0.4.2.11 — artem — 2026-06-10
 **Branch:** artem
 **VM:** potempc
