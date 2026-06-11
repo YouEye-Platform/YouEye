@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getIdentityConfig } from '@/lib/identity/config';
-import { verifyUser } from '@/lib/identity/store';
+import { getClient, verifyUser } from '@/lib/identity/store';
 import { createIdentityToken } from '@/lib/identity/tokens';
 import { setIdentityCookie } from '@/lib/identity/http';
 import { getIdentityProviderConfig } from '@/lib/identity/provider';
@@ -41,10 +41,56 @@ async function wordmarkStyle(): Promise<string> {
   ].filter(Boolean).join('; ');
 }
 
+function titleCase(value: string): string {
+  return value
+    .split(/[\s._-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function appNameFromClientId(clientId: string): string | null {
+  const appId = clientId
+    .replace(/^youeye-app-/, '')
+    .replace(/^ye-/, '')
+    .trim();
+  return appId && appId !== clientId ? titleCase(appId) : null;
+}
+
+function appNameFromHost(hostname: string): string | null {
+  const labels = hostname.split('.').filter(Boolean);
+  if (labels.length < 3) return null;
+  const subdomain = labels[0];
+  if (['auth', 'control', 'dns', 'id', 'www'].includes(subdomain)) return null;
+  return titleCase(subdomain);
+}
+
+async function resolveLoginContext(returnTo: string): Promise<string | null> {
+  try {
+    const url = new URL(returnTo);
+    const isAuthorize = url.pathname === '/application/o/authorize' || url.pathname === '/oauth/authorize';
+    if (isAuthorize) {
+      const clientId = url.searchParams.get('client_id') || '';
+      if (clientId) {
+        const client = await getClient(clientId).catch(() => null);
+        const name = client?.name?.trim() || appNameFromClientId(clientId);
+        return name || null;
+      }
+    }
+    return appNameFromHost(url.hostname);
+  } catch {
+    return null;
+  }
+}
+
 async function html(returnTo: string, error = ''): Promise<Response> {
   const provider = await getIdentityProviderConfig();
   const wordmark = await wordmarkStyle();
-  const safeReturnTo = returnTo.replace(/"/g, '&quot;');
+  const appName = await resolveLoginContext(returnTo);
+  const contextTitle = appName ? `Continue to ${appName}` : `Continue with ${provider.name}`;
+  const contextDescription = appName
+    ? `Sign in with ${provider.name} to keep going.`
+    : `Sign in with your ${provider.name} account.`;
   return new Response(`<!doctype html>
 <html lang="en">
 <head>
@@ -53,35 +99,105 @@ async function html(returnTo: string, error = ''): Promise<Response> {
   <link rel="icon" href="data:," />
   <title>${escapeHtml(provider.name)}</title>
   <style>
-    :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: radial-gradient(circle at 20% 12%, rgba(86, 178, 255, .18), transparent 32%), linear-gradient(145deg, #f7f9fb, #eef4f1 48%, #f6f2e9); color: #15171a; }
-    main { width: min(390px, calc(100vw - 32px)); }
-    .wordmark { ${wordmark}; margin: 0 0 10px; line-height: 1; overflow-wrap: anywhere; }
-    .panel { display: grid; gap: 14px; border: 1px solid rgba(21, 23, 26, .12); border-radius: 12px; background: rgba(255,255,255,.74); box-shadow: 0 24px 70px rgba(25, 42, 55, .13); padding: 22px; backdrop-filter: blur(16px); }
-    h1 { font-size: 1.15rem; margin: 0; }
-    p { margin: 0; color: rgba(21, 23, 26, .68); }
-    form { display: grid; gap: 12px; }
-    label { display: grid; gap: 6px; font-size: 13px; font-weight: 700; }
-    input { height: 44px; padding: 0 12px; border: 1px solid rgba(21, 23, 26, .16); border-radius: 8px; background: rgba(255,255,255,.9); color: #15171a; font: inherit; }
-    button { height: 44px; border: 0; border-radius: 8px; background: #15171a; color: #fff; font-weight: 800; cursor: pointer; }
-    .error { min-height: 20px; color: #d12; font-size: 13px; }
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: linear-gradient(145deg, #f8fbff 0%, #eef9f6 48%, #f7fbff 100%);
+      color: #17191c;
+    }
+    main { width: min(408px, 100%); }
+    .identity { margin: 0 0 18px; text-align: center; }
+    .wordmark { ${wordmark}; line-height: 1; overflow-wrap: anywhere; }
+    .panel {
+      display: grid;
+      gap: 18px;
+      border: 1px solid rgba(24, 36, 48, .12);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, .92);
+      box-shadow: 0 24px 60px rgba(28, 52, 70, .12);
+      padding: 26px;
+    }
+    .copy { display: grid; gap: 6px; text-align: center; }
+    h1 { font-size: 1.35rem; line-height: 1.2; margin: 0; letter-spacing: 0; }
+    p { margin: 0; color: #64717f; line-height: 1.45; }
+    form { display: grid; gap: 14px; }
+    label { display: grid; gap: 7px; font-size: 13px; font-weight: 700; color: #2c3440; }
+    input {
+      height: 44px;
+      padding: 0 12px;
+      border: 1px solid #cdd8e2;
+      border-radius: 8px;
+      background: #fff;
+      color: #17191c;
+      font: inherit;
+      outline: none;
+      transition: border-color .16s ease, box-shadow .16s ease;
+    }
+    input:focus { border-color: #1788ff; box-shadow: 0 0 0 3px rgba(23, 136, 255, .14); }
+    button {
+      height: 44px;
+      border: 0;
+      border-radius: 8px;
+      background: #0b84ff;
+      color: #fff;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+      transition: background .16s ease, transform .16s ease, opacity .16s ease;
+    }
+    button:hover { background: #0574e5; }
+    button:active { transform: translateY(1px); }
+    button[disabled] { cursor: wait; opacity: .82; }
+    .error {
+      min-height: 18px;
+      color: #b42318;
+      font-size: 13px;
+      line-height: 1.35;
+      text-align: center;
+    }
+    .help { border-top: 1px solid #e6edf3; padding-top: 14px; text-align: center; font-size: 12px; color: #748292; }
+    .help a { color: #216db8; text-decoration: none; font-weight: 700; }
+    .help a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
   <main>
-    <div class="wordmark">${escapeHtml(provider.name)}</div>
+    <header class="identity">
+      <div class="wordmark">${escapeHtml(provider.name)}</div>
+    </header>
     <section class="panel">
-      <h1>Welcome back</h1>
-      <p>Sign in to continue.</p>
-      <form method="post">
-        <input type="hidden" name="return_to" value="${safeReturnTo}" />
-        <label>Username <input name="username" autocomplete="username" required autofocus /></label>
-        <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
-        <button type="submit">Sign in</button>
+      <div class="copy">
+        <h1>${escapeHtml(contextTitle)}</h1>
+        <p>${escapeHtml(contextDescription)}</p>
+      </div>
+      <form method="post" id="login-form">
+        <input type="hidden" name="return_to" value="${escapeHtml(returnTo)}" />
+        <label for="username">Username
+          <input id="username" name="username" autocomplete="username" required autofocus />
+        </label>
+        <label for="password">Password
+          <input id="password" name="password" type="password" autocomplete="current-password" required />
+        </label>
+        <button type="submit" id="continue-button" data-loading-text="Continuing...">Continue</button>
         <div class="error">${escapeHtml(error)}</div>
+        <div class="help">Need help? Ask the person who runs this server.</div>
       </form>
     </section>
   </main>
+  <script>
+    const form = document.getElementById('login-form');
+    const button = document.getElementById('continue-button');
+    form?.addEventListener('submit', () => {
+      if (!button) return;
+      button.textContent = button.dataset.loadingText || 'Continuing...';
+      button.setAttribute('disabled', 'true');
+    });
+  </script>
 </body>
 </html>`, {
     headers: { 'Content-Type': 'text/html; charset=utf-8' },

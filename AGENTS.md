@@ -1,3 +1,23 @@
+## cp-v0.4.16 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Redesign YouEye ID login screen with branded app context
+
+### Changes
+- `control-panel/src/app/identity/login/route.ts` — Redesigned the raw identity login HTML around the configured identity provider name, a centered light panel, app-aware copy such as `Continue to Notes`, and a submit button that morphs to `Continuing...`.
+- `control-panel/tests/identity-login-polish.spec.ts` — Added regression checks for provider-name wordmark, app-context derivation, submit loading transition, and hiding protocol terms from primary copy.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.16`.
+
+### Test Results
+- Build: `pnpm build` passed in `control-panel/`; `control-panel/.next/standalone.tar` contains package version `0.4.16`.
+- Static assertions: focused `rg` checks passed for configured provider wordmark, app context helpers, and `Continuing...` button transition.
+- TypeScript/lint: full-project checks remain blocked by pre-existing unrelated errors noted in `cp-v0.4.15`.
+
+### Notes for Iris
+- CP-only release; Spine remains `0.4.8`, UI remains `0.4.4`.
+- User asked for release/push flow and will test manually.
+
 ## cp-v0.4.15 — mythos — 2026-06-11
 **Branch:** main
 **VM:** potempc / bykapc
