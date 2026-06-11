@@ -13,8 +13,24 @@ test('identity login uses configured provider name as the visible wordmark', () 
   const route = read('src/app/identity/login/route.ts');
 
   assert.match(route, /getIdentityProviderConfig/);
-  assert.match(route, /<div class="wordmark">\$\{escapeHtml\(provider\.name\)\}<\/div>/);
+  assert.match(route, /wordmarkMarkup\(provider\.name\)/);
+  assert.match(route, /renderWordmark\(providerName, style\)/);
   assert.doesNotMatch(route, />YouEye ID</);
+});
+
+test('identity login renders the server WordArt style and font assets', () => {
+  const route = read('src/app/identity/login/route.ts');
+  const middleware = read('src/middleware.ts');
+
+  assert.match(route, /DEFAULT_STYLE/);
+  assert.match(route, /CHARACTER_SHAPE_PRESETS/);
+  assert.match(route, /raw\.site_name_style/);
+  assert.match(route, /FONT_CSS_MAP/);
+  assert.match(route, /<link rel="stylesheet" href="\$\{escapeHtml\(fontHref\)\}" \/>/);
+  assert.match(route, /background-image: linear-gradient/);
+  assert.match(route, /-webkit-text-stroke/);
+  assert.match(route, /charShape\.charTransform/);
+  assert.match(middleware, /white-label login can load its local WordArt font CSS\/assets/);
 });
 
 test('identity login derives app context from OAuth client or return host', () => {
@@ -40,5 +56,5 @@ test('identity login keeps technical context out of primary copy', () => {
 
   assert.doesNotMatch(route, />OAuth</);
   assert.doesNotMatch(route, />OIDC</);
-  assert.doesNotMatch(route, />client_id</);
+  assert.doesNotMatch(route, /<[^>]*>[^<]*client_id[^<]*</);
 });

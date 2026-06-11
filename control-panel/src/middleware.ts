@@ -175,17 +175,18 @@ function applySecurityHeaders(response: NextResponse, pathname: string): NextRes
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // Skip static resources before identity-service route narrowing so the
+  // white-label login can load its local WordArt font CSS/assets.
+  if (STATIC_PATTERNS.some(pattern => pathname.startsWith(pattern))) {
+    return NextResponse.next();
+  }
+
   if (process.env.IDENTITY_SERVICE === 'true') {
     const allowed = IDENTITY_SERVICE_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
     if (!allowed) {
       return new NextResponse('Not Found', { status: 404 });
     }
     return applySecurityHeaders(NextResponse.next(), pathname);
-  }
-
-  // Skip static resources
-  if (STATIC_PATTERNS.some(pattern => pathname.startsWith(pattern))) {
-    return NextResponse.next();
   }
 
   // Track route usage for beta telemetry (fire-and-forget, no latency impact)

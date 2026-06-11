@@ -1,3 +1,24 @@
+## cp-v0.4.17 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Make identity login use real server WordArt and improve composition
+
+### Changes
+- `control-panel/src/app/identity/login/route.ts` — Replaced the partial hand-rolled wordmark with a server-side WordArt renderer using `site_name_style` and `DEFAULT_STYLE`, including font CSS, gradients, text stroke, transforms, and character shapes; moved the wordmark into a more balanced single-panel header.
+- `control-panel/src/middleware.ts` — Allows static font assets through identity-service mode so `/identity/login` can load the selected local WordArt font.
+- `control-panel/tests/identity-login-polish.spec.ts` — Updated regression checks for full WordArt rendering and identity font asset support.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.17`.
+
+### Test Results
+- Build: `pnpm build` passed in `control-panel/`; `control-panel/.next/standalone.tar` contains package version `0.4.17`.
+- Static assertions: focused `rg` checks passed for WordArt defaults, configured style usage, font CSS links, character-shape support, and hidden protocol copy.
+- TypeScript/lint: full-project checks remain blocked by pre-existing unrelated errors noted in `cp-v0.4.15`.
+
+### Notes for Iris
+- CP-only release; Spine remains `0.4.8`, UI remains `0.4.4`.
+- User explicitly asked not to deploy from this session.
+
 ## cp-v0.4.16 — mythos — 2026-06-11
 **Branch:** main
 **VM:** potempc / bykapc

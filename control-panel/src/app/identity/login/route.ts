@@ -5,6 +5,7 @@ import { createIdentityToken } from '@/lib/identity/tokens';
 import { setIdentityCookie } from '@/lib/identity/http';
 import { getIdentityProviderConfig } from '@/lib/identity/provider';
 import { settingsService } from '@/lib/settings';
+import { CHARACTER_SHAPE_PRESETS, DEFAULT_STYLE, type SiteNameStyle } from '@/lib/wordart-presets';
 
 function escapeHtml(value: string): string {
   return value
@@ -19,26 +20,125 @@ function safeCss(value: unknown, fallback = ''): string {
   return typeof value === 'string' && !/[;{}<>]/.test(value) ? value : fallback;
 }
 
-async function wordmarkStyle(): Promise<string> {
-  const raw = await settingsService.getRaw();
-  const style = raw.site_name_style && typeof raw.site_name_style === 'object'
-    ? raw.site_name_style as Record<string, unknown>
+const FONT_CSS_MAP: Record<string, string> = {
+  Montserrat: '/fonts/montserrat.css',
+  'Playfair Display': '/fonts/playfair-display.css',
+  Inter: '/fonts/inter.css',
+  Poppins: '/fonts/poppins.css',
+  'Space Grotesk': '/fonts/space-grotesk.css',
+  'JetBrains Mono': '/fonts/jetbrains-mono.css',
+  Raleway: '/fonts/raleway.css',
+  Caveat: '/fonts/caveat.css',
+  Outfit: '/fonts/outfit.css',
+  'Plus Jakarta Sans': '/fonts/plus-jakarta-sans.css',
+  Lobster: '/fonts/lobster.css',
+  'Permanent Marker': '/fonts/permanent-marker.css',
+  Orbitron: '/fonts/orbitron.css',
+  'Abril Fatface': '/fonts/abril-fatface.css',
+  Pacifico: '/fonts/pacifico.css',
+  Bungee: '/fonts/bungee.css',
+  'Russo One': '/fonts/russo-one.css',
+  Fredoka: '/fonts/fredoka.css',
+  Satisfy: '/fonts/satisfy.css',
+  Righteous: '/fonts/righteous.css',
+  Bangers: '/fonts/bangers.css',
+  'Bebas Neue': '/fonts/bebas-neue.css',
+  'Dancing Script': '/fonts/dancing-script.css',
+  Comfortaa: '/fonts/comfortaa.css',
+  Oswald: '/fonts/oswald.css',
+  'Titan One': '/fonts/titan-one.css',
+  'Black Ops One': '/fonts/black-ops-one.css',
+  Creepster: '/fonts/creepster.css',
+  Monoton: '/fonts/monoton.css',
+  'Press Start 2P': '/fonts/press-start-2p.css',
+  Audiowide: '/fonts/audiowide.css',
+  Cinzel: '/fonts/cinzel.css',
+  'Great Vibes': '/fonts/great-vibes.css',
+  Quicksand: '/fonts/quicksand.css',
+  'Archivo Black': '/fonts/archivo-black.css',
+};
+
+function normalizeWordArt(value: unknown): SiteNameStyle {
+  const style = value && typeof value === 'object'
+    ? value as Partial<SiteNameStyle>
     : {};
   const gradient = style.gradient && typeof style.gradient === 'object'
-    ? style.gradient as Record<string, unknown>
-    : null;
-  const gradientCss = gradient?.from && gradient?.to
-    ? `background: linear-gradient(135deg, ${safeCss(gradient.from)}, ${safeCss(gradient.to)}); -webkit-background-clip: text; background-clip: text; color: transparent;`
-    : `color: ${safeCss(style.color, '#15171a')};`;
+    ? {
+        enabled: Boolean(style.gradient.enabled),
+        from: style.gradient.from || DEFAULT_STYLE.gradient?.from || '#111111',
+        to: style.gradient.to || DEFAULT_STYLE.gradient?.to || '#111111',
+        direction: style.gradient.direction || DEFAULT_STYLE.gradient?.direction || '135deg',
+      }
+    : style.gradient === null
+      ? null
+      : DEFAULT_STYLE.gradient;
+
+  return {
+    ...DEFAULT_STYLE,
+    ...style,
+    gradient,
+  };
+}
+
+function wordmarkStyle(style: SiteNameStyle): string {
+  const gradientCss = style.gradient?.enabled
+    ? [
+        `color: transparent`,
+        `background-image: linear-gradient(${safeCss(style.gradient.direction, '135deg')}, ${safeCss(style.gradient.from)}, ${safeCss(style.gradient.to)})`,
+        `-webkit-background-clip: text`,
+        `background-clip: text`,
+        `-webkit-text-fill-color: transparent`,
+      ].join('; ')
+    : [
+        `color: ${safeCss(style.color, '#15171a')}`,
+        `background-image: none`,
+        `-webkit-background-clip: initial`,
+        `background-clip: initial`,
+        `-webkit-text-fill-color: ${safeCss(style.color, '#15171a')}`,
+      ].join('; ');
+
   return [
-    `font-family: "${safeCss(style.fontFamily, 'Inter')}", system-ui, sans-serif`,
-    `font-size: clamp(2rem, 7vw, 3.25rem)`,
-    `font-weight: ${Number(style.fontWeight) || 800}`,
-    `letter-spacing: ${safeCss(style.letterSpacing, '0')}`,
-    `text-transform: ${safeCss(style.textTransform, 'none')}`,
+    `font-family: "${safeCss(style.fontFamily, 'Montserrat')}", system-ui, sans-serif`,
+    `font-size: clamp(2.15rem, 9vw, 4.4rem)`,
+    `font-weight: ${Number(style.fontWeight) || DEFAULT_STYLE.fontWeight}`,
+    `letter-spacing: ${safeCss(style.letterSpacing, DEFAULT_STYLE.letterSpacing)}`,
+    `text-transform: ${safeCss(style.textTransform, DEFAULT_STYLE.textTransform)}`,
     style.textShadow && style.textShadow !== 'none' ? `text-shadow: ${safeCss(style.textShadow)}` : '',
+    style.textStroke ? `-webkit-text-stroke: ${safeCss(style.textStroke)}` : '',
+    style.transform ? `transform: ${safeCss(style.transform)}` : '',
+    `display: inline-block`,
+    `line-height: .98`,
+    `backface-visibility: hidden`,
     gradientCss,
   ].filter(Boolean).join('; ');
+}
+
+function renderWordmark(name: string, style: SiteNameStyle): string {
+  const css = wordmarkStyle(style);
+  const charShape = style.charShapeId
+    ? CHARACTER_SHAPE_PRESETS.find((preset) => preset.id === style.charShapeId) ?? null
+    : null;
+  if (!charShape) {
+    return `<span class="wordmark" style="${escapeHtml(css)}">${escapeHtml(name)}</span>`;
+  }
+
+  const intensity = style.charShapeIntensity ?? 1;
+  const chars = name.split('').map((ch, index) => {
+    const transform = safeCss(charShape.charTransform(index, name.length, intensity));
+    const text = ch === ' ' ? '&nbsp;' : escapeHtml(ch);
+    return `<span style="display:inline-block; transform:${escapeHtml(transform)}">${text}</span>`;
+  }).join('');
+  return `<span class="wordmark wordmark-shaped" style="${escapeHtml(css)}">${chars}</span>`;
+}
+
+async function wordmarkMarkup(providerName: string): Promise<{ fontLink: string; html: string }> {
+  const raw = await settingsService.getRaw();
+  const style = normalizeWordArt(raw.site_name_style);
+  const fontHref = FONT_CSS_MAP[style.fontFamily];
+  return {
+    fontLink: fontHref ? `<link rel="stylesheet" href="${escapeHtml(fontHref)}" />` : '',
+    html: renderWordmark(providerName, style),
+  };
 }
 
 function titleCase(value: string): string {
@@ -85,7 +185,7 @@ async function resolveLoginContext(returnTo: string): Promise<string | null> {
 
 async function html(returnTo: string, error = ''): Promise<Response> {
   const provider = await getIdentityProviderConfig();
-  const wordmark = await wordmarkStyle();
+  const wordmark = await wordmarkMarkup(provider.name);
   const appName = await resolveLoginContext(returnTo);
   const contextTitle = appName ? `Continue to ${appName}` : `Continue with ${provider.name}`;
   const contextDescription = appName
@@ -97,6 +197,7 @@ async function html(returnTo: string, error = ''): Promise<Response> {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="icon" href="data:," />
+  ${wordmark.fontLink}
   <title>${escapeHtml(provider.name)}</title>
   <style>
     :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
@@ -107,20 +208,54 @@ async function html(returnTo: string, error = ''): Promise<Response> {
       display: grid;
       place-items: center;
       padding: 24px;
-      background: linear-gradient(145deg, #f8fbff 0%, #eef9f6 48%, #f7fbff 100%);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.65), rgba(255,255,255,.86)),
+        linear-gradient(135deg, #eaf8f6 0%, #eff7ff 46%, #f8fbff 100%);
       color: #17191c;
     }
-    main { width: min(408px, 100%); }
-    .identity { margin: 0 0 18px; text-align: center; }
-    .wordmark { ${wordmark}; line-height: 1; overflow-wrap: anywhere; }
+    main { width: min(430px, 100%); }
     .panel {
       display: grid;
-      gap: 18px;
+      gap: 20px;
       border: 1px solid rgba(24, 36, 48, .12);
       border-radius: 8px;
-      background: rgba(255, 255, 255, .92);
-      box-shadow: 0 24px 60px rgba(28, 52, 70, .12);
-      padding: 26px;
+      background: rgba(255, 255, 255, .94);
+      box-shadow: 0 22px 54px rgba(28, 52, 70, .14);
+      padding: 22px;
+    }
+    .identity {
+      display: grid;
+      gap: 10px;
+      place-items: center;
+      border: 1px solid #dce8f0;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #f7fcfb 0%, #eef7ff 100%);
+      padding: 22px 18px 18px;
+      overflow: hidden;
+      text-align: center;
+    }
+    .wordmark {
+      max-width: 100%;
+      overflow-wrap: anywhere;
+      filter: drop-shadow(0 2px 2px rgba(16, 42, 67, .10));
+    }
+    .wordmark-shaped {
+      display: inline-flex !important;
+      align-items: baseline;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .identity-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border: 1px solid #d4e5ee;
+      border-radius: 999px;
+      background: rgba(255,255,255,.78);
+      padding: 0 10px;
+      color: #536477;
+      font-size: 12px;
+      font-weight: 700;
     }
     .copy { display: grid; gap: 6px; text-align: center; }
     h1 { font-size: 1.35rem; line-height: 1.2; margin: 0; letter-spacing: 0; }
@@ -167,10 +302,11 @@ async function html(returnTo: string, error = ''): Promise<Response> {
 </head>
 <body>
   <main>
-    <header class="identity">
-      <div class="wordmark">${escapeHtml(provider.name)}</div>
-    </header>
     <section class="panel">
+      <header class="identity">
+        ${wordmark.html}
+        <div class="identity-pill">Private account login</div>
+      </header>
       <div class="copy">
         <h1>${escapeHtml(contextTitle)}</h1>
         <p>${escapeHtml(contextDescription)}</p>
