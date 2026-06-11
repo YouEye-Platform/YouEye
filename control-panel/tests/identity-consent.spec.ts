@@ -53,13 +53,18 @@ test('OAuth consent presents a simple account handoff without technical scope UI
   const authorize = read('src/app/application/o/authorize/route.ts');
 
   assert.match(authorize, /<h1>Sign in to \$\{escapeHtml\(appName\)\}<\/h1>/);
-  assert.match(authorize, /class="provider"/);
+  assert.match(authorize, /class="app-brand"/);
+  assert.match(authorize, /appMark\(params\.display\?\.app, appName\)/);
   assert.match(authorize, /class="account"/);
+  assert.match(authorize, /accountAvatar\(params\.display\?\.user, accountLabel\)/);
   assert.match(authorize, /will share your/);
   assert.match(authorize, /You can revoke access later in app settings/);
   assert.match(authorize, />Cancel<\/button>/);
   assert.match(authorize, />Continue<\/button>/);
+  assert.match(authorize, /display: runtime\?\.display/);
   assert.doesNotMatch(authorize, /class="relationship"/);
+  assert.doesNotMatch(authorize, /class="provider"/);
+  assert.doesNotMatch(authorize, /provider-name/);
   assert.doesNotMatch(authorize, /Basic access/);
   assert.doesNotMatch(authorize, /Technical details/);
   assert.doesNotMatch(authorize, /<details>/);

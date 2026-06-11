@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBridgeToken } from "@/lib/admin/bridge-client";
 import { getApp } from "@/lib/db/queries/app-management";
+import { getUserAppsWithConfig } from "@/lib/db/queries/apps";
 import { denyPermission, getPermissionDecision, grantPermission } from "@/lib/db/queries/permissions";
 import { findUserByIdentityId, findUserByEmail, findUserById, findUserByUsername } from "@/lib/db/queries/users";
 import { describePermission } from "@/lib/permissions/descriptors";
@@ -107,6 +108,47 @@ async function resolveUiUser(input: {
   return null;
 }
 
+function uiBaseUrl(): string {
+  return process.env.UI_EXTERNAL_URL || process.env.BASE_URL || process.env.NEXTAUTH_URL || "";
+}
+
+function publicUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("data:")) return value;
+  if (value.startsWith("/")) {
+    const base = uiBaseUrl();
+    return base ? `${base}${value}` : value;
+  }
+  return null;
+}
+
+function normalizeAppId(value: string): string {
+  return value.replace(/^youeye-app-/, "").replace(/^ye-/, "");
+}
+
+async function consentDisplay(user: NonNullable<Awaited<ReturnType<typeof resolveUiUser>>>, appId: string) {
+  const { apps } = await getUserAppsWithConfig(user.id);
+  const app = apps.find((candidate) => normalizeAppId(candidate.id) === normalizeAppId(appId));
+  const displayIcon = app?.customIconUrl ?? app?.icon ?? null;
+  return {
+    app: {
+      id: app?.id ?? appId,
+      name: app?.customName ?? app?.name ?? appId,
+      icon: displayIcon,
+      icon_url: publicUrl(displayIcon),
+      header_display_mode: app?.headerDisplayMode ?? "logo-text",
+      has_branding_override: Boolean(app?.brandingWordart),
+    },
+    user: {
+      id: user.id,
+      name: user.name,
+      username: user.username,
+      email: user.email,
+      avatar_url: publicUrl(user.image),
+    },
+  };
+}
+
 export async function POST(request: NextRequest) {
   if (!validateToken(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -161,5 +203,6 @@ export async function POST(request: NextRequest) {
     permissions: after.permissions,
     granted_permissions: after.granted,
     denied_permissions: after.denied,
+    display: await consentDisplay(user, appId),
   });
 }

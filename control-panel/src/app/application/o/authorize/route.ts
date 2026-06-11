@@ -39,6 +39,24 @@ interface RuntimePermission {
   risk?: string;
 }
 
+interface ConsentDisplay {
+  app?: {
+    id?: string;
+    name?: string;
+    icon?: string | null;
+    icon_url?: string | null;
+    header_display_mode?: string | null;
+    has_branding_override?: boolean;
+  };
+  user?: {
+    id?: string;
+    name?: string | null;
+    username?: string | null;
+    email?: string | null;
+    avatar_url?: string | null;
+  };
+}
+
 function appIdFromClientId(clientId: string): string | null {
   if (clientId.startsWith('youeye-app-')) return clientId.slice('youeye-app-'.length).replace(/^ye-/, '');
   if (clientId.startsWith('ye-')) return clientId.slice('ye-'.length);
@@ -61,7 +79,7 @@ async function fetchRuntimePermissions(input: {
   clientId: string;
   user: IdentityUser;
   grantPermissions?: string[];
-}): Promise<{ appId: string; permissions: RuntimePermission[] } | null> {
+}): Promise<{ appId: string; permissions: RuntimePermission[]; display?: ConsentDisplay } | null> {
   const appId = appIdFromClientId(input.clientId);
   const token = readBridgeToken();
   if (!appId || !token) return null;
@@ -90,6 +108,7 @@ async function fetchRuntimePermissions(input: {
     return {
       appId,
       permissions: Array.isArray(data.permissions) ? data.permissions : [],
+      display: data.display && typeof data.display === 'object' ? data.display as ConsentDisplay : undefined,
     };
   } catch (err) {
     console.warn('[identity] Failed to fetch runtime launch permissions:', err);
@@ -134,6 +153,54 @@ function initials(value: string): string {
   return letters || 'A';
 }
 
+function svgIcon(icon: string | null | undefined): string | null {
+  switch ((icon || '').toLowerCase()) {
+    case 'book-open':
+      return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>';
+    case 'search':
+      return '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>';
+    case 'sticky-note':
+      return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z"/><path d="M14 3v4a2 2 0 0 0 2 2h4"/></svg>';
+    case 'film':
+      return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="2.18"/><path d="M7 2v20M17 2v20M2 12h20M2 7h5M2 17h5M17 7h5M17 17h5"/></svg>';
+    case 'cloud-sun':
+      return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v2M4.93 4.93l1.41 1.41M20 12h2M19.07 4.93l-1.41 1.41"/><path d="M15.95 12.65a4 4 0 0 0-5.93-4.13"/><path d="M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z"/></svg>';
+    case 'languages':
+      return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg>';
+    case 'cloud':
+      return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>';
+    case 'globe':
+      return '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2Z"/></svg>';
+    case 'package':
+      return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></svg>';
+    default:
+      return null;
+  }
+}
+
+function appMark(display: ConsentDisplay['app'] | undefined, appName: string): string {
+  const iconUrl = display?.icon_url;
+  if (iconUrl) {
+    return `<div class="app-mark app-mark-image"><img src="${escapeHtml(iconUrl)}" alt="" /></div>`;
+  }
+  const icon = display?.icon || '';
+  if (icon.startsWith('emoji:')) {
+    return `<div class="app-mark app-mark-emoji" aria-hidden="true">${escapeHtml(icon.slice(6))}</div>`;
+  }
+  const svg = svgIcon(icon);
+  if (svg) {
+    return `<div class="app-mark app-mark-svg">${svg}</div>`;
+  }
+  return `<div class="app-mark">${escapeHtml(initials(appName))}</div>`;
+}
+
+function accountAvatar(display: ConsentDisplay['user'] | undefined, accountLabel: string): string {
+  if (display?.avatar_url) {
+    return `<div class="avatar avatar-image"><img src="${escapeHtml(display.avatar_url)}" alt="" /></div>`;
+  }
+  return `<div class="avatar">${escapeHtml(initials(accountLabel))}</div>`;
+}
+
 function consentHtml(params: {
   client: IdentityClient;
   user: IdentityUser;
@@ -141,9 +208,10 @@ function consentHtml(params: {
   query: string;
   providerName: string;
   runtimePermissions?: RuntimePermission[];
+  display?: ConsentDisplay;
 }) {
   const scopes = scopeList(params.scope);
-  const appName = params.client.name || params.client.client_id;
+  const appName = params.display?.app?.name || params.client.name || params.client.client_id;
   const runtimeRows = (params.runtimePermissions ?? []).map((permission) => {
     return `<label class="runtime-permission">
       <input type="checkbox" name="runtime_permission" value="${escapeHtml(permission.permission)}" checked />
@@ -198,14 +266,13 @@ function consentHtml(params: {
     }
     h1 { margin: 0; font-size: 1.55rem; line-height: 1.18; letter-spacing: 0; text-align: center; }
     p { margin: 0; color: #627183; line-height: 1.45; }
-    .provider {
+    .app-brand {
       display: grid;
       justify-items: center;
-      gap: 8px;
       margin-bottom: 18px;
       text-align: center;
     }
-    .mark {
+    .app-mark {
       display: grid;
       place-items: center;
       width: 52px;
@@ -216,8 +283,11 @@ function consentHtml(params: {
       color: #126cc6;
       font-size: 18px;
       font-weight: 900;
+      overflow: hidden;
     }
-    .provider-name { color: #2c3440; font-size: 13px; font-weight: 800; }
+    .app-mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .app-mark svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.85; stroke-linecap: round; stroke-linejoin: round; }
+    .app-mark-emoji { font-size: 25px; line-height: 1; }
     .intro { display: grid; gap: 8px; margin-bottom: 18px; text-align: center; }
     .account {
       display: flex;
@@ -240,7 +310,9 @@ function consentHtml(params: {
       font-size: 13px;
       font-weight: 900;
       flex: 0 0 auto;
+      overflow: hidden;
     }
+    .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .account-main { min-width: 0; flex: 1; }
     .account-main strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
     .account-main span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #64717f; font-size: 12px; margin-top: 2px; }
@@ -271,15 +343,14 @@ function consentHtml(params: {
 </head>
 <body>
   <main>
-    <div class="provider" aria-label="${escapeHtml(params.providerName)}">
-      <div class="mark">${escapeHtml(initials(params.providerName))}</div>
-      <div class="provider-name">${escapeHtml(params.providerName)}</div>
+    <div class="app-brand" aria-label="${escapeHtml(appName)}">
+      ${appMark(params.display?.app, appName)}
     </div>
     <div class="intro">
       <h1>Sign in to ${escapeHtml(appName)}</h1>
     </div>
     <div class="account">
-      <div class="avatar">${escapeHtml(initials(accountLabel))}</div>
+      ${accountAvatar(params.display?.user, accountLabel)}
       <div class="account-main">
         <strong>${escapeHtml(accountLabel)}</strong>
         <span>${escapeHtml(accountEmail)}</span>
@@ -351,6 +422,7 @@ export async function GET(request: NextRequest) {
         query: request.nextUrl.searchParams.toString(),
         providerName: provider.name,
         runtimePermissions: runtime?.permissions,
+        display: runtime?.display,
       });
     }
   }
