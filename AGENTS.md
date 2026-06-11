@@ -1,3 +1,22 @@
+## spine-v0.4.4 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / youeye-pc
+**Agent:** Mythos
+**Task:** Harden fresh deploy against Incus mirror/network and missing Node failures
+
+### Changes
+- `spine/internal/incus/install.go` — Normalizes `incusbr0` to IPv4-only, reapplies DHCP/DNS setup on reused Incus installs, and restarts Incus when stale `incusbr0` dnsmasq processes from old subnets are detected.
+- `spine/internal/container/control.go` — Adds CP container IPv4/network preflight, fails every critical Node install step loudly, verifies `/usr/bin/node`, and verifies bundled `styled-jsx` instead of running production `pnpm install`.
+- `spine/internal/incus/install_test.go` — Adds regression coverage for stale Incus dnsmasq process detection.
+- `spine/internal/cmd/root.go`, `README.md` — Bumped Spine to `0.4.4` and updated current versions.
+
+### Test Results
+- Go: `go test ./...` passed in `spine/`.
+
+### Notes for Iris
+- Spine-only release; CP remains `0.4.14`, UI remains `0.4.4`.
+- Fresh deploy should now fail before CP extraction if the control container lacks IPv4/DNS/TCP access, instead of falsely reporting Node installed and crash-looping systemd.
+
 ## ui-v0.4.3.31 / cp-v0.4.13.100 — mythos — 2026-06-11
 **Branch:** mythos
 **VM:** potempc (host, Artem-style)
