@@ -245,10 +245,27 @@ if (fs.existsSync(sharpPkgPath)) {
   } catch {}
 }
 // Search local pnpm store first (UI's own deps), then workspace root
+function findSharpNestedImgDir(modulesDir, version) {
+  const sharpDir = path.join(modulesDir, 'sharp');
+  const nestedImg = path.join(sharpDir, 'node_modules', '@img');
+  if (!fs.existsSync(nestedImg)) return null;
+  if (!version) return nestedImg;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(sharpDir, 'package.json'), 'utf-8'));
+    return pkg.version === version ? nestedImg : null;
+  } catch {
+    return null;
+  }
+}
+
 const imgSrc = findSharpImgDir(path.join(localModules, '.pnpm'), sharpVersion)
   || findSharpImgDir(path.join(workspaceModules, '.pnpm'), sharpVersion)
+  || findSharpNestedImgDir(localModules, sharpVersion)
+  || findSharpNestedImgDir(workspaceModules, sharpVersion)
   || findSharpImgDir(path.join(localModules, '.pnpm'), null)
-  || findSharpImgDir(path.join(workspaceModules, '.pnpm'), null);
+  || findSharpImgDir(path.join(workspaceModules, '.pnpm'), null)
+  || findSharpNestedImgDir(localModules, null)
+  || findSharpNestedImgDir(workspaceModules, null);
 if (imgSrc) {
   console.log(`  Using @img bindings from: ${imgSrc}`);
   const imgDest = path.join(nodeModulesPath, '@img');

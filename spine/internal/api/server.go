@@ -1106,6 +1106,41 @@ func (s *Server) getControlVersion() string {
 	return "unknown"
 }
 
+func getServiceWorkingDir(containerName, serviceName, fallback string) string {
+	out, err := exec.Command("incus", "exec", containerName, "--",
+		"systemctl", "show", serviceName, "--property=WorkingDirectory", "--value").Output()
+	if err == nil {
+		dir := strings.TrimSpace(string(out))
+		if dir != "" && dir != "/" {
+			return dir
+		}
+	}
+	return fallback
+}
+
+func readPackageVersionFromContainer(containerName string, appDirs ...string) string {
+	seen := map[string]bool{}
+	for _, appDir := range appDirs {
+		appDir = strings.TrimSpace(appDir)
+		if appDir == "" || seen[appDir] {
+			continue
+		}
+		seen[appDir] = true
+		out, err := exec.Command("incus", "exec", containerName, "--",
+			"cat", appDir+"/package.json").Output()
+		if err != nil {
+			continue
+		}
+		var pkg struct {
+			Version string `json:"version"`
+		}
+		if json.Unmarshal(out, &pkg) == nil && pkg.Version != "" {
+			return pkg.Version
+		}
+	}
+	return "unknown"
+}
+
 // handlePiholeCredentials handles GET/POST for Pi-Hole web interface credentials.
 // GET: reads the password from the file saved during deployment.
 // POST: updates the stored password file (called by Control Panel after pihole setpassword).
@@ -1262,7 +1297,7 @@ func (s *Server) handleControlSSO(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		jsonResponse(w, map[string]interface{}{
-			"configured":             true,
+			"configured":            true,
 			"identity_url":          envVars["IDENTITY_URL"],
 			"client_id":             envVars["IDENTITY_CLIENT_ID"],
 			"identity_internal_url": envVars["IDENTITY_INTERNAL_URL"],
@@ -1486,16 +1521,8 @@ func getUIStatus(cfg *config.Config) map[string]interface{} {
 		}()
 		go func() {
 			defer wg.Done()
-			verOut, err := exec.Command("incus", "exec", containerName, "--",
-				"cat", cfg.Deployment.UI.AppDir+"/package.json").Output()
-			if err == nil {
-				var pkg struct {
-					Version string `json:"version"`
-				}
-				if json.Unmarshal(verOut, &pkg) == nil && pkg.Version != "" {
-					version = pkg.Version
-				}
-			}
+			serviceDir := getServiceWorkingDir(containerName, "youeye-ui", cfg.Deployment.UI.AppDir)
+			version = readPackageVersionFromContainer(containerName, serviceDir, "/opt/youeye-ui", cfg.Deployment.UI.AppDir, "/opt/app")
 		}()
 		go func() {
 			defer wg.Done()
@@ -1540,22 +1567,8 @@ func getUIStatus(cfg *config.Config) map[string]interface{} {
 // getUIVersion gets the current UI version from container.
 func (s *Server) getUIVersion() string {
 	containerName := s.cfg.Deployment.UI.ContainerName
-	appDir := s.cfg.Deployment.UI.AppDir
-
-	out, err := exec.Command("incus", "exec", containerName, "--",
-		"cat", appDir+"/package.json").Output()
-	if err != nil {
-		return "unknown"
-	}
-
-	var pkg struct {
-		Version string `json:"version"`
-	}
-	if json.Unmarshal(out, &pkg) == nil && pkg.Version != "" {
-		return pkg.Version
-	}
-
-	return "unknown"
+	serviceDir := getServiceWorkingDir(containerName, "youeye-ui", s.cfg.Deployment.UI.AppDir)
+	return readPackageVersionFromContainer(containerName, serviceDir, "/opt/youeye-ui", s.cfg.Deployment.UI.AppDir, "/opt/app")
 }
 
 // handleUISSO manages SSO environment variables for the UI container.
@@ -1611,14 +1624,14 @@ func (s *Server) handleUISSO(w http.ResponseWriter, r *http.Request) {
 
 	case "POST":
 		var req struct {
-			IdentityURL       string `json:"identity_url"`
-			IdentityInternal  string `json:"identity_internal_url"`
-			ClientID          string `json:"client_id"`
-			ClientSecret      string `json:"client_secret"`
-			JWTSecret         string `json:"jwt_secret"`
-			DatabaseURL       string `json:"database_url"`
-			Domain            string `json:"domain"`
-			BaseURL           string `json:"base_url"`
+			IdentityURL      string `json:"identity_url"`
+			IdentityInternal string `json:"identity_internal_url"`
+			ClientID         string `json:"client_id"`
+			ClientSecret     string `json:"client_secret"`
+			JWTSecret        string `json:"jwt_secret"`
+			DatabaseURL      string `json:"database_url"`
+			Domain           string `json:"domain"`
+			BaseURL          string `json:"base_url"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			errorResponse(w, "invalid request body", http.StatusBadRequest)
@@ -1857,6 +1870,59 @@ func (s *Server) releaseSource() *ReleaseSource {
 	}
 }
 
+func releaseRepoURLFromPatch(patch map[string]interface{}) (string, bool, error) {
+	if raw, ok := patch["release_source"]; ok {
+		source, ok := raw.(map[string]interface{})
+		if !ok {
+			return "", false, fmt.Errorf("release_source must be an object")
+		}
+		if repoURL, ok := source["repo_url"].(string); ok {
+			return repoURL, true, nil
+		}
+	}
+	if repoURL, ok := patch["repo_url"].(string); ok {
+		return repoURL, true, nil
+	}
+	return "", false, nil
+}
+
+func (s *Server) clearUpdatesCache() {
+	s.updatesMu.Lock()
+	defer s.updatesMu.Unlock()
+	s.updatesCache = nil
+	s.updatesTime = time.Time{}
+}
+
+func (s *Server) applyReleaseRepoURL(rawURL string) error {
+	repo, err := config.ParseReleaseRepoURL(rawURL)
+	if err != nil {
+		return err
+	}
+	if err := config.WriteCoreRepoURL("", repo.RepoURL); err != nil {
+		return err
+	}
+
+	s.cfg.Releases.RepoURL = repo.RepoURL
+	s.cfg.Releases.Provider = repo.Provider
+	s.cfg.Releases.BaseURL = repo.BaseURL
+	s.cfg.Releases.APIPath = repo.APIPath
+	s.cfg.Releases.Organization = repo.Organization
+	s.cfg.Releases.Repositories.Spine = repo.Repository
+	s.cfg.Releases.Repositories.ControlPanel = repo.Repository
+	s.cfg.Releases.Repositories.UI = repo.Repository
+	if s.cfg.Releases.Repositories.SpineTagPrefix == "" {
+		s.cfg.Releases.Repositories.SpineTagPrefix = "spine"
+	}
+	if s.cfg.Releases.Repositories.ControlPanelTagPrefix == "" {
+		s.cfg.Releases.Repositories.ControlPanelTagPrefix = "cp"
+	}
+	if s.cfg.Releases.Repositories.UITagPrefix == "" {
+		s.cfg.Releases.Repositories.UITagPrefix = "ui"
+	}
+	s.clearUpdatesCache()
+	return nil
+}
+
 // loadYouEyeConfig reads the youeye.yaml config file
 func loadYouEyeConfig() (*YouEyeConfig, error) {
 	cfg := &YouEyeConfig{
@@ -1971,9 +2037,19 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if v, ok := patch["release_branch"].(string); ok {
 			existing.ReleaseBranch = v
+			s.clearUpdatesCache()
 		}
 		if v, ok := patch["language"].(string); ok {
 			existing.Language = v
+		}
+		if repoURL, ok, err := releaseRepoURLFromPatch(patch); err != nil {
+			errorResponse(w, err.Error(), http.StatusBadRequest)
+			return
+		} else if ok {
+			if err := s.applyReleaseRepoURL(repoURL); err != nil {
+				errorResponse(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 		}
 
 		// Store any unrecognized keys in Extra — this allows the
@@ -1983,7 +2059,7 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 		knownKeys := map[string]bool{
 			"site_name": true, "domain": true, "subdomains": true,
 			"setup_completed": true, "release_branch": true, "language": true,
-			"extra": true,
+			"release_source": true, "repo_url": true, "extra": true,
 		}
 		for key, val := range patch {
 			if knownKeys[key] {

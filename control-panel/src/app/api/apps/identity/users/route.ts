@@ -9,12 +9,15 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createUser, listUsers } from '@/lib/identity/provider';
-import { getSession } from '@/lib/auth';
+import { getSession } from '@/lib/auth/session';
 
 export async function GET(request: NextRequest) {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (!session.isAdmin) {
+    return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
   }
 
   try {
@@ -34,6 +37,9 @@ export async function POST(request: NextRequest) {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (!session.isAdmin) {
+    return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
   }
 
   try {

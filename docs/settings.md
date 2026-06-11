@@ -1,6 +1,6 @@
 # Settings
 
-Access settings from the user menu (top-right avatar → Settings) or navigate directly to `/settings`.
+Access settings from the user menu (top-right avatar → Settings) or navigate directly to `/settings`. The `/settings` surface is served by Control Panel on the root domain.
 
 ## Profile
 
@@ -27,7 +27,7 @@ Customize the look and feel of your dashboard:
 
 - **Color Theme** — Choose from preset color palettes or create your own using the OKLCH color picker
 - **Mode** — Switch between light and dark mode, or set it to follow your system preference
-- **Animated Background** — Enable or disable the shader gradient background
+- **Animated Background** — Choose canvas-based backgrounds or disable animation
 - **Widget Style** — Adjust widget transparency and border radius
 
 The OKLCH color system ensures perceptually uniform colors — themes look consistent across light and dark modes.
@@ -73,12 +73,12 @@ Supported languages are added with each release.
 
 Manage platform users (admin only):
 
-- **Invite users** — Add new users to your platform
+- **Create users** — Add new users to your platform
 - **View all users** — See registered accounts
-- **Manage roles** — Assign admin or regular user permissions
+- **Manage roles** — Create accounts as admin or regular user
 - **Remove users** — Revoke access
 
-Users are managed through Authentik SSO — changes here sync across all apps automatically.
+Users are managed through YouEye's provider-neutral identity layer — changes sync across all apps automatically.
 
 ---
 
@@ -90,9 +90,10 @@ Users are managed through Authentik SSO — changes here sync across all apps au
 
 Platform-wide system settings:
 
-- **Platform Name** — Customize the name shown in the UI and browser tab
-- **Domain** — View and change your platform's domain
-- **Updates** — Check for and apply platform updates
+- **Core Update Source** — Set Release Branch and Repo URL for Spine, Control Panel, and UI updates
+- **Host Info** — View hostname, OS, kernel, and uptime
+- **Resources** — View CPU, memory, disk, and container summary
+- **System Manifests** — Check Market-tracked infrastructure images
 - **Backups** — Configure backup schedules and view backup history
 - **Maintenance** — System maintenance operations
 

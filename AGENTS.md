@@ -1,3 +1,34 @@
+## spine-mythos-v0.4.8.1 / cp-mythos-v0.4.14.1 / ui-mythos-v0.4.4.1 — mythos — 2026-06-11
+**Branch:** mythos
+**VM:** potempc / youeye-pc
+**Agent:** Mythos
+**Task:** Add CP Settings update-source/user creation controls and restore animated backgrounds
+
+### Changes
+- `ui/src/components/backgrounds/homepage-background.tsx` — Removed the `navigator.hardwareConcurrency <= 2` auto-disable heuristic so animated backgrounds only stop for explicit user disable or OS reduced-motion preference.
+- `ui/src/app/settings/system/page.tsx`, `ui/src/app/settings/users/page.tsx` — Removed retired UI-hosted System/Users settings embed routes.
+- `control-panel/src/components/settings-shell/system-client.tsx`, `control-panel/src/lib/settings/service.ts` — Added Core Update Source controls for Release Branch and Repo URL under CP-native Settings/System.
+- `control-panel/src/components/settings-shell/users-client.tsx`, `control-panel/src/app/api/apps/identity/users/route.ts` — Added admin-only create-user flow with admin/user role selection and protected the identity users API.
+- `control-panel/src/app/embed/system/*`, `control-panel/src/app/embed/users/*` — Removed obsolete CP embed routes so System/Users settings can no longer be mistaken for UI iframe surfaces.
+- `spine/internal/api/server.go`, `spine/internal/config/repo_file.go`, `spine/internal/cmd/repo.go` — Persist Spine core repo URL changes to `/etc/youeye/config.yaml` as `releases.repo_url`, apply them to the running config, and clear update caches when release source changes.
+- `spine/internal/config/defaults.go` — Corrected the default UI app directory to `/opt/youeye-ui` so Spine can report UI versions from the actual deployed package.
+- `ui/scripts/postbuild.js` — Added a fallback for copying sharp `@img` native bindings from `node_modules/sharp/node_modules/@img` into the standalone release output.
+- `README.md`, `docs/settings.md`, `spine/docs/configuration.md`, `ui/README.md` — Updated version/source/settings documentation for the new CP-owned Settings behavior.
+
+### Test Results
+- Go: `go test ./...` passed in `spine/`.
+- Control Panel focused tests: `node --test tests/settings-update-source-users.spec.mjs tests/settings-app-updates.spec.mjs` passed.
+- UI focused tests: `node --test tests/background-animation-gating.spec.mjs` passed.
+- Control Panel build: `pnpm build` passed for `0.4.14.1`.
+- UI build: `pnpm build` passed for `0.4.4.1`; local static generation still logs the known `127.0.0.1:5432` database warnings.
+- Targeted CP lint: `pnpm exec eslint src/components/settings-shell/system-client.tsx src/components/settings-shell/users-client.tsx src/app/api/apps/identity/users/route.ts src/lib/settings/service.ts tests/settings-update-source-users.spec.mjs` passed.
+- Targeted UI ESLint: direct `pnpm exec eslint ...` is blocked by the package's ESLint 9 config migration gap; production build and focused tests passed.
+
+### Notes for Iris
+- No deploy performed; user requested to test the update manually.
+- Settings/System and Settings/Users are CP-native `/settings/*` pages now. Do not reintroduce UI `AdminEmbed` or CP `/embed/system`/`/embed/users` paths for these pages.
+- The core repo URL belongs to Spine's core update source only. AppMarket continues to use its separate market source.
+
 ## spine-v0.4.8 — mythos — 2026-06-11
 **Branch:** main
 **VM:** potempc / youeye-pc

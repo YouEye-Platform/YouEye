@@ -16,6 +16,14 @@ export interface PlatformSettings {
   subdomains: Record<string, string>;
   setupCompleted: boolean;
   releaseBranch?: string;
+  releaseSource?: {
+    repo_url?: string;
+    provider?: string;
+    base_url?: string;
+    api_path?: string;
+    organization?: string;
+    repository?: string;
+  };
   language?: string;
   smtpHost?: string;
   smtpPort?: number;
@@ -32,6 +40,7 @@ const KEY_MAP: Record<keyof PlatformSettings, string> = {
   subdomains: 'subdomains',
   setupCompleted: 'setup_completed',
   releaseBranch: 'release_branch',
+  releaseSource: 'release_source',
   language: 'language',
   smtpHost: 'smtp_host',
   smtpPort: 'smtp_port',
@@ -41,11 +50,6 @@ const KEY_MAP: Record<keyof PlatformSettings, string> = {
   identity: 'identity',
 };
 
-/** Maps youeye.yaml snake_case keys back to PlatformSettings keys */
-const REVERSE_KEY_MAP: Record<string, keyof PlatformSettings> = Object.fromEntries(
-  Object.entries(KEY_MAP).map(([k, v]) => [v, k as keyof PlatformSettings])
-) as Record<string, keyof PlatformSettings>;
-
 /** Convert raw Spine config to typed PlatformSettings */
 function fromRaw(raw: Record<string, unknown>): PlatformSettings {
   return {
@@ -54,6 +58,7 @@ function fromRaw(raw: Record<string, unknown>): PlatformSettings {
     subdomains: (raw.subdomains as Record<string, string>) || {},
     setupCompleted: (raw.setup_completed as boolean) || false,
     releaseBranch: raw.release_branch as string | undefined,
+    releaseSource: raw.release_source as PlatformSettings['releaseSource'] | undefined,
     language: raw.language as string | undefined,
     smtpHost: raw.smtp_host as string | undefined,
     smtpPort: raw.smtp_port as number | undefined,
@@ -142,7 +147,7 @@ class SettingsService {
    * Use this for call sites that need the raw format
    * (e.g. setup/config endpoint, bridge endpoints).
    */
-  async getRaw(): Promise<{ site_name: string; domain: string; subdomains: Record<string, string>; setup_completed: boolean; release_branch?: string; language?: string; smtp_host?: string; smtp_port?: number; smtp_username?: string; smtp_from?: string; smtp_require_tls?: boolean; [key: string]: unknown }> {
+  async getRaw(): Promise<{ site_name: string; domain: string; subdomains: Record<string, string>; setup_completed: boolean; release_branch?: string; release_source?: PlatformSettings['releaseSource']; language?: string; smtp_host?: string; smtp_port?: number; smtp_username?: string; smtp_from?: string; smtp_require_tls?: boolean; [key: string]: unknown }> {
     const now = Date.now();
     if (this.cache && (now - this.cacheTimestamp) < this.CACHE_TTL_MS) {
       // Convert cached typed settings back to raw
@@ -152,6 +157,7 @@ class SettingsService {
         subdomains: this.cache.subdomains,
         setup_completed: this.cache.setupCompleted,
         release_branch: this.cache.releaseBranch,
+        release_source: this.cache.releaseSource,
         language: this.cache.language,
         smtp_host: this.cache.smtpHost,
         smtp_port: this.cache.smtpPort,

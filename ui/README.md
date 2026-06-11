@@ -13,12 +13,12 @@ The UI is what users see after logging in: a customizable home screen with drag-
 - **i18n**: Full internationalization with language propagation to native apps
 - **Timeline**: Activity feed with info cards from across the platform
 - **Notifications**: Platform-wide notification center
-- **Settings**: User preferences, profile, avatar, and admin controls
+- **Settings integration**: Root-domain `/settings` is served by Control Panel; UI owns dashboard preferences and bridge-backed data
 - **PWA**: Installable as a Progressive Web App
 
 ## Architecture
 
-The UI receives data from the Control Panel via one-way bridge endpoints (`/api/ui-bridge/*`). It never calls the Control Panel directly. All CP data arrives via push, or the browser loads CP embeds in iframes.
+The UI receives data from the Control Panel via one-way bridge endpoints (`/api/ui-bridge/*`). UI server code never calls the Control Panel directly. Root-domain Settings are Control Panel-owned; app-provided iframe surfaces are separate from System and Users Settings.
 
 User data (widgets, layout, preferences) is stored in a local PostgreSQL database via Drizzle ORM.
 
