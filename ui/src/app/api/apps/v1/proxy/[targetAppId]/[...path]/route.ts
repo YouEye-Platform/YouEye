@@ -81,10 +81,17 @@ function copyRequestHeaders(request: NextRequest, token: string | null): Headers
   return headers;
 }
 
+// fetch() decompresses upstream bodies but leaves the original
+// content-encoding/content-length headers in place; forwarding them makes
+// compliant clients inflate plain bytes (Z_DATA_ERROR).
+const DECODED_BODY_HEADERS = new Set(["content-encoding", "content-length"]);
+
 function copyResponseHeaders(upstream: Response): Headers {
   const headers = new Headers();
   upstream.headers.forEach((value, key) => {
-    if (HOP_BY_HOP_HEADERS.has(key.toLowerCase())) return;
+    const name = key.toLowerCase();
+    if (HOP_BY_HOP_HEADERS.has(name)) return;
+    if (DECODED_BODY_HEADERS.has(name)) return;
     headers.set(key, value);
   });
   return headers;
