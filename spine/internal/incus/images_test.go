@@ -54,6 +54,52 @@ func TestValidateDebian12ImageRejectsWrongArch(t *testing.T) {
 	}
 }
 
+func TestParseLocalImageList(t *testing.T) {
+	out := []byte(`[
+		{
+			"aliases": [{"name": "youeye-debian-12", "description": ""}],
+			"architecture": "x86_64",
+			"fingerprint": "c7dfccc48c6187fd2daf2846845d8cf98d88832b9d6aa76250a338a9ca4b7bf0",
+			"properties": {
+				"architecture": "amd64",
+				"description": "Debian bookworm amd64 (20260602_05:24)",
+				"os": "debian",
+				"release": "bookworm",
+				"serial": "20260602_05:24",
+				"variant": "default"
+			},
+			"type": "container"
+		}
+	]`)
+
+	info, err := parseLocalImageList(SystemBaseImageAlias, out)
+	if err != nil {
+		t.Fatalf("parseLocalImageList() returned error: %v", err)
+	}
+	if info.Fingerprint != "c7dfccc48c6187fd2daf2846845d8cf98d88832b9d6aa76250a338a9ca4b7bf0" {
+		t.Fatalf("Fingerprint = %q", info.Fingerprint)
+	}
+	if err := validateDebian12Image(info); err != nil {
+		t.Fatalf("parsed image failed validation: %v", err)
+	}
+}
+
+func TestParseLocalImageListRejectsNoMatches(t *testing.T) {
+	if _, err := parseLocalImageList(SystemBaseImageAlias, []byte(`[]`)); err == nil {
+		t.Fatal("parseLocalImageList() accepted empty list")
+	}
+}
+
+func TestParseLocalImageListRejectsAmbiguousMatches(t *testing.T) {
+	out := []byte(`[
+		{"fingerprint": "one"},
+		{"fingerprint": "two"}
+	]`)
+	if _, err := parseLocalImageList(SystemBaseImageAlias, out); err == nil {
+		t.Fatal("parseLocalImageList() accepted multiple matches")
+	}
+}
+
 func TestShortFingerprint(t *testing.T) {
 	got := shortFingerprint("1234567890abcdef")
 	if got != "1234567890ab" {

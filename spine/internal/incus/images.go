@@ -355,15 +355,25 @@ func copyBaseImageWithRetry(source, alias string, attempts int) error {
 }
 
 func localImageInfo(alias string) (*imageInfo, error) {
-	out, err := exec.Command("incus", "image", "info", "local:"+alias, "--format", "json").Output()
+	out, err := exec.Command("incus", "image", "list", alias, "--format", "json").Output()
 	if err != nil {
 		return nil, err
 	}
-	var info imageInfo
-	if err := json.Unmarshal(out, &info); err != nil {
+	return parseLocalImageList(alias, out)
+}
+
+func parseLocalImageList(alias string, out []byte) (*imageInfo, error) {
+	var images []imageInfo
+	if err := json.Unmarshal(out, &images); err != nil {
 		return nil, err
 	}
-	return &info, nil
+	if len(images) == 0 {
+		return nil, fmt.Errorf("local image alias %s was not found", alias)
+	}
+	if len(images) > 1 {
+		return nil, fmt.Errorf("local image alias %s matched %d images", alias, len(images))
+	}
+	return &images[0], nil
 }
 
 func validateDebian12Image(info *imageInfo) error {

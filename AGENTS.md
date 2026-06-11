@@ -1,3 +1,21 @@
+## spine-v0.4.8 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / youeye-pc
+**Agent:** Mythos
+**Task:** Fix Incus 7.1 local base-image JSON lookup
+
+### Changes
+- `spine/internal/incus/images.go` — Replaced `incus image info local:<alias> --format json` with `incus image list <alias> --format json` for local base-image lookup because Incus 7.1 rejects `--format` on `image info`.
+- `spine/internal/incus/images_test.go` — Adds parser coverage for the real `incus image list` JSON array shape, plus empty and ambiguous match rejection.
+- `spine/internal/cmd/root.go`, `README.md`, `current-state.yaml` — Bumped Spine to `0.4.8` and updated current versions.
+
+### Test Results
+- Go: `go test ./...` passed in `spine/`.
+
+### Notes for Iris
+- Spine-only release; CP remains `0.4.14`, UI remains `0.4.4`.
+- Follow-up to `spine-v0.4.7`: verified mirror fallback imported the image successfully on `youeye-pc`, but the post-import lookup used an unsupported Incus CLI flag and misreported the image as unavailable.
+
 ## spine-v0.4.7 — mythos — 2026-06-11
 **Branch:** main
 **VM:** potempc / youeye-pc
