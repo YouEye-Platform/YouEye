@@ -410,9 +410,23 @@ export default function AppDetailPage() {
   const longDescription = app.detail?.longDescription || app.description;
   const screenshots = app.detail?.screenshots ?? [];
   const isDifferentSourceVariant = isInstalled && !!app.sourceId && !!status?.sourceId && app.sourceId !== status.sourceId;
+  const capabilityLabels = [
+    app.capabilities?.widgets ? 'Widgets' : null,
+    app.capabilities?.notifications ? 'Notifications' : null,
+    app.capabilities?.smtp ? 'Mail sending' : null,
+    app.capabilities?.link_handlers?.length ? 'Link handlers' : null,
+    app.surfaces?.length ? `${app.surfaces.length} app surface${app.surfaces.length === 1 ? '' : 's'}` : null,
+    app.entrances?.length ? `${app.entrances.length} entrance${app.entrances.length === 1 ? '' : 's'}` : null,
+  ].filter(Boolean) as string[];
+
+  const latestInstallEvent = installEvents[installEvents.length - 1];
+  const installPercent = latestInstallEvent?.totalSteps
+    ? Math.round((latestInstallEvent.step / latestInstallEvent.totalSteps) * 100)
+    : 0;
+  const installFailed = installDone && latestInstallEvent?.status === 'error';
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6 max-w-6xl">
       {/* Back button */}
       <button
         onClick={() => router.push('/market')}
@@ -422,6 +436,8 @@ export default function AppDetailPage() {
         Back to Market
       </button>
 
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
+      <div className="space-y-6">
       {/* Header card */}
       <div className="rounded-xl border border-gray-200 bg-white p-6">
         <div className="flex items-start gap-5">
@@ -498,103 +514,6 @@ export default function AppDetailPage() {
           </div>
         </div>
 
-        {/* Action buttons */}
-        <div className="mt-5 flex items-center gap-3">
-          {isIntegration ? (
-            integrationInstalled ? (
-              <>
-                <Button
-                  size="lg"
-                  disabled
-                  className="px-8"
-                >
-                  <CheckCircle2 className="h-4 w-4 mr-2" />
-                  Installed
-                </Button>
-                <Button
-                  size="lg"
-                  variant="outline"
-                  onClick={handleRemoveIntegration}
-                  disabled={removingIntegration}
-                  className="text-red-600 hover:bg-red-50 hover:text-red-700"
-                >
-                  {removingIntegration ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-4 w-4 mr-2" />
-                  )}
-                  {app.integrations?.[0]?.hasUninstall ? `Remove ${app.name}` : 'Remove record'}
-                </Button>
-              </>
-            ) : (
-              <Button
-                size="lg"
-                onClick={handleApplyIntegration}
-                disabled={!targetIsInstalled || applyingIntegration}
-                className="px-8"
-              >
-                {applyingIntegration ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Applying {app.name}
-                  </>
-                ) : targetIsInstalled ? (
-                  `Apply ${app.name}`
-                ) : (
-                  `Available after ${app.target?.appName || app.target?.appId || 'target app'} install`
-                )}
-              </Button>
-            )
-          ) : !isInstalled ? (
-            <Button
-              size="lg"
-              onClick={() => setShowInstallDialog(true)}
-              className="px-8"
-            >
-              Install {app.name}
-            </Button>
-          ) : (
-            <>
-              {status?.url && (
-                <Button
-                  size="lg"
-                  onClick={() => window.open(status.url, '_blank')}
-                >
-                  <ExternalLink className="h-4 w-4 mr-2" />
-                  Open {app.name}
-                </Button>
-              )}
-              <Button
-                size="lg"
-                variant="outline"
-                onClick={handleSyncManifest}
-                disabled={syncingManifest}
-              >
-                {syncingManifest ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                )}
-                Sync manifest
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                className="text-red-600 hover:bg-red-50 hover:text-red-700"
-                onClick={() => setShowUninstallDialog(true)}
-                disabled={uninstalling}
-              >
-                {uninstalling ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Trash2 className="h-4 w-4 mr-2" />
-                )}
-                Uninstall
-              </Button>
-            </>
-          )}
-        </div>
-
         {integrationMessage && (
           <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
             {integrationMessage}
@@ -625,7 +544,7 @@ export default function AppDetailPage() {
       {/* Details section */}
       <div className="rounded-xl border border-gray-200 bg-white p-6">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-          Details
+          What this app uses
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* SSO / Forward-Auth */}
@@ -682,6 +601,20 @@ export default function AppDetailPage() {
               </div>
             </div>
           ) : null}
+
+          {capabilityLabels.length > 0 && !isIntegration && (
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-gray-50">
+                <Package className="h-4 w-4 text-gray-500" />
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">App features</p>
+                <p className="text-sm font-medium text-gray-700">
+                  {capabilityLabels.join(', ')}
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Website */}
           {app.website && (
@@ -861,6 +794,189 @@ export default function AppDetailPage() {
         </div>
       )}
 
+      </div>
+
+      <aside className="lg:sticky lg:top-24">
+        <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="space-y-4">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Status</p>
+              <div className="mt-2 flex items-center gap-2">
+                {isIntegration ? (
+                  <Plug className="h-4 w-4 text-blue-500" />
+                ) : isInstalled ? (
+                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                ) : (
+                  <Package className="h-4 w-4 text-gray-400" />
+                )}
+                <span className="text-sm font-medium text-gray-900">
+                  {isIntegration
+                    ? integrationInstalled ? 'Applied' : 'Available'
+                    : isInstalled ? appStatus : 'Ready to install'}
+                </span>
+                {isInstalled && (
+                  <HealthDot
+                    healthStatus={status?.healthStatus}
+                    healthCheckedAt={status?.healthCheckedAt}
+                  />
+                )}
+              </div>
+            </div>
+
+            {installing && installEvents.length > 0 ? (
+              <div className="space-y-4">
+                <div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-medium text-gray-900">
+                      {installDone
+                        ? installFailed ? 'Installation failed' : 'Ready'
+                        : `Installing ${app.name}`}
+                    </span>
+                    <span className="text-gray-400">{installPercent}%</span>
+                  </div>
+                  <div className="mt-2 h-2 rounded-full bg-gray-100">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        installFailed ? 'bg-red-500' : installDone ? 'bg-green-500' : 'bg-blue-500'
+                      }`}
+                      style={{ width: `${installPercent}%` }}
+                    />
+                  </div>
+                  {latestInstallEvent?.message && (
+                    <p className="mt-2 text-sm text-gray-600">{latestInstallEvent.message}</p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  {installEvents.slice(-6).map((event, i) => (
+                    <div key={`${event.step}-${i}-${event.message}`} className="flex items-start gap-2 text-sm">
+                      <div className={`mt-0.5 ${
+                        event.status === 'running' ? 'text-blue-500' :
+                        event.status === 'success' ? 'text-green-500' :
+                        event.status === 'error' ? 'text-red-500' : 'text-gray-400'
+                      }`}>
+                        {event.status === 'running' ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : event.status === 'error' ? (
+                          <AlertCircle className="h-4 w-4" />
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-gray-700">{event.message}</p>
+                        {event.detail && <p className="truncate text-xs text-gray-400">{event.detail}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {installDone && (
+                  <div className="grid gap-2">
+                    {!installFailed && status?.url && (
+                      <Button onClick={() => window.open(status.url, '_blank')}>
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                        Open {app.name}
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setInstalling(false);
+                        setInstallEvents([]);
+                        setInstallDone(false);
+                      }}
+                    >
+                      Dismiss
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="grid gap-2">
+                {isIntegration ? (
+                  integrationInstalled ? (
+                    <>
+                      <Button disabled>
+                        <CheckCircle2 className="h-4 w-4 mr-2" />
+                        Applied
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={handleRemoveIntegration}
+                        disabled={removingIntegration}
+                        className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                      >
+                        {removingIntegration ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
+                        {app.integrations?.[0]?.hasUninstall ? `Remove ${app.name}` : 'Remove record'}
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      onClick={handleApplyIntegration}
+                      disabled={!targetIsInstalled || applyingIntegration}
+                    >
+                      {applyingIntegration ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                      {targetIsInstalled ? `Apply ${app.name}` : `Available after ${app.target?.appName || app.target?.appId || 'target app'} install`}
+                    </Button>
+                  )
+                ) : !isInstalled ? (
+                  <Button onClick={() => setShowInstallDialog(true)}>
+                    Install {app.name}
+                  </Button>
+                ) : (
+                  <>
+                    {status?.url && (
+                      <Button onClick={() => window.open(status.url, '_blank')}>
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                        Open {app.name}
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      onClick={handleSyncManifest}
+                      disabled={syncingManifest}
+                    >
+                      {syncingManifest ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+                      Sync manifest
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                      onClick={() => setShowUninstallDialog(true)}
+                      disabled={uninstalling}
+                    >
+                      {uninstalling ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
+                      Uninstall
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
+
+            <div className="border-t border-gray-100 pt-4 text-sm">
+              <div className="flex justify-between gap-3">
+                <span className="text-gray-500">Source</span>
+                <span className="text-right font-medium text-gray-700">{app.sourceName || app.sourceId || 'Market'}</span>
+              </div>
+              {app.version && (
+                <div className="mt-2 flex justify-between gap-3">
+                  <span className="text-gray-500">Version</span>
+                  <span className="font-medium text-gray-700">v{app.version}</span>
+                </div>
+              )}
+              {!isIntegration && (
+                <div className="mt-2 flex justify-between gap-3">
+                  <span className="text-gray-500">Account login</span>
+                  <span className="text-right font-medium text-gray-700">
+                    {app.supportsSSO ? 'Built in' : status?.forwardAuthEnabled ? 'Protected' : app.forwardAuth === 'disabled' ? 'Unavailable' : 'Optional'}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </aside>
+      </div>
+
       {/* Install dialog */}
       {showInstallDialog && app && (
         <InstallDialog
@@ -880,89 +996,6 @@ export default function AppDetailPage() {
         />
       )}
 
-      {/* Install progress (inline, not a modal) */}
-      {installing && installEvents.length > 0 && (
-        <div className="rounded-xl border border-gray-200 bg-white p-6">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-              {installDone
-                ? installEvents[installEvents.length - 1]?.status === 'error'
-                  ? `Installation Failed`
-                  : `Installation Complete`
-                : `Installing ${app.name}...`}
-            </h2>
-            {installDone && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setInstalling(false);
-                  setInstallEvents([]);
-                  setInstallDone(false);
-                }}
-              >
-                Dismiss
-              </Button>
-            )}
-          </div>
-
-          {/* Progress bar */}
-          {installEvents.length > 0 && installEvents[installEvents.length - 1].totalSteps > 0 && (
-            <div className="mb-4">
-              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-500 rounded-full ${
-                    installDone && installEvents[installEvents.length - 1]?.status === 'error'
-                      ? 'bg-red-500'
-                      : installDone
-                        ? 'bg-green-500'
-                        : 'bg-blue-500'
-                  }`}
-                  style={{
-                    width: `${Math.round(
-                      (installEvents[installEvents.length - 1].step /
-                        installEvents[installEvents.length - 1].totalSteps) *
-                        100
-                    )}%`,
-                  }}
-                />
-              </div>
-              <p className="text-xs text-gray-400 mt-1 text-right">
-                {installEvents[installEvents.length - 1].step} / {installEvents[installEvents.length - 1].totalSteps}
-              </p>
-            </div>
-          )}
-
-          {/* Event list */}
-          <div className="space-y-2 max-h-64 overflow-y-auto">
-            {installEvents.map((event, i) => (
-              <div key={i} className="flex items-start gap-3">
-                <div className={`mt-0.5 shrink-0 ${
-                  event.status === 'running' ? 'text-blue-500' :
-                  event.status === 'success' ? 'text-green-500' :
-                  event.status === 'error' ? 'text-red-500' : 'text-gray-400'
-                }`}>
-                  {event.status === 'running' ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : event.status === 'success' ? (
-                    <CheckCircle2 className="h-4 w-4" />
-                  ) : event.status === 'error' ? (
-                    <AlertCircle className="h-4 w-4" />
-                  ) : (
-                    <CheckCircle2 className="h-4 w-4" />
-                  )}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm text-gray-700">{event.message}</p>
-                  {event.detail && (
-                    <p className="text-xs text-gray-400 mt-0.5 truncate">{event.detail}</p>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

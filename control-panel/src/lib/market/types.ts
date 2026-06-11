@@ -127,6 +127,8 @@ export interface InstallConfig {
   approvedConnections?: ApprovedConnection[];
   /** Optional Market integrations selected during install */
   selectedIntegrations?: string[];
+  /** User's install-time choice for platform account-login protection */
+  protectWithAccountLogin?: boolean;
   /** True when a selected standalone identity Integration will provide app-native SSO after base install */
   plannedNativeIdentityIntegration?: boolean;
   installedIntegrations?: {
@@ -189,6 +191,7 @@ export interface InstallMetadata {
   domain: string;
   enableSSO: boolean;
   forwardAuthEnabled?: boolean;
+  protectWithAccountLogin?: boolean;
   installedAt: string;
   installedVersion?: string;
   containers: ContainerMeta[];

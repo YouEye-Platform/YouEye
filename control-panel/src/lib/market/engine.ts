@@ -286,12 +286,14 @@ function emit(
  * - If manifest.forwardAuth === 'disabled', never use it.
  * - Default ('default' or undefined): use forward-auth only if no native SSO section.
  */
-function resolveForwardAuth(manifest: AppManifest, hasSSOEnabled: boolean): boolean {
+function resolveForwardAuth(manifest: AppManifest, hasSSOEnabled: boolean, explicitChoice?: boolean): boolean {
   const fa = manifest.forwardAuth;
-  if (fa === 'enabled') return true;
   if (fa === 'disabled') return false;
+  if (hasSSOEnabled) return false;
+  if (explicitChoice !== undefined) return explicitChoice;
+  if (fa === 'enabled') return true;
   // Default: use forward-auth when there's no native SSO section
-  return !manifest.sso && !hasSSOEnabled;
+  return !manifest.sso;
 }
 
 async function ensureRoute(params: Parameters<typeof addRoute>[0]): Promise<void> {
@@ -704,7 +706,11 @@ export async function installApp(
   // mark it for a YouEye ID forward-auth handler when Caddy is configured.
 
   let forwardAuthEnabled = false;
-  const useForwardAuth = resolveForwardAuth(manifest, ssoEnabled || nativeIdentityIntegrationPlanned);
+  const useForwardAuth = resolveForwardAuth(
+    manifest,
+    ssoEnabled || nativeIdentityIntegrationPlanned,
+    config.protectWithAccountLogin
+  );
 
   if (useForwardAuth) {
     try {
@@ -1166,6 +1172,7 @@ export async function installApp(
     domain: config.domain,
     enableSSO: ssoEnabled,
     forwardAuthEnabled,
+    protectWithAccountLogin: ssoEnabled || nativeIdentityIntegrationPlanned || forwardAuthEnabled,
     installedAt: new Date().toISOString(),
     installedVersion,
     containers: containerMetas,

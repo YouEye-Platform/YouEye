@@ -129,6 +129,7 @@ export default function MarketPage() {
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [activeSection, setActiveSection] = useState<'apps' | 'integrations' | 'installed' | 'updates'>('apps');
 
   // Install progress (polled from install-status endpoint)
   const [installProgresses, setInstallProgresses] = useState<Record<string, { events: InstallEvent[]; done: boolean }>>({});
@@ -372,6 +373,15 @@ export default function MarketPage() {
   const installedGroups = groupByCatalogIdentity(installedApps);
   const availableGroups = groupByCatalogIdentity(availableApps);
   const integrationGroups = groupByCatalogIdentity(integrationItems);
+  const updateGroups = groupByCatalogIdentity(
+    filteredApps.filter((app) => (app.itemKind || 'app') === 'app' && !!statuses[app.id]?.updateAvailable)
+  );
+  const sectionCounts = {
+    apps: nativeGroups.length + availableGroups.length,
+    integrations: integrationGroups.length,
+    installed: installedGroups.length,
+    updates: updateGroups.length,
+  };
 
   return (
     <div className="space-y-6">
@@ -404,6 +414,32 @@ export default function MarketPage() {
           <span>{error}</span>
         </div>
       )}
+
+      <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-2">
+        {([
+          ['apps', 'Apps'],
+          ['integrations', 'Integrations'],
+          ['installed', 'Installed'],
+          ['updates', 'Updates'],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => {
+              setActiveSection(id);
+              if (id !== 'integrations' && typeFilter === 'integration') setTypeFilter('all');
+            }}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              activeSection === id
+                ? 'bg-blue-50 text-blue-700'
+                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+            }`}
+          >
+            {label}
+            <span className="ml-1 text-xs text-gray-400">{sectionCounts[id]}</span>
+          </button>
+        ))}
+      </div>
 
       <div className="space-y-3 border-y border-gray-200 py-3">
         <div className="flex items-center justify-between gap-3">
@@ -561,7 +597,7 @@ export default function MarketPage() {
       </div>
 
       {/* Built for YouEye — native apps, grouped by category */}
-      {nativeGroups.length > 0 && (
+      {activeSection === 'apps' && nativeGroups.length > 0 && (
         <div className="space-y-4">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
             <Shield className="h-4 w-4" />
@@ -603,19 +639,25 @@ export default function MarketPage() {
         </div>
       )}
 
-      {integrationGroups.length > 0 && (
+      {activeSection === 'integrations' && integrationGroups.length > 0 && (
         <div className="space-y-4">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
             <Plug className="h-4 w-4" />
             Integrations ({integrationGroups.length})
           </h2>
-          {Object.entries(groupByCategory(integrationGroups)).map(([cat, catApps]) => (
-            <div key={cat} className="space-y-3">
+          {Object.entries(
+            integrationGroups.reduce<Record<string, MarketAppGroup[]>>((groups, group) => {
+              const target = group.primary.target?.appName || group.primary.target?.appId || 'Other apps';
+              groups[target] = [...(groups[target] ?? []), group];
+              return groups;
+            }, {})
+          ).map(([target, targetApps]) => (
+            <div key={target} className="space-y-3">
               <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wider">
-                {CATEGORIES[cat] || cat}
+                For {target}
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {catApps.map((group) => (
+                {targetApps.map((group) => (
                   <MarketAppGroupCard
                     key={group.key}
                     group={group}
@@ -628,7 +670,7 @@ export default function MarketPage() {
       )}
 
       {/* Installed marketplace apps (flat, no category grouping) */}
-      {installedGroups.length > 0 && (
+      {activeSection === 'installed' && installedGroups.length > 0 && (
         <div className="space-y-3">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
             {t('installed')} ({installedGroups.length})
@@ -646,8 +688,26 @@ export default function MarketPage() {
         </div>
       )}
 
+      {activeSection === 'updates' && updateGroups.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Updates ({updateGroups.length})
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {updateGroups.map((group) => (
+              <MarketAppGroupCard
+                key={group.key}
+                group={group}
+                status={statuses[group.primary.id]}
+                installProgress={installProgresses[group.primary.id]}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Available marketplace apps, grouped by category */}
-      {availableGroups.length > 0 && (
+      {activeSection === 'apps' && availableGroups.length > 0 && (
         <div className="space-y-4">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
             {t('available')} ({availableGroups.length})

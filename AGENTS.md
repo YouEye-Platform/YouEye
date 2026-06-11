@@ -1,3 +1,27 @@
+## cp-v0.4.25 — mythos — 2026-06-12
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Redesign Market app install flow
+
+### Changes
+- `control-panel/src/app/market/[appId]/page.tsx` — Moved app actions into a right sticky status panel, kept install progress in the action area, and added concise app capability/status context.
+- `control-panel/src/components/market/install-dialog.tsx` — Reworked install into a focused dialog with basics, integration choices, and a manifest-defaulted account-login switch.
+- `control-panel/src/app/market/page.tsx` — Added Market section tabs so integrations are grouped separately by target app while preserving source variants.
+- `control-panel/src/lib/market/engine.ts`, `control-panel/src/lib/market/types.ts` — Persisted the install-time account-login choice and used it when resolving platform account protection.
+- `control-panel/tests/market-product-install-ux.spec.mjs`, `control-panel/tests/market-integrations.spec.ts` — Added and updated Market UX regression checks.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.25`.
+
+### Test Results
+- Focused Market tests passed: `CONTROL_PANEL_ROOT="$PWD/control-panel" node --import tsx --test control-panel/tests/market-product-install-ux.spec.mjs control-panel/tests/market-integrations.spec.ts control-panel/tests/market-filters.spec.mjs control-panel/tests/market-sso-engine.spec.mjs`.
+- Adjacent Market tests passed: `CONTROL_PANEL_ROOT="$PWD/control-panel" node --import tsx --test control-panel/tests/market-update-manifest-sync.spec.mjs control-panel/tests/market-system-apps.spec.ts control-panel/tests/market-surfaces.spec.ts control-panel/tests/market-canonical-surfaces.spec.mjs control-panel/tests/market-integration-remove.spec.mjs control-panel/tests/market-product-install-ux.spec.mjs`.
+- Build passed: `pnpm build` in `control-panel/`.
+- Artifact verification passed: CP `standalone.tar` contains top-level `server.js` and package version `0.4.25`.
+
+### Notes for Iris
+- Control Panel-only release; Spine remains `0.4.9` and UI remains `0.4.7`.
+- User asked not to deploy/update from this session; they will update and test manually.
+
 ## spine-v0.4.9 / cp-v0.4.24 / ui-v0.4.7 — mythos — 2026-06-12
 **Branch:** main
 **VM:** potempc / bykapc

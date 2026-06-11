@@ -18,15 +18,15 @@ test('market manifests support optional integrations', () => {
   assert.match(types, /selectedIntegrations\?: string\[\]/);
 });
 
-test('legacy api and cli SSO setup is exposed as the YouEye ID integration', () => {
+test('legacy api and cli SSO setup is exposed as the identity provider integration', () => {
   const catalog = read('src/lib/market/catalog.ts');
   const engine = read('src/lib/market/engine.ts');
 
   assert.match(catalog, /id:\s*'youeye-id'/);
   assert.match(catalog, /installByDefault:\s*true/);
-  assert.match(engine, /LEGACY_YOUEYE_ID_INTEGRATION = 'youeye-id'/);
+  assert.match(engine, /LEGACY_IDENTITY_PROVIDER_INTEGRATION = 'youeye-id'/);
   assert.match(engine, /config\.selectedIntegrations \?\? getDefaultSelectedIntegrations/);
-  assert.match(engine, /selectedIntegrations\.includes\(LEGACY_YOUEYE_ID_INTEGRATION\)/);
+  assert.match(engine, /selectedIntegrations\.includes\(LEGACY_IDENTITY_PROVIDER_INTEGRATION\)/);
 });
 
 test('market install UIs send selected integrations', () => {
