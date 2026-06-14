@@ -1,3 +1,23 @@
+## cp-v0.4.27 — mythos — 2026-06-14
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Plan 1 redesign — Workstream A (blue token foundation) + B.2 (friendly identity error page)
+
+### Changes
+- `control-panel/src/app/globals.css`, `ui/src/app/globals.css` — Workstream A: reconcile shadcn near-black `--primary` to the YouEye blue accent (`#2563eb` light / `#3b82f6` dark), white primary-foreground, blue `--ring`/`--sidebar-primary`, `--radius` 0.5rem (override block appended; consolidated in Workstream F). Kills the black "Install" button across shadcn surfaces.
+- `control-panel/src/lib/identity/error-page.ts` — NEW `renderIdentityErrorPage()`: friendly HTML identity error page (warn glyph, human title, Go home / Try again, collapsed technical details), light+dark via `prefers-color-scheme`, per `mockups/v2/error.html`.
+- `control-panel/src/app/application/o/authorize/route.ts` — user-facing `invalid_redirect_uri` / `invalid_client` / `unsupported_response_type` now render the friendly page instead of raw JSON. Machine `token`/`userinfo` endpoints intentionally keep JSON (OAuth2 spec).
+- `control-panel/tests/identity-error-page.spec.ts` — NEW (4 tests). `package.json` → 0.4.27.
+
+### Test Results
+- `CONTROL_PANEL_ROOT=… node --import tsx --test tests/identity-error-page.spec.ts tests/silent-settings-sso.spec.ts` → 8/8 pass.
+- `pnpm build` OK; `standalone.tar` carries 0.4.27.
+
+### Notes for Iris
+- CP-only release. UI `globals.css` token change is in source but ships with the first UI release.
+- B.3 (login rebuild) / B.4 (consent rebuild) are the remaining Phase 1 identity slices.
+
 ## cp-v0.4.26 — mythos — 2026-06-14
 **Branch:** main
 **VM:** potempc / bykapc

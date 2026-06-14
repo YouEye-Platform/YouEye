@@ -6,6 +6,7 @@ import { getIdentitySession } from '@/lib/identity/http';
 import { readFileSync } from 'fs';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import { settingsService } from '@/lib/settings';
+import { renderIdentityErrorPage } from '@/lib/identity/error-page';
 
 const FIRST_PARTY_CLIENTS = new Set(['youeye-control', 'youeye-ui']);
 const DEFAULT_SCOPE = 'openid profile email';
@@ -458,15 +459,16 @@ async function validateAuthorizeRequest(request: NextRequest) {
   const state = params.get('state') || '';
   const scope = params.get('scope') || DEFAULT_SCOPE;
 
+  const homeUrl = (await uiExternalUrl()) || '/';
   if (responseType !== 'code') {
-    return { error: NextResponse.json({ error: 'unsupported_response_type' }, { status: 400 }) };
+    return { error: await renderIdentityErrorPage({ code: 'unsupported_response_type', status: 400, technical: `response_type=${responseType ?? '(none)'}`, homeUrl }) };
   }
   const client = await getClient(clientId);
   if (!client) {
-    return { error: NextResponse.json({ error: 'invalid_client' }, { status: 400 }) };
+    return { error: await renderIdentityErrorPage({ code: 'invalid_client', status: 400, technical: `client_id=${clientId || '(none)'}`, homeUrl }) };
   }
   if (!client.redirect_uris.includes(redirectUri)) {
-    return { error: NextResponse.json({ error: 'invalid_redirect_uri' }, { status: 400 }) };
+    return { error: await renderIdentityErrorPage({ code: 'invalid_redirect_uri', status: 400, technical: `client ${clientId} requested ${redirectUri}`, homeUrl }) };
   }
 
   return { client, clientId, redirectUri, state, scope };
