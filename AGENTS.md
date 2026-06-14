@@ -1,3 +1,16 @@
+## cp-v0.4.30 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C1 — Settings nav reconcile on the LIVE (CP) shell
+
+### Changes
+- `control-panel/src/components/settings-shell/settings-shell.tsx` — **+Privacy** (Personal), **+Backups** (Admin), **Users→People**, **−Market (D9)**. This is the shell that actually serves `lemon.app/settings` (Caddy routes `/settings*`,`/market*` → youeye-control). `package.json` → 0.4.30.
+
+### Test Results
+- `pnpm build` OK; artifact 0.4.30. **Live-verified** on lemon.app/settings (DOM nav: Profile/Appearance/Apps/Language/Privacy + People/System/Network/Backups/About, no Market).
+
+### Notes for Iris
+- The matching `ui-v0.4.8` change to `ui/src/components/settings/settings-shell.tsx` targets the future UI-owned route; CP shell is the live one until a Caddy `/settings`→youeye-ui migration (C3).
+
 ## ui-v0.4.8 — mythos — 2026-06-14
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 — Workstream A (UI tokens, first UI deploy) + C1 (Settings nav reconcile)
