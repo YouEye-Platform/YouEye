@@ -1,3 +1,18 @@
+## ui-v0.4.9 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E0 — UnifiedEmbed foundation (unblocked by the open C route decision)
+
+### Changes
+- `ui/src/components/embeds/unified-embed.tsx` — NEW: the one embed wrapper + `youeye:ready/resize/action` protocol (origin-validated, lazy IntersectionObserver, skeleton, timeout→fallback never-silent, sandbox, `?theme&mode` token delivery, one-cycle legacy compat).
+- `ui/tests/unified-embed.spec.ts` — NEW (3 tests). `package.json` → 0.4.9.
+
+### Test Results
+- spec 3/3; `pnpm build` OK. Additive/unused → **not deployed** (ships when E2/E3/E5/E6 consume it).
+
+### Notes for Iris
+- E0 remaining: `normalize.ts` kinds (settings-panel, launcher) + Canvas SDK `SettingsPanel` kit.
+- (cp-v0.4.31 earlier reverted premature Privacy/Backups nav; see changelog.)
+
 ## cp-v0.4.30 — mythos — 2026-06-14
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 C1 — Settings nav reconcile on the LIVE (CP) shell

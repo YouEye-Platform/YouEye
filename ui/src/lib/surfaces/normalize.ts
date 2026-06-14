@@ -1,5 +1,6 @@
-export type SurfaceKind = "widget" | "info-card" | "timeline-card" | "notification";
-export type SurfacePlacement = "dashboard" | "timeline" | "notification-center" | "app-settings" | "app-detail";
+// Plan 1 E0: + settings-panel (native-feeling app settings) + launcher (UI-served).
+export type SurfaceKind = "widget" | "info-card" | "timeline-card" | "notification" | "settings-panel" | "launcher";
+export type SurfacePlacement = "dashboard" | "timeline" | "notification-center" | "app-settings" | "app-detail" | "launcher";
 
 export interface AppSurface {
   id: string;
