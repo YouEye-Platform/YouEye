@@ -1,3 +1,19 @@
+## ui-v0.4.8 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 — Workstream A (UI tokens, first UI deploy) + C1 (Settings nav reconcile)
+
+### Changes
+- `ui/src/app/globals.css` — Workstream A blue token override now BUILT + DEPLOYED to the UI container (was source-only since cp-v0.4.27).
+- `ui/src/components/settings/settings-shell.tsx` — C1: added Privacy (Personal) + Backups (Administration) to the Settings nav; **removed Market (D9 — Market is a launcher app)**; removed now-unused Store import.
+- `ui/tests/settings-shell-nav.spec.ts` — NEW regression. `package.json` → 0.4.8.
+
+### Test Results
+- UI source-regression spec passes. `pnpm build` OK; UI standalone carries 0.4.8.
+- Deployed to youeye-ui; screenshot-verified on lemon.app/settings.
+
+### Notes for Iris
+- First UI release of the redesign. C1 i18n-only polish (headers "Personal"/"Administration", Users→People) deferred. Next: C2 per-page + C3 CP retirement.
+
 ## cp-v0.4.29 — mythos — 2026-06-14
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 B.3 polish — login wordmark size-cap (D3)

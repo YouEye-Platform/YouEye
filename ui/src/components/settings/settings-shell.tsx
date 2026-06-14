@@ -16,9 +16,10 @@ import {
   User,
   Palette,
   LayoutGrid,
+  Lock,
   Users,
   Server,
-  Store,
+  HardDrive,
   ArrowLeft,
   Globe,
   Languages,
@@ -32,14 +33,17 @@ const USER_SECTIONS = [
   { id: "appearance", labelKey: "appearance" as const, icon: Palette, href: "/settings/appearance" },
   { id: "apps", labelKey: "apps" as const, icon: LayoutGrid, href: "/settings/apps" },
   { id: "language", labelKey: "language" as const, icon: Languages, href: "/settings/language" },
+  { id: "privacy", labelKey: "privacy" as const, icon: Lock, href: "/settings/privacy" },
 ];
 
+// Market intentionally removed from Settings (Plan 1 D9 — Market is a launcher app
+// with its own Sources page, not a Settings destination).
 const ADMIN_SECTIONS = [
   { id: "users", labelKey: "users" as const, icon: Users, href: "/settings/users" },
   { id: "system", labelKey: "system" as const, icon: Server, href: "/settings/system" },
   { id: "network", labelKey: "network" as const, icon: Globe, href: "/settings/network" },
+  { id: "backup", labelKey: "backup" as const, icon: HardDrive, href: "/settings/backup" },
   { id: "about", labelKey: "about" as const, icon: Info, href: "/settings/about" },
-  { id: "market", labelKey: "appMarket" as const, icon: Store, href: "/market" },
 ];
 
 interface SettingsShellProps {

@@ -144,7 +144,7 @@ Each component is versioned and released independently.
 |-----------|---------|
 | Spine | 0.4.9 (`spine-v0.4.9`) |
 | Control Panel | 0.4.29 (`cp-v0.4.29`) |
-| UI | 0.4.7 (`ui-v0.4.7`) |
+| UI | 0.4.8 (`ui-v0.4.8`) |
 | Canvas | 0.3.0 (`v0.3.0`, tag only) |
 | Wiki | 0.4.1 (`v0.4.1`) |
 | Search | 0.4.1 (`v0.4.1`) |
