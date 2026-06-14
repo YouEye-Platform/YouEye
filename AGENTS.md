@@ -1,3 +1,20 @@
+## cp-v0.4.37 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 (C) — CP Settings honors + persists dark mode (owner-reported bug)
+
+### Changes
+- `control-panel/src/lib/theme.ts` — NEW: `resolveDark`/`applyThemeMode`/`broadcastThemeMode`; mirrors mode to `localStorage["theme"]` (shared with the dashboard's next-themes; `/settings` is same-origin).
+- `control-panel/src/app/layout.tsx` — `suppressHydrationWarning` + pre-paint boot script applies `.dark` from `localStorage["theme"]` (no flash); body `bg-gray-50` → `bg-background`.
+- `control-panel/src/components/control-surface/control-header.tsx` — effect applies saved mode on load + on change (keyed on themeMode/systemPref) + `youeye-theme-mode` listener; cycle button uses `applyThemeMode`.
+- `control-panel/src/components/settings-shell/appearance-client.tsx` — `selectMode` applies + broadcasts immediately, then PUTs to persist.
+- `control-panel/package.json` → 0.4.37; new spec `tests/settings-dark-mode.spec.ts`.
+
+### Test Results
+- `settings-dark-mode.spec.ts` 4/4 + `settings-personal.spec.ts` 10/10; `pnpm build` OK. Released cp-v0.4.37 → bykapc deploy + verify on lemon.app/settings.
+
+### Notes for Iris
+- N/A (direct-to-main, no Iris). CP-only; no new dependency; no UI→CP call (pitfall #25). Closes the dark-mode-live gap flagged at cp-v0.4.32.
+
 ## cp-v0.4.36 — mythos — 2026-06-14
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 C2 — System fix: Core Update Source routing (pre-existing)

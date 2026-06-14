@@ -8,6 +8,7 @@ import WordArtGalleryEmbed from "@/components/embed/WordArtGalleryEmbed";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { uiSettingsApi } from "./api-base";
+import { applyThemeMode, broadcastThemeMode, type ThemeMode } from "@/lib/theme";
 
 const DEFAULT_STYLE: SiteNameStyle = {
   fontFamily: "Inter",
@@ -257,6 +258,10 @@ function ThemeSettings() {
 
   async function selectMode(nextMode: string) {
     setMode(nextMode);
+    // Apply immediately so this page re-themes on click, and tell the header
+    // (source-of-truth state) so it stays in sync; the PUT below persists it.
+    applyThemeMode(nextMode as ThemeMode);
+    broadcastThemeMode(nextMode as ThemeMode);
     const res = await fetch(uiSettingsApi("themes/active"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },

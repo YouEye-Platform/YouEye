@@ -38,6 +38,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SiteName } from "@/components/control-surface/site-name";
+import { applyThemeMode, THEME_MODE_EVENT, type ThemeMode } from "@/lib/theme";
 import type { SiteNameStyle } from "@/lib/wordart-presets";
 
 interface ControlHeaderProps {
@@ -377,6 +378,25 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
   const prefs = drawerPrefs;
   const themeMode = config?.theme?.mode ?? "system";
 
+  // Apply the user's saved light/dark/system mode to <html> on load and whenever
+  // it changes. Source of truth is config.theme.mode (bridge → UI DB); the inline
+  // boot script in app/layout.tsx handles the very first paint from the shared
+  // localStorage("theme") key the dashboard's next-themes already writes.
+  useEffect(() => {
+    applyThemeMode(themeMode as ThemeMode);
+  }, [themeMode, systemPref]);
+
+  // Stay in sync when the Appearance page changes the mode (it broadcasts an event).
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const mode = (event as CustomEvent).detail?.mode as ThemeMode | undefined;
+      if (!mode) return;
+      setConfig((current) => ({ ...(current ?? {}), theme: { ...(current?.theme ?? {}), mode } }));
+    };
+    window.addEventListener(THEME_MODE_EVENT, handler);
+    return () => window.removeEventListener(THEME_MODE_EVENT, handler);
+  }, []);
+
   const visibleApps = useMemo(() => {
     return [...allApps]
       .filter((app) => app.visible !== false)
@@ -560,7 +580,7 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
     if (!hasUserContext) return;
     const next = themeMode === "light" ? "dark" : themeMode === "dark" ? "system" : "light";
     setConfig((current) => ({ ...(current ?? {}), theme: { ...(current?.theme ?? {}), mode: next } }));
-    document.documentElement.classList.toggle("dark", next === "dark" || (next === "system" && systemPref === "dark"));
+    applyThemeMode(next as ThemeMode);
     if (saveThemeTimeout.current) clearTimeout(saveThemeTimeout.current);
     saveThemeTimeout.current = setTimeout(() => {
       fetch(bridgeApi("themes/active"), {
