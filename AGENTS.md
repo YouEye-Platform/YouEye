@@ -1,3 +1,14 @@
+## cp-v0.4.33 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — Language page rebuilt to mockup
+
+### Changes
+- `control-panel/src/components/settings-shell/language-client.tsx` — tabs → mockup two-card layout: page H1 + "Language and formats…" sub; "Your language" card (System default + 5-lang selector, soft-blue active, + locale-derived read-only Dates/Time preview via `Intl`); admin "Server default" card (current + Change → inline picker). Backend unchanged. Editable per-format overrides scoped out (no store) → shown read-only.
+- `control-panel/tests/settings-personal.spec.ts` — +Language test (7/7). `control-panel/package.json` → 0.4.33. Wiki `control-panel/settings.md` + changelog.
+
+### Test Results
+- settings-personal.spec 7/7; `pnpm build` OK. Released cp-v0.4.33 → bykapc deploy + lemon.app verification in this slice.
+
 ## cp-v0.4.32 — mythos — 2026-06-14
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 C2 — Settings shell + Personal pages (Profile, Appearance, nav)

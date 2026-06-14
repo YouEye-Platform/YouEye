@@ -56,3 +56,17 @@ test('C2: Appearance header is the page H1 with the mockup subtitle; WordArt pic
   // D7: the WordArt picker remains (BrandingTabs renders it).
   assert.match(appearance, /BrandingTabs/);
 });
+
+test('C2: Language rebuilt to the two-card layout (Your language + Server default), not tabs', () => {
+  const lang = read('src/components/settings-shell/language-client.tsx');
+  assert.match(lang, /<h1 className="text-2xl font-bold tracking-tight">Language<\/h1>/);
+  assert.match(lang, /Your language/);
+  assert.match(lang, /Server default/);
+  assert.match(lang, /from "@\/components\/ui\/card"/);
+  // Formats are derived from the locale (honest), not stored as fake editable fields.
+  assert.match(lang, /Intl\.DateTimeFormat/);
+  assert.match(lang, /formats follow your language/);
+  // The old tab UI is gone.
+  assert.doesNotMatch(lang, /setTab\(/);
+  assert.doesNotMatch(lang, /function tabClass/);
+});
