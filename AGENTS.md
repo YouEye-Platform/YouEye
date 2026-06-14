@@ -1,3 +1,20 @@
+## cp-v0.4.32 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — Settings shell + Personal pages (Profile, Appearance, nav)
+
+### Changes
+- `control-panel/src/components/settings-shell/settings-shell.tsx` — nav grouped into **Personal** + **Administration** section labels (mockup `.section-label`); active item soft-blue `bg-primary/10 text-primary` (was the wrong shadcn gray `bg-accent`). Market stays out (D9); People not Users.
+- `control-panel/src/components/settings-shell/profile-client.tsx` — rebuilt to `settings-profile.html` on shadcn Card/Input/Button/Avatar: page H1 + "Your account on this server", identity card (64px avatar, role, Change photo/Remove), Details card. Data wiring unchanged. Honest omissions: no "Change password" (no self-service endpoint) and no join date (API has none) — no fake UI (#28).
+- `control-panel/src/components/settings-shell/appearance-client.tsx` — page header → H1 + mockup subtitle; WordArt picker unchanged (D7).
+- `control-panel/tests/settings-personal.spec.ts` — NEW (6 tests). `control-panel/package.json` → 0.4.32. Wiki `control-panel/settings.md` (Workstream C section).
+
+### Test Results
+- settings-personal.spec 6/6; `pnpm build` OK. Released cp-v0.4.32 → bykapc deploy + lemon.app screenshot verification in this slice.
+
+### Notes
+- Correction (owner, 2026-06-14): no Caddy `/settings`→UI migration. Settings stays CP-served by design; C = redesign CP pages + drop `control.<domain>` from nav, then retire dead embeds + old `(dashboard)` shell.
+- Deferred C slices: Language (format fields + backend), Privacy (new page + Switch primitive), Apps list (detail = E6), Administration pages (live infra), C3 retirement.
+
 ## ui-v0.4.10 — mythos — 2026-06-14
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 E4 — Google-style account menu

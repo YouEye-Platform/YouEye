@@ -401,8 +401,8 @@ export function AppearanceClient({ isAdmin }: AppearanceClientProps) {
   return (
     <div className="space-y-10">
       <div>
-        <h2 className="text-xl font-semibold">Appearance</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Customize the look and feel of your dashboard.</p>
+        <h1 className="text-2xl font-bold tracking-tight">Appearance</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Make this server yours — wordmark, themes, and wallpaper</p>
       </div>
       <BrandingTabs isAdmin={isAdmin} />
       <ThemeSettings />
