@@ -70,3 +70,21 @@ test('C2: Language rebuilt to the two-card layout (Your language + Server defaul
   assert.doesNotMatch(lang, /setTab\(/);
   assert.doesNotMatch(lang, /function tabClass/);
 });
+
+test('C2: People page — list reshape + Sign-in section + real Manage flow (no fake data)', () => {
+  const people = read('src/components/settings-shell/users-client.tsx');
+  assert.match(people, /<h1 className="text-2xl font-bold tracking-tight">People<\/h1>/);
+  assert.match(people, /Who can sign in to this server/);
+  assert.match(people, /Add person/);
+  assert.match(people, />Sign-in</);
+  assert.match(people, /Emergency local access/);
+  assert.match(people, /from "@\/components\/ui\/card"/);
+  // Manage is a real backend flow (PATCH update, password reset, DELETE remove).
+  assert.match(people, /userId\(manage\)/);
+  assert.match(people, /method: "PATCH"/);
+  assert.match(people, /method: "DELETE"/);
+  assert.match(people, /\/password/);
+  // Emergency access IP is derived from server config — never a hardcoded LAN address.
+  assert.match(people, /config\.ip/);
+  assert.doesNotMatch(people, /\b192\.168\.\d+\.\d+\b/);
+});

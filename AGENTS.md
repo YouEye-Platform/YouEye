@@ -1,3 +1,14 @@
+## cp-v0.4.34 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — People (Administration) rebuilt to mockup
+
+### Changes
+- `control-panel/src/components/settings-shell/users-client.tsx` — rebuilt to `settings-people.html`: H1 "People" + sub; "N people" card (avatar tiles, Admin badge, last-seen/deactivated, Add person) with a real Manage modal (name/email, role, active, reset password, two-step Remove → PATCH/DELETE/`[id]/password`); Sign-in card ("<Site> ID" Active + Emergency local access `http://<ip>:3000` from `/api/setup/config`, never hardcoded).
+- `control-panel/tests/settings-personal.spec.ts` — +People test (8/8). `control-panel/package.json` → 0.4.34. Wiki `control-panel/settings.md` + changelog.
+
+### Test Results
+- settings-personal.spec 8/8; `pnpm build` OK. Released cp-v0.4.34 → bykapc deploy + lemon.app verification in this slice.
+
 ## cp-v0.4.33 — mythos — 2026-06-14
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 C2 — Language page rebuilt to mockup
