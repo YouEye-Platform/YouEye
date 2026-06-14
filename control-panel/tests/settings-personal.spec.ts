@@ -88,3 +88,27 @@ test('C2: People page — list reshape + Sign-in section + real Manage flow (no 
   assert.match(people, /config\.ip/);
   assert.doesNotMatch(people, /\b192\.168\.\d+\.\d+\b/);
 });
+
+test('C2: System page — stat row + human-named Platform + live usage + preserved update flow', () => {
+  const sys = read('src/components/settings-shell/system-client.tsx');
+  assert.match(sys, /<h1 className="text-2xl font-bold tracking-tight">System<\/h1>/);
+  assert.match(sys, /Your server at a glance/);
+  assert.match(sys, /from "@\/components\/ui\/card"/);
+  // Human service names (D4 / skill copy rule — never raw component names as titles).
+  assert.match(sys, /System core/);
+  assert.match(sys, /Server interface/);
+  assert.match(sys, /Web gateway/);
+  assert.match(sys, /Network shield/);
+  // Live usage from real health data, with restart + 5s polling.
+  assert.match(sys, /\/api\/health\/services/);
+  assert.match(sys, /\/restart/);
+  assert.match(sys, /setInterval\(loadHealth, 5000\)/);
+  // The maintenance-window image-update flow is preserved (not broken by the redesign).
+  assert.match(sys, /confirmMaintenanceWindow/);
+  assert.match(sys, /system-updates/);
+});
+
+test('C2: System page passes the running CP version for the Server interface row', () => {
+  const page = read('src/app/settings/(shell)/system/page.tsx');
+  assert.match(page, /cpVersion=\{pkg\.version\}/);
+});

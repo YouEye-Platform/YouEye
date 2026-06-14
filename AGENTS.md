@@ -1,3 +1,18 @@
+## cp-v0.4.35 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — System (Administration) rebuilt to mockup
+
+### Changes
+- `control-panel/src/components/settings-shell/system-client.tsx` — rebuilt to `settings-system.html`: H1 + sub; stat row (CPU/Memory/Disk/Uptime); Platform card with **human-named services** (System core/Server interface/Database/Web gateway/Network shield, versions + status dots); Live usage card (restartable core services, real cpuPercent/memory from `/api/health/services`, 5s polling, Restart). Core Update Source + Market system-image dry-run/SSE/maintenance-window flow preserved (restyled, dark-safe amber).
+- `control-panel/src/app/settings/(shell)/system/page.tsx` — passes `cpVersion={pkg.version}` (Server interface row).
+- `control-panel/tests/settings-personal.spec.ts` — +System tests (10/10). `control-panel/package.json` → 0.4.35. Wiki updated.
+
+### Test Results
+- settings-personal.spec 10/10; `pnpm build` OK. Released cp-v0.4.35 → bykapc deploy + lemon.app verification in this slice.
+
+### Notes
+- Per-app live usage (Notes/Cinema/…) deferred — needs incus `recursion=2` + app-restart endpoint (To Plan).
+
 ## cp-v0.4.34 — mythos — 2026-06-14
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 C2 — People (Administration) rebuilt to mockup
