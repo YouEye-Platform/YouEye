@@ -315,10 +315,11 @@ async function html(returnTo: string, error = ''): Promise<Response> {
       padding: 28px;
     }
     .wordmark {
-      max-width: min(420px, calc(100vw - 28px));
+      max-width: min(560px, calc(100vw - 28px));
+      font-size: 38px !important; /* D3: size-cap the login wordmark (~30px line) so wordart never clips */
       overflow: visible;
       overflow-wrap: normal;
-      filter: drop-shadow(0 4px 10px rgba(16, 42, 67, .10));
+      filter: drop-shadow(0 3px 8px rgba(16, 42, 67, .12));
     }
     .wordmark-shaped {
       display: inline-flex !important;

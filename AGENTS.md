@@ -1,3 +1,13 @@
+## cp-v0.4.29 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 B.3 polish — login wordmark size-cap (D3)
+
+### Changes
+- `control-panel/src/app/identity/login/route.ts` — `.wordmark` font-size capped to 38px (was rendering at the full branding size and clipping the last letter after the B.3 panel narrowing); wider max-width, toned shadow. `package.json` → 0.4.29.
+
+### Test Results
+- `pnpm build` OK; visual re-verify on bykapc (login wordmark no longer clipped).
+
 ## cp-v0.4.28 — mythos — 2026-06-14
 **Branch:** main
 **VM:** potempc / bykapc
