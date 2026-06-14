@@ -1,3 +1,23 @@
+## cp-v0.4.26 — mythos — 2026-06-14
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Plan 1 redesign — Workstream B.1: fix signed-out `control.<domain>` SSO `invalid_redirect_uri`
+
+### Changes
+- `control-panel/src/lib/identity/core-clients.ts` — `controlRedirectUris()` now registers the Control Panel host's `/settings/api/auth/callback` (silent settings SSO) alongside `/api/auth/callback`. Signed-out `https://control.<domain>/` is bounced through settings SSO with `redirect_uri=https://control.<domain>/settings/api/auth/callback`, which was unregistered → raw JSON `{"error":"invalid_redirect_uri"}`. `settingsExternalUrl` already includes `/settings`, so only `/api/auth/callback` is appended there (avoids a bogus `…/settings/settings/api/auth/callback`).
+- `control-panel/tests/silent-settings-sso.spec.ts` — regression: control-host settings callback registered; double-`/settings` URI absent.
+- `control-panel/package.json` — bump to 0.4.26.
+
+### Test Results
+- `CONTROL_PANEL_ROOT="$PWD/control-panel" node --import tsx --test control-panel/tests/silent-settings-sso.spec.ts` → 4/4 pass.
+- `pnpm build` (control-panel) OK; `standalone.tar` carries version 0.4.26.
+
+### Notes for Iris
+- Control Panel-only release; Spine 0.4.9 and UI 0.4.7 unchanged.
+- Existing installs keep old `redirect_uris` until re-registered: `POST /api/identity/core-clients` (admin) or update the `youeye-control` row in `identity_clients`. Fresh installs get the fix automatically.
+- Raw-JSON identity error surfaces (`invalid_redirect_uri`, `invalid_client`) get the friendly error page in a follow-up cp slice (Workstream B.2).
+
 ## cp-v0.4.25 — mythos — 2026-06-12
 **Branch:** main
 **VM:** potempc / bykapc

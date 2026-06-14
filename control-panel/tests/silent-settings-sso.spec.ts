@@ -39,3 +39,17 @@ test('PAM login form no longer performs client-side SSO detection', () => {
   assert.doesNotMatch(loginForm, /window\.location\.href/);
   assert.match(loginForm, /settingsFlow \? '\/settings\/api\/auth' : '\/api\/auth'/);
 });
+
+test('Control SSO client registers the control-host settings callback (fixes invalid_redirect_uri)', () => {
+  const coreClients = read('src/lib/identity/core-clients.ts');
+
+  // The Control Panel host must register BOTH callbacks. The /settings one is
+  // what the signed-out control.<domain>/ -> silent settings SSO flow requests;
+  // registering only /api/auth/callback caused {"error":"invalid_redirect_uri"}.
+  assert.match(coreClients, /\$\{controlExternalUrl\}\/api\/auth\/callback/);
+  assert.match(coreClients, /\$\{controlExternalUrl\}\/settings\/api\/auth\/callback/);
+  // settingsExternalUrl already points at the /settings base, so it only appends
+  // /api/auth/callback — guard against the double-/settings regression.
+  assert.match(coreClients, /\$\{settingsExternalUrl\}\/api\/auth\/callback/);
+  assert.doesNotMatch(coreClients, /\$\{settingsExternalUrl\}\/settings\/api\/auth\/callback/);
+});
