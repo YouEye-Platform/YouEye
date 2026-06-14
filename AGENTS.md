@@ -1,3 +1,14 @@
+## ui-v0.4.10 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E4 — Google-style account menu
+
+### Changes
+- `ui/src/components/layout/user-menu.tsx` — rebuilt to the mockup: 340px rounded panel, centered email, 76px avatar + edit pencil, "Hi, <first name>!", "Manage your account" pill, grouped card (Timeline/Settings), **Theme Light/Dark/Auto segmented control** (replaces cycle; DB-synced), ghost Sign out, Privacy·About footer. Tokenized; data plumbing preserved.
+- `ui/tests/account-menu.spec.ts` — NEW. `package.json` → 0.4.10. Wiki `YE-Wiki/ui/account-menu.md`.
+
+### Test Results
+- spec 2/2; `pnpm build` OK. **Deployed** to youeye-ui (UI-served dashboard) + screenshot-verified on lemon.app.
+
 ## ui-v0.4.9 — mythos — 2026-06-14
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 E0 — UnifiedEmbed foundation (unblocked by the open C route decision)
