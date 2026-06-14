@@ -1,3 +1,15 @@
+## cp-v0.4.36 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — System fix: Core Update Source routing (pre-existing)
+
+### Changes
+- `control-panel/src/app/settings/api/settings/route.ts` — NEW: re-exports GET/PATCH from `@/app/api/settings/route` under the CP-guaranteed `/settings/api/*` prefix (root `/api/settings` 404s at the domain — Caddy routes root `/api/*` to UI).
+- `control-panel/src/components/settings-shell/system-client.tsx` — Core Update Source fetches `/settings/api/settings` (load + save).
+- `control-panel/package.json` → 0.4.36. spec 10/10 (+path assertion).
+
+### Test Results
+- spec 10/10; `pnpm build` OK. Released cp-v0.4.36 → bykapc deploy + verify Core Update Source loads.
+
 ## cp-v0.4.35 — mythos — 2026-06-14
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 C2 — System (Administration) rebuilt to mockup

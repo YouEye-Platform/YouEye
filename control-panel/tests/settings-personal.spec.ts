@@ -106,6 +106,9 @@ test('C2: System page — stat row + human-named Platform + live usage + preserv
   // The maintenance-window image-update flow is preserved (not broken by the redesign).
   assert.match(sys, /confirmMaintenanceWindow/);
   assert.match(sys, /system-updates/);
+  // Core Update Source uses the CP-guaranteed /settings/api/* prefix (root /api/settings 404s at the domain).
+  assert.match(sys, /\/settings\/api\/settings/);
+  assert.doesNotMatch(sys, /fetch\("\/api\/settings"/);
 });
 
 test('C2: System page passes the running CP version for the Server interface row', () => {

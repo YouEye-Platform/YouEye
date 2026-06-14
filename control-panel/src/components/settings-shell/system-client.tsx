@@ -196,7 +196,7 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
     setSourceLoading(true);
     setSourceError("");
     setSourceMessage("");
-    const res = await fetch("/api/settings");
+    const res = await fetch("/settings/api/settings");
     if (res.ok) {
       const settings = (await res.json()) as PlatformSettings;
       setReleaseBranch(settings.releaseBranch || "main");
@@ -273,7 +273,7 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
 
     setSourceSaving(true);
     try {
-      const res = await fetch("/api/settings", {
+      const res = await fetch("/settings/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
