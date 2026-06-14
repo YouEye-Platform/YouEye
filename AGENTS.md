@@ -1,3 +1,20 @@
+## cp-v0.4.28 — mythos — 2026-06-14
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Plan 1 redesign — Workstream B.3 (identity login rebuild) + B.4 (consent rebuild) — completes Phase 1
+
+### Changes
+- `control-panel/src/app/identity/login/route.ts` — login generated from shared tokens (no hardcoded hex), light+dark via `prefers-color-scheme`, Geist Sans, blue accent Continue (keeps "Continuing…" morph + wordart wordmark), 12px panel, quiet "<Identity> — your account on this server" footer.
+- `control-panel/src/app/application/o/authorize/route.ts` — consent tokenized + light+dark; runtime permissions render as switches (kept); app-icon ‹··› provider pairing kept; blue approve.
+- `control-panel/tests/identity-error-page.spec.ts` — +1 regression (login+consent tokens/dark/no-Inter/no-#0b84ff). `package.json` → 0.4.28.
+
+### Test Results
+- 9/9 source-regression specs pass. `pnpm build` OK; artifact carries 0.4.28.
+
+### Notes for Iris
+- Completes Workstream B (identity). Full wordmark size-cap + "Can't sign in?" recovery link (no backend) deferred to Workstream F. UI `globals.css` token change ships with first UI release.
+
 ## cp-v0.4.27 — mythos — 2026-06-14
 **Branch:** main
 **VM:** potempc / bykapc

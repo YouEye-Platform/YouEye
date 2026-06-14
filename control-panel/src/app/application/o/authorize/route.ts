@@ -316,7 +316,20 @@ function consentHtml(params: {
   ${appFontLink ? `<link rel="stylesheet" href="${escapeHtml(appFontLink)}" />` : ''}
   <title>Allow ${escapeHtml(appName)}?</title>
   <style>
-    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    :root {
+      color-scheme: light dark;
+      font-family: "Geist Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --bg: #fafafa; --surface: #ffffff; --border: #e4e4e7; --border-strong: #d4d4d8;
+      --text: #18181b; --muted: #71717a; --faint: #a1a1aa;
+      --accent: #2563eb; --accent-hover: #1d4ed8; --accent-soft: #eff6ff;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0a0a0a; --surface: #171717; --border: #27272a; --border-strong: #3f3f46;
+        --text: #fafafa; --muted: #a1a1aa; --faint: #52525b;
+        --accent: #3b82f6; --accent-hover: #60a5fa; --accent-soft: rgba(59,130,246,.15);
+      }
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -324,21 +337,21 @@ function consentHtml(params: {
       display: grid;
       place-items: center;
       padding: 24px;
+      color: var(--text);
       background:
-        linear-gradient(180deg, rgba(255,255,255,.62), rgba(255,255,255,.86)),
-        linear-gradient(135deg, #eaf8f6 0%, #eff7ff 48%, #f8fbff 100%);
-      color: #17191c;
+        radial-gradient(1100px 520px at 80% -10%, color-mix(in srgb, var(--accent) 9%, transparent) 0%, transparent 60%),
+        var(--bg);
     }
     main {
       width: min(520px, 100%);
-      border: 1px solid rgba(24, 36, 48, .12);
-      border-radius: 8px;
-      background: rgba(255,255,255,.94);
-      box-shadow: 0 22px 54px rgba(28, 52, 70, .14);
-      padding: 22px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: 0 8px 30px rgba(0,0,0,.08);
+      padding: 28px;
     }
-    h1 { margin: 0; font-size: 1.55rem; line-height: 1.18; letter-spacing: 0; text-align: center; }
-    p { margin: 0; color: #627183; line-height: 1.45; }
+    h1 { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.18; letter-spacing: -.01em; text-align: center; }
+    p { margin: 0; color: var(--muted); line-height: 1.45; }
     .app-brand {
       display: flex;
       align-items: center;
@@ -346,18 +359,18 @@ function consentHtml(params: {
       gap: 8px;
       margin-bottom: 16px;
       min-height: 24px;
-      color: #111827;
+      color: var(--text);
       font-size: 15px;
-      font-weight: 800;
+      font-weight: 600;
     }
     .app-icon {
       display: grid;
       place-items: center;
       width: 20px;
       height: 20px;
-      color: #111827;
+      color: var(--text);
       font-size: 18px;
-      font-weight: 800;
+      font-weight: 700;
       overflow: hidden;
       flex: 0 0 auto;
     }
@@ -372,9 +385,9 @@ function consentHtml(params: {
       display: flex;
       align-items: center;
       gap: 10px;
-      border: 1px solid #e1e8ef;
+      border: 1px solid var(--border);
       border-radius: 8px;
-      background: #fbfdff;
+      background: var(--surface);
       padding: 10px 12px;
       margin-bottom: 18px;
     }
@@ -384,35 +397,36 @@ function consentHtml(params: {
       width: 38px;
       height: 38px;
       border-radius: 999px;
-      background: #e8f3ff;
-      color: #126cc6;
+      background: var(--accent-soft);
+      color: var(--accent);
       font-size: 13px;
-      font-weight: 900;
+      font-weight: 700;
       flex: 0 0 auto;
       overflow: hidden;
     }
     .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .account-main { min-width: 0; flex: 1; }
     .account-main strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
-    .account-main span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #64717f; font-size: 12px; margin-top: 2px; }
+    .account-main span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; margin-top: 2px; }
     .copy { display: grid; gap: 8px; margin-bottom: 18px; text-align: center; }
     .copy p { font-size: 14px; }
     .extra-access { margin-bottom: 18px; display: grid; gap: 9px; }
-    .extra-access > p { color: #2c3440; font-size: 13px; font-weight: 800; }
+    .extra-access > p { color: var(--text); font-size: 13px; font-weight: 600; }
     .runtime-list { display: grid; gap: 8px; }
-    .runtime-permission { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; border: 1px solid #e1e8ef; border-radius: 8px; padding: 10px 12px; cursor: pointer; background: #fff; }
+    .runtime-permission { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: pointer; background: var(--surface); }
     .runtime-permission input { position: absolute; opacity: 0; pointer-events: none; }
-    .switch { width: 38px; height: 22px; border-radius: 999px; background: #cbd5e1; position: relative; transition: background .16s ease; }
+    .switch { width: 38px; height: 22px; border-radius: 999px; background: var(--border-strong); position: relative; transition: background .16s ease; }
     .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 999px; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.2); transition: transform .16s ease; }
-    .runtime-permission input:checked + .switch { background: #0b84ff; }
+    .runtime-permission input:checked + .switch { background: var(--accent); }
     .runtime-permission input:checked + .switch::after { transform: translateX(16px); }
-    .runtime-permission strong { display: block; color: #2c3440; font-size: 14px; font-weight: 800; }
-    .runtime-permission small { display: block; margin-top: 3px; color: #64717f; font-size: 12px; line-height: 1.35; }
+    .runtime-permission strong { display: block; color: var(--text); font-size: 14px; font-weight: 600; }
+    .runtime-permission small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.35; }
     form { display: grid; gap: 0; }
     .actions { display: flex; gap: 10px; }
-    button { height: 42px; border-radius: 8px; font: inherit; font-weight: 700; cursor: pointer; padding: 0 16px; }
-    .approve { border: 0; background: #0b84ff; color: #fff; flex: 1; }
-    .deny { border: 1px solid #d6e1ea; background: #fff; color: #405061; }
+    button { height: 42px; border-radius: 8px; font: inherit; font-weight: 600; cursor: pointer; padding: 0 16px; }
+    .approve { border: 0; background: var(--accent); color: #fff; flex: 1; }
+    .approve:hover { background: var(--accent-hover); }
+    .deny { border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); }
     @media (max-width: 460px) {
       main { padding: 18px; }
       .actions { flex-direction: column-reverse; }

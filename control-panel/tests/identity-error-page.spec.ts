@@ -37,3 +37,18 @@ test('A: globals.css reconciles --primary to the blue accent (CP + UI)', () => {
   const ui = readFileSync(join(repoRoot, '..', 'ui', 'src', 'app', 'globals.css'), 'utf8');
   assert.match(ui, /--primary:\s*#2563eb/);
 });
+
+test('B.3/B.4: identity login + consent use shared tokens + dark mode (no Inter, no hardcoded blue)', () => {
+  const login = read('src/app/identity/login/route.ts');
+  const consent = read('src/app/application/o/authorize/route.ts');
+  for (const src of [login, consent]) {
+    assert.match(src, /prefers-color-scheme: dark/);
+    assert.match(src, /--accent: #2563eb/);
+    assert.match(src, /"Geist Sans"/);
+    assert.doesNotMatch(src, /font-family: Inter,/);
+    assert.doesNotMatch(src, /#0b84ff/);
+  }
+  // login gets the "your account on this server" footer; consent keeps runtime switches.
+  assert.match(login, /your account on this server/);
+  assert.match(consent, /class="switch"/);
+});

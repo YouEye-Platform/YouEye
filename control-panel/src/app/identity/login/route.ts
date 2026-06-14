@@ -262,7 +262,22 @@ async function html(returnTo: string, error = ''): Promise<Response> {
   ${wordmark.fontLink}
   <title>${escapeHtml(provider.name)}</title>
   <style>
-    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    :root {
+      color-scheme: light dark;
+      font-family: "Geist Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --bg: #fafafa; --surface: #ffffff; --border: #e4e4e7; --border-strong: #d4d4d8;
+      --text: #18181b; --muted: #71717a; --faint: #a1a1aa;
+      --accent: #2563eb; --accent-hover: #1d4ed8; --ring: rgba(37,99,235,.20);
+      --danger: #dc2626;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0a0a0a; --surface: #171717; --border: #27272a; --border-strong: #3f3f46;
+        --text: #fafafa; --muted: #a1a1aa; --faint: #52525b;
+        --accent: #3b82f6; --accent-hover: #60a5fa; --ring: rgba(59,130,246,.30);
+        --danger: #f87171;
+      }
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -270,10 +285,10 @@ async function html(returnTo: string, error = ''): Promise<Response> {
       display: grid;
       place-items: center;
       padding: 24px;
+      color: var(--text);
       background:
-        linear-gradient(180deg, rgba(255,255,255,.65), rgba(255,255,255,.86)),
-        linear-gradient(135deg, #eaf8f6 0%, #eff7ff 46%, #f8fbff 100%);
-      color: #17191c;
+        radial-gradient(1100px 520px at 80% -10%, color-mix(in srgb, var(--accent) 9%, transparent) 0%, transparent 60%),
+        var(--bg);
     }
     main {
       display: grid;
@@ -291,19 +306,19 @@ async function html(returnTo: string, error = ''): Promise<Response> {
     }
     .panel {
       display: grid;
-      gap: 20px;
-      width: min(430px, 100%);
-      border: 1px solid rgba(24, 36, 48, .12);
-      border-radius: 8px;
-      background: rgba(255, 255, 255, .94);
-      box-shadow: 0 22px 54px rgba(28, 52, 70, .14);
-      padding: 22px;
+      gap: 18px;
+      width: min(400px, 100%);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: 0 8px 30px rgba(0,0,0,.08);
+      padding: 28px;
     }
     .wordmark {
-      max-width: min(720px, calc(100vw - 28px));
+      max-width: min(420px, calc(100vw - 28px));
       overflow: visible;
       overflow-wrap: normal;
-      filter: drop-shadow(0 8px 18px rgba(16, 42, 67, .10));
+      filter: drop-shadow(0 4px 10px rgba(16, 42, 67, .10));
     }
     .wordmark-shaped {
       display: inline-flex !important;
@@ -312,43 +327,44 @@ async function html(returnTo: string, error = ''): Promise<Response> {
       flex-wrap: wrap;
     }
     .copy { display: grid; gap: 6px; text-align: center; }
-    h1 { font-size: 1.35rem; line-height: 1.2; margin: 0; letter-spacing: 0; }
-    p { margin: 0; color: #64717f; line-height: 1.45; }
+    h1 { font-size: 19px; font-weight: 600; line-height: 1.2; margin: 0; letter-spacing: -.01em; }
+    p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.45; }
     form { display: grid; gap: 14px; }
-    label { display: grid; gap: 7px; font-size: 13px; font-weight: 700; color: #2c3440; }
+    label { display: grid; gap: 7px; font-size: 13px; font-weight: 500; color: var(--text); }
     input {
-      height: 44px;
+      height: 42px;
       padding: 0 12px;
-      border: 1px solid #cdd8e2;
+      border: 1px solid var(--border-strong);
       border-radius: 8px;
-      background: #fff;
-      color: #17191c;
+      background: var(--surface);
+      color: var(--text);
       font: inherit;
       outline: none;
       transition: border-color .16s ease, box-shadow .16s ease;
     }
-    input:focus { border-color: #1788ff; box-shadow: 0 0 0 3px rgba(23, 136, 255, .14); }
+    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); }
     button {
-      height: 44px;
+      height: 42px;
       border: 0;
       border-radius: 8px;
-      background: #0b84ff;
+      background: var(--accent);
       color: #fff;
       font: inherit;
-      font-weight: 800;
+      font-weight: 600;
       cursor: pointer;
       transition: background .16s ease, transform .16s ease, opacity .16s ease;
     }
-    button:hover { background: #0574e5; }
+    button:hover { background: var(--accent-hover); }
     button:active { transform: translateY(1px); }
     button[disabled] { cursor: wait; opacity: .82; }
     .error {
       min-height: 18px;
-      color: #b42318;
+      color: var(--danger);
       font-size: 13px;
       line-height: 1.35;
       text-align: center;
     }
+    .foot { font-size: 12px; color: var(--faint); text-align: center; margin: 0; }
   </style>
 </head>
 <body>
@@ -373,6 +389,7 @@ async function html(returnTo: string, error = ''): Promise<Response> {
         <div class="error">${escapeHtml(error)}</div>
       </form>
     </section>
+    <p class="foot">${escapeHtml(provider.name)} — your account on this server</p>
   </main>
   <script>
     const form = document.getElementById('login-form');
