@@ -1,3 +1,20 @@
+## cp-v0.4.38 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — Network page rebuilt to mockup (DNS / Routes / Domain & HTTPS) + Switch primitive
+
+### Changes
+- `control-panel/src/components/settings-shell/network-client.tsx` — full rewrite, 3 tabs. DNS (stats + blocking master switch + Local names A/CNAME add/remove + Blocklists enable-toggle + Recent queries), Routes (read-only Caddy table + raw config), Domain & HTTPS (domain edit + cert status, honest on-demand copy).
+- `control-panel/src/app/api/apps/pihole/lists/route.ts` — NEW: blocklists GET/POST/PATCH(toggle)/DELETE (session-authed, FTL `/api/lists`).
+- `control-panel/src/app/settings/api/caddy/routes/route.ts` + `.../caddy/config/route.ts` — NEW: re-export GET under CP-guaranteed `/settings/api/*` (root `/api/caddy/*` 404s → UI from Settings surface).
+- `control-panel/src/components/ui/switch.tsx` — NEW: dependency-free `Switch` primitive.
+- `control-panel/package.json` → 0.4.38; new spec `tests/settings-network.spec.ts`.
+
+### Test Results
+- `settings-network.spec.ts` 7/7 (+ dark-mode 4/4, personal 10/10); `pnpm build` OK. Released cp-v0.4.38 → bykapc deploy + verify on lemon.app/settings/network.
+
+### Notes for Iris
+- N/A (direct-to-main). New backend route (`apps/pihole/lists`) + 2 caddy proxies; no new dependency; admin+CSRF on all writes; no UI→CP call.
+
 ## cp-v0.4.37 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 (C) — CP Settings honors + persists dark mode (owner-reported bug)
