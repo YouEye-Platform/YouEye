@@ -1,3 +1,18 @@
+## ui-v0.4.27 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 5 — notification tab embed (Plan A) + menu/bell transparency (owner asks)
+
+### Changes
+- `ui/src/components/layout/notification-bell.tsx` — `embedded` mode (content-only, window.top links, themed inner embeds) + translucent popover.
+- `ui/src/app/embed/notifications/page.tsx` — **new** UI-served `/embed/notifications` (mirrors /embed/drawer). Closes the cross-app notification leak (native apps stop fetching the list).
+- `ui/src/components/layout/user-menu.tsx` — glassy transparency to match the drawer.
+
+### Test Results
+- `pnpm build` OK; standalone 0.4.27. Verify on lemon.app: bell+menu transparency; `/embed/notifications` renders the feed (per-notification embeds = nested iframes, Plan A).
+
+### Notes for Iris
+- Native side (Canvas notif-bell hosts the iframe + re-vendor 6 apps) = Slice 3 batch. Direct-to-main.
+
 ## ui-v0.4.26 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 5 — dual pointer+mouse drag sensor (robustness + testability)

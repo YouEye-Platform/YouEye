@@ -105,7 +105,7 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
       <DropdownMenuContent
         align="end"
         sideOffset={8}
-        className="w-[340px] rounded-3xl p-0 overflow-hidden border bg-muted"
+        className="w-[340px] rounded-3xl p-0 overflow-hidden border-border/60 bg-popover/80 backdrop-blur-xl"
       >
         {/* Email, centered */}
         <p className="pt-4 pb-3 text-center text-xs text-muted-foreground truncate px-6">{email}</p>
@@ -123,7 +123,7 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
         </div>
 
         {/* Grouped card */}
-        <div className="m-3 rounded-2xl bg-card border overflow-hidden">
+        <div className="m-3 rounded-2xl bg-card/60 border border-border/50 overflow-hidden">
           <button
             type="button"
             onClick={() => router.push("/timeline")}
