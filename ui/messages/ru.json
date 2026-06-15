@@ -283,6 +283,8 @@
     "createPin": "Создать PIN",
     "today": "Сегодня в {time}",
     "yesterday": "Вчера",
+    "dayToday": "Сегодня",
+    "deleteEntry": "Удалить запись",
     "daysAgo": "{count} дн. назад",
     "history": "История",
     "upcoming": "Предстоящие",

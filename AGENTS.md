@@ -1,3 +1,20 @@
+## ui-v0.4.13 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E2 — timeline feed: embeds-first, date-grouped single column
+
+### Changes
+- `ui/src/app/timeline/page.tsx` — single centered column `max-w-[640px]` (was `max-w-4xl`), mockup padding.
+- `ui/src/components/timeline/timeline-feed.tsx` — `buildDayGroups()` inserts Today/Yesterday/date dividers in one pass over the timestamp-sorted entries; `useLocale()` for locale-correct date headers.
+- `ui/src/components/timeline/timeline-entry-card.tsx` — rewritten to the `.via` model: 18px app chip (manifest accent) + app name + clock time + hover-delete, all **outside** the embed (anti-impersonation); body = embed / legacy info-card / StandardCard. Dropped the bordered chrome, collection badge, raw-JSON expander, in-row title.
+- `ui/messages/{en,fr,es,de,ru}.json` — added `timeline.dayToday` + `timeline.deleteEntry`.
+- `ui/package.json` → 0.4.13; new spec `ui/tests/timeline-feed.test.mjs`.
+
+### Test Results
+- `timeline-feed.test.mjs` 6/6 + `timeline-embed.test.mjs` 4/4; `pnpm build` OK. Released ui-v0.4.13 → bykapc (`spine update ui`) + verify lemon.app/timeline.
+
+### Notes for Iris
+- Direct-to-main Plan 1 slice (no Iris merge). Timeline entry-card chrome removed by design per `timeline.html`; the detail view still carries tags/collection/raw data.
+
 ## ui-v0.4.12 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 E2 — timeline entries render through <UnifiedEmbed>

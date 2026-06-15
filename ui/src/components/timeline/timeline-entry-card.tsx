@@ -1,14 +1,17 @@
 /**
- * Timeline Entry Card
+ * Timeline Entry Card — Plan 1 Workstream E2.
  *
- * Renders a single decrypted timeline entry with type icon,
- * title, tags, timestamp, and either:
- *   - An iframe embed from the source app (via embed_path)
- *   - A standard card from stored data (fallback)
- *   - A legacy info card fetch (backward compat)
+ * An entry is now an embeds-first row that matches `timeline.html`:
+ *   1. a `.via` attribution row rendered by the UI **outside** the embed
+ *      (18px app chip + app name + clock time, delete on hover) — this is the
+ *      anti-impersonation guarantee: the app can never forge its own attribution.
+ *   2. the body — the source app's own card via <TimelineEmbed kind="timeline-card">
+ *      (app-declared height), or a legacy info-card fetch, or the StandardCard
+ *      fallback for plain / uninstalled-app entries.
  *
- * Icons are resolved dynamically from app_meta (manifest data),
- * with a legacy static map as fallback for old entries.
+ * The old chrome (bordered card, collection badge, expand-raw-JSON, in-row title)
+ * is gone — the day-group header gives the date, the embed owns the content, and
+ * the full record stays one click away in the detail view.
  */
 
 "use client";
@@ -22,18 +25,9 @@ import {
   Calendar,
   Star,
   Package,
-  Trash2,
-  ChevronDown,
-  ChevronUp,
   Search,
-  MapPin,
-  BookOpen,
-  Eye,
-  Heart,
-  ListPlus,
-  Play,
+  Trash2,
 } from "lucide-react";
-import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { TimelineEmbed, type AppMetaEntry } from "./timeline-embed";
 import { TimelineInfoCard } from "./timeline-info-card";
@@ -83,35 +77,33 @@ const LEGACY_TYPE_ICONS: Record<string, typeof Film> = {
   "item-rated": Star,
 };
 
-const COLLECTION_COLORS: Record<string, string> = {
-  history: "border-l-blue-500",
-  future: "border-l-amber-500",
-  imported: "border-l-emerald-500",
-};
-
 /**
  * Resolve the icon for a timeline entry.
  * Priority: entry-type icon from manifest > app-level icon from manifest > legacy map > Package
  */
 function resolveEntryIcon(
   entryType: string,
-  appId: string,
   appMeta?: AppMetaEntry
 ): typeof Film {
-  // 1. Per-entry-type icon from manifest
   if (appMeta?.entry_icons[entryType]) {
     return resolveLucideIcon(appMeta.entry_icons[entryType]);
   }
-  // 2. App-level icon from manifest
   if (appMeta?.icon) {
     return resolveLucideIcon(appMeta.icon);
   }
-  // 3. Legacy static map
   if (LEGACY_TYPE_ICONS[entryType]) {
     return LEGACY_TYPE_ICONS[entryType];
   }
-  // 4. Fallback
   return Package;
+}
+
+/** Soft-tinted chip style from a hex accent (bg ~12% alpha, fg full) — matches the mockup `.mini`. */
+function chipStyle(hex: string | null | undefined): React.CSSProperties | undefined {
+  if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return undefined;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return { background: `rgba(${r}, ${g}, ${b}, 0.12)`, color: hex };
 }
 
 export function TimelineEntryCard({
@@ -121,52 +113,25 @@ export function TimelineEntryCard({
   onDelete,
   onSelect,
 }: TimelineEntryCardProps) {
-  const [expanded, setExpanded] = useState(false);
   const t = useTranslations("timeline");
 
-  const COLLECTION_LABELS: Record<string, string> = {
-    history: t("history"),
-    future: t("upcoming"),
-    imported: t("imported"),
-  };
-
   const appMeta = appMetaMap?.[entry.entry.app_id];
-  const Icon = resolveEntryIcon(entry.entry.entry_type, entry.entry.app_id, appMeta);
+  const Icon = resolveEntryIcon(entry.entry.entry_type, appMeta);
 
-  const borderColor =
-    COLLECTION_COLORS[entry.collection] ?? "border-l-gray-500";
+  const appSlug = entry.entry.app_id.replace(/^ye-/, "");
+  const appName = appSlug.charAt(0).toUpperCase() + appSlug.slice(1);
+  const chip = chipStyle(appMeta?.accent_color);
 
-  const formatTimestamp = (iso: string) => {
-    const d = new Date(iso);
-    const now = new Date();
-    const diffMs = now.getTime() - d.getTime();
-    const diffDays = Math.floor(diffMs / 86400000);
+  // Day-grouped feed gives the date — the per-entry attribution shows the clock time.
+  const clockTime = new Date(entry.entry.timestamp).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
-    if (diffDays === 0) {
-      return t("today", {
-        time: d.toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-      });
-    }
-    if (diffDays === 1) return t("yesterday");
-    if (diffDays < 7) return t("daysAgo", { count: diffDays });
-    return d.toLocaleDateString([], {
-      month: "short",
-      day: "numeric",
-      year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
-    });
-  };
-
-  const tags = Object.entries(entry.entry.tags).filter(
-    ([, v]) => v !== null && v !== undefined
-  );
-
-  // Determine which card rendering to use:
-  // 1. embed_path → TimelineEmbed (iframe with fallback)
-  // 2. Legacy infoCardUrl → TimelineInfoCard (data fetch)
-  // 3. Neither → no card, just text entry
+  // Body selection:
+  //  1. embed_path → the app's own card (iframe) with StandardCard fallback
+  //  2. legacy info-card URL → fetched info card
+  //  3. neither → StandardCard (TimelineEmbed renders it when embed_path is absent)
   const hasEmbedPath = !!entry.entry.embed_path;
   const legacyInfoCardUrl = !hasEmbedPath
     ? (entry.entry.infoCardUrl ??
@@ -176,123 +141,71 @@ export function TimelineEntryCard({
     : null;
 
   return (
-    <div
-      className={`border-l-4 ${borderColor} bg-card rounded-lg border shadow-sm hover:shadow-md transition-shadow`}
-    >
-      <div className="flex items-start gap-3 p-4">
-        {/* Icon */}
-        <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-accent flex items-center justify-center">
-          <Icon className="w-5 h-5 text-muted-foreground" />
-        </div>
+    <div className="group grid gap-1.5">
+      {/* Attribution row (.via) — UI-rendered, outside the embed (anti-impersonation) */}
+      <div className="flex items-center gap-[7px] pl-0.5 text-xs text-muted-foreground">
+        <button
+          type="button"
+          onClick={() => onSelect?.(entry)}
+          className="flex items-center gap-[7px] rounded transition-colors hover:text-foreground"
+          title={t("backToTimeline")}
+        >
+          <span
+            className="grid h-[18px] w-[18px] place-items-center rounded-[5px] bg-accent text-muted-foreground"
+            style={chip}
+          >
+            <Icon className="h-[11px] w-[11px]" />
+          </span>
+          <span className="font-medium text-foreground/90">{appName}</span>
+        </button>
 
-        {/* Content */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <h3
-                className="font-medium text-sm cursor-pointer hover:text-primary transition-colors"
-                onClick={() => onSelect?.(entry)}
-              >
-                {entry.entry.title}
-              </h3>
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-xs text-muted-foreground">
-                  {formatTimestamp(entry.entry.timestamp)}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  &middot;
-                </span>
-                <span className="text-xs text-muted-foreground capitalize">
-                  {entry.entry.app_id.replace(/^ye-/, "")}
-                </span>
-                {entry.entry.import_source && (
-                  <>
-                    <span className="text-xs text-muted-foreground">
-                      &middot;
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {t("via", { source: entry.entry.import_source })}
-                    </span>
-                  </>
-                )}
-              </div>
-            </div>
+        {entry.entry.import_source && (
+          <span>· {t("via", { source: entry.entry.import_source })}</span>
+        )}
 
-            <div className="flex items-center gap-1">
-              {/* Collection badge */}
-              <span className="text-[10px] uppercase tracking-wider font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                {COLLECTION_LABELS[entry.collection] ?? entry.collection}
-              </span>
+        <time className="ml-auto tabular-nums">{clockTime}</time>
 
-              {/* Expand/collapse */}
-              <button
-                onClick={() => setExpanded(!expanded)}
-                className="p-1 rounded hover:bg-accent transition-colors"
-              >
-                {expanded ? (
-                  <ChevronUp className="w-4 h-4 text-muted-foreground" />
-                ) : (
-                  <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                )}
-              </button>
-
-              {/* Delete */}
-              {onDelete && (
-                <button
-                  onClick={() => onDelete(entry.id)}
-                  className="p-1 rounded hover:bg-red-500/10 transition-colors"
-                >
-                  <Trash2 className="w-4 h-4 text-muted-foreground hover:text-red-500" />
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Tags */}
-          {tags.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-2">
-              {tags.map(([key, value]) => (
-                <span
-                  key={key}
-                  className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] bg-accent text-muted-foreground"
-                >
-                  {key}: {String(value)}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {/* Embed card (new system — iframe with fallback) */}
-          {hasEmbedPath && domain && (
-            <div className="mt-3">
-              <TimelineEmbed entry={entry.entry} domain={domain} appMeta={appMeta} />
-            </div>
-          )}
-
-          {/* Embed card fallback when no domain provided (standard card only) */}
-          {hasEmbedPath && !domain && (
-            <div className="mt-3">
-              <TimelineEmbed entry={entry.entry} domain="" appMeta={appMeta} />
-            </div>
-          )}
-
-          {/* Legacy info card (for entries created before embed_path) */}
-          {legacyInfoCardUrl && (
-            <div className="mt-3">
-              <TimelineInfoCard infoCardUrl={legacyInfoCardUrl} size="compact" />
-            </div>
-          )}
-
-          {/* Expanded data */}
-          {expanded && Object.keys(entry.entry.data).length > 0 && (
-            <div className="mt-3 p-3 bg-muted rounded-md">
-              <pre className="text-xs text-muted-foreground overflow-x-auto whitespace-pre-wrap">
-                {JSON.stringify(entry.entry.data, null, 2)}
-              </pre>
-            </div>
-          )}
-        </div>
+        {onDelete && (
+          <button
+            type="button"
+            onClick={() => onDelete(entry.id)}
+            className="rounded p-0.5 opacity-0 transition-opacity hover:text-red-500 focus:opacity-100 group-hover:opacity-100"
+            title={t("deleteEntry")}
+            aria-label={t("deleteEntry")}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
+
+      {/* Body — the embed (app-native), legacy info card, or StandardCard fallback */}
+      {hasEmbedPath ? (
+        <TimelineEmbed entry={entry.entry} domain={domain ?? ""} appMeta={appMeta} />
+      ) : legacyInfoCardUrl ? (
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => onSelect?.(entry)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") onSelect?.(entry);
+          }}
+          className="cursor-pointer"
+        >
+          <TimelineInfoCard infoCardUrl={legacyInfoCardUrl} size="compact" />
+        </div>
+      ) : (
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => onSelect?.(entry)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") onSelect?.(entry);
+          }}
+          className="cursor-pointer"
+        >
+          <TimelineEmbed entry={entry.entry} domain={domain ?? ""} appMeta={appMeta} />
+        </div>
+      )}
     </div>
   );
 }

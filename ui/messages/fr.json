@@ -282,6 +282,8 @@
     "createPin": "Créer un PIN",
     "today": "Aujourd'hui à {time}",
     "yesterday": "Hier",
+    "dayToday": "Aujourd’hui",
+    "deleteEntry": "Supprimer l’entrée",
     "daysAgo": "Il y a {count} jours",
     "history": "Historique",
     "upcoming": "À venir",
