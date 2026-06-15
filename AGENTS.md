@@ -1,3 +1,13 @@
+## ui-v0.4.20 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E6 fix — legacy resize-only embeds lost to fallback
+
+### Changes
+- `ui/src/components/embeds/unified-embed.tsx` — a `youeye:resize`/legacy resize now also `setReady(true)` (a resizing embed is alive). Without it, legacy settings panels (`youeye-app-settings-resize`, no ready) timed out to the fallback. `ui/package.json` → 0.4.20; e6 spec → 4/4.
+
+### Test Results
+- e6 4/4 + timeline/notif/widget/launcher specs still green (shared component). `pnpm build` OK. Caught verifying 0.4.19.
+
 ## ui-v0.4.19 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 E6 — app settings panel on UnifiedEmbed (acceptance #6 met)

@@ -163,6 +163,11 @@ export function UnifiedEmbed({
         if (LEGACY_RESIZE.has(type)) {
           console.warn(`[UnifiedEmbed] legacy resize message "${type}" — migrate to "youeye:resize"`);
         }
+        // A resize means the embed has mounted and is running — treat it as ready.
+        // Legacy surfaces (e.g. settings panels via `youeye-app-settings-resize`)
+        // only ever send resize, never an explicit ready; without this they would
+        // time out to the fallback even though they are alive.
+        setReady(true);
         const h = Number((data as { height?: number }).height);
         if (Number.isFinite(h) && h > 0) setHeight(clampHeight(h));
         return;

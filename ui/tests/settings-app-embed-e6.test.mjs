@@ -26,3 +26,11 @@ test('a visible fallback is provided (never silent)', () => {
   assert.match(detail, /fallback=\{/);
   assert.match(detail, /failed to load/i);
 });
+
+test('UnifiedEmbed treats a resize as ready — legacy resize-only surfaces are not lost to the fallback', () => {
+  const embed = read('src/components/embeds/unified-embed.tsx');
+  assert.match(embed, /treat it as ready/);                 // the resize-branch comment
+  // setReady(true) now appears in BOTH the ready branch and the resize branch
+  const count = (embed.match(/setReady\(true\)/g) || []).length;
+  assert.ok(count >= 2, `expected >=2 setReady(true), got ${count}`);
+});
