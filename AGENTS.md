@@ -1,3 +1,22 @@
+## cp-v0.4.40 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — Privacy page rebuilt to mockup (Your data + admin Server card) + real telemetry toggle
+
+### Changes
+- `control-panel/src/components/settings-shell/privacy-client.tsx` — NEW. **Your data**: Timeline lock on the real UI PIN flow (on+disabled when set — no remove endpoint, honest copy; Change PIN / Lock now); Export my data scoped out (disabled + "Coming soon"). **Server** (admin): Local usage statistics with exact D18 copy + Download/Reset.
+- `control-panel/src/app/settings/(shell)/privacy/page.tsx` — replaced `redirect("/settings")` stub; Personal page, passes `isAdmin`, PAM/CLI → System.
+- `control-panel/src/lib/telemetry/tracker.ts` — real persisted `enabled` flag (`isTelemetryEnabled`/`setTelemetryEnabled`; `trackRoute`/`trackError` no-op when off; `reset()` preserves flag).
+- `control-panel/src/app/api/telemetry/settings/route.ts` — NEW: GET (session) / PATCH (admin+CSRF) toggle.
+- `control-panel/src/app/api/telemetry/export/route.ts` — added admin guard (was unauthenticated) + CSRF on DELETE.
+- `control-panel/src/app/settings/api/telemetry/{settings,export}/route.ts` — NEW proxies.
+- `control-panel/package.json` → 0.4.40; new spec `tests/settings-privacy.spec.ts`.
+
+### Test Results
+- `settings-privacy.spec.ts` 9/9 (+ about 7/7); `pnpm build` OK. Released cp-v0.4.40 → bykapc deploy + verify on lemon.app/settings/privacy.
+
+### Notes for Iris
+- N/A (direct-to-main). New telemetry settings route + 2 proxies; telemetry export hardened (admin+CSRF). No new dependency, no UI→CP call. Deferred backends (PIN-remove, user-data export) → Plans/Archive/To Plan/.
+
 ## cp-v0.4.39 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 C2 — About page rebuilt to mockup (This server + Software cards)

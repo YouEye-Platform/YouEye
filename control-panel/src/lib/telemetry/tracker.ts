@@ -22,6 +22,7 @@ const FLUSH_INTERVAL_MS = 60_000;
 export interface CpTelemetryReport {
   version: string;
   component: "control-panel";
+  enabled: boolean;
   period_start: string;
   last_flush: string;
   routes: Record<string, number>;
@@ -32,6 +33,7 @@ function emptyReport(): CpTelemetryReport {
   return {
     version: "1",
     component: "control-panel",
+    enabled: true,
     period_start: new Date().toISOString(),
     last_flush: new Date().toISOString(),
     routes: {},
@@ -54,7 +56,11 @@ class CpUsageTracker {
       if (existsSync(DATA_FILE)) {
         const raw = readFileSync(DATA_FILE, "utf-8");
         const parsed = JSON.parse(raw) as CpTelemetryReport;
-        if (parsed.routes) return parsed;
+        if (parsed.routes) {
+          // Default to enabled for files written before the toggle existed.
+          parsed.enabled = parsed.enabled !== false;
+          return parsed;
+        }
       }
     } catch { /* start fresh */ }
     return emptyReport();
@@ -92,12 +98,14 @@ class CpUsageTracker {
   }
 
   trackRoute(pathname: string): void {
+    if (!this.data.enabled) return;
     const normalized = this.normalizeRoute(pathname);
     this.data.routes[normalized] = (this.data.routes[normalized] || 0) + 1;
     this.dirty = true;
   }
 
   trackError(route: string, message: string): void {
+    if (!this.data.enabled) return;
     const existing = this.data.errors.find(
       (e) => e.route === route && e.message === message
     );
@@ -125,8 +133,21 @@ class CpUsageTracker {
   }
 
   reset(): void {
+    const wasEnabled = this.data.enabled;
     drainCounters(); // Clear edge counters too
     this.data = emptyReport();
+    this.data.enabled = wasEnabled; // resetting data must not silently re-enable collection
+    this.dirty = true;
+    this.writeToDisk();
+  }
+
+  isEnabled(): boolean {
+    return this.data.enabled;
+  }
+
+  setEnabled(value: boolean): void {
+    if (this.data.enabled === value) return;
+    this.data.enabled = value;
     this.dirty = true;
     this.writeToDisk();
   }
@@ -170,4 +191,12 @@ export function getCpTelemetryReport(): CpTelemetryReport {
 
 export function resetCpTelemetry(): void {
   cpTracker.reset();
+}
+
+export function isTelemetryEnabled(): boolean {
+  return cpTracker.isEnabled();
+}
+
+export function setTelemetryEnabled(value: boolean): void {
+  cpTracker.setEnabled(value);
 }
