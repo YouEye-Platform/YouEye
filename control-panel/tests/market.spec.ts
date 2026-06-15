@@ -61,3 +61,36 @@ test('Sources toggles persist to the real source API (no fake control)', () => {
   assert.match(s, /onCheckedChange=\{\(v\) => toggle/);
   assert.match(s, /active_sources/);
 });
+
+test('App detail rebuilt to mockup: hero (88px tile) + meta band + 2-up gallery + About', () => {
+  const d = read('src/app/market/[appId]/page.tsx');
+  assert.match(d, /heroTile/);                 // category-coloured 88px tile
+  assert.match(d, /size-\[88px\]/);
+  assert.match(d, />Version</);
+  assert.match(d, />Category</);
+  assert.match(d, />Source</);
+  assert.match(d, />Developer</);
+  assert.match(d, />Account login</);
+  assert.match(d, /About this app/);
+  // gallery shows designed placeholders, never broken images
+  assert.match(d, /aspectRatio: '16 \/ 10'/);
+  assert.match(d, /<Camera /);
+});
+
+test('App detail preserves install/uninstall machinery + drops the fake domain fallback', () => {
+  const d = read('src/app/market/[appId]/page.tsx');
+  assert.match(d, /InstallDialog/);
+  assert.match(d, /handleInstall/);
+  assert.match(d, /UninstallDialog/);
+  assert.match(d, /handleUninstall/);
+  assert.doesNotMatch(d, /youeye\.local/);     // pitfall #13
+});
+
+test('App detail is token-styled (dark-mode-correct), no hardcoded gray/blue/white', () => {
+  const d = read('src/app/market/[appId]/page.tsx');
+  assert.doesNotMatch(d, /text-gray-\d/);
+  assert.doesNotMatch(d, /bg-gray-\d/);
+  assert.doesNotMatch(d, /\bbg-white\b/);
+  assert.doesNotMatch(d, /text-blue-\d/);
+  assert.doesNotMatch(d, /border-gray-\d/);
+});

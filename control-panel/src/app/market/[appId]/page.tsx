@@ -50,6 +50,19 @@ const ICON_MAP: Record<string, typeof Search> = {
   plug: Plug,
 };
 
+// Colorful app-icon tile by category (mockup palette — intentionally light in both
+// themes, like an OS home-screen icon).
+const HERO_TILE: Record<string, { background: string; color: string }> = {
+  productivity: { background: '#eff6ff', color: '#2563eb' },
+  media: { background: '#fdf2f8', color: '#db2777' },
+  search: { background: '#f5f3ff', color: '#7c3aed' },
+  social: { background: '#ecfeff', color: '#0891b2' },
+  utilities: { background: '#f0f9ff', color: '#0284c7' },
+};
+function heroTile(category?: string) {
+  return HERO_TILE[category || ''] || { background: '#f4f4f5', color: '#52525b' };
+}
+
 export default function AppDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -363,7 +376,7 @@ export default function AppDetailPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
@@ -375,15 +388,15 @@ export default function AppDetailPage() {
       <div className="space-y-6">
         <button
           onClick={() => router.push('/market')}
-          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to Market
         </button>
         <div className="rounded-xl border border-red-200 bg-red-50 p-8 text-center">
           <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-3" />
-          <h2 className="text-lg font-semibold text-gray-900 mb-1">App Not Found</h2>
-          <p className="text-sm text-gray-500">
+          <h2 className="text-lg font-semibold text-foreground mb-1">App Not Found</h2>
+          <p className="text-sm text-muted-foreground">
             {error || `The app "${appId}" could not be found in the catalog.`}
           </p>
           <Button
@@ -430,7 +443,7 @@ export default function AppDetailPage() {
       {/* Back button */}
       <button
         onClick={() => router.push('/market')}
-        className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+        className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
         Back to Market
@@ -438,112 +451,84 @@ export default function AppDetailPage() {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
       <div className="space-y-6">
-      {/* Header card */}
-      <div className="rounded-xl border border-gray-200 bg-white p-6">
-        <div className="flex items-start gap-5">
-          {/* App icon */}
-          <div className="p-4 rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
-            {app.iconUrl ? (
-              <Image
-                src={app.iconUrl}
-                alt={app.name}
-                width={48}
-                height={48}
-                className="h-12 w-12 object-contain"
-                unoptimized
-              />
-            ) : (
-              <FallbackIcon className="h-12 w-12 text-blue-600" />
-            )}
-          </div>
-
-          {/* App info */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-bold text-gray-900">{app.name}</h1>
-              {app.version && (
-                <Badge variant="outline" className="text-xs">
-                  v{app.version}
-                </Badge>
-              )}
-              {isIntegration ? (
-                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-100">
-                  <Plug className="h-3 w-3" />
-                  Integration
-                </span>
-              ) : app.integration === 'native' ? (
-                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100">
-                  <Shield className="h-3 w-3" />
-                  Native
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-gray-50 text-gray-500 border border-gray-200">
-                  <Globe className="h-3 w-3" />
-                  External
-                </span>
-              )}
-            </div>
-            <p className="text-sm text-gray-400 capitalize mt-1">
-              Category: {app.category}
-            </p>
-
-            {/* Status indicator when installed */}
-            {isInstalled && (
-              <div className="mt-2 flex items-center gap-1.5">
-                <CheckCircle2 className="h-4 w-4 text-green-500" />
-                <span className="text-sm text-green-600 font-medium capitalize">
-                  {appStatus}
-                </span>
-                <HealthDot
-                  healthStatus={status?.healthStatus}
-                  healthCheckedAt={status?.healthCheckedAt}
-                />
-                {status?.url && (
-                  <a
-                    href={status.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-blue-600 hover:underline flex items-center gap-1 ml-2"
-                  >
-                    {status.url}
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
-                )}
-              </div>
-            )}
-          </div>
+      {/* Hero */}
+      <div className="flex flex-wrap items-center gap-5">
+        <div
+          className="flex size-[88px] shrink-0 items-center justify-center rounded-[22px] border shadow-sm"
+          style={heroTile(app.category)}
+        >
+          {app.iconUrl ? (
+            <Image src={app.iconUrl} alt={app.name} width={48} height={48} className="h-12 w-12 object-contain" unoptimized />
+          ) : (
+            <FallbackIcon className="h-10 w-10" />
+          )}
         </div>
-
-        {integrationMessage && (
-          <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
-            {integrationMessage}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-[28px] font-bold tracking-tight text-foreground">{app.name}</h1>
+            {isIntegration ? (
+              <Badge variant="secondary" className="gap-1"><Plug className="h-3 w-3" /> Integration</Badge>
+            ) : app.integration === 'native' ? (
+              <Badge variant="secondary" className="gap-1 bg-primary/10 text-primary"><Shield className="h-3 w-3" /> Native</Badge>
+            ) : (
+              <Badge variant="secondary" className="gap-1"><Globe className="h-3 w-3" /> External</Badge>
+            )}
           </div>
+          <p className="mt-1 text-[15px] text-muted-foreground">{app.description}</p>
+          {isInstalled && status?.url && (
+            <a href={status.url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 text-sm text-primary hover:underline">
+              {status.url}<ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+        </div>
+      </div>
+
+      {integrationMessage && (
+        <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">{integrationMessage}</div>
+      )}
+
+      {/* Meta band */}
+      <div className="grid grid-cols-2 gap-3 rounded-xl border bg-card p-[18px] sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Version</span><span className="text-[13.5px] font-semibold">{app.version ? `v${app.version}` : '—'}</span></div>
+        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Category</span><span className="text-[13.5px] font-semibold capitalize">{app.category || '—'}</span></div>
+        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Source</span><span className="truncate text-[13.5px] font-semibold">{app.sourceName || app.sourceId || 'Market'}</span></div>
+        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Developer</span><span className="truncate text-[13.5px] font-semibold">{app.integration === 'native' ? 'YouEye (official)' : (app.sourceName || '—')}</span></div>
+        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Account login</span><span className="flex items-center gap-1.5 text-[13.5px] font-semibold">{!isIntegration && (app.supportsSSO || app.forwardAuth !== 'disabled') && <Shield className="h-3.5 w-3.5 text-green-600" />}{app.supportsSSO ? 'Built in' : status?.forwardAuthEnabled ? 'Protected' : app.forwardAuth === 'disabled' ? 'Unavailable' : 'Optional'}</span></div>
+      </div>
+
+      {/* Gallery — real screenshots, or designed placeholders (never broken images) */}
+      <div className="grid gap-3.5 sm:grid-cols-2">
+        {(screenshots.length > 0 ? screenshots.slice(0, 2) : [null, null]).map((shot, i) =>
+          shot ? (
+            <div key={i} className="relative overflow-hidden rounded-2xl border bg-muted/30" style={{ aspectRatio: '16 / 10' }}>
+              <Image src={shot.url} alt={shot.caption || `Screenshot ${i + 1}`} fill className="object-cover" unoptimized />
+              {shot.caption && <div className="absolute inset-x-0 bottom-0 bg-background/85 px-3.5 py-2 text-[12.5px] text-muted-foreground">{shot.caption}</div>}
+            </div>
+          ) : (
+            <div key={i} className="flex items-center justify-center rounded-2xl border bg-muted/30 text-muted-foreground/40" style={{ aspectRatio: '16 / 10' }}>
+              <Camera className="h-7 w-7" />
+            </div>
+          ),
         )}
       </div>
-
-      {/* Description section */}
-      <div className="rounded-xl border border-gray-200 bg-white p-6">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-          Description
-        </h2>
-        <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
-          {longDescription}
-        </div>
-      </div>
-
-      {/* Screenshots gallery */}
-      {screenshots.length > 0 && (
-        <div className="rounded-xl border border-gray-200 bg-white p-6">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-            Screenshots
-          </h2>
+      {screenshots.length > 2 && (
+        <div className="rounded-xl border bg-card p-[22px]">
+          <h2 className="mb-3 text-[15px] font-semibold">More screenshots</h2>
           <ScreenshotGallery screenshots={screenshots} />
         </div>
       )}
 
+      {/* About */}
+      <div className="rounded-xl border bg-card p-[22px]">
+        <h2 className="text-[15px] font-semibold">About this app</h2>
+        <div className="mt-3 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+          {longDescription}
+        </div>
+      </div>
+
       {/* Details section */}
-      <div className="rounded-xl border border-gray-200 bg-white p-6">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
+      <div className="rounded-xl border border-border bg-card p-6">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-4">
           What this app uses
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -554,8 +539,8 @@ export default function AppDetailPage() {
                 <Plug className="h-4 w-4 text-violet-600" />
               </div>
               <div>
-                <p className="text-xs text-gray-400">Target App</p>
-                <p className="text-sm font-medium text-gray-700">
+                <p className="text-xs text-muted-foreground">Target App</p>
+                <p className="text-sm font-medium text-foreground">
                   {app.target?.appName || app.target?.appId || 'Unknown'}
                   {app.target?.version ? ` ${app.target.version}` : ''}
                 </p>
@@ -570,18 +555,18 @@ export default function AppDetailPage() {
             />
           ) : (
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-gray-50">
-                <Shield className="h-4 w-4 text-gray-500" />
+              <div className="p-2 rounded-lg bg-muted">
+                <Shield className="h-4 w-4 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-xs text-gray-400">SSO Support</p>
-                <p className="text-sm font-medium text-gray-700">
+                <p className="text-xs text-muted-foreground">SSO Support</p>
+                <p className="text-sm font-medium text-foreground">
                   {app.supportsSSO ? (
                     <span className="text-green-600">Native OAuth2</span>
                   ) : app.forwardAuth !== 'disabled' ? (
                     <span className="text-green-600">Forward-auth (auto)</span>
                   ) : (
-                    <span className="text-gray-400">Disabled</span>
+                    <span className="text-muted-foreground">Disabled</span>
                   )}
                 </p>
               </div>
@@ -590,12 +575,12 @@ export default function AppDetailPage() {
 
           {isIntegration && app.integrations?.[0]?.permissions?.length ? (
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-gray-50">
-                <Shield className="h-4 w-4 text-gray-500" />
+              <div className="p-2 rounded-lg bg-muted">
+                <Shield className="h-4 w-4 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-xs text-gray-400">Permissions</p>
-                <p className="text-sm font-medium text-gray-700">
+                <p className="text-xs text-muted-foreground">Permissions</p>
+                <p className="text-sm font-medium text-foreground">
                   {app.integrations[0].permissions.join(', ')}
                 </p>
               </div>
@@ -604,12 +589,12 @@ export default function AppDetailPage() {
 
           {capabilityLabels.length > 0 && !isIntegration && (
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-gray-50">
-                <Package className="h-4 w-4 text-gray-500" />
+              <div className="p-2 rounded-lg bg-muted">
+                <Package className="h-4 w-4 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-xs text-gray-400">App features</p>
-                <p className="text-sm font-medium text-gray-700">
+                <p className="text-xs text-muted-foreground">App features</p>
+                <p className="text-sm font-medium text-foreground">
                   {capabilityLabels.join(', ')}
                 </p>
               </div>
@@ -619,16 +604,16 @@ export default function AppDetailPage() {
           {/* Website */}
           {app.website && (
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-gray-50">
-                <Globe className="h-4 w-4 text-gray-500" />
+              <div className="p-2 rounded-lg bg-muted">
+                <Globe className="h-4 w-4 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-xs text-gray-400">Website</p>
+                <p className="text-xs text-muted-foreground">Website</p>
                 <a
                   href={app.website}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-sm font-medium text-blue-600 hover:underline flex items-center gap-1"
+                  className="text-sm font-medium text-primary hover:underline flex items-center gap-1"
                 >
                   {(() => {
                     try {
@@ -646,12 +631,12 @@ export default function AppDetailPage() {
           {/* Market Source */}
           {app.sourceName && (
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-gray-50">
-                <Package className="h-4 w-4 text-gray-500" />
+              <div className="p-2 rounded-lg bg-muted">
+                <Package className="h-4 w-4 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-xs text-gray-400">Market Source</p>
-                <p className="text-sm font-medium text-gray-700">
+                <p className="text-xs text-muted-foreground">Market Source</p>
+                <p className="text-sm font-medium text-foreground">
                   {isInstalled && status?.sourceName ? status.sourceName : app.sourceName}
                 </p>
               </div>
@@ -660,13 +645,13 @@ export default function AppDetailPage() {
         </div>
 
         {isDifferentSourceVariant && (
-          <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4">
+          <div className="mt-5 rounded-lg border border-primary/30 bg-primary/10p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-sm font-medium text-blue-900">
+                <p className="text-sm font-medium text-foreground">
                   This variant is from {app.sourceName || app.sourceId}.
                 </p>
-                <p className="mt-1 text-sm text-blue-700">
+                <p className="mt-1 text-sm text-muted-foreground">
                   Current install source is {status?.sourceName || status?.sourceId}. Switching changes the source used for future update checks and updates.
                 </p>
               </div>
@@ -675,7 +660,7 @@ export default function AppDetailPage() {
                 size="sm"
                 onClick={handleSwitchSource}
                 disabled={switchingSource}
-                className="border-blue-200 bg-white text-blue-700 hover:bg-blue-100"
+                className="border-primary/30 bg-card text-muted-foreground hover:bg-primary/15"
               >
                 {switchingSource ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : null}
                 Use this source
@@ -685,23 +670,23 @@ export default function AppDetailPage() {
         )}
 
         {sourceSwitchMessage && (
-          <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+          <div className="mt-3 rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground">
             {sourceSwitchMessage}
           </div>
         )}
 
         {manifestSyncMessage && (
-          <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+          <div className="mt-3 rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground">
             {manifestSyncMessage}
           </div>
         )}
 
         {/* Tags */}
         {app.tags.length > 0 && (
-          <div className="mt-5 pt-4 border-t border-gray-100">
+          <div className="mt-5 pt-4 border-t border-border">
             <div className="flex items-center gap-2 mb-2">
-              <Tag className="h-4 w-4 text-gray-400" />
-              <p className="text-xs text-gray-400 uppercase tracking-wide font-medium">
+              <Tag className="h-4 w-4 text-muted-foreground" />
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 Tags
               </p>
             </div>
@@ -709,7 +694,7 @@ export default function AppDetailPage() {
               {app.tags.map((tag) => (
                 <span
                   key={tag}
-                  className="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-600"
+                  className="text-xs px-2.5 py-1 rounded-full bg-muted text-muted-foreground"
                 >
                   {tag}
                 </span>
@@ -739,16 +724,16 @@ export default function AppDetailPage() {
           </div>
           <div className="space-y-3">
             {credentials.map((cred, i) => (
-              <div key={i} className="rounded-lg border border-amber-200 bg-white p-4">
-                <p className="text-xs text-gray-400 font-medium mb-2">{cred.label}</p>
+              <div key={i} className="rounded-lg border border-amber-200 bg-card p-4">
+                <p className="text-xs text-muted-foreground font-medium mb-2">{cred.label}</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <p className="text-xs text-gray-400">Username</p>
+                    <p className="text-xs text-muted-foreground">Username</p>
                     <div className="flex items-center gap-2">
-                      <code className="text-sm font-mono text-gray-800">{cred.username}</code>
+                      <code className="text-sm font-mono text-foreground">{cred.username}</code>
                       <button
                         onClick={() => navigator.clipboard.writeText(cred.username)}
-                        className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600"
+                        className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-muted-foreground"
                         title="Copy username"
                       >
                         <Copy className="h-3.5 w-3.5" />
@@ -756,9 +741,9 @@ export default function AppDetailPage() {
                     </div>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-400">Password</p>
+                    <p className="text-xs text-muted-foreground">Password</p>
                     <div className="flex items-center gap-2">
-                      <code className="text-sm font-mono text-gray-800">
+                      <code className="text-sm font-mono text-foreground">
                         {visiblePasswords.has(i) ? cred.password : '\u2022'.repeat(12)}
                       </code>
                       <button
@@ -770,14 +755,14 @@ export default function AppDetailPage() {
                             return next;
                           });
                         }}
-                        className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600"
+                        className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-muted-foreground"
                         title={visiblePasswords.has(i) ? 'Hide password' : 'Show password'}
                       >
                         {visiblePasswords.has(i) ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                       </button>
                       <button
                         onClick={() => navigator.clipboard.writeText(cred.password)}
-                        className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600"
+                        className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-muted-foreground"
                         title="Copy password"
                       >
                         <Copy className="h-3.5 w-3.5" />
@@ -797,19 +782,19 @@ export default function AppDetailPage() {
       </div>
 
       <aside className="lg:sticky lg:top-24">
-        <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+        <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
           <div className="space-y-4">
             <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Status</p>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Status</p>
               <div className="mt-2 flex items-center gap-2">
                 {isIntegration ? (
-                  <Plug className="h-4 w-4 text-blue-500" />
+                  <Plug className="h-4 w-4 text-primary" />
                 ) : isInstalled ? (
                   <CheckCircle2 className="h-4 w-4 text-green-500" />
                 ) : (
-                  <Package className="h-4 w-4 text-gray-400" />
+                  <Package className="h-4 w-4 text-muted-foreground" />
                 )}
-                <span className="text-sm font-medium text-gray-900">
+                <span className="text-sm font-medium text-foreground">
                   {isIntegration
                     ? integrationInstalled ? 'Applied' : 'Available'
                     : isInstalled ? appStatus : 'Ready to install'}
@@ -827,32 +812,32 @@ export default function AppDetailPage() {
               <div className="space-y-4">
                 <div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium text-gray-900">
+                    <span className="font-medium text-foreground">
                       {installDone
                         ? installFailed ? 'Installation failed' : 'Ready'
                         : `Installing ${app.name}`}
                     </span>
-                    <span className="text-gray-400">{installPercent}%</span>
+                    <span className="text-muted-foreground">{installPercent}%</span>
                   </div>
-                  <div className="mt-2 h-2 rounded-full bg-gray-100">
+                  <div className="mt-2 h-2 rounded-full bg-muted">
                     <div
                       className={`h-full rounded-full transition-all duration-500 ${
-                        installFailed ? 'bg-red-500' : installDone ? 'bg-green-500' : 'bg-blue-500'
+                        installFailed ? 'bg-red-500' : installDone ? 'bg-green-500' : 'bg-primary'
                       }`}
                       style={{ width: `${installPercent}%` }}
                     />
                   </div>
                   {latestInstallEvent?.message && (
-                    <p className="mt-2 text-sm text-gray-600">{latestInstallEvent.message}</p>
+                    <p className="mt-2 text-sm text-muted-foreground">{latestInstallEvent.message}</p>
                   )}
                 </div>
                 <div className="space-y-2">
                   {installEvents.slice(-6).map((event, i) => (
                     <div key={`${event.step}-${i}-${event.message}`} className="flex items-start gap-2 text-sm">
                       <div className={`mt-0.5 ${
-                        event.status === 'running' ? 'text-blue-500' :
+                        event.status === 'running' ? 'text-primary' :
                         event.status === 'success' ? 'text-green-500' :
-                        event.status === 'error' ? 'text-red-500' : 'text-gray-400'
+                        event.status === 'error' ? 'text-red-500' : 'text-muted-foreground'
                       }`}>
                         {event.status === 'running' ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -863,8 +848,8 @@ export default function AppDetailPage() {
                         )}
                       </div>
                       <div className="min-w-0">
-                        <p className="text-gray-700">{event.message}</p>
-                        {event.detail && <p className="truncate text-xs text-gray-400">{event.detail}</p>}
+                        <p className="text-foreground">{event.message}</p>
+                        {event.detail && <p className="truncate text-xs text-muted-foreground">{event.detail}</p>}
                       </div>
                     </div>
                   ))}
@@ -952,21 +937,21 @@ export default function AppDetailPage() {
               </div>
             )}
 
-            <div className="border-t border-gray-100 pt-4 text-sm">
+            <div className="border-t border-border pt-4 text-sm">
               <div className="flex justify-between gap-3">
-                <span className="text-gray-500">Source</span>
-                <span className="text-right font-medium text-gray-700">{app.sourceName || app.sourceId || 'Market'}</span>
+                <span className="text-muted-foreground">Source</span>
+                <span className="text-right font-medium text-foreground">{app.sourceName || app.sourceId || 'Market'}</span>
               </div>
               {app.version && (
                 <div className="mt-2 flex justify-between gap-3">
-                  <span className="text-gray-500">Version</span>
-                  <span className="font-medium text-gray-700">v{app.version}</span>
+                  <span className="text-muted-foreground">Version</span>
+                  <span className="font-medium text-foreground">v{app.version}</span>
                 </div>
               )}
               {!isIntegration && (
                 <div className="mt-2 flex justify-between gap-3">
-                  <span className="text-gray-500">Account login</span>
-                  <span className="text-right font-medium text-gray-700">
+                  <span className="text-muted-foreground">Account login</span>
+                  <span className="text-right font-medium text-foreground">
                     {app.supportsSSO ? 'Built in' : status?.forwardAuthEnabled ? 'Protected' : app.forwardAuth === 'disabled' ? 'Unavailable' : 'Optional'}
                   </span>
                 </div>
@@ -981,7 +966,7 @@ export default function AppDetailPage() {
       {showInstallDialog && app && (
         <InstallDialog
           app={app}
-          domain={domain || 'youeye.local'}
+          domain={domain || ''}
           onInstall={handleInstall}
           onClose={() => setShowInstallDialog(false)}
         />
@@ -1017,7 +1002,7 @@ function ScreenshotGallery({ screenshots }: ScreenshotGalleryProps) {
           <button
             key={i}
             onClick={() => setSelectedIndex(i)}
-            className="shrink-0 rounded-lg overflow-hidden border border-gray-200 hover:border-blue-400 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
+            className="shrink-0 rounded-lg overflow-hidden border border-border hover:border-primary transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
           >
             <Image
               src={shot.url}
@@ -1028,7 +1013,7 @@ function ScreenshotGallery({ screenshots }: ScreenshotGalleryProps) {
               unoptimized
             />
             {shot.caption && (
-              <p className="text-xs text-gray-500 px-2 py-1.5 bg-gray-50 truncate max-w-[280px]">
+              <p className="text-xs text-muted-foreground px-2 py-1.5 bg-muted truncate max-w-[280px]">
                 {shot.caption}
               </p>
             )}

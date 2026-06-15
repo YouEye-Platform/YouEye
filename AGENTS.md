@@ -1,3 +1,17 @@
+## cp-v0.4.46 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 D — Market app-detail rebuilt to mockup (completes D)
+
+### Changes
+- `control-panel/src/app/market/[appId]/page.tsx` — restyled to `app-detail.html`: hero (88px category tile + name + badge + tagline), meta band (Version/Category/Source/Developer/Account login), 2-up gallery w/ designed placeholders (`Camera`, never broken images; lightbox `ScreenshotGallery` kept for >2), About card. **ALL install/connection/credential/integration logic preserved** (only JSX restyled). Token-recolored (was hardcoded light → dark-mode-broken). Dropped fake `youeye.local` domain fallback (pitfall #13).
+- `control-panel/package.json` → 0.4.46; `tests/market.spec.ts` extended (8/8).
+
+### Test Results
+- `market.spec.ts` 8/8; `pnpm build` OK. Released cp-v0.4.46 → bykapc deploy + verify a market detail page on lemon.app.
+
+### Notes for Iris
+- N/A (direct-to-main). **Completes Workstream D.** Install/uninstall behavior unchanged (only restyle). `install-dialog.tsx` deeper token pass → F. No new dep, no UI→CP call.
+
 ## cp-v0.4.45 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 D — Market Browse rebuilt to Umbrel mockup + new Sources page
