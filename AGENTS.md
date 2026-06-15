@@ -1,3 +1,19 @@
+## cp-v0.4.39 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — About page rebuilt to mockup (This server + Software cards)
+
+### Changes
+- `control-panel/src/components/settings-shell/about-client.tsx` — full rewrite from the "About & Usage" telemetry stub to the mockup. **This server** (name + host/OS/uptime; domain + HTTPS reachability) and **Software** (Platform "core·interface" versions, Update channel, Open source licenses). Honest copy + `Promise.allSettled` degradation (pitfalls #23/#28). Telemetry export removed (moves to Privacy next slice).
+- `control-panel/src/app/settings/(shell)/about/page.tsx` — injects CP version from `package.json` (server-side), admin-gated.
+- `control-panel/src/app/settings/(shell)/about/licenses/page.tsx` — NEW: open-source licenses list (real OSS stack + YouEye BSL-1.1).
+- `control-panel/package.json` → 0.4.39; new spec `tests/settings-about.spec.ts`.
+
+### Test Results
+- `settings-about.spec.ts` 7/7; `pnpm build` OK (both About routes compiled). Released cp-v0.4.39 → bykapc deploy + verify on lemon.app/settings/about.
+
+### Notes for Iris
+- N/A (direct-to-main). No new backend route, no new dependency, no UI→CP call. Reuses existing admin APIs (settings, system, health, domain, tls).
+
 ## cp-v0.4.38 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 C2 — Network page rebuilt to mockup (DNS / Routes / Domain & HTTPS) + Switch primitive
