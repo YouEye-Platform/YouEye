@@ -217,6 +217,7 @@ export function AppDrawer({
           mode === "edit" ? "cursor-grab touch-none select-none active:cursor-grabbing hover:bg-accent/40" : "cursor-pointer hover:scale-105 hover:bg-accent/40"
         }${up ? "" : " opacity-40 grayscale"}${dragging ? " scale-95 opacity-30" : ""}`}
         onPointerDown={mode === "edit" ? (e) => drag.startDrag(e, app.id) : undefined}
+        onMouseDown={mode === "edit" ? (e) => drag.startDrag(e, app.id) : undefined}
         onClick={
           mode === "open"
             ? () => { if (!drag.consumeClick()) handleAppClick(app); }

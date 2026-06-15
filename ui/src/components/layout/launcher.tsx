@@ -272,6 +272,7 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
         type="button"
         ref={drag.register(app.id)}
         onPointerDown={(e) => drag.startDrag(e, app.id)}
+        onMouseDown={(e) => drag.startDrag(e, app.id)}
         onClick={() => { if (!drag.consumeClick() && app.url) go(app.url); }}
         className={`grid touch-none select-none justify-items-center gap-2 rounded-xl p-1 text-center transition-[transform,opacity] hover:scale-105 ${app.status === "unhealthy" ? "opacity-40 grayscale" : ""} ${dragging ? "scale-95 opacity-30" : ""} ${merge ? "scale-110" : ""}`}
         title={app.name}
@@ -293,6 +294,7 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
         type="button"
         ref={drag.register(folder.id)}
         onPointerDown={(e) => drag.startDrag(e, folder.id)}
+        onMouseDown={(e) => drag.startDrag(e, folder.id)}
         onClick={() => { if (!drag.consumeClick()) setOpenFolderId(folder.id); }}
         className={`grid touch-none select-none justify-items-center gap-2 rounded-xl p-1 text-center transition-[transform,opacity] hover:scale-105 ${dragging ? "scale-95 opacity-30" : ""} ${merge ? "scale-110" : ""}`}
         title={folder.name}

@@ -85,7 +85,7 @@ export function useGridDrag(opts: UseGridDragOptions): GridDragState {
     dwell.current = { id: null, t: null };
   };
 
-  const onMove = useCallback((e: PointerEvent) => {
+  const onMove = useCallback((e: PointerEvent | MouseEvent) => {
     const p = pending.current;
     if (!p) return;
     if (!active.current) {
@@ -135,6 +135,8 @@ export function useGridDrag(opts: UseGridDragOptions): GridDragState {
     window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", onUp);
     window.removeEventListener("pointercancel", onUp);
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", onUp);
     clearDwell();
     const o = optsRef.current;
     const p = pending.current;
@@ -151,10 +153,12 @@ export function useGridDrag(opts: UseGridDragOptions): GridDragState {
     setMergeTargetId(null);
   }, [onMove]);
 
-  const startDrag = useCallback((e: React.PointerEvent, id: string) => {
+  const startDrag = useCallback((e: PointerLike, id: string) => {
     if (optsRef.current.enabled === false) return;
-    // Only primary button / touch / pen.
+    // Only primary button.
     if (e.button !== undefined && e.button !== 0) return;
+    // Dedup: a real mouse fires BOTH pointerdown and mousedown — first one wins.
+    if (pending.current) return;
     pending.current = { id, x: e.clientX, y: e.clientY };
     active.current = false;
     // Capture the pointer on the tile: guarantees pointermove/up fire (and bubble
@@ -164,9 +168,13 @@ export function useGridDrag(opts: UseGridDragOptions): GridDragState {
     if (el && e.pointerId !== undefined) {
       try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     }
+    // Listen for both pointer and mouse streams (mouse is the fallback for
+    // environments — incl. some automation — that don't emit pointer events).
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
   }, [onMove, onUp]);
 
   return { draggingId, ghost, mergeTargetId, register, startDrag, consumeClick };

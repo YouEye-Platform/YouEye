@@ -1,3 +1,14 @@
+## ui-v0.4.26 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 5 — dual pointer+mouse drag sensor (robustness + testability)
+
+### Changes
+- `ui/src/lib/hooks/use-grid-drag.ts` — added a mouse-event fallback (mousedown→startDrag + window mousemove/mouseup) deduped vs pointer via a `pending` guard. Pointer primary (setPointerCapture); mouse fallback for envs without pointer events (incl. automation).
+- `ui/src/components/layout/{launcher,app-drawer}.tsx` — `onMouseDown` alongside `onPointerDown` on tiles.
+
+### Test Results
+- `pnpm build` OK; standalone 0.4.26. Intend to drive via tool mouse-drag to demonstrate reorder.
+
 ## ui-v0.4.25 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 5 fix — real-mouse drag didn't work (setPointerCapture)
