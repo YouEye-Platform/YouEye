@@ -69,8 +69,28 @@ export interface AppWidgetDef {
   name: string;
   description: string;
   default_size: { width: number; height: number };
+  min_size?: { width: number; height: number };
+  max_size?: { width: number; height: number };
   app_id: string;
   app_name: string;
+}
+
+type Size = { width: number; height: number };
+
+/**
+ * E5: clamp a widget to its app-declared min/max (viewport-percentage units).
+ * Built-in widgets read min/max from the catalog meta; app widgets carry their
+ * declared bounds in settings (`_minSize`/`_maxSize`, stored on add).
+ */
+function clampWidgetSize(w: WidgetData, width: number, height: number): Size {
+  const meta = getWidgetMeta(w.widgetType);
+  const min = (w.settings?._minSize as Size | undefined) ?? meta?.minSize;
+  const max = (w.settings?._maxSize as Size | undefined) ?? meta?.maxSize;
+  let cw = width;
+  let ch = height;
+  if (min) { cw = Math.max(min.width, cw); ch = Math.max(min.height, ch); }
+  if (max) { cw = Math.min(max.width, cw); ch = Math.min(max.height, ch); }
+  return { width: cw, height: ch };
 }
 
 export function WidgetGrid({ widgets, username, initialBackground }: WidgetGridProps) {
@@ -180,9 +200,12 @@ export function WidgetGrid({ widgets, username, initialBackground }: WidgetGridP
   const handleSizeChange = useCallback(
     (id: string, width: number, height: number) => {
       setLocalWidgets((prev) => {
-        const next = prev.map((w) =>
-          w.id === id ? { ...w, width, height } : w
-        );
+        const next = prev.map((w) => {
+          if (w.id !== id) return w;
+          // E5: honor the widget's declared min/max bounds on every resize.
+          const clamped = clampWidgetSize(w, width, height);
+          return { ...w, width: clamped.width, height: clamped.height };
+        });
         saveWidgets(next);
         return next;
       });
@@ -214,7 +237,13 @@ export function WidgetGrid({ widgets, username, initialBackground }: WidgetGridP
       const settings: Record<string, unknown> = widgetType === "greeting"
         ? { name: username }
         : widgetType === "app-widget" && appWidgetDef
-          ? { appId: appWidgetDef.app_id, widgetId: appWidgetDef.widget_id }
+          ? {
+              appId: appWidgetDef.app_id,
+              widgetId: appWidgetDef.widget_id,
+              // E5: persist the app's declared bounds so resize can clamp later.
+              ...(appWidgetDef.min_size ? { _minSize: appWidgetDef.min_size } : {}),
+              ...(appWidgetDef.max_size ? { _maxSize: appWidgetDef.max_size } : {}),
+            }
           : {};
       const newWidget: WidgetData = {
         id: `temp-${Date.now()}`,
@@ -226,6 +255,10 @@ export function WidgetGrid({ widgets, username, initialBackground }: WidgetGridP
         order: localWidgets.length,
         settings,
       };
+      // E5: arrive at the declared default, but never outside the declared bounds.
+      const clampedDefault = clampWidgetSize(newWidget, defaultW, defaultH);
+      newWidget.width = clampedDefault.width;
+      newWidget.height = clampedDefault.height;
       setLocalWidgets((prev) => {
         const next = [...prev, newWidget];
         saveWidgets(next);

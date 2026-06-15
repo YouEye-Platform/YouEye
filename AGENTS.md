@@ -1,3 +1,19 @@
+## ui-v0.4.16 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E5 — dashboard widgets on the unified embed + declared size bounds
+
+### Changes
+- `ui/src/components/embeds/unified-embed.tsx` — new `fill` mode (iframe + container 100% height; resize-height ignored) for fixed-size hosts.
+- `ui/src/components/widgets/app-widget.tsx` — rewritten onto `<UnifiedEmbed kind="widget" fill>`; bespoke iframe removed.
+- `ui/src/components/dashboard/widget-grid.tsx` — `clampWidgetSize()` honors app-declared min/max on resize + on add; `AppWidgetDef` gains `min_size`/`max_size`; app widgets carry `_minSize`/`_maxSize` into settings.
+- `ui/package.json` → 0.4.16; spec `ui/tests/widget-sizes-e5.test.mjs` (4/4).
+
+### Test Results
+- 4/4; `pnpm build` OK. Released ui-v0.4.16 → bykapc (`spine update ui`) + verify dashboard renders.
+
+### Notes for Iris
+- Strict 12-col grid visual deferred (non-destructive) → `Plans/Archive/To Plan/dashboard-12col-grid-migration.md`. Acceptance #6 (widgets on UnifiedEmbed) satisfied. Native-app widget manifest sizes ride the native batch.
+
 ## ui-v0.4.15 + cp-v0.4.47 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 E4 (D14-revised) — toned-down account menu mirrored UI↔CP

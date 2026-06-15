@@ -35,6 +35,12 @@ export interface UnifiedEmbedProps {
   size?: { default?: number; min?: number; max?: number };
   /** ms to wait for `youeye:ready` before showing the fallback (never silent). */
   timeout?: number;
+  /**
+   * Fill the parent instead of content-sizing. For fixed-size surfaces — dashboard
+   * widgets (E5) — where the host card owns the box and the embed must be 100% tall;
+   * `youeye:resize` height messages are ignored. Default false (content-height).
+   */
+  fill?: boolean;
   /** Rendered if the embed errors or times out. */
   fallback?: ReactNode;
   /** Token delivery — appended as ?theme & ?mode so the embed themes itself. */
@@ -74,6 +80,7 @@ export function UnifiedEmbed({
   kind,
   size,
   timeout = 5000,
+  fill = false,
   fallback,
   theme,
   mode,
@@ -172,14 +179,25 @@ export function UnifiedEmbed({
 
   if (failed) {
     return (
-      <div ref={containerRef} className={className} data-embed-kind={kind} data-embed-state="fallback">
+      <div
+        ref={containerRef}
+        className={className}
+        data-embed-kind={kind}
+        data-embed-state="fallback"
+        style={fill ? { height: "100%" } : undefined}
+      >
         {fallback ?? null}
       </div>
     );
   }
 
   return (
-    <div ref={containerRef} className={className} data-embed-kind={kind} style={{ position: "relative" }}>
+    <div
+      ref={containerRef}
+      className={className}
+      data-embed-kind={kind}
+      style={{ position: "relative", ...(fill ? { height: "100%" } : {}) }}
+    >
       {visible && !ready && (
         <div
           aria-hidden
@@ -205,7 +223,7 @@ export function UnifiedEmbed({
           id={`embed-${reactId}`}
           style={{
             width: "100%",
-            height,
+            height: fill ? "100%" : height,
             border: "none",
             background: "transparent",
             display: "block",
