@@ -1,3 +1,18 @@
+## ui-v0.4.15 + cp-v0.4.47 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E4 (D14-revised) — toned-down account menu mirrored UI↔CP
+
+### Changes
+- `ui/src/components/layout/user-menu.tsx` — removed the "Manage your account" pill, the avatar pencil-edit, and the Privacy·About footer. Kept email + avatar (display-only) + greeting + grouped Timeline/Settings/Theme-segmented + Sign out.
+- `control-panel/src/components/control-surface/control-header.tsx` — account dropdown rebuilt from the plain 224px list to the same 340px toned-down panel; theme cycle item → Light/Dark/Auto segmented `applyTheme(mode)`; dropped `DropdownMenuItem`/`Label`/`Separator`.
+- `ui/package.json` → 0.4.15; `control-panel/package.json` → 0.4.47; specs `ui/tests/user-menu-e4.test.mjs` (4/4) + `control-panel/tests/user-menu-e4.spec.ts` (5/5).
+
+### Test Results
+- UI 4/4 + CP 5/5; both `pnpm build` OK. Released ui-v0.4.15 + cp-v0.4.47 → bykapc (`spine update ui` + `spine update control`) + verify both menus.
+
+### Notes for Iris
+- Direct-to-main Plan 1 slice. One spec, two implementations (the third — Canvas native menu — rides the native-app batch). D14 mockup `user-menu.html` is superseded by the toned-down revision.
+
 ## ui-v0.4.14 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 E3 — notifications bell popover on the unified embed

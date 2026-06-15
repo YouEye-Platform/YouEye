@@ -1,10 +1,11 @@
 /**
- * User Menu — Plan 1 Workstream E4.
+ * User Menu — Plan 1 Workstream E4 (D14-revised, toned down 2026-06-15).
  *
- * Google-style account panel: centered email, large avatar with edit,
- * "Hi, <first name>!", "Manage your account" pill, grouped card
- * (Timeline / Settings / Theme as a Light·Dark·Auto segmented control),
- * ghost Sign out, Privacy · About footer.
+ * Account panel: centered email, large avatar (display only — no pencil-edit),
+ * "Hi, <first name>!", grouped card (Timeline / Settings / Theme as a
+ * Light·Dark·Auto segmented control), ghost Sign out. The Google-isms removed
+ * per the owner: the "Manage your account" pill, the avatar pencil-edit, and the
+ * Privacy · About footer. Mirrored on CP (control-header) and native (Canvas).
  */
 
 "use client";
@@ -19,7 +20,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { LogOut, Shield, Settings, Clock, Sun, Moon, Monitor, Pencil } from "lucide-react";
+import { LogOut, Shield, Settings, Clock, Sun, Moon, Monitor } from "lucide-react";
 
 interface UserMenuProps {
   username: string;
@@ -109,33 +110,16 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
         {/* Email, centered */}
         <p className="pt-4 pb-3 text-center text-xs text-muted-foreground truncate px-6">{email}</p>
 
-        {/* Big avatar with edit, greeting, manage pill */}
+        {/* Big avatar + greeting — display only (no pencil-edit), toned down per D14-revised */}
         <div className="flex flex-col items-center gap-2 px-5">
-          <button
-            type="button"
-            onClick={() => router.push("/settings")}
-            className="relative outline-none"
-            aria-label="Edit profile"
-          >
-            <Avatar className="size-[76px]">
-              {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
-              <AvatarFallback className="text-xl">{initials}</AvatarFallback>
-            </Avatar>
-            <span className="absolute -bottom-0.5 -right-0.5 grid place-items-center size-6 rounded-full bg-background border shadow-sm">
-              <Pencil className="size-3" />
-            </span>
-          </button>
+          <Avatar className="size-[76px]">
+            {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
+            <AvatarFallback className="text-xl">{initials}</AvatarFallback>
+          </Avatar>
           <div className="flex items-center gap-1.5 text-base font-medium">
             <span>Hi, {firstName}!</span>
             {isAdmin && <Shield className="size-3.5 text-primary" />}
           </div>
-          <button
-            type="button"
-            onClick={() => router.push("/settings")}
-            className="rounded-full border bg-background px-4 py-1.5 text-sm hover:bg-accent transition-colors"
-          >
-            Manage your account
-          </button>
         </div>
 
         {/* Grouped card */}
@@ -188,7 +172,7 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
         </div>
 
         {/* Sign out */}
-        <div className="px-3 pb-2">
+        <div className="px-3 pb-3">
           <button
             type="button"
             onClick={handleLogout}
@@ -196,17 +180,6 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
           >
             <LogOut className="size-4" />
             {t("signOut")}
-          </button>
-        </div>
-
-        {/* Footer */}
-        <div className="border-t bg-card/40 px-4 py-2.5 text-center text-xs text-muted-foreground">
-          <button type="button" className="hover:text-foreground" onClick={() => router.push("/settings/privacy")}>
-            Privacy
-          </button>
-          <span className="mx-1.5">·</span>
-          <button type="button" className="hover:text-foreground" onClick={() => router.push("/settings/about")}>
-            About this server
           </button>
         </div>
       </DropdownMenuContent>
