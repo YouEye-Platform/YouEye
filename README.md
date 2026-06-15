@@ -146,12 +146,12 @@ Each component is versioned and released independently.
 | Control Panel | 0.4.47 (`cp-v0.4.47`) |
 | UI | 0.4.20 (`ui-v0.4.20`) |
 | Canvas | 0.3.0 (`v0.3.0`, tag only) |
-| Wiki | 0.4.1 (`v0.4.1`) |
-| Search | 0.4.1 (`v0.4.1`) |
-| Notes | 0.4.1 (`v0.4.1`) |
-| Cinema | 0.4.1 (`v0.4.1`) |
-| Weather | 0.4.1 (`v0.4.1`) |
-| Translate | 0.4.1 (`v0.4.1`) |
+| Wiki | 0.4.2 (`v0.4.2`) |
+| Search | 0.4.2 (`v0.4.2`) |
+| Notes | 0.4.3 (`v0.4.3`) |
+| Cinema | 0.4.2 (`v0.4.2`) |
+| Weather | 0.4.2 (`v0.4.2`) |
+| Translate | 0.4.2 (`v0.4.2`) |
 
 ## Related Repositories
 
