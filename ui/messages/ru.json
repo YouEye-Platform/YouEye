@@ -34,6 +34,9 @@
   },
   "nav": {
     "backToDashboard": "На главную",
+    "searchApps": "Поиск приложений",
+    "noAppsFound": "Приложения не найдены",
+    "launcherHint": "Откройте любое из ваших приложений",
     "timeline": "Хронология",
     "settings": "Настройки",
     "signOut": "Выйти",

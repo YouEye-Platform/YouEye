@@ -34,6 +34,9 @@
   },
   "nav": {
     "backToDashboard": "Retour au tableau de bord",
+    "searchApps": "Rechercher des applications",
+    "noAppsFound": "Aucune application trouvée",
+    "launcherHint": "Ouvrez n’importe laquelle de vos applications",
     "timeline": "Chronologie",
     "settings": "Paramètres",
     "signOut": "Déconnexion",

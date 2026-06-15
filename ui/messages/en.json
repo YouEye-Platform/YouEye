@@ -34,6 +34,9 @@
   },
   "nav": {
     "backToDashboard": "Back to Dashboard",
+    "searchApps": "Search apps",
+    "noAppsFound": "No apps found",
+    "launcherHint": "Open any of your apps",
     "timeline": "Timeline",
     "settings": "Settings",
     "signOut": "Sign out",

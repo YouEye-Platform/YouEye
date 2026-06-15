@@ -34,6 +34,9 @@
   },
   "nav": {
     "backToDashboard": "Zurück zum Dashboard",
+    "searchApps": "Apps suchen",
+    "noAppsFound": "Keine Apps gefunden",
+    "launcherHint": "Öffne eine deiner Apps",
     "timeline": "Zeitachse",
     "settings": "Einstellungen",
     "signOut": "Abmelden",

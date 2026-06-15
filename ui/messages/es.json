@@ -34,6 +34,9 @@
   },
   "nav": {
     "backToDashboard": "Volver al panel",
+    "searchApps": "Buscar aplicaciones",
+    "noAppsFound": "No se encontraron aplicaciones",
+    "launcherHint": "Abre cualquiera de tus aplicaciones",
     "timeline": "Cronología",
     "settings": "Configuración",
     "signOut": "Cerrar sesión",

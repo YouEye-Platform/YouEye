@@ -1,3 +1,19 @@
+## ui-v0.4.17 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E1 — UI-served app launcher (foundation)
+
+### Changes
+- `ui/src/components/layout/launcher.tsx` (NEW) — `launcher.html` content: search + app tile grid + Market/Settings system tiles; fed by `/api/v1/apps/drawer` (no CP); embedded mode opens at `window.top`.
+- `ui/src/app/embed/launcher/page.tsx` (NEW) — `/embed/launcher` UI-origin route (native apps iframe it); theme via `?mode=`.
+- `ui/messages/{en,fr,es,de,ru}.json` — `nav.searchApps`/`noAppsFound`/`launcherHint`.
+- `ui/package.json` → 0.4.17; spec `ui/tests/launcher-e1.test.mjs` (4/4).
+
+### Test Results
+- 4/4; `pnpm build` OK (`/embed/launcher` route present). Released ui-v0.4.17 → bykapc; verify `lemon.app/embed/launcher`.
+
+### Notes for Iris
+- Foundation slice. Folders + pinned-row + UI-header adoption + native consumption (6-app batch) → `Plans/Archive/To Plan/launcher-folders-and-native-adoption.md`. E1 security fix already shipped ui-v0.4.11.
+
 ## ui-v0.4.16 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 E5 — dashboard widgets on the unified embed + declared size bounds
