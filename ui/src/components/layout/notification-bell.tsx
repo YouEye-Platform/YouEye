@@ -44,6 +44,11 @@ export function NotificationBell({
   const [notifications, setNotifications] = useState<NotificationData[]>([]);
   const [appMeta, setAppMeta] = useState<Record<string, NotificationAppMeta>>({});
   const [unreadCount, setUnreadCount] = useState(0);
+  // Gates the empty state: until the FIRST fetch succeeds we show a loading
+  // skeleton, not "No notifications" — the API can be slow on a cold request and
+  // the embed makes that the first visible thing. A failed/slow fetch retries via
+  // the 30s poll rather than masking as empty (no silent failure).
+  const [loaded, setLoaded] = useState(false);
   const t = useTranslations("notifications");
 
   // Track in-flight installs so we can update the loading notification on completion
@@ -57,8 +62,9 @@ export function NotificationBell({
       setNotifications(data.notifications);
       setUnreadCount(data.unread_count);
       if (data.app_meta) setAppMeta(data.app_meta);
+      setLoaded(true);
     } catch {
-      // Silently fail
+      // Leave loaded=false so the next poll retries instead of showing a false empty.
     }
   }, []);
 
@@ -139,7 +145,7 @@ export function NotificationBell({
   };
 
   const content = (
-    <div className={`flex flex-col ${embedded ? "h-full w-full" : ""}`}>
+    <div className={`flex flex-col ${embedded ? "w-full" : ""}`}>
       {/* Header */}
       <div className="flex items-center justify-between border-b px-[18px] py-3.5">
         <h2 className="text-[15px] font-semibold">{t("title")}</h2>
@@ -152,10 +158,22 @@ export function NotificationBell({
       </div>
 
       {/* Feed */}
-      {notifications.length === 0 ? (
+      {!loaded ? (
+        <div className="grid gap-3 px-3.5 py-3.5" aria-busy="true">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="flex gap-3 rounded-xl border border-border/40 p-3">
+              <div className="h-8 w-8 shrink-0 animate-pulse rounded-lg bg-muted" />
+              <div className="flex-1 space-y-2 py-0.5">
+                <div className="h-3 w-2/3 animate-pulse rounded bg-muted" />
+                <div className="h-2.5 w-full animate-pulse rounded bg-muted/70" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : notifications.length === 0 ? (
         <div className="px-4 py-10 text-center text-sm text-muted-foreground">{t("noNotifications")}</div>
       ) : (
-        <div className={`grid gap-3 overflow-y-auto px-3.5 py-3.5 ${embedded ? "min-h-0 flex-1" : "max-h-[60vh]"}`}>
+        <div className={`grid gap-3 overflow-y-auto px-3.5 py-3.5 ${embedded ? "max-h-[440px]" : "max-h-[60vh]"}`}>
           {notifications.map((notif) => (
             <NotificationItem key={notif.id} notif={notif} appMeta={appMeta} onAction={handleAction} onDismiss={dismiss} mode={mode} />
           ))}
@@ -176,7 +194,7 @@ export function NotificationBell({
   );
 
   if (embedded) {
-    return <div className="h-full w-full bg-transparent">{content}</div>;
+    return <div className="w-full bg-transparent">{content}</div>;
   }
 
   return (

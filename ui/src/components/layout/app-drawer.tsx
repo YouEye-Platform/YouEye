@@ -149,10 +149,17 @@ export function AppDrawer({
     }
   }, []);
 
+  // In the /embed/drawer iframe (native apps), navigate the TOP window so apps
+  // open as the real page — not inside the little drawer popover iframe.
+  const go = useCallback((url: string) => {
+    if (embedded && typeof window !== "undefined" && window.top) window.top.location.href = url;
+    else window.location.href = url;
+  }, [embedded]);
+
   const handleAppClick = (app: DrawerApp) => {
     if (editMode || !app.url) return;
     try { navigator.sendBeacon("/api/v1/telemetry/record", JSON.stringify({ events: [{ type: "app_launch", key: app.id || app.name }] })); } catch { /* best-effort */ }
-    window.location.href = app.url;
+    go(app.url);
     setOpen(false);
   };
 
@@ -251,7 +258,7 @@ export function AppDrawer({
   };
 
   const content = (
-    <div className={`flex flex-col ${embedded ? "h-full w-full" : ""}`}>
+    <div className={`flex flex-col ${embedded ? "w-full" : ""}`}>
       {/* Top bar: search + edit toggle */}
       <div className="flex items-center gap-2 p-3 pb-2">
         <div className="relative flex-1">
@@ -263,12 +270,12 @@ export function AppDrawer({
         </Button>
       </div>
 
-      <ScrollArea className={embedded ? "min-h-0 flex-1" : ""} style={{ maxHeight: embedded ? undefined : editMode ? "calc(100vh - 260px)" : prefs.maxHeight }}>
+      <ScrollArea style={{ maxHeight: editMode ? (embedded ? 360 : "calc(100vh - 260px)") : prefs.maxHeight }}>
         <div className="px-3 pb-2">
           {gridApps.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 text-center">
               <p className="mb-3 text-sm text-muted-foreground">{q ? t("noMatchingApps") : t("noAppsInstalled")}</p>
-              {!q && isAdmin && <Link href="/market" className="text-sm text-primary hover:underline" onClick={() => setOpen(false)}>{t("visitMarketplace")}</Link>}
+              {!q && isAdmin && <Link href="/market" target={embedded ? "_top" : undefined} className="text-sm text-primary hover:underline" onClick={() => setOpen(false)}>{t("visitMarketplace")}</Link>}
             </div>
           ) : (
             <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
@@ -339,7 +346,7 @@ export function AppDrawer({
       )
     : null;
 
-  if (embedded) return <div className="h-full w-full bg-transparent">{content}{ghost}</div>;
+  if (embedded) return <div className="w-full bg-transparent">{content}{ghost}</div>;
 
   return (
     <Popover open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setEditMode(false); setAddMode(false); setQuery(""); } }}>

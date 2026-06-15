@@ -11,13 +11,16 @@
 
 "use client";
 
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { NotificationBell } from "@/components/layout/notification-bell";
+import { useEmbedAutoResize } from "@/lib/hooks/use-embed-auto-resize";
 
 function NotificationsEmbedInner() {
   const params = useSearchParams();
   const mode = params.get("mode");
+  const contentRef = useRef<HTMLDivElement>(null);
+  useEmbedAutoResize(contentRef);
 
   useEffect(() => {
     if (mode === "dark") document.documentElement.classList.add("dark");
@@ -25,7 +28,7 @@ function NotificationsEmbedInner() {
   }, [mode]);
 
   return (
-    <div className="h-screen w-screen">
+    <div ref={contentRef} className="w-full">
       <NotificationBell embedded mode={mode === "dark" ? "dark" : mode === "light" ? "light" : undefined} />
     </div>
   );

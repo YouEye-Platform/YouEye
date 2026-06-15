@@ -11,13 +11,16 @@
 
 "use client";
 
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppDrawer } from "@/components/layout/app-drawer";
+import { useEmbedAutoResize } from "@/lib/hooks/use-embed-auto-resize";
 
 function DrawerEmbedInner() {
   const params = useSearchParams();
   const mode = params.get("mode");
+  const contentRef = useRef<HTMLDivElement>(null);
+  useEmbedAutoResize(contentRef);
 
   useEffect(() => {
     if (mode === "dark") document.documentElement.classList.add("dark");
@@ -31,7 +34,7 @@ function DrawerEmbedInner() {
   };
 
   return (
-    <div className="h-screen w-screen">
+    <div ref={contentRef} className="w-full">
       <AppDrawer embedded onOpenLauncher={openLauncher} />
     </div>
   );
