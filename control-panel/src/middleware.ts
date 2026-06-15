@@ -198,9 +198,28 @@ export async function middleware(request: NextRequest) {
     }).catch(() => {});
   }
 
+  const host = request.headers.get('host') || '';
+
+  // --- Retire the legacy control.<domain> / (dashboard) shell (D4) ---
+  // The old admin shell is replaced by the unified Settings. Redirect its
+  // routes to Settings: subdomain (control.<base>) → base-domain Settings;
+  // direct/PAM access (IP or :3000) → same-origin /settings. This never matches
+  // /settings, /market, /embed, /api, or identity routes (different prefixes),
+  // so the Settings surface, embeds, and APIs keep working on either host.
+  {
+    const shellHost = host.split(':')[0];
+    const SHELL_PREFIXES = ['/apps', '/dns', '/health', '/people', '/proxy', '/updates'];
+    const isShellRoute =
+      pathname === '/' || SHELL_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + '/'));
+    if (isShellRoute) {
+      return shellHost.startsWith('control.')
+        ? NextResponse.redirect(`${getParentOrigin()}/settings`)
+        : NextResponse.redirect(new URL('/settings', request.url));
+    }
+  }
+
   // --- IP-via-Caddy setup flow ---
   // When accessed via IP through Caddy (ports 80/443), redirect to setup flow
-  const host = request.headers.get('host') || '';
   if (isIPViaCaddy(host)) {
     // Allow these paths through (needed for setup flow to work)
     const setupAllowedPaths = [

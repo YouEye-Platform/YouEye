@@ -1,3 +1,18 @@
+## cp-v0.4.44 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C3 (complete) — retire control.<domain> + delete the (dashboard) shell
+
+### Changes
+- `control-panel/src/middleware.ts` — host-aware redirect: legacy shell routes (`/`, `/apps`, `/dns`, `/health`, `/people`, `/proxy`, `/updates`) → Settings (`control.<base>` → `<base>/settings` via `getParentOrigin()`; direct/PAM → same-origin `/settings`). Never matches `/settings`, `/market`, `/embed`, `/api`, or identity.
+- Deleted `control-panel/src/app/(dashboard)/` — the entire legacy shell route group (12 files; verified no external imports).
+- `control-panel/package.json` → 0.4.44; `tests/c3-retirement.spec.ts` extended (5/5).
+
+### Test Results
+- `c3-retirement.spec.ts` 5/5; `pnpm build` OK (177 pages, clean). Released cp-v0.4.44 → bykapc deploy + verify control.lemon.app → /settings.
+
+### Notes for Iris
+- N/A (direct-to-main). **Completes Workstream C.** Redirect is precise (only the 6 shell prefixes + `/`); embeds/APIs/identity/settings/market unaffected. PAM door (ip:3000) now lands on `/settings`.
+
 ## cp-v0.4.43 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 C3 (partial) — browser-tab-title branding sweep + delete dead embeds

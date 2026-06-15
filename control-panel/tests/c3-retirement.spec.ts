@@ -29,3 +29,22 @@ test('still-consumed embeds are KEPT', () => {
     assert.ok(has(`src/app/embed/${e}`), `embed/${e} should remain`);
   }
 });
+
+test('legacy (dashboard) shell is deleted', () => {
+  assert.ok(!has('src/app/(dashboard)/page.tsx'), '(dashboard) root must be deleted');
+  assert.ok(!has('src/app/(dashboard)/apps/page.tsx'), '(dashboard)/apps must be deleted');
+  assert.ok(!has('src/app/(dashboard)/health/page.tsx'), '(dashboard)/health must be deleted');
+  assert.ok(!has('src/app/(dashboard)/layout.tsx'), '(dashboard) layout must be deleted');
+});
+
+test('middleware redirects legacy shell routes to Settings (host-aware, precise)', () => {
+  const m = read('src/middleware.ts');
+  assert.match(m, /Retire the legacy control\.<domain>/);
+  assert.match(m, /SHELL_PREFIXES = \['\/apps', '\/dns', '\/health', '\/people', '\/proxy', '\/updates'\]/);
+  // subdomain → base-domain Settings; direct/PAM → same-origin /settings
+  assert.match(m, /shellHost\.startsWith\('control\.'\)/);
+  assert.match(m, /\$\{getParentOrigin\(\)\}\/settings/);
+  assert.match(m, /NextResponse\.redirect\(new URL\('\/settings', request\.url\)\)/);
+  // the redirect must NOT capture /settings, /market, /embed, or /api
+  assert.doesNotMatch(m, /SHELL_PREFIXES = \[[^\]]*'\/(settings|market|embed|api)'/);
+});
