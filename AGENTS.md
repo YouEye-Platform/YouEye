@@ -1,3 +1,13 @@
+## ui-v0.4.22 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 5 Slice 1 fix — launcher overlay didn't open on the dashboard
+
+### Changes
+- `ui/src/components/layout/drawer-and-launcher.tsx` — `createPortal` the launcher overlay to `document.body`. The header's `backdrop-filter` (blur) is a containing block for `position:fixed`, which trapped the overlay inside the 56px bar. `pointer-events-none` container keeps the header clickable.
+
+### Test Results
+- `pnpm build` OK; standalone baked 0.4.22. Manual deploy (spine update ui is a no-op for UI — Spine manages only itself+CP). Live verify on lemon.app.
+
 ## ui-v0.4.21 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 5 Slice 1 — app drawer + launcher as two cooperating surfaces
