@@ -1,3 +1,13 @@
+## ui-v0.4.18 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E1 fix — launcher grid was single-column
+
+### Changes
+- `ui/src/components/layout/launcher.tsx` — grid given `w-full max-w-3xl` + `minmax(84px,96px)` tracks so `auto-fill` lays out multi-column (was shrink-wrapped to 1 column). `ui/package.json` → 0.4.18.
+
+### Test Results
+- `pnpm build` OK. Caught in live verification of 0.4.17; redeployed + re-verified.
+
 ## ui-v0.4.17 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 E1 — UI-served app launcher (foundation)

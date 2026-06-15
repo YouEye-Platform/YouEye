@@ -124,7 +124,7 @@ export function Launcher({ embedded = false }: { embedded?: boolean }) {
       {filteredApps.length === 0 && filteredSystem.length === 0 ? (
         <p className="mt-6 text-sm text-muted-foreground">{t("noAppsFound")}</p>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,96px)] justify-center gap-x-9 gap-y-7">
+        <div className="grid w-full max-w-3xl grid-cols-[repeat(auto-fill,minmax(84px,96px))] justify-center gap-x-9 gap-y-7">
           {filteredApps.map((app) => (
             <button
               key={app.id}
