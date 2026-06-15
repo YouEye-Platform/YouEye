@@ -24,7 +24,7 @@ export const viewport: Viewport = {
 export async function generateMetadata(): Promise<Metadata> {
   const config = await getSiteConfig();
   return {
-    title: `${config.site_name} Control Panel`,
+    title: config.site_name,
     description: `Manage your ${config.site_name} infrastructure`,
     icons: {
       icon: [
@@ -38,7 +38,7 @@ export async function generateMetadata(): Promise<Metadata> {
     appleWebApp: {
       capable: true,
       statusBarStyle: "default",
-      title: `${config.site_name} Control Panel`,
+      title: config.site_name,
     },
   };
 }

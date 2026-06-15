@@ -1,3 +1,19 @@
+## cp-v0.4.43 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C3 (partial) — browser-tab-title branding sweep + delete dead embeds
+
+### Changes
+- `control-panel/src/app/layout.tsx` — tab title `${site_name} Control Panel` → `${site_name}` (metadata + appleWebApp; D4 — never surface "Control Panel").
+- Deleted `control-panel/src/app/embed/{containers,market,update-progress}` (page + client) — verified unreferenced in CP + UI.
+- **Kept `embed/health`** — the UI `admin-embed.tsx` health poll fetches it (plan §1.6 parity correction).
+- `control-panel/package.json` → 0.4.43; new spec `tests/c3-retirement.spec.ts`.
+
+### Test Results
+- `c3-retirement.spec.ts` 3/3; `pnpm build` OK (deletions compile clean). Released cp-v0.4.43 → bykapc deploy + verify tab title on lemon.app.
+
+### Notes for Iris
+- N/A (direct-to-main). Pure retirement; only genuinely-dead code removed. **Still in C3:** retire old `(dashboard)` shell + `control.<domain>`→`/settings` redirect (redirect-first follow-up).
+
 ## cp-v0.4.42 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 C2 — Apps installed-list reconciled to mockup (completes C2)
