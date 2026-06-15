@@ -1,3 +1,19 @@
+## cp-v0.4.45 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 D — Market Browse rebuilt to Umbrel mockup + new Sources page
+
+### Changes
+- `control-panel/src/app/market/page.tsx` — full restyle to `market.html`: hero + search, pill bar (All/Installed/Updates/Integrations + categories + Sources pill), "Built for your server" native big-tiles, Featured banner, compact category rows → app detail. Token-styled (dropped ~15 hardcoded-gray raw inputs + filter `<select>`s). `MarketIcon` (iconUrl or category-colored tile + lucide). Install/uninstall now live on the detail page.
+- `control-panel/src/app/market/sources/page.tsx` — NEW (D9): connected sources (live enable Switch → PATCH `/api/market/source`, Add, remove, per-source app counts) + Install-from-address via `InstallFromUrlDialog`. Sources management removed from Browse.
+- Dropped `OrphanSection` from Browse (not in the mockup) → `Plans/Archive/To Plan/market-orphan-section-rehome.md`.
+- `control-panel/package.json` → 0.4.45; new spec `tests/market.spec.ts`.
+
+### Test Results
+- `market.spec.ts` 5/5; `pnpm build` OK (all 3 market routes compile). Released cp-v0.4.45 → bykapc deploy + verify on lemon.app/market.
+
+### Notes for Iris
+- N/A (direct-to-main). Browse is navigational (actions on detail). Sources page admin-gated by the source PATCH API. **App-detail + install-dialog restyle remain in D.** No new dep, no UI→CP call.
+
 ## cp-v0.4.44 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 C3 (complete) — retire control.<domain> + delete the (dashboard) shell

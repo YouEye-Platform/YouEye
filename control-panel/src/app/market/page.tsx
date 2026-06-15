@@ -2,759 +2,367 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { Loader2, Store, AlertCircle, RefreshCw, Shield, Globe, Save, Plus, Trash2, Plug, Search, SlidersHorizontal } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { AppCard } from '@/components/market/app-card';
-import { UninstallDialog } from '@/components/market/uninstall-dialog';
-import { OrphanSection } from '@/components/market/orphan-section';
-import { InstallFromUrlDialog } from '@/components/market/install-from-url-dialog';
-import { authenticatedFetch } from '@/lib/api-client';
-import { useTranslations } from 'next-intl';
-import type { MarketApp, InstallEvent, AppStatusInfo } from '@/lib/market/types';
+import * as LucideIcons from 'lucide-react';
+import {
+  AlertCircle,
+  Check,
+  Download,
+  Grid3x3,
+  type LucideIcon,
+  Loader2,
+  Package,
+  Search,
+  Sparkles,
+  Store,
+} from 'lucide-react';
+import type { MarketApp, AppStatusInfo } from '@/lib/market/types';
 
-// Categories for grouping
-const CATEGORIES: Record<string, string> = {
+/* ─────────────────────────── helpers ─────────────────────────── */
+
+const CATEGORY_LABEL: Record<string, string> = {
   productivity: 'Productivity',
   media: 'Media',
   search: 'Search',
   social: 'Social',
   utilities: 'Utilities',
+  other: 'Other',
 };
 
-interface MarketSourceConfig {
-  id: string;
-  name: string;
-  repo_url: string;
-  enabled: boolean;
-  priority: number;
-  trust: 'official' | 'community' | 'custom';
+// Soft tile colours from the mockup palette, keyed by category.
+const CATEGORY_TILE: Record<string, { bg: string; fg: string }> = {
+  productivity: { bg: '#eff6ff', fg: '#2563eb' },
+  media: { bg: '#fdf2f8', fg: '#db2777' },
+  search: { bg: '#f5f3ff', fg: '#7c3aed' },
+  social: { bg: '#ecfeff', fg: '#0891b2' },
+  utilities: { bg: '#f0f9ff', fg: '#0284c7' },
+  other: { bg: '#f4f4f5', fg: '#52525b' },
+};
+
+function tileColors(category?: string) {
+  return CATEGORY_TILE[category || 'other'] || CATEGORY_TILE.other;
 }
 
-interface MarketAppGroup {
-  key: string;
-  primary: MarketApp;
-  variants: MarketApp[];
+function lucideByName(name?: string): LucideIcon {
+  if (!name) return Package;
+  const map = LucideIcons as unknown as Record<string, LucideIcon>;
+  const pascal = name.charAt(0).toUpperCase() + name.slice(1);
+  return map[name] || map[pascal] || Package;
 }
 
-function groupByCatalogIdentity(apps: MarketApp[]): MarketAppGroup[] {
-  const groups = new Map<string, MarketApp[]>();
-  for (const app of apps) {
-    const key = `${app.itemKind || 'app'}:${app.id}`;
-    groups.set(key, [...(groups.get(key) ?? []), app]);
+function MarketIcon({ app, size = 44 }: { app: MarketApp; size?: number }) {
+  if (app.iconUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={app.iconUrl}
+        alt=""
+        className="shrink-0 rounded-[14px] object-cover"
+        style={{ width: size, height: size }}
+      />
+    );
   }
-  return Array.from(groups.entries()).map(([key, variants]) => ({
-    key,
-    primary: variants[0],
-    variants,
-  }));
-}
-
-function groupByCategory(groups: MarketAppGroup[]): Record<string, MarketAppGroup[]> {
-  const byCategory: Record<string, MarketAppGroup[]> = {};
-  for (const group of groups) {
-    const cat = group.primary.category || 'other';
-    if (!byCategory[cat]) byCategory[cat] = [];
-    byCategory[cat].push(group);
-  }
-  return byCategory;
-}
-
-function emptySource(index: number): MarketSourceConfig {
-  return {
-    id: `custom-${Date.now()}`,
-    name: `Market ${index + 1}`,
-    repo_url: '',
-    enabled: true,
-    priority: index,
-    trust: 'custom',
-  };
-}
-
-function variantHref(app: MarketApp): string {
-  return app.sourceId
-    ? `/market/${app.id}?source=${encodeURIComponent(app.sourceId)}`
-    : `/market/${app.id}`;
-}
-
-function MarketAppGroupCard({
-  group,
-  status,
-  installProgress,
-}: {
-  group: MarketAppGroup;
-  status?: AppStatusInfo;
-  installProgress?: { events: InstallEvent[]; done: boolean };
-}) {
-  const { primary, variants } = group;
-
+  const { bg, fg } = tileColors(app.category);
+  const Icon = lucideByName(app.icon);
   return (
-    <div className="space-y-2">
-      <AppCard app={primary} status={status} installProgress={installProgress} />
-      {variants.length > 1 && (
-        <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-          <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">
-            Sources
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {variants.map((variant) => (
-              <Link
-                key={variant.catalogKey || `${variant.sourceId}-${variant.id}`}
-                href={variantHref(variant)}
-                className={`rounded-full border px-2 py-0.5 text-xs ${
-                  variant.catalogKey === primary.catalogKey
-                    ? 'border-blue-200 bg-blue-50 text-blue-700'
-                    : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                }`}
-              >
-                {variant.sourceName || variant.sourceId || 'Market'}
-                {variant.version ? ` v${variant.version}` : ''}
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
+    <div
+      className="flex shrink-0 items-center justify-center rounded-[14px]"
+      style={{ width: size, height: size, background: bg, color: fg }}
+    >
+      <Icon style={{ width: Math.round(size * 0.46), height: Math.round(size * 0.46) }} />
     </div>
   );
 }
 
+function StatusDot({ status }: { status?: string }) {
+  const ok = !!status && status !== 'not-installed';
+  return <span className={`inline-block size-2 shrink-0 rounded-full ${ok ? 'bg-green-500' : 'bg-muted-foreground/30'}`} />;
+}
+
+function variantHref(app: MarketApp): string {
+  return app.sourceId ? `/market/${app.id}?source=${encodeURIComponent(app.sourceId)}` : `/market/${app.id}`;
+}
+
+type Section = 'apps' | 'installed' | 'updates' | 'integrations';
+
+/* ─────────────────────────── page ─────────────────────────── */
+
 export default function MarketPage() {
   const [apps, setApps] = useState<MarketApp[]>([]);
   const [statuses, setStatuses] = useState<Record<string, AppStatusInfo>>({});
+  const [sourceCount, setSourceCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [marketSources, setMarketSources] = useState<MarketSourceConfig[]>([]);
-  const [savingMarketRepo, setSavingMarketRepo] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [sourceFilter, setSourceFilter] = useState('all');
-  const [typeFilter, setTypeFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [categoryFilter, setCategoryFilter] = useState('all');
-  const [activeSection, setActiveSection] = useState<'apps' | 'integrations' | 'installed' | 'updates'>('apps');
-
-  // Install progress (polled from install-status endpoint)
-  const [installProgresses, setInstallProgresses] = useState<Record<string, { events: InstallEvent[]; done: boolean }>>({});
-
-  // Uninstall state
-  const [uninstallApp, setUninstallApp] = useState<MarketApp | null>(null);
-  const [uninstalling, setUninstalling] = useState<string | null>(null);
-
-  // Install from URL state
-  const [showUrlDialog, setShowUrlDialog] = useState(false);
-
-  const t = useTranslations('market');
-  const tc = useTranslations('common');
+  const [search, setSearch] = useState('');
+  const [section, setSection] = useState<Section>('apps');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
   const fetchCatalog = useCallback(async () => {
     try {
       const res = await fetch('/api/market/catalog');
-      if (!res.ok) throw new Error('Failed to fetch app catalog');
+      if (!res.ok) throw new Error('Failed to load the Market catalog');
       const data = await res.json();
-      setApps(data.apps);
+      setApps(data.apps || []);
+      if (Array.isArray(data.sources)) {
+        setSourceCount(data.sources.filter((s: { enabled?: boolean }) => s.enabled !== false).length || data.sources.length);
+      }
+      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load catalog');
-    }
-  }, []);
-
-  const fetchMarketSource = useCallback(async () => {
-    try {
-      const res = await authenticatedFetch('/api/market/source');
-      if (!res.ok) throw new Error('Failed to load Market source');
-      const data = await res.json();
-      setMarketSources(data.sources?.length ? data.sources : [{
-        id: data.source?.id || 'official',
-        name: data.source?.name || 'Official YouEye Market',
-        repo_url: data.source?.repo_url || '',
-        enabled: data.source?.enabled ?? true,
-        priority: data.source?.priority ?? 0,
-        trust: data.source?.trust || 'official',
-      }]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load Market source');
+      console.error('[Market] catalog load failed', err);
+      setError(err instanceof Error ? err.message : 'Failed to load the Market catalog');
     }
   }, []);
 
   const fetchStatuses = useCallback(async () => {
     try {
       const res = await fetch('/api/market/status');
-      if (!res.ok) throw new Error('Failed to fetch app statuses');
+      if (!res.ok) return;
       const data = await res.json();
       const map: Record<string, AppStatusInfo> = {};
-      for (const s of data.apps) {
-        map[s.appId] = s;
-      }
+      for (const s of data.apps || []) map[s.appId] = s;
       setStatuses(map);
-      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      console.error('[Market] status load failed', err);
     }
   }, []);
 
-  const fetchDomain = useCallback(async () => {
+  const fetchSourceCount = useCallback(async () => {
     try {
-      const res = await fetch('/api/domain');
-      if (res.ok) {
-        const data = await res.json();
-        // domain is available but not needed on this page anymore
-      }
-    } catch {
-      // Will use fallback
-    }
-  }, []);
-
-  useEffect(() => {
-    Promise.all([
-      fetchMarketSource(),
-      fetchCatalog(),
-      fetchStatuses(),
-      fetchDomain(),
-    ]).finally(() => setLoading(false));
-
-    const interval = setInterval(() => {
-      fetchStatuses();
-    }, 10_000);
-    return () => clearInterval(interval);
-  }, [fetchMarketSource, fetchCatalog, fetchStatuses, fetchDomain]);
-
-  const updateMarketSource = (index: number, patch: Partial<MarketSourceConfig>) => {
-    setMarketSources((current) => current.map((source, i) => (
-      i === index ? { ...source, ...patch } : source
-    )));
-  };
-
-  const addMarketSource = () => {
-    setMarketSources((current) => [...current, emptySource(current.length)]);
-  };
-
-  const removeMarketSource = (index: number) => {
-    setMarketSources((current) => current.filter((_, i) => i !== index));
-  };
-
-  const saveMarketSources = async () => {
-    setSavingMarketRepo(true);
-    try {
-      const normalizedSources = marketSources
-        .map((source, index) => ({
-          ...source,
-          id: source.id.trim() || `source-${index + 1}`,
-          name: source.name.trim() || `Market ${index + 1}`,
-          repo_url: source.repo_url.trim(),
-          priority: Number.isFinite(Number(source.priority)) ? Number(source.priority) : index,
-        }))
-        .filter((source) => source.repo_url);
-
-      const res = await authenticatedFetch('/api/market/source', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active_sources: normalizedSources }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Failed to save Market source');
-      }
+      const res = await fetch('/api/market/source');
+      if (!res.ok) return;
       const data = await res.json();
-      setMarketSources(data.sources?.length ? data.sources : normalizedSources);
-      await fetchCatalog();
-      await fetchStatuses();
-      setError(null);
+      const list = data.sources?.length ? data.sources : data.source ? [data.source] : [];
+      setSourceCount(list.filter((s: { enabled?: boolean }) => s.enabled !== false).length || list.length);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save Market source');
-    } finally {
-      setSavingMarketRepo(false);
+      console.error('[Market] source count load failed', err);
     }
-  };
-
-  // Poll install status for progress on cards
-  useEffect(() => {
-    const pollInterval = setInterval(async () => {
-      try {
-        const res = await fetch('/api/market/install-status');
-        if (res.ok) {
-          const data = await res.json();
-          const progresses: Record<string, { events: InstallEvent[]; done: boolean }> = {};
-          for (const install of data.installs) {
-            progresses[install.appId] = { events: install.events, done: install.done };
-          }
-          setInstallProgresses(progresses);
-        }
-      } catch { /* ignore */ }
-    }, 2000);
-    return () => clearInterval(pollInterval);
   }, []);
 
-  // ── Uninstall ──────────────────────────────────────────────
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([fetchCatalog(), fetchStatuses(), fetchSourceCount()]).finally(() => setLoading(false));
+    const interval = setInterval(fetchStatuses, 10_000);
+    return () => clearInterval(interval);
+  }, [fetchCatalog, fetchStatuses, fetchSourceCount]);
 
-  const handleUninstallRequest = (appId: string) => {
-    const app = apps.find((a) => a.id === appId);
-    if (app) setUninstallApp(app);
+  /* ── derived ── */
+
+  const statusOf = (app: MarketApp) => statuses[app.id]?.status || 'not-installed';
+  const isInstalled = (app: MarketApp) => statusOf(app) !== 'not-installed';
+  const hasUpdate = (app: MarketApp) => !!statuses[app.id]?.updateAvailable;
+  const kindOf = (app: MarketApp) => (app.itemKind === 'integration' ? 'integration' : 'app');
+
+  const matchesSearch = (app: MarketApp) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return [app.name, app.description, app.category, app.sourceName, ...(app.tags || [])]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+      .includes(q);
   };
 
-  const handleUninstall = async (appId: string, keepData: boolean) => {
-    setUninstallApp(null);
-    setUninstalling(appId);
-    try {
-      await authenticatedFetch('/api/market/uninstall', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appId, keepData }),
-      });
-      await fetchStatuses();
-    } catch (err) {
-      alert(`Uninstall failed: ${err}`);
-    } finally {
-      setUninstalling(null);
-    }
+  const visible = apps.filter(matchesSearch);
+  const realApps = visible.filter((a) => kindOf(a) === 'app');
+  const integrations = visible.filter((a) => kindOf(a) === 'integration');
+
+  const counts = {
+    apps: realApps.length,
+    installed: realApps.filter(isInstalled).length,
+    updates: realApps.filter(hasUpdate).length,
+    integrations: integrations.length,
   };
+
+  const categories = Array.from(new Set(realApps.map((a) => a.category).filter(Boolean) as string[])).sort();
+
+  // Native apps highlighted in the "Built for <server>" row.
+  const nativeApps = realApps.filter((a) => a.integration === 'native');
+  const featured = nativeApps.find((a) => !isInstalled(a)) || nativeApps[0] || realApps[0];
+
+  // Dedupe by catalog identity so the same app from multiple sources collapses.
+  const dedupe = (list: MarketApp[]) => {
+    const seen = new Set<string>();
+    return list.filter((a) => {
+      const key = `${a.itemKind || 'app'}:${a.id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
+  const sectionApps = (() => {
+    if (section === 'installed') return dedupe(realApps.filter(isInstalled));
+    if (section === 'updates') return dedupe(realApps.filter(hasUpdate));
+    if (section === 'integrations') return dedupe(integrations);
+    return dedupe(realApps);
+  })();
+
+  const filteredSectionApps = categoryFilter === 'all'
+    ? sectionApps
+    : sectionApps.filter((a) => (a.category || 'other') === categoryFilter);
+
+  // Group the browse list by category.
+  const byCategory: Record<string, MarketApp[]> = {};
+  for (const a of filteredSectionApps) {
+    const cat = a.category || 'other';
+    (byCategory[cat] ||= []).push(a);
+  }
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+      <div className="flex h-64 items-center justify-center">
+        <Loader2 className="h-7 w-7 animate-spin text-primary" />
       </div>
     );
   }
 
-  const sourceOptions = Array.from(new Map(
-    apps
-      .filter((app) => app.sourceId || app.sourceName)
-      .map((app) => [app.sourceId || app.sourceName || 'market', app.sourceName || app.sourceId || 'Market'])
-  ).entries()).sort((a, b) => a[1].localeCompare(b[1]));
-  const categoryOptions = Array.from(new Set(apps.map((app) => app.category).filter(Boolean))).sort();
-  const hasActiveFilters = !!searchQuery
-    || sourceFilter !== 'all'
-    || typeFilter !== 'all'
-    || statusFilter !== 'all'
-    || categoryFilter !== 'all';
-
-  const filteredApps = apps.filter((app) => {
-    const status = statuses[app.id]?.status || 'not-installed';
-    const itemKind = app.itemKind || 'app';
-    const itemType = itemKind === 'integration'
-      ? 'integration'
-      : app.integration === 'native'
-        ? 'native'
-        : 'external';
-
-    if (searchQuery.trim()) {
-      const query = searchQuery.trim().toLowerCase();
-      const haystack = [
-        app.name,
-        app.description,
-        app.category,
-        app.sourceName,
-        app.sourceId,
-        itemType,
-        ...(app.tags || []),
-      ].filter(Boolean).join(' ').toLowerCase();
-      if (!haystack.includes(query)) return false;
-    }
-
-    if (sourceFilter !== 'all' && app.sourceId !== sourceFilter && app.sourceName !== sourceFilter) return false;
-    if (typeFilter !== 'all' && itemType !== typeFilter) return false;
-    if (categoryFilter !== 'all' && app.category !== categoryFilter) return false;
-    if (statusFilter === 'installed' && status === 'not-installed') return false;
-    if (statusFilter === 'available' && status !== 'not-installed') return false;
-    if (statusFilter === 'updates' && !statuses[app.id]?.updateAvailable) return false;
-
-    return true;
-  });
-
-  // Separate native, external apps, and other Market item kinds.
-  const nativeApps = filteredApps.filter((a) => (a.itemKind || 'app') === 'app' && a.integration === 'native');
-  const marketplaceApps = filteredApps.filter((a) => (a.itemKind || 'app') === 'app' && a.integration !== 'native');
-  const integrationItems = filteredApps.filter((a) => a.itemKind === 'integration');
-
-  const installedApps = marketplaceApps.filter(
-    (a) => statuses[a.id]?.status && statuses[a.id]?.status !== 'not-installed'
-  );
-  const availableApps = marketplaceApps.filter(
-    (a) => !statuses[a.id]?.status || statuses[a.id]?.status === 'not-installed'
-  );
-  const nativeGroups = groupByCatalogIdentity(nativeApps);
-  const installedGroups = groupByCatalogIdentity(installedApps);
-  const availableGroups = groupByCatalogIdentity(availableApps);
-  const integrationGroups = groupByCatalogIdentity(integrationItems);
-  const updateGroups = groupByCatalogIdentity(
-    filteredApps.filter((app) => (app.itemKind || 'app') === 'app' && !!statuses[app.id]?.updateAvailable)
-  );
-  const sectionCounts = {
-    apps: nativeGroups.length + availableGroups.length,
-    integrations: integrationGroups.length,
-    installed: installedGroups.length,
-    updates: updateGroups.length,
-  };
+  const pill = (active: boolean) =>
+    `inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-colors ${
+      active ? 'border-primary/30 bg-primary/10 text-primary' : 'border-border bg-card text-muted-foreground hover:bg-accent'
+    }`;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="mx-auto max-w-[1040px] space-y-6 px-1 pb-16">
+      {/* Hero */}
+      <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border bg-gradient-to-br from-primary/[0.06] to-transparent p-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Store className="h-7 w-7 text-blue-600" />
-            {t('title')}
-          </h1>
-          <p className="text-gray-500 mt-1">
-            {t('description')}
-          </p>
+          <h1 className="text-[26px] font-bold tracking-tight">Market</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Apps for your server. Install with one click — everything runs at home.</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setShowUrlDialog(true)}>
-            <Globe className="h-4 w-4 mr-1.5" />
-            Install from URL
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => { fetchCatalog(); fetchStatuses(); }}>
-            <RefreshCw className="h-4 w-4 mr-1.5" />
-            {tc('refresh')}
-          </Button>
+        <div className="relative w-full max-w-xs">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search apps"
+            aria-label="Search apps"
+            className="h-10 w-full rounded-full border bg-background pl-9 pr-4 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
         </div>
-      </div>
+      </section>
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 flex items-center gap-2 text-red-600">
-          <AlertCircle className="h-5 w-5 shrink-0" />
-          <span>{error}</span>
+        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4 shrink-0" /> {error}
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-2">
-        {([
-          ['apps', 'Apps'],
-          ['integrations', 'Integrations'],
-          ['installed', 'Installed'],
-          ['updates', 'Updates'],
-        ] as const).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => {
-              setActiveSection(id);
-              if (id !== 'integrations' && typeFilter === 'integration') setTypeFilter('all');
-            }}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-              activeSection === id
-                ? 'bg-blue-50 text-blue-700'
-                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-            }`}
-          >
-            {label}
-            <span className="ml-1 text-xs text-gray-400">{sectionCounts[id]}</span>
+      {/* Pill bar */}
+      <nav className="flex flex-wrap items-center gap-2">
+        <button type="button" className={pill(section === 'apps')} onClick={() => setSection('apps')}>
+          <Grid3x3 className="h-3.5 w-3.5" /> All apps
+        </button>
+        <button type="button" className={pill(section === 'installed')} onClick={() => setSection('installed')}>
+          <Check className="h-3.5 w-3.5" /> Installed
+          {counts.installed > 0 && <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[11px]">{counts.installed}</span>}
+        </button>
+        <button type="button" className={pill(section === 'updates')} onClick={() => setSection('updates')}>
+          <Download className="h-3.5 w-3.5" /> Updates
+          {counts.updates > 0 && <span className="ml-0.5 rounded-full bg-primary/15 px-1.5 text-[11px] text-primary">{counts.updates}</span>}
+        </button>
+        <button type="button" className={pill(section === 'integrations')} onClick={() => setSection('integrations')}>
+          <Sparkles className="h-3.5 w-3.5" /> Integrations
+        </button>
+
+        {categories.length > 0 && <span className="mx-1 h-5 w-px bg-border" />}
+        <button type="button" className={pill(categoryFilter === 'all')} onClick={() => setCategoryFilter('all')}>
+          All
+        </button>
+        {categories.map((cat) => (
+          <button key={cat} type="button" className={pill(categoryFilter === cat)} onClick={() => setCategoryFilter(cat)}>
+            {CATEGORY_LABEL[cat] || cat}
           </button>
         ))}
-      </div>
 
-      <div className="space-y-3 border-y border-gray-200 py-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
-            <Globe className="h-4 w-4 text-gray-500" />
-            Markets
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={addMarketSource}>
-              <Plus className="h-4 w-4 mr-1.5" />
-              Add
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={saveMarketSources}
-              disabled={savingMarketRepo || marketSources.every((source) => !source.repo_url.trim())}
-            >
-              {savingMarketRepo ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Save className="h-4 w-4 mr-1.5" />}
-              Save
-            </Button>
-          </div>
-        </div>
-        <div className="space-y-2">
-          {marketSources.map((source, index) => (
-            <div key={`${source.id}-${index}`} className="grid grid-cols-1 gap-2 rounded-lg border border-gray-200 bg-white p-3 lg:grid-cols-[1fr_2fr_120px_90px_90px_auto] lg:items-center">
-              <input
-                value={source.name}
-                onChange={(event) => updateMarketSource(index, { name: event.target.value })}
-                className="h-9 rounded-md border border-gray-300 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                placeholder="Market name"
-              />
-              <input
-                value={source.repo_url}
-                onChange={(event) => updateMarketSource(index, { repo_url: event.target.value })}
-                className="h-9 rounded-md border border-gray-300 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                placeholder="https://github.com/youeye-platform/Market"
-              />
-              <select
-                value={source.trust}
-                onChange={(event) => updateMarketSource(index, { trust: event.target.value as MarketSourceConfig['trust'] })}
-                className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+        <Link href="/market/sources" className={`${pill(false)} ml-auto`}>
+          <Store className="h-3.5 w-3.5" /> Sources
+          {sourceCount > 0 && <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[11px]">{sourceCount}</span>}
+        </Link>
+      </nav>
+
+      {/* Built for your server — native big-tiles (only on All apps, unfiltered) */}
+      {section === 'apps' && categoryFilter === 'all' && nativeApps.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-[17px] font-bold tracking-tight">Built for your server</h2>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {dedupe(nativeApps).map((app) => (
+              <Link
+                key={app.id}
+                href={variantHref(app)}
+                className="flex flex-col items-center gap-2 rounded-[14px] p-4 text-center transition-all hover:-translate-y-0.5 hover:shadow-md"
               >
-                <option value="official">Official</option>
-                <option value="community">Community</option>
-                <option value="custom">Custom</option>
-              </select>
-              <input
-                type="number"
-                value={source.priority}
-                onChange={(event) => updateMarketSource(index, { priority: Number(event.target.value) })}
-                className="h-9 rounded-md border border-gray-300 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                aria-label="Priority"
-              />
-              <label className="flex h-9 items-center gap-2 rounded-md border border-gray-200 px-3 text-sm text-gray-600">
-                <input
-                  type="checkbox"
-                  checked={source.enabled}
-                  onChange={(event) => updateMarketSource(index, { enabled: event.target.checked })}
-                  className="h-4 w-4 rounded border-gray-300"
-                />
-                Enabled
-              </label>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => removeMarketSource(index)}
-                disabled={marketSources.length === 1}
+                <MarketIcon app={app} size={56} />
+                <span className="text-[13.5px] font-semibold">{app.name}</span>
+                <span className="text-[11.5px] text-muted-foreground">{CATEGORY_LABEL[app.category || 'other'] || app.category}</span>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Featured banner */}
+      {section === 'apps' && categoryFilter === 'all' && featured && (
+        <section className="grid overflow-hidden rounded-2xl border md:grid-cols-2">
+          <div className="flex flex-col justify-center gap-2.5 p-8">
+            <div className="text-[12px] font-semibold uppercase tracking-wider text-primary">Featured</div>
+            <h3 className="text-[22px] font-bold tracking-tight">{featured.name}</h3>
+            <p className="text-sm text-muted-foreground">{featured.description}</p>
+            <div className="pt-1">
+              <Link
+                href={variantHref(featured)}
+                className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90"
               >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+                {isInstalled(featured) ? `Open ${featured.name}` : `Install ${featured.name}`}
+              </Link>
             </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-gray-200 bg-white p-3">
-        <div className="mb-3 flex items-center gap-2 text-sm font-medium text-gray-700">
-          <SlidersHorizontal className="h-4 w-4 text-gray-500" />
-          Browse
-        </div>
-        <div className="grid grid-cols-1 gap-2 lg:grid-cols-[minmax(220px,2fr)_repeat(4,minmax(140px,1fr))_auto] lg:items-center">
-          <label className="relative block">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-            <input
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              className="h-9 w-full rounded-md border border-gray-300 pl-9 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              placeholder="Search Market"
-              aria-label="Search Market"
-            />
-          </label>
-          <select
-            value={sourceFilter}
-            onChange={(event) => setSourceFilter(event.target.value)}
-            className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            aria-label="Filter by Market source"
-          >
-            <option value="all">All Markets</option>
-            {sourceOptions.map(([id, name]) => (
-              <option key={id} value={id}>{name}</option>
-            ))}
-          </select>
-          <select
-            value={typeFilter}
-            onChange={(event) => setTypeFilter(event.target.value)}
-            className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            aria-label="Filter by item type"
-          >
-            <option value="all">All Types</option>
-            <option value="native">Native Apps</option>
-            <option value="external">External Apps</option>
-            <option value="integration">Integrations</option>
-          </select>
-          <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value)}
-            className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            aria-label="Filter by install status"
-          >
-            <option value="all">All Statuses</option>
-            <option value="installed">Installed</option>
-            <option value="available">Available</option>
-            <option value="updates">Updates</option>
-          </select>
-          <select
-            value={categoryFilter}
-            onChange={(event) => setCategoryFilter(event.target.value)}
-            className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            aria-label="Filter by category"
-          >
-            <option value="all">All Categories</option>
-            {categoryOptions.map((category) => (
-              <option key={category} value={category}>{CATEGORIES[category] || category}</option>
-            ))}
-          </select>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setSearchQuery('');
-              setSourceFilter('all');
-              setTypeFilter('all');
-              setStatusFilter('all');
-              setCategoryFilter('all');
-            }}
-            disabled={!hasActiveFilters}
-          >
-            Clear
-          </Button>
-        </div>
-        <div className="mt-2 text-xs text-gray-400">
-          Showing {filteredApps.length} of {apps.length} Market items
-        </div>
-      </div>
-
-      {/* Built for YouEye — native apps, grouped by category */}
-      {activeSection === 'apps' && nativeGroups.length > 0 && (
-        <div className="space-y-4">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-            <Shield className="h-4 w-4" />
-            {t('builtForYouEye') ?? 'Built for YouEye'} ({nativeGroups.length})
-          </h2>
-          {Object.entries(groupByCategory(nativeGroups)).map(([cat, catApps]) => (
-            <div key={cat} className="space-y-3">
-              <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wider">
-                {CATEGORIES[cat] || cat}
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {catApps.map((group) => (
-                  <MarketAppGroupCard
-                    key={group.key}
-                    group={group}
-                    status={statuses[group.primary.id]}
-                    installProgress={installProgresses[group.primary.id]}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {apps.length === 0 && !error && (
-        <div className="text-center py-16 text-gray-400">
-          <Store className="h-12 w-12 mx-auto mb-3 opacity-40" />
-          <p className="text-lg font-medium">{t('noApps')}</p>
-          <p className="text-sm mt-1">{t('catalogEmpty')}</p>
-        </div>
-      )}
-
-      {apps.length > 0 && filteredApps.length === 0 && !error && (
-        <div className="text-center py-16 text-gray-400">
-          <Store className="h-12 w-12 mx-auto mb-3 opacity-40" />
-          <p className="text-lg font-medium">No Market items match these filters</p>
-          <p className="text-sm mt-1">Clear a filter or try a broader search.</p>
-        </div>
-      )}
-
-      {activeSection === 'integrations' && integrationGroups.length > 0 && (
-        <div className="space-y-4">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-            <Plug className="h-4 w-4" />
-            Integrations ({integrationGroups.length})
-          </h2>
-          {Object.entries(
-            integrationGroups.reduce<Record<string, MarketAppGroup[]>>((groups, group) => {
-              const target = group.primary.target?.appName || group.primary.target?.appId || 'Other apps';
-              groups[target] = [...(groups[target] ?? []), group];
-              return groups;
-            }, {})
-          ).map(([target, targetApps]) => (
-            <div key={target} className="space-y-3">
-              <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wider">
-                For {target}
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {targetApps.map((group) => (
-                  <MarketAppGroupCard
-                    key={group.key}
-                    group={group}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Installed marketplace apps (flat, no category grouping) */}
-      {activeSection === 'installed' && installedGroups.length > 0 && (
-        <div className="space-y-3">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-            {t('installed')} ({installedGroups.length})
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {installedGroups.map((group) => (
-              <MarketAppGroupCard
-                key={group.key}
-                group={group}
-                status={statuses[group.primary.id]}
-                installProgress={installProgresses[group.primary.id]}
-              />
-            ))}
           </div>
-        </div>
-      )}
-
-      {activeSection === 'updates' && updateGroups.length > 0 && (
-        <div className="space-y-3">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-            Updates ({updateGroups.length})
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {updateGroups.map((group) => (
-              <MarketAppGroupCard
-                key={group.key}
-                group={group}
-                status={statuses[group.primary.id]}
-                installProgress={installProgresses[group.primary.id]}
-              />
-            ))}
+          <div className="hidden items-center justify-center bg-gradient-to-br from-slate-900 to-slate-700 p-8 md:flex">
+            <MarketIcon app={featured} size={96} />
           </div>
-        </div>
+        </section>
       )}
 
-      {/* Available marketplace apps, grouped by category */}
-      {activeSection === 'apps' && availableGroups.length > 0 && (
-        <div className="space-y-4">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-            {t('available')} ({availableGroups.length})
-          </h2>
-          {Object.entries(groupByCategory(availableGroups)).map(([cat, catApps]) => (
-            <div key={cat} className="space-y-3">
-              <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wider">
-                {CATEGORIES[cat] || cat}
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {catApps.map((group) => (
-                  <MarketAppGroupCard
-                    key={group.key}
-                    group={group}
-                    status={statuses[group.primary.id]}
-                    installProgress={installProgresses[group.primary.id]}
-                  />
-                ))}
-              </div>
+      {/* Category sections (compact rows) */}
+      {Object.keys(byCategory).length === 0 ? (
+        <div className="rounded-xl border bg-card py-16 text-center text-muted-foreground">
+          <Store className="mx-auto mb-3 h-10 w-10 opacity-40" />
+          <p className="text-sm">{apps.length === 0 ? 'No apps in the catalog yet.' : 'Nothing matches your search or filters.'}</p>
+        </div>
+      ) : (
+        Object.entries(byCategory).map(([cat, list]) => (
+          <section key={cat} className="space-y-2">
+            <h2 className="text-[17px] font-bold tracking-tight">{CATEGORY_LABEL[cat] || cat}</h2>
+            <div className="grid gap-x-6 gap-y-1 rounded-xl border bg-card p-2 md:grid-cols-2 lg:grid-cols-3">
+              {list.map((app) => (
+                <Link
+                  key={`${app.id}-${app.sourceId ?? ''}`}
+                  href={variantHref(app)}
+                  className="flex items-center gap-3 rounded-xl px-2.5 py-2.5 transition-colors hover:bg-accent"
+                >
+                  <MarketIcon app={app} size={44} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 text-sm font-semibold">
+                      <span className="truncate">{app.name}</span>
+                      {app.integration === 'native' && (
+                        <span className="rounded-full bg-primary/10 px-1.5 py-px text-[10px] font-medium text-primary">Native</span>
+                      )}
+                    </div>
+                    <div className="truncate text-[12.5px] text-muted-foreground">{app.description || app.sourceName || '—'}</div>
+                  </div>
+                  {hasUpdate(app) ? (
+                    <span className="text-[11px] font-medium text-primary">Update</span>
+                  ) : (
+                    <StatusDot status={statusOf(app)} />
+                  )}
+                </Link>
+              ))}
             </div>
-          ))}
-        </div>
+          </section>
+        ))
       )}
 
-      {/* Orphan resources section */}
-      <OrphanSection />
-
-      {/* Uninstall confirmation dialog */}
-      {uninstallApp && (
-        <UninstallDialog
-          app={uninstallApp}
-          onUninstall={handleUninstall}
-          onClose={() => setUninstallApp(null)}
-        />
-      )}
-
-      {/* Install from URL dialog */}
-      {showUrlDialog && (
-        <InstallFromUrlDialog
-          domain={'youeye.local'}
-          onClose={() => setShowUrlDialog(false)}
-          onInstallComplete={() => {
-            setShowUrlDialog(false);
-            setTimeout(fetchStatuses, 1000);
-          }}
-        />
-      )}
+      <div className="text-center text-[12.5px] text-muted-foreground">
+        {sourceCount} {sourceCount === 1 ? 'market' : 'markets'} connected · <Link href="/market/sources" className="text-primary hover:underline">Manage sources</Link>
+      </div>
     </div>
   );
 }
