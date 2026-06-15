@@ -1,26 +1,20 @@
 /**
- * Timeline Embed
+ * Timeline Embed — Plan 1 Workstream E2.
  *
- * Renders a rich timeline entry card via iframe from the source app,
- * with lazy loading (IntersectionObserver) and fallback to a standard
- * card when the app is unavailable or the embed times out.
- *
- * The embed URL is constructed from the entry's embed_path + the app's
- * subdomain. The app renders the card using only URL params — no
- * server-side storage needed for the specific timeline entry.
- *
- * Icons and colors are resolved dynamically from app_meta (sourced from
- * the app manifest at install time) — no hardcoded per-app maps.
- *
- * postMessage protocol:
- *   iframe → parent: { type: "youeye-embed-ready" }
- *   iframe → parent: { type: "youeye-embed-resize", height: number }
+ * Renders a timeline entry as the source app's own embed via the ONE
+ * <UnifiedEmbed> wrapper (kind="timeline-card"): lazy IntersectionObserver
+ * mount, origin-validated `youeye:ready/resize/action` protocol (legacy
+ * `youeye-embed-*` accepted for one cycle), timeout → visible fallback. The old
+ * 200px height cap is gone — app-declared height up to a generous 480px guard.
+ * Attribution (app chip + time) is rendered by the feed OUTSIDE the embed
+ * (anti-impersonation). When the app has no embed, is uninstalled, or times out,
+ * the StandardCard fallback is shown (never silent).
  */
 
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
-import { Package, ExternalLink } from "lucide-react";
+import { ExternalLink, Package } from "lucide-react";
+import { UnifiedEmbed } from "@/components/embeds/unified-embed";
 import { resolveLucideIcon } from "@/lib/timeline/icon-map";
 
 // ─── App Meta (passed down from timeline feed) ─────────────────────
@@ -45,14 +39,12 @@ interface StandardCardData {
 
 /** Generate Tailwind-compatible border/bg classes from a hex accent color */
 function accentClasses(hex: string | null | undefined): string {
-  if (!hex) return "border-gray-500/40 bg-muted/30";
-  // Use inline style via CSS custom property for arbitrary colors
+  if (!hex) return "border-border bg-muted/30";
   return "border-[var(--accent-border)] bg-[var(--accent-bg)]";
 }
 
 function accentStyle(hex: string | null | undefined): React.CSSProperties {
   if (!hex) return {};
-  // Parse hex to rgb for alpha blending
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
@@ -65,9 +57,11 @@ function accentStyle(hex: string | null | undefined): React.CSSProperties {
 function StandardCard({
   entry,
   meta,
+  uninstalled,
 }: {
   entry: StandardCardData;
   meta?: AppMetaEntry;
+  uninstalled?: boolean;
 }) {
   const Icon = meta?.icon ? resolveLucideIcon(meta.icon) : Package;
   const color = meta?.accent_color ?? null;
@@ -75,7 +69,6 @@ function StandardCard({
   const thumbnailUrl = entry.data.thumbnail_url as string | undefined;
   const url = entry.data.url as string | undefined;
 
-  // Strip app slug prefix from entry_type for display
   const appSlug = entry.app_id.replace(/^ye-/, "");
   const actionLabel = entry.entry_type
     .replace(new RegExp(`^${appSlug}-`), "")
@@ -86,48 +79,51 @@ function StandardCard({
       className={`flex gap-3 rounded-lg border p-3 ${accentClasses(color)}`}
       style={accentStyle(color)}
     >
-      {/* Thumbnail */}
       {thumbnailUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
         <img
           src={thumbnailUrl}
           alt=""
-          className="w-12 h-16 object-cover rounded flex-shrink-0"
+          className="h-16 w-12 flex-shrink-0 rounded object-cover"
           onError={(e) => {
             (e.target as HTMLImageElement).style.display = "none";
           }}
         />
       )}
 
-      <div className="flex-1 min-w-0">
-        {/* App badge + type */}
-        <div className="flex items-center gap-1.5 mb-1">
-          <Icon className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="text-[11px] text-muted-foreground capitalize">
-            {appSlug}
-          </span>
+      <div className="min-w-0 flex-1">
+        <div className="mb-1 flex items-center gap-1.5">
+          <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-[11px] capitalize text-muted-foreground">{appSlug}</span>
           <span className="text-[11px] text-muted-foreground">·</span>
-          <span className="text-[11px] text-muted-foreground">
-            {actionLabel}
-          </span>
+          <span className="text-[11px] text-muted-foreground">{actionLabel}</span>
         </div>
 
-        {/* Description */}
-        {description && (
-          <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
-            {description}
+        {entry.title && <p className="truncate text-sm font-medium text-foreground">{entry.title}</p>}
+
+        {uninstalled ? (
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            This app was uninstalled — the entry is kept from your timeline history.
           </p>
+        ) : (
+          description && <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{description}</p>
         )}
 
-        {/* External link */}
         {url && (
           <a
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline mt-1"
+            className="mt-1 inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
           >
-            {new URL(url).hostname.replace("www.", "")}
-            <ExternalLink className="w-3 h-3" />
+            {(() => {
+              try {
+                return new URL(url).hostname.replace("www.", "");
+              } catch {
+                return url;
+              }
+            })()}
+            <ExternalLink className="h-3 w-3" />
           </a>
         )}
       </div>
@@ -135,11 +131,11 @@ function StandardCard({
   );
 }
 
-// ─── Embed Iframe ────────────────────────────────────────────────────
+// ─── Timeline embed (on UnifiedEmbed) ────────────────────────────────
 
 const EMBED_TIMEOUT_MS = 5000;
-const EMBED_MAX_HEIGHT = 200;
 const EMBED_MIN_HEIGHT = 48;
+const EMBED_MAX_HEIGHT = 480; // E2: the old 200px cap is gone — generous guard.
 
 interface TimelineEmbedProps {
   entry: {
@@ -155,19 +151,13 @@ interface TimelineEmbedProps {
   domain: string;
   /** App metadata from manifest (icon, accent_color, entry_icons) */
   appMeta?: AppMetaEntry;
+  /** Optional theme mode passed through to the embed (`?mode=`) for self-theming */
+  mode?: "light" | "dark";
   className?: string;
 }
 
-export function TimelineEmbed({ entry, domain, appMeta, className }: TimelineEmbedProps) {
-  const [isVisible, setIsVisible] = useState(false);
-  const [embedReady, setEmbedReady] = useState(false);
-  const [embedFailed, setEmbedFailed] = useState(false);
-  const [embedHeight, setEmbedHeight] = useState(EMBED_MIN_HEIGHT);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
-
-  // No embed_path → always show standard card
+export function TimelineEmbed({ entry, domain, appMeta, mode, className }: TimelineEmbedProps) {
+  // No embed_path → always show the standard card.
   if (!entry.embed_path) {
     return (
       <div className={className}>
@@ -176,111 +166,19 @@ export function TimelineEmbed({ entry, domain, appMeta, className }: TimelineEmb
     );
   }
 
-  // Construct full embed URL
   const appSlug = entry.app_id.replace(/^ye-/, "");
   const embedUrl = `https://${appSlug}.${domain}${entry.embed_path}`;
 
-  // IntersectionObserver: lazy-load iframe
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-
-    const observer = new IntersectionObserver(
-      ([obs]) => {
-        if (obs.isIntersecting) {
-          setIsVisible(true);
-          observer.disconnect();
-        }
-      },
-      { rootMargin: "200px", threshold: 0 }
-    );
-
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  // postMessage listener
-  const handleMessage = useCallback(
-    (event: MessageEvent) => {
-      // Only accept messages from our embed origin
-      if (!embedUrl.startsWith(event.origin)) return;
-      const msg = event.data;
-      if (!msg || typeof msg !== "object") return;
-
-      if (msg.type === "youeye-embed-ready") {
-        setEmbedReady(true);
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      }
-
-      if (msg.type === "youeye-embed-resize" && typeof msg.height === "number") {
-        setEmbedHeight(
-          Math.min(Math.max(msg.height, EMBED_MIN_HEIGHT), EMBED_MAX_HEIGHT)
-        );
-      }
-    },
-    [embedUrl]
-  );
-
-  // Attach message listener + timeout when iframe becomes visible
-  useEffect(() => {
-    if (!isVisible) return;
-
-    window.addEventListener("message", handleMessage);
-
-    // Timeout: if embed doesn't signal ready, fall back to standard card
-    timeoutRef.current = setTimeout(() => {
-      if (!embedReady) {
-        setEmbedFailed(true);
-      }
-    }, EMBED_TIMEOUT_MS);
-
-    return () => {
-      window.removeEventListener("message", handleMessage);
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, [isVisible, handleMessage, embedReady]);
-
-  // Handle iframe load error
-  const handleIframeError = () => {
-    setEmbedFailed(true);
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-  };
-
   return (
-    <div ref={containerRef} className={className}>
-      {/* Skeleton while waiting for visibility or embed ready */}
-      {!isVisible && (
-        <div className="h-12 rounded-lg bg-muted/30 animate-pulse" />
-      )}
-
-      {isVisible && !embedFailed && (
-        <>
-          {/* Loading skeleton (shown until embed is ready) */}
-          {!embedReady && (
-            <div className="h-12 rounded-lg bg-muted/30 animate-pulse" />
-          )}
-
-          {/* Iframe — hidden until ready, shown on top when ready */}
-          <iframe
-            ref={iframeRef}
-            src={embedUrl}
-            sandbox="allow-scripts allow-same-origin"
-            loading="lazy"
-            onError={handleIframeError}
-            className={`w-full border-0 rounded-lg transition-opacity duration-200 ${
-              embedReady ? "opacity-100" : "opacity-0 absolute pointer-events-none"
-            }`}
-            style={{
-              height: embedReady ? embedHeight : 0,
-              background: "transparent",
-              colorScheme: "normal",
-            }}
-          />
-        </>
-      )}
-
-      {/* Fallback: standard card when embed fails */}
-      {isVisible && embedFailed && <StandardCard entry={entry} meta={appMeta} />}
-    </div>
+    <UnifiedEmbed
+      url={embedUrl}
+      kind="timeline-card"
+      size={{ default: EMBED_MIN_HEIGHT, min: EMBED_MIN_HEIGHT, max: EMBED_MAX_HEIGHT }}
+      timeout={EMBED_TIMEOUT_MS}
+      mode={mode}
+      className={className}
+      title={`${appSlug} timeline card`}
+      fallback={<StandardCard entry={entry} meta={appMeta} uninstalled />}
+    />
   );
 }

@@ -1,3 +1,17 @@
+## ui-v0.4.12 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E2 — timeline entries render through <UnifiedEmbed>
+
+### Changes
+- `ui/src/components/timeline/timeline-embed.tsx` — rewritten to wrap `<UnifiedEmbed kind="timeline-card">` (lazy mount, `youeye:ready/resize/action` + legacy compat, sandbox, timeout→fallback). Dropped the 200px cap → 480 guard. Redesigned `StandardCard` fallback ("This app was uninstalled…"). Attribution stays outside the embed.
+- `ui/package.json` → 0.4.12; new spec `ui/tests/timeline-embed.test.mjs`.
+
+### Test Results
+- `timeline-embed.test.mjs` 4/4; `pnpm build` OK. Released ui-v0.4.12 → bykapc (`spine update ui`) + verify lemon.app/timeline.
+
+### Notes for Iris
+- N/A (direct-to-main). UI-only; component API unchanged (added optional `mode` prop). Legacy `youeye-embed-*` still accepted by UnifiedEmbed → existing apps' timeline cards keep working. No UI→CP call.
+
 ## ui-v0.4.11 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 E1 (security fix) — header-config no longer leaks the installed-app list to apps
