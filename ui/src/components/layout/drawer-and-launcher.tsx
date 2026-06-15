@@ -42,7 +42,7 @@ export function DrawerAndLauncher({ isAdmin = false }: { isAdmin?: boolean }) {
               className="pointer-events-auto absolute inset-x-0 bottom-0 top-14"
               onClick={close}
             />
-            <div className="pointer-events-auto absolute inset-x-4 bottom-4 top-[68px] overflow-hidden rounded-3xl border bg-popover/95 shadow-2xl backdrop-blur-xl sm:inset-x-7 sm:bottom-5">
+            <div className="pointer-events-auto absolute inset-x-4 bottom-4 top-[68px] overflow-hidden rounded-3xl border border-border/40 bg-popover/70 shadow-2xl backdrop-blur-2xl sm:inset-x-7 sm:bottom-5">
               <Launcher onClose={close} />
             </div>
           </div>,

@@ -1,3 +1,19 @@
+## ui-v0.4.24 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 5 Slice 2.5 — pointer-drag live reorder + unified launcher grid + transparency (owner feedback)
+
+### Changes
+- `ui/src/lib/hooks/use-grid-drag.ts` — **new** pointer-based drag (live reorder, threshold→click guard, portaled ghost, dwell-to-merge). Replaces HTML5 DnD.
+- `ui/src/components/layout/app-drawer.tsx` — edit-mode live reorder via the hook; translucent popover; tiles → render-functions (no remount flicker).
+- `ui/src/components/layout/launcher.tsx` — **unified ordered grid** of apps+folders; reorder anything; folder created **at the drop target's position**; always-visible folder × ; glassy translucency.
+- `ui/src/components/layout/drawer-and-launcher.tsx` — launcher overlay more translucent.
+
+### Test Results
+- `pnpm build` OK; standalone baked 0.4.24. Live verify on lemon.app — drag now driveable via automation (pointer events).
+
+### Notes for Iris
+- Fixes owner-reported drawer-reorder + folder-placement bugs. Native apps iframe these surfaces, so the fixes propagate automatically. Direct-to-main.
+
 ## ui-v0.4.23 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 5 Slice 2 — launcher folders (iOS-style)
