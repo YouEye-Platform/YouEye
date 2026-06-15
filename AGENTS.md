@@ -1,3 +1,17 @@
+## ui-v0.4.11 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E1 (security fix) — header-config no longer leaks the installed-app list to apps
+
+### Changes
+- `ui/src/app/api/v1/header/config/route.ts` — for native-app service calls (`X-YouEye-App`), `navigation` omits `apps` + `sections` (`...(isServiceCall ? {} : { apps, sections })`). The UI's own header keeps the list. Closes the app-enumeration leak (plan §1.4).
+- `ui/package.json` → 0.4.11; new spec `ui/tests/header-config-security.test.mjs`.
+
+### Test Results
+- `header-config-security.test.mjs` 1/1; `pnpm build` OK. Released ui-v0.4.11 → bykapc (`spine update ui`) + verify service-call header/config has no app list.
+
+### Notes for Iris
+- N/A (direct-to-main). Canvas `AppHeader` degrades gracefully (`navigation?.apps ?? []` → empty drawer, no crash). Full launcher iframe + populated drawer = rest of E1 (needs the 6-native-app rollout). No UI→CP call.
+
 ## cp-v0.4.46 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 D — Market app-detail rebuilt to mockup (completes D)
