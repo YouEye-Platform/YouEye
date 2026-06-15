@@ -4,6 +4,7 @@ import { spineClient } from '@/lib/spine/client';
 import { getAppDefinition } from '@/lib/apps/definitions';
 import { updateLXDApp } from '@/lib/apps/lxd-updater';
 import { updateOCIApp } from '@/lib/apps/updater';
+import { updateSystemFromMarket } from '@/lib/infrastructure/system-updater';
 import { getInstalledApp } from '@/lib/market/installed-apps';
 import { updateMarketplaceApp } from '@/lib/market/updater';
 import { startUpdate, writeStatus, completeUpdate, failUpdate } from '@/lib/updates/state';
@@ -127,6 +128,43 @@ export async function POST(
         previous_version: result.previousVersion,
         new_version: result.newVersion,
       }, { status: result.success ? 200 : 500 });
+    }
+
+    // Market system apps (Caddy/Pi-Hole/Postgres) update through the pinned
+    // Market system manifests, NOT the moving-tag OCI rebuild. Confirmations
+    // come from the client dialog; the guards below are a safety net.
+    if (appDef?.marketSystemId) {
+      const body = await request.json().catch(() => ({} as Record<string, unknown>));
+      let lastMessage = '';
+      const result = await updateSystemFromMarket(
+        {
+          systemId: appDef.marketSystemId,
+          hostIP: process.env.HOST_IP || '',
+          confirmMaintenanceWindow: body.confirmMaintenanceWindow === true,
+          confirmContainerName:
+            typeof body.confirmContainerName === 'string' ? body.confirmContainerName : undefined,
+          allowDatabaseUpdate: body.allowDatabaseUpdate === true,
+        },
+        (event) => {
+          lastMessage = event.message;
+          const progress = event.totalSteps > 0 ? Math.round((event.step / event.totalSteps) * 100) : 0;
+          recordStatus(
+            component,
+            event.status === 'error' ? 'failed' : event.status === 'success' ? 'completed' : 'installing',
+            progress,
+            event.message,
+          );
+        },
+      );
+      if (result.success) {
+        await markCompleted(component, result.newVersion || '');
+      } else {
+        await markFailed(component, result.error || result.message);
+      }
+      return NextResponse.json(
+        { status: result.success ? 'success' : 'error', message: result.message, new_version: result.newVersion },
+        { status: result.success ? 200 : 400 },
+      );
     }
 
     if (appDef?.updatedBy === 'control-panel') {

@@ -23,6 +23,7 @@ import { getAllInstalledApps } from '@/lib/market/installed-apps';
 import { fetchManifest } from '@/lib/market/catalog';
 import { refreshVersionCheck } from '@/lib/market/version-checker';
 import { getAllCachedLxdUpdates } from '@/lib/apps/lxd-updates';
+import { planSystemUpdates, type SystemUpdatePlan } from '@/lib/infrastructure/system-updater';
 
 function extractIP(stateMetadata: Record<string, unknown>): string | undefined {
   const network = stateMetadata.network as Record<string, unknown> | undefined;
@@ -65,12 +66,13 @@ export async function GET(request: NextRequest) {
     }
 
     // Parallel data fetches
-    const [instancesResp, spineStatus, spineUpdates, marketInstalled, dbInstalledApps] = await Promise.allSettled([
+    const [instancesResp, spineStatus, spineUpdates, marketInstalled, dbInstalledApps, systemPlansResult] = await Promise.allSettled([
       incusRequest<string[]>('GET', '/1.0/instances'),
       spineClient.status(),
       spineClient.checkUpdates(),
       listInstalledApps(),
       getAllInstalledApps(),
+      planSystemUpdates(),
     ]);
 
     const instancePaths =
@@ -84,6 +86,13 @@ export async function GET(request: NextRequest) {
     const installed = marketInstalled.status === 'fulfilled' ? marketInstalled.value : [];
     const dbApps = dbInstalledApps.status === 'fulfilled' ? dbInstalledApps.value : [];
     const dbAppsMap = new Map(dbApps.map((a) => [a.appId, a]));
+
+    const systemPlanById = new Map<string, SystemUpdatePlan>();
+    if (systemPlansResult.status === 'fulfilled') {
+      for (const p of systemPlansResult.value) systemPlanById.set(p.id, p);
+    } else {
+      console.error('[/api/ui-bridge/apps] system update plan failed (degrading):', systemPlansResult.reason);
+    }
 
     // Container state
     const allContainerNames = APP_DEFINITIONS.flatMap((a) =>
@@ -157,8 +166,16 @@ export async function GET(request: NextRequest) {
           // Incus updates disabled for now
         }
 
-        // OCI container updates disabled for infrastructure (caddy, postgres, authentik, pihole)
-        // until the update pipeline is stable
+        // Market system apps (Caddy/Pi-Hole/Postgres): tracked via the pinned
+        // Market system manifests, not the moving-tag OCI checker.
+        const systemPlan = def.marketSystemId ? systemPlanById.get(def.marketSystemId) : undefined;
+        if (systemPlan) {
+          version = systemPlan.currentVersion ?? systemPlan.recordedVersion ?? version;
+          if (systemPlan.updateAvailable && systemPlan.trackingStatus === 'tracked') {
+            updateAvailable = true;
+            updateInfo = `${systemPlan.currentVersion ?? '?'} → ${systemPlan.desiredVersion}`;
+          }
+        }
 
         // Check LXD native app updates (Search, Cinema, Weather, etc.)
         if (def.lxdConfig && !updateAvailable) {

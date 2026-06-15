@@ -7,6 +7,7 @@ import * as LucideIcons from "lucide-react";
 import { AlertCircle, ArrowLeft, ChevronRight, ExternalLink, Info, Loader2, Network, Palette, RefreshCw, RotateCcw, Shield, Sliders, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import WordArtPickerInline from "@/components/setup/WordArtPickerInline";
 import type { SiteNameStyle } from "@/lib/wordart-presets";
 import { uiSettingsApi } from "./api-base";
@@ -37,6 +38,7 @@ interface UnifiedApp {
   status: string;
   updateAvailable: boolean;
   updateInfo?: string;
+  systemManaged?: boolean;
 }
 
 interface UpdateStatus {
@@ -210,6 +212,9 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [statuses, setStatuses] = useState<Map<string, UpdateStatus>>(new Map());
+  const [confirmApp, setConfirmApp] = useState<UnifiedApp | null>(null);
+  const [maintAck, setMaintAck] = useState(false);
+  const [dbAck, setDbAck] = useState(false);
   const updates = apps.filter((app) => app.updateAvailable);
   const systemApps = apps.filter((app) => app.category !== "user");
 
@@ -251,7 +256,16 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
     setChecking(false);
   }
 
-  async function updateApp(appId: string) {
+  function openConfirm(app: UnifiedApp) {
+    setMaintAck(false);
+    setDbAck(false);
+    setConfirmApp(app);
+  }
+
+  async function updateApp(
+    appId: string,
+    confirm?: { confirmMaintenanceWindow: boolean; confirmContainerName: string; allowDatabaseUpdate?: boolean },
+  ) {
     const component = updateStatusComponent(appId);
     setStatuses((prev) => {
       const next = new Map(prev);
@@ -287,7 +301,10 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
 
     fetch(`/settings/api/apps/${encodeURIComponent(appId)}/update`, {
       method: "POST",
-      headers: { "X-CSRF-Token": csrfToken },
+      headers: confirm
+        ? { "X-CSRF-Token": csrfToken, "Content-Type": "application/json" }
+        : { "X-CSRF-Token": csrfToken },
+      ...(confirm ? { body: JSON.stringify(confirm) } : {}),
     })
       .then(async (res) => {
         if (!res.ok) {
@@ -326,6 +343,36 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
 
   return (
     <>
+      {confirmApp && (
+        <ConfirmDialog
+          open
+          title={`Update ${confirmApp.displayName}?`}
+          description={`This briefly stops and rebuilds ${confirmApp.displayName} (${confirmApp.containers[0]?.name ?? "its container"}) to the version pinned in the Market manifest. The service will be unavailable for a few seconds.`}
+          confirmLabel="Update now"
+          confirmDisabled={!maintAck || (confirmApp.id === "postgres" && !dbAck)}
+          onCancel={() => setConfirmApp(null)}
+          onConfirm={() => {
+            const app = confirmApp;
+            setConfirmApp(null);
+            updateApp(app.id, {
+              confirmMaintenanceWindow: true,
+              confirmContainerName: app.containers[0]?.name ?? "",
+              allowDatabaseUpdate: app.id === "postgres" ? dbAck : undefined,
+            });
+          }}
+        >
+          <label className="flex items-start gap-2 text-[13px]">
+            <input type="checkbox" checked={maintAck} onChange={(e) => setMaintAck(e.target.checked)} className="mt-0.5" />
+            <span>I understand this restarts the service.</span>
+          </label>
+          {confirmApp.id === "postgres" && (
+            <label className="flex items-start gap-2 text-[13px]">
+              <input type="checkbox" checked={dbAck} onChange={(e) => setDbAck(e.target.checked)} className="mt-0.5" />
+              <span>I understand the database will restart; this is a patch update within PostgreSQL 17.</span>
+            </label>
+          )}
+        </ConfirmDialog>
+      )}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <div>
@@ -353,7 +400,7 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
                         <p className="text-xs text-muted-foreground">{app.updateInfo || "Update available"}</p>
                       </div>
                     </button>
-                    <Button size="sm" onClick={() => updateApp(app.id)} disabled={isUpdating}>
+                    <Button size="sm" onClick={() => (app.systemManaged ? openConfirm(app) : updateApp(app.id))} disabled={isUpdating}>
                       {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                       {isUpdating ? "Updating" : "Update"}
                     </Button>

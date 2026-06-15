@@ -1,3 +1,23 @@
+## cp-v0.4.41 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 4 — system-app (Caddy/Pi-Hole/Postgres) updates through the Market manifests
+
+### Changes
+- `control-panel/src/lib/apps/definitions.ts` — 3 infra defs gain `marketSystemId`, lose moving-tag `imageRef` (auto-disables legacy OCI paths).
+- `control-panel/src/app/api/apps/unified/route.ts` — `planSystemUpdates()` detection + `systemManaged`; OCI branch gated off for system apps (kills false "New image available").
+- `control-panel/src/app/api/ui-bridge/apps/route.ts` — same Market detection for parity.
+- `control-panel/src/app/settings/api/apps/[appId]/update/route.ts` — reroute `marketSystemId` apps to `updateSystemFromMarket` with confirmation body.
+- `control-panel/src/components/settings-shell/apps-client.tsx` — `systemManaged` + ConfirmDialog (maintenance ack + Postgres DB ack) + JSON confirm body.
+- `control-panel/src/components/ui/confirm-dialog.tsx` — NEW dependency-free modal.
+- `control-panel/src/app/api/apps/check-updates/route.ts` — `clearCatalogCache()` for manifest freshness.
+- `control-panel/package.json` → 0.4.41; new spec `tests/system-app-updates.spec.ts`.
+
+### Test Results
+- `system-app-updates.spec.ts` 7/7; `pnpm build` OK. Released cp-v0.4.41 → bykapc deploy + live verify (false positive gone + positive detection via temp label).
+
+### Notes for Iris
+- N/A (direct-to-main). CP-only; no Market/Spine/UI change. Legacy SSE/queue update paths fail safe (no imageRef → throws). Deferred items (forceLegacy UI, PG major upgrade, OCI machinery removal) → To Plan.
+
 ## cp-v0.4.40 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 C2 — Privacy page rebuilt to mockup (Your data + admin Server card) + real telemetry toggle
