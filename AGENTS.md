@@ -1,3 +1,17 @@
+## ui-v0.4.19 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E6 — app settings panel on UnifiedEmbed (acceptance #6 met)
+
+### Changes
+- `ui/src/components/settings/app-settings-detail.tsx` — `AppSettingsEmbed` migrated from a hand-rolled iframe + `youeye-app-settings-resize` listener onto `<UnifiedEmbed kind="settings-panel">` (renders `/settings?embed=true`; timeout→visible fallback).
+- `ui/package.json` → 0.4.19; spec `ui/tests/settings-app-embed-e6.test.mjs` (3/3).
+
+### Test Results
+- 3/3; `pnpm build` OK. Released ui-v0.4.19 → bykapc; verify a settings/apps/[app] page.
+
+### Notes for Iris
+- **Acceptance #6 satisfied**: timeline/notifications/widgets/launcher/settings-panels all on `<UnifiedEmbed>`. Native `/embed/settings` (Notes) + the `settings-app-notes.html` page restyle + per-surface toggles ride the native batch → `Plans/Archive/To Plan/e6-native-settings-panels.md`.
+
 ## ui-v0.4.18 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 E1 fix — launcher grid was single-column
