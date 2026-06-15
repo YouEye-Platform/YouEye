@@ -1,3 +1,17 @@
+## cp-v0.4.42 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — Apps installed-list reconciled to mockup (completes C2)
+
+### Changes
+- `control-panel/src/components/settings-shell/apps-client.tsx` — `InstalledAppsList` restyled to the mockup card (Installed apps head + Open Market link; rows: app-icon tile, name, subdomain `app.<host>`, status dot+word; `unknown` status suppressed, no faked version/surfaces — pitfall #28). Page header → mockup copy; redundant outer "Installed Apps" heading folded into the card head.
+- `control-panel/package.json` → 0.4.42; new spec `tests/settings-apps.spec.ts`.
+
+### Test Results
+- `settings-apps.spec.ts` 4/4 (+ system-app-updates 7/7); `pnpm build` OK. Released cp-v0.4.42 → bykapc deploy + verify on lemon.app/settings/apps.
+
+### Notes for Iris
+- N/A (direct-to-main). UI-only restyle of the user installed-apps list; admin Updates/System sections + Plan 4 flow unchanged. No new dep, no UI→CP call. **Completes Workstream C2** (Backups skipped per owner).
+
 ## cp-v0.4.41 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 4 — system-app (Caddy/Pi-Hole/Postgres) updates through the Market manifests

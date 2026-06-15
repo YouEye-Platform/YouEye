@@ -182,28 +182,49 @@ function InstalledAppsList({ onOpen }: { onOpen: (id: string) => void }) {
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) return <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading apps...</div>;
-  if (error) return <div className="py-12 text-center text-sm text-muted-foreground"><AlertCircle className="mx-auto mb-2 h-6 w-6 opacity-50" />{error}</div>;
-  if (apps.length === 0) return <div className="rounded-xl border p-8 text-center text-sm text-muted-foreground">No apps installed yet.</div>;
+  const host = typeof window !== "undefined" ? window.location.hostname : "";
 
   return (
-    <div className="space-y-1.5">
-      {apps.map((app) => (
-        <button key={app.id} onClick={() => onOpen(app.id)} className="flex w-full items-center gap-3 rounded-lg border px-3.5 py-2.5 text-left transition-colors hover:bg-accent/40">
-          <AppIcon app={app} />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className="truncate text-[13px] font-medium">{app.name}</span>
-            </div>
-            <div className="mt-0.5 flex items-center gap-1">
-              <StatusDot status={app.status} />
-              <span className="text-xs text-muted-foreground">{app.status || "unknown"}</span>
-            </div>
-          </div>
-          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/50" />
-        </button>
-      ))}
-    </div>
+    <section className="overflow-hidden rounded-xl border bg-card">
+      <div className="flex items-center justify-between px-[18px] py-3">
+        <h2 className="text-[15px] font-semibold">Installed apps</h2>
+        <a href="/market" className="text-[13px] font-medium text-primary hover:underline">Open Market</a>
+      </div>
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 border-t py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading apps…</div>
+      ) : error ? (
+        <div className="border-t py-12 text-center text-sm text-muted-foreground"><AlertCircle className="mx-auto mb-2 h-6 w-6 opacity-50" />{error}</div>
+      ) : apps.length === 0 ? (
+        <div className="border-t py-10 text-center text-sm text-muted-foreground">No apps installed yet.</div>
+      ) : (
+        apps.map((app) => {
+          const known = app.status && app.status !== "unknown";
+          return (
+            <button
+              key={app.id}
+              onClick={() => onOpen(app.id)}
+              className="flex w-full items-center gap-3 border-t px-[18px] py-3 text-left transition-colors hover:bg-accent/40"
+            >
+              <AppIcon app={app} />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium">{app.name}</div>
+                {app.subdomain && (
+                  <div className="truncate text-[13px] text-muted-foreground">{host ? `${app.subdomain}.${host}` : app.subdomain}</div>
+                )}
+              </div>
+              {known && (
+                <span className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+                  <StatusDot status={app.status} />
+                  {app.status}
+                </span>
+              )}
+              <span className="hidden text-[13px] font-medium text-muted-foreground sm:inline">Manage</span>
+              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/40" />
+            </button>
+          );
+        })
+      )}
+    </section>
   );
 }
 
@@ -778,18 +799,10 @@ export function AppsClient({ isAdmin, hasUserContext = true, initialAppId }: { i
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="flex items-center gap-2 text-xl font-semibold">Apps</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Manage installed apps, updates, and app-specific settings.</p>
+        <h2 className="text-xl font-semibold text-foreground">Apps</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Apps installed on this server and how they behave for you</p>
       </div>
-      {hasUserContext && (
-        <section className="space-y-3">
-          <div>
-            <h3 className="text-base font-semibold">Installed Apps</h3>
-            <p className="text-[13px] text-muted-foreground">Open an app to view its settings, branding, permissions, and links.</p>
-          </div>
-          <InstalledAppsList onOpen={setSelectedApp} />
-        </section>
-      )}
+      {hasUserContext && <InstalledAppsList onOpen={setSelectedApp} />}
       {isAdmin && <AdminAppSections onOpen={setSelectedApp} />}
     </div>
   );
