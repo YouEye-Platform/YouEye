@@ -44,7 +44,9 @@
     "themeLight": "Claro",
     "themeDark": "Oscuro",
     "themeSystem": "Sistema",
-    "notifications": "Notificaciones"
+    "notifications": "Notificaciones",
+    "folder": "Carpeta",
+    "removeFromFolder": "Quitar de la carpeta"
   },
   "greeting": {
     "goodMorning": "Buenos días",

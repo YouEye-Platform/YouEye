@@ -44,7 +44,9 @@
     "themeLight": "Light",
     "themeDark": "Dark",
     "themeSystem": "System",
-    "notifications": "Notifications"
+    "notifications": "Notifications",
+    "folder": "Folder",
+    "removeFromFolder": "Remove from folder"
   },
   "greeting": {
     "goodMorning": "Good morning",

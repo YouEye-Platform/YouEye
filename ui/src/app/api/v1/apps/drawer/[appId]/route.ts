@@ -27,6 +27,7 @@ export async function PUT(
       visible: body.visible,
       displayOrder: body.order,
       sectionId: body.section_id,
+      folderId: body.folder_id,
     });
 
     return NextResponse.json(updated);

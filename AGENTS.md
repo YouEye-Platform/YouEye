@@ -1,3 +1,19 @@
+## ui-v0.4.23 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 5 Slice 2 — launcher folders (iOS-style)
+
+### Changes
+- `ui/src/db/schema.ts` + `ui/src/db/index.ts` — new `user_launcher_folders` table + `folder_id` on `user_app_config` (self-healing `ensureSchema`).
+- `ui/src/lib/db/queries/apps.ts` — `folders[]` + per-app `folderId` in reads; `folderId` in `updateAppConfig`; new `updateLauncherFolders`.
+- `ui/src/app/api/v1/apps/drawer/route.ts` (folder_id + folders), `[appId]/route.ts` (folder_id), new `folders/route.ts`.
+- `ui/src/components/layout/launcher.tsx` — folders: drag-to-create/add, 2×2 tile, open panel (rename + × remove), auto-delete empty, search flattens. i18n ×5.
+
+### Test Results
+- `pnpm build` OK; standalone baked 0.4.23. Live verify on lemon.app (drag-create folder, open, add, remove).
+
+### Notes for Iris
+- Launcher folders are independent of drawer sections (D10). Direct-to-main. Slice 3 = Canvas + 6 native re-release.
+
 ## ui-v0.4.22 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 5 Slice 1 fix — launcher overlay didn't open on the dashboard

@@ -51,6 +51,7 @@ export async function GET(request: NextRequest) {
       pinned: a.visible,
       order: a.displayOrder,
       section_id: a.sectionId,
+      folder_id: a.folderId,
       // Registered apps (have containerUrl) with "unknown" status are assumed running
       status: (a.status === "unknown" || !a.status) && a.containerUrl ? "running" : (a.status ?? "unknown"),
       version: a.version ?? null,
@@ -64,6 +65,11 @@ export async function GET(request: NextRequest) {
       name: s.name,
       order: s.displayOrder,
       collapsed: s.collapsed,
+    })),
+    folders: data.folders.map((f) => ({
+      id: f.folderId,
+      name: f.name,
+      order: f.displayOrder,
     })),
   });
 }
