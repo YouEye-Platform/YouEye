@@ -1,3 +1,14 @@
+## ui-v0.4.25 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 5 fix — real-mouse drag didn't work (setPointerCapture)
+
+### Changes
+- `ui/src/lib/hooks/use-grid-drag.ts` — `el.setPointerCapture(e.pointerId)` on drag start: the pointer-drag worked via JS-dispatched PointerEvents but a real mouse started a native image/text drag → `pointercancel` → drag died. Capture prevents that + guarantees the events fire.
+- `ui/src/components/layout/{launcher,app-drawer}.tsx` — `draggable={false}` on icon `<img>`s.
+
+### Test Results
+- `pnpm build` OK; standalone baked 0.4.25. JS-PointerEvent reorder still works; real-mouse confirmation requested from owner (left_click_drag emits mouse, not pointer, events).
+
 ## ui-v0.4.24 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 5 Slice 2.5 — pointer-drag live reorder + unified launcher grid + transparency (owner feedback)

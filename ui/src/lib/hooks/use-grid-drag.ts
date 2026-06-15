@@ -20,7 +20,7 @@
 import { useCallback, useRef, useState } from "react";
 
 /** Minimal shape of a pointer event (avoids depending on the React namespace in a .ts file). */
-type PointerLike = { clientX: number; clientY: number; button?: number };
+type PointerLike = { clientX: number; clientY: number; button?: number; pointerId?: number };
 
 export interface UseGridDragOptions {
   /** Current ordered ids of the draggable items (kept fresh via ref). */
@@ -157,6 +157,13 @@ export function useGridDrag(opts: UseGridDragOptions): GridDragState {
     if (e.button !== undefined && e.button !== 0) return;
     pending.current = { id, x: e.clientX, y: e.clientY };
     active.current = false;
+    // Capture the pointer on the tile: guarantees pointermove/up fire (and bubble
+    // to window) AND stops the browser starting a native image/text drag — the
+    // thing that otherwise fires pointercancel and kills a real-mouse drag.
+    const el = els.current.get(id);
+    if (el && e.pointerId !== undefined) {
+      try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    }
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);

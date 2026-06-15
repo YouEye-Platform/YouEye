@@ -67,7 +67,7 @@ function LauncherTile({ icon, customIconUrl }: { icon: string | null; customIcon
   const src = resolveImg({ icon, custom_icon_url: customIconUrl });
   if (src && !imgError) {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src={src} alt="" className="h-16 w-16 rounded-2xl border border-border/50 object-cover shadow-sm" onError={() => setImgError(true)} />;
+    return <img src={src} alt="" draggable={false} className="h-16 w-16 rounded-2xl border border-border/50 object-cover shadow-sm" onError={() => setImgError(true)} />;
   }
   if (icon?.startsWith("emoji:")) {
     return <div className="grid h-16 w-16 place-items-center rounded-2xl border border-border/50 bg-card/60 text-3xl shadow-sm">{icon.slice(6)}</div>;
@@ -85,7 +85,7 @@ function MiniTile({ app }: { app: LauncherApp }) {
   const src = resolveImg(app);
   if (src && !imgError) {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src={src} alt="" className="h-full w-full rounded-md object-cover" onError={() => setImgError(true)} />;
+    return <img src={src} alt="" draggable={false} className="h-full w-full rounded-md object-cover" onError={() => setImgError(true)} />;
   }
   if (app.icon?.startsWith("emoji:")) {
     return <div className="grid h-full w-full place-items-center rounded-md bg-background/60 text-xs">{app.icon.slice(6)}</div>;

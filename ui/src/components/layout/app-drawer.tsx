@@ -75,7 +75,7 @@ function AppIcon({ icon, customIconUrl, name, size = 40 }: { icon: string | null
     return <span className="leading-none" style={{ fontSize: size * 0.5 }}>{displayIcon.slice(6)}</span>;
   }
   if (displayIcon && !imgError && (displayIcon.startsWith("http") || displayIcon.startsWith("/") || displayIcon.startsWith("data:"))) {
-    return <img src={displayIcon} alt={name} className="rounded-xl object-cover" style={{ width: size, height: size }} onError={() => setImgError(true)} />;
+    return <img src={displayIcon} alt={name} draggable={false} className="rounded-xl object-cover" style={{ width: size, height: size }} onError={() => setImgError(true)} />;
   }
   if (displayIcon && !imgError) {
     const IconComponent = getLucideIcon(displayIcon);
