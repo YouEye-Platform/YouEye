@@ -332,6 +332,7 @@
     "markAllRead": "Marcar todo como leído",
     "noNotifications": "Sin notificaciones",
     "dismiss": "Descartar",
+    "system": "Sistema",
     "justNow": "ahora mismo",
     "minutesAgo": "hace {count} min",
     "hoursAgo": "hace {count} h",

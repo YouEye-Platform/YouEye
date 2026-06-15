@@ -1,48 +1,36 @@
 /**
- * Notification Bell
+ * Notification Bell — Plan 1 Workstream E3.
  *
- * Shows bell icon with unread count badge.
- * Dropdown (Radix Popover) displays recent notifications with mark-read and dismiss.
- * Also listens for app install postMessage events and creates proper
- * notifications via the notifications API instead of ephemeral toasts.
+ * Bell icon + unread badge, opening the `notifications.html` popover: a 400px
+ * panel ("Notifications" / "Mark all read"), then a feed where each entry is a
+ * <NotificationItem> — a `.via` attribution row + the app's own
+ * <UnifiedEmbed kind="notification"> (with a standard-row fallback) or the
+ * standard row directly. Also listens for app-install postMessage events and
+ * creates real notifications instead of ephemeral toasts.
  */
 
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Bell, Check, Info, AlertTriangle, XCircle, CheckCircle2, X, Download } from "lucide-react";
+import { Bell, Check } from "lucide-react";
 import { useTranslations } from "next-intl";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { NotificationSurfaceEmbed } from "@/components/notifications/notification-surface-embed";
-
-interface NotificationSurface {
-  surface_id: string;
-  embed_path: string;
-  name: string | null;
-  description: string | null;
-}
-
-interface Notification {
-  id: string;
-  type: string;
-  title: string;
-  message: string | null;
-  appId: string | null;
-  read: boolean;
-  createdAt: string;
-  action: { type?: string; url?: string } | null;
-  surface?: NotificationSurface;
-}
+import {
+  NotificationItem,
+  type NotificationData,
+  type NotificationAppMeta,
+} from "@/components/notifications/notification-item";
 
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [notifications, setNotifications] = useState<NotificationData[]>([]);
+  const [appMeta, setAppMeta] = useState<Record<string, NotificationAppMeta>>({});
   const [unreadCount, setUnreadCount] = useState(0);
-  const t = useTranslations('notifications');
+  const t = useTranslations("notifications");
 
   // Track in-flight installs so we can update the loading notification on completion
   const activeInstalls = useRef<Map<string, string>>(new Map()); // appId -> notificationId
@@ -54,6 +42,7 @@ export function NotificationBell() {
       const data = await res.json();
       setNotifications(data.notifications);
       setUnreadCount(data.unread_count);
+      if (data.app_meta) setAppMeta(data.app_meta);
     } catch {
       // Silently fail
     }
@@ -151,28 +140,11 @@ export function NotificationBell() {
     }
   };
 
-  const handleAction = (notif: Notification) => {
+  const handleAction = (notif: NotificationData) => {
     if (notif.action?.url) {
       window.location.href = notif.action.url;
     }
     if (!notif.read) markRead(notif.id);
-  };
-
-  const typeIcon = (type: string) => {
-    switch (type) {
-      case "success": return <CheckCircle2 className="w-4 h-4 text-green-500" />;
-      case "warning": return <AlertTriangle className="w-4 h-4 text-yellow-500" />;
-      case "error": return <XCircle className="w-4 h-4 text-red-500" />;
-      default: return <Info className="w-4 h-4 text-blue-500" />;
-    }
-  };
-
-  const timeAgo = (dateStr: string) => {
-    const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-    if (seconds < 60) return t('justNow');
-    if (seconds < 3600) return t('minutesAgo', { count: Math.floor(seconds / 60) });
-    if (seconds < 86400) return t('hoursAgo', { count: Math.floor(seconds / 3600) });
-    return t('daysAgo', { count: Math.floor(seconds / 86400) });
   };
 
   return (
@@ -180,7 +152,7 @@ export function NotificationBell() {
       <PopoverTrigger asChild>
         <button
           className="relative inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent transition-colors"
-          aria-label={t('title')}
+          aria-label={t("title")}
         >
           <Bell className="h-4 w-4" />
           {unreadCount > 0 && (
@@ -194,80 +166,49 @@ export function NotificationBell() {
       <PopoverContent
         align="end"
         sideOffset={8}
-        className="w-80 max-h-96 overflow-y-auto rounded-lg p-0"
+        className="w-[400px] max-h-[calc(100vh-90px)] overflow-hidden rounded-2xl p-0"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b">
-          <h3 className="font-semibold text-sm">{t('title')}</h3>
+        <div className="flex items-center justify-between border-b px-[18px] py-3.5">
+          <h2 className="text-[15px] font-semibold">{t("title")}</h2>
           {unreadCount > 0 && (
             <button
               onClick={markAllRead}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              className="flex items-center gap-1 text-[12.5px] text-muted-foreground transition-colors hover:text-foreground"
             >
-              <Check className="w-3 h-3" />
-              {t('markAllRead')}
+              <Check className="h-3 w-3" />
+              {t("markAllRead")}
             </button>
           )}
         </div>
 
-        {/* List */}
+        {/* Feed */}
         {notifications.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-            {t('noNotifications')}
+          <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+            {t("noNotifications")}
           </div>
         ) : (
-          <div className="divide-y">
+          <div className="grid max-h-[60vh] gap-3 overflow-y-auto px-3.5 py-3.5">
             {notifications.map((notif) => (
-              <div
+              <NotificationItem
                 key={notif.id}
-                className={`flex items-start gap-3 px-4 py-3 hover:bg-accent/50 transition-colors cursor-pointer ${
-                  !notif.read ? "bg-accent/20" : ""
-                }`}
-                onClick={() => handleAction(notif)}
-              >
-                <div className="mt-0.5">{typeIcon(notif.type)}</div>
-                <div className="flex-1 min-w-0">
-                  <p className={`text-sm ${!notif.read ? "font-semibold" : ""}`}>
-                    {notif.title}
-                  </p>
-                  {notif.message && (
-                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
-                      {notif.message}
-                    </p>
-                  )}
-                  <NotificationSurfaceEmbed
-                    notificationId={notif.id}
-                    appId={notif.appId}
-                    surface={notif.surface}
-                    compact
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {timeAgo(notif.createdAt)}
-                  </p>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    dismiss(notif.id);
-                  }}
-                  className="p-1 rounded hover:bg-accent transition-colors"
-                  aria-label={t('dismiss')}
-                >
-                  <X className="w-3 h-3 text-muted-foreground" />
-                </button>
-              </div>
+                notif={notif}
+                appMeta={appMeta}
+                onAction={handleAction}
+                onDismiss={dismiss}
+              />
             ))}
           </div>
         )}
 
         {/* View all link */}
-        <div className="border-t px-4 py-2">
+        <div className="border-t px-4 py-2.5">
           <a
             href="/notifications"
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            className="text-xs text-muted-foreground transition-colors hover:text-foreground"
             onClick={() => setOpen(false)}
           >
-            {t('viewAll')}
+            {t("viewAll")}
           </a>
         </div>
       </PopoverContent>

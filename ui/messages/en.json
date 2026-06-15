@@ -333,6 +333,7 @@
     "markAllRead": "Mark all read",
     "noNotifications": "No notifications",
     "dismiss": "Dismiss",
+    "system": "System",
     "justNow": "just now",
     "minutesAgo": "{count}m ago",
     "hoursAgo": "{count}h ago",

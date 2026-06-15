@@ -1,3 +1,22 @@
+## ui-v0.4.14 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E3 — notifications bell popover on the unified embed
+
+### Changes
+- `ui/src/components/layout/notification-bell.tsx` — 400px popover per `notifications.html`; feed of `<NotificationItem>`; mark-all-read.
+- `ui/src/components/notifications/notification-item.tsx` (NEW) — `.via` attribution row (app chip + name + time, outside the embed) + unread blue dot + embed-or-standard body.
+- `ui/src/components/notifications/notification-standard-row.tsx` (NEW) — `.std` fallback row (30px tile + title + description + action).
+- `ui/src/components/notifications/notification-surface-embed.tsx` — rewritten onto `<UnifiedEmbed kind="notification">` (3s timeout → std-row fallback); legacy `youeye-embed-*` iframe removed.
+- `ui/src/components/notifications/notifications-list.tsx` — `/notifications` page uses the same `<NotificationItem>` (one implementation).
+- `ui/src/app/api/v1/notifications/route.ts` — returns `app_meta` (getAppMetaMap). `notifications.system` i18n ×5.
+- `ui/package.json` → 0.4.14; new spec `ui/tests/notifications-e3.test.mjs`.
+
+### Test Results
+- `notifications-e3.test.mjs` 6/6; `pnpm build` OK. Released ui-v0.4.14 → bykapc (`spine update ui`) + verify lemon.app bell.
+
+### Notes for Iris
+- Direct-to-main Plan 1 slice. Notification attribution is UI-rendered outside the embed (anti-impersonation), same pattern as the E2 timeline.
+
 ## ui-v0.4.13 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 E2 — timeline feed: embeds-first, date-grouped single column
