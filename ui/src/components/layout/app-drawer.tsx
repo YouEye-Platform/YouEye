@@ -1,26 +1,24 @@
 /**
- * App Drawer — Google-style Popover with floating edit-mode panels
+ * App Drawer — Plan 5 (two cooperating surfaces).
  *
- * Normal mode: compact dropdown from the 9-dot grid button.
- * Edit mode:   the drawer itself stays visually the same — icons just shake
- *              and become draggable.  Two SEPARATE floating panels appear
- *              rendered via React createPortal at document.body:
- *                – Hidden-apps panel to the LEFT (grid tiles, not a list)
- *                – Layout controls BELOW
- *              These are completely independent DOM elements positioned with
- *              position:fixed based on the popover's bounding rect.
+ * The QUICK drawer: the user's PINNED apps (`pinned` === the old `visible`),
+ * for fast access. A search box finds ANY app — including unpinned ones — and
+ * opens it. Edit mode manages pins: "Add app" → search → add, and an × to
+ * remove. There is NO hidden tray (unpinning just drops the app from the drawer;
+ * it still lives in the launcher). An "All apps" button opens the launcher
+ * (everything + folders).
+ *
+ * Renders two ways from one implementation:
+ *   • default  — the UI header popover (9-dot trigger + Radix popover).
+ *   • embedded — content-only, for the UI-served /embed/drawer iframe that
+ *     native apps host (host provides the panel chrome). `onOpenLauncher` then
+ *     posts a youeye:action so the host swaps in the launcher.
  */
 
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { createPortal } from "react-dom";
-import {
-  Pencil,
-  Check,
-  EyeOff,
-  GripVertical,
-} from "lucide-react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { Pencil, Check, GripVertical, Search, Plus, X, LayoutGrid } from "lucide-react";
 import * as LucideIcons from "lucide-react";
 import type { ComponentType } from "react";
 
@@ -45,6 +43,7 @@ interface DrawerApp {
   icon: string | null;
   custom_icon_url: string | null;
   visible: boolean;
+  pinned?: boolean;
   order: number;
   section_id: string | null;
   status: string | null;
@@ -62,10 +61,6 @@ const DEFAULT_PREFS: DrawerPrefs = {
   iconScale: 1,
   maxHeight: 400,
 };
-
-// ────────────────────────────────────────
-// Shake animation (injected once in edit mode)
-// ────────────────────────────────────────
 
 const SHAKE_CSS = `
 @keyframes app-shake {
@@ -92,7 +87,7 @@ function DotsIcon({ className }: { className?: string }) {
 }
 
 function kebabToPascal(s: string): string {
-  return s.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join("");
+  return s.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join("");
 }
 
 function getLucideIcon(name: string): ComponentType<{ className?: string; style?: React.CSSProperties }> | undefined {
@@ -108,29 +103,25 @@ function AppIcon({
   icon,
   customIconUrl,
   name,
-  className = "w-10 h-10",
-  size,
+  size = 40,
 }: {
   icon: string | null;
   customIconUrl: string | null;
   name: string;
-  className?: string;
   size?: number;
 }) {
   const [imgError, setImgError] = useState(false);
-  const sizeStyle = size ? { width: size, height: size } : undefined;
-  // Resolve display icon: customIconUrl overrides icon
   const displayIcon = customIconUrl ?? icon;
   if (displayIcon && displayIcon.startsWith("emoji:")) {
-    return <span className="text-xl leading-none" style={size ? { fontSize: size * 0.5 } : undefined}>{displayIcon.slice(6)}</span>;
+    return <span className="leading-none" style={{ fontSize: size * 0.5 }}>{displayIcon.slice(6)}</span>;
   }
   if (displayIcon && !imgError && (displayIcon.startsWith("http") || displayIcon.startsWith("/") || displayIcon.startsWith("data:"))) {
     return (
       <img
         src={displayIcon}
         alt={name}
-        className={`${size ? "" : className} rounded-xl object-cover`}
-        style={sizeStyle}
+        className="rounded-xl object-cover"
+        style={{ width: size, height: size }}
         onError={() => setImgError(true)}
       />
     );
@@ -138,12 +129,10 @@ function AppIcon({
   if (displayIcon && !imgError) {
     const IconComponent = getLucideIcon(displayIcon);
     if (IconComponent) {
-      return <IconComponent className="text-foreground/80" style={size ? { width: size * 0.5, height: size * 0.5 } : { width: 20, height: 20 }} />;
+      return <IconComponent className="text-foreground/80" style={{ width: size * 0.5, height: size * 0.5 }} />;
     }
   }
-  return (
-    <span className="text-foreground/80">{name.charAt(0).toUpperCase()}</span>
-  );
+  return <span className="text-foreground/80">{name.charAt(0).toUpperCase()}</span>;
 }
 
 function isAppUp(status: string | null): boolean {
@@ -151,69 +140,24 @@ function isAppUp(status: string | null): boolean {
 }
 
 // ────────────────────────────────────────
-// Rect tracker hook
-// ────────────────────────────────────────
-
-interface Rect {
-  top: number;
-  left: number;
-  right: number;
-  bottom: number;
-  width: number;
-  height: number;
-}
-
-function useElementRect(
-  ref: React.RefObject<HTMLDivElement | null>,
-  enabled: boolean
-): Rect | null {
-  const [rect, setRect] = useState<Rect | null>(null);
-
-  useEffect(() => {
-    if (!enabled) {
-      setRect(null);
-      return;
-    }
-    const el = ref.current;
-    if (!el) return;
-
-    const update = () => {
-      const r = el.getBoundingClientRect();
-      setRect({
-        top: r.top,
-        left: r.left,
-        right: r.right,
-        bottom: r.bottom,
-        width: r.width,
-        height: r.height,
-      });
-    };
-
-    // Initial read (small delay for Radix positioning)
-    const timer = setTimeout(update, 30);
-
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    window.addEventListener("resize", update);
-
-    return () => {
-      clearTimeout(timer);
-      ro.disconnect();
-      window.removeEventListener("resize", update);
-    };
-  }, [ref, enabled]);
-
-  return rect;
-}
-
-// ────────────────────────────────────────
 // Main Component
 // ────────────────────────────────────────
 
-export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
+export function AppDrawer({
+  isAdmin = false,
+  embedded = false,
+  onOpenLauncher,
+}: {
+  isAdmin?: boolean;
+  embedded?: boolean;
+  onOpenLauncher?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [allApps, setAllApps] = useState<DrawerApp[]>([]);
   const [editMode, setEditMode] = useState(false);
+  const [addMode, setAddMode] = useState(false);
+  const [query, setQuery] = useState("");
+  const [addQuery, setAddQuery] = useState("");
   const [prefs, setPrefs] = useState<DrawerPrefs>(DEFAULT_PREFS);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [draggedAppId, setDraggedAppId] = useState<string | null>(null);
@@ -222,9 +166,7 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
   const savePrefsTimeout = useRef<NodeJS.Timeout | null>(null);
   const t = useTranslations("appDrawer");
 
-  // Ref on the inner wrapper of PopoverContent to track its position
-  const drawerRef = useRef<HTMLDivElement>(null);
-  const drawerRect = useElementRect(drawerRef, editMode && open);
+  const active = embedded || open;
 
   // ── Data fetching ──
 
@@ -235,7 +177,7 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
       const data = await res.json();
       setAllApps(data.apps ?? []);
     } catch {
-      // Silently fail
+      /* silently fail */
     }
   }, []);
 
@@ -250,18 +192,18 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
         maxHeight: data.maxHeight ?? DEFAULT_PREFS.maxHeight,
       });
     } catch {
-      // Use defaults
+      /* defaults */
     } finally {
       setPrefsLoaded(true);
     }
   }, []);
 
   useEffect(() => {
-    if (open) {
+    if (active) {
       fetchApps();
       if (!prefsLoaded) fetchPrefs();
     }
-  }, [open, fetchApps, fetchPrefs, prefsLoaded]);
+  }, [active, fetchApps, fetchPrefs, prefsLoaded]);
 
   // ── Prefs persistence ──
 
@@ -277,90 +219,81 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
     }, 500);
   }, []);
 
-  // ── Visibility toggle ──
+  // ── Pin / unpin (the only pin gesture — Plan 5 L5) ──
 
-  const toggleVisibility = useCallback(
-    async (appId: string, visible: boolean) => {
+  const setPinned = useCallback(async (appId: string, pinned: boolean) => {
+    setAllApps((prev) =>
+      prev.map((a) => (a.id === appId ? { ...a, visible: pinned, pinned } : a))
+    );
+    try {
+      await fetch(`/api/v1/apps/drawer/${appId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visible: pinned }),
+      });
+    } catch {
       setAllApps((prev) =>
-        prev.map((a) => (a.id === appId ? { ...a, visible } : a))
+        prev.map((a) => (a.id === appId ? { ...a, visible: !pinned, pinned: !pinned } : a))
       );
-      try {
-        await fetch(`/api/v1/apps/drawer/${appId}`, {
+    }
+  }, []);
+
+  // ── Reorder (pinned apps share one displayOrder with the launcher) ──
+
+  const reorderApp = useCallback((draggedId: string, targetId: string) => {
+    if (draggedId === targetId) return;
+    setAllApps((prev) => {
+      const pinned = [...prev]
+        .filter((a) => a.visible)
+        .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+      const dragIdx = pinned.findIndex((a) => a.id === draggedId);
+      const targetIdx = pinned.findIndex((a) => a.id === targetId);
+      if (dragIdx < 0 || targetIdx < 0) return prev;
+      const [dragged] = pinned.splice(dragIdx, 1);
+      pinned.splice(targetIdx, 0, dragged);
+      const orderMap = new Map<string, number>();
+      pinned.forEach((a, i) => orderMap.set(a.id, i));
+      pinned.forEach((a, i) => {
+        fetch(`/api/v1/apps/drawer/${a.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ visible }),
-        });
-      } catch {
-        setAllApps((prev) =>
-          prev.map((a) => (a.id === appId ? { ...a, visible: !visible } : a))
-        );
-      }
-    },
-    []
-  );
-
-  // ── Reorder ──
-
-  const reorderApp = useCallback(
-    async (draggedId: string, targetId: string) => {
-      if (draggedId === targetId) return;
-      setAllApps((prev) => {
-        const visible = [...prev]
-          .filter((a) => a.visible)
-          .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
-        const dragIdx = visible.findIndex((a) => a.id === draggedId);
-        const targetIdx = visible.findIndex((a) => a.id === targetId);
-        if (dragIdx < 0 || targetIdx < 0) return prev;
-        const [dragged] = visible.splice(dragIdx, 1);
-        visible.splice(targetIdx, 0, dragged);
-        const orderMap = new Map<string, number>();
-        visible.forEach((a, i) => orderMap.set(a.id, i));
-        visible.forEach((a, i) => {
-          fetch(`/api/v1/apps/drawer/${a.id}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ order: i }),
-          }).catch(() => {});
-        });
-        return prev.map((a) => {
-          const newOrder = orderMap.get(a.id);
-          return newOrder !== undefined ? { ...a, order: newOrder } : a;
-        });
+          body: JSON.stringify({ order: i }),
+        }).catch(() => {});
       });
-    },
-    []
-  );
+      return prev.map((a) => {
+        const newOrder = orderMap.get(a.id);
+        return newOrder !== undefined ? { ...a, order: newOrder } : a;
+      });
+    });
+  }, []);
 
   // ── Click ──
 
   const handleAppClick = (app: DrawerApp) => {
-    if (editMode) return;
-    if (app.url) {
-      // Track app launch for telemetry (anonymous usage data)
-      try {
-        navigator.sendBeacon(
-          "/api/v1/telemetry/record",
-          JSON.stringify({ events: [{ type: "app_launch", key: app.id || app.name }] })
-        );
-      } catch { /* best-effort */ }
-      window.location.href = app.url;
-      setOpen(false);
+    if (editMode || !app.url) return;
+    try {
+      navigator.sendBeacon(
+        "/api/v1/telemetry/record",
+        JSON.stringify({ events: [{ type: "app_launch", key: app.id || app.name }] })
+      );
+    } catch {
+      /* best-effort */
     }
+    window.location.href = app.url;
+    setOpen(false);
   };
 
-  // ── Drag handlers ──
+  // ── Drag (reorder pinned apps in edit mode) ──
 
   const handleDragStart = (e: React.DragEvent, appId: string) => {
     setDraggedAppId(appId);
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", appId);
   };
-
   const handleDragEnd = () => {
     setDraggedAppId(null);
     setDragOverTarget(null);
   };
-
   const handleDragOverApp = (e: React.DragEvent, appId: string) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
@@ -368,413 +301,277 @@ export function AppDrawer({ isAdmin = false }: { isAdmin?: boolean }) {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     setInsertSide(e.clientX < rect.left + rect.width / 2 ? "before" : "after");
   };
-
   const handleDropOnApp = (e: React.DragEvent, targetId: string) => {
     e.preventDefault();
-    if (draggedAppId && draggedAppId !== targetId) {
-      const app = allApps.find((a) => a.id === draggedAppId);
-      if (app && !app.visible) {
-        toggleVisibility(draggedAppId, true);
-      }
-      reorderApp(draggedAppId, targetId);
-    }
-    setDraggedAppId(null);
-    setDragOverTarget(null);
-  };
-
-  const handleDropOnHidden = (e: React.DragEvent) => {
-    e.preventDefault();
-    if (draggedAppId) {
-      toggleVisibility(draggedAppId, false);
-    }
-    setDraggedAppId(null);
-    setDragOverTarget(null);
-  };
-
-  const handleDropOnVisible = (e: React.DragEvent) => {
-    e.preventDefault();
-    if (draggedAppId) {
-      const app = allApps.find((a) => a.id === draggedAppId);
-      if (app && !app.visible) {
-        toggleVisibility(draggedAppId, true);
-      }
-    }
+    if (draggedAppId && draggedAppId !== targetId) reorderApp(draggedAppId, targetId);
     setDraggedAppId(null);
     setDragOverTarget(null);
   };
 
   // ── Derived lists ──
 
-  const visibleApps = [...allApps]
-    .filter((a) => a.visible)
-    .sort((a, b) => {
-      const ao = a.order ?? 999;
-      const bo = b.order ?? 999;
-      if (ao !== bo) return ao - bo;
-      return a.name.localeCompare(b.name);
-    });
+  const pinnedApps = useMemo(
+    () =>
+      [...allApps]
+        .filter((a) => a.visible)
+        .sort((a, b) => {
+          const ao = a.order ?? 999;
+          const bo = b.order ?? 999;
+          return ao !== bo ? ao - bo : a.name.localeCompare(b.name);
+        }),
+    [allApps]
+  );
 
-  const hiddenApps = [...allApps]
-    .filter((a) => !a.visible)
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const unpinnedApps = useMemo(
+    () => [...allApps].filter((a) => !a.visible).sort((a, b) => a.name.localeCompare(b.name)),
+    [allApps]
+  );
 
-  const draggingFromVisible =
-    draggedAppId != null && visibleApps.some((a) => a.id === draggedAppId);
+  // Normal-mode search spans ALL apps (incl. unpinned) and opens them (L4).
+  const q = query.trim().toLowerCase();
+  const gridApps = useMemo(
+    () =>
+      q
+        ? [...allApps]
+            .filter((a) => a.url && a.name.toLowerCase().includes(q))
+            .sort((a, b) => a.name.localeCompare(b.name))
+        : pinnedApps,
+    [q, allApps, pinnedApps]
+  );
+
+  const aq = addQuery.trim().toLowerCase();
+  const addCandidates = useMemo(
+    () => (aq ? unpinnedApps.filter((a) => a.name.toLowerCase().includes(aq)) : unpinnedApps),
+    [aq, unpinnedApps]
+  );
+
+  const cols = prefs.columns;
+  const iconPx = 40 * prefs.iconScale;
+
+  // ── Reusable app tile ──
+
+  const Tile = ({ app, mode }: { app: DrawerApp; mode: "open" | "edit" | "add" }) => {
+    const up = isAppUp(app.status);
+    const isDragging = draggedAppId === app.id;
+    const isDragOver = dragOverTarget === app.id;
+    return (
+      <div
+        key={app.id}
+        className={`relative flex flex-col items-center rounded-xl p-2 transition-all duration-150 ${
+          mode === "edit"
+            ? `cursor-grab select-none ${
+                isDragging
+                  ? "scale-90 opacity-30"
+                  : isDragOver
+                    ? `scale-105 bg-primary/10 ${insertSide === "before" ? "border-l-2 border-l-primary" : "border-r-2 border-r-primary"}`
+                    : "hover:bg-accent/60"
+              }`
+            : "cursor-pointer hover:scale-105 hover:bg-accent/60"
+        }${up ? "" : " opacity-40 grayscale"}`}
+        style={
+          mode === "edit" && !isDragging
+            ? { animation: "app-shake 0.4s ease-in-out infinite alternate" }
+            : undefined
+        }
+        draggable={mode === "edit"}
+        onDragStart={mode === "edit" ? (e) => handleDragStart(e, app.id) : undefined}
+        onDragEnd={mode === "edit" ? handleDragEnd : undefined}
+        onDragOver={mode === "edit" ? (e) => handleDragOverApp(e, app.id) : undefined}
+        onDrop={mode === "edit" ? (e) => handleDropOnApp(e, app.id) : undefined}
+        onClick={mode === "open" ? () => handleAppClick(app) : mode === "add" ? () => { setPinned(app.id, true); } : undefined}
+        title={app.name}
+      >
+        {mode === "edit" && (
+          <button
+            type="button"
+            aria-label={t("removeApp")}
+            title={t("removeApp")}
+            onClick={(e) => { e.stopPropagation(); setPinned(app.id, false); }}
+            className="absolute -right-1 -top-1 z-10 grid h-5 w-5 place-items-center rounded-full border bg-background text-muted-foreground shadow-sm hover:text-danger"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
+        {mode === "add" && (
+          <span className="absolute -right-1 -top-1 z-10 grid h-5 w-5 place-items-center rounded-full bg-primary text-primary-foreground shadow-sm">
+            <Plus className="h-3 w-3" />
+          </span>
+        )}
+        <div className="flex items-center justify-center overflow-hidden rounded-xl" style={{ width: iconPx, height: iconPx }}>
+          <AppIcon icon={app.icon} customIconUrl={app.custom_icon_url} name={app.name} size={iconPx} />
+        </div>
+        <span className="mt-1.5 line-clamp-1 w-full text-center text-[11px] leading-tight text-foreground/80">
+          {app.name}
+        </span>
+      </div>
+    );
+  };
+
+  // ── Content (shared by popover + embed) ──
+
+  const content = (
+    <div className={`flex flex-col ${embedded ? "h-full w-full" : ""}`}>
+      {editMode && <style dangerouslySetInnerHTML={{ __html: SHAKE_CSS }} />}
+
+      {/* Top bar: search + edit toggle */}
+      <div className="flex items-center gap-2 p-3 pb-2">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("searchApps")}
+            className="h-9 w-full rounded-full border bg-card/80 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+        <Button
+          variant={editMode ? "default" : "ghost"}
+          size="icon"
+          className="h-9 w-9 shrink-0"
+          onClick={() => { setEditMode((v) => !v); setAddMode(false); setQuery(""); }}
+          title={editMode ? t("doneEditing") : t("manageApps")}
+          aria-label={editMode ? t("doneEditing") : t("manageApps")}
+        >
+          {editMode ? <Check className="h-4 w-4" /> : <Pencil className="h-3.5 w-3.5" />}
+        </Button>
+      </div>
+
+      {/* Grid */}
+      <ScrollArea
+        className={embedded ? "min-h-0 flex-1" : ""}
+        style={{ maxHeight: embedded ? undefined : editMode ? "calc(100vh - 260px)" : prefs.maxHeight }}
+      >
+        <div className="px-3 pb-2">
+          {gridApps.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 text-center">
+              <p className="mb-3 text-sm text-muted-foreground">
+                {q ? t("noMatchingApps") : t("noAppsInstalled")}
+              </p>
+              {!q && isAdmin && (
+                <Link href="/market" className="text-sm text-primary hover:underline" onClick={() => setOpen(false)}>
+                  {t("visitMarketplace")}
+                </Link>
+              )}
+            </div>
+          ) : (
+            <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
+              {gridApps.map((app) => (
+                <Tile key={app.id} app={app} mode={editMode ? "edit" : "open"} />
+              ))}
+            </div>
+          )}
+
+          {/* Edit mode: Add app (→ search → pin) */}
+          {editMode && (
+            <div className="mt-2 rounded-xl border border-dashed border-border/70">
+              {!addMode ? (
+                <button
+                  type="button"
+                  onClick={() => setAddMode(true)}
+                  className="flex w-full items-center justify-center gap-2 py-2.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <Plus className="h-4 w-4" /> {t("addApp")}
+                </button>
+              ) : (
+                <div className="p-2">
+                  <div className="relative mb-2">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
+                    <input
+                      autoFocus
+                      value={addQuery}
+                      onChange={(e) => setAddQuery(e.target.value)}
+                      placeholder={t("searchApps")}
+                      className="h-8 w-full rounded-full border bg-background pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                    />
+                  </div>
+                  {addCandidates.length === 0 ? (
+                    <p className="py-4 text-center text-xs text-muted-foreground">{t("noAppsToAdd")}</p>
+                  ) : (
+                    <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
+                      {addCandidates.map((app) => (
+                        <Tile key={app.id} app={app} mode="add" />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+
+      {/* Edit controls (popover only) */}
+      {editMode && !embedded && (
+        <div className="space-y-2 border-t px-3 py-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">Columns</span>
+            <div className="flex items-center gap-1">
+              {[3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  className={`h-6 w-6 rounded text-xs font-medium transition-colors ${
+                    prefs.columns === n ? "bg-primary text-primary-foreground" : "bg-accent/60 text-foreground/60 hover:bg-accent"
+                  }`}
+                  onClick={() => persistPrefs({ ...prefs, columns: n })}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-muted-foreground">Icon size</span>
+            <input
+              type="range" min="0.7" max="1.5" step="0.1" value={prefs.iconScale}
+              onChange={(e) => persistPrefs({ ...prefs, iconScale: parseFloat(e.target.value) })}
+              className="h-1.5 w-24 cursor-pointer appearance-none rounded-full bg-accent [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* All apps → launcher */}
+      {onOpenLauncher && (
+        <div className="border-t p-2">
+          <button
+            type="button"
+            onClick={() => { onOpenLauncher(); setOpen(false); }}
+            className="flex w-full items-center justify-center gap-2 rounded-lg py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <LayoutGrid className="h-4 w-4" /> {t("allApps")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  if (embedded) {
+    return <div className="h-full w-full bg-transparent">{content}</div>;
+  }
 
   return (
     <Popover
       open={open}
       onOpenChange={(v) => {
         setOpen(v);
-        if (!v) setEditMode(false);
+        if (!v) { setEditMode(false); setAddMode(false); setQuery(""); }
       }}
     >
       <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-9 w-9"
-          aria-label={t("title")}
-        >
+        <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={t("title")}>
           <DotsIcon className="h-5 w-5" />
         </Button>
       </PopoverTrigger>
-
       <PopoverContent
         align="end"
         sideOffset={8}
-        className="w-[340px] rounded-xl p-0 origin-top-right transition-all duration-200"
-        onInteractOutside={(e) => {
-          // In edit mode, don't close on outside clicks — user must click Done
-          if (editMode) e.preventDefault();
-        }}
-        onEscapeKeyDown={(e) => {
-          if (editMode) {
-            e.preventDefault();
-            setEditMode(false);
-          }
-        }}
+        className="w-[360px] rounded-2xl p-0"
+        onInteractOutside={(e) => { if (editMode) e.preventDefault(); }}
+        onEscapeKeyDown={(e) => { if (editMode) { e.preventDefault(); setEditMode(false); } }}
       >
-        {/* Inject shake keyframes */}
-        {editMode && (
-          <style dangerouslySetInnerHTML={{ __html: SHAKE_CSS }} />
-        )}
-
-        {/* Inner wrapper — ref tracks position for satellite placement */}
-        <div ref={drawerRef}>
-          {/* ─── HEADER ─── */}
-          {editMode ? (
-            <div className="flex items-center justify-between px-3 pt-3 pb-1">
-              <span className="text-sm font-semibold">{t("title")}</span>
-              <Button
-                variant="default"
-                size="sm"
-                className="h-7 gap-1.5 text-xs"
-                onClick={() => setEditMode(false)}
-              >
-                <Check className="h-3.5 w-3.5" />
-                {t("doneEditing")}
-              </Button>
-            </div>
-          ) : (
-            <div className="absolute top-2 left-2 z-10">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 text-muted-foreground/60 hover:text-foreground"
-                onClick={() => setEditMode(true)}
-                title="Edit drawer"
-              >
-                <Pencil className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          )}
-
-          {/* ─── APP GRID — same look in both modes ─── */}
-          <ScrollArea
-            style={{
-              maxHeight: editMode ? "calc(100vh - 200px)" : prefs.maxHeight,
-            }}
-          >
-            <div
-              className="p-3 pt-2"
-              onDragOver={
-                editMode
-                  ? (e) => {
-                      e.preventDefault();
-                      e.dataTransfer.dropEffect = "move";
-                    }
-                  : undefined
-              }
-              onDrop={editMode ? handleDropOnVisible : undefined}
-            >
-              {visibleApps.length === 0 && !editMode ? (
-                <div className="flex flex-col items-center justify-center py-10 text-center">
-                  <p className="text-sm text-muted-foreground mb-3">
-                    {t("noAppsInstalled")}
-                  </p>
-                  {isAdmin && (
-                    <Link
-                      href="/market"
-                      className="text-sm text-primary hover:underline"
-                      onClick={() => setOpen(false)}
-                    >
-                      {t("visitMarketplace")}
-                    </Link>
-                  )}
-                </div>
-              ) : (
-                <div
-                  className="grid gap-1"
-                  style={{
-                    gridTemplateColumns: `repeat(${prefs.columns}, 1fr)`,
-                  }}
-                >
-                  {visibleApps.map((app, i) => {
-                    const up = isAppUp(app.status);
-                    const isDragging = draggedAppId === app.id;
-                    const isDragOver = dragOverTarget === app.id;
-                    return (
-                      <div
-                        key={app.id}
-                        className={`relative flex flex-col items-center p-2 rounded-xl transition-all duration-150 ${
-                          editMode
-                            ? `cursor-grab select-none ${
-                                isDragging
-                                  ? "opacity-30 scale-90"
-                                  : isDragOver
-                                    ? `bg-primary/10 scale-105 ${insertSide === "before" ? "border-l-2 border-l-primary" : "border-r-2 border-r-primary"}`
-                                    : "hover:bg-accent/60"
-                              }`
-                            : `cursor-pointer hover:bg-accent/60 hover:scale-105`
-                        }${up ? "" : " opacity-40 grayscale"}`}
-                        style={
-                          editMode && !isDragging
-                            ? {
-                                animation:
-                                  "app-shake 0.4s ease-in-out infinite alternate",
-                                animationDelay: `${(i % 5) * 0.08}s`,
-                              }
-                            : undefined
-                        }
-                        draggable={editMode}
-                        onDragStart={
-                          editMode
-                            ? (e) => handleDragStart(e, app.id)
-                            : undefined
-                        }
-                        onDragEnd={editMode ? handleDragEnd : undefined}
-                        onDragOver={
-                          editMode
-                            ? (e) => handleDragOverApp(e, app.id)
-                            : undefined
-                        }
-                        onDrop={
-                          editMode
-                            ? (e) => handleDropOnApp(e, app.id)
-                            : undefined
-                        }
-                        onClick={
-                          editMode ? undefined : () => handleAppClick(app)
-                        }
-                        title={
-                          editMode
-                            ? app.name
-                            : up
-                              ? app.name
-                              : `${app.name} — offline`
-                        }
-                      >
-                        {editMode && (
-                          <GripVertical className="absolute top-0.5 right-0.5 h-3 w-3 text-muted-foreground/30" />
-                        )}
-                        <div className="rounded-xl flex items-center justify-center text-base font-medium overflow-hidden transition-transform duration-150" style={{ width: 40 * prefs.iconScale, height: 40 * prefs.iconScale }}>
-                          <AppIcon
-                            icon={app.icon}
-                            customIconUrl={app.custom_icon_url}
-                            name={app.name}
-                            size={40 * prefs.iconScale}
-                          />
-                        </div>
-                        <span className="text-[11px] text-center line-clamp-1 w-full mt-1.5 text-foreground/80 leading-tight">
-                          {app.name}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  {visibleApps.length === 0 && editMode && (
-                    <div className="col-span-full text-xs text-muted-foreground text-center py-8">
-                      Drag apps here to show
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </ScrollArea>
-        </div>
+        {content}
       </PopoverContent>
-
-      {/* ═══════════════════════════════════════════════════════════════
-          SATELLITE PANELS — rendered via createPortal at document.body
-          These are completely separate DOM elements from the popover.
-          ═══════════════════════════════════════════════════════════════ */}
-      {editMode &&
-        open &&
-        drawerRect &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <>
-            {/* ── Hidden apps panel — LEFT of drawer ── */}
-            <div
-              className={`rounded-xl border shadow-lg transition-colors ${
-                draggingFromVisible
-                  ? "border-primary/50 bg-primary/5"
-                  : "border-border bg-popover"
-              }`}
-              style={{
-                position: "fixed",
-                top: drawerRect.top,
-                right:
-                  document.documentElement.clientWidth -
-                  drawerRect.left +
-                  12,
-                zIndex: 50,
-                minWidth: 180,
-                maxHeight: drawerRect.height,
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = "move";
-              }}
-              onDrop={handleDropOnHidden}
-            >
-              <div className="px-3 py-2.5 border-b border-border/50">
-                <div className="flex items-center gap-1.5">
-                  <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                    Hidden ({hiddenApps.length})
-                  </span>
-                </div>
-              </div>
-              <div className="p-3">
-                {hiddenApps.length === 0 ? (
-                  <div className="text-[11px] text-muted-foreground/50 text-center py-8 px-3">
-                    Drag apps here to hide
-                  </div>
-                ) : (
-                  <div
-                    className="grid gap-1"
-                    style={{ gridTemplateColumns: "repeat(2, 1fr)" }}
-                  >
-                    {hiddenApps.map((app, i) => (
-                      <div
-                        key={app.id}
-                        className={`flex flex-col items-center p-2 rounded-xl cursor-grab select-none transition-all duration-150 opacity-60 hover:opacity-100 hover:bg-accent/40 ${
-                          draggedAppId === app.id
-                            ? "opacity-20 scale-90"
-                            : ""
-                        }`}
-                        style={{
-                          animation:
-                            "app-shake 0.4s ease-in-out infinite alternate",
-                          animationDelay: `${(i % 5) * 0.08}s`,
-                        }}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, app.id)}
-                        onDragEnd={handleDragEnd}
-                      >
-                        <div className="rounded-xl flex items-center justify-center text-base font-medium overflow-hidden" style={{ width: 40 * prefs.iconScale, height: 40 * prefs.iconScale }}>
-                          <AppIcon
-                            icon={app.icon}
-                            customIconUrl={app.custom_icon_url}
-                            name={app.name}
-                            size={40 * prefs.iconScale}
-                          />
-                        </div>
-                        <span className="text-[11px] text-center line-clamp-1 w-full mt-1.5 text-foreground/80 leading-tight">
-                          {app.name}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* ── Controls panel — BELOW drawer ── */}
-            <div
-              className="rounded-xl border border-border bg-popover text-popover-foreground shadow-lg px-3 py-2.5 space-y-2"
-              style={{
-                position: "fixed",
-                top: drawerRect.bottom + 8,
-                left: drawerRect.left,
-                width: drawerRect.width,
-                zIndex: 50,
-              }}
-            >
-              {/* Columns */}
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Columns</span>
-                <div className="flex items-center gap-1">
-                  {[3, 4, 5].map((n) => (
-                    <button
-                      key={n}
-                      className={`w-6 h-6 rounded text-xs font-medium transition-colors ${
-                        prefs.columns === n
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-accent/60 text-foreground/60 hover:bg-accent"
-                      }`}
-                      onClick={() => persistPrefs({ ...prefs, columns: n })}
-                    >
-                      {n}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {/* Icon size */}
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-xs text-muted-foreground">
-                  Icon size
-                </span>
-                <input
-                  type="range"
-                  min="0.7"
-                  max="1.5"
-                  step="0.1"
-                  value={prefs.iconScale}
-                  onChange={(e) =>
-                    persistPrefs({
-                      ...prefs,
-                      iconScale: parseFloat(e.target.value),
-                    })
-                  }
-                  className="w-24 h-1.5 appearance-none bg-accent rounded-full cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:cursor-pointer"
-                />
-              </div>
-              {/* Max height */}
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-xs text-muted-foreground">
-                  Max height
-                </span>
-                <input
-                  type="range"
-                  min="200"
-                  max="700"
-                  step="50"
-                  value={prefs.maxHeight}
-                  onChange={(e) =>
-                    persistPrefs({
-                      ...prefs,
-                      maxHeight: parseInt(e.target.value, 10),
-                    })
-                  }
-                  className="w-24 h-1.5 appearance-none bg-accent rounded-full cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:cursor-pointer"
-                />
-              </div>
-            </div>
-          </>,
-          document.body
-        )}
     </Popover>
   );
 }

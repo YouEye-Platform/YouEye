@@ -328,7 +328,11 @@
     "statusDown": "Ausgefallen",
     "statusUnknown": "Unbekannt",
     "manageApps": "Apps verwalten",
-    "visitMarketplace": "Zum Marktplatz"
+    "visitMarketplace": "Zum Marktplatz",
+    "addApp": "App hinzufügen",
+    "removeApp": "Aus Leiste entfernen",
+    "allApps": "Alle Apps",
+    "noAppsToAdd": "Alles ist bereits in deiner Leiste"
   },
   "notifications": {
     "title": "Benachrichtigungen",

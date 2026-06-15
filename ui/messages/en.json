@@ -329,7 +329,11 @@
     "statusDown": "Down",
     "statusUnknown": "Unknown",
     "manageApps": "Manage Apps",
-    "visitMarketplace": "Visit Marketplace"
+    "visitMarketplace": "Visit Marketplace",
+    "addApp": "Add app",
+    "removeApp": "Remove from drawer",
+    "allApps": "All apps",
+    "noAppsToAdd": "Everything is already in your drawer"
   },
   "notifications": {
     "title": "Notifications",

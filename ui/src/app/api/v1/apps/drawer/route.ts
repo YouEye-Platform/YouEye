@@ -45,7 +45,10 @@ export async function GET(request: NextRequest) {
       original_name: a.name,
       icon: a.icon,
       custom_icon_url: a.customIconUrl,
+      // `pinned` is the new name for `visible`: whether the app shows in the
+      // quick drawer. The launcher ignores it (shows all). Both sent for back-compat.
       visible: a.visible,
+      pinned: a.visible,
       order: a.displayOrder,
       section_id: a.sectionId,
       // Registered apps (have containerUrl) with "unknown" status are assumed running

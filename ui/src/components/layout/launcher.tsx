@@ -17,7 +17,7 @@
 import { useEffect, useMemo, useState } from "react";
 import * as LucideIcons from "lucide-react";
 import type { ComponentType } from "react";
-import { Search, Store, Settings, Package } from "lucide-react";
+import { Search, Store, Settings, Package, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 interface LauncherApp {
@@ -69,7 +69,7 @@ interface SystemTile {
   Icon: ComponentType<{ className?: string }>;
 }
 
-export function Launcher({ embedded = false }: { embedded?: boolean }) {
+export function Launcher({ embedded = false, onClose }: { embedded?: boolean; onClose?: () => void }) {
   const [apps, setApps] = useState<LauncherApp[]>([]);
   const [query, setQuery] = useState("");
   const t = useTranslations("nav");
@@ -90,13 +90,14 @@ export function Launcher({ embedded = false }: { embedded?: boolean }) {
     [t]
   );
 
-  const visibleApps = useMemo(
-    () => apps.filter((a) => a.visible !== false && a.url),
+  // The launcher shows ALL installed apps — pinning only affects the drawer (Plan 5 L6).
+  const allLauncherApps = useMemo(
+    () => apps.filter((a) => a.url),
     [apps]
   );
 
   const q = query.trim().toLowerCase();
-  const filteredApps = q ? visibleApps.filter((a) => a.name.toLowerCase().includes(q)) : visibleApps;
+  const filteredApps = q ? allLauncherApps.filter((a) => a.name.toLowerCase().includes(q)) : allLauncherApps;
   const filteredSystem = q ? systemTiles.filter((s) => s.name.toLowerCase().includes(q)) : systemTiles;
 
   // In an iframe, navigate the top window so the app opens at the top level.
@@ -106,7 +107,17 @@ export function Launcher({ embedded = false }: { embedded?: boolean }) {
   };
 
   return (
-    <div className="flex h-full w-full flex-col items-center gap-8 overflow-y-auto px-6 pb-6 pt-9">
+    <div className="relative flex h-full w-full flex-col items-center gap-8 overflow-y-auto px-6 pb-6 pt-9">
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full border bg-card/80 text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      )}
       {/* Search */}
       <div className="relative w-[min(440px,90%)]">
         <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

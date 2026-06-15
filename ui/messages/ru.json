@@ -329,7 +329,11 @@
     "statusDown": "Не работает",
     "statusUnknown": "Неизвестно",
     "manageApps": "Управление приложениями",
-    "visitMarketplace": "Перейти в Маркетплейс"
+    "visitMarketplace": "Перейти в Маркетплейс",
+    "addApp": "Добавить приложение",
+    "removeApp": "Убрать из панели",
+    "allApps": "Все приложения",
+    "noAppsToAdd": "Все приложения уже в панели"
   },
   "notifications": {
     "title": "Уведомления",

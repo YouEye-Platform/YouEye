@@ -328,7 +328,11 @@
     "statusDown": "Caído",
     "statusUnknown": "Desconocido",
     "manageApps": "Administrar Apps",
-    "visitMarketplace": "Visitar Marketplace"
+    "visitMarketplace": "Visitar Marketplace",
+    "addApp": "Añadir app",
+    "removeApp": "Quitar del cajón",
+    "allApps": "Todas las apps",
+    "noAppsToAdd": "Todo ya está en tu cajón"
   },
   "notifications": {
     "title": "Notificaciones",

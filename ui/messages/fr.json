@@ -328,7 +328,11 @@
     "statusDown": "Hors service",
     "statusUnknown": "Inconnu",
     "manageApps": "Gérer les apps",
-    "visitMarketplace": "Visiter le Marketplace"
+    "visitMarketplace": "Visiter le Marketplace",
+    "addApp": "Ajouter une app",
+    "removeApp": "Retirer du tiroir",
+    "allApps": "Toutes les apps",
+    "noAppsToAdd": "Tout est déjà dans votre tiroir"
   },
   "notifications": {
     "title": "Notifications",

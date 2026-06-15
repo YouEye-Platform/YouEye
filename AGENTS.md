@@ -1,3 +1,20 @@
+## ui-v0.4.21 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 5 Slice 1 — app drawer + launcher as two cooperating surfaces
+
+### Changes
+- `ui/src/components/layout/app-drawer.tsx` — drawer reworked: search (any app → open), edit-mode "Add app"→pin + × to unpin, **hidden tray removed**; `embedded` prop for `/embed/drawer`; "All apps"→launcher. `pinned` === existing `visible` (no migration).
+- `ui/src/components/layout/launcher.tsx` — shows ALL apps (dropped `visible` filter); `onClose` for the overlay.
+- `ui/src/components/layout/drawer-and-launcher.tsx` — **new** client wrapper: drawer popover + launcher overlay on the dashboard.
+- `ui/src/app/embed/drawer/page.tsx` — **new** UI-served `/embed/drawer`; posts `youeye:action open-launcher`.
+- `ui/src/app/api/v1/apps/drawer/route.ts` — `pinned` alias. `ui/src/components/layout/navbar.tsx` — uses `<DrawerAndLauncher>`. i18n ×5.
+
+### Test Results
+- `pnpm build` OK; standalone baked 0.4.21; `/embed/drawer` compiled. Live verify on lemon.app (light+dark) post-deploy.
+
+### Notes for Iris
+- Direct-to-main (Plan 1 model, no Iris merge). Launcher folders + Canvas + 6 native re-releases are the next Plan 5 slices.
+
 ## ui-v0.4.20 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 1 E6 fix — legacy resize-only embeds lost to fallback
