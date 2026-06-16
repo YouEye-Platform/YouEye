@@ -23,6 +23,9 @@ const ALLOWED_DOMAINS = [
   'usememos.com',
   'i.ibb.co',
   'jellyfin.org',
+  // YouEye Forgejo / App Market host — external app icons are served from the
+  // catalog repo's raw file URLs (e.g. git.potemk.in/.../raw/icons/<app>.svg).
+  'git.potemk.in',
 ];
 
 export async function GET(request: Request) {

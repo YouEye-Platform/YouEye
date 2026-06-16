@@ -1,3 +1,19 @@
+## cp-mythos-v0.4.49.1 + ui-mythos-v0.4.28.2 — mythos — 2026-06-16
+**Branch:** mythos · **Agent:** Mythos
+**Task:** Fix Market external-app favicons (image-proxy domain whitelist)
+
+### Changes
+- `control-panel/src/app/api/market/image/route.ts` — add `git.potemk.in` to `ALLOWED_DOMAINS` so external app icons served from the Forgejo raw URL are no longer 403'd by the proxy.
+- `ui/src/app/api/market/image/route.ts` — same whitelist addition (the UI mirrors the proxy).
+- `control-panel/package.json` 0.4.49 → 0.4.49.1; `ui/package.json` 0.4.28.1 → 0.4.28.2.
+
+### Test Results
+- Owner-run on bykapc. Root cause confirmed by code trace: an external `iconUrl` resolves to `https://git.potemk.in/api/v1/repos/potemsla/YE-AppMarket/raw/icons/<app>.svg`, gets wrapped as `/api/market/image?url=...`, and the proxy returned 403 because `git.potemk.in` was not in the allow-list. Native apps use Lucide icon names and were unaffected.
+
+### Notes for Iris
+- Pairs with YE-AppMarket `mythos` v0.4.0.8 (SSO/notifications/version sweep); those manifests' icons now render.
+- DEFERRED to a follow-up monorepo build (owner greenlight pending): the per-app notification toggle (UI: `user_settings.mutedAppIds` + a Settings→Notifications page + read-query enforcement) and roleClaim admin mapping under the `youeye-id` provider. Neither is in this build.
+
 ## cp-v0.4.49 + spine-v0.4.10 — mythos — 2026-06-16
 **Branch:** main · **Agent:** Mythos
 **Task:** Platform RAM + app-isolation overhaul (5 workstreams) — verified live on bykapc incl. reboot.
