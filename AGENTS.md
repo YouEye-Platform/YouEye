@@ -1,3 +1,23 @@
+## cp-mythos-v0.4.49.3 + ui-mythos-v0.4.28.3 — mythos — 2026-06-17
+**Branch:** mythos · **Agent:** Mythos
+**Task:** Propagate integration-provided SSO `entry_url` to the UI so the app drawer/header launch the SSO login path (not the app's local login form) for integration-wired apps (Jellyfin, Nextcloud, Immich, Memos, Audiobookshelf)
+
+### Changes
+- `control-panel/src/lib/market/engine.ts` — new exported `pushSsoEntryUrlToUI(appId, entryUrl)`: token-safe, bridge-authenticated `POST /api/v1/apps/sso-entry-url` that updates ONLY the UI `sso_entry_url` column (omits token_hash/icon/name/container URL → bridge token & all other fields preserved).
+- `control-panel/src/lib/market/integration-runner.ts` — `applyIntegration` calls `pushSsoEntryUrlToUI` after OAuth-client creation when `integration.sso?.entry_url` is set, resolving `${sso.slug}` (→ `youeye-app-<appId>`). Root cause: integration-wired apps have no `sso` block in the app manifest, so the main install's `registerAppWithUI` registered `sso_entry_url=null`; the integration runs post-install and never pushed it.
+- `ui/src/lib/db/queries/app-management.ts` — new `setAppSsoEntryUrl(appId, entryUrl)` query (update-only, invalidates app-surface cache).
+- `ui/src/app/api/v1/apps/sso-entry-url/route.ts` — NEW bridge-only `POST` route.
+- CP `package.json` 0.4.49.2 → 0.4.49.3; UI `package.json` 0.4.28.2 → 0.4.28.3.
+
+### Test Results
+- Local `tsc --noEmit`: no errors in changed files.
+- Deployed to bykapc (CP 0.4.49.3, UI 0.4.28.3). Installed Jellyfin via the Market (youeye-id integration auto-applied); UI `apps.sso_entry_url` for jellyfin = `/sso/OID/start/youeye-app-jellyfin` (was NULL pre-fix) — entry_url now reaches the UI, so the drawer launches the SSO login path. Browser dual-account (tester/tester2) role verification recorded in the YE-Wiki 2026-06-17 test matrix.
+
+### Notes for Iris
+- CP + UI released together: `cp-mythos-v0.4.49.3`, `ui-mythos-v0.4.28.3`. No Spine change.
+- Pre-existing CLI bug found (separate from this release): `youeye app install <name>` sends only `{appId}` to `/api/market/install`, omitting the required `subdomain`/`domain`/`selectedIntegrations` → 400. Logged for a Spine follow-up; installs in this session used the direct CP API.
+- Manifests unchanged here — Jellyfin's integration already declared `sso.entry_url`. Other apps' `entry_url` values are added to YE-AppMarket as each is validated against its running instance.
+
 ## spine-mythos-v0.4.10.1 — mythos — 2026-06-16
 **Branch:** mythos · **Agent:** Mythos
 **Task:** Fix `id.<domain>` HTTP 500 on login — identity provider missing Incus HTTPS env (spine-v0.4.10 regression)
