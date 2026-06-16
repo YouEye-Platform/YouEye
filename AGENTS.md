@@ -1,3 +1,18 @@
+## installer/proxmox-vm.sh — artem — 2026-06-17
+**Branch:** artem · **Agent:** Artem
+**Task:** New Proxmox VM provisioner for the YouEye installer — creates a Debian VM with the QEMU guest agent pre-baked, so the host drives the in-VM install via `qm guest exec`. No component release (host-side script).
+
+### Changes
+- `installer/proxmox-vm.sh` — **new.** Non-interactive, curl-from-Proxmox-host script. Downloads Debian 13 genericcloud, pre-bakes `qemu-guest-agent` with `virt-customize`, `qm create` (virtio-scsi-single, serial console, `--agent enabled=1`), one-step `import-from` disk into local-lvm, cloud-init drive + DHCP + ciuser/sshkeys, grows disk, boots, polls the agent, runs a demo `qm guest exec`. Env/flag parameterized; `--recreate` for re-tests.
+
+### Test Results
+- Live on Proxmox host **Koshka (PVE 9.1.1)**, throwaway VM 9000: VM created → guest agent up → `qm guest exec` ran as root (uid=0) → disk grew to 20G (cloud-init growpart) → cloud-init done → SSH fallback (youeye + passwordless sudo) confirmed. End-to-end green.
+
+### Notes for Iris
+- Host-side bash, NOT a Spine/CP/UI component — no version bump / Forgejo release.
+- Part of the "X installer" plan (`Agent Working/youeye-developer/Artem/Plans/X installer.md`). Next slices: wire the real Spine install + `youeye deploy` into the guest-exec step, the base-Linux detection branch, then the TUI.
+- Requires `libguestfs-tools` on the host (script installs it if missing). Koshka had a pre-existing broken 3rd-party Docker apt repo; the script tolerates a non-zero `apt-get update`.
+
 ## cp-v0.4.49 + spine-v0.4.10 — mythos — 2026-06-16
 **Branch:** main · **Agent:** Mythos
 **Task:** Platform RAM + app-isolation overhaul (5 workstreams) — verified live on bykapc incl. reboot.
