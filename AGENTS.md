@@ -1,3 +1,22 @@
+## cp-v0.4.49 + spine-v0.4.10 — mythos — 2026-06-16
+**Branch:** main · **Agent:** Mythos
+**Task:** Platform RAM + app-isolation overhaul (5 workstreams) — verified live on bykapc incl. reboot.
+
+### Changes
+- `control-panel/src/lib/incus/app-network.ts` — `addSystemProxyDevices` now attaches each proxy to its target instance with `bind:host`+`nat:true` (kernel DNAT, no forkproxy); `removeSystemProxyDevices` scans all core instances; new `applyAppEgressAcl`/`removeAppEgressAcl` (port-specific per-app egress isolation).
+- `control-panel/src/lib/market/engine.ts` — replaced the never-applied `ye-app-infra-block` with `applyAppEgressAcl` (fail-loud).
+- `control-panel/src/lib/health/monitor.ts` — watchdog now reconciles desired-state (restarts containers that should run but crashed at boot), not just Running→Stopped.
+- `control-panel/src/lib/incus/server.ts` — `openIncus()` transport: Unix socket by default, Incus HTTPS API (client cert) when `INCUS_HTTPS_URL` set → removes the 1.3 GiB incus-socket forkproxy leak.
+- `spine/internal/container/control.go` — `setupIncusHTTPS` (enable listener + trusted client cert) replaces the `incus-socket` proxy; CP unit gets `INCUS_HTTPS_URL`/`CLIENT_CERT`/`CLIENT_KEY`.
+- `spine/internal/incus/install.go` — `capZFSARC()` pins `zfs_arc_max=2 GiB`.
+
+### Test Results
+- Live on bykapc: forkproxy 25→7, host used 5.5→3.0 GiB / avail 9.5→12.3 GiB, incus-socket leak gone, ARC capped, per-app isolation enforced (CP-dash/Postgres-non-DB/Caddy/Pi-Hole blocked), all apps 307/200 via Caddy, memos DB 200. **Survived a full reboot** (13/13 autostart, memos auto-recovered, CP back on HTTPS).
+
+### Notes for Iris
+- Existing apps were migrated to nat-mode + ACLs live via incus (persistent). Fresh-install Spine HTTPS/ARC path is verified-by-construction; a clean install would exercise it end-to-end.
+- Plans: `Agent Working/youeye-developer/Mythos/Plans/platform-ram-and-isolation-master-plan.md`.
+
 ## ui-v0.4.27 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
 **Task:** Plan 5 — notification tab embed (Plan A) + menu/bell transparency (owner asks)
