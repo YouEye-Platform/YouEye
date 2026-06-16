@@ -437,53 +437,154 @@ export async function addSystemProxyDevices(
     throw new Error(`Cannot add system proxies for ${appId}: app bridge gateway not found`);
   }
 
-  const res = await incusRequest<{
-    devices: Record<string, Record<string, string>>;
-  }>('GET', '/1.0/instances/youeye-control');
-
-  const devices = { ...res.metadata.devices };
-
+  // nat-mode (kernel DNAT) requires each proxy be attached to the instance whose
+  // STATIC IP it connects to — so group doorways by target instance and PATCH
+  // each. This replaces the userspace forkproxy (~17 MiB RSS each) with an
+  // nftables DNAT rule (~0 RAM). See plans/proxy-nat-mode-optimization.md.
+  const byInstance = new Map<string, Record<string, Record<string, string>>>();
   for (const svc of services) {
     const serviceIP = await getSystemStaticIP(svc.containerName) || await getContainerIP(svc.containerName);
     if (!serviceIP) {
       throw new Error(`Cannot resolve IP for system service ${svc.containerName}`);
     }
-
     const listenPort = svc.listenPort ?? svc.port;
-    devices[systemProxyDeviceName(appId, svc.name)] = {
+    const group = byInstance.get(svc.containerName) ?? {};
+    group[systemProxyDeviceName(appId, svc.name)] = {
       type: 'proxy',
+      bind: 'host',
+      nat: 'true',
       listen: `tcp:${gatewayIP}:${listenPort}`,
       connect: `tcp:${serviceIP}:${svc.port}`,
     };
+    byInstance.set(svc.containerName, group);
   }
 
-  await incusRequest('PATCH', '/1.0/instances/youeye-control', { devices });
-  console.log(`[app-network] Added ${services.length} system proxy devices for ${appId} on ${gatewayIP}`);
+  for (const [instance, newDevices] of byInstance) {
+    const res = await incusRequest<{
+      devices: Record<string, Record<string, string>>;
+    }>('GET', `/1.0/instances/${instance}`);
+    const devices = { ...res.metadata.devices, ...newDevices };
+    await incusRequest('PATCH', `/1.0/instances/${instance}`, { devices });
+  }
+  console.log(`[app-network] Added ${services.length} nat-mode proxy devices for ${appId} on ${gatewayIP}`);
 }
 
 export async function removeSystemProxyDevices(appId: string): Promise<void> {
-  try {
-    const res = await incusRequest<{
-      devices: Record<string, Record<string, string>>;
-    }>('GET', '/1.0/instances/youeye-control');
-
-    const devices = { ...res.metadata.devices };
-    let removed = 0;
-
-    const prefix = systemProxyDeviceName(appId, '');
-    for (const name of Object.keys(devices)) {
-      if (name.startsWith(prefix)) {
-        delete devices[name];
-        removed++;
+  const prefix = systemProxyDeviceName(appId, '');
+  // nat-mode distributes doorways across the core instances they connect to,
+  // so scan every instance a system service can live on (not just control).
+  const allServices = await getSystemServices({ needsSharedDb: true, needsSSO: true });
+  const instances = Array.from(new Set(allServices.map((s) => s.containerName)));
+  for (const instance of instances) {
+    try {
+      const res = await incusRequest<{
+        devices: Record<string, Record<string, string>>;
+      }>('GET', `/1.0/instances/${instance}`);
+      const devices = { ...res.metadata.devices };
+      let removed = 0;
+      for (const name of Object.keys(devices)) {
+        if (name.startsWith(prefix)) {
+          delete devices[name];
+          removed++;
+        }
       }
+      if (removed > 0) {
+        await incusRequest('PATCH', `/1.0/instances/${instance}`, { devices });
+        console.log(`[app-network] Removed ${removed} system proxy devices for ${appId} from ${instance}`);
+      }
+    } catch (err) {
+      console.warn(`[app-network] Failed to remove proxies for ${appId} from ${instance}:`, err);
     }
+  }
+  // Tear down the per-app egress ACL too (best-effort; containers are gone by now).
+  await removeAppEgressAcl(appId);
+}
 
-    if (removed > 0) {
-      await incusRequest('PATCH', '/1.0/instances/youeye-control', { devices });
-      console.log(`[app-network] Removed ${removed} system proxy devices for ${appId}`);
+// ─── Per-App Egress Isolation ACL ───────────────────────────
+
+function appAclName(appId: string): string {
+  return `ye-app-${appId.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 32)}-egress`;
+}
+
+/**
+ * Apply the per-app egress isolation ACL. An app may reach ONLY its bridge
+ * gateway (DNS + its proxied doorways) and the specific core services it is
+ * entitled to (UI, identity if SSO, shared Postgres if a DB app). Direct access
+ * to the CP dashboard, Caddy admin, Pi-Hole, and Postgres (for non-DB apps) is
+ * rejected.
+ *
+ * Rules MUST be port-specific: Incus orders reject rules before allow rules, so
+ * a broad subnet reject would shadow the allows — and would also break nat-mode,
+ * whose DNAT'd legitimate traffic arrives with a core-IP destination. See the
+ * master plan WS2.
+ */
+export async function applyAppEgressAcl(
+  appId: string,
+  containerNames: string[],
+  opts: { needsSharedDb: boolean; needsSSO: boolean },
+): Promise<void> {
+  const gatewayIP = await getAppBridgeGatewayIP(appId);
+  if (!gatewayIP) throw new Error(`Cannot apply egress ACL for ${appId}: app bridge gateway not found`);
+  const gwSubnet = `${gatewayIP.replace(/\.\d+$/, '.0')}/24`;
+
+  const ip = async (n: string) => (await getSystemStaticIP(n)) || (await getContainerIP(n));
+  const [uiIP, pgIP, controlIP, caddyIP, piholeIP] = await Promise.all([
+    ip('youeye-ui'), ip('youeye-postgres'), ip('youeye-control'), ip('youeye-caddy'), ip('youeye-pihole'),
+  ]);
+  if (!uiIP || !pgIP || !controlIP) {
+    throw new Error(`Cannot resolve core IPs for ${appId} egress ACL`);
+  }
+
+  const egress: Array<Record<string, string>> = [
+    { action: 'allow', destination: gwSubnet, description: 'gateway: DNS + proxied doorways' },
+    { action: 'allow', protocol: 'tcp', destination: `${uiIP}/32`, destination_port: '3000', description: 'UI bridge' },
+  ];
+  if (opts.needsSSO) {
+    egress.push({ action: 'allow', protocol: 'tcp', destination: `${controlIP}/32`, destination_port: '3001', description: 'identity service' });
+  }
+  if (opts.needsSharedDb) {
+    egress.push({ action: 'allow', protocol: 'tcp', destination: `${pgIP}/32`, destination_port: '5432', description: 'shared Postgres' });
+  }
+  egress.push({ action: 'reject', protocol: 'tcp', destination: `${controlIP}/32`, destination_port: '3000', description: 'block CP dashboard' });
+  if (!opts.needsSharedDb) {
+    egress.push({ action: 'reject', destination: `${pgIP}/32`, description: 'block Postgres (non-DB app)' });
+  }
+  if (caddyIP) egress.push({ action: 'reject', destination: `${caddyIP}/32`, description: 'block Caddy admin' });
+  if (piholeIP) egress.push({ action: 'reject', destination: `${piholeIP}/32`, description: 'block Pi-Hole' });
+
+  const name = appAclName(appId);
+  const body = { name, description: `Egress isolation for app ${appId}`, egress, ingress: [] as unknown[] };
+  try {
+    await incusRequest('POST', '/1.0/network-acls', body);
+  } catch {
+    // Already exists — replace its rules in place.
+    await incusRequest('PUT', `/1.0/network-acls/${name}`, { description: body.description, egress, ingress: [], config: {} });
+  }
+
+  for (const cn of containerNames) {
+    const res = await incusRequest<{ devices: Record<string, Record<string, string>> }>('GET', `/1.0/instances/${cn}`);
+    const devices = { ...res.metadata.devices };
+    if (devices.eth0) {
+      devices.eth0 = {
+        ...devices.eth0,
+        'security.acls': name,
+        'security.acls.default.egress.action': 'allow',
+        'security.acls.default.ingress.action': 'allow',
+      };
+      await incusRequest('PATCH', `/1.0/instances/${cn}`, { devices });
     }
-  } catch (err) {
-    console.warn(`[app-network] Failed to remove system proxy devices for ${appId}:`, err);
+  }
+  console.log(`[app-network] Applied egress ACL ${name} to ${containerNames.join(', ')}`);
+}
+
+/** Remove the per-app egress ACL (best-effort; safe once container holders are gone). */
+export async function removeAppEgressAcl(appId: string): Promise<void> {
+  const name = appAclName(appId);
+  try {
+    await incusRequest('DELETE', `/1.0/network-acls/${name}`);
+    console.log(`[app-network] Removed egress ACL ${name}`);
+  } catch {
+    // Not present, or still referenced by a not-yet-deleted container — harmless.
   }
 }
 

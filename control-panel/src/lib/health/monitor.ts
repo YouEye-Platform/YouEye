@@ -181,6 +181,39 @@ async function checkContainerWatchdog(): Promise<void> {
       if (!isApp && !isInfra) continue;
       if (WATCHDOG_EXCLUDE.has(name)) continue;
 
+      // Desired-state reconcile: start a container that SHOULD be running but is
+      // Stopped — even one we never observed Running (e.g. it crashed at boot,
+      // before CP/watchdog started, like an app racing Postgres). The
+      // Running→Stopped transition check below misses this case, so such a
+      // container would otherwise stay down forever. Honors boot.autostart=false
+      // and the crash-loop backoff.
+      {
+        const cfg = (instance.config ?? {}) as Record<string, string>;
+        const shouldRun = (cfg['boot.autostart'] ?? 'true') !== 'false';
+        const ws = watchStates.get(name);
+        if (shouldRun && status === 'Stopped' && !ws?.crashLoopDetected) {
+          const recent = (ws?.restarts ?? []).filter((t) => now - t < CRASH_LOOP_WINDOW_MS);
+          if (recent.length < CRASH_LOOP_THRESHOLD) {
+            console.log(`[watchdog] ${name} should be running but is Stopped — starting`);
+            try {
+              await incusRequest('PUT', `/1.0/instances/${name}/state`, { action: 'start', timeout: 30 });
+              await applyResourcePolicy(name, isInfra ? 'critical' as const : 'normal' as const);
+              const s = watchStates.get(name) ?? { previousStatus: 'Stopped', restarts: [], crashLoopDetected: false };
+              s.restarts = [...recent, now];
+              if (s.restarts.length >= CRASH_LOOP_THRESHOLD) {
+                s.crashLoopDetected = true;
+                await notify(`${name} keeps crashing`, `${name} failed to stay running after ${s.restarts.length} starts in 5 minutes. Auto-start paused.`, 'error', '/health');
+              }
+              s.previousStatus = 'Running';
+              watchStates.set(name, s);
+            } catch (err) {
+              console.error(`[watchdog] Failed to start ${name}:`, err);
+            }
+            continue;
+          }
+        }
+      }
+
       const state = watchStates.get(name);
 
       if (!state) {
