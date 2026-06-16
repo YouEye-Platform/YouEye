@@ -67,10 +67,14 @@ export async function refreshVersionCheck(): Promise<InstalledApp[]> {
     lastResults = appsWithUpdates;
     lastCheckedAt = new Date().toISOString();
 
-    // Also trigger infrastructure (OCI + LXD) update checks
-    refreshAllUpdates().catch((err) => {
+    // Also refresh infrastructure (OCI + LXD digest) checks in the SAME pass, so a
+    // single user action ("Check for updates") covers market apps + infra. A failure
+    // here must not abort the market result.
+    try {
+      await refreshAllUpdates();
+    } catch (err) {
       console.error('[version-checker] Infrastructure check failed:', err);
-    });
+    }
 
     return appsWithUpdates;
   } catch (err) {
