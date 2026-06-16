@@ -141,6 +141,23 @@ export async function registerApp(data: {
   invalidateAppSurfaceCache();
 }
 
+/**
+ * Update ONLY the SSO entry URL for an already-registered app.
+ *
+ * Used by the Control Panel when SSO is wired by a post-install integration
+ * (Jellyfin, Nextcloud, Immich, …): the app was first registered without an
+ * entry_url, and this sets the SSO login path so the drawer/header link to it.
+ * Touches nothing else — token, icon, name and container URL are preserved.
+ */
+export async function setAppSsoEntryUrl(appId: string, ssoEntryUrl: string | null): Promise<void> {
+  await ensureSchema();
+  await db
+    .update(apps)
+    .set({ ssoEntryUrl, updatedAt: new Date() })
+    .where(eq(apps.id, appId));
+  invalidateAppSurfaceCache();
+}
+
 /** Unregister an app and clean up all related data */
 export async function unregisterApp(appId: string): Promise<void> {
   await ensureSchema();

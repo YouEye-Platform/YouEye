@@ -7,6 +7,7 @@ import { fetchIntegrationManifestReferenceFromSource, fetchIntegrationManifestFr
 import { buildCanonicalContext, generateAppToken } from './platform-env';
 import { executeSSOSteps, StepError } from './sso-engine';
 import { getContainerName } from './engine-helpers';
+import { pushSsoEntryUrlToUI } from './engine';
 import { injectCaddyRootCA } from './caddy-ca';
 import { resolveVariables } from './variables';
 import type { AppManifest, InstallConfig, InstallEvent, IntegrationManifest, VariableContext } from './types';
@@ -255,6 +256,21 @@ export async function applyIntegration(
     throw err;
   }
   emit(onEvent, step, totalSteps, 'success', `${integration.metadata.name} configured`);
+
+  // Propagate the SSO entry URL to the UI so the app drawer/header launch the SSO
+  // login path (e.g. /sso/OID/start/youeye-app-jellyfin) instead of the app's local
+  // login form. Integration-wired apps have no `sso` block in their app manifest, so
+  // the main install registered them with sso_entry_url=null — this is the only place
+  // the integration's entry_url reaches the UI. Best-effort: degrades the launch link
+  // on failure, never breaks the install.
+  if (integration.sso?.entry_url) {
+    try {
+      const entryUrl = resolveVariables(integration.sso.entry_url, ctx);
+      await pushSsoEntryUrlToUI(targetAppId, entryUrl);
+    } catch (err) {
+      console.warn(`[integration] Failed to push SSO entry URL for ${targetAppId}:`, err);
+    }
+  }
 
   step++;
   emit(onEvent, step, totalSteps, 'running', 'Recording integration metadata...');
