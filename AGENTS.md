@@ -1,3 +1,19 @@
+## spine-mythos-v0.4.10.1 — mythos — 2026-06-16
+**Branch:** mythos · **Agent:** Mythos
+**Task:** Fix `id.<domain>` HTTP 500 on login — identity provider missing Incus HTTPS env (spine-v0.4.10 regression)
+
+### Changes
+- `spine/internal/container/control.go` — add `INCUS_HTTPS_URL` / `INCUS_CLIENT_CERT` / `INCUS_CLIENT_KEY` Environment lines (+ `incusGW` arg) to the `youeye-id.service` (identity provider, :3001) unit. The spine-v0.4.10 unix-socket→HTTPS migration added them to the CP unit only; the identity service shares the same `/opt/app` bundle + Incus client and fell back to the removed Incus unix socket → `ECONNREFUSED` → 500 on the login flow. Added a "keep in sync with the CP unit" comment to prevent recurrence.
+- `spine/internal/cmd/root.go` — Version 0.4.10 → 0.4.10.1.
+
+### Test Results
+- Live on bykapc: applied the equivalent `youeye-id.service.d/incus-https.conf` drop-in + restart → 0 `ECONNREFUSED` / 0 watchdog failures since the restart; `/application/o/authorize` → `/identity/login` chain returns 200. Go: `gofmt` clean, `go build ./...` OK.
+
+### Notes for Iris
+- **Only Spine changed** (no CP/UI release). Branch release: `spine-mythos-v0.4.10.1`.
+- Live bykapc currently runs the equivalent **systemd drop-in** hotfix (not a re-provision). The inline env in this release supersedes the drop-in on the next full re-provision (harmless duplicate). `spine update self` swaps the binary but does NOT rewrite the CP-container units, so the drop-in remains until a re-provision/`spine deploy`.
+- Follow-ups in Plans/Archive/To Plan/: `identity-service-cp-background-loops.md`, `spine-stale-incus-socket-after-forkproxy-removal.md`.
+
 ## cp-mythos-v0.4.49.1 + ui-mythos-v0.4.28.2 — mythos — 2026-06-16
 **Branch:** mythos · **Agent:** Mythos
 **Task:** Fix Market external-app favicons (image-proxy domain whitelist)

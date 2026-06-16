@@ -503,6 +503,11 @@ WantedBy=multi-user.target
 	util.RunIncusExec(containerName, "bash", "-c",
 		fmt.Sprintf("cat > /etc/systemd/system/youeye-control.service << 'EOF'\n%sEOF", serviceContent))
 
+	// The identity provider (port 3001) runs the same /opt/app bundle as the Control
+	// Panel and shares its Incus client. It must get the same INCUS_HTTPS_URL + client
+	// cert/key as the CP unit above — otherwise it falls back to the (removed) Incus
+	// unix socket and returns HTTP 500 on the login flow (regression in spine-v0.4.10).
+	// Keep these three Environment lines in sync with the Control Panel unit.
 	identityServiceContent := fmt.Sprintf(`[Unit]
 Description=Identity Provider
 After=network.target
@@ -517,13 +522,16 @@ Environment=IDENTITY_SERVICE=true
 Environment=JWT_SECRET=%s
 Environment=HOST_IP=%s
 Environment=SECURE_COOKIES=true
+Environment=INCUS_HTTPS_URL=%s:8443
+Environment=INCUS_CLIENT_CERT=/etc/youeye/incus-client.crt
+Environment=INCUS_CLIENT_KEY=/etc/youeye/incus-client.key
 ExecStart=/usr/bin/node %s/server.js
 Restart=always
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
-`, appDir, util.GenerateJWTSecret(), hostIP, appDir)
+`, appDir, util.GenerateJWTSecret(), hostIP, incusGW, appDir)
 
 	util.RunIncusExec(containerName, "bash", "-c",
 		fmt.Sprintf("cat > /etc/systemd/system/youeye-id.service << 'EOF'\n%sEOF", identityServiceContent))
