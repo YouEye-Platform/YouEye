@@ -6,6 +6,46 @@
  */
 
 import { Socket } from 'net';
+import { connect as tlsConnect, type TLSSocket } from 'tls';
+import { readFileSync } from 'fs';
+
+// ─── Incus transport ────────────────────────────────────────
+// Default: Unix socket (forwarded into this container by the incus-socket proxy
+// device). If INCUS_HTTPS_URL is set, connect to the Incus HTTPS API directly
+// with a client certificate instead — this removes the userspace forkproxy that
+// copies every API byte and grows unboundedly (it reached 1.3 GiB on bykapc).
+// Backward-compatible: with no HTTPS env set, behaviour is identical.
+function incusEndpoint(): { tls: true; host: string; port: number } | { tls: false; socketPath: string } {
+  const httpsUrl = process.env.INCUS_HTTPS_URL;
+  if (httpsUrl) {
+    const cleaned = httpsUrl.replace(/^https?:\/\//, '');
+    const [host, portStr] = cleaned.split(':');
+    return { tls: true, host, port: parseInt(portStr || '8443', 10) };
+  }
+  return { tls: false, socketPath: process.env.INCUS_SOCKET || '/var/lib/incus/unix.socket' };
+}
+
+let cachedCert: Buffer | undefined;
+let cachedKey: Buffer | undefined;
+function clientCreds(): { cert?: Buffer; key?: Buffer } {
+  if (!cachedCert && process.env.INCUS_CLIENT_CERT) cachedCert = readFileSync(process.env.INCUS_CLIENT_CERT);
+  if (!cachedKey && process.env.INCUS_CLIENT_KEY) cachedKey = readFileSync(process.env.INCUS_CLIENT_KEY);
+  return { cert: cachedCert, key: cachedKey };
+}
+
+/** Open a connection to Incus (Unix socket or HTTPS) and invoke onReady once connected. */
+function openIncus(onReady: () => void, socketPathOverride?: string): Socket | TLSSocket {
+  const ep = incusEndpoint();
+  if (ep.tls) {
+    const { cert, key } = clientCreds();
+    // rejectUnauthorized:false — the endpoint is the local incusd over the core
+    // bridge; authentication is via the trusted client cert, not server CN.
+    return tlsConnect({ host: ep.host, port: ep.port, cert, key, rejectUnauthorized: false }, onReady);
+  }
+  const s = new Socket();
+  s.connect(socketPathOverride || ep.socketPath, onReady);
+  return s;
+}
 
 interface IncusResponse<T = unknown> {
   type: 'sync' | 'async' | 'error';
@@ -57,10 +97,9 @@ async function incusRawGet(path: string): Promise<string> {
   const socketPath = process.env.INCUS_SOCKET || '/var/lib/incus/unix.socket';
   
   return new Promise((resolve, reject) => {
-    const socket = new Socket();
     const chunks: Buffer[] = [];
 
-    socket.connect(socketPath, () => {
+    const socket = openIncus(() => {
       const headers = [
         `GET ${path} HTTP/1.1`,
         'Host: localhost',
@@ -69,7 +108,7 @@ async function incusRawGet(path: string): Promise<string> {
         '',
       ].join('\r\n');
       socket.write(headers);
-    });
+    }, socketPath);
 
     socket.on('data', (data) => {
       chunks.push(data);
@@ -118,14 +157,13 @@ export async function incusRequest<T = unknown>(
   const socketPath = process.env.INCUS_SOCKET || '/var/lib/incus/unix.socket';
   
   return new Promise((resolve, reject) => {
-    const socket = new Socket();
     let responseData = '';
     let headersReceived = false;
     let contentLength = -1;  // -1 means not specified (chunked)
     let isChunked = false;
     let bodyStartIndex = 0;
 
-    socket.connect(socketPath, () => {
+    const socket = openIncus(() => {
       // Build HTTP request
       const bodyStr = body ? JSON.stringify(body) : '';
       const headers = [
@@ -142,7 +180,7 @@ export async function incusRequest<T = unknown>(
       if (bodyStr) {
         socket.write(bodyStr);
       }
-    });
+    }, socketPath);
 
     socket.on('data', (data) => {
       responseData += data.toString();
@@ -225,10 +263,9 @@ export async function incusUploadFile(
   const path = `/1.0/instances/${encodeURIComponent(instanceName)}/files?path=${encodeURIComponent(remotePath)}`;
 
   return new Promise((resolve, reject) => {
-    const socket = new Socket();
     const chunks: Buffer[] = [];
 
-    socket.connect(socketPath, () => {
+    const socket = openIncus(() => {
       const headers = [
         `POST ${path} HTTP/1.1`,
         'Host: localhost',
@@ -240,7 +277,7 @@ export async function incusUploadFile(
       ].join('\r\n');
       socket.write(headers);
       socket.write(data);
-    });
+    }, socketPath);
 
     socket.on('data', (chunk) => {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
