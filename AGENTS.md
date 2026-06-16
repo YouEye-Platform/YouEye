@@ -14,6 +14,26 @@
 - Live bykapc currently runs the equivalent **systemd drop-in** hotfix (not a re-provision). The inline env in this release supersedes the drop-in on the next full re-provision (harmless duplicate). `spine update self` swaps the binary but does NOT rewrite the CP-container units, so the drop-in remains until a re-provision/`spine deploy`.
 - Follow-ups in Plans/Archive/To Plan/: `identity-service-cp-background-loops.md`, `spine-stale-incus-socket-after-forkproxy-removal.md`.
 
+## cp-mythos-v0.4.49.2 — mythos — 2026-06-16
+**Branch:** mythos · **Agent:** Mythos
+**Task:** Unify "Check for updates" (components + market + infra), self-consistent market update-status, remove dead update-check routes
+
+### Changes
+- `lib/market/version-checker.ts` — `refreshVersionCheck()` now `await`s `refreshAllUpdates()` (was fire-and-forget): one pass = market catalog + infra (OCI/LXD) digest.
+- `components/settings-shell/apps-client.tsx` — native "Check for Updates" button now POSTs `/api/market/updates` (was OCI-only `/api/apps/check-updates`); component (Spine) status stays fresh via `load()` → `/api/apps/unified`.
+- `app/api/ui-bridge/apps/route.ts` — refresh path → single `refreshVersionCheck()`; market/native `updateAvailable` computed from `isNewer(catalogVersion, installedVersion)`.
+- `app/api/apps/unified/route.ts` — market `updateAvailable` computed on read via `isNewer(...)` instead of the stored boolean (health-checker re-saves no longer freeze it; clears immediately post-update).
+- Removed 6 dead update-check routes (zero callers, cp+ui verified): `updates` (bare GET), `ui-bridge/updates` (bare GET), `ui-bridge/market`, `apps/check-updates`, `apps/[name]/check-update`, `market/update`. Live siblings kept.
+
+### Test Results
+- `next build` clean (cp 0.4.49.2). Deployed to bykapc via `spine update control` (0.4.49.1 → 0.4.49.2, healthy).
+- Post-deploy boot version-check refreshed the store correctly (memos `catalogVersion` 0.29.1). Compute-on-read shows `updateAvailable=false` now that memos `installedVersion`=0.29.1 (no false positive). Button endpoint `/api/market/updates` present + auth-gated (401 cookieless). memos had since been updated to 0.29.1, so no installed app is currently behind to show a live positive badge.
+
+### Notes for Iris
+- Root cause: the native button hit OCI-only `/api/apps/check-updates`; the market-capable `/api/market/updates` was orphaned (zero callers).
+- Additional dead exports left in place (zero external refs): `update-cache` getCachedUpdate/hasAnyUpdate/getAppsWithUpdates; `registry` getBaselineDigest/setBaselineDigest/getLastBulkCheckTime/fetchRemoteDigest.
+- Wiki: `app-market/update-check-pipeline.md`.
+
 ## cp-mythos-v0.4.49.1 + ui-mythos-v0.4.28.2 — mythos — 2026-06-16
 **Branch:** mythos · **Agent:** Mythos
 **Task:** Fix Market external-app favicons (image-proxy domain whitelist)
