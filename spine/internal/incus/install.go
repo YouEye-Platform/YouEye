@@ -649,8 +649,21 @@ func ConfigureSubuidSubgid() {
 	}
 }
 
+// capZFSARC bounds the ZFS ARC to 2 GiB, persistently (modprobe.d) and live.
+// Uncapped, the ARC grows toward all RAM and counts against MemAvailable,
+// starving containers (observed on bykapc). Safe to re-run.
+func capZFSARC() {
+	const max = "2147483648" // 2 GiB
+	util.RunCmdQuiet("bash", "-c", "printf 'options zfs zfs_arc_max="+max+"\\n' > /etc/modprobe.d/zfs.conf")
+	util.RunCmdQuiet("bash", "-c", "echo "+max+" > /sys/module/zfs/parameters/zfs_arc_max 2>/dev/null || true")
+	util.RunCmdQuiet("update-initramfs", "-u")
+}
+
 // installZFS installs ZFS utilities required for ZFS storage driver.
 func installZFS() error {
+	// Always (re)assert the ARC cap, even if ZFS is already installed.
+	capZFSARC()
+
 	// Check if zfs command is already available
 	if _, err := exec.LookPath("zfs"); err == nil {
 		fmt.Println("✓ ZFS is already installed")

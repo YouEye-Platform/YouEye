@@ -200,22 +200,70 @@ func waitForContainer(containerName string) error {
 	return nil
 }
 
+// incusGatewayIP returns the incusbr0 gateway address the Control Panel uses to
+// reach the Incus HTTPS API.
+func incusGatewayIP() string {
+	out, err := util.RunCmdCapture("incus", "network", "get", "incusbr0", "ipv4.address")
+	addr := strings.TrimSpace(out)
+	if err != nil || addr == "" {
+		return "10.87.209.1"
+	}
+	if i := strings.Index(addr, "/"); i > 0 {
+		addr = addr[:i]
+	}
+	return addr
+}
+
+// setupIncusHTTPS enables the Incus HTTPS API and provisions a trusted client
+// certificate for the Control Panel container, replacing the userspace
+// incus-socket forkproxy.
+func setupIncusHTTPS(containerName string) error {
+	util.LogSubStep("Configuring Incus HTTPS API access for Control Panel...")
+	gw := incusGatewayIP()
+
+	if cmdOut, err := util.RunCmdCapture("incus", "config", "set", "core.https_address", gw+":8443"); err != nil {
+		return fmt.Errorf("enable https listener: %w: %s", err, strings.TrimSpace(cmdOut))
+	}
+
+	certDir := "/var/lib/youeye/incus-client"
+	os.MkdirAll(certDir, 0700)
+	crt := certDir + "/cp.crt"
+	key := certDir + "/cp.key"
+	if _, err := os.Stat(crt); err != nil {
+		if cmdOut, err := util.RunCmdCapture("openssl", "req", "-x509", "-newkey", "rsa:2048",
+			"-keyout", key, "-out", crt, "-days", "3650", "-nodes",
+			"-subj", "/CN=youeye-control-cp"); err != nil {
+			return fmt.Errorf("generate client cert: %w: %s", err, strings.TrimSpace(cmdOut))
+		}
+	}
+
+	// Trust the client cert (idempotent — a duplicate add is harmless).
+	util.RunCmdCapture("incus", "config", "trust", "add-certificate", crt)
+
+	// Push cert + key into the container for the CP service to use.
+	util.RunIncusExec(containerName, "mkdir", "-p", "/etc/youeye")
+	if cmdOut, err := util.RunCmdCapture("incus", "file", "push", crt, containerName+"/etc/youeye/incus-client.crt"); err != nil {
+		return fmt.Errorf("push client cert: %w: %s", err, strings.TrimSpace(cmdOut))
+	}
+	if cmdOut, err := util.RunCmdCapture("incus", "file", "push", key, containerName+"/etc/youeye/incus-client.key"); err != nil {
+		return fmt.Errorf("push client key: %w: %s", err, strings.TrimSpace(cmdOut))
+	}
+	util.RunIncusExec(containerName, "chmod", "600", "/etc/youeye/incus-client.key")
+
+	util.LogSuccess("Incus HTTPS API access configured")
+	return nil
+}
+
 // addSocketProxies adds Incus and Spine socket proxies to the container.
 func addSocketProxies(containerName, spineSocketPath string) error {
 	util.LogStep(3, 7, "Adding socket proxies...")
 
-	// Incus socket proxy
-	util.LogSubStep("Adding Incus socket proxy...")
-	util.LogDebug("This allows the Control Panel to communicate with Incus")
-	util.RunIncusExec(containerName, "mkdir", "-p", "/var/lib/incus")
-	if cmdOut, err := util.RunCmdCapture("incus", "config", "device", "add", containerName, "incus-socket", "proxy",
-		"bind=container",
-		"connect=unix:/var/lib/incus/unix.socket",
-		"listen=unix:/var/lib/incus/unix.socket",
-		"uid=0", "gid=0", "mode=0666"); err != nil {
-		util.LogDebug(fmt.Sprintf("Incus socket proxy warning: %s", strings.TrimSpace(cmdOut)))
-	} else {
-		util.LogSuccess("Incus socket proxy added")
+	// Incus API access over HTTPS (replaces the legacy incus-socket forkproxy,
+	// which copied every API byte in userspace and grew unboundedly — 1.3 GiB
+	// observed on bykapc). The CP connects to the Incus HTTPS API with a trusted
+	// client certificate instead. See plans/platform-ram-and-isolation-master-plan WS3.
+	if err := setupIncusHTTPS(containerName); err != nil {
+		util.LogDebug(fmt.Sprintf("Incus HTTPS setup warning: %v", err))
 	}
 
 	// Spine socket proxy
@@ -426,6 +474,7 @@ func DeployControlPanelApp(cfg *config.Config) error {
 	hostIP := util.GetPrimaryIP()
 	util.LogDebug(fmt.Sprintf("Host IP for Control Panel: %s", hostIP))
 
+	incusGW := incusGatewayIP()
 	serviceContent := fmt.Sprintf(`[Unit]
 Description=YouEye Control Panel
 After=network.target
@@ -440,13 +489,16 @@ Environment=JWT_SECRET=%s
 Environment=HOST_IP=%s
 Environment=TEST_ADMIN_SECRET=%s
 Environment=SECURE_COOKIES=true
+Environment=INCUS_HTTPS_URL=%s:8443
+Environment=INCUS_CLIENT_CERT=/etc/youeye/incus-client.crt
+Environment=INCUS_CLIENT_KEY=/etc/youeye/incus-client.key
 ExecStart=/usr/bin/node %s/server.js
 Restart=always
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
-`, appDir, port, jwtSecret, hostIP, deploySecret, appDir)
+`, appDir, port, jwtSecret, hostIP, deploySecret, incusGW, appDir)
 
 	util.RunIncusExec(containerName, "bash", "-c",
 		fmt.Sprintf("cat > /etc/systemd/system/youeye-control.service << 'EOF'\n%sEOF", serviceContent))
