@@ -1,3 +1,19 @@
+## cp-mythos-v0.4.49.4 — mythos — 2026-06-17
+**Branch:** mythos · **Agent:** Mythos
+**Task:** Fix env-OIDC apps failing OIDC discovery with `CERTIFICATE_VERIFY_FAILED` (systemic) — trust the YouEye root CA in non-systemd OCI containers
+
+### Changes
+- `control-panel/src/lib/market/engine.ts` — OCI deploy path: for SSO apps (`ssoEnabled || nativeIdentityIntegrationPlanned`), set `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `NODE_EXTRA_CA_CERTS` → `/usr/local/share/ca-certificates/caddy-root.crt` in the container env (from boot), never overriding manifest values. Root cause: `injectCaddyRootCA` only adds the cert to the system store + a **systemd drop-in**; non-systemd OCI runtimes that ship their own CA bundle (Python `httpx`/`certifi`, Node) ignore the system store, so server-side OIDC discovery to `https://id.<domain>` fails TLS verify (confirmed on Mealie: `httpx.ConnectError: CERTIFICATE_VERIFY_FAILED`). Integration apps (.NET/PHP) read the system store, so were unaffected — which is why Jellyfin/Nextcloud worked but env-OIDC apps didn't.
+- `control-panel/package.json` 0.4.49.3 → 0.4.49.4.
+
+### Test Results
+- `tsc --noEmit`: no errors in the changed file. Live deploy + re-test left to the owner (per request).
+
+### Notes for Iris
+- CP-only release `cp-mythos-v0.4.49.4`. No UI/Spine change.
+- Companion Market release `mythos-v0.4.0.9` adds SSO `entry_url` to the nextcloud (`/apps/user_oidc/login/1`) + immich (`/auth/login?autoLaunch=1`) integration manifests.
+- Verified PASS (dual-account) before this fix: Jellyfin 10.11.11, Nextcloud 34.0.0, Immich 2.7.5, Memos 0.29.1. Follow-ups: Audiobookshelf OIDC redirect_uri `/undefined/` bug; re-test remaining env-OIDC apps after deploy; CLI `app install`/`app stop` bugs.
+
 ## cp-mythos-v0.4.49.3 + ui-mythos-v0.4.28.3 — mythos — 2026-06-17
 **Branch:** mythos · **Agent:** Mythos
 **Task:** Propagate integration-provided SSO `entry_url` to the UI so the app drawer/header launch the SSO login path (not the app's local login form) for integration-wired apps (Jellyfin, Nextcloud, Immich, Memos, Audiobookshelf)

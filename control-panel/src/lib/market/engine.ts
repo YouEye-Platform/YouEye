@@ -895,6 +895,20 @@ export async function installApp(
           // ── OCI container deployment ─────────────────
           const staticEnv = resolveEnvironment(containerSpec.environment || {}, ctx);
           const fullEnv = { ...envFromMapping, ...staticEnv };
+          // Trust the YouEye root CA for SERVER-SIDE HTTPS to YouEye-managed services — chiefly the
+          // identity provider's OIDC discovery (https://id.<domain>/.../.well-known/openid-configuration),
+          // which env-OIDC apps fetch from inside the container. injectCaddyRootCA() (step 7) adds the cert
+          // to the system trust store + a systemd drop-in, but non-systemd OCI runtimes that ship their own
+          // CA bundle (Python httpx/certifi, Node) ignore the system store and never see the drop-in — so
+          // they fail with CERTIFICATE_VERIFY_FAILED. Set the standard CA-bundle env vars here so they are
+          // in the process environment from boot. The cert file is written during install (step 7), well
+          // before any user login / OIDC discovery. Never override a value the manifest set explicitly.
+          if (ssoEnabled || nativeIdentityIntegrationPlanned) {
+            const caPath = '/usr/local/share/ca-certificates/caddy-root.crt';
+            if (!fullEnv.SSL_CERT_FILE) fullEnv.SSL_CERT_FILE = caPath;
+            if (!fullEnv.REQUESTS_CA_BUNDLE) fullEnv.REQUESTS_CA_BUNDLE = caPath;
+            if (!fullEnv.NODE_EXTRA_CA_CERTS) fullEnv.NODE_EXTRA_CA_CERTS = caPath;
+          }
           const ociManifest = buildOCIManifest(containerSpec, containerName, appId, fullEnv);
           await deployOCIContainer(ociManifest, '', appNIC, { start: !appBridgeName });
         }
