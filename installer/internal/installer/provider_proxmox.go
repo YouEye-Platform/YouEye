@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -319,6 +320,27 @@ func installVM(config installConfig, ch chan<- engineMsg) {
 		time.Sleep(4 * time.Second)
 	}
 	send(ch, "Deploying YouEye", "Deployment complete", 0.96)
+
+	// -- Optional: stage a YouEye Names reuse bundle (--names-bundle) --
+	// If YOUEYE_NAMES_BUNDLE points at a bundle file, drop it into the Control
+	// Panel container so the setup wizard reuses that name + certificate
+	// instead of claiming a new one (no Let's Encrypt round-trip).
+	if bundlePath := os.Getenv("YOUEYE_NAMES_BUNDLE"); bundlePath != "" {
+		send(ch, "Deploying YouEye", "Staging YouEye Names reuse bundle...", 0.97)
+		if data, err := os.ReadFile(bundlePath); err != nil || len(data) == 0 {
+			send(ch, "Deploying YouEye", "Warning: could not read names bundle "+clip(bundlePath, 80), 0.97)
+		} else {
+			b64 := base64.StdEncoding.EncodeToString(data)
+			stage := "incus exec youeye-control -- mkdir -p /opt/youeye-control-data/youeye-names && " +
+				"echo '" + b64 + "' | base64 -d | incus exec youeye-control -- tee /opt/youeye-control-data/youeye-names/import-bundle.json >/dev/null && " +
+				"incus exec youeye-control -- chmod 600 /opt/youeye-control-data/youeye-names/import-bundle.json"
+			if res, err := qmGuestExec(vmid, 60, "bash", "-lc", stage); err != nil || res.ExitCode != 0 {
+				send(ch, "Deploying YouEye", "Warning: staging names bundle failed: "+clip(res.ErrData, 120), 0.97)
+			} else {
+				send(ch, "Deploying YouEye", "Names bundle staged — setup will reuse the existing address", 0.98)
+			}
+		}
+	}
 
 	sendDone(ch, vmIP)
 }

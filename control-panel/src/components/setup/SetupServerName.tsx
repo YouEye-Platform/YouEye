@@ -84,6 +84,9 @@ export default function SetupServerName({
   const [yenLoading, setYenLoading] = useState(false);
   const [yenError, setYenError] = useState('');
   const currentYen = yenOptions[yenIndex];
+  // Reuse: a bundle staged by the installer (--names-bundle) locks the address.
+  const [reusing, setReusing] = useState(false);
+  const [reuseChecked, setReuseChecked] = useState(false);
 
   // ACME inline flow state (the "connect your own domain" path)
   const [acmePhase, setAcmePhase] = useState<AcmePhase>('choice');
@@ -135,12 +138,28 @@ export default function SetupServerName({
     }
   }, [t]);
 
-  // Fetch a first address when YouEye Names is the active choice.
+  // Check once for a staged reuse bundle (installer --names-bundle).
   useEffect(() => {
-    if (tlsChoice === 'youeye-names' && yenOptions.length === 0 && !yenLoading && !yenError) {
+    let active = true;
+    fetch('/api/tls/youeye-names/reuse')
+      .then((r) => r.json())
+      .then((d) => {
+        if (active && d?.reuse && d.name) {
+          setReusing(true);
+          setYenName(d.name);
+        }
+      })
+      .catch(() => {})
+      .finally(() => { if (active) setReuseChecked(true); });
+    return () => { active = false; };
+  }, [setYenName]);
+
+  // Fetch a first address when YouEye Names is active (and not reusing).
+  useEffect(() => {
+    if (tlsChoice === 'youeye-names' && reuseChecked && !reusing && yenOptions.length === 0 && !yenLoading && !yenError) {
       fetchPreviews();
     }
-  }, [tlsChoice, yenOptions.length, yenLoading, yenError, fetchPreviews]);
+  }, [tlsChoice, reuseChecked, reusing, yenOptions.length, yenLoading, yenError, fetchPreviews]);
 
   // Keep the lifted name in sync with the shown address.
   useEffect(() => {
@@ -163,7 +182,7 @@ export default function SetupServerName({
 
   const canProceed = siteName.trim().length > 0 && (
     tlsChoice === 'youeye-names'
-      ? !!currentYen
+      ? (reusing ? !!yenName : !!currentYen)
       : domainSlug.length > 0 && (!isCustomTld || customTld.length > 0)
   );
 
@@ -295,9 +314,9 @@ export default function SetupServerName({
       {onYouEyeNames && (
         <div className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150">
           <div className="flex items-center justify-between">
-            <Label>{t('yenLabel')}</Label>
+            <Label>{reusing ? t('yenReuseLabel') : t('yenLabel')}</Label>
             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">
-              {t('recommended')}
+              {reusing ? t('yenReuseBadge') : t('recommended')}
             </span>
           </div>
 
@@ -307,7 +326,11 @@ export default function SetupServerName({
                 <ShieldCheck className="h-4 w-4 text-primary" />
               </div>
               <div className="flex-1 min-w-0">
-                {yenError ? (
+                {reusing ? (
+                  <p className="font-mono text-base font-medium truncate" title={`${yenName}.youeye.me`}>
+                    {yenName}.youeye.me
+                  </p>
+                ) : yenError ? (
                   <p className="text-sm text-amber-700 dark:text-amber-300">{yenError}</p>
                 ) : currentYen ? (
                   <p className="font-mono text-base font-medium truncate" title={currentYen.fqdn}>
@@ -319,32 +342,36 @@ export default function SetupServerName({
                   </p>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={refreshYen}
-                disabled={yenLoading}
-                title={t('yenRefresh')}
-                aria-label={t('yenRefresh')}
-                className="p-2 rounded-lg border hover:bg-muted transition-colors disabled:opacity-50 shrink-0"
-              >
-                <RefreshCw className={`h-4 w-4 text-muted-foreground ${yenLoading ? 'animate-spin' : ''}`} />
-              </button>
+              {!reusing && (
+                <button
+                  type="button"
+                  onClick={refreshYen}
+                  disabled={yenLoading}
+                  title={t('yenRefresh')}
+                  aria-label={t('yenRefresh')}
+                  className="p-2 rounded-lg border hover:bg-muted transition-colors disabled:opacity-50 shrink-0"
+                >
+                  <RefreshCw className={`h-4 w-4 text-muted-foreground ${yenLoading ? 'animate-spin' : ''}`} />
+                </button>
+              )}
             </div>
             <p className="text-xs text-muted-foreground mt-3 flex items-start gap-1.5">
               <Sparkles className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary/70" />
-              <span>{t('yenDesc')}</span>
+              <span>{reusing ? t('yenReuseNote') : t('yenDesc')}</span>
             </p>
           </div>
 
-          {/* Secondary options — buttons underneath */}
-          <div className="pt-1">
-            <p className="text-xs text-muted-foreground mb-2">{t('yenOtherOptions')}</p>
-            <div className="grid gap-2">
-              <SecondaryOption icon={Lock} label={t('tlsOwnDomain')} onClick={() => selectOwn('letsencrypt')} />
-              <SecondaryOption icon={ShieldAlert} label={t('tlsSelfSigned')} onClick={() => selectOwn('selfsigned')} />
-              <SecondaryOption icon={Upload} label={t('tlsUploadOwn')} onClick={() => selectOwn('upload')} />
+          {/* Secondary options — buttons underneath (hidden when reusing) */}
+          {!reusing && (
+            <div className="pt-1">
+              <p className="text-xs text-muted-foreground mb-2">{t('yenOtherOptions')}</p>
+              <div className="grid gap-2">
+                <SecondaryOption icon={Lock} label={t('tlsOwnDomain')} onClick={() => selectOwn('letsencrypt')} />
+                <SecondaryOption icon={ShieldAlert} label={t('tlsSelfSigned')} onClick={() => selectOwn('selfsigned')} />
+                <SecondaryOption icon={Upload} label={t('tlsUploadOwn')} onClick={() => selectOwn('upload')} />
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 

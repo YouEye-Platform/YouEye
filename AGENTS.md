@@ -1,3 +1,21 @@
+## cp-v0.4.49.2 + installer — artem — 2026-06-17
+**Branch:** artem · **VM:** potempc · **Agent:** Artem
+**Task:** Fast cert (no self-signed temp) + reuse a YouEye Names address/cert across (re)installs via an installer flag. Follows the first live test (cert installed too slowly because the broker's blind 120s sleep beat CP's 120s poll).
+
+### Changes
+- **Broker** (`YouEye-Names` v0.3.0, deployed to LXC 623): DNS-propagation poll instead of the blind 120s sleep → issuance ~131s → **~22s verified**; generated names now bare `adjective-noun` (suffix only on collision). Separate repo/AGENTS.
+- `control-panel/src/lib/youeye-names/bundle.ts` — **new** reuse bundle: `exportBundle` (identity + TLS key + cert + name), `getStagedBundle`/`consumeStagedBundle`/`applyBundleIdentity`/`bundleCertStillValid`. `identity.ts` — `resetIdentityCache` + path exports.
+- `control-panel/src/app/api/tls/youeye-names/{export,reuse}/route.ts` — **new** admin routes: download the bundle (a credential), and report whether a staged bundle awaits import.
+- `control-panel/src/app/api/setup/run/route.ts` — reuse path: if a bundle is staged + its cert is valid, install it + signed IP-update (DNS-only) — **no Let's Encrypt**; else fresh issue (expired bundle re-issues under the same identity/name). Cert poll ceiling 120s → 150s.
+- `control-panel/src/components/setup/SetupServerName.tsx` — detects a staged bundle (`/reuse`) and locks the address to the existing name ("Reusing your existing address"). `messages/*.json` — 3 keys.
+- `installer/internal/installer/provider_proxmox.go` — `YOUEYE_NAMES_BUNDLE` env: after deploy, stages the bundle into `youeye-control:/opt/youeye-control-data/youeye-names/import-bundle.json`. `scripts/install.sh` — documents the flag.
+
+### Test Results
+- Broker: `pnpm build`/test clean; deployed; **live e2e issuance 22s**; previews now `snowy-valley`, `ivory-glade`, … (clean 2-word). CP `tsc` clean for new files; `pnpm build` standalone OK (0.4.49.2). Installer `go build`/`vet` clean. Owner re-tests reinstall.
+
+### Notes for Iris
+- Bundle holds private keys → a credential (0600, never logged). Reuse = same logical server resuming; broker still enforces signed ownership. Avoids LE quota burn on frequent reinstalls.
+
 ## cp-v0.4.49.1 — artem — 2026-06-17
 **Branch:** artem · **VM:** potempc · **Agent:** Artem
 **Task:** Integrate YouEye Names into the setup "choose your server name" screen.

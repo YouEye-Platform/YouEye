@@ -26,8 +26,9 @@ import {
   ensureIdentityAdminUser,
 } from '@/lib/identity/core-clients';
 import { tlsStorage } from '@/lib/acme/storage';
-import { claimName, requestCertificate, getCurrentCertificate } from '@/lib/youeye-names/client';
+import { claimName, requestCertificate, getCurrentCertificate, updateIp } from '@/lib/youeye-names/client';
 import { generateCsr } from '@/lib/youeye-names/csr';
+import { getStagedBundle, consumeStagedBundle, applyBundleIdentity, bundleCertStillValid } from '@/lib/youeye-names/bundle';
 
 /** True for the private/VPN IPv4 ranges YouEye Names accepts. */
 function isPrivateIPv4(ip: string): boolean {
@@ -253,43 +254,66 @@ export async function POST(request: NextRequest) {
             const alreadyDone = (await tlsStorage.getCert())?.domains?.includes(domain);
             if (!alreadyDone) {
               try {
-                stepUpdate('caddy', 'running', 'Securing your YouEye Names address…');
                 const ip = (body.current_ip || '').trim();
                 if (!isPrivateIPv4(ip)) {
                   throw new Error(`Could not determine this server's local network IP${ip ? ` (got "${ip}")` : ''}. Open setup from the server's IP address and try again.`);
                 }
-                // Claim (tolerate a lease we already own from a prior attempt).
-                try {
-                  await claimName(body.yen_name, ip);
-                } catch (claimErr) {
-                  const m = claimErr instanceof Error ? claimErr.message : '';
-                  if (!/already|exists|own|leased/i.test(m)) throw claimErr;
-                }
-                const { keyPem, csrPem } = await generateCsr(domain);
-                await requestCertificate(body.yen_name, csrPem);
-                // Poll for issuance (DNS-01 needs propagation — up to ~2 min).
-                let cert: Awaited<ReturnType<typeof getCurrentCertificate>> = null;
-                const deadline = Date.now() + 120_000;
-                while (Date.now() < deadline) {
-                  cert = await getCurrentCertificate(body.yen_name);
-                  if (cert) break;
-                  await new Promise((r) => setTimeout(r, 4000));
-                }
-                if (!cert) {
-                  throw new Error('Your YouEye Names certificate is taking longer than usual to issue. It may still arrive shortly — you can retry this step.');
-                }
                 const domains = [domain, `*.${domain}`];
-                await caddy.loadExternalCert(cert.certificateChain, keyPem, domains);
-                await tlsStorage.storeCert({
-                  mode: 'manual',
-                  certPem: cert.certificateChain,
-                  keyPem,
-                  issuer: 'YouEye Names',
-                  domains,
-                  expiresAt: cert.expiresAt || '',
-                  issuedAt: new Date().toISOString(),
-                });
-                console.log('[setup] Installed YouEye Names certificate for', domain);
+                const staged = await getStagedBundle();
+
+                if (staged && bundleCertStillValid(staged)) {
+                  // ── Reuse: install the bundled cert, NO Let's Encrypt issuance ──
+                  stepUpdate('caddy', 'running', 'Reusing your YouEye Names certificate…');
+                  await applyBundleIdentity(staged);
+                  await caddy.loadExternalCert(staged.tls.certPem, staged.tls.keyPem, domains);
+                  await tlsStorage.storeCert({
+                    mode: 'manual', certPem: staged.tls.certPem, keyPem: staged.tls.keyPem,
+                    issuer: 'YouEye Names', domains, expiresAt: staged.expiresAt || '',
+                    issuedAt: new Date().toISOString(),
+                  });
+                  // Resume the lease + repoint DNS at this box's current IP (DNS-only).
+                  try {
+                    await claimName(staged.name, ip);
+                  } catch (claimErr) {
+                    const m = claimErr instanceof Error ? claimErr.message : '';
+                    if (!/already|exists|own|leased/i.test(m)) throw claimErr;
+                  }
+                  await updateIp(staged.name, ip).catch(() => {});
+                  await consumeStagedBundle();
+                  console.log('[setup] Reused YouEye Names certificate for', domain);
+                } else {
+                  // ── Fresh issuance (or expired bundle → re-issue under same name) ──
+                  if (staged) { await applyBundleIdentity(staged); await consumeStagedBundle(); }
+                  stepUpdate('caddy', 'running', 'Securing your YouEye Names address…');
+                  // Claim (tolerate a lease we already own from a prior attempt).
+                  try {
+                    await claimName(body.yen_name, ip);
+                  } catch (claimErr) {
+                    const m = claimErr instanceof Error ? claimErr.message : '';
+                    if (!/already|exists|own|leased/i.test(m)) throw claimErr;
+                  }
+                  const { keyPem, csrPem } = await generateCsr(domain);
+                  await requestCertificate(body.yen_name, csrPem);
+                  // Poll for issuance. The broker now issues in ~15–30s (it polls
+                  // DNS propagation instead of a fixed sleep); ceiling is generous.
+                  let cert: Awaited<ReturnType<typeof getCurrentCertificate>> = null;
+                  const deadline = Date.now() + 150_000;
+                  while (Date.now() < deadline) {
+                    cert = await getCurrentCertificate(body.yen_name);
+                    if (cert) break;
+                    await new Promise((r) => setTimeout(r, 4000));
+                  }
+                  if (!cert) {
+                    throw new Error('Your YouEye Names certificate is taking longer than usual to issue. It may still arrive shortly — you can retry this step.');
+                  }
+                  await caddy.loadExternalCert(cert.certificateChain, keyPem, domains);
+                  await tlsStorage.storeCert({
+                    mode: 'manual', certPem: cert.certificateChain, keyPem,
+                    issuer: 'YouEye Names', domains, expiresAt: cert.expiresAt || '',
+                    issuedAt: new Date().toISOString(),
+                  });
+                  console.log('[setup] Installed YouEye Names certificate for', domain);
+                }
               } catch (yenErr) {
                 stepUpdate('caddy', 'error', yenErr instanceof Error ? yenErr.message : 'YouEye Names certificate failed');
                 await saveStepState('caddy', 'error');

@@ -93,3 +93,11 @@ export function signPayload(identity: InstallIdentity, payload: string): string 
     .sign(null, Buffer.from(payload), identity.privateKey)
     .toString('base64url');
 }
+
+export const IDENTITY_DATA_DIR = DATA_DIR;
+export const IDENTITY_FILE_PATH = IDENTITY_FILE;
+
+/** Drop the cached identity (after importing a different one from a bundle). */
+export function resetIdentityCache(): void {
+  cached = null;
+}

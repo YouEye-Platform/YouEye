@@ -11,6 +11,11 @@
 # Overridable:
 #   INSTALLER_TAG   release tag to pull the binary from (default: installer-artem-v0.1.0)
 #   INSTALLER_URL   direct binary URL (overrides REPO_BASE/INSTALLER_TAG)
+#   YOUEYE_NAMES_BUNDLE  path (on this Proxmox host) to a YouEye Names reuse
+#                        bundle exported from a prior install. When set, the new
+#                        VM reuses that address + certificate instead of
+#                        provisioning a fresh one through Let's Encrypt. Run as:
+#                        sudo YOUEYE_NAMES_BUNDLE=/root/test.bundle.json bash -c "$(curl -fsSL <this-url>)"
 set -e
 
 REPO_BASE="${REPO_BASE:-https://git.potemk.in/potemsla/YouEye}"
