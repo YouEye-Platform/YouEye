@@ -1,3 +1,17 @@
+## cp-v0.4.49.3 — artem — 2026-06-17
+**Branch:** artem · **VM:** potempc · **Agent:** Artem
+**Task:** Fix the YouEye Names apex serving Caddy's internal cert instead of the loaded Let's Encrypt cert. Latent today (staging LE is untrusted everywhere) but under production LE the main dashboard at the bare apex would warn while subdomains stayed trusted.
+
+### Changes
+- `control-panel/src/lib/caddy/client.ts` — `loadExternalCert()` now also sets a TLS **connection policy** pinning `certificate_selection.any_tag:['external']` for the loaded subjects (apex + wildcard), with a catch-all `{}` last so IP / uncovered hosts keep on_demand internal. This makes Caddy deterministically serve the loaded cert at the handshake, beating any on-demand internal cert it cached for the bare apex during the deploy window. `removeExternalCert()` strips that policy on revert (else it force-selects a now-missing cert and breaks the handshake). Lives inside `loadExternalCert` → covers all 5 cert-load paths (YouEye Names reuse + fresh, ACME, manual upload, post-`setDomain` restore). Types already supported it — no type change.
+- `control-panel/package.json` — 0.4.49.2 → **0.4.49.3**.
+
+### Test Results
+- Verified live on VM 192.168.31.63 (lease `sage-dell`): applying the exact connection policy via Caddy's admin API flipped the apex `sage-dell.youeye.me` from `Caddy Local Authority` → `(STAGING) Let's Encrypt` instantly — zero downtime, no LE re-issue. `control.`/`id.`/`dns.` stayed LE; IP `192.168.31.63` correctly stayed internal. Built via `yebuild cp` (pnpm build clean, artifact reports 0.4.49.3).
+
+### Notes for Iris
+- CP-only — no Spine/UI/broker/installer change. The bug is **not** reuse-specific: any external cert load (including fresh installs) hits it whenever the apex is touched on-demand before the cert loads. Still LE **staging** until `youeye.me` is on the Public Suffix List.
+
 ## spine-v0.4.10.1 — artem — 2026-06-17
 **Branch:** artem · **VM:** potempc · **Agent:** Artem
 **Task:** `youeye names export` / `youeye names import` — reuse a YouEye Names address+cert across (re)installs, esp. same-VM `youeye deploy` (where the installer `--names-bundle` flag doesn't apply).
