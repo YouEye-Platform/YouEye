@@ -30,20 +30,19 @@ type engineMsg struct {
 // Engine entry point
 // ---------------------------------------------------------------------------
 
-// startEngine launches the real installation in a background goroutine.
-// The returned channel streams engineMsg updates until closed.
+// startEngine launches the provider for the configured mode in a background
+// goroutine. The returned channel streams engineMsg updates until closed.
+// Providers are registered in provider.go — add an installer by implementing
+// Provider and registering it there.
 func startEngine(config installConfig) <-chan engineMsg {
 	ch := make(chan engineMsg, 200)
 	go func() {
 		defer close(ch)
-		switch config.Mode {
-		case modeLXC:
-			installLXC(config, ch)
-		case modeVM:
-			installVM(config, ch)
-		case modeHost:
-			installHost(config, ch)
+		if p, ok := providerForMode(config.Mode); ok {
+			p.Provision(config, ch)
+			return
 		}
+		sendErr(ch, fmt.Errorf("no installer available for mode %q", config.Mode))
 	}()
 	return ch
 }
@@ -547,234 +546,6 @@ func installLXC(config installConfig, ch chan<- engineMsg) {
 	sendDone(ch, containerIP)
 }
 
-// ---------------------------------------------------------------------------
-// VM Installation
-// ---------------------------------------------------------------------------
-
-func installVM(config installConfig, ch chan<- engineMsg) {
-	vmid := config.ContainerID
-
-	// -- Find or generate host SSH key for VM access --
-	sshPrivKey, sshPubKeyContent := findHostSSHKey()
-	if sshPrivKey == "" {
-		send(ch, "Preparing SSH access", "Generating SSH key pair...", 0.01)
-		run("ssh-keygen", "-t", "ed25519", "-f", "/root/.ssh/id_ed25519", "-N", "", "-q")
-		sshPrivKey, sshPubKeyContent = findHostSSHKey()
-	}
-	if sshPrivKey == "" {
-		sendErr(ch, fmt.Errorf("could not find or generate SSH key pair in /root/.ssh/"))
-		return
-	}
-
-	// -- Download cloud image --
-	send(ch, "Downloading cloud image", "Fetching Debian 13 cloud image...", 0.02)
-	imgPath := "/tmp/debian-13-cloud.qcow2"
-	if out, err := run("curl", "-fsSL", "-o", imgPath,
-		"https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"); err != nil {
-		sendErr(ch, fmt.Errorf("downloading cloud image: %s\n%s", err, out))
-		return
-	}
-	send(ch, "Downloading cloud image", "Done", 0.08)
-
-	// -- Create VM --
-	send(ch, "Creating VM", fmt.Sprintf("qm create %s", vmid), 0.10)
-	args := []string{
-		"create", vmid,
-		"-name", config.Hostname,
-		"-cores", strconv.Itoa(config.CPUCores),
-		"-memory", strconv.Itoa(config.RAMMB),
-		"-net0", fmt.Sprintf("virtio,bridge=%s", config.NetworkBridge),
-		"-bios", "ovmf",
-		"-ostype", "l26",
-		"-scsihw", "virtio-scsi-pci",
-		"-agent", "1",
-		"-tablet", "0",
-		"-onboot", "1",
-		"-tags", strings.ReplaceAll(config.Tags, " ", ""),
-	}
-	if out, err := run("qm", args...); err != nil {
-		sendErr(ch, fmt.Errorf("qm create failed: %s\n%s", err, out))
-		return
-	}
-
-	// -- EFI disk --
-	send(ch, "Configuring disks", "Allocating EFI disk...", 0.12)
-	efiVolID := fmt.Sprintf("vm-%s-efi", vmid)
-	if out, err := run("pvesm", "alloc", config.StoragePool, vmid, efiVolID, "4M"); err != nil {
-		sendErr(ch, fmt.Errorf("allocating EFI disk: %s\n%s", err, out))
-		return
-	}
-
-	// -- Import disk --
-	send(ch, "Configuring disks", "Importing cloud image as system disk...", 0.15)
-	if out, err := run("qm", "importdisk", vmid, imgPath, config.StoragePool); err != nil {
-		sendErr(ch, fmt.Errorf("importing disk: %s\n%s", err, out))
-		return
-	}
-
-	// -- Wire disks + boot --
-	send(ch, "Configuring disks", "Setting boot order...", 0.18)
-	diskRef := fmt.Sprintf("%s:vm-%s-disk-0,size=%dG", config.StoragePool, vmid, config.DiskGB)
-	efiRef := fmt.Sprintf("%s:%s", config.StoragePool, efiVolID)
-	ciRef := fmt.Sprintf("%s:cloudinit", config.StoragePool)
-	if out, err := run("qm", "set", vmid,
-		"-efidisk0", efiRef,
-		"-scsi0", diskRef,
-		"-ide2", ciRef,
-		"-boot", "order=scsi0",
-		"-serial0", "socket",
-	); err != nil {
-		sendErr(ch, fmt.Errorf("configuring VM: %s\n%s", err, out))
-		return
-	}
-
-	// -- Cloud-init vendor-data snippet (guest-agent + SSH access) --
-	send(ch, "Configuring cloud-init", "Creating cloud-init config...", 0.19)
-	snippetDir := "/var/lib/vz/snippets"
-	os.MkdirAll(snippetDir, 0755)
-
-	// Ensure 'snippets' content type is enabled on local storage
-	if out, _ := run("bash", "-c", "pvesm status --storage local 2>/dev/null | awk 'NR==2{print $4}'"); out != "" {
-		if !strings.Contains(out, "snippets") {
-			run("pvesm", "set", "local", "--content", strings.TrimSpace(out)+",snippets")
-		}
-	}
-
-	// Vendor-data is merged with PVE's auto-generated user-data,
-	// so -ciuser/-cipassword still work. We add guest-agent install,
-	// SSH key injection, and root SSH login enablement here.
-	vendorSnippet := fmt.Sprintf(`#cloud-config
-packages:
-  - qemu-guest-agent
-ssh_pwauth: true
-runcmd:
-  - systemctl enable --now qemu-guest-agent
-  - mkdir -p /root/.ssh
-  - echo '%s' >> /root/.ssh/authorized_keys
-  - chmod 700 /root/.ssh
-  - chmod 600 /root/.ssh/authorized_keys
-  - sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-  - sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-  - systemctl restart sshd || systemctl restart ssh
-`, sshPubKeyContent)
-
-	snippetPath := fmt.Sprintf("%s/youeye-%s-vendor.yml", snippetDir, vmid)
-	if err := os.WriteFile(snippetPath, []byte(vendorSnippet), 0644); err != nil {
-		send(ch, "Configuring cloud-init", fmt.Sprintf("Warning: cloud-init snippet write failed: %v", err), 0.19)
-	}
-
-	// -- Cloud-init settings --
-	// User-data is auto-generated by PVE from -ciuser/-cipassword.
-	// Vendor-data (our snippet) is merged on top for SSH + guest-agent.
-	send(ch, "Configuring cloud-init", "Setting user and network...", 0.20)
-	ciArgs := []string{"set", vmid, "-ciuser", "root"}
-	if config.RootPassword != "" {
-		ciArgs = append(ciArgs, "-cipassword", config.RootPassword)
-	}
-	if config.IPMode == "Static" && config.StaticIP != "" {
-		ipcfg := fmt.Sprintf("ip=%s", config.StaticIP)
-		if config.Gateway != "" {
-			ipcfg += fmt.Sprintf(",gw=%s", config.Gateway)
-		}
-		ciArgs = append(ciArgs, "-ipconfig0", ipcfg)
-	} else {
-		ciArgs = append(ciArgs, "-ipconfig0", "ip=dhcp")
-	}
-	ciArgs = append(ciArgs, "-cicustom", fmt.Sprintf("vendor=local:snippets/youeye-%s-vendor.yml", vmid))
-	if out, err := run("qm", ciArgs...); err != nil {
-		sendErr(ch, fmt.Errorf("cloud-init config: %s\n%s", err, out))
-		return
-	}
-
-	// -- Resize --
-	send(ch, "Configuring disks", "Resizing disk...", 0.22)
-	if out, err := run("qm", "resize", vmid, "scsi0", fmt.Sprintf("%dG", config.DiskGB)); err != nil {
-		sendErr(ch, fmt.Errorf("resizing disk: %s\n%s", err, out))
-		return
-	}
-
-	// -- Start --
-	send(ch, "Starting VM", "Booting...", 0.25)
-	if out, err := run("qm", "start", vmid); err != nil {
-		sendErr(ch, fmt.Errorf("qm start failed: %s\n%s", err, out))
-		return
-	}
-
-	// -- Wait for guest agent --
-	send(ch, "Starting VM", "Waiting for guest agent...", 0.27)
-	agentReady := false
-	for i := 0; i < 120; i++ {
-		if _, err := run("qm", "agent", vmid, "ping"); err == nil {
-			agentReady = true
-			break
-		}
-		time.Sleep(2 * time.Second)
-		if i%10 == 9 {
-			send(ch, "Starting VM", fmt.Sprintf("Still booting... (%ds)", (i+1)*2), 0.27)
-		}
-	}
-	// -- Get VM IP --
-	var vmIP string
-	if agentReady {
-		send(ch, "Starting VM", "Getting IP from guest agent...", 0.30)
-		if out, err := run("qm", "agent", vmid, "network-get-interfaces"); err == nil {
-			vmIP = parseVMIP(out)
-		}
-	}
-
-	// Fallback: if we have a static IP configured, use it directly
-	if vmIP == "" && config.IPMode == "Static" && config.StaticIP != "" {
-		vmIP = strings.Split(config.StaticIP, "/")[0] // strip CIDR
-		send(ch, "Starting VM", fmt.Sprintf("Using configured static IP: %s", vmIP), 0.30)
-	}
-
-	if vmIP == "" {
-		sendErr(ch, fmt.Errorf("could not determine VM IP — guest agent not responding and no static IP configured"))
-		return
-	}
-	send(ch, "Starting VM", fmt.Sprintf("VM IP: %s", vmIP), 0.32)
-
-	// -- Install Spine via SSH --
-	send(ch, "Downloading Spine", "Resolving latest release...", 0.34)
-	tag, err := findLatestSpineTag()
-	if err != nil {
-		sendErr(ch, fmt.Errorf("finding Spine release: %w", err))
-		return
-	}
-	dlURL := spineDownloadURL(tag)
-	send(ch, "Downloading Spine", "Installing via SSH...", 0.36)
-
-	sshOpts := []string{"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", "-i", sshPrivKey}
-	sshTarget := fmt.Sprintf("root@%s", vmIP)
-	installCmd := fmt.Sprintf("curl -fsSL '%s' -o /usr/bin/youeye && chmod +x /usr/bin/youeye && ln -sf /usr/bin/youeye /usr/bin/spine", dlURL)
-
-	// Retry SSH a few times (cloud-init may still be configuring SSH)
-	for attempt := 0; attempt < 10; attempt++ {
-		if out, err := run("ssh", append(sshOpts, sshTarget, installCmd)...); err == nil {
-			break
-		} else if attempt == 9 {
-			sendErr(ch, fmt.Errorf("SSH install failed after retries: %s\n%s", err, out))
-			return
-		}
-		time.Sleep(5 * time.Second)
-		send(ch, "Downloading Spine", fmt.Sprintf("SSH not ready, retrying (%d/10)...", attempt+2), 0.37)
-	}
-	send(ch, "Downloading Spine", "Spine installed", 0.40)
-
-	// -- Deploy via SSH --
-	send(ch, "Deploying YouEye", "Running youeye deploy...", 0.42)
-	if err := streamCmd(ch, "Deploying YouEye", "ssh", append(sshOpts, sshTarget, "youeye", "deploy")...); err != nil {
-		sendErr(ch, fmt.Errorf("youeye deploy failed: %w", err))
-		return
-	}
-	send(ch, "Deploying YouEye", "Deployment complete", 0.95)
-
-	// Cleanup temp files
-	os.Remove(imgPath)
-	os.Remove(snippetPath)
-
-	sendDone(ch, vmIP)
-}
 
 // ---------------------------------------------------------------------------
 // Bare Linux Installation

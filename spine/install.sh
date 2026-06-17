@@ -445,16 +445,11 @@ main() {
     echo "=================================="
     echo ""
 
-    # Launch TUI only if explicitly requested via --tui flag.
-    if [ "$LAUNCH_TUI" = "true" ] && [ -t 1 ] && [ -r /dev/tty ]; then
-        log_info "Launching interactive installer..."
-        exec "${INSTALL_DIR}/youeye" installer < /dev/tty
-    fi
-
     echo "Next steps:"
-    echo "  1. Run 'youeye deploy' to deploy the platform"
-    echo "  2. Run 'youeye installer' for interactive setup with TUI"
-    echo "     (or re-run this script with --tui)"
+    echo "  Run 'youeye deploy' to deploy the platform."
+    echo ""
+    echo "  The interactive installer (TUI) is now a standalone tool —"
+    echo "  see installer/ in the YouEye repo (youeye-installer binary)."
     echo ""
     echo "For help: youeye --help"
     echo "  (The 'spine' command also works as a backward-compatible alias)"

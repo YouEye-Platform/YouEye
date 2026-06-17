@@ -1,3 +1,20 @@
+## installer (youeye-installer TUI) — artem — 2026-06-17
+**Branch:** artem · **Agent:** Artem
+**Task:** Combine the existing Bubble Tea installer (design/steps/games) with the proven Proxmox VM logic — Go-native, provider architecture, VM-only.
+
+### Changes
+- `installer/` — **new Go module** (`git.potemk.in/potemsla/YouEye/installer`) building the `youeye-installer` binary. `main.go` launches the TUI.
+- `installer/internal/installer/` — TUI **moved** from `spine/internal/installer/`. Added `provider.go` (Provider interface + registry), `provider_proxmox.go` (the proven sequence in Go: pre-bake/SeaBIOS/import-from/virtio-scsi-single + in-VM Spine install & `youeye deploy` via `qm guest exec`, no SSH). `installer.go` re-enables the Proxmox→wizard path (removed the "not ready" stub routing); `wizard.go` forces `modeVM` (VM-only).
+- `installer/scripts/proxmox-vm.sh` — the standalone provisioner, kept as reference/escape-hatch. `installer/scripts/install.sh` — curl bootstrap.
+- `spine/internal/installer/` + `spine/internal/cmd/installer_cmd.go` — **removed** (TUI moved out). `spine/install.sh` — fixed stale `youeye installer` references. Spine still builds.
+
+### Test Results
+- `go build` + `go vet ./...` clean for the installer module (linux/amd64). `go build ./...` clean for spine. Binary smoke-tested. VM sequence previously verified end-to-end on Koshka (VM 9000) via proxmox-vm.sh; Go port + TUI await live owner test.
+
+### Notes for Iris
+- New module = a new release artifact (`youeye-installer` binary). Not a spine/cp/ui component bump.
+- LXC intentionally unsupported (Spine runs Incus; nested Incus-in-LXC is fragile). See `YE-Wiki/installer/youeye-installer.md`.
+
 ## installer/proxmox-vm.sh — artem — 2026-06-17
 **Branch:** artem · **Agent:** Artem
 **Task:** New Proxmox VM provisioner for the YouEye installer — creates a Debian VM with the QEMU guest agent pre-baked, so the host drives the in-VM install via `qm guest exec`. No component release (host-side script).

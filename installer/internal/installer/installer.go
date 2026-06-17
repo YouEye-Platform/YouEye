@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/installer/theme"
+	"git.potemk.in/potemsla/YouEye/installer/internal/installer/theme"
 )
 
 // QuitMsg is emitted to return to the main menu / exit.
@@ -121,10 +121,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, cmd
 			}
 
-			// Proxmox detected: show "not ready yet" message
+			// Proxmox detected: start the VM-install wizard.
 			if m.detect.env.IsProxmox {
-				m.phase = phaseProxmoxNotReady
-				return m, nil
+				m.wizard = newWizardModel(m.detect.env)
+				m.wizard.width, m.wizard.height = m.width, m.height
+				m.phase = phaseWizard
+				return m, m.wizard.Init()
 			}
 
 			// Bare OS (not Proxmox): skip wizard entirely, go straight to install.

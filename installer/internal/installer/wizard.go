@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/installer/theme"
+	"git.potemk.in/potemsla/YouEye/installer/internal/installer/theme"
 )
 
 // ---------------------------------------------------------------------------
@@ -227,10 +227,13 @@ func newWizardModel(env envInfo) wizardModel {
 		config: newConfigFromEnv(env),
 		env:    env,
 	}
-	// Proxmox: mode select → path select → steps.
+	// VM-only: YouEye must run in a full VM (LXC is not supported — Spine runs
+	// Incus, and nested Incus-in-LXC is fragile). So we skip the LXC/VM mode
+	// select and go straight to path select.
 	// No welcome screen — go straight to business.
 	if env.IsProxmox {
-		w.steps = []wizStep{modeSelectStep(), pathSelectStep()}
+		w.config.Mode = modeVM
+		w.steps = []wizStep{pathSelectStep()}
 	} else {
 		w.config.Mode = modeHost
 		w.steps = []wizStep{pathSelectStep()}
