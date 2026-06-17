@@ -339,6 +339,7 @@ export interface VariableContext {
     slug: string;
     issuer: string;
     discovery_url: string;
+    authorize_url: string;
     client_id: string;
     client_secret: string;
     callback_url: string;
