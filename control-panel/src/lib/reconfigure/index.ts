@@ -326,6 +326,15 @@ async function updateInstalledApp(
     }
   }
 
+  // Persist the new domain to install metadata BEFORE the SSO re-sync. applyIntegration
+  // reloads metadata from disk (readInstallMetadata) and computes redirect_uris/authorize
+  // URLs from targetMeta.domain — so it MUST see the new domain here. Previously this save
+  // happened at the very end, so integration apps (e.g. Audiobookshelf) re-applied against
+  // the STALE old domain and silently overwrote the correct resync (env-OIDC apps were
+  // unaffected because resyncClientRedirectUris domain-replaces the stored URIs directly).
+  meta.domain = newDomain;
+  await saveInstallMetadata(meta);
+
   // Re-sync the homegrown OIDC client(s) to the new domain (NOT Authentik — removed;
   // there is no youeye-authentik container).
   if (meta.enableSSO) {
@@ -345,9 +354,10 @@ async function updateInstalledApp(
     //     domain context. applyIntegration re-creates the OAuth client (redirect_uris
     //     recomputed from the new domain) and re-runs the app's SSO setup steps, which
     //     rewrite the app's stored EXTERNAL authorize URL to the new domain.
-    //     buildCanonicalContext reads the domain from settings — already set to newDomain
-    //     by reconfigure() before this point. The app is still running here (we restart
-    //     after), so its setup-step API calls succeed.
+    //     applyIntegration reloads install metadata from disk (readInstallMetadata) and
+    //     derives appUrl from targetMeta.domain — which we persisted to newDomain just
+    //     above, so the recomputed redirect_uris/authorize URL track the new domain. The
+    //     app is still running here (we restart after), so its setup-step API calls succeed.
     if (meta.installedIntegrations?.length) {
       const { applyIntegration } = await import('@/lib/market/integration-runner');
       for (const integ of meta.installedIntegrations) {
@@ -366,10 +376,6 @@ async function updateInstalledApp(
       }
     }
   }
-
-  // Update metadata
-  meta.domain = newDomain;
-  await saveInstallMetadata(meta);
 }
 
 // ─── Main Reconfigure Function ────────────────────────────
