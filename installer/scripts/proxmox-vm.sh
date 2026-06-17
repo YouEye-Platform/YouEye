@@ -204,7 +204,7 @@ qm create "$VMID" \
   --serial0 socket --vga serial0 \
   --agent enabled=1 \
   --onboot 1 \
-  --tags youeye,installer >/dev/null
+  --tags youeye >/dev/null
 
 # Import the OS disk (PVE 8/9 one-step; auto qcow2->raw on lvm-thin)
 log_info "importing OS disk into ${STORAGE}..."

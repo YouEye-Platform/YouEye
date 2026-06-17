@@ -20,7 +20,14 @@ import (
 
 const (
 	debian13ImageURL = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
-	spineInstallURL  = "https://git.potemk.in/potemsla/YouEye/raw/branch/main/spine/install.sh"
+	// install.sh comes from the canonical main branch (stable installer logic);
+	// the BRANCH + repo below tell it — and the subsequent `youeye deploy` —
+	// to use the artem releases from Forgejo instead of the GitHub stable
+	// default. install.sh persists both into Spine's config, so `youeye deploy`
+	// then pulls cp-artem-* / ui-artem-* from Forgejo automatically.
+	spineInstallURL = "https://git.potemk.in/potemsla/YouEye/raw/branch/main/spine/install.sh"
+	releaseRepo     = "https://git.potemk.in/potemsla/YouEye"
+	releaseBranch   = "artem"
 )
 
 // guestExecResult is the JSON `qm guest exec` returns. `qm guest exec` itself
@@ -144,7 +151,7 @@ func installVM(config installConfig, ch chan<- engineMsg) {
 		"--serial0", "socket", "--vga", "serial0",
 		"--agent", "enabled=1",
 		"--onboot", "1",
-		"--tags", "youeye,installer",
+		"--tags", "youeye",
 	}
 	if out, err := run("qm", createArgs...); err != nil {
 		sendErr(ch, fmt.Errorf("qm create: %s", clip(out, 300)))
@@ -202,8 +209,9 @@ func installVM(config installConfig, ch chan<- engineMsg) {
 	send(ch, "Starting VM", fmt.Sprintf("Guest agent up — VM IP: %s", vmIP), 0.38)
 
 	// -- Install Spine inside the VM (guest agent runs as root) --
-	send(ch, "Installing Spine", "Downloading Spine into the VM...", 0.42)
-	if res, err := qmGuestExec(vmid, 180, "bash", "-lc", "curl -fsSL "+spineInstallURL+" | sh"); err != nil || res.ExitCode != 0 {
+	send(ch, "Installing Spine", fmt.Sprintf("Installing Spine (%s branch, Forgejo)...", releaseBranch), 0.42)
+	installCmd := fmt.Sprintf("curl -fsSL %s | RELEASE_REPO_URL='%s' BRANCH='%s' sh", spineInstallURL, releaseRepo, releaseBranch)
+	if res, err := qmGuestExec(vmid, 180, "bash", "-lc", installCmd); err != nil || res.ExitCode != 0 {
 		sendErr(ch, fmt.Errorf("Spine install failed: %v %s", err, clip(res.OutData+res.ErrData, 400)))
 		return
 	}
