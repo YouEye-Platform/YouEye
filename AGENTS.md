@@ -1,3 +1,23 @@
+## cp-v0.4.49.1 — artem — 2026-06-17
+**Branch:** artem · **VM:** potempc · **Agent:** Artem
+**Task:** Integrate YouEye Names into the setup "choose your server name" screen.
+
+### Changes
+- `control-panel/src/lib/youeye-names/{identity,client,csr}.ts` — **new** broker client: Ed25519 install identity (persisted at `/opt/youeye-control-data/youeye-names`, survives redeploy), canonical signed requests, `preview/claim/requestCertificate/getCurrentCertificate/updateIp`, CSR via `acme-client`. Signing verified byte-for-byte against the live broker.
+- `control-panel/src/app/api/tls/youeye-names/preview/route.ts` — **new** non-committing name preview (admin + CSRF gate, same as `/api/tls/acme`).
+- `control-panel/src/components/setup/SetupServerName.tsx` — YouEye Names is the **default**: display name + auto-generated `*.youeye.me` address with a refresh button (cycles previews, **no certificate**). The three existing options (own domain / self-signed / upload) demoted to inline-expanding buttons.
+- `control-panel/src/app/setup/page.tsx` — default `tlsChoice='youeye-names'`; `domain=<name>.youeye.me`; passes `yen_name` + `current_ip` to provisioning.
+- `control-panel/src/app/api/setup/run/route.ts` — for youeye-names: claim(name, LAN IP) → gen key+CSR → request cert → poll (≤2 min) → `caddy.loadExternalCert` (wildcard covers control./id./dns.); idempotent; persists cert. Restore-after-setDomain now covers `manual` certs too.
+- `control-panel/src/components/setup/SetupDnsExplainer.tsx` — suppress manual-DNS steps for youeye-names (broker owns DNS); show rebinding caveat.
+- `messages/{en,de,fr,es,ru}.json` — 10 new `setup.*` keys.
+- `control-panel/package.json` — 0.4.49 → **0.4.49.1**.
+
+### Test Results
+- `pnpm build` clean (next build + postbuild, standalone OK, artifact version 0.4.49.1). `tsc` clean for new files. Live broker: register 201 (fingerprint matches local), signed preview 200 → 3 options. Owner installs + tests the full flow.
+
+### Notes for Iris
+- Monorepo CP release `cp-artem-v0.4.49.1`. Broker (`YouEye-Names`) committed+pushed to `main` (817fa70). Stays on **LE staging** until validated; production needs `youeye.me` on the Public Suffix List (rate-limit scaling).
+
 ## installer — IPv6 image-pull fix + deploy failure detection — artem — 2026-06-17
 **Branch:** artem · **Agent:** Artem
 **Task:** Operator's first full run reported success but the platform was half-deployed (Caddy + Pi-Hole missing).

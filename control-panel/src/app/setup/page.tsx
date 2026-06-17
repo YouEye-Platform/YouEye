@@ -65,8 +65,9 @@ export default function SetupPage() {
   });
   const [identityName, setIdentityName] = useState('');
   const [customTld, setCustomTld] = useState('');
-  const [tlsChoice, setTlsChoice] = useState<TlsChoice>('selfsigned');
+  const [tlsChoice, setTlsChoice] = useState<TlsChoice>('youeye-names');
   const [acmeCertIssued, setAcmeCertIssued] = useState(false);
+  const [yenName, setYenName] = useState('');
 
   // Step 1: WordArt
   const [nameStyle, setNameStyle] = useState<SiteNameStyle>(DEFAULT_STYLE);
@@ -171,7 +172,9 @@ export default function SetupPage() {
 
   // Full domain string — resolve custom TLD sentinel
   const effectiveTld = tld === '__custom__' ? (customTld.startsWith('.') ? customTld : `.${customTld}`) : tld;
-  const domain = `${domainSlug}${effectiveTld}`;
+  const domain = tlsChoice === 'youeye-names' && yenName
+    ? `${yenName}.youeye.me`
+    : `${domainSlug}${effectiveTld}`;
 
   // After provisioning completes:
   // - LE: cert already issued in step 0 → go to DNS explainer
@@ -223,6 +226,8 @@ export default function SetupPage() {
           identity_name: identityName || `${siteName} ID`,
           language: selectedLanguage || 'en',
           tls_choice: tlsChoice,
+          yen_name: tlsChoice === 'youeye-names' ? yenName : undefined,
+          current_ip: typeof window !== 'undefined' ? window.location.hostname : undefined,
         }),
       });
 
@@ -274,7 +279,7 @@ export default function SetupPage() {
     } catch (err) {
       setSetupError(err instanceof Error ? err.message : 'Setup failed');
     }
-  }, [siteName, domain, subdomains, nameStyle, iconConfig, adminUsername, adminEmail, adminPassword, identityName, adminFirstName, adminLastName, selectedLanguage, t]);
+  }, [siteName, domain, subdomains, nameStyle, iconConfig, adminUsername, adminEmail, adminPassword, identityName, adminFirstName, adminLastName, selectedLanguage, tlsChoice, yenName, t]);
 
   // Start provisioning when we enter step 4
   const provisioningStarted = useRef(false);
@@ -372,6 +377,8 @@ export default function SetupPage() {
             setTlsChoice={setTlsChoice}
             acmeCertIssued={acmeCertIssued}
             setAcmeCertIssued={setAcmeCertIssued}
+            yenName={yenName}
+            setYenName={setYenName}
             onNext={() => goToStep(1)}
           />
         )}

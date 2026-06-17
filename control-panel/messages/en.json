@@ -187,6 +187,16 @@
     }
   },
   "setup": {
+    "yenReadyDesc": "Your address {domain} works automatically — no DNS setup needed. Public DNS can take a minute to propagate, then open it below.",
+    "yenRebindNote": "If your network blocks names that point to private addresses (DNS rebinding protection), use the YouEye app or a custom domain instead.",
+    "yenLabel": "Your web address",
+    "yenDesc": "A ready-to-use secure address. It works in any browser on your network with a real certificate — nothing to configure.",
+    "yenRefresh": "Show another address",
+    "yenLoading": "Finding an address…",
+    "yenError": "Couldn't reach YouEye Names right now. Try again, or choose another option below.",
+    "yenOtherOptions": "Prefer to set it up yourself?",
+    "yenBack": "Use a YouEye Names address instead",
+    "tlsOwnDomain": "Connect your own domain",
     "title": "Setup Wizard",
     "welcome": "Welcome to {name}",
     "description": "Let's set up your self-hosted platform",
