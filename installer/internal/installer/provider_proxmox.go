@@ -239,6 +239,18 @@ func installVM(config installConfig, ch chan<- engineMsg) {
 		"systemctl enable --now getty@tty1.service serial-getty@ttyS0.service 2>/dev/null || true; "+
 			"{ [ -f /etc/securetty ] && ! grep -qx ttyS0 /etc/securetty && echo ttyS0 >> /etc/securetty; } || true")
 
+	// Prefer IPv4 for image pulls (CLAUDE.md pitfall #17). A fresh VM has no
+	// IPv6 route, but Docker Hub's DNS returns AAAA records — skopeo (used by
+	// incus to pull Caddy & Pi-Hole) then tries IPv6 first and dies with
+	// "network is unreachable", silently half-deploying the platform. Disable
+	// IPv6 (runtime + persisted) and prefer IPv4 in getaddrinfo.
+	send(ch, "Configuring VM", "Preferring IPv4 for image pulls...", 0.41)
+	qmGuestExec(vmid, 30, "bash", "-lc",
+		"sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null 2>&1 || true; "+
+			"sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true; "+
+			"printf 'net.ipv6.conf.all.disable_ipv6=1\\nnet.ipv6.conf.default.disable_ipv6=1\\n' > /etc/sysctl.d/99-youeye-ipv4.conf 2>/dev/null || true; "+
+			"grep -q '::ffff:0:0/96' /etc/gai.conf 2>/dev/null || echo 'precedence ::ffff:0:0/96  100' >> /etc/gai.conf 2>/dev/null || true")
+
 	// -- Install Spine inside the VM (guest agent runs as root) --
 	send(ch, "Installing Spine", fmt.Sprintf("Installing Spine (%s branch, Forgejo)...", releaseBranch), 0.42)
 	installCmd := fmt.Sprintf("curl -fsSL %s | RELEASE_REPO_URL='%s' BRANCH='%s' sh", spineInstallURL, releaseRepo, releaseBranch)
@@ -280,9 +292,25 @@ func installVM(config installConfig, ch chan<- engineMsg) {
 		// Completion? The rc file appears when deploy exits.
 		if rc, err := qmGuestExec(vmid, 15, "bash", "-lc", "cat /var/log/youeye-deploy.rc 2>/dev/null"); err == nil {
 			if code := strings.TrimSpace(rc.OutData); code != "" {
-				if code != "0" {
-					tail, _ := qmGuestExec(vmid, 20, "bash", "-lc", "tail -n 30 /var/log/youeye-deploy.log")
-					sendErr(ch, fmt.Errorf("youeye deploy failed (exit %s):\n%s", code, clip(tail.OutData, 600)))
+				// `youeye deploy` can exit 0 while individual stages (Caddy,
+				// Pi-Hole, ...) failed — it logs them but swallows the error
+				// and still prints "Deployment Complete!". So a 0 exit is NOT
+				// proof of success: scan the log for the failures it reports
+				// and treat them as a hard failure too.
+				fails, _ := qmGuestExec(vmid, 20, "bash", "-lc",
+					"grep -nE 'deployment failed|Operation failed|network is unreachable' /var/log/youeye-deploy.log | tail -n 12")
+				stageFailed := strings.TrimSpace(fails.OutData) != ""
+				if code != "0" || stageFailed {
+					detail := strings.TrimSpace(fails.OutData)
+					if detail == "" {
+						tail, _ := qmGuestExec(vmid, 20, "bash", "-lc", "tail -n 30 /var/log/youeye-deploy.log")
+						detail = tail.OutData
+					}
+					// NOTE: we don't suggest re-running `youeye deploy` — it is not
+				// idempotent (fails on "Instance already exists" and then skips
+				// the remaining stages). A clean reinstall on a fresh VM is the
+				// reliable recovery.
+				sendErr(ch, fmt.Errorf("youeye deploy did not fully complete (exit %s). The VM (%s) is up — log in as root and check /var/log/youeye-deploy.log; reinstall on a fresh VM to recover:\n%s", code, vmIP, clip(detail, 700)))
 					return
 				}
 				break
