@@ -20,12 +20,13 @@ import (
 
 const (
 	debian13ImageURL = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
-	// install.sh comes from the canonical main branch (stable installer logic);
-	// the BRANCH + repo below tell it — and the subsequent `youeye deploy` —
-	// to use the artem releases from Forgejo instead of the GitHub stable
-	// default. install.sh persists both into Spine's config, so `youeye deploy`
-	// then pulls cp-artem-* / ui-artem-* from Forgejo automatically.
-	spineInstallURL = "https://git.potemk.in/potemsla/YouEye/raw/branch/main/spine/install.sh"
+	// install.sh is pulled from the artem branch because it carries the
+	// main-release fallback fix: when a branch release isn't in the API's
+	// recent window, fall back to the main release TAG (not a non-existent
+	// branch tag). BRANCH + repo below tell it — and the subsequent
+	// `youeye deploy` — to use Forgejo (artem releases where available, else
+	// main). Point this back at main once the install.sh fix is promoted.
+	spineInstallURL = "https://git.potemk.in/potemsla/YouEye/raw/branch/artem/spine/install.sh"
 	releaseRepo     = "https://git.potemk.in/potemsla/YouEye"
 	releaseBranch   = "artem"
 )

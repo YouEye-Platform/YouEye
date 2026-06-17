@@ -255,13 +255,16 @@ download_spine() {
         log_success "Downloaded successfully"
     else
         rm -f "$TMP_FILE"
-        # Fallback to raw branch (for development)
-        log_warn "Release download failed, trying raw branch..." >&2
-        DOWNLOAD_URL="${RELEASE_BASE_URL}/${RELEASE_ORG}/${RELEASE_REPO}/raw/branch/main/spine/spine-linux-${ARCH}"
+        # The branch release for this version may not exist (e.g. the version
+        # came from get_latest_version's main-release fallback). Try the MAIN
+        # release tag for the same version on the SAME server before giving up.
+        MAIN_TAG="${TAG_PREFIX}-v${VERSION}"
+        log_warn "Release ${TAG} not found, trying main release ${MAIN_TAG}..." >&2
+        DOWNLOAD_URL="${RELEASE_BASE_URL}/${RELEASE_ORG}/${RELEASE_REPO}/releases/download/${MAIN_TAG}/${ASSET_NAME}"
 
         if curl -4 -sSL -f "$DOWNLOAD_URL" -o "$TMP_FILE" && [ -s "$TMP_FILE" ]; then
             mv "$TMP_FILE" "${INSTALL_DIR}/youeye"
-            log_success "Downloaded from main branch"
+            log_success "Downloaded main release ${MAIN_TAG}"
         else
             rm -f "$TMP_FILE"
             log_error "Failed to download YouEye binary"
