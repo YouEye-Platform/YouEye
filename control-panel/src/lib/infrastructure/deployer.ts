@@ -337,6 +337,8 @@ export async function reconcileInfrastructure(
         try { await setDefaultRoute('youeye-control', 3000); } catch { /* non-fatal */ }
         // BUG-022: Ensure /api/ping route
         try { await ensurePingRoute('youeye-control', 3000); } catch { /* non-fatal */ }
+        // Security: re-ensure the X-Youeye-* header-stripping route (anti-spoof) on reconcile
+        try { await ensureHeaderStrippingRoute(); } catch { /* non-fatal */ }
       }
       remit(2, healthy ? 'success' : 'error',
         healthy ? 'Caddy deployed and configured' : 'Caddy deployed but health check timed out');
@@ -348,6 +350,9 @@ export async function reconcileInfrastructure(
     // BUG-022: Ensure /api/ping route even when Caddy was already running.
     // This handles upgrades from versions that didn't have the ping route.
     try { await ensurePingRoute('youeye-control', 3000); } catch { /* non-fatal */ }
+    // Security: re-ensure the X-Youeye-* header-stripping route (anti-spoof) even when Caddy was
+    // already running. Self-heals boxes set up before this route existed, on every reconcile.
+    try { await ensureHeaderStrippingRoute(); } catch { /* non-fatal */ }
   }
 
   // ─── Step 3: Pi-Hole DNS ─────────────────────────────────
