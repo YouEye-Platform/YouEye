@@ -1,3 +1,17 @@
+## installer — root password + console fixes — artem — 2026-06-17
+**Branch:** artem · **Agent:** Artem
+**Task:** Fix three issues from the operator's live TUI test: password didn't log in, and the xterm.js console was flaky.
+
+### Changes
+- `installer/internal/installer/provider_proxmox.go` — the "Root Password" was set on the **youeye** cloud-init user (`--cipassword`), not root. Removed that; root's password is now set **inside the guest** via `qm guest exec` (`chpasswd -e` with the openssl `$6$` hash — no plaintext on a command line), after the agent is up. Failing to set it is fatal (loud, per pitfall #23). Switched the VM display from `--vga serial0` to `--vga std` so the Proxmox **Console** button is **noVNC** (reliable typing) instead of the xterm.js serial console (blank-until-Enter, flaky focus); serial socket kept for host-side `qm terminal`. Explicitly `systemctl enable --now getty@tty1 + serial-getty@ttyS0` and allow root on ttyS0 in `/etc/securetty` (if present) so both consoles always have a live login prompt.
+- `installer/internal/installer/complete.go` — completion screen hard-coded `Username: admin`, conflating the YouEye **web** login (a browser setup wizard, no preset password — see `spine/internal/cmd/setup.go`) with the **VM console** login. Now shows the setup-wizard note plus a separate `VM login: root — password: the one you set`.
+
+### Test Results
+- `go build ./...` + `go vet ./internal/installer/` clean (linux/amd64). Binary (7.4 MB, static ELF) re-uploaded to `installer-artem-v0.1.0` (curl URL unchanged). Awaiting live owner re-test.
+
+### Notes for Iris
+- "Just root" by design: no separate VM user password. youeye cloud-init user remains key-only (host SSH key).
+
 ## installer (youeye-installer TUI) — artem — 2026-06-17
 **Branch:** artem · **Agent:** Artem
 **Task:** Combine the existing Bubble Tea installer (design/steps/games) with the proven Proxmox VM logic — Go-native, provider architecture, VM-only.
