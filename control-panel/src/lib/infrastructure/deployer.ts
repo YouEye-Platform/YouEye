@@ -255,7 +255,13 @@ export async function reconcileInfrastructure(
   }
 
   if (missing.length === 0) {
-    remit(1, 'success', 'All infrastructure containers are present — nothing to reconcile');
+    // Even when no containers need (re)deploying, re-ensure the security-critical Caddy routes.
+    // These are idempotent and self-heal boxes that were set up before the routes existed —
+    // notably the X-Youeye-* anti-spoof header-strip, which is otherwise only added on full
+    // deploy/setup and was missing on already-provisioned boxes.
+    try { await ensurePingRoute('youeye-control', 3000); } catch { /* non-fatal */ }
+    try { await ensureHeaderStrippingRoute(); } catch { /* non-fatal */ }
+    remit(1, 'success', 'All infrastructure containers are present — security routes ensured');
     return;
   }
 
