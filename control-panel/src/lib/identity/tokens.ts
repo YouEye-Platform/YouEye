@@ -89,6 +89,10 @@ function oauthClaims(user: IdentityUser, scope = ''): Record<string, unknown> {
     preferred_username: user.username,
     name: user.name,
     email: user.email,
+    // YouEye owns the account lifecycle and sets the email at creation, so it is
+    // verified by definition. Some clients (e.g. Vaultwarden, django-allauth)
+    // refuse to provision an account whose email is not marked verified.
+    email_verified: true,
     groups,
     is_admin: isAdmin,
   };
@@ -102,11 +106,16 @@ function oauthClaims(user: IdentityUser, scope = ''): Record<string, unknown> {
   return claims;
 }
 
-export async function createAccessToken(user: IdentityUser, clientId: string, scope = ''): Promise<string> {
+export async function createAccessToken(user: IdentityUser, clientId: string, scope = '', nonce?: string | null): Promise<string> {
   const config = await getIdentityConfig();
   const privateKey = await getOAuthPrivateKey();
   const jwk = await getOAuthPublicJwk();
-  return new SignJWT(oauthClaims(user, scope))
+  const claims = oauthClaims(user, scope);
+  // OIDC: when the client sent a nonce in the auth request, the ID token MUST
+  // echo it (and MUST NOT include one otherwise). Required by Authlib, Spring
+  // Security, mod_auth_openidc, the Rust openidconnect crate, etc.
+  if (nonce) claims.nonce = nonce;
+  return new SignJWT(claims)
     .setProtectedHeader({ alg: 'RS256', kid: String(jwk.kid) })
     .setSubject(user.id)
     .setIssuer(config.issuer)

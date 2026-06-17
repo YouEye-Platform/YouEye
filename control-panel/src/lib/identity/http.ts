@@ -14,6 +14,7 @@ export function userinfo(user: IdentityUser) {
     preferred_username: user.username,
     name: user.name || user.username,
     email: user.email,
+    email_verified: true,
     groups: user.groups,
     is_admin: user.is_admin,
   };

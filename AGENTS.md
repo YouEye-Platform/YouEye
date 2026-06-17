@@ -1,3 +1,25 @@
+## cp-mythos-v0.4.49.5 — mythos — 2026-06-17
+**Branch:** mythos · **Agent:** Mythos
+**Task:** Make YouEye ID (the homegrown OIDC provider) interoperable with every market app's OIDC client — accept both client-auth methods, echo `nonce`, assert `email_verified`
+
+### Changes
+- `control-panel/src/app/application/o/token/route.ts` — accept client creds from EITHER the `Authorization: Basic` header (`client_secret_basic`) or the POST body (`client_secret_post`); constant-time secret compare; `WWW-Authenticate: Basic` on the 401; pass the auth code's `nonce` into the id_token. Root cause: the endpoint read creds from the body only, so every library defaulting to Basic (Authlib/Mealie, openid-client, mod_auth_openidc, Spring, the Rust openidconnect crate) got `401 invalid_client`.
+- `control-panel/src/app/application/o/authorize/route.ts` — capture `nonce` from the auth request and thread it through `issueAuthRedirect` → `createAuthCode` (both the GET fast-path and the POST consent-path).
+- `control-panel/src/lib/identity/store.ts` — `AuthCode.nonce`; `identity_auth_codes.nonce` column + `ALTER TABLE … ADD COLUMN IF NOT EXISTS` upgrade path; `createAuthCode` persists it; `consumeAuthCode` returns it.
+- `control-panel/src/lib/identity/tokens.ts` — `createAccessToken(..., nonce?)` emits the `nonce` claim only when present; `oauthClaims` always emits `email_verified: true`.
+- `control-panel/src/lib/identity/http.ts` — `userinfo` emits `email_verified: true`.
+- `control-panel/src/app/application/o/[clientId]/.well-known/openid-configuration/route.ts` — advertise `token_endpoint_auth_methods_supported: [client_secret_basic, client_secret_post]`.
+- `control-panel/package.json` 0.4.49.4 → 0.4.49.5.
+
+### Test Results
+- `tsc --noEmit`: no errors in the changed files (only pre-existing unrelated errors; `next.config` sets `ignoreBuildErrors`). Live deploy + dual-account re-test left to the owner (per request).
+
+### Notes for Iris
+- CP-only release `cp-mythos-v0.4.49.5`. No UI/Spine/Market change.
+- Closes the env-OIDC class systemically: 12 market apps (Mealie, Vaultwarden, FreshRSS, Stirling-PDF, Planka, Actual, Linkwarden, Kavita, Paperless fixed here; Miniflux/Vikunja/HedgeDoc already worked off the 0.4.49.4 CA fix). Per-app matrix + sources: YE-Wiki `app-market/sso-test-results.md` (Bug 3) + new `control-panel/identity-oidc-provider.md`.
+- Additive/backwards-compatible: `client_secret_post` still works (first-party CP/UI login unaffected), `nonce` echoed only when sent, `email_verified` is a new claim, DB column added idempotently.
+- Still open: Audiobookshelf OIDC redirect_uri `/undefined/` (separate, pre-existing).
+
 ## cp-mythos-v0.4.49.4 — mythos — 2026-06-17
 **Branch:** mythos · **Agent:** Mythos
 **Task:** Fix env-OIDC apps failing OIDC discovery with `CERTIFICATE_VERIFY_FAILED` (systemic) — trust the YouEye root CA in non-systemd OCI containers
