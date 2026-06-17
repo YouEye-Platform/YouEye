@@ -1,3 +1,19 @@
+## spine-v0.4.10.1 — artem — 2026-06-17
+**Branch:** artem · **VM:** potempc · **Agent:** Artem
+**Task:** `youeye names export` / `youeye names import` — reuse a YouEye Names address+cert across (re)installs, esp. same-VM `youeye deploy` (where the installer `--names-bundle` flag doesn't apply).
+
+### Changes
+- `spine/internal/cmd/names.go` — **new** `youeye names` command group:
+  - `export [-o file]` — pulls the reuse bundle from CP (`GET /api/tls/youeye-names/export` via the CLI-token `controlClient`) → stdout or a `0600` file.
+  - `import <bundle.json>` — validates + stages it into the CP container at `/opt/youeye-control-data/youeye-names/import-bundle.json` (the path the setup wizard already watches) via `incus exec`. Run after `youeye deploy`, before opening setup.
+- `spine/internal/cmd/root.go` — register `namesCmd`; version `0.4.10` → `0.4.10.1`.
+
+### Test Results
+- `go build ./...` + `go vet` clean. `youeye names --help` lists export/import. No CP/web change — reuses the live reuse path (`/reuse` + setup/run import shipped in cp-v0.4.49.2).
+
+### Notes for Iris
+- Export needs CP up (CLI-token API); import is host-level (incus exec). Bundle holds private keys → a credential. Built with ldflags (Version+BuildDate) per pitfall #7.
+
 ## cp-v0.4.49.2 + installer — artem — 2026-06-17
 **Branch:** artem · **VM:** potempc · **Agent:** Artem
 **Task:** Fast cert (no self-signed temp) + reuse a YouEye Names address/cert across (re)installs via an installer flag. Follows the first live test (cert installed too slowly because the broker's blind 120s sleep beat CP's 120s poll).
