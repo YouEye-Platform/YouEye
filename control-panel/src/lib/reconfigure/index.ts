@@ -15,7 +15,7 @@ import * as caddy from '@/lib/caddy/client';
 import { setDomainDNS } from '@/lib/apps/pihole-api';
 import { listInstalledApps, saveInstallMetadata } from '@/lib/market/metadata';
 import { getContainerIP } from '@/lib/incus/container-ip';
-import { resolveVariables, resolveEnvironment } from '@/lib/market/variables';
+import { resolveVariables } from '@/lib/market/variables';
 import { writeAllConfigFiles } from '@/lib/market/config-writer';
 import { incusRequest } from '@/lib/incus/server';
 import type { InstallMetadata } from '@/lib/market/types';
@@ -23,6 +23,8 @@ import {
   configureControlPanelIdentitySSO,
   configureUIIdentitySSO,
 } from '@/lib/identity/core-clients';
+import { getClient } from '@/lib/identity/store';
+import { createOAuthClient } from '@/lib/identity/provider';
 
 export interface ReconfigureRequest {
   site_name?: string;
@@ -40,42 +42,11 @@ export interface ReconfigureEvent {
 
 export type ReconfigureEventCallback = (event: ReconfigureEvent) => void;
 
-// ─── Authentik Helpers ─────────────────────────────────────
-
-interface AuthentikConfig {
-  url: string;
-  token: string;
-}
-
-async function getAuthentikConfig(): Promise<AuthentikConfig> {
-  const creds = await spineClient.getAuthentikCredentials();
-  const ip = await getContainerIP('youeye-authentik');
-  const url = ip ? `http://${ip}:9000` : creds.internal_url;
-  return { url, token: creds.bootstrap_token };
-}
-
-async function authentikAPI<T>(
-  config: AuthentikConfig,
-  path: string,
-  method: string = 'GET',
-  body?: Record<string, unknown>
-): Promise<T> {
-  const options: RequestInit = {
-    method,
-    headers: {
-      Authorization: `Bearer ${config.token}`,
-      'Content-Type': 'application/json',
-    },
-  };
-  if (body) options.body = JSON.stringify(body);
-  const res = await fetch(`${config.url}/api/v3${path}`, options);
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Authentik API ${res.status}: ${text}`);
-  }
-  if (res.status === 204) return {} as T;
-  return res.json() as Promise<T>;
-}
+// NOTE: YouEye uses a HOMEGROUND OIDC provider (control-panel/src/lib/identity/*),
+// NOT Authentik — there is no youeye-authentik container. The old Authentik helpers
+// (getAuthentikConfig/authentikAPI/updateAuthentikProvider/getAuthentikExternalUrl)
+// were dead code that threw on every domain change; removed. App SSO re-sync now goes
+// through the homegrown `identity_clients` store + integration re-apply (see updateInstalledApp).
 
 // ─── Caddy Bulk Update ────────────────────────────────────
 
@@ -145,73 +116,31 @@ async function updateCaddyDomain(
   await caddy.setConfig(config);
 }
 
-// ─── Authentik Provider Update ────────────────────────────
+// ─── Homegrown identity_clients re-sync ───────────────────
 
 /**
- * Update redirect URIs and launch URL for an Authentik OAuth2 provider/application.
- * hostnameMap optionally maps old full hostnames to new ones (for subdomain changes).
+ * Re-sync an installed app's homegrown OAuth client (`identity_clients`) to a new
+ * domain by domain-replacing its stored `redirect_uris`, PRESERVING the client_secret.
+ * (After Phase 1 the back-channel is internal/domain-free; only redirect_uris carry the
+ * domain.) Non-domain callbacks like `app://oauth` pass through unchanged. No-op if the
+ * client doesn't exist. Used for env-OIDC apps; integration apps are additionally re-applied.
  */
-async function updateAuthentikProvider(
-  akConfig: AuthentikConfig,
+async function resyncClientRedirectUris(
   clientId: string,
   oldDomain: string,
   newDomain: string,
-  hostnameMap?: Map<string, string>
 ): Promise<void> {
-  // Find the provider
-  const providers = await authentikAPI<{
-    results: Array<{ pk: number; client_id: string; redirect_uris: Array<{ matching_mode: string; url: string }> }>;
-  }>(akConfig, `/providers/oauth2/?client_id=${encodeURIComponent(clientId)}`);
-
-  for (const provider of providers.results || []) {
-    if (provider.client_id !== clientId) continue;
-
-    // Update redirect URIs — apply hostname replacements first, then domain replacement
-    const newUris = provider.redirect_uris.map((uri) => {
-      let url = uri.url;
-      if (hostnameMap) {
-        for (const [oldHost, newHost] of hostnameMap) {
-          url = url.replace(new RegExp(escapeRegex(oldHost), 'g'), newHost);
-        }
-      }
-      // Fall back to domain-only replacement for anything not caught by hostname map
-      url = url.replace(new RegExp(escapeRegex(oldDomain), 'g'), newDomain);
-      return { ...uri, url };
-    });
-
-    if (clientId === 'youeye-control') {
-      for (const url of [
-        `https://${newDomain}/settings/api/auth/callback`,
-        `http://${newDomain}/settings/api/auth/callback`,
-      ]) {
-        if (!newUris.some((uri) => uri.url === url)) {
-          newUris.push({ matching_mode: 'strict', url });
-        }
-      }
-    }
-
-    await authentikAPI(akConfig, `/providers/oauth2/${provider.pk}/`, 'PATCH', {
-      redirect_uris: newUris,
-    });
-  }
-
-  // Update application launch URL
-  try {
-    const app = await authentikAPI<{ meta_launch_url: string }>(
-      akConfig,
-      `/core/applications/${clientId}/`
-    );
-    if (app.meta_launch_url?.includes(oldDomain)) {
-      await authentikAPI(akConfig, `/core/applications/${clientId}/`, 'PATCH', {
-        meta_launch_url: app.meta_launch_url.replace(
-          new RegExp(escapeRegex(oldDomain), 'g'),
-          newDomain
-        ),
-      });
-    }
-  } catch {
-    // Application may not exist
-  }
+  const existing = await getClient(clientId);
+  if (!existing) return;
+  const oldRe = new RegExp(escapeRegex(oldDomain), 'g');
+  const newRedirectUris = (existing.redirect_uris || []).map((uri) => uri.replace(oldRe, newDomain));
+  await createOAuthClient({
+    clientId: existing.client_id,
+    name: existing.name,
+    redirectUris: newRedirectUris,
+    scopes: existing.scopes,
+    clientSecret: existing.client_secret, // preserve — no secret rotation on a domain change
+  });
 }
 
 function escapeRegex(str: string): string {
@@ -221,16 +150,15 @@ function escapeRegex(str: string): string {
 // ─── App Domain Update ────────────────────────────────────
 
 /**
- * Fetch an app manifest from the Market repo on GitHub.
+ * Fetch an app manifest from the configured Market source (Forgejo, the active release
+ * branch) via the catalog. The previous implementation hit a dead GitHub URL
+ * (`raw.githubusercontent.com/YouEye-Platform/Market/main/apps/...`) and always returned
+ * null, so every reconfigure fell back to naive env string-replacement.
  */
 async function fetchAppManifest(appId: string): Promise<Record<string, unknown> | null> {
   try {
-    const { parse } = await import('yaml');
-    const url = `https://raw.githubusercontent.com/YouEye-Platform/Market/main/apps/${appId}.yaml`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return null;
-    const text = await res.text();
-    return parse(text) as Record<string, unknown>;
+    const { fetchManifest } = await import('@/lib/market/catalog');
+    return (await fetchManifest(appId)) as unknown as Record<string, unknown> | null;
   } catch {
     return null;
   }
@@ -244,11 +172,16 @@ async function updateInstalledApp(
   meta: InstallMetadata,
   oldDomain: string,
   newDomain: string,
-  akConfig: AuthentikConfig
 ): Promise<void> {
   const appId = meta.appId;
-  const oldUrl = `https://${meta.subdomain}.${oldDomain}`;
   const newUrl = `https://${meta.subdomain}.${newDomain}`;
+  // `meta.containers` holds ContainerMeta objects ({ containerName, ... }); some legacy
+  // metadata stored plain strings. Resolve the real incus instance names either way —
+  // the original restart loops iterated the objects directly, producing "[object Object]"
+  // (so they silently never restarted anything on a domain change).
+  const containerNames = (meta.containers as Array<string | { containerName?: string }>)
+    .map((c) => (typeof c === 'string' ? c : c?.containerName))
+    .filter((n): n is string => !!n);
 
   // Load manifest to know which env vars and config files reference the domain
   const rawManifest = await fetchAppManifest(appId);
@@ -281,7 +214,6 @@ async function updateInstalledApp(
       secrets,
       container: { ip: '', port: 0 },
       sso: { clientId: meta.ssoClientId || '', clientSecret: '' },
-      authentik: { externalUrl: '', internalUrl: '', name: '' },
     };
 
     // Update container environment variables with new domain values
@@ -327,7 +259,7 @@ async function updateInstalledApp(
     }
 
     // Restart app containers to pick up new env vars
-    for (const containerName of meta.containers) {
+    for (const containerName of containerNames) {
       try {
         await incusRequest('PUT', `/1.0/instances/${containerName}/state`, {
           action: 'restart',
@@ -341,7 +273,7 @@ async function updateInstalledApp(
 
     // Wait for the primary container to be ready before running SSO steps
     if (meta.enableSSO) {
-      const primaryContainer = typeof meta.containers[0] === 'string' ? meta.containers[0] : (meta.containers[0] as any)?.containerName;
+      const primaryContainer = containerNames[0];
       const primaryPort = (rawManifest as { containers?: Array<{ primary?: boolean; port?: number }> })
         .containers?.find((c) => c.primary)?.port || 0;
       if (primaryPort > 0) {
@@ -360,7 +292,7 @@ async function updateInstalledApp(
     }
   } else {
     // No manifest available — just do string replacement on env vars
-    for (const containerName of meta.containers) {
+    for (const containerName of containerNames) {
       try {
         const resp = await incusRequest<Record<string, unknown>>(
           'GET',
@@ -385,7 +317,7 @@ async function updateInstalledApp(
     }
 
     // Restart containers
-    for (const containerName of meta.containers) {
+    for (const containerName of containerNames) {
       try {
         await incusRequest('PUT', `/1.0/instances/${containerName}/state`, {
           action: 'restart', force: true, timeout: 30,
@@ -394,63 +326,43 @@ async function updateInstalledApp(
     }
   }
 
-  // Update Authentik SSO if the app has it
-  if (meta.enableSSO && meta.ssoSlug) {
-    try {
-      await updateAuthentikProvider(akConfig, meta.ssoSlug, oldDomain, newDomain);
-    } catch (err) {
-      console.error(`[Reconfigure] Failed to update Authentik for ${appId}:`, err);
+  // Re-sync the homegrown OIDC client(s) to the new domain (NOT Authentik — removed;
+  // there is no youeye-authentik container).
+  if (meta.enableSSO) {
+    // (a) Base app client: domain-replace its redirect_uris, PRESERVING the secret.
+    //     Covers env-OIDC apps (Vaultwarden, Mealie, ...). After Phase 1 the back-channel
+    //     (issuer/discovery/token/userinfo/jwks) is internal & domain-free, so only the
+    //     redirect_uris carry the domain.
+    const baseClientId = meta.ssoClientId || meta.ssoSlug;
+    if (baseClientId) {
+      try {
+        await resyncClientRedirectUris(baseClientId, oldDomain, newDomain);
+      } catch (err) {
+        console.error(`[Reconfigure] Failed to re-sync redirect_uris for ${appId}:`, err);
+      }
     }
-
-    // Re-run SSO setup steps for apps that have API/CLI SSO configuration
-    if (rawManifest) {
-      const ssoConfig = (rawManifest as { sso?: { setup?: { method?: string; api?: { steps?: Array<Record<string, unknown>> }; cli?: { steps?: Array<Record<string, unknown>> } } } }).sso;
-      if (ssoConfig?.setup && (ssoConfig.setup.api?.steps?.length || ssoConfig.setup.cli?.steps?.length)) {
+    // (b) Integration apps: re-apply each installed identity integration with the NEW
+    //     domain context. applyIntegration re-creates the OAuth client (redirect_uris
+    //     recomputed from the new domain) and re-runs the app's SSO setup steps, which
+    //     rewrite the app's stored EXTERNAL authorize URL to the new domain.
+    //     buildCanonicalContext reads the domain from settings — already set to newDomain
+    //     by reconfigure() before this point. The app is still running here (we restart
+    //     after), so its setup-step API calls succeed.
+    if (meta.installedIntegrations?.length) {
+      const { applyIntegration } = await import('@/lib/market/integration-runner');
+      for (const integ of meta.installedIntegrations) {
         try {
-          const primaryContainer = typeof meta.containers[0] === 'string' ? meta.containers[0] : (meta.containers[0] as any)?.containerName;
-          const primaryIP = await getContainerIP(primaryContainer);
-          const primaryPort = (rawManifest as { containers?: Array<{ primary?: boolean; port?: number }> })
-            .containers?.find((c) => c.primary)?.port || 0;
-
-          const authentikExternalUrl = await getAuthentikExternalUrl(akConfig, newDomain);
-          const authentikIP = await getContainerIP('youeye-authentik');
-
-          // Get SSO credentials from the existing provider
-          const providers = await authentikAPI<{
-            results: Array<{ pk: number; client_id: string; client_secret: string }>;
-          }>(akConfig, `/providers/oauth2/?client_id=${encodeURIComponent(meta.ssoSlug)}`);
-          const provider = providers.results?.find((p) => p.client_id === meta.ssoSlug);
-
-          if (provider && primaryIP) {
-            const ctx = {
-              app: { id: appId },
-              install: { url: newUrl, subdomain: meta.subdomain, domain: newDomain },
-              secrets: {},
-              container: { ip: primaryIP, port: primaryPort },
-              sso: { clientId: provider.client_id, clientSecret: provider.client_secret },
-              authentik: {
-                externalUrl: authentikExternalUrl,
-                internalUrl: authentikIP ? `http://${authentikIP}:9000` : authentikExternalUrl,
-                name: '',
-              },
-            };
-
-            // Read secrets for SSO step resolution
-            const secretSpecs = (rawManifest as { secrets?: Array<{ name: string; file: string }> }).secrets || [];
-            for (const sec of secretSpecs) {
-              try {
-                const { readFile } = await import('fs/promises');
-                const val = await readFile(`/var/lib/youeye/app-${appId}/${sec.file}`, 'utf-8');
-                (ctx.secrets as Record<string, string>)[sec.name] = val.trim();
-              } catch { /* ignore */ }
-            }
-
-            const { executeSSOSteps } = await import('@/lib/market/sso-engine');
-            await executeSSOSteps(ssoConfig as Parameters<typeof executeSSOSteps>[0], ctx as any);
-          }
+          await applyIntegration({ integrationId: integ.id, sourceId: integ.sourceId }, () => {});
         } catch (err) {
-          console.error(`[Reconfigure] Failed to re-run SSO steps for ${appId}:`, err);
+          console.error(`[Reconfigure] Failed to re-apply integration ${integ.id} for ${appId}:`, err);
         }
+      }
+      // Restart so any cached OIDC client (e.g. Audiobookshelf builds its openid-client
+      // once and caches it) rebuilds from the freshly re-applied config.
+      for (const containerName of containerNames) {
+        try {
+          await incusRequest('PUT', `/1.0/instances/${containerName}/state`, { action: 'restart', force: true, timeout: 30 });
+        } catch { /* container may not be running */ }
       }
     }
   }
@@ -458,22 +370,6 @@ async function updateInstalledApp(
   // Update metadata
   meta.domain = newDomain;
   await saveInstallMetadata(meta);
-}
-
-async function getAuthentikExternalUrl(
-  akConfig: AuthentikConfig,
-  newDomain: string
-): Promise<string> {
-  // Try to find from Caddy routes first
-  try {
-    const { getAuthentikExternalUrl: getFromCaddy } = await import('@/lib/market/authentik');
-    const url = await getFromCaddy();
-    if (url) return url;
-  } catch { /* ignore */ }
-  // Fallback: construct from config
-  const config = await settingsService.getRaw();
-  const authSub = config.subdomains?.auth || 'auth';
-  return `https://${authSub}.${newDomain}`;
 }
 
 // ─── Main Reconfigure Function ────────────────────────────
@@ -503,8 +399,6 @@ export async function reconfigure(
   const installedApps = await listInstalledApps();
   onEvent({ step: 'apps', status: 'done', message: `Found ${installedApps.length} installed app(s)` });
 
-  // Get Authentik config (needed for SSO updates)
-  const akConfig = await getAuthentikConfig();
   const hostIP = process.env.HOST_IP;
 
   // 3. Update youeye.yaml
@@ -639,7 +533,7 @@ export async function reconfigure(
     for (const app of installedApps) {
       onEvent({ step: `app_${app.appId}`, status: 'running', message: `Updating ${app.appId}...` });
       try {
-        await updateInstalledApp(app, oldDomain, newDomain, akConfig);
+        await updateInstalledApp(app, oldDomain, newDomain);
         onEvent({ step: `app_${app.appId}`, status: 'done', message: `${app.appId} updated` });
       } catch (err) {
         console.error(`[Reconfigure] Failed to update app ${app.appId}:`, err);
