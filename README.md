@@ -142,8 +142,8 @@ Each component is versioned and released independently.
 
 | Component | Version |
 |-----------|---------|
-| Spine | 0.4.9 (`spine-v0.4.9`) |
-| Control Panel | 0.4.47 (`cp-v0.4.47`) |
+| Spine | 0.4.10.1 (`spine-artem-v0.4.10.1`) |
+| Control Panel | 0.4.49.4 (`cp-artem-v0.4.49.4`) |
 | UI | 0.4.28 (`ui-v0.4.28`) |
 | Canvas | 0.3.1.1 (`v0.3.1.1`) |
 | Wiki | 0.4.4 (`v0.4.4`) |

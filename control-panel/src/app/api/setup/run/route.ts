@@ -203,6 +203,7 @@ export async function POST(request: NextRequest) {
             domain: body.domain,
             subdomains: body.subdomains,
             identity: { provider: 'youeye-id', name: identityName },
+            tls_choice: body.tls_choice || 'selfsigned',
             setup_completed: false,
           });
           await saveStepState('config', 'done');
@@ -580,7 +581,10 @@ export async function POST(request: NextRequest) {
         // ── Step 6: Finalize ─────────────────────────────────────────
         if (shouldRunStep('finalize')) {
           stepUpdate('finalize', 'running');
-          await settingsService.setRaw({ setup_completed: true });
+          await settingsService.setRaw({
+            setup_completed: true,
+            tls_choice: body.tls_choice || 'selfsigned',
+          });
           // Clear setup_steps on successful completion
           await spineClient.patchConfig({ setup_steps: {} });
           await saveStepState('finalize', 'done');

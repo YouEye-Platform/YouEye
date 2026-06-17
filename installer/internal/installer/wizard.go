@@ -20,18 +20,18 @@ type stepKind int
 
 const (
 	stepWelcome    stepKind = iota // logo + badge + "press enter"
-	stepModeSelect                // LXC vs VM (Proxmox only)
-	stepPathSelect                // Quick vs Advanced
-	stepRadio                     // single-select from options
-	stepText                      // single text input
-	stepPassword                  // two masked inputs (pw + confirm)
-	stepNumber                    // numeric input (with up/down)
-	stepResources                 // 3 number fields on one screen
-	stepToggle                    // grid of on/off toggles
-	stepIPConfig                  // DHCP/Static radio + conditional fields
-	stepDNS                       // two text fields
-	stepSSH                       // toggle + conditional source
-	stepConfirm                   // read-only summary
+	stepModeSelect                 // LXC vs VM (Proxmox only)
+	stepPathSelect                 // Quick vs Advanced
+	stepRadio                      // single-select from options
+	stepText                       // single text input
+	stepPassword                   // two masked inputs (pw + confirm)
+	stepNumber                     // numeric input (with up/down)
+	stepResources                  // 3 number fields on one screen
+	stepToggle                     // grid of on/off toggles
+	stepIPConfig                   // DHCP/Static radio + conditional fields
+	stepDNS                        // two text fields
+	stepSSH                        // toggle + conditional source
+	stepConfirm                    // read-only summary
 )
 
 // ---------------------------------------------------------------------------
@@ -905,6 +905,9 @@ func (w wizardModel) viewRadioLike(s wizStep, prompt string) string {
 
 func (w wizardModel) viewPassword() string {
 	var rows []string
+	if tree := rootPasswordTreeView(w.width, w.height); tree != "" {
+		rows = append(rows, tree, "")
+	}
 	labels := []string{"Password:", "Confirm: "}
 	for i, lbl := range labels {
 		style := theme.Dim
@@ -918,7 +921,7 @@ func (w wizardModel) viewPassword() string {
 		rows = append(rows, "", theme.Danger.Render("  Passwords don't match"))
 	}
 	if w.inputs[0].Value() == "" {
-		rows = append(rows, "", theme.Dim.Render("  Leave blank for no password (auto-login)"))
+		rows = append(rows, "", theme.Dim.Render("  This sets the VM OS root password for console/emergency access."))
 	}
 	return strings.Join(rows, "\n")
 }

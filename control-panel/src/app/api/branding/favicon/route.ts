@@ -17,7 +17,7 @@ let cachedToken: string | null = null;
 
 function fallbackIcon(size: string): NextResponse {
   const px = Math.max(16, Math.min(512, Number.parseInt(size, 10) || 32));
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#111827"/><path d="M19 14h8l5 15 5-15h8L35.8 39v11h-7.6V39L19 14Z" fill="#f8fafc"/></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 64 64"><path d="M19 14h8l5 15 5-15h8L35.8 39v11h-7.6V39L19 14Z" fill="#2563eb"/></svg>`;
   return new NextResponse(svg, {
     headers: {
       'Content-Type': 'image/svg+xml',

@@ -29,6 +29,8 @@ interface SetupConfig {
   domain: string;
   subdomains: Record<string, string>;
   setup_completed: boolean;
+  tls_choice?: TlsChoice;
+  extra?: { tls_choice?: TlsChoice };
 }
 
 type StepStatus = 'pending' | 'running' | 'done' | 'error';
@@ -115,7 +117,7 @@ export default function SetupPage() {
       if (res.ok) {
         const config: SetupConfig = await res.json();
         if (config.setup_completed) {
-          router.replace('/');
+          router.replace('/setup-complete');
           return;
         }
         if (config.site_name && config.site_name !== 'YouEye') setSiteName(config.site_name);
@@ -184,9 +186,9 @@ export default function SetupPage() {
     if (tlsChoice === 'upload') {
       goToStep(5); // show upload flow
     } else {
-      goToStep(6); // LE cert already issued or self-signed — go straight to DNS explainer
+      router.replace(`/setup-complete?tls=${encodeURIComponent(tlsChoice)}`);
     }
-  }, [tlsChoice, goToStep]);
+  }, [tlsChoice, goToStep, router]);
 
   // Run setup provisioning
   const handleRunSetup = useCallback(async () => {
@@ -440,7 +442,7 @@ export default function SetupPage() {
         {step === 5 && (
           <SetupTls
             domain={domain}
-            onComplete={() => goToStep(6)}
+            onComplete={() => router.replace(`/setup-complete?tls=${encodeURIComponent(tlsChoice)}`)}
             onBack={() => goToStep(0, 'back')}
           />
         )}

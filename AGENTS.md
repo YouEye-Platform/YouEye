@@ -1,3 +1,25 @@
+## cp-v0.4.49.4 + installer refresh — artem — 2026-06-18
+**Branch:** artem · **VM:** potempc · **Agent:** Artem
+**Task:** Setup polish: blue setup favicon, durable setup-complete TLS choice, ANSI tree motif on installer root password + PAM root login, and YouEye Names production-LE readiness.
+
+### Changes
+- `control-panel/src/app/api/branding/favicon/route.ts` — fallback favicon is now a transparent blue `Y`, used before UI branding is available during first setup.
+- `control-panel/src/app/api/setup/run/route.ts`, `control-panel/src/app/setup/page.tsx`, `control-panel/src/app/setup-complete/page.tsx`, `control-panel/src/lib/settings/service.ts` — persist `tls_choice`, redirect completed provisioning to `/setup-complete?tls=...`, and read persisted/extra TLS choice so CA downloads appear only for self-signed installs.
+- `control-panel/src/components/auth/login-form.tsx`, `control-panel/src/components/auth/root-tree-art.ts` — PAM emergency login now shows a static tree-roots motif and "Local administrator" title only when username is `root`; no runtime generator dependency.
+- `installer/internal/installer/root_tree.go`, `installer/internal/installer/root_tree_test.go`, `installer/internal/installer/wizard.go` — installer root-password step shows the dim amber tree on roomy terminals, hides it at 80x24, and clarifies this is the VM OS root password.
+- `control-panel/package.json` — 0.4.49.3 → **0.4.49.4**.
+- `README.md` — Current Versions table updated for Artem's Spine/CP release line.
+
+### Test Results
+- CP: `pnpm build` clean (Next skipped project-wide type validation by config; direct `tsc --noEmit` still fails on pre-existing unrelated files listed in final report).
+- CP focused: `pnpm exec node --test tests/setup-polish.spec.mjs` passed.
+- Visual: Playwright screenshots of `/login` empty + typed `root`; verified the tree appears only after `root`, form remains readable, and `/api/branding/favicon?size=64` contains blue `Y` and no dark fallback rect.
+- Installer: `go test ./...` and `go vet ./...` passed.
+
+### Notes for Iris
+- Ansizalizer/`ansipx` remain local/offline asset-generation tools only. Commit static text assets; do not add generator dependencies to CP or installer.
+- YouEye Names production LE is an ops switch on LXC 623, not a CP code dependency. Watch LE rate limits until `youeye.me` is on the Public Suffix List; use reuse bundles for reinstall loops.
+
 ## cp-v0.4.49.3 — artem — 2026-06-17
 **Branch:** artem · **VM:** potempc · **Agent:** Artem
 **Task:** Fix the YouEye Names apex serving Caddy's internal cert instead of the loaded Let's Encrypt cert. Latent today (staging LE is untrusted everywhere) but under production LE the main dashboard at the bare apex would warn while subdomains stayed trusted.

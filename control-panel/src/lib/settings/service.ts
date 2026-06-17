@@ -31,6 +31,7 @@ export interface PlatformSettings {
   smtpFrom?: string;
   smtpRequireTls?: boolean;
   identity?: { provider?: string };
+  extra?: Record<string, string>;
 }
 
 /** Maps PlatformSettings keys to youeye.yaml snake_case keys */
@@ -48,6 +49,7 @@ const KEY_MAP: Record<keyof PlatformSettings, string> = {
   smtpFrom: 'smtp_from',
   smtpRequireTls: 'smtp_require_tls',
   identity: 'identity',
+  extra: 'extra',
 };
 
 /** Convert raw Spine config to typed PlatformSettings */
@@ -66,7 +68,14 @@ function fromRaw(raw: Record<string, unknown>): PlatformSettings {
     smtpFrom: raw.smtp_from as string | undefined,
     smtpRequireTls: raw.smtp_require_tls as boolean | undefined,
     identity: raw.identity as { provider?: string } | undefined,
+    extra: raw.extra as Record<string, string> | undefined,
   };
+}
+
+function flattenExtra(raw: Record<string, unknown>): Record<string, unknown> {
+  const extra = raw.extra;
+  if (!extra || typeof extra !== 'object' || Array.isArray(extra)) return raw;
+  return { ...(extra as Record<string, string>), ...raw };
 }
 
 function readLocalRawConfig(): Record<string, unknown> | null {
@@ -165,6 +174,8 @@ class SettingsService {
         smtp_from: this.cache.smtpFrom,
         smtp_require_tls: this.cache.smtpRequireTls,
         identity: this.cache.identity,
+        extra: this.cache.extra,
+        ...(this.cache.extra || {}),
       };
     }
     let raw: Record<string, unknown>;
@@ -178,7 +189,7 @@ class SettingsService {
     // Also populate the typed cache
     this.cache = fromRaw(raw as unknown as Record<string, unknown>);
     this.cacheTimestamp = Date.now();
-    return raw as Awaited<ReturnType<typeof this.getRaw>>;
+    return flattenExtra(raw) as Awaited<ReturnType<typeof this.getRaw>>;
   }
 
   /** Invalidate the cache (call after external config changes) */
