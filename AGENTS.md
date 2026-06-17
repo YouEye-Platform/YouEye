@@ -1,3 +1,16 @@
+## installer — IPv6 image-pull fix + deploy failure detection — artem — 2026-06-17
+**Branch:** artem · **Agent:** Artem
+**Task:** Operator's first full run reported success but the platform was half-deployed (Caddy + Pi-Hole missing).
+
+### Changes
+- `installer/internal/installer/provider_proxmox.go` — **(1)** CLAUDE.md pitfall #17: a fresh Debian VM has no IPv6 route, but docker.io DNS returns AAAA records, so incus's bundled `skopeo` tries IPv6 first and dies `network is unreachable`. Spine/Postgres/CP/UI pull over IPv4 (Forgejo/Debian) and succeeded; Caddy + Pi-Hole (docker.io) failed. Now disable IPv6 (`sysctl` runtime + `/etc/sysctl.d/99-youeye-ipv4.conf`) and add the `precedence ::ffff:0:0/96 100` gai.conf line **before** deploy. **(2)** `youeye deploy` logs stage failures but swallows them and exits 0 — the installer trusted that 0. Now scan the deploy log for `deployment failed|Operation failed|network is unreachable` on exit and fail loudly with detail, even on exit 0. Corrected the recovery hint (deploy is NOT idempotent — dies on "Instance already exists" — so point at the log + fresh reinstall, don't suggest re-running deploy).
+
+### Test Results
+- `go build`/`go vet` clean. **Verified on the live failed VM (135):** after disabling IPv6, `curl -4 registry-1.docker.io/v2/` → 401 (reachable; was "network unreachable"), and `/opt/incus/bin/skopeo inspect docker://docker.io/library/caddy:2.11.4` + `pihole:2026.05.0` both return full manifests. First run already proved Postgres/CP/UI deploy cleanly. Binary re-uploaded to `installer-artem-v0.1.0` (curl unchanged).
+
+### Notes for Iris
+- The non-idempotent `youeye deploy` ("Instance already exists" on re-run, then skips remaining stages, still exits 0) is a **Spine deploy** bug, out of scope here — flagged for follow-up.
+
 ## installer — root password + console fixes — artem — 2026-06-17
 **Branch:** artem · **Agent:** Artem
 **Task:** Fix three issues from the operator's live TUI test: password didn't log in, and the xterm.js console was flaky.
