@@ -1,10 +1,25 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getIdentityConfig } from '@/lib/identity/config';
+import { getClient } from '@/lib/identity/store';
 
-export async function GET() {
+// Per-client OIDC discovery. The `issuer` MUST equal this document's URL prefix
+// (RFC 8414 / OIDC Discovery §4.3) — the per-client authority the app is
+// configured with, `${externalUrl}/application/o/<clientId>/` — or strict clients
+// (the Rust openidconnect crate, Spring Security, go-oidc) reject it. The OAuth
+// endpoints themselves are shared: the client is identified by client_id, not the
+// URL path.
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ clientId: string }> },
+) {
+  const { clientId } = await params;
+  const client = await getClient(clientId);
+  if (!client) {
+    return NextResponse.json({ error: 'unknown_client' }, { status: 404 });
+  }
   const config = await getIdentityConfig();
   return NextResponse.json({
-    issuer: config.issuer,
+    issuer: `${config.externalUrl}/application/o/${clientId}/`,
     authorization_endpoint: `${config.externalUrl}/application/o/authorize/`,
     token_endpoint: `${config.externalUrl}/application/o/token`,
     userinfo_endpoint: `${config.externalUrl}/application/o/userinfo`,

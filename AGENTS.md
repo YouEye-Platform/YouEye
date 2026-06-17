@@ -1,3 +1,24 @@
+## cp-mythos-v0.4.49.6 + Market mythos-v0.4.0.10 — mythos — 2026-06-17
+**Branch:** mythos · **Agent:** Mythos
+**Task:** Per-client OIDC issuer (Option B) — YouEye ID now issues a per-client `issuer`/`iss` matching the per-client discovery URL, so strict OIDC clients (Vaultwarden/openidconnect crate, Spring, go-oidc) stop rejecting "unexpected issuer URI"
+
+### Changes
+- `control-panel/src/app/application/o/[clientId]/.well-known/openid-configuration/route.ts` — return `issuer: ${externalUrl}/application/o/${clientId}/` (uses the route's clientId; 404 unknown client). Endpoints stay shared/absolute.
+- `control-panel/src/lib/identity/tokens.ts` — `createAccessToken` sets the id_token `iss` to the per-client issuer; `verifyBearerToken` (RS256 path) no longer pins a single issuer (signature is the trust boundary; requires `iss` to be one of ours). Session token (`createIdentityToken`/`verifyIdentityToken`, HS256) unchanged (bare issuer).
+- DELETED `control-panel/src/app/.well-known/openid-configuration/route.ts` (bare root discovery — re-exported the per-client GET, which now needs a clientId; no consumer after the two manifest migrations).
+- `control-panel/package.json` 0.4.49.5 → 0.4.49.6.
+- YE-AppMarket: `integrations/immich/youeye-id.yaml` (`oauth.issuerUrl: ${sso.issuer}`, was `${identity.externalUrl}`; v0.1.3→0.1.4), `integrations/jellyfin/youeye-id.yaml` (`oidEndpoint: ${sso.issuer}`, was `${identity.externalUrl}/`; v0.1.3→0.1.4), `catalog.yaml` (both latestVersion→0.1.4). These were the ONLY two apps on the bare issuer.
+
+### Test Results
+- `tsc --noEmit`: no errors in the changed files (only pre-existing unrelated `sso-setup.ts` errors; `ignoreBuildErrors`). Owner does a FULL REINSTALL + dual-account re-test (per request).
+
+### Notes for Iris
+- CP `cp-mythos-v0.4.49.6` + Market `mythos-v0.4.0.10`. No UI/Spine change.
+- Builds on 0.4.49.4 (CA) + 0.4.49.5 (accept-both/nonce/email_verified); this closes the 4th axis (issuer matching). With all four, strict + lenient OIDC libraries should both work.
+- First-party CP/UI login unaffected (lenient: exchange→userinfo; the `verifyBearerToken` change keeps /userinfo working with the per-client `iss`). No backwards-compat kept (bare issuer removed) → clean reinstall is the test path.
+- Watch on test: Jellyfin `doNotValidateEndpoints: false` may reject the shared endpoints under a per-client issuer → flip to true if so. Audiobookshelf `/undefined/` redirect_uri still separate.
+- Docs: YE-Wiki `control-panel/identity-oidc-provider.md` (per-client issuer) + `app-market/sso-test-results.md` (Bug 4).
+
 ## cp-mythos-v0.4.49.5 — mythos — 2026-06-17
 **Branch:** mythos · **Agent:** Mythos
 **Task:** Make YouEye ID (the homegrown OIDC provider) interoperable with every market app's OIDC client — accept both client-auth methods, echo `nonce`, assert `email_verified`
