@@ -149,7 +149,12 @@ func installVM(config installConfig, ch chan<- engineMsg) {
 		"--net0", fmt.Sprintf("virtio,bridge=%s", bridge),
 		"--ostype", "l26",
 		"--scsihw", "virtio-scsi-single",
-		"--serial0", "socket", "--vga", "serial0",
+		// Serial socket stays (cloud-init + host `qm terminal`), but the
+		// display is std VGA so the Proxmox "Console" button is noVNC —
+		// reliable typing — rather than the xterm.js serial console, which
+		// shows a blank screen until you press Enter and has flaky focus.
+		"--serial0", "socket",
+		"--vga", "std",
 		"--agent", "enabled=1",
 		"--onboot", "1",
 		"--tags", "youeye",
@@ -172,11 +177,11 @@ func installVM(config installConfig, ch chan<- engineMsg) {
 	// -- Cloud-init --
 	send(ch, "Creating VM", "Configuring cloud-init...", 0.24)
 	run("qm", "set", vmid, "--ciuser", ciuser)
-	if config.RootPassword != "" {
-		if hashed, err := run("openssl", "passwd", "-6", config.RootPassword); err == nil {
-			run("qm", "set", vmid, "--cipassword", hashed)
-		}
-	}
+	// NOTE: we deliberately do NOT set --cipassword here. That sets the
+	// password on the youeye cloud-init user, not root — which is exactly
+	// why "log in as root with my password" failed. The password the
+	// operator typed is the VM's ROOT password, applied inside the guest
+	// after boot (see "Configuring VM" below).
 	if _, err := os.Stat("/root/.ssh/authorized_keys"); err == nil {
 		run("qm", "set", vmid, "--sshkeys", "/root/.ssh/authorized_keys")
 	}
@@ -208,6 +213,31 @@ func installVM(config installConfig, ch chan<- engineMsg) {
 		vmIP = strings.Split(config.StaticIP, "/")[0]
 	}
 	send(ch, "Starting VM", fmt.Sprintf("Guest agent up — VM IP: %s", vmIP), 0.38)
+
+	// -- Configure root login + consoles inside the VM (via guest agent) --
+	// The password the operator entered is the VM's ROOT password. Set it on
+	// root directly; chpasswd -e takes the hash, so no plaintext ever lands
+	// on a command line. Then make sure BOTH the graphical console (tty1 →
+	// noVNC) and the serial console (ttyS0) have a live login prompt, so the
+	// box is always reachable.
+	send(ch, "Configuring VM", "Setting root password & console...", 0.40)
+	if config.RootPassword != "" {
+		hashed, herr := run("openssl", "passwd", "-6", config.RootPassword)
+		if herr != nil {
+			sendErr(ch, fmt.Errorf("hashing root password: %w", herr))
+			return
+		}
+		if res, err := qmGuestExec(vmid, 30, "bash", "-lc",
+			fmt.Sprintf("echo 'root:%s' | chpasswd -e", hashed)); err != nil || res.ExitCode != 0 {
+			sendErr(ch, fmt.Errorf("setting root password: %v %s", err, clip(res.OutData+res.ErrData, 200)))
+			return
+		}
+	}
+	// Best-effort: ensure a getty on the VGA console (noVNC) and serial, and
+	// allow root on ttyS0 if /etc/securetty exists and restricts it.
+	qmGuestExec(vmid, 30, "bash", "-lc",
+		"systemctl enable --now getty@tty1.service serial-getty@ttyS0.service 2>/dev/null || true; "+
+			"{ [ -f /etc/securetty ] && ! grep -qx ttyS0 /etc/securetty && echo ttyS0 >> /etc/securetty; } || true")
 
 	// -- Install Spine inside the VM (guest agent runs as root) --
 	send(ch, "Installing Spine", fmt.Sprintf("Installing Spine (%s branch, Forgejo)...", releaseBranch), 0.42)

@@ -57,19 +57,26 @@ func (c completeModel) View() string {
 	)
 
 	// URL on its own line, plain text so it's easy to select/copy
-	rows = append(rows, fmt.Sprintf("  Open in browser:"))
+	rows = append(rows, "  Open in browser:")
 	rows = append(rows, "")
 	rows = append(rows, fmt.Sprintf("    %s", url))
 	rows = append(rows, "")
-
-	rows = append(rows, fmt.Sprintf("  Username:   %s", "admin"))
-
-	pw := "(none — auto-login)"
-	if cfg.RootPassword != "" {
-		pw = "(the one you set)"
-	}
-	rows = append(rows, fmt.Sprintf("  Password:   %s", theme.Dim.Render(pw)))
+	rows = append(rows, theme.Dim.Render("  First visit runs the YouEye setup wizard — you create"))
+	rows = append(rows, theme.Dim.Render("  your admin account there (no web password is preset)."))
 	rows = append(rows, "")
+
+	// VM console / SSH login is a SEPARATE thing from the web login above.
+	if cfg.Mode != modeHost {
+		login := "  VM login:   root"
+		if cfg.RootPassword != "" {
+			login += "  —  password: the one you set"
+		} else {
+			login += "  —  SSH key only (no password set)"
+		}
+		rows = append(rows, login)
+		rows = append(rows, theme.Dim.Render("  Reach it via the Proxmox Console button (noVNC)."))
+		rows = append(rows, "")
+	}
 
 	if cfg.Mode != modeHost {
 		rows = append(rows, fmt.Sprintf("  %s:   %s", cfg.Mode, target))
