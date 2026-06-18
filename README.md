@@ -13,10 +13,10 @@ One command installs a full platform: dashboard with widgets, six native apps, S
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/install.sh | sudo bash -s --
 ```
 
-The installer detects Proxmox or base Linux, installs YouEye, and shows progress in the terminal. When it finishes, open `https://your-server-ip` in your browser and create your account.
+The bootstrap downloads the latest released `youeye-installer` binary, then the installer detects Proxmox or base Linux, installs YouEye, and shows progress in the terminal. When it finishes, open `https://your-server-ip` in your browser and create your account.
 
 > Requires a fresh Debian 12+ or Ubuntu 24.04+ system with root access, or a Proxmox VE host for the VM installer. See [full install guide](docs/getting-started.md) for Proxmox, silent installs, and manual setup.
 
@@ -182,10 +182,10 @@ Full documentation lives in the [`docs/`](docs/) folder:
 ### One-Line Install (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/install.sh | sudo bash -s --
 ```
 
-This downloads the `youeye-installer` binary from GitHub releases. On Proxmox it creates a Debian VM and installs YouEye inside it; on base Debian/Ubuntu it installs YouEye directly on the host.
+This downloads the latest `installer-v*` release asset from GitHub and launches `youeye-installer`. On Proxmox it creates a Debian VM and installs YouEye inside it; on base Debian/Ubuntu it installs YouEye directly on the host. The interactive installer defaults to GitHub core and Market releases on the `main` channel, with editable source fields under Advanced Options.
 
 ### Silent Install
 
@@ -193,10 +193,20 @@ This downloads the `youeye-installer` binary from GitHub releases. On Proxmox it
 curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/install.sh | sudo bash -s -- --silent --yes
 ```
 
-Automation can override the release source and channel:
+Automation can install another channel by selecting the installer binary channel before `bash` and the runtime release channel after `--`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/install.sh | sudo bash -s -- --silent --yes --release-channel dev
+curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/install.sh | sudo env INSTALLER_CHANNEL=dev bash -s -- --silent --yes --release-channel dev
+```
+
+Automation can also override the bootstrap and runtime release sources explicitly:
+
+```bash
+curl -fsSL <installer-script-url> | sudo env INSTALLER_REPO_URL=<installer-release-repo> INSTALLER_CHANNEL=<channel> bash -s -- \
+  --silent --yes \
+  --core-repo <core-release-repo> \
+  --market-repo <market-repo> \
+  --release-channel <channel>
 ```
 
 ### Manual Install

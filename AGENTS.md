@@ -1,3 +1,18 @@
+## docs-readme — artem — 2026-06-18
+**Branch:** dev
+**VM:** potempc
+**Agent:** Artem
+**Task:** Point the monorepo README at the current installer bootstrap command.
+
+### Changes
+- `README.md` — updated the public installer curl examples to use the release-bootstrap `bash -s --` pattern, documented that the bootstrap downloads the released `youeye-installer` binary, and clarified the split between `INSTALLER_CHANNEL` for the installer binary and `--release-channel` for runtime YouEye releases.
+
+### Test Results
+- Docs-only change: verified README installer command references with `rg`.
+
+### Notes for Iris
+- No component version bump or release was created; this is documentation-only.
+
 ## installer-dev-v0.1.0.2 / cp-dev-v0.4.49.14 — artem — 2026-06-18
 **Branch:** dev
 **VM:** potempc
