@@ -30,10 +30,21 @@ export async function GET() {
       });
     }
 
-    const domain = await getConfiguredDomain();
+    let domain: string | undefined;
+    try {
+      const config = await settingsService.getRaw();
+      domain = typeof config.domain === 'string' && config.domain.trim()
+        ? config.domain.trim()
+        : undefined;
+    } catch (err) {
+      console.warn('[Domain] Could not read platform settings domain, falling back to Caddy config:', err);
+    }
+
+    const caddyDomain = await getConfiguredDomain();
     
     return NextResponse.json({
-      domain: domain || null,
+      domain: domain || caddyDomain || null,
+      caddyDomain: caddyDomain || null,
       caddyRunning: true,
     });
   } catch (error) {

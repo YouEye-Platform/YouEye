@@ -18,6 +18,7 @@ import { installApp } from '@/lib/market/engine';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import { startTracking, trackEvent, finishTracking } from '@/lib/market/install-tracker';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
+import { settingsService } from '@/lib/settings';
 import type { InstallConfig, InstallEvent } from '@/lib/market/types';
 
 export const dynamic = 'force-dynamic';
@@ -53,6 +54,19 @@ function validateUrl(url: string): string | null {
   return null;
 }
 
+function validAppSubdomain(value: string): boolean {
+  return /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(value);
+}
+
+async function canonicalPlatformDomain(): Promise<string> {
+  const settings = await settingsService.getRaw();
+  const domain = typeof settings.domain === 'string' ? settings.domain.trim() : '';
+  if (!domain) {
+    throw new Error('Platform domain is not configured');
+  }
+  return domain;
+}
+
 export async function POST(request: NextRequest) {
   let body: { manifestUrl?: string; subdomain?: string; domain?: string };
   try {
@@ -63,11 +77,32 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const { manifestUrl, subdomain, domain } = body;
+  const { manifestUrl } = body;
+  const subdomain = body.subdomain?.trim().toLowerCase();
 
-  if (!manifestUrl || !subdomain || !domain) {
+  if (!manifestUrl || !subdomain) {
     return new Response(
-      JSON.stringify({ error: 'Missing required fields: manifestUrl, subdomain, domain' }),
+      JSON.stringify({ error: 'Missing required fields: manifestUrl, subdomain' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  if (!validAppSubdomain(subdomain)) {
+    return new Response(
+      JSON.stringify({ error: 'Subdomain must be a single DNS label using lowercase letters, numbers, and hyphens' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  let domain: string;
+  try {
+    domain = await canonicalPlatformDomain();
+    if (body.domain && body.domain !== domain) {
+      console.warn(`[Market] Ignoring client-supplied URL install domain "${body.domain}", using platform domain "${domain}"`);
+    }
+  } catch (err) {
+    return new Response(
+      JSON.stringify({ error: err instanceof Error ? err.message : 'Platform domain is not configured' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } },
     );
   }

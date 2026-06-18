@@ -15,9 +15,23 @@ import { uninstallApp } from '@/lib/market/uninstaller';
 import { startTracking, trackEvent, finishTracking } from '@/lib/market/install-tracker';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
 import { emitEvent } from '@/lib/events/emitter';
+import { settingsService } from '@/lib/settings';
 import type { InstallConfig, InstallEvent } from '@/lib/market/types';
 
 export const dynamic = 'force-dynamic';
+
+function validAppSubdomain(value: string): boolean {
+  return /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(value);
+}
+
+async function canonicalPlatformDomain(): Promise<string> {
+  const settings = await settingsService.getRaw();
+  const domain = typeof settings.domain === 'string' ? settings.domain.trim() : '';
+  if (!domain) {
+    throw new Error('Platform domain is not configured');
+  }
+  return domain;
+}
 
 export async function POST(request: NextRequest) {
   let config: InstallConfig;
@@ -30,9 +44,30 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  if (!config.appId || !config.subdomain || !config.domain) {
+  if (!config.appId || !config.subdomain) {
     return new Response(
-      JSON.stringify({ error: 'Missing required fields: appId, subdomain, domain' }),
+      JSON.stringify({ error: 'Missing required fields: appId, subdomain' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  config.subdomain = config.subdomain.trim().toLowerCase();
+  if (!validAppSubdomain(config.subdomain)) {
+    return new Response(
+      JSON.stringify({ error: 'Subdomain must be a single DNS label using lowercase letters, numbers, and hyphens' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  try {
+    const canonicalDomain = await canonicalPlatformDomain();
+    if (config.domain && config.domain !== canonicalDomain) {
+      console.warn(`[Market] Ignoring client-supplied install domain "${config.domain}", using platform domain "${canonicalDomain}"`);
+    }
+    config.domain = canonicalDomain;
+  } catch (err) {
+    return new Response(
+      JSON.stringify({ error: err instanceof Error ? err.message : 'Platform domain is not configured' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }
     );
   }

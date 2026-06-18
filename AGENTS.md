@@ -1,3 +1,26 @@
+## cp-dev-v0.4.49.16 — artem — 2026-06-19
+**Branch:** dev
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix Market app routing when the platform domain is itself a YouEye Names subdomain
+
+### Changes
+- `control-panel/src/app/api/domain/route.ts` — returns the authoritative Spine/settings platform domain before falling back to Caddy inference, so `misty-spring.youeye.me` stays intact.
+- `control-panel/src/lib/caddy/client.ts` — preserves full TLS policy subjects in `getConfiguredDomain()` instead of collapsing them to the final two labels.
+- `control-panel/src/app/api/market/install/route.ts` — canonicalizes app install domains server-side from platform settings and rejects dotted app subdomains.
+- `control-panel/src/app/api/market/install-url/route.ts` — applies the same canonical domain and single-label subdomain guard for URL-based installs.
+- `control-panel/tests/platform-subdomain-routing.spec.mjs` — adds regression coverage for YouEye Names subdomain routing.
+- `control-panel/package.json`, `README.md` — bumped Control Panel to `0.4.49.16` and updated the current-version table.
+
+### Test Results
+- `CONTROL_PANEL_ROOT="$PWD/control-panel" pnpm --dir control-panel exec node --import tsx --test tests/platform-subdomain-routing.spec.mjs tests/market.spec.ts`: PASS (12/12).
+- `pnpm --dir control-panel build`: PASS for `ye-controlpanel@0.4.49.16`.
+- `/tmp/standalone.tar`: verified top-level `server.js` and embedded `package.json` version `0.4.49.16`.
+
+### Notes for Iris
+- CP-only release. UI and Spine are unchanged.
+- The owner will deploy/test manually. Existing installs created during the bug window may need metadata/Caddy route repair from `cloud + youeye.me` to `cloud + <platform-domain>`.
+
 ## cp-dev-v0.4.49.15 / ui-dev-v0.4.28.7 — artem — 2026-06-18
 **Branch:** dev
 **VM:** potempc

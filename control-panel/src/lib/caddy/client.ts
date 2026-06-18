@@ -1110,14 +1110,10 @@ export async function getConfiguredDomain(): Promise<string | undefined> {
     for (const policy of policies) {
       if (policy.subjects) {
         for (const subject of policy.subjects) {
-          // Skip wildcards and return the first real domain
+          // setDomain() stores the configured platform domain itself plus
+          // its wildcard. Return the full subject; leased names such as
+          // misty-spring.youeye.me must not collapse to youeye.me.
           if (!subject.startsWith('*') && subject.includes('.')) {
-            // Extract base domain (remove subdomain if present)
-            const parts = subject.split('.');
-            if (parts.length >= 2) {
-              // Return the last two parts (e.g., example.com from control.example.com)
-              return parts.slice(-2).join('.');
-            }
             return subject;
           }
         }
