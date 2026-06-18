@@ -288,6 +288,7 @@
     "passwordsMustMatch": "Пароли не совпадают",
     "settingUpHome": "Настраиваем ваш новый дом",
     "allDone": "Готово!",
+    "restartingServerInterface": "Перезапуск интерфейса сервера...",
     "stepsComplete": "шагов выполнено",
     "tryAgain": "Попробовать снова",
     "almostThere": "Почти готово!",

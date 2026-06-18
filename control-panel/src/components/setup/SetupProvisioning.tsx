@@ -18,12 +18,20 @@ interface SetupStep {
 interface Props {
   steps: SetupStep[];
   isComplete: boolean;
+  isRestarting?: boolean;
   error: string;
   onRetry: () => void;
   onComplete: () => void;
 }
 
-export default function SetupProvisioning({ steps, isComplete, error, onRetry, onComplete }: Props) {
+export default function SetupProvisioning({
+  steps,
+  isComplete,
+  isRestarting = false,
+  error,
+  onRetry,
+  onComplete,
+}: Props) {
   const t = useTranslations('setup');
   const [funnyMessage, setFunnyMessage] = useState(FUNNY_LOADING_MESSAGES[0]);
   const [messageIndex, setMessageIndex] = useState(0);
@@ -85,7 +93,9 @@ export default function SetupProvisioning({ steps, isComplete, error, onRetry, o
         {/* Funny message or status */}
         <div className="h-8 flex items-center justify-center">
           {isComplete ? (
-            <p className="text-green-600 font-medium animate-in fade-in duration-300">{t('allDone')}</p>
+            <p className="text-green-600 font-medium animate-in fade-in duration-300">
+              {isRestarting ? t('restartingServerInterface') : t('allDone')}
+            </p>
           ) : error ? (
             <p className="text-red-600 text-sm">{error}</p>
           ) : (

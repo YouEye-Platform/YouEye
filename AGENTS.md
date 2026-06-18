@@ -1,3 +1,27 @@
+## cp-dev-v0.4.49.13 — artem — 2026-06-18
+**Branch:** dev
+**VM:** potempc
+**Agent:** Artem
+**Task:** Remove the post-setup TLS query redirect, wait through the CP restart window, and restore the blue Y setup favicon.
+
+### Changes
+- `control-panel/src/app/setup/page.tsx` — setup provisioning now redirects to `/setup-complete` without `?tls=...`, waits for `/api/ping` to return stable success after CP's SSO restart, and keeps upload-mode completion on the same clean URL.
+- `control-panel/src/components/setup/SetupProvisioning.tsx`, `control-panel/messages/*.json` — show a localized "restarting server interface" completion message while the post-setup readiness poll runs.
+- `control-panel/src/middleware.ts` — allows `/api/branding/favicon` through the IP-via-Caddy setup gate so first-setup pages can load the dynamic blue Y favicon.
+- `control-panel/src/app/favicon.ico` — replaced the bundled static default favicon with a transparent blue Y so Next's automatic favicon link no longer shows the default triangle.
+- `control-panel/tests/setup-polish.spec.mjs` — guards the clean setup-complete redirect, readiness poll, restart message, and setup favicon middleware allowlist.
+- `control-panel/package.json`, `README.md` — bumped Control Panel to `0.4.49.13` and updated the dev release pointer.
+
+### Test Results
+- CP focused: `pnpm exec node --test tests/setup-polish.spec.mjs` passed.
+- CP build: `pnpm build` passed for `ye-controlpanel@0.4.49.13`.
+- CP artifact: `standalone.tar` contains root `server.js`, includes `src/app/favicon.ico`, and reports package version `0.4.49.13`.
+- Visual asset check: rendered the 32px favicon frame with ImageMagick and verified it is the blue Y on a transparent background.
+
+### Notes for Iris
+- CP-only release. The live VM was not deployed from this workspace because the owner said they will test and update the server themselves.
+- The setup-complete page still accepts legacy `?tls=...` for old links, but the setup wizard no longer emits that query string; TLS choice comes from persisted setup config.
+
 ## ui-dev-v0.4.28.6 — artem — 2026-06-18
 **Branch:** dev
 **VM:** potempc

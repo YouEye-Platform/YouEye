@@ -42,6 +42,16 @@ interface SetupStep {
   message?: string;
 }
 
+const SETUP_COMPLETE_PATH = '/setup-complete';
+const SETUP_RESTART_SETTLE_MS = 2_500;
+const SETUP_READY_POLL_MS = 1_000;
+const SETUP_READY_MIN_WAIT_MS = 8_000;
+const SETUP_READY_TIMEOUT_MS = 45_000;
+
+function delay(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // Steps: -2=language, 0=serverName(+LE inline), 1=wordart, 2=icon, 3=admin,
 //        4=provisioning, 5=tls(upload only), 6=dns
 // Note: step -1 (choice) and 'restore' are disabled — backup feature is hidden
@@ -88,6 +98,7 @@ export default function SetupPage() {
   const [setupSteps, setSetupSteps] = useState<SetupStep[]>([]);
   const [setupComplete, setSetupComplete] = useState(false);
   const [setupError, setSetupError] = useState('');
+  const [setupRestarting, setSetupRestarting] = useState(false);
 
   // Selected language
   const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
@@ -117,7 +128,7 @@ export default function SetupPage() {
       if (res.ok) {
         const config: SetupConfig = await res.json();
         if (config.setup_completed) {
-          router.replace('/setup-complete');
+          router.replace(SETUP_COMPLETE_PATH);
           return;
         }
         if (config.site_name && config.site_name !== 'YouEye') setSiteName(config.site_name);
@@ -178,17 +189,52 @@ export default function SetupPage() {
     ? `${yenName}.youeye.me`
     : `${domainSlug}${effectiveTld}`;
 
+  const waitForControlPanelReady = useCallback(async () => {
+    const startedAt = Date.now();
+    let sawRestartWindow = false;
+    let consecutiveOk = 0;
+
+    await delay(SETUP_RESTART_SETTLE_MS);
+
+    while (Date.now() - startedAt < SETUP_READY_TIMEOUT_MS) {
+      try {
+        const res = await fetch(`/api/ping?setup-complete-ready=${Date.now()}`, {
+          cache: 'no-store',
+        });
+        if (res.ok) {
+          consecutiveOk += 1;
+          if (
+            consecutiveOk >= 2 &&
+            (sawRestartWindow || Date.now() - startedAt >= SETUP_READY_MIN_WAIT_MS)
+          ) {
+            return;
+          }
+        } else {
+          sawRestartWindow = true;
+          consecutiveOk = 0;
+        }
+      } catch {
+        sawRestartWindow = true;
+        consecutiveOk = 0;
+      }
+
+      await delay(SETUP_READY_POLL_MS);
+    }
+  }, []);
+
   // After provisioning completes:
-  // - LE: cert already issued in step 0 → go to DNS explainer
-  // - Self-signed: no TLS step needed → go to DNS explainer
+  // - LE/self-signed/YouEye Names: wait for CP's SSO restart, then show DNS explainer
   // - Upload: show upload flow in step 5
   const handleProvisioningComplete = useCallback(() => {
     if (tlsChoice === 'upload') {
       goToStep(5); // show upload flow
     } else {
-      router.replace(`/setup-complete?tls=${encodeURIComponent(tlsChoice)}`);
+      setSetupRestarting(true);
+      void waitForControlPanelReady().finally(() => {
+        router.replace(SETUP_COMPLETE_PATH);
+      });
     }
-  }, [tlsChoice, goToStep, router]);
+  }, [tlsChoice, goToStep, router, waitForControlPanelReady]);
 
   // Run setup provisioning
   const handleRunSetup = useCallback(async () => {
@@ -427,10 +473,12 @@ export default function SetupPage() {
           <SetupProvisioning
             steps={setupSteps}
             isComplete={setupComplete}
+            isRestarting={setupRestarting}
             error={setupError}
             onRetry={() => {
               provisioningStarted.current = false;
               setSetupComplete(false);
+              setSetupRestarting(false);
               setSetupError('');
               setSetupSteps([]);
               handleRunSetup();
@@ -442,7 +490,7 @@ export default function SetupPage() {
         {step === 5 && (
           <SetupTls
             domain={domain}
-            onComplete={() => router.replace(`/setup-complete?tls=${encodeURIComponent(tlsChoice)}`)}
+            onComplete={() => router.replace(SETUP_COMPLETE_PATH)}
             onBack={() => goToStep(0, 'back')}
           />
         )}

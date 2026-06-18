@@ -12,11 +12,18 @@ function read(path) {
 test('setup completion persists and reuses the selected TLS path', () => {
   const run = read('src/app/api/setup/run/route.ts');
   const setup = read('src/app/setup/page.tsx');
+  const provisioning = read('src/components/setup/SetupProvisioning.tsx');
   const complete = read('src/app/setup-complete/page.tsx');
   const settings = read('src/lib/settings/service.ts');
 
   assert.match(run, /tls_choice: body\.tls_choice \|\| 'selfsigned'/);
-  assert.match(setup, /router\.replace\(`\/setup-complete\?tls=\$\{encodeURIComponent\(tlsChoice\)\}`\)/);
+  assert.match(setup, /const SETUP_COMPLETE_PATH = '\/setup-complete'/);
+  assert.match(setup, /\/api\/ping\?setup-complete-ready=/);
+  assert.match(setup, /router\.replace\(SETUP_COMPLETE_PATH\)/);
+  assert.match(setup, /isRestarting=\{setupRestarting\}/);
+  assert.doesNotMatch(setup, /\/setup-complete\?tls=/);
+  assert.match(provisioning, /isRestarting \= false/);
+  assert.match(provisioning, /restartingServerInterface/);
   assert.match(complete, /new URLSearchParams\(window\.location\.search\)\.get\('tls'\)/);
   assert.match(complete, /data\.extra\?\.tls_choice/);
   assert.match(complete, /tlsChoice=\{tlsChoice\}/);
@@ -25,10 +32,14 @@ test('setup completion persists and reuses the selected TLS path', () => {
 
 test('fallback favicon is the transparent blue Y used during initial setup', () => {
   const favicon = read('src/app/api/branding/favicon/route.ts');
+  const middleware = read('src/middleware.ts');
+  const staticFavicon = readFileSync(join(root, 'src/app/favicon.ico'));
 
   assert.match(favicon, /fill="#2563eb"/);
   assert.doesNotMatch(favicon, /fill="#111827"/);
   assert.doesNotMatch(favicon, /<rect[^>]+fill="#111827"/);
+  assert.match(middleware, /setupAllowedPaths[\s\S]*'\/api\/branding\/favicon'/);
+  assert.ok(staticFavicon.length > 1000);
 });
 
 test('PAM login tree is the default full-screen root emergency door asset', () => {

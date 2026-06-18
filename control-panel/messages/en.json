@@ -288,6 +288,7 @@
     "passwordsMustMatch": "Passwords do not match",
     "settingUpHome": "Setting up your new home",
     "allDone": "All done!",
+    "restartingServerInterface": "Restarting the server interface...",
     "stepsComplete": "steps complete",
     "tryAgain": "Try Again",
     "almostThere": "Almost there!",

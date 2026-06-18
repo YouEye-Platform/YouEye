@@ -288,6 +288,7 @@
     "passwordsMustMatch": "Les mots de passe ne correspondent pas",
     "settingUpHome": "Configuration de votre nouveau chez-vous",
     "allDone": "Terminé !",
+    "restartingServerInterface": "Redémarrage de l'interface du serveur...",
     "stepsComplete": "étapes terminées",
     "tryAgain": "Réessayer",
     "almostThere": "Presque terminé !",
