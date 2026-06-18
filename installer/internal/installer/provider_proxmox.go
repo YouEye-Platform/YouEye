@@ -239,6 +239,27 @@ func installVM(config installConfig, ch chan<- engineMsg) {
 	qmGuestExec(vmid, 30, "bash", "-lc",
 		"systemctl enable --now getty@tty1.service serial-getty@ttyS0.service 2>/dev/null || true; "+
 			"{ [ -f /etc/securetty ] && ! grep -qx ttyS0 /etc/securetty && echo ttyS0 >> /etc/securetty; } || true")
+	// Debian cloud images install Proxmox --sshkeys on the cloud-init user and
+	// also put forced-command guard entries in root's authorized_keys. That is
+	// good generic cloud posture, but confusing here: the installer explicitly
+	// sets a root password for console recovery, and the cloud-init user already
+	// has passwordless sudo. Normalize the same operator-supplied keys so root
+	// SSH works for host/debug automation without weakening password login.
+	qmGuestExec(vmid, 30, "bash", "-lc", fmt.Sprintf(`
+set -e
+src=%q
+if [ -s "$src" ]; then
+  install -d -m 700 -o root -g root /root/.ssh
+  tmp="$(mktemp)"
+  if [ -f /root/.ssh/authorized_keys ]; then
+    awk 'index($0, "Please login as the user") == 0 { print }' /root/.ssh/authorized_keys > "$tmp"
+  fi
+  cat "$src" >> "$tmp"
+  awk 'NF && !seen[$0]++ { print }' "$tmp" > "$tmp.dedup"
+  install -m 600 -o root -g root "$tmp.dedup" /root/.ssh/authorized_keys
+  rm -f "$tmp" "$tmp.dedup"
+fi
+`, "/home/"+ciuser+"/.ssh/authorized_keys"))
 
 	// Prefer IPv4 for image pulls (CLAUDE.md pitfall #17). A fresh VM has no
 	// IPv6 route, but Docker Hub's DNS returns AAAA records — skopeo (used by
@@ -308,10 +329,10 @@ func installVM(config installConfig, ch chan<- engineMsg) {
 						detail = tail.OutData
 					}
 					// NOTE: we don't suggest re-running `youeye deploy` — it is not
-				// idempotent (fails on "Instance already exists" and then skips
-				// the remaining stages). A clean reinstall on a fresh VM is the
-				// reliable recovery.
-				sendErr(ch, fmt.Errorf("youeye deploy did not fully complete (exit %s). The VM (%s) is up — log in as root and check /var/log/youeye-deploy.log; reinstall on a fresh VM to recover:\n%s", code, vmIP, clip(detail, 700)))
+					// idempotent (fails on "Instance already exists" and then skips
+					// the remaining stages). A clean reinstall on a fresh VM is the
+					// reliable recovery.
+					sendErr(ch, fmt.Errorf("youeye deploy did not fully complete (exit %s). The VM (%s) is up — log in as root and check /var/log/youeye-deploy.log; reinstall on a fresh VM to recover:\n%s", code, vmIP, clip(detail, 700)))
 					return
 				}
 				break

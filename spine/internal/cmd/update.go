@@ -64,6 +64,27 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 fi
+if [ -f /etc/youeye/incus-client.crt ] && [ -f /etc/youeye/incus-client.key ]; then
+  INCUS_URL="$(systemctl show youeye-control --property=Environment --value 2>/dev/null | tr ' ' '\n' | sed -n 's/^INCUS_HTTPS_URL=//p' | head -n1)"
+  if [ -z "$INCUS_URL" ] && [ -f /etc/systemd/system/youeye-control.service ]; then
+    INCUS_URL="$(sed -n 's/^Environment=INCUS_HTTPS_URL=//p' /etc/systemd/system/youeye-control.service | head -n1)"
+  fi
+  if [ -z "$INCUS_URL" ]; then
+    GW="$(ip route show default 2>/dev/null | awk '{print $3; exit}')"
+    if [ -n "$GW" ]; then
+      INCUS_URL="${GW}:8443"
+    fi
+  fi
+  if [ -n "$INCUS_URL" ]; then
+    mkdir -p /etc/systemd/system/youeye-id.service.d
+    cat > /etc/systemd/system/youeye-id.service.d/incus-https.conf <<EOF
+[Service]
+Environment=INCUS_HTTPS_URL=${INCUS_URL}
+Environment=INCUS_CLIENT_CERT=/etc/youeye/incus-client.crt
+Environment=INCUS_CLIENT_KEY=/etc/youeye/incus-client.key
+EOF
+  fi
+fi
 systemctl daemon-reload
 systemctl enable youeye-id
 systemctl restart youeye-id

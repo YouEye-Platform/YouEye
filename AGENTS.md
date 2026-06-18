@@ -1,3 +1,23 @@
+## spine-v0.4.10.2 + installer refresh — artem — 2026-06-18
+**Branch:** artem · **VM:** potempc · **Agent:** Artem
+**Task:** Fix fresh-install identity-login 500 and remove the root SSH cloud-init guard for operator keys.
+
+### Changes
+- `spine/internal/container/control.go` — fresh deploy now creates `youeye-id.service` with the same `INCUS_HTTPS_URL`, `INCUS_CLIENT_CERT`, and `INCUS_CLIENT_KEY` env as `youeye-control.service`.
+- `spine/internal/api/server.go`, `spine/internal/cmd/update.go` — CP update/repair paths now write a `youeye-id.service.d/incus-https.conf` drop-in for existing installs when the Incus client cert/key exist, then restart `youeye-id`.
+- `spine/internal/cmd/root.go` — Spine 0.4.10.1 -> **0.4.10.2**.
+- `installer/internal/installer/provider_proxmox.go` — after guest boot, normalize the operator-supplied cloud-init SSH keys into `/root/.ssh/authorized_keys` without Debian's forced "login as youeye" root guard. This does not enable password root SSH; it makes trusted host keys work directly for root, equivalent to the existing `youeye` passwordless-sudo path.
+- `README.md` — Current Versions table updated for `spine-artem-v0.4.10.2`.
+
+### Test Results
+- Live hotpatch on VM `youeye8` (`192.168.31.65`): added the Incus HTTPS env drop-in to `youeye-id.service`, restarted only `youeye-id`, and confirmed `/application/o/authorize` returns a clean 307 to `/identity/login` with no new `ENOENT /var/lib/incus/unix.socket` route errors.
+- Spine: `go test ./...`, `go vet ./...`, and `go build ./...` passed.
+- Installer: `go test ./...` and `go vet ./...` passed.
+
+### Notes for Iris
+- Root SSH direct login is acceptable here because the imported host keys already land on the `youeye` cloud-init user, which has passwordless sudo. The change removes a confusing forced-command guard for the same trusted keys; it does not enable root password SSH.
+- The identity-login 500 root cause was `youeye-id.service` falling back to the removed Incus Unix socket because it lacked the HTTPS Incus client env that CP already had.
+
 ## cp-v0.4.49.5 + installer refresh — artem — 2026-06-18
 **Branch:** artem · **VM:** potempc · **Agent:** Artem
 **Task:** Redesign the PAM root login and installer root-password screens around the full-screen tree motif.
