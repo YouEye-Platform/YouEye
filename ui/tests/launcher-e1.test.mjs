@@ -12,7 +12,8 @@ const read = (p) => readFileSync(join(root, p), 'utf8');
 test('Launcher renders search + app grid + Market/Settings system tiles', () => {
   const l = read('src/components/layout/launcher.tsx');
   assert.match(l, /t\("searchApps"\)/);
-  assert.match(l, /filteredApps\.map/);
+  assert.match(l, /searchHits\.map/);
+  assert.match(l, /gridItems\.map/);
   assert.match(l, /systemTiles/);
   assert.match(l, /href: "\/market"/);
   assert.match(l, /href: "\/settings"/);

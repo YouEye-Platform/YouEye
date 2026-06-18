@@ -965,7 +965,7 @@ function LinkHandlingTab({
             />
             <input
               type="text"
-              placeholder="Domains, comma-separated (e.g. youtube.com, vimeo.com)"
+              placeholder="Domains, comma-separated (e.g. example.com, media.example)"
               value={formTriggers}
               onChange={(e) => setFormTriggers(e.target.value)}
               className="w-full px-3 py-1.5 text-sm border rounded-md bg-background"

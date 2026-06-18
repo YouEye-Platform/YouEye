@@ -33,15 +33,6 @@ interface BookmarksWidgetProps {
   };
 }
 
-function getFaviconUrl(url: string, size: number): string {
-  try {
-    const domain = new URL(url).hostname;
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=${size}`;
-  } catch {
-    return "";
-  }
-}
-
 function getDomain(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, "");
@@ -112,7 +103,7 @@ export function BookmarksWidget({ settings }: BookmarksWidgetProps) {
               rel="noopener noreferrer"
               className="flex items-center gap-3 px-2.5 py-1.5 rounded-lg hover:bg-white/5 transition-colors group"
             >
-              <FaviconWithFallback url={bookmark.url} icon={bookmark.icon} title={bookmark.title} />
+              <FaviconWithFallback icon={bookmark.icon} title={bookmark.title} />
               <div className="flex-1 min-w-0">
                 {showLabels && (
                   <span className="text-sm text-foreground/90 truncate block leading-tight">
@@ -132,15 +123,13 @@ export function BookmarksWidget({ settings }: BookmarksWidgetProps) {
 }
 
 function FaviconWithFallback({
-  url,
   icon,
   title,
 }: {
-  url: string;
   icon?: string;
   title: string;
 }) {
-  const faviconUrl = icon || getFaviconUrl(url, 32);
+  const faviconUrl = icon;
   const [failed, setFailed] = useState(false);
 
   if (!faviconUrl || failed) {

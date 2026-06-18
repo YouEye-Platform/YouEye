@@ -17,3 +17,10 @@ test('header/config omits the installed-app list for native-app (service) calls'
   // the service-call flag is derived from the app header
   assert.match(r, /const isServiceCall = !!request\.headers\.get\("x-youeye-app"\)/);
 });
+
+test('ui settings bridge exposes the UI base URL for CP iframe hosts', () => {
+  const r = read('src/app/api/ui-bridge/settings/[...path]/route.ts');
+
+  assert.match(r, /const uiBaseUrl = process\.env\.UI_EXTERNAL_URL \|\| ""/);
+  assert.match(r, /ui_base_url: uiBaseUrl/);
+});

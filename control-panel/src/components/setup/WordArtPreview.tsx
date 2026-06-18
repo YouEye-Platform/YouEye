@@ -38,7 +38,7 @@ const FONT_CSS_MAP: Record<string, string> = {
 };
 
 /** Load a font via local self-hosted CSS (idempotent) */
-export function useGoogleFont(fontFamily: string) {
+export function useLocalDisplayFont(fontFamily: string) {
   useEffect(() => {
     const id = `gf-${fontFamily.replace(/\s+/g, '-')}`;
     if (document.getElementById(id)) return;
@@ -76,7 +76,7 @@ interface Props {
 }
 
 export default function WordArtPreview({ name, style, sizeOverride, className = '' }: Props) {
-  useGoogleFont(style.fontFamily);
+  useLocalDisplayFont(style.fontFamily);
 
   const cssStyle = useMemo((): CSSProperties => {
     const base: CSSProperties = {

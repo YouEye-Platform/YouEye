@@ -8,7 +8,7 @@ function read(path: string): string {
   return readFileSync(join(uiRoot, path), 'utf8');
 }
 
-test('E4: account menu is the Google-style panel (greeting, manage pill, footer)', () => {
+test('E4: account menu is the structured panel (greeting, manage pill, footer)', () => {
   const src = read('src/components/layout/user-menu.tsx');
   assert.match(src, /Hi, \{firstName\}!/);
   assert.match(src, /Manage your account/);

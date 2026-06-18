@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Eye, EyeOff, Loader2, Monitor, Moon, Palette, Pencil, Plus, RotateCcw, Save, Sun, Upload } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Check, Loader2, Monitor, Moon, Palette, RotateCcw, Save, Sun, Upload } from "lucide-react";
 import type { SiteNameStyle } from "@/lib/wordart-presets";
 import WordArtPickerInline from "@/components/setup/WordArtPickerInline";
 import WordArtGalleryEmbed from "@/components/embed/WordArtGalleryEmbed";
@@ -38,16 +38,6 @@ interface Branding {
   accent_color?: string | null;
   logo_url?: string | null;
   favicon_url?: string | null;
-}
-
-interface DrawerApp {
-  id: string;
-  name: string;
-  original_name?: string;
-  icon: string | null;
-  custom_icon_url?: string | null;
-  visible: boolean;
-  status: string | null;
 }
 
 function tabClass(active: boolean) {
@@ -324,84 +314,6 @@ function ThemeSettings() {
   );
 }
 
-function AppDrawerSettings({ isAdmin }: { isAdmin: boolean }) {
-  const [apps, setApps] = useState<DrawerApp[]>([]);
-  const [editing, setEditing] = useState<DrawerApp | null>(null);
-  const [status, setStatus] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  const load = useCallback(async () => {
-    const res = await fetch(uiSettingsApi("apps/drawer"));
-    if (!res.ok) {
-      setStatus("Could not load apps.");
-      return;
-    }
-    const data = await res.json();
-    setApps((data.apps || []).sort((a: DrawerApp, b: DrawerApp) => a.name.localeCompare(b.name)));
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  async function patchApp(appId: string, body: Record<string, unknown>) {
-    setSaving(true);
-    const res = await fetch(uiSettingsApi(`apps/drawer/${encodeURIComponent(appId)}`), {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    setStatus(res.ok ? "Saved" : "Save failed");
-    setSaving(false);
-    await load();
-  }
-
-  return (
-    <section className="space-y-3">
-      <div>
-        <h3 className="text-base font-semibold">App Drawer</h3>
-        <p className="text-sm text-muted-foreground">Customize the apps shown in the universal header drawer.</p>
-      </div>
-      {apps.length === 0 ? (
-        <p className="py-4 text-sm text-muted-foreground">No apps installed yet. Install apps from the marketplace to customize your drawer.</p>
-      ) : (
-        <div className="space-y-1.5">
-          {apps.map((app) => (
-            <div key={app.id} className={`flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 ${!app.visible ? "opacity-50" : ""}`}>
-              <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg bg-accent text-sm">
-                {app.custom_icon_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={app.custom_icon_url} alt="" className="h-8 w-8 rounded-lg object-cover" />
-                ) : app.icon?.startsWith("emoji:") ? <span>{app.icon.slice(6)}</span> : <span className="text-xs font-medium">{app.name[0]?.toUpperCase()}</span>}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{app.name}</p>
-                <p className="text-xs text-muted-foreground">{app.status || "unknown"}</p>
-              </div>
-              <Button variant="ghost" size="icon-sm" onClick={() => patchApp(app.id, { visible: !app.visible })} title={app.visible ? "Hide from drawer" : "Show in drawer"}>
-                {app.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-              </Button>
-              <Button variant="ghost" size="icon-sm" onClick={() => setEditing(app)} title="Edit display name">
-                <Pencil className="h-4 w-4" />
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
-      {editing && (
-        <div className="rounded-lg border p-4">
-          <p className="mb-3 text-sm font-medium">Edit {editing.original_name || editing.name}</p>
-          <div className="flex flex-wrap gap-2">
-            <input value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} className="min-w-64 flex-1 rounded-md border bg-background px-3 py-2 text-sm" />
-            <Button disabled={saving} onClick={() => patchApp(editing.id, { customName: editing.name })}>Save</Button>
-            <Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
-            {isAdmin && <Button variant="outline" onClick={() => patchApp(editing.id, { customName: editing.name, setAsDefault: true })}>Set as server default</Button>}
-          </div>
-        </div>
-      )}
-      {status && <p className="text-sm text-muted-foreground">{status}</p>}
-    </section>
-  );
-}
-
 export function AppearanceClient({ isAdmin }: AppearanceClientProps) {
   return (
     <div className="space-y-10">
@@ -411,7 +323,6 @@ export function AppearanceClient({ isAdmin }: AppearanceClientProps) {
       </div>
       <BrandingTabs isAdmin={isAdmin} />
       <ThemeSettings />
-      <AppDrawerSettings isAdmin={isAdmin} />
     </div>
   );
 }

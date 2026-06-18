@@ -1,3 +1,47 @@
+## cp-dev-v0.4.49.15 / ui-dev-v0.4.28.7 — artem — 2026-06-18
+**Branch:** dev
+**VM:** potempc
+**Agent:** Artem
+**Task:** Move Control Panel header apps onto the UI-served drawer/launcher and prepare public cleanup release
+
+### Changes
+- `control-panel/src/components/control-surface/control-header.tsx` — removed the legacy CP-rendered app drawer/editor and replaced it with UI-origin `/embed/drawer` and `/embed/launcher` iframe hosts with origin-validated `youeye:resize` and `youeye:action/open-launcher` handling.
+- `ui/src/app/api/ui-bridge/settings/[...path]/route.ts` — added `ui_base_url` to the CP header-config bridge payload from `UI_EXTERNAL_URL` so CP can host the UI drawer without guessing domains.
+- `control-panel/src/components/settings-shell/appearance-client.tsx` — removed the old CP drawer customization section; drawer/launcher ownership now stays in UI.
+- `control-panel/src/app/*`, `ui/src/app/*`, `ui/src/components/*`, `control-panel/tests/*`, `ui/tests/*` — completed public wording/source cleanup and regenerated tracked worker assets.
+- `control-panel/package.json`, `ui/package.json`, `README.md` — bumped Control Panel to `0.4.49.15`, UI to `0.4.28.7`, and updated the current-version table.
+
+### Test Results
+- `node --test control-panel/tests/control-header-drawer-icons.spec.mjs ui/tests/header-config-security.test.mjs ui/tests/launcher-e1.test.mjs`: PASS (7/7).
+- `pnpm build` in `control-panel`: PASS for `ye-controlpanel@0.4.49.15`; `control-panel/.next/standalone.tar` created.
+- `pnpm build` in `ui`: PASS for `ye-ui@0.4.28.7`; `ui/.next/standalone.tar` created.
+- Public-reference grep sweep: PASS after cleanup; remaining names are practical dependencies, providers, app names, package coordinates, release-source support, or runtime config.
+- `pnpm --dir control-panel exec tsc --noEmit`: still fails on pre-existing unrelated TS issues in Market validation, suggestions, service-worker typings, SSO setup, and system-market manifests.
+
+### Notes for Iris
+- The bridge remains one-way CP -> UI; UI server code does not call CP. CP only hosts UI-origin embeds using the bridge-provided `ui_base_url`.
+- CP Appearance no longer owns app drawer settings. Drawer pinning, layout, launcher folders, and edit/search behavior stay in UI.
+- This release pairs with native app public-cleanup releases but does not require native code for CP's own Settings header to use the new drawer/launcher.
+
+## Unreleased — artem — 2026-06-18
+**Branch:** dev
+**VM:** potempc
+**Agent:** Artem
+**Task:** Clean public references and remove unnecessary external lookup paths
+
+### Changes
+- `AGENTS.md`, `control-panel/tests/*`, `ui/tests/*`, `ui/src/components/*`, `ui/src/middleware.ts`, `ui/src/app/api/v1/user/avatar/[id]/route.ts` — replaced nonessential product-comparison wording with neutral UI descriptions.
+- `control-panel/src/app/layout.tsx`, `control-panel/src/app/globals.css`, `ui/src/app/globals.css` — removed named external font-provider imports/variables in favor of local/system stacks.
+- `ui/src/components/widgets/bookmarks-*` — replaced remote favicon lookups with local fallback tiles.
+- `ui/src/app/sw.ts`, `ui/public/sw.js`, `control-panel/src/app/sw.ts` — switched worker source to a first-party cache/offline implementation and regenerated the tracked UI worker.
+
+### Test Results
+- `pnpm build` in `ui`: PASS; postbuild recovered missing standalone symlinks by copying workspace dependencies.
+- Targeted public-reference grep sweep: PASS.
+
+### Notes for Iris
+- No release, version bump, tag, or push was created.
+
 ## docs-readme — artem — 2026-06-18
 **Branch:** dev
 **VM:** potempc
@@ -705,7 +749,7 @@
 
 ## cp-v0.4.45 — mythos — 2026-06-15
 **Branch:** main · **Agent:** Mythos
-**Task:** Plan 1 D — Market Browse rebuilt to Umbrel mockup + new Sources page
+**Task:** Plan 1 D — Market Browse rebuilt to approved mockup + new Sources page
 
 ### Changes
 - `control-panel/src/app/market/page.tsx` — full restyle to `market.html`: hero + search, pill bar (All/Installed/Updates/Integrations + categories + Sources pill), "Built for your server" native big-tiles, Featured banner, compact category rows → app detail. Token-styled (dropped ~15 hardcoded-gray raw inputs + filter `<select>`s). `MarketIcon` (iconUrl or category-colored tile + lucide). Install/uninstall now live on the detail page.
@@ -921,7 +965,7 @@
 
 ## ui-v0.4.10 — mythos — 2026-06-14
 **Branch:** main · **Agent:** Mythos
-**Task:** Plan 1 E4 — Google-style account menu
+**Task:** Plan 1 E4 — account menu
 
 ### Changes
 - `ui/src/components/layout/user-menu.tsx` — rebuilt to the mockup: 340px rounded panel, centered email, 76px avatar + edit pencil, "Hi, <first name>!", "Manage your account" pill, grouped card (Timeline/Settings), **Theme Light/Dark/Auto segmented control** (replaces cycle; DB-synced), ghost Sign out, Privacy·About footer. Tokenized; data plumbing preserved.
@@ -1145,7 +1189,7 @@
 **Task:** Simplify identity consent to account handoff
 
 ### Changes
-- `control-panel/src/app/application/o/authorize/route.ts` — Reworked the consent screen into a Google-like account handoff: provider mark, `Sign in to <app>`, selected account row, short sharing copy, quiet revoke note, optional runtime permission toggles only when needed, and no technical details/scope chips/diagram/risk pills.
+- `control-panel/src/app/application/o/authorize/route.ts` — Reworked the consent screen into a account handoff: provider mark, `Sign in to <app>`, selected account row, short sharing copy, quiet revoke note, optional runtime permission toggles only when needed, and no technical details/scope chips/diagram/risk pills.
 - `control-panel/tests/identity-consent.spec.ts` — Updated static regressions to lock in the simplified account handoff and prevent raw technical scope UI from returning.
 - `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.21`.
 
@@ -4613,7 +4657,7 @@
 
 ### Notes for Iris
 - **Architecture change**: ALL UI→CP bridge calls for avatar eliminated. CP owns Authentik avatar management end-to-end.
-- **Avatar serving is now public** — profile pictures are served without auth at `/api/v1/user/avatar/[id]` (like Gravatar). Upload/delete still require auth.
+- **Avatar serving is now public** — profile pictures are served without auth at `/api/v1/user/avatar/[id]`. Upload/delete still require auth.
 - **Header config contract change**: `user.avatar_url` is now included. Existing apps that don't use it are unaffected (additive change).
 - Native apps (Search, Weather) have independent releases for the avatar display change.
 - Authentik admin settings MUST have `attributes.avatar` in the `avatars` chain — setup wizard and branding sync handle this automatically.
@@ -4921,10 +4965,10 @@
 **Branch:** vanya
 **VM:** ye-vanya
 **Agent:** Vanya
-**Task:** Revert app drawer from Sheet panel to Google-style Popover dropdown
+**Task:** Revert app drawer from Sheet panel to compact Popover dropdown
 
 ### Changes
-- `ui/src/components/layout/app-drawer.tsx` — Reverted from Sheet side-panel to Popover dropdown (Google-style). Kept edit mode with show/hide/reorder, drawer prefs (columns, icon scale), and admin-only marketplace link. Removed max-height slider (dropdown auto-sizes). Footer now has "Manage Apps" + "Edit" button.
+- `ui/src/components/layout/app-drawer.tsx` — Reverted from Sheet side-panel to Popover dropdown. Kept edit mode with show/hide/reorder, drawer prefs (columns, icon scale), and admin-only marketplace link. Removed max-height slider (dropdown auto-sizes). Footer now has "Manage Apps" + "Edit" button.
 - `ui/package.json` — Bumped 0.3.2.4 → 0.3.2.5
 - `ui/tests/server-name-widget-drawer.spec.ts` — Updated tests for Popover instead of Sheet
 
@@ -5153,7 +5197,7 @@ pnpm hoists sharp to workspace root with symlinks. Next.js standalone copies the
 ### Changes
 - `control-panel/src/lib/apps/pihole-api.ts` — Added `getUpstreamDNS()` and `setUpstreamDNS()` functions using Pi-Hole FTL v6 `/api/config/dns` upstreams endpoint
 - `control-panel/src/app/api/apps/pihole/upstream/route.ts` — New API route (GET/PUT) with IP validation, deduplication, minimum-one-server enforcement
-- `control-panel/src/app/(dashboard)/dns/page.tsx` — Added "Upstream DNS Servers" card to Settings tab with current server list, add/remove, and quick presets (Cloudflare, Google, Quad9, OpenDNS)
+- `control-panel/src/app/(dashboard)/dns/page.tsx` — Added "Upstream DNS Servers" card to Settings tab with current server list, add/remove, and quick presets
 - `control-panel/messages/{en,ru,de,fr,es}.json` — 13 new i18n keys per language for upstream DNS UI
 - `control-panel/package.json` — Version bump to 0.2.22.4
 
@@ -5862,7 +5906,7 @@ pnpm hoists sharp to workspace root with symlinks. Next.js standalone copies the
 - `ui/src/lib/themes/css-generator.ts` — Added `charShapeId` and `charShapeIntensity` fields
 - `ui/src/components/wordart/WordArtPicker.tsx` — `ALL_SHAPE_PRESETS` (CSS + per-char), per-character span rendering, expanded `FONT_CSS_MAP` for 31 fonts
 - `ui/src/components/layout/site-name.tsx` — Per-character span rendering for char shapes, expanded `FONT_CSS_MAP`
-- `ui/src/app/onboarding/page.tsx` — Per-character span rendering, switched from Google Fonts CDN to local self-hosted fonts, expanded `FONT_CSS_MAP`
+- `ui/src/app/onboarding/page.tsx` — Per-character span rendering, switched from external font CDN to local self-hosted fonts, expanded `FONT_CSS_MAP`
 - `ui/scripts/postbuild.js` — Changed from destructive `.next/static` replacement to merge strategy (previous approach broke Next.js standalone file serving)
 - `ui/public/fonts/*` — 15 new font families as self-hosted woff2 + CSS
 - `control-panel/src/lib/wordart-presets.ts` — Mirrored all new presets from UI

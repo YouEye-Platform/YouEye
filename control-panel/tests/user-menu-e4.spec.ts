@@ -30,7 +30,7 @@ test("Light/Dark/Auto segmented control replaces the single cycle item", () => {
   assert.doesNotMatch(header, /cycleTheme/);
 });
 
-test("no Google-isms (no Manage-account pill, no Privacy·About footer)", () => {
+test("no borrowed account-panel details (no Manage-account pill, no Privacy·About footer)", () => {
   assert.doesNotMatch(header, />\s*Manage your account/);
   assert.doesNotMatch(header, />\s*About this server/);
 });

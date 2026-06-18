@@ -36,6 +36,11 @@ function extractTitle(url: string): string {
   }
 }
 
+function getBookmarkInitial(bookmark: BookmarkItem): string {
+  const source = bookmark.title || bookmark.url || "?";
+  return source.trim().charAt(0).toUpperCase() || "?";
+}
+
 export function BookmarksEditor({ pages, onChange }: BookmarksEditorProps) {
   const [activePageId, setActivePageId] = useState<string>(pages[0]?.id ?? "");
   const [editingPageId, setEditingPageId] = useState<string | null>(null);
@@ -220,13 +225,9 @@ export function BookmarksEditor({ pages, onChange }: BookmarksEditorProps) {
                   key={bookmark.id}
                   className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-muted/30 group"
                 >
-                  <img
-                    src={`https://www.google.com/s2/favicons?domain=${
-                      (() => { try { return new URL(bookmark.url).hostname; } catch { return ""; } })()
-                    }&sz=16`}
-                    alt=""
-                    className="w-4 h-4 rounded-sm shrink-0"
-                  />
+                  <div className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm bg-muted text-[10px] font-medium text-muted-foreground">
+                    {getBookmarkInitial(bookmark)}
+                  </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-xs truncate">{bookmark.title}</div>
                     <div className="text-[10px] text-muted-foreground truncate">{bookmark.url}</div>

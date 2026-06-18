@@ -61,7 +61,7 @@ const FONT_CSS_MAP: Record<string, string> = {
   'Archivo Black': '/fonts/archivo-black.css',
 };
 
-function useGoogleFont(fontFamily: string | undefined) {
+function useLocalDisplayFont(fontFamily: string | undefined) {
   useEffect(() => {
     if (!fontFamily) return;
     const id = `gf-${fontFamily.replace(/\s+/g, '-')}`;
@@ -77,7 +77,7 @@ function useGoogleFont(fontFamily: string | undefined) {
 }
 
 function WordArtDisplay({ name, style }: { name: string; style: SiteNameStyle }) {
-  useGoogleFont(style.fontFamily);
+  useLocalDisplayFont(style.fontFamily);
 
   const cssStyle = useMemo((): CSSProperties => {
     const base: CSSProperties = {

@@ -1,7 +1,7 @@
 /**
  * Accounts Settings — Connected accounts
  *
- * Shows OAuth accounts (Google, Spotify, etc.) with connect/disconnect.
+ * Shows OAuth accounts (connected providers) with connect/disconnect.
  */
 
 "use client";

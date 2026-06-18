@@ -3,7 +3,7 @@
  *
  * Account panel: centered email, large avatar (display only — no pencil-edit),
  * "Hi, <first name>!", grouped card (Timeline / Settings / Theme as a
- * Light·Dark·Auto segmented control), ghost Sign out. The Google-isms removed
+ * Light·Dark·Auto segmented control), ghost Sign out. The borrowed account-panel details removed
  * per the owner: the "Manage your account" pill, the avatar pencil-edit, and the
  * Privacy · About footer. Mirrored on CP (control-header) and native (Canvas).
  */

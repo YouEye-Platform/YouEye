@@ -4,13 +4,13 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-// Plan 1 E4 (D14-revised) — the UI account menu is toned down (less Google-like).
+// Plan 1 E4 (D14-revised) — the UI account menu is toned down (less similar).
 // Run: node --test tests/user-menu-e4.test.mjs
 const root = process.env.UI_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(root, p), 'utf8');
 const menu = read('src/components/layout/user-menu.tsx');
 
-test('the three Google-isms are removed: pill, pencil-edit, Privacy·About footer', () => {
+test('the three borrowed account-panel details are removed: pill, pencil-edit, Privacy·About footer', () => {
   assert.doesNotMatch(menu, />\s*Manage your account/);     // no pill button (text node)
   assert.doesNotMatch(menu, /import \{[^}]*\bPencil\b/);     // Pencil no longer imported
   assert.doesNotMatch(menu, /<Pencil/);                     // no pencil badge

@@ -9,7 +9,7 @@ const repoRoot = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..
 const read = (p: string) => readFileSync(join(repoRoot, p), 'utf8');
 const has = (p: string) => existsSync(join(repoRoot, p));
 
-test('Browse page is the Umbrel layout: hero + pill bar + Built-for + Featured + Sources pill', () => {
+test('Browse page layout includes hero, pill bar, Built-for, Featured, and Sources pill', () => {
   const m = read('src/app/market/page.tsx');
   assert.match(m, /Apps for your server/);                 // hero tagline
   assert.match(m, /All apps/);

@@ -2,20 +2,15 @@
 
 import Link from "next/link";
 import { createPortal } from "react-dom";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as LucideIcons from "lucide-react";
-import type { ComponentType, CSSProperties, DragEvent, RefObject } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bell,
   Check,
   CheckCircle2,
   Clock,
-  EyeOff,
-  GripVertical,
   Home,
   Info,
   LogOut,
-  Pencil,
   Settings,
   Shield,
   Sun,
@@ -33,7 +28,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { SiteName } from "@/components/control-surface/site-name";
 import { applyThemeMode, THEME_MODE_EVENT, type ThemeMode } from "@/lib/theme";
 import type { SiteNameStyle } from "@/lib/wordart-presets";
@@ -42,33 +36,6 @@ interface ControlHeaderProps {
   username: string;
   isAdmin: boolean;
   hasUserContext?: boolean;
-}
-
-interface DrawerApp {
-  id: string;
-  name: string;
-  original_name?: string;
-  icon?: string | null;
-  custom_icon_url?: string | null;
-  url?: string | null;
-  visible?: boolean;
-  order?: number | null;
-  status?: string | null;
-}
-
-interface DrawerPrefs {
-  columns?: number;
-  iconScale?: number;
-  maxHeight?: number;
-}
-
-interface Rect {
-  top: number;
-  left: number;
-  right: number;
-  bottom: number;
-  width: number;
-  height: number;
 }
 
 interface Notification {
@@ -88,10 +55,6 @@ interface HeaderConfig {
     site_name_style?: SiteNameStyle | null;
     logo_url?: string | null;
   };
-  navigation?: {
-    apps?: DrawerApp[];
-  };
-  drawer_prefs?: DrawerPrefs;
   user?: {
     name?: string | null;
     username?: string | null;
@@ -106,13 +69,13 @@ interface HeaderConfig {
   theme?: {
     mode?: string;
   };
+  ui_base_url?: string | null;
 }
 
-const DEFAULT_PREFS: Required<DrawerPrefs> = {
-  columns: 4,
-  iconScale: 1,
-  maxHeight: 400,
-};
+const EMBED_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups allow-top-navigation-by-user-activation";
+const DEFAULT_DRAWER_HEIGHT = 420;
+const MIN_DRAWER_HEIGHT = 140;
+const MAX_DRAWER_HEIGHT = 620;
 
 function bridgeApi(path: string) {
   const prefix = typeof window !== "undefined" && window.location.pathname.startsWith("/market")
@@ -143,49 +106,6 @@ function DotsIcon({ className }: { className?: string }) {
   );
 }
 
-function kebabToPascal(value: string) {
-  return value.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join("");
-}
-
-function getLucideIcon(name: string): ComponentType<{ className?: string; style?: CSSProperties }> | null {
-  const icon = (LucideIcons as Record<string, unknown>)[kebabToPascal(name)];
-  if (
-    typeof icon === "function" ||
-    (typeof icon === "object" && icon !== null && "$$typeof" in (icon as Record<string, unknown>))
-  ) {
-    return icon as ComponentType<{ className?: string; style?: CSSProperties }>;
-  }
-  return null;
-}
-
-function AppIcon({ app, size }: { app: DrawerApp; size: number }) {
-  const [imgError, setImgError] = useState(false);
-  const displayIcon = app.custom_icon_url ?? app.icon ?? null;
-
-  if (displayIcon?.startsWith("emoji:")) {
-    return <span className="leading-none" style={{ fontSize: size * 0.5 }}>{displayIcon.slice(6)}</span>;
-  }
-
-  if (displayIcon && !imgError && (displayIcon.startsWith("http") || displayIcon.startsWith("/") || displayIcon.startsWith("data:"))) {
-    return (
-      <img
-        src={displayIcon}
-        alt={app.name}
-        className="rounded-xl object-cover"
-        style={{ width: size, height: size }}
-        onError={() => setImgError(true)}
-      />
-    );
-  }
-
-  if (displayIcon && !imgError) {
-    const Icon = getLucideIcon(displayIcon);
-    if (Icon) return <Icon className="text-foreground/80" style={{ width: size * 0.5, height: size * 0.5 }} />;
-  }
-
-  return <span className="text-foreground/80">{app.name.charAt(0).toUpperCase()}</span>;
-}
-
 function timeAgo(dateStr: string) {
   const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
   if (seconds < 60) return "just now";
@@ -203,68 +123,15 @@ function NotificationIcon({ type }: { type: string }) {
   }
 }
 
-const SHAKE_CSS = `
-@keyframes app-shake {
-  0%, 100% { transform: rotate(0deg); }
-  25% { transform: rotate(-1.5deg); }
-  75% { transform: rotate(1.5deg); }
-}
-`;
-
-function useElementRect(ref: RefObject<HTMLDivElement | null>, enabled: boolean): Rect | null {
-  const [rect, setRect] = useState<Rect | null>(null);
-
-  useEffect(() => {
-    if (!enabled) {
-      setRect(null);
-      return;
-    }
-    const el = ref.current;
-    if (!el) return;
-
-    const update = () => {
-      const r = el.getBoundingClientRect();
-      setRect({
-        top: r.top,
-        left: r.left,
-        right: r.right,
-        bottom: r.bottom,
-        width: r.width,
-        height: r.height,
-      });
-    };
-
-    const timer = window.setTimeout(update, 30);
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    window.addEventListener("resize", update);
-
-    return () => {
-      window.clearTimeout(timer);
-      ro.disconnect();
-      window.removeEventListener("resize", update);
-    };
-  }, [enabled, ref]);
-
-  return rect;
-}
-
 export function ControlHeader({ username, isAdmin, hasUserContext = true }: ControlHeaderProps) {
   const [config, setConfig] = useState<HeaderConfig | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editDrawer, setEditDrawer] = useState(false);
-  const [allApps, setAllApps] = useState<DrawerApp[]>([]);
-  const [drawerPrefs, setDrawerPrefs] = useState<Required<DrawerPrefs>>(DEFAULT_PREFS);
-  const [prefsLoaded, setPrefsLoaded] = useState(false);
-  const [draggedAppId, setDraggedAppId] = useState<string | null>(null);
-  const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
-  const [insertSide, setInsertSide] = useState<"before" | "after">("before");
+  const [launcherOpen, setLauncherOpen] = useState(false);
+  const [embedMode, setEmbedMode] = useState<"light" | "dark">("light");
+  const [drawerHeight, setDrawerHeight] = useState(DEFAULT_DRAWER_HEIGHT);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [systemPref, setSystemPref] = useState<"light" | "dark">("light");
   const saveThemeTimeout = useRef<NodeJS.Timeout | null>(null);
-  const savePrefsTimeout = useRef<NodeJS.Timeout | null>(null);
-  const drawerRef = useRef<HTMLDivElement>(null);
-  const drawerRect = useElementRect(drawerRef, editDrawer && drawerOpen);
 
   const loadConfig = useCallback(async () => {
     if (!hasUserContext) {
@@ -276,8 +143,6 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
           site_name_style: null,
           logo_url: null,
         },
-        navigation: { apps: [] },
-        drawer_prefs: DEFAULT_PREFS,
         user: {
           name: username,
           username,
@@ -287,10 +152,8 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
         },
         notifications: { unread_count: 0, items: [] },
         theme: { mode: "system" },
+        ui_base_url: null,
       });
-      setAllApps([]);
-      setDrawerPrefs(DEFAULT_PREFS);
-      setPrefsLoaded(true);
       return;
     }
 
@@ -298,9 +161,6 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
     if (!res.ok) return;
     const data = await res.json();
     setConfig(data);
-    setAllApps(data.navigation?.apps ?? []);
-    setDrawerPrefs({ ...DEFAULT_PREFS, ...(data.drawer_prefs ?? {}) });
-    setPrefsLoaded(true);
   }, [hasUserContext, isAdmin, username]);
 
   useEffect(() => {
@@ -315,38 +175,51 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
     return () => mq.removeEventListener("change", handler);
   }, []);
 
-  useEffect(() => {
-    if (!drawerOpen) setEditDrawer(false);
-  }, [drawerOpen]);
-
-  const fetchDrawerApps = useCallback(async () => {
-    if (!hasUserContext) return;
-    const res = await fetch(bridgeApi("apps/drawer"), { cache: "no-store" });
-    if (!res.ok) return;
-    const data = await res.json();
-    setAllApps(data.apps ?? []);
-  }, [hasUserContext]);
-
-  const fetchDrawerPrefs = useCallback(async () => {
-    if (!hasUserContext) {
-      setPrefsLoaded(true);
-      return;
-    }
+  const uiBaseUrl = config?.ui_base_url?.replace(/\/$/, "") ?? "";
+  const uiBaseOrigin = (() => {
+    if (!uiBaseUrl) return "";
     try {
-      const res = await fetch(bridgeApi("apps/drawer/prefs"), { cache: "no-store" });
-      if (!res.ok) return;
-      const data = await res.json();
-      setDrawerPrefs({ ...DEFAULT_PREFS, ...data });
-    } finally {
-      setPrefsLoaded(true);
+      return new URL(uiBaseUrl).origin;
+    } catch {
+      return uiBaseUrl;
     }
-  }, [hasUserContext]);
+  })();
+
+  const resolveEmbedMode = useCallback((): "light" | "dark" => (
+    document.documentElement.classList.contains("dark") ? "dark" : "light"
+  ), []);
+
+  const openDrawer = useCallback((open: boolean) => {
+    if (open) setEmbedMode(resolveEmbedMode());
+    setDrawerOpen(open);
+  }, [resolveEmbedMode]);
 
   useEffect(() => {
-    if (!drawerOpen) return;
-    fetchDrawerApps().catch(() => {});
-    if (!prefsLoaded) fetchDrawerPrefs().catch(() => {});
-  }, [drawerOpen, fetchDrawerApps, fetchDrawerPrefs, prefsLoaded]);
+    if (!uiBaseOrigin) return;
+    function onMessage(event: MessageEvent) {
+      if (event.origin !== uiBaseOrigin) return;
+      if (event.data?.type === "youeye:action" && event.data?.action === "open-launcher") {
+        setDrawerOpen(false);
+        setEmbedMode(resolveEmbedMode());
+        setLauncherOpen(true);
+        return;
+      }
+      if (event.data?.type === "youeye:resize" && typeof event.data.height === "number") {
+        setDrawerHeight(Math.max(MIN_DRAWER_HEIGHT, Math.min(MAX_DRAWER_HEIGHT, Math.ceil(event.data.height))));
+      }
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [resolveEmbedMode, uiBaseOrigin]);
+
+  useEffect(() => {
+    if (!launcherOpen) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setLauncherOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [launcherOpen]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -373,8 +246,9 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
   const logoUrl = config?.branding?.logo_url ?? null;
   const unreadCount = config?.notifications?.unread_count ?? 0;
   const notifications = config?.notifications?.items ?? [];
-  const prefs = drawerPrefs;
   const themeMode = config?.theme?.mode ?? "system";
+  const drawerUrl = uiBaseUrl ? `${uiBaseUrl}/embed/drawer?mode=${embedMode}` : null;
+  const launcherUrl = uiBaseUrl ? `${uiBaseUrl}/embed/launcher?mode=${embedMode}` : null;
 
   // Apply the user's saved light/dark/system mode to <html> on load and whenever
   // it changes. Source of truth is config.theme.mode (bridge → UI DB); the inline
@@ -394,122 +268,6 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
     window.addEventListener(THEME_MODE_EVENT, handler);
     return () => window.removeEventListener(THEME_MODE_EVENT, handler);
   }, []);
-
-  const visibleApps = useMemo(() => {
-    return [...allApps]
-      .filter((app) => app.visible !== false)
-      .sort((a, b) => {
-        const ao = a.order ?? 999;
-        const bo = b.order ?? 999;
-        if (ao !== bo) return ao - bo;
-        return a.name.localeCompare(b.name);
-      });
-  }, [allApps]);
-
-  const hiddenApps = useMemo(() => [...allApps]
-    .filter((app) => app.visible === false)
-    .sort((a, b) => a.name.localeCompare(b.name)), [allApps]);
-
-  const draggingFromVisible = draggedAppId != null && visibleApps.some((app) => app.id === draggedAppId);
-
-  const persistDrawerPrefs = useCallback((next: Required<DrawerPrefs>) => {
-    if (!hasUserContext) return;
-    setDrawerPrefs(next);
-    setConfig((current) => ({ ...(current ?? {}), drawer_prefs: next }));
-    if (savePrefsTimeout.current) clearTimeout(savePrefsTimeout.current);
-    savePrefsTimeout.current = setTimeout(() => {
-      fetch(bridgeApi("apps/drawer/prefs"), {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(next),
-      }).catch(() => {});
-    }, 500);
-  }, [hasUserContext]);
-
-  const toggleVisibility = useCallback(async (appId: string, visible: boolean) => {
-    if (!hasUserContext) return;
-    setAllApps((current) => current.map((app) => app.id === appId ? { ...app, visible } : app));
-    try {
-      await fetch(bridgeApi(`apps/drawer/${encodeURIComponent(appId)}`), {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ visible }),
-      });
-    } catch {
-      setAllApps((current) => current.map((app) => app.id === appId ? { ...app, visible: !visible } : app));
-    }
-  }, [hasUserContext]);
-
-  const reorderApp = useCallback((draggedId: string, targetId: string) => {
-    if (draggedId === targetId) return;
-    setAllApps((current) => {
-      const visible = [...current]
-        .filter((app) => app.visible !== false)
-        .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
-      const dragIdx = visible.findIndex((app) => app.id === draggedId);
-      const targetIdx = visible.findIndex((app) => app.id === targetId);
-      if (dragIdx < 0 || targetIdx < 0) return current;
-      const [dragged] = visible.splice(dragIdx, 1);
-      visible.splice(targetIdx, 0, dragged);
-      const orderMap = new Map<string, number>();
-      visible.forEach((app, index) => {
-        orderMap.set(app.id, index);
-        fetch(bridgeApi(`apps/drawer/${encodeURIComponent(app.id)}`), {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ order: index }),
-        }).catch(() => {});
-      });
-      return current.map((app) => {
-        const order = orderMap.get(app.id);
-        return order === undefined ? app : { ...app, order };
-      });
-    });
-  }, []);
-
-  function handleDragStart(event: DragEvent, appId: string) {
-    setDraggedAppId(appId);
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", appId);
-  }
-
-  function handleDragEnd() {
-    setDraggedAppId(null);
-    setDragOverTarget(null);
-  }
-
-  function handleDragOverApp(event: DragEvent, appId: string) {
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    setDragOverTarget(appId);
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    setInsertSide(event.clientX < rect.left + rect.width / 2 ? "before" : "after");
-  }
-
-  function handleDropOnApp(event: DragEvent, targetId: string) {
-    event.preventDefault();
-    if (draggedAppId && draggedAppId !== targetId) {
-      const app = allApps.find((item) => item.id === draggedAppId);
-      if (app && app.visible === false) toggleVisibility(draggedAppId, true).catch(() => {});
-      reorderApp(draggedAppId, targetId);
-    }
-    handleDragEnd();
-  }
-
-  function handleDropOnHidden(event: DragEvent) {
-    event.preventDefault();
-    if (draggedAppId) toggleVisibility(draggedAppId, false).catch(() => {});
-    handleDragEnd();
-  }
-
-  function handleDropOnVisible(event: DragEvent) {
-    event.preventDefault();
-    if (draggedAppId) {
-      const app = allApps.find((item) => item.id === draggedAppId);
-      if (app && app.visible === false) toggleVisibility(draggedAppId, true).catch(() => {});
-    }
-    handleDragEnd();
-  }
 
   async function logout() {
     await fetch("/settings/api/auth/logout", { method: "POST" }).catch(() => {});
@@ -612,224 +370,46 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
         </Button>
 
         {hasUserContext && (
-        <Popover open={drawerOpen} onOpenChange={setDrawerOpen}>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Apps">
-              <DotsIcon className="h-4 w-4" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent
-            align="end"
-            sideOffset={8}
-            className="w-[340px] origin-top-right rounded-xl p-0 transition-all duration-200"
-            onInteractOutside={(event) => {
-              if (editDrawer) event.preventDefault();
-            }}
-            onEscapeKeyDown={(event) => {
-              if (editDrawer) {
-                event.preventDefault();
-                setEditDrawer(false);
-              }
-            }}
-          >
-            {editDrawer && <style dangerouslySetInnerHTML={{ __html: SHAKE_CSS }} />}
-            <div ref={drawerRef}>
-              {editDrawer ? (
-                <div className="flex items-center justify-between px-3 pb-1 pt-3">
-                  <span className="text-sm font-semibold">Apps</span>
-                  <Button variant="default" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => setEditDrawer(false)}>
-                    <Check className="h-3.5 w-3.5" />
-                    Done
-                  </Button>
-                </div>
+          <Popover open={drawerOpen} onOpenChange={openDrawer}>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Apps">
+                <DotsIcon className="h-4 w-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              sideOffset={8}
+              className="w-[min(380px,92vw)] overflow-hidden rounded-2xl border-border/60 bg-popover/80 p-0 shadow-xl backdrop-blur-xl transition-[height] duration-150"
+              style={{ height: drawerUrl ? drawerHeight : undefined }}
+            >
+              {drawerUrl ? (
+                <iframe
+                  src={drawerUrl}
+                  className="h-full w-full border-0 bg-transparent"
+                  title="App drawer"
+                  sandbox={EMBED_SANDBOX}
+                />
               ) : (
-                <div className="absolute left-2 top-2 z-10">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-muted-foreground/60 hover:text-foreground"
-                    onClick={() => setEditDrawer(true)}
-                    title="Edit drawer"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </Button>
+                <div className="px-6 py-10 text-center text-sm text-muted-foreground">
+                  Open apps from the dashboard once the UI origin is available.
                 </div>
               )}
-              <ScrollArea style={{ maxHeight: editDrawer ? "calc(100vh - 200px)" : prefs.maxHeight }}>
-                <div
-                  className="p-3 pt-2"
-                  onDragOver={editDrawer ? (event) => {
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = "move";
-                  } : undefined}
-                  onDrop={editDrawer ? handleDropOnVisible : undefined}
-                >
-                {visibleApps.length === 0 && !editDrawer ? (
-                  <div className="flex flex-col items-center justify-center py-10 text-center">
-                    <p className="mb-3 text-sm text-muted-foreground">No apps installed</p>
-                    {headerIsAdmin && (
-                      <Link href="/market" className="text-sm text-primary hover:underline" onClick={() => setDrawerOpen(false)}>
-                        Visit marketplace
-                      </Link>
-                    )}
-                  </div>
-                ) : (
-                  <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${prefs.columns}, 1fr)` }}>
-                    {visibleApps.map((app, index) => {
-                      const up = app.status !== "unhealthy";
-                      const size = 40 * prefs.iconScale;
-                      return (
-                        <div
-                          key={app.id}
-                          className={`relative flex flex-col items-center rounded-xl p-2 transition-all duration-150 ${
-                            editDrawer
-                              ? `cursor-grab select-none ${
-                                  draggedAppId === app.id
-                                    ? "scale-90 opacity-30"
-                                    : dragOverTarget === app.id
-                                      ? `scale-105 bg-primary/10 ${insertSide === "before" ? "border-l-2 border-l-primary" : "border-r-2 border-r-primary"}`
-                                      : "hover:bg-accent/60"
-                                }`
-                              : "cursor-pointer hover:scale-105 hover:bg-accent/60"
-                          } ${up ? "" : "opacity-40 grayscale"}`}
-                          style={editDrawer && draggedAppId !== app.id ? {
-                            animation: "app-shake 0.4s ease-in-out infinite alternate",
-                            animationDelay: `${(index % 5) * 0.08}s`,
-                          } : undefined}
-                          draggable={editDrawer}
-                          title={up ? app.name : `${app.name} - offline`}
-                          onDragStart={editDrawer ? (event) => handleDragStart(event, app.id) : undefined}
-                          onDragEnd={editDrawer ? handleDragEnd : undefined}
-                          onDragOver={editDrawer ? (event) => handleDragOverApp(event, app.id) : undefined}
-                          onDrop={editDrawer ? (event) => handleDropOnApp(event, app.id) : undefined}
-                          onClick={() => {
-                            if (editDrawer) return;
-                            if (app.url) window.location.href = app.url;
-                            setDrawerOpen(false);
-                          }}
-                        >
-                          {editDrawer && (
-                            <>
-                              <GripVertical className="absolute right-0.5 top-0.5 h-3 w-3 text-muted-foreground/30" />
-                              <button
-                                type="button"
-                                className="absolute -left-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-background shadow-sm ring-1 ring-border transition-colors hover:bg-accent"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  toggleVisibility(app.id, false).catch(() => {});
-                                }}
-                                title="Hide app"
-                              >
-                                <EyeOff className="h-3 w-3" />
-                              </button>
-                            </>
-                          )}
-                          <div className="flex items-center justify-center overflow-hidden rounded-xl text-base font-medium" style={{ width: size, height: size }}>
-                            <AppIcon app={app} size={size} />
-                          </div>
-                          <span className="mt-1.5 w-full line-clamp-1 text-center text-[11px] leading-tight text-foreground/80">
-                            {app.name}
-                          </span>
-                        </div>
-                      );
-                    })}
-                    {visibleApps.length === 0 && editDrawer && (
-                      <div className="col-span-full py-8 text-center text-xs text-muted-foreground">Drag apps here to show</div>
-                    )}
-                  </div>
-                )}
-                </div>
-              </ScrollArea>
-            </div>
-          </PopoverContent>
-        </Popover>
+            </PopoverContent>
+          </Popover>
         )}
 
-        {hasUserContext && editDrawer && drawerRect && typeof document !== "undefined" && createPortal(
-          <>
-            <div
-              className="fixed z-[60] w-64 rounded-xl border bg-popover p-3 text-popover-foreground shadow-lg"
-              style={{
-                top: drawerRect.top,
-                left: Math.max(12, drawerRect.left - 276),
-                maxHeight: Math.min(360, window.innerHeight - drawerRect.top - 16),
-              }}
-              onDragOver={(event) => {
-                event.preventDefault();
-                event.dataTransfer.dropEffect = draggingFromVisible ? "move" : "none";
-              }}
-              onDrop={handleDropOnHidden}
-            >
-              <div className="mb-2 flex items-center gap-2">
-                <EyeOff className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-semibold">Hidden apps</span>
-              </div>
-              {hiddenApps.length === 0 ? (
-                <div className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">Drag apps here to hide</div>
-              ) : (
-                <div className="grid grid-cols-3 gap-2">
-                  {hiddenApps.map((app) => (
-                    <button
-                      key={app.id}
-                      type="button"
-                      draggable
-                      className="flex flex-col items-center rounded-lg p-2 text-center transition-colors hover:bg-accent/60"
-                      onDragStart={(event) => handleDragStart(event, app.id)}
-                      onDragEnd={handleDragEnd}
-                      onClick={() => toggleVisibility(app.id, true).catch(() => {})}
-                    >
-                      <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl">
-                        <AppIcon app={app} size={36} />
-                      </div>
-                      <span className="mt-1 w-full truncate text-[10px] text-muted-foreground">{app.name}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
+        {hasUserContext && launcherOpen && launcherUrl && typeof document !== "undefined" && createPortal(
+          <div className="pointer-events-none fixed inset-0 z-[60]">
+            <div className="pointer-events-auto absolute inset-x-0 bottom-0 top-14" onClick={() => setLauncherOpen(false)} />
+            <div className="pointer-events-auto absolute inset-x-4 bottom-4 top-[68px] overflow-hidden rounded-3xl border border-border/40 bg-popover/70 shadow-2xl backdrop-blur-2xl sm:inset-x-7 sm:bottom-5">
+              <iframe
+                src={launcherUrl}
+                className="h-full w-full border-0 bg-transparent"
+                title="App launcher"
+                sandbox={EMBED_SANDBOX}
+              />
             </div>
-            <div
-              className="fixed z-[60] w-[340px] rounded-xl border bg-popover p-3 text-popover-foreground shadow-lg"
-              style={{
-                top: Math.min(window.innerHeight - 150, drawerRect.bottom + 8),
-                left: drawerRect.left,
-              }}
-            >
-              <div className="grid gap-3 text-xs">
-                <label className="grid gap-1.5">
-                  <span className="font-medium">Columns</span>
-                  <input
-                    type="range"
-                    min={2}
-                    max={6}
-                    value={prefs.columns}
-                    onChange={(event) => persistDrawerPrefs({ ...prefs, columns: Number(event.target.value) })}
-                  />
-                </label>
-                <label className="grid gap-1.5">
-                  <span className="font-medium">Icon size</span>
-                  <input
-                    type="range"
-                    min={0.5}
-                    max={2}
-                    step={0.1}
-                    value={prefs.iconScale}
-                    onChange={(event) => persistDrawerPrefs({ ...prefs, iconScale: Number(event.target.value) })}
-                  />
-                </label>
-                <label className="grid gap-1.5">
-                  <span className="font-medium">Height</span>
-                  <input
-                    type="range"
-                    min={200}
-                    max={800}
-                    step={20}
-                    value={prefs.maxHeight}
-                    onChange={(event) => persistDrawerPrefs({ ...prefs, maxHeight: Number(event.target.value) })}
-                  />
-                </label>
-              </div>
-            </div>
-          </>,
+          </div>,
           document.body
         )}
 

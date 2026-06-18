@@ -5,7 +5,7 @@
  *
  * Public (no auth required). Profile pictures are inherently public —
  * native apps on different subdomains need to load them in <img> tags
- * without cross-domain cookies. Same pattern as Gravatar/GitHub avatars.
+ * without cross-domain cookies. This follows the platform's public avatar URL pattern.
  */
 
 import { NextRequest, NextResponse } from "next/server";

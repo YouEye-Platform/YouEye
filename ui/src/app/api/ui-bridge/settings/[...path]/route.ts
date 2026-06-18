@@ -128,6 +128,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
   if (path === "header/config") {
     const host = getPublicHost(request);
     const proto = getPublicProto(request);
+    const uiBaseUrl = process.env.UI_EXTERNAL_URL || "";
     const [branding, wordartOverride, appsData, drawerPrefs, settings, unreadCount, notifications] = await Promise.all([
       getBranding(),
       getUserWordartOverride(user.id),
@@ -195,6 +196,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       theme: {
         mode: (settings.themeMode as string) ?? "system",
       },
+      ui_base_url: uiBaseUrl,
     });
   }
 
