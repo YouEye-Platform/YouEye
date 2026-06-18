@@ -3,8 +3,8 @@ package installer
 import (
 	"strings"
 
-	"git.potemk.in/potemsla/YouEye/installer/internal/installer/theme"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/youeye-platform/YouEye/installer/internal/installer/theme"
 )
 
 // Generated offline from Artem's tree-roots source image with ansipx-render.

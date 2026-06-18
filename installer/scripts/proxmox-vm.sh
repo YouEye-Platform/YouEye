@@ -7,7 +7,7 @@
 # Run ON the Proxmox host. Non-interactive.
 #
 # Usage:
-#   bash -c "$(curl -fsSL https://git.potemk.in/potemsla/YouEye/raw/branch/artem/installer/proxmox-vm.sh)"
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/proxmox-vm.sh)"
 #   VMID=9000 VMNAME=youeye-test CORES=2 MEMORY=2048 DISK_SIZE=20 bash proxmox-vm.sh
 #
 # Options (env var OR --flag):

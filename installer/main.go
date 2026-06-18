@@ -6,23 +6,42 @@
 package main
 
 import (
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 
-	"git.potemk.in/potemsla/YouEye/installer/internal/installer"
+	"github.com/youeye-platform/YouEye/installer/internal/installer"
 )
 
 func main() {
+	opts, err := installer.ParseOptions(os.Args[1:], os.Stdin, os.Stderr)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+
+	if opts.Silent {
+		if err := installer.RunSilent(opts); err != nil {
+			fmt.Fprintln(os.Stderr, "installer error:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// The TUI needs an interactive terminal. Bubble Tea opens /dev/tty as a
 	// fallback for stdin, so we only require that /dev/tty exists (i.e. we are
 	// not in a container/CI with no terminal at all).
 	if _, err := os.Open("/dev/tty"); err != nil {
-		fmt.Fprintln(os.Stderr, "The installer requires an interactive terminal (/dev/tty not available).")
-		fmt.Fprintln(os.Stderr, "For non-interactive installs, run 'youeye deploy' on a bare host.")
+		fmt.Fprintln(os.Stderr, "The interactive installer requires /dev/tty.")
+		fmt.Fprintln(os.Stderr, "Use --silent --yes for non-interactive installs.")
 		os.Exit(1)
 	}
 
-	if err := installer.Run(); err != nil {
+	if err := installer.Run(opts); err != nil {
 		os.Exit(1)
 	}
 }

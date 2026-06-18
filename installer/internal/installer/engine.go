@@ -333,7 +333,9 @@ func findLatestSpineTag() (string, error) {
 	return "", fmt.Errorf("no spine release found on GitHub")
 }
 
-func hasAsset(assets []struct{ Name string `json:"name"` }, name string) bool {
+func hasAsset(assets []struct {
+	Name string `json:"name"`
+}, name string) bool {
 	for _, a := range assets {
 		if a.Name == name {
 			return true
@@ -343,7 +345,37 @@ func hasAsset(assets []struct{ Name string `json:"name"` }, name string) bool {
 }
 
 func spineDownloadURL(tag string) string {
-	return fmt.Sprintf("https://git.potemk.in/potemsla/YouEye/releases/download/%s/spine-linux-amd64", tag)
+	return fmt.Sprintf("https://github.com/youeye-platform/YouEye/releases/download/%s/spine-linux-amd64", tag)
+}
+
+func spineInstallCommand(config installConfig) (string, error) {
+	scriptURL, err := rawFileURL(config.CoreRepoURL, config.ReleaseChannel, "spine/install.sh")
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(
+		"curl -fsSL %s | RELEASE_REPO_URL=%s BRANCH=%s sh",
+		shellQuote(scriptURL),
+		shellQuote(config.CoreRepoURL),
+		shellQuote(config.ReleaseChannel),
+	), nil
+}
+
+func seedMarketSourceLocal(config installConfig) error {
+	legacy, multi, err := marketSourceJSON(config.MarketRepoURL)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll("/var/lib/youeye", 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile("/var/lib/youeye/market-source.json", legacy, 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile("/var/lib/youeye/market-sources.json", multi, 0o644); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -546,7 +578,6 @@ func installLXC(config installConfig, ch chan<- engineMsg) {
 	sendDone(ch, containerIP)
 }
 
-
 // ---------------------------------------------------------------------------
 // Bare Linux Installation
 // ---------------------------------------------------------------------------
@@ -581,9 +612,24 @@ func installHost(config installConfig, ch chan<- engineMsg) {
 	}
 	send(ch, "Checking prerequisites", "All checks passed", 0.10)
 
-	// When running as `youeye installer`, Spine is already installed by
-	// install.sh — skip downloading it again. Just verify it exists.
-	send(ch, "Verifying Spine", "Spine binary already installed", 0.20)
+	// Install Spine from the configured core repository/channel. The public
+	// default is GitHub/main; custom repos only come from flags or Advanced.
+	send(ch, "Installing Spine", "Installing system core from configured source...", 0.16)
+	installCmd, err := spineInstallCommand(config)
+	if err != nil {
+		sendErr(ch, fmt.Errorf("building Spine install command: %w", err))
+		return
+	}
+	if err := streamCmd(ch, "Installing Spine", "bash", "-lc", installCmd); err != nil {
+		sendErr(ch, fmt.Errorf("installing Spine: %w", err))
+		return
+	}
+
+	send(ch, "Configuring Market", "Saving Market source...", 0.20)
+	if err := seedMarketSourceLocal(config); err != nil {
+		sendErr(ch, fmt.Errorf("saving Market source: %w", err))
+		return
+	}
 
 	// -- Deploy --
 	send(ch, "Deploying YouEye", "Running youeye deploy (this takes a few minutes)...", 0.22)

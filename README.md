@@ -4,7 +4,7 @@
 
 > **Not so public beta** - YouEye is under active development. Breaking changes can and will occur between releases. APIs, configuration formats, and database schemas may change without migration paths. Back up your data before upgrading.
 
-One command installs a full platform: dashboard with widgets, six native apps, SSO, reverse proxy, DNS, and an app marketplace. Runs on any Debian/Ubuntu server or Proxmox LXC.
+One command installs a full platform: dashboard with widgets, six native apps, SSO, reverse proxy, DNS, and an app marketplace. Runs on a Debian/Ubuntu server or in a Debian VM created automatically on Proxmox VE.
 
 <p align="center">
   <img src="docs/assets/screenshots/homepage/dashboard.png" alt="YouEye Dashboard" width="800">
@@ -13,12 +13,12 @@ One command installs a full platform: dashboard with widgets, six native apps, S
 ## Quick Start
 
 ```bash
-curl -sSL https://git.potemk.in/potemsla/YouEye/raw/branch/main/spine/install.sh | sh && youeye deploy
+curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/install.sh | sudo bash
 ```
 
-The installer downloads the `youeye` CLI and deploys the full platform. A progress bar tracks the installation. When it finishes, open `https://your-server-ip` in your browser and create your account.
+The installer detects Proxmox or base Linux, installs YouEye, and shows progress in the terminal. When it finishes, open `https://your-server-ip` in your browser and create your account.
 
-> Requires a fresh Debian 12+ or Ubuntu 24.04+ system with root access. See [full install guide](docs/getting-started.md) for Proxmox LXC, branch installs, and manual setup.
+> Requires a fresh Debian 12+ or Ubuntu 24.04+ system with root access, or a Proxmox VE host for the VM installer. See [full install guide](docs/getting-started.md) for Proxmox, silent installs, and manual setup.
 
 ## Features
 
@@ -143,7 +143,8 @@ Each component is versioned and released independently.
 | Component | Version |
 |-----------|---------|
 | Spine | 0.4.10.3 (`spine-dev-v0.4.10.3`) |
-| Control Panel | 0.4.49.13 (`cp-dev-v0.4.49.13`) |
+| Installer | 0.1.0.2 (`installer-dev-v0.1.0.2`) |
+| Control Panel | 0.4.49.14 (`cp-dev-v0.4.49.14`) |
 | UI | 0.4.28.6 (`ui-dev-v0.4.28.6`) |
 | Canvas | 0.3.1.1 (`v0.3.1.1`) |
 | Wiki | 0.4.4 (`v0.4.4`) |
@@ -157,13 +158,13 @@ Each component is versioned and released independently.
 
 | Repository | Description |
 |------------|-------------|
-| [Market](https://git.potemk.in/potemsla/YE-AppMarket) | App marketplace catalog (YAML manifests) |
-| [Wiki](https://git.potemk.in/potemsla/YE-App-Wiki) | Wiki native app |
-| [Search](https://git.potemk.in/potemsla/YE-App-Search) | Search native app |
-| [Notes](https://git.potemk.in/potemsla/YE-App-Notes) | Notes native app |
-| [Cinema](https://git.potemk.in/potemsla/YE-App-Cinema) | Cinema native app |
-| [Weather](https://git.potemk.in/potemsla/YE-App-Weather) | Weather native app |
-| [Translate](https://git.potemk.in/potemsla/YE-App-Translate) | Translate native app |
+| [Market](https://github.com/youeye-platform/Market) | App marketplace catalog (YAML manifests) |
+| [Wiki](https://github.com/youeye-platform/Wiki) | Wiki native app |
+| [Search](https://github.com/youeye-platform/Search) | Search native app |
+| [Notes](https://github.com/youeye-platform/Notes) | Notes native app |
+| [Cinema](https://github.com/youeye-platform/Cinema) | Cinema native app |
+| [Weather](https://github.com/youeye-platform/Weather) | Weather native app |
+| [Translate](https://github.com/youeye-platform/Translate) | Translate native app |
 
 ## Documentation
 
@@ -181,22 +182,28 @@ Full documentation lives in the [`docs/`](docs/) folder:
 ### One-Line Install (recommended)
 
 ```bash
-curl -sSL https://git.potemk.in/potemsla/YouEye/raw/branch/main/spine/install.sh | sh && youeye deploy
+curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/install.sh | sudo bash
 ```
 
-This downloads the `youeye` CLI and deploys the full platform. The installer detects your environment and deploys with a live progress bar.
+This downloads the `youeye-installer` binary from GitHub releases. On Proxmox it creates a Debian VM and installs YouEye inside it; on base Debian/Ubuntu it installs YouEye directly on the host.
 
-### Install from a Branch
+### Silent Install
 
 ```bash
-curl -sSL https://git.potemk.in/potemsla/YouEye/raw/branch/main/spine/install.sh | sh -s -- --branch dev && youeye deploy
+curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/install.sh | sudo bash -s -- --silent --yes
+```
+
+Automation can override the release source and channel:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/install.sh | sudo bash -s -- --silent --yes --release-channel dev
 ```
 
 ### Manual Install
 
 ```bash
 # Download Spine binary directly
-curl -LO https://git.potemk.in/potemsla/YouEye/releases/download/spine-v0.4.1/spine-linux-amd64
+curl -LO https://github.com/youeye-platform/YouEye/releases/download/spine-v0.4.1/spine-linux-amd64
 chmod +x spine-linux-amd64
 mv spine-linux-amd64 /usr/local/bin/youeye
 
@@ -204,9 +211,9 @@ mv spine-linux-amd64 /usr/local/bin/youeye
 youeye deploy
 ```
 
-### Proxmox LXC
+### Proxmox VE
 
-Create an unprivileged Debian 12 LXC with nesting enabled, then run the one-line install inside it.
+Run the one-line installer on the Proxmox host. It creates a Debian VM, installs YouEye inside it, and leaves the Proxmox host itself clean.
 
 ## Platform Management
 

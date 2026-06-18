@@ -24,6 +24,7 @@ test('system app manifests are first-class Market artifacts', () => {
   const systemManifestApi = readControl('src/app/api/deploy/infrastructure/system-manifests/route.ts');
   const systemUpdatesApi = readControl('src/app/api/deploy/infrastructure/system-updates/route.ts');
   const source = readControl('src/lib/market/source.ts');
+  const engine = readControl('src/lib/market/engine.ts');
   const resolver = readControl('src/lib/infrastructure/system-market-manifests.ts');
   const updater = readControl('src/lib/infrastructure/system-updater.ts');
   const deployer = readControl('src/lib/infrastructure/deployer.ts');
@@ -40,7 +41,9 @@ test('system app manifests are first-class Market artifacts', () => {
   assert.match(systemUpdatesApi, /updateSystemFromMarket/);
   assert.match(systemUpdatesApi, /forceLegacy/);
   assert.match(systemUpdatesApi, /allowDatabaseUpdate/);
-  assert.match(source, /DEFAULT_MARKET_REPO_URL = 'https:\/\/git\.potemk\.in\/potemsla\/YE-AppMarket'/);
+  assert.match(source, /DEFAULT_MARKET_REPO_URL = 'https:\/\/github\.com\/youeye-platform\/Market'/);
+  assert.doesNotMatch(engine, /GITEA_BASE|git\.potemk\.in/);
+  assert.match(engine, /getMarketSource/);
   assert.match(resolver, /resolveSystemImageOverrides/);
   assert.match(resolver, /Required Market system manifest/);
   assert.match(resolver, /recordSystemContainerManifest/);

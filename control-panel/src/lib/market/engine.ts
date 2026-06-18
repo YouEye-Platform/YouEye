@@ -82,6 +82,7 @@ import {
 import { injectCaddyRootCA } from './caddy-ca';
 import { activatePendingBridges, detectBridgeDependencies, createBridge, resolveBridgeMappings, activateBridge, pushConnectionsToUI } from '../bridges/manager';
 import { generateSuggestionsForApp } from '../bridges/suggestions';
+import { getMarketSource } from './source';
 
 // ─── Install Rollback ─────────────────────────────────────
 
@@ -576,13 +577,14 @@ function buildOCIManifest(
   };
 }
 
-// ─── Gitea Helpers ─────────────────────────────────────────
+// ─── Release Repo Helpers ─────────────────────────────────
 
-const GITEA_BASE = 'https://git.potemk.in';
-
-function githubRepoFromSource(repo: string): { org: string; repo: string } {
+function repoPartsFromSource(repo: string, fallbackOrg: string): { org: string; repo: string } {
   const parts = repo.split('/');
-  return { org: parts[0] || 'potemsla', repo: parts[parts.length - 1] };
+  if (parts.length >= 2) {
+    return { org: parts[0], repo: parts[parts.length - 1] };
+  }
+  return { org: fallbackOrg, repo: parts[0] };
 }
 
 // ─── Main Install Function (v2: unified) ──────────────────
@@ -853,7 +855,8 @@ export async function installApp(
           // ── LXD container deployment ──────────────────
           const source = containerSpec.source;
           if (!source) throw new Error(`LXD container ${containerSpec.name} missing source config`);
-          const gitInfo = githubRepoFromSource(source.repo);
+          const marketSource = await getMarketSource();
+          const gitInfo = repoPartsFromSource(source.repo, marketSource.organization);
 
           await deployLXDContainer(
             {
@@ -869,7 +872,7 @@ export async function installApp(
             },
             {
               spineSocketPath: '/var/run/youeye/youeye.sock',
-              giteaBaseURL: GITEA_BASE,
+              giteaBaseURL: marketSource.base_url,
               giteaOrg: gitInfo.org,
               giteaRepo: gitInfo.repo,
               tagPrefix: source.tagPrefix,

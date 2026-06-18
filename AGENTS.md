@@ -1,3 +1,29 @@
+## installer-dev-v0.1.0.2 / cp-dev-v0.4.49.14 — artem — 2026-06-18
+**Branch:** dev
+**VM:** potempc
+**Agent:** Artem
+**Task:** Make the installer GitHub-first, add silent mode, support source overrides, and seed Market source defaults.
+
+### Changes
+- `installer/` — moved the installer module/import path to `github.com/youeye-platform/YouEye/installer`, added GitHub/main defaults, `--silent --yes`, source/channel flags, `--root-password-file`, `--names-bundle`, and provider-shared source persistence.
+- `installer/internal/installer/wizard.go` — changed the first choice to `Install` / `Advanced Options`; Advanced pre-fills GitHub core repo, GitHub Market repo, and `main` channel; bare Linux now pauses on confirmation instead of auto-starting.
+- `installer/internal/installer/progress.go`, `installer/internal/installer/tetris/` — progress view now renders Tetris only during install, with installer status below it.
+- `installer/internal/installer/provider_proxmox.go`, `installer/internal/installer/engine.go` — VM and host installs now bootstrap Spine from the configured core repo/channel and write `/var/lib/youeye/market-source.json` + `market-sources.json` before deploy.
+- `installer/scripts/install.sh` — public bootstrap now defaults to GitHub installer release assets, resolves branch-channel installer tags, and forwards `curl | bash -s -- ...` flags.
+- `control-panel/src/lib/market/source.ts`, `control-panel/src/lib/market/engine.ts` — Market default is now GitHub `youeye-platform/Market`; LXD/native release downloads derive base/org from the active Market source instead of a fixed host.
+- `control-panel/tests/*`, `installer/internal/installer/source_options_test.go` — added/updated regression coverage for GitHub defaults, source ownership, raw URL construction, Market source seeding, and fixed the `import.meta.dirname` test runner bug.
+- `control-panel/package.json`, `README.md` — bumped CP to `0.4.49.14`, documented the installer bootstrap, and added installer `0.1.0.2` to Current Versions.
+
+### Test Results
+- Installer: `go test ./...` passed.
+- Installer build: `go build -o /tmp/youeye-installer-linux-amd64 .` passed; `--help` shows silent/source flags and GitHub defaults.
+- CP focused: `node --import tsx --test control-panel/tests/market-system-apps.spec.ts control-panel/tests/release-source-ownership.spec.ts` passed.
+- CP build: `pnpm build` passed for `ye-controlpanel@0.4.49.14`.
+
+### Notes for Iris
+- Public defaults are GitHub/main only. Custom Forgejo/dev installs require explicit Advanced Options or flags.
+- GitHub Market must publish a catalog whose app repo entries use the public repo mapping (`youeye-platform/Wiki`, `Search`, etc.); otherwise the GitHub default source will not be able to fetch native app manifests.
+
 ## cp-dev-v0.4.49.13 — artem — 2026-06-18
 **Branch:** dev
 **VM:** potempc

@@ -14,8 +14,8 @@ type rootModel struct {
 	height    int
 }
 
-func newRootModel() rootModel {
-	return rootModel{installer: New()}
+func newRootModel(opts CLIOptions) rootModel {
+	return rootModel{installer: NewWithOptions(opts)}
 }
 
 func (m rootModel) Init() tea.Cmd {
@@ -45,9 +45,9 @@ func (m rootModel) View() string {
 
 // Run launches the interactive TUI installer. It takes over the terminal
 // and returns when the user exits.
-func Run() error {
+func Run(opts CLIOptions) error {
 	p := tea.NewProgram(
-		newRootModel(),
+		newRootModel(opts),
 		tea.WithAltScreen(),
 		tea.WithMouseAllMotion(),
 	)

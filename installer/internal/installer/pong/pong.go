@@ -15,7 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"git.potemk.in/potemsla/YouEye/installer/internal/installer/theme"
+	"github.com/youeye-platform/YouEye/installer/internal/installer/theme"
 )
 
 // QuitMsg returns control to the menu.
@@ -29,9 +29,9 @@ const (
 	fieldH       = 20
 	paddleH      = 4
 	winScore     = 7
-	frameMs      = 35  // physics tick — ~28 fps
-	cpuMaxSpeed  = 1   // CPU paddle moves up to 1 row per tick
-	playerMaxSpd = 2   // human paddle moves up to 2 rows per tick
+	frameMs      = 35 // physics tick — ~28 fps
+	cpuMaxSpeed  = 1  // CPU paddle moves up to 1 row per tick
+	playerMaxSpd = 2  // human paddle moves up to 2 rows per tick
 )
 
 // Model holds Pong state.

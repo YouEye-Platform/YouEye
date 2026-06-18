@@ -27,7 +27,7 @@ func (m installMode) String() string {
 type installPath int
 
 const (
-	pathQuick    installPath = iota
+	pathQuick installPath = iota
 	pathAdvanced
 )
 
@@ -158,6 +158,13 @@ type installConfig struct {
 	Timezone string
 	Tags     string
 
+	// Release and catalog sources. Public defaults are GitHub/main; custom
+	// values are explicit operator choices from Advanced Options or CLI flags.
+	CoreRepoURL     string
+	MarketRepoURL   string
+	ReleaseChannel  string
+	NamesBundlePath string
+
 	// Result — set by the engine after installation completes.
 	ResultIP string
 }
@@ -166,26 +173,29 @@ type installConfig struct {
 // Detection data overrides these when available.
 func newConfig() installConfig {
 	return installConfig{
-		Mode:          modeLXC,
-		ContainerType: "Privileged",
-		MachineType:   "q35",
-		ContainerID:   "100",
-		Hostname:      "youeye",
-		DiskGB:        25,
-		CPUCores:      4,
-		RAMMB:         5120,
-		StoragePool:   "local-lvm",
-		NetworkBridge: "vmbr0",
-		IPMode:        "DHCP",
-		DNSSearch:     "lan",
-		DNSServer:     "inherit from host",
-		SSHKeySource:  "None",
-		CPUModel:      "KVM64",
-		DiskCache:     "None",
-		StartAfter:    true,
-		FeatNesting:   true,
-		Timezone:      "UTC",
-		Tags:          "youeye",
+		Mode:           modeLXC,
+		ContainerType:  "Privileged",
+		MachineType:    "q35",
+		ContainerID:    "100",
+		Hostname:       "youeye",
+		DiskGB:         25,
+		CPUCores:       4,
+		RAMMB:          5120,
+		StoragePool:    "local-lvm",
+		NetworkBridge:  "vmbr0",
+		IPMode:         "DHCP",
+		DNSSearch:      "lan",
+		DNSServer:      "inherit from host",
+		SSHKeySource:   "None",
+		CPUModel:       "KVM64",
+		DiskCache:      "None",
+		StartAfter:     true,
+		FeatNesting:    true,
+		Timezone:       "UTC",
+		Tags:           "youeye",
+		CoreRepoURL:    DefaultCoreRepoURL,
+		MarketRepoURL:  DefaultMarketRepoURL,
+		ReleaseChannel: DefaultReleaseChannel,
 	}
 }
 

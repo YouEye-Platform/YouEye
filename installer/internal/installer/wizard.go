@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"git.potemk.in/potemsla/YouEye/installer/internal/installer/theme"
+	"github.com/youeye-platform/YouEye/installer/internal/installer/theme"
 )
 
 // ---------------------------------------------------------------------------
@@ -19,19 +19,20 @@ import (
 type stepKind int
 
 const (
-	stepWelcome    stepKind = iota // logo + badge + "press enter"
-	stepModeSelect                 // LXC vs VM (Proxmox only)
-	stepPathSelect                 // Quick vs Advanced
-	stepRadio                      // single-select from options
-	stepText                       // single text input
-	stepPassword                   // two masked inputs (pw + confirm)
-	stepNumber                     // numeric input (with up/down)
-	stepResources                  // 3 number fields on one screen
-	stepToggle                     // grid of on/off toggles
-	stepIPConfig                   // DHCP/Static radio + conditional fields
-	stepDNS                        // two text fields
-	stepSSH                        // toggle + conditional source
-	stepConfirm                    // read-only summary
+	stepWelcome       stepKind = iota // logo + badge + "press enter"
+	stepModeSelect                    // LXC vs VM (Proxmox only)
+	stepPathSelect                    // Quick vs Advanced
+	stepRadio                         // single-select from options
+	stepText                          // single text input
+	stepPassword                      // two masked inputs (pw + confirm)
+	stepNumber                        // numeric input (with up/down)
+	stepResources                     // 3 number fields on one screen
+	stepToggle                        // grid of on/off toggles
+	stepIPConfig                      // DHCP/Static radio + conditional fields
+	stepDNS                           // two text fields
+	stepSourceOptions                 // core repo, Market repo, release channel
+	stepSSH                           // toggle + conditional source
+	stepConfirm                       // read-only summary
 )
 
 // ---------------------------------------------------------------------------
@@ -85,15 +86,23 @@ func modeSelectStep() wizStep {
 		{"Virtual Machine", "Full isolation, own kernel, more resources"},
 	}}
 }
-func pathSelectStep() wizStep {
+func pathSelectStep(mode installMode) wizStep {
+	installDesc := "Use GitHub/main and recommended settings"
+	advancedDesc := "Edit release sources, channel, and install settings"
+	if mode == modeHost {
+		advancedDesc = "Edit release sources and channel before installing"
+	}
 	return wizStep{kind: stepPathSelect, title: "Choose Your Adventure", options: []wizOption{
-		{"Quick Install", "Uses sensible defaults, 3 questions only"},
-		{"Advanced Setup", "Full control over every option"},
+		{"Install", installDesc},
+		{"Advanced Options", advancedDesc},
 	}}
 }
 
 // Quick path steps — includes ID selection for Proxmox modes.
 func quickSteps(mode installMode) []wizStep {
+	if mode == modeHost {
+		return []wizStep{{kind: stepConfirm, title: "Confirmation"}}
+	}
 	steps := []wizStep{
 		{kind: stepPassword, title: "Root Password"},
 	}
@@ -175,6 +184,7 @@ func advancedLXCSteps(env envInfo) []wizStep {
 // advancedVMSteps builds VM wizard steps using real detection data.
 func advancedVMSteps(env envInfo) []wizStep {
 	return []wizStep{
+		{kind: stepSourceOptions, title: "Advanced Options"},
 		{kind: stepRadio, title: "Machine Type", options: []wizOption{
 			{"q35", "Modern chipset, UEFI support"},
 			{"i440fx", "Legacy chipset, maximum compatibility"},
@@ -209,10 +219,8 @@ func advancedVMSteps(env envInfo) []wizStep {
 // advancedHostSteps returns wizard steps for bare Linux install.
 func advancedHostSteps() []wizStep {
 	return []wizStep{
-		{kind: stepPassword, title: "Root Password"},
+		{kind: stepSourceOptions, title: "Advanced Options"},
 		{kind: stepText, title: "Hostname"},
-		{kind: stepResources, title: "Resources"},
-		{kind: stepIPConfig, title: "IP Configuration"},
 		{kind: stepText, title: "Timezone"},
 		{kind: stepConfirm, title: "Confirmation"},
 	}
@@ -223,8 +231,12 @@ func advancedHostSteps() []wizStep {
 // ---------------------------------------------------------------------------
 
 func newWizardModel(env envInfo) wizardModel {
+	return newWizardModelWithConfig(env, newConfigFromEnv(env))
+}
+
+func newWizardModelWithConfig(env envInfo, cfg installConfig) wizardModel {
 	w := wizardModel{
-		config: newConfigFromEnv(env),
+		config: cfg,
 		env:    env,
 	}
 	// VM-only: YouEye must run in a full VM (LXC is not supported — Spine runs
@@ -233,10 +245,10 @@ func newWizardModel(env envInfo) wizardModel {
 	// No welcome screen — go straight to business.
 	if env.IsProxmox {
 		w.config.Mode = modeVM
-		w.steps = []wizStep{pathSelectStep()}
+		w.steps = []wizStep{pathSelectStep(w.config.Mode)}
 	} else {
 		w.config.Mode = modeHost
-		w.steps = []wizStep{pathSelectStep()}
+		w.steps = []wizStep{pathSelectStep(w.config.Mode)}
 	}
 	// Remaining steps added when path is chosen (in advanceStep).
 	w.initStep()
@@ -329,6 +341,22 @@ func (w *wizardModel) initStep() {
 		server.SetValue(w.config.DNSServer)
 		server.Width = 30
 		w.inputs = []textinput.Model{search, server}
+
+	case stepSourceOptions:
+		core := textinput.New()
+		core.Placeholder = DefaultCoreRepoURL
+		core.SetValue(w.config.CoreRepoURL)
+		core.Width = 62
+		core.Focus()
+		market := textinput.New()
+		market.Placeholder = DefaultMarketRepoURL
+		market.SetValue(w.config.MarketRepoURL)
+		market.Width = 62
+		channel := textinput.New()
+		channel.Placeholder = DefaultReleaseChannel
+		channel.SetValue(w.config.ReleaseChannel)
+		channel.Width = 24
+		w.inputs = []textinput.Model{core, market, channel}
 
 	case stepSSH:
 		// radioCur 0 = disabled, 1 = enabled
@@ -458,6 +486,17 @@ func (w *wizardModel) saveStep() {
 			if v := w.inputs[1].Value(); v != "" {
 				w.config.DNSServer = v
 			}
+		}
+
+	case stepSourceOptions:
+		if len(w.inputs) >= 3 {
+			if v := strings.TrimSpace(w.inputs[0].Value()); v != "" {
+				w.config.CoreRepoURL = normalizeRepoURL(v)
+			}
+			if v := strings.TrimSpace(w.inputs[1].Value()); v != "" {
+				w.config.MarketRepoURL = normalizeRepoURL(v)
+			}
+			w.config.ReleaseChannel = normalizeReleaseChannel(w.inputs[2].Value())
 		}
 
 	case stepSSH:
@@ -678,6 +717,26 @@ func (w wizardModel) handleKey(msg tea.KeyMsg) (wizardModel, tea.Cmd) {
 			}
 		}
 
+	case stepSourceOptions:
+		switch key {
+		case "tab":
+			w.focusField = (w.focusField + 1) % len(w.inputs)
+			return w.focusInput(w.focusField)
+		case "shift+tab":
+			w.focusField = (w.focusField + len(w.inputs) - 1) % len(w.inputs)
+			return w.focusInput(w.focusField)
+		case "enter":
+			return w.advance()
+		case "esc":
+			return w.goBack()
+		default:
+			if len(w.inputs) > 0 && w.focusField < len(w.inputs) {
+				var cmd tea.Cmd
+				w.inputs[w.focusField], cmd = w.inputs[w.focusField].Update(msg)
+				return w, cmd
+			}
+		}
+
 	case stepSSH:
 		switch key {
 		case "up", "k":
@@ -807,6 +866,8 @@ func (w wizardModel) View() string {
 		body = w.viewIPConfig()
 	case stepDNS:
 		body = w.viewDNS()
+	case stepSourceOptions:
+		body = w.viewSourceOptions()
 	case stepSSH:
 		body = w.viewSSH()
 	case stepToggle:
@@ -864,6 +925,8 @@ func (w wizardModel) hintForStep(k stepKind) string {
 		return theme.Hint.Render("  ↑/↓ select mode · Tab fields · Enter next · Esc back")
 	case stepDNS:
 		return theme.Hint.Render("  Tab switch field · Enter next · Esc back")
+	case stepSourceOptions:
+		return theme.Hint.Render("  Tab switch field · Enter next · Esc back")
 	case stepSSH:
 		return theme.Hint.Render("  ↑/↓ select · Enter next · Esc back")
 	case stepConfirm:
@@ -892,7 +955,7 @@ func (w wizardModel) viewWelcome() string {
 		badge = theme.StatusBar.Render(" LINUX HOST ")
 	}
 	desc := theme.Body.Render("  Self-hosted personal cloud platform")
-	ver := theme.Dim.Render("  Installer v0.3.1")
+	ver := theme.Dim.Render("  Installer v" + InstallerVersion)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		logo,
@@ -1038,6 +1101,22 @@ func (w wizardModel) viewDNS() string {
 	return strings.Join(rows, "\n")
 }
 
+func (w wizardModel) viewSourceOptions() string {
+	labels := []string{"Core repo:", "Market repo:", "Channel:"}
+	var rows []string
+	rows = append(rows, theme.Dim.Render("  Public installs use GitHub/main by default."))
+	rows = append(rows, "")
+	for i, lbl := range labels {
+		style := theme.Dim
+		if i == w.focusField {
+			style = theme.Body
+		}
+		rows = append(rows, fmt.Sprintf("  %s  %s", style.Render(fmt.Sprintf("%-12s", lbl)), w.inputs[i].View()))
+	}
+	rows = append(rows, "", theme.Dim.Render("  Custom repositories are manual overrides, not built-in profiles."))
+	return strings.Join(rows, "\n")
+}
+
 func (w wizardModel) viewSSH() string {
 	opts := []string{"Disabled", "Enabled"}
 	var rows []string
@@ -1103,9 +1182,15 @@ func (w wizardModel) viewConfirm() string {
 		add("ID", c.ContainerID)
 	}
 	add("Hostname", c.Hostname)
-	add("Disk", fmt.Sprintf("%d GB", c.DiskGB))
-	add("CPU", fmt.Sprintf("%d cores", c.CPUCores))
-	add("RAM", fmt.Sprintf("%d MiB", c.RAMMB))
+	add("Core Repo", c.CoreRepoURL)
+	add("Market Repo", c.MarketRepoURL)
+	add("Channel", c.ReleaseChannel)
+
+	if c.Mode != modeHost {
+		add("Disk", fmt.Sprintf("%d GB", c.DiskGB))
+		add("CPU", fmt.Sprintf("%d cores", c.CPUCores))
+		add("RAM", fmt.Sprintf("%d MiB", c.RAMMB))
+	}
 
 	if c.Path == pathAdvanced {
 		if c.Mode != modeHost {

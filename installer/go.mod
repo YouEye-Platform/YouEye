@@ -1,4 +1,4 @@
-module git.potemk.in/potemsla/YouEye/installer
+module github.com/youeye-platform/YouEye/installer
 
 go 1.23
 

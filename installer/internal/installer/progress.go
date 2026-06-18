@@ -8,27 +8,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"git.potemk.in/potemsla/YouEye/installer/internal/installer/pong"
-	"git.potemk.in/potemsla/YouEye/installer/internal/installer/snake"
-	"git.potemk.in/potemsla/YouEye/installer/internal/installer/tetris"
-	"git.potemk.in/potemsla/YouEye/installer/internal/installer/theme"
-	"git.potemk.in/potemsla/YouEye/installer/internal/installer/twofortyeight"
+	"github.com/youeye-platform/YouEye/installer/internal/installer/tetris"
+	"github.com/youeye-platform/YouEye/installer/internal/installer/theme"
 )
-
-// ---------------------------------------------------------------------------
-// Active game enum
-// ---------------------------------------------------------------------------
-
-type activeGame int
-
-const (
-	gameSnake activeGame = iota
-	gamePong
-	gameTetris
-	game2048
-)
-
-var gameNames = []string{"Snake", "Pong", "Tetris", "2048"}
 
 // ---------------------------------------------------------------------------
 // Engine channel listener (bridges goroutine → Bubble Tea)
@@ -65,13 +47,7 @@ type progressModel struct {
 
 	bar progress.Model
 
-	// Games
-	activeGame  activeGame
-	gameStarted bool
-	snakeM      snake.Model
-	pongM       pong.Model
-	tetrisM     tetris.Model
-	twoKM       twofortyeight.Model
+	tetrisM tetris.Model
 
 	done     bool
 	err      error
@@ -84,15 +60,11 @@ func newProgressModel(config installConfig) progressModel {
 	pb.Width = 60
 
 	return progressModel{
-		ready:      true,
-		config:     config,
-		stepName:   "Starting installation...",
-		bar:        pb,
-		snakeM:     snake.New(20, 12, true),
-		pongM:      pong.New(),
-		tetrisM:    tetris.New(),
-		twoKM:      twofortyeight.New(),
-		activeGame: gameTetris,
+		ready:    true,
+		config:   config,
+		stepName: "Starting installation...",
+		bar:      pb,
+		tetrisM:  tetris.New(),
 	}
 }
 
@@ -102,7 +74,7 @@ func (p progressModel) Init() tea.Cmd {
 	// the listener command here — we cannot set engineCh ourselves
 	// because Init() is a value receiver and changes would be lost.
 	if p.autoStart && p.engineCh != nil {
-		return listenEngine(p.engineCh)
+		return tea.Batch(listenEngine(p.engineCh), p.tetrisM.Init())
 	}
 	return nil // engine starts when user presses Enter
 }
@@ -131,28 +103,8 @@ func (p progressModel) Update(msg tea.Msg) (progressModel, tea.Cmd) {
 			if key == "enter" {
 				p.ready = false
 				p.engineCh = startEngine(p.config)
-				return p, listenEngine(p.engineCh)
+				return p, tea.Batch(listenEngine(p.engineCh), p.tetrisM.Init())
 			}
-			return p, nil
-		}
-
-		// Game switcher: number keys 1-4
-		switch key {
-		case "1":
-			p.activeGame = gameSnake
-			p.gameStarted = false
-			return p, nil
-		case "2":
-			p.activeGame = gamePong
-			p.gameStarted = false
-			return p, nil
-		case "3":
-			p.activeGame = gameTetris
-			p.gameStarted = false
-			return p, nil
-		case "4":
-			p.activeGame = game2048
-			p.gameStarted = false
 			return p, nil
 		}
 
@@ -161,30 +113,9 @@ func (p progressModel) Update(msg tea.Msg) (progressModel, tea.Cmd) {
 			return p, nil
 		}
 
-		// If game not started yet, any gameplay key starts it
-		if !p.gameStarted {
-			if isGameplayKey(key) {
-				p.gameStarted = true
-				switch p.activeGame {
-				case gameSnake:
-					p.snakeM = snake.New(20, 12, true)
-					return p, p.snakeM.Init()
-				case gamePong:
-					p.pongM = pong.New()
-					return p, p.pongM.Init()
-				case gameTetris:
-					p.tetrisM = tetris.New()
-					return p, p.tetrisM.Init()
-				case game2048:
-					p.twoKM = twofortyeight.New()
-					return p, p.twoKM.Init()
-				}
-			}
-			return p, nil
-		}
-
-		// Forward gameplay keys to active game
-		return p.forwardToGame(msg)
+		var cmd tea.Cmd
+		p.tetrisM, cmd = p.tetrisM.Update(msg)
+		return p, cmd
 
 	case progress.FrameMsg:
 		var pm tea.Model
@@ -193,33 +124,14 @@ func (p progressModel) Update(msg tea.Msg) (progressModel, tea.Cmd) {
 		return p, cmd
 
 	// Intercept game quit messages so they don't bubble up
-	case snake.QuitMsg:
-		return p, nil
-	case pong.QuitMsg:
-		return p, nil
 	case tetris.QuitMsg:
-		return p, nil
-	case twofortyeight.QuitMsg:
 		return p, nil
 
 	default:
-		// Forward game ticks to active game only if started
-		if p.gameStarted {
-			return p.forwardToGame(msg)
-		}
-		return p, nil
+		var cmd tea.Cmd
+		p.tetrisM, cmd = p.tetrisM.Update(msg)
+		return p, cmd
 	}
-}
-
-// isGameplayKey returns true for keys that should start a game.
-func isGameplayKey(key string) bool {
-	switch key {
-	case "up", "down", "left", "right",
-		"w", "a", "s", "d",
-		" ", "enter":
-		return true
-	}
-	return false
 }
 
 func (p progressModel) handleEngine(msg engineMsg) (progressModel, tea.Cmd) {
@@ -252,21 +164,6 @@ func (p progressModel) handleEngine(msg engineMsg) (progressModel, tea.Cmd) {
 	return p, tea.Batch(listenEngine(p.engineCh), barCmd)
 }
 
-func (p progressModel) forwardToGame(msg tea.Msg) (progressModel, tea.Cmd) {
-	var cmd tea.Cmd
-	switch p.activeGame {
-	case gameSnake:
-		p.snakeM, cmd = p.snakeM.Update(msg)
-	case gamePong:
-		p.pongM, cmd = p.pongM.Update(msg)
-	case gameTetris:
-		p.tetrisM, cmd = p.tetrisM.Update(msg)
-	case game2048:
-		p.twoKM, cmd = p.twoKM.Update(msg)
-	}
-	return p, cmd
-}
-
 // ---------------------------------------------------------------------------
 // View
 // ---------------------------------------------------------------------------
@@ -277,9 +174,7 @@ func (p progressModel) View() string {
 		return p.readyView()
 	}
 
-	// --- Game picker tabs (hidden — games are compiled in but not shown) ---
-	gamePicker := ""
-	gameView := ""
+	gameView := p.tetrisM.View()
 
 	// --- Step indicator + last log ---
 	stepLine := ""
@@ -327,8 +222,6 @@ func (p progressModel) View() string {
 
 	// --- Layout: game on top, compact status on bottom ---
 	content := lipgloss.JoinVertical(lipgloss.Left,
-		gamePicker,
-		"",
 		gameView,
 		divider,
 		stepLine,
@@ -365,6 +258,9 @@ func (p progressModel) readyView() string {
 	case modeHost:
 		rows = append(rows, theme.Body.Render(fmt.Sprintf("  Mode:       Direct install on this host")))
 	}
+	rows = append(rows, theme.Body.Render(fmt.Sprintf("  Core repo:  %s", p.config.CoreRepoURL)))
+	rows = append(rows, theme.Body.Render(fmt.Sprintf("  Market:     %s", p.config.MarketRepoURL)))
+	rows = append(rows, theme.Body.Render(fmt.Sprintf("  Channel:    %s", p.config.ReleaseChannel)))
 
 	if p.config.Mode != modeHost {
 		rows = append(rows, theme.Body.Render(fmt.Sprintf("  Resources:  %d CPU · %d MB RAM · %d GB disk", p.config.CPUCores, p.config.RAMMB, p.config.DiskGB)))

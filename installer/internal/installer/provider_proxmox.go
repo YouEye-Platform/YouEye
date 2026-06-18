@@ -21,15 +21,6 @@ import (
 
 const (
 	debian13ImageURL = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
-	// install.sh is pulled from the artem branch because it carries the
-	// main-release fallback fix: when a branch release isn't in the API's
-	// recent window, fall back to the main release TAG (not a non-existent
-	// branch tag). BRANCH + repo below tell it — and the subsequent
-	// `youeye deploy` — to use Forgejo (artem releases where available, else
-	// main). Point this back at main once the install.sh fix is promoted.
-	spineInstallURL = "https://git.potemk.in/potemsla/YouEye/raw/branch/artem/spine/install.sh"
-	releaseRepo     = "https://git.potemk.in/potemsla/YouEye"
-	releaseBranch   = "artem"
 )
 
 // guestExecResult is the JSON `qm guest exec` returns. `qm guest exec` itself
@@ -81,6 +72,24 @@ func vmIPViaAgent(vmid string) string {
 		return ""
 	}
 	return parseVMIP(out)
+}
+
+func seedMarketSourceInGuest(vmid string, config installConfig) error {
+	legacy, multi, err := marketSourceJSON(config.MarketRepoURL)
+	if err != nil {
+		return err
+	}
+	legacyB64 := base64.StdEncoding.EncodeToString(legacy)
+	multiB64 := base64.StdEncoding.EncodeToString(multi)
+	cmd := "set -e; mkdir -p /var/lib/youeye; " +
+		"echo " + shellQuote(legacyB64) + " | base64 -d > /var/lib/youeye/market-source.json; " +
+		"echo " + shellQuote(multiB64) + " | base64 -d > /var/lib/youeye/market-sources.json; " +
+		"chmod 644 /var/lib/youeye/market-source.json /var/lib/youeye/market-sources.json"
+	res, err := qmGuestExec(vmid, 30, "bash", "-lc", cmd)
+	if err != nil || res.ExitCode != 0 {
+		return fmt.Errorf("%v %s", err, clip(res.OutData+res.ErrData, 300))
+	}
+	return nil
 }
 
 // installVM is the Proxmox VM provider's provisioning routine.
@@ -274,13 +283,23 @@ fi
 			"grep -q '::ffff:0:0/96' /etc/gai.conf 2>/dev/null || echo 'precedence ::ffff:0:0/96  100' >> /etc/gai.conf 2>/dev/null || true")
 
 	// -- Install Spine inside the VM (guest agent runs as root) --
-	send(ch, "Installing Spine", fmt.Sprintf("Installing Spine (%s branch, Forgejo)...", releaseBranch), 0.42)
-	installCmd := fmt.Sprintf("curl -fsSL %s | RELEASE_REPO_URL='%s' BRANCH='%s' sh", spineInstallURL, releaseRepo, releaseBranch)
+	send(ch, "Installing Spine", fmt.Sprintf("Installing Spine (%s channel)...", config.ReleaseChannel), 0.42)
+	installCmd, err := spineInstallCommand(config)
+	if err != nil {
+		sendErr(ch, fmt.Errorf("building Spine install command: %w", err))
+		return
+	}
 	if res, err := qmGuestExec(vmid, 180, "bash", "-lc", installCmd); err != nil || res.ExitCode != 0 {
 		sendErr(ch, fmt.Errorf("Spine install failed: %v %s", err, clip(res.OutData+res.ErrData, 400)))
 		return
 	}
 	send(ch, "Installing Spine", "Spine installed", 0.46)
+
+	send(ch, "Configuring Market", "Saving Market source...", 0.48)
+	if err := seedMarketSourceInGuest(vmid, config); err != nil {
+		sendErr(ch, fmt.Errorf("saving Market source in VM: %w", err))
+		return
+	}
 
 	// -- Deploy YouEye inside the VM: start in background, poll the log so the
 	//    TUI streams progress (qm guest exec is not itself a live stream). --
@@ -346,7 +365,11 @@ fi
 	// If YOUEYE_NAMES_BUNDLE points at a bundle file, drop it into the Control
 	// Panel container so the setup wizard reuses that name + certificate
 	// instead of claiming a new one (no Let's Encrypt round-trip).
-	if bundlePath := os.Getenv("YOUEYE_NAMES_BUNDLE"); bundlePath != "" {
+	bundlePath := config.NamesBundlePath
+	if bundlePath == "" {
+		bundlePath = os.Getenv("YOUEYE_NAMES_BUNDLE")
+	}
+	if bundlePath != "" {
 		send(ch, "Deploying YouEye", "Staging YouEye Names reuse bundle...", 0.97)
 		if data, err := os.ReadFile(bundlePath); err != nil || len(data) == 0 {
 			send(ch, "Deploying YouEye", "Warning: could not read names bundle "+clip(bundlePath, 80), 0.97)

@@ -1,9 +1,9 @@
 // Package installer implements the full YouEye install experience:
 //
-//	detect → wizard (Proxmox) or direct install (bare OS) → progress → complete / error
+//	detect → wizard/confirmation → progress → complete / error
 //
-// On Proxmox: detect → "not ready yet" message (Proxmox helper script not ready)
-// On bare Linux: detect → progress (skip wizard, auto-start install with games) → complete / error
+// On Proxmox: detect → VM wizard → progress → complete / error
+// On bare Linux: detect → minimal confirmation → progress → complete / error
 package installer
 
 import (
@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"git.potemk.in/potemsla/YouEye/installer/internal/installer/theme"
+	"github.com/youeye-platform/YouEye/installer/internal/installer/theme"
 )
 
 // QuitMsg is emitted to return to the main menu / exit.
@@ -33,6 +33,7 @@ const (
 // Model is the top-level installer model.
 type Model struct {
 	phase phase
+	opts  CLIOptions
 
 	detect   detectModel
 	wizard   wizardModel
@@ -45,8 +46,32 @@ type Model struct {
 
 // New constructs a fresh installer.
 func New() Model {
+	return NewWithOptions(CLIOptions{
+		Mode:           defaultInstallerMode,
+		CoreRepoURL:    DefaultCoreRepoURL,
+		MarketRepoURL:  DefaultMarketRepoURL,
+		ReleaseChannel: DefaultReleaseChannel,
+	})
+}
+
+// NewWithOptions constructs a fresh installer using CLI/env overrides as
+// defaults for the TUI.
+func NewWithOptions(opts CLIOptions) Model {
+	if opts.CoreRepoURL == "" {
+		opts.CoreRepoURL = DefaultCoreRepoURL
+	}
+	if opts.MarketRepoURL == "" {
+		opts.MarketRepoURL = DefaultMarketRepoURL
+	}
+	if opts.ReleaseChannel == "" {
+		opts.ReleaseChannel = DefaultReleaseChannel
+	}
+	if opts.Mode == "" {
+		opts.Mode = defaultInstallerMode
+	}
 	return Model{
 		phase:  phaseDetect,
+		opts:   opts,
 		detect: newDetectModel(),
 	}
 }
@@ -121,26 +146,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, cmd
 			}
 
-			// Proxmox detected: start the VM-install wizard.
-			if m.detect.env.IsProxmox {
-				m.wizard = newWizardModel(m.detect.env)
-				m.wizard.width, m.wizard.height = m.width, m.height
-				m.phase = phaseWizard
-				return m, m.wizard.Init()
+			cfg, err := configFromEnvAndOptions(m.detect.env, m.opts)
+			if err != nil {
+				m.errModel = newErrorModel(cfg, err)
+				m.errModel.width, m.errModel.height = m.width, m.height
+				m.phase = phaseError
+				return m, m.errModel.Init()
 			}
 
-			// Bare OS (not Proxmox): skip wizard entirely, go straight to install.
-			// Start the engine HERE on the real model — Init() is a value receiver
-			// so it cannot set engineCh (changes would be lost on the copy).
-			cfg := newConfigFromEnv(m.detect.env)
-			cfg.Mode = modeHost
-			m.progress = newProgressModel(cfg)
-			m.progress.autoStart = true
-			m.progress.ready = false
-			m.progress.engineCh = startEngine(cfg)
-			m.progress.width, m.progress.height = m.width, m.height
-			m.phase = phaseProgress
-			return m, m.progress.Init()
+			// Both Proxmox and bare Linux now pass through the same compact
+			// wizard shell: Install uses defaults, Advanced Options exposes
+			// editable source/channel fields plus platform-specific controls.
+			m.wizard = newWizardModelWithConfig(m.detect.env, cfg)
+			m.wizard.width, m.wizard.height = m.width, m.height
+			m.phase = phaseWizard
+			return m, m.wizard.Init()
 		}
 		return m, cmd
 
