@@ -272,7 +272,10 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
 
   async function checkUpdates() {
     setChecking(true);
-    await fetch("/api/apps/check-updates", { method: "POST" }).catch(() => {});
+    // Authoritative "check everything": refreshVersionCheck() runs the market catalog
+    // check AND the infra (OCI/LXD) digest check in one pass. Component (Spine) status
+    // is always fetched fresh by load() -> /api/apps/unified.
+    await fetch("/api/market/updates", { method: "POST" }).catch(() => {});
     await load();
     setChecking(false);
   }

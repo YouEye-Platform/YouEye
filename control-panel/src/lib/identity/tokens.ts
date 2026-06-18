@@ -11,6 +11,7 @@ import {
 } from 'jose';
 import { getIdentitySecret, getSigningSecret, getUserById, setIdentitySecret, type IdentityUser } from './store';
 import { getIdentityConfig } from './config';
+import { getClientIssuer } from './issuer';
 
 const SESSION_COOKIE = 'ye-id-session';
 const OAUTH_RS256_PRIVATE_KEY = 'oauth-rs256-private-key';
@@ -89,6 +90,10 @@ function oauthClaims(user: IdentityUser, scope = ''): Record<string, unknown> {
     preferred_username: user.username,
     name: user.name,
     email: user.email,
+    // YouEye owns the account lifecycle and sets the email at creation, so it is
+    // verified by definition. Some clients (e.g. Vaultwarden, django-allauth)
+    // refuse to provision an account whose email is not marked verified.
+    email_verified: true,
     groups,
     is_admin: isAdmin,
   };
@@ -102,14 +107,24 @@ function oauthClaims(user: IdentityUser, scope = ''): Record<string, unknown> {
   return claims;
 }
 
-export async function createAccessToken(user: IdentityUser, clientId: string, scope = ''): Promise<string> {
-  const config = await getIdentityConfig();
+export async function createAccessToken(user: IdentityUser, clientId: string, scope = '', nonce?: string | null): Promise<string> {
   const privateKey = await getOAuthPrivateKey();
   const jwk = await getOAuthPublicJwk();
-  return new SignJWT(oauthClaims(user, scope))
+  const claims = oauthClaims(user, scope);
+  // OIDC: when the client sent a nonce in the auth request, the ID token MUST
+  // echo it (and MUST NOT include one otherwise). Required by Authlib, Spring
+  // Security, mod_auth_openidc, the Rust openidconnect crate, etc.
+  if (nonce) claims.nonce = nonce;
+  // Per-client issuer: must equal what the per-client discovery doc advertises and
+  // the authority the app is configured with, or strict clients (the Rust openidconnect
+  // crate, Spring Security, go-oidc) reject the token. For app clients this is the
+  // clientId-derived INTERNAL authority (http://<app-gw>:3002/application/o/<clientId>/),
+  // so the token validates even under full network isolation; first-party clients
+  // (and resolution failures) get the external authority.
+  return new SignJWT(claims)
     .setProtectedHeader({ alg: 'RS256', kid: String(jwk.kid) })
     .setSubject(user.id)
-    .setIssuer(config.issuer)
+    .setIssuer(await getClientIssuer(clientId))
     .setAudience(clientId)
     .setIssuedAt()
     .setExpirationTime('1h')
@@ -121,9 +136,16 @@ export async function verifyBearerToken(token: string): Promise<IdentityUser | n
   try {
     const jwk = await getOAuthPublicJwk();
     const publicKey = await importJWK(jwk, 'RS256');
-    const result = await jwtVerify(token, publicKey, {
-      issuer: config.issuer,
-    });
+    // OAuth access tokens carry a PER-CLIENT issuer that may be EXTERNAL (first-party,
+    // non-isolated apps) or INTERNAL (http://<app-gw>:3002/application/o/<clientId>/),
+    // so we can't pin a single value; the RS256 signature (our key alone) is the trust
+    // boundary. We additionally require iss to be one of our `/application/o/<aud>/`
+    // authorities — tying iss to the token's audience so it can't claim a foreign issuer.
+    const result = await jwtVerify(token, publicKey);
+    const iss = String(result.payload.iss || '');
+    const audClaim = result.payload.aud;
+    const aud = Array.isArray(audClaim) ? String(audClaim[0] || '') : String(audClaim || '');
+    if (!aud || !/^https?:\/\//.test(iss) || !iss.endsWith(`/application/o/${aud}/`)) return null;
     const sub = result.payload.sub;
     if (!sub) return null;
     return getUserById(sub);

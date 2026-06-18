@@ -139,12 +139,14 @@ async function issueAuthRedirect(input: {
   redirectUri: string;
   scope: string;
   state: string;
+  nonce: string;
 }) {
   const code = await createAuthCode({
     clientId: input.clientId,
     userId: input.user.id,
     redirectUri: input.redirectUri,
     scope: input.scope,
+    nonce: input.nonce || null,
   });
   const redirect = new URL(input.redirectUri);
   redirect.searchParams.set('code', code);
@@ -472,6 +474,7 @@ async function validateAuthorizeRequest(request: NextRequest) {
   const redirectUri = params.get('redirect_uri') || '';
   const state = params.get('state') || '';
   const scope = params.get('scope') || DEFAULT_SCOPE;
+  const nonce = params.get('nonce') || '';
 
   const homeUrl = (await uiExternalUrl()) || '/';
   if (responseType !== 'code') {
@@ -485,7 +488,7 @@ async function validateAuthorizeRequest(request: NextRequest) {
     return { error: await renderIdentityErrorPage({ code: 'invalid_redirect_uri', status: 400, technical: `client ${clientId} requested ${redirectUri}`, homeUrl }) };
   }
 
-  return { client, clientId, redirectUri, state, scope };
+  return { client, clientId, redirectUri, state, scope, nonce };
 }
 
 export async function GET(request: NextRequest) {
@@ -500,7 +503,7 @@ export async function GET(request: NextRequest) {
 
   const validated = await validateAuthorizeRequest(request);
   if ('error' in validated) return validated.error;
-  const { client, clientId, redirectUri, state, scope } = validated;
+  const { client, clientId, redirectUri, state, scope, nonce } = validated;
 
   if (!isFirstPartyClient(clientId)) {
     const requestedScopes = scopeList(scope);
@@ -521,7 +524,7 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return issueAuthRedirect({ clientId, user, redirectUri, scope, state });
+  return issueAuthRedirect({ clientId, user, redirectUri, scope, state, nonce });
 }
 
 export async function POST(request: NextRequest) {
@@ -532,7 +535,7 @@ export async function POST(request: NextRequest) {
 
   const validated = await validateAuthorizeRequest(request);
   if ('error' in validated) return validated.error;
-  const { clientId, redirectUri, state, scope } = validated;
+  const { clientId, redirectUri, state, scope, nonce } = validated;
 
   const form = await request.formData();
   const decision = String(form.get('decision') || '');
@@ -553,5 +556,5 @@ export async function POST(request: NextRequest) {
   }
 
   await upsertAppConsent({ userId: user.id, clientId, scopes: scopeList(scope) });
-  return issueAuthRedirect({ clientId, user, redirectUri, scope, state });
+  return issueAuthRedirect({ clientId, user, redirectUri, scope, state, nonce });
 }

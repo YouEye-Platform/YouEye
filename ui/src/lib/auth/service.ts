@@ -9,14 +9,16 @@
  * YE-UI validates the token hash matches the stored hash in the apps table,
  * then verifies the app is registered and the user exists.
  *
- * Grace period: apps without tokens are warned but allowed through.
- * Strict mode: uncomment the return-null lines after all apps are updated.
+ * Enforcement (Auth Unification Phase 3): an app registered WITH a token_hash MUST present a
+ * valid Bearer token — an invalid or absent token is rejected. Apps that have no token_hash yet
+ * (transitional, pre-provisioning) remain in a logged grace period so they are not locked out;
+ * once Control Panel registers their hash they fall under enforcement automatically.
  */
 
 import type { NextRequest } from "next/server";
 import { db, ensureSchema } from "@/db";
 import { users, apps } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { validateAppToken } from "./app-token";
 
 interface ServiceUser {
@@ -53,37 +55,36 @@ export async function resolveServiceAuth(
   try {
     await ensureSchema();
 
-    // === Layer 2: Verify app token ===
+    // === Layer 2: Verify app token (ENFORCED — Auth Unification Phase 3) ===
+    // The app token is the trust boundary. A request is honored only if it presents a Bearer
+    // token whose SHA-256 hash matches the app's stored token_hash. Apps registered WITH a hash
+    // MUST present a valid token (invalid/absent → reject). Apps with no hash yet (transitional,
+    // pre-provisioning) are allowed through with a warning so they aren't locked out.
     const authHeader = request.headers.get("authorization");
     const tokenResult = await validateAppToken(request);
 
     if (tokenResult) {
-      // Token provided and valid — verify it matches the claimed app
+      // Valid token — verify it matches the claimed app.
       const tokenAppId = tokenResult.appId.replace(/^ye-/, "");
       if (tokenAppId !== appId && tokenResult.appId !== rawAppId) {
         console.warn(`[Service Auth] Token/app mismatch: token=${tokenResult.appId}, header=${rawAppId}`);
         return null;
       }
-    } else if (authHeader?.startsWith("Bearer ")) {
-      // Token provided but validation failed — check if app has no hash yet
+    } else {
+      // No valid token (absent or invalid). Reject if the app is registered WITH a token hash —
+      // it is expected to present its token. Grace only for apps that have no hash registered yet.
       const appCheck = await db
         .select({ id: apps.id, tokenHash: apps.tokenHash })
         .from(apps)
-        .where(eq(apps.id, appId))
+        .where(or(eq(apps.id, appId), eq(apps.id, rawAppId)))
         .limit(1);
-
-      if (appCheck.length > 0 && appCheck[0].tokenHash === null) {
-        console.warn(`[Service Auth] App ${rawAppId} has no token_hash registered — grace period`);
-      } else {
-        console.warn(`[Service Auth] Invalid token from ${rawAppId} — grace period`);
-        // TODO: After all apps updated and verified, uncomment to enforce:
-        // return null;
+      const registeredWithHash = appCheck.length > 0 && appCheck[0].tokenHash !== null;
+      const reason = authHeader?.startsWith("Bearer ") ? "invalid app token" : "no app token";
+      if (registeredWithHash) {
+        console.warn(`[Service Auth] Rejecting ${rawAppId}: ${reason} but app has a registered token_hash`);
+        return null;
       }
-    } else {
-      // No token at all — grace period
-      console.warn(`[Service Auth] No app token from ${rawAppId} — grace period`);
-      // TODO: After all apps updated and verified, uncomment to enforce:
-      // return null;
+      console.warn(`[Service Auth] ${rawAppId} presented ${reason} and has no token_hash registered — grace period`);
     }
     // === End Layer 2 ===
 

@@ -35,6 +35,7 @@ export interface AuthCode {
   user_id: string;
   redirect_uri: string;
   scope: string;
+  nonce: string | null;
 }
 
 function sql(value: string | number | boolean | null): string {
@@ -99,6 +100,7 @@ export async function ensureIdentitySchema(): Promise<void> {
       user_id uuid NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
       redirect_uri text NOT NULL,
       scope text NOT NULL,
+      nonce text,
       expires_at timestamptz NOT NULL,
       used_at timestamptz
     );
@@ -115,6 +117,9 @@ export async function ensureIdentitySchema(): Promise<void> {
       updated_at timestamptz NOT NULL DEFAULT now(),
       PRIMARY KEY (user_id, client_id)
     );
+    -- Upgrade path: the nonce column was added after identity_auth_codes shipped,
+    -- so add it to installs whose table predates it (CREATE IF NOT EXISTS won't).
+    ALTER TABLE identity_auth_codes ADD COLUMN IF NOT EXISTS nonce text;
   `);
 }
 
@@ -305,12 +310,13 @@ export async function createAuthCode(input: {
   userId: string;
   redirectUri: string;
   scope: string;
+  nonce?: string | null;
 }): Promise<string> {
   await ensureIdentitySchema();
   const code = randomBytes(32).toString('hex');
   await psql(`
-    INSERT INTO identity_auth_codes (code, client_id, user_id, redirect_uri, scope, expires_at)
-    VALUES (${sql(code)}, ${sql(input.clientId)}, ${sql(input.userId)}, ${sql(input.redirectUri)}, ${sql(input.scope)}, now() + interval '10 minutes')
+    INSERT INTO identity_auth_codes (code, client_id, user_id, redirect_uri, scope, nonce, expires_at)
+    VALUES (${sql(code)}, ${sql(input.clientId)}, ${sql(input.userId)}, ${sql(input.redirectUri)}, ${sql(input.scope)}, ${sql(input.nonce ?? null)}, now() + interval '10 minutes')
   `);
   return code;
 }
@@ -325,7 +331,7 @@ export async function consumeAuthCode(code: string, clientId: string, redirectUr
       AND redirect_uri = ${sql(redirectUri)}
       AND used_at IS NULL
       AND expires_at > now()
-    RETURNING code, client_id, user_id::text, redirect_uri, scope
+    RETURNING code, client_id, user_id::text, redirect_uri, scope, nonce
   `);
   return rows[0] || null;
 }

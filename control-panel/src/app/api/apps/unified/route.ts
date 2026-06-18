@@ -29,6 +29,7 @@ import { listInstalledApps } from '@/lib/market/metadata';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
 import { fetchManifest } from '@/lib/market/catalog';
 import { planSystemUpdates, type SystemUpdatePlan } from '@/lib/infrastructure/system-updater';
+import { isNewer } from '@/lib/version';
 
 // ─── Response types ───────────────────────────────────────────────────────────
 
@@ -349,6 +350,9 @@ export async function GET() {
 
     const marketApps: UnifiedApp[] = filteredMarket.map((meta, i) => {
       const dbEntry = dbAppsMap.get(meta.appId);
+      const catV = dbEntry?.catalogVersion;
+      const insV = dbEntry?.installedVersion;
+      const marketUpdate = !!(catV && insV && isNewer(catV, insV));
       const manifest = manifestResults[i].status === 'fulfilled'
         ? manifestResults[i].value
         : null;
@@ -377,10 +381,8 @@ export async function GET() {
         updatedBy: 'control-panel' as const,
         version: dbEntry?.installedVersion ?? undefined,
         status: aggregateStatus(containerStatuses),
-        updateAvailable: dbEntry?.updateAvailable ?? false,
-        updateInfo: dbEntry?.updateAvailable && dbEntry.catalogVersion
-          ? `${dbEntry.installedVersion} → ${dbEntry.catalogVersion}`
-          : undefined,
+        updateAvailable: marketUpdate,
+        updateInfo: marketUpdate && catV ? `${insV} → ${catV}` : undefined,
         healthStatus: healthStatuses[meta.appId] ?? undefined,
         healthCheckedAt: lastHealthCheck,
       };

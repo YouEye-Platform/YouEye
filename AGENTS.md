@@ -189,6 +189,136 @@
 - Host-side bash, NOT a Spine/CP/UI component — no version bump / Forgejo release.
 - Part of the "X installer" plan (`Agent Working/youeye-developer/Artem/Plans/X installer.md`). Next slices: wire the real Spine install + `youeye deploy` into the guest-exec step, the base-Linux detection branch, then the TUI.
 - Requires `libguestfs-tools` on the host (script installs it if missing). Koshka had a pre-existing broken 3rd-party Docker apt repo; the script tolerates a non-zero `apt-get update`.
+## cp-mythos-v0.4.49.6 + Market mythos-v0.4.0.10 — mythos — 2026-06-17
+**Branch:** mythos · **Agent:** Mythos
+**Task:** Per-client OIDC issuer (Option B) — YouEye ID now issues a per-client `issuer`/`iss` matching the per-client discovery URL, so strict OIDC clients (Vaultwarden/openidconnect crate, Spring, go-oidc) stop rejecting "unexpected issuer URI"
+
+### Changes
+- `control-panel/src/app/application/o/[clientId]/.well-known/openid-configuration/route.ts` — return `issuer: ${externalUrl}/application/o/${clientId}/` (uses the route's clientId; 404 unknown client). Endpoints stay shared/absolute.
+- `control-panel/src/lib/identity/tokens.ts` — `createAccessToken` sets the id_token `iss` to the per-client issuer; `verifyBearerToken` (RS256 path) no longer pins a single issuer (signature is the trust boundary; requires `iss` to be one of ours). Session token (`createIdentityToken`/`verifyIdentityToken`, HS256) unchanged (bare issuer).
+- DELETED `control-panel/src/app/.well-known/openid-configuration/route.ts` (bare root discovery — re-exported the per-client GET, which now needs a clientId; no consumer after the two manifest migrations).
+- `control-panel/package.json` 0.4.49.5 → 0.4.49.6.
+- YE-AppMarket: `integrations/immich/youeye-id.yaml` (`oauth.issuerUrl: ${sso.issuer}`, was `${identity.externalUrl}`; v0.1.3→0.1.4), `integrations/jellyfin/youeye-id.yaml` (`oidEndpoint: ${sso.issuer}`, was `${identity.externalUrl}/`; v0.1.3→0.1.4), `catalog.yaml` (both latestVersion→0.1.4). These were the ONLY two apps on the bare issuer.
+
+### Test Results
+- `tsc --noEmit`: no errors in the changed files (only pre-existing unrelated `sso-setup.ts` errors; `ignoreBuildErrors`). Owner does a FULL REINSTALL + dual-account re-test (per request).
+
+### Notes for Iris
+- CP `cp-mythos-v0.4.49.6` + Market `mythos-v0.4.0.10`. No UI/Spine change.
+- Builds on 0.4.49.4 (CA) + 0.4.49.5 (accept-both/nonce/email_verified); this closes the 4th axis (issuer matching). With all four, strict + lenient OIDC libraries should both work.
+- First-party CP/UI login unaffected (lenient: exchange→userinfo; the `verifyBearerToken` change keeps /userinfo working with the per-client `iss`). No backwards-compat kept (bare issuer removed) → clean reinstall is the test path.
+- Watch on test: Jellyfin `doNotValidateEndpoints: false` may reject the shared endpoints under a per-client issuer → flip to true if so. Audiobookshelf `/undefined/` redirect_uri still separate.
+- Docs: YE-Wiki `control-panel/identity-oidc-provider.md` (per-client issuer) + `app-market/sso-test-results.md` (Bug 4).
+
+## cp-mythos-v0.4.49.5 — mythos — 2026-06-17
+**Branch:** mythos · **Agent:** Mythos
+**Task:** Make YouEye ID (the homegrown OIDC provider) interoperable with every market app's OIDC client — accept both client-auth methods, echo `nonce`, assert `email_verified`
+
+### Changes
+- `control-panel/src/app/application/o/token/route.ts` — accept client creds from EITHER the `Authorization: Basic` header (`client_secret_basic`) or the POST body (`client_secret_post`); constant-time secret compare; `WWW-Authenticate: Basic` on the 401; pass the auth code's `nonce` into the id_token. Root cause: the endpoint read creds from the body only, so every library defaulting to Basic (Authlib/Mealie, openid-client, mod_auth_openidc, Spring, the Rust openidconnect crate) got `401 invalid_client`.
+- `control-panel/src/app/application/o/authorize/route.ts` — capture `nonce` from the auth request and thread it through `issueAuthRedirect` → `createAuthCode` (both the GET fast-path and the POST consent-path).
+- `control-panel/src/lib/identity/store.ts` — `AuthCode.nonce`; `identity_auth_codes.nonce` column + `ALTER TABLE … ADD COLUMN IF NOT EXISTS` upgrade path; `createAuthCode` persists it; `consumeAuthCode` returns it.
+- `control-panel/src/lib/identity/tokens.ts` — `createAccessToken(..., nonce?)` emits the `nonce` claim only when present; `oauthClaims` always emits `email_verified: true`.
+- `control-panel/src/lib/identity/http.ts` — `userinfo` emits `email_verified: true`.
+- `control-panel/src/app/application/o/[clientId]/.well-known/openid-configuration/route.ts` — advertise `token_endpoint_auth_methods_supported: [client_secret_basic, client_secret_post]`.
+- `control-panel/package.json` 0.4.49.4 → 0.4.49.5.
+
+### Test Results
+- `tsc --noEmit`: no errors in the changed files (only pre-existing unrelated errors; `next.config` sets `ignoreBuildErrors`). Live deploy + dual-account re-test left to the owner (per request).
+
+### Notes for Iris
+- CP-only release `cp-mythos-v0.4.49.5`. No UI/Spine/Market change.
+- Closes the env-OIDC class systemically: 12 market apps (Mealie, Vaultwarden, FreshRSS, Stirling-PDF, Planka, Actual, Linkwarden, Kavita, Paperless fixed here; Miniflux/Vikunja/HedgeDoc already worked off the 0.4.49.4 CA fix). Per-app matrix + sources: YE-Wiki `app-market/sso-test-results.md` (Bug 3) + new `control-panel/identity-oidc-provider.md`.
+- Additive/backwards-compatible: `client_secret_post` still works (first-party CP/UI login unaffected), `nonce` echoed only when sent, `email_verified` is a new claim, DB column added idempotently.
+- Still open: Audiobookshelf OIDC redirect_uri `/undefined/` (separate, pre-existing).
+
+## cp-mythos-v0.4.49.4 — mythos — 2026-06-17
+**Branch:** mythos · **Agent:** Mythos
+**Task:** Fix env-OIDC apps failing OIDC discovery with `CERTIFICATE_VERIFY_FAILED` (systemic) — trust the YouEye root CA in non-systemd OCI containers
+
+### Changes
+- `control-panel/src/lib/market/engine.ts` — OCI deploy path: for SSO apps (`ssoEnabled || nativeIdentityIntegrationPlanned`), set `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `NODE_EXTRA_CA_CERTS` → `/usr/local/share/ca-certificates/caddy-root.crt` in the container env (from boot), never overriding manifest values. Root cause: `injectCaddyRootCA` only adds the cert to the system store + a **systemd drop-in**; non-systemd OCI runtimes that ship their own CA bundle (Python `httpx`/`certifi`, Node) ignore the system store, so server-side OIDC discovery to `https://id.<domain>` fails TLS verify (confirmed on Mealie: `httpx.ConnectError: CERTIFICATE_VERIFY_FAILED`). Integration apps (.NET/PHP) read the system store, so were unaffected — which is why Jellyfin/Nextcloud worked but env-OIDC apps didn't.
+- `control-panel/package.json` 0.4.49.3 → 0.4.49.4.
+
+### Test Results
+- `tsc --noEmit`: no errors in the changed file. Live deploy + re-test left to the owner (per request).
+
+### Notes for Iris
+- CP-only release `cp-mythos-v0.4.49.4`. No UI/Spine change.
+- Companion Market release `mythos-v0.4.0.9` adds SSO `entry_url` to the nextcloud (`/apps/user_oidc/login/1`) + immich (`/auth/login?autoLaunch=1`) integration manifests.
+- Verified PASS (dual-account) before this fix: Jellyfin 10.11.11, Nextcloud 34.0.0, Immich 2.7.5, Memos 0.29.1. Follow-ups: Audiobookshelf OIDC redirect_uri `/undefined/` bug; re-test remaining env-OIDC apps after deploy; CLI `app install`/`app stop` bugs.
+
+## cp-mythos-v0.4.49.3 + ui-mythos-v0.4.28.3 — mythos — 2026-06-17
+**Branch:** mythos · **Agent:** Mythos
+**Task:** Propagate integration-provided SSO `entry_url` to the UI so the app drawer/header launch the SSO login path (not the app's local login form) for integration-wired apps (Jellyfin, Nextcloud, Immich, Memos, Audiobookshelf)
+
+### Changes
+- `control-panel/src/lib/market/engine.ts` — new exported `pushSsoEntryUrlToUI(appId, entryUrl)`: token-safe, bridge-authenticated `POST /api/v1/apps/sso-entry-url` that updates ONLY the UI `sso_entry_url` column (omits token_hash/icon/name/container URL → bridge token & all other fields preserved).
+- `control-panel/src/lib/market/integration-runner.ts` — `applyIntegration` calls `pushSsoEntryUrlToUI` after OAuth-client creation when `integration.sso?.entry_url` is set, resolving `${sso.slug}` (→ `youeye-app-<appId>`). Root cause: integration-wired apps have no `sso` block in the app manifest, so the main install's `registerAppWithUI` registered `sso_entry_url=null`; the integration runs post-install and never pushed it.
+- `ui/src/lib/db/queries/app-management.ts` — new `setAppSsoEntryUrl(appId, entryUrl)` query (update-only, invalidates app-surface cache).
+- `ui/src/app/api/v1/apps/sso-entry-url/route.ts` — NEW bridge-only `POST` route.
+- CP `package.json` 0.4.49.2 → 0.4.49.3; UI `package.json` 0.4.28.2 → 0.4.28.3.
+
+### Test Results
+- Local `tsc --noEmit`: no errors in changed files.
+- Deployed to bykapc (CP 0.4.49.3, UI 0.4.28.3). Installed Jellyfin via the Market (youeye-id integration auto-applied); UI `apps.sso_entry_url` for jellyfin = `/sso/OID/start/youeye-app-jellyfin` (was NULL pre-fix) — entry_url now reaches the UI, so the drawer launches the SSO login path. Browser dual-account (tester/tester2) role verification recorded in the YE-Wiki 2026-06-17 test matrix.
+
+### Notes for Iris
+- CP + UI released together: `cp-mythos-v0.4.49.3`, `ui-mythos-v0.4.28.3`. No Spine change.
+- Pre-existing CLI bug found (separate from this release): `youeye app install <name>` sends only `{appId}` to `/api/market/install`, omitting the required `subdomain`/`domain`/`selectedIntegrations` → 400. Logged for a Spine follow-up; installs in this session used the direct CP API.
+- Manifests unchanged here — Jellyfin's integration already declared `sso.entry_url`. Other apps' `entry_url` values are added to YE-AppMarket as each is validated against its running instance.
+
+## spine-mythos-v0.4.10.1 — mythos — 2026-06-16
+**Branch:** mythos · **Agent:** Mythos
+**Task:** Fix `id.<domain>` HTTP 500 on login — identity provider missing Incus HTTPS env (spine-v0.4.10 regression)
+
+### Changes
+- `spine/internal/container/control.go` — add `INCUS_HTTPS_URL` / `INCUS_CLIENT_CERT` / `INCUS_CLIENT_KEY` Environment lines (+ `incusGW` arg) to the `youeye-id.service` (identity provider, :3001) unit. The spine-v0.4.10 unix-socket→HTTPS migration added them to the CP unit only; the identity service shares the same `/opt/app` bundle + Incus client and fell back to the removed Incus unix socket → `ECONNREFUSED` → 500 on the login flow. Added a "keep in sync with the CP unit" comment to prevent recurrence.
+- `spine/internal/cmd/root.go` — Version 0.4.10 → 0.4.10.1.
+
+### Test Results
+- Live on bykapc: applied the equivalent `youeye-id.service.d/incus-https.conf` drop-in + restart → 0 `ECONNREFUSED` / 0 watchdog failures since the restart; `/application/o/authorize` → `/identity/login` chain returns 200. Go: `gofmt` clean, `go build ./...` OK.
+
+### Notes for Iris
+- **Only Spine changed** (no CP/UI release). Branch release: `spine-mythos-v0.4.10.1`.
+- Live bykapc currently runs the equivalent **systemd drop-in** hotfix (not a re-provision). The inline env in this release supersedes the drop-in on the next full re-provision (harmless duplicate). `spine update self` swaps the binary but does NOT rewrite the CP-container units, so the drop-in remains until a re-provision/`spine deploy`.
+- Follow-ups in Plans/Archive/To Plan/: `identity-service-cp-background-loops.md`, `spine-stale-incus-socket-after-forkproxy-removal.md`.
+
+## cp-mythos-v0.4.49.2 — mythos — 2026-06-16
+**Branch:** mythos · **Agent:** Mythos
+**Task:** Unify "Check for updates" (components + market + infra), self-consistent market update-status, remove dead update-check routes
+
+### Changes
+- `lib/market/version-checker.ts` — `refreshVersionCheck()` now `await`s `refreshAllUpdates()` (was fire-and-forget): one pass = market catalog + infra (OCI/LXD) digest.
+- `components/settings-shell/apps-client.tsx` — native "Check for Updates" button now POSTs `/api/market/updates` (was OCI-only `/api/apps/check-updates`); component (Spine) status stays fresh via `load()` → `/api/apps/unified`.
+- `app/api/ui-bridge/apps/route.ts` — refresh path → single `refreshVersionCheck()`; market/native `updateAvailable` computed from `isNewer(catalogVersion, installedVersion)`.
+- `app/api/apps/unified/route.ts` — market `updateAvailable` computed on read via `isNewer(...)` instead of the stored boolean (health-checker re-saves no longer freeze it; clears immediately post-update).
+- Removed 6 dead update-check routes (zero callers, cp+ui verified): `updates` (bare GET), `ui-bridge/updates` (bare GET), `ui-bridge/market`, `apps/check-updates`, `apps/[name]/check-update`, `market/update`. Live siblings kept.
+
+### Test Results
+- `next build` clean (cp 0.4.49.2). Deployed to bykapc via `spine update control` (0.4.49.1 → 0.4.49.2, healthy).
+- Post-deploy boot version-check refreshed the store correctly (memos `catalogVersion` 0.29.1). Compute-on-read shows `updateAvailable=false` now that memos `installedVersion`=0.29.1 (no false positive). Button endpoint `/api/market/updates` present + auth-gated (401 cookieless). memos had since been updated to 0.29.1, so no installed app is currently behind to show a live positive badge.
+
+### Notes for Iris
+- Root cause: the native button hit OCI-only `/api/apps/check-updates`; the market-capable `/api/market/updates` was orphaned (zero callers).
+- Additional dead exports left in place (zero external refs): `update-cache` getCachedUpdate/hasAnyUpdate/getAppsWithUpdates; `registry` getBaselineDigest/setBaselineDigest/getLastBulkCheckTime/fetchRemoteDigest.
+- Wiki: `app-market/update-check-pipeline.md`.
+
+## cp-mythos-v0.4.49.1 + ui-mythos-v0.4.28.2 — mythos — 2026-06-16
+**Branch:** mythos · **Agent:** Mythos
+**Task:** Fix Market external-app favicons (image-proxy domain whitelist)
+
+### Changes
+- `control-panel/src/app/api/market/image/route.ts` — add `git.potemk.in` to `ALLOWED_DOMAINS` so external app icons served from the Forgejo raw URL are no longer 403'd by the proxy.
+- `ui/src/app/api/market/image/route.ts` — same whitelist addition (the UI mirrors the proxy).
+- `control-panel/package.json` 0.4.49 → 0.4.49.1; `ui/package.json` 0.4.28.1 → 0.4.28.2.
+
+### Test Results
+- Owner-run on bykapc. Root cause confirmed by code trace: an external `iconUrl` resolves to `https://git.potemk.in/api/v1/repos/potemsla/YE-AppMarket/raw/icons/<app>.svg`, gets wrapped as `/api/market/image?url=...`, and the proxy returned 403 because `git.potemk.in` was not in the allow-list. Native apps use Lucide icon names and were unaffected.
+
+### Notes for Iris
+- Pairs with YE-AppMarket `mythos` v0.4.0.8 (SSO/notifications/version sweep); those manifests' icons now render.
+- DEFERRED to a follow-up monorepo build (owner greenlight pending): the per-app notification toggle (UI: `user_settings.mutedAppIds` + a Settings→Notifications page + read-query enforcement) and roleClaim admin mapping under the `youeye-id` provider. Neither is in this build.
 
 ## cp-v0.4.49 + spine-v0.4.10 — mythos — 2026-06-16
 **Branch:** main · **Agent:** Mythos

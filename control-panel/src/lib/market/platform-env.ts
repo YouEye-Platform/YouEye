@@ -277,8 +277,14 @@ export async function buildCanonicalContext(
     },
     sso: {
       slug: ssoSlug,
-      issuer: ssoResult ? `${identity.externalUrl}/application/o/${ssoSlug}/` : '',
-      discovery_url: ssoResult ? `${identity.externalUrl}/application/o/${ssoSlug}/.well-known/openid-configuration` : '',
+      // Split-channel OIDC. Back-channel (issuer/discovery) rides the app's INTERNAL
+      // identity DNAT (${identityInternalUrl} = http://<app-gw>:3002): domain-free,
+      // CA-free, isolation-proof. The CP discovery route returns this same internal
+      // authority as `issuer` + internal token/userinfo/jwks + EXTERNAL authorize.
+      // Front-channel (authorize_url/logout_url) stays external for the browser.
+      issuer: ssoResult ? `${identityInternalUrl}/application/o/${ssoSlug}/` : '',
+      discovery_url: ssoResult ? `${identityInternalUrl}/application/o/${ssoSlug}/.well-known/openid-configuration` : '',
+      authorize_url: ssoResult ? `${identity.externalUrl}/application/o/authorize/` : '',
       client_id: ssoResult?.clientId || '',
       client_secret: ssoResult?.clientSecret || '',
       callback_url: manifest.sso

@@ -450,6 +450,39 @@ async function registerAppWithUI(
   }
 }
 
+/**
+ * Push ONLY the SSO entry URL for an already-registered app to the UI.
+ *
+ * Apps whose SSO is wired by a post-install integration (Jellyfin, Nextcloud,
+ * Immich, Memos, Audiobookshelf, …) have no `sso` block in their app manifest,
+ * so the main install registers them with `sso_entry_url = null`. The integration
+ * manifest carries `sso.entry_url`, but it is applied AFTER the app is registered.
+ * This sends just that field so the drawer/header link to the SSO login path.
+ *
+ * Token-safe: omits token_hash, icon, name and container URL, so the UI preserves
+ * the existing bridge token and all other app fields untouched. Best-effort —
+ * a failure here only degrades the launch link, it does not break the install.
+ */
+export async function pushSsoEntryUrlToUI(appId: string, entryUrl: string | null): Promise<void> {
+  const uiIP = await getIncusContainerIP('youeye-ui');
+  if (!uiIP) return;
+
+  const bridgeToken = await readBridgeToken();
+  const res = await fetch(`http://${uiIP}:3000/api/v1/apps/sso-entry-url`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(bridgeToken ? { 'X-UI-Bridge-Token': bridgeToken } : {}),
+    },
+    body: JSON.stringify({ id: appId, sso_entry_url: entryUrl }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    console.warn(`[engine] UI sso-entry-url update warning for ${appId}: ${res.status} ${text}`);
+  }
+}
+
 // ─── Env File Writer ──────────────────────────────────────
 
 async function writeEnvToContainer(
@@ -862,6 +895,20 @@ export async function installApp(
           // ── OCI container deployment ─────────────────
           const staticEnv = resolveEnvironment(containerSpec.environment || {}, ctx);
           const fullEnv = { ...envFromMapping, ...staticEnv };
+          // Trust the YouEye root CA for SERVER-SIDE HTTPS to YouEye-managed services — chiefly the
+          // identity provider's OIDC discovery (https://id.<domain>/.../.well-known/openid-configuration),
+          // which env-OIDC apps fetch from inside the container. injectCaddyRootCA() (step 7) adds the cert
+          // to the system trust store + a systemd drop-in, but non-systemd OCI runtimes that ship their own
+          // CA bundle (Python httpx/certifi, Node) ignore the system store and never see the drop-in — so
+          // they fail with CERTIFICATE_VERIFY_FAILED. Set the standard CA-bundle env vars here so they are
+          // in the process environment from boot. The cert file is written during install (step 7), well
+          // before any user login / OIDC discovery. Never override a value the manifest set explicitly.
+          if (ssoEnabled || nativeIdentityIntegrationPlanned) {
+            const caPath = '/usr/local/share/ca-certificates/caddy-root.crt';
+            if (!fullEnv.SSL_CERT_FILE) fullEnv.SSL_CERT_FILE = caPath;
+            if (!fullEnv.REQUESTS_CA_BUNDLE) fullEnv.REQUESTS_CA_BUNDLE = caPath;
+            if (!fullEnv.NODE_EXTRA_CA_CERTS) fullEnv.NODE_EXTRA_CA_CERTS = caPath;
+          }
           const ociManifest = buildOCIManifest(containerSpec, containerName, appId, fullEnv);
           await deployOCIContainer(ociManifest, '', appNIC, { start: !appBridgeName });
         }

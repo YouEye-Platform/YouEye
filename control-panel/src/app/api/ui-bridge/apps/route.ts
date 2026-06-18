@@ -16,12 +16,12 @@ import {
   getAllCachedUpdates,
   getLastCheckedAt,
   isCheckInProgress,
-  refreshAllUpdates,
 } from '@/lib/apps/update-cache';
 import { listInstalledApps } from '@/lib/market/metadata';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
 import { fetchManifest } from '@/lib/market/catalog';
 import { refreshVersionCheck } from '@/lib/market/version-checker';
+import { isNewer } from '@/lib/version';
 import { getAllCachedLxdUpdates } from '@/lib/apps/lxd-updates';
 import { planSystemUpdates, type SystemUpdatePlan } from '@/lib/infrastructure/system-updater';
 
@@ -59,10 +59,9 @@ export async function GET(request: NextRequest) {
     // Optional force refresh
     const refresh = request.nextUrl.searchParams.get('refresh') === 'true';
     if (refresh) {
-      await Promise.all([
-        refreshAllUpdates(),
-        refreshVersionCheck(),
-      ]);
+      // refreshVersionCheck() runs the market catalog check AND the infra (OCI/LXD)
+      // digest check in one pass, so a single refresh covers everything.
+      await refreshVersionCheck();
     }
 
     // Parallel data fetches
@@ -189,13 +188,12 @@ export async function GET(request: NextRequest) {
           }
         }
 
-        // For native user apps, also check the installed_apps DB for update status
+        // For native user apps, derive update status from the installed_apps DB.
+        // Compute from versions (not the stored boolean) so it can't go stale.
         const dbEntry = dbAppsMap.get(def.id);
-        if (dbEntry?.updateAvailable) {
+        if (dbEntry?.catalogVersion && dbEntry?.installedVersion && isNewer(dbEntry.catalogVersion, dbEntry.installedVersion)) {
           updateAvailable = true;
-          updateInfo = dbEntry.catalogVersion
-            ? `${dbEntry.installedVersion} → ${dbEntry.catalogVersion}`
-            : 'Update available';
+          updateInfo = `${dbEntry.installedVersion} → ${dbEntry.catalogVersion}`;
         }
         if (dbEntry?.installedVersion) {
           version = version ?? dbEntry.installedVersion;
@@ -247,6 +245,9 @@ export async function GET(request: NextRequest) {
 
     const marketApps = filteredMarket.map((meta, i) => {
       const dbEntry = dbAppsMap.get(meta.appId);
+      const catV = dbEntry?.catalogVersion;
+      const insV = dbEntry?.installedVersion;
+      const upd = !!(catV && insV && isNewer(catV, insV));
       const manifest = manifestResults[i].status === 'fulfilled'
         ? manifestResults[i].value
         : null;
@@ -265,10 +266,8 @@ export async function GET(request: NextRequest) {
         }),
         version: dbEntry?.installedVersion ?? undefined,
         status: 'running' as const,
-        updateAvailable: dbEntry?.updateAvailable ?? false,
-        updateInfo: dbEntry?.updateAvailable && dbEntry.catalogVersion
-          ? `${dbEntry.installedVersion} → ${dbEntry.catalogVersion}`
-          : undefined,
+        updateAvailable: upd,
+        updateInfo: upd && catV ? `${insV} → ${catV}` : undefined,
       };
     });
 

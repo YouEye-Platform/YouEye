@@ -255,7 +255,13 @@ export async function reconcileInfrastructure(
   }
 
   if (missing.length === 0) {
-    remit(1, 'success', 'All infrastructure containers are present — nothing to reconcile');
+    // Even when no containers need (re)deploying, re-ensure the security-critical Caddy routes.
+    // These are idempotent and self-heal boxes that were set up before the routes existed —
+    // notably the X-Youeye-* anti-spoof header-strip, which is otherwise only added on full
+    // deploy/setup and was missing on already-provisioned boxes.
+    try { await ensurePingRoute('youeye-control', 3000); } catch { /* non-fatal */ }
+    try { await ensureHeaderStrippingRoute(); } catch { /* non-fatal */ }
+    remit(1, 'success', 'All infrastructure containers are present — security routes ensured');
     return;
   }
 
@@ -337,6 +343,8 @@ export async function reconcileInfrastructure(
         try { await setDefaultRoute('youeye-control', 3000); } catch { /* non-fatal */ }
         // BUG-022: Ensure /api/ping route
         try { await ensurePingRoute('youeye-control', 3000); } catch { /* non-fatal */ }
+        // Security: re-ensure the X-Youeye-* header-stripping route (anti-spoof) on reconcile
+        try { await ensureHeaderStrippingRoute(); } catch { /* non-fatal */ }
       }
       remit(2, healthy ? 'success' : 'error',
         healthy ? 'Caddy deployed and configured' : 'Caddy deployed but health check timed out');
@@ -348,6 +356,9 @@ export async function reconcileInfrastructure(
     // BUG-022: Ensure /api/ping route even when Caddy was already running.
     // This handles upgrades from versions that didn't have the ping route.
     try { await ensurePingRoute('youeye-control', 3000); } catch { /* non-fatal */ }
+    // Security: re-ensure the X-Youeye-* header-stripping route (anti-spoof) even when Caddy was
+    // already running. Self-heals boxes set up before this route existed, on every reconcile.
+    try { await ensureHeaderStrippingRoute(); } catch { /* non-fatal */ }
   }
 
   // ─── Step 3: Pi-Hole DNS ─────────────────────────────────
