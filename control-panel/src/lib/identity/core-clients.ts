@@ -14,15 +14,20 @@ function httpVariant(url: string): string {
 }
 
 function controlRedirectUris(controlExternalUrl: string, settingsExternalUrl?: string): string[] {
+  const withHttp = (url: string): string[] => [url, httpVariant(url)];
+  // The Control Panel host (e.g. https://control.<domain>) needs BOTH callbacks:
+  //   /api/auth/callback          — direct CP login
+  //   /settings/api/auth/callback — silent settings SSO (added cp-v0.4.15)
+  // Registering only /api/auth/callback caused invalid_redirect_uri when a
+  // signed-out user hit control.<domain>/ and was bounced through settings SSO.
   const uris = [
-    `${controlExternalUrl}/api/auth/callback`,
-    httpVariant(`${controlExternalUrl}/api/auth/callback`),
+    ...withHttp(`${controlExternalUrl}/api/auth/callback`),
+    ...withHttp(`${controlExternalUrl}/settings/api/auth/callback`),
   ];
+  // settingsExternalUrl already points at the /settings base (e.g.
+  // https://<domain>/settings), so its callback is just /api/auth/callback.
   if (settingsExternalUrl) {
-    uris.push(
-      `${settingsExternalUrl}/api/auth/callback`,
-      httpVariant(`${settingsExternalUrl}/api/auth/callback`),
-    );
+    uris.push(...withHttp(`${settingsExternalUrl}/api/auth/callback`));
   }
   return Array.from(new Set(uris));
 }

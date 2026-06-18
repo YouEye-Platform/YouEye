@@ -1,3 +1,950 @@
+## cp-v0.4.49 + spine-v0.4.10 — mythos — 2026-06-16
+**Branch:** main · **Agent:** Mythos
+**Task:** Platform RAM + app-isolation overhaul (5 workstreams) — verified live on bykapc incl. reboot.
+
+### Changes
+- `control-panel/src/lib/incus/app-network.ts` — `addSystemProxyDevices` now attaches each proxy to its target instance with `bind:host`+`nat:true` (kernel DNAT, no forkproxy); `removeSystemProxyDevices` scans all core instances; new `applyAppEgressAcl`/`removeAppEgressAcl` (port-specific per-app egress isolation).
+- `control-panel/src/lib/market/engine.ts` — replaced the never-applied `ye-app-infra-block` with `applyAppEgressAcl` (fail-loud).
+- `control-panel/src/lib/health/monitor.ts` — watchdog now reconciles desired-state (restarts containers that should run but crashed at boot), not just Running→Stopped.
+- `control-panel/src/lib/incus/server.ts` — `openIncus()` transport: Unix socket by default, Incus HTTPS API (client cert) when `INCUS_HTTPS_URL` set → removes the 1.3 GiB incus-socket forkproxy leak.
+- `spine/internal/container/control.go` — `setupIncusHTTPS` (enable listener + trusted client cert) replaces the `incus-socket` proxy; CP unit gets `INCUS_HTTPS_URL`/`CLIENT_CERT`/`CLIENT_KEY`.
+- `spine/internal/incus/install.go` — `capZFSARC()` pins `zfs_arc_max=2 GiB`.
+
+### Test Results
+- Live on bykapc: forkproxy 25→7, host used 5.5→3.0 GiB / avail 9.5→12.3 GiB, incus-socket leak gone, ARC capped, per-app isolation enforced (CP-dash/Postgres-non-DB/Caddy/Pi-Hole blocked), all apps 307/200 via Caddy, memos DB 200. **Survived a full reboot** (13/13 autostart, memos auto-recovered, CP back on HTTPS).
+
+### Notes for Iris
+- Existing apps were migrated to nat-mode + ACLs live via incus (persistent). Fresh-install Spine HTTPS/ARC path is verified-by-construction; a clean install would exercise it end-to-end.
+- Plans: `Agent Working/youeye-developer/Mythos/Plans/platform-ram-and-isolation-master-plan.md`.
+
+## ui-v0.4.27 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 5 — notification tab embed (Plan A) + menu/bell transparency (owner asks)
+
+### Changes
+- `ui/src/components/layout/notification-bell.tsx` — `embedded` mode (content-only, window.top links, themed inner embeds) + translucent popover.
+- `ui/src/app/embed/notifications/page.tsx` — **new** UI-served `/embed/notifications` (mirrors /embed/drawer). Closes the cross-app notification leak (native apps stop fetching the list).
+- `ui/src/components/layout/user-menu.tsx` — glassy transparency to match the drawer.
+
+### Test Results
+- `pnpm build` OK; standalone 0.4.27. Verify on lemon.app: bell+menu transparency; `/embed/notifications` renders the feed (per-notification embeds = nested iframes, Plan A).
+
+### Notes for Iris
+- Native side (Canvas notif-bell hosts the iframe + re-vendor 6 apps) = Slice 3 batch. Direct-to-main.
+
+## ui-v0.4.26 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 5 — dual pointer+mouse drag sensor (robustness + testability)
+
+### Changes
+- `ui/src/lib/hooks/use-grid-drag.ts` — added a mouse-event fallback (mousedown→startDrag + window mousemove/mouseup) deduped vs pointer via a `pending` guard. Pointer primary (setPointerCapture); mouse fallback for envs without pointer events (incl. automation).
+- `ui/src/components/layout/{launcher,app-drawer}.tsx` — `onMouseDown` alongside `onPointerDown` on tiles.
+
+### Test Results
+- `pnpm build` OK; standalone 0.4.26. Intend to drive via tool mouse-drag to demonstrate reorder.
+
+## ui-v0.4.25 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 5 fix — real-mouse drag didn't work (setPointerCapture)
+
+### Changes
+- `ui/src/lib/hooks/use-grid-drag.ts` — `el.setPointerCapture(e.pointerId)` on drag start: the pointer-drag worked via JS-dispatched PointerEvents but a real mouse started a native image/text drag → `pointercancel` → drag died. Capture prevents that + guarantees the events fire.
+- `ui/src/components/layout/{launcher,app-drawer}.tsx` — `draggable={false}` on icon `<img>`s.
+
+### Test Results
+- `pnpm build` OK; standalone baked 0.4.25. JS-PointerEvent reorder still works; real-mouse confirmation requested from owner (left_click_drag emits mouse, not pointer, events).
+
+## ui-v0.4.24 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 5 Slice 2.5 — pointer-drag live reorder + unified launcher grid + transparency (owner feedback)
+
+### Changes
+- `ui/src/lib/hooks/use-grid-drag.ts` — **new** pointer-based drag (live reorder, threshold→click guard, portaled ghost, dwell-to-merge). Replaces HTML5 DnD.
+- `ui/src/components/layout/app-drawer.tsx` — edit-mode live reorder via the hook; translucent popover; tiles → render-functions (no remount flicker).
+- `ui/src/components/layout/launcher.tsx` — **unified ordered grid** of apps+folders; reorder anything; folder created **at the drop target's position**; always-visible folder × ; glassy translucency.
+- `ui/src/components/layout/drawer-and-launcher.tsx` — launcher overlay more translucent.
+
+### Test Results
+- `pnpm build` OK; standalone baked 0.4.24. Live verify on lemon.app — drag now driveable via automation (pointer events).
+
+### Notes for Iris
+- Fixes owner-reported drawer-reorder + folder-placement bugs. Native apps iframe these surfaces, so the fixes propagate automatically. Direct-to-main.
+
+## ui-v0.4.23 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 5 Slice 2 — launcher folders (iOS-style)
+
+### Changes
+- `ui/src/db/schema.ts` + `ui/src/db/index.ts` — new `user_launcher_folders` table + `folder_id` on `user_app_config` (self-healing `ensureSchema`).
+- `ui/src/lib/db/queries/apps.ts` — `folders[]` + per-app `folderId` in reads; `folderId` in `updateAppConfig`; new `updateLauncherFolders`.
+- `ui/src/app/api/v1/apps/drawer/route.ts` (folder_id + folders), `[appId]/route.ts` (folder_id), new `folders/route.ts`.
+- `ui/src/components/layout/launcher.tsx` — folders: drag-to-create/add, 2×2 tile, open panel (rename + × remove), auto-delete empty, search flattens. i18n ×5.
+
+### Test Results
+- `pnpm build` OK; standalone baked 0.4.23. Live verify on lemon.app (drag-create folder, open, add, remove).
+
+### Notes for Iris
+- Launcher folders are independent of drawer sections (D10). Direct-to-main. Slice 3 = Canvas + 6 native re-release.
+
+## ui-v0.4.22 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 5 Slice 1 fix — launcher overlay didn't open on the dashboard
+
+### Changes
+- `ui/src/components/layout/drawer-and-launcher.tsx` — `createPortal` the launcher overlay to `document.body`. The header's `backdrop-filter` (blur) is a containing block for `position:fixed`, which trapped the overlay inside the 56px bar. `pointer-events-none` container keeps the header clickable.
+
+### Test Results
+- `pnpm build` OK; standalone baked 0.4.22. Manual deploy (spine update ui is a no-op for UI — Spine manages only itself+CP). Live verify on lemon.app.
+
+## ui-v0.4.21 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 5 Slice 1 — app drawer + launcher as two cooperating surfaces
+
+### Changes
+- `ui/src/components/layout/app-drawer.tsx` — drawer reworked: search (any app → open), edit-mode "Add app"→pin + × to unpin, **hidden tray removed**; `embedded` prop for `/embed/drawer`; "All apps"→launcher. `pinned` === existing `visible` (no migration).
+- `ui/src/components/layout/launcher.tsx` — shows ALL apps (dropped `visible` filter); `onClose` for the overlay.
+- `ui/src/components/layout/drawer-and-launcher.tsx` — **new** client wrapper: drawer popover + launcher overlay on the dashboard.
+- `ui/src/app/embed/drawer/page.tsx` — **new** UI-served `/embed/drawer`; posts `youeye:action open-launcher`.
+- `ui/src/app/api/v1/apps/drawer/route.ts` — `pinned` alias. `ui/src/components/layout/navbar.tsx` — uses `<DrawerAndLauncher>`. i18n ×5.
+
+### Test Results
+- `pnpm build` OK; standalone baked 0.4.21; `/embed/drawer` compiled. Live verify on lemon.app (light+dark) post-deploy.
+
+### Notes for Iris
+- Direct-to-main (Plan 1 model, no Iris merge). Launcher folders + Canvas + 6 native re-releases are the next Plan 5 slices.
+
+## ui-v0.4.20 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E6 fix — legacy resize-only embeds lost to fallback
+
+### Changes
+- `ui/src/components/embeds/unified-embed.tsx` — a `youeye:resize`/legacy resize now also `setReady(true)` (a resizing embed is alive). Without it, legacy settings panels (`youeye-app-settings-resize`, no ready) timed out to the fallback. `ui/package.json` → 0.4.20; e6 spec → 4/4.
+
+### Test Results
+- e6 4/4 + timeline/notif/widget/launcher specs still green (shared component). `pnpm build` OK. Caught verifying 0.4.19.
+
+## ui-v0.4.19 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E6 — app settings panel on UnifiedEmbed (acceptance #6 met)
+
+### Changes
+- `ui/src/components/settings/app-settings-detail.tsx` — `AppSettingsEmbed` migrated from a hand-rolled iframe + `youeye-app-settings-resize` listener onto `<UnifiedEmbed kind="settings-panel">` (renders `/settings?embed=true`; timeout→visible fallback).
+- `ui/package.json` → 0.4.19; spec `ui/tests/settings-app-embed-e6.test.mjs` (3/3).
+
+### Test Results
+- 3/3; `pnpm build` OK. Released ui-v0.4.19 → bykapc; verify a settings/apps/[app] page.
+
+### Notes for Iris
+- **Acceptance #6 satisfied**: timeline/notifications/widgets/launcher/settings-panels all on `<UnifiedEmbed>`. Native `/embed/settings` (Notes) + the `settings-app-notes.html` page restyle + per-surface toggles ride the native batch → `Plans/Archive/To Plan/e6-native-settings-panels.md`.
+
+## ui-v0.4.18 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E1 fix — launcher grid was single-column
+
+### Changes
+- `ui/src/components/layout/launcher.tsx` — grid given `w-full max-w-3xl` + `minmax(84px,96px)` tracks so `auto-fill` lays out multi-column (was shrink-wrapped to 1 column). `ui/package.json` → 0.4.18.
+
+### Test Results
+- `pnpm build` OK. Caught in live verification of 0.4.17; redeployed + re-verified.
+
+## ui-v0.4.17 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E1 — UI-served app launcher (foundation)
+
+### Changes
+- `ui/src/components/layout/launcher.tsx` (NEW) — `launcher.html` content: search + app tile grid + Market/Settings system tiles; fed by `/api/v1/apps/drawer` (no CP); embedded mode opens at `window.top`.
+- `ui/src/app/embed/launcher/page.tsx` (NEW) — `/embed/launcher` UI-origin route (native apps iframe it); theme via `?mode=`.
+- `ui/messages/{en,fr,es,de,ru}.json` — `nav.searchApps`/`noAppsFound`/`launcherHint`.
+- `ui/package.json` → 0.4.17; spec `ui/tests/launcher-e1.test.mjs` (4/4).
+
+### Test Results
+- 4/4; `pnpm build` OK (`/embed/launcher` route present). Released ui-v0.4.17 → bykapc; verify `lemon.app/embed/launcher`.
+
+### Notes for Iris
+- Foundation slice. Folders + pinned-row + UI-header adoption + native consumption (6-app batch) → `Plans/Archive/To Plan/launcher-folders-and-native-adoption.md`. E1 security fix already shipped ui-v0.4.11.
+
+## ui-v0.4.16 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E5 — dashboard widgets on the unified embed + declared size bounds
+
+### Changes
+- `ui/src/components/embeds/unified-embed.tsx` — new `fill` mode (iframe + container 100% height; resize-height ignored) for fixed-size hosts.
+- `ui/src/components/widgets/app-widget.tsx` — rewritten onto `<UnifiedEmbed kind="widget" fill>`; bespoke iframe removed.
+- `ui/src/components/dashboard/widget-grid.tsx` — `clampWidgetSize()` honors app-declared min/max on resize + on add; `AppWidgetDef` gains `min_size`/`max_size`; app widgets carry `_minSize`/`_maxSize` into settings.
+- `ui/package.json` → 0.4.16; spec `ui/tests/widget-sizes-e5.test.mjs` (4/4).
+
+### Test Results
+- 4/4; `pnpm build` OK. Released ui-v0.4.16 → bykapc (`spine update ui`) + verify dashboard renders.
+
+### Notes for Iris
+- Strict 12-col grid visual deferred (non-destructive) → `Plans/Archive/To Plan/dashboard-12col-grid-migration.md`. Acceptance #6 (widgets on UnifiedEmbed) satisfied. Native-app widget manifest sizes ride the native batch.
+
+## ui-v0.4.15 + cp-v0.4.47 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E4 (D14-revised) — toned-down account menu mirrored UI↔CP
+
+### Changes
+- `ui/src/components/layout/user-menu.tsx` — removed the "Manage your account" pill, the avatar pencil-edit, and the Privacy·About footer. Kept email + avatar (display-only) + greeting + grouped Timeline/Settings/Theme-segmented + Sign out.
+- `control-panel/src/components/control-surface/control-header.tsx` — account dropdown rebuilt from the plain 224px list to the same 340px toned-down panel; theme cycle item → Light/Dark/Auto segmented `applyTheme(mode)`; dropped `DropdownMenuItem`/`Label`/`Separator`.
+- `ui/package.json` → 0.4.15; `control-panel/package.json` → 0.4.47; specs `ui/tests/user-menu-e4.test.mjs` (4/4) + `control-panel/tests/user-menu-e4.spec.ts` (5/5).
+
+### Test Results
+- UI 4/4 + CP 5/5; both `pnpm build` OK. Released ui-v0.4.15 + cp-v0.4.47 → bykapc (`spine update ui` + `spine update control`) + verify both menus.
+
+### Notes for Iris
+- Direct-to-main Plan 1 slice. One spec, two implementations (the third — Canvas native menu — rides the native-app batch). D14 mockup `user-menu.html` is superseded by the toned-down revision.
+
+## ui-v0.4.14 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E3 — notifications bell popover on the unified embed
+
+### Changes
+- `ui/src/components/layout/notification-bell.tsx` — 400px popover per `notifications.html`; feed of `<NotificationItem>`; mark-all-read.
+- `ui/src/components/notifications/notification-item.tsx` (NEW) — `.via` attribution row (app chip + name + time, outside the embed) + unread blue dot + embed-or-standard body.
+- `ui/src/components/notifications/notification-standard-row.tsx` (NEW) — `.std` fallback row (30px tile + title + description + action).
+- `ui/src/components/notifications/notification-surface-embed.tsx` — rewritten onto `<UnifiedEmbed kind="notification">` (3s timeout → std-row fallback); legacy `youeye-embed-*` iframe removed.
+- `ui/src/components/notifications/notifications-list.tsx` — `/notifications` page uses the same `<NotificationItem>` (one implementation).
+- `ui/src/app/api/v1/notifications/route.ts` — returns `app_meta` (getAppMetaMap). `notifications.system` i18n ×5.
+- `ui/package.json` → 0.4.14; new spec `ui/tests/notifications-e3.test.mjs`.
+
+### Test Results
+- `notifications-e3.test.mjs` 6/6; `pnpm build` OK. Released ui-v0.4.14 → bykapc (`spine update ui`) + verify lemon.app bell.
+
+### Notes for Iris
+- Direct-to-main Plan 1 slice. Notification attribution is UI-rendered outside the embed (anti-impersonation), same pattern as the E2 timeline.
+
+## ui-v0.4.13 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E2 — timeline feed: embeds-first, date-grouped single column
+
+### Changes
+- `ui/src/app/timeline/page.tsx` — single centered column `max-w-[640px]` (was `max-w-4xl`), mockup padding.
+- `ui/src/components/timeline/timeline-feed.tsx` — `buildDayGroups()` inserts Today/Yesterday/date dividers in one pass over the timestamp-sorted entries; `useLocale()` for locale-correct date headers.
+- `ui/src/components/timeline/timeline-entry-card.tsx` — rewritten to the `.via` model: 18px app chip (manifest accent) + app name + clock time + hover-delete, all **outside** the embed (anti-impersonation); body = embed / legacy info-card / StandardCard. Dropped the bordered chrome, collection badge, raw-JSON expander, in-row title.
+- `ui/messages/{en,fr,es,de,ru}.json` — added `timeline.dayToday` + `timeline.deleteEntry`.
+- `ui/package.json` → 0.4.13; new spec `ui/tests/timeline-feed.test.mjs`.
+
+### Test Results
+- `timeline-feed.test.mjs` 6/6 + `timeline-embed.test.mjs` 4/4; `pnpm build` OK. Released ui-v0.4.13 → bykapc (`spine update ui`) + verify lemon.app/timeline.
+
+### Notes for Iris
+- Direct-to-main Plan 1 slice (no Iris merge). Timeline entry-card chrome removed by design per `timeline.html`; the detail view still carries tags/collection/raw data.
+
+## ui-v0.4.12 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E2 — timeline entries render through <UnifiedEmbed>
+
+### Changes
+- `ui/src/components/timeline/timeline-embed.tsx` — rewritten to wrap `<UnifiedEmbed kind="timeline-card">` (lazy mount, `youeye:ready/resize/action` + legacy compat, sandbox, timeout→fallback). Dropped the 200px cap → 480 guard. Redesigned `StandardCard` fallback ("This app was uninstalled…"). Attribution stays outside the embed.
+- `ui/package.json` → 0.4.12; new spec `ui/tests/timeline-embed.test.mjs`.
+
+### Test Results
+- `timeline-embed.test.mjs` 4/4; `pnpm build` OK. Released ui-v0.4.12 → bykapc (`spine update ui`) + verify lemon.app/timeline.
+
+### Notes for Iris
+- N/A (direct-to-main). UI-only; component API unchanged (added optional `mode` prop). Legacy `youeye-embed-*` still accepted by UnifiedEmbed → existing apps' timeline cards keep working. No UI→CP call.
+
+## ui-v0.4.11 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E1 (security fix) — header-config no longer leaks the installed-app list to apps
+
+### Changes
+- `ui/src/app/api/v1/header/config/route.ts` — for native-app service calls (`X-YouEye-App`), `navigation` omits `apps` + `sections` (`...(isServiceCall ? {} : { apps, sections })`). The UI's own header keeps the list. Closes the app-enumeration leak (plan §1.4).
+- `ui/package.json` → 0.4.11; new spec `ui/tests/header-config-security.test.mjs`.
+
+### Test Results
+- `header-config-security.test.mjs` 1/1; `pnpm build` OK. Released ui-v0.4.11 → bykapc (`spine update ui`) + verify service-call header/config has no app list.
+
+### Notes for Iris
+- N/A (direct-to-main). Canvas `AppHeader` degrades gracefully (`navigation?.apps ?? []` → empty drawer, no crash). Full launcher iframe + populated drawer = rest of E1 (needs the 6-native-app rollout). No UI→CP call.
+
+## cp-v0.4.46 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 D — Market app-detail rebuilt to mockup (completes D)
+
+### Changes
+- `control-panel/src/app/market/[appId]/page.tsx` — restyled to `app-detail.html`: hero (88px category tile + name + badge + tagline), meta band (Version/Category/Source/Developer/Account login), 2-up gallery w/ designed placeholders (`Camera`, never broken images; lightbox `ScreenshotGallery` kept for >2), About card. **ALL install/connection/credential/integration logic preserved** (only JSX restyled). Token-recolored (was hardcoded light → dark-mode-broken). Dropped fake `youeye.local` domain fallback (pitfall #13).
+- `control-panel/package.json` → 0.4.46; `tests/market.spec.ts` extended (8/8).
+
+### Test Results
+- `market.spec.ts` 8/8; `pnpm build` OK. Released cp-v0.4.46 → bykapc deploy + verify a market detail page on lemon.app.
+
+### Notes for Iris
+- N/A (direct-to-main). **Completes Workstream D.** Install/uninstall behavior unchanged (only restyle). `install-dialog.tsx` deeper token pass → F. No new dep, no UI→CP call.
+
+## cp-v0.4.45 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 D — Market Browse rebuilt to Umbrel mockup + new Sources page
+
+### Changes
+- `control-panel/src/app/market/page.tsx` — full restyle to `market.html`: hero + search, pill bar (All/Installed/Updates/Integrations + categories + Sources pill), "Built for your server" native big-tiles, Featured banner, compact category rows → app detail. Token-styled (dropped ~15 hardcoded-gray raw inputs + filter `<select>`s). `MarketIcon` (iconUrl or category-colored tile + lucide). Install/uninstall now live on the detail page.
+- `control-panel/src/app/market/sources/page.tsx` — NEW (D9): connected sources (live enable Switch → PATCH `/api/market/source`, Add, remove, per-source app counts) + Install-from-address via `InstallFromUrlDialog`. Sources management removed from Browse.
+- Dropped `OrphanSection` from Browse (not in the mockup) → `Plans/Archive/To Plan/market-orphan-section-rehome.md`.
+- `control-panel/package.json` → 0.4.45; new spec `tests/market.spec.ts`.
+
+### Test Results
+- `market.spec.ts` 5/5; `pnpm build` OK (all 3 market routes compile). Released cp-v0.4.45 → bykapc deploy + verify on lemon.app/market.
+
+### Notes for Iris
+- N/A (direct-to-main). Browse is navigational (actions on detail). Sources page admin-gated by the source PATCH API. **App-detail + install-dialog restyle remain in D.** No new dep, no UI→CP call.
+
+## cp-v0.4.44 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C3 (complete) — retire control.<domain> + delete the (dashboard) shell
+
+### Changes
+- `control-panel/src/middleware.ts` — host-aware redirect: legacy shell routes (`/`, `/apps`, `/dns`, `/health`, `/people`, `/proxy`, `/updates`) → Settings (`control.<base>` → `<base>/settings` via `getParentOrigin()`; direct/PAM → same-origin `/settings`). Never matches `/settings`, `/market`, `/embed`, `/api`, or identity.
+- Deleted `control-panel/src/app/(dashboard)/` — the entire legacy shell route group (12 files; verified no external imports).
+- `control-panel/package.json` → 0.4.44; `tests/c3-retirement.spec.ts` extended (5/5).
+
+### Test Results
+- `c3-retirement.spec.ts` 5/5; `pnpm build` OK (177 pages, clean). Released cp-v0.4.44 → bykapc deploy + verify control.lemon.app → /settings.
+
+### Notes for Iris
+- N/A (direct-to-main). **Completes Workstream C.** Redirect is precise (only the 6 shell prefixes + `/`); embeds/APIs/identity/settings/market unaffected. PAM door (ip:3000) now lands on `/settings`.
+
+## cp-v0.4.43 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C3 (partial) — browser-tab-title branding sweep + delete dead embeds
+
+### Changes
+- `control-panel/src/app/layout.tsx` — tab title `${site_name} Control Panel` → `${site_name}` (metadata + appleWebApp; D4 — never surface "Control Panel").
+- Deleted `control-panel/src/app/embed/{containers,market,update-progress}` (page + client) — verified unreferenced in CP + UI.
+- **Kept `embed/health`** — the UI `admin-embed.tsx` health poll fetches it (plan §1.6 parity correction).
+- `control-panel/package.json` → 0.4.43; new spec `tests/c3-retirement.spec.ts`.
+
+### Test Results
+- `c3-retirement.spec.ts` 3/3; `pnpm build` OK (deletions compile clean). Released cp-v0.4.43 → bykapc deploy + verify tab title on lemon.app.
+
+### Notes for Iris
+- N/A (direct-to-main). Pure retirement; only genuinely-dead code removed. **Still in C3:** retire old `(dashboard)` shell + `control.<domain>`→`/settings` redirect (redirect-first follow-up).
+
+## cp-v0.4.42 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — Apps installed-list reconciled to mockup (completes C2)
+
+### Changes
+- `control-panel/src/components/settings-shell/apps-client.tsx` — `InstalledAppsList` restyled to the mockup card (Installed apps head + Open Market link; rows: app-icon tile, name, subdomain `app.<host>`, status dot+word; `unknown` status suppressed, no faked version/surfaces — pitfall #28). Page header → mockup copy; redundant outer "Installed Apps" heading folded into the card head.
+- `control-panel/package.json` → 0.4.42; new spec `tests/settings-apps.spec.ts`.
+
+### Test Results
+- `settings-apps.spec.ts` 4/4 (+ system-app-updates 7/7); `pnpm build` OK. Released cp-v0.4.42 → bykapc deploy + verify on lemon.app/settings/apps.
+
+### Notes for Iris
+- N/A (direct-to-main). UI-only restyle of the user installed-apps list; admin Updates/System sections + Plan 4 flow unchanged. No new dep, no UI→CP call. **Completes Workstream C2** (Backups skipped per owner).
+
+## cp-v0.4.41 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 4 — system-app (Caddy/Pi-Hole/Postgres) updates through the Market manifests
+
+### Changes
+- `control-panel/src/lib/apps/definitions.ts` — 3 infra defs gain `marketSystemId`, lose moving-tag `imageRef` (auto-disables legacy OCI paths).
+- `control-panel/src/app/api/apps/unified/route.ts` — `planSystemUpdates()` detection + `systemManaged`; OCI branch gated off for system apps (kills false "New image available").
+- `control-panel/src/app/api/ui-bridge/apps/route.ts` — same Market detection for parity.
+- `control-panel/src/app/settings/api/apps/[appId]/update/route.ts` — reroute `marketSystemId` apps to `updateSystemFromMarket` with confirmation body.
+- `control-panel/src/components/settings-shell/apps-client.tsx` — `systemManaged` + ConfirmDialog (maintenance ack + Postgres DB ack) + JSON confirm body.
+- `control-panel/src/components/ui/confirm-dialog.tsx` — NEW dependency-free modal.
+- `control-panel/src/app/api/apps/check-updates/route.ts` — `clearCatalogCache()` for manifest freshness.
+- `control-panel/package.json` → 0.4.41; new spec `tests/system-app-updates.spec.ts`.
+
+### Test Results
+- `system-app-updates.spec.ts` 7/7; `pnpm build` OK. Released cp-v0.4.41 → bykapc deploy + live verify (false positive gone + positive detection via temp label).
+
+### Notes for Iris
+- N/A (direct-to-main). CP-only; no Market/Spine/UI change. Legacy SSE/queue update paths fail safe (no imageRef → throws). Deferred items (forceLegacy UI, PG major upgrade, OCI machinery removal) → To Plan.
+
+## cp-v0.4.40 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — Privacy page rebuilt to mockup (Your data + admin Server card) + real telemetry toggle
+
+### Changes
+- `control-panel/src/components/settings-shell/privacy-client.tsx` — NEW. **Your data**: Timeline lock on the real UI PIN flow (on+disabled when set — no remove endpoint, honest copy; Change PIN / Lock now); Export my data scoped out (disabled + "Coming soon"). **Server** (admin): Local usage statistics with exact D18 copy + Download/Reset.
+- `control-panel/src/app/settings/(shell)/privacy/page.tsx` — replaced `redirect("/settings")` stub; Personal page, passes `isAdmin`, PAM/CLI → System.
+- `control-panel/src/lib/telemetry/tracker.ts` — real persisted `enabled` flag (`isTelemetryEnabled`/`setTelemetryEnabled`; `trackRoute`/`trackError` no-op when off; `reset()` preserves flag).
+- `control-panel/src/app/api/telemetry/settings/route.ts` — NEW: GET (session) / PATCH (admin+CSRF) toggle.
+- `control-panel/src/app/api/telemetry/export/route.ts` — added admin guard (was unauthenticated) + CSRF on DELETE.
+- `control-panel/src/app/settings/api/telemetry/{settings,export}/route.ts` — NEW proxies.
+- `control-panel/package.json` → 0.4.40; new spec `tests/settings-privacy.spec.ts`.
+
+### Test Results
+- `settings-privacy.spec.ts` 9/9 (+ about 7/7); `pnpm build` OK. Released cp-v0.4.40 → bykapc deploy + verify on lemon.app/settings/privacy.
+
+### Notes for Iris
+- N/A (direct-to-main). New telemetry settings route + 2 proxies; telemetry export hardened (admin+CSRF). No new dependency, no UI→CP call. Deferred backends (PIN-remove, user-data export) → Plans/Archive/To Plan/.
+
+## cp-v0.4.39 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — About page rebuilt to mockup (This server + Software cards)
+
+### Changes
+- `control-panel/src/components/settings-shell/about-client.tsx` — full rewrite from the "About & Usage" telemetry stub to the mockup. **This server** (name + host/OS/uptime; domain + HTTPS reachability) and **Software** (Platform "core·interface" versions, Update channel, Open source licenses). Honest copy + `Promise.allSettled` degradation (pitfalls #23/#28). Telemetry export removed (moves to Privacy next slice).
+- `control-panel/src/app/settings/(shell)/about/page.tsx` — injects CP version from `package.json` (server-side), admin-gated.
+- `control-panel/src/app/settings/(shell)/about/licenses/page.tsx` — NEW: open-source licenses list (real OSS stack + YouEye BSL-1.1).
+- `control-panel/package.json` → 0.4.39; new spec `tests/settings-about.spec.ts`.
+
+### Test Results
+- `settings-about.spec.ts` 7/7; `pnpm build` OK (both About routes compiled). Released cp-v0.4.39 → bykapc deploy + verify on lemon.app/settings/about.
+
+### Notes for Iris
+- N/A (direct-to-main). No new backend route, no new dependency, no UI→CP call. Reuses existing admin APIs (settings, system, health, domain, tls).
+
+## cp-v0.4.38 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — Network page rebuilt to mockup (DNS / Routes / Domain & HTTPS) + Switch primitive
+
+### Changes
+- `control-panel/src/components/settings-shell/network-client.tsx` — full rewrite, 3 tabs. DNS (stats + blocking master switch + Local names A/CNAME add/remove + Blocklists enable-toggle + Recent queries), Routes (read-only Caddy table + raw config), Domain & HTTPS (domain edit + cert status, honest on-demand copy).
+- `control-panel/src/app/api/apps/pihole/lists/route.ts` — NEW: blocklists GET/POST/PATCH(toggle)/DELETE (session-authed, FTL `/api/lists`).
+- `control-panel/src/app/settings/api/caddy/routes/route.ts` + `.../caddy/config/route.ts` — NEW: re-export GET under CP-guaranteed `/settings/api/*` (root `/api/caddy/*` 404s → UI from Settings surface).
+- `control-panel/src/components/ui/switch.tsx` — NEW: dependency-free `Switch` primitive.
+- `control-panel/package.json` → 0.4.38; new spec `tests/settings-network.spec.ts`.
+
+### Test Results
+- `settings-network.spec.ts` 7/7 (+ dark-mode 4/4, personal 10/10); `pnpm build` OK. Released cp-v0.4.38 → bykapc deploy + verify on lemon.app/settings/network.
+
+### Notes for Iris
+- N/A (direct-to-main). New backend route (`apps/pihole/lists`) + 2 caddy proxies; no new dependency; admin+CSRF on all writes; no UI→CP call.
+
+## cp-v0.4.37 — mythos — 2026-06-15
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 (C) — CP Settings honors + persists dark mode (owner-reported bug)
+
+### Changes
+- `control-panel/src/lib/theme.ts` — NEW: `resolveDark`/`applyThemeMode`/`broadcastThemeMode`; mirrors mode to `localStorage["theme"]` (shared with the dashboard's next-themes; `/settings` is same-origin).
+- `control-panel/src/app/layout.tsx` — `suppressHydrationWarning` + pre-paint boot script applies `.dark` from `localStorage["theme"]` (no flash); body `bg-gray-50` → `bg-background`.
+- `control-panel/src/components/control-surface/control-header.tsx` — effect applies saved mode on load + on change (keyed on themeMode/systemPref) + `youeye-theme-mode` listener; cycle button uses `applyThemeMode`.
+- `control-panel/src/components/settings-shell/appearance-client.tsx` — `selectMode` applies + broadcasts immediately, then PUTs to persist.
+- `control-panel/package.json` → 0.4.37; new spec `tests/settings-dark-mode.spec.ts`.
+
+### Test Results
+- `settings-dark-mode.spec.ts` 4/4 + `settings-personal.spec.ts` 10/10; `pnpm build` OK. Released cp-v0.4.37 → bykapc deploy + verify on lemon.app/settings.
+
+### Notes for Iris
+- N/A (direct-to-main, no Iris). CP-only; no new dependency; no UI→CP call (pitfall #25). Closes the dark-mode-live gap flagged at cp-v0.4.32.
+
+## cp-v0.4.36 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — System fix: Core Update Source routing (pre-existing)
+
+### Changes
+- `control-panel/src/app/settings/api/settings/route.ts` — NEW: re-exports GET/PATCH from `@/app/api/settings/route` under the CP-guaranteed `/settings/api/*` prefix (root `/api/settings` 404s at the domain — Caddy routes root `/api/*` to UI).
+- `control-panel/src/components/settings-shell/system-client.tsx` — Core Update Source fetches `/settings/api/settings` (load + save).
+- `control-panel/package.json` → 0.4.36. spec 10/10 (+path assertion).
+
+### Test Results
+- spec 10/10; `pnpm build` OK. Released cp-v0.4.36 → bykapc deploy + verify Core Update Source loads.
+
+## cp-v0.4.35 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — System (Administration) rebuilt to mockup
+
+### Changes
+- `control-panel/src/components/settings-shell/system-client.tsx` — rebuilt to `settings-system.html`: H1 + sub; stat row (CPU/Memory/Disk/Uptime); Platform card with **human-named services** (System core/Server interface/Database/Web gateway/Network shield, versions + status dots); Live usage card (restartable core services, real cpuPercent/memory from `/api/health/services`, 5s polling, Restart). Core Update Source + Market system-image dry-run/SSE/maintenance-window flow preserved (restyled, dark-safe amber).
+- `control-panel/src/app/settings/(shell)/system/page.tsx` — passes `cpVersion={pkg.version}` (Server interface row).
+- `control-panel/tests/settings-personal.spec.ts` — +System tests (10/10). `control-panel/package.json` → 0.4.35. Wiki updated.
+
+### Test Results
+- settings-personal.spec 10/10; `pnpm build` OK. Released cp-v0.4.35 → bykapc deploy + lemon.app verification in this slice.
+
+### Notes
+- Per-app live usage (Notes/Cinema/…) deferred — needs incus `recursion=2` + app-restart endpoint (To Plan).
+
+## cp-v0.4.34 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — People (Administration) rebuilt to mockup
+
+### Changes
+- `control-panel/src/components/settings-shell/users-client.tsx` — rebuilt to `settings-people.html`: H1 "People" + sub; "N people" card (avatar tiles, Admin badge, last-seen/deactivated, Add person) with a real Manage modal (name/email, role, active, reset password, two-step Remove → PATCH/DELETE/`[id]/password`); Sign-in card ("<Site> ID" Active + Emergency local access `http://<ip>:3000` from `/api/setup/config`, never hardcoded).
+- `control-panel/tests/settings-personal.spec.ts` — +People test (8/8). `control-panel/package.json` → 0.4.34. Wiki `control-panel/settings.md` + changelog.
+
+### Test Results
+- settings-personal.spec 8/8; `pnpm build` OK. Released cp-v0.4.34 → bykapc deploy + lemon.app verification in this slice.
+
+## cp-v0.4.33 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — Language page rebuilt to mockup
+
+### Changes
+- `control-panel/src/components/settings-shell/language-client.tsx` — tabs → mockup two-card layout: page H1 + "Language and formats…" sub; "Your language" card (System default + 5-lang selector, soft-blue active, + locale-derived read-only Dates/Time preview via `Intl`); admin "Server default" card (current + Change → inline picker). Backend unchanged. Editable per-format overrides scoped out (no store) → shown read-only.
+- `control-panel/tests/settings-personal.spec.ts` — +Language test (7/7). `control-panel/package.json` → 0.4.33. Wiki `control-panel/settings.md` + changelog.
+
+### Test Results
+- settings-personal.spec 7/7; `pnpm build` OK. Released cp-v0.4.33 → bykapc deploy + lemon.app verification in this slice.
+
+## cp-v0.4.32 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C2 — Settings shell + Personal pages (Profile, Appearance, nav)
+
+### Changes
+- `control-panel/src/components/settings-shell/settings-shell.tsx` — nav grouped into **Personal** + **Administration** section labels (mockup `.section-label`); active item soft-blue `bg-primary/10 text-primary` (was the wrong shadcn gray `bg-accent`). Market stays out (D9); People not Users.
+- `control-panel/src/components/settings-shell/profile-client.tsx` — rebuilt to `settings-profile.html` on shadcn Card/Input/Button/Avatar: page H1 + "Your account on this server", identity card (64px avatar, role, Change photo/Remove), Details card. Data wiring unchanged. Honest omissions: no "Change password" (no self-service endpoint) and no join date (API has none) — no fake UI (#28).
+- `control-panel/src/components/settings-shell/appearance-client.tsx` — page header → H1 + mockup subtitle; WordArt picker unchanged (D7).
+- `control-panel/tests/settings-personal.spec.ts` — NEW (6 tests). `control-panel/package.json` → 0.4.32. Wiki `control-panel/settings.md` (Workstream C section).
+
+### Test Results
+- settings-personal.spec 6/6; `pnpm build` OK. Released cp-v0.4.32 → bykapc deploy + lemon.app screenshot verification in this slice.
+
+### Notes
+- Correction (owner, 2026-06-14): no Caddy `/settings`→UI migration. Settings stays CP-served by design; C = redesign CP pages + drop `control.<domain>` from nav, then retire dead embeds + old `(dashboard)` shell.
+- Deferred C slices: Language (format fields + backend), Privacy (new page + Switch primitive), Apps list (detail = E6), Administration pages (live infra), C3 retirement.
+
+## ui-v0.4.10 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E4 — Google-style account menu
+
+### Changes
+- `ui/src/components/layout/user-menu.tsx` — rebuilt to the mockup: 340px rounded panel, centered email, 76px avatar + edit pencil, "Hi, <first name>!", "Manage your account" pill, grouped card (Timeline/Settings), **Theme Light/Dark/Auto segmented control** (replaces cycle; DB-synced), ghost Sign out, Privacy·About footer. Tokenized; data plumbing preserved.
+- `ui/tests/account-menu.spec.ts` — NEW. `package.json` → 0.4.10. Wiki `YE-Wiki/ui/account-menu.md`.
+
+### Test Results
+- spec 2/2; `pnpm build` OK. **Deployed** to youeye-ui (UI-served dashboard) + screenshot-verified on lemon.app.
+
+## ui-v0.4.9 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 E0 — UnifiedEmbed foundation (unblocked by the open C route decision)
+
+### Changes
+- `ui/src/components/embeds/unified-embed.tsx` — NEW: the one embed wrapper + `youeye:ready/resize/action` protocol (origin-validated, lazy IntersectionObserver, skeleton, timeout→fallback never-silent, sandbox, `?theme&mode` token delivery, one-cycle legacy compat).
+- `ui/tests/unified-embed.spec.ts` — NEW (3 tests). `package.json` → 0.4.9.
+
+### Test Results
+- spec 3/3; `pnpm build` OK. Additive/unused → **not deployed** (ships when E2/E3/E5/E6 consume it).
+
+### Notes for Iris
+- E0 remaining: `normalize.ts` kinds (settings-panel, launcher) + Canvas SDK `SettingsPanel` kit.
+- (cp-v0.4.31 earlier reverted premature Privacy/Backups nav; see changelog.)
+
+## cp-v0.4.30 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 C1 — Settings nav reconcile on the LIVE (CP) shell
+
+### Changes
+- `control-panel/src/components/settings-shell/settings-shell.tsx` — **+Privacy** (Personal), **+Backups** (Admin), **Users→People**, **−Market (D9)**. This is the shell that actually serves `lemon.app/settings` (Caddy routes `/settings*`,`/market*` → youeye-control). `package.json` → 0.4.30.
+
+### Test Results
+- `pnpm build` OK; artifact 0.4.30. **Live-verified** on lemon.app/settings (DOM nav: Profile/Appearance/Apps/Language/Privacy + People/System/Network/Backups/About, no Market).
+
+### Notes for Iris
+- The matching `ui-v0.4.8` change to `ui/src/components/settings/settings-shell.tsx` targets the future UI-owned route; CP shell is the live one until a Caddy `/settings`→youeye-ui migration (C3).
+
+## ui-v0.4.8 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 — Workstream A (UI tokens, first UI deploy) + C1 (Settings nav reconcile)
+
+### Changes
+- `ui/src/app/globals.css` — Workstream A blue token override now BUILT + DEPLOYED to the UI container (was source-only since cp-v0.4.27).
+- `ui/src/components/settings/settings-shell.tsx` — C1: added Privacy (Personal) + Backups (Administration) to the Settings nav; **removed Market (D9 — Market is a launcher app)**; removed now-unused Store import.
+- `ui/tests/settings-shell-nav.spec.ts` — NEW regression. `package.json` → 0.4.8.
+
+### Test Results
+- UI source-regression spec passes. `pnpm build` OK; UI standalone carries 0.4.8.
+- Deployed to youeye-ui; screenshot-verified on lemon.app/settings.
+
+### Notes for Iris
+- First UI release of the redesign. C1 i18n-only polish (headers "Personal"/"Administration", Users→People) deferred. Next: C2 per-page + C3 CP retirement.
+
+## cp-v0.4.29 — mythos — 2026-06-14
+**Branch:** main · **Agent:** Mythos
+**Task:** Plan 1 B.3 polish — login wordmark size-cap (D3)
+
+### Changes
+- `control-panel/src/app/identity/login/route.ts` — `.wordmark` font-size capped to 38px (was rendering at the full branding size and clipping the last letter after the B.3 panel narrowing); wider max-width, toned shadow. `package.json` → 0.4.29.
+
+### Test Results
+- `pnpm build` OK; visual re-verify on bykapc (login wordmark no longer clipped).
+
+## cp-v0.4.28 — mythos — 2026-06-14
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Plan 1 redesign — Workstream B.3 (identity login rebuild) + B.4 (consent rebuild) — completes Phase 1
+
+### Changes
+- `control-panel/src/app/identity/login/route.ts` — login generated from shared tokens (no hardcoded hex), light+dark via `prefers-color-scheme`, Geist Sans, blue accent Continue (keeps "Continuing…" morph + wordart wordmark), 12px panel, quiet "<Identity> — your account on this server" footer.
+- `control-panel/src/app/application/o/authorize/route.ts` — consent tokenized + light+dark; runtime permissions render as switches (kept); app-icon ‹··› provider pairing kept; blue approve.
+- `control-panel/tests/identity-error-page.spec.ts` — +1 regression (login+consent tokens/dark/no-Inter/no-#0b84ff). `package.json` → 0.4.28.
+
+### Test Results
+- 9/9 source-regression specs pass. `pnpm build` OK; artifact carries 0.4.28.
+
+### Notes for Iris
+- Completes Workstream B (identity). Full wordmark size-cap + "Can't sign in?" recovery link (no backend) deferred to Workstream F. UI `globals.css` token change ships with first UI release.
+
+## cp-v0.4.27 — mythos — 2026-06-14
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Plan 1 redesign — Workstream A (blue token foundation) + B.2 (friendly identity error page)
+
+### Changes
+- `control-panel/src/app/globals.css`, `ui/src/app/globals.css` — Workstream A: reconcile shadcn near-black `--primary` to the YouEye blue accent (`#2563eb` light / `#3b82f6` dark), white primary-foreground, blue `--ring`/`--sidebar-primary`, `--radius` 0.5rem (override block appended; consolidated in Workstream F). Kills the black "Install" button across shadcn surfaces.
+- `control-panel/src/lib/identity/error-page.ts` — NEW `renderIdentityErrorPage()`: friendly HTML identity error page (warn glyph, human title, Go home / Try again, collapsed technical details), light+dark via `prefers-color-scheme`, per `mockups/v2/error.html`.
+- `control-panel/src/app/application/o/authorize/route.ts` — user-facing `invalid_redirect_uri` / `invalid_client` / `unsupported_response_type` now render the friendly page instead of raw JSON. Machine `token`/`userinfo` endpoints intentionally keep JSON (OAuth2 spec).
+- `control-panel/tests/identity-error-page.spec.ts` — NEW (4 tests). `package.json` → 0.4.27.
+
+### Test Results
+- `CONTROL_PANEL_ROOT=… node --import tsx --test tests/identity-error-page.spec.ts tests/silent-settings-sso.spec.ts` → 8/8 pass.
+- `pnpm build` OK; `standalone.tar` carries 0.4.27.
+
+### Notes for Iris
+- CP-only release. UI `globals.css` token change is in source but ships with the first UI release.
+- B.3 (login rebuild) / B.4 (consent rebuild) are the remaining Phase 1 identity slices.
+
+## cp-v0.4.26 — mythos — 2026-06-14
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Plan 1 redesign — Workstream B.1: fix signed-out `control.<domain>` SSO `invalid_redirect_uri`
+
+### Changes
+- `control-panel/src/lib/identity/core-clients.ts` — `controlRedirectUris()` now registers the Control Panel host's `/settings/api/auth/callback` (silent settings SSO) alongside `/api/auth/callback`. Signed-out `https://control.<domain>/` is bounced through settings SSO with `redirect_uri=https://control.<domain>/settings/api/auth/callback`, which was unregistered → raw JSON `{"error":"invalid_redirect_uri"}`. `settingsExternalUrl` already includes `/settings`, so only `/api/auth/callback` is appended there (avoids a bogus `…/settings/settings/api/auth/callback`).
+- `control-panel/tests/silent-settings-sso.spec.ts` — regression: control-host settings callback registered; double-`/settings` URI absent.
+- `control-panel/package.json` — bump to 0.4.26.
+
+### Test Results
+- `CONTROL_PANEL_ROOT="$PWD/control-panel" node --import tsx --test control-panel/tests/silent-settings-sso.spec.ts` → 4/4 pass.
+- `pnpm build` (control-panel) OK; `standalone.tar` carries version 0.4.26.
+
+### Notes for Iris
+- Control Panel-only release; Spine 0.4.9 and UI 0.4.7 unchanged.
+- Existing installs keep old `redirect_uris` until re-registered: `POST /api/identity/core-clients` (admin) or update the `youeye-control` row in `identity_clients`. Fresh installs get the fix automatically.
+- Raw-JSON identity error surfaces (`invalid_redirect_uri`, `invalid_client`) get the friendly error page in a follow-up cp slice (Workstream B.2).
+
+## cp-v0.4.25 — mythos — 2026-06-12
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Redesign Market app install flow
+
+### Changes
+- `control-panel/src/app/market/[appId]/page.tsx` — Moved app actions into a right sticky status panel, kept install progress in the action area, and added concise app capability/status context.
+- `control-panel/src/components/market/install-dialog.tsx` — Reworked install into a focused dialog with basics, integration choices, and a manifest-defaulted account-login switch.
+- `control-panel/src/app/market/page.tsx` — Added Market section tabs so integrations are grouped separately by target app while preserving source variants.
+- `control-panel/src/lib/market/engine.ts`, `control-panel/src/lib/market/types.ts` — Persisted the install-time account-login choice and used it when resolving platform account protection.
+- `control-panel/tests/market-product-install-ux.spec.mjs`, `control-panel/tests/market-integrations.spec.ts` — Added and updated Market UX regression checks.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.25`.
+
+### Test Results
+- Focused Market tests passed: `CONTROL_PANEL_ROOT="$PWD/control-panel" node --import tsx --test control-panel/tests/market-product-install-ux.spec.mjs control-panel/tests/market-integrations.spec.ts control-panel/tests/market-filters.spec.mjs control-panel/tests/market-sso-engine.spec.mjs`.
+- Adjacent Market tests passed: `CONTROL_PANEL_ROOT="$PWD/control-panel" node --import tsx --test control-panel/tests/market-update-manifest-sync.spec.mjs control-panel/tests/market-system-apps.spec.ts control-panel/tests/market-surfaces.spec.ts control-panel/tests/market-canonical-surfaces.spec.mjs control-panel/tests/market-integration-remove.spec.mjs control-panel/tests/market-product-install-ux.spec.mjs`.
+- Build passed: `pnpm build` in `control-panel/`.
+- Artifact verification passed: CP `standalone.tar` contains top-level `server.js` and package version `0.4.25`.
+
+### Notes for Iris
+- Control Panel-only release; Spine remains `0.4.9` and UI remains `0.4.7`.
+- User asked not to deploy/update from this session; they will update and test manually.
+
+## spine-v0.4.9 / cp-v0.4.24 / ui-v0.4.7 — mythos — 2026-06-12
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Merge Mythos Settings/update-source work into current identity-polished main
+
+### Changes
+- `control-panel/src/components/settings-shell/system-client.tsx`, `control-panel/src/lib/settings/service.ts` — Added CP-native Core Update Source controls for release branch and repo URL while keeping Settings/System in the Control Panel shell.
+- `control-panel/src/components/settings-shell/users-client.tsx`, `control-panel/src/app/api/apps/identity/users/route.ts` — Added admin-only user creation with role selection and protected the identity users API with admin checks.
+- `control-panel/src/app/embed/system/*`, `control-panel/src/app/embed/users/*`, `ui/src/app/settings/system/page.tsx`, `ui/src/app/settings/users/page.tsx` — Removed retired embed/settings routes so System and Users are no longer mistaken for UI iframe surfaces.
+- `spine/internal/api/server.go`, `spine/internal/config/repo_file.go`, `spine/internal/cmd/repo.go`, `spine/internal/config/defaults.go` — Persisted core release repo changes to `/etc/youeye/config.yaml`, clear update caches when release source changes, and corrected UI app-dir/version detection.
+- `ui/src/components/backgrounds/homepage-background.tsx`, `ui/scripts/postbuild.js` — Restored animated backgrounds unless the user/OS disables motion and added a sharp `@img` nested-binding fallback for standalone builds.
+- `README.md`, `docs/settings.md`, `spine/docs/configuration.md`, `ui/README.md` — Updated current versions and settings/update-source documentation for the combined main release.
+- `control-panel/package.json`, `ui/package.json`, `spine/internal/cmd/root.go` — Bumped stable releases to Spine `0.4.9`, Control Panel `0.4.24`, and UI `0.4.7`.
+
+### Test Results
+- Go: `go test ./...` passed in `spine/`.
+- Control Panel focused tests passed: `CONTROL_PANEL_ROOT="$PWD/control-panel" node --import tsx --test control-panel/tests/identity-consent.spec.ts control-panel/tests/settings-update-source-users.spec.mjs control-panel/tests/settings-app-updates.spec.mjs`.
+- UI focused tests passed: `UI_ROOT="$PWD/ui" node --test ui/tests/launch-permissions-bridge.spec.mjs ui/tests/background-animation-gating.spec.mjs ui/tests/internet-proxy.spec.mjs`.
+- Builds passed: `pnpm build` in `control-panel/`; `pnpm build` in `ui/`; Spine built with `Version=0.4.9` and `BuildDate=2026-06-12`.
+- Artifact verification passed: CP `standalone.tar` contains top-level `server.js` and package version `0.4.24`; UI `standalone.tar` contains top-level `server.js` and package version `0.4.7`; `spine-linux-amd64 version` reports `0.4.9`.
+- UI build printed the known local `127.0.0.1:5432` schema-initialization warnings during static generation but exited successfully.
+
+### Notes for Iris
+- Combined the older `mythos` branch work with the current main identity releases; no identity login/consent source conflicts occurred.
+- User asked not to deploy/update from this session; they will update and test manually.
+
+## cp-v0.4.23 / ui-v0.4.6 — mythos — 2026-06-12
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Match identity consent branding to native app headers
+
+### Changes
+- `control-panel/src/app/application/o/authorize/route.ts` — Changed consent from the oversized centered app tile to the same compact icon/name lockup used by native app headers, including app wordart styling when available and absolute UI asset URLs for app/user images.
+- `ui/src/app/api/ui-bridge/app-launch-permissions/route.ts` — Expanded the consent display payload with branding CSS/font/character-shape metadata, preserved the raw avatar path for CP to absolutize, and stopped returning relative public URLs that break on the identity domain.
+- `control-panel/tests/identity-consent.spec.ts`, `ui/tests/launch-permissions-bridge.spec.mjs` — Added regressions for native-style consent branding, wordart payload fields, UI external URL wiring, and avatar fallback data.
+- `ui/public/sw.js` — Regenerated by the UI production build with updated precache hashes.
+- `control-panel/package.json`, `ui/package.json`, `README.md` — Bumped Control Panel to `0.4.23` and UI to `0.4.6`.
+
+### Test Results
+- Focused tests passed: `CONTROL_PANEL_ROOT="$PWD/control-panel" node --import tsx --test control-panel/tests/identity-consent.spec.ts`.
+- Focused tests passed: `UI_ROOT="$PWD/ui" node --test ui/tests/launch-permissions-bridge.spec.mjs ui/tests/internet-proxy.spec.mjs`.
+- Build: `pnpm build` passed in `control-panel/`; `/tmp/cp-standalone.tar` contains package version `0.4.23`. `pnpm build` passed in `ui/`; `/tmp/ui-standalone.tar` contains package version `0.4.6`.
+- TypeScript/lint: full-project checks remain blocked by pre-existing unrelated errors noted in prior releases; no new task-local type error remains after fixing `uiExternalUrl` null handling.
+
+### Notes for Iris
+- Paired CP/UI bridge release; Spine remains `0.4.8`.
+- User explicitly asked not to update/deploy from this session; they will test the release manually.
+
+## cp-v0.4.22 / ui-v0.4.5 — mythos — 2026-06-12
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Use app branding and real user avatars on identity consent
+
+### Changes
+- `ui/src/app/api/ui-bridge/app-launch-permissions/route.ts` — Adds consent display metadata to the existing permission bridge response: resolved app name/icon from the user's app config and the user's public avatar URL.
+- `control-panel/src/app/application/o/authorize/route.ts` — Renders the consent header with the app mark instead of the identity-provider mark, uses app/user bridge metadata when available, and displays the user's real YouEye avatar with initials as fallback.
+- `control-panel/tests/identity-consent.spec.ts`, `ui/tests/launch-permissions-bridge.spec.mjs` — Added regressions for app-brand rendering, avatar metadata, and bridge display payloads.
+- `ui/public/sw.js` — Regenerated by the UI production build with updated precache hashes.
+- `control-panel/package.json`, `ui/package.json`, `README.md` — Bumped Control Panel to `0.4.22` and UI to `0.4.5`.
+
+### Test Results
+- Focused tests passed: `CONTROL_PANEL_ROOT="$PWD/control-panel" node --import tsx --test control-panel/tests/identity-consent.spec.ts`.
+- Focused tests passed: `UI_ROOT="$PWD/ui" node --test ui/tests/launch-permissions-bridge.spec.mjs ui/tests/internet-proxy.spec.mjs`.
+- Build: `pnpm build` passed in `control-panel/`; `/tmp/cp-standalone.tar` contains package version `0.4.22`. `pnpm build` passed in `ui/`; `/tmp/ui-standalone.tar` contains package version `0.4.5`.
+- TypeScript/lint: full-project checks remain blocked by pre-existing unrelated errors noted in `cp-v0.4.15`; `ui/` `pnpm exec tsc --noEmit --pretty false` is also blocked by existing unrelated errors in embed-status, settings bridge, launch requirements, service worker, and notification/timeline embeds.
+
+### Notes for Iris
+- Paired CP/UI bridge release; Spine remains `0.4.8`.
+- User explicitly asked not to update/deploy from this session; they will test the release manually.
+
+## cp-v0.4.21 — mythos — 2026-06-12
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Simplify identity consent to account handoff
+
+### Changes
+- `control-panel/src/app/application/o/authorize/route.ts` — Reworked the consent screen into a Google-like account handoff: provider mark, `Sign in to <app>`, selected account row, short sharing copy, quiet revoke note, optional runtime permission toggles only when needed, and no technical details/scope chips/diagram/risk pills.
+- `control-panel/tests/identity-consent.spec.ts` — Updated static regressions to lock in the simplified account handoff and prevent raw technical scope UI from returning.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.21`.
+
+### Test Results
+- Static assertions: `CONTROL_PANEL_ROOT="$PWD/control-panel" node --import tsx --test control-panel/tests/identity-consent.spec.ts` passed for provider mark, account row, sharing copy, cancel/continue actions, optional runtime toggles, white-label provider naming, and absence of technical details/basic-access scope UI.
+- Build: `pnpm build` passed in `control-panel/`; `/tmp/standalone.tar` contains package version `0.4.21`.
+- TypeScript/lint: full-project checks remain blocked by pre-existing unrelated errors noted in `cp-v0.4.15`.
+
+### Notes for Iris
+- CP-only release; Spine remains `0.4.8`, UI remains `0.4.4`.
+- User explicitly asked not to update/deploy from this session; they will test the release manually.
+
+## cp-v0.4.20 — mythos — 2026-06-12
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Redesign identity consent screen
+
+### Changes
+- `control-panel/src/app/application/o/authorize/route.ts` — Redesigned the raw consent HTML around the app-to-identity relationship, signed-in account row, simple basic-access bullets, optional permission switches, and collapsed technical OAuth scope details.
+- `control-panel/tests/identity-consent.spec.ts` — Updated static regressions for the human consent layout, optional permission switches, and technical-details scope placement.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.20`.
+
+### Test Results
+- Static assertions: focused identity-consent assertions passed for relationship header, signed-in row, basic access bullets, optional switches, technical details, runtime permission grant flow, and OAuth redirect behavior.
+- Build: `pnpm build` passed in `control-panel/`; `/tmp/standalone.tar` contains package version `0.4.20`.
+- TypeScript/lint: full-project checks remain blocked by pre-existing unrelated errors noted in `cp-v0.4.15`.
+
+### Notes for Iris
+- CP-only release; Spine remains `0.4.8`, UI remains `0.4.4`.
+- User explicitly asked not to update/deploy from this session; they will test the release manually.
+
+## cp-v0.4.19 — mythos — 2026-06-12
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Float server WordArt above identity login panel
+
+### Changes
+- `control-panel/src/app/identity/login/route.ts` — Changed `/identity/login` to render the server name WordArt outside the white login panel, removed the inner WordArt box, removed the private account pill and help footer, widened the WordArt area, and kept the login panel starting at the `Continue to <app/server>` copy.
+- `control-panel/tests/identity-login-polish.spec.ts` — Updated static regressions for server-name WordArt, outside-panel placement, and removed footer/pill copy.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.19`.
+
+### Test Results
+- Static assertions: focused identity-login layout assertions passed for server-name WordArt, outside-panel placement, removed pill/footer, app context, loading transition, and hidden protocol copy.
+- Build: `pnpm build` passed in `control-panel/`; `/tmp/standalone.tar` contains package version `0.4.19`.
+- TypeScript/lint: full-project checks remain blocked by pre-existing unrelated errors noted in `cp-v0.4.15`.
+
+### Notes for Iris
+- CP-only release; Spine remains `0.4.8`, UI remains `0.4.4`.
+- User explicitly asked not to update/deploy from this session; they will test the release manually.
+
+## cp-v0.4.18 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Use server branding WordArt on identity login
+
+### Changes
+- `control-panel/src/app/identity/login/route.ts` — Reads server branding from the UI branding bridge for identity login WordArt, falls back to CP config only when the bridge is unavailable, and maps built-in YouEye UI/Control Panel clients to `Continue to <Server name>`.
+- `control-panel/tests/identity-login-polish.spec.ts` — Expanded regression checks for UI bridge branding and built-in client context naming.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.18`.
+
+### Test Results
+- Build: `pnpm build` passed in `control-panel/`; `/tmp/standalone.tar` contains package version `0.4.18`.
+- Static assertions: focused identity-login assertions passed for UI bridge branding, WordArt rendering, built-in client context, loading transition, and hidden protocol copy.
+- TypeScript/lint: full-project checks remain blocked by pre-existing unrelated errors noted in `cp-v0.4.15`.
+
+### Notes for Iris
+- CP-only release; Spine remains `0.4.8`, UI remains `0.4.4`.
+- User explicitly asked not to update/deploy from this session; they will test the release manually.
+
+## cp-v0.4.17 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Make identity login use real server WordArt and improve composition
+
+### Changes
+- `control-panel/src/app/identity/login/route.ts` — Replaced the partial hand-rolled wordmark with a server-side WordArt renderer using `site_name_style` and `DEFAULT_STYLE`, including font CSS, gradients, text stroke, transforms, and character shapes; moved the wordmark into a more balanced single-panel header.
+- `control-panel/src/middleware.ts` — Allows static font assets through identity-service mode so `/identity/login` can load the selected local WordArt font.
+- `control-panel/tests/identity-login-polish.spec.ts` — Updated regression checks for full WordArt rendering and identity font asset support.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.17`.
+
+### Test Results
+- Build: `pnpm build` passed in `control-panel/`; `control-panel/.next/standalone.tar` contains package version `0.4.17`.
+- Static assertions: focused `rg` checks passed for WordArt defaults, configured style usage, font CSS links, character-shape support, and hidden protocol copy.
+- TypeScript/lint: full-project checks remain blocked by pre-existing unrelated errors noted in `cp-v0.4.15`.
+
+### Notes for Iris
+- CP-only release; Spine remains `0.4.8`, UI remains `0.4.4`.
+- User explicitly asked not to deploy from this session.
+
+## cp-v0.4.16 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Redesign YouEye ID login screen with branded app context
+
+### Changes
+- `control-panel/src/app/identity/login/route.ts` — Redesigned the raw identity login HTML around the configured identity provider name, a centered light panel, app-aware copy such as `Continue to Notes`, and a submit button that morphs to `Continuing...`.
+- `control-panel/tests/identity-login-polish.spec.ts` — Added regression checks for provider-name wordmark, app-context derivation, submit loading transition, and hiding protocol terms from primary copy.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.16`.
+
+### Test Results
+- Build: `pnpm build` passed in `control-panel/`; `control-panel/.next/standalone.tar` contains package version `0.4.16`.
+- Static assertions: focused `rg` checks passed for configured provider wordmark, app context helpers, and `Continuing...` button transition.
+- TypeScript/lint: full-project checks remain blocked by pre-existing unrelated errors noted in `cp-v0.4.15`.
+
+### Notes for Iris
+- CP-only release; Spine remains `0.4.8`, UI remains `0.4.4`.
+- User asked for release/push flow and will test manually.
+
+## cp-v0.4.15 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / bykapc
+**Agent:** Mythos
+**Task:** Make Settings SSO redirect silent and server-side
+
+### Changes
+- `control-panel/src/app/login/page.tsx` — Converted login entry to a server component that redirects domain SSO users before rendering the PAM form.
+- `control-panel/src/app/settings/login/page.tsx` — Added Settings-specific server redirect to `/settings/api/auth/sso` with `/settings` return path.
+- `control-panel/src/components/auth/login-form.tsx` — Moved the PAM login form into a client component and removed client-side SSO mode detection.
+- `control-panel/src/lib/auth/mode.ts` — Added shared auth-mode helper for host/IP vs SSO decisions.
+- `control-panel/src/app/api/auth/mode/route.ts` — Reused the shared auth-mode helper so API reporting matches server routing.
+- `control-panel/tests/silent-settings-sso.spec.ts` — Added regression checks for server-side Settings SSO redirect and removal of the old client interstitial path.
+- `control-panel/package.json`, `README.md` — Bumped Control Panel to `0.4.15`.
+
+### Test Results
+- Build: `pnpm build` passed in `control-panel/`; `control-panel/.next/standalone.tar` contains package version `0.4.15`.
+- Static assertions: focused `rg` checks passed for server-side Settings SSO redirect and absence of `redirectingToSSO`/client `window.location` path.
+- TypeScript/lint: `pnpm exec tsc --noEmit` and `pnpm lint` remain blocked by pre-existing unrelated errors across market, suggestions, service worker, backup, Caddy, and setup files.
+
+### Notes for Iris
+- CP-only release; Spine remains `0.4.8`, UI remains `0.4.4`.
+- User asked to update and test manually, so no deployment was performed from this session.
+
+## spine-v0.4.8 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / youeye-pc
+**Agent:** Mythos
+**Task:** Fix Incus 7.1 local base-image JSON lookup
+
+### Changes
+- `spine/internal/incus/images.go` — Replaced `incus image info local:<alias> --format json` with `incus image list <alias> --format json` for local base-image lookup because Incus 7.1 rejects `--format` on `image info`.
+- `spine/internal/incus/images_test.go` — Adds parser coverage for the real `incus image list` JSON array shape, plus empty and ambiguous match rejection.
+- `spine/internal/cmd/root.go`, `README.md`, `current-state.yaml` — Bumped Spine to `0.4.8` and updated current versions.
+
+### Test Results
+- Go: `go test ./...` passed in `spine/`.
+
+### Notes for Iris
+- Spine-only release; CP remains `0.4.14`, UI remains `0.4.4`.
+- Follow-up to `spine-v0.4.7`: verified mirror fallback imported the image successfully on `youeye-pc`, but the post-import lookup used an unsupported Incus CLI flag and misreported the image as unavailable.
+
+## spine-v0.4.7 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / youeye-pc
+**Agent:** Mythos
+**Task:** Add verified public-mirror fallback for first base-image acquisition
+
+### Changes
+- `spine/internal/incus/images.go` — When `incus image copy images:debian/12` fails, Spine now fetches official Linux Containers simplestreams metadata, selects Debian bookworm amd64 default, downloads image files from public mirror candidates, verifies metadata/rootfs/combined hashes, imports the image as `local:youeye-debian-12`, and validates the imported fingerprint.
+- `spine/internal/incus/images_test.go` — Adds regression coverage for latest metadata selection, incomplete-version fallback, combined fingerprint hashing, and mirror URL construction.
+- `spine/internal/cmd/root.go`, `README.md`, `current-state.yaml` — Bumped Spine to `0.4.7` and updated current versions.
+
+### Test Results
+- Go: `go test ./...` passed in `spine/`.
+
+### Notes for Iris
+- Spine-only release; CP remains `0.4.14`, UI remains `0.4.4`.
+- This does not require YouEye to host images. Official simplestreams metadata remains the trust source; public mirrors are accepted only when the downloaded bytes match official hashes.
+
+## spine-v0.4.6 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / youeye-pc
+**Agent:** Mythos
+**Task:** Add verified local base-image manager for system containers
+
+### Changes
+- `spine/internal/incus/images.go` — Adds a base-image manager that ensures official Debian 12 is available as local alias `youeye-debian-12`, validates Debian/bookworm/amd64/container metadata, and records verified image metadata under `/var/lib/youeye/images/debian-12.json`.
+- `spine/internal/container/control.go`, `spine/internal/container/ui.go` — Create system containers from `local:youeye-debian-12` instead of reaching directly to `images:debian/12` during container creation.
+- `spine/internal/incus/install.go` — Runs base-image bootstrap after Incus bridge hygiene and before CP/UI container creation, including reused-Incus install paths.
+- `spine/internal/incus/images_test.go` — Adds validation coverage for Debian 12 image metadata.
+- `spine/internal/cmd/root.go`, `README.md` — Bumped Spine to `0.4.6` and updated current versions.
+
+### Test Results
+- Go: `go test ./...` passed in `spine/`.
+
+### Notes for Iris
+- Spine-only release; CP remains `0.4.14`, UI remains `0.4.4`.
+- This does not raw-download arbitrary mirror URLs. It uses official Incus image copy first, then creates system containers from the verified local alias so retry deploys are deterministic once the image exists.
+
+## spine-v0.4.5 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / youeye-pc
+**Agent:** Mythos
+**Task:** Clean orphaned Incus dnsmasq processes after fresh deploy bridge recreation
+
+### Changes
+- `spine/internal/incus/install.go` — After restarting Incus for stale `incusbr0` dnsmasq state, Spine now terminates only stale Incus-owned bridge dnsmasq processes whose `--listen-address` does not match the current bridge IP, then verifies exactly one current dnsmasq remains.
+- `spine/internal/incus/install_test.go` — Adds regression coverage for stale PID extraction and duplicate-current dnsmasq counting.
+- `spine/internal/cmd/root.go`, `README.md` — Bumped Spine to `0.4.5` and updated current versions.
+
+### Test Results
+- Go: `go test ./...` passed in `spine/`.
+
+### Notes for Iris
+- Follow-up to `spine-v0.4.4`: restart alone did not reap old dnsmasq children parented to PID 1 on `youeye-pc`; this release performs targeted cleanup before container creation.
+- Spine-only release; CP remains `0.4.14`, UI remains `0.4.4`.
+
+## spine-v0.4.4 — mythos — 2026-06-11
+**Branch:** main
+**VM:** potempc / youeye-pc
+**Agent:** Mythos
+**Task:** Harden fresh deploy against Incus mirror/network and missing Node failures
+
+### Changes
+- `spine/internal/incus/install.go` — Normalizes `incusbr0` to IPv4-only, reapplies DHCP/DNS setup on reused Incus installs, and restarts Incus when stale `incusbr0` dnsmasq processes from old subnets are detected.
+- `spine/internal/container/control.go` — Adds CP container IPv4/network preflight, fails every critical Node install step loudly, verifies `/usr/bin/node`, and verifies bundled `styled-jsx` instead of running production `pnpm install`.
+- `spine/internal/incus/install_test.go` — Adds regression coverage for stale Incus dnsmasq process detection.
+- `spine/internal/cmd/root.go`, `README.md` — Bumped Spine to `0.4.4` and updated current versions.
+
+### Test Results
+- Go: `go test ./...` passed in `spine/`.
+
+### Notes for Iris
+- Spine-only release; CP remains `0.4.14`, UI remains `0.4.4`.
+- Fresh deploy should now fail before CP extraction if the control container lacks IPv4/DNS/TCP access, instead of falsely reporting Node installed and crash-looping systemd.
+
 ## ui-v0.4.3.31 / cp-v0.4.13.100 — mythos — 2026-06-11
 **Branch:** mythos
 **VM:** potempc (host, Artem-style)

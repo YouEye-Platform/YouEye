@@ -175,17 +175,18 @@ function applySecurityHeaders(response: NextResponse, pathname: string): NextRes
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // Skip static resources before identity-service route narrowing so the
+  // white-label login can load its local WordArt font CSS/assets.
+  if (STATIC_PATTERNS.some(pattern => pathname.startsWith(pattern))) {
+    return NextResponse.next();
+  }
+
   if (process.env.IDENTITY_SERVICE === 'true') {
     const allowed = IDENTITY_SERVICE_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
     if (!allowed) {
       return new NextResponse('Not Found', { status: 404 });
     }
     return applySecurityHeaders(NextResponse.next(), pathname);
-  }
-
-  // Skip static resources
-  if (STATIC_PATTERNS.some(pattern => pathname.startsWith(pattern))) {
-    return NextResponse.next();
   }
 
   // Track route usage for beta telemetry (fire-and-forget, no latency impact)
@@ -197,9 +198,28 @@ export async function middleware(request: NextRequest) {
     }).catch(() => {});
   }
 
+  const host = request.headers.get('host') || '';
+
+  // --- Retire the legacy control.<domain> / (dashboard) shell (D4) ---
+  // The old admin shell is replaced by the unified Settings. Redirect its
+  // routes to Settings: subdomain (control.<base>) → base-domain Settings;
+  // direct/PAM access (IP or :3000) → same-origin /settings. This never matches
+  // /settings, /market, /embed, /api, or identity routes (different prefixes),
+  // so the Settings surface, embeds, and APIs keep working on either host.
+  {
+    const shellHost = host.split(':')[0];
+    const SHELL_PREFIXES = ['/apps', '/dns', '/health', '/people', '/proxy', '/updates'];
+    const isShellRoute =
+      pathname === '/' || SHELL_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + '/'));
+    if (isShellRoute) {
+      return shellHost.startsWith('control.')
+        ? NextResponse.redirect(`${getParentOrigin()}/settings`)
+        : NextResponse.redirect(new URL('/settings', request.url));
+    }
+  }
+
   // --- IP-via-Caddy setup flow ---
   // When accessed via IP through Caddy (ports 80/443), redirect to setup flow
-  const host = request.headers.get('host') || '';
   if (isIPViaCaddy(host)) {
     // Allow these paths through (needed for setup flow to work)
     const setupAllowedPaths = [

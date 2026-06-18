@@ -24,7 +24,7 @@ export const viewport: Viewport = {
 export async function generateMetadata(): Promise<Metadata> {
   const config = await getSiteConfig();
   return {
-    title: `${config.site_name} Control Panel`,
+    title: config.site_name,
     description: `Manage your ${config.site_name} infrastructure`,
     icons: {
       icon: [
@@ -38,7 +38,7 @@ export async function generateMetadata(): Promise<Metadata> {
     appleWebApp: {
       capable: true,
       statusBarStyle: "default",
-      title: `${config.site_name} Control Panel`,
+      title: config.site_name,
     },
   };
 }
@@ -52,10 +52,21 @@ export default async function RootLayout({
   const messages = await getMessages();
 
   return (
-    <html lang={locale}>
+    <html lang={locale} suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen bg-gray-50`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen bg-background`}
       >
+        {/* Apply the saved light/dark/system mode before first paint to avoid a
+            flash. Reads the same localStorage("theme") key the dashboard's
+            next-themes writes (same origin), so /settings matches the rest of
+            the product immediately; control-header reconciles against the bridge
+            value on mount. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "(function(){try{var m=localStorage.getItem('theme');var s=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;if(m==='dark'||((m==='system'||!m)&&s)){document.documentElement.classList.add('dark');}}catch(e){}})();",
+          }}
+        />
         <NextIntlClientProvider messages={messages}>
           {children}
         </NextIntlClientProvider>

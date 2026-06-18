@@ -101,7 +101,9 @@ func createContainer(containerName string) error {
 	util.LogDebug(fmt.Sprintf("Storage driver detected: %s", storageDriver))
 
 	// Try unprivileged first (preferred) — init only, don't start yet
-	cmdOut, err := util.RunCmdCapture("incus", "init", "images:debian/12", containerName,
+	baseImage := "local:" + incus.SystemBaseImageAlias
+
+	cmdOut, err := util.RunCmdCapture("incus", "init", baseImage, containerName,
 		"-c", "security.privileged=false",
 		"-c", "security.nesting=true")
 
@@ -114,7 +116,7 @@ func createContainer(containerName string) error {
 			exec.Command("incus", "delete", containerName, "--force").Run()
 
 			// Try privileged as fallback
-			cmdOut2, err2 := util.RunCmdCapture("incus", "init", "images:debian/12", containerName,
+			cmdOut2, err2 := util.RunCmdCapture("incus", "init", baseImage, containerName,
 				"-c", "security.privileged=true",
 				"-c", "security.nesting=true")
 
@@ -155,13 +157,13 @@ func detectStorageDriver() string {
 	if incus.StorageDriver != "" && incus.StorageDriver != "dir" {
 		return incus.StorageDriver
 	}
-	
+
 	// Otherwise check Incus directly
 	out, err := exec.Command("incus", "storage", "list", "--format", "csv").Output()
 	if err != nil {
 		return "unknown"
 	}
-	
+
 	if strings.Contains(string(out), ",zfs,") {
 		return "zfs"
 	} else if strings.Contains(string(out), ",btrfs,") {
@@ -169,14 +171,14 @@ func detectStorageDriver() string {
 	} else if strings.Contains(string(out), ",dir,") {
 		return "dir"
 	}
-	
+
 	return "unknown"
 }
 
 // waitForContainer waits for the container to be ready.
 func waitForContainer(containerName string) error {
 	util.LogStep(2, 7, "Waiting for container to start...")
-	
+
 	containerReady := false
 	for i := 0; i < 30; i++ {
 		out, _ := exec.Command("incus", "exec", containerName, "--", "echo", "ready").Output()
@@ -188,32 +190,80 @@ func waitForContainer(containerName string) error {
 		fmt.Print(".")
 	}
 	fmt.Println()
-	
+
 	if !containerReady {
 		util.LogError("Container did not start within 30 seconds")
 		return fmt.Errorf("container failed to start")
 	}
-	
+
 	util.LogSuccess("Container is running")
+	return nil
+}
+
+// incusGatewayIP returns the incusbr0 gateway address the Control Panel uses to
+// reach the Incus HTTPS API.
+func incusGatewayIP() string {
+	out, err := util.RunCmdCapture("incus", "network", "get", "incusbr0", "ipv4.address")
+	addr := strings.TrimSpace(out)
+	if err != nil || addr == "" {
+		return "10.87.209.1"
+	}
+	if i := strings.Index(addr, "/"); i > 0 {
+		addr = addr[:i]
+	}
+	return addr
+}
+
+// setupIncusHTTPS enables the Incus HTTPS API and provisions a trusted client
+// certificate for the Control Panel container, replacing the userspace
+// incus-socket forkproxy.
+func setupIncusHTTPS(containerName string) error {
+	util.LogSubStep("Configuring Incus HTTPS API access for Control Panel...")
+	gw := incusGatewayIP()
+
+	if cmdOut, err := util.RunCmdCapture("incus", "config", "set", "core.https_address", gw+":8443"); err != nil {
+		return fmt.Errorf("enable https listener: %w: %s", err, strings.TrimSpace(cmdOut))
+	}
+
+	certDir := "/var/lib/youeye/incus-client"
+	os.MkdirAll(certDir, 0700)
+	crt := certDir + "/cp.crt"
+	key := certDir + "/cp.key"
+	if _, err := os.Stat(crt); err != nil {
+		if cmdOut, err := util.RunCmdCapture("openssl", "req", "-x509", "-newkey", "rsa:2048",
+			"-keyout", key, "-out", crt, "-days", "3650", "-nodes",
+			"-subj", "/CN=youeye-control-cp"); err != nil {
+			return fmt.Errorf("generate client cert: %w: %s", err, strings.TrimSpace(cmdOut))
+		}
+	}
+
+	// Trust the client cert (idempotent — a duplicate add is harmless).
+	util.RunCmdCapture("incus", "config", "trust", "add-certificate", crt)
+
+	// Push cert + key into the container for the CP service to use.
+	util.RunIncusExec(containerName, "mkdir", "-p", "/etc/youeye")
+	if cmdOut, err := util.RunCmdCapture("incus", "file", "push", crt, containerName+"/etc/youeye/incus-client.crt"); err != nil {
+		return fmt.Errorf("push client cert: %w: %s", err, strings.TrimSpace(cmdOut))
+	}
+	if cmdOut, err := util.RunCmdCapture("incus", "file", "push", key, containerName+"/etc/youeye/incus-client.key"); err != nil {
+		return fmt.Errorf("push client key: %w: %s", err, strings.TrimSpace(cmdOut))
+	}
+	util.RunIncusExec(containerName, "chmod", "600", "/etc/youeye/incus-client.key")
+
+	util.LogSuccess("Incus HTTPS API access configured")
 	return nil
 }
 
 // addSocketProxies adds Incus and Spine socket proxies to the container.
 func addSocketProxies(containerName, spineSocketPath string) error {
 	util.LogStep(3, 7, "Adding socket proxies...")
-	
-	// Incus socket proxy
-	util.LogSubStep("Adding Incus socket proxy...")
-	util.LogDebug("This allows the Control Panel to communicate with Incus")
-	util.RunIncusExec(containerName, "mkdir", "-p", "/var/lib/incus")
-	if cmdOut, err := util.RunCmdCapture("incus", "config", "device", "add", containerName, "incus-socket", "proxy",
-		"bind=container",
-		"connect=unix:/var/lib/incus/unix.socket",
-		"listen=unix:/var/lib/incus/unix.socket",
-		"uid=0", "gid=0", "mode=0666"); err != nil {
-		util.LogDebug(fmt.Sprintf("Incus socket proxy warning: %s", strings.TrimSpace(cmdOut)))
-	} else {
-		util.LogSuccess("Incus socket proxy added")
+
+	// Incus API access over HTTPS (replaces the legacy incus-socket forkproxy,
+	// which copied every API byte in userspace and grew unboundedly — 1.3 GiB
+	// observed on bykapc). The CP connects to the Incus HTTPS API with a trusted
+	// client certificate instead. See plans/platform-ram-and-isolation-master-plan WS3.
+	if err := setupIncusHTTPS(containerName); err != nil {
+		util.LogDebug(fmt.Sprintf("Incus HTTPS setup warning: %v", err))
 	}
 
 	// Spine socket proxy
@@ -239,7 +289,7 @@ func addSocketProxies(containerName, spineSocketPath string) error {
 	util.RunIncusExec(containerName, "bash", "-c",
 		fmt.Sprintf("echo '%s' > /etc/tmpfiles.d/youeye.conf", tmpfilesConfig))
 	util.LogDebug(fmt.Sprintf("Created tmpfiles.d config for %s persistence across reboots", spineSocketDir))
-	
+
 	if cmdOut, err := util.RunCmdCapture("incus", "config", "device", "add", containerName, "youeye-socket", "proxy",
 		"bind=container",
 		"connect=unix:"+spineSocketPath,
@@ -249,7 +299,7 @@ func addSocketProxies(containerName, spineSocketPath string) error {
 	} else {
 		util.LogSuccess("YouEye socket proxy added")
 	}
-	
+
 	return nil
 }
 
@@ -257,7 +307,7 @@ func addSocketProxies(containerName, spineSocketPath string) error {
 func addPortProxy(containerName string, port int) error {
 	util.LogSubStep(fmt.Sprintf("Adding port %d proxy...", port))
 	util.LogDebug(fmt.Sprintf("This exposes the Control Panel on host port %d", port))
-	
+
 	if cmdOut, err := util.RunCmdCapture("incus", "config", "device", "add", containerName, fmt.Sprintf("port%d", port), "proxy",
 		"bind=host",
 		fmt.Sprintf("listen=tcp:0.0.0.0:%d", port),
@@ -265,7 +315,7 @@ func addPortProxy(containerName string, port int) error {
 		util.LogError(fmt.Sprintf("Failed to add port proxy: %s", strings.TrimSpace(cmdOut)))
 		return fmt.Errorf("failed to add port %d proxy: %w", port, err)
 	}
-	
+
 	util.LogSuccess(fmt.Sprintf("Port %d proxy added", port))
 	return nil
 }
@@ -273,25 +323,66 @@ func addPortProxy(containerName string, port int) error {
 // installNodeJS installs Node.js in the container.
 func installNodeJS(containerName string) error {
 	util.LogStep(4, 7, "Installing Node.js in container...")
-	
+
+	if err := preflightContainerNetwork(containerName); err != nil {
+		return err
+	}
+
 	util.LogSubStep("Updating package lists...")
-	util.RunIncusExec(containerName, "apt-get", "update")
-	
+	if err := util.RunIncusExec(containerName, "apt-get", "update"); err != nil {
+		return fmt.Errorf("failed to update package lists in %s: %w", containerName, err)
+	}
+
 	util.LogSubStep("Installing curl, ca-certificates, and pamtester...")
-	util.RunIncusExec(containerName, "apt-get", "install", "-y", "curl", "ca-certificates", "pamtester")
-	
+	if err := util.RunIncusExec(containerName, "apt-get", "install", "-y", "curl", "ca-certificates", "pamtester"); err != nil {
+		return fmt.Errorf("failed to install control panel prerequisites in %s: %w", containerName, err)
+	}
+
 	util.LogSubStep("Setting random container root password...")
 	containerPassword := util.GenerateRandomPassword(32)
-	util.RunIncusExec(containerName, "bash", "-c", fmt.Sprintf("echo 'root:%s' | chpasswd", containerPassword))
-	
+	if err := util.RunIncusExec(containerName, "bash", "-c", fmt.Sprintf("echo 'root:%s' | chpasswd", containerPassword)); err != nil {
+		return fmt.Errorf("failed to set container root password in %s: %w", containerName, err)
+	}
+
 	util.LogSubStep("Adding NodeSource repository...")
-	util.RunIncusExec(containerName, "bash", "-c",
-		"curl -fsSL https://deb.nodesource.com/setup_22.x | bash -")
-	
+	if err := util.RunIncusExec(containerName, "bash", "-c",
+		"curl -4 -fsSL https://deb.nodesource.com/setup_22.x | bash -"); err != nil {
+		return fmt.Errorf("failed to add NodeSource repository in %s: %w", containerName, err)
+	}
+
 	util.LogSubStep("Installing Node.js 22...")
-	util.RunIncusExec(containerName, "apt-get", "install", "-y", "nodejs")
-	
+	if err := util.RunIncusExec(containerName, "apt-get", "install", "-y", "nodejs"); err != nil {
+		return fmt.Errorf("failed to install Node.js in %s: %w", containerName, err)
+	}
+	if err := util.RunIncusExec(containerName, "bash", "-c", "test -x /usr/bin/node && /usr/bin/node --version"); err != nil {
+		return fmt.Errorf("Node.js install verification failed in %s: %w", containerName, err)
+	}
+
 	util.LogSuccess("Node.js installed")
+	return nil
+}
+
+func preflightContainerNetwork(containerName string) error {
+	util.LogSubStep("Verifying container IPv4 networking...")
+
+	checks := []struct {
+		name string
+		cmd  string
+	}{
+		{"IPv4 address", "ip -4 addr show dev eth0 | grep -q 'inet '"},
+		{"IPv4 default route", "ip -4 route show default | grep -q '^default '"},
+		{"Debian mirror DNS", "getent ahostsv4 deb.debian.org >/dev/null"},
+		{"Debian mirror TCP", "timeout 10 bash -c '</dev/tcp/deb.debian.org/80'"},
+	}
+
+	for _, check := range checks {
+		out, err := exec.Command("incus", "exec", containerName, "--", "bash", "-c", check.cmd).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("container network preflight failed (%s): %w: %s", check.name, err, strings.TrimSpace(string(out)))
+		}
+	}
+
+	util.LogSuccess("Container IPv4 networking verified")
 	return nil
 }
 
@@ -328,7 +419,7 @@ func DeployControlPanelApp(cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
-	
+
 	written, err := io.Copy(f, resp.Body)
 	f.Close()
 	if err != nil {
@@ -357,16 +448,16 @@ func DeployControlPanelApp(cfg *config.Config) error {
 
 	util.RunIncusExec(containerName, "rm", "/tmp/app.tar")
 
-	util.LogSubStep("Installing styled-jsx dependency...")
-	if err := util.RunIncusExec(containerName, "bash", "-c", fmt.Sprintf("cd %s && pnpm install styled-jsx --silent", appDir)); err != nil {
-		util.LogDebug("Warning: failed to install styled-jsx, service may not start")
+	util.LogSubStep("Verifying bundled runtime dependencies...")
+	if err := verifyControlPanelArtifact(containerName, appDir); err != nil {
+		return err
 	}
 
 	// Create systemd service
 	util.LogSubStep("Creating systemd service...")
 	jwtSecret := util.GenerateJWTSecret()
 	util.LogSubStep("Generated secure JWT_SECRET for this deployment")
-	
+
 	// Generate deploy secret for Spine→CP authenticated calls
 	deploySecret := util.GenerateJWTSecret()
 	util.LogSubStep("Generated secure deploy secret for Spine→CP communication")
@@ -378,11 +469,12 @@ func DeployControlPanelApp(cfg *config.Config) error {
 	if err := os.WriteFile(deploySecretDir+"/.deploy_secret", []byte(deploySecret), 0600); err != nil {
 		util.LogDebug(fmt.Sprintf("Warning: could not save deploy secret: %v", err))
 	}
-	
+
 	// Get host IP for Pi-Hole DNS binding (avoids conflict with Incus dnsmasq)
 	hostIP := util.GetPrimaryIP()
 	util.LogDebug(fmt.Sprintf("Host IP for Control Panel: %s", hostIP))
-	
+
+	incusGW := incusGatewayIP()
 	serviceContent := fmt.Sprintf(`[Unit]
 Description=YouEye Control Panel
 After=network.target
@@ -397,13 +489,16 @@ Environment=JWT_SECRET=%s
 Environment=HOST_IP=%s
 Environment=TEST_ADMIN_SECRET=%s
 Environment=SECURE_COOKIES=true
+Environment=INCUS_HTTPS_URL=%s:8443
+Environment=INCUS_CLIENT_CERT=/etc/youeye/incus-client.crt
+Environment=INCUS_CLIENT_KEY=/etc/youeye/incus-client.key
 ExecStart=/usr/bin/node %s/server.js
 Restart=always
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
-`, appDir, port, jwtSecret, hostIP, deploySecret, appDir)
+`, appDir, port, jwtSecret, hostIP, deploySecret, incusGW, appDir)
 
 	util.RunIncusExec(containerName, "bash", "-c",
 		fmt.Sprintf("cat > /etc/systemd/system/youeye-control.service << 'EOF'\n%sEOF", serviceContent))
@@ -437,11 +532,11 @@ WantedBy=multi-user.target
 	util.LogStep(7, 7, "Starting Control Panel service...")
 	util.LogSubStep("Reloading systemd...")
 	util.RunIncusExec(containerName, "systemctl", "daemon-reload")
-	
+
 	util.LogSubStep("Enabling service...")
 	util.RunIncusExec(containerName, "systemctl", "enable", "youeye-control")
 	util.RunIncusExec(containerName, "systemctl", "enable", "youeye-id")
-	
+
 	util.LogSubStep("Starting service...")
 	util.RunIncusExec(containerName, "systemctl", "start", "youeye-control")
 	util.RunIncusExec(containerName, "systemctl", "start", "youeye-id")
@@ -473,6 +568,22 @@ WantedBy=multi-user.target
 	version := GetInstalledVersion(containerName, appDir)
 	util.LogSuccess(fmt.Sprintf("Control Panel v%s deployed successfully", version))
 
+	return nil
+}
+
+func verifyControlPanelArtifact(containerName, appDir string) error {
+	required := []string{
+		"server.js",
+		"package.json",
+		"node_modules/styled-jsx/package.json",
+	}
+	for _, path := range required {
+		fullPath := fmt.Sprintf("%s/%s", appDir, path)
+		if err := util.RunIncusExec(containerName, "test", "-e", fullPath); err != nil {
+			return fmt.Errorf("control panel artifact is missing required file %s: %w", fullPath, err)
+		}
+	}
+	util.LogSuccess("Bundled runtime dependencies verified")
 	return nil
 }
 

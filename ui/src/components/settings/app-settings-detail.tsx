@@ -43,6 +43,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { AdminEmbed } from "@/components/settings/admin-embed";
 import { AppBrandingTab } from "@/components/settings/app-branding-tab";
+import { UnifiedEmbed } from "@/components/embeds/unified-embed";
 import { Palette } from "lucide-react";
 
 /* ── Types ── */
@@ -686,33 +687,33 @@ function AppSettingsTab({
   );
 }
 
-/* ── App Settings Embed ── */
+/* ── App Settings Embed ── Plan 1 E6: on the ONE <UnifiedEmbed kind="settings-panel">.
+ * UnifiedEmbed owns origin-validation, lazy mount, the `youeye:resize` protocol
+ * (legacy `youeye-app-settings-resize` accepted one cycle), and the timeout →
+ * visible fallback (never silent). The app's settings render at the proven
+ * `/settings?embed=true` page; the migration to a dedicated `/embed/settings`
+ * surface (manifest `kind: settings-panel`) rides the native-app re-release batch
+ * (see Plans/Archive/To Plan/e6-native-settings-panels.md), at which point the UI
+ * prefers it. */
 
 function AppSettingsEmbed({ subdomain }: { subdomain: string }) {
-  const [iframeHeight, setIframeHeight] = useState(400);
   const domain = typeof window !== "undefined" ? window.location.hostname : "";
   const settingsUrl = `https://${subdomain}.${domain}/settings?embed=true`;
 
-  useEffect(() => {
-    function handleMessage(e: MessageEvent) {
-      if (e.data?.type === "youeye-app-settings-resize" && typeof e.data.height === "number") {
-        setIframeHeight(Math.max(200, e.data.height));
-      }
-    }
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, []);
-
   return (
-    <div className="border rounded-lg overflow-hidden">
-      <iframe
-        src={settingsUrl}
-        className="w-full border-0"
-        style={{ height: `${iframeHeight}px`, minHeight: "200px" }}
-        title="App Settings"
-        allow="clipboard-write"
-      />
-    </div>
+    <UnifiedEmbed
+      url={settingsUrl}
+      kind="settings-panel"
+      size={{ default: 400, min: 200, max: 1200 }}
+      timeout={5000}
+      title="App Settings"
+      className="overflow-hidden rounded-lg border"
+      fallback={
+        <div className="p-6 text-center text-sm text-muted-foreground">
+          Settings panel failed to load.
+        </div>
+      }
+    />
   );
 }
 

@@ -1,10 +1,30 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Cpu, Database, HardDrive, Loader2, MemoryStick, RefreshCw, Server, ShieldAlert } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  Cpu,
+  Database,
+  GitBranch,
+  HardDrive,
+  Loader2,
+  type LucideIcon,
+  MemoryStick,
+  Monitor,
+  RefreshCw,
+  Route,
+  Save,
+  Server,
+  ShieldAlert,
+  ShieldCheck,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 interface SystemInfo {
   hostname: string;
@@ -17,6 +37,30 @@ interface SystemInfo {
   disk: null | { total_gb: number; used_gb: number; free_gb: number };
   incus: { version: string; storage_pool: string };
   containers: { total: number; running: number; stopped: number; items: Array<{ name: string; status: string }> };
+}
+
+interface ServiceHealth {
+  slug: string;
+  name: string;
+  version: string;
+  status: string;
+  cpuPercent: number;
+  memory: number; // MB
+  restartable: boolean;
+  uptime: string;
+}
+
+interface ReleaseSource {
+  repo_url?: string;
+  provider?: string;
+  base_url?: string;
+  organization?: string;
+  repository?: string;
+}
+
+interface PlatformSettings {
+  releaseBranch?: string;
+  releaseSource?: ReleaseSource;
 }
 
 type TrackingStatus = "tracked" | "legacy-compatible" | "legacy-untracked" | "missing";
@@ -39,18 +83,77 @@ interface SystemUpdatePlan {
   reason: string;
 }
 
-function Usage({ label, used, total, unit }: { label: string; used: number; total: number; unit: string }) {
-  const percent = total > 0 ? Math.round((used / total) * 100) : 0;
+// Human service names (skill copy rule / D4 — never surface raw component names).
+const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIcon }> = {
+  spine: { name: "System core", desc: "Keeps the platform healthy and updated", icon: Server },
+  postgres: { name: "Database", desc: "Stores app data on this server", icon: Database },
+  caddy: { name: "Web gateway", desc: "Routes your addresses with automatic HTTPS", icon: Route },
+  pihole: { name: "Network shield", desc: "Ad-blocking DNS for your whole network", icon: ShieldCheck },
+};
+const PLATFORM_ORDER = ["spine", "__cp__", "postgres", "caddy", "pihole"];
+
+function fmtMB(mb: number) {
+  if (!mb || mb <= 0) return "—";
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
+}
+
+function pct(used: number, total: number) {
+  return total > 0 ? Math.round((used / total) * 100) : 0;
+}
+
+// Versions sometimes come back empty or token-like; only show a short, sane string.
+function showVersion(v: string | undefined) {
+  if (!v || v.length > 24 || /\s/.test(v)) return "";
+  return v.startsWith("v") || /[a-z]/i.test(v) ? v : `v${v}`;
+}
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  sub,
+  meter,
+  warn,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  sub?: string;
+  meter?: number;
+  warn?: boolean;
+}) {
   return (
-    <div className="space-y-1.5">
-      <div className="flex justify-between text-sm"><span className="text-muted-foreground">{label}</span><span className="font-medium">{used} / {total} {unit} ({percent}%)</span></div>
-      <div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(percent, 100)}%` }} /></div>
+    <div className="rounded-xl border bg-card p-4 shadow-sm">
+      <div className="flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground">
+        <Icon className="size-3.5" />
+        {label}
+      </div>
+      <div className="mt-1 text-[22px] font-bold tracking-tight">{value}</div>
+      {meter !== undefined ? (
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+          <div className={`h-full rounded-full ${warn ? "bg-amber-500" : "bg-primary"}`} style={{ width: `${Math.min(Math.max(meter, 0), 100)}%` }} />
+        </div>
+      ) : sub ? (
+        <div className="mt-1 text-[12px] text-muted-foreground">{sub}</div>
+      ) : null}
     </div>
   );
 }
 
-export function SystemClient() {
+function StatusDot({ status }: { status: string }) {
+  const ok = status === "running" || status === "ok" || status === "healthy";
+  return (
+    <span className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+      <span className={`inline-block size-2 rounded-full ${ok ? "bg-green-500" : "bg-amber-500"}`} />
+      {ok ? "Running" : status}
+    </span>
+  );
+}
+
+export function SystemClient({ cpVersion }: { cpVersion?: string }) {
   const [data, setData] = useState<SystemInfo | null>(null);
+  const [health, setHealth] = useState<ServiceHealth[]>([]);
+  const [restarting, setRestarting] = useState<string | null>(null);
   const [systemPlans, setSystemPlans] = useState<SystemUpdatePlan[]>([]);
   const [loading, setLoading] = useState(true);
   const [plansLoading, setPlansLoading] = useState(true);
@@ -61,6 +164,12 @@ export function SystemClient() {
   const [confirmPlan, setConfirmPlan] = useState<SystemUpdatePlan | null>(null);
   const [confirmName, setConfirmName] = useState("");
   const [maintenanceConfirmed, setMaintenanceConfirmed] = useState(false);
+  const [releaseBranch, setReleaseBranch] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [sourceLoading, setSourceLoading] = useState(true);
+  const [sourceSaving, setSourceSaving] = useState(false);
+  const [sourceError, setSourceError] = useState("");
+  const [sourceMessage, setSourceMessage] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -69,6 +178,33 @@ export function SystemClient() {
     if (res.ok) setData(await res.json());
     else setError((await res.json().catch(() => ({}))).error || "Failed to load system information");
     setLoading(false);
+  }, []);
+
+  const loadHealth = useCallback(async () => {
+    try {
+      const res = await fetch("/api/health/services");
+      if (res.ok) {
+        const body = await res.json();
+        if (Array.isArray(body)) setHealth(body);
+      }
+    } catch {
+      // health is supplementary; the page still renders from system info.
+    }
+  }, []);
+
+  const loadUpdateSource = useCallback(async () => {
+    setSourceLoading(true);
+    setSourceError("");
+    setSourceMessage("");
+    const res = await fetch("/settings/api/settings");
+    if (res.ok) {
+      const settings = (await res.json()) as PlatformSettings;
+      setReleaseBranch(settings.releaseBranch || "main");
+      setRepoUrl(settings.releaseSource?.repo_url || "");
+    } else {
+      setSourceError((await res.json().catch(() => ({}))).error || "Failed to load update source");
+    }
+    setSourceLoading(false);
   }, []);
 
   const loadSystemPlans = useCallback(async () => {
@@ -84,7 +220,80 @@ export function SystemClient() {
     setPlansLoading(false);
   }, []);
 
-  useEffect(() => { load(); loadSystemPlans(); }, [load, loadSystemPlans]);
+  useEffect(() => {
+    load();
+    loadSystemPlans();
+    loadUpdateSource();
+  }, [load, loadSystemPlans, loadUpdateSource]);
+
+  // Live usage refreshes every 5s.
+  useEffect(() => {
+    loadHealth();
+    const id = setInterval(loadHealth, 5000);
+    return () => clearInterval(id);
+  }, [loadHealth]);
+
+  async function restartService(slug: string) {
+    setRestarting(slug);
+    try {
+      const res = await fetch(`/api/health/services/${slug}/restart`, { method: "POST" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Restart failed");
+      await loadHealth();
+    } catch {
+      // surfaced via the next health poll; keep the button responsive.
+    } finally {
+      setRestarting(null);
+    }
+  }
+
+  async function saveUpdateSource() {
+    const branch = releaseBranch.trim();
+    const normalizedRepoUrl = repoUrl.trim().replace(/\/$/, "").replace(/\.git$/, "");
+    setSourceError("");
+    setSourceMessage("");
+
+    if (!branch) {
+      setSourceError("Release branch is required");
+      return;
+    }
+    if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.includes("..")) {
+      setSourceError("Release branch contains unsupported characters");
+      return;
+    }
+    try {
+      const parsed = new URL(normalizedRepoUrl);
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      if (!["http:", "https:"].includes(parsed.protocol) || parts.length < 2) {
+        throw new Error("Repo URL must include an owner and repository");
+      }
+    } catch (err) {
+      setSourceError(err instanceof Error ? err.message : "Repo URL is invalid");
+      return;
+    }
+
+    setSourceSaving(true);
+    try {
+      const res = await fetch("/settings/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          releaseBranch: branch,
+          releaseSource: { repo_url: normalizedRepoUrl },
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Failed to save update source");
+      const updated = body as PlatformSettings;
+      setReleaseBranch(updated.releaseBranch || branch);
+      setRepoUrl(updated.releaseSource?.repo_url || normalizedRepoUrl);
+      setSourceMessage("Update source saved");
+      await loadSystemPlans();
+    } catch (err) {
+      setSourceError(err instanceof Error ? err.message : "Failed to save update source");
+    } finally {
+      setSourceSaving(false);
+    }
+  }
 
   async function readSystemUpdateStream(response: Response, onMessage: (message: string) => void, fallback: string) {
     if (!response.ok) {
@@ -179,60 +388,160 @@ export function SystemClient() {
 
   const refreshAll = useCallback(() => {
     load();
+    loadHealth();
     loadSystemPlans();
-  }, [load, loadSystemPlans]);
+    loadUpdateSource();
+  }, [load, loadHealth, loadSystemPlans, loadUpdateSource]);
 
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
   if (error) return <div className="rounded-lg border p-6 text-sm text-destructive">{error}</div>;
   if (!data) return null;
 
+  const healthBySlug = Object.fromEntries(health.map((h) => [h.slug, h]));
+  const platformRows = PLATFORM_ORDER.map((slug) => {
+    if (slug === "__cp__") {
+      return { key: "__cp__", icon: Monitor, name: "Server interface", desc: "This dashboard and settings", version: cpVersion ? `v${cpVersion}` : "", status: "running" };
+    }
+    const h = healthBySlug[slug];
+    const meta = SERVICE_META[slug];
+    if (!meta) return null;
+    return {
+      key: slug,
+      icon: meta.icon,
+      name: meta.name,
+      desc: meta.desc,
+      version: showVersion(h?.version),
+      status: h?.status || "running",
+    };
+  }).filter((row): row is NonNullable<typeof row> => row !== null);
+
+  const usageRows = health
+    .filter((h) => h.restartable && (h.memory > 0 || h.cpuPercent >= 0))
+    .sort((a, b) => b.memory - a.memory);
+
+  const memUsed = data.memory?.used_mb ?? 0;
+  const memTotal = data.memory?.total_mb ?? 0;
+  const diskUsed = data.disk?.used_gb ?? 0;
+  const diskTotal = data.disk?.total_gb ?? 0;
+  const cpuUsage = data.cpu?.usage_percent ? Number.parseFloat(data.cpu.usage_percent) : 0;
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="flex items-center gap-2 text-xl font-semibold"><Server className="h-5 w-5" />System</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Host info, resource usage, and container summary.</p>
-        </div>
-        <Button variant="outline" size="sm" onClick={refreshAll}><RefreshCw className="h-4 w-4" />Refresh</Button>
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">System</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Your server at a glance — live usage, services, and updates</p>
       </div>
 
-      <div className="rounded-lg border p-4">
-        <div className="grid gap-4 text-sm sm:grid-cols-2">
-          <div><span className="text-muted-foreground">Hostname</span><p className="font-medium">{data.hostname}</p></div>
-          <div><span className="text-muted-foreground">Operating System</span><p className="font-medium">{data.os}</p></div>
-          <div><span className="text-muted-foreground">Kernel</span><p className="font-medium">{data.kernel}</p></div>
-          <div><span className="text-muted-foreground">Uptime</span><p className="font-medium">{data.uptime}</p></div>
-        </div>
+      {/* Stat row */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard icon={Cpu} label="CPU" value={`${Math.round(cpuUsage)}%`} meter={cpuUsage} />
+        <StatCard icon={MemoryStick} label="Memory" value={fmtMB(memUsed)} meter={pct(memUsed, memTotal)} warn={pct(memUsed, memTotal) >= 85} />
+        <StatCard icon={HardDrive} label="Disk" value={`${diskUsed} GB`} meter={pct(diskUsed, diskTotal)} warn={pct(diskUsed, diskTotal) >= 85} />
+        <StatCard icon={Clock} label="Uptime" value={data.uptime} sub={data.hostname} />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-3 rounded-lg border p-4">
-          <h3 className="flex items-center gap-2 text-base font-semibold"><Cpu className="h-4 w-4" />CPU</h3>
-          <p className="text-sm text-muted-foreground">{data.cpu?.model || "unknown"}</p>
-          <p className="text-sm">{data.cpu?.cores || 0} cores{data.cpu?.usage_percent ? ` · ${data.cpu.usage_percent}% usage` : ""}</p>
+      {/* Platform services */}
+      <Card className="gap-0 py-0">
+        <div className="flex items-center justify-between gap-4 border-b p-4">
+          <h2 className="text-[15px] font-semibold">Platform</h2>
+          <Button variant="ghost" size="sm" onClick={refreshAll} disabled={plansLoading}>
+            <RefreshCw className="size-4" /> Check for updates
+          </Button>
         </div>
-        <div className="space-y-3 rounded-lg border p-4">
-          <h3 className="flex items-center gap-2 text-base font-semibold"><MemoryStick className="h-4 w-4" />Memory</h3>
-          {data.memory && <Usage label="Memory" used={data.memory.used_mb} total={data.memory.total_mb} unit="MB" />}
+        <div className="divide-y">
+          {platformRows.map((row) => {
+            const Icon = row.icon;
+            return (
+              <div key={row.key} className="flex items-center gap-3 p-4">
+                <div className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
+                  <Icon className="size-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">{row.name}</p>
+                  <p className="truncate text-[13px] text-muted-foreground">{row.desc}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  {row.version && <span className="text-[12px] tabular-nums text-muted-foreground">{row.version}</span>}
+                  <StatusDot status={row.status} />
+                </div>
+              </div>
+            );
+          })}
         </div>
-        <div className="space-y-3 rounded-lg border p-4">
-          <h3 className="flex items-center gap-2 text-base font-semibold"><HardDrive className="h-4 w-4" />Disk</h3>
-          {data.disk && <Usage label="Disk" used={data.disk.used_gb} total={data.disk.total_gb} unit="GB" />}
+      </Card>
+
+      {/* Live usage (core services with real, already-sampled usage) */}
+      <Card className="gap-0 py-0">
+        <div className="flex items-center justify-between gap-4 border-b p-4">
+          <h2 className="text-[15px] font-semibold">Live usage</h2>
+          <span className="text-[12.5px] text-muted-foreground">refreshes every 5s</span>
         </div>
-        <div className="space-y-3 rounded-lg border p-4">
-          <h3 className="text-base font-semibold">Containers</h3>
-          <p className="text-sm text-muted-foreground">{data.containers.running} running / {data.containers.total} total</p>
-          <div className="flex flex-wrap gap-2">
-            {data.containers.items.slice(0, 8).map((container) => <Badge key={container.name} variant="outline">{container.name}: {container.status}</Badge>)}
+        {usageRows.length === 0 ? (
+          <div className="p-6 text-center text-sm text-muted-foreground">Collecting usage…</div>
+        ) : (
+          <div className="divide-y">
+            {usageRows.map((h) => {
+              const meta = SERVICE_META[h.slug];
+              const Icon = meta?.icon ?? Server;
+              const cpu = h.cpuPercent >= 0 ? Math.round(h.cpuPercent) : null;
+              return (
+                <div key={h.slug} className="flex items-center gap-3 p-4">
+                  <div className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
+                    <Icon className="size-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium">{meta?.name ?? h.name}</p>
+                    <p className="text-[13px] text-muted-foreground">{fmtMB(h.memory)} memory</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+                      <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(Math.max(cpu ?? 0, 0), 100)}%` }} />
+                    </div>
+                    <span className="w-9 text-right text-[12px] tabular-nums text-muted-foreground">{cpu === null ? "—" : `${cpu}%`}</span>
+                    <Button variant="ghost" size="sm" onClick={() => restartService(h.slug)} disabled={restarting === h.slug}>
+                      {restarting === h.slug ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                      Restart
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+
+      {/* Core Update Source (admin) — release source for Spine, Server interface, and the dashboard. */}
+      <div className="space-y-4 rounded-xl border bg-card p-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="flex items-center gap-2 text-[15px] font-semibold"><GitBranch className="h-4 w-4" />Core update source</h3>
+            <p className="mt-1 text-sm text-muted-foreground">Where core platform releases are discovered (System core, Server interface, dashboard).</p>
+          </div>
+          <Button size="sm" onClick={saveUpdateSource} disabled={sourceLoading || sourceSaving}>
+            {sourceSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            Save
+          </Button>
+        </div>
+        <div className="grid gap-4 md:grid-cols-[minmax(180px,240px)_1fr]">
+          <div className="space-y-2">
+            <Label htmlFor="release-branch">Release branch</Label>
+            <Input id="release-branch" value={releaseBranch} onChange={(event) => setReleaseBranch(event.target.value)} disabled={sourceLoading || sourceSaving} placeholder="main" />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="release-repo-url">Repo URL</Label>
+            <Input id="release-repo-url" value={repoUrl} onChange={(event) => setRepoUrl(event.target.value)} disabled={sourceLoading || sourceSaving} placeholder="https://git.potemk.in/potemsla/YouEye" />
           </div>
         </div>
+        {sourceError && <p className="text-sm text-destructive">{sourceError}</p>}
+        {sourceMessage && <p className="text-sm text-muted-foreground">{sourceMessage}</p>}
       </div>
 
+      {/* Market System Manifests (admin) — image tracking + maintenance-window update flow (unchanged). */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="flex items-center gap-2 text-base font-semibold"><Database className="h-4 w-4" />Market System Manifests</h3>
-            <p className="mt-1 text-sm text-muted-foreground">Postgres, Caddy, and Pi-hole image tracking from Market.</p>
+            <h3 className="flex items-center gap-2 text-[15px] font-semibold"><Database className="h-4 w-4" />System images</h3>
+            <p className="mt-1 text-sm text-muted-foreground">Database, Web gateway, and Network shield image tracking from Market.</p>
           </div>
           <Button variant="outline" size="sm" onClick={loadSystemPlans} disabled={plansLoading}>
             {plansLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
@@ -249,7 +558,7 @@ export function SystemClient() {
               const canUpdate = plan.exists && (plan.updateAvailable || plan.trackingStatus !== "tracked");
               const updating = updateStatus[plan.id] === "Starting..." || updateStatus[plan.id]?.startsWith("Stopping") || updateStatus[plan.id]?.startsWith("Rebuilding") || updateStatus[plan.id]?.startsWith("Starting") || updateStatus[plan.id]?.startsWith("Verifying");
               return (
-                <div key={plan.id} className="space-y-3 rounded-lg border p-4">
+                <div key={plan.id} className="space-y-3 rounded-xl border p-4 shadow-sm">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <h4 className="text-sm font-semibold">{plan.id}</h4>
@@ -272,7 +581,7 @@ export function SystemClient() {
                     <span>{plan.reason}</span>
                   </div>
                   {plan.id === "postgresql" && (
-                    <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                    <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
                       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                       <span>Database image changes require an explicit maintenance window.</span>
                     </div>
@@ -314,41 +623,27 @@ export function SystemClient() {
 
       {confirmPlan && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md space-y-4 rounded-lg border bg-background p-5 shadow-lg">
+          <div className="w-full max-w-md space-y-4 rounded-xl border bg-background p-5 shadow-lg">
             <div>
               <h3 className="text-base font-semibold">{updateLabel(confirmPlan)} {confirmPlan.id}</h3>
               <p className="mt-1 text-sm text-muted-foreground">
                 This will stop and rebuild {confirmPlan.containerName} from the Market image {confirmPlan.desiredImage}.
               </p>
             </div>
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
               System services affect sign-in, routing, DNS, and app data. Run this only during a maintenance window after a successful dry-run.
             </div>
             <label className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={maintenanceConfirmed}
-                onChange={(event) => setMaintenanceConfirmed(event.target.checked)}
-              />
+              <input type="checkbox" className="mt-1" checked={maintenanceConfirmed} onChange={(event) => setMaintenanceConfirmed(event.target.checked)} />
               <span>I have a maintenance window and understand this rebuild can temporarily interrupt YouEye.</span>
             </label>
             <div className="space-y-2">
               <label className="text-sm font-medium" htmlFor="system-confirm-name">Type {confirmPlan.containerName} to continue</label>
-              <Input
-                id="system-confirm-name"
-                value={confirmName}
-                onChange={(event) => setConfirmName(event.target.value)}
-                placeholder={confirmPlan.containerName}
-              />
+              <Input id="system-confirm-name" value={confirmName} onChange={(event) => setConfirmName(event.target.value)} placeholder={confirmPlan.containerName} />
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setConfirmPlan(null)}>Cancel</Button>
-              <Button
-                variant="destructive"
-                onClick={() => runConfirmedUpdate(confirmPlan)}
-                disabled={!maintenanceConfirmed || confirmName !== confirmPlan.containerName}
-              >
+              <Button variant="destructive" onClick={() => runConfirmedUpdate(confirmPlan)} disabled={!maintenanceConfirmed || confirmName !== confirmPlan.containerName}>
                 {updateLabel(confirmPlan)}
               </Button>
             </div>

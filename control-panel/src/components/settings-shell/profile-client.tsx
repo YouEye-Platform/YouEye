@@ -1,8 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Loader2, MapPin, Save } from "lucide-react";
+import { Loader2, Upload } from "lucide-react";
 import { uiSettingsApi } from "./api-base";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 interface ProfileClientProps {
   userId?: string;
@@ -38,6 +43,11 @@ function readAsDataUrl(blob: Blob): Promise<string> {
     reader.readAsDataURL(blob);
   });
 }
+
+const FIELD_LABEL = "text-[13px] font-medium text-muted-foreground";
+// Native controls (textarea / 400-item timezone select) styled to the shadcn Input recipe.
+const NATIVE_CONTROL =
+  "w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50";
 
 export function ProfileClient({ userId, username, name, email, isAdmin }: ProfileClientProps) {
   const [account, setAccount] = useState<AccountProfile | null>(null);
@@ -88,7 +98,9 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
       }
     }
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -100,9 +112,19 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
     return () => window.removeEventListener("avatar-updated", handler);
   }, []);
 
+  const fullName = useMemo(
+    () => [firstName, lastName].filter(Boolean).join(" ") || account?.username || name || username,
+    [firstName, lastName, account?.username, name, username]
+  );
+
   const initials = useMemo(() => {
     const source = [firstName, lastName].filter(Boolean).join(" ") || name || username || "?";
-    return source.split(" ").map((part) => part[0]).join("").toUpperCase().slice(0, 2);
+    return source
+      .split(" ")
+      .map((part) => part[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
   }, [firstName, lastName, name, username]);
 
   const timezones = useMemo(() => {
@@ -179,18 +201,27 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
 
   if (loading) {
     return (
-      <div className="space-y-6 animate-pulse">
+      <div className="space-y-6">
         <div>
-          <div className="h-6 w-48 rounded bg-muted" />
-          <div className="mt-2 h-4 w-64 rounded bg-muted" />
+          <div className="h-7 w-40 animate-pulse rounded bg-muted" />
+          <div className="mt-2 h-4 w-56 animate-pulse rounded bg-muted" />
         </div>
-        <div className="flex items-center gap-4">
-          <div className="h-16 w-16 rounded-full bg-muted" />
-          <div className="space-y-2">
-            <div className="h-4 w-32 rounded bg-muted" />
-            <div className="h-3 w-20 rounded bg-muted" />
+        <Card className="gap-0 py-0">
+          <div className="flex items-center gap-4 p-5">
+            <div className="size-16 animate-pulse rounded-full bg-muted" />
+            <div className="space-y-2">
+              <div className="h-4 w-32 animate-pulse rounded bg-muted" />
+              <div className="h-3 w-20 animate-pulse rounded bg-muted" />
+            </div>
           </div>
-        </div>
+        </Card>
+        <Card className="gap-0 py-0">
+          <div className="space-y-4 p-5">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="h-9 w-full animate-pulse rounded bg-muted" />
+            ))}
+          </div>
+        </Card>
       </div>
     );
   }
@@ -198,98 +229,131 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-semibold">Profile</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Manage your account name, avatar, bio, and timezone.</p>
+        <h1 className="text-2xl font-bold tracking-tight">Profile</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Your account on this server</p>
       </div>
 
-      <div className="flex max-w-lg items-center gap-4">
-        <div className="relative">
-          {avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={avatarUrl} alt="Avatar" className="h-16 w-16 rounded-full object-cover" />
-          ) : (
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary text-lg font-semibold text-primary-foreground">
-              {initials}
-            </div>
-          )}
-          {avatarUploading && (
-            <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/50">
-              <Loader2 className="h-5 w-5 animate-spin text-white" />
-            </div>
-          )}
-        </div>
-        <div className="min-w-0">
-          <p className="font-medium">{[firstName, lastName].filter(Boolean).join(" ") || account?.username || username}</p>
-          <p className="text-sm text-muted-foreground">{isAdmin ? "Administrator" : "User"}</p>
-          <div className="mt-1 flex gap-3 text-xs">
-            <label className="cursor-pointer text-primary hover:underline">
-              Change avatar
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                disabled={avatarUploading}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) uploadAvatar(file);
-                }}
-              />
-            </label>
-            {avatarUrl && (
-              <button type="button" onClick={removeAvatar} disabled={avatarUploading} className="text-destructive hover:underline">
-                Remove
-              </button>
+      {/* Identity card */}
+      <Card className="gap-0 py-0">
+        <div className="flex items-center gap-4 p-5">
+          <div className="relative">
+            <Avatar className="size-16">
+              {avatarUrl ? <AvatarImage src={avatarUrl} alt="" className="object-cover" /> : null}
+              <AvatarFallback className="bg-primary text-lg font-semibold text-primary-foreground">
+                {initials}
+              </AvatarFallback>
+            </Avatar>
+            {avatarUploading && (
+              <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/50">
+                <Loader2 className="size-5 animate-spin text-white" />
+              </div>
             )}
           </div>
+          <div className="min-w-0">
+            <p className="truncate text-[17px] font-bold leading-tight">{fullName}</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">{isAdmin ? "Administrator" : "User"}</p>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={avatarUploading}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Upload className="size-4" /> Change photo
+            </Button>
+            {avatarUrl && (
+              <Button type="button" variant="ghost" size="sm" disabled={avatarUploading} onClick={removeAvatar}>
+                Remove
+              </Button>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              disabled={avatarUploading}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) uploadAvatar(file);
+              }}
+            />
+          </div>
         </div>
-      </div>
+      </Card>
 
-      <div className="max-w-lg space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <label className="space-y-1.5 text-sm">
-            <span className="font-medium text-muted-foreground">First name</span>
-            <input value={firstName} onChange={(event) => setFirstName(event.target.value)} className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+      {/* Details card */}
+      <Card className="gap-0 py-0">
+        <div className="space-y-4 p-5">
+          <h2 className="text-[15px] font-semibold">Details</h2>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block space-y-1.5">
+              <span className={FIELD_LABEL}>First name</span>
+              <Input value={firstName} onChange={(event) => setFirstName(event.target.value)} />
+            </label>
+            <label className="block space-y-1.5">
+              <span className={FIELD_LABEL}>Last name</span>
+              <Input value={lastName} onChange={(event) => setLastName(event.target.value)} />
+            </label>
+          </div>
+
+          <label className="block space-y-1.5">
+            <span className={FIELD_LABEL}>Username</span>
+            <Input value={account?.username || username} disabled className="bg-muted text-muted-foreground" />
           </label>
-          <label className="space-y-1.5 text-sm">
-            <span className="font-medium text-muted-foreground">Last name</span>
-            <input value={lastName} onChange={(event) => setLastName(event.target.value)} className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+
+          <label className="block space-y-1.5">
+            <span className={FIELD_LABEL}>Email</span>
+            <Input
+              value={account?.email || email || ""}
+              disabled
+              placeholder="—"
+              className="bg-muted text-muted-foreground"
+            />
           </label>
+
+          <label className="block space-y-1.5">
+            <span className={FIELD_LABEL}>Bio</span>
+            <textarea
+              value={local.bio}
+              onChange={(event) => setLocal((current) => ({ ...current, bio: event.target.value }))}
+              rows={3}
+              placeholder="A line about you (shown on your profile)"
+              className={cn(NATIVE_CONTROL, "min-h-20 resize-y")}
+            />
+          </label>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block space-y-1.5">
+              <span className={FIELD_LABEL}>Timezone</span>
+              <select
+                value={local.timezone}
+                onChange={(event) => setLocal((current) => ({ ...current, timezone: event.target.value }))}
+                className={cn(NATIVE_CONTROL, "h-9 py-1")}
+              >
+                {timezones.map((timezone) => (
+                  <option key={timezone} value={timezone}>
+                    {timezone}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="flex items-center gap-3 pt-1">
+            <Button onClick={save} disabled={saving}>
+              {saving && <Loader2 className="size-4 animate-spin" />}
+              Save changes
+            </Button>
+            {saved && <span className="text-sm text-green-600 dark:text-green-500">Saved</span>}
+            {error && <span className="text-sm text-destructive">{error}</span>}
+          </div>
+
+          <p className="text-xs text-muted-foreground">User ID: {local.userId || userId || "—"}</p>
         </div>
-
-        <label className="block space-y-1.5 text-sm">
-          <span className="font-medium text-muted-foreground">Username</span>
-          <div className="rounded-md bg-muted px-3 py-2 text-sm">{account?.username || username}</div>
-        </label>
-
-        <label className="block space-y-1.5 text-sm">
-          <span className="font-medium text-muted-foreground">Email</span>
-          <div className="rounded-md bg-muted px-3 py-2 text-sm">{account?.email || email || "—"}</div>
-        </label>
-
-        <label className="block space-y-1.5 text-sm">
-          <span className="flex items-center gap-2 font-medium text-muted-foreground"><FileText className="h-4 w-4" /> Bio</span>
-          <textarea value={local.bio} onChange={(event) => setLocal((current) => ({ ...current, bio: event.target.value }))} rows={3} className="min-h-20 w-full resize-y rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-        </label>
-
-        <label className="block space-y-1.5 text-sm">
-          <span className="flex items-center gap-2 font-medium text-muted-foreground"><MapPin className="h-4 w-4" /> Timezone</span>
-          <select value={local.timezone} onChange={(event) => setLocal((current) => ({ ...current, timezone: event.target.value }))} className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
-            {timezones.map((timezone) => <option key={timezone} value={timezone}>{timezone}</option>)}
-          </select>
-        </label>
-
-        <div className="flex items-center gap-3">
-          <button onClick={save} disabled={saving} className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Save
-          </button>
-          {saved && <span className="text-sm text-green-600">Saved</span>}
-          {error && <span className="text-sm text-destructive">{error}</span>}
-        </div>
-
-        <p className="text-xs text-muted-foreground">User ID: {local.userId || userId || "—"}</p>
-      </div>
+      </Card>
     </div>
   );
 }

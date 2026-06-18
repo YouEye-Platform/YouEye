@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -26,6 +27,9 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.Deployment.ControlPanel.Port != 3000 {
 		t.Errorf("default CP port = %d, want 3000", cfg.Deployment.ControlPanel.Port)
+	}
+	if cfg.Deployment.UI.AppDir != "/opt/youeye-ui" {
+		t.Errorf("default UI app dir = %q, want /opt/youeye-ui", cfg.Deployment.UI.AppDir)
 	}
 	if cfg.API.Auth.MaxAttempts != 5 {
 		t.Errorf("default MaxAttempts = %d, want 5", cfg.API.Auth.MaxAttempts)
@@ -254,6 +258,39 @@ func TestCoreReleaseRepoLegacyFallback(t *testing.T) {
 	}
 	if repo.Provider != "gitea" {
 		t.Errorf("Provider = %q", repo.Provider)
+	}
+}
+
+func TestWriteCoreRepoURL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(`releases:
+  provider: github
+  base_url: https://github.com
+  organization: youeye-platform
+  repositories:
+    spine: YouEye
+deployment:
+  control_panel:
+    app_dir: /opt/app
+`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if err := WriteCoreRepoURL(path, "https://git.potemk.in/potemsla/YouEye"); err != nil {
+		t.Fatalf("WriteCoreRepoURL() error: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "repo_url: https://git.potemk.in/potemsla/YouEye") {
+		t.Fatalf("repo_url not written:\n%s", text)
+	}
+	if strings.Contains(text, "provider:") || strings.Contains(text, "base_url:") || strings.Contains(text, "organization:") || strings.Contains(text, "repositories:") {
+		t.Fatalf("deprecated release source keys were not removed:\n%s", text)
 	}
 }
 

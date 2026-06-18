@@ -45,9 +45,13 @@ export async function GET(request: NextRequest) {
       original_name: a.name,
       icon: a.icon,
       custom_icon_url: a.customIconUrl,
+      // `pinned` is the new name for `visible`: whether the app shows in the
+      // quick drawer. The launcher ignores it (shows all). Both sent for back-compat.
       visible: a.visible,
+      pinned: a.visible,
       order: a.displayOrder,
       section_id: a.sectionId,
+      folder_id: a.folderId,
       // Registered apps (have containerUrl) with "unknown" status are assumed running
       status: (a.status === "unknown" || !a.status) && a.containerUrl ? "running" : (a.status ?? "unknown"),
       version: a.version ?? null,
@@ -61,6 +65,11 @@ export async function GET(request: NextRequest) {
       name: s.name,
       order: s.displayOrder,
       collapsed: s.collapsed,
+    })),
+    folders: data.folders.map((f) => ({
+      id: f.folderId,
+      name: f.name,
+      order: f.displayOrder,
     })),
   });
 }

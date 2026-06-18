@@ -33,7 +33,7 @@ func Default() *Config {
 			UI: UIConfig{
 				ContainerName: "youeye-ui",
 				Port:          3000,
-				AppDir:        "/opt/app",
+				AppDir:        "/opt/youeye-ui",
 				NodeVersion:   "22.x",
 			},
 			Incus: IncusConfig{

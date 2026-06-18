@@ -138,6 +138,7 @@ export async function registerApp(data: {
       ssoEntryUrl: data.ssoEntryUrl,
     });
   }
+  invalidateAppSurfaceCache();
 }
 
 /** Unregister an app and clean up all related data */
@@ -170,6 +171,8 @@ export async function unregisterApp(appId: string): Promise<void> {
 
   // Remove the app itself
   await db.delete(apps).where(eq(apps.id, appId));
+
+  invalidateAppSurfaceCache();
 }
 
 /** Update global app properties (admin only — affects all users' defaults) */
@@ -196,6 +199,7 @@ export async function updateGlobalApp(
     .where(eq(apps.id, appId))
     .returning();
 
+  invalidateAppSurfaceCache();
   return updated ?? null;
 }
 
@@ -216,6 +220,8 @@ export async function updateAppManifest(
       updatedAt: new Date(),
     })
     .where(eq(apps.id, appId));
+
+  invalidateAppSurfaceCache();
 }
 
 /** Update an app's health status */
@@ -446,13 +452,41 @@ export async function getAppWidgetDeclarations(): Promise<
 }
 
 /** Get all unified app surface declarations from live manifests with cached fallback */
-export async function getAppSurfaceDeclarations(): Promise<
-  Array<{
-    appId: string;
-    appName: string;
-    surfaces: AppSurface[];
-  }>
-> {
+/**
+ * Cache for getAppSurfaceDeclarations(). The uncached path does a LIVE
+ * fetchAppManifest() to every installed app's container (5s timeout each), which
+ * made GET /api/v1/notifications take ~5s warm / ~18s cold — and that surfaced
+ * badly once /embed/notifications made the fetch the first thing a native app's
+ * bell shows. Surfaces only change on app install/update, so a short TTL is safe;
+ * mutations call invalidateAppSurfaceCache() for immediacy.
+ */
+type SurfaceDeclarations = Array<{ appId: string; appName: string; surfaces: AppSurface[] }>;
+const SURFACE_CACHE_TTL_MS = 60_000;
+let surfaceCache: { at: number; value: SurfaceDeclarations } | null = null;
+let surfaceInflight: Promise<SurfaceDeclarations> | null = null;
+
+/** Clear the app-surface declarations cache (call on app install/update/remove). */
+export function invalidateAppSurfaceCache(): void {
+  surfaceCache = null;
+}
+
+export async function getAppSurfaceDeclarations(): Promise<SurfaceDeclarations> {
+  const now = Date.now();
+  if (surfaceCache && now - surfaceCache.at < SURFACE_CACHE_TTL_MS) return surfaceCache.value;
+  // Coalesce concurrent misses so a burst of requests triggers ONE manifest sweep.
+  if (surfaceInflight) return surfaceInflight;
+  surfaceInflight = getAppSurfaceDeclarationsUncached()
+    .then((value) => {
+      surfaceCache = { at: Date.now(), value };
+      return value;
+    })
+    .finally(() => {
+      surfaceInflight = null;
+    });
+  return surfaceInflight;
+}
+
+async function getAppSurfaceDeclarationsUncached(): Promise<SurfaceDeclarations> {
   await ensureSchema();
 
   const allApps = await db

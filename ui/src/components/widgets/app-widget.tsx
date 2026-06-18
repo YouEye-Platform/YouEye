@@ -1,18 +1,20 @@
 "use client";
 
 /**
- * App Widget — Iframe Embed
+ * App Widget — Plan 1 Workstream E5.
  *
- * Renders app-provided widgets inside a sandboxed iframe.
- * The iframe points to the app's /embed/widget/{widgetId} page,
- * which renders the widget content with the app's own styling.
+ * Renders an app-provided dashboard widget through the ONE
+ * <UnifiedEmbed kind="widget" fill> (origin-validated `youeye:ready/resize/action`,
+ * lazy mount, timeout → fallback). `fill` makes the embed own 100% of the host
+ * widget card (the card is the fixed box; the app paints inside it).
  *
- * Security: Cross-origin iframe isolation prevents malicious apps
- * from accessing the parent page's DOM, cookies, or session.
+ * Security: cross-origin iframe isolation + UnifiedEmbed origin validation prevent
+ * a malicious app from reaching the parent DOM/session.
  */
 
 import { useEffect, useState } from "react";
 import { Loader2, AlertCircle } from "lucide-react";
+import { UnifiedEmbed } from "@/components/embeds/unified-embed";
 
 interface AppWidgetProps {
   settings?: Record<string, unknown>;
@@ -33,7 +35,7 @@ export function AppWidget({ settings }: AppWidgetProps) {
       return;
     }
 
-    // Look up app's subdomain URL from the drawer/navigation data
+    // Resolve the app's subdomain URL from the drawer/navigation data (UI API).
     fetch("/api/v1/apps/drawer")
       .then((r) => {
         if (!r.ok) throw new Error(`Failed: ${r.status}`);
@@ -48,7 +50,7 @@ export function AppWidget({ settings }: AppWidgetProps) {
           return;
         }
 
-        // Validate URL — must be https:// to prevent javascript: or data: injection
+        // Must be http(s) — reject javascript:/data: injection.
         const url = app.url as string;
         if (!url.startsWith("https://") && !url.startsWith("http://")) {
           setError("Invalid app URL");
@@ -63,33 +65,33 @@ export function AppWidget({ settings }: AppWidgetProps) {
       .finally(() => setLoading(false));
   }, [appId, widgetId]);
 
+  const errorView = (message: string) => (
+    <div className="flex h-full flex-col items-center justify-center gap-2 p-3 text-muted-foreground">
+      <AlertCircle className="h-5 w-5" />
+      <span className="text-center text-xs">{message}</span>
+    </div>
+  );
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full text-muted-foreground">
+      <div className="flex h-full items-center justify-center text-muted-foreground">
         <Loader2 className="h-5 w-5 animate-spin" />
       </div>
     );
   }
 
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2 p-3">
-        <AlertCircle className="h-5 w-5" />
-        <span className="text-xs text-center">{error}</span>
-      </div>
-    );
-  }
-
+  if (error) return errorView(error);
   if (!embedUrl) return null;
 
   return (
-    <iframe
-      src={embedUrl}
-      className="w-full h-full border-0"
-      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-top-navigation-by-user-activation"
-      loading="lazy"
-      style={{ background: "transparent", colorScheme: "normal" }}
+    <UnifiedEmbed
+      url={embedUrl}
+      kind="widget"
+      fill
+      timeout={5000}
       title={`${appId} widget`}
+      fallback={errorView("This widget couldn't load")}
+      className="h-full w-full"
     />
   );
 }

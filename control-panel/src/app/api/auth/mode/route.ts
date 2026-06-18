@@ -8,25 +8,13 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getAuthModeForHost } from '@/lib/auth/mode';
 import { isSSOConfigured } from '@/lib/auth/authentik';
-
-/** Check if the Host header looks like a raw IP (possibly with port) */
-function isIPAccess(host: string): boolean {
-  const hostname = host.split(':')[0];
-  // IPv4 pattern
-  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
-  // localhost
-  if (hostname === 'localhost' || hostname === '127.0.0.1') return true;
-  return false;
-}
 
 export async function GET(request: NextRequest) {
   const host = request.headers.get('host') || '';
-  const ipAccess = isIPAccess(host);
   const ssoConfigured = isSSOConfigured();
-
-  // IP access always gets PAM; subdomain gets SSO if configured, else PAM fallback
-  const mode = ipAccess || !ssoConfigured ? 'pam' : 'sso';
+  const mode = getAuthModeForHost(host);
 
   return NextResponse.json({ mode, host, ssoConfigured });
 }

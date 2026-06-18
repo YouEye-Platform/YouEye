@@ -27,6 +27,13 @@ export interface AppDefinition {
   containers: AppContainer[];
   /** OCI image reference for update detection (optional) */
   imageRef?: string;
+  /**
+   * Market system-app id. When set, update detection AND the update action flow
+   * through the Market system manifests (lib/infrastructure/system-updater) with
+   * pinned versions — NOT the moving-tag OCI digest checker. Mutually exclusive
+   * with imageRef for the three infra containers.
+   */
+  marketSystemId?: 'postgresql' | 'caddy' | 'pihole';
   /** Who performs the update */
   updatedBy: 'control-panel' | 'spine';
   /** Web UI port inside the container (if applicable) */
@@ -104,7 +111,7 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     category: 'infrastructure',
     type: 'oci-single',
     containers: [{ name: 'youeye-postgres', canControl: true }],
-    imageRef: 'docker.io/library/postgres:17-alpine',
+    marketSystemId: 'postgresql',
     updatedBy: 'control-panel',
   },
   {
@@ -115,7 +122,7 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     category: 'infrastructure',
     type: 'oci-single',
     containers: [{ name: 'youeye-caddy', canControl: true }],
-    imageRef: 'docker.io/library/caddy',
+    marketSystemId: 'caddy',
     updatedBy: 'control-panel',
     managementLinks: [{ label: 'Reverse Proxy', href: '/proxy' }],
   },
@@ -127,7 +134,7 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     category: 'infrastructure',
     type: 'oci-single',
     containers: [{ name: 'youeye-pihole', canControl: true }],
-    imageRef: 'docker.io/pihole/pihole:latest',
+    marketSystemId: 'pihole',
     webPort: 80,
     updatedBy: 'control-panel',
     managementLinks: [{ label: 'DNS Management', href: '/dns' }],

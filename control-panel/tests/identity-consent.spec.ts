@@ -37,7 +37,8 @@ test('OAuth authorize can show and grant selected runtime app permissions', () =
   assert.match(authorize, /appIdFromClientId/);
   assert.match(authorize, /\/api\/ui-bridge\/app-launch-permissions/);
   assert.match(authorize, /name="runtime_permission"/);
-  assert.match(authorize, /Allow selected/);
+  assert.match(authorize, /class="switch"/);
+  assert.match(authorize, /also wants to:/);
   assert.match(authorize, /form\.getAll\('runtime_permission'\)/);
   assert.match(authorize, /grantPermissions: selectedRuntimePermissions/);
   assert.match(authorize, /denyUnselected: Array\.isArray\(input\.grantPermissions\)/);
@@ -46,6 +47,38 @@ test('OAuth authorize can show and grant selected runtime app permissions', () =
   assert.match(authorize, /email: input\.user\.email/);
   assert.match(authorize, /NextResponse\.redirect\(redirect, \{ status: 303 \}\)/);
   assert.match(authorize, /failed_to_update_app_permissions/);
+});
+
+test('OAuth consent presents a simple account handoff without technical scope UI', () => {
+  const authorize = read('src/app/application/o/authorize/route.ts');
+
+  assert.match(authorize, /<h1>Sign in to \$\{escapeHtml\(appName\)\}<\/h1>/);
+  assert.match(authorize, /class="app-brand"/);
+  assert.match(authorize, /appBrand\(params\.display\?\.app, appName, params\.uiExternalUrl \?\? null\)/);
+  assert.match(authorize, /class="app-icon/);
+  assert.match(authorize, /appNameMarkup/);
+  assert.match(authorize, /branding_css/);
+  assert.match(authorize, /branding_font_url/);
+  assert.match(authorize, /class="account"/);
+  assert.match(authorize, /uiExternalUrl: externalUiUrl/);
+  assert.match(authorize, /accountAvatar\(params\.display\?\.user, accountLabel, params\.uiExternalUrl \?\? null\)/);
+  assert.match(authorize, /avatar_path/);
+  assert.match(authorize, /will share your/);
+  assert.match(authorize, /You can revoke access later in app settings/);
+  assert.match(authorize, />Cancel<\/button>/);
+  assert.match(authorize, />Continue<\/button>/);
+  assert.match(authorize, /display: runtime\?\.display/);
+  assert.doesNotMatch(authorize, /appMark/);
+  assert.doesNotMatch(authorize, /app-mark/);
+  assert.doesNotMatch(authorize, /class="relationship"/);
+  assert.doesNotMatch(authorize, /class="provider"/);
+  assert.doesNotMatch(authorize, /provider-name/);
+  assert.doesNotMatch(authorize, /Basic access/);
+  assert.doesNotMatch(authorize, /Technical details/);
+  assert.doesNotMatch(authorize, /<details>/);
+  assert.doesNotMatch(authorize, /scope-chips/);
+  assert.doesNotMatch(authorize, /risk<\/span>/);
+  assert.doesNotMatch(authorize, /<li><span>\$\{escapeHtml\(label\)\}<\/span><code>/);
 });
 
 test('Fresh installs push connection candidates to UI after dashboard registration', () => {
@@ -66,7 +99,7 @@ test('App settings can list and revoke YouEye ID first-launch consent', () => {
   assert.match(consentRoute, /getAppConsent/);
   assert.match(consentRoute, /revokeAppConsent/);
   assert.match(consentRoute, /identity:youeye-id:sign-in/);
-  assert.match(consentRoute, /Sign in with YouEye ID/);
+  assert.match(consentRoute, /Sign in with \$\{provider\.name\}/);
   assert.match(consentRoute, /descriptor/);
   assert.match(consentRoute, /first-launch/);
   assert.match(appSettings, /identityConsentApi/);

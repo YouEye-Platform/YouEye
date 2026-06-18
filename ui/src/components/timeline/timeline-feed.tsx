@@ -13,8 +13,8 @@ import { PINPrompt } from "./pin-prompt";
 import { TimelineFilters } from "./timeline-filters";
 import { TimelineEntryCard } from "./timeline-entry-card";
 import { TimelineEntryDetail } from "./timeline-entry-detail";
-import { Clock, Plus, Lock, History } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { Lock, History } from "lucide-react";
+import { useTranslations, useLocale } from "next-intl";
 import { deriveInfoCardUrl } from "@/lib/timeline/derive-info-card-url";
 import type { AppMetaEntry } from "./timeline-embed";
 
@@ -43,6 +43,56 @@ interface TimelineFeedProps {
   initialSessionActive: boolean;
 }
 
+/** A grouped feed item: either a day-divider label or an entry. */
+type FeedItem =
+  | { type: "day"; key: string; label: string }
+  | { type: "entry"; entry: TimelineEntry };
+
+/**
+ * Walk timestamp-sorted entries (the API returns entry-timestamp desc) and emit
+ * a `.day` divider whenever the calendar day changes — Today / Yesterday / a
+ * locale-formatted date. The single pass means no duplicate headers.
+ */
+function buildDayGroups(
+  entries: TimelineEntry[],
+  locale: string,
+  labels: { today: string; yesterday: string }
+): FeedItem[] {
+  const startOfDay = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const now = new Date();
+  const todayStart = startOfDay(now);
+
+  const items: FeedItem[] = [];
+  let lastKey: string | null = null;
+
+  for (const e of entries) {
+    const d = new Date(e.entry.timestamp);
+    const key = isNaN(d.getTime()) ? "unknown" : d.toDateString();
+    if (key !== lastKey) {
+      let label: string;
+      if (key === "unknown") {
+        label = "—";
+      } else {
+        const diffDays = Math.round((todayStart - startOfDay(d)) / 86400000);
+        if (diffDays === 0) label = labels.today;
+        else if (diffDays === 1) label = labels.yesterday;
+        else
+          label = d.toLocaleDateString(locale, {
+            weekday: "long",
+            month: "long",
+            day: "numeric",
+            year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+          });
+      }
+      items.push({ type: "day", key, label });
+      lastKey = key;
+    }
+    items.push({ type: "entry", entry: e });
+  }
+  return items;
+}
+
 export function TimelineFeed({
   initialPinExists,
   initialSessionActive,
@@ -55,6 +105,7 @@ export function TimelineFeed({
   );
   const t = useTranslations("timeline");
   const tc = useTranslations("common");
+  const locale = useLocale();
 
   const [entries, setEntries] = useState<TimelineEntry[]>([]);
   const [counts, setCounts] = useState({
@@ -288,17 +339,29 @@ export function TimelineFeed({
       )}
 
       {!loading && displayEntries.length > 0 && (
-        <div className="space-y-3">
-          {displayEntries.map((entry) => (
-            <TimelineEntryCard
-              key={entry.id}
-              entry={entry}
-              domain={baseDomain}
-              appMetaMap={appMetaMap}
-              onDelete={handleDelete}
-              onSelect={setSelectedEntry}
-            />
-          ))}
+        <div className="grid gap-3.5">
+          {buildDayGroups(displayEntries, locale, {
+            today: t("dayToday"),
+            yesterday: t("yesterday"),
+          }).map((item) =>
+            item.type === "day" ? (
+              <div
+                key={`day-${item.key}`}
+                className="px-0.5 pt-2.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground/80"
+              >
+                {item.label}
+              </div>
+            ) : (
+              <TimelineEntryCard
+                key={item.entry.id}
+                entry={item.entry}
+                domain={baseDomain}
+                appMetaMap={appMetaMap}
+                onDelete={handleDelete}
+                onSelect={setSelectedEntry}
+              />
+            )
+          )}
 
           {/* Pagination */}
           {total > limit && (

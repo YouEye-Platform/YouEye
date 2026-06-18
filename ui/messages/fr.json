@@ -34,6 +34,9 @@
   },
   "nav": {
     "backToDashboard": "Retour au tableau de bord",
+    "searchApps": "Rechercher des applications",
+    "noAppsFound": "Aucune application trouvée",
+    "launcherHint": "Ouvrez n’importe laquelle de vos applications",
     "timeline": "Chronologie",
     "settings": "Paramètres",
     "signOut": "Déconnexion",
@@ -41,7 +44,9 @@
     "themeLight": "Clair",
     "themeDark": "Sombre",
     "themeSystem": "Système",
-    "notifications": "Notifications"
+    "notifications": "Notifications",
+    "folder": "Dossier",
+    "removeFromFolder": "Retirer du dossier"
   },
   "greeting": {
     "goodMorning": "Bonjour",
@@ -282,6 +287,8 @@
     "createPin": "Créer un PIN",
     "today": "Aujourd'hui à {time}",
     "yesterday": "Hier",
+    "dayToday": "Aujourd’hui",
+    "deleteEntry": "Supprimer l’entrée",
     "daysAgo": "Il y a {count} jours",
     "history": "Historique",
     "upcoming": "À venir",
@@ -323,13 +330,18 @@
     "statusDown": "Hors service",
     "statusUnknown": "Inconnu",
     "manageApps": "Gérer les apps",
-    "visitMarketplace": "Visiter le Marketplace"
+    "visitMarketplace": "Visiter le Marketplace",
+    "addApp": "Ajouter une app",
+    "removeApp": "Retirer du tiroir",
+    "allApps": "Toutes les apps",
+    "noAppsToAdd": "Tout est déjà dans votre tiroir"
   },
   "notifications": {
     "title": "Notifications",
     "markAllRead": "Tout marquer comme lu",
     "noNotifications": "Aucune notification",
     "dismiss": "Ignorer",
+    "system": "Système",
     "justNow": "à l'instant",
     "minutesAgo": "il y a {count} min",
     "hoursAgo": "il y a {count} h",

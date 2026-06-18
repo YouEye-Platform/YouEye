@@ -252,3 +252,23 @@
   border-bottom: 1px solid var(--embed-border);
 }
 .embed-row:last-child { border-bottom: none; }
+
+/* ── Plan 1 redesign — Workstream A: blue action color + focus ring + tighter radii ── */
+/* Reconciles shadcn's near-black --primary to the YouEye blue accent token (skill ground truth). */
+:root {
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --ring: #2563eb;
+  --sidebar-primary: #2563eb;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-ring: #2563eb;
+  --radius: 0.5rem;
+}
+.dark {
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+  --ring: #3b82f6;
+  --sidebar-primary: #3b82f6;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-ring: #3b82f6;
+}

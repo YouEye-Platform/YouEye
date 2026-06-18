@@ -8,39 +8,13 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useTranslations } from "next-intl";
-import {
-  Bell,
-  Check,
-  Info,
-  AlertTriangle,
-  XCircle,
-  CheckCircle2,
-  X,
-  Search,
-  Trash2,
-  Loader2,
-} from "lucide-react";
+import { Bell, Check, Search, Trash2, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { NotificationSurfaceEmbed } from "./notification-surface-embed";
-
-interface NotificationSurface {
-  surface_id: string;
-  embed_path: string;
-  name: string | null;
-  description: string | null;
-}
-
-interface Notification {
-  id: string;
-  type: string;
-  title: string;
-  message: string | null;
-  appId: string | null;
-  read: boolean;
-  createdAt: string;
-  action: { type?: string; url?: string } | null;
-  surface?: NotificationSurface;
-}
+import {
+  NotificationItem,
+  type NotificationData,
+  type NotificationAppMeta,
+} from "./notification-item";
 
 type FilterType = "all" | "info" | "success" | "warning" | "error";
 type FilterRead = "all" | "unread" | "read";
@@ -50,7 +24,8 @@ const PAGE_SIZE = 50;
 export function NotificationsList() {
   const t = useTranslations("notifications");
 
-  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [notifications, setNotifications] = useState<NotificationData[]>([]);
+  const [appMeta, setAppMeta] = useState<Record<string, NotificationAppMeta>>({});
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -91,6 +66,7 @@ export function NotificationsList() {
           setNotifications(data.notifications);
         }
         setTotal(data.total);
+        if (data.app_meta) setAppMeta(data.app_meta);
       } catch {
         // Network error — leave existing state
       } finally {
@@ -129,37 +105,11 @@ export function NotificationsList() {
     setTotal((t) => Math.max(0, t - notifications.filter((n) => n.read).length));
   };
 
-  const handleAction = (notif: Notification) => {
+  const handleAction = (notif: NotificationData) => {
     if (notif.action?.url) {
       window.location.href = notif.action.url;
     }
     if (!notif.read) markRead(notif.id);
-  };
-
-  const typeIcon = (type: string) => {
-    switch (type) {
-      case "success":
-        return <CheckCircle2 className="w-5 h-5 text-green-500" />;
-      case "warning":
-        return <AlertTriangle className="w-5 h-5 text-yellow-500" />;
-      case "error":
-        return <XCircle className="w-5 h-5 text-red-500" />;
-      default:
-        return <Info className="w-5 h-5 text-blue-500" />;
-    }
-  };
-
-  const timeAgo = (dateStr: string) => {
-    if (!dateStr) return t("justNow");
-    const ms = new Date(dateStr).getTime();
-    if (isNaN(ms)) return t("justNow");
-    const seconds = Math.floor((Date.now() - ms) / 1000);
-    if (seconds < 60) return t("justNow");
-    if (seconds < 3600)
-      return t("minutesAgo", { count: Math.floor(seconds / 60) });
-    if (seconds < 86400)
-      return t("hoursAgo", { count: Math.floor(seconds / 3600) });
-    return t("daysAgo", { count: Math.floor(seconds / 86400) });
   };
 
   const hasMore = notifications.length < total;
@@ -266,57 +216,15 @@ export function NotificationsList() {
           <p className="text-sm">{t("noResults")}</p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="mx-auto grid max-w-[640px] gap-3.5">
           {notifications.map((notif) => (
-            <div
+            <NotificationItem
               key={notif.id}
-              className={cn(
-                "flex items-start gap-3 rounded-lg border p-4 transition-colors cursor-pointer hover:bg-accent/50",
-                !notif.read && "bg-accent/20 border-primary/20"
-              )}
-              onClick={() => handleAction(notif)}
-            >
-              <div className="mt-0.5 flex-shrink-0">{typeIcon(notif.type)}</div>
-              <div className="flex-1 min-w-0">
-                <p
-                  className={cn(
-                    "text-sm",
-                    !notif.read && "font-semibold"
-                  )}
-                >
-                  {notif.title}
-                </p>
-                {notif.message && (
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {notif.message}
-                  </p>
-                )}
-                <NotificationSurfaceEmbed
-                  notificationId={notif.id}
-                  appId={notif.appId}
-                  surface={notif.surface}
-                />
-                <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
-                  <span>{timeAgo(notif.createdAt)}</span>
-                  {notif.appId && (
-                    <>
-                      <span>·</span>
-                      <span>{notif.appId}</span>
-                    </>
-                  )}
-                </div>
-              </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  dismiss(notif.id);
-                }}
-                className="p-1.5 rounded-md hover:bg-accent transition-colors flex-shrink-0"
-                aria-label={t("dismiss")}
-              >
-                <X className="w-4 h-4 text-muted-foreground" />
-              </button>
-            </div>
+              notif={notif}
+              appMeta={appMeta}
+              onAction={handleAction}
+              onDismiss={dismiss}
+            />
           ))}
 
           {/* Load more */}

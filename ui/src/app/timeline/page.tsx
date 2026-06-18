@@ -45,9 +45,9 @@ export default async function TimelinePage() {
         siteNameStyle={wordartOverride ?? branding.site_name_style}
         logoUrl={branding.logo_url}
       />
-      <main className="max-w-4xl mx-auto px-6 py-8">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold">{t('title')}</h1>
+      <main className="max-w-[640px] mx-auto px-5 pt-7 pb-16">
+        <div className="mb-5">
+          <h1 className="text-2xl font-bold tracking-tight">{t('title')}</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {t('description')}
           </p>

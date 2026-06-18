@@ -34,6 +34,9 @@
   },
   "nav": {
     "backToDashboard": "На главную",
+    "searchApps": "Поиск приложений",
+    "noAppsFound": "Приложения не найдены",
+    "launcherHint": "Откройте любое из ваших приложений",
     "timeline": "Хронология",
     "settings": "Настройки",
     "signOut": "Выйти",
@@ -41,7 +44,9 @@
     "themeLight": "Светлая",
     "themeDark": "Тёмная",
     "themeSystem": "Системная",
-    "notifications": "Уведомления"
+    "notifications": "Уведомления",
+    "folder": "Папка",
+    "removeFromFolder": "Убрать из папки"
   },
   "greeting": {
     "goodMorning": "Доброе утро",
@@ -283,6 +288,8 @@
     "createPin": "Создать PIN",
     "today": "Сегодня в {time}",
     "yesterday": "Вчера",
+    "dayToday": "Сегодня",
+    "deleteEntry": "Удалить запись",
     "daysAgo": "{count} дн. назад",
     "history": "История",
     "upcoming": "Предстоящие",
@@ -324,13 +331,18 @@
     "statusDown": "Не работает",
     "statusUnknown": "Неизвестно",
     "manageApps": "Управление приложениями",
-    "visitMarketplace": "Перейти в Маркетплейс"
+    "visitMarketplace": "Перейти в Маркетплейс",
+    "addApp": "Добавить приложение",
+    "removeApp": "Убрать из панели",
+    "allApps": "Все приложения",
+    "noAppsToAdd": "Все приложения уже в панели"
   },
   "notifications": {
     "title": "Уведомления",
     "markAllRead": "Прочитать все",
     "noNotifications": "Нет уведомлений",
     "dismiss": "Отклонить",
+    "system": "Система",
     "justNow": "только что",
     "minutesAgo": "{count} мин. назад",
     "hoursAgo": "{count} ч. назад",

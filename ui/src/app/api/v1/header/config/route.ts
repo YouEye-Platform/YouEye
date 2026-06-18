@@ -189,8 +189,12 @@ export async function GET(request: NextRequest) {
     },
     navigation: {
       home_url: "/",
-      apps,
-      sections,
+      // E1 security fix: native apps (service calls, identified by X-YouEye-App)
+      // can no longer enumerate the user's installed apps. Only the UI's own
+      // (non-service) header receives the list; native apps get the launcher as a
+      // UI-served /embed/launcher iframe instead (Canvas's AppHeader degrades to an
+      // empty drawer via `navigation?.apps ?? []` until apps adopt the iframe).
+      ...(isServiceCall ? {} : { apps, sections }),
     },
     user: {
       id: userId,

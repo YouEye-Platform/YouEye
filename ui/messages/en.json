@@ -34,6 +34,9 @@
   },
   "nav": {
     "backToDashboard": "Back to Dashboard",
+    "searchApps": "Search apps",
+    "noAppsFound": "No apps found",
+    "launcherHint": "Open any of your apps",
     "timeline": "Timeline",
     "settings": "Settings",
     "signOut": "Sign out",
@@ -41,7 +44,9 @@
     "themeLight": "Light",
     "themeDark": "Dark",
     "themeSystem": "System",
-    "notifications": "Notifications"
+    "notifications": "Notifications",
+    "folder": "Folder",
+    "removeFromFolder": "Remove from folder"
   },
   "greeting": {
     "goodMorning": "Good morning",
@@ -283,6 +288,8 @@
     "createPin": "Create PIN",
     "today": "Today at {time}",
     "yesterday": "Yesterday",
+    "dayToday": "Today",
+    "deleteEntry": "Delete entry",
     "daysAgo": "{count} days ago",
     "history": "History",
     "upcoming": "Upcoming",
@@ -324,13 +331,18 @@
     "statusDown": "Down",
     "statusUnknown": "Unknown",
     "manageApps": "Manage Apps",
-    "visitMarketplace": "Visit Marketplace"
+    "visitMarketplace": "Visit Marketplace",
+    "addApp": "Add app",
+    "removeApp": "Remove from drawer",
+    "allApps": "All apps",
+    "noAppsToAdd": "Everything is already in your drawer"
   },
   "notifications": {
     "title": "Notifications",
     "markAllRead": "Mark all read",
     "noNotifications": "No notifications",
     "dismiss": "Dismiss",
+    "system": "System",
     "justNow": "just now",
     "minutesAgo": "{count}m ago",
     "hoursAgo": "{count}h ago",

@@ -1,6 +1,17 @@
+/**
+ * NotificationSurfaceEmbed — Plan 1 Workstream E3.
+ *
+ * A notification's app-rendered card via the ONE <UnifiedEmbed kind="notification">
+ * (lazy mount, origin-validated `youeye:ready/resize/action`, 3s timeout → fallback).
+ * Only rendered when the app actually declares a notification surface; otherwise the
+ * parent renders the standard row directly. On timeout/error the `fallback` (the
+ * standard row) is shown — never silent.
+ */
+
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode } from "react";
+import { UnifiedEmbed } from "@/components/embeds/unified-embed";
 
 interface NotificationSurface {
   surface_id: string;
@@ -13,7 +24,9 @@ interface NotificationSurfaceEmbedProps {
   notificationId: string;
   appId: string | null;
   surface?: NotificationSurface | null;
-  compact?: boolean;
+  /** Standard row shown on embed timeout/error (and when there is no surface). */
+  fallback: ReactNode;
+  mode?: "light" | "dark";
 }
 
 const MIN_HEIGHT = 56;
@@ -23,61 +36,30 @@ export function NotificationSurfaceEmbed({
   notificationId,
   appId,
   surface,
-  compact = false,
+  fallback,
+  mode,
 }: NotificationSurfaceEmbedProps) {
-  const [ready, setReady] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const [height, setHeight] = useState(compact ? MIN_HEIGHT : 96);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  // No app / no surface / no DOM (SSR) → the standard row carries the notification.
+  if (!appId || !surface?.embed_path || typeof window === "undefined") {
+    return <>{fallback}</>;
+  }
 
-  const embedUrl = useMemo(() => {
-    if (!appId || !surface?.embed_path || typeof window === "undefined") return null;
-    const appSlug = appId.replace(/^ye-/, "");
-    const host = window.location.hostname.replace(/^[^.]+\./, "");
-    const url = new URL(`https://${appSlug}.${host}${surface.embed_path}`);
-    url.searchParams.set("notification_id", notificationId);
-    url.searchParams.set("surface_id", surface.surface_id);
-    return url.toString();
-  }, [appId, notificationId, surface]);
-
-  const handleMessage = useCallback(
-    (event: MessageEvent) => {
-      if (!embedUrl || !embedUrl.startsWith(event.origin)) return;
-      const msg = event.data;
-      if (!msg || typeof msg !== "object") return;
-
-      if (msg.type === "youeye-embed-ready") {
-        setReady(true);
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      }
-      if (msg.type === "youeye-embed-resize" && typeof msg.height === "number") {
-        setHeight(Math.min(Math.max(msg.height, MIN_HEIGHT), MAX_HEIGHT));
-      }
-    },
-    [embedUrl]
-  );
-
-  useEffect(() => {
-    if (!embedUrl) return;
-    window.addEventListener("message", handleMessage);
-    timeoutRef.current = setTimeout(() => setFailed(true), 3000);
-    return () => {
-      window.removeEventListener("message", handleMessage);
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, [embedUrl, handleMessage]);
-
-  if (!embedUrl || failed) return null;
+  const appSlug = appId.replace(/^ye-/, "");
+  const host = window.location.hostname.replace(/^[^.]+\./, "");
+  const url = new URL(`https://${appSlug}.${host}${surface.embed_path}`);
+  url.searchParams.set("notification_id", notificationId);
+  url.searchParams.set("surface_id", surface.surface_id);
 
   return (
-    <iframe
-      src={embedUrl}
-      sandbox="allow-scripts allow-same-origin"
-      loading="lazy"
-      title={surface?.name ?? "Notification"}
-      className={`mt-2 w-full rounded-md border-0 bg-transparent transition-opacity ${ready ? "opacity-100" : "h-0 opacity-0"}`}
-      style={{ height: ready ? height : 0 }}
-      onError={() => setFailed(true)}
+    <UnifiedEmbed
+      url={url.toString()}
+      kind="notification"
+      size={{ default: MIN_HEIGHT, min: MIN_HEIGHT, max: MAX_HEIGHT }}
+      timeout={3000}
+      mode={mode}
+      title={surface.name ?? "Notification"}
+      fallback={fallback}
+      className="overflow-hidden rounded-xl border"
     />
   );
 }

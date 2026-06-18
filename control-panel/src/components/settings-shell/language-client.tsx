@@ -1,9 +1,10 @@
 "use client";
 
 import type React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check } from "lucide-react";
 import { uiSettingsApi } from "./api-base";
+import { Card } from "@/components/ui/card";
 
 const LANGUAGES = [
   { code: "en", native: "English", english: "English" },
@@ -12,14 +13,6 @@ const LANGUAGES = [
   { code: "de", native: "Deutsch", english: "German" },
   { code: "fr", native: "Français", english: "French" },
 ];
-
-function tabClass(active: boolean) {
-  return `border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-    active
-      ? "border-primary text-foreground"
-      : "border-transparent text-muted-foreground hover:text-foreground"
-  }`;
-}
 
 function LanguageOption({
   active,
@@ -36,9 +29,9 @@ function LanguageOption({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`flex w-full cursor-pointer items-center justify-between rounded-lg border px-4 py-3 text-sm transition-colors ${
+      className={`flex w-full cursor-pointer items-center justify-between rounded-lg border px-4 py-3 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
         active
-          ? "border-primary bg-primary/5 text-foreground"
+          ? "border-primary bg-primary/10 text-foreground"
           : "border-border text-muted-foreground hover:border-border/80 hover:text-foreground"
       }`}
     >
@@ -49,11 +42,11 @@ function LanguageOption({
 }
 
 export function LanguageClient({ isAdmin }: { isAdmin: boolean }) {
-  const [tab, setTab] = useState<"my-language" | "system-language">("my-language");
   const [language, setLanguage] = useState<string | null>(null);
   const [systemLanguage, setSystemLanguage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
+  const [showServerPicker, setShowServerPicker] = useState(false);
 
   useEffect(() => {
     fetch(uiSettingsApi("language"))
@@ -62,7 +55,7 @@ export function LanguageClient({ isAdmin }: { isAdmin: boolean }) {
       .catch(() => setStatus("Could not load language."));
     if (isAdmin) {
       fetch("/api/setup/config")
-        .then((r) => r.ok ? r.json() : null)
+        .then((r) => (r.ok ? r.json() : null))
         .then((data) => setSystemLanguage(data?.language ?? "en"))
         .catch(() => {});
     }
@@ -87,8 +80,9 @@ export function LanguageClient({ isAdmin }: { isAdmin: boolean }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ language: next }),
     });
-    if (res.ok) setSystemLanguage(next);
     if (res.ok) {
+      setSystemLanguage(next);
+      setShowServerPicker(false);
       fetch("/api/user/language", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -99,51 +93,118 @@ export function LanguageClient({ isAdmin }: { isAdmin: boolean }) {
     setSaving(false);
   }
 
+  // Date/time formats are derived from the active locale (honest — they follow the
+  // language; we do NOT store editable per-format overrides, which have no backend yet).
+  const activeLocale = language || systemLanguage || "en";
+  const formats = useMemo(() => {
+    try {
+      const sample = new Date(2026, 5, 12, 14, 5);
+      const dateExample = new Intl.DateTimeFormat(activeLocale, { dateStyle: "long" }).format(sample);
+      const hour12 = new Intl.DateTimeFormat(activeLocale, { hour: "numeric" }).resolvedOptions().hour12;
+      return { dateExample, timeFormat: hour12 ? "12-hour" : "24-hour" };
+    } catch {
+      return { dateExample: "—", timeFormat: "—" };
+    }
+  }, [activeLocale]);
+
+  const serverLangLabel = useMemo(() => {
+    const match = LANGUAGES.find((l) => l.code === (systemLanguage || "en"));
+    return match ? `${match.native}${match.native !== match.english ? ` (${match.english})` : ""}` : systemLanguage || "—";
+  }, [systemLanguage]);
+
   return (
     <div className="space-y-6">
-      <div className="flex gap-1 border-b">
-        <button onClick={() => setTab("my-language")} className={tabClass(tab === "my-language")}>My Language</button>
-        {isAdmin && <button onClick={() => setTab("system-language")} className={tabClass(tab === "system-language")}>System Language</button>}
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Language</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Language and formats — yours, and the server default</p>
       </div>
 
-      {tab === "my-language" && (
-        <div>
+      {/* Your language */}
+      <Card className="gap-0 py-0">
+        <div className="space-y-4 p-5">
           <div>
-            <h2 className="text-xl font-semibold">Language</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Choose your preferred language.</p>
+            <h2 className="text-[15px] font-semibold">Your language</h2>
+            <p className="mt-0.5 text-[13px] text-muted-foreground">Only affects your view.</p>
           </div>
-          <div className="mt-6 max-w-lg space-y-3">
-            <label className="text-sm font-medium text-muted-foreground">User language</label>
-            <LanguageOption active={language === null} disabled={saving} onClick={() => chooseUser(null)}>System default</LanguageOption>
-            {LANGUAGES.map((item) => (
-              <LanguageOption key={item.code} active={language === item.code} disabled={saving} onClick={() => chooseUser(item.code)}>
-                <div className="flex items-center gap-3">
-                  <span className="font-medium">{item.native}</span>
-                  {item.native !== item.english && <span className="text-muted-foreground">({item.english})</span>}
-                </div>
-              </LanguageOption>
-            ))}
-          </div>
-        </div>
-      )}
 
-      {tab === "system-language" && isAdmin && (
-        <div>
-          <div>
-            <h2 className="text-xl font-semibold">System Language</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Set the default language for the instance.</p>
-          </div>
-          <div className="mt-6 max-w-lg space-y-3">
+          <div className="space-y-2.5">
+            <LanguageOption active={language === null} disabled={saving} onClick={() => chooseUser(null)}>
+              <span className="font-medium">System default</span>
+            </LanguageOption>
             {LANGUAGES.map((item) => (
-              <LanguageOption key={item.code} active={systemLanguage === item.code} disabled={saving} onClick={() => chooseSystem(item.code)}>
-                <div className="flex items-center gap-3">
+              <LanguageOption
+                key={item.code}
+                active={language === item.code}
+                disabled={saving}
+                onClick={() => chooseUser(item.code)}
+              >
+                <span className="flex items-center gap-3">
                   <span className="font-medium">{item.native}</span>
                   {item.native !== item.english && <span className="text-muted-foreground">({item.english})</span>}
-                </div>
+                </span>
               </LanguageOption>
             ))}
           </div>
+
+          <div className="rounded-md border bg-muted/40 p-3">
+            <p className="text-[13px] font-medium text-muted-foreground">Date &amp; time formats follow your language</p>
+            <div className="mt-1.5 flex flex-wrap gap-x-6 gap-y-1 text-[13px] text-muted-foreground">
+              <span>
+                Dates: <span className="text-foreground">{formats.dateExample}</span>
+              </span>
+              <span>
+                Time: <span className="text-foreground">{formats.timeFormat}</span>
+              </span>
+            </div>
+          </div>
         </div>
+      </Card>
+
+      {/* Server default (admin) */}
+      {isAdmin && (
+        <Card className="gap-0 py-0">
+          <div className="space-y-3 p-5">
+            <h2 className="flex items-center text-[15px] font-semibold">
+              Server default
+              <span className="ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                Admin
+              </span>
+            </h2>
+
+            <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Default language</p>
+                <p className="text-[13px] text-muted-foreground">
+                  {serverLangLabel} — used on the login screen and for new people until they pick their own
+                </p>
+              </div>
+              <button
+                onClick={() => setShowServerPicker((v) => !v)}
+                className="shrink-0 text-[13px] font-medium text-primary hover:underline"
+              >
+                {showServerPicker ? "Close" : "Change"}
+              </button>
+            </div>
+
+            {showServerPicker && (
+              <div className="space-y-2.5">
+                {LANGUAGES.map((item) => (
+                  <LanguageOption
+                    key={item.code}
+                    active={systemLanguage === item.code}
+                    disabled={saving}
+                    onClick={() => chooseSystem(item.code)}
+                  >
+                    <span className="flex items-center gap-3">
+                      <span className="font-medium">{item.native}</span>
+                      {item.native !== item.english && <span className="text-muted-foreground">({item.english})</span>}
+                    </span>
+                  </LanguageOption>
+                ))}
+              </div>
+            )}
+          </div>
+        </Card>
       )}
 
       {status && <p className="text-sm text-muted-foreground">{status}</p>}

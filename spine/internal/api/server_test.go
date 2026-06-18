@@ -517,6 +517,74 @@ func TestHandleYouEyeConfig_PATCH_UpdatesSiteName(t *testing.T) {
 	}
 }
 
+func TestHandleYouEyeConfig_PATCH_UpdatesReleaseSource(t *testing.T) {
+	cleanupSite := setupTestConfig(t, "site_name: Original\ndomain: test.local\n")
+	defer cleanupSite()
+
+	spineDir := t.TempDir()
+	spinePath := filepath.Join(spineDir, "config.yaml")
+	if err := os.WriteFile(spinePath, []byte("releases:\n  repo_url: \"https://github.com/youeye-platform/YouEye\"\n"), 0644); err != nil {
+		t.Fatalf("write spine config: %v", err)
+	}
+	if _, err := config.LoadFromFile(spinePath); err != nil {
+		t.Fatalf("load spine config: %v", err)
+	}
+	defer config.Reset()
+
+	s := testServer()
+	body := `{"release_source":{"repo_url":"https://git.potemk.in/potemsla/YouEye.git"}}`
+	req := httptest.NewRequest("PATCH", "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	s.handleYouEyeConfig(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if got := s.cfg.CoreReleaseRepo().RepoURL; got != "https://git.potemk.in/potemsla/YouEye" {
+		t.Fatalf("runtime RepoURL = %q", got)
+	}
+	saved, err := os.ReadFile(spinePath)
+	if err != nil {
+		t.Fatalf("read spine config: %v", err)
+	}
+	if !strings.Contains(string(saved), "repo_url: https://git.potemk.in/potemsla/YouEye") {
+		t.Fatalf("spine config did not persist normalized repo URL:\n%s", string(saved))
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp) //nolint:errcheck
+	cfg, ok := resp["config"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("config missing from response: %v", resp)
+	}
+	source, ok := cfg["release_source"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("release_source missing from response: %v", cfg)
+	}
+	if source["repo_url"] != "https://git.potemk.in/potemsla/YouEye" {
+		t.Errorf("response repo_url = %v", source["repo_url"])
+	}
+}
+
+func TestHandleYouEyeConfig_PATCH_InvalidReleaseSource(t *testing.T) {
+	cleanup := setupTestConfig(t, "site_name: Original\ndomain: test.local\n")
+	defer cleanup()
+
+	s := testServer()
+	body := `{"release_source":{"repo_url":"not-a-url"}}`
+	req := httptest.NewRequest("PATCH", "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	s.handleYouEyeConfig(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
 func TestHandleYouEyeConfig_PATCH_InvalidBody(t *testing.T) {
 	cleanup := setupTestConfig(t, "")
 	defer cleanup()

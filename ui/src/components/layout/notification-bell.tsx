@@ -1,48 +1,55 @@
 /**
- * Notification Bell
+ * Notification Bell — Plan 1 Workstream E3 (+ Plan 5 Item 2: notification tab embed).
  *
- * Shows bell icon with unread count badge.
- * Dropdown (Radix Popover) displays recent notifications with mark-read and dismiss.
- * Also listens for app install postMessage events and creates proper
- * notifications via the notifications API instead of ephemeral toasts.
+ * Bell icon + unread badge, opening the `notifications.html` popover: a 400px
+ * panel ("Notifications" / "Mark all read"), then a feed where each entry is a
+ * <NotificationItem> — a `.via` attribution row + the app's own
+ * <UnifiedEmbed kind="notification"> (with a standard-row fallback) or the
+ * standard row directly.
+ *
+ * Renders two ways (like AppDrawer / Launcher):
+ *   • default  — the UI header popover (glassy, translucent).
+ *   • embedded — content-only, for the UI-served /embed/notifications iframe that
+ *     native apps host. The host gives it a fixed-size scrollable box, so the
+ *     OUTER tab needs no resize relay; the per-notification embeds inside become
+ *     nested iframes (Plan A — accepted) and theme via `mode`. Keeps the
+ *     installed-app/notification list out of the native app's origin (the E1
+ *     security model applied to notifications). Links open at `window.top`.
  */
 
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Bell, Check, Info, AlertTriangle, XCircle, CheckCircle2, X, Download } from "lucide-react";
+import { Bell, Check } from "lucide-react";
 import { useTranslations } from "next-intl";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { NotificationSurfaceEmbed } from "@/components/notifications/notification-surface-embed";
+import {
+  NotificationItem,
+  type NotificationData,
+  type NotificationAppMeta,
+} from "@/components/notifications/notification-item";
 
-interface NotificationSurface {
-  surface_id: string;
-  embed_path: string;
-  name: string | null;
-  description: string | null;
-}
-
-interface Notification {
-  id: string;
-  type: string;
-  title: string;
-  message: string | null;
-  appId: string | null;
-  read: boolean;
-  createdAt: string;
-  action: { type?: string; url?: string } | null;
-  surface?: NotificationSurface;
-}
-
-export function NotificationBell() {
+export function NotificationBell({
+  embedded = false,
+  mode,
+}: {
+  embedded?: boolean;
+  mode?: "light" | "dark";
+}) {
   const [open, setOpen] = useState(false);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [notifications, setNotifications] = useState<NotificationData[]>([]);
+  const [appMeta, setAppMeta] = useState<Record<string, NotificationAppMeta>>({});
   const [unreadCount, setUnreadCount] = useState(0);
-  const t = useTranslations('notifications');
+  // Gates the empty state: until the FIRST fetch succeeds we show a loading
+  // skeleton, not "No notifications" — the API can be slow on a cold request and
+  // the embed makes that the first visible thing. A failed/slow fetch retries via
+  // the 30s poll rather than masking as empty (no silent failure).
+  const [loaded, setLoaded] = useState(false);
+  const t = useTranslations("notifications");
 
   // Track in-flight installs so we can update the loading notification on completion
   const activeInstalls = useRef<Map<string, string>>(new Map()); // appId -> notificationId
@@ -54,8 +61,10 @@ export function NotificationBell() {
       const data = await res.json();
       setNotifications(data.notifications);
       setUnreadCount(data.unread_count);
+      if (data.app_meta) setAppMeta(data.app_meta);
+      setLoaded(true);
     } catch {
-      // Silently fail
+      // Leave loaded=false so the next poll retries instead of showing a false empty.
     }
   }, []);
 
@@ -66,6 +75,7 @@ export function NotificationBell() {
   }, [fetchNotifications]);
 
   // Listen for app install postMessage events and create proper notifications
+  // (dashboard market flow; harmless in the embed — no such messages arrive).
   useEffect(() => {
     const handleMessage = async (e: MessageEvent) => {
       if (e.data?.type === "youeye-app-install-started") {
@@ -74,65 +84,45 @@ export function NotificationBell() {
           const res = await fetch("/api/v1/notifications", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              type: "info",
-              title: `Installing ${appName}...`,
-              message: "Installation in progress",
-              app_id: appId,
-            }),
+            body: JSON.stringify({ type: "info", title: `Installing ${appName}...`, message: "Installation in progress", app_id: appId }),
           });
           if (res.ok) {
             const notif = await res.json();
             activeInstalls.current.set(appId, notif.id);
             fetchNotifications();
           }
-        } catch {
-          // Best effort
-        }
+        } catch { /* best effort */ }
       }
-
       if (e.data?.type === "youeye-app-install-complete") {
         const { appId, appName, error } = e.data;
         const existingNotifId = activeInstalls.current.get(appId);
-
-        // Delete the "installing..." notification if we tracked it
         if (existingNotifId) {
-          try {
-            await fetch(`/api/v1/notifications/${existingNotifId}`, { method: "DELETE" });
-          } catch {
-            // Best effort
-          }
+          try { await fetch(`/api/v1/notifications/${existingNotifId}`, { method: "DELETE" }); } catch { /* best effort */ }
           activeInstalls.current.delete(appId);
         }
-
-        // Create the completion notification
         try {
           await fetch("/api/v1/notifications", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              type: error ? "error" : "success",
-              title: error ? `${appName} install failed` : `${appName} installed`,
-              message: error || null,
-              app_id: appId,
-            }),
+            body: JSON.stringify({ type: error ? "error" : "success", title: error ? `${appName} install failed` : `${appName} installed`, message: error || null, app_id: appId }),
           });
           fetchNotifications();
-        } catch {
-          // Best effort
-        }
+        } catch { /* best effort */ }
       }
     };
-
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [fetchNotifications]);
 
+  // In an iframe, navigate the top window so links open at the top level.
+  const go = (url: string) => {
+    if (embedded && typeof window !== "undefined" && window.top) window.top.location.href = url;
+    else window.location.href = url;
+  };
+
   const markRead = async (id: string) => {
     await fetch(`/api/v1/notifications/${id}`, { method: "PUT" });
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
-    );
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
     setUnreadCount((c) => Math.max(0, c - 1));
   };
 
@@ -146,42 +136,71 @@ export function NotificationBell() {
     await fetch(`/api/v1/notifications/${id}`, { method: "DELETE" });
     const removed = notifications.find((n) => n.id === id);
     setNotifications((prev) => prev.filter((n) => n.id !== id));
-    if (removed && !removed.read) {
-      setUnreadCount((c) => Math.max(0, c - 1));
-    }
+    if (removed && !removed.read) setUnreadCount((c) => Math.max(0, c - 1));
   };
 
-  const handleAction = (notif: Notification) => {
-    if (notif.action?.url) {
-      window.location.href = notif.action.url;
-    }
+  const handleAction = (notif: NotificationData) => {
+    if (notif.action?.url) go(notif.action.url);
     if (!notif.read) markRead(notif.id);
   };
 
-  const typeIcon = (type: string) => {
-    switch (type) {
-      case "success": return <CheckCircle2 className="w-4 h-4 text-green-500" />;
-      case "warning": return <AlertTriangle className="w-4 h-4 text-yellow-500" />;
-      case "error": return <XCircle className="w-4 h-4 text-red-500" />;
-      default: return <Info className="w-4 h-4 text-blue-500" />;
-    }
-  };
+  const content = (
+    <div className={`flex flex-col ${embedded ? "w-full" : ""}`}>
+      {/* Header */}
+      <div className="flex items-center justify-between border-b px-[18px] py-3.5">
+        <h2 className="text-[15px] font-semibold">{t("title")}</h2>
+        {unreadCount > 0 && (
+          <button onClick={markAllRead} className="flex items-center gap-1 text-[12.5px] text-muted-foreground transition-colors hover:text-foreground">
+            <Check className="h-3 w-3" />
+            {t("markAllRead")}
+          </button>
+        )}
+      </div>
 
-  const timeAgo = (dateStr: string) => {
-    const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-    if (seconds < 60) return t('justNow');
-    if (seconds < 3600) return t('minutesAgo', { count: Math.floor(seconds / 60) });
-    if (seconds < 86400) return t('hoursAgo', { count: Math.floor(seconds / 3600) });
-    return t('daysAgo', { count: Math.floor(seconds / 86400) });
-  };
+      {/* Feed */}
+      {!loaded ? (
+        <div className="grid gap-3 px-3.5 py-3.5" aria-busy="true">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="flex gap-3 rounded-xl border border-border/40 p-3">
+              <div className="h-8 w-8 shrink-0 animate-pulse rounded-lg bg-muted" />
+              <div className="flex-1 space-y-2 py-0.5">
+                <div className="h-3 w-2/3 animate-pulse rounded bg-muted" />
+                <div className="h-2.5 w-full animate-pulse rounded bg-muted/70" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : notifications.length === 0 ? (
+        <div className="px-4 py-10 text-center text-sm text-muted-foreground">{t("noNotifications")}</div>
+      ) : (
+        <div className={`grid gap-3 overflow-y-auto px-3.5 py-3.5 ${embedded ? "max-h-[440px]" : "max-h-[60vh]"}`}>
+          {notifications.map((notif) => (
+            <NotificationItem key={notif.id} notif={notif} appMeta={appMeta} onAction={handleAction} onDismiss={dismiss} mode={mode} />
+          ))}
+        </div>
+      )}
+
+      {/* View all */}
+      <div className="border-t px-4 py-2.5">
+        <button
+          type="button"
+          onClick={() => { go("/notifications"); setOpen(false); }}
+          className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          {t("viewAll")}
+        </button>
+      </div>
+    </div>
+  );
+
+  if (embedded) {
+    return <div className="w-full bg-transparent">{content}</div>;
+  }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button
-          className="relative inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent transition-colors"
-          aria-label={t('title')}
-        >
+        <button className="relative inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent transition-colors" aria-label={t("title")}>
           <Bell className="h-4 w-4" />
           {unreadCount > 0 && (
             <span className="absolute top-0.5 right-0.5 flex items-center justify-center min-w-[16px] h-[16px] px-0.5 text-[9px] font-bold text-white bg-red-500 rounded-full">
@@ -194,82 +213,9 @@ export function NotificationBell() {
       <PopoverContent
         align="end"
         sideOffset={8}
-        className="w-80 max-h-96 overflow-y-auto rounded-lg p-0"
+        className="w-[400px] max-h-[calc(100vh-90px)] overflow-hidden rounded-2xl border-border/60 bg-popover/80 p-0 backdrop-blur-xl"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b">
-          <h3 className="font-semibold text-sm">{t('title')}</h3>
-          {unreadCount > 0 && (
-            <button
-              onClick={markAllRead}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <Check className="w-3 h-3" />
-              {t('markAllRead')}
-            </button>
-          )}
-        </div>
-
-        {/* List */}
-        {notifications.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-            {t('noNotifications')}
-          </div>
-        ) : (
-          <div className="divide-y">
-            {notifications.map((notif) => (
-              <div
-                key={notif.id}
-                className={`flex items-start gap-3 px-4 py-3 hover:bg-accent/50 transition-colors cursor-pointer ${
-                  !notif.read ? "bg-accent/20" : ""
-                }`}
-                onClick={() => handleAction(notif)}
-              >
-                <div className="mt-0.5">{typeIcon(notif.type)}</div>
-                <div className="flex-1 min-w-0">
-                  <p className={`text-sm ${!notif.read ? "font-semibold" : ""}`}>
-                    {notif.title}
-                  </p>
-                  {notif.message && (
-                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
-                      {notif.message}
-                    </p>
-                  )}
-                  <NotificationSurfaceEmbed
-                    notificationId={notif.id}
-                    appId={notif.appId}
-                    surface={notif.surface}
-                    compact
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {timeAgo(notif.createdAt)}
-                  </p>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    dismiss(notif.id);
-                  }}
-                  className="p-1 rounded hover:bg-accent transition-colors"
-                  aria-label={t('dismiss')}
-                >
-                  <X className="w-3 h-3 text-muted-foreground" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* View all link */}
-        <div className="border-t px-4 py-2">
-          <a
-            href="/notifications"
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-            onClick={() => setOpen(false)}
-          >
-            {t('viewAll')}
-          </a>
-        </div>
+        {content}
       </PopoverContent>
     </Popover>
   );

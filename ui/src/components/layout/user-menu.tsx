@@ -1,8 +1,11 @@
 /**
- * User Menu Component
+ * User Menu — Plan 1 Workstream E4 (D14-revised, toned down 2026-06-15).
  *
- * Dropdown menu showing the current user's name/email and a logout button.
- * Uses shadcn/ui DropdownMenu with Avatar trigger.
+ * Account panel: centered email, large avatar (display only — no pencil-edit),
+ * "Hi, <first name>!", grouped card (Timeline / Settings / Theme as a
+ * Light·Dark·Auto segmented control), ghost Sign out. The Google-isms removed
+ * per the owner: the "Manage your account" pill, the avatar pencil-edit, and the
+ * Privacy · About footer. Mirrored on CP (control-header) and native (Canvas).
  */
 
 "use client";
@@ -14,9 +17,6 @@ import { useTheme } from "next-themes";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -28,24 +28,16 @@ interface UserMenuProps {
   isAdmin: boolean;
 }
 
+type ThemeMode = "light" | "dark" | "system";
+
 export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
   const router = useRouter();
   const t = useTranslations("nav");
   const { theme, setTheme } = useTheme();
-  const [systemPref, setSystemPref] = useState<"light" | "dark">("light");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState(username);
 
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    setSystemPref(mq.matches ? "dark" : "light");
-    const handler = (e: MediaQueryListEvent) =>
-      setSystemPref(e.matches ? "dark" : "light");
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
-
-  // Fetch avatar and name from profile
+  // Fetch avatar and name from profile.
   useEffect(() => {
     fetch("/api/v1/user/profile")
       .then((r) => r.json())
@@ -56,24 +48,19 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
       .catch(() => {});
   }, []);
 
-  // Listen for avatar updates from profile page
+  // Live updates from the profile page.
   useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      setAvatarUrl(detail?.url || null);
+    const onAvatar = (e: Event) => setAvatarUrl((e as CustomEvent).detail?.url || null);
+    const onName = (e: Event) => {
+      const name = (e as CustomEvent).detail?.name;
+      if (name) setDisplayName(name);
     };
-    window.addEventListener("avatar-updated", handler);
-    return () => window.removeEventListener("avatar-updated", handler);
-  }, []);
-
-  // Listen for name updates from profile page
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail?.name) setDisplayName(detail.name);
+    window.addEventListener("avatar-updated", onAvatar);
+    window.addEventListener("name-updated", onName);
+    return () => {
+      window.removeEventListener("avatar-updated", onAvatar);
+      window.removeEventListener("name-updated", onName);
     };
-    window.addEventListener("name-updated", handler);
-    return () => window.removeEventListener("name-updated", handler);
   }, []);
 
   const initials = displayName
@@ -82,11 +69,28 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
     .join("")
     .toUpperCase()
     .slice(0, 2);
+  const firstName = displayName.split(" ")[0] || displayName;
+
+  function applyTheme(mode: ThemeMode) {
+    setTheme(mode);
+    // Sync to DB so native apps pick up the mode.
+    fetch("/api/v1/themes/active", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    }).catch(() => {});
+  }
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
   }
+
+  const THEMES: { mode: ThemeMode; Icon: typeof Sun; label: string }[] = [
+    { mode: "light", Icon: Sun, label: t("themeLight") },
+    { mode: "dark", Icon: Moon, label: t("themeDark") },
+    { mode: "system", Icon: Monitor, label: t("themeSystem") },
+  ];
 
   return (
     <DropdownMenu>
@@ -98,56 +102,86 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
           </Avatar>
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel className="flex flex-col gap-0.5">
-          <span className="flex items-center gap-1.5">
-            {displayName}
-            {isAdmin && <Shield className="size-3 text-primary" />}
-          </span>
-          <span className="text-xs font-normal text-muted-foreground">
-            {email}
-          </span>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => router.push("/timeline")}>
-          <Clock className="size-4" />
-          {t("timeline")}
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => router.push("/settings")}>
-          <Settings className="size-4" />
-          {t("settings")}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={() => {
-            const next = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
-            setTheme(next);
-            // Sync to DB so native apps pick up the mode
-            fetch("/api/v1/themes/active", {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ mode: next }),
-            }).catch(() => {});
-          }}
-        >
-          {theme === "light" ? (
-            <Sun className="size-4" />
-          ) : theme === "dark" ? (
-            <Moon className="size-4" />
-          ) : (
-            <Monitor className="size-4" />
-          )}
-          {theme === "light"
-            ? t("themeLight")
-            : theme === "dark"
-              ? t("themeDark")
-              : t("themeSystem")}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleLogout} className="text-destructive">
-          <LogOut className="size-4" />
-          {t("signOut")}
-        </DropdownMenuItem>
+      <DropdownMenuContent
+        align="end"
+        sideOffset={8}
+        className="w-[340px] rounded-3xl p-0 overflow-hidden border-border/60 bg-popover/80 backdrop-blur-xl"
+      >
+        {/* Email, centered */}
+        <p className="pt-4 pb-3 text-center text-xs text-muted-foreground truncate px-6">{email}</p>
+
+        {/* Big avatar + greeting — display only (no pencil-edit), toned down per D14-revised */}
+        <div className="flex flex-col items-center gap-2 px-5">
+          <Avatar className="size-[76px]">
+            {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
+            <AvatarFallback className="text-xl">{initials}</AvatarFallback>
+          </Avatar>
+          <div className="flex items-center gap-1.5 text-base font-medium">
+            <span>Hi, {firstName}!</span>
+            {isAdmin && <Shield className="size-3.5 text-primary" />}
+          </div>
+        </div>
+
+        {/* Grouped card */}
+        <div className="m-3 rounded-2xl bg-card/60 border border-border/50 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => router.push("/timeline")}
+            className="flex w-full items-center gap-3 px-4 py-3 text-sm hover:bg-accent transition-colors"
+          >
+            <Clock className="size-4 text-muted-foreground" />
+            {t("timeline")}
+          </button>
+          <div className="border-t" />
+          <button
+            type="button"
+            onClick={() => router.push("/settings")}
+            className="flex w-full items-center gap-3 px-4 py-3 text-sm hover:bg-accent transition-colors"
+          >
+            <Settings className="size-4 text-muted-foreground" />
+            {t("settings")}
+          </button>
+          <div className="border-t" />
+          <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+            <span className="flex items-center gap-3 text-sm">
+              <Sun className="size-4 text-muted-foreground" />
+              Theme
+            </span>
+            <div className="inline-flex rounded-lg border bg-background p-0.5">
+              {THEMES.map(({ mode, Icon, label }) => {
+                const active = (theme ?? "system") === mode;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => applyTheme(mode)}
+                    aria-pressed={active}
+                    title={label}
+                    className={`grid place-items-center size-7 rounded-md transition-colors ${
+                      active
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Icon className="size-3.5" />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Sign out */}
+        <div className="px-3 pb-3">
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          >
+            <LogOut className="size-4" />
+            {t("signOut")}
+          </button>
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );

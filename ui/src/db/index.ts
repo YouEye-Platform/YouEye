@@ -140,6 +140,9 @@ export async function ensureSchema() {
     await queryClient`ALTER TABLE user_app_config ADD COLUMN IF NOT EXISTS branding_wordart JSONB`;
     await queryClient`ALTER TABLE user_app_config ADD COLUMN IF NOT EXISTS header_display_mode TEXT`;
 
+    // Plan 5: launcher folder membership (which launcher folder an app is in)
+    await queryClient`ALTER TABLE user_app_config ADD COLUMN IF NOT EXISTS folder_id TEXT`;
+
     await queryClient`
       CREATE TABLE IF NOT EXISTS user_drawer_sections (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -149,6 +152,17 @@ export async function ensureSchema() {
         display_order INTEGER DEFAULT 0,
         collapsed BOOLEAN DEFAULT FALSE,
         UNIQUE(user_id, section_id)
+      )`;
+
+    // Plan 5: launcher folders (iOS-style, independent of drawer sections)
+    await queryClient`
+      CREATE TABLE IF NOT EXISTS user_launcher_folders (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        folder_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        display_order INTEGER DEFAULT 0,
+        UNIQUE(user_id, folder_id)
       )`;
 
     await queryClient`

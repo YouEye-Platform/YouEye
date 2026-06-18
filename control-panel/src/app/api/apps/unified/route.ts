@@ -28,6 +28,7 @@ import { getAllHealthStatuses, getLastHealthCheckAt } from '@/lib/market/health-
 import { listInstalledApps } from '@/lib/market/metadata';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
 import { fetchManifest } from '@/lib/market/catalog';
+import { planSystemUpdates, type SystemUpdatePlan } from '@/lib/infrastructure/system-updater';
 
 // ─── Response types ───────────────────────────────────────────────────────────
 
@@ -55,6 +56,8 @@ export interface UnifiedApp {
   updateAvailable: boolean;
   /** Human-readable update info */
   updateInfo?: string;
+  /** True when updates are tracked via the Market system manifests (Caddy/Pi-Hole/Postgres) */
+  systemManaged?: boolean;
   /** Links to existing management pages */
   managementLinks?: Array<{ label: string; href: string }>;
   /** Health check status for marketplace/native apps */
@@ -114,12 +117,13 @@ export async function GET() {
     }
 
     // Parallel data fetches
-    const [instancesResp, spineStatus, spineUpdates, marketInstalled, dbInstalledApps] = await Promise.allSettled([
+    const [instancesResp, spineStatus, spineUpdates, marketInstalled, dbInstalledApps, systemPlansResult] = await Promise.allSettled([
       incusRequest<string[]>('GET', '/1.0/instances'),
       spineClient.status(),
       spineClient.checkUpdates(),
       listInstalledApps(),
       getAllInstalledApps(),
+      planSystemUpdates(),
     ]);
 
     const instancePaths =
@@ -133,6 +137,16 @@ export async function GET() {
     const installed = marketInstalled.status === 'fulfilled' ? marketInstalled.value : [];
     const dbApps = dbInstalledApps.status === 'fulfilled' ? dbInstalledApps.value : [];
     const dbAppsMap = new Map(dbApps.map((a) => [a.appId, a]));
+
+    // System apps (Caddy/Pi-Hole/Postgres) are tracked via the Market system
+    // manifests, not the moving-tag OCI checker. Degrade gracefully if the
+    // market source is unreachable — never 500 the Apps page.
+    const systemPlanById = new Map<string, SystemUpdatePlan>();
+    if (systemPlansResult.status === 'fulfilled') {
+      for (const p of systemPlansResult.value) systemPlanById.set(p.id, p);
+    } else {
+      console.error('[/api/apps/unified] system update plan failed (degrading):', systemPlansResult.reason);
+    }
 
     // Fetch state for every known container in parallel
     const allContainerNames = APP_DEFINITIONS.flatMap((a) =>
@@ -247,8 +261,19 @@ export async function GET() {
         }
       }
 
-      // OCI update detection from digest cache (only for non-LXD apps)
-      if (def.updatedBy === 'control-panel' && !lxdResult) {
+      // Market system apps (Caddy/Pi-Hole/Postgres): version + update come from
+      // the Market system manifest plan (pinned), never the moving-tag checker.
+      const systemPlan = def.marketSystemId ? systemPlanById.get(def.marketSystemId) : undefined;
+      if (systemPlan) {
+        version = systemPlan.currentVersion ?? systemPlan.recordedVersion ?? version;
+        updateAvailable = systemPlan.updateAvailable && systemPlan.trackingStatus === 'tracked';
+        updateInfo = updateAvailable
+          ? `${systemPlan.currentVersion ?? '?'} → ${systemPlan.desiredVersion}`
+          : undefined;
+      }
+
+      // OCI update detection from digest cache (only for non-LXD, non-system apps)
+      if (def.updatedBy === 'control-panel' && !lxdResult && !def.marketSystemId) {
         const ociResult = ociUpdates.get(def.id);
         if (ociResult?.hasUpdate) {
           updateAvailable = true;
@@ -269,6 +294,7 @@ export async function GET() {
         status: def.containers.length > 0 ? aggregateStatus(containerStatuses) : 'running',
         updateAvailable,
         updateInfo,
+        systemManaged: !!def.marketSystemId,
         managementLinks: def.managementLinks,
         healthStatus: healthStatuses[def.id] ?? undefined,
         healthCheckedAt: lastHealthCheck,

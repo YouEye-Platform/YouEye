@@ -159,6 +159,8 @@ export const userAppConfig = pgTable("user_app_config", {
   displayOrder: integer("display_order").default(0),
   /** Section this app belongs to (references user_drawer_sections) */
   sectionId: text("section_id"),
+  /** Launcher folder this app belongs to (references user_launcher_folders) — Plan 5 */
+  folderId: text("folder_id"),
   /** User's per-app WordArt branding override */
   brandingWordart: jsonb("branding_wordart").$type<Record<string, unknown>>(),
   /** User's per-app header display mode override */
@@ -182,6 +184,25 @@ export const userDrawerSections = pgTable("user_drawer_sections", {
   displayOrder: integer("display_order").default(0),
   /** Whether section is collapsed in the drawer */
   collapsed: boolean("collapsed").default(false),
+});
+
+/**
+ * User-created launcher folders (iOS-style) — Plan 5.
+ * Independent of drawer sections: the drawer groups *pinned* apps via
+ * `sectionId`; the launcher groups *all* apps via `folderId`. An app's drawer
+ * section and its launcher folder are unrelated.
+ */
+export const userLauncherFolders = pgTable("user_launcher_folders", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  /** Unique folder identifier per user */
+  folderId: text("folder_id").notNull(),
+  /** Display name */
+  name: text("name").notNull(),
+  /** Display order */
+  displayOrder: integer("display_order").default(0),
 });
 
 // ============================================

@@ -34,6 +34,9 @@
   },
   "nav": {
     "backToDashboard": "Volver al panel",
+    "searchApps": "Buscar aplicaciones",
+    "noAppsFound": "No se encontraron aplicaciones",
+    "launcherHint": "Abre cualquiera de tus aplicaciones",
     "timeline": "Cronología",
     "settings": "Configuración",
     "signOut": "Cerrar sesión",
@@ -41,7 +44,9 @@
     "themeLight": "Claro",
     "themeDark": "Oscuro",
     "themeSystem": "Sistema",
-    "notifications": "Notificaciones"
+    "notifications": "Notificaciones",
+    "folder": "Carpeta",
+    "removeFromFolder": "Quitar de la carpeta"
   },
   "greeting": {
     "goodMorning": "Buenos días",
@@ -282,6 +287,8 @@
     "createPin": "Crear PIN",
     "today": "Hoy a las {time}",
     "yesterday": "Ayer",
+    "dayToday": "Hoy",
+    "deleteEntry": "Eliminar entrada",
     "daysAgo": "Hace {count} días",
     "history": "Historial",
     "upcoming": "Próximos",
@@ -323,13 +330,18 @@
     "statusDown": "Caído",
     "statusUnknown": "Desconocido",
     "manageApps": "Administrar Apps",
-    "visitMarketplace": "Visitar Marketplace"
+    "visitMarketplace": "Visitar Marketplace",
+    "addApp": "Añadir app",
+    "removeApp": "Quitar del cajón",
+    "allApps": "Todas las apps",
+    "noAppsToAdd": "Todo ya está en tu cajón"
   },
   "notifications": {
     "title": "Notificaciones",
     "markAllRead": "Marcar todo como leído",
     "noNotifications": "Sin notificaciones",
     "dismiss": "Descartar",
+    "system": "Sistema",
     "justNow": "ahora mismo",
     "minutesAgo": "hace {count} min",
     "hoursAgo": "hace {count} h",

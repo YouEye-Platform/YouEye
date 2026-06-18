@@ -30,14 +30,12 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SiteName } from "@/components/control-surface/site-name";
+import { applyThemeMode, THEME_MODE_EVENT, type ThemeMode } from "@/lib/theme";
 import type { SiteNameStyle } from "@/lib/wordart-presets";
 
 interface ControlHeaderProps {
@@ -366,6 +364,7 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
   }, []);
 
   const displayName = config?.user?.name || username;
+  const firstName = displayName.split(" ")[0] || displayName;
   const email = config?.user?.email || username;
   const avatarUrl = config?.user?.avatar_url || null;
   const headerIsAdmin = config?.user?.is_admin ?? isAdmin;
@@ -376,6 +375,25 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
   const notifications = config?.notifications?.items ?? [];
   const prefs = drawerPrefs;
   const themeMode = config?.theme?.mode ?? "system";
+
+  // Apply the user's saved light/dark/system mode to <html> on load and whenever
+  // it changes. Source of truth is config.theme.mode (bridge → UI DB); the inline
+  // boot script in app/layout.tsx handles the very first paint from the shared
+  // localStorage("theme") key the dashboard's next-themes already writes.
+  useEffect(() => {
+    applyThemeMode(themeMode as ThemeMode);
+  }, [themeMode, systemPref]);
+
+  // Stay in sync when the Appearance page changes the mode (it broadcasts an event).
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const mode = (event as CustomEvent).detail?.mode as ThemeMode | undefined;
+      if (!mode) return;
+      setConfig((current) => ({ ...(current ?? {}), theme: { ...(current?.theme ?? {}), mode } }));
+    };
+    window.addEventListener(THEME_MODE_EVENT, handler);
+    return () => window.removeEventListener(THEME_MODE_EVENT, handler);
+  }, []);
 
   const visibleApps = useMemo(() => {
     return [...allApps]
@@ -556,20 +574,26 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
     });
   }
 
-  async function cycleTheme() {
+  // E4 (D14-revised): direct Light/Dark/Auto setter for the segmented control.
+  function applyTheme(mode: ThemeMode) {
     if (!hasUserContext) return;
-    const next = themeMode === "light" ? "dark" : themeMode === "dark" ? "system" : "light";
-    setConfig((current) => ({ ...(current ?? {}), theme: { ...(current?.theme ?? {}), mode: next } }));
-    document.documentElement.classList.toggle("dark", next === "dark" || (next === "system" && systemPref === "dark"));
+    setConfig((current) => ({ ...(current ?? {}), theme: { ...(current?.theme ?? {}), mode } }));
+    applyThemeMode(mode);
     if (saveThemeTimeout.current) clearTimeout(saveThemeTimeout.current);
     saveThemeTimeout.current = setTimeout(() => {
       fetch(bridgeApi("themes/active"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: next }),
+        body: JSON.stringify({ mode }),
       }).catch(() => {});
     }, 300);
   }
+
+  const THEME_MODES: { mode: ThemeMode; Icon: typeof Sun; label: string }[] = [
+    { mode: "light", Icon: Sun, label: "Light" },
+    { mode: "dark", Icon: Moon, label: "Dark" },
+    { mode: "system", Icon: Monitor, label: "Auto" },
+  ];
 
   return (
     <header className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-border/40 bg-background/95 px-4 backdrop-blur-md">
@@ -888,39 +912,95 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
               </Avatar>
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel className="flex flex-col gap-0.5">
-              <span className="flex items-center gap-1.5">
-                {displayName}
-                {headerIsAdmin && <Shield className="size-3 text-primary" />}
-              </span>
-              <span className="text-xs font-normal text-muted-foreground">{email}</span>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {hasUserContext && (
-              <DropdownMenuItem onClick={() => { window.location.href = "/timeline"; }}>
-                <Clock className="size-4" />
-                Timeline
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem onClick={() => { window.location.href = hasUserContext ? "/settings" : "/settings/system"; }}>
-              <Settings className="size-4" />
-              Settings
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            {hasUserContext && (
-              <>
-                <DropdownMenuItem onClick={cycleTheme}>
-                  {themeMode === "light" ? <Sun className="size-4" /> : themeMode === "dark" ? <Moon className="size-4" /> : <Monitor className="size-4" />}
-                  {themeMode === "light" ? "Light theme" : themeMode === "dark" ? "Dark theme" : "System theme"}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-              </>
-            )}
-            <DropdownMenuItem onClick={logout} className="text-destructive">
-              <LogOut className="size-4" />
-              Sign out
-            </DropdownMenuItem>
+          {/* E4 (D14-revised) — the same toned-down account panel mirrored from the UI:
+              email, big avatar (no pencil-edit), greeting, grouped Timeline/Settings/Theme, Sign out.
+              No "Manage your account" pill and no Privacy · About footer. */}
+          <DropdownMenuContent
+            align="end"
+            sideOffset={8}
+            className="w-[340px] rounded-3xl p-0 overflow-hidden border bg-muted"
+          >
+            {/* Email, centered */}
+            <p className="pt-4 pb-3 text-center text-xs text-muted-foreground truncate px-6">{email}</p>
+
+            {/* Big avatar + greeting — display only */}
+            <div className="flex flex-col items-center gap-2 px-5">
+              <Avatar className="size-[76px]">
+                {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
+                <AvatarFallback className="text-xl">{initials(displayName)}</AvatarFallback>
+              </Avatar>
+              <div className="flex items-center gap-1.5 text-base font-medium">
+                <span>Hi, {firstName}!</span>
+                {headerIsAdmin && <Shield className="size-3.5 text-primary" />}
+              </div>
+            </div>
+
+            {/* Grouped card */}
+            <div className="m-3 rounded-2xl bg-card border overflow-hidden">
+              {hasUserContext && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => { window.location.href = "/timeline"; }}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-sm hover:bg-accent transition-colors"
+                  >
+                    <Clock className="size-4 text-muted-foreground" />
+                    Timeline
+                  </button>
+                  <div className="border-t" />
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => { window.location.href = hasUserContext ? "/settings" : "/settings/system"; }}
+                className="flex w-full items-center gap-3 px-4 py-3 text-sm hover:bg-accent transition-colors"
+              >
+                <Settings className="size-4 text-muted-foreground" />
+                Settings
+              </button>
+              {hasUserContext && (
+                <>
+                  <div className="border-t" />
+                  <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+                    <span className="flex items-center gap-3 text-sm">
+                      <Sun className="size-4 text-muted-foreground" />
+                      Theme
+                    </span>
+                    <div className="inline-flex rounded-lg border bg-background p-0.5">
+                      {THEME_MODES.map(({ mode, Icon, label }) => {
+                        const active = themeMode === mode;
+                        return (
+                          <button
+                            key={mode}
+                            type="button"
+                            onClick={() => applyTheme(mode)}
+                            aria-pressed={active}
+                            title={label}
+                            className={`grid place-items-center size-7 rounded-md transition-colors ${
+                              active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                            }`}
+                          >
+                            <Icon className="size-3.5" />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Sign out */}
+            <div className="px-3 pb-3">
+              <button
+                type="button"
+                onClick={logout}
+                className="flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+              >
+                <LogOut className="size-4" />
+                Sign out
+              </button>
+            </div>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

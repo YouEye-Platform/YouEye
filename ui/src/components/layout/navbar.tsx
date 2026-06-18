@@ -5,7 +5,7 @@
 import { Home } from "lucide-react";
 import { UserMenu } from "./user-menu";
 import { NotificationBell } from "./notification-bell";
-import { AppDrawer } from "./app-drawer";
+import { DrawerAndLauncher } from "./drawer-and-launcher";
 import { SiteName } from "./site-name";
 import { Button } from "@/components/ui/button";
 import type { SiteNameStyle } from "@/lib/db/queries/branding";
@@ -45,7 +45,7 @@ export function Navbar({
             <Home className="h-4 w-4" />
           </Link>
         </Button>
-        <AppDrawer isAdmin={isAdmin} />
+        <DrawerAndLauncher isAdmin={isAdmin} />
         <NotificationBell />
         <UserMenu username={username} email={email} isAdmin={isAdmin} />
       </div>

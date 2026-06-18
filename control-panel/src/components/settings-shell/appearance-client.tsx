@@ -8,6 +8,7 @@ import WordArtGalleryEmbed from "@/components/embed/WordArtGalleryEmbed";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { uiSettingsApi } from "./api-base";
+import { applyThemeMode, broadcastThemeMode, type ThemeMode } from "@/lib/theme";
 
 const DEFAULT_STYLE: SiteNameStyle = {
   fontFamily: "Inter",
@@ -257,6 +258,10 @@ function ThemeSettings() {
 
   async function selectMode(nextMode: string) {
     setMode(nextMode);
+    // Apply immediately so this page re-themes on click, and tell the header
+    // (source-of-truth state) so it stays in sync; the PUT below persists it.
+    applyThemeMode(nextMode as ThemeMode);
+    broadcastThemeMode(nextMode as ThemeMode);
     const res = await fetch(uiSettingsApi("themes/active"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -401,8 +406,8 @@ export function AppearanceClient({ isAdmin }: AppearanceClientProps) {
   return (
     <div className="space-y-10">
       <div>
-        <h2 className="text-xl font-semibold">Appearance</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Customize the look and feel of your dashboard.</p>
+        <h1 className="text-2xl font-bold tracking-tight">Appearance</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Make this server yours — wordmark, themes, and wallpaper</p>
       </div>
       <BrandingTabs isAdmin={isAdmin} />
       <ThemeSettings />

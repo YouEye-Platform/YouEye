@@ -94,13 +94,35 @@ func Install() error {
 		if strings.Contains(string(out), ",zfs,") {
 			StorageDriver = "zfs"
 			fmt.Println("✓ Incus is already initialized with ZFS storage")
+			if err := ensureIncusBridgeReady(); err != nil {
+				return err
+			}
+			if err := EnsureSystemBaseImage(); err != nil {
+				return err
+			}
+			configureOCIRemote()
+			if err := util.RunCmd("incus", "version"); err != nil {
+				return fmt.Errorf("failed to verify Incus: %w", err)
+			}
+			fmt.Println("\n=== Incus Installation Complete ===")
 			return nil
 		} else if strings.Contains(string(out), ",dir,") {
 			StorageDriver = "dir"
 			fmt.Println("✓ Incus is already initialized with dir storage")
+			if err := ensureIncusBridgeReady(); err != nil {
+				return err
+			}
+			if err := EnsureSystemBaseImage(); err != nil {
+				return err
+			}
+			configureOCIRemote()
+			if err := util.RunCmd("incus", "version"); err != nil {
+				return fmt.Errorf("failed to verify Incus: %w", err)
+			}
+			fmt.Println("\n=== Incus Installation Complete ===")
 			return nil
 		}
-		
+
 		// Reinitialize with preferred driver
 		fmt.Println("Reinitializing Incus storage...")
 		exec.Command("incus", "storage", "delete", "default", "--force").Run()
@@ -120,13 +142,11 @@ func Install() error {
 
 	fmt.Println("✓ Incus initialized")
 
-	// Restrict DHCP range to .100–.254 so system containers can use
-	// static IPs in the .10–.19 range without collision.
-	if err := ConfigureSystemDHCP(); err != nil {
-		fmt.Printf("Warning: could not configure static IP DHCP range: %v\n", err)
+	if err := ensureIncusBridgeReady(); err != nil {
+		return err
 	}
-	if err := ConfigureSystemDNS(); err != nil {
-		fmt.Printf("Warning: could not configure system DNS records: %v\n", err)
+	if err := EnsureSystemBaseImage(); err != nil {
+		return err
 	}
 
 	// Configure OCI remote for Docker Hub images
@@ -177,7 +197,7 @@ func checkZFSAvailable() bool {
 	if _, err := os.Stat("/dev/zfs"); err == nil {
 		return true
 	}
-	
+
 	// Try loading ZFS module (will fail in LXC)
 	if err := exec.Command("modprobe", "zfs").Run(); err == nil {
 		// Check again after modprobe
@@ -185,7 +205,7 @@ func checkZFSAvailable() bool {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -213,13 +233,13 @@ func initializeWithPreseed(zfsAvailable bool) error {
 	} else {
 		fmt.Println("Initializing Incus with dir storage...")
 	}
-	
+
 	preseed := fmt.Sprintf(`config:
   core.https_address: '[::]:8443'
 networks:
 - config:
     ipv4.address: auto
-    ipv6.address: ""
+    ipv6.address: none
     dns.domain: youeye
   description: ""
   name: incusbr0
@@ -246,17 +266,17 @@ profiles:
 projects: []
 cluster: null
 `, driverConfig, driver)
-	
+
 	cmd := exec.Command("incus", "admin", "init", "--preseed")
 	cmd.Stdin = strings.NewReader(preseed)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	
+
 	if err := cmd.Run(); err != nil {
 		// Fallback to manual setup if preseed fails
 		return initializeManually(err, zfsAvailable)
 	}
-	
+
 	StorageDriver = driver
 	return nil
 }
@@ -265,44 +285,44 @@ cluster: null
 func initializeManually(preseedErr error, zfsAvailable bool) error {
 	fmt.Println("\n⚠️  Preseed init failed, trying manual setup...")
 	util.LogDebug(fmt.Sprintf("Preseed error: %v", preseedErr))
-	
+
 	driver := "dir"
 	if zfsAvailable {
 		driver = "zfs"
 	}
-	
+
 	// Clean up any partial state from failed preseed
 	util.LogSubStep("Cleaning up partial initialization state...")
-	
+
 	util.LogDebug("Removing profile device 'root'...")
 	out, _ := util.RunCmdCapture("incus", "profile", "device", "remove", "default", "root")
 	if len(out) > 0 {
 		util.LogDebug(strings.TrimSpace(out))
 	}
-	
+
 	util.LogDebug("Removing profile device 'eth0'...")
 	out, _ = util.RunCmdCapture("incus", "profile", "device", "remove", "default", "eth0")
 	if len(out) > 0 {
 		util.LogDebug(strings.TrimSpace(out))
 	}
-	
+
 	util.LogDebug("Deleting storage pool 'default'...")
 	out, _ = util.RunCmdCapture("incus", "storage", "delete", "default")
 	if len(out) > 0 {
 		util.LogDebug(strings.TrimSpace(out))
 	}
-	
+
 	util.LogDebug("Deleting network 'incusbr0'...")
 	out, _ = util.RunCmdCapture("incus", "network", "delete", "incusbr0")
 	if len(out) > 0 {
 		util.LogDebug(strings.TrimSpace(out))
 	}
-	
+
 	// Check if storage pool exists
 	storageOut, _ := exec.Command("incus", "storage", "list", "--format", "csv").Output()
 	storageExists := strings.Contains(string(storageOut), "default")
 	util.LogDebug(fmt.Sprintf("Storage pools: %s", strings.TrimSpace(string(storageOut))))
-	
+
 	// Create storage pool with appropriate driver (try ZFS first, fall back to dir)
 	util.LogSubStep(fmt.Sprintf("Creating storage pool with %s driver...", driver))
 	if !storageExists {
@@ -341,51 +361,51 @@ func initializeManually(preseedErr error, zfsAvailable bool) error {
 	} else {
 		util.LogDebug("Storage pool 'default' already exists, using existing")
 	}
-	
+
 	StorageDriver = driver
-	
+
 	// Create network
 	util.LogSubStep("Creating network...")
-	
+
 	util.LogDebug("Deleting any existing Incus network definition...")
 	out, _ = util.RunCmdCapture("incus", "network", "delete", "incusbr0")
 	if len(out) > 0 {
 		util.LogDebug(strings.TrimSpace(out))
 	}
-	
+
 	util.LogDebug("Deleting any existing Linux bridge interface...")
 	out, _ = util.RunCmdCapture("ip", "link", "delete", "incusbr0")
 	if len(out) > 0 {
 		util.LogDebug(strings.TrimSpace(out))
 	}
-	
+
 	util.LogDebug("Killing any lingering dnsmasq processes...")
 	out, _ = util.RunCmdCapture("pkill", "-9", "dnsmasq")
 	if len(out) > 0 {
 		util.LogDebug(strings.TrimSpace(out))
 	}
 	time.Sleep(1 * time.Second)
-	
-	if out, err := util.RunCmdCapture("incus", "network", "create", "incusbr0", "ipv4.address=auto", "ipv6.address=", "dns.domain=youeye"); err != nil {
+
+	if out, err := util.RunCmdCapture("incus", "network", "create", "incusbr0", "ipv4.address=auto", "ipv6.address=none", "dns.domain=youeye"); err != nil {
 		util.LogError(fmt.Sprintf("Failed to create network: %s", strings.TrimSpace(out)))
 		return fmt.Errorf("failed to create network: %w", err)
 	}
 	util.LogSuccess("Network 'incusbr0' created (dns.domain=youeye)")
-	
+
 	// Configure default profile
 	util.LogSubStep("Configuring default profile...")
-	
+
 	util.LogDebug("Removing existing profile devices...")
 	util.RunCmdQuiet("incus", "profile", "device", "remove", "default", "root")
 	util.RunCmdQuiet("incus", "profile", "device", "remove", "default", "eth0")
-	
+
 	util.LogDebug("Adding root disk device to profile...")
 	if out, err := util.RunCmdCapture("incus", "profile", "device", "add", "default", "root", "disk", "path=/", "pool=default"); err != nil {
 		util.LogError(fmt.Sprintf("Failed to add root device: %s", strings.TrimSpace(out)))
 		return fmt.Errorf("failed to add root device to profile: %w", err)
 	}
 	util.LogSuccess("Root disk device added")
-	
+
 	util.LogDebug("Adding network device to profile...")
 	if out, err := util.RunCmdCapture("incus", "profile", "device", "add", "default", "eth0", "nic", "network=incusbr0", "name=eth0"); err != nil {
 		util.LogError(fmt.Sprintf("Failed to add network device: %s", strings.TrimSpace(out)))
@@ -402,6 +422,121 @@ func initializeManually(preseedErr error, zfsAvailable bool) error {
 	}
 
 	return nil
+}
+
+// ensureIncusBridgeReady normalizes the managed bridge after init/reuse. Fresh
+// deploy depends on DHCPv4 working before the Control Panel container can
+// install Node.js, so stale dnsmasq processes or accidental IPv6-only bridge
+// state must be repaired before any system containers are created.
+func ensureIncusBridgeReady() error {
+	if err := setIncusBridgeIPv4Only(); err != nil {
+		return err
+	}
+	if err := ConfigureSystemDHCP(); err != nil {
+		return fmt.Errorf("failed to configure static IP DHCP range: %w", err)
+	}
+	if err := ConfigureSystemDNS(); err != nil {
+		return fmt.Errorf("failed to configure system DNS records: %w", err)
+	}
+	if err := restartIncusIfDnsmasqStale(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func setIncusBridgeIPv4Only() error {
+	if err := exec.Command("incus", "network", "set", "incusbr0", "ipv6.address", "none").Run(); err != nil {
+		return fmt.Errorf("failed to disable IPv6 on incusbr0: %w", err)
+	}
+	// ipv6.nat can remain unset on some Incus versions; setting false is best effort.
+	exec.Command("incus", "network", "set", "incusbr0", "ipv6.nat", "false").Run()
+	return nil
+}
+
+func restartIncusIfDnsmasqStale() error {
+	gateway, err := exec.Command("incus", "network", "get", "incusbr0", "ipv4.address").Output()
+	if err != nil {
+		return fmt.Errorf("failed to read incusbr0 IPv4 address: %w", err)
+	}
+	expected := strings.Split(strings.TrimSpace(string(gateway)), "/")[0]
+	out, _ := exec.Command("pgrep", "-a", "-u", "incus", "dnsmasq").Output()
+
+	if !incusBridgeDnsmasqStale(string(out), expected) {
+		return nil
+	}
+
+	fmt.Println("Restarting Incus to clear stale incusbr0 dnsmasq processes...")
+	if err := util.RunCmdQuiet("systemctl", "restart", "incus"); err != nil {
+		return fmt.Errorf("failed to restart Incus after stale dnsmasq detection: %w", err)
+	}
+	time.Sleep(2 * time.Second)
+
+	out, _ = exec.Command("pgrep", "-a", "-u", "incus", "dnsmasq").Output()
+	stale := staleIncusBridgeDnsmasqPIDs(string(out), expected)
+	if len(stale) > 0 {
+		fmt.Printf("Killing %d stale incusbr0 dnsmasq process(es)...\n", len(stale))
+		for _, pid := range stale {
+			if err := exec.Command("kill", "-TERM", pid).Run(); err != nil {
+				return fmt.Errorf("failed to terminate stale incusbr0 dnsmasq process %s: %w", pid, err)
+			}
+		}
+		time.Sleep(1 * time.Second)
+
+		out, _ = exec.Command("pgrep", "-a", "-u", "incus", "dnsmasq").Output()
+		stale = staleIncusBridgeDnsmasqPIDs(string(out), expected)
+		for _, pid := range stale {
+			if err := exec.Command("kill", "-KILL", pid).Run(); err != nil {
+				return fmt.Errorf("failed to kill stale incusbr0 dnsmasq process %s: %w", pid, err)
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+		out, _ = exec.Command("pgrep", "-a", "-u", "incus", "dnsmasq").Output()
+	}
+
+	active := activeIncusBridgeDnsmasqCount(string(out), expected)
+	if remaining := staleIncusBridgeDnsmasqPIDs(string(out), expected); len(remaining) > 0 {
+		return fmt.Errorf("stale incusbr0 dnsmasq still active after cleanup: %s", strings.Join(remaining, ", "))
+	}
+	if active != 1 {
+		return fmt.Errorf("expected exactly one current incusbr0 dnsmasq process, found %d", active)
+	}
+	fmt.Println("✓ Incus dnsmasq state is clean")
+	return nil
+}
+
+func incusBridgeDnsmasqStale(processList, expectedIPv4 string) bool {
+	if len(staleIncusBridgeDnsmasqPIDs(processList, expectedIPv4)) > 0 {
+		return true
+	}
+	return activeIncusBridgeDnsmasqCount(processList, expectedIPv4) > 1
+}
+
+func staleIncusBridgeDnsmasqPIDs(processList, expectedIPv4 string) []string {
+	var pids []string
+	for _, line := range strings.Split(strings.TrimSpace(processList), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if !strings.Contains(line, "--interface=incusbr0") {
+			continue
+		}
+		if strings.Contains(line, "--listen-address="+expectedIPv4) {
+			continue
+		}
+		pids = append(pids, fields[0])
+	}
+	return pids
+}
+
+func activeIncusBridgeDnsmasqCount(processList, expectedIPv4 string) int {
+	active := 0
+	for _, line := range strings.Split(strings.TrimSpace(processList), "\n") {
+		if strings.Contains(line, "--interface=incusbr0") && strings.Contains(line, "--listen-address="+expectedIPv4) {
+			active++
+		}
+	}
+	return active
 }
 
 // configureZabblyRepository sets up the official Zabbly repository for latest Incus packages.
@@ -481,12 +616,12 @@ func getDistroCodename() string {
 // ConfigureSubuidSubgid ensures root has subuid/subgid mappings for unprivileged containers.
 func ConfigureSubuidSubgid() {
 	fmt.Println("Configuring subuid/subgid for unprivileged containers...")
-	
+
 	subuidContent, _ := os.ReadFile("/etc/subuid")
 	subgidContent, _ := os.ReadFile("/etc/subgid")
-	
+
 	rootMapping := "root:1000000:1000000000"
-	
+
 	if !strings.Contains(string(subuidContent), "root:") {
 		f, err := os.OpenFile("/etc/subuid", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err == nil {
@@ -499,7 +634,7 @@ func ConfigureSubuidSubgid() {
 	} else {
 		util.LogDebug("root already has subuid mapping")
 	}
-	
+
 	if !strings.Contains(string(subgidContent), "root:") {
 		f, err := os.OpenFile("/etc/subgid", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err == nil {
@@ -514,8 +649,21 @@ func ConfigureSubuidSubgid() {
 	}
 }
 
+// capZFSARC bounds the ZFS ARC to 2 GiB, persistently (modprobe.d) and live.
+// Uncapped, the ARC grows toward all RAM and counts against MemAvailable,
+// starving containers (observed on bykapc). Safe to re-run.
+func capZFSARC() {
+	const max = "2147483648" // 2 GiB
+	util.RunCmdQuiet("bash", "-c", "printf 'options zfs zfs_arc_max="+max+"\\n' > /etc/modprobe.d/zfs.conf")
+	util.RunCmdQuiet("bash", "-c", "echo "+max+" > /sys/module/zfs/parameters/zfs_arc_max 2>/dev/null || true")
+	util.RunCmdQuiet("update-initramfs", "-u")
+}
+
 // installZFS installs ZFS utilities required for ZFS storage driver.
 func installZFS() error {
+	// Always (re)assert the ARC cap, even if ZFS is already installed.
+	capZFSARC()
+
 	// Check if zfs command is already available
 	if _, err := exec.LookPath("zfs"); err == nil {
 		fmt.Println("✓ ZFS is already installed")
@@ -523,18 +671,18 @@ func installZFS() error {
 	}
 
 	fmt.Println("Installing ZFS utilities...")
-	
+
 	// Update package list if not recently updated
 	util.RunCmdQuiet("apt-get", "update")
-	
+
 	// Install zfsutils-linux
 	if err := util.RunCmd("apt-get", "install", "-y", "zfsutils-linux"); err != nil {
 		return fmt.Errorf("failed to install ZFS: %w", err)
 	}
-	
+
 	// Load ZFS kernel module
 	util.RunCmdQuiet("modprobe", "zfs")
-	
+
 	fmt.Println("✓ ZFS installed")
 	return nil
 }

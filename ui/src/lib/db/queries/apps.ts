@@ -7,7 +7,7 @@
  */
 
 import { db, ensureSchema } from "@/db";
-import { apps, userAppConfig, userDrawerSections } from "@/db/schema";
+import { apps, userAppConfig, userDrawerSections, userLauncherFolders } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 
 import type { SiteNameStyle } from "@/lib/db/queries/branding";
@@ -28,6 +28,8 @@ interface AppWithConfig {
   visible: boolean;
   displayOrder: number;
   sectionId: string | null;
+  /** Launcher folder this app is in (null = loose in the launcher grid) */
+  folderId: string | null;
   /** Resolved branding WordArt (user override > admin default > null) */
   brandingWordart: SiteNameStyle | null;
   /** Resolved header display mode (user override > admin default > 'logo-text') */
@@ -44,19 +46,30 @@ interface DrawerSection {
   collapsed: boolean;
 }
 
+interface LauncherFolder {
+  folderId: string;
+  name: string;
+  displayOrder: number;
+}
+
 export async function getUserAppsWithConfig(userId: string): Promise<{
   apps: AppWithConfig[];
   sections: DrawerSection[];
+  folders: LauncherFolder[];
 }> {
   await ensureSchema();
 
-  const [allApps, userConfigs, userSections] = await Promise.all([
+  const [allApps, userConfigs, userSections, userFolders] = await Promise.all([
     db.select().from(apps).where(eq(apps.enabled, true)),
     db.select().from(userAppConfig).where(eq(userAppConfig.userId, userId)),
     db
       .select()
       .from(userDrawerSections)
       .where(eq(userDrawerSections.userId, userId)),
+    db
+      .select()
+      .from(userLauncherFolders)
+      .where(eq(userLauncherFolders.userId, userId)),
   ]);
 
   const configMap = new Map(userConfigs.map((c) => [c.appId, c]));
@@ -81,6 +94,7 @@ export async function getUserAppsWithConfig(userId: string): Promise<{
       visible: config?.visible ?? true,
       displayOrder: config?.displayOrder ?? app.displayOrder ?? 0,
       sectionId: config?.sectionId ?? null,
+      folderId: config?.folderId ?? null,
       brandingWordart: (config?.brandingWordart as unknown as SiteNameStyle) ?? adminWordart,
       headerDisplayMode: config?.headerDisplayMode ?? adminMode,
       adminBrandingWordart: adminWordart,
@@ -99,7 +113,15 @@ export async function getUserAppsWithConfig(userId: string): Promise<{
 
   sections.sort((a, b) => a.displayOrder - b.displayOrder);
 
-  return { apps: mergedApps, sections };
+  const folders: LauncherFolder[] = userFolders
+    .map((f) => ({
+      folderId: f.folderId,
+      name: f.name,
+      displayOrder: f.displayOrder ?? 0,
+    }))
+    .sort((a, b) => a.displayOrder - b.displayOrder);
+
+  return { apps: mergedApps, sections, folders };
 }
 
 export async function updateAppConfig(
@@ -111,6 +133,7 @@ export async function updateAppConfig(
     visible?: boolean;
     displayOrder?: number;
     sectionId?: string | null;
+    folderId?: string | null;
   }
 ) {
   await ensureSchema();
@@ -131,6 +154,7 @@ export async function updateAppConfig(
         visible: data.visible !== undefined ? data.visible : existing.visible,
         displayOrder: data.displayOrder !== undefined ? data.displayOrder : existing.displayOrder,
         sectionId: data.sectionId !== undefined ? data.sectionId : existing.sectionId,
+        folderId: data.folderId !== undefined ? data.folderId : existing.folderId,
       })
       .where(eq(userAppConfig.id, existing.id))
       .returning();
@@ -147,9 +171,38 @@ export async function updateAppConfig(
       visible: data.visible ?? true,
       displayOrder: data.displayOrder ?? 0,
       sectionId: data.sectionId ?? null,
+      folderId: data.folderId ?? null,
     })
     .returning();
   return created;
+}
+
+/**
+ * Replace the user's launcher folders (Plan 5). Mirrors updateDrawerSections —
+ * the client sends the full desired folder set (create/rename/delete in one
+ * call). App→folder membership lives on user_app_config.folder_id, set via
+ * updateAppConfig.
+ */
+export async function updateLauncherFolders(
+  userId: string,
+  folders: { id: string; name: string; order: number }[]
+) {
+  await ensureSchema();
+
+  await db
+    .delete(userLauncherFolders)
+    .where(eq(userLauncherFolders.userId, userId));
+
+  if (folders.length === 0) return [];
+
+  const rows = folders.map((f) => ({
+    userId,
+    folderId: f.id,
+    name: f.name,
+    displayOrder: f.order,
+  }));
+
+  return db.insert(userLauncherFolders).values(rows).returning();
 }
 
 export async function updateDrawerSections(

@@ -34,6 +34,9 @@
   },
   "nav": {
     "backToDashboard": "Zurück zum Dashboard",
+    "searchApps": "Apps suchen",
+    "noAppsFound": "Keine Apps gefunden",
+    "launcherHint": "Öffne eine deiner Apps",
     "timeline": "Zeitachse",
     "settings": "Einstellungen",
     "signOut": "Abmelden",
@@ -41,7 +44,9 @@
     "themeLight": "Hell",
     "themeDark": "Dunkel",
     "themeSystem": "System",
-    "notifications": "Benachrichtigungen"
+    "notifications": "Benachrichtigungen",
+    "folder": "Ordner",
+    "removeFromFolder": "Aus Ordner entfernen"
   },
   "greeting": {
     "goodMorning": "Guten Morgen",
@@ -282,6 +287,8 @@
     "createPin": "PIN erstellen",
     "today": "Heute um {time}",
     "yesterday": "Gestern",
+    "dayToday": "Heute",
+    "deleteEntry": "Eintrag löschen",
     "daysAgo": "Vor {count} Tagen",
     "history": "Verlauf",
     "upcoming": "Kommend",
@@ -323,13 +330,18 @@
     "statusDown": "Ausgefallen",
     "statusUnknown": "Unbekannt",
     "manageApps": "Apps verwalten",
-    "visitMarketplace": "Zum Marktplatz"
+    "visitMarketplace": "Zum Marktplatz",
+    "addApp": "App hinzufügen",
+    "removeApp": "Aus Leiste entfernen",
+    "allApps": "Alle Apps",
+    "noAppsToAdd": "Alles ist bereits in deiner Leiste"
   },
   "notifications": {
     "title": "Benachrichtigungen",
     "markAllRead": "Alle als gelesen markieren",
     "noNotifications": "Keine Benachrichtigungen",
     "dismiss": "Verwerfen",
+    "system": "System",
     "justNow": "gerade eben",
     "minutesAgo": "vor {count} Min.",
     "hoursAgo": "vor {count} Std.",

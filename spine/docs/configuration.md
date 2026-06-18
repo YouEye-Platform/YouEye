@@ -1,6 +1,6 @@
 # Spine Configuration Guide
 
-This document describes the configuration system for YE-Spine.
+This document describes the configuration system for Spine.
 
 ## Overview
 
@@ -8,7 +8,7 @@ Spine uses a YAML configuration file to customize behavior. Configuration follow
 
 1. **CLI flags** - `--config /path/to/config.yaml`
 2. **Environment variables** - `SPINE_*` prefix
-3. **Config file** - `/etc/spine/config.yaml`
+3. **Config file** - `/etc/youeye/config.yaml` (legacy: `/etc/spine/config.yaml`)
 4. **Defaults** - Built-in sensible defaults
 
 Spine works without a config file - all values have sensible defaults.
@@ -21,7 +21,7 @@ Generate a default configuration file:
 spine config init
 ```
 
-This creates `/etc/spine/config.yaml` with all defaults and comments.
+This creates `/etc/youeye/config.yaml` with all defaults and comments.
 
 View current configuration:
 
@@ -37,7 +37,7 @@ spine config validate
 
 ## Configuration File Location
 
-Default: `/etc/spine/config.yaml`
+Default: `/etc/youeye/config.yaml`
 
 Override via CLI:
 
@@ -53,14 +53,14 @@ Configure where Spine fetches updates from:
 
 ```yaml
 releases:
-  provider: "github"                  # "github" (default) or "gitea"
-  base_url: "https://github.com"      # Base URL for release downloads
-  organization: "YouEye-Platform"     # Organization/owner name
+  repo_url: "https://github.com/youeye-platform/YouEye"
   repositories:
-    spine: "YouEye"                   # Repository for Spine releases
-    control_panel: "YouEye"           # Repository for Control Panel releases
-    ui: "YouEye"                      # Repository for UI releases
+    spine_tag_prefix: "spine"
+    control_panel_tag_prefix: "cp"
+    ui_tag_prefix: "ui"
 ```
+
+`releases.repo_url` is the canonical core monorepo source for Spine, Control Panel, and YouEye UI. It can also be changed from Control Panel Settings/System.
 
 ### Deployment
 
@@ -75,6 +75,9 @@ deployment:
     app_dir: "/opt/app"          # App directory inside container
     port: 3000                   # Port to expose
     service_name: "youeye-control" # systemd service name
+  ui:
+    app_dir: "/opt/youeye-ui"    # UI app directory inside its container
+    port: 3000
 ```
 
 ### API
@@ -124,7 +127,7 @@ logging:
 All config options can be set via environment variables with `SPINE_` prefix:
 
 ```bash
-export SPINE_RELEASES_BASE_URL="https://custom.git.server"
+export SPINE_RELEASES_REPO_URL="https://git.potemk.in/potemsla/YouEye"
 export SPINE_DEPLOYMENT_CONTAINER_NAME="my-container"
 export SPINE_API_SOCKET_PATH="/custom/socket.sock"
 export SPINE_LOGGING_LEVEL="debug"
@@ -140,13 +143,11 @@ Environment variables use underscore-separated paths matching the YAML structure
 
 # Release source configuration
 releases:
-  provider: "github"
-  base_url: "https://github.com"
-  organization: "YouEye-Platform"
+  repo_url: "https://github.com/youeye-platform/YouEye"
   repositories:
-    spine: "YouEye"
-    control_panel: "YouEye"
-    ui: "YouEye"
+    spine_tag_prefix: "spine"
+    control_panel_tag_prefix: "cp"
+    ui_tag_prefix: "ui"
 
 # Deployment configuration
 deployment:
@@ -157,6 +158,9 @@ deployment:
     app_dir: "/opt/app"
     port: 3000
     service_name: "youeye-control"
+  ui:
+    app_dir: "/opt/youeye-ui"
+    port: 3000
 
 # API server configuration
 api:
@@ -198,9 +202,10 @@ Spine 0.1.0 introduces the configuration system. Previous versions used hardcode
 
 | Previous Hardcoded | Config Path | Default |
 |-------------------|-------------|---------|
-| `https://github.com` | `releases.base_url` | `https://github.com` |
+| `https://github.com/youeye-platform/YouEye` | `releases.repo_url` | `https://github.com/youeye-platform/YouEye` |
 | `youeye-control` | `deployment.container.name` | `youeye-control` |
 | `/opt/app` | `deployment.control_panel.app_dir` | `/opt/app` |
+| `/opt/youeye-ui` | `deployment.ui.app_dir` | `/opt/youeye-ui` |
 | Port 3000 | `deployment.control_panel.port` | `3000` |
 
 **No action required** - existing deployments will work unchanged.
@@ -212,7 +217,7 @@ Spine 0.1.0 introduces the configuration system. Previous versions used hardcode
 Check config file exists and is readable:
 
 ```bash
-ls -la /etc/spine/config.yaml
+ls -la /etc/youeye/config.yaml
 spine config validate
 ```
 
@@ -222,10 +227,10 @@ Ensure proper naming:
 
 ```bash
 # Correct
-export SPINE_RELEASES_BASE_URL="..."
+export SPINE_RELEASES_REPO_URL="..."
 
 # Incorrect (won't work)
-export SPINE_RELEASES_BASEURL="..."
+export SPINE_RELEASES_REPOURL="..."
 export RELEASES_BASE_URL="..."
 ```
 
@@ -234,6 +239,6 @@ export RELEASES_BASE_URL="..."
 Delete the config file and Spine will use defaults:
 
 ```bash
-rm /etc/spine/config.yaml
+rm /etc/youeye/config.yaml
 spine status  # Works with defaults
 ```
