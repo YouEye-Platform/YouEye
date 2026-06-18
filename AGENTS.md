@@ -1,3 +1,26 @@
+## dev-v0.4.10.3 / cp-dev-v0.4.49.12 / ui-dev-v0.4.28.5 — artem — 2026-06-18
+**Branch:** dev
+**VM:** potempc
+**Agent:** Artem
+**Task:** Merge Artem and Mythos work onto dev and prepare dev integration releases
+
+### Changes
+- `spine/internal/cmd/root.go` — bumped Spine to `0.4.10.3` for the dev integration release.
+- `control-panel/package.json` — bumped Control Panel to `0.4.49.12` for the merged auth/settings/native-app integration line.
+- `ui/package.json`, `ui/public/sw.js` — bumped UI to `0.4.28.5` and refreshed the generated service worker for the release build.
+- `ui/scripts/postbuild.js` — made Sharp native binding packaging skip absent optional-platform bindings while still copying installed Linux x64 bindings.
+- `README.md` — updated the Current Versions table to the dev integration tags.
+
+### Test Results
+- Spine: `go test ./...` passed; release binary reports `0.4.10.3`.
+- Installer: `go test ./...` passed; refreshed dev installer binary built.
+- Control Panel: `pnpm build` passed and `standalone.tar` contains `server.js`.
+- UI: `pnpm build` passed after the packaging fix and `standalone.tar` contains `server.js`.
+
+### Notes for Iris
+- Left the integration on `dev`; no main promotion in this pass.
+- YouEye-Uno remains excluded per owner direction.
+
 ## spine-v0.4.10.2 + installer refresh — artem — 2026-06-18
 **Branch:** artem · **VM:** potempc · **Agent:** Artem
 **Task:** Fix fresh-install identity-login 500 and remove the root SSH cloud-init guard for operator keys.

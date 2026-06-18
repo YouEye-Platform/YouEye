@@ -270,17 +270,27 @@ if (imgSrc) {
   console.log(`  Using @img bindings from: ${imgSrc}`);
   const imgDest = path.join(nodeModulesPath, '@img');
   fs.mkdirSync(imgDest, { recursive: true });
+  let copiedBindings = 0;
   for (const pkg of fs.readdirSync(imgSrc)) {
     const dest = path.join(imgDest, pkg);
     const src = path.join(imgSrc, pkg);
+    if (!fs.existsSync(src)) {
+      console.log(`  Skipping @img/${pkg}; optional binding is not installed`);
+      continue;
+    }
     // Always overwrite — earlier steps may have copied mismatched versions
     if (fs.existsSync(dest)) {
-      fs.rmSync(dest, { recursive: true });
+      fs.rmSync(dest, { recursive: true, force: true });
     }
     console.log(`  Copying @img/${pkg} (sharp native binding)...`);
-    require('child_process').execSync(`cp -rL "${src}" "${dest}"`);
+    fs.cpSync(src, dest, { recursive: true, dereference: true });
+    copiedBindings += 1;
   }
-  console.log('Done copying sharp native bindings');
+  if (copiedBindings === 0) {
+    console.log('WARNING: no installed @img native bindings were copied for sharp');
+  } else {
+    console.log('Done copying sharp native bindings');
+  }
 } else {
   console.log('WARNING: @img native bindings for sharp not found in pnpm store');
 }
