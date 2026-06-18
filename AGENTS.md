@@ -1,3 +1,26 @@
+## cp-v0.4.49.5 + installer refresh — artem — 2026-06-18
+**Branch:** artem · **VM:** potempc · **Agent:** Artem
+**Task:** Redesign the PAM root login and installer root-password screens around the full-screen tree motif.
+
+### Changes
+- `control-panel/src/components/auth/login-form.tsx`, `control-panel/src/components/auth/root-tree-art.ts` — PAM login defaults username to `root`, removes the card/title/footer/placeholder text, switches the root state to `Enter your root password`, and shows a dark full-screen amber tree backdrop. Non-root usernames return to the plain local-credentials prompt.
+- `control-panel/src/app/login/page.tsx`, `control-panel/src/app/settings/login/page.tsx` — removed the old outer page card spacing so the login form owns the full viewport.
+- `control-panel/tests/setup-polish.spec.mjs` — locked the minimal PAM root UI, static art policy, and no-runtime-generator/no-card behavior.
+- `installer/internal/installer/root_tree.go`, `installer/internal/installer/root_tree_test.go`, `installer/internal/installer/wizard.go` — root-password step now uses the tree as a terminal-sized backdrop with a small centered `Create a root password` dialog; Enter moves password -> confirm, then confirm -> next.
+- `control-panel/package.json` — 0.4.49.4 -> **0.4.49.5**.
+- `README.md` — Current Versions table updated for `cp-artem-v0.4.49.5`.
+
+### Test Results
+- Installer: `go test ./...` and `go vet ./...` passed.
+- CP focused: `pnpm exec node --test tests/setup-polish.spec.mjs` passed.
+- CP auth regression: `CONTROL_PANEL_ROOT="$PWD" pnpm exec node --import tsx --test tests/silent-settings-sso.spec.ts` passed.
+- CP production build: `pnpm build` passed for `ye-controlpanel@0.4.49.5`.
+- Visual: Playwright screenshots verified `/login` default root state is dark/full-screen with enlarged tree art, and changing username to `admin` removes the art and returns to the plain light local-credentials screen.
+
+### Notes for Iris
+- The tree remains generated offline and committed as static text only; no Ansizalizer/`ansipx` runtime dependency in CP or the installer.
+- Installer release reuses the stable `installer-artem-v0.1.0` curl target, refreshed to this commit.
+
 ## cp-v0.4.49.4 + installer refresh — artem — 2026-06-18
 **Branch:** artem · **VM:** potempc · **Agent:** Artem
 **Task:** Setup polish: blue setup favicon, durable setup-complete TLS choice, ANSI tree motif on installer root password + PAM root login, and YouEye Names production-LE readiness.

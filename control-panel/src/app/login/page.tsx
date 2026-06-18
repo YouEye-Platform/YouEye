@@ -22,9 +22,5 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     redirect(`/api/auth/sso?redirect=${encodeURIComponent(returnTo)}`);
   }
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <LoginForm initialError={params.error ?? null} />
-    </div>
-  );
+  return <LoginForm initialError={params.error ?? null} />;
 }

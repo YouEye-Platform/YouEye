@@ -22,9 +22,5 @@ export default async function SettingsLoginPage({ searchParams }: SettingsLoginP
     redirect(`/settings/api/auth/sso?redirect=${encodeURIComponent(returnTo)}`);
   }
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <LoginForm initialError={params.error ?? null} settingsFlow />
-    </div>
-  );
+  return <LoginForm initialError={params.error ?? null} settingsFlow />;
 }

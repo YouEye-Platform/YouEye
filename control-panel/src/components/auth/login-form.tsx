@@ -5,12 +5,10 @@ import { usePathname, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
-import { Server, Lock, User, AlertCircle } from 'lucide-react';
+import { Lock, User, AlertCircle } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import { useSiteConfig } from '@/hooks/use-site-config';
 import { ROOT_TREE_ART } from './root-tree-art';
 
 interface LoginFormProps {
@@ -24,11 +22,13 @@ export function LoginForm({ initialError = null, settingsFlow = false }: LoginFo
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(initialError);
   const [remaining, setRemaining] = useState<number | null>(null);
-  const [username, setUsername] = useState('');
-  const { site_name } = useSiteConfig();
+  const [username, setUsername] = useState('root');
   const t = useTranslations('login');
   const authBase = settingsFlow ? '/settings/api/auth' : '/api/auth';
   const showRootTree = username.trim() === 'root';
+  const prompt = showRootTree
+    ? 'Enter your root password'
+    : 'Sign in with your Linux system credentials';
 
   async function handleSubmit(formData: FormData) {
     setError(null);
@@ -85,102 +85,120 @@ export function LoginForm({ initialError = null, settingsFlow = false }: LoginFo
   }
 
   return (
-    <div className="relative flex w-full max-w-5xl justify-center px-4">
-      <pre
+    <div
+      className={cn(
+        'relative flex min-h-screen w-full items-center justify-center overflow-hidden px-6 py-10 transition-colors duration-300',
+        showRootTree ? 'bg-black text-amber-100' : 'bg-background text-foreground'
+      )}
+    >
+      <div
         aria-hidden="true"
         className={cn(
-          'pointer-events-none absolute left-1/2 top-[58%] hidden -translate-x-1/2 -translate-y-1/2 select-none font-mono text-[10px] leading-[0.9] tracking-normal text-foreground/25 transition-opacity duration-500 dark:text-foreground/30 sm:block',
+          'pointer-events-none fixed inset-0 z-0 flex items-center justify-center overflow-hidden transition-opacity duration-500',
           showRootTree ? 'opacity-100' : 'opacity-0'
         )}
       >
-        {ROOT_TREE_ART.join('\n')}
-      </pre>
+        <pre className="select-none font-mono text-[clamp(17px,1.75vw,31px)] leading-[0.78] tracking-normal text-amber-500/30 [text-shadow:0_0_18px_rgba(245,158,11,0.22)]">
+          {ROOT_TREE_ART.join('\n')}
+        </pre>
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(0,0,0,0.18),rgba(0,0,0,0.82)_72%,#000_100%)]" />
+      </div>
 
-      <Card className="relative z-10 w-full max-w-md border-border bg-card/95 text-card-foreground shadow-lg backdrop-blur-sm">
-        <CardHeader className="space-y-1 text-center">
-          <div className="flex justify-center mb-4">
-            <div className="p-3 rounded-full bg-primary/10">
-              <Server className="h-8 w-8 text-primary" />
-            </div>
-          </div>
-          <CardTitle className="text-xl font-semibold">
-            {showRootTree ? 'Local administrator' : `${site_name} ${t('controlPanel')}`}
-          </CardTitle>
-          <CardDescription>
-            {t('signInDescription')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form action={handleSubmit} className="space-y-4">
-            {error && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  {error}
-                  {remaining !== null && remaining > 0 && (
-                    <span className="block mt-1 text-sm">
-                      {remaining} attempt{remaining !== 1 ? 's' : ''} remaining
-                    </span>
-                  )}
-                </AlertDescription>
-              </Alert>
-            )}
+      <form action={handleSubmit} className="relative z-10 w-full max-w-[360px] space-y-3">
+        <p
+          className={cn(
+            'mb-5 text-center text-sm font-medium',
+            showRootTree ? 'text-amber-200' : 'text-muted-foreground'
+          )}
+        >
+          {prompt}
+        </p>
 
-            <div className="space-y-2">
-              <Label htmlFor="username">{t('username')}</Label>
-              <div className="relative">
-                <User className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="username"
-                  name="username"
-                  type="text"
-                  placeholder="root"
-                  autoComplete="username"
-                  required
-                  value={username}
-                  onChange={(event) => setUsername(event.target.value)}
-                  className="pl-10"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="password">{t('password')}</Label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="password"
-                  name="password"
-                  type="password"
-                  placeholder="********"
-                  autoComplete="current-password"
-                  required
-                  className="pl-10"
-                />
-              </div>
-            </div>
-
-            <Button type="submit" className="w-full" disabled={isPending}>
-              {isPending ? (
-                <span className="flex items-center gap-2">
-                  <span className="h-4 w-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                  {t('signingIn')}
+        {error && (
+          <Alert variant="destructive" className="bg-background/95">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              {error}
+              {remaining !== null && remaining > 0 && (
+                <span className="mt-1 block text-sm">
+                  {remaining} attempt{remaining !== 1 ? 's' : ''} remaining
                 </span>
-              ) : (
-                t('signIn')
               )}
-            </Button>
-          </form>
+            </AlertDescription>
+          </Alert>
+        )}
 
-          <div className="mt-6 pt-4 border-t border-border">
-            <p className="text-xs text-muted-foreground text-center">
-              {t('pamHint')}
-              <br />
-              {t('adminHint')}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+        <div className="relative">
+          <Label htmlFor="username" className="sr-only">
+            {t('username')}
+          </Label>
+          <User
+            className={cn(
+              'absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2',
+              showRootTree ? 'text-amber-500/75' : 'text-muted-foreground'
+            )}
+          />
+          <Input
+            id="username"
+            name="username"
+            type="text"
+            autoComplete="username"
+            required
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            className={cn(
+              'h-11 pl-10 shadow-none',
+              showRootTree
+                ? 'border-amber-500/45 bg-black/70 text-amber-100 placeholder:text-amber-700 focus-visible:border-amber-300 focus-visible:ring-amber-400/30'
+                : 'bg-background/90'
+            )}
+          />
+        </div>
+
+        <div className="relative">
+          <Label htmlFor="password" className="sr-only">
+            {t('password')}
+          </Label>
+          <Lock
+            className={cn(
+              'absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2',
+              showRootTree ? 'text-amber-500/75' : 'text-muted-foreground'
+            )}
+          />
+          <Input
+            id="password"
+            name="password"
+            type="password"
+            autoComplete="current-password"
+            required
+            autoFocus
+            className={cn(
+              'h-11 pl-10 shadow-none',
+              showRootTree
+                ? 'border-amber-500/45 bg-black/70 text-amber-100 placeholder:text-amber-700 focus-visible:border-amber-300 focus-visible:ring-amber-400/30'
+                : 'bg-background/90'
+            )}
+          />
+        </div>
+
+        <Button
+          type="submit"
+          disabled={isPending}
+          className={cn(
+            'h-11 w-full',
+            showRootTree && 'bg-amber-500 text-black hover:bg-amber-400 focus-visible:ring-amber-400/35'
+          )}
+        >
+          {isPending ? (
+            <span className="flex items-center gap-2">
+              <span className="h-4 w-4 rounded-full border-2 border-current/30 border-t-current animate-spin" />
+              {t('signingIn')}
+            </span>
+          ) : (
+            t('signIn')
+          )}
+        </Button>
+      </form>
     </div>
   );
 }

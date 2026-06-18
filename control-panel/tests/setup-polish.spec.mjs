@@ -31,14 +31,22 @@ test('fallback favicon is the transparent blue Y used during initial setup', () 
   assert.doesNotMatch(favicon, /<rect[^>]+fill="#111827"/);
 });
 
-test('PAM login tree is a root-triggered static web asset', () => {
+test('PAM login tree is the default full-screen root emergency door asset', () => {
   const login = read('src/components/auth/login-form.tsx');
   const art = read('src/components/auth/root-tree-art.ts');
 
+  assert.match(login, /useState\('root'\)/);
   assert.match(login, /username\.trim\(\) === 'root'/);
   assert.match(login, /aria-hidden="true"/);
-  assert.match(login, /Local administrator/);
+  assert.match(login, /Enter your root password/);
+  assert.match(login, /Sign in with your Linux system credentials/);
+  assert.match(login, /fixed inset-0/);
+  assert.match(login, /bg-black text-amber-100/);
   assert.match(login, /ROOT_TREE_ART\.join\('\\n'\)/);
+  assert.doesNotMatch(login, /from '@\/components\/ui\/card'/);
+  assert.doesNotMatch(login, /Local administrator/);
+  assert.doesNotMatch(login, /pamHint/);
+  assert.doesNotMatch(login, /placeholder=/);
   assert.match(art, /Generated offline/);
   assert.doesNotMatch(art, /\x1b\[/);
   assert.doesNotMatch(art, /from 'github.com\/Zebbeni\/ansipx'/);
