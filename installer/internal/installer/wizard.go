@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/installer/theme"
+	"git.potemk.in/potemsla/YouEye/installer/internal/installer/theme"
 )
 
 // ---------------------------------------------------------------------------
@@ -20,18 +20,18 @@ type stepKind int
 
 const (
 	stepWelcome    stepKind = iota // logo + badge + "press enter"
-	stepModeSelect                // LXC vs VM (Proxmox only)
-	stepPathSelect                // Quick vs Advanced
-	stepRadio                     // single-select from options
-	stepText                      // single text input
-	stepPassword                  // two masked inputs (pw + confirm)
-	stepNumber                    // numeric input (with up/down)
-	stepResources                 // 3 number fields on one screen
-	stepToggle                    // grid of on/off toggles
-	stepIPConfig                  // DHCP/Static radio + conditional fields
-	stepDNS                       // two text fields
-	stepSSH                       // toggle + conditional source
-	stepConfirm                   // read-only summary
+	stepModeSelect                 // LXC vs VM (Proxmox only)
+	stepPathSelect                 // Quick vs Advanced
+	stepRadio                      // single-select from options
+	stepText                       // single text input
+	stepPassword                   // two masked inputs (pw + confirm)
+	stepNumber                     // numeric input (with up/down)
+	stepResources                  // 3 number fields on one screen
+	stepToggle                     // grid of on/off toggles
+	stepIPConfig                   // DHCP/Static radio + conditional fields
+	stepDNS                        // two text fields
+	stepSSH                        // toggle + conditional source
+	stepConfirm                    // read-only summary
 )
 
 // ---------------------------------------------------------------------------
@@ -227,10 +227,13 @@ func newWizardModel(env envInfo) wizardModel {
 		config: newConfigFromEnv(env),
 		env:    env,
 	}
-	// Proxmox: mode select → path select → steps.
+	// VM-only: YouEye must run in a full VM (LXC is not supported — Spine runs
+	// Incus, and nested Incus-in-LXC is fragile). So we skip the LXC/VM mode
+	// select and go straight to path select.
 	// No welcome screen — go straight to business.
 	if env.IsProxmox {
-		w.steps = []wizStep{modeSelectStep(), pathSelectStep()}
+		w.config.Mode = modeVM
+		w.steps = []wizStep{pathSelectStep()}
 	} else {
 		w.config.Mode = modeHost
 		w.steps = []wizStep{pathSelectStep()}
@@ -546,17 +549,12 @@ func (w wizardModel) handleKey(msg tea.KeyMsg) (wizardModel, tea.Cmd) {
 	case stepPassword:
 		switch key {
 		case "tab", "shift+tab":
-			w.focusField = (w.focusField + 1) % 2
-			cmds := make([]tea.Cmd, len(w.inputs))
-			for i := range w.inputs {
-				if i == w.focusField {
-					cmds[i] = w.inputs[i].Focus()
-				} else {
-					w.inputs[i].Blur()
-				}
-			}
-			return w, tea.Batch(cmds...)
+			return w.focusInput((w.focusField + 1) % 2)
 		case "enter":
+			if w.focusField == 0 {
+				w.pwMatch = true
+				return w.focusInput(1)
+			}
 			if len(w.inputs) >= 2 {
 				w.pwMatch = w.inputs[0].Value() == w.inputs[1].Value()
 				if !w.pwMatch {
@@ -728,6 +726,28 @@ func (w wizardModel) handleKey(msg tea.KeyMsg) (wizardModel, tea.Cmd) {
 	return w, nil
 }
 
+func (w wizardModel) focusInput(index int) (wizardModel, tea.Cmd) {
+	if len(w.inputs) == 0 {
+		return w, nil
+	}
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(w.inputs) {
+		index = len(w.inputs) - 1
+	}
+	w.focusField = index
+	cmds := make([]tea.Cmd, len(w.inputs))
+	for i := range w.inputs {
+		if i == w.focusField {
+			cmds[i] = w.inputs[i].Focus()
+		} else {
+			w.inputs[i].Blur()
+		}
+	}
+	return w, tea.Batch(cmds...)
+}
+
 func (w wizardModel) advance() (wizardModel, tea.Cmd) {
 	w.saveStep()
 	w.current++
@@ -762,6 +782,10 @@ func (w wizardModel) View() string {
 		return ""
 	}
 	s := w.steps[w.current]
+
+	if s.kind == stepPassword {
+		return w.viewPasswordScreen()
+	}
 
 	var body string
 	switch s.kind {
@@ -829,7 +853,7 @@ func (w wizardModel) hintForStep(k stepKind) string {
 	case stepModeSelect, stepPathSelect, stepRadio:
 		return theme.Hint.Render("  ↑/↓ select · Enter confirm · Esc back")
 	case stepPassword:
-		return theme.Hint.Render("  Tab switch field · Enter next · Esc back")
+		return theme.Hint.Render("  Enter confirm field · Enter again next · Tab switch · Esc back")
 	case stepText:
 		return theme.Hint.Render("  Type your value · Enter next · Esc back")
 	case stepResources:
@@ -900,8 +924,27 @@ func (w wizardModel) viewRadioLike(s wizStep, prompt string) string {
 	return strings.Join(rows, "\n")
 }
 
+func (w wizardModel) viewPasswordScreen() string {
+	body := w.viewPassword()
+	dialog := theme.Box.
+		Width(58).
+		Padding(1, 2).
+		Background(theme.Bg).
+		Render(body)
+
+	if w.width > 0 && w.height > 0 {
+		return renderRootPasswordBackdropWithDialog(w.width, w.height, dialog)
+	}
+	return dialog
+}
+
 func (w wizardModel) viewPassword() string {
 	var rows []string
+	rows = append(rows,
+		theme.Dim.Render("Step "+strconv.Itoa(w.current+1)+" of "+strconv.Itoa(len(w.steps))),
+		theme.Title.Render("Create a root password"),
+		"",
+	)
 	labels := []string{"Password:", "Confirm: "}
 	for i, lbl := range labels {
 		style := theme.Dim
@@ -915,8 +958,9 @@ func (w wizardModel) viewPassword() string {
 		rows = append(rows, "", theme.Danger.Render("  Passwords don't match"))
 	}
 	if w.inputs[0].Value() == "" {
-		rows = append(rows, "", theme.Dim.Render("  Leave blank for no password (auto-login)"))
+		rows = append(rows, "", theme.Dim.Render("  VM OS root password for console/emergency access."))
 	}
+	rows = append(rows, "", theme.Hint.Render("  Enter moves to confirm · Enter again continues · Esc back"))
 	return strings.Join(rows, "\n")
 }
 

@@ -1,3 +1,195 @@
+## spine-v0.4.10.2 + installer refresh — artem — 2026-06-18
+**Branch:** artem · **VM:** potempc · **Agent:** Artem
+**Task:** Fix fresh-install identity-login 500 and remove the root SSH cloud-init guard for operator keys.
+
+### Changes
+- `spine/internal/container/control.go` — fresh deploy now creates `youeye-id.service` with the same `INCUS_HTTPS_URL`, `INCUS_CLIENT_CERT`, and `INCUS_CLIENT_KEY` env as `youeye-control.service`.
+- `spine/internal/api/server.go`, `spine/internal/cmd/update.go` — CP update/repair paths now write a `youeye-id.service.d/incus-https.conf` drop-in for existing installs when the Incus client cert/key exist, then restart `youeye-id`.
+- `spine/internal/cmd/root.go` — Spine 0.4.10.1 -> **0.4.10.2**.
+- `installer/internal/installer/provider_proxmox.go` — after guest boot, normalize the operator-supplied cloud-init SSH keys into `/root/.ssh/authorized_keys` without Debian's forced "login as youeye" root guard. This does not enable password root SSH; it makes trusted host keys work directly for root, equivalent to the existing `youeye` passwordless-sudo path.
+- `README.md` — Current Versions table updated for `spine-artem-v0.4.10.2`.
+
+### Test Results
+- Live hotpatch on VM `youeye8` (`192.168.31.65`): added the Incus HTTPS env drop-in to `youeye-id.service`, restarted only `youeye-id`, and confirmed `/application/o/authorize` returns a clean 307 to `/identity/login` with no new `ENOENT /var/lib/incus/unix.socket` route errors.
+- Spine: `go test ./...`, `go vet ./...`, and `go build ./...` passed.
+- Installer: `go test ./...` and `go vet ./...` passed.
+
+### Notes for Iris
+- Root SSH direct login is acceptable here because the imported host keys already land on the `youeye` cloud-init user, which has passwordless sudo. The change removes a confusing forced-command guard for the same trusted keys; it does not enable root password SSH.
+- The identity-login 500 root cause was `youeye-id.service` falling back to the removed Incus Unix socket because it lacked the HTTPS Incus client env that CP already had.
+
+## cp-v0.4.49.5 + installer refresh — artem — 2026-06-18
+**Branch:** artem · **VM:** potempc · **Agent:** Artem
+**Task:** Redesign the PAM root login and installer root-password screens around the full-screen tree motif.
+
+### Changes
+- `control-panel/src/components/auth/login-form.tsx`, `control-panel/src/components/auth/root-tree-art.ts` — PAM login defaults username to `root`, removes the card/title/footer/placeholder text, switches the root state to `Enter your root password`, and shows a dark full-screen amber tree backdrop. Non-root usernames return to the plain local-credentials prompt.
+- `control-panel/src/app/login/page.tsx`, `control-panel/src/app/settings/login/page.tsx` — removed the old outer page card spacing so the login form owns the full viewport.
+- `control-panel/tests/setup-polish.spec.mjs` — locked the minimal PAM root UI, static art policy, and no-runtime-generator/no-card behavior.
+- `installer/internal/installer/root_tree.go`, `installer/internal/installer/root_tree_test.go`, `installer/internal/installer/wizard.go` — root-password step now uses the tree as a terminal-sized backdrop with a small centered `Create a root password` dialog; Enter moves password -> confirm, then confirm -> next.
+- `control-panel/package.json` — 0.4.49.4 -> **0.4.49.5**.
+- `README.md` — Current Versions table updated for `cp-artem-v0.4.49.5`.
+
+### Test Results
+- Installer: `go test ./...` and `go vet ./...` passed.
+- CP focused: `pnpm exec node --test tests/setup-polish.spec.mjs` passed.
+- CP auth regression: `CONTROL_PANEL_ROOT="$PWD" pnpm exec node --import tsx --test tests/silent-settings-sso.spec.ts` passed.
+- CP production build: `pnpm build` passed for `ye-controlpanel@0.4.49.5`.
+- Visual: Playwright screenshots verified `/login` default root state is dark/full-screen with enlarged tree art, and changing username to `admin` removes the art and returns to the plain light local-credentials screen.
+
+### Notes for Iris
+- The tree remains generated offline and committed as static text only; no Ansizalizer/`ansipx` runtime dependency in CP or the installer.
+- Installer release reuses the stable `installer-artem-v0.1.0` curl target, refreshed to this commit.
+
+## cp-v0.4.49.4 + installer refresh — artem — 2026-06-18
+**Branch:** artem · **VM:** potempc · **Agent:** Artem
+**Task:** Setup polish: blue setup favicon, durable setup-complete TLS choice, ANSI tree motif on installer root password + PAM root login, and YouEye Names production-LE readiness.
+
+### Changes
+- `control-panel/src/app/api/branding/favicon/route.ts` — fallback favicon is now a transparent blue `Y`, used before UI branding is available during first setup.
+- `control-panel/src/app/api/setup/run/route.ts`, `control-panel/src/app/setup/page.tsx`, `control-panel/src/app/setup-complete/page.tsx`, `control-panel/src/lib/settings/service.ts` — persist `tls_choice`, redirect completed provisioning to `/setup-complete?tls=...`, and read persisted/extra TLS choice so CA downloads appear only for self-signed installs.
+- `control-panel/src/components/auth/login-form.tsx`, `control-panel/src/components/auth/root-tree-art.ts` — PAM emergency login now shows a static tree-roots motif and "Local administrator" title only when username is `root`; no runtime generator dependency.
+- `installer/internal/installer/root_tree.go`, `installer/internal/installer/root_tree_test.go`, `installer/internal/installer/wizard.go` — installer root-password step shows the dim amber tree on roomy terminals, hides it at 80x24, and clarifies this is the VM OS root password.
+- `control-panel/package.json` — 0.4.49.3 → **0.4.49.4**.
+- `README.md` — Current Versions table updated for Artem's Spine/CP release line.
+
+### Test Results
+- CP: `pnpm build` clean (Next skipped project-wide type validation by config; direct `tsc --noEmit` still fails on pre-existing unrelated files listed in final report).
+- CP focused: `pnpm exec node --test tests/setup-polish.spec.mjs` passed.
+- Visual: Playwright screenshots of `/login` empty + typed `root`; verified the tree appears only after `root`, form remains readable, and `/api/branding/favicon?size=64` contains blue `Y` and no dark fallback rect.
+- Installer: `go test ./...` and `go vet ./...` passed.
+
+### Notes for Iris
+- Ansizalizer/`ansipx` remain local/offline asset-generation tools only. Commit static text assets; do not add generator dependencies to CP or installer.
+- YouEye Names production LE is an ops switch on LXC 623, not a CP code dependency. Watch LE rate limits until `youeye.me` is on the Public Suffix List; use reuse bundles for reinstall loops.
+
+## cp-v0.4.49.3 — artem — 2026-06-17
+**Branch:** artem · **VM:** potempc · **Agent:** Artem
+**Task:** Fix the YouEye Names apex serving Caddy's internal cert instead of the loaded Let's Encrypt cert. Latent today (staging LE is untrusted everywhere) but under production LE the main dashboard at the bare apex would warn while subdomains stayed trusted.
+
+### Changes
+- `control-panel/src/lib/caddy/client.ts` — `loadExternalCert()` now also sets a TLS **connection policy** pinning `certificate_selection.any_tag:['external']` for the loaded subjects (apex + wildcard), with a catch-all `{}` last so IP / uncovered hosts keep on_demand internal. This makes Caddy deterministically serve the loaded cert at the handshake, beating any on-demand internal cert it cached for the bare apex during the deploy window. `removeExternalCert()` strips that policy on revert (else it force-selects a now-missing cert and breaks the handshake). Lives inside `loadExternalCert` → covers all 5 cert-load paths (YouEye Names reuse + fresh, ACME, manual upload, post-`setDomain` restore). Types already supported it — no type change.
+- `control-panel/package.json` — 0.4.49.2 → **0.4.49.3**.
+
+### Test Results
+- Verified live on VM 192.168.31.63 (lease `sage-dell`): applying the exact connection policy via Caddy's admin API flipped the apex `sage-dell.youeye.me` from `Caddy Local Authority` → `(STAGING) Let's Encrypt` instantly — zero downtime, no LE re-issue. `control.`/`id.`/`dns.` stayed LE; IP `192.168.31.63` correctly stayed internal. Built via `yebuild cp` (pnpm build clean, artifact reports 0.4.49.3).
+
+### Notes for Iris
+- CP-only — no Spine/UI/broker/installer change. The bug is **not** reuse-specific: any external cert load (including fresh installs) hits it whenever the apex is touched on-demand before the cert loads. Still LE **staging** until `youeye.me` is on the Public Suffix List.
+
+## spine-v0.4.10.1 — artem — 2026-06-17
+**Branch:** artem · **VM:** potempc · **Agent:** Artem
+**Task:** `youeye names export` / `youeye names import` — reuse a YouEye Names address+cert across (re)installs, esp. same-VM `youeye deploy` (where the installer `--names-bundle` flag doesn't apply).
+
+### Changes
+- `spine/internal/cmd/names.go` — **new** `youeye names` command group:
+  - `export [-o file]` — pulls the reuse bundle from CP (`GET /api/tls/youeye-names/export` via the CLI-token `controlClient`) → stdout or a `0600` file.
+  - `import <bundle.json>` — validates + stages it into the CP container at `/opt/youeye-control-data/youeye-names/import-bundle.json` (the path the setup wizard already watches) via `incus exec`. Run after `youeye deploy`, before opening setup.
+- `spine/internal/cmd/root.go` — register `namesCmd`; version `0.4.10` → `0.4.10.1`.
+
+### Test Results
+- `go build ./...` + `go vet` clean. `youeye names --help` lists export/import. No CP/web change — reuses the live reuse path (`/reuse` + setup/run import shipped in cp-v0.4.49.2).
+
+### Notes for Iris
+- Export needs CP up (CLI-token API); import is host-level (incus exec). Bundle holds private keys → a credential. Built with ldflags (Version+BuildDate) per pitfall #7.
+
+## cp-v0.4.49.2 + installer — artem — 2026-06-17
+**Branch:** artem · **VM:** potempc · **Agent:** Artem
+**Task:** Fast cert (no self-signed temp) + reuse a YouEye Names address/cert across (re)installs via an installer flag. Follows the first live test (cert installed too slowly because the broker's blind 120s sleep beat CP's 120s poll).
+
+### Changes
+- **Broker** (`YouEye-Names` v0.3.0, deployed to LXC 623): DNS-propagation poll instead of the blind 120s sleep → issuance ~131s → **~22s verified**; generated names now bare `adjective-noun` (suffix only on collision). Separate repo/AGENTS.
+- `control-panel/src/lib/youeye-names/bundle.ts` — **new** reuse bundle: `exportBundle` (identity + TLS key + cert + name), `getStagedBundle`/`consumeStagedBundle`/`applyBundleIdentity`/`bundleCertStillValid`. `identity.ts` — `resetIdentityCache` + path exports.
+- `control-panel/src/app/api/tls/youeye-names/{export,reuse}/route.ts` — **new** admin routes: download the bundle (a credential), and report whether a staged bundle awaits import.
+- `control-panel/src/app/api/setup/run/route.ts` — reuse path: if a bundle is staged + its cert is valid, install it + signed IP-update (DNS-only) — **no Let's Encrypt**; else fresh issue (expired bundle re-issues under the same identity/name). Cert poll ceiling 120s → 150s.
+- `control-panel/src/components/setup/SetupServerName.tsx` — detects a staged bundle (`/reuse`) and locks the address to the existing name ("Reusing your existing address"). `messages/*.json` — 3 keys.
+- `installer/internal/installer/provider_proxmox.go` — `YOUEYE_NAMES_BUNDLE` env: after deploy, stages the bundle into `youeye-control:/opt/youeye-control-data/youeye-names/import-bundle.json`. `scripts/install.sh` — documents the flag.
+
+### Test Results
+- Broker: `pnpm build`/test clean; deployed; **live e2e issuance 22s**; previews now `snowy-valley`, `ivory-glade`, … (clean 2-word). CP `tsc` clean for new files; `pnpm build` standalone OK (0.4.49.2). Installer `go build`/`vet` clean. Owner re-tests reinstall.
+
+### Notes for Iris
+- Bundle holds private keys → a credential (0600, never logged). Reuse = same logical server resuming; broker still enforces signed ownership. Avoids LE quota burn on frequent reinstalls.
+
+## cp-v0.4.49.1 — artem — 2026-06-17
+**Branch:** artem · **VM:** potempc · **Agent:** Artem
+**Task:** Integrate YouEye Names into the setup "choose your server name" screen.
+
+### Changes
+- `control-panel/src/lib/youeye-names/{identity,client,csr}.ts` — **new** broker client: Ed25519 install identity (persisted at `/opt/youeye-control-data/youeye-names`, survives redeploy), canonical signed requests, `preview/claim/requestCertificate/getCurrentCertificate/updateIp`, CSR via `acme-client`. Signing verified byte-for-byte against the live broker.
+- `control-panel/src/app/api/tls/youeye-names/preview/route.ts` — **new** non-committing name preview (admin + CSRF gate, same as `/api/tls/acme`).
+- `control-panel/src/components/setup/SetupServerName.tsx` — YouEye Names is the **default**: display name + auto-generated `*.youeye.me` address with a refresh button (cycles previews, **no certificate**). The three existing options (own domain / self-signed / upload) demoted to inline-expanding buttons.
+- `control-panel/src/app/setup/page.tsx` — default `tlsChoice='youeye-names'`; `domain=<name>.youeye.me`; passes `yen_name` + `current_ip` to provisioning.
+- `control-panel/src/app/api/setup/run/route.ts` — for youeye-names: claim(name, LAN IP) → gen key+CSR → request cert → poll (≤2 min) → `caddy.loadExternalCert` (wildcard covers control./id./dns.); idempotent; persists cert. Restore-after-setDomain now covers `manual` certs too.
+- `control-panel/src/components/setup/SetupDnsExplainer.tsx` — suppress manual-DNS steps for youeye-names (broker owns DNS); show rebinding caveat.
+- `messages/{en,de,fr,es,ru}.json` — 10 new `setup.*` keys.
+- `control-panel/package.json` — 0.4.49 → **0.4.49.1**.
+
+### Test Results
+- `pnpm build` clean (next build + postbuild, standalone OK, artifact version 0.4.49.1). `tsc` clean for new files. Live broker: register 201 (fingerprint matches local), signed preview 200 → 3 options. Owner installs + tests the full flow.
+
+### Notes for Iris
+- Monorepo CP release `cp-artem-v0.4.49.1`. Broker (`YouEye-Names`) committed+pushed to `main` (817fa70). Stays on **LE staging** until validated; production needs `youeye.me` on the Public Suffix List (rate-limit scaling).
+
+## installer — IPv6 image-pull fix + deploy failure detection — artem — 2026-06-17
+**Branch:** artem · **Agent:** Artem
+**Task:** Operator's first full run reported success but the platform was half-deployed (Caddy + Pi-Hole missing).
+
+### Changes
+- `installer/internal/installer/provider_proxmox.go` — **(1)** CLAUDE.md pitfall #17: a fresh Debian VM has no IPv6 route, but docker.io DNS returns AAAA records, so incus's bundled `skopeo` tries IPv6 first and dies `network is unreachable`. Spine/Postgres/CP/UI pull over IPv4 (Forgejo/Debian) and succeeded; Caddy + Pi-Hole (docker.io) failed. Now disable IPv6 (`sysctl` runtime + `/etc/sysctl.d/99-youeye-ipv4.conf`) and add the `precedence ::ffff:0:0/96 100` gai.conf line **before** deploy. **(2)** `youeye deploy` logs stage failures but swallows them and exits 0 — the installer trusted that 0. Now scan the deploy log for `deployment failed|Operation failed|network is unreachable` on exit and fail loudly with detail, even on exit 0. Corrected the recovery hint (deploy is NOT idempotent — dies on "Instance already exists" — so point at the log + fresh reinstall, don't suggest re-running deploy).
+
+### Test Results
+- `go build`/`go vet` clean. **Verified on the live failed VM (135):** after disabling IPv6, `curl -4 registry-1.docker.io/v2/` → 401 (reachable; was "network unreachable"), and `/opt/incus/bin/skopeo inspect docker://docker.io/library/caddy:2.11.4` + `pihole:2026.05.0` both return full manifests. First run already proved Postgres/CP/UI deploy cleanly. Binary re-uploaded to `installer-artem-v0.1.0` (curl unchanged).
+
+### Notes for Iris
+- The non-idempotent `youeye deploy` ("Instance already exists" on re-run, then skips remaining stages, still exits 0) is a **Spine deploy** bug, out of scope here — flagged for follow-up.
+
+## installer — root password + console fixes — artem — 2026-06-17
+**Branch:** artem · **Agent:** Artem
+**Task:** Fix three issues from the operator's live TUI test: password didn't log in, and the xterm.js console was flaky.
+
+### Changes
+- `installer/internal/installer/provider_proxmox.go` — the "Root Password" was set on the **youeye** cloud-init user (`--cipassword`), not root. Removed that; root's password is now set **inside the guest** via `qm guest exec` (`chpasswd -e` with the openssl `$6$` hash — no plaintext on a command line), after the agent is up. Failing to set it is fatal (loud, per pitfall #23). Switched the VM display from `--vga serial0` to `--vga std` so the Proxmox **Console** button is **noVNC** (reliable typing) instead of the xterm.js serial console (blank-until-Enter, flaky focus); serial socket kept for host-side `qm terminal`. Explicitly `systemctl enable --now getty@tty1 + serial-getty@ttyS0` and allow root on ttyS0 in `/etc/securetty` (if present) so both consoles always have a live login prompt.
+- `installer/internal/installer/complete.go` — completion screen hard-coded `Username: admin`, conflating the YouEye **web** login (a browser setup wizard, no preset password — see `spine/internal/cmd/setup.go`) with the **VM console** login. Now shows the setup-wizard note plus a separate `VM login: root — password: the one you set`.
+
+### Test Results
+- `go build ./...` + `go vet ./internal/installer/` clean (linux/amd64). Binary (7.4 MB, static ELF) re-uploaded to `installer-artem-v0.1.0` (curl URL unchanged). Awaiting live owner re-test.
+
+### Notes for Iris
+- "Just root" by design: no separate VM user password. youeye cloud-init user remains key-only (host SSH key).
+
+## installer (youeye-installer TUI) — artem — 2026-06-17
+**Branch:** artem · **Agent:** Artem
+**Task:** Combine the existing Bubble Tea installer (design/steps/games) with the proven Proxmox VM logic — Go-native, provider architecture, VM-only.
+
+### Changes
+- `installer/` — **new Go module** (`git.potemk.in/potemsla/YouEye/installer`) building the `youeye-installer` binary. `main.go` launches the TUI.
+- `installer/internal/installer/` — TUI **moved** from `spine/internal/installer/`. Added `provider.go` (Provider interface + registry), `provider_proxmox.go` (the proven sequence in Go: pre-bake/SeaBIOS/import-from/virtio-scsi-single + in-VM Spine install & `youeye deploy` via `qm guest exec`, no SSH). `installer.go` re-enables the Proxmox→wizard path (removed the "not ready" stub routing); `wizard.go` forces `modeVM` (VM-only).
+- `installer/scripts/proxmox-vm.sh` — the standalone provisioner, kept as reference/escape-hatch. `installer/scripts/install.sh` — curl bootstrap.
+- `spine/internal/installer/` + `spine/internal/cmd/installer_cmd.go` — **removed** (TUI moved out). `spine/install.sh` — fixed stale `youeye installer` references. Spine still builds.
+
+### Test Results
+- `go build` + `go vet ./...` clean for the installer module (linux/amd64). `go build ./...` clean for spine. Binary smoke-tested. VM sequence previously verified end-to-end on Koshka (VM 9000) via proxmox-vm.sh; Go port + TUI await live owner test.
+
+### Notes for Iris
+- New module = a new release artifact (`youeye-installer` binary). Not a spine/cp/ui component bump.
+- LXC intentionally unsupported (Spine runs Incus; nested Incus-in-LXC is fragile). See `YE-Wiki/installer/youeye-installer.md`.
+
+## installer/proxmox-vm.sh — artem — 2026-06-17
+**Branch:** artem · **Agent:** Artem
+**Task:** New Proxmox VM provisioner for the YouEye installer — creates a Debian VM with the QEMU guest agent pre-baked, so the host drives the in-VM install via `qm guest exec`. No component release (host-side script).
+
+### Changes
+- `installer/proxmox-vm.sh` — **new.** Non-interactive, curl-from-Proxmox-host script. Downloads Debian 13 genericcloud, pre-bakes `qemu-guest-agent` with `virt-customize`, `qm create` (virtio-scsi-single, serial console, `--agent enabled=1`), one-step `import-from` disk into local-lvm, cloud-init drive + DHCP + ciuser/sshkeys, grows disk, boots, polls the agent, runs a demo `qm guest exec`. Env/flag parameterized; `--recreate` for re-tests.
+
+### Test Results
+- Live on Proxmox host **Koshka (PVE 9.1.1)**, throwaway VM 9000: VM created → guest agent up → `qm guest exec` ran as root (uid=0) → disk grew to 20G (cloud-init growpart) → cloud-init done → SSH fallback (youeye + passwordless sudo) confirmed. End-to-end green.
+
+### Notes for Iris
+- Host-side bash, NOT a Spine/CP/UI component — no version bump / Forgejo release.
+- Part of the "X installer" plan (`Agent Working/youeye-developer/Artem/Plans/X installer.md`). Next slices: wire the real Spine install + `youeye deploy` into the guest-exec step, the base-Linux detection branch, then the TUI.
+- Requires `libguestfs-tools` on the host (script installs it if missing). Koshka had a pre-existing broken 3rd-party Docker apt repo; the script tolerates a non-zero `apt-get update`.
+
 ## cp-v0.4.49 + spine-v0.4.10 — mythos — 2026-06-16
 **Branch:** main · **Agent:** Mythos
 **Task:** Platform RAM + app-isolation overhaul (5 workstreams) — verified live on bykapc incl. reboot.

@@ -26,6 +26,24 @@ import {
   ensureIdentityAdminUser,
 } from '@/lib/identity/core-clients';
 import { tlsStorage } from '@/lib/acme/storage';
+import { claimName, requestCertificate, getCurrentCertificate, updateIp } from '@/lib/youeye-names/client';
+import { generateCsr } from '@/lib/youeye-names/csr';
+import { getStagedBundle, consumeStagedBundle, applyBundleIdentity, bundleCertStillValid } from '@/lib/youeye-names/bundle';
+
+/** True for the private/VPN IPv4 ranges YouEye Names accepts. */
+function isPrivateIPv4(ip: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+  if (!m) return false;
+  const o = m.slice(1).map(Number);
+  if (o.some((n) => n > 255)) return false;
+  const [a, b] = o;
+  return (
+    a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127)
+  );
+}
 
 interface SetupRequest {
   site_name: string;
@@ -39,8 +57,12 @@ interface SetupRequest {
   site_name_style?: Record<string, unknown>;
   icon_config?: Record<string, unknown>;
   identity_name?: string;
-  /** TLS mode chosen during setup (letsencrypt, selfsigned, upload) */
+  /** TLS mode chosen during setup (youeye-names, letsencrypt, selfsigned, upload) */
   tls_choice?: string;
+  /** YouEye Names leased subdomain (when tls_choice === 'youeye-names') */
+  yen_name?: string;
+  /** The server's LAN IP the browser reached setup on (YouEye Names DNS target) */
+  current_ip?: string;
   /** If set, only run this specific step (retry mode) */
   retry_step?: string;
 }
@@ -181,6 +203,7 @@ export async function POST(request: NextRequest) {
             domain: body.domain,
             subdomains: body.subdomains,
             identity: { provider: 'youeye-id', name: identityName },
+            tls_choice: body.tls_choice || 'selfsigned',
             setup_completed: false,
           });
           await saveStepState('config', 'done');
@@ -208,17 +231,95 @@ export async function POST(request: NextRequest) {
             hasError = true;
           }
 
-          // If an ACME cert was already issued during setup (LE flow in step 0),
-          // restore it now — setDomain() resets TLS policies to self-signed
+          // If a cert was already issued/stored during setup (LE flow in step 0,
+          // or a prior YouEye Names run), restore it — setDomain() resets TLS
+          // policies to self-signed.
           if (!hasError) {
             try {
               const storedCert = await tlsStorage.getCert();
-              if (storedCert && storedCert.mode === 'acme') {
+              if (storedCert && (storedCert.mode === 'acme' || storedCert.mode === 'manual')) {
                 await caddy.loadExternalCert(storedCert.certPem, storedCert.keyPem, storedCert.domains);
-                console.log('[setup] Restored ACME certificate after setDomain');
+                console.log(`[setup] Restored ${storedCert.mode} certificate after setDomain`);
               }
             } catch (certErr) {
-              console.warn('[setup] Non-fatal: could not restore ACME cert:', certErr);
+              console.warn('[setup] Non-fatal: could not restore stored cert:', certErr);
+            }
+          }
+
+          // ── YouEye Names: claim the leased name + install a real certificate ──
+          // The broker runs ACME DNS-01 in the youeye.me zone and returns only the
+          // chain (the TLS key never leaves this server). Idempotent: if a prior
+          // run already stored a cert for this domain it was restored above, so we
+          // skip re-issuing.
+          if (!hasError && body.tls_choice === 'youeye-names' && body.yen_name) {
+            const alreadyDone = (await tlsStorage.getCert())?.domains?.includes(domain);
+            if (!alreadyDone) {
+              try {
+                const ip = (body.current_ip || '').trim();
+                if (!isPrivateIPv4(ip)) {
+                  throw new Error(`Could not determine this server's local network IP${ip ? ` (got "${ip}")` : ''}. Open setup from the server's IP address and try again.`);
+                }
+                const domains = [domain, `*.${domain}`];
+                const staged = await getStagedBundle();
+
+                if (staged && bundleCertStillValid(staged)) {
+                  // ── Reuse: install the bundled cert, NO Let's Encrypt issuance ──
+                  stepUpdate('caddy', 'running', 'Reusing your YouEye Names certificate…');
+                  await applyBundleIdentity(staged);
+                  await caddy.loadExternalCert(staged.tls.certPem, staged.tls.keyPem, domains);
+                  await tlsStorage.storeCert({
+                    mode: 'manual', certPem: staged.tls.certPem, keyPem: staged.tls.keyPem,
+                    issuer: 'YouEye Names', domains, expiresAt: staged.expiresAt || '',
+                    issuedAt: new Date().toISOString(),
+                  });
+                  // Resume the lease + repoint DNS at this box's current IP (DNS-only).
+                  try {
+                    await claimName(staged.name, ip);
+                  } catch (claimErr) {
+                    const m = claimErr instanceof Error ? claimErr.message : '';
+                    if (!/already|exists|own|leased/i.test(m)) throw claimErr;
+                  }
+                  await updateIp(staged.name, ip).catch(() => {});
+                  await consumeStagedBundle();
+                  console.log('[setup] Reused YouEye Names certificate for', domain);
+                } else {
+                  // ── Fresh issuance (or expired bundle → re-issue under same name) ──
+                  if (staged) { await applyBundleIdentity(staged); await consumeStagedBundle(); }
+                  stepUpdate('caddy', 'running', 'Securing your YouEye Names address…');
+                  // Claim (tolerate a lease we already own from a prior attempt).
+                  try {
+                    await claimName(body.yen_name, ip);
+                  } catch (claimErr) {
+                    const m = claimErr instanceof Error ? claimErr.message : '';
+                    if (!/already|exists|own|leased/i.test(m)) throw claimErr;
+                  }
+                  const { keyPem, csrPem } = await generateCsr(domain);
+                  await requestCertificate(body.yen_name, csrPem);
+                  // Poll for issuance. The broker now issues in ~15–30s (it polls
+                  // DNS propagation instead of a fixed sleep); ceiling is generous.
+                  let cert: Awaited<ReturnType<typeof getCurrentCertificate>> = null;
+                  const deadline = Date.now() + 150_000;
+                  while (Date.now() < deadline) {
+                    cert = await getCurrentCertificate(body.yen_name);
+                    if (cert) break;
+                    await new Promise((r) => setTimeout(r, 4000));
+                  }
+                  if (!cert) {
+                    throw new Error('Your YouEye Names certificate is taking longer than usual to issue. It may still arrive shortly — you can retry this step.');
+                  }
+                  await caddy.loadExternalCert(cert.certificateChain, keyPem, domains);
+                  await tlsStorage.storeCert({
+                    mode: 'manual', certPem: cert.certificateChain, keyPem,
+                    issuer: 'YouEye Names', domains, expiresAt: cert.expiresAt || '',
+                    issuedAt: new Date().toISOString(),
+                  });
+                  console.log('[setup] Installed YouEye Names certificate for', domain);
+                }
+              } catch (yenErr) {
+                stepUpdate('caddy', 'error', yenErr instanceof Error ? yenErr.message : 'YouEye Names certificate failed');
+                await saveStepState('caddy', 'error');
+                hasError = true;
+              }
             }
           }
 
@@ -480,7 +581,10 @@ export async function POST(request: NextRequest) {
         // ── Step 6: Finalize ─────────────────────────────────────────
         if (shouldRunStep('finalize')) {
           stepUpdate('finalize', 'running');
-          await settingsService.setRaw({ setup_completed: true });
+          await settingsService.setRaw({
+            setup_completed: true,
+            tls_choice: body.tls_choice || 'selfsigned',
+          });
           // Clear setup_steps on successful completion
           await spineClient.patchConfig({ setup_steps: {} });
           await saveStepState('finalize', 'done');

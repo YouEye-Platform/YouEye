@@ -5,11 +5,11 @@ import { usePathname, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Server, Lock, User, AlertCircle } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Lock, User, AlertCircle } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import { useSiteConfig } from '@/hooks/use-site-config';
+import { ROOT_TREE_ART } from './root-tree-art';
 
 interface LoginFormProps {
   initialError?: string | null;
@@ -22,9 +22,13 @@ export function LoginForm({ initialError = null, settingsFlow = false }: LoginFo
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(initialError);
   const [remaining, setRemaining] = useState<number | null>(null);
-  const { site_name } = useSiteConfig();
+  const [username, setUsername] = useState('root');
   const t = useTranslations('login');
   const authBase = settingsFlow ? '/settings/api/auth' : '/api/auth';
+  const showRootTree = username.trim() === 'root';
+  const prompt = showRootTree
+    ? 'Enter your root password'
+    : 'Sign in with your Linux system credentials';
 
   async function handleSubmit(formData: FormData) {
     setError(null);
@@ -81,88 +85,120 @@ export function LoginForm({ initialError = null, settingsFlow = false }: LoginFo
   }
 
   return (
-    <Card className="w-full max-w-md bg-white border-gray-200 shadow-lg">
-      <CardHeader className="space-y-1 text-center">
-        <div className="flex justify-center mb-4">
-          <div className="p-3 bg-blue-100 rounded-full">
-            <Server className="h-8 w-8 text-blue-600" />
-          </div>
-        </div>
-        <CardTitle className="text-2xl font-bold text-gray-900">
-          {site_name} {t('controlPanel')}
-        </CardTitle>
-        <CardDescription className="text-gray-500">
-          {t('signInDescription')}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form action={handleSubmit} className="space-y-4">
-          {error && (
-            <Alert variant="destructive" className="bg-red-50 border-red-200">
-              <AlertCircle className="h-4 w-4 text-red-600" />
-              <AlertDescription className="text-red-700">
-                {error}
-                {remaining !== null && remaining > 0 && (
-                  <span className="block mt-1 text-sm">
-                    {remaining} attempt{remaining !== 1 ? 's' : ''} remaining
-                  </span>
-                )}
-              </AlertDescription>
-            </Alert>
+    <div
+      className={cn(
+        'relative flex min-h-screen w-full items-center justify-center overflow-hidden px-6 py-10 transition-colors duration-300',
+        showRootTree ? 'bg-black text-amber-100' : 'bg-background text-foreground'
+      )}
+    >
+      <div
+        aria-hidden="true"
+        className={cn(
+          'pointer-events-none fixed inset-0 z-0 flex items-center justify-center overflow-hidden transition-opacity duration-500',
+          showRootTree ? 'opacity-100' : 'opacity-0'
+        )}
+      >
+        <pre className="select-none font-mono text-[clamp(17px,1.75vw,31px)] leading-[0.78] tracking-normal text-amber-500/30 [text-shadow:0_0_18px_rgba(245,158,11,0.22)]">
+          {ROOT_TREE_ART.join('\n')}
+        </pre>
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(0,0,0,0.18),rgba(0,0,0,0.82)_72%,#000_100%)]" />
+      </div>
+
+      <form action={handleSubmit} className="relative z-10 w-full max-w-[360px] space-y-3">
+        <p
+          className={cn(
+            'mb-5 text-center text-sm font-medium',
+            showRootTree ? 'text-amber-200' : 'text-muted-foreground'
           )}
+        >
+          {prompt}
+        </p>
 
-          <div className="space-y-2">
-            <Label htmlFor="username" className="text-gray-700">{t('username')}</Label>
-            <div className="relative">
-              <User className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-              <Input
-                id="username"
-                name="username"
-                type="text"
-                placeholder="root"
-                autoComplete="username"
-                required
-                className="pl-10 bg-white border-gray-300 text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-blue-500"
-              />
-            </div>
-          </div>
+        {error && (
+          <Alert variant="destructive" className="bg-background/95">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              {error}
+              {remaining !== null && remaining > 0 && (
+                <span className="mt-1 block text-sm">
+                  {remaining} attempt{remaining !== 1 ? 's' : ''} remaining
+                </span>
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
 
-          <div className="space-y-2">
-            <Label htmlFor="password" className="text-gray-700">{t('password')}</Label>
-            <div className="relative">
-              <Lock className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                placeholder="********"
-                autoComplete="current-password"
-                required
-                className="pl-10 bg-white border-gray-300 text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-
-          <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white" disabled={isPending}>
-            {isPending ? (
-              <span className="flex items-center gap-2">
-                <span className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                {t('signingIn')}
-              </span>
-            ) : (
-              t('signIn')
+        <div className="relative">
+          <Label htmlFor="username" className="sr-only">
+            {t('username')}
+          </Label>
+          <User
+            className={cn(
+              'absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2',
+              showRootTree ? 'text-amber-500/75' : 'text-muted-foreground'
             )}
-          </Button>
-        </form>
-
-        <div className="mt-6 pt-4 border-t border-gray-200">
-          <p className="text-xs text-gray-500 text-center">
-            {t('pamHint')}
-            <br />
-            {t('adminHint')}
-          </p>
+          />
+          <Input
+            id="username"
+            name="username"
+            type="text"
+            autoComplete="username"
+            required
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            className={cn(
+              'h-11 pl-10 shadow-none',
+              showRootTree
+                ? 'border-amber-500/45 bg-black/70 text-amber-100 placeholder:text-amber-700 focus-visible:border-amber-300 focus-visible:ring-amber-400/30'
+                : 'bg-background/90'
+            )}
+          />
         </div>
-      </CardContent>
-    </Card>
+
+        <div className="relative">
+          <Label htmlFor="password" className="sr-only">
+            {t('password')}
+          </Label>
+          <Lock
+            className={cn(
+              'absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2',
+              showRootTree ? 'text-amber-500/75' : 'text-muted-foreground'
+            )}
+          />
+          <Input
+            id="password"
+            name="password"
+            type="password"
+            autoComplete="current-password"
+            required
+            autoFocus
+            className={cn(
+              'h-11 pl-10 shadow-none',
+              showRootTree
+                ? 'border-amber-500/45 bg-black/70 text-amber-100 placeholder:text-amber-700 focus-visible:border-amber-300 focus-visible:ring-amber-400/30'
+                : 'bg-background/90'
+            )}
+          />
+        </div>
+
+        <Button
+          type="submit"
+          disabled={isPending}
+          className={cn(
+            'h-11 w-full',
+            showRootTree && 'bg-amber-500 text-black hover:bg-amber-400 focus-visible:ring-amber-400/35'
+          )}
+        >
+          {isPending ? (
+            <span className="flex items-center gap-2">
+              <span className="h-4 w-4 rounded-full border-2 border-current/30 border-t-current animate-spin" />
+              {t('signingIn')}
+            </span>
+          ) : (
+            t('signIn')
+          )}
+        </Button>
+      </form>
+    </div>
   );
 }

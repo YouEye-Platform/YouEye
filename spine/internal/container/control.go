@@ -517,13 +517,16 @@ Environment=IDENTITY_SERVICE=true
 Environment=JWT_SECRET=%s
 Environment=HOST_IP=%s
 Environment=SECURE_COOKIES=true
+Environment=INCUS_HTTPS_URL=%s:8443
+Environment=INCUS_CLIENT_CERT=/etc/youeye/incus-client.crt
+Environment=INCUS_CLIENT_KEY=/etc/youeye/incus-client.key
 ExecStart=/usr/bin/node %s/server.js
 Restart=always
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
-`, appDir, util.GenerateJWTSecret(), hostIP, appDir)
+`, appDir, util.GenerateJWTSecret(), hostIP, incusGW, appDir)
 
 	util.RunIncusExec(containerName, "bash", "-c",
 		fmt.Sprintf("cat > /etc/systemd/system/youeye-id.service << 'EOF'\n%sEOF", identityServiceContent))

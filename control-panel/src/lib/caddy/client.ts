@@ -1644,6 +1644,30 @@ export async function loadExternalCert(
     ...otherPolicies,
   ];
 
+  // Pin cert selection at the TLS handshake so the tagged loaded cert wins over
+  // any on-demand internal cert Caddy may have cached for these names. Without
+  // this, the bare apex (hit on-demand during the deploy window, before the cert
+  // is loaded) keeps serving Caddy's internal cert even though the loaded cert's
+  // SAN covers it. First-match-wins: our SNI policy goes first, a catch-all stays
+  // last so IP / uncovered hosts still negotiate on_demand internal.
+  if (subjects.length) {
+    if (!config.apps.http) config.apps.http = {};
+    if (!config.apps.http.servers) config.apps.http.servers = {};
+    const serverName = Object.keys(config.apps.http.servers)[0] || 'srv0';
+    const server = config.apps.http.servers[serverName];
+    if (server) {
+      const kept = (server.tls_connection_policies ?? []).filter(
+        (p) => !p.certificate_selection?.any_tag?.includes('external'),
+      );
+      const hasFallback = kept.some((p) => !p.match && !p.certificate_selection);
+      server.tls_connection_policies = [
+        { match: { sni: subjects }, certificate_selection: { any_tag: ['external'] } },
+        ...kept,
+        ...(hasFallback ? [] : [{}]),
+      ];
+    }
+  }
+
   await setConfig(config);
   console.log(`[Caddy] External cert loaded for: ${subjects.join(', ')}`);
 }
@@ -1676,6 +1700,21 @@ export async function removeExternalCert(): Promise<void> {
         on_demand: true,
         issuers: [{ module: 'internal' }],
       });
+    }
+  }
+
+  // Strip our cert-selection connection policy — otherwise it would force
+  // selecting a now-missing external cert and break the handshake.
+  if (config.apps.http?.servers) {
+    const serverName = Object.keys(config.apps.http.servers)[0] || 'srv0';
+    const server = config.apps.http.servers[serverName];
+    if (server?.tls_connection_policies) {
+      server.tls_connection_policies = server.tls_connection_policies.filter(
+        (p) => !p.certificate_selection?.any_tag?.includes('external'),
+      );
+      if (server.tls_connection_policies.length === 0) {
+        server.tls_connection_policies = [{}];
+      }
     }
   }
 

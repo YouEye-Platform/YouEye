@@ -323,6 +323,8 @@ export default function SetupDnsExplainer({ domain, siteName, standalone = false
 
   const effectivePath = tlsChoice ?? 'selfsigned';
   const showCertInstall = effectivePath === 'selfsigned';
+  // YouEye Names manages public DNS + a real cert — the user configures nothing.
+  const isYouEyeNames = effectivePath === 'youeye-names';
 
   useEffect(() => {
     setPlatform(detectPlatform());
@@ -345,16 +347,26 @@ export default function SetupDnsExplainer({ domain, siteName, standalone = false
         <p className="text-muted-foreground text-sm">
           {reachable
             ? t('allSetDesc')
-            : t('configureDnsDesc', { domain })}
+            : isYouEyeNames
+              ? t('yenReadyDesc', { domain })
+              : t('configureDnsDesc', { domain })}
         </p>
       </div>
 
       {/* Connection status */}
       <StatusIndicator reachable={reachable} checking={checking} domain={domain} t={t} />
 
-      {/* DNS setup instructions */}
-      {!reachable && (
+      {/* DNS setup instructions — not shown for YouEye Names (broker handles DNS) */}
+      {!reachable && !isYouEyeNames && (
         <DnsStep serverIp={serverIp} platform={platform} t={t} />
+      )}
+
+      {/* YouEye Names: address resolves automatically; just the rebinding caveat */}
+      {!reachable && isYouEyeNames && (
+        <div className="rounded-xl border bg-card p-5 flex items-start gap-3 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-75">
+          <ShieldCheck className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+          <p className="text-xs text-muted-foreground">{t('yenRebindNote')}</p>
+        </div>
       )}
 
       {/* Self-signed cert install (only for self-signed path) */}

@@ -255,13 +255,16 @@ download_spine() {
         log_success "Downloaded successfully"
     else
         rm -f "$TMP_FILE"
-        # Fallback to raw branch (for development)
-        log_warn "Release download failed, trying raw branch..." >&2
-        DOWNLOAD_URL="${RELEASE_BASE_URL}/${RELEASE_ORG}/${RELEASE_REPO}/raw/branch/main/spine/spine-linux-${ARCH}"
+        # The branch release for this version may not exist (e.g. the version
+        # came from get_latest_version's main-release fallback). Try the MAIN
+        # release tag for the same version on the SAME server before giving up.
+        MAIN_TAG="${TAG_PREFIX}-v${VERSION}"
+        log_warn "Release ${TAG} not found, trying main release ${MAIN_TAG}..." >&2
+        DOWNLOAD_URL="${RELEASE_BASE_URL}/${RELEASE_ORG}/${RELEASE_REPO}/releases/download/${MAIN_TAG}/${ASSET_NAME}"
 
         if curl -4 -sSL -f "$DOWNLOAD_URL" -o "$TMP_FILE" && [ -s "$TMP_FILE" ]; then
             mv "$TMP_FILE" "${INSTALL_DIR}/youeye"
-            log_success "Downloaded from main branch"
+            log_success "Downloaded main release ${MAIN_TAG}"
         else
             rm -f "$TMP_FILE"
             log_error "Failed to download YouEye binary"
@@ -445,16 +448,11 @@ main() {
     echo "=================================="
     echo ""
 
-    # Launch TUI only if explicitly requested via --tui flag.
-    if [ "$LAUNCH_TUI" = "true" ] && [ -t 1 ] && [ -r /dev/tty ]; then
-        log_info "Launching interactive installer..."
-        exec "${INSTALL_DIR}/youeye" installer < /dev/tty
-    fi
-
     echo "Next steps:"
-    echo "  1. Run 'youeye deploy' to deploy the platform"
-    echo "  2. Run 'youeye installer' for interactive setup with TUI"
-    echo "     (or re-run this script with --tui)"
+    echo "  Run 'youeye deploy' to deploy the platform."
+    echo ""
+    echo "  The interactive installer (TUI) is now a standalone tool —"
+    echo "  see installer/ in the YouEye repo (youeye-installer binary)."
     echo ""
     echo "For help: youeye --help"
     echo "  (The 'spine' command also works as a backward-compatible alias)"
