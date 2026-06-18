@@ -8,10 +8,15 @@
 import { db } from '@/db';
 import { systemSettings } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { isNextProductionBuild } from "@/lib/runtime-phase";
 
 const DEFAULT_SITE_NAME = 'YouEye';
 
 export async function getSiteName(): Promise<string> {
+  if (isNextProductionBuild()) {
+    return DEFAULT_SITE_NAME;
+  }
+
   try {
     const row = await db
       .select({ value: systemSettings.value })

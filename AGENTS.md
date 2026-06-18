@@ -1,3 +1,24 @@
+## ui-dev-v0.4.28.6 — artem — 2026-06-18
+**Branch:** dev
+**VM:** potempc
+**Agent:** Artem
+**Task:** Stop UI production builds from probing Postgres during metadata generation
+
+### Changes
+- `ui/src/lib/runtime-phase.ts` — added a shared Next production-build phase helper.
+- `ui/src/db/index.ts` — skips schema initialization during `phase-production-build`; runtime schema failures now rethrow after logging instead of being swallowed.
+- `ui/src/lib/db/queries/branding.ts`, `ui/src/lib/site-config.ts` — return build-time defaults for PWA/metadata helpers instead of touching Postgres during `next build`.
+- `ui/tests/build-db-guard.spec.mjs` — guards the build-time DB skip and runtime failure behavior.
+- `ui/package.json`, `README.md` — bumped UI to `0.4.28.6` and updated the dev release pointer.
+
+### Test Results
+- UI focused: `pnpm exec node --test tests/build-db-guard.spec.mjs` passed.
+- UI build: `pnpm build` passed with no `Schema initialization failed` or local Postgres `ECONNREFUSED` messages.
+- UI artifact: `standalone.tar` contains `server.js` and reports package version `0.4.28.6`.
+
+### Notes for Iris
+- This removes build log noise only. At runtime, a real DB/schema failure is now louder because `ensureSchema()` rethrows after logging.
+
 ## dev-v0.4.10.3 / cp-dev-v0.4.49.12 / ui-dev-v0.4.28.5 — artem — 2026-06-18
 **Branch:** dev
 **VM:** potempc

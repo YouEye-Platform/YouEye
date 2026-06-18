@@ -12,6 +12,7 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema";
+import { isNextProductionBuild } from "@/lib/runtime-phase";
 
 const connectionString = process.env.DATABASE_URL!;
 
@@ -27,6 +28,7 @@ let schemaReady = false;
  */
 export async function ensureSchema() {
   if (schemaReady) return;
+  if (isNextProductionBuild()) return;
 
   try {
     await queryClient`
@@ -345,6 +347,7 @@ export async function ensureSchema() {
     console.log("Database schema verified");
   } catch (e) {
     console.error("Schema initialization failed:", e);
+    throw e;
   }
 }
 

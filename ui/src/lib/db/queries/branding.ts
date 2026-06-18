@@ -8,6 +8,7 @@
 import { db, ensureSchema } from "@/db";
 import { systemSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { isNextProductionBuild } from "@/lib/runtime-phase";
 
 export interface SiteNameStyle {
   fontFamily: string;
@@ -51,6 +52,17 @@ const DEFAULT_STYLE: SiteNameStyle = {
   textTransform: "none",
 };
 
+function getDefaultBranding(): BrandingConfig {
+  return {
+    site_name: "YouEye",
+    site_name_style: { ...DEFAULT_STYLE },
+    logo_url: null,
+    favicon_url: null,
+    accent_color: "#8B5CF6",
+    icon_config: null,
+  };
+}
+
 async function getSystemSetting(key: string): Promise<unknown | null> {
   await ensureSchema();
   const [row] = await db
@@ -78,6 +90,10 @@ async function setSystemSetting(key: string, value: unknown) {
 }
 
 export async function getBranding(): Promise<BrandingConfig> {
+  if (isNextProductionBuild()) {
+    return getDefaultBranding();
+  }
+
   await ensureSchema();
   const [name, style, logo, favicon, accent, iconCfg] = await Promise.all([
     getSystemSetting("site_name"),
@@ -90,7 +106,7 @@ export async function getBranding(): Promise<BrandingConfig> {
 
   return {
     site_name: (name as string) ?? "YouEye",
-    site_name_style: (style as SiteNameStyle) ?? DEFAULT_STYLE,
+    site_name_style: (style as SiteNameStyle) ?? { ...DEFAULT_STYLE },
     logo_url: (logo as string) ?? null,
     favicon_url: (favicon as string) ?? null,
     accent_color: (accent as string) ?? "#8B5CF6",
