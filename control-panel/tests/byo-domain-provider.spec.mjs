@@ -40,6 +40,20 @@ test('setup provider path validates, stores token as a secret, syncs DNS, and is
   assert.doesNotMatch(source, /tls_choice === 'byo-provider'[\s\S]*console\.log\([^)]*token/);
 });
 
+test('provider config is persisted using Spine-compatible string extras', () => {
+  const config = read('src/lib/dns-providers/config.ts');
+  const sync = read('src/lib/dns-providers/sync.ts');
+
+  assert.match(config, /settingsService\.setRaw\(\{ \[CONFIG_KEY\]: JSON\.stringify\(config\) \}\)/);
+  assert.match(config, /const saved = await getByoDnsProviderConfig\(\)/);
+  assert.match(config, /DNS provider config could not be saved/);
+  assert.match(config, /settingsService\.setRaw\(\{ \[CONFIG_KEY\]: '' \}\)/);
+  assert.match(sync, /reason === 'setup' \|\| reason === 'connect'/);
+  assert.match(sync, /DNS provider config is not available/);
+  assert.doesNotMatch(config, /settingsService\.setRaw\(\{ \[CONFIG_KEY\]: config \}\)/);
+  assert.doesNotMatch(config, /settingsService\.setRaw\(\{ \[CONFIG_KEY\]: null \}\)/);
+});
+
 test('BYO domain bundle export excludes DNS token unless explicitly requested', () => {
   const bundle = read('src/lib/byo-domain/bundle.ts');
   const exportRoute = read('src/app/api/tls/domain/export/route.ts');

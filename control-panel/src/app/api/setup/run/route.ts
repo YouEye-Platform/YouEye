@@ -723,6 +723,16 @@ export async function POST(request: NextRequest) {
         // ── Step 6: Finalize ─────────────────────────────────────────
         if (shouldRunStep('finalize')) {
           stepUpdate('finalize', 'running');
+          if (hasError) {
+            const message = 'Setup needs attention before finishing. Fix the failed step and try again.';
+            await saveStepState('finalize', 'error');
+            stepUpdate('finalize', 'error', message);
+            send({ error: message, complete: false, hasErrors: true });
+            controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+            controller.close();
+            return;
+          }
+
           await settingsService.setRaw({
             setup_completed: true,
             tls_choice: body.tls_choice || 'selfsigned',

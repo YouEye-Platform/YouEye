@@ -16,7 +16,14 @@ export interface DnsSyncResult {
 export async function syncByoDomainDns(reason: string, targetIp = process.env.HOST_IP || ''): Promise<DnsSyncResult> {
   const config = await getByoDnsProviderConfig();
   if (!config || config.mode !== 'byo-provider') {
-    return { ok: true, domain: null, targetIp: targetIp || null, changes: [] };
+    const requiresProviderConfig = reason === 'setup' || reason === 'connect';
+    return {
+      ok: !requiresProviderConfig,
+      domain: null,
+      targetIp: targetIp || null,
+      changes: [],
+      ...(requiresProviderConfig ? { error: 'DNS provider config is not available' } : {}),
+    };
   }
   if (!targetIp) {
     return { ok: false, domain: config.domain, targetIp: null, changes: [], error: 'HOST_IP is not available' };

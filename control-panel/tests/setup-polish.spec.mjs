@@ -22,6 +22,14 @@ test('setup completion persists and reuses the selected TLS path', () => {
   assert.match(setup, /router\.replace\(SETUP_COMPLETE_PATH\)/);
   assert.match(setup, /isRestarting=\{setupRestarting\}/);
   assert.doesNotMatch(setup, /\/setup-complete\?tls=/);
+  assert.match(setup, /let streamHasError = false/);
+  assert.match(setup, /event\.complete === true/);
+  assert.match(setup, /event\.hasErrors \|\| streamHasError/);
+  assert.doesNotMatch(setup, /data === '\[DONE\]'\) \{\s*setSetupComplete\(true\)/);
+  assert.match(run, /if \(hasError\) \{/);
+  assert.match(run, /Setup needs attention before finishing/);
+  assert.match(run, /complete: false, hasErrors: true/);
+  assert.match(run, /controller\.close\(\)/);
   assert.match(provisioning, /isRestarting \= false/);
   assert.match(provisioning, /restartingServerInterface/);
   assert.match(complete, /new URLSearchParams\(window\.location\.search\)\.get\('tls'\)/);

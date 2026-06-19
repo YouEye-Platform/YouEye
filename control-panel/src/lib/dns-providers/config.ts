@@ -23,11 +23,16 @@ export async function getByoDnsProviderConfig(): Promise<ByoDnsProviderConfig | 
 }
 
 export async function saveByoDnsProviderConfig(config: ByoDnsProviderConfig): Promise<void> {
-  await settingsService.setRaw({ [CONFIG_KEY]: config });
+  await settingsService.setRaw({ [CONFIG_KEY]: JSON.stringify(config) });
+
+  const saved = await getByoDnsProviderConfig();
+  if (!saved || saved.connectionId !== config.connectionId || saved.domain !== config.domain) {
+    throw new Error('DNS provider config could not be saved. Try connecting the provider again.');
+  }
 }
 
 export async function clearByoDnsProviderConfig(): Promise<void> {
-  await settingsService.setRaw({ [CONFIG_KEY]: null });
+  await settingsService.setRaw({ [CONFIG_KEY]: '' });
 }
 
 export function createConnectionId(): string {

@@ -1,3 +1,26 @@
+## cp-dev-v0.4.49.21 — artem — 2026-06-19
+**Branch:** dev
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix BYO domain provider persistence and setup finalization after DNS failures.
+
+### Changes
+- `control-panel/src/lib/dns-providers/config.ts` — stores provider metadata as a JSON string in Spine-compatible `extra` settings and verifies the save with a read-back guard.
+- `control-panel/src/lib/dns-providers/sync.ts` — treats missing provider config as a setup/connect error instead of a successful no-op.
+- `control-panel/src/app/api/setup/run/route.ts` — blocks final setup completion when any provisioning step failed.
+- `control-panel/src/app/setup/page.tsx` — only marks setup complete after an explicit successful completion event; `[DONE]` now only terminates the stream.
+- `control-panel/tests/byo-domain-provider.spec.mjs`, `control-panel/tests/setup-polish.spec.mjs` — added regression coverage for provider metadata persistence, strict setup/connect sync failure, and setup finalization behavior.
+- `control-panel/package.json`, `README.md` — bumped Control Panel to `0.4.49.21` before build/release.
+
+### Test Results
+- CP focused tests: `node --test control-panel/tests/byo-domain-provider.spec.mjs control-panel/tests/setup-polish.spec.mjs` passed.
+- CP typecheck: `pnpm --dir control-panel run typecheck` passed.
+- CP build: `rm -rf control-panel/.next control-panel/node_modules/.cache && pnpm --dir control-panel build` passed; build ran the explicit typecheck gate first.
+- CP release artifact: `/tmp/standalone.tar` built from `.next/standalone/control-panel`, contains root `server.js`, and embeds package version `0.4.49.21`.
+
+### Notes for Iris
+- Live hotpatch investigation showed the token secret was saved but `dns_provider_config` was missing because Spine ignored the object-shaped unknown key. This release persists that metadata as a string and prevents setup from looking successful when DNS sync did not run.
+
 ## cp-dev-v0.4.49.20 — artem — 2026-06-19
 **Branch:** dev
 **VM:** potempc

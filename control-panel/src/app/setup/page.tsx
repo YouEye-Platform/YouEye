@@ -296,6 +296,7 @@ export default function SetupPage() {
 
       const decoder = new TextDecoder();
       let buffer = '';
+      let streamHasError = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -309,7 +310,6 @@ export default function SetupPage() {
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6);
           if (data === '[DONE]') {
-            setSetupComplete(true);
             continue;
           }
           try {
@@ -322,9 +322,22 @@ export default function SetupPage() {
                     : s
                 )
               );
+              if (event.status === 'error') {
+                streamHasError = true;
+              }
             }
             if (event.error) {
+              streamHasError = true;
               setSetupError(event.error);
+            }
+            if (event.complete === true) {
+              if (event.hasErrors || streamHasError) {
+                streamHasError = true;
+                setSetupComplete(false);
+                setSetupError(prev => prev || 'Setup needs attention before finishing. Fix the failed step and try again.');
+              } else {
+                setSetupComplete(true);
+              }
             }
           } catch {
             // Ignore malformed lines
