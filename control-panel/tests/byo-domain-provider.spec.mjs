@@ -58,6 +58,7 @@ test('BYO domain bundle export excludes DNS token unless explicitly requested', 
   const bundle = read('src/lib/byo-domain/bundle.ts');
   const exportRoute = read('src/app/api/tls/domain/export/route.ts');
   const reuseRoute = read('src/app/api/tls/domain/reuse/route.ts');
+  const spineClient = read('src/lib/spine/client.ts');
 
   assert.match(bundle, /BYO_DOMAIN_BUNDLE_TYPE = 'youeye-byo-domain'/);
   assert.match(bundle, /dnsToken: includeToken && token \? \{ included: true, value: token \} : \{ included: false \}/);
@@ -66,6 +67,7 @@ test('BYO domain bundle export excludes DNS token unless explicitly requested', 
   assert.match(exportRoute, /includeToken/);
   assert.match(exportRoute, /cache-control': 'no-store'/);
   assert.match(reuseRoute, /safeByoDomainBundleSummary\(bundle\)/);
+  assert.match(spineClient, /return \{ \.\.\.rest, \.\.\.extra as Record<string, unknown>, extra \}/);
   assert.doesNotMatch(reuseRoute, /dnsToken\.value/);
 });
 

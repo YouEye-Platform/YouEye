@@ -394,10 +394,12 @@ export class SpineClient {
     const raw = await this.request('/api/config') as Record<string, unknown>;
     // Spine stores unrecognized keys in an "extra" map. Merge them into
     // the top level so callers can read e.g. raw.tls_acme_account_key
-    // without knowing about the extra indirection.
+    // without knowing about the extra indirection. Keep the original extra
+    // object too so settingsService's typed cache can later reconstruct raw
+    // extras instead of dropping provider/TLS metadata.
     if (raw.extra && typeof raw.extra === 'object') {
       const { extra, ...rest } = raw;
-      return { ...rest, ...extra as Record<string, unknown> };
+      return { ...rest, ...extra as Record<string, unknown>, extra };
     }
     return raw;
   }

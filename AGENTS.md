@@ -1,3 +1,24 @@
+## cp-dev-v0.4.49.22 — artem — 2026-06-19
+**Branch:** dev
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix BYO domain export after settings cache drops Spine extras.
+
+### Changes
+- `control-panel/src/lib/spine/client.ts` — preserves the original Spine `extra` object while also flattening extras to top-level keys, so `settingsService.getRaw()` can reconstruct provider/TLS metadata from the typed cache.
+- `control-panel/tests/byo-domain-provider.spec.mjs` — added regression coverage for preserving `extra` during Spine config flattening.
+- `control-panel/package.json`, `README.md` — bumped Control Panel to `0.4.49.22` before build/release.
+
+### Test Results
+- CP focused tests: `node --test control-panel/tests/byo-domain-provider.spec.mjs control-panel/tests/setup-polish.spec.mjs` passed.
+- CP typecheck: `pnpm --dir control-panel run typecheck` passed.
+- CP build: `rm -rf control-panel/.next control-panel/node_modules/.cache && pnpm --dir control-panel build` passed; build ran the explicit typecheck gate first.
+- CP release artifact: `/tmp/standalone.tar` built from `.next/standalone/control-panel`, contains root `server.js`, and embeds package version `0.4.49.22`.
+- Live bykapc verification: after `youeye update control`, `youeye domain export --output ...` succeeded and produced a valid BYO domain bundle without an included DNS token.
+
+### Notes for Iris
+- This follows `cp-dev-v0.4.49.21`. The provider metadata persistence fix worked, but export could still read a stale typed settings cache that omitted raw `extra` values. Preserving `extra` fixes export and other raw-extra readers.
+
 ## cp-dev-v0.4.49.21 — artem — 2026-06-19
 **Branch:** dev
 **VM:** potempc
