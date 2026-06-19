@@ -11,5 +11,7 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     // Import tracker to initialize it (starts flush interval)
     await import("@/lib/telemetry/tracker");
+    const { startDnsProviderMaintenanceLoop } = await import("@/lib/dns-providers/maintenance");
+    startDnsProviderMaintenanceLoop();
   }
 }

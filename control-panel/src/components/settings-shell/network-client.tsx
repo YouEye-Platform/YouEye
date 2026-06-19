@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   Shield, ShieldOff, Globe, Route as RouteIcon, Plus, Trash2, Loader2, RefreshCw,
-  Check, X, AlertTriangle, ChevronRight,
+  Check, X, AlertTriangle, ChevronRight, Cloud, Info, KeyRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,10 +20,31 @@ interface CnameRecord { domain: string; target: string; }
 interface QueryRow { timestamp: number; type: string; domain: string; client: string; reply: string; }
 interface ProxyRoute { id: string; hostname?: string; path: string; upstream: string; port: number; enabled: boolean; }
 interface TlsStatus { mode: string; hasExternalCert: boolean; cert: null | { issuer: string; domains: string[]; expiresAt: string; issuedAt: string }; subjects: string[]; expiryWarning: boolean; }
+interface DnsProviderState {
+  connection: null | {
+    provider: string;
+    domain: string;
+    zoneName: string;
+    targetIp: string;
+    hasToken: boolean;
+    lastDnsSyncAt: string | null;
+    lastDnsSyncError: string | null;
+    lastCertRenewalAt: string | null;
+    nextCertRenewalDueAt: string | null;
+  };
+}
 
 // FTL puts its status string in `reply`; treat gravity/deny/black/regex/block as blocked.
 const isBlockedReply = (reply: string) => /gravity|deny|black|regex|block/i.test(reply || "");
 const looksLikeIp = (v: string) => /^(\d{1,3}\.){3}\d{1,3}$/.test(v.trim()) || (v.includes(":") && /^[0-9a-fA-F:]+$/.test(v.trim()));
+const hostOnly = (value: string) => {
+  const trimmed = value.trim();
+  try {
+    return new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`).hostname.toLowerCase().replace(/\.+$/, "");
+  } catch {
+    return trimmed.toLowerCase().replace(/\.+$/, "");
+  }
+};
 
 async function csrfHeaders(): Promise<Record<string, string>> {
   const token = await fetch("/settings/api/auth/csrf").then((r) => r.json()).then((b) => b.csrfToken as string);
@@ -37,15 +58,29 @@ function tabClass(active: boolean) {
   );
 }
 
+function tabFromSearch(): NetworkTab {
+  if (typeof window === "undefined") return "dns";
+  const tab = new URLSearchParams(window.location.search).get("tab");
+  if (tab === "routes" || tab === "domain") return tab;
+  if (tab === "tls") return "domain";
+  return "dns";
+}
+
 export function NetworkClient() {
-  const [active, setActive] = useState<NetworkTab>(() => {
-    if (typeof window !== "undefined") {
-      const t = new URLSearchParams(window.location.search).get("tab");
-      if (t === "routes" || t === "domain") return t;
-      if (t === "tls") return "domain"; // legacy ?tab=tls
-    }
-    return "dns";
-  });
+  const [active, setActive] = useState<NetworkTab>("dns");
+
+  useEffect(() => {
+    setActive(tabFromSearch());
+  }, []);
+
+  function selectTab(tab: NetworkTab) {
+    setActive(tab);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (tab === "dns") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", tab);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }
 
   const tabs: { id: NetworkTab; label: string; icon: typeof Shield }[] = [
     { id: "dns", label: "DNS", icon: Shield },
@@ -58,9 +93,9 @@ export function NetworkClient() {
       <h1 className="text-2xl font-bold tracking-tight">Network</h1>
       <p className="mt-1 text-muted-foreground">DNS, routes, and how your server is reached</p>
 
-      <div className="mb-6 mt-6 flex items-center gap-1 border-b">
+      <div className="mb-6 mt-6 flex items-center gap-1 overflow-x-auto border-b">
         {tabs.map(({ id, label, icon: Icon }) => (
-          <button key={id} onClick={() => setActive(id)} className={tabClass(active === id)}>
+          <button key={id} onClick={() => selectTab(id)} className={tabClass(active === id)}>
             <Icon className="h-4 w-4" />{label}
           </button>
         ))}
@@ -390,19 +425,32 @@ function DomainPanel() {
   const [domain, setDomain] = useState<string | null>(null);
   const [caddyRunning, setCaddyRunning] = useState(true);
   const [tls, setTls] = useState<TlsStatus | null>(null);
+  const [provider, setProvider] = useState<DnsProviderState | null>(null);
   const [edit, setEdit] = useState("");
+  const [providerDomain, setProviderDomain] = useState("");
+  const [providerToken, setProviderToken] = useState("");
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [providerBusy, setProviderBusy] = useState<string | null>(null);
+  const [replacingToken, setReplacingToken] = useState(false);
   const [saved, setSaved] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
     const dRes = await fetch("/api/domain");
-    if (dRes.ok) { const d = await dRes.json(); setDomain(d.domain ?? null); setCaddyRunning(d.caddyRunning ?? false); setEdit(d.domain ?? ""); }
+    if (dRes.ok) {
+      const d = await dRes.json();
+      setDomain(d.domain ?? null);
+      setCaddyRunning(d.caddyRunning ?? false);
+      setEdit(d.domain ?? "");
+      setProviderDomain((prev) => prev || d.domain || "");
+    }
     const tRes = await fetch("/api/tls/status");
     if (tRes.ok) setTls(await tRes.json());
+    const pRes = await fetch("/api/dns-providers");
+    if (pRes.ok) setProvider(await pRes.json());
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -418,9 +466,76 @@ function DomainPanel() {
     finally { setSaving(false); }
   }
 
+  async function connectProvider() {
+    if (!providerDomain.trim() || !providerToken.trim()) return;
+    setProviderBusy("connect"); setError(""); setSaved("");
+    try {
+      const requestedDomain = hostOnly(providerDomain);
+      const currentDomain = domain ? hostOnly(domain) : "";
+      if (currentDomain && requestedDomain !== currentDomain) {
+        throw new Error("Change the platform domain first, then connect its DNS provider.");
+      }
+      const headers = await csrfHeaders();
+      const res = await fetch("/api/dns-providers/connect", {
+        method: "POST", headers,
+        body: JSON.stringify({ provider: "cloudflare", domain: requestedDomain, token: providerToken }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || data.sync?.error || "Failed to connect DNS provider");
+      const certRes = await fetch("/api/tls/acme/provider", { method: "POST", headers });
+      const certData = await certRes.json().catch(() => ({}));
+      if (!certRes.ok) throw new Error(certData.error || "DNS connected, but certificate issuance failed");
+      setProviderToken("");
+      setReplacingToken(false);
+      setSaved("DNS provider connected and certificate issued");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed to connect DNS provider"); }
+    finally { setProviderBusy(null); }
+  }
+
+  async function syncProvider() {
+    setProviderBusy("sync"); setError(""); setSaved("");
+    try {
+      const res = await fetch("/api/dns-providers/sync", { method: "POST", headers: await csrfHeaders() });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "DNS sync failed");
+      setSaved("DNS records synced");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "DNS sync failed"); }
+    finally { setProviderBusy(null); }
+  }
+
+  async function renewProvider() {
+    setProviderBusy("renew"); setError(""); setSaved("");
+    try {
+      const res = await fetch("/api/dns-providers/maintenance", {
+        method: "POST", headers: await csrfHeaders(), body: JSON.stringify({ force: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Certificate renewal failed");
+      setSaved(data.renewed ? "Certificate renewed" : data.reason || "Certificate checked");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Certificate renewal failed"); }
+    finally { setProviderBusy(null); }
+  }
+
+  async function disconnectProvider() {
+    setProviderBusy("disconnect"); setError(""); setSaved("");
+    try {
+      const res = await fetch("/api/dns-providers/connection", { method: "DELETE", headers: await csrfHeaders() });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to disconnect DNS provider");
+      setReplacingToken(false);
+      setSaved("DNS provider disconnected");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed to disconnect DNS provider"); }
+    finally { setProviderBusy(null); }
+  }
+
   if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
 
-  const auto = tls?.mode === "internal" || !tls?.hasExternalCert;
+  const internalCert = tls?.mode === "internal" || !tls?.hasExternalCert;
+  const connection = provider?.connection || null;
 
   return (
     <div className="space-y-6">
@@ -430,7 +545,7 @@ function DomainPanel() {
       <div className="rounded-xl border bg-card p-[22px]">
         <h2 className="text-[15px] font-semibold">Domain</h2>
         <p className="mt-1 text-sm text-muted-foreground">The address people use to reach this server.</p>
-        {!caddyRunning && <p className="mt-3 text-sm text-destructive">The web gateway isn’t running, so the domain can’t be changed right now.</p>}
+        {!caddyRunning && <p className="mt-3 text-sm text-destructive">The web gateway is not running, so the domain cannot be changed right now.</p>}
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {editing ? (
             <>
@@ -448,6 +563,82 @@ function DomainPanel() {
         {saved && <p className="mt-2 text-sm text-green-600 dark:text-green-500">{saved}</p>}
       </div>
 
+      {/* DNS provider */}
+      <div className="rounded-xl border bg-card p-[22px]">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-[15px] font-semibold">DNS provider</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Keep your domain and app subdomains pointed at this server.</p>
+          </div>
+          <Cloud className="h-5 w-5 text-muted-foreground" />
+        </div>
+        {connection ? (
+          <div className="mt-4 space-y-4">
+            <div className="grid gap-4 text-sm sm:grid-cols-2">
+              <Field label="Provider" value={connection.provider === "cloudflare" ? "Cloudflare" : connection.provider} />
+              <Field label="Zone" value={connection.zoneName} />
+              <Field label="Target IP" value={connection.targetIp || "—"} />
+              <Field label="Last sync" value={fmtDateTime(connection.lastDnsSyncAt)} />
+            </div>
+            {connection.lastDnsSyncError && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                {connection.lastDnsSyncError}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" className="h-8" disabled={!!providerBusy} onClick={syncProvider}>
+                {providerBusy === "sync" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}Sync DNS now
+              </Button>
+              <Button size="sm" variant="outline" className="h-8" disabled={!!providerBusy} onClick={() => { setProviderDomain(connection.domain); setProviderToken(""); setReplacingToken(true); }}>
+                <KeyRound className="h-3.5 w-3.5" />Replace token
+              </Button>
+              <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" disabled={!!providerBusy} onClick={disconnectProvider}>
+                {providerBusy === "disconnect" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}Disconnect
+              </Button>
+            </div>
+            {replacingToken && (
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <div className="space-y-1.5">
+                  <LabelText>New Cloudflare token</LabelText>
+                  <Input type="password" value={providerToken} onChange={(e) => setProviderToken(e.target.value)} placeholder="Paste token" className="h-9" />
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <Button size="sm" className="h-8" disabled={!providerToken.trim() || !!providerBusy} onClick={connectProvider}>
+                    {providerBusy === "connect" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}Save token
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-8" onClick={() => { setReplacingToken(false); setProviderToken(""); }}>Cancel</Button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="mt-4 space-y-3">
+            <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
+              <div className="space-y-1.5">
+                <LabelText>Domain</LabelText>
+                <Input value={providerDomain} onChange={(e) => setProviderDomain(e.target.value)} placeholder="home.example.com" className="h-9 font-mono" />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <LabelText>Cloudflare token</LabelText>
+                  <span className="group relative inline-flex">
+                    <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="pointer-events-none absolute right-0 z-10 mt-5 hidden w-72 rounded-xl border bg-popover p-3 text-xs text-popover-foreground shadow-lg group-hover:block">
+                      Create a Cloudflare API token from the Edit zone DNS template. Scope it to this domain's zone and grant Zone - Zone - Read plus Zone - DNS - Edit.
+                    </span>
+                  </span>
+                </div>
+                <Input type="password" value={providerToken} onChange={(e) => setProviderToken(e.target.value)} placeholder="Paste token" className="h-9" />
+              </div>
+            </div>
+            <Button size="sm" className="h-9" disabled={!providerDomain.trim() || !providerToken.trim() || !!providerBusy} onClick={connectProvider}>
+              {providerBusy === "connect" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Cloud className="h-4 w-4" />}
+              Connect and secure domain
+            </Button>
+          </div>
+        )}
+      </div>
+
       {/* HTTPS / certificate */}
       <div className="rounded-xl border bg-card p-[22px]">
         <div className="flex items-center justify-between">
@@ -459,9 +650,9 @@ function DomainPanel() {
             <AlertTriangle className="h-4 w-4" />This certificate expires soon.
           </div>
         )}
-        {auto ? (
+        {internalCert ? (
           <p className="mt-3 text-sm text-muted-foreground">
-            <span className="font-medium text-foreground">Automatic.</span> Certificates are issued and renewed on demand for any domain that points at this server — nothing to configure.
+            <span className="font-medium text-foreground">Private/local certificate.</span> Browsers may warn unless you connect YouEye Names, a DNS provider, or upload a trusted certificate.
           </p>
         ) : (
           <div className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
@@ -469,6 +660,14 @@ function DomainPanel() {
             <Field label="Issuer" value={tls?.cert?.issuer || "—"} />
             <Field label="Issued" value={fmtDate(tls?.cert?.issuedAt)} />
             <Field label="Expires" value={fmtDate(tls?.cert?.expiresAt)} />
+            <Field label="Next renewal" value={fmtDateTime(connection?.nextCertRenewalDueAt)} />
+          </div>
+        )}
+        {connection && !internalCert && (
+          <div className="mt-4">
+            <Button size="sm" variant="outline" className="h-8" disabled={!!providerBusy} onClick={renewProvider}>
+              {providerBusy === "renew" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}Renew now
+            </Button>
           </div>
         )}
         <div className="mt-4">
@@ -511,6 +710,10 @@ function Field({ label, value }: { label: string; value?: string }) {
   return (<div><span className="text-muted-foreground">{label}</span><p className="font-medium">{value || "—"}</p></div>);
 }
 
+function LabelText({ children }: { children: ReactNode }) {
+  return <span className="text-xs font-medium text-muted-foreground">{children}</span>;
+}
+
 function Empty({ children }: { children: ReactNode }) {
   return <div className="border-t px-[18px] py-8 text-center text-sm text-muted-foreground">{children}</div>;
 }
@@ -519,4 +722,19 @@ function fmtDate(iso?: string) {
   if (!iso) return "—";
   try { return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" }).format(new Date(iso)); }
   catch { return iso; }
+}
+
+function fmtDateTime(iso?: string | null) {
+  if (!iso) return "—";
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
 }

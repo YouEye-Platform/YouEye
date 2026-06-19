@@ -69,9 +69,9 @@ export function SettingsShell({ children, isAdmin, username, hasUserContext = tr
   };
 
   return (
-    <div className="mx-auto flex max-w-6xl gap-8 px-6 py-8">
-      <nav className="w-52 shrink-0">
-        <div className="sticky top-20 space-y-1">
+    <div className="mx-auto flex max-w-6xl flex-col gap-5 px-4 py-5 md:flex-row md:gap-8 md:px-6 md:py-8">
+      <nav className="w-full shrink-0 md:w-52">
+        <div className="space-y-1 md:sticky md:top-20">
           {hasUserContext && (
             <>
               <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">

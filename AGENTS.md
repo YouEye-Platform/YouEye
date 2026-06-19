@@ -1,3 +1,32 @@
+## cp-dev-v0.4.49.17 — artem — 2026-06-19
+**Branch:** dev
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add Cloudflare-backed BYO domain DNS and TLS automation
+
+### Changes
+- `control-panel/src/lib/dns-providers/*` — added the DNS provider abstraction, Cloudflare client, safe config/secret handling, validation, DNS sync, and certificate-maintenance loop.
+- `control-panel/src/lib/acme/client.ts` — added provider-backed DNS-01 issuance for apex plus wildcard certificates.
+- `control-panel/src/app/api/dns-providers/*`, `control-panel/src/app/api/tls/acme/provider/route.ts` — added admin APIs for provider discovery, validation, connection, sync, disconnect, certificate issuance, and renewal checks.
+- `control-panel/src/app/api/setup/run/route.ts`, `control-panel/src/lib/reconfigure/index.ts`, `control-panel/src/app/api/host-ip/migrate/route.ts` — wired provider mode into initial setup, domain reconfigure, and host-IP migration.
+- `control-panel/src/components/setup/SetupServerName.tsx`, `control-panel/src/app/setup/page.tsx`, `control-panel/src/components/settings-shell/network-client.tsx` — added the setup and Settings UX for entering a domain, choosing Cloudflare, getting token guidance, testing credentials, syncing DNS, replacing tokens, and renewing certificates.
+- `control-panel/src/components/settings-shell/settings-shell.tsx` — fixed Settings mobile layout so the new Domain & HTTPS surface does not overflow on narrow screens.
+- `control-panel/tests/byo-domain-provider.spec.mjs` — added regression coverage for exact-domain/wildcard handling, Cloudflare validation, setup storage of provider secrets, host-IP sync, domain-change guard, and token-safe Settings state.
+- `control-panel/package.json`, `README.md` — bumped Control Panel to `0.4.49.17` and updated the current-version table.
+
+### Test Results
+- `node --test control-panel/tests/byo-domain-provider.spec.mjs`: PASS (6/6).
+- `pnpm --dir control-panel build`: PASS for `ye-controlpanel@0.4.49.17`.
+- Playwright screenshots: Settings Domain & HTTPS checked at 1440x1100 and 390x1000; no horizontal overflow and the provider controls render correctly.
+- `/tmp/standalone.tar`: verified top-level `server.js`, top-level `package.json`, static assets, and embedded package version `0.4.49.17`.
+- Secret/domain scrub over touched CP source/tests/docs: no test token or owner-provided test domain material present.
+
+### Notes for Iris
+- CP-only release. UI and Spine are unchanged.
+- Cloudflare is the first provider behind the provider interface. Tokens are stored through the existing secret system under per-connection secret names, not in raw settings or API responses.
+- Provider mode manages the configured domain and `*.configured-domain`; if the user enters a subdomain as the base, that subdomain and its wildcard are managed.
+- Disconnect leaves external DNS records in place; it removes YouEye's saved provider connection and secret so operators can decide whether to clean records at the DNS host.
+
 ## spine-dev-v0.4.10.4 — artem — 2026-06-19
 **Branch:** dev
 **VM:** potempc

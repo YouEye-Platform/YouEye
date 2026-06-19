@@ -29,6 +29,14 @@ import { tlsStorage } from '@/lib/acme/storage';
 import { claimName, requestCertificate, getCurrentCertificate, updateIp } from '@/lib/youeye-names/client';
 import { generateCsr } from '@/lib/youeye-names/csr';
 import { getStagedBundle, consumeStagedBundle, applyBundleIdentity, bundleCertStillValid } from '@/lib/youeye-names/bundle';
+import { issueCertificateWithDnsProvider } from '@/lib/acme/client';
+import { CloudflareDnsProvider } from '@/lib/dns-providers/cloudflare';
+import { createConnectionId, saveByoDnsProviderConfig } from '@/lib/dns-providers/config';
+import { managedAddressNames } from '@/lib/dns-providers/domain';
+import { writeProviderToken } from '@/lib/dns-providers/secrets';
+import { syncByoDomainDns } from '@/lib/dns-providers/sync';
+import { validateDnsProvider } from '@/lib/dns-providers/validation';
+import type { ByoDnsProviderConfig } from '@/lib/dns-providers/types';
 
 /** True for the private/VPN IPv4 ranges YouEye Names accepts. */
 function isPrivateIPv4(ip: string): boolean {
@@ -61,6 +69,11 @@ interface SetupRequest {
   tls_choice?: string;
   /** YouEye Names leased subdomain (when tls_choice === 'youeye-names') */
   yen_name?: string;
+  /** BYO DNS provider connection submitted during setup. */
+  byo_dns_provider?: {
+    provider?: string;
+    token?: string;
+  };
   /** The server's LAN IP the browser reached setup on (YouEye Names DNS target) */
   current_ip?: string;
   /** If set, only run this specific step (retry mode) */
@@ -243,6 +256,77 @@ export async function POST(request: NextRequest) {
               }
             } catch (certErr) {
               console.warn('[setup] Non-fatal: could not restore stored cert:', certErr);
+            }
+          }
+
+          // ── BYO DNS provider: sync records + install a real certificate ──
+          if (!hasError && body.tls_choice === 'byo-provider') {
+            const alreadyDone = (await tlsStorage.getCert())?.domains?.includes(domain);
+            if (!alreadyDone) {
+              try {
+                const provider = body.byo_dns_provider?.provider === 'cloudflare' ? 'cloudflare' : null;
+                const token = body.byo_dns_provider?.token || '';
+                if (!provider) throw new Error('Choose a supported DNS provider.');
+                if (!token.trim()) throw new Error('DNS provider token is required.');
+
+                const hostIP = process.env.HOST_IP || '';
+                if (!isPrivateIPv4(hostIP)) {
+                  throw new Error("Could not determine this server's private network IP. Check HOST_IP and try again.");
+                }
+
+                stepUpdate('caddy', 'running', 'Connecting your DNS provider…');
+                const validation = await validateDnsProvider({ provider, domain, token, writeTest: true });
+                if (!validation.ok || !validation.zone) {
+                  throw new Error(validation.error || 'DNS provider validation failed.');
+                }
+
+                const connectionId = createConnectionId();
+                await writeProviderToken(connectionId, token);
+                const config: ByoDnsProviderConfig = {
+                  mode: 'byo-provider',
+                  provider,
+                  connectionId,
+                  domain: validation.domain,
+                  zoneId: validation.zone.id,
+                  zoneName: validation.zone.name,
+                  delegated: false,
+                  managedRecords: managedAddressNames(validation.domain).map((name) => ({
+                    type: 'A',
+                    name,
+                    content: hostIP,
+                  })),
+                  targetIp: hostIP,
+                };
+                await saveByoDnsProviderConfig(config);
+
+                stepUpdate('caddy', 'running', 'Pointing your domain at this server…');
+                const sync = await syncByoDomainDns('setup', hostIP);
+                if (!sync.ok) throw new Error(sync.error || 'DNS sync failed.');
+
+                stepUpdate('caddy', 'running', 'Requesting a trusted certificate…');
+                const dnsProvider = new CloudflareDnsProvider(token);
+                const cert = await issueCertificateWithDnsProvider(
+                  validation.domain,
+                  dnsProvider,
+                  validation.zone,
+                  true,
+                );
+                await caddy.loadExternalCert(cert.certificate, cert.privateKey, cert.domains);
+                const expiresAt = new Date(cert.expiresAt);
+                const nextRenewal = new Date(expiresAt.getTime() - 30 * 24 * 60 * 60 * 1000);
+                await saveByoDnsProviderConfig({
+                  ...config,
+                  targetIp: hostIP,
+                  lastDnsSyncAt: new Date().toISOString(),
+                  lastCertRenewalAt: new Date().toISOString(),
+                  nextCertRenewalDueAt: nextRenewal.toISOString(),
+                });
+                console.log('[setup] Installed provider-backed certificate for', validation.domain);
+              } catch (providerErr) {
+                stepUpdate('caddy', 'error', providerErr instanceof Error ? providerErr.message : 'DNS provider setup failed');
+                await saveStepState('caddy', 'error');
+                hasError = true;
+              }
             }
           }
 

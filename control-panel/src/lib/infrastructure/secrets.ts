@@ -5,7 +5,7 @@
  */
 
 import { randomBytes } from 'crypto';
-import { readFile, writeFile, mkdir, chmod } from 'fs/promises';
+import { readFile, writeFile, mkdir, chmod, unlink, access } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 
@@ -49,6 +49,16 @@ export async function readSecret(app: string, name: string): Promise<string | nu
   }
 }
 
+/** Check whether a secret exists without reading its value. */
+export async function secretExists(app: string, name: string): Promise<boolean> {
+  try {
+    await access(path.join(BASE_DIR, app, name));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Write a secret to disk with restrictive permissions. */
 export async function writeSecret(app: string, name: string, value: string): Promise<void> {
   const dir = path.join(BASE_DIR, app);
@@ -57,6 +67,16 @@ export async function writeSecret(app: string, name: string, value: string): Pro
     await chmod(dir, 0o777);
   }
   await writeFile(path.join(dir, name), value, { mode: 0o600 });
+}
+
+/** Delete a secret if present. */
+export async function deleteSecret(app: string, name: string): Promise<void> {
+  try {
+    await unlink(path.join(BASE_DIR, app, name));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') throw error;
+  }
 }
 
 /**

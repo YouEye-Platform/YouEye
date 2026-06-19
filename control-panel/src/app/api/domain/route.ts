@@ -10,6 +10,7 @@ import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { getConfiguredDomain, setDomain, checkHealth } from '@/lib/caddy/client';
 import { setDomainDNS } from '@/lib/apps/pihole-api';
 import { settingsService } from '@/lib/settings';
+import { getByoDnsProviderConfig } from '@/lib/dns-providers/config';
 
 /**
  * GET /api/domain - Get the currently configured domain
@@ -95,6 +96,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: 'Invalid domain format' },
         { status: 400 }
+      );
+    }
+
+    const providerConfig = await getByoDnsProviderConfig();
+    if (providerConfig?.mode === 'byo-provider' && providerConfig.domain !== domain) {
+      return NextResponse.json(
+        { error: 'Use the full reconfigure flow to change a provider-managed domain.' },
+        { status: 409 },
       );
     }
 

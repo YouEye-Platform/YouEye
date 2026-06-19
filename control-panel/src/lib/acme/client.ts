@@ -14,6 +14,8 @@
 import * as acme from 'acme-client';
 import dns from 'dns';
 import { tlsStorage } from './storage';
+import { acmeTxtName } from '@/lib/dns-providers/domain';
+import type { DnsProviderClient, ZoneRef } from '@/lib/dns-providers/types';
 
 // ── Intercept ACME 429 rate limits ──────────────────────────
 // The acme-client library silently retries on 429, sleeping for
@@ -201,7 +203,7 @@ export async function verifyAndFinalize(
     // for minutes after TXT records are created.
     const domain = authz.identifier.value;
     const baseDomain = domain.replace(/^\*\./, '');
-    const recordName = `_acme-challenge.${baseDomain}`;
+    const recordName = acmeTxtName(domain);
 
     try {
       const txtValues = await resolveViaAuthoritativeNs(recordName, baseDomain);
@@ -267,6 +269,79 @@ export async function verifyAndFinalize(
   };
 }
 
+export async function issueCertificateWithDnsProvider(
+  domain: string,
+  provider: DnsProviderClient,
+  zone: ZoneRef,
+  includeWildcard = true,
+): Promise<{
+  certificate: string;
+  privateKey: string;
+  domains: string[];
+  expiresAt: string;
+}> {
+  const client = await getClient();
+  const identifiers: Array<{ type: 'dns'; value: string }> = [{ type: 'dns', value: domain }];
+  if (includeWildcard) identifiers.push({ type: 'dns', value: `*.${domain}` });
+  const domains = identifiers.map((identifier) => identifier.value);
+  const order = await client.createOrder({ identifiers });
+  const authorizations = await client.getAuthorizations(order);
+  const createdTxtRecords: Array<{ name: string; value: string; recordId?: string }> = [];
+  const privateKey = await acme.crypto.createPrivateKey();
+
+  try {
+    for (const authz of authorizations) {
+      const challenge = authz.challenges.find((c: AcmeChallenge) => c.type === 'dns-01');
+      if (!challenge) {
+        throw new Error(`No dns-01 challenge available for ${authz.identifier.value}`);
+      }
+
+      const keyAuth = await client.getChallengeKeyAuthorization(challenge);
+      const recordName = acmeTxtName(authz.identifier.value);
+      const change = await provider.ensureTxtRecord({ zone, name: recordName, value: keyAuth, ttl: 60 });
+      createdTxtRecords.push({ name: recordName, value: keyAuth, recordId: change.recordId });
+
+      await waitForTxtValue(recordName, keyAuth);
+      await client.completeChallenge(challenge);
+    }
+
+    const readyOrder = await client.waitForValidStatus(order);
+    readyOrder.url = order.url;
+
+    const [, csr] = await acme.crypto.createCsr({ altNames: domains }, privateKey);
+    if (readyOrder.status !== 'valid') {
+      await client.finalizeOrder(readyOrder, csr);
+    }
+
+    const validOrder = await client.waitForValidStatus(readyOrder);
+    const certificate = await client.getCertificate(validOrder);
+    const expiresAt = parseCertExpiry(certificate);
+
+    await tlsStorage.storeCert({
+      mode: 'acme',
+      certPem: certificate,
+      keyPem: privateKey.toString(),
+      issuer: "Let's Encrypt",
+      domains,
+      expiresAt,
+      issuedAt: new Date().toISOString(),
+    });
+
+    return {
+      certificate,
+      privateKey: privateKey.toString(),
+      domains,
+      expiresAt,
+    };
+  } finally {
+    await Promise.allSettled(
+      createdTxtRecords.map((record) =>
+        provider.deleteTxtRecord({ zone, name: record.name, value: record.value, recordId: record.recordId }),
+      ),
+    );
+  }
+}
+
 /**
  * Get the active order status (for polling)
  */
@@ -292,8 +367,7 @@ async function resolveViaAuthoritativeNs(
   recordName: string,
   baseDomain: string,
 ): Promise<string[]> {
-  // Get authoritative NS for the domain
-  const nsRecords = await dns.promises.resolveNs(baseDomain);
+  const nsRecords = await resolveAuthoritativeNs(recordName, baseDomain);
   const nsIpArrays = await Promise.all(
     nsRecords.map((ns) => dns.promises.resolve4(ns)),
   );
@@ -314,6 +388,35 @@ async function resolveViaAuthoritativeNs(
   });
 
   return txtRecords.flat();
+}
+
+async function resolveAuthoritativeNs(recordName: string, fallbackBaseDomain: string): Promise<string[]> {
+  const labels = recordName.replace(/\.$/, '').split('.');
+  for (let i = 0; i <= labels.length - 2; i += 1) {
+    const candidate = labels.slice(i).join('.');
+    try {
+      const records = await dns.promises.resolveNs(candidate);
+      if (records.length > 0) return records;
+    } catch {
+      // Try the next parent name.
+    }
+  }
+  return dns.promises.resolveNs(fallbackBaseDomain);
+}
+
+async function waitForTxtValue(recordName: string, expectedValue: string): Promise<void> {
+  const deadline = Date.now() + 120_000;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const txtValues = await resolveViaAuthoritativeNs(recordName, recordName);
+      if (txtValues.includes(expectedValue)) return;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+  throw new Error(`DNS validation record did not propagate for ${recordName}${lastError instanceof Error ? `: ${lastError.message}` : ''}`);
 }
 
 /**

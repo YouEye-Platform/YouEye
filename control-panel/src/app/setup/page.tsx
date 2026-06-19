@@ -80,6 +80,8 @@ export default function SetupPage() {
   const [tlsChoice, setTlsChoice] = useState<TlsChoice>('youeye-names');
   const [acmeCertIssued, setAcmeCertIssued] = useState(false);
   const [yenName, setYenName] = useState('');
+  const [byoDomain, setByoDomain] = useState('');
+  const [byoProviderToken, setByoProviderToken] = useState('');
 
   // Step 1: WordArt
   const [nameStyle, setNameStyle] = useState<SiteNameStyle>(DEFAULT_STYLE);
@@ -187,7 +189,9 @@ export default function SetupPage() {
   const effectiveTld = tld === '__custom__' ? (customTld.startsWith('.') ? customTld : `.${customTld}`) : tld;
   const domain = tlsChoice === 'youeye-names' && yenName
     ? `${yenName}.youeye.me`
-    : `${domainSlug}${effectiveTld}`;
+    : tlsChoice === 'byo-provider'
+      ? byoDomain.trim().replace(/^https?:\/\//, '').split('/')[0].replace(/\.+$/, '').toLowerCase()
+      : `${domainSlug}${effectiveTld}`;
 
   const waitForControlPanelReady = useCallback(async () => {
     const startedAt = Date.now();
@@ -275,6 +279,9 @@ export default function SetupPage() {
           language: selectedLanguage || 'en',
           tls_choice: tlsChoice,
           yen_name: tlsChoice === 'youeye-names' ? yenName : undefined,
+          byo_dns_provider: tlsChoice === 'byo-provider'
+            ? { provider: 'cloudflare', token: byoProviderToken }
+            : undefined,
           current_ip: typeof window !== 'undefined' ? window.location.hostname : undefined,
         }),
       });
@@ -427,6 +434,10 @@ export default function SetupPage() {
             setAcmeCertIssued={setAcmeCertIssued}
             yenName={yenName}
             setYenName={setYenName}
+            byoDomain={byoDomain}
+            setByoDomain={setByoDomain}
+            byoProviderToken={byoProviderToken}
+            setByoProviderToken={setByoProviderToken}
             onNext={() => goToStep(1)}
           />
         )}

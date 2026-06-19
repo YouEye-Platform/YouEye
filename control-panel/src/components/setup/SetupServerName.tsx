@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Globe, ChevronDown, ChevronUp, ArrowRight, AlertTriangle,
   Lock, ShieldAlert, Upload, Check, Copy, Loader2, ShieldCheck,
-  RotateCcw, Sparkles, RefreshCw,
+  RotateCcw, Sparkles, RefreshCw, Info, KeyRound, Cloud,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { TLD_OPTIONS } from '@/lib/wordart-presets';
 import { useTranslations } from 'next-intl';
 
-export type TlsChoice = 'youeye-names' | 'letsencrypt' | 'selfsigned' | 'upload';
+export type TlsChoice = 'youeye-names' | 'byo-provider' | 'letsencrypt' | 'selfsigned' | 'upload';
 
 type AcmePhase = 'choice' | 'records' | 'verifying' | 'done';
 
@@ -49,6 +49,10 @@ interface Props {
   /** Chosen YouEye Names subdomain (e.g. "quiet-wood-9e"). */
   yenName: string;
   setYenName: (v: string) => void;
+  byoDomain: string;
+  setByoDomain: (v: string) => void;
+  byoProviderToken: string;
+  setByoProviderToken: (v: string) => void;
   onNext: () => void;
 }
 
@@ -70,6 +74,8 @@ export default function SetupServerName({
   tlsChoice, setTlsChoice,
   acmeCertIssued, setAcmeCertIssued,
   yenName, setYenName,
+  byoDomain, setByoDomain,
+  byoProviderToken, setByoProviderToken,
   onNext,
 }: Props) {
   const t = useTranslations('setup');
@@ -96,6 +102,10 @@ export default function SetupServerName({
   const [acmeError, setAcmeError] = useState('');
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [includeWildcard, setIncludeWildcard] = useState(true);
+  const [providerLoading, setProviderLoading] = useState(false);
+  const [providerValid, setProviderValid] = useState(false);
+  const [providerError, setProviderError] = useState('');
+  const [providerZone, setProviderZone] = useState('');
 
   // Auto-fill domain slug from site name (for the own-domain path)
   useEffect(() => {
@@ -179,11 +189,14 @@ export default function SetupServerName({
   const isLocal = isCustomTld ? isLocalDomain(effectiveTld) : isLocalDomain(tld);
 
   const acmeInProgress = tlsChoice === 'letsencrypt' && acmePhase !== 'choice' && !acmeCertIssued;
+  const providerDomain = byoDomain.trim();
 
   const canProceed = siteName.trim().length > 0 && (
     tlsChoice === 'youeye-names'
       ? (reusing ? !!yenName : !!currentYen)
-      : domainSlug.length > 0 && (!isCustomTld || customTld.length > 0)
+      : tlsChoice === 'byo-provider'
+        ? providerDomain.length > 0 && byoProviderToken.trim().length > 0
+        : domainSlug.length > 0 && (!isCustomTld || customTld.length > 0)
   );
 
   const selectOwn = (choice: Exclude<TlsChoice, 'youeye-names'>) => {
@@ -192,6 +205,9 @@ export default function SetupServerName({
     setAcmeChallenges([]);
     setAcmeError('');
     setAcmeCertIssued(false);
+    setProviderError('');
+    setProviderValid(false);
+    setProviderZone('');
     setTlsChoice(choice);
   };
 
@@ -275,7 +291,43 @@ export default function SetupServerName({
     }
   };
 
-  const handleContinue = () => {
+  const handleValidateProvider = async (): Promise<boolean> => {
+    setProviderLoading(true);
+    setProviderError('');
+    setProviderValid(false);
+    setProviderZone('');
+    try {
+      const csrfRes = await fetch('/api/auth/csrf');
+      const { csrfToken } = await csrfRes.json();
+      const res = await fetch('/api/dns-providers/cloudflare/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ domain: providerDomain, token: byoProviderToken }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Cloudflare connection failed');
+      setProviderValid(true);
+      setProviderZone(data.zone?.name || '');
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error
+        ? (e.name === 'TimeoutError' ? 'Cloudflare validation timed out. Check the token and try again.' : e.message)
+        : 'Cloudflare connection failed';
+      setProviderError(msg);
+      return false;
+    } finally {
+      setProviderLoading(false);
+    }
+  };
+
+  const handleContinue = async () => {
+    if (tlsChoice === 'byo-provider' && !providerValid) {
+      const ok = await handleValidateProvider();
+      if (!ok) return;
+      onNext();
+      return;
+    }
     if (tlsChoice === 'letsencrypt' && !acmeCertIssued) {
       handleStartAcme();
       return;
@@ -366,7 +418,7 @@ export default function SetupServerName({
             <div className="pt-1">
               <p className="text-xs text-muted-foreground mb-2">{t('yenOtherOptions')}</p>
               <div className="grid gap-2">
-                <SecondaryOption icon={Lock} label={t('tlsOwnDomain')} onClick={() => selectOwn('letsencrypt')} />
+                <SecondaryOption icon={Cloud} label={t('tlsOwnDomain')} onClick={() => selectOwn('byo-provider')} />
                 <SecondaryOption icon={ShieldAlert} label={t('tlsSelfSigned')} onClick={() => selectOwn('selfsigned')} />
                 <SecondaryOption icon={Upload} label={t('tlsUploadOwn')} onClick={() => selectOwn('upload')} />
               </div>
@@ -389,80 +441,154 @@ export default function SetupServerName({
             </button>
           )}
 
-          {/* Domain */}
-          <div className="space-y-2">
-            <Label>{t('serverAddress')}</Label>
-            <div className="flex items-center gap-0">
-              <Input
-                value={domainSlug}
-                onChange={e => { setSlugEdited(true); setDomainSlug(slugify(e.target.value)); }}
-                placeholder="myserver"
-                className="rounded-r-none border-r-0 text-base h-11 font-mono flex-1"
-                disabled={acmeInProgress}
-              />
-              <div className="relative shrink-0">
-                <select
-                  value={tld}
-                  onChange={e => { e.stopPropagation(); setTld(e.target.value); }}
-                  onMouseDown={e => e.stopPropagation()}
-                  disabled={acmeInProgress}
-                  className="h-11 rounded-l-none rounded-r-md border border-input bg-muted pl-3 pr-8 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer disabled:opacity-50"
-                  style={{ WebkitAppearance: 'menulist', appearance: 'menulist' }}
-                >
-                  <optgroup label="Local network">
-                    {TLD_OPTIONS.filter(opt => opt.group === 'local').map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Public domains">
-                    {TLD_OPTIONS.filter(opt => opt.group === 'real').map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="─────────">
-                    {TLD_OPTIONS.filter(opt => opt.group === 'custom').map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </optgroup>
-                </select>
+          {tlsChoice === 'byo-provider' ? (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label>Your domain</Label>
+                <Input
+                  value={byoDomain}
+                  onChange={e => { setByoDomain(e.target.value); setProviderValid(false); setProviderError(''); }}
+                  placeholder="home.example.com"
+                  className="text-base h-11 font-mono"
+                  disabled={providerLoading}
+                />
+                <p className="text-xs text-muted-foreground">YouEye will manage this name and its app subdomains.</p>
+              </div>
+              <div className="rounded-xl border bg-muted/30 p-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium">Cloudflare</p>
+                    <p className="text-xs text-muted-foreground">DNS records and HTTPS validation</p>
+                  </div>
+                  <div className="group relative">
+                    <button type="button" className="rounded-full p-1 text-muted-foreground hover:text-foreground" aria-label="Cloudflare token help">
+                      <Info className="h-4 w-4" />
+                    </button>
+                    <div className="pointer-events-none absolute right-0 z-10 mt-2 hidden w-72 rounded-xl border bg-popover p-3 text-left text-xs text-popover-foreground shadow-lg group-hover:block">
+                      <p className="font-semibold">Token steps</p>
+                      <ol className="mt-2 list-decimal space-y-1 pl-4 text-muted-foreground">
+                        <li>Open Cloudflare, then My Profile and API Tokens.</li>
+                        <li>Create a token from the Edit zone DNS template.</li>
+                        <li>Scope it to this domain&apos;s DNS zone.</li>
+                        <li>Grant Zone - Zone - Read and Zone - DNS - Edit.</li>
+                      </ol>
+                    </div>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">API token</Label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        type="password"
+                        value={byoProviderToken}
+                        onChange={e => { setByoProviderToken(e.target.value); setProviderValid(false); setProviderError(''); }}
+                        placeholder="Paste token"
+                        className="h-10 pl-9"
+                        disabled={providerLoading}
+                      />
+                    </div>
+                    <Button type="button" variant="outline" className="h-10" disabled={!providerDomain || !byoProviderToken.trim() || providerLoading} onClick={handleValidateProvider}>
+                      {providerLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                      Test
+                    </Button>
+                  </div>
+                </div>
+                {providerValid && (
+                  <p className="rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-xs text-green-700 dark:text-green-400">
+                    Cloudflare connected{providerZone ? ` for ${providerZone}` : ''}.
+                  </p>
+                )}
+                {providerError && (
+                  <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-400">{providerError}</p>
+                )}
               </div>
             </div>
-
-            {isCustomTld && (
-              <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                <span className="text-sm text-muted-foreground">.</span>
+          ) : (
+            <div className="space-y-2">
+              <Label>{t('serverAddress')}</Label>
+              <div className="flex items-center gap-0">
                 <Input
-                  value={customTld}
-                  onChange={e => setCustomTld(e.target.value.replace(/^\./, '').replace(/[^a-z0-9.-]/gi, '').replace(/\.+$/, '').toLowerCase())}
-                  placeholder="wtf"
-                  className="h-9 text-sm font-mono flex-1"
-                  autoFocus
+                  value={domainSlug}
+                  onChange={e => { setSlugEdited(true); setDomainSlug(slugify(e.target.value)); }}
+                  placeholder="myserver"
+                  className="rounded-r-none border-r-0 text-base h-11 font-mono flex-1"
                   disabled={acmeInProgress}
                 />
+                <div className="relative shrink-0">
+                  <select
+                    value={tld}
+                    onChange={e => { e.stopPropagation(); setTld(e.target.value); }}
+                    onMouseDown={e => e.stopPropagation()}
+                    disabled={acmeInProgress}
+                    className="h-11 rounded-l-none rounded-r-md border border-input bg-muted pl-3 pr-8 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer disabled:opacity-50"
+                    style={{ WebkitAppearance: 'menulist', appearance: 'menulist' }}
+                  >
+                    <optgroup label="Local network">
+                      {TLD_OPTIONS.filter(opt => opt.group === 'local').map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Public domains">
+                      {TLD_OPTIONS.filter(opt => opt.group === 'real').map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="─────────">
+                      {TLD_OPTIONS.filter(opt => opt.group === 'custom').map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </div>
               </div>
-            )}
 
-            <p className="text-xs text-muted-foreground">
-              {t('serverAddressPreview')}: <span className="font-mono font-medium">{ownDomain || '...'}</span>
-            </p>
-            {isRealTld && (
-              <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200">
-                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
-                <span>{t('realDomainWarning')}</span>
-              </div>
-            )}
-          </div>
+              {isCustomTld && (
+                <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <span className="text-sm text-muted-foreground">.</span>
+                  <Input
+                    value={customTld}
+                    onChange={e => setCustomTld(e.target.value.replace(/^\./, '').replace(/[^a-z0-9.-]/gi, '').replace(/\.+$/, '').toLowerCase())}
+                    placeholder="example"
+                    className="h-9 text-sm font-mono flex-1"
+                    autoFocus
+                    disabled={acmeInProgress}
+                  />
+                </div>
+              )}
+
+              <p className="text-xs text-muted-foreground">
+                {t('serverAddressPreview')}: <span className="font-mono font-medium">{ownDomain || '...'}</span>
+              </p>
+              {isRealTld && (
+                <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200">
+                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+                  <span>{t('realDomainWarning')}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Option cards */}
           <div className="space-y-3">
             <Label>{t('certificateChoice')}</Label>
 
             <OptionCard
+              active={tlsChoice === 'byo-provider'}
+              disabled={acmeInProgress}
+              tone="blue"
+              icon={Cloud}
+              title="Automatic with Cloudflare"
+              desc="YouEye keeps DNS and HTTPS updated for your own domain."
+              onClick={() => selectOwn('byo-provider')}
+            />
+            <OptionCard
               active={tlsChoice === 'letsencrypt'}
               disabled={acmeInProgress || isLocal}
               tone="green"
               icon={Lock}
-              title={t('tlsOwnDomain')}
+              title="Manual Let's Encrypt"
               desc={t('tlsLetsEncryptDesc')}
               note={isLocal ? t('tlsLetsEncryptLocalWarn') : undefined}
               onClick={() => selectOwn('letsencrypt')}
@@ -607,11 +733,16 @@ export default function SetupServerName({
         <div className="pt-2 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-[400ms]">
           <Button
             onClick={handleContinue}
-            disabled={!canProceed || acmeLoading}
+            disabled={!canProceed || acmeLoading || providerLoading}
             className="w-full h-12 text-base gap-2"
           >
             {acmeLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-            {tlsChoice === 'letsencrypt' && !acmeCertIssued ? t('acmeStartOrder') : t('continue')}
+            {providerLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+            {tlsChoice === 'letsencrypt' && !acmeCertIssued
+              ? t('acmeStartOrder')
+              : tlsChoice === 'byo-provider' && !providerValid
+                ? 'Test and continue'
+                : t('continue')}
             {!acmeLoading && (tlsChoice !== 'letsencrypt' || acmeCertIssued) && <ArrowRight className="h-4 w-4" />}
           </Button>
         </div>
@@ -637,11 +768,13 @@ function SecondaryOption({ icon: Icon, label, onClick }: { icon: typeof Lock; la
 function OptionCard({
   active, disabled, tone, icon: Icon, title, desc, note, onClick,
 }: {
-  active: boolean; disabled?: boolean; tone?: 'green'; icon: typeof Lock;
+  active: boolean; disabled?: boolean; tone?: 'green' | 'blue'; icon: typeof Lock;
   title: string; desc: string; note?: string; onClick: () => void;
 }) {
   const activeRing = tone === 'green'
     ? 'border-green-400 bg-green-50/60 ring-1 ring-green-300 dark:bg-green-950/30 dark:border-green-700'
+    : tone === 'blue'
+      ? 'border-primary/40 bg-primary/[0.06] ring-1 ring-primary/30'
     : 'border-primary/40 bg-muted/60 ring-1 ring-primary/30';
   return (
     <button
@@ -653,8 +786,8 @@ function OptionCard({
       } ${disabled && !active ? 'opacity-50 pointer-events-none' : ''} disabled:cursor-not-allowed`}
     >
       <div className="flex items-start gap-3">
-        <div className={`mt-0.5 p-2 rounded-lg ${tone === 'green' ? 'bg-green-100 dark:bg-green-900/40' : 'bg-muted'}`}>
-          <Icon className={`h-4 w-4 ${tone === 'green' ? 'text-green-700 dark:text-green-400' : 'text-muted-foreground'}`} />
+        <div className={`mt-0.5 p-2 rounded-lg ${tone === 'green' ? 'bg-green-100 dark:bg-green-900/40' : tone === 'blue' ? 'bg-primary/10' : 'bg-muted'}`}>
+          <Icon className={`h-4 w-4 ${tone === 'green' ? 'text-green-700 dark:text-green-400' : tone === 'blue' ? 'text-primary' : 'text-muted-foreground'}`} />
         </div>
         <div className="flex-1">
           <p className="font-medium text-sm">{title}</p>

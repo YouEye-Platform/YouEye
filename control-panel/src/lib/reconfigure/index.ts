@@ -25,6 +25,13 @@ import {
 } from '@/lib/identity/core-clients';
 import { getClient } from '@/lib/identity/store';
 import { createOAuthClient } from '@/lib/identity/provider';
+import { issueCertificateWithDnsProvider } from '@/lib/acme/client';
+import { CloudflareDnsProvider } from '@/lib/dns-providers/cloudflare';
+import { getByoDnsProviderConfig, saveByoDnsProviderConfig } from '@/lib/dns-providers/config';
+import { managedAddressNames } from '@/lib/dns-providers/domain';
+import { readProviderToken } from '@/lib/dns-providers/secrets';
+import { syncByoDomainDns } from '@/lib/dns-providers/sync';
+import { validateDnsProvider } from '@/lib/dns-providers/validation';
 
 export interface ReconfigureRequest {
   site_name?: string;
@@ -448,6 +455,64 @@ export async function reconfigure(
       }
     } else {
       onEvent({ step: 'dns', status: 'done', message: 'Skipped — HOST_IP not available' });
+    }
+
+    const providerConfig = await getByoDnsProviderConfig();
+    if (providerConfig?.mode === 'byo-provider') {
+      onEvent({ step: 'dns_provider', status: 'running', message: 'Updating DNS provider records...' });
+      try {
+        const token = await readProviderToken(providerConfig.connectionId);
+        if (!token) throw new Error('DNS provider token is not available');
+        if (providerConfig.provider !== 'cloudflare') throw new Error(`Unsupported DNS provider: ${providerConfig.provider}`);
+        const validation = await validateDnsProvider({
+          provider: providerConfig.provider,
+          domain: newDomain,
+          token,
+          writeTest: true,
+        });
+        if (!validation.ok || !validation.zone) {
+          throw new Error(validation.error || 'DNS provider validation failed');
+        }
+        await saveByoDnsProviderConfig({
+          ...providerConfig,
+          domain: validation.domain,
+          zoneId: validation.zone.id,
+          zoneName: validation.zone.name,
+          managedRecords: managedAddressNames(validation.domain).map((name) => ({
+            type: 'A',
+            name,
+            content: hostIP || providerConfig.targetIp,
+          })),
+          targetIp: hostIP || providerConfig.targetIp,
+          lastDnsSyncError: '',
+        });
+        const sync = await syncByoDomainDns('reconfigure', hostIP || providerConfig.targetIp);
+        if (!sync.ok) throw new Error(sync.error || 'DNS provider sync failed');
+        onEvent({ step: 'dns_provider', status: 'done', message: 'DNS provider records updated' });
+
+        onEvent({ step: 'tls', status: 'running', message: 'Issuing certificate for the new domain...' });
+        const dnsProvider = new CloudflareDnsProvider(token);
+        const cert = await issueCertificateWithDnsProvider(validation.domain, dnsProvider, validation.zone, true);
+        await caddy.loadExternalCert(cert.certificate, cert.privateKey, cert.domains);
+        const expiresAt = new Date(cert.expiresAt);
+        const nextRenewal = new Date(expiresAt.getTime() - 30 * 24 * 60 * 60 * 1000);
+        await saveByoDnsProviderConfig({
+          ...providerConfig,
+          domain: validation.domain,
+          zoneId: validation.zone.id,
+          zoneName: validation.zone.name,
+          targetIp: hostIP || providerConfig.targetIp,
+          lastDnsSyncAt: new Date().toISOString(),
+          lastCertRenewalAt: new Date().toISOString(),
+          nextCertRenewalDueAt: nextRenewal.toISOString(),
+          lastDnsSyncError: '',
+        });
+        onEvent({ step: 'tls', status: 'done', message: 'Certificate issued and loaded' });
+      } catch (err) {
+        console.error('[Reconfigure] DNS provider update failed:', err);
+        onEvent({ step: 'dns_provider', status: 'error', message: err instanceof Error ? err.message : 'DNS provider update failed' });
+        throw err;
+      }
     }
   }
 

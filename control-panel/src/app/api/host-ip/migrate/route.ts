@@ -31,6 +31,7 @@ import { NextRequest } from 'next/server';
 import { settingsService } from '@/lib/settings';
 import { setDomainDNS } from '@/lib/apps/pihole-api';
 import { removeIPLiteralRoute } from '@/lib/caddy/client';
+import { syncByoDomainDns } from '@/lib/dns-providers/sync';
 
 export const dynamic = 'force-dynamic';
 
@@ -103,6 +104,20 @@ export async function POST(request: NextRequest) {
     console.log('[host-ip/migrate] skipping dnsmasq update — no domain in settings');
   }
 
+  let providerDnsOk = false;
+  let providerDnsError: string | undefined;
+  try {
+    const result = await syncByoDomainDns('host-ip-change', newIP);
+    providerDnsOk = result.ok;
+    providerDnsError = result.error;
+    if (result.domain) {
+      console.log(`[host-ip/migrate] provider DNS sync for ${result.domain}: ${result.ok ? 'ok' : result.error}`);
+    }
+  } catch (err) {
+    providerDnsError = err instanceof Error ? err.message : String(err);
+    console.error('[host-ip/migrate] provider DNS sync failed:', err);
+  }
+
   // ─── 2. Caddy IP-literal route (best-effort) ────────────
   let caddyOk = false;
   try {
@@ -123,6 +138,8 @@ export async function POST(request: NextRequest) {
       new: newIP,
       domain: domain || null,
       dns: dnsOk,
+      providerDns: providerDnsOk,
+      providerDnsError: providerDnsError || null,
       caddy: caddyOk,
     }),
     { headers: { 'Content-Type': 'application/json' } }

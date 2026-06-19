@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { tlsStorage } from '@/lib/acme/storage';
 import * as caddy from '@/lib/caddy/client';
+import { getByoDnsProviderConfig } from '@/lib/dns-providers/config';
 
 export async function GET() {
   try {
@@ -20,6 +21,7 @@ export async function GET() {
 
     const mode = await tlsStorage.getMode();
     const stored = await tlsStorage.getCert();
+    const providerConfig = await getByoDnsProviderConfig();
 
     // Check cert expiry warning (14 days)
     let expiryWarning = false;
@@ -56,6 +58,15 @@ export async function GET() {
         : null,
       subjects,
       expiryWarning,
+      dnsProvider: providerConfig
+        ? {
+            provider: providerConfig.provider,
+            domain: providerConfig.domain,
+            zoneName: providerConfig.zoneName,
+            lastCertRenewalAt: providerConfig.lastCertRenewalAt || null,
+            nextCertRenewalDueAt: providerConfig.nextCertRenewalDueAt || null,
+          }
+        : null,
     });
   } catch (error) {
     console.error('[TLS/Status] Failed:', error);
