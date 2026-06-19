@@ -1,3 +1,27 @@
+## spine-dev-v0.4.10.4 — artem — 2026-06-19
+**Branch:** dev
+**VM:** potempc
+**Agent:** Artem
+**Task:** Make Spine automatically prepare appliance storage for YouEye hosts
+
+### Changes
+- `spine/internal/storage/storage.go` — added a host storage planner/grower that detects safe root-LVM free space, computes host reserve, and plans appliance-sized Incus pool targets.
+- `spine/internal/incus/install.go` — removed the hardcoded 20 GB ZFS pool cap, creates fresh managed pools at the calculated target, and grows existing managed loop-backed ZFS pools upward without shrinking or touching block-backed pools.
+- `spine/internal/cmd/install.go`, `spine/internal/cmd/storage.go`, `spine/internal/cmd/root.go` — run storage preparation before Incus setup and add `youeye storage status`, `youeye storage plan`, and `youeye storage grow`.
+- `spine/internal/config/*` — added `deployment.storage` defaults for appliance mode, root auto-expand, Incus auto-grow, host reserve, and pool-size cap.
+- `spine/internal/storage/storage_test.go`, `spine/internal/incus/install_test.go` — added regression coverage for Ubuntu default LVM layouts, non-LVM/multi-LV safety skips, no-shrink behavior, size parsing, and managed-loop detection.
+- `spine/internal/cmd/root.go`, `README.md` — bumped Spine to `0.4.10.4` and updated the current-version table.
+
+### Test Results
+- `go test ./...`: PASS.
+- `go vet ./...`: PASS.
+- `go build ./...`: PASS.
+- Read-only live probe on `bykapc` with the new binary: `youeye storage status` detected root grow by `363.8 GiB`, Incus `20GB` loop-backed ZFS pool, target `377 GiB`, and Incus grow by `358.4 GiB`.
+
+### Notes for Iris
+- Spine-only release. No live mutation was performed on `bykapc`; the owner will deploy/test.
+- `youeye deploy` remains non-interactive. It auto-expands only safe single-LV root LVM layouts, never shrinks storage, and never touches real block-backed or operator-created Incus pools.
+
 ## cp-dev-v0.4.49.16 — artem — 2026-06-19
 **Branch:** dev
 **VM:** potempc

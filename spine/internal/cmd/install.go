@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"git.potemk.in/potemsla/YouEye/spine/internal/container"
 	"git.potemk.in/potemsla/YouEye/spine/internal/incus"
+	hoststorage "git.potemk.in/potemsla/YouEye/spine/internal/storage"
 )
 
 var installCmd = &cobra.Command{
@@ -35,7 +38,16 @@ func init() {
 }
 
 func installIncus() error {
-	return incus.Install()
+	cfg := GetConfig()
+	policy := hoststorage.PolicyFromConfig(cfg.Deployment.Storage)
+	result, err := hoststorage.EnsureApplianceStorage(policy)
+	if err != nil {
+		return fmt.Errorf("storage preparation failed: %w", err)
+	}
+	return incus.InstallWithOptions(incus.InstallOptions{
+		DesiredZFSSize: result.FinalPlan.IncusTargetSize(),
+		AutoGrowZFS:    policy.AutoGrowIncus,
+	})
 }
 
 func installControl() error {

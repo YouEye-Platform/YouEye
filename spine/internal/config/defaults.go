@@ -42,6 +42,13 @@ func Default() *Config {
 				StorageDriver: "dir",
 				StoragePath:   "/var/lib/incus/storage-pools/default",
 			},
+			Storage: StorageConfig{
+				Mode:                "appliance",
+				AutoExpandRoot:      true,
+				AutoGrowIncus:       true,
+				HostReserveGB:       60,
+				MaxIncusPoolPercent: 85,
+			},
 		},
 		API: APIConfig{
 			SocketPath:        "/var/run/youeye/youeye.sock",

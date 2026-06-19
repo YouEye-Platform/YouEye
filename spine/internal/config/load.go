@@ -163,6 +163,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("deployment.incus.storage_driver", defaults.Deployment.Incus.StorageDriver)
 	v.SetDefault("deployment.incus.storage_path", defaults.Deployment.Incus.StoragePath)
 
+	// Deployment - Storage
+	v.SetDefault("deployment.storage.mode", defaults.Deployment.Storage.Mode)
+	v.SetDefault("deployment.storage.auto_expand_root", defaults.Deployment.Storage.AutoExpandRoot)
+	v.SetDefault("deployment.storage.auto_grow_incus", defaults.Deployment.Storage.AutoGrowIncus)
+	v.SetDefault("deployment.storage.host_reserve_gb", defaults.Deployment.Storage.HostReserveGB)
+	v.SetDefault("deployment.storage.max_incus_pool_percent", defaults.Deployment.Storage.MaxIncusPoolPercent)
+
 	// API
 	v.SetDefault("api.socket_path", defaults.API.SocketPath)
 	v.SetDefault("api.socket_permissions", defaults.API.SocketPermissions)
@@ -215,6 +222,19 @@ func (c *Config) Validate() error {
 	}
 	if c.Deployment.ControlPanel.Port < 1 || c.Deployment.ControlPanel.Port > 65535 {
 		return fmt.Errorf("deployment.control_panel.port must be between 1 and 65535")
+	}
+	if c.Deployment.Storage.Mode == "" {
+		c.Deployment.Storage.Mode = "appliance"
+	}
+	validStorageModes := map[string]bool{"appliance": true, "disabled": true, "off": true}
+	if !validStorageModes[strings.ToLower(c.Deployment.Storage.Mode)] {
+		return fmt.Errorf("deployment.storage.mode must be one of: appliance, disabled")
+	}
+	if c.Deployment.Storage.HostReserveGB < 0 {
+		return fmt.Errorf("deployment.storage.host_reserve_gb cannot be negative")
+	}
+	if c.Deployment.Storage.MaxIncusPoolPercent < 0 || c.Deployment.Storage.MaxIncusPoolPercent > 100 {
+		return fmt.Errorf("deployment.storage.max_incus_pool_percent must be between 0 and 100")
 	}
 
 	// Validate API configuration

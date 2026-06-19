@@ -76,3 +76,39 @@ func TestActiveIncusBridgeDnsmasqCount(t *testing.T) {
 		t.Fatalf("activeIncusBridgeDnsmasqCount() = %d, want 2", got)
 	}
 }
+
+func TestParseStorageShow(t *testing.T) {
+	out := `config:
+  size: 20GB
+  source: /var/lib/incus/disks/default.img
+  zfs.pool_name: default
+description: ""
+name: default
+driver: zfs
+`
+	got := parseStorageShow(out)
+	if got.driver != "zfs" {
+		t.Fatalf("driver = %q, want zfs", got.driver)
+	}
+	if got.source != "/var/lib/incus/disks/default.img" {
+		t.Fatalf("source = %q", got.source)
+	}
+	if got.size != "20GB" {
+		t.Fatalf("size = %q", got.size)
+	}
+	if got.poolName != "default" {
+		t.Fatalf("poolName = %q", got.poolName)
+	}
+}
+
+func TestManagedLoopSource(t *testing.T) {
+	if !managedLoopSource("/var/lib/incus/disks/default.img") {
+		t.Fatal("expected default.img to be treated as a managed loop source")
+	}
+	if managedLoopSource("default") {
+		t.Fatal("expected named zpool source to be ignored")
+	}
+	if managedLoopSource("/dev/nvme0n1p4") {
+		t.Fatal("expected block device source to be ignored")
+	}
+}

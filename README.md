@@ -142,7 +142,7 @@ Each component is versioned and released independently.
 
 | Component | Version |
 |-----------|---------|
-| Spine | 0.4.10.3 (`spine-dev-v0.4.10.3`) |
+| Spine | 0.4.10.4 (`spine-dev-v0.4.10.4`) |
 | Installer | 0.1.0.2 (`installer-dev-v0.1.0.2`) |
 | Control Panel | 0.4.49.16 (`cp-dev-v0.4.49.16`) |
 | UI | 0.4.28.7 (`ui-dev-v0.4.28.7`) |

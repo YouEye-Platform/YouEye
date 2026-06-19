@@ -8,14 +8,26 @@ import (
 	"strings"
 	"time"
 
+	"git.potemk.in/potemsla/YouEye/spine/internal/storage"
 	"git.potemk.in/potemsla/YouEye/spine/internal/util"
 )
 
 // StorageDriver tracks the initialized storage driver type
 var StorageDriver string = "dir"
 
+// InstallOptions configures Incus initialization and storage growth.
+type InstallOptions struct {
+	DesiredZFSSize string
+	AutoGrowZFS    bool
+}
+
 // Install installs and initializes Incus with proper storage configuration.
 func Install() error {
+	return InstallWithOptions(InstallOptions{})
+}
+
+// InstallWithOptions installs and initializes Incus with proper storage configuration.
+func InstallWithOptions(opts InstallOptions) error {
 	fmt.Println("=== Installing Incus ===")
 
 	// Install pamtester on HOST for PAM authentication (required by Spine API)
@@ -94,6 +106,11 @@ func Install() error {
 		if strings.Contains(string(out), ",zfs,") {
 			StorageDriver = "zfs"
 			fmt.Println("✓ Incus is already initialized with ZFS storage")
+			if opts.AutoGrowZFS {
+				if err := GrowDefaultManagedZFSLoopPool(opts.DesiredZFSSize); err != nil {
+					fmt.Printf("Warning: could not grow Incus storage: %v\n", err)
+				}
+			}
 			if err := ensureIncusBridgeReady(); err != nil {
 				return err
 			}
@@ -131,7 +148,7 @@ func Install() error {
 	}
 
 	// Initialize Incus with best available storage
-	if err := initializeWithPreseed(zfsAvailable); err != nil {
+	if err := initializeWithPreseed(zfsAvailable, opts); err != nil {
 		return err
 	}
 
@@ -216,7 +233,7 @@ func zpoolExists(name string) bool {
 }
 
 // initializeWithPreseed initializes Incus using preseed configuration.
-func initializeWithPreseed(zfsAvailable bool) error {
+func initializeWithPreseed(zfsAvailable bool, opts InstallOptions) error {
 	driver := "dir"
 	driverConfig := ""
 	if zfsAvailable {
@@ -226,8 +243,10 @@ func initializeWithPreseed(zfsAvailable bool) error {
 		if zpoolExists("default") {
 			fmt.Println("Found existing ZFS pool 'default', reusing it...")
 			driverConfig = "\n    source: default"
+		} else if strings.TrimSpace(opts.DesiredZFSSize) != "" {
+			driverConfig = "\n    size: " + strings.TrimSpace(opts.DesiredZFSSize)
 		} else {
-			driverConfig = "\n    size: 20GB"
+			driverConfig = ""
 		}
 		fmt.Println("Initializing Incus with ZFS storage...")
 	} else {
@@ -274,7 +293,7 @@ cluster: null
 
 	if err := cmd.Run(); err != nil {
 		// Fallback to manual setup if preseed fails
-		return initializeManually(err, zfsAvailable)
+		return initializeManually(err, zfsAvailable, opts)
 	}
 
 	StorageDriver = driver
@@ -282,7 +301,7 @@ cluster: null
 }
 
 // initializeManually performs manual Incus initialization when preseed fails.
-func initializeManually(preseedErr error, zfsAvailable bool) error {
+func initializeManually(preseedErr error, zfsAvailable bool, opts InstallOptions) error {
 	fmt.Println("\n⚠️  Preseed init failed, trying manual setup...")
 	util.LogDebug(fmt.Sprintf("Preseed error: %v", preseedErr))
 
@@ -332,8 +351,10 @@ func initializeManually(preseedErr error, zfsAvailable bool) error {
 			if zpoolExists("default") {
 				util.LogDebug("Found existing ZFS pool 'default', reusing via source=default")
 				createArgs = []string{"storage", "create", "default", "zfs", "source=default"}
+			} else if strings.TrimSpace(opts.DesiredZFSSize) != "" {
+				createArgs = []string{"storage", "create", "default", "zfs", "size=" + strings.TrimSpace(opts.DesiredZFSSize)}
 			} else {
-				createArgs = []string{"storage", "create", "default", "zfs", "size=20GB"}
+				createArgs = []string{"storage", "create", "default", "zfs"}
 			}
 		} else {
 			createArgs = []string{"storage", "create", "default", "dir"}
@@ -422,6 +443,105 @@ func initializeManually(preseedErr error, zfsAvailable bool) error {
 	}
 
 	return nil
+}
+
+// GrowDefaultManagedZFSLoopPool grows Incus' default managed loop-backed ZFS
+// pool when it is below the requested size. It never shrinks a pool and ignores
+// non-loop pools that may be backed by a real disk or an operator-created zpool.
+func GrowDefaultManagedZFSLoopPool(targetSize string) error {
+	targetSize = strings.TrimSpace(targetSize)
+	if targetSize == "" {
+		return nil
+	}
+
+	out, err := util.RunCmdCapture("incus", "storage", "show", "default")
+	if err != nil {
+		return nil
+	}
+	info := parseStorageShow(out)
+	if info.driver != "zfs" {
+		return nil
+	}
+	if !managedLoopSource(info.source) {
+		return nil
+	}
+
+	targetBytes := storage.ParseSizeBytes(targetSize)
+	currentBytes := storage.ParseSizeBytes(info.size)
+	if targetBytes <= 0 || currentBytes <= 0 || targetBytes <= currentBytes {
+		return nil
+	}
+
+	fmt.Printf("Growing Incus storage pool from %s to %s...\n", info.size, targetSize)
+	if err := util.RunCmd("incus", "storage", "set", "default", "size="+targetSize); err != nil {
+		return err
+	}
+	poolName := info.poolName
+	if poolName == "" {
+		poolName = "default"
+	}
+	util.RunCmdQuiet("zpool", "set", "autoexpand=on", poolName)
+	if info.source != "" {
+		util.RunCmdQuiet("zpool", "online", "-e", poolName, info.source)
+	}
+	fmt.Println("✓ Incus storage pool grown")
+	return nil
+}
+
+type storageShowInfo struct {
+	driver   string
+	source   string
+	size     string
+	poolName string
+}
+
+func parseStorageShow(out string) storageShowInfo {
+	var info storageShowInfo
+	inConfig := false
+	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if trimmed == "config:" {
+			inConfig = true
+			continue
+		}
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			inConfig = false
+		}
+		key, value, ok := strings.Cut(trimmed, ":")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.Trim(strings.TrimSpace(value), "\"'")
+		switch {
+		case key == "driver":
+			info.driver = value
+		case inConfig && key == "source":
+			info.source = value
+		case inConfig && key == "size":
+			info.size = value
+		case inConfig && key == "zfs.pool_name":
+			info.poolName = value
+		}
+	}
+	return info
+}
+
+func managedLoopSource(source string) bool {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return false
+	}
+	if strings.HasPrefix(source, "/var/lib/incus/disks/") {
+		return true
+	}
+	if info, err := os.Stat(source); err == nil {
+		return info.Mode().IsRegular()
+	}
+	return false
 }
 
 // ensureIncusBridgeReady normalizes the managed bridge after init/reuse. Fresh

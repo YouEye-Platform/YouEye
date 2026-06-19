@@ -18,7 +18,7 @@ import (
 //	go build -ldflags "-X git.potemk.in/potemsla/YouEye/spine/internal/cmd.Version=0.2.4.1 -X git.potemk.in/potemsla/YouEye/spine/internal/cmd.BuildDate=2026-03-27"
 //
 // Defaults here are used only for development builds.
-var Version = "0.4.10.3"
+var Version = "0.4.10.4"
 var BuildDate = "dev"
 
 // Global configuration
@@ -106,6 +106,7 @@ func init() {
 	rootCmd.AddCommand(backupCmd)
 	rootCmd.AddCommand(restoreCmd)
 	rootCmd.AddCommand(settingsCmd)
+	rootCmd.AddCommand(storageCmd)
 }
 
 // versionCmd shows version info

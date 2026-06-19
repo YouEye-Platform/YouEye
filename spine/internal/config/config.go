@@ -105,6 +105,9 @@ type DeploymentConfig struct {
 
 	// Incus configures Incus settings
 	Incus IncusConfig `mapstructure:"incus" yaml:"incus"`
+
+	// Storage configures host and Incus storage stewardship.
+	Storage StorageConfig `mapstructure:"storage" yaml:"storage"`
 }
 
 // ContainerConfig configures the container settings.
@@ -159,6 +162,24 @@ type IncusConfig struct {
 
 	// StoragePath is the storage pool path
 	StoragePath string `mapstructure:"storage_path" yaml:"storage_path"`
+}
+
+// StorageConfig configures appliance-style host storage management.
+type StorageConfig struct {
+	// Mode controls storage automation. "appliance" is the default.
+	Mode string `mapstructure:"mode" yaml:"mode"`
+
+	// AutoExpandRoot grows safe root LVM layouts before deployment.
+	AutoExpandRoot bool `mapstructure:"auto_expand_root" yaml:"auto_expand_root"`
+
+	// AutoGrowIncus grows managed loop-backed Incus pools upward.
+	AutoGrowIncus bool `mapstructure:"auto_grow_incus" yaml:"auto_grow_incus"`
+
+	// HostReserveGB leaves this much normal root filesystem headroom.
+	HostReserveGB int `mapstructure:"host_reserve_gb" yaml:"host_reserve_gb"`
+
+	// MaxIncusPoolPercent caps Incus pool size as a percent of root filesystem size.
+	MaxIncusPoolPercent int `mapstructure:"max_incus_pool_percent" yaml:"max_incus_pool_percent"`
 }
 
 // APIConfig configures the API server.
