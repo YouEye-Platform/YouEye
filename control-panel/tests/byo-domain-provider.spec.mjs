@@ -30,11 +30,29 @@ test('setup provider path validates, stores token as a secret, syncs DNS, and is
   const source = read('src/app/api/setup/run/route.ts');
 
   assert.match(source, /body\.tls_choice === 'byo-provider'/);
+  assert.match(source, /getStagedByoDomainBundle\(\)/);
+  assert.match(source, /byoDomainBundleCertStillValid\(staged\)/);
   assert.match(source, /validateDnsProvider\(\{ provider, domain, token, writeTest: true \}\)/);
   assert.match(source, /writeProviderToken\(connectionId, token\)/);
   assert.match(source, /syncByoDomainDns\('setup', hostIP\)/);
   assert.match(source, /issueCertificateWithDnsProvider/);
+  assert.match(source, /consumeStagedByoDomainBundle\(\)/);
   assert.doesNotMatch(source, /tls_choice === 'byo-provider'[\s\S]*console\.log\([^)]*token/);
+});
+
+test('BYO domain bundle export excludes DNS token unless explicitly requested', () => {
+  const bundle = read('src/lib/byo-domain/bundle.ts');
+  const exportRoute = read('src/app/api/tls/domain/export/route.ts');
+  const reuseRoute = read('src/app/api/tls/domain/reuse/route.ts');
+
+  assert.match(bundle, /BYO_DOMAIN_BUNDLE_TYPE = 'youeye-byo-domain'/);
+  assert.match(bundle, /dnsToken: includeToken && token \? \{ included: true, value: token \} : \{ included: false \}/);
+  assert.match(bundle, /readProviderToken\(config\.connectionId\)/);
+  assert.match(bundle, /safeByoDomainBundleSummary/);
+  assert.match(exportRoute, /includeToken/);
+  assert.match(exportRoute, /cache-control': 'no-store'/);
+  assert.match(reuseRoute, /safeByoDomainBundleSummary\(bundle\)/);
+  assert.doesNotMatch(reuseRoute, /dnsToken\.value/);
 });
 
 test('host IP migration syncs configured external DNS provider', () => {
@@ -60,6 +78,18 @@ test('settings network page exposes provider controls without returning token ma
   assert.match(source, /Connect and secure domain/);
   assert.match(source, /Sync DNS now/);
   assert.match(source, /Replace token/);
+  assert.match(source, /Export bundle/);
+  assert.match(source, /With token/);
   assert.match(source, /Renew now/);
   assert.doesNotMatch(source, /value=\{connection\.[^}]*token/);
+});
+
+test('setup screen recognizes staged BYO domain bundles without exposing token material', () => {
+  const source = read('src/components/setup/SetupServerName.tsx');
+
+  assert.match(source, /\/api\/tls\/domain\/reuse/);
+  assert.match(source, /Domain bundle staged/);
+  assert.match(source, /usingStagedDomainToken/);
+  assert.match(source, /setProviderValid\(\!\!d\.hasDnsToken\)/);
+  assert.doesNotMatch(source, /domainReuse[^]*dnsToken\.value/);
 });

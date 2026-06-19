@@ -29,6 +29,15 @@ interface NamePreview {
   available: boolean;
 }
 
+interface DomainReuseSummary {
+  reuse: boolean;
+  domain: string | null;
+  provider: { id: string; zoneName: string } | null;
+  hasDnsToken: boolean;
+  expiresAt: string | null;
+  certValid: boolean;
+}
+
 interface Props {
   siteName: string;
   setSiteName: (v: string) => void;
@@ -106,6 +115,7 @@ export default function SetupServerName({
   const [providerValid, setProviderValid] = useState(false);
   const [providerError, setProviderError] = useState('');
   const [providerZone, setProviderZone] = useState('');
+  const [domainReuse, setDomainReuse] = useState<DomainReuseSummary | null>(null);
 
   // Auto-fill domain slug from site name (for the own-domain path)
   useEffect(() => {
@@ -164,6 +174,24 @@ export default function SetupServerName({
     return () => { active = false; };
   }, [setYenName]);
 
+  // Check once for a staged BYO domain bundle (installer --domain-bundle).
+  useEffect(() => {
+    let active = true;
+    fetch('/api/tls/domain/reuse')
+      .then((r) => r.json())
+      .then((d: DomainReuseSummary) => {
+        if (!active || !d?.reuse || !d.domain) return;
+        setDomainReuse(d);
+        setByoDomain(d.domain);
+        setTlsChoice('byo-provider');
+        setProviderZone(d.provider?.zoneName || '');
+        setProviderValid(!!d.hasDnsToken);
+        setProviderError('');
+      })
+      .catch((error) => { console.warn('[setup] Could not check staged BYO domain bundle:', error); });
+    return () => { active = false; };
+  }, [setByoDomain, setTlsChoice]);
+
   // Fetch a first address when YouEye Names is active (and not reusing).
   useEffect(() => {
     if (tlsChoice === 'youeye-names' && reuseChecked && !reusing && yenOptions.length === 0 && !yenLoading && !yenError) {
@@ -190,12 +218,17 @@ export default function SetupServerName({
 
   const acmeInProgress = tlsChoice === 'letsencrypt' && acmePhase !== 'choice' && !acmeCertIssued;
   const providerDomain = byoDomain.trim();
+  const usingStagedDomainToken = !!(
+    domainReuse?.reuse &&
+    domainReuse.hasDnsToken &&
+    domainReuse.domain === providerDomain
+  );
 
   const canProceed = siteName.trim().length > 0 && (
     tlsChoice === 'youeye-names'
       ? (reusing ? !!yenName : !!currentYen)
       : tlsChoice === 'byo-provider'
-        ? providerDomain.length > 0 && byoProviderToken.trim().length > 0
+        ? providerDomain.length > 0 && (usingStagedDomainToken || byoProviderToken.trim().length > 0)
         : domainSlug.length > 0 && (!isCustomTld || customTld.length > 0)
   );
 
@@ -292,6 +325,10 @@ export default function SetupServerName({
   };
 
   const handleValidateProvider = async (): Promise<boolean> => {
+    if (usingStagedDomainToken) {
+      setProviderValid(true);
+      return true;
+    }
     setProviderLoading(true);
     setProviderError('');
     setProviderValid(false);
@@ -450,10 +487,32 @@ export default function SetupServerName({
                   onChange={e => { setByoDomain(e.target.value); setProviderValid(false); setProviderError(''); }}
                   placeholder="home.example.com"
                   className="text-base h-11 font-mono"
-                  disabled={providerLoading}
+                  disabled={providerLoading || !!domainReuse?.reuse}
                 />
                 <p className="text-xs text-muted-foreground">YouEye will manage this name and its app subdomains.</p>
               </div>
+              {domainReuse?.reuse && domainReuse.domain === providerDomain && (
+                <div className="rounded-xl border border-primary/30 bg-primary/[0.04] p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="rounded-lg bg-primary/10 p-2">
+                      <ShieldCheck className="h-4 w-4 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium">Domain bundle staged</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {domainReuse.certValid
+                          ? `Setup will reuse the existing certificate${domainReuse.expiresAt ? `, valid until ${new Date(domainReuse.expiresAt).toLocaleDateString()}` : ''}.`
+                          : 'The bundle certificate is close to expiry, so setup will issue a fresh one.'}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {domainReuse.hasDnsToken
+                          ? 'The DNS token is included and will be restored into the secret store.'
+                          : 'Paste a fresh provider token so DNS sync and renewal can continue.'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="rounded-xl border bg-muted/30 p-4 space-y-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -475,26 +534,32 @@ export default function SetupServerName({
                     </div>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label className="text-xs">API token</Label>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        type="password"
-                        value={byoProviderToken}
-                        onChange={e => { setByoProviderToken(e.target.value); setProviderValid(false); setProviderError(''); }}
-                        placeholder="Paste token"
-                        className="h-10 pl-9"
-                        disabled={providerLoading}
-                      />
+                {usingStagedDomainToken ? (
+                  <p className="rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-xs text-green-700 dark:text-green-400">
+                    Cloudflare token will be restored from the staged bundle.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <Label className="text-xs">API token</Label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          type="password"
+                          value={byoProviderToken}
+                          onChange={e => { setByoProviderToken(e.target.value); setProviderValid(false); setProviderError(''); }}
+                          placeholder="Paste token"
+                          className="h-10 pl-9"
+                          disabled={providerLoading}
+                        />
+                      </div>
+                      <Button type="button" variant="outline" className="h-10" disabled={!providerDomain || !byoProviderToken.trim() || providerLoading} onClick={handleValidateProvider}>
+                        {providerLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                        Test
+                      </Button>
                     </div>
-                    <Button type="button" variant="outline" className="h-10" disabled={!providerDomain || !byoProviderToken.trim() || providerLoading} onClick={handleValidateProvider}>
-                      {providerLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                      Test
-                    </Button>
                   </div>
-                </div>
+                )}
                 {providerValid && (
                   <p className="rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-xs text-green-700 dark:text-green-400">
                     Cloudflare connected{providerZone ? ` for ${providerZone}` : ''}.

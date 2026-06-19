@@ -160,10 +160,11 @@ type installConfig struct {
 
 	// Release and catalog sources. Public defaults are GitHub/main; custom
 	// values are explicit operator choices from Advanced Options or CLI flags.
-	CoreRepoURL     string
-	MarketRepoURL   string
-	ReleaseChannel  string
-	NamesBundlePath string
+	CoreRepoURL      string
+	MarketRepoURL    string
+	ReleaseChannel   string
+	NamesBundlePath  string
+	DomainBundlePath string
 
 	// Result — set by the engine after installation completes.
 	ResultIP string

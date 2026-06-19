@@ -1,3 +1,36 @@
+## cp-dev-v0.4.49.18 / spine-dev-v0.4.10.5 / installer-dev-v0.1.0.3 — artem — 2026-06-19
+**Branch:** dev
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add separate BYO domain reuse bundles for provider-managed domains.
+
+### Changes
+- `control-panel/src/lib/byo-domain/bundle.ts` — added BYO domain bundle export, staged import reading, safe summary, and certificate-validity helpers.
+- `control-panel/src/app/api/tls/domain/export/route.ts` — added admin bundle export endpoint with optional token inclusion.
+- `control-panel/src/app/api/tls/domain/reuse/route.ts` — added setup-safe staged bundle probe that never returns private key or token material.
+- `control-panel/src/app/api/setup/run/route.ts` — restored staged BYO domain bundles during setup, reusing valid certs or issuing fresh provider-backed certs when needed.
+- `control-panel/src/components/setup/SetupServerName.tsx` — added staged BYO domain restore UX with locked domain and token-required/token-included states.
+- `control-panel/src/components/settings-shell/network-client.tsx` — added Domain export controls in Settings → Network → Domain & HTTPS.
+- `control-panel/tests/byo-domain-provider.spec.mjs` — extended provider tests for bundle export, setup reuse, Settings export, and safe token handling.
+- `spine/internal/cmd/domain.go` — added `youeye domain export/import` and `--include-token`.
+- `spine/internal/cmd/domain_test.go` — added CLI command tree regression coverage.
+- `installer/internal/installer/options.go`, `types.go`, `provider_proxmox.go` — added `--domain-bundle` / `YOUEYE_DOMAIN_BUNDLE` staging.
+- `installer/internal/installer/source_options_test.go` — added bundle flag parsing/config propagation coverage.
+- `control-panel/package.json`, `spine/internal/cmd/root.go`, `installer/internal/installer/options.go`, `README.md` — bumped changed component versions before build/release.
+
+### Test Results
+- CP source test: `node --test control-panel/tests/byo-domain-provider.spec.mjs` passed (8/8).
+- Spine: `go test ./... && go vet ./...` passed.
+- Installer: `go test ./... && go vet ./...` passed.
+- CP build: `pnpm --dir control-panel build` passed.
+- Visual: Settings Domain export controls screenshot verified at `Agent Working/youeye-developer/Tests/Artem/20260619_byo_domain_bundle/settings-domain-export.png`.
+- Typecheck caveat: full `pnpm --dir control-panel exec tsc --noEmit --pretty false` still fails on known pre-existing project-wide errors outside this change.
+
+### Notes for Iris
+- BYO domain bundles are deliberately separate from YouEye Names bundles.
+- Default export excludes DNS token; token-bearing export is explicit and should be treated as a credential.
+- User will perform real provider restore testing; no live deploy was performed by Artem in this slice.
+
 ## cp-dev-v0.4.49.17 — artem — 2026-06-19
 **Branch:** dev
 **VM:** potempc

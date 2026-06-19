@@ -29,10 +29,16 @@ import { tlsStorage } from '@/lib/acme/storage';
 import { claimName, requestCertificate, getCurrentCertificate, updateIp } from '@/lib/youeye-names/client';
 import { generateCsr } from '@/lib/youeye-names/csr';
 import { getStagedBundle, consumeStagedBundle, applyBundleIdentity, bundleCertStillValid } from '@/lib/youeye-names/bundle';
+import {
+  byoDomainBundleCertStillValid,
+  bundleToProviderConfig,
+  consumeStagedByoDomainBundle,
+  getStagedByoDomainBundle,
+} from '@/lib/byo-domain/bundle';
 import { issueCertificateWithDnsProvider } from '@/lib/acme/client';
 import { CloudflareDnsProvider } from '@/lib/dns-providers/cloudflare';
 import { createConnectionId, saveByoDnsProviderConfig } from '@/lib/dns-providers/config';
-import { managedAddressNames } from '@/lib/dns-providers/domain';
+import { managedAddressNames, normalizeDomainInput } from '@/lib/dns-providers/domain';
 import { writeProviderToken } from '@/lib/dns-providers/secrets';
 import { syncByoDomainDns } from '@/lib/dns-providers/sync';
 import { validateDnsProvider } from '@/lib/dns-providers/validation';
@@ -261,11 +267,22 @@ export async function POST(request: NextRequest) {
 
           // ── BYO DNS provider: sync records + install a real certificate ──
           if (!hasError && body.tls_choice === 'byo-provider') {
-            const alreadyDone = (await tlsStorage.getCert())?.domains?.includes(domain);
+            const normalizedDomain = normalizeDomainInput(domain);
+            const alreadyDone = (await tlsStorage.getCert())?.domains?.includes(normalizedDomain);
             if (!alreadyDone) {
               try {
-                const provider = body.byo_dns_provider?.provider === 'cloudflare' ? 'cloudflare' : null;
-                const token = body.byo_dns_provider?.token || '';
+                const staged = await getStagedByoDomainBundle();
+                if (staged && staged.domain !== normalizedDomain) {
+                  throw new Error(`The staged domain bundle is for ${staged.domain}, but setup is configuring ${normalizedDomain}. Import a matching bundle or remove the staged bundle.`);
+                }
+
+                const provider =
+                  body.byo_dns_provider?.provider === 'cloudflare'
+                    ? 'cloudflare'
+                    : staged?.provider.id === 'cloudflare'
+                      ? 'cloudflare'
+                      : null;
+                const token = (body.byo_dns_provider?.token || staged?.dnsToken.value || '').trim();
                 if (!provider) throw new Error('Choose a supported DNS provider.');
                 if (!token.trim()) throw new Error('DNS provider token is required.');
 
@@ -282,46 +299,87 @@ export async function POST(request: NextRequest) {
 
                 const connectionId = createConnectionId();
                 await writeProviderToken(connectionId, token);
-                const config: ByoDnsProviderConfig = {
-                  mode: 'byo-provider',
-                  provider,
-                  connectionId,
-                  domain: validation.domain,
-                  zoneId: validation.zone.id,
-                  zoneName: validation.zone.name,
-                  delegated: false,
-                  managedRecords: managedAddressNames(validation.domain).map((name) => ({
-                    type: 'A',
-                    name,
-                    content: hostIP,
-                  })),
-                  targetIp: hostIP,
-                };
+                const plannedRecords = managedAddressNames(validation.domain).map((name) => ({
+                  type: 'A' as const,
+                  name,
+                  content: hostIP,
+                }));
+                const config: ByoDnsProviderConfig = staged
+                  ? {
+                      ...bundleToProviderConfig(staged, connectionId, hostIP),
+                      provider,
+                      domain: validation.domain,
+                      zoneId: validation.zone.id,
+                      zoneName: validation.zone.name,
+                      managedRecords: plannedRecords,
+                    }
+                  : {
+                      mode: 'byo-provider',
+                      provider,
+                      connectionId,
+                      domain: validation.domain,
+                      zoneId: validation.zone.id,
+                      zoneName: validation.zone.name,
+                      delegated: false,
+                      managedRecords: plannedRecords,
+                      targetIp: hostIP,
+                    };
                 await saveByoDnsProviderConfig(config);
 
                 stepUpdate('caddy', 'running', 'Pointing your domain at this server…');
                 const sync = await syncByoDomainDns('setup', hostIP);
                 if (!sync.ok) throw new Error(sync.error || 'DNS sync failed.');
 
-                stepUpdate('caddy', 'running', 'Requesting a trusted certificate…');
-                const dnsProvider = new CloudflareDnsProvider(token);
-                const cert = await issueCertificateWithDnsProvider(
-                  validation.domain,
-                  dnsProvider,
-                  validation.zone,
-                  true,
-                );
-                await caddy.loadExternalCert(cert.certificate, cert.privateKey, cert.domains);
-                const expiresAt = new Date(cert.expiresAt);
-                const nextRenewal = new Date(expiresAt.getTime() - 30 * 24 * 60 * 60 * 1000);
-                await saveByoDnsProviderConfig({
-                  ...config,
-                  targetIp: hostIP,
-                  lastDnsSyncAt: new Date().toISOString(),
-                  lastCertRenewalAt: new Date().toISOString(),
-                  nextCertRenewalDueAt: nextRenewal.toISOString(),
-                });
-                console.log('[setup] Installed provider-backed certificate for', validation.domain);
+                if (staged?.acme.accountKeyPem) {
+                  await tlsStorage.setAccountKey(staged.acme.accountKeyPem);
+                }
+
+                if (staged && byoDomainBundleCertStillValid(staged)) {
+                  stepUpdate('caddy', 'running', 'Reusing your domain certificate…');
+                  const domains = [validation.domain, `*.${validation.domain}`];
+                  await tlsStorage.storeCert({
+                    ...staged.tls,
+                    mode: 'acme',
+                    issuer: staged.tls.issuer || "Let's Encrypt",
+                    domains,
+                    issuedAt: staged.tls.issuedAt || staged.exportedAt,
+                  });
+                  await caddy.loadExternalCert(staged.tls.certPem, staged.tls.keyPem, domains);
+                  const expiresAt = Date.parse(staged.tls.expiresAt);
+                  const nextRenewal = Number.isNaN(expiresAt)
+                    ? undefined
+                    : new Date(expiresAt - 30 * 24 * 60 * 60 * 1000).toISOString();
+                  await saveByoDnsProviderConfig({
+                    ...config,
+                    targetIp: hostIP,
+                    lastDnsSyncAt: new Date().toISOString(),
+                    lastCertRenewalAt: staged.tls.issuedAt || staged.exportedAt,
+                    nextCertRenewalDueAt: nextRenewal,
+                  });
+                  await consumeStagedByoDomainBundle();
+                  console.log('[setup] Reused provider-backed certificate for', validation.domain);
+                } else {
+                  stepUpdate('caddy', 'running', 'Requesting a trusted certificate…');
+                  const dnsProvider = new CloudflareDnsProvider(token);
+                  const cert = await issueCertificateWithDnsProvider(
+                    validation.domain,
+                    dnsProvider,
+                    validation.zone,
+                    true,
+                  );
+                  await caddy.loadExternalCert(cert.certificate, cert.privateKey, cert.domains);
+                  const expiresAt = new Date(cert.expiresAt);
+                  const nextRenewal = new Date(expiresAt.getTime() - 30 * 24 * 60 * 60 * 1000);
+                  await saveByoDnsProviderConfig({
+                    ...config,
+                    targetIp: hostIP,
+                    lastDnsSyncAt: new Date().toISOString(),
+                    lastCertRenewalAt: new Date().toISOString(),
+                    nextCertRenewalDueAt: nextRenewal.toISOString(),
+                  });
+                  if (staged) await consumeStagedByoDomainBundle();
+                  console.log('[setup] Installed provider-backed certificate for', validation.domain);
+                }
               } catch (providerErr) {
                 stepUpdate('caddy', 'error', providerErr instanceof Error ? providerErr.message : 'DNS provider setup failed');
                 await saveStepState('caddy', 'error');

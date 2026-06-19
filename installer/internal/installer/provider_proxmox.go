@@ -92,6 +92,40 @@ func seedMarketSourceInGuest(vmid string, config installConfig) error {
 	return nil
 }
 
+func stageBundleInControl(
+	vmid string,
+	ch chan<- engineMsg,
+	progress float64,
+	bundlePath string,
+	envName string,
+	label string,
+	dataDir string,
+	importFile string,
+	successMessage string,
+) {
+	if bundlePath == "" {
+		bundlePath = os.Getenv(envName)
+	}
+	if bundlePath == "" {
+		return
+	}
+
+	send(ch, "Deploying YouEye", "Staging "+label+"...", progress)
+	if data, err := os.ReadFile(bundlePath); err != nil || len(data) == 0 {
+		send(ch, "Deploying YouEye", "Warning: could not read "+label+" "+clip(bundlePath, 80), progress)
+	} else {
+		b64 := base64.StdEncoding.EncodeToString(data)
+		stage := "incus exec youeye-control -- mkdir -p " + shellQuote(dataDir) + " && " +
+			"echo '" + b64 + "' | base64 -d | incus exec youeye-control -- tee " + shellQuote(importFile) + " >/dev/null && " +
+			"incus exec youeye-control -- chmod 600 " + shellQuote(importFile)
+		if res, err := qmGuestExec(vmid, 60, "bash", "-lc", stage); err != nil || res.ExitCode != 0 {
+			send(ch, "Deploying YouEye", "Warning: staging "+label+" failed: "+clip(res.ErrData, 120), progress)
+		} else {
+			send(ch, "Deploying YouEye", successMessage, progress+0.01)
+		}
+	}
+}
+
 // installVM is the Proxmox VM provider's provisioning routine.
 func installVM(config installConfig, ch chan<- engineMsg) {
 	os.Setenv("LIBGUESTFS_BACKEND", "direct") // libguestfs on PVE kernels
@@ -365,26 +399,28 @@ fi
 	// If YOUEYE_NAMES_BUNDLE points at a bundle file, drop it into the Control
 	// Panel container so the setup wizard reuses that name + certificate
 	// instead of claiming a new one (no Let's Encrypt round-trip).
-	bundlePath := config.NamesBundlePath
-	if bundlePath == "" {
-		bundlePath = os.Getenv("YOUEYE_NAMES_BUNDLE")
-	}
-	if bundlePath != "" {
-		send(ch, "Deploying YouEye", "Staging YouEye Names reuse bundle...", 0.97)
-		if data, err := os.ReadFile(bundlePath); err != nil || len(data) == 0 {
-			send(ch, "Deploying YouEye", "Warning: could not read names bundle "+clip(bundlePath, 80), 0.97)
-		} else {
-			b64 := base64.StdEncoding.EncodeToString(data)
-			stage := "incus exec youeye-control -- mkdir -p /opt/youeye-control-data/youeye-names && " +
-				"echo '" + b64 + "' | base64 -d | incus exec youeye-control -- tee /opt/youeye-control-data/youeye-names/import-bundle.json >/dev/null && " +
-				"incus exec youeye-control -- chmod 600 /opt/youeye-control-data/youeye-names/import-bundle.json"
-			if res, err := qmGuestExec(vmid, 60, "bash", "-lc", stage); err != nil || res.ExitCode != 0 {
-				send(ch, "Deploying YouEye", "Warning: staging names bundle failed: "+clip(res.ErrData, 120), 0.97)
-			} else {
-				send(ch, "Deploying YouEye", "Names bundle staged — setup will reuse the existing address", 0.98)
-			}
-		}
-	}
+	stageBundleInControl(
+		vmid,
+		ch,
+		0.97,
+		config.NamesBundlePath,
+		"YOUEYE_NAMES_BUNDLE",
+		"YouEye Names reuse bundle",
+		"/opt/youeye-control-data/youeye-names",
+		"/opt/youeye-control-data/youeye-names/import-bundle.json",
+		"Names bundle staged — setup will reuse the existing address",
+	)
+	stageBundleInControl(
+		vmid,
+		ch,
+		0.98,
+		config.DomainBundlePath,
+		"YOUEYE_DOMAIN_BUNDLE",
+		"BYO domain reuse bundle",
+		"/opt/youeye-control-data/byo-domain",
+		"/opt/youeye-control-data/byo-domain/import-bundle.json",
+		"Domain bundle staged — setup will reuse the existing domain",
+	)
 
 	sendDone(ch, vmIP)
 }

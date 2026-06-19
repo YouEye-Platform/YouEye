@@ -16,7 +16,7 @@ const (
 	DefaultCoreRepoURL     = "https://github.com/youeye-platform/YouEye"
 	DefaultMarketRepoURL   = "https://github.com/youeye-platform/Market"
 	DefaultReleaseChannel  = "main"
-	InstallerVersion       = "0.1.0.2"
+	InstallerVersion       = "0.1.0.3"
 	defaultInstallerMode   = "auto"
 	defaultInstallerBranch = "main"
 )
@@ -42,6 +42,7 @@ type CLIOptions struct {
 	RootPasswordFile string
 	RootPassword     string
 	NamesBundlePath  string
+	DomainBundlePath string
 }
 
 // ParseOptions parses installer flags. It intentionally uses only the stdlib
@@ -74,6 +75,7 @@ func ParseOptions(args []string, stdin io.Reader, stderr io.Writer) (CLIOptions,
 	fs.StringVar(&opts.RootPasswordFile, "root-password-file", "", "read VM root password from file")
 	rootPasswordStdin := fs.Bool("root-password-stdin", false, "read VM root password from stdin")
 	fs.StringVar(&opts.NamesBundlePath, "names-bundle", "", "YouEye Names export bundle to reuse")
+	fs.StringVar(&opts.DomainBundlePath, "domain-bundle", "", "BYO domain export bundle to reuse")
 
 	if err := fs.Parse(args); err != nil {
 		return opts, err
@@ -162,6 +164,9 @@ func applyOptionsToConfig(cfg *installConfig, opts CLIOptions) {
 	}
 	if opts.NamesBundlePath != "" {
 		cfg.NamesBundlePath = opts.NamesBundlePath
+	}
+	if opts.DomainBundlePath != "" {
+		cfg.DomainBundlePath = opts.DomainBundlePath
 	}
 }
 

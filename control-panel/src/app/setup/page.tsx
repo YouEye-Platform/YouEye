@@ -334,7 +334,7 @@ export default function SetupPage() {
     } catch (err) {
       setSetupError(err instanceof Error ? err.message : 'Setup failed');
     }
-  }, [siteName, domain, subdomains, nameStyle, iconConfig, adminUsername, adminEmail, adminPassword, identityName, adminFirstName, adminLastName, selectedLanguage, tlsChoice, yenName, t]);
+  }, [siteName, domain, subdomains, nameStyle, iconConfig, adminUsername, adminEmail, adminPassword, identityName, adminFirstName, adminLastName, selectedLanguage, tlsChoice, yenName, byoProviderToken, t]);
 
   // Start provisioning when we enter step 4
   const provisioningStarted = useRef(false);

@@ -120,3 +120,33 @@ func TestConfigFromOptionsAllowsCustomAutomationSource(t *testing.T) {
 		t.Fatalf("ReleaseChannel = %q, want dev", cfg.ReleaseChannel)
 	}
 }
+
+func TestParseOptionsAcceptsReuseBundlePaths(t *testing.T) {
+	opts, err := ParseOptions([]string{
+		"--silent",
+		"--yes",
+		"--names-bundle", "/tmp/names.bundle.json",
+		"--domain-bundle", "/tmp/domain.bundle.json",
+	}, strings.NewReader(""), ioDiscard{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.NamesBundlePath != "/tmp/names.bundle.json" {
+		t.Fatalf("NamesBundlePath = %q", opts.NamesBundlePath)
+	}
+	if opts.DomainBundlePath != "/tmp/domain.bundle.json" {
+		t.Fatalf("DomainBundlePath = %q", opts.DomainBundlePath)
+	}
+
+	cfg := newConfig()
+	applyOptionsToConfig(&cfg, opts)
+	if cfg.NamesBundlePath != opts.NamesBundlePath || cfg.DomainBundlePath != opts.DomainBundlePath {
+		t.Fatalf("bundle paths were not copied to config: %+v", cfg)
+	}
+}
+
+type ioDiscard struct{}
+
+func (ioDiscard) Write(p []byte) (int, error) {
+	return len(p), nil
+}

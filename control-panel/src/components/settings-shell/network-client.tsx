@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   Shield, ShieldOff, Globe, Route as RouteIcon, Plus, Trash2, Loader2, RefreshCw,
   Check, X, AlertTriangle, ChevronRight, Cloud, Info, KeyRound,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -532,6 +533,35 @@ function DomainPanel() {
     finally { setProviderBusy(null); }
   }
 
+  async function downloadDomainBundle(includeToken = false) {
+    if (includeToken && !window.confirm("Exporting with the DNS token creates a bundle that can edit DNS for this zone. Keep it private.")) {
+      return;
+    }
+    setProviderBusy(includeToken ? "export-token" : "export"); setError(""); setSaved("");
+    try {
+      const res = await fetch(`/api/tls/domain/export${includeToken ? "?includeToken=true" : ""}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Domain export failed");
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get("content-disposition") || "";
+      const filename = /filename="([^"]+)"/.exec(disposition)?.[1] || "youeye-domain.bundle.json";
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setSaved(includeToken ? "Domain bundle exported with DNS token" : "Domain bundle exported");
+    } catch (e) { setError(e instanceof Error ? e.message : "Domain export failed"); }
+    finally { setProviderBusy(null); }
+  }
+
   if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
 
   const internalCert = tls?.mode === "internal" || !tls?.hasExternalCert;
@@ -596,6 +626,24 @@ function DomainPanel() {
                 {providerBusy === "disconnect" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}Disconnect
               </Button>
             </div>
+            {!internalCert && (
+              <div className="border-t pt-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-sm font-medium">Domain export</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Save the certificate, private key, provider zone, and optional DNS token for reinstall reuse.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" className="h-8" disabled={!!providerBusy} onClick={() => downloadDomainBundle(false)}>
+                      {providerBusy === "export" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}Export bundle
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-8" disabled={!!providerBusy || !connection.hasToken} onClick={() => downloadDomainBundle(true)}>
+                      {providerBusy === "export-token" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}With token
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
             {replacingToken && (
               <div className="rounded-lg border bg-muted/30 p-3">
                 <div className="space-y-1.5">
