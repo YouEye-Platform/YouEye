@@ -1,3 +1,27 @@
+## cp-dev-v0.4.49.20 — artem — 2026-06-19
+**Branch:** dev
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix BYO domain setup validation and manual Let's Encrypt availability.
+
+### Changes
+- `control-panel/src/middleware.ts` — allowed the exact Cloudflare validation route through the pre-setup IP/Caddy flow so setup does not redirect it to the HTML login page.
+- `control-panel/src/components/setup/SetupServerName.tsx` — normalized the visible BYO domain for provider validation, converted HTML/redirect responses into a friendly setup-session error, enabled Manual Let's Encrypt based on the BYO domain instead of stale hidden `.local` state, and carries the BYO domain into the manual ACME fields when selected.
+- `control-panel/src/app/setup-complete/page.tsx` — recognized `byo-provider` as a persisted TLS choice for the post-setup explainer.
+- `control-panel/tests/byo-domain-provider.spec.mjs`, `control-panel/tests/setup-polish.spec.mjs` — added regression coverage for setup validation routing, safe response parsing, manual Let's Encrypt gating, and setup-complete TLS choice handling.
+- `control-panel/package.json`, `README.md` — bumped Control Panel to `0.4.49.20` before build/release.
+
+### Test Results
+- CP focused tests: `node --test control-panel/tests/byo-domain-provider.spec.mjs control-panel/tests/setup-polish.spec.mjs` passed (12/12).
+- CP typecheck: `pnpm --dir control-panel run typecheck` passed.
+- CP build: `rm -rf control-panel/.next control-panel/node_modules/.cache && pnpm --dir control-panel build` passed; build ran the explicit typecheck gate first.
+- CP release artifact: `/tmp/standalone.tar` built from `.next/standalone/control-panel`, contains root `server.js`, and embeds package version `0.4.49.20`.
+- Local middleware proof: `POST /api/dns-providers/cloudflare/validate` through an IP-style Host returned JSON `401` instead of redirecting to HTML login.
+- Visual smoke: `/tmp/youeye-shots/byo-manual-letsencrypt.png` confirms Manual Let's Encrypt is enabled for a public BYO domain and no local-domain warning is shown.
+
+### Notes for Iris
+- Live bykapc proof before this fix: `/api/dns-providers/cloudflare/validate` returned `307 /login` and then HTML during first setup, which caused the UI JSON parse error.
+
 ## cp-dev-v0.4.49.19 — artem — 2026-06-19
 **Branch:** dev
 **VM:** potempc

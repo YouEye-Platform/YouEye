@@ -225,6 +225,7 @@ export async function middleware(request: NextRequest) {
     const setupAllowedPaths = [
       '/setup', '/setup-complete', '/login',
       '/api/auth/', '/api/setup/', '/api/deploy/', '/api/tls/',
+      '/api/dns-providers/cloudflare/validate',
       '/api/branding/favicon',
     ];
     const isSetupPath = setupAllowedPaths.some(p => pathname === p || pathname.startsWith(p));

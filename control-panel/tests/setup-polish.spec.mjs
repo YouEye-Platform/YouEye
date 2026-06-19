@@ -26,6 +26,7 @@ test('setup completion persists and reuses the selected TLS path', () => {
   assert.match(provisioning, /restartingServerInterface/);
   assert.match(complete, /new URLSearchParams\(window\.location\.search\)\.get\('tls'\)/);
   assert.match(complete, /data\.extra\?\.tls_choice/);
+  assert.match(complete, /value === 'byo-provider'/);
   assert.match(complete, /tlsChoice=\{tlsChoice\}/);
   assert.match(settings, /function flattenExtra/);
 });
@@ -39,6 +40,7 @@ test('fallback favicon is the transparent blue Y used during initial setup', () 
   assert.doesNotMatch(favicon, /fill="#111827"/);
   assert.doesNotMatch(favicon, /<rect[^>]+fill="#111827"/);
   assert.match(middleware, /setupAllowedPaths[\s\S]*'\/api\/branding\/favicon'/);
+  assert.match(middleware, /setupAllowedPaths[\s\S]*'\/api\/dns-providers\/cloudflare\/validate'/);
   assert.ok(staticFavicon.length > 1000);
 });
 

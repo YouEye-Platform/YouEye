@@ -73,6 +73,45 @@ function isLocalDomain(tld: string): boolean {
   return /^\.(local|test|internal|lan|home|localhost|invalid|example)$/i.test(tld);
 }
 
+function normalizeHostnameInput(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return '';
+
+  try {
+    const parsed = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
+    return parsed.hostname.toLowerCase().replace(/\.+$/, '');
+  } catch {
+    return trimmed.replace(/^https?:\/\//, '').split('/')[0].toLowerCase().replace(/\.+$/, '');
+  }
+}
+
+function isLocalHostname(hostname: string): boolean {
+  const normalized = normalizeHostnameInput(hostname);
+  if (!normalized) return false;
+  if (normalized === 'localhost') return true;
+  const labels = normalized.split('.');
+  if (labels.length < 2) return true;
+  return isLocalDomain(`.${labels[labels.length - 1]}`);
+}
+
+async function readSetupJson(response: Response, fallback: string): Promise<Record<string, unknown>> {
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.toLowerCase().includes('application/json')) {
+    const text = await response.text().catch(() => '');
+    const looksLikeLoginPage = response.redirected || response.url.includes('/login') || text.trim().startsWith('<!DOCTYPE');
+    if (looksLikeLoginPage || contentType.toLowerCase().includes('text/html')) {
+      throw new Error('Setup session expired. Refresh setup and sign in again.');
+    }
+    throw new Error(`${fallback} (${response.status})`);
+  }
+
+  try {
+    return await response.json() as Record<string, unknown>;
+  } catch {
+    throw new Error(`${fallback} returned an unreadable response`);
+  }
+}
+
 export default function SetupServerName({
   siteName, setSiteName,
   domainSlug, setDomainSlug,
@@ -217,7 +256,10 @@ export default function SetupServerName({
   const isLocal = isCustomTld ? isLocalDomain(effectiveTld) : isLocalDomain(tld);
 
   const acmeInProgress = tlsChoice === 'letsencrypt' && acmePhase !== 'choice' && !acmeCertIssued;
-  const providerDomain = byoDomain.trim();
+  const providerDomain = normalizeHostnameInput(byoDomain);
+  const manualLetsEncryptIsLocal = tlsChoice === 'byo-provider'
+    ? (providerDomain ? isLocalHostname(providerDomain) : false)
+    : isLocal;
   const usingStagedDomainToken = !!(
     domainReuse?.reuse &&
     domainReuse.hasDnsToken &&
@@ -232,7 +274,28 @@ export default function SetupServerName({
         : domainSlug.length > 0 && (!isCustomTld || customTld.length > 0)
   );
 
+  const carryProviderDomainToManualCertificate = () => {
+    if (!providerDomain) return;
+    const lastDot = providerDomain.lastIndexOf('.');
+    if (lastDot <= 0) return;
+
+    const slug = providerDomain.slice(0, lastDot);
+    const suffix = `.${providerDomain.slice(lastDot + 1)}`;
+    setSlugEdited(true);
+    setDomainSlug(slug);
+    if (TLD_OPTIONS.some(opt => opt.value === suffix)) {
+      setTld(suffix);
+      setCustomTld('');
+    } else {
+      setTld('__custom__');
+      setCustomTld(providerDomain.slice(lastDot + 1));
+    }
+  };
+
   const selectOwn = (choice: Exclude<TlsChoice, 'youeye-names'>) => {
+    if (choice === 'letsencrypt' && tlsChoice === 'byo-provider') {
+      carryProviderDomainToManualCertificate();
+    }
     setAcmePhase('choice');
     setAcmeOrderId('');
     setAcmeChallenges([]);
@@ -335,17 +398,24 @@ export default function SetupServerName({
     setProviderZone('');
     try {
       const csrfRes = await fetch('/api/auth/csrf');
-      const { csrfToken } = await csrfRes.json();
+      const csrfData = await readSetupJson(csrfRes, 'Could not read setup session');
+      const csrfToken = typeof csrfData.csrfToken === 'string' ? csrfData.csrfToken : '';
+      if (!csrfToken) throw new Error('Setup session expired. Refresh setup and sign in again.');
       const res = await fetch('/api/dns-providers/cloudflare/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({ domain: providerDomain, token: byoProviderToken }),
         signal: AbortSignal.timeout(30_000),
       });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || 'Cloudflare connection failed');
+      const data = await readSetupJson(res, 'Cloudflare connection failed');
+      if (!res.ok || data.ok !== true) {
+        throw new Error(typeof data.error === 'string' ? data.error : 'Cloudflare connection failed');
+      }
+      const zone = data.zone && typeof data.zone === 'object'
+        ? data.zone as { name?: unknown }
+        : null;
       setProviderValid(true);
-      setProviderZone(data.zone?.name || '');
+      setProviderZone(typeof zone?.name === 'string' ? zone.name : '');
       return true;
     } catch (e) {
       const msg = e instanceof Error
@@ -650,12 +720,12 @@ export default function SetupServerName({
             />
             <OptionCard
               active={tlsChoice === 'letsencrypt'}
-              disabled={acmeInProgress || isLocal}
+              disabled={acmeInProgress || manualLetsEncryptIsLocal}
               tone="green"
               icon={Lock}
               title="Manual Let's Encrypt"
               desc={t('tlsLetsEncryptDesc')}
-              note={isLocal ? t('tlsLetsEncryptLocalWarn') : undefined}
+              note={manualLetsEncryptIsLocal ? t('tlsLetsEncryptLocalWarn') : undefined}
               onClick={() => selectOwn('letsencrypt')}
             />
             <OptionCard

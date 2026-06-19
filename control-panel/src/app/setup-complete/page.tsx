@@ -14,7 +14,7 @@ interface SetupConfig {
 }
 
 function isTlsChoice(value: string | null | undefined): value is TlsChoice {
-  return value === 'youeye-names' || value === 'letsencrypt' || value === 'selfsigned' || value === 'upload';
+  return value === 'youeye-names' || value === 'byo-provider' || value === 'letsencrypt' || value === 'selfsigned' || value === 'upload';
 }
 
 /**

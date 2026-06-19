@@ -93,3 +93,18 @@ test('setup screen recognizes staged BYO domain bundles without exposing token m
   assert.match(source, /setProviderValid\(\!\!d\.hasDnsToken\)/);
   assert.doesNotMatch(source, /domainReuse[^]*dnsToken\.value/);
 });
+
+test('setup BYO provider validation and manual certificate path handle first-run routing', () => {
+  const source = read('src/components/setup/SetupServerName.tsx');
+
+  assert.match(source, /readSetupJson\(csrfRes, 'Could not read setup session'\)/);
+  assert.match(source, /readSetupJson\(res, 'Cloudflare connection failed'\)/);
+  assert.match(source, /Setup session expired\. Refresh setup and sign in again\./);
+  assert.match(source, /response\.redirected/);
+  assert.match(source, /response\.url\.includes\('\/login'\)/);
+  assert.match(source, /manualLetsEncryptIsLocal/);
+  assert.match(source, /tlsChoice === 'byo-provider'[\s\S]*isLocalHostname\(providerDomain\)/);
+  assert.match(source, /carryProviderDomainToManualCertificate/);
+  assert.match(source, /setDomainSlug\(slug\)/);
+  assert.match(source, /setCustomTld\(providerDomain\.slice\(lastDot \+ 1\)\)/);
+});
