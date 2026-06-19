@@ -53,7 +53,11 @@ export async function POST(request: NextRequest) {
   }
 
   const safeReturnTo = sanitizePermissionReturnTo(return_to);
-  const approval = buildPermissionApproval(targetAppId, requested, grant_type, request, safeReturnTo);
+  const safeGrantType =
+    grant_type === "once" || grant_type === "session" || grant_type === "persistent"
+      ? grant_type
+      : "persistent";
+  const approval = buildPermissionApproval(targetAppId, requested, safeGrantType, request, safeReturnTo);
 
   if (approved !== true || !session) {
     return NextResponse.json(approval, { status: 202 });
@@ -64,7 +68,7 @@ export async function POST(request: NextRequest) {
       session.userId,
       targetAppId,
       perm,
-      typeof grant_type === "string" && grant_type.length > 0 ? grant_type : "persistent",
+      safeGrantType,
       "user"
     );
   }

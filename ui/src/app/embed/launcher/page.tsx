@@ -16,7 +16,7 @@ import { Launcher } from "@/components/layout/launcher";
 
 function LauncherEmbedInner() {
   const params = useSearchParams();
-  const mode = params.get("mode");
+  const mode = params?.get("mode");
 
   useEffect(() => {
     if (mode === "dark") document.documentElement.classList.add("dark");

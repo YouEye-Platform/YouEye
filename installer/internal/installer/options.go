@@ -16,7 +16,7 @@ const (
 	DefaultCoreRepoURL     = "https://github.com/youeye-platform/YouEye"
 	DefaultMarketRepoURL   = "https://github.com/youeye-platform/Market"
 	DefaultReleaseChannel  = "main"
-	InstallerVersion       = "0.1.0.3"
+	InstallerVersion       = "0.1.0"
 	defaultInstallerMode   = "auto"
 	defaultInstallerBranch = "main"
 )

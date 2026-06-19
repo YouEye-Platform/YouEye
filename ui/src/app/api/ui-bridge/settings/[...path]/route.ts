@@ -458,8 +458,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const body = await request.json().catch(() => ({}));
 
   if (path === "pin/create") {
-    const result = await createPIN(auth.user.id, body.pin);
-    return NextResponse.json(result, { status: result.success ? 200 : 400 });
+    try {
+      const result = await createPIN(auth.user.id, body.pin);
+      return NextResponse.json({ success: true, session_id: result.sessionId });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create PIN";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
   }
 
   if (path === "pin/change") {

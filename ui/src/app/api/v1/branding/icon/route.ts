@@ -120,7 +120,7 @@ export async function GET(request: NextRequest) {
       .toBuffer();
   }
 
-  return new NextResponse(buf, {
+  return new NextResponse(new Blob([new Uint8Array(buf)]), {
     headers: {
       "Content-Type": "image/png",
       "Cache-Control": "public, max-age=3600, s-maxage=3600",

@@ -142,17 +142,17 @@ Each component is versioned and released independently.
 
 | Component | Version |
 |-----------|---------|
-| Spine | 0.4.10.5 (`spine-dev-v0.4.10.5`) |
-| Installer | 0.1.0.3 (`installer-dev-v0.1.0.3`) |
-| Control Panel | 0.4.49.22 (`cp-dev-v0.4.49.22`) |
-| UI | 0.4.28.7 (`ui-dev-v0.4.28.7`) |
+| Spine | 0.4.11 (`spine-v0.4.11`) |
+| Installer | 0.1.0 (`installer-v0.1.0`) |
+| Control Panel | 0.4.50 (`cp-v0.4.50`) |
+| UI | 0.4.29 (`ui-v0.4.29`) |
 | Canvas | 0.3.1.1 (`v0.3.1.1`) |
-| Wiki | 0.4.4 (`v0.4.4`) |
-| Search | 0.4.4 (`v0.4.4`) |
-| Notes | 0.4.5 (`v0.4.5`) |
-| Cinema | 0.4.4 (`v0.4.4`) |
-| Weather | 0.4.3 (`v0.4.3`, released, not installed) |
-| Translate | 0.4.4 (`v0.4.4`) |
+| Wiki | 0.4.5 (`v0.4.5`) |
+| Search | 0.4.5 (`v0.4.5`) |
+| Notes | 0.4.6 (`v0.4.6`) |
+| Cinema | 0.4.5 (`v0.4.5`) |
+| Weather | 0.4.4 (`v0.4.4`) |
+| Translate | 0.4.5 (`v0.4.5`) |
 
 ## Related Repositories
 

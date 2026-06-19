@@ -473,11 +473,10 @@ export function IconPickerBranding({
             const LIcon = entry.component;
             return (
               <div className="hidden">
-                <LIcon
-                  className="h-6 w-6"
-                  // @ts-expect-error custom data attribute for canvas rendering
-                  data-lucide-preview={config.lucideIcon}
-                />
+	                <LIcon
+	                  className="h-6 w-6"
+	                  data-lucide-preview={config.lucideIcon}
+	                />
               </div>
             );
           })()}

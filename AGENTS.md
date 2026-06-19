@@ -1,3 +1,28 @@
+## spine-v0.4.11 / installer-v0.1.0 / cp-v0.4.50 / ui-v0.4.29 — artem — 2026-06-19
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Promote the integrated dev line to stable main releases.
+
+### Changes
+- `spine/internal/cmd/root.go` — bumped Spine from the dev line to stable `0.4.11`.
+- `installer/internal/installer/options.go` — bumped the installer from the dev line to stable `0.1.0`.
+- `control-panel/package.json` — bumped Control Panel from the dev line to stable `0.4.50`.
+- `ui/package.json` — bumped YouEye UI from the dev line to stable `0.4.29`.
+- `ui/next.config.ts`, `ui/src/app/sw.ts`, `ui/src/app/api/ui-bridge/embed-status/route.ts`, `ui/src/app/api/ui-bridge/settings/[...path]/route.ts`, `ui/src/app/api/v1/apps/[appId]/launch-requirements/route.ts`, `ui/src/app/api/v1/branding/icon/route.ts`, `ui/src/app/api/v1/permissions/request/route.ts`, `ui/src/app/apple-icon.tsx`, `ui/src/app/icon.tsx`, `ui/src/app/embed/*/page.tsx`, `ui/src/components/settings/*` — fixed UI typecheck blockers and removed `ignoreBuildErrors` so the stable UI build cannot hide TypeScript failures.
+- `ui/public/sw.js` — regenerated the tracked service worker during the stable UI build.
+- `README.md` — updated the current-version matrix to the promoted stable component and native-app tags.
+
+### Test Results
+- Spine: `go test ./... && go vet ./...` passed; `/tmp/youeye-main-release-20260619/spine-linux-amd64 version` reports `0.4.11`.
+- Installer: `go test ./... && go vet ./...` passed; `/tmp/youeye-main-release-20260619/youeye-installer-linux-amd64 --help` includes `--domain-bundle`.
+- Control Panel: `pnpm --dir control-panel run typecheck` passed; clean `pnpm --dir control-panel build` passed for `ye-controlpanel@0.4.50`.
+- YouEye UI: `pnpm --dir ui exec tsc --noEmit --pretty false` passed; clean `pnpm --dir ui build` passed for `ye-ui@0.4.29` with TypeScript validation enabled.
+- Artifacts: `cp-standalone.tar` embeds package version `0.4.50`; `ui-standalone.tar` embeds package version `0.4.29`; both archives contain root `server.js` and `package.json`.
+
+### Notes for Iris
+- This is a main-channel promotion from the integrated `dev` line. Build artifacts must embed these stable versions before tags are created.
+
 ## cp-dev-v0.4.49.22 — artem — 2026-06-19
 **Branch:** dev
 **VM:** potempc

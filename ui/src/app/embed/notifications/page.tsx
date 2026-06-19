@@ -18,7 +18,7 @@ import { useEmbedAutoResize } from "@/lib/hooks/use-embed-auto-resize";
 
 function NotificationsEmbedInner() {
   const params = useSearchParams();
-  const mode = params.get("mode");
+  const mode = params?.get("mode");
   const contentRef = useRef<HTMLDivElement>(null);
   useEmbedAutoResize(contentRef);
 

@@ -33,7 +33,7 @@ let currentStatus: EmbedStatus = {
   timestamp: Date.now(),
 };
 
-export function getEmbedStatus(): EmbedStatus {
+function getEmbedStatus(): EmbedStatus {
   return currentStatus;
 }
 

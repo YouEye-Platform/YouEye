@@ -53,7 +53,7 @@ interface SettingsShellProps {
 }
 
 export function SettingsShell({ children, isAdmin }: SettingsShellProps) {
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
   const ts = useTranslations("settings.sections");
   const ta = useTranslations("settings.admin");
   const tn = useTranslations("nav");

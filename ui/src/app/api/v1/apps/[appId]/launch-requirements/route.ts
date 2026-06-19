@@ -195,6 +195,8 @@ export async function GET(
       : { success: false, approval_required: false };
     return NextResponse.json(
       {
+        ...preferences,
+        ...approval,
         first_launch_complete: false,
         app_id: grantAppId,
         manifest_app_id: app.id,
@@ -203,8 +205,6 @@ export async function GET(
           .filter((check) => check.decision === true)
           .map((check) => describePermission(check.permission)),
         denied_permissions: denied.map((permission) => describePermission(permission)),
-        ...preferences,
-        ...approval,
       },
       { status: 202 }
     );

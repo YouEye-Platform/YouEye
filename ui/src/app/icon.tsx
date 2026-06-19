@@ -33,7 +33,7 @@ export default async function Icon() {
   }
 
   if (buf) {
-    return new Response(buf, {
+    return new Response(new Blob([new Uint8Array(buf)]), {
       headers: {
         "Content-Type": "image/png",
         "Cache-Control": "public, max-age=60",

@@ -1,6 +1,9 @@
 /**
  * Service Worker - YouEye UI PWA
  */
+/// <reference lib="webworker" />
+
+export {};
 
 type PrecacheEntry = string | { url: string; revision?: string | null; integrity?: string };
 type Strategy = "cache-first" | "network-first" | "stale-while-revalidate";
