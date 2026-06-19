@@ -71,7 +71,7 @@ export async function checkSSOPrerequisites(): Promise<{
     const ssoStatus = await spineClient.getControlSSO();
     ssoConfigured = ssoStatus.configured;
     if (ssoConfigured) {
-      authentikUrl = ssoStatus.authentik_url || null;
+      authentikUrl = ssoStatus.identity_url || null;
     }
   } catch {
     // Not configured
@@ -181,134 +181,6 @@ export async function setupSSO(params: {
     controlExternalUrl: params.controlExternalUrl,
     settingsExternalUrl: `${controlUrl.protocol}//${controlUrl.host.replace(/^control\./, '')}/settings`,
   });
-
-  const config = await getAuthentikConfig();
-  const clientId = 'youeye-control';
-
-  // 1. Find the default authorization flow
-  const flows = await authentikAPI<{ results: Array<{ pk: string; slug: string }> }>(
-    config, '/flows/instances/?designation=authorization'
-  );
-  if (!flows.results || flows.results.length === 0) {
-    throw new Error('No authorization flow found in Authentik');
-  }
-  const authFlowPk = flows.results[0].pk;
-
-  // 1b. Find the default invalidation flow (required in Authentik 2024.12+)
-  const invalidationFlows = await authentikAPI<{ results: Array<{ pk: string; slug: string }> }>(
-    config, '/flows/instances/?designation=invalidation'
-  );
-  // Pick provider-specific invalidation flow, or fall back to the first one
-  const invalidationFlow = invalidationFlows.results?.find(f => f.slug === 'default-provider-invalidation-flow')
-    || invalidationFlows.results?.[0];
-  if (!invalidationFlow) {
-    throw new Error('No invalidation flow found in Authentik');
-  }
-  const invalidationFlowPk = invalidationFlow.pk;
-
-  // 2. Get existing scope mappings (built-in openid, email, profile)
-  //    Authentik 2024.12+ uses /propertymappings/provider/scope/
-  const mappings = await authentikAPI<{ results: Array<{ pk: string; scope_name: string; managed: string }> }>(
-    config, '/propertymappings/provider/scope/?page_size=100'
-  );
-  const scopeMappingPks: string[] = [];
-  for (const m of mappings.results || []) {
-    if (m.managed && m.managed.startsWith('goauthentik.io/providers/oauth2/scope-')) {
-      scopeMappingPks.push(m.pk);
-    }
-  }
-
-  // 3. Create groups scope mapping if not exists
-  let groupsMappingPk: string | null = null;
-  for (const m of mappings.results || []) {
-    if (m.scope_name === 'groups') {
-      groupsMappingPk = m.pk;
-      break;
-    }
-  }
-  if (!groupsMappingPk) {
-    const groupsMapping = await authentikAPI<{ pk: string }>(
-      config, '/propertymappings/provider/scope/', 'POST', {
-        name: 'YouEye Groups',
-        scope_name: 'groups',
-        description: 'Returns user group memberships',
-        expression: 'groups = [group.name for group in request.user.ak_groups.all()]\nif "authentik Admins" in groups:\n    groups.append("admin")\nreturn {"groups": groups}',
-      }
-    );
-    groupsMappingPk = groupsMapping.pk;
-  }
-  scopeMappingPks.push(groupsMappingPk);
-
-  // 4. Generate client secret
-  const secretBytes = new Uint8Array(32);
-  crypto.getRandomValues(secretBytes);
-  const clientSecret = Array.from(secretBytes, b => b.toString(16).padStart(2, '0')).join('');
-
-  // 5. Check if provider already exists and delete it
-  const existingProviders = await authentikAPI<{ results: Array<{ pk: number }> }>(
-    config, `/providers/oauth2/?search=${encodeURIComponent(clientId)}`
-  );
-  for (const p of existingProviders.results || []) {
-    await authentikAPI(config, `/providers/oauth2/${p.pk}/`, 'DELETE');
-  }
-
-  // Also check for existing application
-  try {
-    await authentikAPI(config, `/core/applications/${clientId}/`, 'DELETE');
-  } catch {
-    // App doesn't exist, that's fine
-  }
-
-  // 6. Build redirect URIs as array of objects (Authentik 2024.12+ format)
-  const redirectUris = [
-    { matching_mode: 'strict', url: `https://${new URL(params.controlExternalUrl).host}/api/auth/callback` },
-    { matching_mode: 'strict', url: `http://${new URL(params.controlExternalUrl).host}/api/auth/callback` },
-    { matching_mode: 'strict', url: `https://${new URL(params.controlExternalUrl).host.replace(/^control\./, '')}/settings/api/auth/callback` },
-    { matching_mode: 'strict', url: `http://${new URL(params.controlExternalUrl).host.replace(/^control\./, '')}/settings/api/auth/callback` },
-  ];
-
-  // 7. Create OAuth2 Provider
-  const provider = await authentikAPI<{ pk: number }>(
-    config, '/providers/oauth2/', 'POST', {
-      name: 'YouEye Control Panel',
-      authorization_flow: authFlowPk,
-      invalidation_flow: invalidationFlowPk,
-      client_type: 'confidential',
-      client_id: clientId,
-      client_secret: clientSecret,
-      redirect_uris: redirectUris,
-      property_mappings: scopeMappingPks,
-      sub_mode: 'hashed_user_id',
-      include_claims_in_id_token: true,
-      issuer_mode: 'per_provider',
-      access_code_validity: 'minutes=1',
-      access_token_validity: 'minutes=5',
-      refresh_token_validity: 'days=30',
-    }
-  );
-
-  // 8. Create Application
-  await authentikAPI(
-    config, '/core/applications/', 'POST', {
-      name: 'YouEye Control Panel',
-      slug: clientId,
-      provider: provider.pk,
-      meta_launch_url: params.controlExternalUrl,
-      open_in_new_tab: false,
-    }
-  );
-
-  // 9. Configure Spine to inject env vars into CP container
-  const internalUrl = config.url; // The internal container URL
-  await spineClient.setControlSSO({
-    authentik_url: params.authentikExternalUrl,
-    client_id: clientId,
-    client_secret: clientSecret,
-    internal_url: internalUrl,
-    control_url: params.controlExternalUrl,
-  });
-
-  return { clientId, clientSecret };
 }
 
 /**

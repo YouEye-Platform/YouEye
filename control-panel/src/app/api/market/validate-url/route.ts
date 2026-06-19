@@ -243,7 +243,7 @@ export async function POST(request: NextRequest) {
   const preview = manifestToPreview(manifest);
 
   // Log the URL install attempt for audit
-  console.log(`[Market] Manifest validated from URL: ${resolvedUrl}${giteaMatch ? ` (repo: ${manifestUrl})` : ''} — app: ${manifest.metadata.id} v${manifest.version || 'unknown'}`);
+  console.log(`[Market] Manifest validated from URL: ${resolvedUrl} — app: ${manifest.metadata.id} v${manifest.version || 'unknown'}`);
 
   return NextResponse.json({
     valid: true,

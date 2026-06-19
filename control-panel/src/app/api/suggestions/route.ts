@@ -85,7 +85,7 @@ export async function POST(request: Request) {
         let targetPort = 8080;
         try {
           const manifest = await fetchManifest(suggestion.fromAppId);
-          const want = manifest.wants?.find((w: { appId: string }) => w.appId === suggestion.targetAppId);
+          const want = manifest.wants?.find((w) => w.appId === suggestion.targetAppId);
           if (want?.defaultPort) targetPort = want.defaultPort;
         } catch { /* use default */ }
 

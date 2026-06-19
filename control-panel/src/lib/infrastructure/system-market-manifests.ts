@@ -45,6 +45,9 @@ export async function resolveSystemImageOverrides(): Promise<SystemImageOverride
     if (!item.system?.image) {
       throw new Error(`Market system manifest "${id}" does not declare system.image`);
     }
+    if (!item.version) {
+      throw new Error(`Market system manifest "${id}" does not declare version`);
+    }
     if (item.system.containerName !== expected.containerName) {
       throw new Error(
         `Market system manifest "${id}" containerName mismatch: expected ${expected.containerName}, got ${item.system.containerName || 'missing'}`

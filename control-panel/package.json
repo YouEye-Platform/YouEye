@@ -1,10 +1,11 @@
 {
   "name": "ye-controlpanel",
-  "version": "0.4.49.18",
+  "version": "0.4.49.19",
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build && pnpm run postbuild",
+    "typecheck": "tsc --noEmit --pretty false",
+    "build": "pnpm run typecheck && next build && pnpm run postbuild",
     "postbuild": "node scripts/postbuild.js",
     "start": "next start",
     "lint": "eslint"

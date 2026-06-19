@@ -68,12 +68,18 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
     let healthStatus: 'healthy' | 'unhealthy' | 'unknown' = 'unknown';
     let healthCheckedAt: string | null = null;
     let forwardAuthEnabled = false;
+    let installedVersion: string | undefined = metadata.installedVersion;
+    let catalogVersion: string | null | undefined;
+    let updateAvailable = false;
     try {
       const dbApp = await getInstalledApp(appId);
       if (dbApp) {
         healthStatus = dbApp.healthStatus;
         healthCheckedAt = dbApp.healthCheckedAt;
         forwardAuthEnabled = dbApp.forwardAuthEnabled;
+        installedVersion = dbApp.installedVersion || installedVersion;
+        catalogVersion = dbApp.catalogVersion;
+        updateAvailable = dbApp.updateAvailable;
       }
     } catch {}
 
@@ -90,6 +96,9 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
       domain: metadata.domain,
       url: baseUrl && entryUrl ? `${baseUrl}${entryUrl}` : baseUrl,
       installedAt: metadata.installedAt,
+      installedVersion,
+      catalogVersion,
+      updateAvailable,
       healthStatus,
       healthCheckedAt,
       forwardAuthEnabled,

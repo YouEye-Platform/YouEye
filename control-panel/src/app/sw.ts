@@ -1,6 +1,7 @@
 /**
  * Service Worker - Control Panel PWA
  */
+/// <reference lib="webworker" />
 
 type PrecacheEntry = string | { url: string; revision?: string | null; integrity?: string };
 type Strategy = "cache-first" | "network-first" | "stale-while-revalidate";
@@ -12,7 +13,7 @@ interface RuntimeRule {
   match: (url: URL, request: Request) => boolean;
 }
 
-declare const self: ServiceWorkerGlobalScope & {
+const sw = self as unknown as ServiceWorkerGlobalScope & {
   __SW_MANIFEST?: PrecacheEntry[];
 };
 
@@ -20,26 +21,26 @@ const CACHE_PREFIX = "control-panel";
 const PRECACHE_CACHE = `${CACHE_PREFIX}-precache-v1`;
 const PAGE_CACHE = `${CACHE_PREFIX}-pages`;
 const OFFLINE_URL = "/offline";
-const PRECACHE_ENTRIES = self.__SW_MANIFEST || [];
+const PRECACHE_ENTRIES = sw.__SW_MANIFEST || [];
 
 const runtimeRules: RuntimeRule[] = [
   {
     cacheName: "control-static-assets",
     maxEntries: 200,
     strategy: "cache-first",
-    match: (url) => url.origin === self.location.origin && url.pathname.startsWith("/_next/static/"),
+    match: (url) => url.origin === sw.location.origin && url.pathname.startsWith("/_next/static/"),
   },
   {
     cacheName: "control-branding",
     maxEntries: 10,
     strategy: "stale-while-revalidate",
-    match: (url) => url.origin === self.location.origin && url.pathname.startsWith("/api/branding/favicon"),
+    match: (url) => url.origin === sw.location.origin && url.pathname.startsWith("/api/branding/favicon"),
   },
   {
     cacheName: "control-api-cache",
     maxEntries: 50,
     strategy: "network-first",
-    match: (url) => url.origin === self.location.origin && url.pathname.startsWith("/api/"),
+    match: (url) => url.origin === sw.location.origin && url.pathname.startsWith("/api/"),
   },
 ];
 
@@ -54,7 +55,7 @@ function getEntryUrl(entry: PrecacheEntry): string {
 }
 
 function createPrecacheRequest(entry: PrecacheEntry): Request {
-  return new Request(new URL(getEntryUrl(entry), self.location.origin).href, {
+  return new Request(new URL(getEntryUrl(entry), sw.location.origin).href, {
     cache: "reload",
     credentials: "same-origin",
     integrity: typeof entry === "string" ? undefined : entry.integrity || undefined,
@@ -83,11 +84,11 @@ async function cacheResponse(
 }
 
 async function matchPrecache(request: Request): Promise<Response | undefined> {
-  const requestUrl = new URL(request.url, self.location.origin);
+  const requestUrl = new URL(request.url, sw.location.origin);
   requestUrl.hash = "";
 
-  const entry = PRECACHE_ENTRIES.find((candidate) => {
-    const candidateUrl = new URL(getEntryUrl(candidate), self.location.origin);
+  const entry = PRECACHE_ENTRIES.find((candidate: PrecacheEntry) => {
+    const candidateUrl = new URL(getEntryUrl(candidate), sw.location.origin);
     candidateUrl.hash = "";
     return candidateUrl.href === requestUrl.href;
   });
@@ -153,7 +154,7 @@ async function staleWhileRevalidate(request: Request, rule: RuntimeRule): Promis
   return (await fresh) || new Response("Offline", { status: 503, statusText: "Service Unavailable" });
 }
 
-self.addEventListener("install", (event) => {
+sw.addEventListener("install", (event: ExtendableEvent) => {
   event.waitUntil(
     (async () => {
       await caches.delete(PRECACHE_CACHE);
@@ -165,12 +166,12 @@ self.addEventListener("install", (event) => {
           if (response.ok) await cache.put(request, response);
         }),
       );
-      await self.skipWaiting();
+      await sw.skipWaiting();
     })(),
   );
 });
 
-self.addEventListener("activate", (event) => {
+sw.addEventListener("activate", (event: ExtendableEvent) => {
   event.waitUntil(
     (async () => {
       const cacheNames = await caches.keys();
@@ -179,12 +180,12 @@ self.addEventListener("activate", (event) => {
           .filter((cacheName) => cacheName.startsWith(`${CACHE_PREFIX}-`) && !cachesToKeep.has(cacheName))
           .map((cacheName) => caches.delete(cacheName)),
       );
-      await self.clients.claim();
+      await sw.clients.claim();
     })(),
   );
 });
 
-self.addEventListener("fetch", (event) => {
+sw.addEventListener("fetch", (event: FetchEvent) => {
   const { request } = event;
   if (request.method !== "GET") return;
 

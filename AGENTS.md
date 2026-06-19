@@ -1,3 +1,28 @@
+## cp-dev-v0.4.49.19 — artem — 2026-06-19
+**Branch:** dev
+**VM:** potempc
+**Agent:** Artem
+**Task:** Restore Control Panel strict typecheck as a release gate.
+
+### Changes
+- `control-panel/package.json`, `control-panel/next.config.ts` — added `pnpm run typecheck`, made `pnpm build` run it before Next, and removed `typescript.ignoreBuildErrors`.
+- `control-panel/src/app/api/market/validate-url/route.ts` — removed a stale audit-log variable that blocked typecheck.
+- `control-panel/src/app/api/suggestions/route.ts` — let manifest want typing stay optional instead of narrowing to a required `appId`.
+- `control-panel/src/app/api/market/status/route.ts`, `control-panel/src/lib/market/types.ts` — returned and typed installed/catalog/update metadata expected by the Market page.
+- `control-panel/src/app/sw.ts` — typed the service worker against worker globals instead of browser-window globals.
+- `control-panel/src/lib/auth/sso-setup.ts` — aligned old SSO status naming with `identity_url` and removed unreachable legacy provider-creation code after the current identity helper return.
+- `control-panel/src/lib/infrastructure/system-market-manifests.ts` — fail loudly when required system manifests omit `version` before recording metadata.
+- `control-panel/package.json`, `README.md` — bumped Control Panel to `0.4.49.19` before build/release.
+
+### Test Results
+- CP typecheck: `pnpm --dir control-panel run typecheck` passed.
+- CP focused tests: `node --test control-panel/tests/byo-domain-provider.spec.mjs` passed (8/8); `CONTROL_PANEL_ROOT="$PWD/control-panel" pnpm --dir control-panel exec node --import tsx --test tests/market-system-apps.spec.ts tests/platform-subdomain-routing.spec.mjs tests/market.spec.ts` passed (14/14).
+- CP build: `rm -rf control-panel/.next control-panel/node_modules/.cache && pnpm --dir control-panel build` passed; build now runs typecheck before Next.
+- CP release artifact: `/tmp/standalone.tar` built from `.next/standalone/control-panel`, contains root `server.js`, and embeds package version `0.4.49.19`.
+
+### Notes for Iris
+- This release supersedes the previous CP typecheck caveat. Future CP releases should not ship with full-project `tsc` failures.
+
 ## cp-dev-v0.4.49.18 / spine-dev-v0.4.10.5 / installer-dev-v0.1.0.3 — artem — 2026-06-19
 **Branch:** dev
 **VM:** potempc

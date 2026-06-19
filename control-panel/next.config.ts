@@ -13,12 +13,6 @@ const withSerwist = withSerwistInit({
 const nextConfig: NextConfig = {
   output: 'standalone',
   reactCompiler: true,
-  typescript: {
-    // Serwist WorkerGlobalScope types conflict with DOM types —
-    // the SW is compiled by its own webpack plugin, not TS.
-    ignoreBuildErrors: true,
-  },
-
   // Allow remote images from GitHub (Market icons)
   images: {
     remotePatterns: [

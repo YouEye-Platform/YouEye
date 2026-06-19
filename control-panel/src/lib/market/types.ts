@@ -268,6 +268,9 @@ export interface AppStatusInfo {
   domain?: string;
   url?: string;
   installedAt?: string;
+  installedVersion?: string;
+  catalogVersion?: string | null;
+  updateAvailable?: boolean;
   healthStatus?: 'healthy' | 'unhealthy' | 'unknown';
   healthCheckedAt?: string | null;
   forwardAuthEnabled?: boolean;
