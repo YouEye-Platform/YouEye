@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { createPortal } from "react-dom";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   Clock,
@@ -85,9 +85,81 @@ function DotsIcon({ className }: { className?: string }) {
   );
 }
 
+function PlatformOverlayFrame({
+  kind,
+  active,
+  preload,
+  uiBaseUrl,
+  uiBaseOrigin,
+  mode,
+  isAdmin,
+}: {
+  kind: PlatformOverlayKind;
+  active: boolean;
+  preload: boolean;
+  uiBaseUrl: string;
+  uiBaseOrigin: string;
+  mode: "light" | "dark";
+  isAdmin: boolean;
+}) {
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [mounted, setMounted] = useState(active || preload);
+  const [loaded, setLoaded] = useState(false);
+  const src = useMemo(() => {
+    if (!uiBaseUrl) return null;
+    const params = new URLSearchParams({ mode });
+    if (kind === "drawer" && isAdmin) params.set("admin", "true");
+    return `${uiBaseUrl}/embed/${kind}?${params.toString()}`;
+  }, [isAdmin, kind, mode, uiBaseUrl]);
+  const targetOrigin = uiBaseOrigin || "*";
+
+  useEffect(() => {
+    if (active || preload) setMounted(true);
+  }, [active, preload]);
+
+  useEffect(() => {
+    setLoaded(false);
+  }, [src]);
+
+  const postVisibility = useCallback(() => {
+    if (!src) return;
+    iframeRef.current?.contentWindow?.postMessage(
+      { type: "youeye:overlay-visibility", kind, open: active },
+      targetOrigin
+    );
+  }, [active, kind, src, targetOrigin]);
+
+  useEffect(() => {
+    if (!mounted || !loaded) return;
+    postVisibility();
+  }, [loaded, mounted, postVisibility]);
+
+  if (!mounted || !src || typeof document === "undefined") return null;
+
+  return createPortal(
+    <iframe
+      ref={iframeRef}
+      src={src}
+      className={`fixed inset-0 z-[60] h-screen w-screen border-0 bg-transparent transition-opacity duration-100 ${
+        active && loaded ? "pointer-events-auto" : "pointer-events-none"
+      }`}
+      style={{ colorScheme: mode, opacity: active && loaded ? 1 : 0 }}
+      title={`YouEye ${kind}`}
+      sandbox={EMBED_SANDBOX}
+      allow="clipboard-read; clipboard-write"
+      onLoad={() => {
+        setLoaded(true);
+        window.setTimeout(postVisibility, 0);
+      }}
+    />,
+    document.body
+  );
+}
+
 export function ControlHeader({ username, isAdmin, hasUserContext = true }: ControlHeaderProps) {
   const [config, setConfig] = useState<HeaderConfig | null>(null);
   const [platformOverlay, setPlatformOverlay] = useState<PlatformOverlayKind | null>(null);
+  const [prewarmOverlays, setPrewarmOverlays] = useState(false);
   const [embedMode, setEmbedMode] = useState<"light" | "dark">("light");
   const [systemPref, setSystemPref] = useState<"light" | "dark">("light");
   const saveThemeTimeout = useRef<NodeJS.Timeout | null>(null);
@@ -148,10 +220,35 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
     document.documentElement.classList.contains("dark") ? "dark" : "light"
   ), []);
 
-  const openPlatformOverlay = useCallback((kind: PlatformOverlayKind) => {
+  const warmPlatformOverlays = useCallback(() => {
+    if (!uiBaseUrl) return;
     setEmbedMode(resolveEmbedMode());
+    setPrewarmOverlays(true);
+  }, [resolveEmbedMode, uiBaseUrl]);
+
+  const openPlatformOverlay = useCallback((kind: PlatformOverlayKind) => {
+    warmPlatformOverlays();
     setPlatformOverlay(kind);
-  }, [resolveEmbedMode]);
+  }, [warmPlatformOverlays]);
+
+  useEffect(() => {
+    if (!hasUserContext || !uiBaseUrl) return;
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (idleWindow.requestIdleCallback) {
+      const handle = idleWindow.requestIdleCallback(warmPlatformOverlays, { timeout: 1200 });
+      return () => idleWindow.cancelIdleCallback?.(handle);
+    }
+    const handle = window.setTimeout(warmPlatformOverlays, 600);
+    return () => window.clearTimeout(handle);
+  }, [hasUserContext, uiBaseUrl, warmPlatformOverlays]);
+
+  useEffect(() => {
+    if (!platformOverlay) return;
+    warmPlatformOverlays();
+  }, [platformOverlay, warmPlatformOverlays]);
 
   useEffect(() => {
     if (!uiBaseOrigin) return;
@@ -214,9 +311,6 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
   const logoUrl = config?.branding?.logo_url ?? null;
   const unreadCount = config?.notifications?.unread_count ?? 0;
   const themeMode = config?.theme?.mode ?? "system";
-  const overlayUrl = platformOverlay && uiBaseUrl
-    ? `${uiBaseUrl}/embed/${platformOverlay}?mode=${embedMode}${platformOverlay === "drawer" && headerIsAdmin ? "&admin=true" : ""}`
-    : null;
 
   // Apply the user's saved light/dark/system mode to <html> on load and whenever
   // it changes. Source of truth is config.theme.mode (bridge → UI DB); the inline
@@ -286,7 +380,9 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
             className="h-9 w-9"
             aria-label="Apps"
             disabled={!uiBaseUrl}
+            onFocus={warmPlatformOverlays}
             onClick={() => openPlatformOverlay("drawer")}
+            onPointerEnter={warmPlatformOverlays}
           >
             <DotsIcon className="h-4 w-4" />
           </Button>
@@ -297,7 +393,9 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
             className="relative inline-flex h-9 w-9 items-center justify-center rounded-md transition-colors hover:bg-accent disabled:opacity-50"
             aria-label="Notifications"
             disabled={!uiBaseUrl}
+            onFocus={warmPlatformOverlays}
             onClick={() => openPlatformOverlay("notifications")}
+            onPointerEnter={warmPlatformOverlays}
           >
             <Bell className="h-4 w-4" />
             {unreadCount > 0 && (
@@ -308,15 +406,36 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
           </button>
         )}
 
-        {hasUserContext && overlayUrl && typeof document !== "undefined" && createPortal(
-          <iframe
-            src={overlayUrl}
-            className="fixed inset-0 z-[60] h-screen w-screen border-0 bg-transparent"
-            title={`YouEye ${platformOverlay}`}
-            sandbox={EMBED_SANDBOX}
-            allow="clipboard-read; clipboard-write"
-          />,
-          document.body
+        {hasUserContext && uiBaseUrl && (
+          <>
+            <PlatformOverlayFrame
+              kind="drawer"
+              active={platformOverlay === "drawer"}
+              preload={prewarmOverlays}
+              uiBaseUrl={uiBaseUrl}
+              uiBaseOrigin={uiBaseOrigin}
+              mode={embedMode}
+              isAdmin={headerIsAdmin}
+            />
+            <PlatformOverlayFrame
+              kind="launcher"
+              active={platformOverlay === "launcher"}
+              preload={prewarmOverlays}
+              uiBaseUrl={uiBaseUrl}
+              uiBaseOrigin={uiBaseOrigin}
+              mode={embedMode}
+              isAdmin={headerIsAdmin}
+            />
+            <PlatformOverlayFrame
+              kind="notifications"
+              active={platformOverlay === "notifications"}
+              preload={prewarmOverlays}
+              uiBaseUrl={uiBaseUrl}
+              uiBaseOrigin={uiBaseOrigin}
+              mode={embedMode}
+              isAdmin={headerIsAdmin}
+            />
+          </>
         )}
 
         <DropdownMenu>

@@ -39,6 +39,8 @@ export function NotificationBell({
 }) {
   const [open, setOpen] = useState(false);
   const [overlayMode, setOverlayMode] = useState<"light" | "dark">("light");
+  const [prewarm, setPrewarm] = useState(false);
+  const [panelActive, setPanelActive] = useState(!embedded);
   const [notifications, setNotifications] = useState<NotificationData[]>([]);
   const [appMeta, setAppMeta] = useState<Record<string, NotificationAppMeta>>({});
   const [unreadCount, setUnreadCount] = useState(0);
@@ -51,6 +53,26 @@ export function NotificationBell({
 
   // Track in-flight installs so we can update the loading notification on completion
   const activeInstalls = useRef<Map<string, string>>(new Map()); // appId -> notificationId
+
+  const warmOverlay = useCallback(() => {
+    setOverlayMode(getCurrentThemeMode());
+    setPrewarm(true);
+  }, []);
+
+  useEffect(() => {
+    if (embedded) return;
+    setOverlayMode(getCurrentThemeMode());
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (idleWindow.requestIdleCallback && idleWindow.cancelIdleCallback) {
+      const id = idleWindow.requestIdleCallback(warmOverlay, { timeout: 2500 });
+      return () => idleWindow.cancelIdleCallback?.(id);
+    }
+    const id = window.setTimeout(warmOverlay, 1200);
+    return () => window.clearTimeout(id);
+  }, [embedded, warmOverlay]);
 
   const setUnreadAndNotify = useCallback((value: number | ((prev: number) => number)) => {
     setUnreadCount((prev) => {
@@ -75,10 +97,28 @@ export function NotificationBell({
   }, [setUnreadAndNotify]);
 
   useEffect(() => {
+    if (embedded) fetchNotifications();
+  }, [embedded, fetchNotifications]);
+
+  useEffect(() => {
+    if (!panelActive) return;
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
-  }, [fetchNotifications]);
+  }, [fetchNotifications, panelActive]);
+
+  useEffect(() => {
+    if (!embedded) return;
+    const handleVisibility = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type !== "youeye:overlay-visibility" || event.data?.kind !== "notifications") return;
+      const nextActive = event.data.open === true;
+      setPanelActive(nextActive);
+      if (nextActive) fetchNotifications();
+    };
+    window.addEventListener("message", handleVisibility);
+    return () => window.removeEventListener("message", handleVisibility);
+  }, [embedded, fetchNotifications]);
 
   // Listen for app install postMessage events and create proper notifications
   // (dashboard market flow; harmless in the embed — no such messages arrive).
@@ -208,8 +248,10 @@ export function NotificationBell({
       <button
         className="relative inline-flex h-9 w-9 items-center justify-center rounded-md transition-colors hover:bg-accent"
         aria-label={t("title")}
+        onPointerEnter={warmOverlay}
+        onFocus={warmOverlay}
         onClick={() => {
-          setOverlayMode(getCurrentThemeMode());
+          warmOverlay();
           setOpen(true);
         }}
       >
@@ -220,9 +262,11 @@ export function NotificationBell({
           </span>
         )}
       </button>
-      {open && (
+      {(open || prewarm) && (
         <PlatformOverlayFrame
           kind="notifications"
+          active={open}
+          preload={prewarm}
           mode={overlayMode}
           onClose={() => setOpen(false)}
           onUnreadCountChange={setUnreadAndNotify}

@@ -38,9 +38,11 @@ test('NotificationItem renders the .via attribution row OUTSIDE the embed + unre
   assert.match(i, /t\("system"\)/);                 // System notices labelled
 });
 
-test('bell popover is the 400px panel using NotificationItem', () => {
+test('bell trigger opens the UI-owned notification overlay using NotificationItem', () => {
   const b = read('src/components/layout/notification-bell.tsx');
-  assert.match(b, /w-\[400px\]/);
+  assert.match(b, /PlatformOverlayFrame/);
+  assert.match(b, /kind="notifications"/);
+  assert.match(b, /preload=\{prewarm\}/);
   assert.match(b, /<NotificationItem/);
   assert.match(b, /markAllRead/);
   assert.doesNotMatch(b, /typeIcon/);               // old per-type icon row gone

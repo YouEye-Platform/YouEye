@@ -100,6 +100,8 @@ export function AppDrawer({
 }) {
   const [open, setOpen] = useState(false);
   const [allApps, setAllApps] = useState<DrawerApp[]>([]);
+  const [appsLoaded, setAppsLoaded] = useState(false);
+  const [appsError, setAppsError] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [addMode, setAddMode] = useState(false);
   const [query, setQuery] = useState("");
@@ -113,11 +115,20 @@ export function AppDrawer({
 
   const fetchApps = useCallback(async () => {
     try {
+      setAppsError(false);
       const res = await fetch("/api/v1/apps/drawer");
-      if (!res.ok) return;
+      if (!res.ok) {
+        setAppsError(true);
+        setAppsLoaded(true);
+        return;
+      }
       const data = await res.json();
       setAllApps(data.apps ?? []);
-    } catch { /* silent */ }
+      setAppsLoaded(true);
+    } catch {
+      setAppsError(true);
+      setAppsLoaded(true);
+    }
   }, []);
 
   const fetchPrefs = useCallback(async () => {
@@ -132,6 +143,25 @@ export function AppDrawer({
   useEffect(() => {
     if (active) { fetchApps(); if (!prefsLoaded) fetchPrefs(); }
   }, [active, fetchApps, fetchPrefs, prefsLoaded]);
+
+  useEffect(() => {
+    if (!embedded) return;
+    const handleVisibility = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type !== "youeye:overlay-visibility" || event.data?.kind !== "drawer") return;
+      if (event.data.open === true) {
+        fetchApps();
+        if (!prefsLoaded) fetchPrefs();
+        return;
+      }
+      setEditMode(false);
+      setAddMode(false);
+      setQuery("");
+      setAddQuery("");
+    };
+    window.addEventListener("message", handleVisibility);
+    return () => window.removeEventListener("message", handleVisibility);
+  }, [embedded, fetchApps, fetchPrefs, prefsLoaded]);
 
   const persistPrefs = useCallback((newPrefs: DrawerPrefs) => {
     setPrefs(newPrefs);
@@ -273,7 +303,25 @@ export function AppDrawer({
 
       <ScrollArea style={{ maxHeight: editMode ? (embedded ? 360 : "calc(100vh - 260px)") : prefs.maxHeight }}>
         <div className="px-3 pb-2">
-          {gridApps.length === 0 ? (
+          {!appsLoaded ? (
+            <div className="grid gap-3 px-2 py-4" aria-busy="true">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
+                  {Array.from({ length: cols }).map((_, j) => (
+                    <div key={`${i}-${j}`} className="flex flex-col items-center gap-2 rounded-xl p-2">
+                      <div className="h-10 w-10 animate-pulse rounded-xl bg-muted" />
+                      <div className="h-2 w-12 animate-pulse rounded bg-muted/70" />
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : appsError ? (
+            <div className="flex flex-col items-center justify-center py-10 text-center">
+              <p className="mb-3 text-sm text-muted-foreground">Apps could not be loaded.</p>
+              <button type="button" onClick={fetchApps} className="text-sm text-primary hover:underline">Retry</button>
+            </div>
+          ) : gridApps.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 text-center">
               <p className="mb-3 text-sm text-muted-foreground">{q ? t("noMatchingApps") : t("noAppsInstalled")}</p>
               {!q && isAdmin && <Link href="/market" target={embedded ? "_top" : undefined} className="text-sm text-primary hover:underline" onClick={() => setOpen(false)}>{t("visitMarketplace")}</Link>}

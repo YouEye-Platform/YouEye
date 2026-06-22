@@ -111,16 +111,50 @@ function genFolderId(): string {
 export function Launcher({ embedded = false, onClose }: { embedded?: boolean; onClose?: () => void }) {
   const [apps, setApps] = useState<LauncherApp[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [query, setQuery] = useState("");
   const [openFolderId, setOpenFolderId] = useState<string | null>(null);
   const t = useTranslations("nav");
 
-  useEffect(() => {
+  const fetchApps = useCallback(() => {
     fetch("/api/v1/apps/drawer")
-      .then((r) => (r.ok ? r.json() : { apps: [], folders: [] }))
-      .then((data) => { setApps(data.apps ?? []); setFolders(data.folders ?? []); })
-      .catch(() => { setApps([]); setFolders([]); });
+      .then((r) => {
+        if (!r.ok) throw new Error("Failed to load apps");
+        return r.json();
+      })
+      .then((data) => {
+        setApps(data.apps ?? []);
+        setFolders(data.folders ?? []);
+        setLoadError(false);
+      })
+      .catch(() => {
+        setLoadError(true);
+      })
+      .finally(() => {
+        setLoaded(true);
+      });
   }, []);
+
+  useEffect(() => {
+    fetchApps();
+  }, [fetchApps]);
+
+  useEffect(() => {
+    if (!embedded) return;
+    const handleVisibility = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type !== "youeye:overlay-visibility" || event.data?.kind !== "launcher") return;
+      if (event.data.open === true) {
+        fetchApps();
+        return;
+      }
+      setQuery("");
+      setOpenFolderId(null);
+    };
+    window.addEventListener("message", handleVisibility);
+    return () => window.removeEventListener("message", handleVisibility);
+  }, [embedded, fetchApps]);
 
   const systemTiles: SystemTile[] = useMemo(() => [
     { key: "market", name: "Market", href: "/market", Icon: Store },
@@ -321,7 +355,21 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
         <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("searchApps")} className="h-11 w-full rounded-full border bg-card/70 pl-11 pr-4 text-sm outline-none focus:ring-2 focus:ring-ring" />
       </div>
 
-      {(searching ? searchHits.length === 0 && gridSystem.length === 0 : gridItems.length === 0 && gridSystem.length === 0) ? (
+      {!loaded ? (
+        <div className="grid w-full max-w-3xl grid-cols-[repeat(auto-fill,minmax(84px,96px))] justify-center gap-x-9 gap-y-7" aria-busy="true">
+          {Array.from({ length: 12 }).map((_, i) => (
+            <div key={i} className="grid justify-items-center gap-2 rounded-xl p-1">
+              <div className="h-16 w-16 animate-pulse rounded-2xl bg-muted" />
+              <div className="h-3 w-16 animate-pulse rounded bg-muted/70" />
+            </div>
+          ))}
+        </div>
+      ) : loadError ? (
+        <div className="mt-6 grid justify-items-center gap-3 text-sm text-muted-foreground">
+          <p>Apps could not be loaded.</p>
+          <button type="button" onClick={() => window.location.reload()} className="text-primary hover:underline">Retry</button>
+        </div>
+      ) : (searching ? searchHits.length === 0 && gridSystem.length === 0 : gridItems.length === 0 && gridSystem.length === 0) ? (
         <p className="mt-6 text-sm text-muted-foreground">{t("noAppsFound")}</p>
       ) : (
         <div className="grid w-full max-w-3xl grid-cols-[repeat(auto-fill,minmax(84px,96px))] justify-center gap-x-9 gap-y-7">
