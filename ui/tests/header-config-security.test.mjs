@@ -21,6 +21,14 @@ test('header/config omits the installed-app list for native-app (service) calls'
 test('ui settings bridge exposes the UI base URL for CP iframe hosts', () => {
   const r = read('src/app/api/ui-bridge/settings/[...path]/route.ts');
 
-  assert.match(r, /const uiBaseUrl = process\.env\.UI_EXTERNAL_URL \|\| ""/);
+  assert.match(r, /function getUiBaseUrl\(request: NextRequest\)/);
   assert.match(r, /ui_base_url: uiBaseUrl/);
+});
+
+test('ui settings bridge returns absolute avatar URLs to cross-origin native apps', () => {
+  const r = read('src/app/api/ui-bridge/settings/[...path]/route.ts');
+
+  assert.match(r, /function normalizeAvatarUrl/);
+  assert.match(r, /image: normalizeAvatarUrl\(user\.image, uiBaseUrl\)/);
+  assert.match(r, /avatar_url: avatarUrl/);
 });

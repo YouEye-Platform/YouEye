@@ -20,32 +20,56 @@ declare const self: ServiceWorkerGlobalScope & {
 };
 
 const CACHE_PREFIX = "youeye-ui";
-const PRECACHE_CACHE = `${CACHE_PREFIX}-precache-v1`;
-const PAGE_CACHE = `${CACHE_PREFIX}-pages`;
 const OFFLINE_URL = "/offline";
 const PRECACHE_ENTRIES = self.__SW_MANIFEST || [];
+const CACHE_VERSION = getCacheVersion(PRECACHE_ENTRIES);
+const LEGACY_CACHE_PREFIXES = Array.from(new Set([`${CACHE_PREFIX}-`, "ui-"]));
+const PRECACHE_CACHE = versionCacheName("precache");
+const PAGE_CACHE = versionCacheName("pages");
+
+function getCacheVersion(entries: PrecacheEntry[]): string {
+  const buildManifest = entries
+    .map((entry) => getEntryUrl(entry))
+    .find((url) => /\/_next\/static\/[^/]+\/_buildManifest\.js$/.test(url));
+  const buildId = buildManifest?.match(/\/_next\/static\/([^/]+)\//)?.[1];
+  if (buildId) return buildId;
+
+  let hash = 0;
+  for (const char of entries.map((entry) => getEntryUrl(entry)).sort().join("|")) {
+    hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+  }
+  return `manifest-${(hash >>> 0).toString(36)}`;
+}
+
+function versionCacheName(name: string): string {
+  return `${CACHE_PREFIX}-${CACHE_VERSION}-${name}`;
+}
+
+function isOwnedCache(cacheName: string): boolean {
+  return LEGACY_CACHE_PREFIXES.some((prefix) => cacheName.startsWith(prefix));
+}
 
 const runtimeRules: RuntimeRule[] = [
   {
-    cacheName: "ui-static-assets",
+    cacheName: versionCacheName("static-assets"),
     maxEntries: 200,
     strategy: "cache-first",
     match: (url) => url.origin === self.location.origin && url.pathname.startsWith("/_next/static/"),
   },
   {
-    cacheName: "ui-fonts",
+    cacheName: versionCacheName("fonts"),
     maxEntries: 30,
     strategy: "cache-first",
     match: (url) => url.origin === self.location.origin && url.pathname.startsWith("/fonts/"),
   },
   {
-    cacheName: "ui-branding-icons",
+    cacheName: versionCacheName("branding-icons"),
     maxEntries: 10,
     strategy: "stale-while-revalidate",
     match: (url) => url.origin === self.location.origin && url.pathname.startsWith("/api/v1/branding/icon"),
   },
   {
-    cacheName: "ui-api-cache",
+    cacheName: versionCacheName("api-cache"),
     maxEntries: 50,
     strategy: "network-first",
     match: (url) => url.origin === self.location.origin && url.pathname.startsWith("/api/"),
@@ -185,7 +209,7 @@ self.addEventListener("activate", (event) => {
       const cacheNames = await caches.keys();
       await Promise.all(
         cacheNames
-          .filter((cacheName) => cacheName.startsWith(`${CACHE_PREFIX}-`) && !cachesToKeep.has(cacheName))
+          .filter((cacheName) => isOwnedCache(cacheName) && !cachesToKeep.has(cacheName))
           .map((cacheName) => caches.delete(cacheName)),
       );
       await self.clients.claim();

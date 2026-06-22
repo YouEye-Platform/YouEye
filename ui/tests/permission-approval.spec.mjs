@@ -33,6 +33,9 @@ test('permission requests require explicit approval before granting', () => {
 
   assert.match(page, /YouEye permission request/);
   assert.match(page, /describePermission\(permission\)/);
+  assert.match(page, /findUserById\(session\.userId\)/);
+  assert.match(page, /AvatarImage src=\{avatarUrl\}/);
+  assert.match(page, /AvatarFallback/);
   assert.match(form, /approved: true/);
   assert.match(form, /Permission granted/);
 });

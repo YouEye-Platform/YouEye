@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
+import { findUserById } from "@/lib/db/queries/users";
 import { describePermission } from "@/lib/permissions/descriptors";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { PermissionApprovalForm } from "./permission-approval-form";
 
 interface PermissionApprovalPageProps {
@@ -15,6 +17,17 @@ interface PermissionApprovalPageProps {
 export default async function PermissionApprovalPage({ searchParams }: PermissionApprovalPageProps) {
   const session = await getSession();
   if (!session) redirect("/login");
+
+  const user = await findUserById(session.userId);
+  const displayName = user?.name || session.name || session.username;
+  const email = user?.email || session.email;
+  const avatarUrl = user?.image ?? null;
+  const initials = displayName
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2) || "?";
 
   const params = await searchParams;
   const appId = params.app_id;
@@ -39,6 +52,16 @@ export default async function PermissionApprovalPage({ searchParams }: Permissio
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center px-6 py-12">
       <div className="rounded-lg border border-border bg-card p-6 shadow-sm">
+        <div className="mb-5 flex items-center gap-3">
+          <Avatar className="size-12">
+            {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
+            <AvatarFallback className="text-base">{initials}</AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <p className="truncate text-sm text-muted-foreground">{email}</p>
+            <p className="truncate font-medium">{displayName}</p>
+          </div>
+        </div>
         <p className="text-sm font-medium text-muted-foreground">YouEye permission request</p>
         <h1 className="mt-2 text-2xl font-semibold">{appId.replace(/^ye-/, "")} wants access</h1>
         <div className="mt-5 space-y-3">

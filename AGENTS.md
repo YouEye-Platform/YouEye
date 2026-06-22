@@ -1,3 +1,25 @@
+## ui-v0.4.30 — artem — 2026-06-22
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix avatar propagation, permission identity display, Cinema info-card auth context, and stale service-worker caches.
+
+### Changes
+- `ui/package.json` — bumped YouEye UI to `0.4.30` before building the release artifact.
+- `ui/src/app/api/ui-bridge/settings/[...path]/route.ts` — returns absolute avatar URLs for cross-origin settings/native consumers and carries the normalized avatar URL through `header/config`.
+- `ui/src/app/permissions/approve/page.tsx` — resolves the current user and renders the signed-in account avatar/fallback on the YouEye ID permission approval screen.
+- `ui/src/app/sw.ts`, `ui/public/sw.js` — versions runtime caches from the active build manifest and clears old UI-owned caches during service-worker activation.
+- `ui/tests/header-config-security.test.mjs`, `ui/tests/permission-approval.spec.mjs`, `ui/tests/permission-return-to.spec.mjs`, `ui/tests/service-worker-cache-version.test.mjs` — added and refreshed static regression coverage for avatar URLs, permission identity display, sanitized grant-type assertions, and cache rollover.
+- `README.md` — updated the current-version matrix for UI and native app release tags.
+
+### Test Results
+- UI typecheck: `pnpm --dir ui exec tsc --noEmit --pretty false` passed.
+- UI static tests: `node --test tests/*.mjs && git diff --check` passed in `ui/` (52/52).
+- UI build: `pnpm --dir ui build` passed for `ye-ui@0.4.30`; the standalone tree contains root `server.js` and root `package.json`.
+
+### Notes for Iris
+- This release intentionally does not include the remaining dashboard widget-load investigation. The service-worker cache rollover fixes stale deployed JS/CSS assets after updates, but widget runtime behavior still needs a separate follow-up.
+
 ## spine-v0.4.11 / installer-v0.1.0 / cp-v0.4.50 / ui-v0.4.29 — artem — 2026-06-19
 **Branch:** main
 **VM:** potempc

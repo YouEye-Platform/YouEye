@@ -81,6 +81,22 @@ function getPublicProto(request: NextRequest): string {
     || "https";
 }
 
+function getUiBaseUrl(request: NextRequest): string {
+  const configured = process.env.UI_EXTERNAL_URL?.replace(/\/$/, "");
+  if (configured) return configured;
+
+  const host = getPublicHost(request);
+  if (!host) return "";
+  return `${getPublicProto(request)}://${host}`;
+}
+
+function normalizeAvatarUrl(image: string | null | undefined, uiBaseUrl: string): string | null {
+  if (!image) return null;
+  if (/^(https?:|data:|blob:)/i.test(image)) return image;
+  if (image.startsWith("/") && uiBaseUrl) return `${uiBaseUrl}${image}`;
+  return image;
+}
+
 function hasSettingsPanel(manifest: Record<string, unknown> | null | undefined): boolean {
   if (!manifest) return false;
   const capabilities = manifest.capabilities as Record<string, unknown> | undefined;
@@ -111,6 +127,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
   const path = (await context.params).path.join("/");
 
   if (path === "profile") {
+    const uiBaseUrl = getUiBaseUrl(request);
     return NextResponse.json({
       userId: user.id,
       username: user.username,
@@ -121,14 +138,15 @@ export async function GET(request: NextRequest, context: RouteContext) {
       timezone: user.timezone,
       email: user.email,
       isAdmin: user.isAdmin,
-      image: user.image,
+      image: normalizeAvatarUrl(user.image, uiBaseUrl),
     });
   }
 
   if (path === "header/config") {
     const host = getPublicHost(request);
     const proto = getPublicProto(request);
-    const uiBaseUrl = process.env.UI_EXTERNAL_URL || "";
+    const uiBaseUrl = getUiBaseUrl(request);
+    const avatarUrl = normalizeAvatarUrl(user.image, uiBaseUrl);
     const [branding, wordartOverride, appsData, drawerPrefs, settings, unreadCount, notifications] = await Promise.all([
       getBranding(),
       getUserWordartOverride(user.id),
@@ -178,7 +196,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
         name: user.name,
         email: user.email,
         is_admin: user.isAdmin,
-        avatar_url: user.image,
+        avatar_url: avatarUrl,
       },
       notifications: {
         unread_count: unreadCount,
