@@ -5,20 +5,14 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bell,
-  Check,
-  CheckCircle2,
   Clock,
   Home,
-  Info,
   LogOut,
   Settings,
   Shield,
   Sun,
   Moon,
   Monitor,
-  AlertTriangle,
-  X,
-  XCircle,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -27,7 +21,6 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SiteName } from "@/components/control-surface/site-name";
 import { applyThemeMode, THEME_MODE_EVENT, type ThemeMode } from "@/lib/theme";
 import type { SiteNameStyle } from "@/lib/wordart-presets";
@@ -36,17 +29,6 @@ interface ControlHeaderProps {
   username: string;
   isAdmin: boolean;
   hasUserContext?: boolean;
-}
-
-interface Notification {
-  id: string;
-  type: string;
-  title: string;
-  message: string | null;
-  appId: string | null;
-  read: boolean;
-  createdAt: string;
-  action: { type?: string; url?: string } | null;
 }
 
 interface HeaderConfig {
@@ -64,7 +46,6 @@ interface HeaderConfig {
   };
   notifications?: {
     unread_count?: number;
-    items?: Notification[];
   };
   theme?: {
     mode?: string;
@@ -73,9 +54,7 @@ interface HeaderConfig {
 }
 
 const EMBED_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups allow-top-navigation-by-user-activation";
-const DEFAULT_DRAWER_HEIGHT = 420;
-const MIN_DRAWER_HEIGHT = 140;
-const MAX_DRAWER_HEIGHT = 620;
+type PlatformOverlayKind = "drawer" | "launcher" | "notifications";
 
 function bridgeApi(path: string) {
   const prefix = typeof window !== "undefined" && window.location.pathname.startsWith("/market")
@@ -106,30 +85,10 @@ function DotsIcon({ className }: { className?: string }) {
   );
 }
 
-function timeAgo(dateStr: string) {
-  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (seconds < 60) return "just now";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  return `${Math.floor(seconds / 86400)}d ago`;
-}
-
-function NotificationIcon({ type }: { type: string }) {
-  switch (type) {
-    case "success": return <CheckCircle2 className="w-4 h-4 text-green-500" />;
-    case "warning": return <AlertTriangle className="w-4 h-4 text-yellow-500" />;
-    case "error": return <XCircle className="w-4 h-4 text-red-500" />;
-    default: return <Info className="w-4 h-4 text-blue-500" />;
-  }
-}
-
 export function ControlHeader({ username, isAdmin, hasUserContext = true }: ControlHeaderProps) {
   const [config, setConfig] = useState<HeaderConfig | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [launcherOpen, setLauncherOpen] = useState(false);
+  const [platformOverlay, setPlatformOverlay] = useState<PlatformOverlayKind | null>(null);
   const [embedMode, setEmbedMode] = useState<"light" | "dark">("light");
-  const [drawerHeight, setDrawerHeight] = useState(DEFAULT_DRAWER_HEIGHT);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [systemPref, setSystemPref] = useState<"light" | "dark">("light");
   const saveThemeTimeout = useRef<NodeJS.Timeout | null>(null);
 
@@ -150,7 +109,7 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
           is_admin: isAdmin,
           avatar_url: null,
         },
-        notifications: { unread_count: 0, items: [] },
+        notifications: { unread_count: 0 },
         theme: { mode: "system" },
         ui_base_url: null,
       });
@@ -189,23 +148,32 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
     document.documentElement.classList.contains("dark") ? "dark" : "light"
   ), []);
 
-  const openDrawer = useCallback((open: boolean) => {
-    if (open) setEmbedMode(resolveEmbedMode());
-    setDrawerOpen(open);
+  const openPlatformOverlay = useCallback((kind: PlatformOverlayKind) => {
+    setEmbedMode(resolveEmbedMode());
+    setPlatformOverlay(kind);
   }, [resolveEmbedMode]);
 
   useEffect(() => {
     if (!uiBaseOrigin) return;
     function onMessage(event: MessageEvent) {
       if (event.origin !== uiBaseOrigin) return;
-      if (event.data?.type === "youeye:action" && event.data?.action === "open-launcher") {
-        setDrawerOpen(false);
-        setEmbedMode(resolveEmbedMode());
-        setLauncherOpen(true);
+      if (event.data?.type === "youeye:close") {
+        setPlatformOverlay(null);
         return;
       }
-      if (event.data?.type === "youeye:resize" && typeof event.data.height === "number") {
-        setDrawerHeight(Math.max(MIN_DRAWER_HEIGHT, Math.min(MAX_DRAWER_HEIGHT, Math.ceil(event.data.height))));
+      if (event.data?.type === "youeye:action" && event.data?.action === "open-launcher") {
+        setEmbedMode(resolveEmbedMode());
+        setPlatformOverlay("launcher");
+        return;
+      }
+      if (event.data?.type === "youeye:notifications" && typeof event.data.unread_count === "number") {
+        setConfig((current) => ({
+          ...(current ?? {}),
+          notifications: {
+            ...(current?.notifications ?? {}),
+            unread_count: event.data.unread_count,
+          },
+        }));
       }
     }
     window.addEventListener("message", onMessage);
@@ -213,13 +181,13 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
   }, [resolveEmbedMode, uiBaseOrigin]);
 
   useEffect(() => {
-    if (!launcherOpen) return;
+    if (!platformOverlay) return;
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setLauncherOpen(false);
+      if (event.key === "Escape") setPlatformOverlay(null);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [launcherOpen]);
+  }, [platformOverlay]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -245,10 +213,10 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
   const siteNameStyle = config?.branding?.site_name_style ?? null;
   const logoUrl = config?.branding?.logo_url ?? null;
   const unreadCount = config?.notifications?.unread_count ?? 0;
-  const notifications = config?.notifications?.items ?? [];
   const themeMode = config?.theme?.mode ?? "system";
-  const drawerUrl = uiBaseUrl ? `${uiBaseUrl}/embed/drawer?mode=${embedMode}` : null;
-  const launcherUrl = uiBaseUrl ? `${uiBaseUrl}/embed/launcher?mode=${embedMode}` : null;
+  const overlayUrl = platformOverlay && uiBaseUrl
+    ? `${uiBaseUrl}/embed/${platformOverlay}?mode=${embedMode}${platformOverlay === "drawer" && headerIsAdmin ? "&admin=true" : ""}`
+    : null;
 
   // Apply the user's saved light/dark/system mode to <html> on load and whenever
   // it changes. Source of truth is config.theme.mode (bridge → UI DB); the inline
@@ -272,64 +240,6 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
   async function logout() {
     await fetch("/settings/api/auth/logout", { method: "POST" }).catch(() => {});
     window.location.href = "/";
-  }
-
-  async function refreshNotifications() {
-    if (!hasUserContext) return;
-    const res = await fetch(bridgeApi("notifications"), { cache: "no-store" });
-    if (!res.ok) return;
-    const data = await res.json();
-    setConfig((current) => ({
-      ...(current ?? {}),
-      notifications: {
-        unread_count: data.unread_count ?? 0,
-        items: data.notifications ?? [],
-      },
-    }));
-  }
-
-  async function markRead(id: string) {
-    if (!hasUserContext) return;
-    await fetch(bridgeApi(`notifications/${id}`), { method: "PUT" });
-    setConfig((current) => {
-      const items = current?.notifications?.items ?? [];
-      const wasUnread = items.find((item) => item.id === id && !item.read);
-      return {
-        ...(current ?? {}),
-        notifications: {
-          unread_count: Math.max(0, (current?.notifications?.unread_count ?? 0) - (wasUnread ? 1 : 0)),
-          items: items.map((item) => item.id === id ? { ...item, read: true } : item),
-        },
-      };
-    });
-  }
-
-  async function markAllRead() {
-    if (!hasUserContext) return;
-    await fetch(bridgeApi("notifications"), { method: "PUT" });
-    setConfig((current) => ({
-      ...(current ?? {}),
-      notifications: {
-        unread_count: 0,
-        items: (current?.notifications?.items ?? []).map((item) => ({ ...item, read: true })),
-      },
-    }));
-  }
-
-  async function dismiss(id: string) {
-    if (!hasUserContext) return;
-    await fetch(bridgeApi(`notifications/${id}`), { method: "DELETE" });
-    setConfig((current) => {
-      const items = current?.notifications?.items ?? [];
-      const removed = items.find((item) => item.id === id);
-      return {
-        ...(current ?? {}),
-        notifications: {
-          unread_count: Math.max(0, (current?.notifications?.unread_count ?? 0) - (removed && !removed.read ? 1 : 0)),
-          items: items.filter((item) => item.id !== id),
-        },
-      };
-    });
   }
 
   // E4 (D14-revised): direct Light/Dark/Auto setter for the segmented control.
@@ -370,117 +280,43 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
         </Button>
 
         {hasUserContext && (
-          <Popover open={drawerOpen} onOpenChange={openDrawer}>
-            <PopoverTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Apps">
-                <DotsIcon className="h-4 w-4" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent
-              align="end"
-              sideOffset={8}
-              className="w-[min(380px,92vw)] overflow-hidden rounded-2xl border-border/60 bg-popover/80 p-0 shadow-xl backdrop-blur-xl transition-[height] duration-150"
-              style={{ height: drawerUrl ? drawerHeight : undefined }}
-            >
-              {drawerUrl ? (
-                <iframe
-                  src={drawerUrl}
-                  className="h-full w-full border-0 bg-transparent"
-                  title="App drawer"
-                  sandbox={EMBED_SANDBOX}
-                />
-              ) : (
-                <div className="px-6 py-10 text-center text-sm text-muted-foreground">
-                  Open apps from the dashboard once the UI origin is available.
-                </div>
-              )}
-            </PopoverContent>
-          </Popover>
-        )}
-
-        {hasUserContext && launcherOpen && launcherUrl && typeof document !== "undefined" && createPortal(
-          <div className="pointer-events-none fixed inset-0 z-[60]">
-            <div className="pointer-events-auto absolute inset-x-0 bottom-0 top-14" onClick={() => setLauncherOpen(false)} />
-            <div className="pointer-events-auto absolute inset-x-4 bottom-4 top-[68px] overflow-hidden rounded-3xl border border-border/40 bg-popover/70 shadow-2xl backdrop-blur-2xl sm:inset-x-7 sm:bottom-5">
-              <iframe
-                src={launcherUrl}
-                className="h-full w-full border-0 bg-transparent"
-                title="App launcher"
-                sandbox={EMBED_SANDBOX}
-              />
-            </div>
-          </div>,
-          document.body
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9"
+            aria-label="Apps"
+            disabled={!uiBaseUrl}
+            onClick={() => openPlatformOverlay("drawer")}
+          >
+            <DotsIcon className="h-4 w-4" />
+          </Button>
         )}
 
         {hasUserContext && (
-        <Popover
-          open={notificationsOpen}
-          onOpenChange={(open) => {
-            setNotificationsOpen(open);
-            if (open) refreshNotifications().catch(() => {});
-          }}
-        >
-          <PopoverTrigger asChild>
-            <button className="relative inline-flex h-9 w-9 items-center justify-center rounded-md transition-colors hover:bg-accent" aria-label="Notifications">
-              <Bell className="h-4 w-4" />
-              {unreadCount > 0 && (
-                <span className="absolute top-0.5 right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-0.5 text-[9px] font-bold text-white">
-                  {unreadCount > 99 ? "99+" : unreadCount}
-                </span>
-              )}
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="end" sideOffset={8} className="max-h-96 w-80 overflow-y-auto rounded-lg p-0">
-            <div className="flex items-center justify-between border-b px-4 py-3">
-              <h3 className="text-sm font-semibold">Notifications</h3>
-              {unreadCount > 0 && (
-                <button onClick={markAllRead} className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
-                  <Check className="h-3 w-3" />
-                  Mark all read
-                </button>
-              )}
-            </div>
-            {notifications.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm text-muted-foreground">No notifications</div>
-            ) : (
-              <div className="divide-y">
-                {notifications.map((notification) => (
-                  <div
-                    key={notification.id}
-                    className={`flex cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-accent/50 ${!notification.read ? "bg-accent/20" : ""}`}
-                    onClick={() => {
-                      if (notification.action?.url) window.location.href = notification.action.url;
-                      if (!notification.read) markRead(notification.id).catch(() => {});
-                    }}
-                  >
-                    <div className="mt-0.5"><NotificationIcon type={notification.type} /></div>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-sm ${!notification.read ? "font-semibold" : ""}`}>{notification.title}</p>
-                      {notification.message && <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{notification.message}</p>}
-                      <p className="mt-1 text-xs text-muted-foreground">{timeAgo(notification.createdAt)}</p>
-                    </div>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        dismiss(notification.id).catch(() => {});
-                      }}
-                      className="rounded p-1 transition-colors hover:bg-accent"
-                      aria-label="Dismiss"
-                    >
-                      <X className="h-3 w-3 text-muted-foreground" />
-                    </button>
-                  </div>
-                ))}
-              </div>
+          <button
+            className="relative inline-flex h-9 w-9 items-center justify-center rounded-md transition-colors hover:bg-accent disabled:opacity-50"
+            aria-label="Notifications"
+            disabled={!uiBaseUrl}
+            onClick={() => openPlatformOverlay("notifications")}
+          >
+            <Bell className="h-4 w-4" />
+            {unreadCount > 0 && (
+              <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-0.5 text-[9px] font-bold text-white">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
             )}
-            <div className="border-t px-4 py-2">
-              <a href="/notifications" className="text-xs text-muted-foreground transition-colors hover:text-foreground">
-                View all
-              </a>
-            </div>
-          </PopoverContent>
-        </Popover>
+          </button>
+        )}
+
+        {hasUserContext && overlayUrl && typeof document !== "undefined" && createPortal(
+          <iframe
+            src={overlayUrl}
+            className="fixed inset-0 z-[60] h-screen w-screen border-0 bg-transparent"
+            title={`YouEye ${platformOverlay}`}
+            sandbox={EMBED_SANDBOX}
+            allow="clipboard-read; clipboard-write"
+          />,
+          document.body
         )}
 
         <DropdownMenu>

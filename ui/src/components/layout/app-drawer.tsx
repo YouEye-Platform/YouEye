@@ -7,8 +7,9 @@
  * into new positions as you drag — see useGridDrag). No hidden tray. "All apps"
  * opens the launcher.
  *
- * Renders as the UI header popover (default) or, with `embedded`, content-only
- * for the UI-served /embed/drawer iframe that native apps host.
+ * Renders as drawer content inside the UI-owned /embed/drawer overlay. The old
+ * direct popover mode is kept for local callers, but platform hosts use the
+ * iframe route so sizing, scroll, transparency, and animation live in one place.
  */
 
 "use client";
@@ -48,7 +49,7 @@ interface DrawerPrefs {
 
 const DEFAULT_PREFS: DrawerPrefs = { columns: 4, iconScale: 1, maxHeight: 400 };
 
-function DotsIcon({ className }: { className?: string }) {
+export function DotsIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
       {[4, 12, 20].map((cy) => [4, 12, 20].map((cx) => <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="2" />))}

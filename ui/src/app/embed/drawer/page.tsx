@@ -2,41 +2,31 @@
  * /embed/drawer — Plan 5 (Workstream E1 drawer).
  *
  * The UI-served quick drawer (UI origin): pinned apps + search + edit mode.
- * Native apps host this as an iframe in their header popover instead of
- * receiving the installed-app list (the E1 security model). Content only — the
- * host provides the popover chrome. The drawer's "All apps" button posts
- * `youeye:action open-launcher` so the host can swap in the launcher. Theme via
- * `?mode=light|dark`. Transparent background so the host panel shows through.
+ * Platform hosts mount this as a fullscreen transparent iframe; this route owns
+ * the panel chrome, sizing, scroll, animation, and outside-click close behavior.
  */
 
 "use client";
 
-import { Suspense, useEffect, useRef } from "react";
+import { Suspense, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppDrawer } from "@/components/layout/app-drawer";
-import { useEmbedAutoResize } from "@/lib/hooks/use-embed-auto-resize";
+import { EmbedOverlayShell, postOpenLauncher } from "@/components/layout/embed-overlay-shell";
 
 function DrawerEmbedInner() {
   const params = useSearchParams();
   const mode = params?.get("mode");
-  const contentRef = useRef<HTMLDivElement>(null);
-  useEmbedAutoResize(contentRef);
+  const isAdmin = params?.get("admin") === "true";
 
   useEffect(() => {
     if (mode === "dark") document.documentElement.classList.add("dark");
     else if (mode === "light") document.documentElement.classList.remove("dark");
   }, [mode]);
 
-  const openLauncher = () => {
-    if (typeof window !== "undefined" && window.parent !== window) {
-      window.parent.postMessage({ type: "youeye:action", action: "open-launcher" }, "*");
-    }
-  };
-
   return (
-    <div ref={contentRef} className="w-full">
-      <AppDrawer embedded onOpenLauncher={openLauncher} />
-    </div>
+    <EmbedOverlayShell panelClassName="absolute right-3 top-[60px] max-h-[calc(100vh-72px)] w-[min(360px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-border/60 bg-popover/85 p-0 shadow-xl backdrop-blur-xl animate-in fade-in-0 zoom-in-95 slide-in-from-top-1 duration-150 sm:right-4">
+      <AppDrawer embedded isAdmin={isAdmin} onOpenLauncher={postOpenLauncher} />
+    </EmbedOverlayShell>
   );
 }
 

@@ -7,14 +7,10 @@
  * <UnifiedEmbed kind="notification"> (with a standard-row fallback) or the
  * standard row directly.
  *
- * Renders two ways (like AppDrawer / Launcher):
- *   • default  — the UI header popover (glassy, translucent).
- *   • embedded — content-only, for the UI-served /embed/notifications iframe that
- *     native apps host. The host gives it a fixed-size scrollable box, so the
- *     OUTER tab needs no resize relay; the per-notification embeds inside become
- *     nested iframes (Plan A — accepted) and theme via `mode`. Keeps the
- *     installed-app/notification list out of the native app's origin (the E1
- *     security model applied to notifications). Links open at `window.top`.
+ * The trigger stays in the host header, but the panel itself is rendered by the
+ * UI-owned /embed/notifications route. Embedded mode is the panel content used
+ * inside that route; default mode opens the same route in a fullscreen
+ * transparent iframe so every host shares one surface.
  */
 
 "use client";
@@ -23,24 +19,26 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Bell, Check } from "lucide-react";
 import { useTranslations } from "next-intl";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
   NotificationItem,
   type NotificationData,
   type NotificationAppMeta,
 } from "@/components/notifications/notification-item";
+import {
+  getCurrentThemeMode,
+  PlatformOverlayFrame,
+} from "./platform-overlay-frame";
 
 export function NotificationBell({
   embedded = false,
   mode,
+  onUnreadCountChange,
 }: {
   embedded?: boolean;
   mode?: "light" | "dark";
+  onUnreadCountChange?: (count: number) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [overlayMode, setOverlayMode] = useState<"light" | "dark">("light");
   const [notifications, setNotifications] = useState<NotificationData[]>([]);
   const [appMeta, setAppMeta] = useState<Record<string, NotificationAppMeta>>({});
   const [unreadCount, setUnreadCount] = useState(0);
@@ -54,19 +52,27 @@ export function NotificationBell({
   // Track in-flight installs so we can update the loading notification on completion
   const activeInstalls = useRef<Map<string, string>>(new Map()); // appId -> notificationId
 
+  const setUnreadAndNotify = useCallback((value: number | ((prev: number) => number)) => {
+    setUnreadCount((prev) => {
+      const next = typeof value === "function" ? value(prev) : value;
+      onUnreadCountChange?.(next);
+      return next;
+    });
+  }, [onUnreadCountChange]);
+
   const fetchNotifications = useCallback(async () => {
     try {
       const res = await fetch("/api/v1/notifications?limit=20");
       if (!res.ok) return;
       const data = await res.json();
       setNotifications(data.notifications);
-      setUnreadCount(data.unread_count);
+      setUnreadAndNotify(data.unread_count ?? 0);
       if (data.app_meta) setAppMeta(data.app_meta);
       setLoaded(true);
     } catch {
       // Leave loaded=false so the next poll retries instead of showing a false empty.
     }
-  }, []);
+  }, [setUnreadAndNotify]);
 
   useEffect(() => {
     fetchNotifications();
@@ -123,20 +129,20 @@ export function NotificationBell({
   const markRead = async (id: string) => {
     await fetch(`/api/v1/notifications/${id}`, { method: "PUT" });
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
-    setUnreadCount((c) => Math.max(0, c - 1));
+    setUnreadAndNotify((c) => Math.max(0, c - 1));
   };
 
   const markAllRead = async () => {
     await fetch("/api/v1/notifications", { method: "PUT" });
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-    setUnreadCount(0);
+    setUnreadAndNotify(0);
   };
 
   const dismiss = async (id: string) => {
     await fetch(`/api/v1/notifications/${id}`, { method: "DELETE" });
     const removed = notifications.find((n) => n.id === id);
     setNotifications((prev) => prev.filter((n) => n.id !== id));
-    if (removed && !removed.read) setUnreadCount((c) => Math.max(0, c - 1));
+    if (removed && !removed.read) setUnreadAndNotify((c) => Math.max(0, c - 1));
   };
 
   const handleAction = (notif: NotificationData) => {
@@ -198,25 +204,30 @@ export function NotificationBell({
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button className="relative inline-flex items-center justify-center h-9 w-9 rounded-md hover:bg-accent transition-colors" aria-label={t("title")}>
-          <Bell className="h-4 w-4" />
-          {unreadCount > 0 && (
-            <span className="absolute top-0.5 right-0.5 flex items-center justify-center min-w-[16px] h-[16px] px-0.5 text-[9px] font-bold text-white bg-red-500 rounded-full">
-              {unreadCount > 99 ? "99+" : unreadCount}
-            </span>
-          )}
-        </button>
-      </PopoverTrigger>
-
-      <PopoverContent
-        align="end"
-        sideOffset={8}
-        className="w-[400px] max-h-[calc(100vh-90px)] overflow-hidden rounded-2xl border-border/60 bg-popover/80 p-0 backdrop-blur-xl"
+    <>
+      <button
+        className="relative inline-flex h-9 w-9 items-center justify-center rounded-md transition-colors hover:bg-accent"
+        aria-label={t("title")}
+        onClick={() => {
+          setOverlayMode(getCurrentThemeMode());
+          setOpen(true);
+        }}
       >
-        {content}
-      </PopoverContent>
-    </Popover>
+        <Bell className="h-4 w-4" />
+        {unreadCount > 0 && (
+          <span className="absolute right-0.5 top-0.5 flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-red-500 px-0.5 text-[9px] font-bold text-white">
+            {unreadCount > 99 ? "99+" : unreadCount}
+          </span>
+        )}
+      </button>
+      {open && (
+        <PlatformOverlayFrame
+          kind="notifications"
+          mode={overlayMode}
+          onClose={() => setOpen(false)}
+          onUnreadCountChange={setUnreadAndNotify}
+        />
+      )}
+    </>
   );
 }

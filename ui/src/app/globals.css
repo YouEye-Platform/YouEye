@@ -259,6 +259,20 @@
     @apply bg-background text-foreground;
   }
 }
+
+html[data-youeye-overlay-embed="true"],
+html[data-youeye-overlay-embed="true"] body,
+body[data-youeye-overlay-embed="true"],
+html:has([data-youeye-overlay-embed]),
+html:has([data-youeye-overlay-embed]) body {
+  background: transparent !important;
+  overflow: hidden;
+}
+
+[data-youeye-overlay-embed] {
+  background: transparent;
+}
+
 /* ── Plan 1 redesign — Workstream A: blue action color + focus ring + tighter radii ── */
 /* Reconciles shadcn's near-black --primary to the YouEye blue accent token (skill ground truth). */
 :root {

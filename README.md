@@ -144,15 +144,15 @@ Each component is versioned and released independently.
 |-----------|---------|
 | Spine | 0.4.11 (`spine-v0.4.11`) |
 | Installer | 0.1.0 (`installer-v0.1.0`) |
-| Control Panel | 0.4.50 (`cp-v0.4.50`) |
-| UI | 0.4.31 (`ui-v0.4.31`) |
-| Canvas | 0.3.1.1 (`v0.3.1.1`) |
-| Wiki | 0.4.7 (`v0.4.7`) |
-| Search | 0.4.7 (`v0.4.7`) |
-| Notes | 0.4.8 (`v0.4.8`) |
-| Cinema | 0.4.7 (`v0.4.7`) |
-| Weather | 0.4.6 (`v0.4.6`) |
-| Translate | 0.4.7 (`v0.4.7`) |
+| Control Panel | 0.4.51 (`cp-v0.4.51`) |
+| UI | 0.4.32 (`ui-v0.4.32`) |
+| Canvas | 0.3.2 (`v0.3.2`) |
+| Wiki | 0.4.8 (`v0.4.8`) |
+| Search | 0.4.8 (`v0.4.8`) |
+| Notes | 0.4.9 (`v0.4.9`) |
+| Cinema | 0.4.8 (`v0.4.8`) |
+| Weather | 0.4.7 (`v0.4.7`) |
+| Translate | 0.4.8 (`v0.4.8`) |
 
 ## Related Repositories
 

@@ -1,26 +1,22 @@
 /**
  * /embed/notifications — Plan 5 Item 2 (Plan A).
  *
- * The UI-served notification panel (UI origin). Native apps host this as an
- * iframe in their header bell popover instead of fetching the notification list
- * themselves — so the user's cross-app notifications stay out of the app's
- * origin (the E1 security model applied to notifications). Content only; the
- * host provides the popover chrome. Per-notification app embeds inside become
- * nested iframes (Plan A). Theme via `?mode=light|dark`; transparent background.
+ * The UI-served notification panel (UI origin). Platform hosts mount this as a
+ * fullscreen transparent iframe instead of fetching notifications themselves.
+ * This route owns the panel chrome, sizing, scroll, animation, and outside-click
+ * close behavior.
  */
 
 "use client";
 
-import { Suspense, useEffect, useRef } from "react";
+import { Suspense, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { NotificationBell } from "@/components/layout/notification-bell";
-import { useEmbedAutoResize } from "@/lib/hooks/use-embed-auto-resize";
+import { EmbedOverlayShell, postUnreadCount } from "@/components/layout/embed-overlay-shell";
 
 function NotificationsEmbedInner() {
   const params = useSearchParams();
   const mode = params?.get("mode");
-  const contentRef = useRef<HTMLDivElement>(null);
-  useEmbedAutoResize(contentRef);
 
   useEffect(() => {
     if (mode === "dark") document.documentElement.classList.add("dark");
@@ -28,9 +24,13 @@ function NotificationsEmbedInner() {
   }, [mode]);
 
   return (
-    <div ref={contentRef} className="w-full">
-      <NotificationBell embedded mode={mode === "dark" ? "dark" : mode === "light" ? "light" : undefined} />
-    </div>
+    <EmbedOverlayShell panelClassName="absolute right-3 top-[60px] max-h-[calc(100vh-72px)] w-[min(400px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-border/60 bg-popover/85 p-0 shadow-xl backdrop-blur-xl animate-in fade-in-0 zoom-in-95 slide-in-from-top-1 duration-150 sm:right-4">
+      <NotificationBell
+        embedded
+        mode={mode === "dark" ? "dark" : mode === "light" ? "light" : undefined}
+        onUnreadCountChange={postUnreadCount}
+      />
+    </EmbedOverlayShell>
   );
 }
 

@@ -1,11 +1,9 @@
 /**
  * /embed/launcher — Plan 1 Workstream E1.
  *
- * The UI-served app launcher (UI origin). Native apps host this as an iframe in
- * their Canvas header instead of receiving the installed-app list (the E1 security
- * fix). Renders content only — search + app grid + system tiles; the host (or the
- * UI's own overlay) provides the surrounding pop-out panel chrome. Theme via
- * `?mode=light|dark`. Transparent background so the host panel shows through.
+ * The UI-served app launcher (UI origin). Platform hosts mount this as a
+ * fullscreen transparent iframe; this route owns the panel chrome, sizing,
+ * scroll, animation, and outside-click close behavior.
  */
 
 "use client";
@@ -13,6 +11,7 @@
 import { Suspense, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { Launcher } from "@/components/layout/launcher";
+import { EmbedOverlayShell, postOverlayClose } from "@/components/layout/embed-overlay-shell";
 
 function LauncherEmbedInner() {
   const params = useSearchParams();
@@ -24,9 +23,9 @@ function LauncherEmbedInner() {
   }, [mode]);
 
   return (
-    <div className="h-screen w-screen">
-      <Launcher embedded />
-    </div>
+    <EmbedOverlayShell panelClassName="absolute inset-x-3 bottom-3 top-[60px] overflow-hidden rounded-3xl border border-border/40 bg-popover/80 shadow-2xl backdrop-blur-2xl animate-in fade-in-0 zoom-in-95 duration-150 sm:inset-x-7 sm:bottom-5 sm:top-[68px]">
+      <Launcher embedded onClose={postOverlayClose} />
+    </EmbedOverlayShell>
   );
 }
 
