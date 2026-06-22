@@ -60,14 +60,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [branding, unreadCount, appsData, activeThemeData, userSettingsData, userImageRow, drawerPrefs] =
+  const [branding, unreadCount, appsData, activeThemeData, userSettingsData, userProfileRow, drawerPrefs] =
     await Promise.all([
       getBranding(),
       getUnreadCount(userId),
       getUserAppsWithConfig(userId),
       getUserActiveTheme(userId),
       getUserSettings(userId),
-      db.select({ image: users.image }).from(users).where(eq(users.id, userId)).limit(1),
+      db.select({ image: users.image, identityId: users.identityId }).from(users).where(eq(users.id, userId)).limit(1),
       getDrawerPrefs(userId),
     ]);
 
@@ -198,12 +198,14 @@ export async function GET(request: NextRequest) {
     },
     user: {
       id: userId,
+      identity_id: userProfileRow[0]?.identityId ?? null,
+      app_data_user_id: userProfileRow[0]?.identityId ?? userId,
       name,
       username,
       email,
       is_admin: isAdmin,
-      avatar_url: userImageRow[0]?.image
-        ? `${uiBaseUrl}${userImageRow[0].image}`
+      avatar_url: userProfileRow[0]?.image
+        ? `${uiBaseUrl}${userProfileRow[0].image}`
         : null,
     },
     notifications: {

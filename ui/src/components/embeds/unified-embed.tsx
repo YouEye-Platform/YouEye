@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 /**
  * UnifiedEmbed — Plan 1 Workstream E0: the ONE embed wrapper + protocol.
@@ -100,6 +100,12 @@ export function UnifiedEmbed({
 
   const expectedOrigin = originOf(url);
   const src = buildSrc(url, theme, mode);
+  const markReady = useCallback(() => {
+    setReady((wasReady) => {
+      if (!wasReady) onReady?.();
+      return true;
+    });
+  }, [onReady]);
 
   // Lazy: only load the iframe once it scrolls near the viewport.
   useEffect(() => {
@@ -155,8 +161,7 @@ export function UnifiedEmbed({
         if (LEGACY_READY.has(type)) {
           console.warn(`[UnifiedEmbed] legacy ready message "${type}" — migrate to "youeye:ready"`);
         }
-        setReady(true);
-        onReady?.();
+        markReady();
         return;
       }
       if (type === "youeye:resize" || LEGACY_RESIZE.has(type)) {
@@ -167,7 +172,7 @@ export function UnifiedEmbed({
         // Legacy surfaces (e.g. settings panels via `youeye-app-settings-resize`)
         // only ever send resize, never an explicit ready; without this they would
         // time out to the fallback even though they are alive.
-        setReady(true);
+        markReady();
         const h = Number((data as { height?: number }).height);
         if (Number.isFinite(h) && h > 0) setHeight(clampHeight(h));
         return;
@@ -180,7 +185,7 @@ export function UnifiedEmbed({
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [visible, expectedOrigin, size?.min, size?.max, onReady, onAction]);
+  }, [visible, expectedOrigin, size?.min, size?.max, markReady, onAction]);
 
   if (failed) {
     return (
@@ -223,6 +228,9 @@ export function UnifiedEmbed({
           onError={() => {
             setFailed(true);
             onError?.("load-error");
+          }}
+          onLoad={() => {
+            if (kind === "widget") markReady();
           }}
           sandbox="allow-scripts allow-same-origin allow-forms"
           id={`embed-${reactId}`}
