@@ -1,3 +1,29 @@
+## cp-v0.4.52 — artem — 2026-06-22
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix YouEye ID consent avatar CSP and branded favicon inheritance.
+
+### Changes
+- `control-panel/package.json` — bumped Control Panel to `0.4.52` before building the release artifact.
+- `control-panel/src/middleware.ts` — allows the identity service to serve `/api/branding/favicon` and derives a concrete root UI origin for CSP `img-src` so identity pages can load same-server account avatars from the UI domain without wildcards.
+- `control-panel/src/lib/identity/favicon.ts` — added shared YouEye ID favicon link markup backed by the existing UI-proxied branding favicon route.
+- `control-panel/src/app/identity/login/route.ts` — replaces the blank `data:,` favicon with the shared branded favicon links.
+- `control-panel/src/app/application/o/authorize/route.ts` — replaces the blank `data:,` favicon with the shared branded favicon links on OAuth consent.
+- `control-panel/tests/identity-consent.spec.ts` — adds regression coverage for identity favicon links, favicon route allowlisting, dynamic UI-origin CSP, and no hardcoded bykapc/dev domains.
+- `control-panel/tests/identity-login-polish.spec.ts` — adds login favicon coverage and narrows the technical-copy assertion to rendered HTML.
+- `README.md` — updated the current-version matrix for Control Panel `0.4.52`.
+
+### Test Results
+- Focused CP tests: `CONTROL_PANEL_ROOT="$PWD" pnpm exec node --import tsx --test tests/identity-consent.spec.ts tests/identity-login-polish.spec.ts tests/setup-polish.spec.mjs` passed (17/17).
+- Control Panel typecheck: `pnpm --dir control-panel run typecheck` passed.
+- Control Panel build: `pnpm --dir control-panel build` passed for `ye-controlpanel@0.4.52`.
+- Artifact: `/tmp/standalone.tar` was built from `.next/standalone/control-panel`, contains root `server.js`, and embeds package version `0.4.52`.
+
+### Notes for Iris
+- CP-only release. The avatar URL was already local and valid; the bug was the identity-page CSP blocking the root UI origin while served from `id.<domain>`.
+- CSP still uses concrete origins only; no wildcard image source was added.
+
 ## cp-v0.4.51 / ui-v0.4.32 — artem — 2026-06-22
 **Branch:** main
 **VM:** potempc

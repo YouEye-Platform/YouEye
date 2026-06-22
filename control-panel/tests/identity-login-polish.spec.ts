@@ -37,6 +37,17 @@ test('identity login renders the server WordArt style and font assets', () => {
   assert.match(middleware, /white-label login can load its local WordArt font CSS\/assets/);
 });
 
+test('identity login inherits the configured YouEye favicon', () => {
+  const route = read('src/app/identity/login/route.ts');
+  const favicon = read('src/lib/identity/favicon.ts');
+
+  assert.match(route, /identityFaviconLinks\(\)/);
+  assert.match(favicon, /\/api\/branding\/favicon\?size=32/);
+  assert.match(favicon, /\/api\/branding\/favicon\?size=16/);
+  assert.match(favicon, /\/api\/branding\/favicon\?size=180/);
+  assert.doesNotMatch(route, /href="data:,"/);
+});
+
 test('identity login keeps the WordArt outside the form panel', () => {
   const route = read('src/app/identity/login/route.ts');
 
@@ -69,8 +80,9 @@ test('identity login button morphs to continuing state on submit', () => {
 
 test('identity login keeps technical context out of primary copy', () => {
   const route = read('src/app/identity/login/route.ts');
+  const renderedHtml = route.match(/return new Response\(`<!doctype html>[\s\S]*?<\/html>`/)?.[0] ?? route;
 
-  assert.doesNotMatch(route, />OAuth</);
-  assert.doesNotMatch(route, />OIDC</);
-  assert.doesNotMatch(route, /<[^>]*>[^<]*client_id[^<]*</);
+  assert.doesNotMatch(renderedHtml, />OAuth</);
+  assert.doesNotMatch(renderedHtml, />OIDC</);
+  assert.doesNotMatch(renderedHtml, /<[^>]*>[^<]*client_id[^<]*</);
 });

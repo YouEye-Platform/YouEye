@@ -5,6 +5,7 @@ import { getClient, verifyUser } from '@/lib/identity/store';
 import { createIdentityToken } from '@/lib/identity/tokens';
 import { setIdentityCookie } from '@/lib/identity/http';
 import { getIdentityProviderConfig } from '@/lib/identity/provider';
+import { identityFaviconLinks } from '@/lib/identity/favicon';
 import { settingsService } from '@/lib/settings';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import { CHARACTER_SHAPE_PRESETS, DEFAULT_STYLE, type SiteNameStyle } from '@/lib/wordart-presets';
@@ -258,7 +259,7 @@ async function html(returnTo: string, error = ''): Promise<Response> {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="icon" href="data:," />
+  ${identityFaviconLinks()}
   ${wordmark.fontLink}
   <title>${escapeHtml(provider.name)}</title>
   <style>

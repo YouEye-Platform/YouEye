@@ -7,6 +7,7 @@ import { readFileSync } from 'fs';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import { settingsService } from '@/lib/settings';
 import { renderIdentityErrorPage } from '@/lib/identity/error-page';
+import { identityFaviconLinks } from '@/lib/identity/favicon';
 
 const FIRST_PARTY_CLIENTS = new Set(['youeye-control', 'youeye-ui']);
 const DEFAULT_SCOPE = 'openid profile email';
@@ -314,7 +315,7 @@ function consentHtml(params: {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="icon" href="data:," />
+  ${identityFaviconLinks()}
   ${appFontLink ? `<link rel="stylesheet" href="${escapeHtml(appFontLink)}" />` : ''}
   <title>Allow ${escapeHtml(appName)}?</title>
   <style>

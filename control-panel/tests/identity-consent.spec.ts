@@ -53,6 +53,7 @@ test('OAuth consent presents a simple account handoff without technical scope UI
   const authorize = read('src/app/application/o/authorize/route.ts');
 
   assert.match(authorize, /<h1>Sign in to \$\{escapeHtml\(appName\)\}<\/h1>/);
+  assert.match(authorize, /identityFaviconLinks\(\)/);
   assert.match(authorize, /class="app-brand"/);
   assert.match(authorize, /appBrand\(params\.display\?\.app, appName, params\.uiExternalUrl \?\? null\)/);
   assert.match(authorize, /class="app-icon/);
@@ -79,6 +80,26 @@ test('OAuth consent presents a simple account handoff without technical scope UI
   assert.doesNotMatch(authorize, /scope-chips/);
   assert.doesNotMatch(authorize, /risk<\/span>/);
   assert.doesNotMatch(authorize, /<li><span>\$\{escapeHtml\(label\)\}<\/span><code>/);
+  assert.doesNotMatch(authorize, /href="data:,"/);
+});
+
+test('YouEye ID allows branded favicon and root-domain account avatar images', () => {
+  const favicon = read('src/lib/identity/favicon.ts');
+  const middleware = read('src/middleware.ts');
+
+  assert.match(favicon, /\/api\/branding\/favicon\?size=32/);
+  assert.match(favicon, /\/api\/branding\/favicon\?size=16/);
+  assert.match(favicon, /\/api\/branding\/favicon\?size=180/);
+  assert.match(middleware, /IDENTITY_SERVICE_ROUTES[\s\S]*'\/api\/branding\/favicon'/);
+  assert.match(middleware, /function getUiAssetOrigin\(request\?: NextRequest\)/);
+  assert.match(middleware, /process\.env\.UI_EXTERNAL_URL/);
+  assert.match(middleware, /process\.env\.CONTROL_EXTERNAL_URL/);
+  assert.match(middleware, /process\.env\.IDENTITY_URL/);
+  assert.match(middleware, /rootOriginFromIdentityHost/);
+  assert.match(middleware, /request\.headers\.get\('x-forwarded-host'\)/);
+  assert.match(middleware, /img-src \$\{imageSourcesForCsp\(request\)\}/);
+  assert.doesNotMatch(middleware, /byka\.wtf/);
+  assert.doesNotMatch(middleware, /devvm\.test/);
 });
 
 test('Fresh installs push connection candidates to UI after dashboard registration', () => {
