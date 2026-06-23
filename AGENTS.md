@@ -1,3 +1,17 @@
+## vui-0.4.35 — artem — 2026-06-24
+**Branch:** main
+**Agent:** Artem
+**Task:** Header parity CORRECTION (Plan 4 Wave 1.1) — make the apps actually match Settings
+
+### Changes
+- `ui/src/components/layout/app-drawer.tsx` + `drawer-and-launcher.tsx` — `DotsIcon` `h-5`→`h-4` (aligns the UI drawer icon to CP/Settings; the other icons are already `h-4`).
+
+### Why
+- Wave 1 fixed the logo but shipped the wrong user-icon element (filled circle vs CP/UI ghost+`size-7` avatar) and `h-5` dots vs CP `h-4`. This corrects it. Owner: keep the grid, fix everything else.
+
+### Test Results
+- Static specs pass: `header-convergence` + `account-menu-avatar` (plain `node --test`). My changes typecheck clean; production build passed.
+
 ## vui-0.4.34 — artem — 2026-06-23
 **Branch:** main
 **Agent:** Artem

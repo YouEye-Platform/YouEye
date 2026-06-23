@@ -400,7 +400,7 @@ export function AppDrawer({
   return (
     <Popover open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setEditMode(false); setAddMode(false); setQuery(""); } }}>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={t("title")}><DotsIcon className="h-5 w-5" /></Button>
+        <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={t("title")}><DotsIcon className="h-4 w-4" /></Button>
       </PopoverTrigger>
       <PopoverContent align="end" sideOffset={8} className="w-[360px] rounded-2xl border-border/60 bg-popover/80 p-0 backdrop-blur-xl" onInteractOutside={(e) => { if (editMode) e.preventDefault(); }} onEscapeKeyDown={(e) => { if (editMode) { e.preventDefault(); setEditMode(false); } }}>
         {content}

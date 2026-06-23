@@ -59,7 +59,7 @@ export function DrawerAndLauncher({ isAdmin = false }: { isAdmin?: boolean }) {
         onFocus={warmOverlays}
         onClick={() => openOverlay("drawer")}
       >
-        <DotsIcon className="h-5 w-5" />
+        <DotsIcon className="h-4 w-4" />
       </Button>
 
       <PlatformOverlayFrame
