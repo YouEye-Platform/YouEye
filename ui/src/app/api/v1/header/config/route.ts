@@ -143,6 +143,20 @@ export async function GET(request: NextRequest) {
     };
   });
 
+  // Per-app "self" branding — Plan 4 Phase 0.
+  // A native app (service call) can no longer see the full `apps` list (E1
+  // security fix, see below), which left its own logo/wordart unrendered. We
+  // restore *only the requesting app's own* branding via `self`, so a shared
+  // header can draw the app's logo without re-exposing the installed-app list.
+  const requestingAppId = request.headers.get("x-youeye-app");
+  const self = requestingAppId
+    ? apps.find(
+        (a) =>
+          a.id === requestingAppId ||
+          a.id === requestingAppId.replace(/^ye-/, "")
+      ) ?? null
+    : null;
+
   // Resolve theme — use user's active or default
   let themeResponse: {
     id?: string;
@@ -195,6 +209,11 @@ export async function GET(request: NextRequest) {
       // UI-served /embed/launcher iframe instead (Canvas's AppHeader degrades to an
       // empty drawer via `navigation?.apps ?? []` until apps adopt the iframe).
       ...(isServiceCall ? {} : { apps, sections }),
+      // Per-app self branding (Plan 4 Phase 0): always included for the
+      // requesting native app so a shared header renders its own logo/wordart,
+      // WITHOUT exposing the installed-app list. Null for the UI's own header
+      // (which uses the instance wordmark from `branding.site_name_style`).
+      ...(self ? { self } : {}),
     },
     user: {
       id: userId,

@@ -1,3 +1,19 @@
+## vui-0.4.34 — artem — 2026-06-23
+**Branch:** main
+**Agent:** Artem
+**Task:** Universal header — per-app `self` branding, Settings-grade parity (Plan 4 Wave 1)
+
+### Changes
+- `ui/src/app/api/v1/header/config/route.ts` — add `navigation.self`, exposing the requesting native app's OWN branding so a shared header renders its logo. The full app list stays stripped for service calls (E1 boundary intact). This is the keystone that restores native-app logos.
+
+### Test Results
+- My changes typecheck clean (zero new errors); production build passed.
+- Owner verifies visually on the live host (Wave-1 testing).
+
+### Notes
+- Service-worker fix + mobile bottom-bar layout land in Wave 2.
+- Pre-existing per-app type errors (broken `sw.ts`) deferred to Wave 2; do not block `next build`.
+
 ## cp-v0.4.53 / ui-v0.4.33 — artem — 2026-06-22
 **Branch:** main
 **VM:** potempc
