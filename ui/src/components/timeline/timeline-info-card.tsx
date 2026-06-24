@@ -14,24 +14,22 @@ import { cn } from "@/lib/utils";
 
 type InfoCardSize = "compact" | "default" | "expanded";
 
-interface InfoCardProviderCard {
-  type: string;
-  triggers: string[];
-  embed_path: string | null;
-  label: string;
-}
-
-interface InfoCardProvider {
+interface InfoCardSurface {
+  id: string;
   app_id: string;
   app_name: string;
-  app_url: string;
+  app_url: string | null;
   icon: string | null;
-  cards: InfoCardProviderCard[];
+  surface_id: string;
+  kind: string;
+  placement: string;
+  name: string;
+  embed_path: string | null;
+  triggers: string[];
 }
 
 interface InfoCardMatch {
-  provider: InfoCardProvider;
-  card: InfoCardProviderCard;
+  surface: InfoCardSurface;
   targetUrl: string;
 }
 
@@ -42,19 +40,27 @@ interface TimelineInfoCardProps {
   fallback?: ReactNode;
 }
 
-let providersRequest: Promise<InfoCardProvider[]> | null = null;
+let surfacesRequest: Promise<InfoCardSurface[]> | null = null;
 
-function fetchInfoCardProviders(): Promise<InfoCardProvider[]> {
-  if (!providersRequest) {
-    providersRequest = fetch("/api/v1/apps/info-cards")
+function fetchInfoCardSurfaces(): Promise<InfoCardSurface[]> {
+  if (!surfacesRequest) {
+    surfacesRequest = fetch("/api/v1/apps/surfaces")
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`${res.status}`))))
-      .then((json) => (Array.isArray(json.providers) ? json.providers : []))
+      .then((json) => (Array.isArray(json.surfaces) ? json.surfaces : []))
+      .then((surfaces: InfoCardSurface[]) =>
+        surfaces
+          .filter((surface) => surface.kind === "info-card" && !!surface.embed_path)
+          .map((surface) => ({
+            ...surface,
+            triggers: Array.isArray(surface.triggers) ? surface.triggers : [],
+          }))
+      )
       .catch((error) => {
-        providersRequest = null;
+        surfacesRequest = null;
         throw error;
       });
   }
-  return providersRequest;
+  return surfacesRequest;
 }
 
 function normalizeNestedTarget(value: string): string {
@@ -81,23 +87,21 @@ function normalizeInfoCardTargetUrl(raw: string): string {
   return value;
 }
 
-function findMatch(providers: InfoCardProvider[], targetUrl: string): InfoCardMatch | null {
+function findMatch(surfaces: InfoCardSurface[], targetUrl: string): InfoCardMatch | null {
   const normalized = targetUrl.toLowerCase();
-  for (const provider of providers) {
-    for (const card of provider.cards) {
-      if (!card.embed_path) continue;
-      if (card.triggers.some((trigger) => normalized.includes(trigger.toLowerCase()))) {
-        return { provider, card, targetUrl };
-      }
+  for (const surface of surfaces) {
+    if (!surface.embed_path) continue;
+    if (surface.triggers.some((trigger) => normalized.includes(trigger.toLowerCase()))) {
+      return { surface, targetUrl };
     }
   }
   return null;
 }
 
 function buildEmbedUrl(match: InfoCardMatch, size: InfoCardSize): string | null {
-  if (!match.provider.app_url || !match.card.embed_path) return null;
+  if (!match.surface.app_url || !match.surface.embed_path) return null;
   try {
-    const url = new URL(match.card.embed_path, match.provider.app_url);
+    const url = new URL(match.surface.embed_path, match.surface.app_url);
     url.searchParams.set("url", match.targetUrl);
     url.searchParams.set("w", size === "expanded" ? "640" : "480");
     return url.toString();
@@ -169,10 +173,10 @@ export function TimelineInfoCard({
     setStatus("loading");
     setMatch(null);
 
-    fetchInfoCardProviders()
-      .then((providers) => {
+    fetchInfoCardSurfaces()
+      .then((surfaces) => {
         if (!alive) return;
-        const found = findMatch(providers, normalizedTarget);
+        const found = findMatch(surfaces, normalizedTarget);
         setMatch(found);
         setStatus(found ? "ready" : "none");
       })
@@ -199,7 +203,7 @@ export function TimelineInfoCard({
           kind="info-card"
           size={embedSize(size)}
           timeout={5000}
-          title={`${match?.provider.app_name ?? "App"} info card`}
+          title={`${match?.surface.app_name ?? "App"} info card`}
           fallback={fallback}
         />
       )}

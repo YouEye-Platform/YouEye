@@ -20,6 +20,15 @@ interface AppWidgetProps {
   settings?: Record<string, unknown>;
 }
 
+interface WidgetSurface {
+  app_id: string;
+  surface_id: string;
+  kind: string;
+  placement: string;
+  app_url: string | null;
+  embed_path: string;
+}
+
 export function AppWidget({ settings }: AppWidgetProps) {
   const [embedUrl, setEmbedUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,29 +44,32 @@ export function AppWidget({ settings }: AppWidgetProps) {
       return;
     }
 
-    // Resolve the app's subdomain URL from the drawer/navigation data (UI API).
-    fetch("/api/v1/apps/drawer")
+    fetch("/api/v1/apps/surfaces")
       .then((r) => {
         if (!r.ok) throw new Error(`Failed: ${r.status}`);
         return r.json();
       })
       .then((data) => {
-        const app = data.apps?.find(
-          (a: { id: string; url?: string }) => a.id === appId
+        const surfaces = Array.isArray(data.surfaces) ? data.surfaces as WidgetSurface[] : [];
+        const surface = surfaces.find(
+          (item) =>
+            item.kind === "widget" &&
+            item.placement === "dashboard" &&
+            item.app_id === appId &&
+            item.surface_id === widgetId
         );
-        if (!app?.url) {
-          setError("App not found");
+        if (!surface?.app_url || !surface.embed_path) {
+          setError("Widget not found");
           return;
         }
 
-        // Must be http(s) — reject javascript:/data: injection.
-        const url = app.url as string;
+        const url = new URL(surface.embed_path, surface.app_url).toString();
         if (!url.startsWith("https://") && !url.startsWith("http://")) {
           setError("Invalid app URL");
           return;
         }
 
-        setEmbedUrl(`${url}/embed/widget/${encodeURIComponent(widgetId)}`);
+        setEmbedUrl(url);
       })
       .catch((e) => {
         setError(e instanceof Error ? e.message : "Failed to load widget");

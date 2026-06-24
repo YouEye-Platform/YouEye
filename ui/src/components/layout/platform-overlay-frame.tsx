@@ -70,7 +70,7 @@ export function PlatformOverlayFrame({
       if (event.data?.type === "youeye:close") {
         onClose();
       }
-      if (event.data?.type === "youeye:action" && event.data?.action === "open-launcher") {
+      if (event.data?.type === "youeye:overlay-command" && event.data?.command === "open-launcher") {
         onOpenLauncher?.();
       }
       if (event.data?.type === "youeye:notifications" && typeof event.data.unread_count === "number") {

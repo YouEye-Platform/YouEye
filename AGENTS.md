@@ -1,3 +1,28 @@
+## cp-v0.4.56 / ui-v0.4.39 — artem — 2026-06-24
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Plan 4 Waves 3C/3D — finish Phase 3 host surface cleanup.
+
+### Changes
+- `control-panel/package.json`, `ui/package.json` — bumped CP to `0.4.56` and UI to `0.4.39` before building release artifacts.
+- `ui/src/app/api/v1/apps/surfaces/route.ts` — made installed app surfaces the single discovery source, including service auth plus `app_url` and `icon` metadata.
+- `ui/src/lib/db/queries/app-management.ts` — removed legacy widget/info-card declaration helpers and kept explicit `surfaces[]` as the app-surface source.
+- `ui/src/app/api/v1/apps/widgets/route.ts`, `ui/src/app/api/v1/apps/info-cards/route.ts`, `ui/src/app/api/v1/widgets/app-data/route.ts`, `ui/src/app/api/v1/widgets/notify/route.ts`, `ui/src/app/api/apps/v1/widgets/sync/route.ts`, `control-panel/src/app/api/apps/v1/widgets/sync/route.ts` — deleted retired/dead routes after caller migration.
+- `ui/src/components/dashboard/*`, `ui/src/components/widgets/app-widget.tsx`, `ui/src/components/timeline/timeline-info-card.tsx` — moved widgets, previews, saved-widget URLs, and timeline/detail info-card matching to `/api/v1/apps/surfaces`; new app widgets now use declared default/min/max sizes.
+- `ui/src/components/layout/embed-overlay-shell.tsx`, `ui/src/components/layout/platform-overlay-frame.tsx`, `control-panel/src/components/control-surface/control-header.tsx` — moved overlay `open-launcher` to `youeye:overlay-command`.
+- `ui/tests/*.mjs`, `control-panel/tests/control-header-drawer-icons.spec.mjs` — updated focused source tests for retired routes, surfaces consolidation, overlay command namespacing, and widget spawn sizing.
+- `README.md` — updated the current-version matrix for CP, UI, Canvas, and all six native apps.
+
+### Test Results
+- Focused host suite passed: `node --test ui/tests/surfaces.spec.mjs ui/tests/info-card-wave3b.test.mjs ui/tests/timeline-feed.test.mjs ui/tests/widget-sizes-e5.test.mjs ui/tests/platform-overlays-fast-open.test.mjs ui/tests/unified-embed.spec.mjs control-panel/tests/control-header-drawer-icons.spec.mjs`.
+- Clean typechecks passed: `pnpm --dir ui exec tsc --noEmit --pretty false`; `pnpm --dir control-panel run typecheck`.
+- Production builds and flat `standalone.tar` artifacts passed for CP `0.4.56` and UI `0.4.39`.
+
+### Notes for Iris
+- `/api/v1/apps/surfaces` is now the only live surface discovery endpoint; do not reintroduce `/api/v1/apps/widgets` or `/api/v1/apps/info-cards`.
+- Owner deploy/live verification remains Wave 3E before Phase 3 is called visually complete.
+
 ## ui-v0.4.38 — artem — 2026-06-24
 **Branch:** main
 **VM:** potempc

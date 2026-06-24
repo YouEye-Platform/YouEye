@@ -1,15 +1,15 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
 const uiRoot = process.env.UI_ROOT || join(import.meta.dirname, "..");
 const read = (path) => readFileSync(join(uiRoot, path), "utf8");
+const exists = (path) => existsSync(join(uiRoot, path));
 
 test("UI normalizes only explicit versioned app surface declarations", () => {
   const normalizer = read("src/lib/surfaces/normalize.ts");
   const appManagement = read("src/lib/db/queries/app-management.ts");
-  const widgetsRoute = read("src/app/api/v1/apps/widgets/route.ts");
   const surfacesRoute = read("src/app/api/v1/apps/surfaces/route.ts");
   const manifestRoute = read("src/app/api/v1/apps/[appId]/manifest/route.ts");
   const timelineRoute = read("src/app/api/v1/timeline/route.ts");
@@ -31,20 +31,20 @@ test("UI normalizes only explicit versioned app surface declarations", () => {
   assert.match(appManagement, /surfaceSchemaVersion/);
   assert.match(appManagement, /"settings-panel"/);
   assert.doesNotMatch(appManagement, /"launcher"/);
-  assert.match(appManagement, /getInfoCardProviders/);
-  assert.match(appManagement, /surface\.kind === "info-card"/);
-  assert.match(appManagement, /endpoint: surface\.embedPath/);
   assert.match(appManagement, /timeline_cards/);
   assert.match(appManagement, /getNotificationSurfaceMap/);
   assert.match(appManagement, /item\.kind === "notification"/);
 
-  assert.match(widgetsRoute, /getAppSurfaceDeclarations/);
-  assert.match(widgetsRoute, /surface\.kind === "widget"/);
-  assert.match(widgetsRoute, /surface\.placement === "dashboard"/);
-  assert.match(widgetsRoute, /embed_path: w\.embedPath/);
-
   assert.match(surfacesRoute, /surfaces: declarations\.flatMap/);
+  assert.match(surfacesRoute, /resolveServiceAuth/);
+  assert.match(surfacesRoute, /app_url: publicAppUrl/);
+  assert.match(surfacesRoute, /icon: d\.icon/);
   assert.doesNotMatch(surfacesRoute, /legacy_source|legacySource/);
+  assert.equal(exists("src/app/api/v1/apps/widgets/route.ts"), false);
+  assert.equal(exists("src/app/api/v1/apps/info-cards/route.ts"), false);
+  assert.equal(exists("src/app/api/v1/widgets/app-data/route.ts"), false);
+  assert.equal(exists("src/app/api/v1/widgets/notify/route.ts"), false);
+  assert.equal(exists("src/app/api/apps/v1/widgets/sync/route.ts"), false);
 
   assert.match(manifestRoute, /validateBridgeAuth/);
   assert.match(manifestRoute, /X-UI-Bridge-Token/);

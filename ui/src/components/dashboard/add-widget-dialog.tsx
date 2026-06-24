@@ -60,27 +60,10 @@ export function AddWidgetDialog({
   onAddAppWidget,
 }: AddWidgetDialogProps) {
   const [activeTab, setActiveTab] = useState("built-in");
-  const [appUrls, setAppUrls] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (open) setActiveTab("built-in");
   }, [open]);
-
-  // Fetch app URLs for iframe previews when dialog opens
-  useEffect(() => {
-    if (!open || appWidgets.length === 0) return;
-    fetch("/api/v1/apps/drawer")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (!data?.apps) return;
-        const urls: Record<string, string> = {};
-        for (const app of data.apps) {
-          if (app.id && app.url) urls[app.id] = app.url;
-        }
-        setAppUrls(urls);
-      })
-      .catch(() => {});
-  }, [open, appWidgets.length]);
 
   if (!open) return null;
 
@@ -181,14 +164,14 @@ export function AddWidgetDialog({
 
         {/* Carousel content */}
         <div className="flex-1 min-h-0 px-6 py-6">
-          {currentTab && <WidgetCarousel items={currentTab.items} onAdd={handleAdd} appUrls={appUrls} />}
+          {currentTab && <WidgetCarousel items={currentTab.items} onAdd={handleAdd} />}
         </div>
       </div>
     </div>
   );
 }
 
-function WidgetCarousel({ items, onAdd, appUrls }: { items: WidgetItem[]; onAdd: (item: WidgetItem) => void; appUrls: Record<string, string> }) {
+function WidgetCarousel({ items, onAdd }: { items: WidgetItem[]; onAdd: (item: WidgetItem) => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
@@ -257,7 +240,7 @@ function WidgetCarousel({ items, onAdd, appUrls }: { items: WidgetItem[]; onAdd:
         style={{ scrollSnapType: "x mandatory", scrollbarWidth: "none", msOverflowStyle: "none" }}
       >
         {items.map((item) => (
-          <WidgetPreviewCard key={item.id} item={item} onAdd={() => onAdd(item)} appUrls={appUrls} />
+          <WidgetPreviewCard key={item.id} item={item} onAdd={() => onAdd(item)} />
         ))}
       </div>
     </div>
@@ -272,7 +255,7 @@ const PREVIEW_W = 224;
 const PREVIEW_H = 144;
 const SCALE = PREVIEW_W / VIRTUAL_W;
 
-function WidgetPreviewCard({ item, onAdd, appUrls }: { item: WidgetItem; onAdd: () => void; appUrls: Record<string, string> }) {
+function WidgetPreviewCard({ item, onAdd }: { item: WidgetItem; onAdd: () => void }) {
   const hasLivePreview = !!item.component || (item.isAppWidget && item.appWidgetDef);
 
   return (
@@ -282,7 +265,7 @@ function WidgetPreviewCard({ item, onAdd, appUrls }: { item: WidgetItem; onAdd: 
       onClick={onAdd}
     >
       {/* Live preview area */}
-      <div className="relative overflow-hidden bg-background/30" style={{ height: `${PREVIEW_H}px` }}>
+        <div className="relative overflow-hidden bg-background/30" style={{ height: `${PREVIEW_H}px` }}>
         {item.component ? (
           /* Built-in widget: render actual component scaled down */
           <div
@@ -300,7 +283,12 @@ function WidgetPreviewCard({ item, onAdd, appUrls }: { item: WidgetItem; onAdd: 
           </div>
         ) : item.isAppWidget && item.appWidgetDef ? (
           /* App widget: render iframe embed preview */
-          <AppWidgetPreview appId={item.appWidgetDef.app_id} widgetId={item.appWidgetDef.widget_id} appUrls={appUrls} />
+          <AppWidgetPreview
+            appId={item.appWidgetDef.app_id}
+            widgetId={item.appWidgetDef.widget_id}
+            appUrl={item.appWidgetDef.app_url}
+            embedPath={item.appWidgetDef.embed_path}
+          />
         ) : (
           /* Fallback: generic icon */
           <div className="flex items-center justify-center h-full">
@@ -326,18 +314,31 @@ function WidgetPreviewCard({ item, onAdd, appUrls }: { item: WidgetItem; onAdd: 
 }
 
 /** Iframe preview for app-provided widgets */
-function AppWidgetPreview({ appId, widgetId, appUrls }: { appId: string; widgetId: string; appUrls: Record<string, string> }) {
-  const url = appUrls[appId];
+function AppWidgetPreview({
+  appId,
+  widgetId,
+  appUrl,
+  embedPath,
+}: {
+  appId: string;
+  widgetId: string;
+  appUrl: string | null;
+  embedPath: string;
+}) {
+  let embedSrc: string | null = null;
+  try {
+    if (appUrl) embedSrc = new URL(embedPath, appUrl).toString();
+  } catch {
+    embedSrc = null;
+  }
 
-  if (!url) {
+  if (!embedSrc) {
     return (
       <div className="flex items-center justify-center h-full">
-        <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        <Package className="w-10 h-10 text-muted-foreground/40" />
       </div>
     );
   }
-
-  const embedSrc = `${url}/embed/widget/${encodeURIComponent(widgetId)}`;
 
   return (
     <iframe

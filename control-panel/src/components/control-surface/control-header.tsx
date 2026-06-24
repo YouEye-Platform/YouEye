@@ -260,7 +260,7 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
         setPlatformOverlay(null);
         return;
       }
-      if (event.data?.type === "youeye:action" && event.data?.action === "open-launcher") {
+      if (event.data?.type === "youeye:overlay-command" && event.data?.command === "open-launcher") {
         setEmbedMode(resolveEmbedMode());
         setPlatformOverlay("launcher");
         return;

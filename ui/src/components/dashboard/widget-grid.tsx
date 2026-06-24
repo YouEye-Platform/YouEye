@@ -68,6 +68,8 @@ export interface AppWidgetDef {
   widget_id: string;
   name: string;
   description: string;
+  app_url: string | null;
+  embed_path: string;
   default_size: { width: number; height: number };
   min_size?: { width: number; height: number };
   max_size?: { width: number; height: number };
@@ -76,6 +78,16 @@ export interface AppWidgetDef {
 }
 
 type Size = { width: number; height: number };
+
+function asSize(value: unknown): Size | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const width = Number(record.width);
+  const height = Number(record.height);
+  return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+    ? { width, height }
+    : undefined;
+}
 
 /**
  * E5: clamp a widget to its app-declared min/max (viewport-percentage units).
@@ -107,12 +119,34 @@ export function WidgetGrid({ widgets, username, initialBackground }: WidgetGridP
   const [appWidgets, setAppWidgets] = useState<AppWidgetDef[]>([]);
   const t = useTranslations('widgetGrid');
 
-  // Fetch app-provided widgets when entering edit mode
+  // Fetch app-provided widgets from the single surfaces source when entering edit mode.
   useEffect(() => {
     if (!isEditMode) return;
-    fetch("/api/v1/apps/widgets")
+    fetch("/api/v1/apps/surfaces")
       .then((r) => r.json())
-      .then((data) => setAppWidgets(data.widgets ?? []))
+      .then((data) => {
+        const widgetsFromSurfaces: AppWidgetDef[] = (Array.isArray(data.surfaces) ? data.surfaces : [])
+          .filter((surface: Record<string, unknown>) =>
+            surface.kind === "widget" &&
+            surface.placement === "dashboard" &&
+            typeof surface.surface_id === "string" &&
+            typeof surface.embed_path === "string"
+          )
+          .map((surface: Record<string, unknown>) => ({
+            id: String(surface.id ?? `${surface.app_id}:${surface.surface_id}`),
+            widget_id: String(surface.surface_id),
+            name: String(surface.name ?? surface.surface_id),
+            description: typeof surface.description === "string" ? surface.description : "",
+            app_url: typeof surface.app_url === "string" ? surface.app_url : null,
+            embed_path: String(surface.embed_path),
+            default_size: asSize(surface.default_size) ?? { width: 25, height: 12 },
+            min_size: asSize(surface.min_size),
+            max_size: asSize(surface.max_size),
+            app_id: String(surface.app_id),
+            app_name: String(surface.app_name ?? surface.app_id),
+          }));
+        setAppWidgets(widgetsFromSurfaces);
+      })
       .catch(() => setAppWidgets([]));
   }, [isEditMode]);
 

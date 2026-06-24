@@ -14,6 +14,9 @@ test("platform overlay frames stay mounted, prewarm, and signal visibility", () 
   assert.match(frame, /preload/);
   assert.match(frame, /setMounted\(true\)/);
   assert.match(frame, /youeye:overlay-visibility/);
+  assert.match(frame, /youeye:overlay-command/);
+  assert.match(frame, /command === "open-launcher"/);
+  assert.doesNotMatch(frame, /action === "open-launcher"/);
   assert.match(frame, /active && loaded/);
   assert.match(frame, /pointer-events-auto/);
   assert.match(host, /prewarm/);
@@ -45,4 +48,12 @@ test("notification centre is prewarmed and refreshes while visible", () => {
   assert.match(bell, /preload=\{prewarm\}/);
   assert.match(bell, /onUnreadCountChange/);
   assert.match(bell, /setInterval\(fetchNotifications, 30000\)/);
+});
+
+test("overlay shells use a platform command namespace, not app-surface actions", () => {
+  const shell = read("src/components/layout/embed-overlay-shell.tsx");
+
+  assert.match(shell, /youeye:overlay-command/);
+  assert.match(shell, /command: "open-launcher"/);
+  assert.doesNotMatch(shell, /type: "youeye:action", action: "open-launcher"/);
 });

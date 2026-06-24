@@ -14,7 +14,11 @@ test('app widgets render through <UnifiedEmbed kind="widget" fill> (hand-rolled 
   assert.match(w, /from "@\/components\/embeds\/unified-embed"/);
   assert.match(w, /kind="widget"/);
   assert.match(w, /\bfill\b/);
+  assert.match(w, /fetch\("\/api\/v1\/apps\/surfaces"\)/);
+  assert.match(w, /item\.kind === "widget"/);
+  assert.match(w, /new URL\(surface\.embed_path, surface\.app_url\)/);
   assert.doesNotMatch(w, /<iframe/);          // no bespoke iframe
+  assert.doesNotMatch(w, /\/api\/v1\/apps\/drawer/);
   assert.match(w, /fallback=/);                // never silent
 });
 
@@ -37,6 +41,18 @@ test('app widgets carry their declared bounds (min_size/max_size) into settings 
   const g = read('src/components/dashboard/widget-grid.tsx');
   assert.match(g, /min_size\?: \{ width: number; height: number \}/);
   assert.match(g, /max_size\?: \{ width: number; height: number \}/);
+  assert.match(g, /fetch\("\/api\/v1\/apps\/surfaces"\)/);
+  assert.match(g, /surface\.kind === "widget"/);
+  assert.match(g, /surface\.placement === "dashboard"/);
+  assert.match(g, /default_size: asSize\(surface\.default_size\)/);
   assert.match(g, /_minSize: appWidgetDef\.min_size/);
   assert.match(g, /_maxSize: appWidgetDef\.max_size/);
+});
+
+test('app widget previews use app_url and embed_path from surfaces, not drawer lookup', () => {
+  const dialog = read('src/components/dashboard/add-widget-dialog.tsx');
+  assert.match(dialog, /appUrl=\{item\.appWidgetDef\.app_url\}/);
+  assert.match(dialog, /embedPath=\{item\.appWidgetDef\.embed_path\}/);
+  assert.match(dialog, /new URL\(embedPath, appUrl\)/);
+  assert.doesNotMatch(dialog, /\/api\/v1\/apps\/drawer/);
 });

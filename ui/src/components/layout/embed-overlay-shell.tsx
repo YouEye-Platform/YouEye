@@ -10,7 +10,7 @@ export function postOverlayClose() {
 
 export function postOpenLauncher() {
   if (typeof window !== "undefined" && window.parent !== window) {
-    window.parent.postMessage({ type: "youeye:action", action: "open-launcher" }, "*");
+    window.parent.postMessage({ type: "youeye:overlay-command", command: "open-launcher" }, "*");
   }
 }
 

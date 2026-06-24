@@ -29,8 +29,6 @@ export interface AppManifest {
   permissions?: string[];
   surfaceSchemaVersion?: number;
   surfaces?: AppSurfaceDeclaration[];
-  widgets?: AppWidgetDeclaration[];
-  info_cards?: InfoCardDeclaration[];
   timeline_embeds?: TimelineEmbedDeclaration[];
   settings?: { schema: SettingField[] };
   inter_app?: {
@@ -53,26 +51,6 @@ export interface AppSurfaceDeclaration {
   refreshInterval?: number;
   settingsSchema?: SettingField[];
   triggers?: string[];
-}
-
-export interface AppWidgetDeclaration {
-  id: string;
-  name: string;
-  description: string;
-  default_size: { width: number; height: number };
-  min_size?: { width: number; height: number };
-  max_size?: { width: number; height: number };
-  refresh_interval?: number;
-  settings_schema?: SettingField[];
-}
-
-export interface InfoCardDeclaration {
-  type: string;
-  description: string;
-  endpoint: string;
-  triggers: string[];
-  embed_path?: string;
-  label?: string;
 }
 
 export interface TimelineEmbedDeclaration {
@@ -351,124 +329,6 @@ export async function getNotificationSurfaceMap(): Promise<
   return result;
 }
 
-/** Get all apps that provide info cards through unified surface declarations */
-export async function getInfoCardProviders(): Promise<
-  Array<{
-    appId: string;
-    appName: string;
-    containerUrl: string;
-    subdomain: string | null;
-    icon: string | null;
-    cards: InfoCardDeclaration[];
-  }>
-> {
-  await ensureSchema();
-
-  const allApps = await db
-    .select()
-    .from(apps)
-    .where(eq(apps.enabled, true));
-
-  // Discover real container IPs via Caddy (avoids cross-bridge DNS issues)
-  const upstreamMap = await discoverAppUpstreams();
-
-  const results = await Promise.allSettled(
-    allApps
-      .filter((app) => app.containerUrl || app.subdomain || app.manifest)
-      .map(async (app) => {
-        const upstream =
-          (app.subdomain && upstreamMap.get(app.subdomain)) ||
-          app.containerUrl;
-        const manifest = upstream ? await fetchAppManifest(upstream) : null;
-
-        // Fall back to DB manifest if live fetch fails
-        const effective = (manifest as unknown as Record<string, unknown> | null)
-          ?? (app.manifest as Record<string, unknown> | null)
-          ?? null;
-        const infoCardSurfaces = normalizeAppSurfaces(effective)
-          .filter((surface) => surface.kind === "info-card");
-        if (infoCardSurfaces.length > 0) {
-          return {
-            appId: app.id,
-            appName: app.name,
-            containerUrl: app.containerUrl ?? upstream ?? "",
-            subdomain: app.subdomain ?? null,
-            icon: app.icon ?? (effective?.icon as string | undefined) ?? null,
-            cards: infoCardSurfaces.map((surface) => ({
-              type: surface.id,
-              description: surface.description ?? surface.name ?? surface.id,
-              endpoint: surface.embedPath,
-              triggers: surface.triggers ?? [],
-              embed_path: surface.embedPath,
-              label: surface.name,
-            })),
-          };
-        }
-        return null;
-      })
-  );
-
-  const out: Array<{
-    appId: string;
-    appName: string;
-    containerUrl: string;
-    subdomain: string | null;
-    icon: string | null;
-    cards: InfoCardDeclaration[];
-  }> = [];
-  for (const r of results) {
-    if (r.status === "fulfilled" && r.value) out.push(r.value);
-  }
-  return out;
-}
-
-/** Get all app widget declarations by live-fetching from running app containers */
-export async function getAppWidgetDeclarations(): Promise<
-  Array<{
-    appId: string;
-    appName: string;
-    widgets: AppWidgetDeclaration[];
-  }>
-> {
-  await ensureSchema();
-
-  const allApps = await db
-    .select()
-    .from(apps)
-    .where(eq(apps.enabled, true));
-
-  // Discover app backend URLs from Caddy's live config
-  const upstreamMap = await discoverAppUpstreams();
-
-  const results = await Promise.allSettled(
-    allApps
-      .filter((app) => app.containerUrl || app.subdomain)
-      .map(async (app) => {
-        // Prefer Caddy-discovered upstream (avoids cross-bridge DNS issues),
-        // fall back to DB containerUrl
-        const upstream = (app.subdomain && upstreamMap.get(app.subdomain))
-          || app.containerUrl;
-        if (!upstream) return null;
-
-        const manifest = await fetchAppManifest(upstream);
-        if (manifest?.widgets && manifest.widgets.length > 0) {
-          return {
-            appId: app.id,
-            appName: app.name,
-            widgets: manifest.widgets,
-          };
-        }
-        return null;
-      })
-  );
-
-  const out: Array<{ appId: string; appName: string; widgets: AppWidgetDeclaration[] }> = [];
-  for (const r of results) {
-    if (r.status === "fulfilled" && r.value) out.push(r.value);
-  }
-  return out;
-}
-
 /** Get all unified app surface declarations from live manifests with cached fallback */
 /**
  * Cache for getAppSurfaceDeclarations(). The uncached path does a LIVE
@@ -478,7 +338,14 @@ export async function getAppWidgetDeclarations(): Promise<
  * bell shows. Surfaces only change on app install/update, so a short TTL is safe;
  * mutations call invalidateAppSurfaceCache() for immediacy.
  */
-type SurfaceDeclarations = Array<{ appId: string; appName: string; surfaces: AppSurface[] }>;
+type SurfaceDeclarations = Array<{
+  appId: string;
+  appName: string;
+  containerUrl: string | null;
+  subdomain: string | null;
+  icon: string | null;
+  surfaces: AppSurface[];
+}>;
 const SURFACE_CACHE_TTL_MS = 60_000;
 let surfaceCache: { at: number; value: SurfaceDeclarations } | null = null;
 let surfaceInflight: Promise<SurfaceDeclarations> | null = null;
@@ -529,12 +396,15 @@ async function getAppSurfaceDeclarationsUncached(): Promise<SurfaceDeclarations>
         return {
           appId: app.id,
           appName: app.name,
+          containerUrl: app.containerUrl ?? upstream ?? null,
+          subdomain: app.subdomain ?? null,
+          icon: app.icon ?? (manifest?.icon as string | undefined) ?? null,
           surfaces,
         };
       })
   );
 
-  const out: Array<{ appId: string; appName: string; surfaces: AppSurface[] }> = [];
+  const out: SurfaceDeclarations = [];
   for (const r of results) {
     if (r.status === "fulfilled" && r.value) out.push(r.value);
   }

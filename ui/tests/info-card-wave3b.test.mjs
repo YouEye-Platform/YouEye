@@ -13,8 +13,9 @@ test("timeline info cards render app-declared surfaces through UnifiedEmbed", ()
 
   assert.match(timelineInfoCard, /import \{ UnifiedEmbed \}/);
   assert.match(timelineInfoCard, /kind="info-card"/);
-  assert.match(timelineInfoCard, /fetch\("\/api\/v1\/apps\/info-cards"\)/);
-  assert.match(timelineInfoCard, /new URL\(match\.card\.embed_path, match\.provider\.app_url\)/);
+  assert.match(timelineInfoCard, /fetch\("\/api\/v1\/apps\/surfaces"\)/);
+  assert.match(timelineInfoCard, /surface\.kind === "info-card"/);
+  assert.match(timelineInfoCard, /new URL\(match\.surface\.embed_path, match\.surface\.app_url\)/);
   assert.match(timelineInfoCard, /url\.searchParams\.set\("url", match\.targetUrl\)/);
 
   assert.match(deriveTarget, /deriveInfoCardTargetUrl/);
@@ -25,14 +26,16 @@ test("timeline info cards render app-declared surfaces through UnifiedEmbed", ()
 test("host-side JSON info-card route and renderer are removed", () => {
   const middleware = read("src/middleware.ts");
   assert.equal(exists("src/app/api/v1/apps/info-card/route.ts"), false);
+  assert.equal(exists("src/app/api/v1/apps/info-cards/route.ts"), false);
   assert.equal(exists("src/components/info-cards/use-info-card.ts"), false);
   assert.equal(exists("src/components/info-cards/info-card.tsx"), false);
   assert.doesNotMatch(middleware, /\/api\/v1\/apps\/info-card"/);
 });
 
-test("plural provider list remains live for Search/link-handler consumers", () => {
-  const providerRoute = read("src/app/api/v1/apps/info-cards/route.ts");
-  assert.match(providerRoute, /getInfoCardProviders/);
-  assert.match(providerRoute, /app_url/);
-  assert.match(providerRoute, /embed_path/);
+test("the unified surfaces endpoint carries info-card provider fields", () => {
+  const surfacesRoute = read("src/app/api/v1/apps/surfaces/route.ts");
+  assert.match(surfacesRoute, /app_url: publicAppUrl/);
+  assert.match(surfacesRoute, /surface_id: surface\.id/);
+  assert.match(surfacesRoute, /embed_path: surface\.embedPath/);
+  assert.match(surfacesRoute, /triggers: surface\.triggers/);
 });
