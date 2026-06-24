@@ -7,15 +7,18 @@ import assert from 'node:assert/strict';
 const root = process.env.UI_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..');
 const sw = readFileSync(join(root, 'src/app/sw.ts'), 'utf8');
 
-test('service worker versions runtime caches from the active build manifest', () => {
-  assert.match(sw, /const CACHE_VERSION = getCacheVersion\(PRECACHE_ENTRIES\)/);
-  assert.match(sw, /_buildManifest\\.js/);
-  assert.match(sw, /function versionCacheName\(name: string\)/);
-  assert.match(sw, /cacheName: versionCacheName\("static-assets"\)/);
+test('service worker uses Serwist instead of hand-rolled install precaching', () => {
+  assert.match(sw, /new Serwist\(/);
+  assert.match(sw, /precacheEntries: self\.__SW_MANIFEST \?\? \[\]/);
+  assert.match(sw, /serwist\.addEventListeners\(\)/);
+  assert.doesNotMatch(sw, /self\.addEventListener\("install"/);
+  assert.doesNotMatch(sw, /PRECACHE_ENTRIES\.map/);
+  assert.doesNotMatch(sw, /event\.respondWith/);
 });
 
-test('service worker deletes old release caches during activation', () => {
+test('service worker deletes old app-owned runtime caches during activation', () => {
   assert.match(sw, /LEGACY_CACHE_PREFIXES/);
-  assert.match(sw, /isOwnedCache\(cacheName\) && !cachesToKeep\.has\(cacheName\)/);
+  assert.match(sw, /ACTIVE_RUNTIME_CACHES/);
+  assert.match(sw, /caches\.delete\(cacheName\)/);
   assert.match(sw, /"ui-"/);
 });

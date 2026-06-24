@@ -17,11 +17,24 @@ import { EmbedOverlayShell, postUnreadCount } from "@/components/layout/embed-ov
 function NotificationsEmbedInner() {
   const params = useSearchParams();
   const mode = params?.get("mode");
+  const surface = params?.get("surface");
 
   useEffect(() => {
     if (mode === "dark") document.documentElement.classList.add("dark");
     else if (mode === "light") document.documentElement.classList.remove("dark");
   }, [mode]);
+
+  if (surface === "sheet") {
+    return (
+      <div className="h-full w-full bg-transparent text-foreground">
+        <NotificationBell
+          embedded
+          mode={mode === "dark" ? "dark" : mode === "light" ? "light" : undefined}
+          onUnreadCountChange={postUnreadCount}
+        />
+      </div>
+    );
+  }
 
   return (
     <EmbedOverlayShell panelClassName="absolute right-3 top-[60px] max-h-[calc(100vh-72px)] w-[min(400px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-border/60 bg-popover/85 p-0 shadow-xl backdrop-blur-xl animate-in fade-in-0 zoom-in-95 slide-in-from-top-1 duration-150 sm:right-4">

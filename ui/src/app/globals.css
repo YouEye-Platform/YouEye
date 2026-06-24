@@ -292,3 +292,29 @@ html:has([data-youeye-overlay-embed]) body {
   --sidebar-primary-foreground: #ffffff;
   --sidebar-ring: #3b82f6;
 }
+
+.ye-mobile-shell-only,
+.ye-mobile-shell-spacer {
+  display: none;
+}
+
+@media (max-width: 640px), (display-mode: standalone) {
+  .ye-mobile-shell-desktop,
+  .ye-mobile-top-center,
+  .ye-mobile-top-actions {
+    display: none !important;
+  }
+
+  .ye-mobile-shell-only {
+    display: flex;
+  }
+
+  .ye-mobile-shell-spacer {
+    display: block;
+    height: calc(64px + env(safe-area-inset-bottom));
+  }
+
+  .ye-mobile-top-header {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}

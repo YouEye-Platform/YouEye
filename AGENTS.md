@@ -1,3 +1,33 @@
+## cp-v0.4.54 / ui-v0.4.36 — artem — 2026-06-24
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Plan 4 Wave 2 — mobile/PWA bottom shell and Serwist service-worker correction.
+
+### Changes
+- `control-panel/package.json` — bumped Control Panel to `0.4.54` before building.
+- `control-panel/src/components/control-surface/control-header.tsx` — added the Settings/Market mobile/PWA bottom bar while preserving the desktop header.
+- `control-panel/src/components/control-surface/mobile-account-sheet.tsx` — added the mobile account sheet with UI-hosted Notifications/App drawer/Launcher `surface=sheet` iframes.
+- `control-panel/src/app/globals.css` — added the shared mobile/PWA shell utility classes.
+- `ui/package.json` — bumped UI to `0.4.36` before building.
+- `ui/src/components/layout/navbar.tsx` — added the dashboard mobile/PWA bottom bar and account sheet wiring.
+- `ui/src/components/layout/mobile-account-sheet.tsx` — added the UI-local mobile account sheet with embedded Notifications/App drawer/Launcher sections.
+- `ui/src/app/embed/{drawer,launcher,notifications}/page.tsx` — added `surface=sheet` content-only mode for inline sheet hosting.
+- `ui/src/app/sw.ts`, `ui/public/sw.js` — replaced the hand-rolled worker with Serwist output and old-cache cleanup.
+- `ui/tests/service-worker-cache-version.test.mjs`, `ui/tests/mobile-shell-wave2.test.mjs` — added/updated static coverage for the Serwist worker and mobile shell.
+- `README.md` — updated current versions for CP, UI, Canvas, and all six native apps.
+
+### Test Results
+- CP typecheck: `pnpm --dir control-panel run typecheck` passed.
+- UI typecheck: `pnpm --dir ui exec tsc --noEmit --pretty false` passed.
+- UI focused tests: `node --test tests/service-worker-cache-version.test.mjs tests/mobile-shell-wave2.test.mjs` passed (3/3).
+- CP production build passed for `ye-controlpanel@0.4.54`; flat `standalone.tar` built from `.next/standalone/control-panel`.
+- UI production build passed for `ye-ui@0.4.36`; flat `standalone.tar` built from `.next/standalone`.
+
+### Notes for Iris
+- Owner will deploy and visually test Wave 2 on the live target. This entry does not claim post-deploy pixel verification.
+- UI server still does not call CP; Settings/native apps only host UI iframe surfaces.
+
 ## vui-0.4.35 — artem — 2026-06-24
 **Branch:** main
 **Agent:** Artem

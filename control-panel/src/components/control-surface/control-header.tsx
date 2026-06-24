@@ -7,6 +7,7 @@ import {
   Bell,
   Clock,
   Home,
+  Package,
   LogOut,
   Settings,
   Shield,
@@ -22,6 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SiteName } from "@/components/control-surface/site-name";
+import { MobileAccountSheet } from "@/components/control-surface/mobile-account-sheet";
 import { applyThemeMode, THEME_MODE_EVENT, type ThemeMode } from "@/lib/theme";
 import type { SiteNameStyle } from "@/lib/wordart-presets";
 
@@ -358,103 +360,104 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
   ];
 
   return (
-    <header className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-border/40 bg-background/95 px-4 backdrop-blur-md">
-      <div className="flex items-center gap-3">
-        <Link href="/" className="flex items-center gap-2 transition-opacity hover:opacity-80">
-          {logoUrl && <img src={logoUrl} alt="" className="h-6 w-6 object-contain" />}
-          <SiteName name={siteName} style={siteNameStyle} />
-        </Link>
-      </div>
-
-      <div className="flex items-center gap-1">
-        <Button variant="ghost" size="icon" className="h-9 w-9" asChild>
-          <Link href="/" title="Home">
-            <Home className="h-4 w-4" />
+    <>
+      <header className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-border/40 bg-background/95 px-4 backdrop-blur-md">
+        <div className="flex items-center gap-3">
+          <Link href="/" className="flex items-center gap-2 transition-opacity hover:opacity-80">
+            {logoUrl && <img src={logoUrl} alt="" className="h-6 w-6 object-contain" />}
+            <SiteName name={siteName} style={siteNameStyle} />
           </Link>
-        </Button>
+        </div>
 
-        {hasUserContext && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9"
-            aria-label="Apps"
-            disabled={!uiBaseUrl}
-            onFocus={warmPlatformOverlays}
-            onClick={() => openPlatformOverlay("drawer")}
-            onPointerEnter={warmPlatformOverlays}
-          >
-            <DotsIcon className="h-4 w-4" />
+        <div className="ye-mobile-shell-desktop flex items-center gap-1">
+          <Button variant="ghost" size="icon" className="h-9 w-9" asChild>
+            <Link href="/" title="Home">
+              <Home className="h-4 w-4" />
+            </Link>
           </Button>
-        )}
 
-        {hasUserContext && (
-          <button
-            className="relative inline-flex h-9 w-9 items-center justify-center rounded-md transition-colors hover:bg-accent disabled:opacity-50"
-            aria-label="Notifications"
-            disabled={!uiBaseUrl}
-            onFocus={warmPlatformOverlays}
-            onClick={() => openPlatformOverlay("notifications")}
-            onPointerEnter={warmPlatformOverlays}
-          >
-            <Bell className="h-4 w-4" />
-            {unreadCount > 0 && (
-              <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-0.5 text-[9px] font-bold text-white">
-                {unreadCount > 99 ? "99+" : unreadCount}
-              </span>
-            )}
-          </button>
-        )}
+          {hasUserContext && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              aria-label="Apps"
+              disabled={!uiBaseUrl}
+              onFocus={warmPlatformOverlays}
+              onClick={() => openPlatformOverlay("drawer")}
+              onPointerEnter={warmPlatformOverlays}
+            >
+              <DotsIcon className="h-4 w-4" />
+            </Button>
+          )}
 
-        {hasUserContext && uiBaseUrl && (
-          <>
-            <PlatformOverlayFrame
-              kind="drawer"
-              active={platformOverlay === "drawer"}
-              preload={prewarmOverlays}
-              uiBaseUrl={uiBaseUrl}
-              uiBaseOrigin={uiBaseOrigin}
-              mode={embedMode}
-              isAdmin={headerIsAdmin}
-            />
-            <PlatformOverlayFrame
-              kind="launcher"
-              active={platformOverlay === "launcher"}
-              preload={prewarmOverlays}
-              uiBaseUrl={uiBaseUrl}
-              uiBaseOrigin={uiBaseOrigin}
-              mode={embedMode}
-              isAdmin={headerIsAdmin}
-            />
-            <PlatformOverlayFrame
-              kind="notifications"
-              active={platformOverlay === "notifications"}
-              preload={prewarmOverlays}
-              uiBaseUrl={uiBaseUrl}
-              uiBaseOrigin={uiBaseOrigin}
-              mode={embedMode}
-              isAdmin={headerIsAdmin}
-            />
-          </>
-        )}
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button className="inline-flex h-9 w-9 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent">
-              <Avatar className="size-7">
-                {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
-                <AvatarFallback className="text-xs">{initials(displayName)}</AvatarFallback>
-              </Avatar>
+          {hasUserContext && (
+            <button
+              className="relative inline-flex h-9 w-9 items-center justify-center rounded-md transition-colors hover:bg-accent disabled:opacity-50"
+              aria-label="Notifications"
+              disabled={!uiBaseUrl}
+              onFocus={warmPlatformOverlays}
+              onClick={() => openPlatformOverlay("notifications")}
+              onPointerEnter={warmPlatformOverlays}
+            >
+              <Bell className="h-4 w-4" />
+              {unreadCount > 0 && (
+                <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-0.5 text-[9px] font-bold text-white">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              )}
             </button>
-          </DropdownMenuTrigger>
-          {/* E4 (D14-revised) — the same toned-down account panel mirrored from the UI:
-              email, big avatar (no pencil-edit), greeting, grouped Timeline/Settings/Theme, Sign out.
-              No "Manage your account" pill and no Privacy · About footer. */}
-          <DropdownMenuContent
-            align="end"
-            sideOffset={8}
-            className="w-[340px] rounded-3xl p-0 overflow-hidden border bg-muted"
-          >
+          )}
+
+          {hasUserContext && uiBaseUrl && (
+            <>
+              <PlatformOverlayFrame
+                kind="drawer"
+                active={platformOverlay === "drawer"}
+                preload={prewarmOverlays}
+                uiBaseUrl={uiBaseUrl}
+                uiBaseOrigin={uiBaseOrigin}
+                mode={embedMode}
+                isAdmin={headerIsAdmin}
+              />
+              <PlatformOverlayFrame
+                kind="launcher"
+                active={platformOverlay === "launcher"}
+                preload={prewarmOverlays}
+                uiBaseUrl={uiBaseUrl}
+                uiBaseOrigin={uiBaseOrigin}
+                mode={embedMode}
+                isAdmin={headerIsAdmin}
+              />
+              <PlatformOverlayFrame
+                kind="notifications"
+                active={platformOverlay === "notifications"}
+                preload={prewarmOverlays}
+                uiBaseUrl={uiBaseUrl}
+                uiBaseOrigin={uiBaseOrigin}
+                mode={embedMode}
+                isAdmin={headerIsAdmin}
+              />
+            </>
+          )}
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="inline-flex h-9 w-9 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent">
+                <Avatar className="size-7">
+                  {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
+                  <AvatarFallback className="text-xs">{initials(displayName)}</AvatarFallback>
+                </Avatar>
+              </button>
+            </DropdownMenuTrigger>
+            {/* E4 (D14-revised) — the same toned-down account panel mirrored from the UI:
+                email, big avatar (no pencil-edit), greeting, grouped Timeline/Settings/Theme, Sign out.
+                No "Manage your account" pill and no Privacy · About footer. */}
+            <DropdownMenuContent
+              align="end"
+              sideOffset={8}
+              className="w-[340px] rounded-3xl p-0 overflow-hidden border bg-muted"
+            >
             {/* Email, centered */}
             <p className="pt-4 pb-3 text-center text-xs text-muted-foreground truncate px-6">{email}</p>
 
@@ -536,9 +539,48 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
                 Sign out
               </button>
             </div>
-          </DropdownMenuContent>
-        </DropdownMenu>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </header>
+
+      <div className="ye-mobile-shell-only fixed inset-x-0 bottom-0 z-50 items-center gap-2 border-t border-border/60 bg-background/95 px-2 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-xl">
+        <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          <Link
+            href="/settings"
+            className="inline-flex h-12 min-w-12 items-center justify-center gap-2 rounded-2xl px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title="Settings"
+          >
+            <Settings className="size-4" />
+            <span className="max-[420px]:hidden">Settings</span>
+          </Link>
+          {hasUserContext && (
+            <Link
+              href="/market"
+              className="inline-flex h-12 min-w-12 items-center justify-center gap-2 rounded-2xl px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              title="Market"
+            >
+              <Package className="size-4" />
+              <span className="max-[420px]:hidden">Market</span>
+            </Link>
+          )}
+        </nav>
+        <MobileAccountSheet
+          displayName={displayName}
+          email={email}
+          isAdmin={headerIsAdmin}
+          hasUserContext={hasUserContext}
+          avatarUrl={avatarUrl}
+          unreadCount={unreadCount}
+          uiBaseUrl={uiBaseUrl}
+          uiBaseOrigin={uiBaseOrigin}
+          themeMode={themeMode}
+          embedMode={embedMode}
+          onThemeChange={applyTheme}
+          onLogout={logout}
+        />
       </div>
-    </header>
+      <div className="ye-mobile-shell-spacer" aria-hidden="true" />
+    </>
   );
 }
