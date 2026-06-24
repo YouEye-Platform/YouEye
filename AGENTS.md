@@ -1,3 +1,22 @@
+## cp-v0.4.68 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Shared storage groups + honour read_only. External Apps loop, unit `shared-storage-groups`.
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — `VolumeSchema` +`storageGroup` (regex `[a-z0-9-]+`). A group volume mounts the shared `/var/lib/youeye/storage-groups/<group>` dir (per-app `host` ignored).
+- `control-panel/src/lib/market/engine.ts` — `STORAGE_GROUPS_ROOT`; resolve `storageGroup` → shared host path; carry `read_only` into the OCI manifest volume map (was dropped).
+- `control-panel/src/lib/infrastructure/types.ts` — `VolumeMapping` +`readOnly`.
+- `control-panel/src/lib/infrastructure/oci-deployer.ts` — disk device `readonly: 'true'` when `read_only`. Host dir stays `chmod 0777` so the group writer can write; only that app's mount is read-only (previously 0777 made every mount writable, ignoring read_only).
+- `control-panel/package.json` — `0.4.67 → 0.4.68`.
+
+### Test Results
+- CP typecheck clean; Zod parse/resolution check (storageGroup+read_only parse, traversal rejected, resolves to shared path). Deployed `cp-v0.4.68`; no regression (no app uses storage groups yet). Sharing + read-only are standard Incus `source`/`readonly` device semantics; E2E "two apps share a downloads group" lands with the *arr manifests + bundle.
+
+### Notes for Iris
+- CP-only, additive/backward-compatible. Storage groups live under `/var/lib/youeye/storage-groups/<group>` — one filesystem, hardlink-compatible (for the *arr downloads use case).
+
 ## cp-v0.4.67 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc

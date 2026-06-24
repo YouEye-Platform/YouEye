@@ -156,6 +156,9 @@ export async function deployOCIContainer(
       source: vol.host,
       path: vol.container,
       shift: 'true',
+      // Honour read_only: the shared host dir stays writable (so a writer in a storage
+      // group can write), but this app's MOUNT is read-only.
+      ...(vol.readOnly ? { readonly: 'true' } : {}),
     };
   }
 

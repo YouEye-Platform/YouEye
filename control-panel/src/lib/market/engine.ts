@@ -202,6 +202,9 @@ function getSecretsPath(appId: string): string {
 
 const LEGACY_IDENTITY_PROVIDER_INTEGRATION = 'youeye-id';
 
+// Shared storage groups live under one root so members share a filesystem (hardlink-safe).
+const STORAGE_GROUPS_ROOT = '/var/lib/youeye/storage-groups';
+
 function hasLegacySSOConfigureIntegration(manifest: AppManifest): boolean {
   const setupMethod = manifest.sso?.setup?.method;
   return (
@@ -570,6 +573,7 @@ function buildOCIManifest(
   const volumes = spec.volumes.map((v) => ({
     host: v.host,
     container: v.container,
+    readOnly: v.read_only,
   }));
 
   return {
@@ -813,10 +817,14 @@ export async function installApp(
     ? resolveEnvMapping(manifest.env_mapping, ctx)
     : {};
 
-  // Resolve volume host paths in the context
+  // Resolve volume host paths in the context. A volume in a `storageGroup` mounts a shared
+  // host dir (identical for every app in the group) so members share files on one
+  // filesystem (hardlink-compatible); otherwise it resolves the per-app host path.
   for (const containerSpec of manifest.containers) {
     for (const vol of containerSpec.volumes) {
-      vol.host = resolveVariables(vol.host, ctx);
+      vol.host = vol.storageGroup
+        ? `${STORAGE_GROUPS_ROOT}/${vol.storageGroup}`
+        : resolveVariables(vol.host, ctx);
     }
   }
 

@@ -64,6 +64,11 @@ export const VolumeSchema = z.object({
   type: z.enum(['config', 'data', 'media', 'cache']).default('data'),
   containers: z.array(z.string()).optional(),
   read_only: z.boolean().default(false),
+  // Shared storage group — apps that declare the same `storageGroup` mount the SAME host
+  // dir (/var/lib/youeye/storage-groups/<group>), so they share files on one filesystem
+  // (hardlink-compatible, e.g. a `downloads` group for the *arr stack). When set, the
+  // per-app `host` above is ignored. Regex-restricted to block path traversal.
+  storageGroup: z.string().regex(/^[a-z0-9-]+$/, 'storageGroup must be lowercase alphanumeric with dashes').optional(),
 });
 
 // ─── Post-Deploy Step ─────────────────────────────────────

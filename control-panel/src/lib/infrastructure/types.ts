@@ -35,6 +35,8 @@ export interface PortMapping {
 export interface VolumeMapping {
   host: string;
   container: string;
+  /** Mount read-only (Incus disk `readonly`) — honoured even though the shared host dir is writable. */
+  readOnly?: boolean;
 }
 
 /** LXD container spec — full OS containers (Debian) with manual app setup */
