@@ -11,7 +11,8 @@
 - `control-panel/src/app/embed/app-network/[appId]/client.tsx` — `Suggestion` +`scope`; renders a Server-wide / Per-user chip per pending connection.
 
 ### Test Results
-- CP typecheck clean. Live on byka.wtf: install consumer then provider → suggestion appears in the consumer's Connections panel with the scope chip + a bell notification fires. Pairs: Jellyseerr↔Sonarr (service), Search↔SearXNG (user).
+- CP typecheck clean; `cp-v0.4.69` deployed to bykapc. **Live reverse-scan (user scope):** installing Whoogle flipped the pending `bridge-search-whoogle` suggestion to `targetInstalled:true` + added `scope:user` (suggestions.json), and fired the bell notification "New app connection available — Search → Whoogle". `fetchManifest` fallback for native Search worked. Service scope = same code path (bundles E2E).
+- **Surfacing gap (follow-up):** the per-app Settings→Network tab renders a placeholder, not the `AppNetworkClient` embed, so the scope chip is code-complete but not yet visible live. Separate UI/embed-surfacing task.
 
 ### Notes for Iris
 - CP-only release `cp-v0.4.69`. Backward compatible: `InstallMetadata.wants` is optional; apps installed before this change fall back to a cached manifest fetch in the reverse-scan. Deferred (surfaced): true per-user *push* fan-out — UI `GET /api/v1/users` only supports `role=admin`; owner-notify + always-on Connections count cover discovery for now.
