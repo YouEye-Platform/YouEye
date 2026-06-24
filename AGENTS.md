@@ -1,3 +1,22 @@
+## cp-v0.4.70 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Bundles slice 1 — bundle data model + Market display strip. External Apps loop, unit `bundles` (slice 1 of 2).
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — `BundleManifestSchema` + `BundleConnectionSchema` + `BundleCatalogEntrySchema`; `CatalogSchema.bundles` (`.default([])`, backward compatible).
+- `control-panel/src/lib/market/parser.ts` — `parseBundle()`. `.../types.ts` — `MarketBundle`.
+- `control-panel/src/lib/market/catalog.ts` — `fetchBundles()` (loads each `bundle.yaml` from catalog `bundles:` entries; dedup by id; bad bundle logged + skipped, never sinks the catalog).
+- `control-panel/src/app/api/market/catalog/route.ts` — returns `bundles`.
+- `control-panel/src/app/market/page.tsx` — "Bundles" strip (cards: icon + name + setupSummary + member app chips resolved from loaded apps). Members still shown in the normal browse.
+
+### Test Results
+- CP typecheck clean. Bundle + catalog YAML validate against the real Zod schema. Live on byka.wtf: Market home renders the Bundles strip with both bundle cards + member chips.
+
+### Notes for Iris
+- CP-only release `cp-v0.4.70`. Pairs with YE-AppMarket `v0.4.8` (the two bundle definitions). This slice is the data model + display only — the one-click install-and-wire **engine** (install members in order, ensure storage groups, auto-approve connections, re-wire existing) is the next slice. Bundle cards are display-only until then.
+
 ## cp-v0.4.69 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc

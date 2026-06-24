@@ -653,6 +653,41 @@ export const CurationSchema = z.object({
   collections: z.array(CollectionSchema).default([]),
 });
 
+// Bundles — curated, install-and-wire recipes. A bundle is NOT a container/app (no
+// subdomain); it installs a set of member apps in order and arrives pre-wired (shared
+// storage groups + auto-approved service-scoped connections). The full definition lives
+// in `bundles/<id>/bundle.yaml`, referenced by id+file from the catalog `bundles:` list.
+export const BundleConnectionSchema = z.object({
+  from: z.string().min(1), // consumer app id
+  to: z.string().min(1),   // provider app id
+  scope: z.enum(['user', 'service']).optional().default('service'),
+});
+
+export const BundleManifestSchema = z.object({
+  apiVersion: z.literal('v1'),
+  kind: z.literal('bundle'),
+  id: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().min(1),
+  /** Lucide icon name for the bundle card. */
+  icon: z.string().optional(),
+  category: z.string().optional(),
+  /** Plain-language "what this sets up", shown on the bundle card. */
+  setupSummary: z.string().optional(),
+  /** Ordered app ids = install/dependency order (providers before consumers). */
+  members: z.array(z.string().min(1)).min(1),
+  /** App→app connections to auto-approve after install (install-and-wire engine). */
+  connections: z.array(BundleConnectionSchema).default([]),
+  /** Shared storage groups the bundle relies on (members' volumes mount them). */
+  storageGroups: z.array(z.string()).default([]),
+});
+
+export const BundleCatalogEntrySchema = z.object({
+  id: z.string().min(1),
+  file: z.string().min(1),
+  latestVersion: z.string().optional(),
+});
+
 export const CatalogSchema = z.object({
   apiVersion: z.literal('v1'),
   kind: z.literal('catalog'),
@@ -662,4 +697,5 @@ export const CatalogSchema = z.object({
   updatePlans: z.array(UpdatePlanCatalogEntrySchema).default([]),
   categories: z.array(CategorySchema).default([]),
   curation: CurationSchema.optional(),
+  bundles: z.array(BundleCatalogEntrySchema).default([]),
 });

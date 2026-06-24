@@ -10,8 +10,8 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
-import { parseCatalog, parseIntegrationManifest, parseManifest, parseSystemManifest, parseUpdatePlan } from './parser';
-import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp, MarketCategory, MarketCuration, MigrationSpec, SystemAppManifest, SystemCatalogEntry, UpdatePlanCatalogEntry } from './types';
+import { parseBundle, parseCatalog, parseIntegrationManifest, parseManifest, parseSystemManifest, parseUpdatePlan } from './parser';
+import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp, MarketBundle, MarketCategory, MarketCuration, MigrationSpec, SystemAppManifest, SystemCatalogEntry, UpdatePlanCatalogEntry } from './types';
 import { settingsService } from '@/lib/settings';
 import { buildMarketRawURL, getMarketSource, getMarketSources, isGitHubMarketSource, type MarketSource } from './source';
 
@@ -740,6 +740,38 @@ export async function fetchCuration(): Promise<MarketCuration | null> {
     }
   }
   return null;
+}
+
+/**
+ * Fetch the full bundle definitions across enabled Market sources. Reads each source's
+ * catalog `bundles:` entries ({id, file}) and loads + validates the referenced
+ * `bundles/<id>/bundle.yaml`. Deduped by bundle id in source-priority order. A bundle that
+ * fails to load is logged and skipped (it never breaks the rest of the catalog response).
+ */
+export async function fetchBundles(): Promise<MarketBundle[]> {
+  const sources = await getMarketSources();
+  const branch = await getEffectiveBranch();
+  const out: MarketBundle[] = [];
+  const seen = new Set<string>();
+  for (const source of sources) {
+    let catalog: Catalog;
+    try {
+      catalog = await fetchCatalog(source);
+    } catch {
+      continue; // a bad source must not sink bundles from the others
+    }
+    for (const entry of catalog.bundles ?? []) {
+      if (seen.has(entry.id)) continue;
+      try {
+        const yamlText = await fetchFile(entry.file, branch, source);
+        out.push(parseBundle(yamlText));
+        seen.add(entry.id);
+      } catch (err) {
+        console.error(`[catalog] Failed to load bundle "${entry.id}" (${entry.file}):`, err);
+      }
+    }
+  }
+  return out;
 }
 
 export async function fetchAvailableSystemApps(): Promise<MarketApp[]> {

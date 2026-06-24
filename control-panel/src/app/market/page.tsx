@@ -15,7 +15,7 @@ import {
   Sparkles,
   Store,
 } from 'lucide-react';
-import type { MarketApp, AppStatusInfo, MarketCategory, MarketCuration } from '@/lib/market/types';
+import type { MarketApp, AppStatusInfo, MarketCategory, MarketCuration, MarketBundle } from '@/lib/market/types';
 
 /* ─────────────────────────── helpers ─────────────────────────── */
 
@@ -76,6 +76,7 @@ export default function MarketPage() {
   const [apps, setApps] = useState<MarketApp[]>([]);
   const [categoryDefs, setCategoryDefs] = useState<MarketCategory[]>([]);
   const [curation, setCuration] = useState<MarketCuration | null>(null);
+  const [bundles, setBundles] = useState<MarketBundle[]>([]);
   const [statuses, setStatuses] = useState<Record<string, AppStatusInfo>>({});
   const [sourceCount, setSourceCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -92,6 +93,7 @@ export default function MarketPage() {
       setApps(data.apps || []);
       setCategoryDefs(Array.isArray(data.categories) ? data.categories : []);
       setCuration(data.curation ?? null);
+      setBundles(Array.isArray(data.bundles) ? data.bundles : []);
       if (Array.isArray(data.sources)) {
         setSourceCount(data.sources.filter((s: { enabled?: boolean }) => s.enabled !== false).length || data.sources.length);
       }
@@ -206,6 +208,12 @@ export default function MarketPage() {
   const collectionStrips = (curation?.collections ?? [])
     .map((c) => ({ id: c.id, label: c.label, apps: resolveIds(c.apps) }))
     .filter((c) => c.apps.length > 0);
+
+  // Bundles — curated install-and-wire recipes. Cards resolve their member ids to the
+  // already-loaded apps for icons/names. Members still appear in the normal category browse.
+  const bundleCards = bundles
+    .map((b) => ({ ...b, memberApps: resolveIds(b.members) }))
+    .filter((b) => b.memberApps.length > 0);
 
   const featured = spotlightApps.find((a) => !isInstalled(a)) || spotlightApps[0] || realApps[0];
 
@@ -327,6 +335,45 @@ export default function MarketPage() {
                 <span className="text-[11.5px] text-muted-foreground">{catLabel(app.category)}</span>
               </Link>
             ))}
+          </div>
+        </section>
+      )}
+
+      {/* Bundles — curated install-and-wire recipes (data-driven; All apps, unfiltered) */}
+      {showingStrips && bundleCards.length > 0 && (
+        <section className="space-y-3">
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-[17px] font-bold tracking-tight">Bundles</h2>
+            <span className="text-[12.5px] text-muted-foreground">Curated stacks that install and wire together</span>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {bundleCards.map((b) => {
+              const BIcon = lucideByName(b.icon || 'package');
+              return (
+                <div key={b.id} className="flex flex-col gap-3 rounded-2xl border bg-card p-5">
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] bg-primary/10 text-primary">
+                      <BIcon className="h-5 w-5" />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-[15px] font-bold">{b.name}</div>
+                      <div className="text-[12.5px] text-muted-foreground">{b.setupSummary || b.description}</div>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {b.memberApps.map((app) => (
+                      <span
+                        key={`${b.id}-${app.id}`}
+                        className="inline-flex items-center gap-1.5 rounded-full border bg-background px-2.5 py-1 text-[12px]"
+                      >
+                        <MarketIcon app={app} size={18} tile={catTile(app.category)} />
+                        {app.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </section>
       )}
