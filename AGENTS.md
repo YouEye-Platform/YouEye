@@ -1,3 +1,20 @@
+## cp-v0.4.64 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Unify native/external Market presentation — remove the native/external badges. External Apps loop, unit `unify-native-external`.
+
+### Changes
+- `control-panel/src/app/market/[appId]/page.tsx` — removed the per-app "Native"/"External" title badge; only the Integration item-kind keeps a badge.
+- `control-panel/src/app/market/page.tsx` — removed the (now-dead) "Native" badge from category-grid cards.
+- `control-panel/package.json` — `0.4.63 → 0.4.64`.
+
+### Test Results
+- CP typecheck clean. Deployed `cp-v0.4.64`; browser-tested the Market on byka.wtf — app detail pages show no native/external badge (Integration badge intact); one unified category-grouped grid + curated spotlight strip.
+
+### Notes for Iris
+- CP-only, UI-only. The Market is now one unified catalog with no native/external labels (D8 spotlight strip kept). `integration === 'native'` remains only as the transitional spotlight fallback + detail developer label — retired with the manifest field in the Phase 4 restructure.
+
 ## cp-v0.4.63 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc

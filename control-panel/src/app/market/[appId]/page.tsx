@@ -466,12 +466,10 @@ export default function AppDetailPage() {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-[28px] font-bold tracking-tight text-foreground">{app.name}</h1>
-            {isIntegration ? (
+            {/* Unified market: apps are not labelled native vs external. Only the
+                distinct Integration item-kind keeps a badge. */}
+            {isIntegration && (
               <Badge variant="secondary" className="gap-1"><Plug className="h-3 w-3" /> Integration</Badge>
-            ) : app.integration === 'native' ? (
-              <Badge variant="secondary" className="gap-1 bg-primary/10 text-primary"><Shield className="h-3 w-3" /> Native</Badge>
-            ) : (
-              <Badge variant="secondary" className="gap-1"><Globe className="h-3 w-3" /> External</Badge>
             )}
           </div>
           <p className="mt-1 text-[15px] text-muted-foreground">{app.description}</p>

@@ -403,9 +403,6 @@ export default function MarketPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-sm font-semibold">
                       <span className="truncate">{app.name}</span>
-                      {app.integration === 'native' && (
-                        <span className="rounded-full bg-primary/10 px-1.5 py-px text-[10px] font-medium text-primary">Native</span>
-                      )}
                     </div>
                     <div className="truncate text-[12.5px] text-muted-foreground">{app.description || app.sourceName || '—'}</div>
                   </div>
