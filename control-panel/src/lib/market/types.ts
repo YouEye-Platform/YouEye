@@ -31,6 +31,7 @@ import type {
   HealthCheckSchema,
   CatalogSchema,
   CategorySchema,
+  CurationSchema,
   CatalogEntrySchema,
   SystemCatalogEntrySchema,
   IntegrationCatalogEntrySchema,
@@ -79,6 +80,7 @@ export type MigrationStep = z.infer<typeof MigrationStepSchema>;
 export type HealthCheckSpec = z.infer<typeof HealthCheckSchema>;
 export type Catalog = z.infer<typeof CatalogSchema>;
 export type MarketCategory = z.infer<typeof CategorySchema>;
+export type MarketCuration = z.infer<typeof CurationSchema>;
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
 export type SystemCatalogEntry = z.infer<typeof SystemCatalogEntrySchema>;
 export type IntegrationCatalogEntry = z.infer<typeof IntegrationCatalogEntrySchema>;

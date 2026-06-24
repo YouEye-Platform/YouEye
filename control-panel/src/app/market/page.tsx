@@ -15,7 +15,7 @@ import {
   Sparkles,
   Store,
 } from 'lucide-react';
-import type { MarketApp, AppStatusInfo, MarketCategory } from '@/lib/market/types';
+import type { MarketApp, AppStatusInfo, MarketCategory, MarketCuration } from '@/lib/market/types';
 
 /* ─────────────────────────── helpers ─────────────────────────── */
 
@@ -75,6 +75,7 @@ type Section = 'apps' | 'installed' | 'updates' | 'integrations';
 export default function MarketPage() {
   const [apps, setApps] = useState<MarketApp[]>([]);
   const [categoryDefs, setCategoryDefs] = useState<MarketCategory[]>([]);
+  const [curation, setCuration] = useState<MarketCuration | null>(null);
   const [statuses, setStatuses] = useState<Record<string, AppStatusInfo>>({});
   const [sourceCount, setSourceCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -90,6 +91,7 @@ export default function MarketPage() {
       const data = await res.json();
       setApps(data.apps || []);
       setCategoryDefs(Array.isArray(data.categories) ? data.categories : []);
+      setCuration(data.curation ?? null);
       if (Array.isArray(data.sources)) {
         setSourceCount(data.sources.filter((s: { enabled?: boolean }) => s.enabled !== false).length || data.sources.length);
       }
@@ -171,10 +173,6 @@ export default function MarketPage() {
   const usedCategories = Array.from(new Set(realApps.map((a) => a.category).filter(Boolean) as string[]))
     .sort((a, b) => catOrder(a) - catOrder(b) || a.localeCompare(b));
 
-  // Native apps highlighted in the "Built for <server>" row.
-  const nativeApps = realApps.filter((a) => a.integration === 'native');
-  const featured = nativeApps.find((a) => !isInstalled(a)) || nativeApps[0] || realApps[0];
-
   // Dedupe by catalog identity so the same app from multiple sources collapses.
   const dedupe = (list: MarketApp[]) => {
     const seen = new Set<string>();
@@ -186,6 +184,38 @@ export default function MarketPage() {
     });
   };
 
+  // Resolve an ordered list of app ids → apps (existing real apps only, deduped, order kept).
+  const resolveIds = (ids?: string[]) => {
+    const out: MarketApp[] = [];
+    for (const id of ids ?? []) {
+      const app = realApps.find((a) => a.id === id);
+      if (app && !out.some((o) => o.id === app.id)) out.push(app);
+    }
+    return out;
+  };
+
+  // Native apps — fallback for the spotlight when the catalog declares no curation.
+  const nativeApps = realApps.filter((a) => a.integration === 'native');
+
+  // Spotlight ("Built for <server>" strip) + collections come from catalog curation (data),
+  // with a graceful fallback to native apps when no curation is declared.
+  const spotlightApps = curation?.spotlight?.apps?.length
+    ? resolveIds(curation.spotlight.apps)
+    : dedupe(nativeApps);
+  const spotlightTitle = curation?.spotlight?.title || 'Built for your server';
+  const collectionStrips = (curation?.collections ?? [])
+    .map((c) => ({ id: c.id, label: c.label, apps: resolveIds(c.apps) }))
+    .filter((c) => c.apps.length > 0);
+
+  const featured = spotlightApps.find((a) => !isInstalled(a)) || spotlightApps[0] || realApps[0];
+
+  // App ids surfaced in a curated strip — excluded from the generic category browse below
+  // (on the unfiltered All-apps view, where the strips are visible) so they aren't shown twice.
+  const curatedIds = new Set<string>([
+    ...spotlightApps.map((a) => a.id),
+    ...collectionStrips.flatMap((c) => c.apps.map((a) => a.id)),
+  ]);
+
   const sectionApps = (() => {
     if (section === 'installed') return dedupe(realApps.filter(isInstalled));
     if (section === 'updates') return dedupe(realApps.filter(hasUpdate));
@@ -193,9 +223,11 @@ export default function MarketPage() {
     return dedupe(realApps);
   })();
 
-  const filteredSectionApps = categoryFilter === 'all'
+  const showingStrips = section === 'apps' && categoryFilter === 'all';
+  const filteredSectionApps = (categoryFilter === 'all'
     ? sectionApps
-    : sectionApps.filter((a) => (a.category || 'other') === categoryFilter);
+    : sectionApps.filter((a) => (a.category || 'other') === categoryFilter)
+  ).filter((a) => !(showingStrips && curatedIds.has(a.id)));
 
   // Group the browse list by category.
   const byCategory: Record<string, MarketApp[]> = {};
@@ -279,12 +311,12 @@ export default function MarketPage() {
         </Link>
       </nav>
 
-      {/* Built for your server — native big-tiles (only on All apps, unfiltered) */}
-      {section === 'apps' && categoryFilter === 'all' && nativeApps.length > 0 && (
+      {/* Spotlight — "Built for <server>" big-tiles (data-driven curation; All apps, unfiltered) */}
+      {showingStrips && spotlightApps.length > 0 && (
         <section className="space-y-3">
-          <h2 className="text-[17px] font-bold tracking-tight">Built for your server</h2>
+          <h2 className="text-[17px] font-bold tracking-tight">{spotlightTitle}</h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            {dedupe(nativeApps).map((app) => (
+            {spotlightApps.map((app) => (
               <Link
                 key={app.id}
                 href={variantHref(app)}
@@ -298,6 +330,33 @@ export default function MarketPage() {
           </div>
         </section>
       )}
+
+      {/* Curated collections (data-driven; All apps, unfiltered) */}
+      {showingStrips && collectionStrips.map((coll) => (
+        <section key={coll.id} className="space-y-2">
+          <h2 className="text-[17px] font-bold tracking-tight">{coll.label}</h2>
+          <div className="grid gap-x-6 gap-y-1 rounded-xl border bg-card p-2 md:grid-cols-2 lg:grid-cols-3">
+            {coll.apps.map((app) => (
+              <Link
+                key={`${coll.id}-${app.id}`}
+                href={variantHref(app)}
+                className="flex items-center gap-3 rounded-xl px-2.5 py-2.5 transition-colors hover:bg-accent"
+              >
+                <MarketIcon app={app} size={44} tile={catTile(app.category)} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold">{app.name}</div>
+                  <div className="truncate text-[12.5px] text-muted-foreground">{app.description || app.sourceName || '—'}</div>
+                </div>
+                {hasUpdate(app) ? (
+                  <span className="text-[11px] font-medium text-primary">Update</span>
+                ) : (
+                  <StatusDot status={statusOf(app)} />
+                )}
+              </Link>
+            ))}
+          </div>
+        </section>
+      ))}
 
       {/* Featured banner */}
       {section === 'apps' && categoryFilter === 'all' && featured && (

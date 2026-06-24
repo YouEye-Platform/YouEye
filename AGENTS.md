@@ -1,3 +1,22 @@
+## cp-v0.4.63 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Data-driven Market curation — spotlight strip + collections from the catalog; fix native-apps-shown-twice. External Apps loop, unit `spotlight-curation`.
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — `CurationSchema` (`spotlight?: {title?,apps[]}` + `collections[]`) on `CatalogSchema.curation`; `types.ts` exports `MarketCuration`.
+- `control-panel/src/lib/market/catalog.ts` — `fetchCuration()` (first enabled source's curation).
+- `control-panel/src/app/api/market/catalog/route.ts` — returns `curation`.
+- `control-panel/src/app/market/page.tsx` — spotlight strip + collection rows render from curation data (was the `integration === 'native'` "first native app" heuristic); curated apps excluded from the generic category browse on the unfiltered All-apps view → no double-listing. Graceful native-apps fallback when no curation declared.
+- `control-panel/package.json` — `0.4.62 → 0.4.63`.
+
+### Test Results
+- CP typecheck clean. Pairs with YE-AppMarket `v0.4.4`. Deployed `cp-v0.4.63`; browser-tested the Market on byka.wtf — spotlight + collections render from data, native apps no longer shown twice.
+
+### Notes for Iris
+- CP + Market change. Backward-compatible (no curation → native fallback). Curating the home is a catalog change only.
+
 ## cp-v0.4.62 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc

@@ -612,6 +612,24 @@ export const CategorySchema = z.object({
   tile: z.object({ bg: z.string(), fg: z.string() }).optional(),
 });
 
+// Curation — editorial layout for the Market home, data-driven. `spotlight` is the
+// "Built for <server>" strip (ordered app ids); `collections` are extra labeled rows.
+// Apps listed here are shown in their curated strip instead of the generic category
+// browse, so they are not listed twice.
+export const SpotlightSchema = z.object({
+  title: z.string().optional(),
+  apps: z.array(z.string()).default([]),
+});
+export const CollectionSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  apps: z.array(z.string()).default([]),
+});
+export const CurationSchema = z.object({
+  spotlight: SpotlightSchema.optional(),
+  collections: z.array(CollectionSchema).default([]),
+});
+
 export const CatalogSchema = z.object({
   apiVersion: z.literal('v1'),
   kind: z.literal('catalog'),
@@ -620,4 +638,5 @@ export const CatalogSchema = z.object({
   integrations: z.array(IntegrationCatalogEntrySchema).default([]),
   updatePlans: z.array(UpdatePlanCatalogEntrySchema).default([]),
   categories: z.array(CategorySchema).default([]),
+  curation: CurationSchema.optional(),
 });

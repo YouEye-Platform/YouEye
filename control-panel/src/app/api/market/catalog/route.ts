@@ -6,18 +6,19 @@
  */
 
 import { NextResponse } from 'next/server';
-import { fetchAvailableApps, fetchAvailableSystemApps, fetchCategories } from '@/lib/market/catalog';
+import { fetchAvailableApps, fetchAvailableSystemApps, fetchCategories, fetchCuration } from '@/lib/market/catalog';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const [apps, systemApps, categories] = await Promise.all([
+    const [apps, systemApps, categories, curation] = await Promise.all([
       fetchAvailableApps(),
       fetchAvailableSystemApps(),
       fetchCategories(),
+      fetchCuration(),
     ]);
-    return NextResponse.json({ apps, systemApps, categories });
+    return NextResponse.json({ apps, systemApps, categories, curation });
   } catch (err) {
     return NextResponse.json(
       { error: `Failed to fetch catalog: ${err}` },

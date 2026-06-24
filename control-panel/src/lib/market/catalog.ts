@@ -11,7 +11,7 @@ import { existsSync } from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
 import { parseCatalog, parseIntegrationManifest, parseManifest, parseSystemManifest, parseUpdatePlan } from './parser';
-import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp, MarketCategory, MigrationSpec, SystemAppManifest, SystemCatalogEntry, UpdatePlanCatalogEntry } from './types';
+import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp, MarketCategory, MarketCuration, MigrationSpec, SystemAppManifest, SystemCatalogEntry, UpdatePlanCatalogEntry } from './types';
 import { settingsService } from '@/lib/settings';
 import { buildMarketRawURL, getMarketSource, getMarketSources, isGitHubMarketSource, type MarketSource } from './source';
 
@@ -717,6 +717,22 @@ export async function fetchCategories(): Promise<MarketCategory[]> {
   return [...byId.values()].sort(
     (a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER),
   );
+}
+
+/**
+ * Fetch the Market curation (spotlight strip + collections) for the Market home. Curation
+ * is an editorial layout owned by the primary market, so the first enabled source (priority
+ * order) that declares a `curation:` section wins. Returns null if none is declared.
+ */
+export async function fetchCuration(): Promise<MarketCuration | null> {
+  const sources = await getMarketSources();
+  const results = await Promise.allSettled(sources.map((source) => fetchCatalog(source)));
+  for (const result of results) {
+    if (result.status === 'fulfilled' && result.value.curation) {
+      return result.value.curation;
+    }
+  }
+  return null;
 }
 
 export async function fetchAvailableSystemApps(): Promise<MarketApp[]> {
