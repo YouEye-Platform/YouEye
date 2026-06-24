@@ -146,10 +146,10 @@ Each component is versioned and released independently.
 | Installer | 0.1.0 (`installer-v0.1.0`) |
 | Control Panel | 0.4.57 (`cp-v0.4.57`) |
 | UI | 0.4.40 (`ui-v0.4.40`) |
-| Canvas | 0.3.11 (`v0.3.11`) |
+| Canvas | 0.3.12 (`v0.3.12`) |
 | Wiki | 0.4.15 (`v0.4.15`) |
-| Search | 0.4.16 (`v0.4.16`) |
-| Notes | 0.4.17 (`v0.4.17`) |
+| Search | 0.4.17 (`v0.4.17`) |
+| Notes | 0.4.18 (`v0.4.18`) |
 | Cinema | 0.4.15 (`v0.4.15`) |
 | Weather | 0.4.14 (`v0.4.14`) |
 | Translate | 0.4.15 (`v0.4.15`) |

@@ -1,3 +1,20 @@
+## canvas-v0.3.12 / search-v0.4.17 / notes-v0.4.18 metadata — artem — 2026-06-24
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Update current-version metadata for the Plan 4 Canvas sync-tool correction.
+
+### Changes
+- `README.md` — updated the current-version matrix for Canvas `0.3.12`, Search `0.4.17`, and Notes `0.4.18`.
+
+### Test Results
+- Metadata-only change; no CP/UI build or release needed.
+
+### Notes for Iris
+- Source releases live in YouEye-Canvas, YE-App-Search, and YE-App-Notes. No YouEye monorepo component tag is created for this metadata-only update.
+
+---
+
 ## cp-v0.4.57 / ui-v0.4.40 — artem — 2026-06-24
 **Branch:** main
 **VM:** potempc
