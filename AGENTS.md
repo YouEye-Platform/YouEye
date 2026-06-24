@@ -1,3 +1,19 @@
+## cp-v0.4.60 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix half-applied migration-gate hazard in the app updater. External Apps loop, unit `bug-sql-migration-ordering`.
+
+### Changes
+- `control-panel/src/lib/market/updater.ts` — `recordAppliedMigration` → `stageAppliedMigration`, now in-memory only (removed the per-step `saveInstallMetadata`). Migration gates were persisted to `appliedMigrations[]` the moment their steps ran — before the container rebuild — so a failed rebuild rolled back to the old image but left the gate marked done; already-applied gates are skipped on retry → old binary + new schema → crash-loop. Gates now persist via the single post-rebuild `saveInstallMetadata` (after rebuild + health + version succeed); the rollback path saves nothing → a failed update leaves no half-applied gate.
+- `control-panel/package.json` — `0.4.59 → 0.4.60`.
+
+### Test Results
+- CP typecheck clean. `cp-v0.4.60` deployed via `spine update control` on bykapc; CP healthy, `market/updates` 200, fix present in bundle. Failure semantics verified by code structure (single post-rebuild persist in the `try`; no metadata save on the catch/rollback path — same catch path validated live in `bug-oci-rollback`).
+
+### Notes for Iris
+- CP-only, no migration. Pairs with the `bug-oci-rollback` (0.4.59) rollback fix: rollback re-images correctly AND no longer leaves a stale gate.
+
 ## cp-v0.4.59 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc

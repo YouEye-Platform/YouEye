@@ -152,10 +152,19 @@ async function runUpdateHooks(
 
 // ─── Migration Helpers ────────────────────────────────────
 
-async function recordAppliedMigration(
+// Stage an applied-migration gate IN MEMORY only. It is persisted later by the single
+// post-rebuild `saveInstallMetadata` (after the container rebuild + health check + version
+// bump all succeed). Persisting here — per migration step, before the rebuild — was a bug:
+// a migration runs its SQL, the gate gets marked applied, then the rebuild fails and the
+// container rolls back to the OLD image. That left "SQL migrated + gate done + old binary",
+// and because `findApplicableMigrations` skips already-applied gates the migration would
+// never re-run on retry → schema/binary mismatch + crash-loop. Staging in memory means a
+// failed update (which never reaches the final save) leaves NO half-applied gate, so the
+// gate re-runs on the next attempt.
+function stageAppliedMigration(
   installMeta: InstallMetadata,
   migration: MigrationWithSource,
-): Promise<void> {
+): void {
   if (!migration.idempotencyKey) return;
 
   const existing = installMeta.appliedMigrations ?? [];
@@ -171,7 +180,6 @@ async function recordAppliedMigration(
       source: migration.source,
     },
   ];
-  await saveInstallMetadata(installMeta);
 }
 
 /**
@@ -622,7 +630,7 @@ export async function updateMarketplaceApp(
           await executeMigrationStep(migrationStep, appId, containerSpecs.length, ctx);
           emit(onEvent, step, totalSteps, 'success', stepDesc);
         }
-        await recordAppliedMigration(installMeta, migration);
+        stageAppliedMigration(installMeta, migration);
       }
     }
 
