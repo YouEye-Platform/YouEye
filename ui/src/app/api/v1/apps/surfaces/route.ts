@@ -35,7 +35,6 @@ export async function GET() {
         refresh_interval: surface.refreshInterval,
         settings_schema: surface.settingsSchema,
         triggers: surface.triggers,
-        legacy_source: surface.legacySource,
       }))
     ),
   });

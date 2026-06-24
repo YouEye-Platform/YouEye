@@ -17,9 +17,8 @@ test('app settings render through <UnifiedEmbed kind="settings-panel">', () => {
 
 test('the hand-rolled iframe + legacy resize listener are gone (UnifiedEmbed owns the protocol)', () => {
   assert.doesNotMatch(detail, /<iframe/);
-  // the local youeye-app-settings-resize message listener was removed (the doc
-  // comment may still name it — UnifiedEmbed accepts it as legacy for one cycle)
   assert.doesNotMatch(detail, /addEventListener\("message"/);
+  assert.doesNotMatch(detail, /youeye-app-settings-resize|settings\?embed=true/);
 });
 
 test('a visible fallback is provided (never silent)', () => {
@@ -27,10 +26,9 @@ test('a visible fallback is provided (never silent)', () => {
   assert.match(detail, /failed to load/i);
 });
 
-test('UnifiedEmbed treats a resize as ready — legacy resize-only surfaces are not lost to the fallback', () => {
+test('UnifiedEmbed requires explicit ready and does not accept legacy resize-only surfaces', () => {
   const embed = read('src/components/embeds/unified-embed.tsx');
-  assert.match(embed, /treat it as ready/);                 // the resize-branch comment
-  // setReady(true) now appears in BOTH the ready branch and the resize branch
-  const count = (embed.match(/setReady\(true\)/g) || []).length;
-  assert.ok(count >= 2, `expected >=2 setReady(true), got ${count}`);
+  assert.doesNotMatch(embed, /treat it as ready|youeye-app-settings-resize|LEGACY_/);
+  assert.match(embed, /type === "youeye:ready"/);
+  assert.match(embed, /type === "youeye:resize"/);
 });

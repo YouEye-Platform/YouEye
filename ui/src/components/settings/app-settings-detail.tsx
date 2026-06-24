@@ -687,18 +687,13 @@ function AppSettingsTab({
   );
 }
 
-/* ── App Settings Embed ── Plan 1 E6: on the ONE <UnifiedEmbed kind="settings-panel">.
- * UnifiedEmbed owns origin-validation, lazy mount, the `youeye:resize` protocol
- * (legacy `youeye-app-settings-resize` accepted one cycle), and the timeout →
- * visible fallback (never silent). The app's settings render at the proven
- * `/settings?embed=true` page; the migration to a dedicated `/embed/settings`
- * surface (manifest `kind: settings-panel`) rides the native-app re-release batch
- * (see Plans/Archive/To Plan/e6-native-settings-panels.md), at which point the UI
- * prefers it. */
+/* ── App Settings Embed ── App-owned settings render as a declarable
+ * `settings-panel` surface at `/embed/settings` on the unified `youeye:*`
+ * protocol. */
 
 function AppSettingsEmbed({ subdomain }: { subdomain: string }) {
   const domain = typeof window !== "undefined" ? window.location.hostname : "";
-  const settingsUrl = `https://${subdomain}.${domain}/settings?embed=true`;
+  const settingsUrl = `https://${subdomain}.${domain}/embed/settings`;
 
   return (
     <UnifiedEmbed

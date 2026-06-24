@@ -478,27 +478,42 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
 
 function AppSettingsEmbed({ app }: { app: DrawerApp }) {
   const [iframeHeight, setIframeHeight] = useState(420);
+  const [ready, setReady] = useState(false);
   const settingsUrl = useMemo(() => {
     if (app.url) {
       try {
-        return `${new URL(app.url).origin}/settings?embed=true`;
+        return `${new URL(app.url).origin}/embed/settings`;
       } catch {}
     }
     if (app.subdomain && typeof window !== "undefined") {
-      return `${window.location.protocol}//${app.subdomain}.${window.location.hostname}/settings?embed=true`;
+      return `${window.location.protocol}//${app.subdomain}.${window.location.hostname}/embed/settings`;
     }
     return "";
   }, [app.subdomain, app.url]);
 
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
-      if (event.data?.type === "youeye-app-settings-resize" && typeof event.data.height === "number") {
+      let expectedOrigin = "";
+      try {
+        expectedOrigin = settingsUrl ? new URL(settingsUrl).origin : "";
+      } catch {
+        expectedOrigin = "";
+      }
+      if (expectedOrigin && event.origin !== expectedOrigin) return;
+
+      if (event.data?.type === "youeye:ready") {
+        setReady(true);
+        return;
+      }
+
+      if (event.data?.type === "youeye:resize" && typeof event.data.height === "number") {
+        setReady(true);
         setIframeHeight(Math.max(220, event.data.height));
       }
     }
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, []);
+  }, [settingsUrl]);
 
   if (!settingsUrl) {
     return <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">No app settings URL is available.</div>;
@@ -506,10 +521,16 @@ function AppSettingsEmbed({ app }: { app: DrawerApp }) {
 
   return (
     <div className="overflow-hidden rounded-lg border">
+      {!ready && (
+        <div className="flex h-56 items-center justify-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading app settings
+        </div>
+      )}
       <iframe
         src={settingsUrl}
         className="w-full border-0"
-        style={{ height: iframeHeight, minHeight: 220 }}
+        style={{ height: ready ? iframeHeight : 0, minHeight: ready ? 220 : 0 }}
         title={`${app.name} Settings`}
         allow="clipboard-write"
       />

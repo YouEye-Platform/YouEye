@@ -27,6 +27,7 @@ export interface AppManifest {
   /** Accent color for timeline cards, badges, etc. (hex, e.g. "#a855f7") */
   accent_color?: string;
   permissions?: string[];
+  surfaceSchemaVersion?: number;
   surfaces?: AppSurfaceDeclaration[];
   widgets?: AppWidgetDeclaration[];
   info_cards?: InfoCardDeclaration[];
@@ -40,7 +41,7 @@ export interface AppManifest {
 
 export interface AppSurfaceDeclaration {
   id: string;
-  kind: "widget" | "info-card" | "timeline-card" | "notification";
+  kind: "widget" | "info-card" | "timeline-card" | "notification" | "settings-panel";
   placement: "dashboard" | "timeline" | "notification-center" | "app-settings" | "app-detail";
   name?: string;
   description?: string;

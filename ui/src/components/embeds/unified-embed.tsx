@@ -5,18 +5,14 @@ import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 
 /**
  * UnifiedEmbed — Plan 1 Workstream E0: the ONE embed wrapper + protocol.
  *
- * Replaces the four divergent embed mechanisms (timeline-embed, notification-
- * surface-embed, app-widget, app-settings-detail). Every app surface — widgets,
- * info-cards, timeline-cards, notifications, settings-panels, launcher — renders
- * through this single component.
+ * Replaces the divergent app-surface embed mechanisms. Every app surface —
+ * widgets, info-cards, timeline-cards, notifications, and settings-panels —
+ * renders through this single component. Launcher remains UI-internal.
  *
  * Protocol (child -> parent postMessage), origin-validated against the app subdomain:
  *   { type: "youeye:ready" }
  *   { type: "youeye:resize", height }            // child debounces ~100ms
  *   { type: "youeye:action", action, data? }
- * Legacy message types (youeye-embed-ready/resize, youeye-card-ready,
- * youeye-app-settings-resize) are accepted for one release with a deprecation warning,
- * then removed.
  */
 
 export type EmbedKind =
@@ -24,8 +20,7 @@ export type EmbedKind =
   | "info-card"
   | "timeline-card"
   | "notification"
-  | "settings-panel"
-  | "launcher";
+  | "settings-panel";
 
 export interface UnifiedEmbedProps {
   /** Full embed URL on the app's own subdomain. Its origin is validated on every message. */
@@ -52,9 +47,6 @@ export interface UnifiedEmbedProps {
   className?: string;
   title?: string;
 }
-
-const LEGACY_READY = new Set(["youeye-embed-ready", "youeye-card-ready"]);
-const LEGACY_RESIZE = new Set(["youeye-embed-resize", "youeye-app-settings-resize"]);
 
 function buildSrc(url: string, theme?: string, mode?: "light" | "dark"): string {
   try {
@@ -140,7 +132,7 @@ export function UnifiedEmbed({
     return () => clearTimeout(t);
   }, [visible, ready, failed, timeout, onError]);
 
-  // The single message handler (new protocol + one-cycle legacy compat).
+  // The single message handler.
   useEffect(() => {
     if (!visible) return;
     const clampHeight = (h: number) => {
@@ -157,22 +149,11 @@ export function UnifiedEmbed({
       const type = (data as { type?: string }).type;
       if (!type) return;
 
-      if (type === "youeye:ready" || LEGACY_READY.has(type)) {
-        if (LEGACY_READY.has(type)) {
-          console.warn(`[UnifiedEmbed] legacy ready message "${type}" — migrate to "youeye:ready"`);
-        }
+      if (type === "youeye:ready") {
         markReady();
         return;
       }
-      if (type === "youeye:resize" || LEGACY_RESIZE.has(type)) {
-        if (LEGACY_RESIZE.has(type)) {
-          console.warn(`[UnifiedEmbed] legacy resize message "${type}" — migrate to "youeye:resize"`);
-        }
-        // A resize means the embed has mounted and is running — treat it as ready.
-        // Legacy surfaces (e.g. settings panels via `youeye-app-settings-resize`)
-        // only ever send resize, never an explicit ready; without this they would
-        // time out to the fallback even though they are alive.
-        markReady();
+      if (type === "youeye:resize") {
         const h = Number((data as { height?: number }).height);
         if (Number.isFinite(h) && h > 0) setHeight(clampHeight(h));
         return;
@@ -228,9 +209,6 @@ export function UnifiedEmbed({
           onError={() => {
             setFailed(true);
             onError?.("load-error");
-          }}
-          onLoad={() => {
-            if (kind === "widget") markReady();
           }}
           sandbox="allow-scripts allow-same-origin allow-forms"
           id={`embed-${reactId}`}

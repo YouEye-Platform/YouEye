@@ -299,7 +299,7 @@ export const AppSettingsSchema = z.object({
 
 export const SurfaceSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/, 'Surface id must be lowercase alphanumeric with dashes'),
-  kind: z.enum(['widget', 'info-card', 'timeline-card', 'notification']),
+  kind: z.enum(['widget', 'info-card', 'timeline-card', 'notification', 'settings-panel']),
   placement: z.enum(['dashboard', 'timeline', 'notification-center', 'app-settings', 'app-detail']),
   name: z.string().min(1).optional(),
   description: z.string().optional(),
@@ -513,6 +513,7 @@ export const AppManifestSchema = z
     settings: AppSettingsSchema,
     preferences: z.array(UserPreferenceFieldSchema).optional().default([]),
     launchPreferences: z.array(UserPreferenceFieldSchema).optional().default([]),
+    surfaceSchemaVersion: z.number().int().positive().optional().default(1),
     surfaces: z.array(SurfaceSchema).optional().default([]),
     provides: z.array(ProvidesSchema).optional().default([]),
     wants: z.array(WantSchema).optional().default([]),

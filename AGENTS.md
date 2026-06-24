@@ -1,3 +1,28 @@
+## cp-v0.4.55 / ui-v0.4.37 — artem — 2026-06-24
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Plan 4 Wave 3A — cut over to explicit modern app surfaces.
+
+### Changes
+- `control-panel/package.json`, `ui/package.json` — bumped CP to `0.4.55` and UI to `0.4.37` before building release artifacts.
+- `control-panel/src/lib/market/schema.ts` — accepted `surfaceSchemaVersion` plus explicit `settings-panel` surfaces.
+- `control-panel/src/components/settings-shell/apps-client.tsx` — app settings now embed `/embed/settings` and listen only to the modern `youeye:*` ready/resize protocol.
+- `ui/src/lib/surfaces/normalize.ts`, `ui/src/app/api/v1/apps/surfaces/route.ts` — normalized only explicit `manifest.surfaces[]`; no launcher or legacy projection.
+- `ui/src/components/embeds/unified-embed.tsx`, `ui/src/components/settings/app-settings-detail.tsx` — `UnifiedEmbed` owns `settings-panel` and rejects legacy app messages/resize-only readiness.
+- `control-panel/tests/settings-panel-surface-wave3a.spec.mjs`, `ui/tests/*wave3a*.mjs`, `ui/tests/unified-embed.spec.mjs`, `ui/tests/surfaces.spec.mjs` — added runnable coverage for the Wave 3A contract.
+- `README.md` — updated the current-version matrix for CP, UI, Canvas, and all six native apps.
+
+### Test Results
+- Focused Wave 3A suite passed: `node --test control-panel/tests/settings-panel-surface-wave3a.spec.mjs ui/tests/settings-panel-surface-wave3a.test.mjs ui/tests/settings-app-embed-e6.test.mjs ui/tests/notifications-e3.test.mjs ui/tests/timeline-embed.test.mjs ui/tests/unified-embed.spec.mjs ui/tests/surfaces.spec.mjs` (22/22).
+- CP typecheck passed: `pnpm --dir control-panel run typecheck`.
+- UI typecheck passed: `pnpm --dir ui exec tsc --noEmit --pretty false`.
+- CP and UI production builds passed; flat `standalone.tar` assets contain root `server.js` and package versions `0.4.55` / `0.4.37`.
+
+### Notes for Iris
+- This is the deliberate modern-contract cutover: existing installed apps keep the same containers, but updated app releases must provide `surfaceSchemaVersion: 1`, explicit `surfaces[]`, and `/embed/settings`.
+- Wave 3B remains for the host-side URL-derived info-card cleanup, overlay command namespace split, and widget default-size spawn.
+
 ## native-apps-v0.4.13 / canvas-v0.3.7 — artem — 2026-06-24
 **Branch:** main
 **VM:** potempc
