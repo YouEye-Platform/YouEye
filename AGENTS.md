@@ -1,3 +1,21 @@
+## cp-v0.4.71 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Bundles slice 2 — the install-and-wire engine + "Install bundle" button. External Apps loop, unit `bundles` (slice 2 of 3).
+
+### Changes
+- `control-panel/src/lib/market/bundle-installer.ts` (new) — `installBundle(bundle, onEvent, signal)`: installs missing members in order (skip installed; reuse `installApp`), then `approveConnection` per declared connection (createBridge + env mappings from source manifest + resolveBridgeMappings + activateBridge), re-wiring already-installed members. Idempotent; structured result.
+- `control-panel/src/lib/market/catalog.ts` — `fetchBundle(id)`.
+- `control-panel/src/app/api/market/bundles/[id]/install/route.ts` (new) — SSE POST (InstallEvents + final result). Admin-gated by middleware.
+- `control-panel/src/app/market/page.tsx` — "Install bundle" button per bundle card, streams SSE progress inline.
+
+### Test Results
+- CP typecheck clean. Live re-wire path proven on Private Search (both members installed → skips installs, wires search→searxng). Install-missing path = Media Automation acceptance (last slice).
+
+### Notes for Iris
+- CP-only release `cp-v0.4.71` (bundle definitions already in Market `v0.4.8`). The engine reuses existing primitives only (per-app install + bridge approve). Idempotent: re-running on a partially-installed bundle installs the missing members and re-wires connections without erroring.
+
 ## cp-v0.4.70 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc

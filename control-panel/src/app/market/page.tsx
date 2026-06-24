@@ -77,6 +77,8 @@ export default function MarketPage() {
   const [categoryDefs, setCategoryDefs] = useState<MarketCategory[]>([]);
   const [curation, setCuration] = useState<MarketCuration | null>(null);
   const [bundles, setBundles] = useState<MarketBundle[]>([]);
+  const [installingBundle, setInstallingBundle] = useState<string | null>(null);
+  const [bundleMsg, setBundleMsg] = useState<string>('');
   const [statuses, setStatuses] = useState<Record<string, AppStatusInfo>>({});
   const [sourceCount, setSourceCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -128,6 +130,43 @@ export default function MarketPage() {
       console.error('[Market] source count load failed', err);
     }
   }, []);
+
+  // Install + wire a bundle: POST and stream the SSE progress, showing the latest message.
+  const handleInstallBundle = useCallback(async (bundleId: string) => {
+    setInstallingBundle(bundleId);
+    setBundleMsg('Starting…');
+    try {
+      const res = await fetch(`/api/market/bundles/${bundleId}/install`, { method: 'POST' });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop() || '';
+        for (const part of parts) {
+          const line = part.replace(/^data: /, '').trim();
+          if (!line) continue;
+          try {
+            const evt = JSON.parse(line);
+            if (evt.message && evt.message !== 'done') setBundleMsg(evt.message);
+            if (evt.status === 'error') setBundleMsg(evt.message || 'Install failed');
+          } catch {
+            /* ignore partial frame */
+          }
+        }
+      }
+      setBundleMsg('Done — wired and ready.');
+      await Promise.all([fetchStatuses(), fetchCatalog()]);
+    } catch (err) {
+      setBundleMsg(`Failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setTimeout(() => setInstallingBundle(null), 2500);
+    }
+  }, [fetchStatuses, fetchCatalog]);
 
   useEffect(() => {
     setLoading(true);
@@ -370,6 +409,20 @@ export default function MarketPage() {
                         {app.name}
                       </span>
                     ))}
+                  </div>
+                  <div className="flex items-center gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleInstallBundle(b.id)}
+                      disabled={installingBundle !== null}
+                      className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-1.5 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                    >
+                      {installingBundle === b.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                      {installingBundle === b.id ? 'Installing…' : 'Install bundle'}
+                    </button>
+                    {installingBundle === b.id && bundleMsg && (
+                      <span className="truncate text-[12px] text-muted-foreground">{bundleMsg}</span>
+                    )}
                   </div>
                 </div>
               );

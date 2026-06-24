@@ -774,6 +774,12 @@ export async function fetchBundles(): Promise<MarketBundle[]> {
   return out;
 }
 
+/** Fetch a single bundle definition by id (or null if not found in any enabled source). */
+export async function fetchBundle(id: string): Promise<MarketBundle | null> {
+  const bundles = await fetchBundles();
+  return bundles.find((b) => b.id === id) ?? null;
+}
+
 export async function fetchAvailableSystemApps(): Promise<MarketApp[]> {
   const sources = await getMarketSources();
   const systemApps: MarketApp[] = [];
