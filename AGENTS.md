@@ -1,3 +1,23 @@
+## cp-v0.4.62 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Data-driven Market categories — parse + render the catalog `categories:` section. External Apps loop, unit `categories-data-driven`.
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — `CategorySchema` (`{id,label,icon?,order?,tile?}`) + `CatalogSchema.categories` (`.default([])`, backward-compatible).
+- `control-panel/src/lib/market/types.ts` — export `MarketCategory`.
+- `control-panel/src/lib/market/catalog.ts` — `fetchCategories()` merges categories across enabled sources by id, sorts by `order`.
+- `control-panel/src/app/api/market/catalog/route.ts` — returns `categories`.
+- `control-panel/src/app/market/page.tsx` — removed hardcoded `CATEGORY_LABEL`/`CATEGORY_TILE`; pills, section headers, ordering, and tiles render from catalog data; pills show the category icon; unknown categories fall back to a prettified label + neutral tile.
+- `control-panel/package.json` — `0.4.61 → 0.4.62`.
+
+### Test Results
+- CP typecheck clean. Pairs with YE-AppMarket `v0.4.3` (the `categories:` data). Deployed `cp-v0.4.62` via `spine update control`; browser-tested the Market on byka.wtf — category pills show icons + data labels, sections ordered by `order`.
+
+### Notes for Iris
+- CP + Market change. Backward-compatible (old catalogs without `categories:` still parse → empty → UI falls back). Adding a category is now a catalog change only.
+
 ## cp-v0.4.61 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc

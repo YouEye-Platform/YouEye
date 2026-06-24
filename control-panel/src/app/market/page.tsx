@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import * as LucideIcons from 'lucide-react';
 import {
@@ -15,31 +15,17 @@ import {
   Sparkles,
   Store,
 } from 'lucide-react';
-import type { MarketApp, AppStatusInfo } from '@/lib/market/types';
+import type { MarketApp, AppStatusInfo, MarketCategory } from '@/lib/market/types';
 
 /* ─────────────────────────── helpers ─────────────────────────── */
 
-const CATEGORY_LABEL: Record<string, string> = {
-  productivity: 'Productivity',
-  media: 'Media',
-  search: 'Search',
-  social: 'Social',
-  utilities: 'Utilities',
-  other: 'Other',
-};
+// Category labels, icons, ordering, and tile colours are data-driven — they come from the
+// `categories:` section of the Market catalog (see fetchCategories / catIndex below), NOT
+// from a hardcoded map. Adding/renaming a category is a catalog.yaml change only.
+const DEFAULT_TILE = { bg: '#f4f4f5', fg: '#52525b' };
 
-// Soft tile colours from the mockup palette, keyed by category.
-const CATEGORY_TILE: Record<string, { bg: string; fg: string }> = {
-  productivity: { bg: '#eff6ff', fg: '#2563eb' },
-  media: { bg: '#fdf2f8', fg: '#db2777' },
-  search: { bg: '#f5f3ff', fg: '#7c3aed' },
-  social: { bg: '#ecfeff', fg: '#0891b2' },
-  utilities: { bg: '#f0f9ff', fg: '#0284c7' },
-  other: { bg: '#f4f4f5', fg: '#52525b' },
-};
-
-function tileColors(category?: string) {
-  return CATEGORY_TILE[category || 'other'] || CATEGORY_TILE.other;
+function prettify(id: string): string {
+  return id.charAt(0).toUpperCase() + id.slice(1).replace(/[-_]/g, ' ');
 }
 
 function lucideByName(name?: string): LucideIcon {
@@ -49,7 +35,7 @@ function lucideByName(name?: string): LucideIcon {
   return map[name] || map[pascal] || Package;
 }
 
-function MarketIcon({ app, size = 44 }: { app: MarketApp; size?: number }) {
+function MarketIcon({ app, size = 44, tile }: { app: MarketApp; size?: number; tile?: { bg: string; fg: string } }) {
   if (app.iconUrl) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
@@ -61,7 +47,7 @@ function MarketIcon({ app, size = 44 }: { app: MarketApp; size?: number }) {
       />
     );
   }
-  const { bg, fg } = tileColors(app.category);
+  const { bg, fg } = tile || DEFAULT_TILE;
   const Icon = lucideByName(app.icon);
   return (
     <div
@@ -88,6 +74,7 @@ type Section = 'apps' | 'installed' | 'updates' | 'integrations';
 
 export default function MarketPage() {
   const [apps, setApps] = useState<MarketApp[]>([]);
+  const [categoryDefs, setCategoryDefs] = useState<MarketCategory[]>([]);
   const [statuses, setStatuses] = useState<Record<string, AppStatusInfo>>({});
   const [sourceCount, setSourceCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -102,6 +89,7 @@ export default function MarketPage() {
       if (!res.ok) throw new Error('Failed to load the Market catalog');
       const data = await res.json();
       setApps(data.apps || []);
+      setCategoryDefs(Array.isArray(data.categories) ? data.categories : []);
       if (Array.isArray(data.sources)) {
         setSourceCount(data.sources.filter((s: { enabled?: boolean }) => s.enabled !== false).length || data.sources.length);
       }
@@ -172,7 +160,16 @@ export default function MarketPage() {
     integrations: integrations.length,
   };
 
-  const categories = Array.from(new Set(realApps.map((a) => a.category).filter(Boolean) as string[])).sort();
+  // Category metadata index — data-driven labels/icons/tiles/order from the catalog.
+  const catIndex = useMemo(() => new Map(categoryDefs.map((c) => [c.id, c])), [categoryDefs]);
+  const catLabel = (id?: string) => catIndex.get(id || 'other')?.label ?? prettify(id || 'other');
+  const catTile = (id?: string) => catIndex.get(id || 'other')?.tile ?? DEFAULT_TILE;
+  const catIconName = (id?: string) => catIndex.get(id || 'other')?.icon;
+  const catOrder = (id?: string) => catIndex.get(id || 'other')?.order ?? Number.MAX_SAFE_INTEGER;
+
+  // Categories actually used by apps, ordered by the catalog's `order` (label/icon from data).
+  const usedCategories = Array.from(new Set(realApps.map((a) => a.category).filter(Boolean) as string[]))
+    .sort((a, b) => catOrder(a) - catOrder(b) || a.localeCompare(b));
 
   // Native apps highlighted in the "Built for <server>" row.
   const nativeApps = realApps.filter((a) => a.integration === 'native');
@@ -263,15 +260,18 @@ export default function MarketPage() {
           <Sparkles className="h-3.5 w-3.5" /> Integrations
         </button>
 
-        {categories.length > 0 && <span className="mx-1 h-5 w-px bg-border" />}
+        {usedCategories.length > 0 && <span className="mx-1 h-5 w-px bg-border" />}
         <button type="button" className={pill(categoryFilter === 'all')} onClick={() => setCategoryFilter('all')}>
           All
         </button>
-        {categories.map((cat) => (
-          <button key={cat} type="button" className={pill(categoryFilter === cat)} onClick={() => setCategoryFilter(cat)}>
-            {CATEGORY_LABEL[cat] || cat}
-          </button>
-        ))}
+        {usedCategories.map((cat) => {
+          const CatIcon = lucideByName(catIconName(cat));
+          return (
+            <button key={cat} type="button" className={pill(categoryFilter === cat)} onClick={() => setCategoryFilter(cat)}>
+              <CatIcon className="h-3.5 w-3.5" /> {catLabel(cat)}
+            </button>
+          );
+        })}
 
         <Link href="/market/sources" className={`${pill(false)} ml-auto`}>
           <Store className="h-3.5 w-3.5" /> Sources
@@ -290,9 +290,9 @@ export default function MarketPage() {
                 href={variantHref(app)}
                 className="flex flex-col items-center gap-2 rounded-[14px] p-4 text-center transition-all hover:-translate-y-0.5 hover:shadow-md"
               >
-                <MarketIcon app={app} size={56} />
+                <MarketIcon app={app} size={56} tile={catTile(app.category)} />
                 <span className="text-[13.5px] font-semibold">{app.name}</span>
-                <span className="text-[11.5px] text-muted-foreground">{CATEGORY_LABEL[app.category || 'other'] || app.category}</span>
+                <span className="text-[11.5px] text-muted-foreground">{catLabel(app.category)}</span>
               </Link>
             ))}
           </div>
@@ -316,7 +316,7 @@ export default function MarketPage() {
             </div>
           </div>
           <div className="hidden items-center justify-center bg-gradient-to-br from-slate-900 to-slate-700 p-8 md:flex">
-            <MarketIcon app={featured} size={96} />
+            <MarketIcon app={featured} size={96} tile={catTile(featured.category)} />
           </div>
         </section>
       )}
@@ -328,9 +328,11 @@ export default function MarketPage() {
           <p className="text-sm">{apps.length === 0 ? 'No apps in the catalog yet.' : 'Nothing matches your search or filters.'}</p>
         </div>
       ) : (
-        Object.entries(byCategory).map(([cat, list]) => (
+        Object.entries(byCategory)
+          .sort((a, b) => catOrder(a[0]) - catOrder(b[0]) || a[0].localeCompare(b[0]))
+          .map(([cat, list]) => (
           <section key={cat} className="space-y-2">
-            <h2 className="text-[17px] font-bold tracking-tight">{CATEGORY_LABEL[cat] || cat}</h2>
+            <h2 className="text-[17px] font-bold tracking-tight">{catLabel(cat)}</h2>
             <div className="grid gap-x-6 gap-y-1 rounded-xl border bg-card p-2 md:grid-cols-2 lg:grid-cols-3">
               {list.map((app) => (
                 <Link
@@ -338,7 +340,7 @@ export default function MarketPage() {
                   href={variantHref(app)}
                   className="flex items-center gap-3 rounded-xl px-2.5 py-2.5 transition-colors hover:bg-accent"
                 >
-                  <MarketIcon app={app} size={44} />
+                  <MarketIcon app={app} size={44} tile={catTile(app.category)} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-sm font-semibold">
                       <span className="truncate">{app.name}</span>

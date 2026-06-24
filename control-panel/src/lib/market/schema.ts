@@ -598,6 +598,20 @@ export const UpdatePlanCatalogEntrySchema = z.object({
   latestVersion: z.string().optional(),
 });
 
+// Market category metadata — drives the category pills, section headers, ordering, and
+// fallback tile colours/icons in the Market UI. Data-driven: adding a category is a
+// catalog.yaml change only, no code change.
+export const CategorySchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  /** Lucide icon name (e.g. "briefcase"); rendered in the category pill. */
+  icon: z.string().optional(),
+  /** Sort order for pills + sections (ascending; unset sorts last). */
+  order: z.number().optional(),
+  /** Soft tile colours for apps in this category that have no icon image. */
+  tile: z.object({ bg: z.string(), fg: z.string() }).optional(),
+});
+
 export const CatalogSchema = z.object({
   apiVersion: z.literal('v1'),
   kind: z.literal('catalog'),
@@ -605,4 +619,5 @@ export const CatalogSchema = z.object({
   system: z.array(SystemCatalogEntrySchema).default([]),
   integrations: z.array(IntegrationCatalogEntrySchema).default([]),
   updatePlans: z.array(UpdatePlanCatalogEntrySchema).default([]),
+  categories: z.array(CategorySchema).default([]),
 });

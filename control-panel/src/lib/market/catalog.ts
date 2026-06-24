@@ -11,7 +11,7 @@ import { existsSync } from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
 import { parseCatalog, parseIntegrationManifest, parseManifest, parseSystemManifest, parseUpdatePlan } from './parser';
-import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp, MigrationSpec, SystemAppManifest, SystemCatalogEntry, UpdatePlanCatalogEntry } from './types';
+import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp, MarketCategory, MigrationSpec, SystemAppManifest, SystemCatalogEntry, UpdatePlanCatalogEntry } from './types';
 import { settingsService } from '@/lib/settings';
 import { buildMarketRawURL, getMarketSource, getMarketSources, isGitHubMarketSource, type MarketSource } from './source';
 
@@ -696,6 +696,27 @@ export async function fetchAvailableApps(): Promise<MarketApp[]> {
   }
 
   return attachStandaloneIntegrations(apps);
+}
+
+/**
+ * Fetch Market category metadata (pills, labels, icons, ordering, fallback tiles) from the
+ * enabled sources. Categories are merged by id across sources in priority order — the first
+ * source to declare a category id wins — and returned sorted by `order`. Data-driven:
+ * adding/renaming a category is a `catalog.yaml` change only, no code change.
+ */
+export async function fetchCategories(): Promise<MarketCategory[]> {
+  const sources = await getMarketSources();
+  const byId = new Map<string, MarketCategory>();
+  const results = await Promise.allSettled(sources.map((source) => fetchCatalog(source)));
+  for (const result of results) {
+    if (result.status !== 'fulfilled') continue;
+    for (const category of result.value.categories ?? []) {
+      if (!byId.has(category.id)) byId.set(category.id, category);
+    }
+  }
+  return [...byId.values()].sort(
+    (a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER),
+  );
 }
 
 export async function fetchAvailableSystemApps(): Promise<MarketApp[]> {
