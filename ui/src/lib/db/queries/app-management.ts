@@ -223,7 +223,7 @@ export async function updateAppManifest(
 /** Update an app's health status */
 export async function updateAppStatus(
   appId: string,
-  status: "healthy" | "unhealthy" | "unknown"
+  status: "healthy" | "unhealthy" | "unknown" | "stopped"
 ): Promise<void> {
   await ensureSchema();
 

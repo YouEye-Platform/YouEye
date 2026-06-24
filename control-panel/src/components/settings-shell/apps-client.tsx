@@ -4,7 +4,7 @@ import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ComponentType, CSSProperties } from "react";
 import * as LucideIcons from "lucide-react";
-import { AlertCircle, ArrowLeft, ChevronRight, ExternalLink, Info, Loader2, Network, Palette, RefreshCw, RotateCcw, Shield, Sliders, Unplug } from "lucide-react";
+import { AlertCircle, ArrowLeft, ChevronRight, ExternalLink, Info, Loader2, Network, Palette, Power, PowerOff, RefreshCw, RotateCcw, Shield, Sliders, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -36,6 +36,9 @@ interface UnifiedApp {
   containers: Array<{ name: string; status: string; ip?: string; canControl: boolean }>;
   version?: string;
   status: string;
+  enabled?: boolean;
+  desiredState?: "running" | "stopped";
+  databaseMode?: "shared" | "own" | "none";
   updateAvailable: boolean;
   updateInfo?: string;
   systemManaged?: boolean;
@@ -84,6 +87,21 @@ const DEFAULT_APP_WORDART: SiteNameStyle = {
 function StatusDot({ status }: { status?: string | null }) {
   const color = status === "running" ? "bg-green-500" : status === "partial" ? "bg-amber-500" : status === "stopped" ? "bg-red-500" : "bg-muted-foreground";
   return <span className={`h-[5px] w-[5px] shrink-0 rounded-full ${color}`} />;
+}
+
+function isAppOff(app?: UnifiedApp | null) {
+  return !!app && (app.enabled === false || app.desiredState === "stopped" || app.status === "stopped");
+}
+
+function OffDot() {
+  return <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-destructive" aria-hidden />;
+}
+
+async function fetchCSRFToken(): Promise<string> {
+  const res = await fetch("/settings/api/auth/csrf");
+  if (!res.ok) throw new Error("Could not prepare the request");
+  const body = await res.json();
+  return body.csrfToken as string;
 }
 
 function kebabToPascal(value: string) {
@@ -198,7 +216,7 @@ function InstalledAppsList({ onOpen }: { onOpen: (id: string) => void }) {
         <div className="border-t py-10 text-center text-sm text-muted-foreground">No apps installed yet.</div>
       ) : (
         apps.map((app) => {
-          const known = app.status && app.status !== "unknown";
+          const off = app.status === "stopped";
           return (
             <button
               key={app.id}
@@ -207,17 +225,14 @@ function InstalledAppsList({ onOpen }: { onOpen: (id: string) => void }) {
             >
               <AppIcon app={app} />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium">{app.name}</div>
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <div className="truncate text-sm font-medium">{app.name}</div>
+                  {off && <><OffDot /><span className="sr-only">Off</span></>}
+                </div>
                 {app.subdomain && (
                   <div className="truncate text-[13px] text-muted-foreground">{host ? `${app.subdomain}.${host}` : app.subdomain}</div>
                 )}
               </div>
-              {known && (
-                <span className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
-                  <StatusDot status={app.status} />
-                  {app.status}
-                </span>
-              )}
               <span className="hidden text-[13px] font-medium text-muted-foreground sm:inline">Manage</span>
               <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/40" />
             </button>
@@ -544,6 +559,9 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
   const [unifiedApps, setUnifiedApps] = useState<UnifiedApp[]>([]);
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [loading, setLoading] = useState(true);
+  const [powerPending, setPowerPending] = useState<"start" | "stop" | "restart" | null>(null);
+  const [powerError, setPowerError] = useState<string | null>(null);
+  const [confirmStop, setConfirmStop] = useState(false);
   const drawerApp = drawerApps.find((app) => app.id === appId);
   const unifiedApp = unifiedApps.find((app) => app.id === appId);
   const title = drawerApp?.name || unifiedApp?.displayName || appId;
@@ -589,7 +607,37 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
     if (uiRes.ok || identityRes.ok) setPermissions([]);
   }
 
+  async function controlPower(action: "start" | "stop" | "restart") {
+    setPowerPending(action);
+    setPowerError(null);
+    try {
+      const csrfToken = await fetchCSRFToken();
+      const res = await fetch(`/api/apps/${encodeURIComponent(appId)}/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({ action }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: "Power action failed" }));
+        throw new Error(body.error || "Power action failed");
+      }
+      await load();
+    } catch (error) {
+      setPowerError(error instanceof Error ? error.message : "Power action failed");
+    } finally {
+      setPowerPending(null);
+      setConfirmStop(false);
+    }
+  }
+
   const hasAppSettings = hasUserContext && !!drawerApp?.hasSettingsPanel && (!!drawerApp.url || !!drawerApp.subdomain);
+  const off = isAppOff(unifiedApp);
+  const controllable = isAdmin && unifiedApp?.category === "user" && (unifiedApp.containers?.length ?? 0) > 0;
+  const databaseNote = unifiedApp?.databaseMode === "shared"
+    ? "The shared database stays running. Only this app is turned off."
+    : unifiedApp?.databaseMode === "own"
+      ? "This also stops the app's private database container. Data stays saved on disk."
+      : "Your data is kept.";
   const tabs = [
     { id: "app-settings", label: "App Settings", icon: <Sliders className="h-4 w-4" />, userOnly: true, hide: !hasAppSettings },
     { id: "overview", label: "Overview", icon: <Info className="h-4 w-4" /> },
@@ -604,6 +652,18 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
 
   return (
     <div className="space-y-6">
+      <ConfirmDialog
+        open={confirmStop}
+        title={`Turn off ${title}?`}
+        description={`${title} will stop running. Its app pages, widgets, and notifications will be unavailable until you start it again. Your data will be kept.`}
+        confirmLabel={powerPending === "stop" ? "Turning off..." : "Turn off app"}
+        confirmDisabled={powerPending !== null}
+        onCancel={() => setConfirmStop(false)}
+        onConfirm={() => controlPower("stop")}
+      >
+        <p className="text-[13px] leading-relaxed text-muted-foreground">{databaseNote}</p>
+      </ConfirmDialog>
+
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground">
         <ArrowLeft className="h-4 w-4" />
         Back to Apps
@@ -631,6 +691,50 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
 
       {tab === "overview" && (
         <div className="rounded-lg border divide-y">
+          <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">App status</span>
+                {off && <><OffDot /><span className="sr-only">Off</span></>}
+              </div>
+              <p className="mt-1 text-[13px] text-muted-foreground">
+                {off
+                  ? `${title} is off. Start it to make app pages, widgets, and notifications available again.`
+                  : powerPending
+                    ? `${title} is ${powerPending === "stop" ? "turning off" : powerPending === "start" ? "starting" : "restarting"}...`
+                    : `${title} is ${unifiedApp?.status || "unknown"}.`}
+              </p>
+              {powerError && <p className="mt-1 text-[13px] text-destructive">{powerError}</p>}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {drawerApp?.url && !off && (
+                <Button variant="outline" size="sm" asChild>
+                  <a href={drawerApp.url}>
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Open app
+                  </a>
+                </Button>
+              )}
+              {controllable && off && (
+                <Button size="sm" onClick={() => controlPower("start")} disabled={powerPending !== null}>
+                  {powerPending === "start" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Power className="h-3.5 w-3.5" />}
+                  Start app
+                </Button>
+              )}
+              {controllable && !off && (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => controlPower("restart")} disabled={powerPending !== null}>
+                    {powerPending === "restart" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                    Restart
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setConfirmStop(true)} disabled={powerPending !== null}>
+                    {powerPending === "stop" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PowerOff className="h-3.5 w-3.5" />}
+                    Turn off app
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
           <div className="grid gap-4 p-4 text-sm sm:grid-cols-2">
             <div><span className="text-muted-foreground">Status</span><p className="font-medium">{unifiedApp?.status || drawerApp?.status || "unknown"}</p></div>
             <div><span className="text-muted-foreground">Version</span><p className="font-medium">{unifiedApp?.version || "—"}</p></div>

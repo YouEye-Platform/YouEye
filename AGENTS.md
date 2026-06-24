@@ -1,3 +1,35 @@
+## spine-v0.4.12 / cp-v0.4.58 / ui-v0.4.41 — artem — 2026-06-24
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Add app power controls for installed user apps.
+
+### Changes
+- `spine/internal/cmd/root.go`, `spine/internal/cmd/app.go` — bumped Spine to `0.4.12` and clarified `spine app start|stop|restart` help as app lifecycle control.
+- `control-panel/package.json`, `control-panel/src/app/api/apps/[name]/control/route.ts` — bumped CP to `0.4.58` and rewired app control to persistent installed-app lifecycle state instead of static infrastructure manifests.
+- `control-panel/src/lib/apps/lifecycle.ts`, `control-panel/src/lib/ui/app-status.ts` — added installed-app lifecycle orchestration, desired state persistence, Incus autostart toggling, multi-container start/stop ordering, and best-effort CP→UI runtime status sync.
+- `control-panel/src/lib/market/types.ts`, `control-panel/src/lib/market/engine.ts` — added install metadata fields for `enabled`, `desiredState`, power audit fields, and persisted primary-container hints for new installs.
+- `control-panel/src/lib/health/monitor.ts` — made the watchdog honor `boot.autostart=false` on running→stopped transitions so intentionally stopped apps are not restarted.
+- `control-panel/src/app/api/apps/unified/route.ts`, `control-panel/src/app/api/ui-bridge/apps/route.ts` — expose app off/desired-state metadata and accurate marketplace container status.
+- `control-panel/src/components/settings-shell/apps-client.tsx` — kept the Apps list clean with only a small red dot for stopped apps, and added Start/Restart/Turn off controls inside app detail Overview with database-mode stop copy.
+- `ui/src/app/api/v1/apps/[appId]/status/route.ts`, `ui/src/lib/db/queries/app-management.ts`, `ui/src/components/layout/app-drawer.tsx`, `ui/src/components/layout/launcher.tsx` — added CP→UI status ingestion and kept off apps visible but muted with a small red dot in drawer/launcher surfaces.
+- `README.md` — updated current versions for Spine, Control Panel, and UI.
+
+### Test Results
+- CP typecheck passed: `pnpm --dir control-panel run typecheck`.
+- UI typecheck passed: `pnpm --dir ui exec tsc --noEmit --pretty false`.
+- Spine binary build passed with `Version=0.4.12` and `BuildDate` ldflags.
+- CP production build passed for `ye-controlpanel@0.4.58`.
+- UI production build passed for `ye-ui@0.4.41`.
+- Owner will perform live functional testing on bykapc at `https://byka.wtf`; no Playwright/live browser verification was performed from this workspace.
+
+### Notes for Iris
+- App power controls are for installed user apps only. Shared infrastructure remains managed by existing System/Market flows.
+- Shared PostgreSQL is never stopped or database-disabled for one app; private app database containers stop with their app.
+- Release artifacts are exact uncompressed `standalone.tar` files; update CP/UI together so the dashboard receives the new `stopped` runtime status endpoint.
+
+---
+
 ## canvas-v0.3.12 / search-v0.4.17 / notes-v0.4.18 metadata — artem — 2026-06-24
 **Branch:** main
 **VM:** potempc

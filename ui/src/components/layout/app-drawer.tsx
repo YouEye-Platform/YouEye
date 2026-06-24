@@ -86,7 +86,7 @@ function AppIcon({ icon, customIconUrl, name, size = 40 }: { icon: string | null
 }
 
 function isAppUp(status: string | null): boolean {
-  return status !== "unhealthy";
+  return status !== "unhealthy" && status !== "stopped";
 }
 
 export function AppDrawer({
@@ -189,6 +189,7 @@ export function AppDrawer({
 
   const handleAppClick = (app: DrawerApp) => {
     if (editMode || !app.url) return;
+    if (app.status === "stopped") return;
     try { navigator.sendBeacon("/api/v1/telemetry/record", JSON.stringify({ events: [{ type: "app_launch", key: app.id || app.name }] })); } catch { /* best-effort */ }
     go(app.url);
     setOpen(false);
@@ -246,6 +247,7 @@ export function AppDrawer({
 
   const renderTile = (app: DrawerApp, mode: "open" | "edit" | "add") => {
     const up = isAppUp(app.status);
+    const off = app.status === "stopped";
     const dragging = drag.draggingId === app.id;
     return (
       <div
@@ -263,8 +265,9 @@ export function AppDrawer({
               ? () => setPinned(app.id, true)
               : (e) => { e.stopPropagation(); }
         }
-        title={app.name}
+        title={off ? `${app.name} is off` : app.name}
       >
+        {off && <span className="absolute left-2 top-2 h-1.5 w-1.5 rounded-full bg-destructive"><span className="sr-only">Off</span></span>}
         {mode === "edit" && (
           <button
             type="button"

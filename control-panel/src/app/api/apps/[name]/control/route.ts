@@ -1,145 +1,54 @@
 /**
  * App Control API
- * 
- * Start, stop, restart, or remove an app container.
+ *
+ * Persists user app desired state and starts/stops all app-owned containers.
+ * Shared platform services are intentionally not controlled here.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
-import { getAppManifest } from '@/lib/apps/manifest';
-import type { AppManifest } from '@/lib/apps/manifest';
-import { incusRequest } from '@/lib/incus/server';
+import { controlInstalledApp, type AppPowerAction } from '@/lib/apps/lifecycle';
 import type { AppControlRequest } from '@/types/apps';
+
+const ACTIONS = new Set<AppPowerAction>(['start', 'stop', 'restart', 'status']);
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ name: string }> }
+  { params }: { params: Promise<{ name: string }> },
 ) {
   try {
-    // Check authentication
     const session = await getSession();
-    
     if (!session) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    // Require admin
     if (!session.isAdmin) {
-      return NextResponse.json(
-        { error: 'Admin access required' },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
     }
 
-    // Verify CSRF token
     const csrfToken = request.headers.get('X-CSRF-Token');
-    if (!csrfToken || !(await verifyCSRFToken(csrfToken))) {
-      return NextResponse.json(
-        { error: 'Invalid CSRF token' },
-        { status: 403 }
-      );
+    if (!(await verifyCSRFToken(csrfToken ?? ''))) {
+      return NextResponse.json({ error: 'Invalid CSRF token' }, { status: 403 });
     }
 
     const { name } = await params;
-    const body: AppControlRequest = await request.json();
-    const { action, force = false } = body;
-
-    // Validate action
-    if (!['start', 'stop', 'restart', 'remove'].includes(action)) {
-      return NextResponse.json(
-        { error: `Invalid action: ${action}` },
-        { status: 400 }
-      );
+    const body: AppControlRequest = await request.json().catch(() => ({ action: 'status' }));
+    const action = body.action as AppPowerAction;
+    if (!ACTIONS.has(action)) {
+      return NextResponse.json({ error: `Invalid action: ${body.action}` }, { status: 400 });
     }
 
-    // Get app manifest
-    const manifest = getAppManifest(name);
-    if (!manifest) {
-      return NextResponse.json(
-        { error: `Unknown app: ${name}` },
-        { status: 404 }
-      );
-    }
-
-    console.log(`[Apps] ${action} ${manifest.displayName} by ${session.username}`);
-
-    if (action === 'remove') {
-      // Stop container first
-      try {
-        await incusRequest('PUT', `/1.0/instances/${manifest.containerName}/state`, {
-          action: 'stop',
-          force: true,
-        });
-        // Wait a bit for container to stop
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      } catch {
-        // Ignore errors if already stopped
-      }
-
-      // Delete container
-      const deleteResponse = await incusRequest('DELETE', `/1.0/instances/${manifest.containerName}`);
-      
-      if (deleteResponse.type === 'async' && deleteResponse.operation) {
-        await waitForOperation(deleteResponse.operation);
-      }
-
-      return NextResponse.json({
-        success: true,
-        message: `${manifest.displayName} removed`,
-      });
-    }
-
-    // Start, stop, or restart
-    const stateResponse = await incusRequest('PUT', `/1.0/instances/${manifest.containerName}/state`, {
+    const result = await controlInstalledApp(
+      name,
       action,
-      force,
-      timeout: 30,
-    });
-
-    if (stateResponse.type === 'async' && stateResponse.operation) {
-      await waitForOperation(stateResponse.operation);
-    }
-
-    return NextResponse.json({
-      success: true,
-      message: `${manifest.displayName} ${action} successful`,
-    });
-  } catch (error) {
-    console.error('Error controlling app:', error);
-    return NextResponse.json(
-      { 
-        error: 'Failed to control app',
-        details: error instanceof Error ? error.message : 'Unknown error',
-      },
-      { status: 500 }
+      session.username || session.authMethod || 'admin',
+      { force: body.force === true },
     );
+
+    return NextResponse.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = message.startsWith('Unknown installed app') ? 404 : 500;
+    console.error('[app-control] Failed to control app:', error);
+    return NextResponse.json({ error: message }, { status });
   }
-}
-
-/**
- * Wait for an Incus operation to complete
- */
-async function waitForOperation(operation: string, timeout = 60000): Promise<void> {
-  const startTime = Date.now();
-  
-  while (Date.now() - startTime < timeout) {
-    const response = await incusRequest('GET', operation);
-    
-    if (response.metadata && typeof response.metadata === 'object') {
-      const meta = response.metadata as { status: string };
-      if (meta.status === 'Success' || meta.status === 'Cancelled') {
-        return;
-      }
-      if (meta.status === 'Failure') {
-        throw new Error(`Operation failed`);
-      }
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
-
-  throw new Error('Operation timed out');
 }

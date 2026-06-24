@@ -216,9 +216,13 @@ var appRemoveCmd = &cobra.Command{
 }
 
 func newAppControlCmd(action string) *cobra.Command {
+	short := capitalize(action) + " an app"
+	if action == "stop" {
+		short = "Turn off an app"
+	}
 	return &cobra.Command{
 		Use:   action + " <name>",
-		Short: capitalize(action) + " an app's container",
+		Short: short,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !requireCP() {

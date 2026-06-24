@@ -53,6 +53,10 @@ export interface UnifiedApp {
   version?: string;
   /** Overall status derived from container states */
   status: 'running' | 'stopped' | 'partial' | 'not-installed' | 'unknown';
+  /** False when an installed user app was intentionally turned off */
+  enabled?: boolean;
+  desiredState?: 'running' | 'stopped';
+  databaseMode?: 'shared' | 'own' | 'none';
   /** OCI update available */
   updateAvailable: boolean;
   /** Human-readable update info */
@@ -293,6 +297,8 @@ export async function GET() {
         updatedBy: def.updatedBy,
         version,
         status: def.containers.length > 0 ? aggregateStatus(containerStatuses) : 'running',
+        enabled: true,
+        desiredState: 'running',
         updateAvailable,
         updateInfo,
         systemManaged: !!def.marketSystemId,
@@ -369,6 +375,8 @@ export async function GET() {
       });
 
       const containerStatuses = containers.map((c) => c.status);
+      const enabled = meta.enabled !== false && meta.desiredState !== 'stopped';
+      const status = enabled ? aggregateStatus(containerStatuses) : 'stopped';
 
       return {
         id: meta.appId,
@@ -380,7 +388,10 @@ export async function GET() {
         containers,
         updatedBy: 'control-panel' as const,
         version: dbEntry?.installedVersion ?? undefined,
-        status: aggregateStatus(containerStatuses),
+        status,
+        enabled,
+        desiredState: enabled ? 'running' as const : 'stopped' as const,
+        databaseMode: meta.databaseMode ?? 'none',
         updateAvailable: marketUpdate,
         updateInfo: marketUpdate && catV ? `${insV} → ${catV}` : undefined,
         healthStatus: healthStatuses[meta.appId] ?? undefined,

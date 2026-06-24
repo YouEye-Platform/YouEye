@@ -244,6 +244,16 @@ async function checkContainerWatchdog(): Promise<void> {
 
       // Detect running → stopped transition
       if (state.previousStatus === 'Running' && status === 'Stopped') {
+        const cfg = (instance.config ?? {}) as Record<string, string>;
+        const shouldRun = (cfg['boot.autostart'] ?? 'true') !== 'false';
+        if (!shouldRun) {
+          console.log(`[watchdog] ${name} is intentionally stopped — not restarting`);
+          state.previousStatus = status;
+          state.restarts = [];
+          state.crashLoopDetected = false;
+          continue;
+        }
+
         if (state.crashLoopDetected) {
           // Already in crash loop — don't restart
           state.previousStatus = status;

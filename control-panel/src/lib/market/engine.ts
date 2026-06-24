@@ -837,6 +837,7 @@ export async function installApp(
         name: containerSpec.name,
         containerName,
         type: containerSpec.type,
+        primary: isPrimary,
         network: containerSpec.network || 'isolated',
         port: containerSpec.port,
         healthCheck: containerSpec.healthCheck ? {
@@ -1195,6 +1196,8 @@ export async function installApp(
     protectWithAccountLogin: ssoEnabled || nativeIdentityIntegrationPlanned || forwardAuthEnabled,
     installedAt: new Date().toISOString(),
     installedVersion,
+    enabled: true,
+    desiredState: 'running',
     containers: containerMetas,
     ssoSlug,
     ssoClientId,

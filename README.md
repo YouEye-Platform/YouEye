@@ -142,10 +142,10 @@ Each component is versioned and released independently.
 
 | Component | Version |
 |-----------|---------|
-| Spine | 0.4.11 (`spine-v0.4.11`) |
+| Spine | 0.4.12 (`spine-v0.4.12`) |
 | Installer | 0.1.0 (`installer-v0.1.0`) |
-| Control Panel | 0.4.57 (`cp-v0.4.57`) |
-| UI | 0.4.40 (`ui-v0.4.40`) |
+| Control Panel | 0.4.58 (`cp-v0.4.58`) |
+| UI | 0.4.41 (`ui-v0.4.41`) |
 | Canvas | 0.3.12 (`v0.3.12`) |
 | Wiki | 0.4.15 (`v0.4.15`) |
 | Search | 0.4.17 (`v0.4.17`) |

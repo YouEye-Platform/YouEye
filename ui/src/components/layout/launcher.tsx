@@ -300,6 +300,8 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
   const renderApp = (app: LauncherApp) => {
     const dragging = drag.draggingId === app.id;
     const merge = drag.mergeTargetId === app.id;
+    const off = app.status === "stopped";
+    const unavailable = off || app.status === "unhealthy";
     return (
       <button
         key={app.id}
@@ -307,10 +309,11 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
         ref={drag.register(app.id)}
         onPointerDown={(e) => drag.startDrag(e, app.id)}
         onMouseDown={(e) => drag.startDrag(e, app.id)}
-        onClick={() => { if (!drag.consumeClick() && app.url) go(app.url); }}
-        className={`grid touch-none select-none justify-items-center gap-2 rounded-xl p-1 text-center transition-[transform,opacity] hover:scale-105 ${app.status === "unhealthy" ? "opacity-40 grayscale" : ""} ${dragging ? "scale-95 opacity-30" : ""} ${merge ? "scale-110" : ""}`}
-        title={app.name}
+        onClick={() => { if (!drag.consumeClick() && app.url && !off) go(app.url); }}
+        className={`relative grid touch-none select-none justify-items-center gap-2 rounded-xl p-1 text-center transition-[transform,opacity] hover:scale-105 ${unavailable ? "opacity-40 grayscale" : ""} ${dragging ? "scale-95 opacity-30" : ""} ${merge ? "scale-110" : ""}`}
+        title={off ? `${app.name} is off` : app.name}
       >
+        {off && <span className="absolute left-2 top-2 h-1.5 w-1.5 rounded-full bg-destructive"><span className="sr-only">Off</span></span>}
         <div className={merge ? "rounded-2xl ring-2 ring-primary ring-offset-2 ring-offset-transparent" : ""}>
           <LauncherTile icon={app.icon} customIconUrl={app.custom_icon_url} />
         </div>

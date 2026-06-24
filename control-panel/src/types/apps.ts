@@ -38,7 +38,7 @@ export interface AppInstance {
 /**
  * App control actions
  */
-export type AppAction = 'start' | 'stop' | 'restart' | 'remove';
+export type AppAction = 'start' | 'stop' | 'restart' | 'status';
 
 /**
  * App control request

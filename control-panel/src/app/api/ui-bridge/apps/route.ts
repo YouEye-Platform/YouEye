@@ -213,6 +213,8 @@ export async function GET(request: NextRequest) {
           containers,
           version,
           status: appStatus,
+          enabled: true,
+          desiredState: 'running' as const,
           updateAvailable,
           updateInfo,
         };
@@ -238,6 +240,34 @@ export async function GET(request: NextRequest) {
         return !names.some((n: string) => definedContainers.has(n));
       });
 
+    const marketContainerNames = filteredMarket.flatMap((meta) =>
+      meta.containers.map((c: any) => typeof c === 'string' ? c : c.containerName)
+    );
+    const marketStateResults = await Promise.allSettled(
+      marketContainerNames.map(async (name) => {
+        if (!existingNames.has(name)) return { name, status: 'not-found' as const };
+        try {
+          const resp = await incusRequest<Record<string, unknown>>(
+            'GET',
+            `/1.0/instances/${name}/state`
+          );
+          const meta = resp.metadata ?? {};
+          return {
+            name,
+            status: ((meta.status as string) ?? 'unknown').toLowerCase(),
+            ip: extractIP(meta),
+          };
+        } catch {
+          return { name, status: 'unknown' as const };
+        }
+      })
+    );
+    for (const r of marketStateResults) {
+      if (r.status === 'fulfilled') {
+        containerStateMap.set(r.value.name, r.value);
+      }
+    }
+
     // Best-effort manifest lookup for icon/name/description
     const manifestResults = await Promise.allSettled(
       filteredMarket.map((meta) => fetchManifest(meta.appId))
@@ -251,6 +281,12 @@ export async function GET(request: NextRequest) {
       const manifest = manifestResults[i].status === 'fulfilled'
         ? manifestResults[i].value
         : null;
+      const containers = meta.containers.map((c: any) => {
+        const name = typeof c === 'string' ? c : c.containerName;
+        const state = containerStateMap.get(name);
+        return { name, status: state?.status ?? 'not-found', ip: state?.ip };
+      });
+      const enabled = meta.enabled !== false && meta.desiredState !== 'stopped';
       return {
         id: meta.appId,
         displayName: manifest?.metadata.name || meta.appId,
@@ -259,13 +295,12 @@ export async function GET(request: NextRequest) {
         iconUrl: manifest?.metadata.iconUrl || undefined,
         category: 'user' as const,
         type: 'docker-lxd',
-        containers: meta.containers.map((c: any) => {
-          const name = typeof c === 'string' ? c : c.containerName;
-          const state = containerStateMap.get(name);
-          return { name, status: state?.status ?? 'not-found', ip: state?.ip };
-        }),
+        containers,
         version: dbEntry?.installedVersion ?? undefined,
-        status: 'running' as const,
+        status: enabled ? aggregateStatus(containers.map((c) => c.status)) : 'stopped' as const,
+        enabled,
+        desiredState: enabled ? 'running' as const : 'stopped' as const,
+        databaseMode: meta.databaseMode ?? 'none',
         updateAvailable: upd,
         updateInfo: upd && catV ? `${insV} → ${catV}` : undefined,
       };

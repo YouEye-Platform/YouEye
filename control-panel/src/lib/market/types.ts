@@ -157,6 +157,10 @@ export interface ContainerMeta {
   name: string;
   containerName: string;
   type: 'lxd' | 'oci';
+  /** True when this is the app's primary user-facing container */
+  primary?: boolean;
+  /** Optional lifecycle role used to order app start/stop operations */
+  role?: 'app' | 'database' | 'cache' | 'worker' | 'sidecar';
   /** Network mode from manifest: 'isolated' (default) or 'internet' */
   network?: 'isolated' | 'internet';
   /** Primary listening port from manifest (used by health checker) */
@@ -194,6 +198,13 @@ export interface InstallMetadata {
   protectWithAccountLogin?: boolean;
   installedAt: string;
   installedVersion?: string;
+  /** False when the owner intentionally turned this app off */
+  enabled?: boolean;
+  /** Persisted desired runtime state for watchdog/reboot reconciliation */
+  desiredState?: 'running' | 'stopped';
+  disabledAt?: string;
+  disabledBy?: string;
+  lastPowerAction?: 'start' | 'stop' | 'restart';
   containers: ContainerMeta[];
   ssoSlug?: string;
   ssoClientId?: string;
