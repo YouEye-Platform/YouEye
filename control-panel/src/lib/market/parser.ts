@@ -4,8 +4,8 @@
  */
 
 import { parse as parseYAML } from 'yaml';
-import { AppManifestSchema, BundleManifestSchema, CatalogSchema, IntegrationManifestSchema, SystemAppManifestSchema, UpdatePlanSchema } from './schema';
-import type { AppManifest, Catalog, IntegrationManifest, MarketBundle, SystemAppManifest, UpdatePlan } from './types';
+import { AppManifestSchema, BundleManifestSchema, CatalogSchema, IntegrationManifestSchema, StoreDescriptorSchema, SystemAppManifestSchema, UpdatePlanSchema } from './schema';
+import type { AppManifest, Catalog, IntegrationManifest, MarketBundle, StoreDescriptor, SystemAppManifest, UpdatePlan } from './types';
 
 /**
  * Parse and validate a youeye-app.yaml manifest.
@@ -45,6 +45,14 @@ export function parseCatalog(yamlText: string): Catalog {
 export function parseBundle(yamlText: string): MarketBundle {
   const raw = parseYAML(yamlText);
   return BundleManifestSchema.parse(raw);
+}
+
+/**
+ * Parse and validate a store.yaml source descriptor (new market layout).
+ */
+export function parseStore(yamlText: string): StoreDescriptor {
+  const raw = parseYAML(yamlText);
+  return StoreDescriptorSchema.parse(raw);
 }
 
 /**

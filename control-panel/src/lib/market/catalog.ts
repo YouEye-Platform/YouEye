@@ -10,8 +10,8 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
-import { parseBundle, parseCatalog, parseIntegrationManifest, parseManifest, parseSystemManifest, parseUpdatePlan } from './parser';
-import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp, MarketBundle, MarketCategory, MarketCuration, MigrationSpec, SystemAppManifest, SystemCatalogEntry, UpdatePlanCatalogEntry } from './types';
+import { parseBundle, parseCatalog, parseIntegrationManifest, parseManifest, parseStore, parseSystemManifest, parseUpdatePlan } from './parser';
+import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp, MarketBundle, MarketCategory, MarketCuration, MigrationSpec, StoreDescriptor, SystemAppManifest, SystemCatalogEntry, UpdatePlanCatalogEntry } from './types';
 import { settingsService } from '@/lib/settings';
 import { buildMarketRawURL, getMarketSource, getMarketSources, isGitHubMarketSource, type MarketSource } from './source';
 
@@ -263,6 +263,9 @@ async function fetchManifestFromCatalogEntry(
   let resolveRepo = source.repository;
   let manifestPath: string;
   let yamlText: string;
+  // For the new per-app folder layout (`path:`), assets (icon.svg, screenshots/) are
+  // resolved relative to the app folder rather than the repo root.
+  let basePath: string | undefined;
 
   if (entry.repo) {
     const [owner, repoName] = entry.repo.split('/');
@@ -271,15 +274,23 @@ async function fetchManifestFromCatalogEntry(
     manifestPath = entry.manifest || 'youeye-app.yaml';
     yamlText = await fetchRepoFile(owner, repoName, manifestPath, branch, source);
     manifest = parseManifest(yamlText);
+  } else if (entry.path) {
+    // New layout: apps/<id>/youeye-app.yaml + co-located icon.svg/screenshots/.
+    basePath = entry.path.replace(/\/+$/, '');
+    manifestPath = `${basePath}/${entry.manifest}`;
+    yamlText = await fetchFile(manifestPath, branch, source);
+    manifest = parseManifest(yamlText);
+    // Co-located icon convention: apps/<id>/icon.svg unless the manifest declares its own.
+    if (!manifest.metadata.iconUrl) manifest.metadata.iconUrl = 'icon.svg';
   } else if (entry.file) {
     manifestPath = entry.file;
     yamlText = await fetchFile(manifestPath, branch, source);
     manifest = parseManifest(yamlText);
   } else {
-    throw new Error(`Catalog entry for "${entry.id}" has neither repo nor file`);
+    throw new Error(`Catalog entry for "${entry.id}" has none of: path, file, repo`);
   }
 
-  await resolveManifestPaths(manifest, resolveOwner, resolveRepo, branch, source);
+  await resolveManifestPaths(manifest, resolveOwner, resolveRepo, branch, source, basePath);
   return {
     manifest,
     reference: {
@@ -417,17 +428,21 @@ async function resolveManifestPaths(
   owner: string,
   repo: string,
   branch: string,
-  marketSource?: MarketSource
+  marketSource?: MarketSource,
+  /** App folder for the new layout (e.g. `apps/redlib`); relative assets resolve under it. */
+  basePath?: string
 ): Promise<void> {
   const source = marketSource || await getMarketSource();
-  const baseUrl = isGitHubMarketSource(source)
+  const repoBase = isGitHubMarketSource(source)
     ? `https://raw.githubusercontent.com/${owner}/${repo}/${branch}`
     : `${source.base_url}${source.api_path}/repos/${owner}/${repo}/raw`;
+  // Relative assets (icon.svg, screenshots/) resolve under the app folder for the new
+  // per-app layout, and under the repo root for the legacy layout.
+  const assetBase = basePath ? `${repoBase}/${basePath.replace(/\/+$/, '')}` : repoBase;
+  const suffix = isGitHubMarketSource(source) ? '' : `?ref=${encodeURIComponent(branch)}`;
 
   if (manifest.metadata.iconUrl && !manifest.metadata.iconUrl.startsWith('http')) {
-    manifest.metadata.iconUrl = isGitHubMarketSource(source)
-      ? `${baseUrl}/${manifest.metadata.iconUrl}`
-      : `${baseUrl}/${manifest.metadata.iconUrl}?ref=${encodeURIComponent(branch)}`;
+    manifest.metadata.iconUrl = `${assetBase}/${manifest.metadata.iconUrl}${suffix}`;
   }
   if (manifest.metadata.iconUrl) {
     manifest.metadata.iconUrl = proxyImageUrl(manifest.metadata.iconUrl);
@@ -436,9 +451,7 @@ async function resolveManifestPaths(
   if (manifest.detail?.screenshots) {
     for (const screenshot of manifest.detail.screenshots) {
       if (screenshot.path && !screenshot.path.startsWith('http')) {
-        screenshot.path = isGitHubMarketSource(source)
-          ? `${baseUrl}/${screenshot.path}`
-          : `${baseUrl}/${screenshot.path}?ref=${encodeURIComponent(branch)}`;
+        screenshot.path = `${assetBase}/${screenshot.path}${suffix}`;
       }
       if (screenshot.path) {
         screenshot.path = proxyImageUrl(screenshot.path);
@@ -778,6 +791,21 @@ export async function fetchBundles(): Promise<MarketBundle[]> {
 export async function fetchBundle(id: string): Promise<MarketBundle | null> {
   const bundles = await fetchBundles();
   return bundles.find((b) => b.id === id) ?? null;
+}
+
+/**
+ * Fetch a source's `store.yaml` descriptor (new market layout), or null if the source has
+ * none (legacy layout). Official stores keep un-namespaced app ids; third-party stores
+ * namespace by their descriptor `id`. Best-effort: a missing/invalid store.yaml is not an error.
+ */
+export async function fetchStoreDescriptor(marketSource?: MarketSource): Promise<StoreDescriptor | null> {
+  try {
+    const branch = await getEffectiveBranch();
+    const yamlText = await fetchFile('store.yaml', branch, marketSource);
+    return parseStore(yamlText);
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchAvailableSystemApps(): Promise<MarketApp[]> {

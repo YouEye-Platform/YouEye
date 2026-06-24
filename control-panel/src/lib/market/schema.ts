@@ -593,10 +593,28 @@ export const CatalogEntrySchema = z.object({
   id: z.string().min(1),
   file: z.string().optional(),
   repo: z.string().optional(),
+  /**
+   * New per-app folder layout: the app's folder in this store (e.g. `apps/redlib`). The
+   * manifest is read from `<path>/<manifest>` and assets (icon.svg, screenshots/) are
+   * resolved relative to `<path>/`. Coexists with the legacy `file:`/`repo:` fields — an
+   * entry uses exactly one of `path` | `file` | `repo`.
+   */
+  path: z.string().optional(),
   manifest: z.string().default('youeye-app.yaml'),
   integration: z.enum(['native', 'basic']).default('basic'),
   latestVersion: z.string().optional(),
   minPlatformVersion: z.string().optional(),
+});
+
+// store.yaml — per-source descriptor (the new market layout). Official sources keep
+// un-namespaced app ids; third-party stores namespace by their `id`. Parsed when present;
+// absent stores fall back to the configured source metadata (legacy layout).
+export const StoreDescriptorSchema = z.object({
+  apiVersion: z.literal('v1'),
+  kind: z.literal('store'),
+  id: z.string().min(1),
+  name: z.string().min(1),
+  official: z.boolean().optional().default(false),
 });
 
 export const SystemCatalogEntrySchema = z.object({

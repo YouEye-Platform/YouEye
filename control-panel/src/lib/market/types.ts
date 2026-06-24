@@ -33,6 +33,7 @@ import type {
   CategorySchema,
   CurationSchema,
   BundleManifestSchema,
+  StoreDescriptorSchema,
   CatalogEntrySchema,
   SystemCatalogEntrySchema,
   IntegrationCatalogEntrySchema,
@@ -83,6 +84,7 @@ export type Catalog = z.infer<typeof CatalogSchema>;
 export type MarketCategory = z.infer<typeof CategorySchema>;
 export type MarketCuration = z.infer<typeof CurationSchema>;
 export type MarketBundle = z.infer<typeof BundleManifestSchema>;
+export type StoreDescriptor = z.infer<typeof StoreDescriptorSchema>;
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
 export type SystemCatalogEntry = z.infer<typeof SystemCatalogEntrySchema>;
 export type IntegrationCatalogEntry = z.infer<typeof IntegrationCatalogEntrySchema>;

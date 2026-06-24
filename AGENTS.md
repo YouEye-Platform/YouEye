@@ -1,3 +1,20 @@
+## cp-v0.4.72 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** restructure-parser — CP catalog parser reads the new `apps/<id>/` layout + `store.yaml`, alongside the legacy `external/<id>/` layout. External Apps loop, unit `restructure-parser` (Phase 4).
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — `CatalogEntrySchema.path` (optional, alongside `file`/`repo`); `StoreDescriptorSchema`.
+- `control-panel/src/lib/market/types.ts` — `StoreDescriptor`. `.../parser.ts` — `parseStore()`.
+- `control-panel/src/lib/market/catalog.ts` — `fetchManifestFromCatalogEntry` `path` branch (manifest at `<path>/youeye-app.yaml`; co-located icon defaults to `icon.svg`); `resolveManifestPaths(..., basePath?)` resolves relative `iconUrl`/`screenshots` under the app folder for `path:` entries, repo root for legacy; `fetchStoreDescriptor()` (best-effort store.yaml). Additive/backward-compatible.
+
+### Test Results
+- CP typecheck clean. Live on byka.wtf: redlib (migrated to `apps/redlib/` in Market `v0.4.9`) resolves from the new layout — detail page + co-located icon; the 34 legacy-layout apps unaffected.
+
+### Notes for Iris
+- CP-only release `cp-v0.4.72`, pairs with Market `v0.4.9` (redlib canary + store.yaml). Parser-first: ships BEFORE the bulk `external/<id>/` → `apps/<id>/` move (`restructure-repo`). An entry uses exactly one of `path` | `file` | `repo`; mixed catalogs work.
+
 ## cp-v0.4.71 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc
