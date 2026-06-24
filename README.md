@@ -146,7 +146,7 @@ Each component is versioned and released independently.
 | Installer | 0.1.0 (`installer-v0.1.0`) |
 | Control Panel | 0.4.56 (`cp-v0.4.56`) |
 | UI | 0.4.39 (`ui-v0.4.39`) |
-| Canvas | 0.3.9 (`v0.3.9`) |
+| Canvas | 0.3.10 (`v0.3.10`) |
 | Wiki | 0.4.15 (`v0.4.15`) |
 | Search | 0.4.15 (`v0.4.15`) |
 | Notes | 0.4.16 (`v0.4.16`) |

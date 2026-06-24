@@ -1,3 +1,18 @@
+## canvas-v0.3.10 metadata — artem — 2026-06-24
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Update current-version metadata for Plan 4 Phase 4 Canvas forkability.
+
+### Changes
+- `README.md` — updated the current-version matrix for Canvas `0.3.10` / `v0.3.10`.
+
+### Test Results
+- Metadata-only change; no CP/UI build or release needed.
+
+### Notes for Iris
+- Canvas source release lives in the `YouEye-Canvas` repo. No YouEye monorepo component tag is created for this metadata-only update.
+
 ## cp-v0.4.56 / ui-v0.4.39 — artem — 2026-06-24
 **Branch:** main
 **VM:** potempc
