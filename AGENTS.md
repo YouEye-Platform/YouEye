@@ -1,3 +1,23 @@
+## cp-v0.4.57 / ui-v0.4.40 — artem — 2026-06-24
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Plan 4 close-out cleanup — consolidate canonical CSS token roots.
+
+### Changes
+- `control-panel/package.json`, `ui/package.json` — bumped CP to `0.4.57` and UI to `0.4.40` before building release artifacts.
+- `control-panel/src/app/globals.css`, `ui/src/app/globals.css` — folded the Plan 1 blue primary/ring/sidebar token overrides and `0.5rem` radius into the canonical `:root` / `.dark` blocks, then removed the late duplicate override blocks. This preserves the shipped token values while removing the second source of truth.
+- `README.md` — updated current versions for CP, UI, Canvas, Search, and Notes.
+
+### Test Results
+- Focused source tests passed: `node --test ui/tests/mobile-shell-wave2.test.mjs control-panel/tests/control-header-drawer-icons.spec.mjs`.
+- Typechecks passed: `pnpm --dir control-panel run typecheck`; `pnpm --dir ui exec tsc --noEmit --pretty false`.
+- Production builds passed for CP `0.4.57` and UI `0.4.40`.
+- Release artifacts are exact uncompressed `standalone.tar` files with root `server.js` and embedded package versions `0.4.57` / `0.4.40`.
+
+### Notes for Iris
+- No intentional visual change. The winning CSS custom property values are unchanged; only their declaration location changed.
+
 ## canvas-v0.3.10 metadata — artem — 2026-06-24
 **Branch:** main
 **VM:** potempc
