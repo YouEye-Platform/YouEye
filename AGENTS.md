@@ -1,3 +1,21 @@
+## cp-v0.4.59 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Fix broken OCI (marketplace) app update rollback. External Apps loop, unit `bug-oci-rollback`.
+
+### Changes
+- `control-panel/src/lib/incus/snapshot.ts` — new `getContainerBaseImage(name)` (reads `volatile.base_image`) and `rebuildContainerFromFingerprint(name, fp)` (rebuild from the local image store, no network pull).
+- `control-panel/src/lib/market/updater.ts` — OCI rollback no longer relies on a snapshot (the Incus `rebuild` API forces it to be deleted, so the old catch-block `restoreSnapshot` silently failed and left the broken new image running). Now: capture each OCI container's image fingerprint at snapshot time *before* any destructive change (abort the whole update up front if it can't); on failure re-image OCI containers back to the captured fingerprint + restart. LXD keeps the intact-snapshot restore.
+- `control-panel/package.json` — `0.4.58 → 0.4.59`.
+
+### Test Results
+- CP typecheck clean. Built `cp-v0.4.59` standalone (103 MB), deployed via `spine update control` on bykapc.
+- Rollback mechanism (rebuild → bad image throws → `rebuildContainerFromFingerprint` back to captured fingerprint → running) validated on a disposable OCI container; normal successful update path unaffected.
+
+### Notes for Iris
+- CP-only change. No migration. Rebuild preserves volumes/config, so OCI rollback = re-image to previous fingerprint (the old image stays in the local store across the update). Other OCI update paths inherit the new rollback automatically.
+
 ## spine-v0.4.12 / cp-v0.4.58 / ui-v0.4.41 — artem — 2026-06-24
 **Branch:** main
 **VM:** potempc

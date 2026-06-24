@@ -125,6 +125,49 @@ export function parseOCIImage(image: string): { server: string; protocol: string
 }
 
 /**
+ * Read the base image fingerprint an OCI/image instance was created or last rebuilt
+ * from (`volatile.base_image`). This is the rollback point for an OCI update: the
+ * rebuild API requires the pre-update snapshot to be deleted, but it preserves volumes
+ * and config, so the only thing that changes is the image — re-imaging back to this
+ * fingerprint is the correct rollback. The fingerprint stays in the local image store
+ * across the update, so the rollback rebuild needs no network pull.
+ * Returns null if the instance has no base image (e.g. a pure LXD container).
+ */
+export async function getContainerBaseImage(name: string): Promise<string | null> {
+  try {
+    const resp = await incusRequest<Record<string, unknown>>('GET', `/1.0/instances/${name}`);
+    const meta = resp.metadata as Record<string, unknown> | undefined;
+    const cfg = meta?.config as Record<string, unknown> | undefined;
+    const fp = cfg?.['volatile.base_image'];
+    return typeof fp === 'string' && fp.length > 0 ? fp : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Rebuild an existing container from an image already in the LOCAL image store, by
+ * fingerprint (no server/protocol → Incus does not pull from a registry). Used to roll
+ * an OCI container back to its previous image after a failed update — see
+ * getContainerBaseImage. Like rebuildContainer, the instance must have no snapshots.
+ */
+export async function rebuildContainerFromFingerprint(name: string, fingerprint: string): Promise<void> {
+  const resp = await incusRequest<Record<string, unknown>>(
+    'POST', `/1.0/instances/${name}/rebuild`,
+    {
+      source: {
+        type: 'image',
+        fingerprint,
+      },
+    },
+    { timeout: 660_000 }
+  );
+
+  if (resp.error && resp.error !== '') throw new Error(`Rollback rebuild failed: ${resp.error}`);
+  if (resp.type === 'async' && resp.operation) await waitForOperation(resp.operation, 600);
+}
+
+/**
  * Rebuild an existing container with a new OCI image.
  * Uses Incus 6.x rebuild API — preserves volumes and config.
  * IMPORTANT: Snapshots must be deleted before rebuild (Incus requirement).

@@ -31,6 +31,8 @@ import {
   stopContainer,
   startContainer,
   rebuildContainer,
+  getContainerBaseImage,
+  rebuildContainerFromFingerprint,
   getServiceWorkingDir,
   healthCheckViaExec,
   waitForContainerExec,
@@ -574,13 +576,30 @@ export async function updateMarketplaceApp(
 
   emit(onEvent, step, totalSteps, 'success', 'Preflight checks passed');
 
-  try {
-    // ── Step 2: Snapshot container(s) ─────────────────────
+  // OCI rollback points: name → previous image fingerprint. The Incus rebuild API
+  // requires the pre-update snapshot to be deleted (so snapshot-based rollback is
+  // impossible for OCI), but rebuild preserves volumes/config — so the rollback is to
+  // re-image back to the previous fingerprint. Captured before any destructive change.
+  const ociRollbackImages = new Map<string, string>();
 
-    for (const name of containerNames) {
+  try {
+    // ── Step 2: Snapshot container(s) + capture OCI rollback image ──
+
+    for (let i = 0; i < containerNames.length; i++) {
+      const name = containerNames[i];
+      const spec = containerSpecs[i];
       step++;
       emit(onEvent, step, totalSteps, 'running', `Creating snapshot of ${name}...`);
       await createSnapshot(name, SNAPSHOT_PREFIX);
+      if (spec?.type === 'oci') {
+        const baseImage = await getContainerBaseImage(name);
+        if (!baseImage) {
+          // Fail loud before touching anything: with no rollback image, a failed OCI
+          // rebuild would be unrecoverable (the snapshot must be deleted to rebuild).
+          throw new Error(`Cannot capture rollback image for OCI container ${name} (no volatile.base_image); aborting before any destructive change`);
+        }
+        ociRollbackImages.set(name, baseImage);
+      }
       emit(onEvent, step, totalSteps, 'success', `Snapshot created for ${name}`);
     }
 
@@ -736,21 +755,32 @@ export async function updateMarketplaceApp(
       const name = containerNames[i];
       const spec = containerSpecs[i];
       try {
-        await restoreSnapshot(name, SNAPSHOT_PREFIX);
-      } catch {
-        // Snapshot may have been deleted (OCI rebuild requires it)
-      }
-      try {
-        if (spec?.type === 'lxd') {
-          // For LXD, container is still running — wait for exec readiness after restore
-          await waitForContainerExec(name, 30);
+        if (spec?.type === 'oci') {
+          // OCI rollback: the pre-rebuild snapshot was (or must be) deleted to satisfy
+          // the Incus rebuild API, so a snapshot restore is impossible. Re-image back to
+          // the captured previous fingerprint instead — rebuild preserves volumes/config,
+          // and the old image is still in the local store (no network pull).
+          const oldImage = ociRollbackImages.get(name);
+          await deleteSnapshot(name, SNAPSHOT_PREFIX); // rebuild requires no snapshot (idempotent)
+          if (oldImage) {
+            await stopContainer(name);
+            await rebuildContainerFromFingerprint(name, oldImage);
+            await startContainer(name);
+          } else {
+            // No rollback image captured (should not happen — capture or abort above).
+            console.error(`[updater] No rollback image for OCI ${name}; leaving current image, restarting`);
+            await startContainer(name);
+          }
         } else {
-          await startContainer(name);
+          // LXD rollback: the snapshot is intact (LXD updates in place) — restore it.
+          // The container stays running after a non-stateful restore; wait for exec.
+          await restoreSnapshot(name, SNAPSHOT_PREFIX);
+          await waitForContainerExec(name, 30);
         }
       } catch (rollbackErr) {
         console.error(`[updater] Rollback failed for ${name}:`, rollbackErr);
       }
-      // Clean up snapshot after rollback
+      // Clean up snapshot after rollback (idempotent — no-op if already gone)
       await deleteSnapshot(name, SNAPSHOT_PREFIX);
     }
 
