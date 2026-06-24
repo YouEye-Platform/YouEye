@@ -1,3 +1,18 @@
+## native-apps-v0.4.13 / canvas-v0.3.7 — artem — 2026-06-24
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Plan 4 Wave 2.1 — update current-version metadata for native embed shell suppression.
+
+### Changes
+- `README.md` — updated the current-version matrix for Canvas and all six native app patch releases. UI and CP remain at their Wave 2 versions because they had no code changes for this patch.
+
+### Test Results
+- Source tests, typechecks, production builds, and native `standalone.tar` checks were run in the Canvas and native app repos.
+
+### Notes for Iris
+- This monorepo change is README metadata only; no YouEye component tag is created.
+
 ## cp-v0.4.54 / ui-v0.4.36 — artem — 2026-06-24
 **Branch:** main
 **VM:** potempc
