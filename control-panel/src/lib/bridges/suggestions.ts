@@ -29,6 +29,11 @@ export interface Suggestion {
   hosts?: string[];
   /** Whether the target app is installed */
   targetInstalled?: boolean;
+  /**
+   * Connection scope for routing the grant (from the consumer's `want.scope`):
+   * `user` = each user grants individually; `service` = one server-wide (owner) grant.
+   */
+  scope?: 'user' | 'service';
   dismissed: boolean;
   createdAt: string;
 }
@@ -117,6 +122,7 @@ export async function generateSuggestionsForApp(
       targetAppId: want.appId,
       targetAppName: want.name,
       targetInstalled,
+      scope: want.scope ?? 'user',
       dismissed: false,
       createdAt: new Date().toISOString(),
     });

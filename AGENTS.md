@@ -1,3 +1,20 @@
+## cp-v0.4.67 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Connection scope — `scope: user|service` on provides/wants, threaded into the suggestion model. External Apps loop, unit `connection-scope`.
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — `ProvidesSchema` + `WantSchema` gain optional `scope: 'user' | 'service'` (default `user`), distinct from the internet-proxy `scope`. `user` = per-user grant; `service` = one server-wide (owner) grant.
+- `control-panel/src/lib/bridges/suggestions.ts` — `Suggestion` carries `scope` (from the consumer's `want.scope`); set when generating a bridge suggestion so grants route per scope (routing itself = `deferred-grants`).
+- `control-panel/package.json` — `0.4.66 → 0.4.67`.
+
+### Test Results
+- CP typecheck clean; Zod parse check confirms `scope: service` parses, defaults to `user`, rejects bogus. Pairs with YE-AppMarket `v0.4.6` (SearXNG's first service-scoped provide). Deployed `cp-v0.4.67`; `/api/market/catalog` returns SearXNG + all apps (no regression).
+
+### Notes for Iris
+- CP + Market. Additive/backward-compatible (`scope` optional, defaults to `user`). The consumer's `want.scope` is authoritative for grant routing.
+
 ## cp-v0.4.66 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc

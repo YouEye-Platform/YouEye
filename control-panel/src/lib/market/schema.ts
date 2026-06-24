@@ -328,6 +328,10 @@ export const ProvidesSchema = z.object({
   type: z.string().min(1),
   description: z.string().optional(),
   port: z.number().int().positive().optional(),
+  // Connection scope (distinct from the internet-proxy scope below): `user` = each user
+  // grants the connection individually; `service` = a single server-wide (owner) grant.
+  // External-app integrations are typically `service`; native UI-gateway apps `user`.
+  scope: z.enum(['user', 'service']).optional().default('user'),
 });
 
 // ─── Proxy Scopes ────────────────────────────────────────
@@ -356,6 +360,9 @@ export const WantSchema = z.object({
   description: z.string().optional(),
   defaultPort: z.number().int().positive().optional(),
   proxy: ProxyScopeSchema.optional(),
+  // Connection scope declared by the CONSUMER for this want (authoritative for grant
+  // routing): `user` = per-user grant; `service` = one server-wide (owner) grant.
+  scope: z.enum(['user', 'service']).optional().default('user'),
 }).refine(
   (data) => !!(data.appId || data.type),
   { message: 'wants must specify appId or type' }
