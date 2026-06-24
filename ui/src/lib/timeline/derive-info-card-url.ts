@@ -1,9 +1,9 @@
 /**
- * Derive Info Card URL
+ * Derive Info Card Target URL
  *
- * Given a timeline entry's type and metadata, construct the likely
- * info card URL. Used for retroactive enrichment of entries that
- * were created before info cards existed.
+ * Given a timeline entry's type and metadata, construct a real target URL that
+ * can be matched against app-declared info-card surface triggers. This avoids
+ * reconstructing old host/app JSON card endpoints.
  */
 
 interface TimelineEntryMeta {
@@ -14,33 +14,22 @@ interface TimelineEntryMeta {
 }
 
 /**
- * Attempt to derive an info card URL from entry metadata.
+ * Attempt to derive an info card target URL from entry metadata.
  * Returns null if the entry type is not recognized or the
  * required metadata is missing.
  */
-export function deriveInfoCardUrl(
-  entry: TimelineEntryMeta,
-  domain: string
-): string | null {
+export function deriveInfoCardTargetUrl(entry: TimelineEntryMeta): string | null {
+  if (typeof entry.data.url === "string" && entry.data.url) {
+    return entry.data.url;
+  }
+
   const entityId = extractEntityId(entry);
   if (!entityId) return null;
 
   switch (true) {
     // Wiki article read/edit events
     case entry.entry_type.startsWith("wiki-article"):
-      return `https://wiki.${domain}/api/cards/article-summary?url=${encodeURIComponent(`/wiki/${entityId}`)}`;
-
-    // Search query events
-    case entry.entry_type === "search-query":
-      return `https://search.${domain}/api/inter-app/provide?type=search-snippet&query=${encodeURIComponent(entityId)}`;
-
-    // Notes app (future)
-    case entry.entry_type.startsWith("notes-note"):
-      return `https://notes.${domain}/api/cards/note-summary?id=${encodeURIComponent(entityId)}`;
-
-    // Photos app (future)
-    case entry.entry_type.startsWith("photos-photo"):
-      return `https://photos.${domain}/api/cards/photo-preview?id=${encodeURIComponent(entityId)}`;
+      return `https://en.wikipedia.org/wiki/${encodeURIComponent(entityId.replace(/\s+/g, "_"))}`;
 
     default:
       return null;

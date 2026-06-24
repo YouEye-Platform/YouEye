@@ -2,7 +2,7 @@
  * Timeline Entry Detail View
  *
  * Shows full details of a single timeline entry,
- * including a full-size info card with "Open in app" action.
+ * including a full-size app-declared info card with "Open in app" action.
  */
 
 "use client";
@@ -73,7 +73,7 @@ export function TimelineEntryDetail({
   const t = useTranslations("timeline");
   const Icon = TYPE_ICONS[entry.entry.entry_type] ?? Package;
 
-  const infoCardUrl =
+  const infoCardTargetUrl =
     entry.entry.infoCardUrl ??
     entry.entry.info_card?.endpoint ??
     (entry.entry.data.infoCardUrl as string | undefined) ??
@@ -110,10 +110,10 @@ export function TimelineEntryDetail({
       </button>
 
       {/* Full-size Info Card */}
-      {infoCardUrl && (
+      {infoCardTargetUrl && (
         <div className="rounded-xl border bg-card p-1">
           <TimelineInfoCard
-            infoCardUrl={infoCardUrl}
+            targetUrl={infoCardTargetUrl}
             size="expanded"
           />
         </div>

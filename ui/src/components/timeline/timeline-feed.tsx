@@ -3,7 +3,7 @@
  *
  * Main timeline component. Handles PIN state, fetching entries,
  * filtering, entry detail view, and rendering the chronological feed.
- * Includes retroactive enrichment for entries without infoCardUrl.
+ * Includes retroactive enrichment for entries without a stored info-card target.
  */
 
 "use client";
@@ -15,7 +15,7 @@ import { TimelineEntryCard } from "./timeline-entry-card";
 import { TimelineEntryDetail } from "./timeline-entry-detail";
 import { Lock, History } from "lucide-react";
 import { useTranslations, useLocale } from "next-intl";
-import { deriveInfoCardUrl } from "@/lib/timeline/derive-info-card-url";
+import { deriveInfoCardTargetUrl } from "@/lib/timeline/derive-info-card-url";
 import type { AppMetaEntry } from "./timeline-embed";
 
 interface TimelineEntry {
@@ -132,19 +132,13 @@ export function TimelineFeed({
       : "";
 
   /**
-   * Retroactive enrichment: for entries without infoCardUrl,
-   * attempt to derive it from entry metadata.
+   * Retroactive enrichment: for entries without a stored info-card target,
+   * attempt to derive a real URL that an app-declared info-card surface can match.
    */
   const enrichEntries = useCallback(
     (rawEntries: TimelineEntry[]): TimelineEntry[] => {
-      // Get the domain from the current page location
-      const domain =
-        typeof window !== "undefined"
-          ? window.location.hostname.replace(/^[^.]+\./, "")
-          : "";
-
       return rawEntries.map((entry) => {
-        // Already has an info card URL — skip
+        // Already has an info-card target — skip
         if (
           entry.entry.infoCardUrl ||
           entry.entry.info_card?.endpoint ||
@@ -154,14 +148,13 @@ export function TimelineFeed({
         }
 
         // Attempt to derive
-        const derived = deriveInfoCardUrl(
+        const derived = deriveInfoCardTargetUrl(
           {
             entry_type: entry.entry.entry_type,
             app_id: entry.entry.app_id,
             data: entry.entry.data,
             tags: entry.entry.tags,
-          },
-          domain
+          }
         );
 
         if (!derived) return entry;

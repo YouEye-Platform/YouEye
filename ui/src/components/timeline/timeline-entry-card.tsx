@@ -6,8 +6,8 @@
  *      (18px app chip + app name + clock time, delete on hover) — this is the
  *      anti-impersonation guarantee: the app can never forge its own attribution.
  *   2. the body — the source app's own card via <TimelineEmbed kind="timeline-card">
- *      (app-declared height), or a legacy info-card fetch, or the StandardCard
- *      fallback for plain / uninstalled-app entries.
+ *      (app-declared height), or a URL-triggered <UnifiedEmbed kind="info-card">,
+ *      or the StandardCard fallback for plain / uninstalled-app entries.
  *
  * The old chrome (bordered card, collection badge, expand-raw-JSON, in-row title)
  * is gone — the day-group header gives the date, the embed owns the content, and
@@ -130,10 +130,10 @@ export function TimelineEntryCard({
 
   // Body selection:
   //  1. embed_path → the app's own card (iframe) with StandardCard fallback
-  //  2. legacy info-card URL → fetched info card
+  //  2. info-card target URL → app-declared info-card surface on UnifiedEmbed
   //  3. neither → StandardCard (TimelineEmbed renders it when embed_path is absent)
   const hasEmbedPath = !!entry.entry.embed_path;
-  const legacyInfoCardUrl = !hasEmbedPath
+  const infoCardTargetUrl = !hasEmbedPath
     ? (entry.entry.infoCardUrl ??
       entry.entry.info_card?.endpoint ??
       (entry.entry.data.infoCardUrl as string | undefined) ??
@@ -178,10 +178,10 @@ export function TimelineEntryCard({
         )}
       </div>
 
-      {/* Body — the embed (app-native), legacy info card, or StandardCard fallback */}
+      {/* Body — the embed (app-native), info card surface, or StandardCard fallback */}
       {hasEmbedPath ? (
         <TimelineEmbed entry={entry.entry} domain={domain ?? ""} appMeta={appMeta} />
-      ) : legacyInfoCardUrl ? (
+      ) : infoCardTargetUrl ? (
         <div
           role="button"
           tabIndex={0}
@@ -191,7 +191,11 @@ export function TimelineEntryCard({
           }}
           className="cursor-pointer"
         >
-          <TimelineInfoCard infoCardUrl={legacyInfoCardUrl} size="compact" />
+          <TimelineInfoCard
+            targetUrl={infoCardTargetUrl}
+            size="compact"
+            fallback={<TimelineEmbed entry={entry.entry} domain={domain ?? ""} appMeta={appMeta} />}
+          />
         </div>
       ) : (
         <div

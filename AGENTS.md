@@ -1,3 +1,26 @@
+## ui-v0.4.38 — artem — 2026-06-24
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Plan 4 Wave 3B — move timeline info cards onto UnifiedEmbed.
+
+### Changes
+- `ui/package.json` — bumped UI to `0.4.38` before building the release artifact.
+- `ui/src/components/timeline/timeline-info-card.tsx` — resolves app-declared info-card providers and renders matched cards through `<UnifiedEmbed kind="info-card">`.
+- `ui/src/components/timeline/timeline-entry-card.tsx`, `timeline-entry-detail.tsx`, `timeline-feed.tsx`, `ui/src/lib/timeline/derive-info-card-url.ts` — renamed the path around real target URLs and derived Wikipedia targets without reconstructing legacy app JSON endpoints.
+- `ui/src/app/api/v1/apps/info-card/route.ts`, `ui/src/components/info-cards/*`, `ui/src/middleware.ts` — removed the singular host-side JSON info-card route and renderer while keeping the plural provider-list endpoint.
+- `ui/tests/info-card-wave3b.test.mjs`, `ui/tests/timeline-feed.test.mjs` — added focused coverage for the UnifiedEmbed info-card path and route deletion.
+- `README.md` — updated the current-version matrix for UI `0.4.38`.
+
+### Test Results
+- Focused Wave 3B suite passed: `node --test ui/tests/info-card-wave3b.test.mjs ui/tests/timeline-feed.test.mjs ui/tests/surfaces.spec.mjs` (12/12).
+- UI typecheck passed after a clean `.next`: `pnpm --dir ui exec tsc --noEmit --pretty false`.
+- UI production build passed; flat `standalone.tar` contains root `server.js` and package version `0.4.38`.
+
+### Notes for Iris
+- `/api/v1/apps/info-cards` is intentionally retained because Search still consumes it as the provider list.
+- Unrelated widget cleanup endpoints are left for Wave 3C per Plan 4.
+
 ## cp-v0.4.55 / ui-v0.4.37 — artem — 2026-06-24
 **Branch:** main
 **VM:** potempc

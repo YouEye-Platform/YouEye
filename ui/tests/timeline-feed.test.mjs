@@ -40,10 +40,14 @@ test('entry card renders an attribution (.via) row OUTSIDE the embed (anti-imper
   assert.match(c, /deleteEntry/);
 });
 
-test('entry card body is the embed / legacy info-card / StandardCard — old chrome dropped', () => {
+test('entry card body is the embed / unified info-card / StandardCard — old chrome dropped', () => {
   const c = read('src/components/timeline/timeline-entry-card.tsx');
+  const i = read('src/components/timeline/timeline-info-card.tsx');
   assert.match(c, /<TimelineEmbed/);
   assert.match(c, /<TimelineInfoCard/);
+  assert.match(i, /kind="info-card"/);
+  assert.match(i, /\/api\/v1\/apps\/info-cards/);
+  assert.doesNotMatch(i, /useInfoCard|\/api\/v1\/apps\/info-card"/);
   // the old bordered-chrome card, collection badge, and raw-JSON expander are gone
   assert.doesNotMatch(c, /COLLECTION_COLORS/);
   assert.doesNotMatch(c, /COLLECTION_LABELS/);

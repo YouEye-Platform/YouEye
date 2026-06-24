@@ -1,32 +1,146 @@
 /**
  * Timeline Info Card
  *
- * Lazy-loads an info card when the timeline entry becomes visible
- * in the viewport. Uses IntersectionObserver to prevent loading
- * 50+ info cards simultaneously.
+ * Lazy-loads an app-declared info-card surface when the timeline entry becomes
+ * visible. The host resolves URL triggers through the provider list, then renders
+ * the matched app iframe through the one UnifiedEmbed protocol.
  */
 
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { useInfoCard } from "@/components/info-cards/use-info-card";
-import { InfoCard } from "@/components/info-cards/info-card";
-import { InfoCardSkeleton } from "@/components/info-cards/info-card-skeleton";
-import type { InfoCardSize } from "@/components/info-cards/types";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { UnifiedEmbed } from "@/components/embeds/unified-embed";
+import { cn } from "@/lib/utils";
+
+type InfoCardSize = "compact" | "default" | "expanded";
+
+interface InfoCardProviderCard {
+  type: string;
+  triggers: string[];
+  embed_path: string | null;
+  label: string;
+}
+
+interface InfoCardProvider {
+  app_id: string;
+  app_name: string;
+  app_url: string;
+  icon: string | null;
+  cards: InfoCardProviderCard[];
+}
+
+interface InfoCardMatch {
+  provider: InfoCardProvider;
+  card: InfoCardProviderCard;
+  targetUrl: string;
+}
 
 interface TimelineInfoCardProps {
-  infoCardUrl: string;
+  targetUrl: string;
   size?: InfoCardSize;
   className?: string;
+  fallback?: ReactNode;
+}
+
+let providersRequest: Promise<InfoCardProvider[]> | null = null;
+
+function fetchInfoCardProviders(): Promise<InfoCardProvider[]> {
+  if (!providersRequest) {
+    providersRequest = fetch("/api/v1/apps/info-cards")
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`${res.status}`))))
+      .then((json) => (Array.isArray(json.providers) ? json.providers : []))
+      .catch((error) => {
+        providersRequest = null;
+        throw error;
+      });
+  }
+  return providersRequest;
+}
+
+function normalizeNestedTarget(value: string): string {
+  if (value.startsWith("/wiki/")) return `https://en.wikipedia.org${value}`;
+  return value;
+}
+
+function normalizeInfoCardTargetUrl(raw: string): string {
+  const value = raw.trim();
+  if (!value) return value;
+  if (value.startsWith("/wiki/")) return normalizeNestedTarget(value);
+
+  try {
+    const parsed = new URL(
+      value,
+      typeof window !== "undefined" ? window.location.origin : undefined
+    );
+    const nestedUrl = parsed.searchParams.get("url");
+    if (nestedUrl) return normalizeNestedTarget(nestedUrl);
+  } catch {
+    // Not a URL; leave it for trigger matching/fallback.
+  }
+
+  return value;
+}
+
+function findMatch(providers: InfoCardProvider[], targetUrl: string): InfoCardMatch | null {
+  const normalized = targetUrl.toLowerCase();
+  for (const provider of providers) {
+    for (const card of provider.cards) {
+      if (!card.embed_path) continue;
+      if (card.triggers.some((trigger) => normalized.includes(trigger.toLowerCase()))) {
+        return { provider, card, targetUrl };
+      }
+    }
+  }
+  return null;
+}
+
+function buildEmbedUrl(match: InfoCardMatch, size: InfoCardSize): string | null {
+  if (!match.provider.app_url || !match.card.embed_path) return null;
+  try {
+    const url = new URL(match.card.embed_path, match.provider.app_url);
+    url.searchParams.set("url", match.targetUrl);
+    url.searchParams.set("w", size === "expanded" ? "640" : "480");
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function embedSize(size: InfoCardSize): { default: number; min: number; max: number } {
+  if (size === "compact") return { default: 160, min: 72, max: 360 };
+  if (size === "expanded") return { default: 360, min: 120, max: 720 };
+  return { default: 240, min: 96, max: 520 };
+}
+
+function InfoCardSkeleton({ size = "default" }: { size?: InfoCardSize }) {
+  return (
+    <div className="flex gap-3 rounded-lg border bg-card p-3 animate-pulse">
+      <div
+        className={cn(
+          "rounded bg-muted flex-shrink-0",
+          size === "compact" ? "h-10 w-10" : "h-16 w-16"
+        )}
+      />
+      <div className="flex-1 space-y-2">
+        <div className="h-4 bg-muted rounded w-3/4" />
+        {size !== "compact" && <div className="h-3 bg-muted rounded w-full" />}
+        {size !== "compact" && <div className="h-3 bg-muted rounded w-1/2" />}
+      </div>
+    </div>
+  );
 }
 
 export function TimelineInfoCard({
-  infoCardUrl,
+  targetUrl,
   size = "default",
   className,
+  fallback = null,
 }: TimelineInfoCardProps) {
   const [isVisible, setIsVisible] = useState(false);
+  const [status, setStatus] = useState<"idle" | "loading" | "ready" | "none" | "error">("idle");
+  const [match, setMatch] = useState<InfoCardMatch | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const normalizedTarget = useMemo(() => normalizeInfoCardTargetUrl(targetUrl), [targetUrl]);
 
   // IntersectionObserver: only fetch card data when element enters viewport
   useEffect(() => {
@@ -48,15 +162,48 @@ export function TimelineInfoCard({
     return () => observer.disconnect();
   }, []);
 
-  // Only fetch when visible
-  const { data, loading, error } = useInfoCard(isVisible ? infoCardUrl : null);
+  useEffect(() => {
+    if (!isVisible || !normalizedTarget) return;
+
+    let alive = true;
+    setStatus("loading");
+    setMatch(null);
+
+    fetchInfoCardProviders()
+      .then((providers) => {
+        if (!alive) return;
+        const found = findMatch(providers, normalizedTarget);
+        setMatch(found);
+        setStatus(found ? "ready" : "none");
+      })
+      .catch(() => {
+        if (!alive) return;
+        setMatch(null);
+        setStatus("error");
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [isVisible, normalizedTarget]);
+
+  const embedUrl = match ? buildEmbedUrl(match, size) : null;
 
   return (
     <div ref={containerRef} className={className}>
       {!isVisible && <InfoCardSkeleton size={size} />}
-      {isVisible && loading && <InfoCardSkeleton size={size} />}
-      {isVisible && !loading && data && <InfoCard data={data} size={size} />}
-      {/* If error or no data, render nothing — entry shows normally */}
+      {isVisible && status === "loading" && <InfoCardSkeleton size={size} />}
+      {isVisible && status === "ready" && embedUrl && (
+        <UnifiedEmbed
+          url={embedUrl}
+          kind="info-card"
+          size={embedSize(size)}
+          timeout={5000}
+          title={`${match?.provider.app_name ?? "App"} info card`}
+          fallback={fallback}
+        />
+      )}
+      {isVisible && (status === "none" || status === "error" || (status === "ready" && !embedUrl)) && fallback}
     </div>
   );
 }
