@@ -246,6 +246,9 @@ export interface InstallMetadata {
   hasSSO?: boolean;
   /** Capability types this app provides (from manifest `provides` field) */
   provides?: ProvidesSpec[];
+  /** Connection wants this app declares (from manifest `wants` field). Persisted so the
+   *  reverse-scan can suggest connections to existing consumers when a provider installs. */
+  wants?: WantSpec[];
   /** @deprecated All apps use per-app bridge networking now. Kept for install.json compat. */
   usePerAppBridge?: boolean;
   /** Required migration gates already completed for this install. */

@@ -1,3 +1,21 @@
+## cp-v0.4.69 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Connection suggestions — reverse-scan + type-based resolution + scope-aware notifications. External Apps loop, unit `deferred-grants`.
+
+### Changes
+- `control-panel/src/lib/market/types.ts` — `InstallMetadata` +`wants?: WantSpec[]` (mirror of `provides`); the connection graph is now readable locally from install metadata.
+- `control-panel/src/lib/market/engine.ts` — persist `wants` at install time (next to `provides`).
+- `control-panel/src/lib/bridges/suggestions.ts` — rewrote `generateSuggestionsForApp`: forward appId-wants, **type-based** wants (→ installed providers of the capability), and the **reverse-scan** (other installed apps whose wants resolve to the new app; flips a "pending, target not installed" suggestion to approvable). Scope carried on every suggestion; one owner notification for connections that became approvable. Switched to `listInstalledApps()` (metadata) from `getAllInstalledApps()`.
+- `control-panel/src/app/embed/app-network/[appId]/client.tsx` — `Suggestion` +`scope`; renders a Server-wide / Per-user chip per pending connection.
+
+### Test Results
+- CP typecheck clean. Live on byka.wtf: install consumer then provider → suggestion appears in the consumer's Connections panel with the scope chip + a bell notification fires. Pairs: Jellyseerr↔Sonarr (service), Search↔SearXNG (user).
+
+### Notes for Iris
+- CP-only release `cp-v0.4.69`. Backward compatible: `InstallMetadata.wants` is optional; apps installed before this change fall back to a cached manifest fetch in the reverse-scan. Deferred (surfaced): true per-user *push* fan-out — UI `GET /api/v1/users` only supports `role=admin`; owner-notify + always-on Connections count cover discovery for now.
+
 ## cp-v0.4.68 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc

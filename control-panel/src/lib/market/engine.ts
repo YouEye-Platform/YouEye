@@ -1237,6 +1237,7 @@ export async function installApp(
     databaseMode: manifest.database?.mode ?? 'none',
     hasSSO: ssoEnabled,
     provides: manifest.provides?.length ? manifest.provides : undefined,
+    wants: manifest.wants?.length ? manifest.wants : undefined,
     usePerAppBridge: !!appBridgeName,
   };
   await saveInstallMetadata(meta);

@@ -30,6 +30,7 @@ interface Suggestion {
   targetAppName?: string;
   hosts?: string[];
   targetInstalled?: boolean;
+  scope?: "user" | "service";
   dismissed: boolean;
 }
 
@@ -354,6 +355,26 @@ export function AppNetworkClient({ appId }: { appId: string }) {
                 {s.type === "internet" && s.hosts && (
                   <span className="embed-muted" style={{ fontSize: 12 }}>
                     ({s.hosts.join(", ")})
+                  </span>
+                )}
+                {s.type === "bridge" && s.scope && (
+                  <span
+                    className="embed-muted"
+                    style={{
+                      fontSize: 10,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.04em",
+                      padding: "1px 6px",
+                      borderRadius: 4,
+                      border: "1px solid var(--embed-border)",
+                    }}
+                    title={
+                      s.scope === "service"
+                        ? "Server-wide connection — one approval applies to everyone"
+                        : "Per-user connection — each user enables it for themselves"
+                    }
+                  >
+                    {s.scope === "service" ? "Server-wide" : "Per-user"}
                   </span>
                 )}
                 {s.targetInstalled === false && (
