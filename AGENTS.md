@@ -1,3 +1,18 @@
+## cp-v0.4.73 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** cheap-ux #1 — parallelize `checkForUpdates`. External Apps loop, unit `cheap-ux` (Phase 5).
+
+### Changes
+- `control-panel/src/lib/market/installed-apps.ts` — `checkForUpdates` per-app loop → `async processApp(app)` run via `Promise.all` (each `.catch`-wrapped so one app's failure can't sink the whole check). Sequential N round-trips → ~1 round-trip of latency. Apps mutated in place; persisted once via `saveStore()`.
+
+### Test Results
+- CP typecheck clean. Live on byka.wtf: update check returns correct results (faster).
+
+### Notes for Iris
+- CP-only release `cp-v0.4.73`. Pairs with YE-AppMarket `v0.4.11` (catalog test suite). Parallel fetches are bounded by installed-app count (small for self-hosted) and use the existing manifest cache; no rate-limit concern at this scale.
+
 ## cp-v0.4.72 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc

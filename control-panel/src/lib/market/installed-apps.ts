@@ -265,14 +265,15 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
   const branch = await getEffectiveBranch();
   const s = await loadStore();
   const installed = Object.values(s.apps);
-  const appsWithUpdates: InstalledApp[] = [];
 
-  const entryMap = new Map<string, { file?: string; repo?: string; manifest?: string; latestVersion?: string; integration?: string }>();
+  const entryMap = new Map<string, { path?: string; file?: string; repo?: string; manifest?: string; latestVersion?: string; integration?: string }>();
   for (const e of catalog.apps) {
     entryMap.set(e.id, e);
   }
 
-  for (const app of installed) {
+  // Each installed app's update check is independent (per-app network fetches), so run them
+  // in parallel rather than sequentially — N round-trips of latency collapse to ~1.
+  async function processApp(app: InstalledApp): Promise<InstalledApp | null> {
     const installMeta = await readInstallMetadata(app.appId);
     if (installMeta?.installedVersion && installMeta.installedVersion !== app.installedVersion) {
       app.installedVersion = installMeta.installedVersion;
@@ -358,10 +359,18 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
       }
     }
 
-    if (hasUpdate) {
-      appsWithUpdates.push({ ...app });
-    }
+    return hasUpdate ? { ...app } : null;
   }
+
+  const results = await Promise.all(
+    installed.map((app) =>
+      processApp(app).catch((err) => {
+        console.error('[installed-apps] Update check failed for', app.appId, err);
+        return null;
+      }),
+    ),
+  );
+  const appsWithUpdates = results.filter((a): a is InstalledApp => a !== null);
 
   await saveStore();
   return appsWithUpdates;
