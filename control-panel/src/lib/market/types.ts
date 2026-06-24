@@ -419,9 +419,16 @@ export interface MarketApp {
   defaultSubdomain: string;
   supportsSSO: boolean;
   website?: string;
+  developer?: string;
+  license?: string;
+  sourceCode?: string;
+  support?: string;
+  docs?: string;
+  tagline?: string;
   tags: string[];
   detail?: {
     longDescription: string;
+    releaseNotes?: string;
     screenshots: { url: string; caption?: string }[];
   };
   installParams?: {

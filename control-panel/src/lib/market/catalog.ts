@@ -514,9 +514,16 @@ function manifestToMarketApp(manifest: AppManifest, source?: MarketSource, refer
     defaultSubdomain: manifest.metadata.defaultSubdomain,
     supportsSSO: !!manifest.sso,
     website: manifest.metadata.website,
+    developer: manifest.metadata.developer,
+    license: manifest.metadata.license,
+    sourceCode: manifest.metadata.sourceCode,
+    support: manifest.metadata.support,
+    docs: manifest.metadata.docs,
+    tagline: manifest.metadata.tagline,
     tags: manifest.metadata.tags,
     detail: manifest.detail ? {
       longDescription: manifest.detail.longDescription,
+      releaseNotes: manifest.detail.releaseNotes,
       screenshots: manifest.detail.screenshots.map((s) => ({
         url: s.path,
         caption: s.caption,

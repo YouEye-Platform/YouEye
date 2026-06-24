@@ -25,6 +25,15 @@ export const MetadataSchema = z.object({
   iconUrl: z.string().optional(),
   category: z.string().min(1),
   website: z.string().url().optional(),
+  // Richer store metadata (optional so existing manifests keep parsing; the 5 seeded apps
+  // + new apps should set developer + license). developer/license render as the app's
+  // attribution + a license badge; sourceCode/support/docs render as detail-page links.
+  developer: z.string().optional(),
+  license: z.string().optional(),
+  sourceCode: z.string().url().optional(),
+  support: z.string().url().optional(),
+  docs: z.string().url().optional(),
+  tagline: z.string().optional(),
   tags: z.array(z.string()).default([]),
   defaultSubdomain: z.string().min(1),
 });
@@ -489,6 +498,8 @@ export const DetailScreenshotSchema = z.object({
 
 export const DetailSchema = z.object({
   longDescription: z.string().min(1),
+  /** "What's new" — release notes for the current version, shown on the detail page. */
+  releaseNotes: z.string().optional(),
   screenshots: z.array(DetailScreenshotSchema).default([]),
 });
 

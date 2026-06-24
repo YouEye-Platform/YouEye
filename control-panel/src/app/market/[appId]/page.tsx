@@ -28,6 +28,7 @@ import {
   Copy,
   Plug,
   RefreshCw,
+  Code2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -486,11 +487,12 @@ export default function AppDetailPage() {
       )}
 
       {/* Meta band */}
-      <div className="grid grid-cols-2 gap-3 rounded-xl border bg-card p-[18px] sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 rounded-xl border bg-card p-[18px] sm:grid-cols-3 lg:grid-cols-6">
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Version</span><span className="text-[13.5px] font-semibold">{app.version ? `v${app.version}` : '—'}</span></div>
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Category</span><span className="text-[13.5px] font-semibold capitalize">{app.category || '—'}</span></div>
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Source</span><span className="truncate text-[13.5px] font-semibold">{app.sourceName || app.sourceId || 'Market'}</span></div>
-        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Developer</span><span className="truncate text-[13.5px] font-semibold">{app.integration === 'native' ? 'YouEye (official)' : (app.sourceName || '—')}</span></div>
+        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Developer</span><span className="truncate text-[13.5px] font-semibold">{app.developer || (app.integration === 'native' ? 'YouEye (official)' : (app.sourceName || '—'))}</span></div>
+        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">License</span><span className="text-[13.5px] font-semibold">{app.license ? <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[12px] font-semibold">{app.license}</span> : '—'}</span></div>
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Account login</span><span className="flex items-center gap-1.5 text-[13.5px] font-semibold">{!isIntegration && (app.supportsSSO || app.forwardAuth !== 'disabled') && <Shield className="h-3.5 w-3.5 text-green-600" />}{app.supportsSSO ? 'Built in' : status?.forwardAuthEnabled ? 'Protected' : app.forwardAuth === 'disabled' ? 'Unavailable' : 'Optional'}</span></div>
       </div>
 
@@ -523,6 +525,16 @@ export default function AppDetailPage() {
           {longDescription}
         </div>
       </div>
+
+      {/* What's new — release notes for the current version */}
+      {app.detail?.releaseNotes && (
+        <div className="rounded-xl border bg-card p-[22px]">
+          <h2 className="text-[15px] font-semibold">What&apos;s new{app.version ? ` in v${app.version}` : ''}</h2>
+          <div className="mt-3 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+            {app.detail.releaseNotes}
+          </div>
+        </div>
+      )}
 
       {/* Details section */}
       <div className="rounded-xl border border-border bg-card p-6">
@@ -621,6 +633,52 @@ export default function AppDetailPage() {
                     }
                   })()}
                   <ExternalLink className="h-3 w-3" />
+                </a>
+              </div>
+            </div>
+          )}
+
+          {/* Source code */}
+          {app.sourceCode && (
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-muted">
+                <Code2 className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Source code</p>
+                <a href={app.sourceCode} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-primary hover:underline flex items-center gap-1">
+                  {(() => { try { return new URL(app.sourceCode!).hostname; } catch { return app.sourceCode; } })()}
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              </div>
+            </div>
+          )}
+
+          {/* Documentation */}
+          {app.docs && (
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-muted">
+                <BookOpen className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Documentation</p>
+                <a href={app.docs} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-primary hover:underline flex items-center gap-1">
+                  View docs<ExternalLink className="h-3 w-3" />
+                </a>
+              </div>
+            </div>
+          )}
+
+          {/* Support */}
+          {app.support && (
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-muted">
+                <MessageCircle className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Support</p>
+                <a href={app.support} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-primary hover:underline flex items-center gap-1">
+                  Get help<ExternalLink className="h-3 w-3" />
                 </a>
               </div>
             </div>

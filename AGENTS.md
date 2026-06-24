@@ -1,3 +1,21 @@
+## cp-v0.4.65 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Richer app store metadata — schema fields + detail-page rendering. External Apps loop, unit `richer-metadata`.
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — `MetadataSchema` +optional `developer`/`license`/`sourceCode`/`support`/`docs`/`tagline`; `DetailSchema` +optional `releaseNotes` (optional → unseeded manifests keep parsing).
+- `control-panel/src/lib/market/types.ts` + `catalog.ts` — threaded through `MarketApp` + `manifestToMarketApp`.
+- `control-panel/src/app/market/[appId]/page.tsx` — Developer uses real `developer` (was faked `sourceName`); License badge in the meta band; Source/Docs/Support links in "What this app uses"; "What's new" section from `releaseNotes`.
+- `control-panel/package.json` — `0.4.64 → 0.4.65`.
+
+### Test Results
+- CP typecheck clean. Pairs with YE-AppMarket `v0.4.5` (seeded 5 apps). Deployed `cp-v0.4.65`; browser-tested a seeded app detail page on byka.wtf (real developer, license badge, Source/Docs/Support links, "What's new").
+
+### Notes for Iris
+- CP + Market change. New metadata fields optional in the schema (backward compatible). `developer`/`license` editorially required for new apps.
+
 ## cp-v0.4.64 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc
