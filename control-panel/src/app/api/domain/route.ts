@@ -11,6 +11,7 @@ import { getConfiguredDomain, setDomain, checkHealth } from '@/lib/caddy/client'
 import { setDomainDNS } from '@/lib/apps/pihole-api';
 import { settingsService } from '@/lib/settings';
 import { getByoDnsProviderConfig } from '@/lib/dns-providers/config';
+import { getPlatformContext } from '@/lib/market/platform-env';
 
 /**
  * GET /api/domain - Get the currently configured domain
@@ -42,11 +43,21 @@ export async function GET() {
     }
 
     const caddyDomain = await getConfiguredDomain();
-    
+
+    // Server display name (e.g. "Byka") — used for plain-language access labels like
+    // "Only <server> users". Canonical, cached source.
+    let siteName = 'YouEye';
+    try {
+      siteName = (await getPlatformContext()).siteName || siteName;
+    } catch {
+      // best-effort — fall back to the default brand name
+    }
+
     return NextResponse.json({
       domain: domain || caddyDomain || null,
       caddyDomain: caddyDomain || null,
       caddyRunning: true,
+      siteName,
     });
   } catch (error) {
     console.error('Error getting domain:', error);

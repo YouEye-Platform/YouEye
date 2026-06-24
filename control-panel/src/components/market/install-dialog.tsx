@@ -19,6 +19,8 @@ import type { ConnectionsResponse } from '@/app/api/market/app/[appId]/connectio
 interface InstallDialogProps {
   app: MarketApp;
   domain: string;
+  /** Server display name (e.g. "Byka") for plain-language access labels. */
+  siteName?: string;
   onInstall: (config: InstallConfig) => void;
   onClose: () => void;
 }
@@ -47,7 +49,7 @@ function defaultAccountLogin(app: MarketApp): boolean {
   return true;
 }
 
-export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialogProps) {
+export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onClose }: InstallDialogProps) {
   const t = useTranslations('market');
   const tc = useTranslations('common');
 
@@ -306,13 +308,15 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
                   {protectWithAccountLogin ? <ShieldCheck className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-gray-900">Protect this app with account login</p>
+                  <p className="text-sm font-medium text-gray-900">
+                    {(app.supportsSSO || loginIntegration) ? 'Sign in with YouEye ID' : `Only ${siteName} users`}
+                  </p>
                   <p className="mt-1 text-xs text-gray-500">
-                    {app.supportsSSO
-                      ? 'This app declares built-in account login.'
+                    {(app.supportsSSO || loginIntegration)
+                      ? `Users sign in to this app with their ${siteName} ID account.`
                       : app.forwardAuth === 'disabled'
-                        ? 'This app does not declare platform account-login support.'
-                        : 'Ask users to sign in before opening this app.'}
+                        ? 'This app cannot be gated — it does not support account login.'
+                        : `Require a ${siteName} account before anyone can open this app.`}
                   </p>
                   <p className="mt-1 text-xs text-gray-400">
                     Default from manifest: {accountLoginDefault ? 'On' : 'Off'}
@@ -343,8 +347,8 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
               <div>
                 <h3 className="text-sm font-semibold text-gray-900">Extra account gate</h3>
                 <p className="mt-1 text-sm text-gray-500">
-                  This app signs in with YouEye ID. You can also require a YouEye account at the
-                  proxy before the app even loads — an optional extra gate. Most apps don&apos;t need it.
+                  This app signs in with {siteName} ID. You can also require a {siteName} account
+                  before the app even loads — an optional extra gate. Most apps don&apos;t need it.
                 </p>
               </div>
               <div className="flex items-center justify-between gap-4 rounded-lg border border-gray-200 bg-gray-50/60 p-4">
@@ -353,9 +357,10 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
                     {forwardAuthGate ? <ShieldCheck className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-gray-900">Require a YouEye account to open this app</p>
+                    <p className="text-sm font-medium text-gray-900">Only {siteName} users</p>
                     <p className="mt-1 text-xs text-gray-500">
-                      Forward-auth gate at the reverse proxy, on top of the app&apos;s own sign-in.
+                      Only people with a {siteName} account can open this app — a sign-in gate at the
+                      reverse proxy, on top of the app&apos;s own sign-in.
                     </p>
                     <p className="mt-1 text-xs text-gray-400">Default: Off</p>
                   </div>

@@ -1,3 +1,21 @@
+## cp-v0.4.66 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Plain-language access UX (server-name labels + per-app Access surface). External Apps loop, unit `access-ux`.
+
+### Changes
+- `control-panel/src/app/api/domain/route.ts` — GET now returns `siteName` (canonical `getPlatformContext()`).
+- `control-panel/src/components/market/install-dialog.tsx` — new `siteName` prop; plain-language access labels: own-login apps → "Sign in with YouEye ID"; the proxy gate / plain-app login → "Only <server> users" (with a "Require a <server> account before anyone can open this app" explanation). Live "Opens at https://…" URL chip unchanged.
+- `control-panel/src/app/market/[appId]/page.tsx` — fetches `siteName`, passes to the install dialog; new per-app **Access surface** card: Public / Only <server> users / Internal (from gate / native SSO / entrance `authLevel`) + a plain-language one-liner + a live full-URL chip.
+- `control-panel/package.json` — `0.4.65 → 0.4.66`.
+
+### Test Results
+- CP typecheck clean. Deployed `cp-v0.4.66`; browser-tested on byka.wtf — install dialog shows "Sign in with YouEye ID" + "Only Byka users"; detail page Access card shows the level + one-liner + URL chip.
+
+### Notes for Iris
+- CP-only, UI-only. `siteName` is the server display name from platform settings ("YouEye" default). Completes the `access-ux` Phase 2 unit (the post-install gate Settings surface bug-forwardauth-precedence deferred here).
+
 ## cp-v0.4.65 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc

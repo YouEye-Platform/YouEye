@@ -77,6 +77,7 @@ export default function AppDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [domain, setDomain] = useState('');
+  const [siteName, setSiteName] = useState('YouEye');
 
   // Install state
   const [showInstallDialog, setShowInstallDialog] = useState(false);
@@ -137,6 +138,7 @@ export default function AppDetailPage() {
       if (res.ok) {
         const data = await res.json();
         if (data.domain) setDomain(data.domain);
+        if (data.siteName) setSiteName(data.siteName);
       }
     } catch {
       // Will use fallback
@@ -423,6 +425,25 @@ export default function AppDetailPage() {
   const FallbackIcon = ICON_MAP[app.icon] ?? Package;
   const longDescription = app.detail?.longDescription || app.description;
   const screenshots = app.detail?.screenshots ?? [];
+
+  // Plain-language access surface — who can reach this app.
+  const accessLevel: 'public' | 'server-users' | 'internal' | null = (() => {
+    if (isIntegration) return null;
+    const entrances = app.entrances ?? [];
+    if (entrances.length > 0 && entrances.every((e) => e.authLevel === 'internal' || e.authLevel === 'none')) {
+      return 'internal';
+    }
+    const gated = status?.forwardAuthEnabled || app.supportsSSO || app.integrations?.some((i) => i.type === 'identity');
+    return gated ? 'server-users' : 'public';
+  })();
+  const accessLabel = accessLevel === 'internal' ? 'Internal'
+    : accessLevel === 'server-users' ? `Only ${siteName} users`
+    : 'Public';
+  const accessOneLiner = accessLevel === 'internal'
+    ? 'Only reachable inside your server — not exposed to the internet.'
+    : accessLevel === 'server-users'
+      ? `Only people with a ${siteName} account can open this app.`
+      : 'Anyone with the link can open this app.';
   const isDifferentSourceVariant = isInstalled && !!app.sourceId && !!status?.sourceId && app.sourceId !== status.sourceId;
   const capabilityLabels = [
     app.capabilities?.widgets ? 'Widgets' : null,
@@ -495,6 +516,30 @@ export default function AppDetailPage() {
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">License</span><span className="text-[13.5px] font-semibold">{app.license ? <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[12px] font-semibold">{app.license}</span> : '—'}</span></div>
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Account login</span><span className="flex items-center gap-1.5 text-[13.5px] font-semibold">{!isIntegration && (app.supportsSSO || app.forwardAuth !== 'disabled') && <Shield className="h-3.5 w-3.5 text-green-600" />}{app.supportsSSO ? 'Built in' : status?.forwardAuthEnabled ? 'Protected' : app.forwardAuth === 'disabled' ? 'Unavailable' : 'Optional'}</span></div>
       </div>
+
+      {/* Access surface — plain-language "who can reach this app" + a live full-URL chip */}
+      {accessLevel && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4">
+          <div className="flex items-center gap-3">
+            <div className={`rounded-md p-2 ${accessLevel === 'public' ? 'bg-amber-50 text-amber-600' : accessLevel === 'internal' ? 'bg-slate-100 text-slate-600' : 'bg-blue-50 text-blue-600'}`}>
+              {accessLevel === 'public' ? <Globe className="h-4 w-4" /> : accessLevel === 'internal' ? <EyeOff className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-foreground">{accessLabel}</p>
+              <p className="text-xs text-muted-foreground">{accessOneLiner}</p>
+            </div>
+          </div>
+          {(() => {
+            const url = isInstalled && status?.url ? status.url : (domain ? `https://${app.defaultSubdomain}.${domain}` : null);
+            if (!url || accessLevel === 'internal') return null;
+            return (
+              <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 font-mono text-xs text-foreground hover:bg-accent">
+                {url.replace(/^https?:\/\//, '')}<ExternalLink className="h-3 w-3" />
+              </a>
+            );
+          })()}
+        </div>
+      )}
 
       {/* Gallery — real screenshots, or designed placeholders (never broken images) */}
       <div className="grid gap-3.5 sm:grid-cols-2">
@@ -1023,6 +1068,7 @@ export default function AppDetailPage() {
         <InstallDialog
           app={app}
           domain={domain || ''}
+          siteName={siteName}
           onInstall={handleInstall}
           onClose={() => setShowInstallDialog(false)}
         />
