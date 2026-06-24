@@ -283,16 +283,23 @@ function emit(
 }
 
 /**
- * Determine whether forward-auth should be applied for an app.
- * - If manifest.forwardAuth === 'enabled', always use it.
- * - If manifest.forwardAuth === 'disabled', never use it.
- * - Default ('default' or undefined): use forward-auth only if no native SSO section.
+ * Determine whether the forward-auth proxy gate should be applied for an app.
+ * Precedence (highest first):
+ * - manifest.forwardAuth === 'disabled' → never (hard off).
+ * - An explicit install-time choice → honored, EVEN for apps that have their own YouEye ID
+ *   login. This is what makes the gate operable on an OIDC app: the owner can turn it on as
+ *   an extra gate. (The caller passes the app's own forward-auth-gate choice here, separate
+ *   from the OIDC-login choice — see the installApp call site.)
+ * - An app with its own login (native SSO or a planned identity integration) → off by
+ *   default (no double-gate) when no explicit choice was made.
+ * - manifest.forwardAuth === 'enabled' → on.
+ * - Default ('default'/undefined): on only when there's no native SSO section.
  */
 function resolveForwardAuth(manifest: AppManifest, hasSSOEnabled: boolean, explicitChoice?: boolean): boolean {
   const fa = manifest.forwardAuth;
   if (fa === 'disabled') return false;
-  if (hasSSOEnabled) return false;
   if (explicitChoice !== undefined) return explicitChoice;
+  if (hasSSOEnabled) return false;
   if (fa === 'enabled') return true;
   // Default: use forward-auth when there's no native SSO section
   return !manifest.sso;
@@ -742,10 +749,19 @@ export async function installApp(
   // mark it for a YouEye ID forward-auth handler when Caddy is configured.
 
   let forwardAuthEnabled = false;
+  // Apps that do their own YouEye ID login (native SSO or a planned identity integration)
+  // take the forward-auth gate from the SEPARATE `forwardAuthGate` choice — an optional extra
+  // gate the owner can turn on (default off). Apps with no login of their own take it from
+  // `protectWithAccountLogin` (the gate IS their login). This stops the OIDC-login choice and
+  // the proxy-gate choice from being conflated.
+  const hasOwnAccountLogin = ssoEnabled || nativeIdentityIntegrationPlanned;
+  const forwardAuthChoice = hasOwnAccountLogin
+    ? config.forwardAuthGate
+    : config.protectWithAccountLogin;
   const useForwardAuth = resolveForwardAuth(
     manifest,
-    ssoEnabled || nativeIdentityIntegrationPlanned,
-    config.protectWithAccountLogin
+    hasOwnAccountLogin,
+    forwardAuthChoice
   );
 
   if (useForwardAuth) {

@@ -62,6 +62,11 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
   const [integrationToggles, setIntegrationToggles] = useState<Record<string, boolean>>({});
   const [allowInternet, setAllowInternet] = useState(false);
   const [protectWithAccountLogin, setProtectWithAccountLogin] = useState(() => defaultAccountLogin(app));
+  // Forward-auth proxy gate — SEPARATE from account login. Only meaningful for apps that do
+  // their own YouEye ID login (native SSO or an identity integration); for them it is an
+  // optional extra gate, off by default and fully operable. Plain apps drive the gate from
+  // `protectWithAccountLogin` instead, so this stays false/ignored for them.
+  const [forwardAuthGate, setForwardAuthGate] = useState(false);
 
   // Initialize defaults
   useEffect(() => {
@@ -196,6 +201,7 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
       customName: trimmedName !== app.name ? trimmedName : undefined,
       selectedIntegrations: (app.integrations?.length ?? 0) > 0 ? selectedIntegrations : undefined,
       protectWithAccountLogin,
+      forwardAuthGate,
       allowInternet,
     });
   };
@@ -204,6 +210,12 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
   const loginIntegration = identityIntegration(app);
   const accountLoginLocked = app.supportsSSO || loginIntegration?.required || (!loginIntegration && app.forwardAuth === 'disabled');
   const accountLoginDefault = defaultAccountLogin(app);
+  // The forward-auth gate is an OPTIONAL extra gate only for apps that do their own YouEye ID
+  // login (native SSO, or an identity integration that's currently selected). Plain apps use
+  // the account-login toggle above as their gate, so this extra control is hidden for them.
+  // It is never available when the manifest hard-disables forward-auth.
+  const appDoesOwnLogin = app.supportsSSO || (!!loginIntegration && protectWithAccountLogin);
+  const showForwardAuthGate = appDoesOwnLogin && app.forwardAuth !== 'disabled';
 
   const toggleAccountLogin = () => {
     if (accountLoginLocked) return;
@@ -325,6 +337,47 @@ export function InstallDialog({ app, domain, onInstall, onClose }: InstallDialog
               </button>
             </div>
           </section>
+
+          {showForwardAuthGate && (
+            <section className="space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">Extra account gate</h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  This app signs in with YouEye ID. You can also require a YouEye account at the
+                  proxy before the app even loads — an optional extra gate. Most apps don&apos;t need it.
+                </p>
+              </div>
+              <div className="flex items-center justify-between gap-4 rounded-lg border border-gray-200 bg-gray-50/60 p-4">
+                <div className="flex items-start gap-3">
+                  <div className={`mt-0.5 rounded-md p-2 ${forwardAuthGate ? 'bg-blue-50 text-blue-600' : 'bg-white text-gray-400'}`}>
+                    {forwardAuthGate ? <ShieldCheck className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">Require a YouEye account to open this app</p>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Forward-auth gate at the reverse proxy, on top of the app&apos;s own sign-in.
+                    </p>
+                    <p className="mt-1 text-xs text-gray-400">Default: Off</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={forwardAuthGate}
+                  onClick={() => setForwardAuthGate((v) => !v)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                    forwardAuthGate ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                      forwardAuthGate ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+            </section>
+          )}
 
           {/* Required install parameters (always visible) */}
           {requiredParams.map((param) => (

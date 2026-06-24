@@ -129,6 +129,15 @@ export interface InstallConfig {
   selectedIntegrations?: string[];
   /** User's install-time choice for platform account-login protection */
   protectWithAccountLogin?: boolean;
+  /**
+   * Explicit install-time choice for the forward-auth proxy gate, kept SEPARATE from
+   * `protectWithAccountLogin`. For apps that do their own YouEye ID login (native SSO or
+   * an identity integration), `protectWithAccountLogin` controls that login/integration —
+   * the forward-auth gate is an optional extra gate the owner can turn on here (default
+   * off). For apps with no login of their own, the gate IS the login and is driven by
+   * `protectWithAccountLogin`; this field is left undefined.
+   */
+  forwardAuthGate?: boolean;
   /** True when a selected standalone identity Integration will provide app-native SSO after base install */
   plannedNativeIdentityIntegration?: boolean;
   installedIntegrations?: {

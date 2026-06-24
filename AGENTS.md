@@ -1,3 +1,21 @@
+## cp-v0.4.61 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Make the forward-auth gate operable + honored on OIDC apps; separate it from the app's own YouEye ID login. External Apps loop, unit `bug-forwardauth-precedence`.
+
+### Changes
+- `control-panel/src/lib/market/engine.ts` — `resolveForwardAuth` now checks the explicit install-time choice **before** `hasSSOEnabled` (manifest `disabled` still wins first), so the owner can enable the gate on an OIDC app. `installApp` feeds the gate from the SEPARATE `forwardAuthGate` for apps that do their own login (native SSO or a planned identity integration) and from `protectWithAccountLogin` for plain apps.
+- `control-panel/src/lib/market/types.ts` — new `InstallConfig.forwardAuthGate?: boolean` (separate from `protectWithAccountLogin`).
+- `control-panel/src/components/market/install-dialog.tsx` — dedicated, operable "Require a YouEye account to open this app" toggle (default off) shown only for apps that do their own login; existing account-login toggle untouched.
+- `control-panel/package.json` — `0.4.60 → 0.4.61`.
+
+### Test Results
+- CP typecheck clean. `cp-v0.4.61` deployed via `spine update control` on bykapc. Browser-tested the install dialog on byka.wtf as `tester`: OIDC app shows the separate forward-auth-gate toggle (default off, operable); plain apps unchanged. Effective defaults unchanged (no regression) — only the OIDC-gate capability added.
+
+### Notes for Iris
+- CP-only. Effective forward-auth defaults are unchanged for every existing case (gate off for own-login apps, on for plain apps); the change adds a separate `forwardAuthGate` input + makes the explicit choice win. Post-install per-app gate toggle in Settings is `access-ux` (later), not here.
+
 ## cp-v0.4.60 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc
