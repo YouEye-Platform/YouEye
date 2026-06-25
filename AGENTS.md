@@ -1,3 +1,19 @@
+## cp-v0.4.74 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** cheap-ux #2 — health-at-a-glance dot + tag-click filter. External Apps loop, unit `cheap-ux` (Phase 5).
+
+### Changes
+- `control-panel/src/app/market/page.tsx` — `StatusDot` is now health-coloured for installed apps (green/red/amber from `statuses[].healthStatus`, with tooltip); `healthOf` helper; `tagFilter` state (read on mount from `?tag=` via `window.location`), browse filtered by tag (case-insensitive), strips hidden while active, `#<tag> ×` clear chip in the pill bar.
+- `control-panel/src/app/market/[appId]/page.tsx` — tags are clickable → `router.push('/market?tag=<tag>')`.
+
+### Test Results
+- CP typecheck clean. Live on byka.wtf: installed apps show health-coloured dots; tag click filters the Market + shows the clear chip.
+
+### Notes for Iris
+- CP-only release `cp-v0.4.74`. No new data fetch (health was already in app status). Tag filter uses `window.location` (not `useSearchParams`) to avoid a Suspense boundary in this client component.
+
 ## cp-v0.4.73 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc

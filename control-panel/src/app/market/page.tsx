@@ -59,9 +59,14 @@ function MarketIcon({ app, size = 44, tile }: { app: MarketApp; size?: number; t
   );
 }
 
-function StatusDot({ status }: { status?: string }) {
-  const ok = !!status && status !== 'not-installed';
-  return <span className={`inline-block size-2 shrink-0 rounded-full ${ok ? 'bg-green-500' : 'bg-muted-foreground/30'}`} />;
+// Health-at-a-glance dot. Not-installed → muted. Installed → coloured by health:
+// green healthy, red unhealthy, amber unknown (so a broken app stands out on its card).
+function StatusDot({ status, health }: { status?: string; health?: string }) {
+  const installed = !!status && status !== 'not-installed';
+  if (!installed) return <span className="inline-block size-2 shrink-0 rounded-full bg-muted-foreground/30" />;
+  const color = health === 'unhealthy' ? 'bg-red-500' : health === 'unknown' ? 'bg-amber-500' : 'bg-green-500';
+  const title = health === 'unhealthy' ? 'Unhealthy' : health === 'unknown' ? 'Health unknown' : 'Healthy';
+  return <span title={title} className={`inline-block size-2 shrink-0 rounded-full ${color}`} />;
 }
 
 function variantHref(app: MarketApp): string {
@@ -86,6 +91,9 @@ export default function MarketPage() {
   const [search, setSearch] = useState('');
   const [section, setSection] = useState<Section>('apps');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  // Tag filter — set by clicking a tag on an app detail page (?tag=...). Read on mount from
+  // the URL (window-based, so no Suspense boundary is needed for this client component).
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
 
   const fetchCatalog = useCallback(async () => {
     try {
@@ -175,9 +183,16 @@ export default function MarketPage() {
     return () => clearInterval(interval);
   }, [fetchCatalog, fetchStatuses, fetchSourceCount]);
 
+  // Seed the tag filter from ?tag= (set when arriving via a tag click on a detail page).
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('tag');
+    if (t) setTagFilter(t);
+  }, []);
+
   /* ── derived ── */
 
   const statusOf = (app: MarketApp) => statuses[app.id]?.status || 'not-installed';
+  const healthOf = (app: MarketApp) => statuses[app.id]?.healthStatus;
   const isInstalled = (app: MarketApp) => statusOf(app) !== 'not-installed';
   const hasUpdate = (app: MarketApp) => !!statuses[app.id]?.updateAvailable;
   const kindOf = (app: MarketApp) => (app.itemKind === 'integration' ? 'integration' : 'app');
@@ -270,11 +285,13 @@ export default function MarketPage() {
     return dedupe(realApps);
   })();
 
-  const showingStrips = section === 'apps' && categoryFilter === 'all';
+  const showingStrips = section === 'apps' && categoryFilter === 'all' && !tagFilter;
   const filteredSectionApps = (categoryFilter === 'all'
     ? sectionApps
     : sectionApps.filter((a) => (a.category || 'other') === categoryFilter)
-  ).filter((a) => !(showingStrips && curatedIds.has(a.id)));
+  )
+    .filter((a) => !tagFilter || a.tags?.some((t) => t.toLowerCase() === tagFilter.toLowerCase()))
+    .filter((a) => !(showingStrips && curatedIds.has(a.id)));
 
   // Group the browse list by category.
   const byCategory: Record<string, MarketApp[]> = {};
@@ -351,6 +368,16 @@ export default function MarketPage() {
             </button>
           );
         })}
+        {tagFilter && (
+          <button
+            type="button"
+            onClick={() => setTagFilter(null)}
+            title="Clear tag filter"
+            className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-[13px] font-medium text-primary"
+          >
+            #{tagFilter} <span className="text-[15px] leading-none">×</span>
+          </button>
+        )}
 
         <Link href="/market/sources" className={`${pill(false)} ml-auto`}>
           <Store className="h-3.5 w-3.5" /> Sources
@@ -450,7 +477,7 @@ export default function MarketPage() {
                 {hasUpdate(app) ? (
                   <span className="text-[11px] font-medium text-primary">Update</span>
                 ) : (
-                  <StatusDot status={statusOf(app)} />
+                  <StatusDot status={statusOf(app)} health={healthOf(app)} />
                 )}
               </Link>
             ))}
@@ -509,7 +536,7 @@ export default function MarketPage() {
                   {hasUpdate(app) ? (
                     <span className="text-[11px] font-medium text-primary">Update</span>
                   ) : (
-                    <StatusDot status={statusOf(app)} />
+                    <StatusDot status={statusOf(app)} health={healthOf(app)} />
                   )}
                 </Link>
               ))}

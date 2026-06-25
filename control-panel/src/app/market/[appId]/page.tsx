@@ -793,12 +793,15 @@ export default function AppDetailPage() {
             </div>
             <div className="flex flex-wrap gap-1.5">
               {app.tags.map((tag) => (
-                <span
+                <button
                   key={tag}
-                  className="text-xs px-2.5 py-1 rounded-full bg-muted text-muted-foreground"
+                  type="button"
+                  onClick={() => router.push(`/market?tag=${encodeURIComponent(tag)}`)}
+                  title={`Find apps tagged "${tag}"`}
+                  className="text-xs px-2.5 py-1 rounded-full bg-muted text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 >
                   {tag}
-                </span>
+                </button>
               ))}
             </div>
           </div>
