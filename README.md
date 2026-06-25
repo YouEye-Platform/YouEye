@@ -143,7 +143,7 @@ Each component is versioned and released independently.
 | Component | Version |
 |-----------|---------|
 | Spine | 0.5.0 (`spine-v0.5.0`) |
-| Installer | 0.5.0 (`installer-v0.5.0`) |
+| Installer | 0.5.1 (`installer-v0.5.1`) |
 | Control Panel | 0.5.0 (`cp-v0.5.0`) |
 | UI | 0.5.0 (`ui-v0.5.0`) |
 | Wiki | 0.5.0 (`v0.5.0`) |
