@@ -12,6 +12,7 @@
  */
 
 import { installApp } from './engine';
+import { runConnectionWiring } from './wire-runner';
 import { fetchManifest, fetchManifestReferenceFromSource } from './catalog';
 import { listInstalledApps, readInstallMetadata } from './metadata';
 import { createBridge, resolveBridgeMappings, activateBridge, detectBridgeDependencies } from '../bridges/manager';
@@ -63,6 +64,11 @@ async function approveConnection(fromAppId: string, toAppId: string): Promise<{ 
   const resolved = await resolveBridgeMappings(envMappings, targetContainer, defaultPort, targetSub, domain);
   await updateBridge(bridge.id, { envMappings: resolved });
   const result = await activateBridge(bridge.id);
+
+  // Run the app-config wire recipe (if the consumer declares one for this target), so the
+  // connection is functionally configured, not just network-bridged. Non-fatal.
+  await runConnectionWiring(fromAppId, toAppId);
+
   return { bridgeId: bridge.id, activated: !!result?.active };
 }
 

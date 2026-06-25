@@ -397,6 +397,13 @@ export interface VariableContext {
   secrets: Record<string, string>;
   installParams: Record<string, string>;
 
+  // Set only during connection wiring — the two endpoints of the connection being approved,
+  // with resolved internal host/port and API key. Recipes use ${wire.to.apiKey}, ${wire.from.host}, …
+  wire?: {
+    from: { id: string; host: string; port?: number; apiKey?: string; url?: string };
+    to: { id: string; host: string; port?: number; apiKey?: string; url?: string };
+  };
+
   // Legacy aliases — kept for SSO step compat (v1 manifests reference these)
   install: { url: string; subdomain: string; domain: string };
   authentik: { externalUrl: string; internalUrl: string; name: string };

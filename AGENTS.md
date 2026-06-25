@@ -1,3 +1,21 @@
+## cp-v0.4.75 — artem — 2026-06-25
+**Branch:** main
+**VM:** potempc
+**Agent:** Artem
+**Task:** Service auto-wiring mechanism — connections run app-config recipes on approval. External Apps loop, unit `wire-mechanism` (Phase 5.5, owner-requested).
+
+### Changes
+- `control-panel/src/lib/market/schema.ts` — `WantSchema.wire` (recipe reusing SSO api/cli step DSL) + `AppManifestSchema.apiKey` ({file, pattern}).
+- `control-panel/src/lib/market/types.ts` — `VariableContext.wire` (from/to host/port/apiKey/url). `sso-engine.ts` — export `runSteps`.
+- `control-panel/src/lib/market/wire-runner.ts` (new) — `runConnectionWiring(from,to)`: resolve endpoints' host (container IP) + apiKey (read declared file via `execShell` + regex), run the consumer's `want.wire` recipe. Non-fatal + idempotent.
+- Hooked into both approval paths: `bundle-installer.ts` `approveConnection` + `src/app/api/suggestions/route.ts` approve action.
+
+### Test Results
+- CP typecheck clean. Mechanism validated live before shipping recipes (key extraction, CP→app + app→app reachability, exact Prowlarr applications payload). Pairs with YE-AppMarket `v0.4.12` (Prowlarr ← Sonarr/Radarr recipes). E2E wire test via the Media Automation bundle re-install.
+
+### Notes for Iris
+- CP-only release `cp-v0.4.75`. The capability is GENERAL: wiring runs on any connection approval (bundle auto-approve OR a user approving a suggestion for two separately-installed apps), driven by the consumer's `want.wire` — the bundle only enables connections. API-key only (no web-auth mutation).
+
 ## cp-v0.4.74 — artem — 2026-06-25
 **Branch:** main
 **VM:** potempc

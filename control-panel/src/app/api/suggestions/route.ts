@@ -8,6 +8,7 @@
 import { NextResponse } from 'next/server';
 import { listSuggestions, dismissSuggestion, removeSuggestion } from '@/lib/bridges/suggestions';
 import { createBridge, activateBridge, resolveBridgeMappings, detectBridgeDependencies } from '@/lib/bridges/manager';
+import { runConnectionWiring } from '@/lib/market/wire-runner';
 import { updateBridge } from '@/lib/bridges/store';
 import { readInstallMetadata } from '@/lib/market/metadata';
 import { fetchManifest } from '@/lib/market/catalog';
@@ -92,6 +93,10 @@ export async function POST(request: Request) {
         const resolved = await resolveBridgeMappings(envMappings, targetContainer, targetPort, targetSub, domain);
         await updateBridge(bridge.id, { envMappings: resolved });
         await activateBridge(bridge.id);
+
+        // Run the app-config wire recipe (if the consumer declares one) so an individually
+        // approved connection is functionally configured, not just network-bridged. Non-fatal.
+        await runConnectionWiring(suggestion.fromAppId, suggestion.targetAppId);
       }
 
       // Remove the suggestion

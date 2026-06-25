@@ -101,6 +101,20 @@ export async function executeSSOSteps(
   }
 }
 
+/**
+ * Run a list of API steps with a variable context — same engine as executeSSOSteps but
+ * decoupled from the SSO manifest shape. Used by the connection wire-runner.
+ */
+export async function runSteps(
+  steps: SSOStep[],
+  baseCtx: Partial<VariableContext>
+): Promise<void> {
+  const ctx: StepContext = { variables: baseCtx, tokens: {}, saved: {} };
+  for (const step of steps) {
+    await executeStep(step, ctx);
+  }
+}
+
 async function executeStep(step: SSOStep, ctx: StepContext): Promise<void> {
   // Delay step — wait before proceeding (used for restart-and-wait flows)
   if (step.delay) {

@@ -358,6 +358,16 @@ const SYSTEM_APP_IDS = [
   'postgres', 'caddy', 'pihole', 'control', 'ui',
 ];
 
+// Wire recipe — app-config choreography run when a connection is APPROVED (by a bundle's
+// auto-approve OR a user approving a suggestion for two separately-installed apps). Reuses
+// the SSO step format (api: REST calls with var interpolation + extraction; cli: container
+// shell). The wire-runner injects ${wire.from.*}/${wire.to.*} (host, port, apiKey) into the
+// context. Defined on the CONSUMER's `want` — the capability lives with the apps, not the bundle.
+export const WireSchema = z.object({
+  api: z.object({ steps: z.array(SSOStepSchema).default([]) }).optional(),
+  cli: z.object({ steps: z.array(SSOCliStepSchema).default([]) }).optional(),
+});
+
 export const WantSchema = z.object({
   appId: z.string().min(1).optional(),
   type: z.string().min(1).optional(),
@@ -368,6 +378,8 @@ export const WantSchema = z.object({
   // Connection scope declared by the CONSUMER for this want (authoritative for grant
   // routing): `user` = per-user grant; `service` = one server-wide (owner) grant.
   scope: z.enum(['user', 'service']).optional().default('user'),
+  // Optional app-config recipe run when this connection is approved (see WireSchema).
+  wire: WireSchema.optional(),
 }).refine(
   (data) => !!(data.appId || data.type),
   { message: 'wants must specify appId or type' }
@@ -540,6 +552,10 @@ export const AppManifestSchema = z
     surfaces: z.array(SurfaceSchema).optional().default([]),
     provides: z.array(ProvidesSchema).optional().default([]),
     wants: z.array(WantSchema).optional().default([]),
+    // How the wire-runner reads this app's API key (for connection wiring). `file` is read
+    // from the running container via shell; `pattern` is a regex with one capture group.
+    // e.g. *arr apps: { file: /config/config.xml, pattern: "<ApiKey>([a-f0-9]+)</ApiKey>" }.
+    apiKey: z.object({ file: z.string().min(1), pattern: z.string().min(1) }).optional(),
     internet: InternetSchema,
     installParams: z.array(InstallParamSchema).optional().default([]),
     forwardAuth: z.enum(['default', 'enabled', 'disabled']).optional(),
