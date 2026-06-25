@@ -1,0 +1,522 @@
+/**
+ * Server-side Incus Client
+ * 
+ * This module provides direct Unix socket communication with Incus daemon.
+ * Used by API routes to proxy requests from the browser client.
+ */
+
+import { Socket } from 'net';
+import { connect as tlsConnect, type TLSSocket } from 'tls';
+import { readFileSync } from 'fs';
+
+// ─── Incus transport ────────────────────────────────────────
+// Default: Unix socket (forwarded into this container by the incus-socket proxy
+// device). If INCUS_HTTPS_URL is set, connect to the Incus HTTPS API directly
+// with a client certificate instead — this removes the userspace forkproxy that
+// copies every API byte and grows unboundedly (it reached 1.3 GiB on bykapc).
+// Backward-compatible: with no HTTPS env set, behaviour is identical.
+function incusEndpoint(): { tls: true; host: string; port: number } | { tls: false; socketPath: string } {
+  const httpsUrl = process.env.INCUS_HTTPS_URL;
+  if (httpsUrl) {
+    const cleaned = httpsUrl.replace(/^https?:\/\//, '');
+    const [host, portStr] = cleaned.split(':');
+    return { tls: true, host, port: parseInt(portStr || '8443', 10) };
+  }
+  return { tls: false, socketPath: process.env.INCUS_SOCKET || '/var/lib/incus/unix.socket' };
+}
+
+let cachedCert: Buffer | undefined;
+let cachedKey: Buffer | undefined;
+function clientCreds(): { cert?: Buffer; key?: Buffer } {
+  if (!cachedCert && process.env.INCUS_CLIENT_CERT) cachedCert = readFileSync(process.env.INCUS_CLIENT_CERT);
+  if (!cachedKey && process.env.INCUS_CLIENT_KEY) cachedKey = readFileSync(process.env.INCUS_CLIENT_KEY);
+  return { cert: cachedCert, key: cachedKey };
+}
+
+/** Open a connection to Incus (Unix socket or HTTPS) and invoke onReady once connected. */
+function openIncus(onReady: () => void, socketPathOverride?: string): Socket | TLSSocket {
+  const ep = incusEndpoint();
+  if (ep.tls) {
+    const { cert, key } = clientCreds();
+    // rejectUnauthorized:false — the endpoint is the local incusd over the core
+    // bridge; authentication is via the trusted client cert, not server CN.
+    return tlsConnect({ host: ep.host, port: ep.port, cert, key, rejectUnauthorized: false }, onReady);
+  }
+  const s = new Socket();
+  s.connect(socketPathOverride || ep.socketPath, onReady);
+  return s;
+}
+
+interface IncusResponse<T = unknown> {
+  type: 'sync' | 'async' | 'error';
+  status: string;
+  status_code: number;
+  operation: string;
+  error_code: number;
+  error: string;
+  metadata: T;
+}
+
+/**
+ * Parse chunked transfer encoding body
+ * Chunks are formatted as: <size in hex>\r\n<chunk data>\r\n
+ * Ends with: 0\r\n\r\n
+ */
+function parseChunkedBody(body: string): string {
+  let result = '';
+  let remaining = body;
+  
+  while (remaining.length > 0) {
+    // Find the chunk size line
+    const sizeEndIndex = remaining.indexOf('\r\n');
+    if (sizeEndIndex === -1) break;
+    
+    const sizeHex = remaining.substring(0, sizeEndIndex);
+    const chunkSize = parseInt(sizeHex, 16);
+    
+    // End of chunks
+    if (chunkSize === 0) break;
+    
+    // Extract the chunk data
+    const chunkStart = sizeEndIndex + 2;
+    const chunkEnd = chunkStart + chunkSize;
+    result += remaining.substring(chunkStart, chunkEnd);
+    
+    // Move past chunk data and trailing \r\n
+    remaining = remaining.substring(chunkEnd + 2);
+  }
+  
+  return result;
+}
+
+/**
+ * Make a raw GET request to Incus API via Unix socket (returns non-JSON body as string)
+ * Used for downloading log files from exec operations.
+ */
+async function incusRawGet(path: string): Promise<string> {
+  const socketPath = process.env.INCUS_SOCKET || '/var/lib/incus/unix.socket';
+  
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+
+    const socket = openIncus(() => {
+      const headers = [
+        `GET ${path} HTTP/1.1`,
+        'Host: localhost',
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n');
+      socket.write(headers);
+    }, socketPath);
+
+    socket.on('data', (data) => {
+      chunks.push(data);
+    });
+
+    socket.on('end', () => {
+      const raw = Buffer.concat(chunks).toString();
+      // Find the body after headers
+      const bodyStart = raw.indexOf('\r\n\r\n');
+      if (bodyStart === -1) {
+        resolve('');
+        return;
+      }
+      let body = raw.substring(bodyStart + 4);
+      
+      // Handle chunked transfer encoding
+      const headerSection = raw.substring(0, bodyStart).toLowerCase();
+      if (headerSection.includes('transfer-encoding: chunked')) {
+        body = parseChunkedBody(body);
+      }
+      
+      resolve(body);
+    });
+
+    socket.on('error', (error) => {
+      reject(new Error(`Socket error: ${error.message}`));
+    });
+
+    socket.setTimeout(10000);
+    socket.on('timeout', () => {
+      socket.destroy();
+      reject(new Error('Socket timeout'));
+    });
+  });
+}
+
+/**
+ * Make a request to Incus API via Unix socket
+ */
+export async function incusRequest<T = unknown>(
+  method: string,
+  path: string,
+  body?: unknown,
+  options?: { timeout?: number }
+): Promise<IncusResponse<T>> {
+  const socketPath = process.env.INCUS_SOCKET || '/var/lib/incus/unix.socket';
+  
+  return new Promise((resolve, reject) => {
+    let responseData = '';
+    let headersReceived = false;
+    let contentLength = -1;  // -1 means not specified (chunked)
+    let isChunked = false;
+    let bodyStartIndex = 0;
+
+    const socket = openIncus(() => {
+      // Build HTTP request
+      const bodyStr = body ? JSON.stringify(body) : '';
+      const headers = [
+        `${method} ${path} HTTP/1.1`,
+        'Host: localhost',
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(bodyStr)}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n');
+
+      socket.write(headers);
+      if (bodyStr) {
+        socket.write(bodyStr);
+      }
+    }, socketPath);
+
+    socket.on('data', (data) => {
+      responseData += data.toString();
+
+      // Parse headers if not done yet
+      if (!headersReceived) {
+        const headerEndIndex = responseData.indexOf('\r\n\r\n');
+        if (headerEndIndex !== -1) {
+          headersReceived = true;
+          bodyStartIndex = headerEndIndex + 4;
+          
+          // Extract headers
+          const headerSection = responseData.substring(0, headerEndIndex).toLowerCase();
+          
+          // Check for Content-Length
+          const contentLengthMatch = headerSection.match(/content-length: (\d+)/);
+          if (contentLengthMatch) {
+            contentLength = parseInt(contentLengthMatch[1], 10);
+          }
+          
+          // Check for chunked transfer encoding
+          if (headerSection.includes('transfer-encoding: chunked')) {
+            isChunked = true;
+          }
+        }
+      }
+
+      // Check if we have the full body (only for Content-Length responses)
+      if (headersReceived && contentLength > 0) {
+        const currentBodyLength = Buffer.byteLength(responseData.substring(bodyStartIndex));
+        if (currentBodyLength >= contentLength) {
+          socket.end();
+        }
+      }
+    });
+
+    socket.on('end', () => {
+      try {
+        // Get the body
+        let bodyStr = responseData.substring(bodyStartIndex);
+        
+        // Handle chunked transfer encoding
+        if (isChunked) {
+          bodyStr = parseChunkedBody(bodyStr);
+        }
+        
+        const jsonResponse = JSON.parse(bodyStr) as IncusResponse<T>;
+        resolve(jsonResponse);
+      } catch (error) {
+        reject(new Error(`Failed to parse Incus response: ${error}`));
+      }
+    });
+
+    socket.on('error', (error) => {
+      reject(new Error(`Socket error: ${error.message}`));
+    });
+
+    socket.on('timeout', () => {
+      socket.destroy();
+      reject(new Error('Socket timeout'));
+    });
+
+    // Set timeout (configurable for long operations like OCI image downloads)
+    socket.setTimeout(options?.timeout ?? 30000);
+  });
+}
+
+/**
+ * Upload raw file bytes into a container via the Incus files API.
+ * Used when Control Panel must stage artifacts without giving the target
+ * container outbound internet access.
+ */
+export async function incusUploadFile(
+  instanceName: string,
+  remotePath: string,
+  data: Buffer,
+  options?: { timeout?: number }
+): Promise<void> {
+  const socketPath = process.env.INCUS_SOCKET || '/var/lib/incus/unix.socket';
+  const path = `/1.0/instances/${encodeURIComponent(instanceName)}/files?path=${encodeURIComponent(remotePath)}`;
+
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+
+    const socket = openIncus(() => {
+      const headers = [
+        `POST ${path} HTTP/1.1`,
+        'Host: localhost',
+        'Content-Type: application/octet-stream',
+        `Content-Length: ${data.length}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n');
+      socket.write(headers);
+      socket.write(data);
+    }, socketPath);
+
+    socket.on('data', (chunk) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+
+    socket.on('end', () => {
+      try {
+        const raw = Buffer.concat(chunks).toString();
+        const bodyStart = raw.indexOf('\r\n\r\n');
+        const headerSection = bodyStart === -1 ? '' : raw.substring(0, bodyStart).toLowerCase();
+        let body = bodyStart === -1 ? raw : raw.substring(bodyStart + 4);
+        if (headerSection.includes('transfer-encoding: chunked')) {
+          body = parseChunkedBody(body);
+        }
+        const response = JSON.parse(body) as IncusResponse;
+        if (response.type === 'error' || response.error) {
+          reject(new Error(response.error || `Incus upload failed with status ${response.status}`));
+          return;
+        }
+        resolve();
+      } catch (error) {
+        reject(new Error(`Failed to parse Incus upload response: ${error}`));
+      }
+    });
+
+    socket.on('error', (error) => {
+      reject(new Error(`Socket error: ${error.message}`));
+    });
+
+    socket.on('timeout', () => {
+      socket.destroy();
+      reject(new Error('Socket timeout'));
+    });
+
+    socket.setTimeout(options?.timeout ?? 300_000);
+  });
+}
+
+/**
+ * Get server information
+ */
+export async function getServerInfo() {
+  return incusRequest('GET', '/1.0');
+}
+
+/**
+ * List all instances
+ */
+export async function listInstances() {
+  return incusRequest<string[]>('GET', '/1.0/instances');
+}
+
+/**
+ * Get instance details
+ */
+export async function getInstance(name: string) {
+  return incusRequest('GET', `/1.0/instances/${encodeURIComponent(name)}`);
+}
+
+/**
+ * Get instance state
+ */
+export async function getInstanceState(name: string) {
+  return incusRequest('GET', `/1.0/instances/${encodeURIComponent(name)}/state`);
+}
+
+/**
+ * Update instance state (start, stop, restart)
+ */
+export async function updateInstanceState(
+  name: string,
+  action: 'start' | 'stop' | 'restart' | 'freeze' | 'unfreeze',
+  force = false
+) {
+  return incusRequest('PUT', `/1.0/instances/${encodeURIComponent(name)}/state`, {
+    action,
+    force,
+    timeout: 30,
+  });
+}
+
+/**
+ * Create a new instance
+ */
+export async function createInstance(
+  name: string,
+  image: string,
+  config?: Record<string, string>,
+  devices?: Record<string, Record<string, string>>
+) {
+  return incusRequest('POST', '/1.0/instances', {
+    name,
+    source: {
+      type: 'image',
+      alias: image,
+    },
+    config,
+    devices,
+  });
+}
+
+/**
+ * Delete an instance
+ */
+export async function deleteInstance(name: string) {
+  return incusRequest('DELETE', `/1.0/instances/${encodeURIComponent(name)}`);
+}
+
+/**
+ * Execute a command inside a container
+ * Uses the exec endpoint with record-output for synchronous execution
+ */
+export async function execCommand(
+  containerName: string,
+  command: string[],
+  options?: {
+    environment?: Record<string, string>;
+    timeout?: number;
+    workingDir?: string;
+  }
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  // Create the exec request with record-output for synchronous mode
+  const execRequest = {
+    command,
+    environment: options?.environment || {},
+    'wait-for-websocket': false,
+    interactive: false,
+    'record-output': true,
+    'cwd': options?.workingDir || '/',
+  };
+  
+  interface ExecOperationMeta {
+    status: string;
+    status_code: number;
+    metadata?: {
+      return?: number;
+      output?: {
+        '1'?: string;
+        '2'?: string;
+      };
+    };
+  }
+  
+  const response = await incusRequest<ExecOperationMeta>(
+    'POST', 
+    `/1.0/instances/${encodeURIComponent(containerName)}/exec`, 
+    execRequest
+  );
+  
+  // If async operation, wait for it to complete
+  if (response.type === 'async' && response.operation) {
+    const timeout = options?.timeout || 30000;
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeout) {
+      // Use Incus server-side wait with 30s chunks to avoid socket timeouts
+      const remainingMs = timeout - (Date.now() - startTime);
+      const waitSec = Math.min(30, Math.ceil(remainingMs / 1000));
+      
+      let opResponse;
+      try {
+        opResponse = await incusRequest<ExecOperationMeta>(
+          'GET', 
+          `${response.operation}/wait?timeout=${waitSec}`,
+          undefined,
+          { timeout: (waitSec + 10) * 1000 }
+        );
+      } catch {
+        // Socket timeout or network error — retry if we still have time
+        if (Date.now() - startTime >= timeout) break;
+        await new Promise(resolve => setTimeout(resolve, 500));
+        continue;
+      }
+      
+      if (opResponse.metadata) {
+        const meta = opResponse.metadata;
+        if (meta.status === 'Success' || meta.status === 'Failure') {
+          // The output fields contain log file paths, not content.
+          // We need to fetch the actual content from those paths.
+          let stdout = '';
+          let stderr = '';
+          
+          const stdoutPath = meta.metadata?.output?.['1'];
+          const stderrPath = meta.metadata?.output?.['2'];
+          
+          if (stdoutPath) {
+            try {
+              stdout = await incusRawGet(stdoutPath);
+            } catch {
+              stdout = '';
+            }
+          }
+          
+          if (stderrPath) {
+            try {
+              stderr = await incusRawGet(stderrPath);
+            } catch {
+              stderr = '';
+            }
+          }
+          
+          return {
+            exitCode: meta.metadata?.return || 0,
+            stdout,
+            stderr,
+          };
+        }
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    throw new Error('Exec operation timed out');
+  }
+  
+  // Synchronous response
+  if (response.metadata) {
+    return {
+      exitCode: response.metadata.metadata?.return || 0,
+      stdout: response.metadata.metadata?.output?.['1'] || '',
+      stderr: response.metadata.metadata?.output?.['2'] || '',
+    };
+  }
+  
+  throw new Error('Unexpected exec response format');
+}
+
+/**
+ * Execute a simple shell command inside a container
+ * Wraps execCommand with shell execution
+ */
+export async function execShell(
+  containerName: string,
+  shellCommand: string,
+  options?: {
+    environment?: Record<string, string>;
+    timeout?: number;
+    workingDir?: string;
+  }
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  return execCommand(containerName, ['sh', '-c', shellCommand], options);
+}

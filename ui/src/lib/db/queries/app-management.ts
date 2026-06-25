@@ -1,0 +1,523 @@
+/**
+ * App Management Queries
+ *
+ * Handles app registration, unregistration, manifest caching,
+ * health monitoring, and info card provider discovery.
+ */
+
+import { db, ensureSchema } from "@/db";
+import {
+  apps,
+  widgets,
+  appPermissions,
+  permissionAudit,
+  webhookSubscriptions,
+  interAppLog,
+  userAppConfig,
+} from "@/db/schema";
+import { eq, or } from "drizzle-orm";
+import { normalizeAppSurfaces, type AppSurface } from "@/lib/surfaces/normalize";
+
+export interface AppManifest {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  icon?: string;
+  /** Accent color for timeline cards, badges, etc. (hex, e.g. "#a855f7") */
+  accent_color?: string;
+  permissions?: string[];
+  surfaceSchemaVersion?: number;
+  surfaces?: AppSurfaceDeclaration[];
+  timeline_embeds?: TimelineEmbedDeclaration[];
+  settings?: { schema: SettingField[] };
+  inter_app?: {
+    provides?: { type: string; description: string }[];
+    consumes?: { app: string; types: string[] }[];
+  };
+}
+
+export interface AppSurfaceDeclaration {
+  id: string;
+  kind: "widget" | "info-card" | "timeline-card" | "notification" | "settings-panel";
+  placement: "dashboard" | "timeline" | "notification-center" | "app-settings" | "app-detail";
+  name?: string;
+  description?: string;
+  embedPath: string;
+  permissions?: string[];
+  defaultSize?: { width: number; height: number };
+  minSize?: { width: number; height: number };
+  maxSize?: { width: number; height: number };
+  refreshInterval?: number;
+  settingsSchema?: SettingField[];
+  triggers?: string[];
+}
+
+export interface TimelineEmbedDeclaration {
+  entry_type: string;
+  embed_path: string;
+  description?: string;
+  /** Lucide icon name for this entry type (e.g. "Eye", "Play") */
+  icon?: string;
+}
+
+interface SettingField {
+  key: string;
+  type: string;
+  label: string;
+  required?: boolean;
+  default?: unknown;
+}
+
+/** Register a new app in the database */
+export async function registerApp(data: {
+  id: string;
+  name: string;
+  version?: string;
+  containerUrl: string;
+  subdomain?: string;
+  icon?: string;
+  manifest?: Record<string, unknown>;
+  tokenHash?: string;
+  ssoEntryUrl?: string;
+}): Promise<void> {
+  await ensureSchema();
+
+  const existing = await db
+    .select()
+    .from(apps)
+    .where(eq(apps.id, data.id))
+    .limit(1);
+
+  if (existing.length > 0) {
+    await db
+      .update(apps)
+      .set({
+        name: data.name,
+        version: data.version ?? existing[0].version,
+        containerUrl: data.containerUrl,
+        subdomain: data.subdomain,
+        icon: data.icon,
+        manifest: data.manifest ?? existing[0].manifest,
+        tokenHash: data.tokenHash ?? existing[0].tokenHash,
+        ssoEntryUrl: data.ssoEntryUrl ?? existing[0].ssoEntryUrl,
+        updatedAt: new Date(),
+      })
+      .where(eq(apps.id, data.id));
+  } else {
+    await db.insert(apps).values({
+      id: data.id,
+      name: data.name,
+      version: data.version,
+      containerUrl: data.containerUrl,
+      subdomain: data.subdomain,
+      icon: data.icon,
+      manifest: data.manifest ?? {},
+      tokenHash: data.tokenHash,
+      ssoEntryUrl: data.ssoEntryUrl,
+    });
+  }
+  invalidateAppSurfaceCache();
+}
+
+/**
+ * Update ONLY the SSO entry URL for an already-registered app.
+ *
+ * Used by the Control Panel when SSO is wired by a post-install integration
+ * (Jellyfin, Nextcloud, Immich, …): the app was first registered without an
+ * entry_url, and this sets the SSO login path so the drawer/header link to it.
+ * Touches nothing else — token, icon, name and container URL are preserved.
+ */
+export async function setAppSsoEntryUrl(appId: string, ssoEntryUrl: string | null): Promise<void> {
+  await ensureSchema();
+  await db
+    .update(apps)
+    .set({ ssoEntryUrl, updatedAt: new Date() })
+    .where(eq(apps.id, appId));
+  invalidateAppSurfaceCache();
+}
+
+/** Unregister an app and clean up all related data */
+export async function unregisterApp(appId: string): Promise<void> {
+  await ensureSchema();
+
+  // Remove app-provided widgets from all users
+  await db.delete(widgets).where(eq(widgets.appId, appId));
+
+  // Remove all permissions for this app
+  await db.delete(appPermissions).where(eq(appPermissions.appId, appId));
+
+  // Remove audit log entries
+  await db.delete(permissionAudit).where(eq(permissionAudit.appId, appId));
+
+  // Remove webhook subscriptions
+  await db
+    .delete(webhookSubscriptions)
+    .where(eq(webhookSubscriptions.subscriberAppId, appId));
+
+  // Remove inter-app logs
+  await db
+    .delete(interAppLog)
+    .where(
+      or(eq(interAppLog.fromAppId, appId), eq(interAppLog.toAppId, appId))
+    );
+
+  // Remove user app configs
+  await db.delete(userAppConfig).where(eq(userAppConfig.appId, appId));
+
+  // Remove the app itself
+  await db.delete(apps).where(eq(apps.id, appId));
+
+  invalidateAppSurfaceCache();
+}
+
+/** Update global app properties (admin only — affects all users' defaults) */
+export async function updateGlobalApp(
+  appId: string,
+  data: {
+    name?: string;
+    icon?: string | null;
+    subdomain?: string;
+    displayOrder?: number;
+  }
+): Promise<typeof apps.$inferSelect | null> {
+  await ensureSchema();
+
+  const updateData: Record<string, unknown> = { updatedAt: new Date() };
+  if (data.name !== undefined) updateData.name = data.name;
+  if (data.icon !== undefined) updateData.icon = data.icon;
+  if (data.subdomain !== undefined) updateData.subdomain = data.subdomain;
+  if (data.displayOrder !== undefined) updateData.displayOrder = data.displayOrder;
+
+  const [updated] = await db
+    .update(apps)
+    .set(updateData)
+    .where(eq(apps.id, appId))
+    .returning();
+
+  invalidateAppSurfaceCache();
+  return updated ?? null;
+}
+
+/** Update an app's cached manifest */
+export async function updateAppManifest(
+  appId: string,
+  manifest: Record<string, unknown>
+): Promise<void> {
+  await ensureSchema();
+
+  const version = typeof manifest.version === "string" ? manifest.version : undefined;
+
+  await db
+    .update(apps)
+    .set({
+      manifest,
+      ...(version ? { version } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(apps.id, appId));
+
+  invalidateAppSurfaceCache();
+}
+
+/** Update an app's health status */
+export async function updateAppStatus(
+  appId: string,
+  status: "healthy" | "unhealthy" | "unknown" | "stopped"
+): Promise<void> {
+  await ensureSchema();
+
+  await db
+    .update(apps)
+    .set({ status, updatedAt: new Date() })
+    .where(eq(apps.id, appId));
+}
+
+/** Get a single app by ID */
+export async function getApp(appId: string) {
+  await ensureSchema();
+
+  const [app] = await db
+    .select()
+    .from(apps)
+    .where(eq(apps.id, appId))
+    .limit(1);
+
+  return app ?? null;
+}
+
+/** App metadata for timeline rendering (icon, color, per-entry-type icons) */
+export interface AppMeta {
+  icon: string | null;
+  accent_color: string | null;
+  /** Map of entry_type -> lucide icon name from timeline declarations in manifest */
+  entry_icons: Record<string, string>;
+  /** Map of entry_type -> timeline-card surface metadata */
+  timeline_cards: Record<string, { embed_path: string; name: string | null; description: string | null }>;
+}
+
+/** Get app metadata map for all enabled apps (used by timeline feed) */
+export async function getAppMetaMap(): Promise<Record<string, AppMeta>> {
+  await ensureSchema();
+
+  const allApps = await db
+    .select({
+      id: apps.id,
+      icon: apps.icon,
+      manifest: apps.manifest,
+    })
+    .from(apps)
+    .where(eq(apps.enabled, true));
+
+  const result: Record<string, AppMeta> = {};
+  for (const app of allApps) {
+    const manifest = app.manifest as Record<string, unknown> | null;
+    const accentColor = (manifest?.accent_color as string) ?? null;
+    const timelineEmbeds = (manifest?.timeline_embeds as Array<{ entry_type: string; icon?: string }>) ?? [];
+    const timelineSurfaces = normalizeAppSurfaces(manifest)
+      .filter((surface) => surface.kind === "timeline-card" && surface.placement === "timeline");
+
+    const entryIcons: Record<string, string> = {};
+    for (const embed of timelineEmbeds) {
+      if (embed.icon) {
+        entryIcons[embed.entry_type] = embed.icon;
+      }
+    }
+
+    const timelineCards: Record<string, { embed_path: string; name: string | null; description: string | null }> = {};
+    for (const surface of timelineSurfaces) {
+      for (const trigger of surface.triggers?.length ? surface.triggers : [surface.id]) {
+        timelineCards[trigger] = {
+          embed_path: surface.embedPath,
+          name: surface.name ?? null,
+          description: surface.description ?? null,
+        };
+      }
+    }
+
+    result[app.id] = {
+      icon: app.icon ?? null,
+      accent_color: accentColor,
+      entry_icons: entryIcons,
+      timeline_cards: timelineCards,
+    };
+  }
+  return result;
+}
+
+/** Get notification embed surfaces keyed by app id */
+export async function getNotificationSurfaceMap(): Promise<
+  Record<string, { surface_id: string; embed_path: string; name: string | null; description: string | null }>
+> {
+  const declarations = await getAppSurfaceDeclarations();
+  const result: Record<string, { surface_id: string; embed_path: string; name: string | null; description: string | null }> = {};
+
+  for (const declaration of declarations) {
+    const surface = declaration.surfaces.find(
+      (item) => item.kind === "notification" && item.placement === "notification-center"
+    );
+    if (!surface) continue;
+
+    result[declaration.appId] = {
+      surface_id: surface.id,
+      embed_path: surface.embedPath,
+      name: surface.name ?? null,
+      description: surface.description ?? null,
+    };
+  }
+
+  return result;
+}
+
+/** Get all unified app surface declarations from live manifests with cached fallback */
+/**
+ * Cache for getAppSurfaceDeclarations(). The uncached path does a LIVE
+ * fetchAppManifest() to every installed app's container (5s timeout each), which
+ * made GET /api/v1/notifications take ~5s warm / ~18s cold — and that surfaced
+ * badly once /embed/notifications made the fetch the first thing a native app's
+ * bell shows. Surfaces only change on app install/update, so a short TTL is safe;
+ * mutations call invalidateAppSurfaceCache() for immediacy.
+ */
+type SurfaceDeclarations = Array<{
+  appId: string;
+  appName: string;
+  containerUrl: string | null;
+  subdomain: string | null;
+  icon: string | null;
+  surfaces: AppSurface[];
+}>;
+const SURFACE_CACHE_TTL_MS = 60_000;
+let surfaceCache: { at: number; value: SurfaceDeclarations } | null = null;
+let surfaceInflight: Promise<SurfaceDeclarations> | null = null;
+
+/** Clear the app-surface declarations cache (call on app install/update/remove). */
+export function invalidateAppSurfaceCache(): void {
+  surfaceCache = null;
+}
+
+export async function getAppSurfaceDeclarations(): Promise<SurfaceDeclarations> {
+  const now = Date.now();
+  if (surfaceCache && now - surfaceCache.at < SURFACE_CACHE_TTL_MS) return surfaceCache.value;
+  // Coalesce concurrent misses so a burst of requests triggers ONE manifest sweep.
+  if (surfaceInflight) return surfaceInflight;
+  surfaceInflight = getAppSurfaceDeclarationsUncached()
+    .then((value) => {
+      surfaceCache = { at: Date.now(), value };
+      return value;
+    })
+    .finally(() => {
+      surfaceInflight = null;
+    });
+  return surfaceInflight;
+}
+
+async function getAppSurfaceDeclarationsUncached(): Promise<SurfaceDeclarations> {
+  await ensureSchema();
+
+  const allApps = await db
+    .select()
+    .from(apps)
+    .where(eq(apps.enabled, true));
+
+  const upstreamMap = await discoverAppUpstreams();
+
+  const results = await Promise.allSettled(
+    allApps
+      .filter((app) => app.containerUrl || app.subdomain || app.manifest)
+      .map(async (app) => {
+        const upstream = (app.subdomain && upstreamMap.get(app.subdomain))
+          || app.containerUrl;
+        const liveManifest = upstream ? await fetchAppManifest(upstream) : null;
+        const manifest = (liveManifest as unknown as Record<string, unknown> | null)
+          ?? (app.manifest as Record<string, unknown> | null)
+          ?? null;
+        const surfaces = normalizeAppSurfaces(manifest);
+        if (surfaces.length === 0) return null;
+        return {
+          appId: app.id,
+          appName: app.name,
+          containerUrl: app.containerUrl ?? upstream ?? null,
+          subdomain: app.subdomain ?? null,
+          icon: app.icon ?? (manifest?.icon as string | undefined) ?? null,
+          surfaces,
+        };
+      })
+  );
+
+  const out: SurfaceDeclarations = [];
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value) out.push(r.value);
+  }
+  return out;
+}
+
+/** Fetch manifest from an app's container */
+export async function fetchAppManifest(
+  containerUrl: string
+): Promise<AppManifest | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    const response = await fetch(`${containerUrl}/api/manifest`, {
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) return null;
+
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Discover app backend URLs from Caddy's admin API.
+ * Caddy is on the same Incus bridge as UI (youeye-caddy.youeye resolves),
+ * and its config contains the actual app container IPs as upstreams.
+ * Returns a map of subdomain → "http://<ip>:<port>".
+ *
+ * Uses Node http module instead of fetch — fetch adds an Origin header
+ * that Caddy's admin API rejects.
+ */
+async function discoverAppUpstreams(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  try {
+    const http = await import("http");
+    const data = await new Promise<string>((resolve, reject) => {
+      const req = http.get(
+        "http://youeye-caddy.youeye:2019/config/apps/http/servers",
+        (res) => {
+          let body = "";
+          res.on("data", (chunk: string) => (body += chunk));
+          res.on("end", () => resolve(body));
+        }
+      );
+      req.on("error", reject);
+      req.setTimeout(5000, () => {
+        req.destroy();
+        reject(new Error("timeout"));
+      });
+    });
+
+    const servers = JSON.parse(data) as Record<
+      string,
+      {
+        routes?: Array<{
+          match?: Array<{ host?: string[] }>;
+          handle?: Array<{
+            handler?: string;
+            upstreams?: Array<{ dial?: string }>;
+          }>;
+        }>;
+      }
+    >;
+
+    for (const server of Object.values(servers)) {
+      for (const route of server.routes ?? []) {
+        const hosts = route.match?.[0]?.host ?? [];
+        const proxy = route.handle?.find((h) => h.handler === "reverse_proxy");
+        const dial = proxy?.upstreams?.[0]?.dial;
+        if (!dial) continue;
+
+        for (const host of hosts) {
+          const dot = host.indexOf(".");
+          if (dot > 0) {
+            map.set(host.substring(0, dot), `http://${dial}`);
+          }
+        }
+      }
+    }
+  } catch {
+    // Caddy unreachable — fall back to DB containerUrl
+  }
+  return map;
+}
+
+/** Check app health */
+export async function checkAppHealth(
+  containerUrl: string
+): Promise<{ healthy: boolean; version?: string }> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    const response = await fetch(`${containerUrl}/api/health`, {
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) return { healthy: false };
+
+    const data = await response.json();
+    return {
+      healthy: data.status === "healthy" || data.status === "ok",
+      version: data.version,
+    };
+  } catch {
+    return { healthy: false };
+  }
+}

@@ -1,0 +1,389 @@
+/**
+ * Timeline Feed
+ *
+ * Main timeline component. Handles PIN state, fetching entries,
+ * filtering, entry detail view, and rendering the chronological feed.
+ * Includes retroactive enrichment for entries without a stored info-card target.
+ */
+
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { PINPrompt } from "./pin-prompt";
+import { TimelineFilters } from "./timeline-filters";
+import { TimelineEntryCard } from "./timeline-entry-card";
+import { TimelineEntryDetail } from "./timeline-entry-detail";
+import { Lock, History } from "lucide-react";
+import { useTranslations, useLocale } from "next-intl";
+import { deriveInfoCardTargetUrl } from "@/lib/timeline/derive-info-card-url";
+import type { AppMetaEntry } from "./timeline-embed";
+
+interface TimelineEntry {
+  id: string;
+  collection: string;
+  created_at: string | null;
+  entry: {
+    app_id: string;
+    entry_type: string;
+    title: string;
+    timestamp: string;
+    embed_path?: string;
+    tags: Record<string, unknown>;
+    data: Record<string, unknown>;
+    info_card?: { card_type: string; endpoint: string };
+    import_source?: string;
+    original_id?: string;
+    original_timestamp?: string;
+    infoCardUrl?: string;
+  };
+}
+
+interface TimelineFeedProps {
+  initialPinExists: boolean;
+  initialSessionActive: boolean;
+}
+
+/** A grouped feed item: either a day-divider label or an entry. */
+type FeedItem =
+  | { type: "day"; key: string; label: string }
+  | { type: "entry"; entry: TimelineEntry };
+
+/**
+ * Walk timestamp-sorted entries (the API returns entry-timestamp desc) and emit
+ * a `.day` divider whenever the calendar day changes — Today / Yesterday / a
+ * locale-formatted date. The single pass means no duplicate headers.
+ */
+function buildDayGroups(
+  entries: TimelineEntry[],
+  locale: string,
+  labels: { today: string; yesterday: string }
+): FeedItem[] {
+  const startOfDay = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const now = new Date();
+  const todayStart = startOfDay(now);
+
+  const items: FeedItem[] = [];
+  let lastKey: string | null = null;
+
+  for (const e of entries) {
+    const d = new Date(e.entry.timestamp);
+    const key = isNaN(d.getTime()) ? "unknown" : d.toDateString();
+    if (key !== lastKey) {
+      let label: string;
+      if (key === "unknown") {
+        label = "—";
+      } else {
+        const diffDays = Math.round((todayStart - startOfDay(d)) / 86400000);
+        if (diffDays === 0) label = labels.today;
+        else if (diffDays === 1) label = labels.yesterday;
+        else
+          label = d.toLocaleDateString(locale, {
+            weekday: "long",
+            month: "long",
+            day: "numeric",
+            year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+          });
+      }
+      items.push({ type: "day", key, label });
+      lastKey = key;
+    }
+    items.push({ type: "entry", entry: e });
+  }
+  return items;
+}
+
+export function TimelineFeed({
+  initialPinExists,
+  initialSessionActive,
+}: TimelineFeedProps) {
+  const [pinExists, setPinExists] = useState(initialPinExists);
+  const [sessionActive, setSessionActive] = useState(initialSessionActive);
+  const [showPinPrompt, setShowPinPrompt] = useState(false);
+  const [selectedEntry, setSelectedEntry] = useState<TimelineEntry | null>(
+    null
+  );
+  const t = useTranslations("timeline");
+  const tc = useTranslations("common");
+  const locale = useLocale();
+
+  const [entries, setEntries] = useState<TimelineEntry[]>([]);
+  const [counts, setCounts] = useState({
+    history: 0,
+    future: 0,
+    imported: 0,
+  });
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [appMetaMap, setAppMetaMap] = useState<Record<string, AppMetaEntry>>({});
+
+  // Filters
+  const [collection, setCollection] = useState("all");
+  const [search, setSearch] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [offset, setOffset] = useState(0);
+  const limit = 50;
+
+  // Derive base domain for embed iframe URLs (e.g. "yourdomain.com")
+  const baseDomain =
+    typeof window !== "undefined"
+      ? window.location.hostname
+      : "";
+
+  /**
+   * Retroactive enrichment: for entries without a stored info-card target,
+   * attempt to derive a real URL that an app-declared info-card surface can match.
+   */
+  const enrichEntries = useCallback(
+    (rawEntries: TimelineEntry[]): TimelineEntry[] => {
+      return rawEntries.map((entry) => {
+        // Already has an info-card target — skip
+        if (
+          entry.entry.infoCardUrl ||
+          entry.entry.info_card?.endpoint ||
+          entry.entry.data.infoCardUrl
+        ) {
+          return entry;
+        }
+
+        // Attempt to derive
+        const derived = deriveInfoCardTargetUrl(
+          {
+            entry_type: entry.entry.entry_type,
+            app_id: entry.entry.app_id,
+            data: entry.entry.data,
+            tags: entry.entry.tags,
+          }
+        );
+
+        if (!derived) return entry;
+
+        // Return new entry with enriched data (immutable)
+        return {
+          ...entry,
+          entry: {
+            ...entry.entry,
+            infoCardUrl: derived,
+          },
+        };
+      });
+    },
+    []
+  );
+
+  const fetchEntries = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (collection !== "all") params.set("collection", collection);
+      params.set("limit", String(limit));
+      params.set("offset", String(offset));
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
+
+      const res = await fetch(`/api/v1/timeline?${params}`);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      if (data.pin_required) {
+        setPinExists(data.pin_exists);
+        setSessionActive(false);
+        setEntries([]);
+        setCounts(data.counts);
+        return;
+      }
+
+      setSessionActive(true);
+      setPinExists(true);
+      // Enrich entries with derived info card URLs
+      setEntries(enrichEntries(data.entries));
+      setTotal(data.total);
+      setCounts(data.counts);
+      if (data.app_meta) setAppMetaMap(data.app_meta);
+    } catch {
+      // Silently fail
+    } finally {
+      setLoading(false);
+    }
+  }, [collection, offset, from, to, enrichEntries]);
+
+  useEffect(() => {
+    if (sessionActive) {
+      fetchEntries();
+    }
+  }, [sessionActive, fetchEntries]);
+
+  // Client-side search filter (on already-decrypted entries)
+  const displayEntries = search
+    ? entries.filter(
+        (e) =>
+          e.entry.title.toLowerCase().includes(search.toLowerCase()) ||
+          e.entry.app_id.toLowerCase().includes(search.toLowerCase()) ||
+          e.entry.entry_type.toLowerCase().includes(search.toLowerCase())
+      )
+    : entries;
+
+  const handleDelete = async (id: string) => {
+    const res = await fetch(`/api/v1/timeline/entry/${id}`, {
+      method: "DELETE",
+    });
+    if (res.ok) {
+      setEntries((prev) => prev.filter((e) => e.id !== id));
+      setTotal((t) => t - 1);
+    }
+  };
+
+  const handleLock = async () => {
+    await fetch("/api/v1/pin/session", { method: "DELETE" });
+    setSessionActive(false);
+    setEntries([]);
+  };
+
+  const handlePinSuccess = () => {
+    setShowPinPrompt(false);
+    setPinExists(true);
+    setSessionActive(true);
+  };
+
+  // Show PIN setup or unlock prompt
+  if (!sessionActive) {
+    return (
+      <div className="space-y-6">
+        {/* Show prompt inline if needed */}
+        {showPinPrompt && (
+          <PINPrompt
+            mode={pinExists ? "verify" : "create"}
+            onSuccess={handlePinSuccess}
+            onCancel={() => setShowPinPrompt(false)}
+          />
+        )}
+
+        {/* Locked state */}
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="w-16 h-16 rounded-full bg-accent flex items-center justify-center mb-4">
+            <Lock className="w-8 h-8 text-muted-foreground" />
+          </div>
+          <h2 className="text-xl font-semibold mb-2">
+            {pinExists ? t("locked") : t("setupEncryption")}
+          </h2>
+          <p className="text-sm text-muted-foreground max-w-md mb-6">
+            {pinExists ? t("lockedDescription") : t("setupDescription")}
+          </p>
+          <button
+            onClick={() => setShowPinPrompt(true)}
+            className="px-6 py-2.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors"
+          >
+            {pinExists ? t("unlockTimeline") : t("createPin")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Show entry detail view
+  if (selectedEntry) {
+    return (
+      <TimelineEntryDetail
+        entry={selectedEntry}
+        onBack={() => setSelectedEntry(null)}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Filters */}
+      <TimelineFilters
+        collection={collection}
+        onCollectionChange={(c) => {
+          setCollection(c);
+          setOffset(0);
+        }}
+        search={search}
+        onSearchChange={setSearch}
+        from={from}
+        onFromChange={setFrom}
+        to={to}
+        onToChange={setTo}
+        counts={counts}
+        sessionActive={sessionActive}
+        onLock={handleLock}
+      />
+
+      {/* Loading */}
+      {loading && (
+        <div className="flex items-center justify-center py-12">
+          <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      )}
+
+      {/* Entries */}
+      {!loading && displayEntries.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="w-12 h-12 rounded-full bg-accent flex items-center justify-center mb-3">
+            <History className="w-6 h-6 text-muted-foreground" />
+          </div>
+          <h3 className="font-medium text-sm mb-1">{t("noEntries")}</h3>
+          <p className="text-xs text-muted-foreground max-w-sm">
+            {t("noEntriesDescription")}
+          </p>
+        </div>
+      )}
+
+      {!loading && displayEntries.length > 0 && (
+        <div className="grid gap-3.5">
+          {buildDayGroups(displayEntries, locale, {
+            today: t("dayToday"),
+            yesterday: t("yesterday"),
+          }).map((item) =>
+            item.type === "day" ? (
+              <div
+                key={`day-${item.key}`}
+                className="px-0.5 pt-2.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground/80"
+              >
+                {item.label}
+              </div>
+            ) : (
+              <TimelineEntryCard
+                key={item.entry.id}
+                entry={item.entry}
+                domain={baseDomain}
+                appMetaMap={appMetaMap}
+                onDelete={handleDelete}
+                onSelect={setSelectedEntry}
+              />
+            )
+          )}
+
+          {/* Pagination */}
+          {total > limit && (
+            <div className="flex items-center justify-center gap-3 pt-4">
+              <button
+                onClick={() => setOffset(Math.max(0, offset - limit))}
+                disabled={offset === 0}
+                className="px-4 py-2 text-sm rounded-lg border hover:bg-accent disabled:opacity-50 transition-colors"
+              >
+                {tc("previous")}
+              </button>
+              <span className="text-sm text-muted-foreground">
+                {t("ofTotal", {
+                  start: offset + 1,
+                  end: Math.min(offset + limit, total),
+                  total,
+                })}
+              </span>
+              <button
+                onClick={() => setOffset(offset + limit)}
+                disabled={offset + limit >= total}
+                className="px-4 py-2 text-sm rounded-lg border hover:bg-accent disabled:opacity-50 transition-colors"
+              >
+                {tc("next")}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

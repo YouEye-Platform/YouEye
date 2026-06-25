@@ -1,0 +1,463 @@
+#!/bin/sh
+# YouEye Spine Installer
+# Works on minimal Debian/Ubuntu systems (Proxmox LXC, etc.)
+# Usage: curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/spine/install.sh | sudo sh -s --
+#
+# Options:
+#   --repo <url>       Core platform release repository
+#   --tui              Launch interactive TUI installer after download
+#
+# Override URL via environment or flag:
+#   RELEASE_REPO_URL
+
+set -e
+
+RELEASE_REPO_URL="${RELEASE_REPO_URL:-https://github.com/youeye-platform/YouEye}"
+RELEASE_BASE_URL=""
+RELEASE_API_URL=""
+RELEASE_ORG=""
+RELEASE_REPO=""
+PROVIDER=""
+
+REPO="$RELEASE_REPO_URL"
+INSTALL_DIR="/usr/local/bin"
+SERVICE_DIR="/etc/systemd/system"
+SOCKET_DIR="/var/run/youeye"
+
+# Component tag prefix for Spine releases in the monorepo
+TAG_PREFIX="spine"
+
+# Release branch support: install from a branch channel instead of main.
+# Branch releases use tags like "spine-dev-v0.2.21.1".
+#
+# Usage (any of these work):
+#   curl -sSL https://... | sh -s -- --branch sebastian
+#   curl -sSL https://... | BRANCH=sebastian sh
+#   export BRANCH=sebastian && curl -sSL https://... | sh
+BRANCH="${BRANCH:-}"
+LAUNCH_TUI="${LAUNCH_TUI:-false}"
+
+# Parse command-line arguments (passed via `sh -s -- --branch <name>`)
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --branch|-b)
+            BRANCH="$2"
+            shift 2
+            ;;
+        --repo|-r)
+            RELEASE_REPO_URL="$2"
+            shift 2
+            ;;
+        --tui|--interactive)
+            LAUNCH_TUI=true
+            shift
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+parse_repo_url() {
+    url="$1"
+    case "$url" in
+        http://*|https://*) ;;
+        *) printf "Repository URL must start with http:// or https://\\n" >&2; exit 1 ;;
+    esac
+    no_scheme="${url#http://}"
+    no_scheme="${no_scheme#https://}"
+    host="${no_scheme%%/*}"
+    rest="${no_scheme#*/}"
+    org="${rest%%/*}"
+    repo="${rest#*/}"
+    repo="${repo%%/*}"
+    repo="${repo%.git}"
+    if [ -z "$host" ] || [ -z "$org" ] || [ -z "$repo" ] || [ "$rest" = "$no_scheme" ]; then
+        printf "Repository URL must include host, owner, and repo\\n" >&2
+        exit 1
+    fi
+    if [ "$host" = "github.com" ]; then
+        PROVIDER="github"
+        RELEASE_BASE_URL="${url%%/$org/$repo*}"
+        RELEASE_API_URL="https://api.github.com/repos/${org}/${repo}/releases?per_page=50"
+    else
+        PROVIDER="gitea"
+        RELEASE_BASE_URL="${url%%/$org/$repo*}"
+        RELEASE_API_URL="${RELEASE_BASE_URL}/api/v1/repos/${org}/${repo}/releases?limit=50"
+    fi
+    RELEASE_ORG="$org"
+    RELEASE_REPO="$repo"
+    RELEASE_REPO_URL="${RELEASE_BASE_URL}/${RELEASE_ORG}/${RELEASE_REPO}"
+    REPO="$RELEASE_REPO_URL"
+}
+
+parse_repo_url "$RELEASE_REPO_URL"
+
+# Colors (if terminal supports it)
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+log_info() {
+    printf "${BLUE}[INFO]${NC} %s\n" "$1"
+}
+
+log_success() {
+    printf "${GREEN}[OK]${NC} %s\n" "$1"
+}
+
+log_warn() {
+    printf "${YELLOW}[WARN]${NC} %s\n" "$1"
+}
+
+log_error() {
+    printf "${RED}[ERROR]${NC} %s\n" "$1"
+}
+
+# Check if running as root
+if [ "$(id -u)" != "0" ]; then
+    log_error "This script must be run as root"
+    exit 1
+fi
+
+# Detect architecture
+detect_arch() {
+    ARCH=$(uname -m)
+    case $ARCH in
+        x86_64)
+            echo "amd64"
+            ;;
+        aarch64)
+            echo "arm64"
+            ;;
+        arm64)
+            echo "arm64"
+            ;;
+        *)
+            log_error "Unsupported architecture: $ARCH"
+            exit 1
+            ;;
+    esac
+}
+
+# Detect OS
+detect_os() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        echo "$ID"
+    else
+        log_error "Cannot detect OS. /etc/os-release not found."
+        exit 1
+    fi
+}
+
+# Install prerequisites
+install_prerequisites() {
+    log_info "Installing prerequisites..."
+
+    OS=$(detect_os)
+    case $OS in
+        debian|ubuntu)
+            apt-get update -qq
+            apt-get install -y -qq curl ca-certificates
+            ;;
+        alpine)
+            apk add --no-cache curl ca-certificates
+            ;;
+        *)
+            log_warn "Unknown OS: $OS. Assuming curl is available."
+            ;;
+    esac
+
+    log_success "Prerequisites installed"
+}
+
+# Check if curl exists, install if not
+ensure_curl() {
+    if ! command -v curl >/dev/null 2>&1; then
+        log_info "curl not found, installing..."
+        install_prerequisites
+    fi
+}
+
+# Get latest release version, filtered by BRANCH if set.
+# In the YouEye monorepo, Spine tags are prefixed: spine-v0.2.21, spine-dev-v0.2.21.1
+# Works with both forge-compatible and GitHub APIs (JSON response format is compatible).
+# NOTE: all output goes to stderr so the caller can capture only the version from stdout.
+get_latest_version() {
+    # Fetch releases from the configured API endpoint
+    CURL_ARGS="-4 -sSL"
+    if [ "$PROVIDER" = "github" ]; then
+        CURL_ARGS="$CURL_ARGS -H 'Accept: application/vnd.github+json' -H 'User-Agent: youeye-spine'"
+    fi
+    RELEASES=$(eval curl $CURL_ARGS "\"$RELEASE_API_URL\"" 2>/dev/null)
+
+    # Extract all tag names, one per line
+    TAGS=$(echo "$RELEASES" | tr ',' '\n' | grep '"tag_name"' | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+
+    # Filter to only Spine tags (starting with "spine-")
+    SPINE_TAGS=$(echo "$TAGS" | grep "^${TAG_PREFIX}-" | sed "s/^${TAG_PREFIX}-//")
+
+    if [ -n "$BRANCH" ] && [ "$BRANCH" != "main" ]; then
+        # Branch mode: look for tags like "spine-dev-v0.2.21.1" → after prefix strip: "dev-v0.2.21.1"
+        BRANCH_PREFIX="${BRANCH}-v"
+        VERSION=$(echo "$SPINE_TAGS" | grep "^${BRANCH_PREFIX}" | head -1 | sed "s/^${BRANCH_PREFIX}//")
+
+        if [ -n "$VERSION" ]; then
+            echo "$VERSION"
+            return
+        fi
+
+        log_warn "No ${BRANCH} branch release found for Spine, falling back to main" >&2
+    fi
+
+    # Main releases: after prefix strip, tags starting with "v" + digit (e.g. "v0.2.21")
+    VERSION=$(echo "$SPINE_TAGS" | grep '^v[0-9]' | head -1 | sed 's/^v//')
+
+    if [ -z "$VERSION" ]; then
+        log_error "No Spine releases found in $RELEASE_REPO_URL" >&2
+        exit 1
+    else
+        echo "$VERSION"
+    fi
+}
+
+# Download spine binary
+download_spine() {
+    ARCH=$(detect_arch)
+    VERSION=$(get_latest_version)
+
+    log_info "Detected architecture: $ARCH"
+    log_info "Latest version: $VERSION"
+
+    ASSET_NAME="spine-linux-${ARCH}"
+
+    # Ensure install directory exists
+    mkdir -p "$INSTALL_DIR"
+
+    # Use temp file to avoid piping issues when running via curl | sh
+    TMP_FILE="/tmp/spine-download-$$"
+
+    # Construct the download URL using the component-prefixed tag
+    if [ -n "$BRANCH" ] && [ "$BRANCH" != "main" ]; then
+        TAG="${TAG_PREFIX}-${BRANCH}-v${VERSION}"
+    else
+        TAG="${TAG_PREFIX}-v${VERSION}"
+    fi
+    DOWNLOAD_URL="${RELEASE_BASE_URL}/${RELEASE_ORG}/${RELEASE_REPO}/releases/download/${TAG}/${ASSET_NAME}"
+
+    log_info "Downloading Spine from $DOWNLOAD_URL..."
+
+    # Download to temp file first, then move
+    if curl -4 -sSL -f "$DOWNLOAD_URL" -o "$TMP_FILE" && [ -s "$TMP_FILE" ]; then
+        mv "$TMP_FILE" "${INSTALL_DIR}/youeye"
+        log_success "Downloaded successfully"
+    else
+        rm -f "$TMP_FILE"
+        # The branch release for this version may not exist (e.g. the version
+        # came from get_latest_version's main-release fallback). Try the MAIN
+        # release tag for the same version on the SAME server before giving up.
+        MAIN_TAG="${TAG_PREFIX}-v${VERSION}"
+        log_warn "Release ${TAG} not found, trying main release ${MAIN_TAG}..." >&2
+        DOWNLOAD_URL="${RELEASE_BASE_URL}/${RELEASE_ORG}/${RELEASE_REPO}/releases/download/${MAIN_TAG}/${ASSET_NAME}"
+
+        if curl -4 -sSL -f "$DOWNLOAD_URL" -o "$TMP_FILE" && [ -s "$TMP_FILE" ]; then
+            mv "$TMP_FILE" "${INSTALL_DIR}/youeye"
+            log_success "Downloaded main release ${MAIN_TAG}"
+        else
+            rm -f "$TMP_FILE"
+            log_error "Failed to download YouEye binary"
+            log_error "Tried: $DOWNLOAD_URL"
+            exit 1
+        fi
+    fi
+
+    chmod +x "${INSTALL_DIR}/youeye"
+
+    # Clean up old install locations (pre-0.4.0 installed to /usr/bin/)
+    if [ "${INSTALL_DIR}" != "/usr/bin" ]; then
+        for OLD_BIN in /usr/bin/youeye /usr/bin/spine; do
+            if [ -e "$OLD_BIN" ] || [ -L "$OLD_BIN" ]; then
+                rm -f "$OLD_BIN"
+                log_info "Removed old binary: $OLD_BIN"
+            fi
+        done
+    fi
+
+    # Create backward-compatible 'spine' symlink
+    ln -sf "${INSTALL_DIR}/youeye" "${INSTALL_DIR}/spine"
+
+    log_success "YouEye installed to ${INSTALL_DIR}/youeye (spine symlink created)"
+}
+
+# Create systemd service
+create_service() {
+    log_info "Creating systemd service..."
+
+    # Create socket directory
+    mkdir -p "$SOCKET_DIR"
+
+    # Migrate from old spine.service if it exists
+    if [ -f "${SERVICE_DIR}/spine.service" ]; then
+        log_info "Migrating from spine.service to youeye.service..."
+        systemctl stop spine.service 2>/dev/null || true
+        systemctl disable spine.service 2>/dev/null || true
+        rm -f "${SERVICE_DIR}/spine.service"
+    fi
+
+    cat > "${SERVICE_DIR}/youeye.service" << 'EOF'
+[Unit]
+Description=YouEye Platform Management Service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=/bin/mkdir -p /var/run/youeye
+ExecStart=/usr/local/bin/youeye api serve
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable youeye.service
+    systemctl start youeye.service
+
+    log_success "YouEye service created and started"
+}
+
+# Write release branch and core repo config.
+set_release_branch() {
+    mkdir -p /var/lib/youeye/config
+    CONFIG_FILE="/var/lib/youeye/config/youeye.yaml"
+
+    if [ -n "$BRANCH" ] && [ "$BRANCH" != "main" ]; then
+        log_info "Setting release branch to: $BRANCH"
+
+        if [ -f "$CONFIG_FILE" ]; then
+            # Update existing file: replace or append release_branch
+            if grep -q "release_branch" "$CONFIG_FILE"; then
+                sed -i "s/^release_branch:.*/release_branch: ${BRANCH}/" "$CONFIG_FILE"
+            else
+                echo "release_branch: ${BRANCH}" >> "$CONFIG_FILE"
+            fi
+        else
+            cat > "$CONFIG_FILE" << EOFCFG
+# YouEye Configuration
+site_name: YouEye
+release_branch: ${BRANCH}
+setup_completed: false
+subdomains:
+  control: control
+  identity: id
+  dns: dns
+EOFCFG
+        fi
+
+        log_success "Release branch set to: $BRANCH"
+    fi
+
+    # Persist core release repository config to Spine config
+    SPINE_CONFIG_DIR="/etc/youeye"
+    mkdir -p "$SPINE_CONFIG_DIR"
+    SPINE_CONFIG="$SPINE_CONFIG_DIR/config.yaml"
+
+    if [ -f "$SPINE_CONFIG" ]; then
+        TMP_CONFIG="$(mktemp)"
+        awk -v repo="$RELEASE_REPO_URL" '
+            BEGIN { done = 0; skipping = 0 }
+            /^[^[:space:]#][^:]*:/ && skipping { skipping = 0 }
+            !done && /^releases:/ {
+                print "releases:"
+                print "  repo_url: \"" repo "\""
+                done = 1
+                skipping = 1
+                next
+            }
+            skipping { next }
+            { print }
+            END {
+                if (!done) {
+                    print ""
+                    print "releases:"
+                    print "  repo_url: \"" repo "\""
+                }
+            }
+        ' "$SPINE_CONFIG" > "$TMP_CONFIG"
+        mv "$TMP_CONFIG" "$SPINE_CONFIG"
+    else
+        cat > "$SPINE_CONFIG" << EOFREL
+# Spine configuration — generated by installer
+releases:
+  repo_url: "${RELEASE_REPO_URL}"
+EOFREL
+    fi
+
+    log_success "Core release repository set to: ${RELEASE_REPO_URL}" >&2
+}
+
+# Verify installation
+verify_installation() {
+    log_info "Verifying installation..."
+
+    if "${INSTALL_DIR}/youeye" version >/dev/null 2>&1; then
+        VERSION=$("${INSTALL_DIR}/youeye" version 2>&1 | head -1)
+        log_success "YouEye installed successfully: $VERSION"
+    else
+        log_error "YouEye installation verification failed"
+        exit 1
+    fi
+
+    # Check service status
+    if systemctl is-active --quiet youeye.service; then
+        log_success "YouEye service is running"
+    else
+        log_warn "YouEye service is not running. Start with: systemctl start youeye"
+    fi
+}
+
+# Main installation flow
+main() {
+    echo ""
+    echo "=================================="
+    echo "  YouEye Spine Installer"
+    echo "=================================="
+    echo ""
+
+    if [ -n "$BRANCH" ] && [ "$BRANCH" != "main" ]; then
+        echo "  Release branch: $BRANCH"
+    fi
+    if [ "$PROVIDER" != "gitea" ]; then
+        echo "  Provider: $PROVIDER"
+    fi
+    echo ""
+
+    ensure_curl
+    download_spine
+    set_release_branch
+    create_service
+    verify_installation
+
+    echo ""
+    echo "=================================="
+    echo "  Installation Complete!"
+    echo "=================================="
+    echo ""
+
+    echo "Next steps:"
+    echo "  Run 'youeye deploy' to deploy the platform."
+    echo ""
+    echo "  The interactive installer (TUI) is now a standalone tool —"
+    echo "  see installer/ in the YouEye repo (youeye-installer binary)."
+    echo ""
+    echo "For help: youeye --help"
+    echo "  (The 'spine' command also works as a backward-compatible alias)"
+    echo ""
+}
+
+main

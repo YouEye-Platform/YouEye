@@ -1,0 +1,1423 @@
+/**
+ * Market deployment engine.
+ * Unified YAML-driven installer — no more native/Market-installed branching.
+ *
+ * Flow for ANY app:
+ * 1. Parse & validate manifest
+ * 2. Generate secrets
+ * 3. Setup shared PostgreSQL (if database.mode === 'shared')
+ * 4. Write config files
+ * 5. Create identity-provider SSO client (if sso section exists)
+ * 6. Generate app token
+ * 7. Build canonical context + resolve env_mapping
+ * 8. Deploy containers (universal loop: lxd or oci per container)
+ * 9. SSO configure steps (api or cli)
+ * 10. Add Caddy route
+ * 11. Save metadata
+ * 12. Register with UI dashboard
+ */
+
+import type { OCIManifest } from '../infrastructure/types';
+import type {
+  AppManifest,
+  ContainerSpec,
+  ContainerMeta,
+  InstallConfig,
+  InstallEvent,
+  InstallEventCallback,
+  InstallMetadata,
+  VariableContext,
+  RestoreOptions,
+} from './types';
+import { readFile } from 'fs/promises';
+import { resolveVariables, resolveEnvironment } from './variables';
+import { writeAllConfigFiles } from './config-writer';
+import { saveInstallMetadata, removeInstallMetadata, readInstallMetadata } from './metadata';
+import { upsertInstalledApp, removeInstalledApp } from './installed-apps';
+import { deployOCIContainer, startOCIContainer, getContainerIP, containerExists } from '../infrastructure/oci-deployer';
+import { deployLXDContainer } from '../infrastructure/lxd-deployer';
+import { incusRequest } from '../incus/server';
+import { applyResourcePolicy } from '../infrastructure/resource-policy';
+import { execShell } from '../incus/server';
+import {
+  getOrCreateSecret,
+  generatePassword,
+  generateSecretKey,
+  generateHexToken,
+} from '../infrastructure/secrets';
+import { addRoute, getRoutes, removeRoute, addAppRoutes, migrateSystemUpstreamsToIPv4, resolveCaddyUpstreamDial } from '../caddy/client';
+import type { EntranceConfig } from '../caddy/client';
+import { waitForAppHealth, waitForPostgresHealth } from './health';
+import {
+  executeSSOSteps,
+  StepError,
+} from './sso-engine';
+import {
+  createOAuthClient,
+  getIdentityProviderConfig,
+  removeForwardAuth,
+  removeOAuthClient,
+} from '@/lib/identity/provider';
+import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
+import {
+  buildCanonicalContext,
+  resolveEnvMapping,
+  generateAppToken,
+  envToString,
+  coerceInstallParams,
+  getPlatformContext,
+} from './platform-env';
+import { getContainerName } from './engine-helpers';
+import { CONTAINER_DOMAIN } from './constants';
+import {
+  createAppNetwork,
+  addCaddyToAppNetwork,
+  getSystemServices,
+  addSystemProxyDevices,
+  removeSystemProxyDevices,
+  applyAppEgressAcl,
+  buildAppNIC,
+  setAppNetworkNAT,
+} from '../incus/app-network';
+import { injectCaddyRootCA } from './caddy-ca';
+import { activatePendingBridges, detectBridgeDependencies, createBridge, resolveBridgeMappings, activateBridge, pushConnectionsToUI } from '../bridges/manager';
+import { generateSuggestionsForApp } from '../bridges/suggestions';
+import { getMarketSource } from './source';
+
+// ─── Install Rollback ─────────────────────────────────────
+
+interface RollbackContext {
+  containerNames: string[];
+  appId: string;
+  ssoSlug?: string;
+  forwardAuthSlug?: string;
+  subdomain?: string;
+  domain?: string;
+  dbName?: string;
+  dbUser?: string;
+}
+
+async function rollbackInstall(
+  ctx: RollbackContext,
+  onEvent: InstallEventCallback,
+  totalSteps: number
+): Promise<void> {
+  onEvent({ step: 0, totalSteps, status: 'running', message: 'Rolling back failed install...' });
+
+  // 1. Remove containers
+  for (const name of ctx.containerNames) {
+    try {
+      if (!(await containerExists(name))) continue;
+      try {
+        await incusRequest('PUT', `/1.0/instances/${name}/state`, { action: 'stop', force: true, timeout: 10 });
+        await new Promise((r) => setTimeout(r, 2000));
+      } catch (stopErr) {
+        console.warn(`[engine] Rollback: failed to stop container ${name} (may already be stopped):`, stopErr);
+      }
+      const result = await incusRequest('DELETE', `/1.0/instances/${name}`);
+      if (result.type === 'async' && result.operation) {
+        try { await incusRequest('GET', `${result.operation}/wait?timeout=30`, undefined, { timeout: 40_000 }); } catch (waitErr) {
+          console.warn(`[engine] Rollback: timeout waiting for container ${name} deletion:`, waitErr);
+        }
+      }
+    } catch (err) {
+      console.error(`[engine] Rollback: failed to remove container ${name}:`, err);
+    }
+  }
+
+  // 2. Remove Caddy route
+  if (ctx.subdomain && ctx.domain) {
+    try {
+      const hostname = `${ctx.subdomain}.${ctx.domain}`;
+      const routes = await getRoutes();
+      for (const route of routes) {
+        if (route.hostname === hostname) {
+          await removeRoute(route.id);
+        }
+      }
+    } catch (err) {
+      console.error('[engine] Rollback: failed to remove Caddy route:', err);
+    }
+  }
+
+  // 3. Remove identity SSO client
+  if (ctx.ssoSlug) {
+    try {
+      await removeOAuthClient(ctx.ssoSlug);
+    } catch (err) {
+      console.error('[engine] Rollback: failed to remove SSO app:', err);
+    }
+  }
+
+  // 3b. Remove identity forward-auth route
+  if (ctx.forwardAuthSlug) {
+    try {
+      if (ctx.subdomain && ctx.domain) {
+        await removeForwardAuth({ hostname: `${ctx.subdomain}.${ctx.domain}` });
+      }
+    } catch (err) {
+      console.error('[engine] Rollback: failed to remove forward-auth app:', err);
+    }
+  }
+
+  // 4. Drop shared database
+  if (ctx.dbName && ctx.dbUser) {
+    try {
+      await execShell('youeye-postgres',
+        `psql -U youeye -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${ctx.dbName}' AND pid <> pg_backend_pid();"`,
+        { timeout: 10_000 });
+      await execShell('youeye-postgres', `psql -U youeye -c "DROP DATABASE IF EXISTS ${ctx.dbName}"`, { timeout: 10_000 });
+      await execShell('youeye-postgres', `psql -U youeye -c "DROP USER IF EXISTS ${ctx.dbUser}"`, { timeout: 10_000 });
+    } catch (err) {
+      console.error('[engine] Rollback: failed to drop database:', err);
+    }
+  }
+
+  // 5. Remove metadata and secrets
+  try { await removeInstallMetadata(ctx.appId); } catch (err) {
+    console.warn(`[engine] Rollback: failed to remove install metadata for ${ctx.appId}:`, err);
+  }
+  try { await removeInstalledApp(ctx.appId); } catch (err) {
+    console.warn(`[engine] Rollback: failed to remove installed app record for ${ctx.appId}:`, err);
+  }
+
+  // 6. Clean up per-app bridge network
+  try {
+    const { removeCaddyFromAppNetwork, deleteAppNetwork } = await import('../incus/app-network');
+    await removeSystemProxyDevices(ctx.appId);
+    await removeCaddyFromAppNetwork(ctx.appId);
+    await deleteAppNetwork(ctx.appId);
+  } catch (err) {
+    console.warn(`[engine] Rollback: failed to clean up app network for ${ctx.appId}:`, err);
+  }
+
+  onEvent({ step: 0, totalSteps, status: 'running', message: 'Rollback complete — all resources cleaned up' });
+}
+
+// ─── Helpers ──────────────────────────────────────────────
+
+function getSecretsPath(appId: string): string {
+  return `app-${appId}`;
+}
+
+const LEGACY_IDENTITY_PROVIDER_INTEGRATION = 'youeye-id';
+
+// Shared storage groups live under one root so members share a filesystem (hardlink-safe).
+const STORAGE_GROUPS_ROOT = '/var/lib/youeye/storage-groups';
+
+function hasLegacySSOConfigureIntegration(manifest: AppManifest): boolean {
+  const setupMethod = manifest.sso?.setup?.method;
+  return (
+    (setupMethod === 'api' && (manifest.sso?.setup?.api?.steps?.length ?? 0) > 0) ||
+    (setupMethod === 'cli' && (manifest.sso?.setup?.cli?.steps?.length ?? 0) > 0)
+  );
+}
+
+function getDefaultSelectedIntegrations(manifest: AppManifest): string[] {
+  const ids = new Set<string>();
+
+  for (const integration of manifest.integrations ?? []) {
+    if (integration.required || integration.installByDefault || integration.recommended) {
+      ids.add(integration.id);
+    }
+  }
+
+  if (hasLegacySSOConfigureIntegration(manifest)) {
+    ids.add(LEGACY_IDENTITY_PROVIDER_INTEGRATION);
+  }
+
+  return [...ids];
+}
+
+function getSelectedIntegrations(manifest: AppManifest, config: InstallConfig): string[] {
+  return config.selectedIntegrations ?? getDefaultSelectedIntegrations(manifest);
+}
+
+function shouldEnableSSO(manifest: AppManifest, selectedIntegrations: string[]): boolean {
+  if (!manifest.sso) return false;
+  if (!hasLegacySSOConfigureIntegration(manifest)) return true;
+  return selectedIntegrations.includes(LEGACY_IDENTITY_PROVIDER_INTEGRATION);
+}
+
+function oauthScopesForManifest(manifest: AppManifest): string[] {
+  const scopes = new Set(['openid', 'profile', 'email', 'groups']);
+  if (manifest.sso?.adminMapping?.type === 'roleClaim') {
+    scopes.add(manifest.sso.adminMapping.claimName);
+  }
+  return [...scopes];
+}
+
+function countSteps(manifest: AppManifest, ssoEnabled: boolean): number {
+  let steps = 1; // Generate secrets
+
+  // Database setup
+  const dbMode = manifest.database?.mode ?? 'none';
+  if (dbMode === 'shared') steps++;
+
+  if (manifest.configFiles.length > 0) steps++;
+  if (ssoEnabled) steps++; // Create Authentik app
+
+  // Containers
+  steps += manifest.containers.length; // Deploy each
+  steps += manifest.containers.filter((c) => c.healthCheck).length; // Health checks
+
+  steps++; // Add Caddy route
+
+  // SSO configure steps
+  const hasConfigureSteps = ssoEnabled && manifest.sso && (
+    (manifest.sso.setup?.method === 'api' && (manifest.sso.setup.api?.steps?.length ?? 0) > 0) ||
+    (manifest.sso.setup?.method === 'cli' && (manifest.sso.setup.cli?.steps?.length ?? 0) > 0)
+  );
+  if (hasConfigureSteps) steps++;
+
+  steps += 2; // Save metadata + register with UI
+  return steps;
+}
+
+function emit(
+  cb: InstallEventCallback,
+  step: number,
+  totalSteps: number,
+  status: InstallEvent['status'],
+  message: string,
+  detail?: string
+) {
+  cb({ step, totalSteps, status, message, detail });
+}
+
+/**
+ * Determine whether the forward-auth proxy gate should be applied for an app.
+ * Precedence (highest first):
+ * - manifest.forwardAuth === 'disabled' → never (hard off).
+ * - An explicit install-time choice → honored, EVEN for apps that have their own YouEye ID
+ *   login. This is what makes the gate operable on an OIDC app: the owner can turn it on as
+ *   an extra gate. (The caller passes the app's own forward-auth-gate choice here, separate
+ *   from the OIDC-login choice — see the installApp call site.)
+ * - An app with its own login (native SSO or a planned identity integration) → off by
+ *   default (no double-gate) when no explicit choice was made.
+ * - manifest.forwardAuth === 'enabled' → on.
+ * - Default ('default'/undefined): on only when there's no native SSO section.
+ */
+function resolveForwardAuth(manifest: AppManifest, hasSSOEnabled: boolean, explicitChoice?: boolean): boolean {
+  const fa = manifest.forwardAuth;
+  if (fa === 'disabled') return false;
+  if (explicitChoice !== undefined) return explicitChoice;
+  if (hasSSOEnabled) return false;
+  if (fa === 'enabled') return true;
+  // Default: use forward-auth when there's no native SSO section
+  return !manifest.sso;
+}
+
+async function ensureRoute(params: Parameters<typeof addRoute>[0]): Promise<void> {
+  try {
+    await addRoute(params);
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('already exists')) return;
+    throw err;
+  }
+}
+
+// ─── Dashboard Registration ───────────────────────────────
+
+async function readBridgeToken(): Promise<string | null> {
+  try {
+    const { readFileSync } = await import('fs');
+    return readFileSync('/etc/youeye/ui-bridge-token', 'utf-8').trim();
+  } catch {
+    return process.env.UI_BRIDGE_TOKEN ?? null;
+  }
+}
+
+/**
+ * Fetch an icon image and return it as a base64 data URI.
+ * This inlines the icon at install time so it works on all domains
+ * (UI, native app subdomains) without needing a runtime image proxy.
+ * Returns null on failure — caller should fall back to the Lucide icon name.
+ */
+async function fetchIconAsDataUri(iconRef: string): Promise<string | null> {
+  // Extract the real URL from proxy wrapper if present
+  let url = iconRef;
+  if (iconRef.startsWith('/api/market/image?url=')) {
+    const encoded = iconRef.replace('/api/market/image?url=', '');
+    url = decodeURIComponent(encoded);
+  }
+
+  if (!url.startsWith('http')) return null;
+
+  try {
+    const https = await import('https');
+    const parsed = new URL(url);
+    const isInsecure = false; // GitHub uses valid TLS
+
+    const buffer: Buffer = await new Promise((resolve, reject) => {
+      const options = {
+        hostname: parsed.hostname,
+        port: parsed.port || 443,
+        path: parsed.pathname + parsed.search,
+        method: 'GET',
+        rejectUnauthorized: !isInsecure,
+        timeout: 10_000,
+      };
+
+      const req = https.request(options, (res) => {
+        // Follow redirects
+        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          const redirectUrl = new URL(res.headers.location, url).href;
+          fetchIconAsDataUri(redirectUrl).then(r => {
+            if (r) {
+              // Return the data URI as a Buffer trick — unwrap in caller
+              resolve(Buffer.from(r, 'utf-8'));
+            } else {
+              reject(new Error('Redirect failed'));
+            }
+          }).catch(reject);
+          return;
+        }
+        if (res.statusCode && res.statusCode >= 400) {
+          reject(new Error(`HTTP ${res.statusCode}`));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+      req.end();
+    });
+
+    // Determine MIME type from URL extension or content
+    const ext = parsed.pathname.split('.').pop()?.toLowerCase();
+    const mimeMap: Record<string, string> = {
+      svg: 'image/svg+xml',
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      webp: 'image/webp',
+      gif: 'image/gif',
+      ico: 'image/x-icon',
+    };
+    const mime = mimeMap[ext ?? ''] ?? 'image/png';
+
+    // Check if we got a data URI back from redirect handling
+    const asString = buffer.toString('utf-8');
+    if (asString.startsWith('data:')) return asString;
+
+    return `data:${mime};base64,${buffer.toString('base64')}`;
+  } catch (err) {
+    console.warn(`[engine] Failed to inline icon from ${url}:`, err);
+    return null;
+  }
+}
+
+async function registerAppWithUI(
+  appId: string,
+  name: string,
+  subdomain: string,
+  containerName: string,
+  port: number,
+  icon: string | null,
+  appToken?: string,
+  ssoEntryUrl?: string,
+  linkHandlers?: Array<{ type: string; description: string; endpoint?: string; triggers: string[] }>,
+  manifest?: Record<string, unknown>,
+): Promise<void> {
+  const uiIP = await getIncusContainerIP('youeye-ui');
+  if (!uiIP) return;
+
+  const bridgeToken = await readBridgeToken();
+  const containerUrl = port ? `http://${containerName}.${CONTAINER_DOMAIN}:${port}` : `http://${containerName}.${CONTAINER_DOMAIN}`;
+
+  // Hash the app token so YE-UI can validate future app requests by hash lookup
+  let tokenHash: string | undefined;
+  if (appToken) {
+    const crypto = await import('crypto');
+    tokenHash = crypto.createHash('sha256').update(appToken).digest('hex');
+  }
+
+  const payload: Record<string, unknown> = {
+    id: appId, name, container_url: containerUrl, subdomain, icon,
+    token_hash: tokenHash, sso_entry_url: ssoEntryUrl,
+  };
+  if (linkHandlers && linkHandlers.length > 0) {
+    payload.link_handlers = linkHandlers;
+  }
+  if (manifest) {
+    payload.manifest = manifest;
+  }
+
+  const res = await fetch(`http://${uiIP}:3000/api/v1/apps/register`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(bridgeToken ? { 'X-UI-Bridge-Token': bridgeToken } : {}),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    console.warn(`[engine] UI registration warning: ${res.status} ${text}`);
+  }
+}
+
+/**
+ * Push ONLY the SSO entry URL for an already-registered app to the UI.
+ *
+ * Apps whose SSO is wired by a post-install integration (Jellyfin, Nextcloud,
+ * Immich, Memos, Audiobookshelf, …) have no `sso` block in their app manifest,
+ * so the main install registers them with `sso_entry_url = null`. The integration
+ * manifest carries `sso.entry_url`, but it is applied AFTER the app is registered.
+ * This sends just that field so the drawer/header link to the SSO login path.
+ *
+ * Token-safe: omits token_hash, icon, name and container URL, so the UI preserves
+ * the existing bridge token and all other app fields untouched. Best-effort —
+ * a failure here only degrades the launch link, it does not break the install.
+ */
+export async function pushSsoEntryUrlToUI(appId: string, entryUrl: string | null): Promise<void> {
+  const uiIP = await getIncusContainerIP('youeye-ui');
+  if (!uiIP) return;
+
+  const bridgeToken = await readBridgeToken();
+  const res = await fetch(`http://${uiIP}:3000/api/v1/apps/sso-entry-url`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(bridgeToken ? { 'X-UI-Bridge-Token': bridgeToken } : {}),
+    },
+    body: JSON.stringify({ id: appId, sso_entry_url: entryUrl }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    console.warn(`[engine] UI sso-entry-url update warning for ${appId}: ${res.status} ${text}`);
+  }
+}
+
+// ─── Env File Writer ──────────────────────────────────────
+
+async function writeEnvToContainer(
+  containerName: string,
+  env: Record<string, string>,
+): Promise<void> {
+  const content = envToString(env);
+  const b64 = Buffer.from(content).toString('base64');
+  await execShell(containerName, `echo '${b64}' | base64 -d > /etc/${containerName}.env`, { timeout: 10_000 });
+}
+
+// ─── Shared Postgres Setup ────────────────────────────────
+
+async function setupSharedPostgres(
+  dbName: string,
+  dbUser: string,
+  dbPassword: string,
+): Promise<void> {
+  const POSTGRES_CONTAINER = 'youeye-postgres';
+
+  // Verify postgres container is reachable before proceeding
+  try {
+    const check = await execShell(POSTGRES_CONTAINER, 'pg_isready -U youeye', { timeout: 5_000 });
+    if (check.exitCode !== 0) {
+      throw new Error('PostgreSQL is not running. Cannot install apps that require a database.');
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('PostgreSQL is not running')) throw err;
+    throw new Error(`PostgreSQL is unreachable: ${err}. Cannot install apps that require a database.`);
+  }
+
+  const checkUser = await execShell(
+    POSTGRES_CONTAINER,
+    `psql -U youeye -tAc "SELECT 1 FROM pg_roles WHERE rolname='${dbUser}'"`,
+    { timeout: 10_000 }
+  );
+
+  if (!checkUser.stdout.includes('1')) {
+    const result = await execShell(POSTGRES_CONTAINER, `psql -U youeye -c "CREATE USER ${dbUser} WITH PASSWORD '${dbPassword}'"`, { timeout: 10_000 });
+    if (result.exitCode !== 0) throw new Error(`Failed to create user ${dbUser}: ${result.stderr}`);
+  } else {
+    const result = await execShell(POSTGRES_CONTAINER, `psql -U youeye -c "ALTER USER ${dbUser} WITH PASSWORD '${dbPassword}'"`, { timeout: 10_000 });
+    if (result.exitCode !== 0) throw new Error(`Failed to update password for ${dbUser}: ${result.stderr}`);
+  }
+
+  const checkDB = await execShell(POSTGRES_CONTAINER, `psql -U youeye -tAc "SELECT 1 FROM pg_database WHERE datname='${dbName}'"`, { timeout: 10_000 });
+
+  if (checkDB.stdout.includes('1')) {
+    await execShell(POSTGRES_CONTAINER, `psql -U youeye -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${dbName}' AND pid <> pg_backend_pid();"`, { timeout: 10_000 });
+    const dropResult = await execShell(POSTGRES_CONTAINER, `psql -U youeye -c "DROP DATABASE ${dbName}"`, { timeout: 10_000 });
+    if (dropResult.exitCode !== 0) throw new Error(`Failed to drop stale database ${dbName}: ${dropResult.stderr}`);
+  }
+
+  const createResult = await execShell(POSTGRES_CONTAINER, `psql -U youeye -c "CREATE DATABASE ${dbName} OWNER ${dbUser}"`, { timeout: 10_000 });
+  if (createResult.exitCode !== 0) throw new Error(`Failed to create database ${dbName}: ${createResult.stderr}`);
+}
+
+// ─── Secret Generator ─────────────────────────────────────
+
+function getGenerator(type: string, length: number): () => string {
+  switch (type) {
+    case 'password': return () => generatePassword(length);
+    case 'secretKey': return () => generateSecretKey(length);
+    case 'hexToken': return () => generateHexToken(length);
+    default: return () => generatePassword(length);
+  }
+}
+
+// ─── OCI Manifest Builder ─────────────────────────────────
+
+function buildOCIManifest(
+  spec: ContainerSpec,
+  containerName: string,
+  appId: string,
+  resolvedEnv: Record<string, string>,
+): OCIManifest {
+  const volumes = spec.volumes.map((v) => ({
+    host: v.host,
+    container: v.container,
+    readOnly: v.read_only,
+  }));
+
+  return {
+    name: appId,
+    displayName: containerName,
+    image: spec.image,
+    containerName,
+    command: spec.command,
+    ports: [],
+    environment: resolvedEnv,
+    volumes,
+  };
+}
+
+// ─── Release Repo Helpers ─────────────────────────────────
+
+function repoPartsFromSource(repo: string, fallbackOrg: string): { org: string; repo: string } {
+  const parts = repo.split('/');
+  if (parts.length >= 2) {
+    return { org: parts[0], repo: parts[parts.length - 1] };
+  }
+  return { org: fallbackOrg, repo: parts[0] };
+}
+
+// ─── Main Install Function (v2: unified) ──────────────────
+
+export async function installApp(
+  manifest: AppManifest,
+  config: InstallConfig,
+  onEvent: InstallEventCallback,
+  signal?: AbortSignal,
+  restoreOptions?: RestoreOptions
+): Promise<void> {
+  const appId = manifest.metadata.id;
+  const secretsPath = getSecretsPath(appId);
+
+  // Determine SSO support from manifest
+  const selectedIntegrations = getSelectedIntegrations(manifest, config);
+  const identityConfig = await getIdentityProviderConfig();
+  const ssoEnabled = shouldEnableSSO(manifest, selectedIntegrations);
+  const nativeIdentityIntegrationPlanned = config.plannedNativeIdentityIntegration === true;
+  const totalSteps = countSteps(manifest, ssoEnabled);
+  let step = 0;
+
+  const dbMode = manifest.database?.mode ?? 'none';
+  const dbName = manifest.database?.name ?? '';
+  const dbUser = manifest.database?.user ?? '';
+
+  // Rollback context — tracks resources created so far for cleanup on failure
+  const rollbackCtx: RollbackContext = {
+    containerNames: [],
+    appId,
+    subdomain: config.subdomain,
+    domain: config.domain,
+    dbName: (dbMode === 'shared' && dbName) ? dbName : undefined,
+    dbUser: (dbMode === 'shared' && dbUser) ? dbUser : undefined,
+  };
+
+  function checkCancelled() {
+    if (signal?.aborted) throw new Error('Installation cancelled by user');
+  }
+
+  // ── Step 1: Generate secrets ────────────────────────────
+
+  checkCancelled();
+  step++;
+  const secrets: Record<string, string> = {};
+
+  if (restoreOptions?.skipSecrets) {
+    emit(onEvent, step, totalSteps, 'running', 'Reading restored secrets...');
+    for (const secret of manifest.secrets) {
+      const secretValue = await readFile(`/var/lib/youeye/app-${appId}/${secret.file}`, 'utf-8');
+      secrets[secret.name] = secretValue.trim();
+    }
+    emit(onEvent, step, totalSteps, 'success', 'Secrets read from backup');
+  } else {
+    emit(onEvent, step, totalSteps, 'running', 'Generating secrets...');
+    for (const secret of manifest.secrets) {
+      const generator = getGenerator(secret.generator, secret.length);
+      secrets[secret.name] = await getOrCreateSecret(secretsPath, secret.file, generator);
+    }
+    emit(onEvent, step, totalSteps, 'success', 'Secrets generated');
+  }
+
+  // ── Step 2: Setup shared PostgreSQL ─────────────────────
+
+  let dbPassword = '';
+  if (dbMode === 'shared' && dbName && dbUser) {
+    checkCancelled();
+    step++;
+    dbPassword = secrets.db_password || generatePassword(32);
+    if (restoreOptions?.skipDatabase) {
+      emit(onEvent, step, totalSteps, 'skipped', 'Database setup skipped (restored from backup)');
+    } else {
+      emit(onEvent, step, totalSteps, 'running', 'Setting up shared database...');
+      try {
+        await setupSharedPostgres(dbName, dbUser, dbPassword);
+        emit(onEvent, step, totalSteps, 'success', 'Database ready');
+      } catch (err) {
+        emit(onEvent, step, totalSteps, 'error', 'Failed to setup database', String(err));
+        throw err;
+      }
+    }
+  }
+
+  // ── Step 3: Write config files ──────────────────────────
+
+  if (manifest.configFiles.length > 0) {
+    checkCancelled();
+    step++;
+    if (restoreOptions?.skipConfigFiles) {
+      emit(onEvent, step, totalSteps, 'skipped', 'Config files skipped (restored from backup)');
+    } else {
+      emit(onEvent, step, totalSteps, 'running', 'Writing configuration files...');
+      // We need a preliminary context for config file variable resolution
+      const prelimCtx = await buildCanonicalContext(manifest, config, undefined, dbPassword);
+      prelimCtx.secrets = secrets;
+      try {
+        await writeAllConfigFiles(manifest.configFiles, prelimCtx);
+        emit(onEvent, step, totalSteps, 'success', 'Configuration files written');
+      } catch (err) {
+        emit(onEvent, step, totalSteps, 'error', 'Failed to write config files', String(err));
+        throw err;
+      }
+    }
+  }
+
+  // ── Step 4: Pre-deploy SSO — create identity OAuth client ───────
+
+  let ssoSlug: string | undefined;
+  let ssoClientId: string | undefined;
+  let ssoResult: { clientId: string; clientSecret: string; slug: string } | undefined;
+
+  if (ssoEnabled && manifest.sso) {
+    checkCancelled();
+    step++;
+    emit(onEvent, step, totalSteps, 'running', `Creating ${identityConfig.name} SSO client...`);
+    try {
+      ssoSlug = `youeye-app-${appId}`;
+      const appUrl = `https://${config.subdomain}.${config.domain}`;
+
+      // Build redirect URIs from callback_path + additional_callbacks
+      const redirectUris: string[] = [];
+      const prelimCtx = await buildCanonicalContext(manifest, config, undefined, dbPassword);
+      prelimCtx.secrets = secrets;
+
+      if (manifest.sso.callback_path) {
+        const resolvedCallbackPath = resolveVariables(manifest.sso.callback_path, prelimCtx);
+        redirectUris.push(`${appUrl}${resolvedCallbackPath}`);
+      }
+
+      for (const cb of manifest.sso.additional_callbacks || []) {
+        redirectUris.push(cb);
+      }
+
+      const result = await createOAuthClient({
+        clientId: ssoSlug,
+        name: manifest.metadata.name,
+        redirectUris,
+        scopes: oauthScopesForManifest(manifest),
+      });
+
+      ssoClientId = result.clientId;
+      ssoResult = { clientId: result.clientId, clientSecret: result.clientSecret, slug: ssoSlug };
+      rollbackCtx.ssoSlug = ssoSlug;
+
+      emit(onEvent, step, totalSteps, 'success', `${identityConfig.name} SSO client created`);
+    } catch (err) {
+      emit(onEvent, step, totalSteps, 'error', 'Failed to create SSO application', String(err));
+      await rollbackInstall(rollbackCtx, onEvent, totalSteps);
+      throw err;
+    }
+  }
+
+  // ── Step 4b: Forward-auth proxy (for apps without native SSO) ──
+  // If the app has no `sso` section but forward-auth is not disabled,
+  // mark it for a YouEye ID forward-auth handler when Caddy is configured.
+
+  let forwardAuthEnabled = false;
+  // Apps that do their own YouEye ID login (native SSO or a planned identity integration)
+  // take the forward-auth gate from the SEPARATE `forwardAuthGate` choice — an optional extra
+  // gate the owner can turn on (default off). Apps with no login of their own take it from
+  // `protectWithAccountLogin` (the gate IS their login). This stops the OIDC-login choice and
+  // the proxy-gate choice from being conflated.
+  const hasOwnAccountLogin = ssoEnabled || nativeIdentityIntegrationPlanned;
+  const forwardAuthChoice = hasOwnAccountLogin
+    ? config.forwardAuthGate
+    : config.protectWithAccountLogin;
+  const useForwardAuth = resolveForwardAuth(
+    manifest,
+    hasOwnAccountLogin,
+    forwardAuthChoice
+  );
+
+  if (useForwardAuth) {
+    try {
+      const faSlug = `youeye-fa-${appId}`;
+      rollbackCtx.forwardAuthSlug = faSlug;
+      forwardAuthEnabled = true;
+      emit(onEvent, step, totalSteps, 'success', `${identityConfig.name} forward-auth selected`);
+    } catch (err) {
+      emit(onEvent, step, totalSteps, 'error', 'Failed to prepare forward-auth', String(err));
+      await rollbackInstall(rollbackCtx, onEvent, totalSteps);
+      throw err;
+    }
+  }
+
+  // ── Step 5: Create per-app bridge + build canonical context ──
+
+  // Create bridge FIRST — context build needs to know if proxy devices are used.
+  // NAT is always enabled during install — apps need internet to pull images/packages.
+  // Post-install, NAT can be toggled off for apps that shouldn't have outbound internet.
+  let appBridgeName: string | undefined;
+  const wantsInternet = manifest.containers.some(c => c.network === 'internet')
+    || (manifest.internet?.hosts?.length ?? 0) > 0;
+
+  try {
+    const { bridgeName } = await createAppNetwork(appId, { nat: true });
+    appBridgeName = bridgeName;
+    emit(onEvent, step, totalSteps, 'success', `App network created: ${bridgeName}`);
+  } catch (err) {
+    emit(onEvent, step, totalSteps, 'error', 'Failed to create Pi-Hole-backed app network', String(err));
+    await rollbackInstall(rollbackCtx, onEvent, totalSteps);
+    throw err;
+  }
+
+  const appToken = await generateAppToken(appId);
+  const ctx = await buildCanonicalContext(manifest, config, ssoResult, dbPassword, appToken, !!appBridgeName);
+  ctx.secrets = secrets;
+
+  // Populate installParams with type coercion
+  if (config.installParams) {
+    ctx.installParams = coerceInstallParams(
+      config.installParams,
+      manifest.installParams || [],
+    );
+  }
+
+  // Resolve env_mapping once — used for all containers
+  const envFromMapping = manifest.env_mapping
+    ? resolveEnvMapping(manifest.env_mapping, ctx)
+    : {};
+
+  // Resolve volume host paths in the context. A volume in a `storageGroup` mounts a shared
+  // host dir (identical for every app in the group) so members share files on one
+  // filesystem (hardlink-compatible); otherwise it resolves the per-app host path.
+  for (const containerSpec of manifest.containers) {
+    for (const vol of containerSpec.volumes) {
+      vol.host = vol.storageGroup
+        ? `${STORAGE_GROUPS_ROOT}/${vol.storageGroup}`
+        : resolveVariables(vol.host, ctx);
+    }
+  }
+
+  // ── Step 6: Deploy containers (universal loop) ──────────
+
+  const containerMetas: ContainerMeta[] = [];
+  const containerNames: string[] = [];
+  let primaryContainerName = '';
+  let primaryPort = 0;
+
+  // Build NIC device config for per-app bridge (if available)
+  let appNIC: Record<string, Record<string, string>> | undefined;
+  if (appBridgeName) {
+    try {
+      appNIC = await buildAppNIC(appId);
+    } catch (err) {
+      console.warn('[engine] Failed to build app NIC:', err);
+    }
+  }
+
+  try {
+    for (const containerSpec of manifest.containers) {
+      const containerName = getContainerName(appId, containerSpec.name, manifest.containers.length);
+      containerNames.push(containerName);
+      rollbackCtx.containerNames.push(containerName);
+
+      const isPrimary = containerSpec.primary || manifest.containers.length === 1;
+      if (isPrimary) {
+        primaryContainerName = containerName;
+        primaryPort = containerSpec.port || 3000;
+      }
+
+      containerMetas.push({
+        name: containerSpec.name,
+        containerName,
+        type: containerSpec.type,
+        primary: isPrimary,
+        network: containerSpec.network || 'isolated',
+        port: containerSpec.port,
+        healthCheck: containerSpec.healthCheck ? {
+          type: containerSpec.healthCheck.type,
+          path: 'path' in containerSpec.healthCheck ? containerSpec.healthCheck.path : undefined,
+          timeout: containerSpec.healthCheck.timeout,
+        } : undefined,
+      });
+
+      checkCancelled();
+      step++;
+      emit(onEvent, step, totalSteps, 'running', `Deploying ${containerName}...`);
+
+      try {
+        if (containerSpec.type === 'lxd') {
+          // ── LXD container deployment ──────────────────
+          const source = containerSpec.source;
+          if (!source) throw new Error(`LXD container ${containerSpec.name} missing source config`);
+          const marketSource = await getMarketSource();
+          const gitInfo = repoPartsFromSource(source.repo, marketSource.organization);
+
+          await deployLXDContainer(
+            {
+              name: appId,
+              displayName: manifest.metadata.name,
+              containerName,
+              image: containerSpec.image,
+              imageServer: 'https://images.linuxcontainers.org',
+              imageProtocol: 'simplestreams',
+              nodeVersion: source.nodeVersion || '22.x',
+              appDir: source.appDir || '/opt/app',
+              port: containerSpec.port || 3000,
+            },
+            {
+              spineSocketPath: '/var/run/youeye/youeye.sock',
+              giteaBaseURL: marketSource.base_url,
+              giteaOrg: gitInfo.org,
+              giteaRepo: gitInfo.repo,
+              tagPrefix: source.tagPrefix,
+            },
+            appNIC,
+          );
+
+          // Write env file to LXD container
+          const staticEnv = resolveEnvironment(containerSpec.environment || {}, ctx);
+          const fullEnv = { ...envFromMapping, ...staticEnv };
+          await writeEnvToContainer(containerName, fullEnv);
+
+          // Restart service to pick up env
+          await execShell(containerName, `systemctl restart ${containerName}`, { timeout: 15_000 });
+
+          // Post-deploy commands
+          if (containerSpec.postDeploy && containerSpec.postDeploy.length > 0) {
+            for (const cmd of containerSpec.postDeploy) {
+              await execShell(containerName, cmd.exec, { timeout: cmd.timeout });
+            }
+          }
+        } else {
+          // ── OCI container deployment ─────────────────
+          const staticEnv = resolveEnvironment(containerSpec.environment || {}, ctx);
+          const fullEnv = { ...envFromMapping, ...staticEnv };
+          // Trust the YouEye root CA for SERVER-SIDE HTTPS to YouEye-managed services — chiefly the
+          // identity provider's OIDC discovery (https://id.<domain>/.../.well-known/openid-configuration),
+          // which env-OIDC apps fetch from inside the container. injectCaddyRootCA() (step 7) adds the cert
+          // to the system trust store + a systemd drop-in, but non-systemd OCI runtimes that ship their own
+          // CA bundle (Python httpx/certifi, Node) ignore the system store and never see the drop-in — so
+          // they fail with CERTIFICATE_VERIFY_FAILED. Set the standard CA-bundle env vars here so they are
+          // in the process environment from boot. The cert file is written during install (step 7), well
+          // before any user login / OIDC discovery. Never override a value the manifest set explicitly.
+          if (ssoEnabled || nativeIdentityIntegrationPlanned) {
+            const caPath = '/usr/local/share/ca-certificates/caddy-root.crt';
+            if (!fullEnv.SSL_CERT_FILE) fullEnv.SSL_CERT_FILE = caPath;
+            if (!fullEnv.REQUESTS_CA_BUNDLE) fullEnv.REQUESTS_CA_BUNDLE = caPath;
+            if (!fullEnv.NODE_EXTRA_CA_CERTS) fullEnv.NODE_EXTRA_CA_CERTS = caPath;
+          }
+          const ociManifest = buildOCIManifest(containerSpec, containerName, appId, fullEnv);
+          await deployOCIContainer(ociManifest, '', appNIC, { start: !appBridgeName });
+        }
+
+        await applyResourcePolicy(containerName, 'normal');
+
+        if (appBridgeName) {
+          try {
+            const needsSharedDb = (manifest.database?.mode ?? 'none') === 'shared';
+            const needsSSO = ssoEnabled || nativeIdentityIntegrationPlanned;
+            const services = await getSystemServices({ needsSharedDb, needsSSO });
+            await addSystemProxyDevices(appId, services);
+
+            const state = await incusRequest<{ status?: string }>('GET', `/1.0/instances/${containerName}/state`);
+            if (state.metadata?.status !== 'Running') {
+              await startOCIContainer(containerName);
+            }
+          } catch (proxyErr) {
+            console.warn(`[engine] Early proxy setup warning for ${containerName}:`, proxyErr);
+          }
+        }
+
+        emit(onEvent, step, totalSteps, 'success', `${containerName} deployed`);
+      } catch (err) {
+        onEvent({
+          step,
+          totalSteps,
+          status: 'error',
+          message: `Failed to deploy ${containerName}`,
+          detail: String(err),
+          errorContext: {
+            suggestion: 'Container deployment failed. Check disk space, image availability, and incus status.',
+          },
+        });
+        throw err;
+      }
+
+      // Health check
+      if (containerSpec.healthCheck) {
+        step++;
+        emit(onEvent, step, totalSteps, 'running', `Waiting for ${containerName} to be healthy...`);
+
+        const hcStart = Date.now();
+        let healthy = false;
+        if (containerSpec.healthCheck.type === 'http') {
+          healthy = await waitForAppHealth(
+            containerName,
+            containerSpec.port || 80,
+            containerSpec.healthCheck.path,
+            containerSpec.healthCheck.timeout
+          );
+        } else if (containerSpec.healthCheck.type === 'postgres') {
+          healthy = await waitForPostgresHealth(
+            containerName,
+            containerSpec.healthCheck.user,
+            containerSpec.healthCheck.timeout
+          );
+        }
+
+        const hcDuration = Date.now() - hcStart;
+        if (healthy) {
+          onEvent({ step, totalSteps, status: 'success', message: `${containerName} is healthy`, duration: hcDuration });
+        } else {
+          const hcUrl = containerSpec.healthCheck.type === 'http'
+            ? `http://${containerName}:${containerSpec.port || 80}${containerSpec.healthCheck.path || '/'}`
+            : `postgres://${containerName}`;
+          onEvent({
+            step,
+            totalSteps,
+            status: 'error',
+            message: `${containerName} health check timed out`,
+            duration: hcDuration,
+            errorContext: {
+              url: hcUrl,
+              suggestion: 'Health check timed out. The app may need more startup time, or the health endpoint path may be wrong.',
+            },
+          });
+        }
+        if (!healthy) throw new Error(`Health check failed for ${containerName}`);
+      }
+    }
+  } catch (err) {
+    await rollbackInstall(rollbackCtx, onEvent, totalSteps);
+    throw err;
+  }
+
+  // ── Step 6b: Network isolation — proxy devices + Caddy NIC ──────
+  // Per-app bridge provides structural isolation.
+  // Control-owned proxy devices expose system services on the app bridge gateway.
+  // Caddy NIC lets the reverse proxy reach the app on its bridge.
+
+  if (appBridgeName) {
+    try {
+      const needsSharedDb = (manifest.database?.mode ?? 'none') === 'shared';
+      const needsSSO = ssoEnabled || nativeIdentityIntegrationPlanned;
+
+      // Ensure Control owns the system-service proxies for this app bridge.
+      const services = await getSystemServices({ needsSharedDb, needsSSO });
+      await addSystemProxyDevices(appId, services);
+
+      // Hot-plug Caddy NIC onto the app bridge (Docker/Traefik model)
+      await addCaddyToAppNetwork(appId);
+
+      // Layer 4: Per-app egress isolation ACL. An app may reach only its gateway
+      // (DNS + proxied doorways) and the specific core services it's entitled to;
+      // the CP dashboard, Caddy admin, Pi-Hole, and Postgres (for non-DB apps)
+      // are rejected. Port-specific rules so they survive nat-mode (DNAT'd traffic
+      // arrives with a core-IP destination). Throws on failure — caught by the
+      // outer network-config handler and logged, never silently skipped (the old
+      // ye-app-infra-block was swallowed and never actually applied).
+      await applyAppEgressAcl(appId, containerNames, { needsSharedDb, needsSSO });
+
+      emit(onEvent, step, totalSteps, 'success', `Network isolation configured for ${containerNames.length} containers`);
+    } catch (netErr) {
+      console.warn('[engine] Network configuration warning:', netErr);
+    }
+  }
+
+  // ── Steps 7-10: Post-deploy (SSO configure, Caddy, metadata, dashboard)
+  // All wrapped in try/catch for comprehensive rollback on failure.
+
+  try {
+
+  // ── Step 7: SSO Configure Steps ─────────────────────────
+
+  const hasConfigureSteps = ssoEnabled && manifest.sso?.setup && (
+    (manifest.sso.setup.method === 'api' && (manifest.sso.setup.api?.steps?.length ?? 0) > 0) ||
+    (manifest.sso.setup.method === 'cli' && (manifest.sso.setup.cli?.steps?.length ?? 0) > 0)
+  );
+
+  // Inject Caddy root CA into OCI containers that use native identity, so they
+  // can reach YouEye-managed HTTPS services such as YouEye ID.
+  if (ssoEnabled || nativeIdentityIntegrationPlanned) {
+    for (const containerSpec of manifest.containers) {
+      if (containerSpec.type === 'oci') {
+        const cn = getContainerName(appId, containerSpec.name, manifest.containers.length);
+        try {
+          await injectCaddyRootCA(cn);
+        } catch (err) {
+          console.warn(`[engine] CA cert injection warning for ${cn}:`, err);
+        }
+      }
+    }
+  }
+
+  if (hasConfigureSteps) {
+    checkCancelled();
+    // Get primary container IP for SSO configuration
+    const primaryIP = await getContainerIP(primaryContainerName);
+    if (primaryIP) {
+      ctx.container = { ip: primaryIP, port: primaryPort };
+    }
+
+    step++;
+    emit(onEvent, step, totalSteps, 'running', `Configuring ${manifest.metadata.name} SSO...`);
+    try {
+      if (manifest.sso!.setup?.method === 'cli' && manifest.sso!.setup.cli?.steps) {
+        // CLI-based SSO setup: exec commands in primary container
+        for (const cliStep of manifest.sso!.setup.cli.steps) {
+          const resolvedCmd = resolveVariables(cliStep.exec, ctx);
+          await execShell(primaryContainerName, resolvedCmd, { timeout: cliStep.timeout });
+        }
+      } else {
+        // API-based SSO setup
+        await executeSSOSteps(manifest.sso!, ctx);
+      }
+      emit(onEvent, step, totalSteps, 'success', `${manifest.metadata.name} SSO configured`);
+
+      // F2: Runtime roleClaim scope warning
+      if (manifest.sso?.adminMapping?.type === 'roleClaim') {
+        const { checkRoleClaimScope } = await import('./validator');
+        const scopeWarning = checkRoleClaimScope(manifest);
+        if (scopeWarning) {
+          onEvent({
+            step,
+            totalSteps,
+            status: 'warning',
+            message: scopeWarning.message,
+            detail: scopeWarning.detail,
+          });
+        }
+      }
+    } catch (err) {
+      const errorContext = err instanceof StepError ? err.errorContext : undefined;
+      onEvent({
+        step,
+        totalSteps,
+        status: 'error',
+        message: 'SSO configuration failed',
+        detail: String(err),
+        errorContext,
+      });
+      throw err;
+    }
+  }
+
+  // ── Step 8: Add Caddy route ─────────────────────────────
+
+  checkCancelled();
+  step++;
+  emit(onEvent, step, totalSteps, 'running', 'Configuring reverse proxy...');
+  try {
+    // Build forward-auth config for Caddy if enabled
+    let forwardAuthConfig: { upstreamDial: string; uri: string; copyHeaders: string[] } | undefined;
+    if (forwardAuthEnabled) {
+      forwardAuthConfig = {
+        upstreamDial: await resolveCaddyUpstreamDial(identityConfig.containerName, identityConfig.port),
+        uri: '/forward-auth/caddy',
+        copyHeaders: [
+          'X-YouEye-Username',
+          'X-YouEye-Groups',
+          'X-YouEye-Email',
+          'X-YouEye-Name',
+          'X-YouEye-Uid',
+        ],
+      };
+    }
+
+    const hostname = `${config.subdomain}.${config.domain}`;
+
+    if (manifest.entrances && manifest.entrances.length > 0) {
+      // Multi-entrance routing: each entrance gets its own Caddy route
+      const entrances: EntranceConfig[] = manifest.entrances.map((e) => ({
+        name: e.name,
+        path: e.path || '/',
+        port: e.port,
+        container: e.container,
+        protocol: e.protocol || 'http',
+        authLevel: e.authLevel || 'private',
+        stripPath: e.stripPath || false,
+      }));
+
+      await addAppRoutes(appId, hostname, entrances, primaryContainerName, forwardAuthConfig, appBridgeName);
+      emit(onEvent, step, totalSteps, 'success', `Routes added: ${entrances.length} entrances for ${hostname}`);
+    } else {
+      // Single-route (standard)
+      // For per-app bridge containers, use IP instead of DNS name.
+      // Caddy's DNS resolver (incusbr0) can't resolve names on app bridges.
+      let routeUpstream = primaryContainerName;
+      if (appBridgeName) {
+        const appIP = await getIncusContainerIP(primaryContainerName);
+        if (appIP) routeUpstream = appIP;
+      }
+      await ensureRoute({
+        hostname,
+        path: '/*',
+        upstream: routeUpstream,
+        port: primaryPort,
+        forwardAuth: forwardAuthConfig,
+      });
+      emit(onEvent, step, totalSteps, 'success', `Route added: ${hostname}`);
+    }
+    await migrateSystemUpstreamsToIPv4();
+  } catch (err) {
+    emit(onEvent, step, totalSteps, 'error', 'Failed to configure route', String(err));
+    throw err;
+  }
+
+  // ── Step 9: Save metadata ───────────────────────────────
+
+  step++;
+  emit(onEvent, step, totalSteps, 'running', 'Saving configuration...');
+  const installedVersion = manifest.version ?? '';
+
+  const meta: InstallMetadata = {
+    appId,
+    catalogKey: config.catalogKey || (config.sourceId ? `${config.sourceId}:app:${appId}` : undefined),
+    itemKind: 'app',
+    sourceId: config.sourceId,
+    sourceName: config.sourceName,
+    sourceRepoUrl: config.sourceRepoUrl,
+    manifestPath: config.manifestPath,
+    manifestRepo: config.manifestRepo,
+    manifestBranch: config.manifestBranch,
+    manifestDigest: config.manifestDigest,
+    integration: manifest.integration,
+    subdomain: config.subdomain,
+    domain: config.domain,
+    enableSSO: ssoEnabled,
+    forwardAuthEnabled,
+    protectWithAccountLogin: ssoEnabled || nativeIdentityIntegrationPlanned || forwardAuthEnabled,
+    installedAt: new Date().toISOString(),
+    installedVersion,
+    enabled: true,
+    desiredState: 'running',
+    containers: containerMetas,
+    ssoSlug,
+    ssoClientId,
+    forwardAuthSlug: rollbackCtx.forwardAuthSlug,
+    manifestSource: config.repoUrl || config.sourceRepoUrl || 'market',
+    credentials: manifest.credentials?.length
+      ? manifest.credentials.map((c) => ({ label: c.label, username: c.username, passwordSecret: c.passwordSecret }))
+      : undefined,
+    selectedIntegrations,
+    ssoEntryUrl: manifest.sso?.entry_url
+      ? resolveVariables(manifest.sso.entry_url, ctx)
+      : undefined,
+    databaseMode: manifest.database?.mode ?? 'none',
+    hasSSO: ssoEnabled,
+    provides: manifest.provides?.length ? manifest.provides : undefined,
+    wants: manifest.wants?.length ? manifest.wants : undefined,
+    usePerAppBridge: !!appBridgeName,
+  };
+  await saveInstallMetadata(meta);
+
+  try {
+    await upsertInstalledApp({
+      appId,
+      type: manifest.integration,
+      installedVersion,
+      subdomain: config.subdomain,
+      ssoSlug,
+      forwardAuthEnabled,
+      catalogKey: meta.catalogKey,
+      sourceId: config.sourceId,
+      sourceName: config.sourceName,
+      sourceRepoUrl: config.sourceRepoUrl,
+    });
+  } catch (err) {
+    console.error('[engine] Failed to track installed app in DB:', err);
+  }
+
+  emit(onEvent, step, totalSteps, 'success', 'Configuration saved');
+
+  // ── Step 10: Register with UI dashboard ─────────────────
+
+  step++;
+  emit(onEvent, step, totalSteps, 'running', 'Registering with dashboard...');
+  try {
+    const displayName = config.customName || manifest.metadata.name;
+    // Inline icon as base64 data URI so it works on all subdomains
+    const iconRef = config.customIcon || manifest.metadata.iconUrl || null;
+    let displayIcon: string | null = null;
+    if (iconRef) {
+      displayIcon = await fetchIconAsDataUri(iconRef);
+    }
+    // Fall back to Lucide icon name if inlining failed or no URL available
+    if (!displayIcon) {
+      displayIcon = manifest.metadata.icon || null;
+    }
+    const ssoEntryUrl = manifest.sso?.entry_url
+      ? resolveVariables(manifest.sso.entry_url, ctx)
+      : undefined;
+    const linkHandlers = manifest.capabilities?.link_handlers ?? [];
+    await registerAppWithUI(appId, displayName, config.subdomain, primaryContainerName, primaryPort, displayIcon, appToken, ssoEntryUrl, linkHandlers, manifest as unknown as Record<string, unknown>);
+    await pushConnectionsToUI(appId);
+    emit(onEvent, step, totalSteps, 'success', 'Registered with dashboard');
+  } catch (err) {
+    emit(onEvent, step, totalSteps, 'success', `Dashboard registration skipped: ${err}`);
+  }
+
+  // ── Step 11: Detect bridge dependencies from env_mapping ──
+
+  if (manifest.env_mapping) {
+    try {
+      const deps = detectBridgeDependencies(manifest.env_mapping, appId);
+      for (const dep of deps) {
+        await createBridge({
+          from: appId,
+          to: dep.targetAppId,
+          envMappings: dep.envMappings,
+          approvedBy: 'auto',
+        });
+      }
+      if (deps.length > 0) {
+        emit(onEvent, step, totalSteps, 'success', `Detected ${deps.length} bridge dependencies`);
+      }
+    } catch (err) {
+      console.warn('[engine] Bridge dependency detection warning:', err);
+    }
+  }
+
+  // ── Step 12: Activate approved connections from install dialog ──
+
+  const approvedConnections = config.approvedConnections ?? [];
+  const approvedIds = new Set(
+    approvedConnections.filter(c => c.approved).map(c => c.targetAppId)
+  );
+
+  if (approvedIds.size > 0) {
+    step++;
+    emit(onEvent, step, totalSteps, 'running', `Setting up ${approvedIds.size} approved connections...`);
+    try {
+      const platform = await getPlatformContext();
+      const dom = platform.domain || config.domain;
+      let activated = 0;
+
+      for (const targetId of approvedIds) {
+        // Build env mappings from manifest.wants (if this app references the target)
+        const envMappings = manifest.env_mapping
+          ? detectBridgeDependencies(manifest.env_mapping, appId)
+              .filter(d => d.targetAppId === targetId)
+              .flatMap(d => d.envMappings)
+          : [];
+
+        const bridge = await createBridge({
+          from: appId,
+          to: targetId,
+          envMappings,
+          approvedBy: 'install',
+        });
+
+        // If target is installed, resolve mappings and activate immediately
+        try {
+          const targetMeta = await readInstallMetadata(targetId);
+          if (targetMeta) {
+            const targetContainer = targetMeta.containers?.[0]?.containerName || `app-${targetId}`;
+            const targetPort = manifest.wants?.find(w => w.appId === targetId || w.type)?.defaultPort || 8080;
+            const targetSub = targetMeta.subdomain || targetId;
+
+            const resolved = await resolveBridgeMappings(
+              envMappings, targetContainer, targetPort, targetSub, dom
+            );
+            // Update bridge with resolved mappings, then activate
+            const { updateBridge } = await import('../bridges/store');
+            await updateBridge(bridge.id, { envMappings: resolved });
+            const result = await activateBridge(bridge.id);
+            if (result?.active) activated++;
+          }
+        } catch (err) {
+          console.warn(`[engine] Could not activate bridge to ${targetId}:`, err);
+        }
+      }
+
+      emit(onEvent, step, totalSteps, 'success',
+        activated > 0
+          ? `Activated ${activated} connections`
+          : `${approvedIds.size} connections created (will activate when targets are installed)`
+      );
+    } catch (err) {
+      console.warn('[engine] Approved connections warning:', err);
+    }
+  }
+
+  // ── Step 12b: Activate pending bridges targeting this app ──
+
+  try {
+    const platform = await getPlatformContext();
+    const domain = platform.domain || config.domain;
+    const activated = await activatePendingBridges(
+      appId,
+      primaryContainerName,
+      primaryPort,
+      config.subdomain,
+      domain,
+    );
+    if (activated.length > 0) {
+      emit(onEvent, step, totalSteps, 'success', `Activated ${activated.length} pending bridges`);
+    }
+  } catch (err) {
+    console.warn('[engine] Pending bridge activation warning:', err);
+  }
+
+  // ── Step 13: Generate suggestions for unapproved connections ──
+
+  try {
+    const suggestions = await generateSuggestionsForApp(manifest, approvedIds);
+    if (suggestions.length > 0) {
+      emit(onEvent, step, totalSteps, 'success', `Generated ${suggestions.length} connection suggestions`);
+    }
+  } catch (err) {
+    console.warn('[engine] Suggestions generation warning:', err);
+  }
+
+  } catch (err) {
+    // Comprehensive rollback: clean up containers, DB, SSO, Caddy, metadata
+    await rollbackInstall(rollbackCtx, onEvent, totalSteps);
+    throw err;
+  }
+
+  // Post-install: disable NAT on the app bridge if the app doesn't need internet/LAN.
+  // NAT was enabled during install so containers could pull packages/images.
+  // User's explicit choice (config.allowInternet) overrides manifest default.
+  // internet.proxy scopes are handled through the UI gateway, not bridge NAT.
+  const grantInternet = config.allowInternet ?? wantsInternet;
+  if (appBridgeName && !grantInternet) {
+    await setAppNetworkNAT(appId, false);
+  }
+
+  emit(onEvent, step, totalSteps, 'success', `${manifest.metadata.name} installed successfully!`);
+}
+
+// Re-export for backward compat
+export { getContainerName } from './engine-helpers';

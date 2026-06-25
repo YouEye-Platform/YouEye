@@ -1,0 +1,891 @@
+/**
+ * Per-App Bridge Network Manager
+ *
+ * Each app gets its own Incus bridge (ye-appnet-{appId}) with a unique /24 subnet.
+ * Isolation is structural: bridges can't communicate by default.
+ * Permissions are NIC links: hot-plug a NIC onto the target bridge = access granted.
+ *
+ * System services (postgres, UI API) are exposed to app containers
+ * via Incus proxy devices at localhost:{port} — no shared bridge needed.
+ *
+ * Caddy joins every app bridge (Docker/Traefik model) so reverse proxy routes
+ * keep working with DNS names.
+ *
+ * DNS: bridge dnsmasq → pihole (via raw.dnsmasq server= directive) → LAN DNS.
+ */
+
+import { incusRequest, execShell } from './server';
+import { getContainerIP } from './container-ip';
+import { getSystemStaticIP } from './static-ips';
+
+// ─── Constants ──────────────────────────────────────────────
+
+/**
+ * Bridge naming: `yeapp{N}` where N is the subnet number (1-254).
+ * Linux network interface names are limited to 15 characters.
+ * `ye-appnet-{appId}` would exceed this for most app IDs.
+ * The subnet registry maps appId ↔ N for programmatic lookup.
+ * The bridge description stores the appId for human readability.
+ */
+const BRIDGE_PREFIX = 'yeapp';
+
+/** Subnet base: 10.76.{N}.0/24 — N ranges from 1 to 254 */
+const SUBNET_BASE = '10.76';
+
+/** Registry file for allocated subnets */
+const REGISTRY_PATH = '/var/lib/youeye/networks/subnets.json';
+
+/** System containers that live on incusbr0 (never moved to per-app bridges) */
+const SYSTEM_CONTAINERS = [
+  'youeye-control', 'youeye-ui', 'youeye-caddy',
+  'youeye-postgres',
+  'youeye-pihole',
+];
+
+// ─── Subnet Registry ───────────────────────────────────────
+
+interface SubnetRegistry {
+  next: number;
+  allocated: Record<string, number>; // appId → subnet number
+}
+
+async function readRegistry(): Promise<SubnetRegistry> {
+  try {
+    const { readFile } = await import('fs/promises');
+    const data = await readFile(REGISTRY_PATH, 'utf-8');
+    return JSON.parse(data);
+  } catch {
+    return { next: 1, allocated: {} };
+  }
+}
+
+async function writeRegistry(registry: SubnetRegistry): Promise<void> {
+  const { writeFile, mkdir } = await import('fs/promises');
+  await mkdir('/var/lib/youeye/networks', { recursive: true });
+  await writeFile(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+}
+
+/**
+ * Allocate the next available subnet number for an app.
+ * Returns the subnet number (1-254).
+ */
+async function allocateSubnet(appId: string): Promise<number> {
+  const registry = await readRegistry();
+
+  // Already allocated?
+  if (registry.allocated[appId] !== undefined) {
+    return registry.allocated[appId];
+  }
+
+  // Find next available number
+  const used = new Set(Object.values(registry.allocated));
+  let n = registry.next;
+  while (used.has(n) && n <= 254) n++;
+  if (n > 254) throw new Error('Subnet exhaustion: no available subnets (max 254)');
+
+  registry.allocated[appId] = n;
+  registry.next = n + 1;
+  await writeRegistry(registry);
+  return n;
+}
+
+/**
+ * Free a subnet allocation for an app.
+ */
+async function freeSubnet(appId: string): Promise<void> {
+  const registry = await readRegistry();
+  delete registry.allocated[appId];
+  await writeRegistry(registry);
+}
+
+// ─── Bridge Name Helpers ────────────────────────────────────
+
+/**
+ * Get the Incus bridge name for an app.
+ * Uses the subnet number from the registry: `yeapp{N}`.
+ * Returns null if the app has no allocated subnet.
+ */
+export async function getAppBridgeName(appId: string): Promise<string | null> {
+  const registry = await readRegistry();
+  const n = registry.allocated[appId];
+  if (n === undefined) return null;
+  return `${BRIDGE_PREFIX}${n}`;
+}
+
+export async function getAppBridgeGatewayIP(appId: string): Promise<string | null> {
+  const bridgeName = await getAppBridgeName(appId);
+  if (!bridgeName) return null;
+
+  const res = await incusRequest<{ config?: Record<string, string> }>('GET', `/1.0/networks/${bridgeName}`);
+  const address = res.metadata.config?.['ipv4.address'];
+  if (!address || address === 'none') return null;
+  return address.split('/')[0] || null;
+}
+
+/** Build bridge name from a known subnet number. */
+function bridgeNameFromSubnet(n: number): string {
+  return `${BRIDGE_PREFIX}${n}`;
+}
+
+/** Check if a bridge exists. */
+async function bridgeExists(name: string): Promise<boolean> {
+  try {
+    const res = await incusRequest('GET', `/1.0/networks/${name}`);
+    return res.status_code === 200;
+  } catch {
+    return false;
+  }
+}
+
+// ─── Core Bridge Operations ─────────────────────────────────
+
+/**
+ * Create a per-app bridge network.
+ *
+ * Creates an Incus managed bridge with:
+ * - Unique /24 subnet from the 10.76.x.0 range
+ * - DNS domain "youeye" (same as incusbr0 — container names are globally unique)
+ * - DNS forwarding to pihole via raw.dnsmasq
+ * - Optional NAT for internet access
+ */
+export async function createAppNetwork(
+  appId: string,
+  options: { nat?: boolean } = {},
+): Promise<{ bridgeName: string; subnet: number; subnetCIDR: string }> {
+  const n = await allocateSubnet(appId);
+  const bridgeName = bridgeNameFromSubnet(n);
+
+  // Already exists?
+  if (await bridgeExists(bridgeName)) {
+    return {
+      bridgeName,
+      subnet: n,
+      subnetCIDR: `${SUBNET_BASE}.${n}.0/24`,
+    };
+  }
+
+  const subnetCIDR = `${SUBNET_BASE}.${n}.0/24`;
+  const gatewayIP = `${SUBNET_BASE}.${n}.1/24`;
+
+  // Use static IP for pihole DNS forwarding (deterministic, survives restarts)
+  const piholeIP = await getSystemStaticIP('youeye-pihole') || await getContainerIP('youeye-pihole');
+  if (!piholeIP) {
+    throw new Error(
+      'Cannot create app network: Pi-Hole IP was not found, so app DNS forwarding cannot be configured'
+    );
+  }
+
+  const config: Record<string, string> = {
+    'ipv4.address': gatewayIP,
+    'ipv4.dhcp': 'true',
+    'ipv4.nat': options.nat ? 'true' : 'false',
+    'ipv6.address': 'none',
+    'dns.domain': 'youeye',
+  };
+
+  // Forward unresolved DNS queries to Pi-Hole. This is a hard invariant for
+  // app networks so per-app DNS policy and local rewrites are always applied.
+  config['raw.dnsmasq'] = `server=${piholeIP}`;
+
+  await incusRequest('POST', '/1.0/networks', {
+    name: bridgeName,
+    description: `App network: ${appId}`,
+    type: 'bridge',
+    config,
+  });
+
+  console.log(`[app-network] Created bridge ${bridgeName} (${subnetCIDR}, nat=${options.nat ?? false})`);
+
+  return { bridgeName, subnet: n, subnetCIDR };
+}
+
+/**
+ * Delete a per-app bridge network and free its subnet.
+ * Bridge must have no containers attached (delete containers first).
+ */
+export async function deleteAppNetwork(appId: string): Promise<void> {
+  const bridgeName = await getAppBridgeName(appId);
+  if (!bridgeName) {
+    await freeSubnet(appId);
+    return;
+  }
+
+  if (await bridgeExists(bridgeName)) {
+    // Retry deletion — bridge may still be "in use" while container teardown finalizes
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await incusRequest('DELETE', `/1.0/networks/${bridgeName}`);
+        // Verify it's actually gone
+        if (!(await bridgeExists(bridgeName))) {
+          console.log(`[app-network] Deleted bridge ${bridgeName}`);
+          break;
+        }
+        // Still exists — wait and retry
+        await new Promise((r) => setTimeout(r, 2000));
+      } catch (err) {
+        if (attempt === 4) {
+          console.warn(`[app-network] Failed to delete bridge ${bridgeName} after 5 attempts:`, err);
+        } else {
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      }
+    }
+  }
+
+  await freeSubnet(appId);
+}
+
+/**
+ * Enable or disable NAT (internet access) on an app's bridge.
+ * NAT is enabled during install so containers can pull packages/images,
+ * then disabled post-install for apps that don't require blanket internet.
+ */
+export async function setAppNetworkNAT(appId: string, enable: boolean): Promise<void> {
+  const bridgeName = await getAppBridgeName(appId);
+  if (!bridgeName) return;
+
+  try {
+    await incusRequest('PATCH', `/1.0/networks/${bridgeName}`, {
+      config: { 'ipv4.nat': enable ? 'true' : 'false' },
+    });
+    console.log(`[app-network] NAT ${enable ? 'enabled' : 'disabled'} on ${bridgeName}`);
+  } catch (err) {
+    console.warn(`[app-network] Failed to set NAT on ${bridgeName}:`, err);
+  }
+}
+
+// ─── Caddy NIC Management ──────────────────────────────────
+
+/**
+ * Hot-plug a NIC onto youeye-caddy connecting it to an app bridge.
+ * This is the Docker/Traefik model: the reverse proxy joins every backend network.
+ */
+export async function addCaddyToAppNetwork(appId: string): Promise<void> {
+  const bridgeName = await getAppBridgeName(appId);
+  if (!bridgeName) {
+    console.warn(`[app-network] No bridge found for ${appId}`);
+    return;
+  }
+
+  const deviceName = `net-${appId}`;
+
+  try {
+    const res = await incusRequest<{
+      devices: Record<string, Record<string, string>>;
+    }>('GET', '/1.0/instances/youeye-caddy');
+
+    const devices = { ...res.metadata.devices };
+
+    // Already has this NIC?
+    if (devices[deviceName]) return;
+
+    // NIC interface name inside container: max 15 chars
+    // Use truncated appId to keep it readable
+    const ifName = `eth-${appId.substring(0, 11)}`;
+
+    devices[deviceName] = {
+      type: 'nic',
+      network: bridgeName,
+      name: ifName,
+    };
+
+    await incusRequest('PATCH', '/1.0/instances/youeye-caddy', { devices });
+    console.log(`[app-network] Added Caddy NIC for ${bridgeName} (${appId})`);
+  } catch (err) {
+    console.warn(`[app-network] Failed to add Caddy NIC for ${appId}:`, err);
+  }
+}
+
+/**
+ * Remove Caddy's NIC from an app bridge.
+ */
+export async function removeCaddyFromAppNetwork(appId: string): Promise<void> {
+  const deviceName = `net-${appId}`;
+
+  try {
+    const res = await incusRequest<{
+      devices: Record<string, Record<string, string>>;
+    }>('GET', '/1.0/instances/youeye-caddy');
+
+    const devices = { ...res.metadata.devices };
+    if (!devices[deviceName]) return;
+
+    delete devices[deviceName];
+    await incusRequest('PUT', '/1.0/instances/youeye-caddy', {
+      ...res.metadata,
+      devices,
+    });
+    console.log(`[app-network] Removed Caddy NIC for ${appId}`);
+  } catch (err) {
+    console.warn(`[app-network] Failed to remove Caddy NIC for ${appId}:`, err);
+  }
+}
+
+// ─── Proxy Device Management ───────────────────────────────
+
+/** Service definitions for proxy devices */
+interface ProxyService {
+  name: string;
+  containerName: string;
+  port: number;
+  /** Port to listen on inside the app container (defaults to same as service port) */
+  listenPort?: number;
+}
+
+/**
+ * Standard system services available via proxy devices.
+ * Each proxy makes the service accessible at localhost:{port} inside the app container.
+ */
+export async function getSystemServices(options: {
+  needsSharedDb: boolean;
+  needsSSO: boolean;
+}): Promise<ProxyService[]> {
+  const services: ProxyService[] = [];
+
+  // Platform UI API — all apps need this (header, notifications, settings, timeline)
+  services.push({
+    name: 'ui-proxy',
+    containerName: 'youeye-ui',
+    port: 3000,
+    listenPort: 3001, // App itself runs on 3000, so UI proxy listens on 3001
+  });
+
+  // Shared PostgreSQL
+  if (options.needsSharedDb) {
+    services.push({
+      name: 'pg-proxy',
+      containerName: 'youeye-postgres',
+      port: 5432,
+    });
+  }
+
+  // YouEye ID SSO. Apps access the identity-owned service through a localhost
+  // proxy device rather than by reaching the Control Panel dashboard port.
+  if (options.needsSSO) {
+    services.push({
+      name: 'identity-proxy',
+      containerName: 'youeye-control',
+      port: 3001,
+      listenPort: 3002,
+    });
+  }
+
+  return services;
+}
+
+/**
+ * Add proxy devices to a container for system services.
+ * Each proxy makes a system service accessible at localhost:{port} inside the container.
+ *
+ * Proxy devices are Incus-managed userspace TCP proxies. The proxy runs on the HOST
+ * (which can reach both incusbr0 and the app bridge), so the app container doesn't
+ * need any NIC on incusbr0.
+ *
+ * Performance: <1ms latency per connection. Fine for web apps.
+ */
+export async function addProxyDevices(
+  containerName: string,
+  services: ProxyService[],
+): Promise<void> {
+  if (services.length === 0) return;
+
+  try {
+    const res = await incusRequest<{
+      devices: Record<string, Record<string, string>>;
+    }>('GET', `/1.0/instances/${containerName}`);
+
+    const devices = { ...res.metadata.devices };
+
+    for (const svc of services) {
+      // Use static IP for system containers (deterministic, survives restarts).
+      // Falls back to dynamic lookup for non-system containers.
+      const serviceIP = await getSystemStaticIP(svc.containerName) || await getContainerIP(svc.containerName);
+      if (!serviceIP) {
+        console.warn(`[app-network] Cannot resolve IP for ${svc.containerName}, skipping proxy`);
+        continue;
+      }
+
+      const listenPort = svc.listenPort ?? svc.port;
+      devices[svc.name] = {
+        type: 'proxy',
+        bind: 'instance',
+        listen: `tcp:0.0.0.0:${listenPort}`,
+        connect: `tcp:${serviceIP}:${svc.port}`,
+      };
+    }
+
+    await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices });
+    console.log(`[app-network] Added ${services.length} proxy devices to ${containerName}`);
+  } catch (err) {
+    console.warn(`[app-network] Failed to add proxy devices to ${containerName}:`, err);
+  }
+}
+
+function systemProxyDeviceName(appId: string, serviceName: string): string {
+  const safeAppId = appId.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 32);
+  return `app-${safeAppId}-${serviceName}`;
+}
+
+export async function addSystemProxyDevices(
+  appId: string,
+  services: ProxyService[],
+): Promise<void> {
+  if (services.length === 0) return;
+
+  const gatewayIP = await getAppBridgeGatewayIP(appId);
+  if (!gatewayIP) {
+    throw new Error(`Cannot add system proxies for ${appId}: app bridge gateway not found`);
+  }
+
+  // nat-mode (kernel DNAT) requires each proxy be attached to the instance whose
+  // STATIC IP it connects to — so group doorways by target instance and PATCH
+  // each. This replaces the userspace forkproxy (~17 MiB RSS each) with an
+  // nftables DNAT rule (~0 RAM). See plans/proxy-nat-mode-optimization.md.
+  const byInstance = new Map<string, Record<string, Record<string, string>>>();
+  for (const svc of services) {
+    const serviceIP = await getSystemStaticIP(svc.containerName) || await getContainerIP(svc.containerName);
+    if (!serviceIP) {
+      throw new Error(`Cannot resolve IP for system service ${svc.containerName}`);
+    }
+    const listenPort = svc.listenPort ?? svc.port;
+    const group = byInstance.get(svc.containerName) ?? {};
+    group[systemProxyDeviceName(appId, svc.name)] = {
+      type: 'proxy',
+      bind: 'host',
+      nat: 'true',
+      listen: `tcp:${gatewayIP}:${listenPort}`,
+      connect: `tcp:${serviceIP}:${svc.port}`,
+    };
+    byInstance.set(svc.containerName, group);
+  }
+
+  for (const [instance, newDevices] of byInstance) {
+    const res = await incusRequest<{
+      devices: Record<string, Record<string, string>>;
+    }>('GET', `/1.0/instances/${instance}`);
+    const devices = { ...res.metadata.devices, ...newDevices };
+    await incusRequest('PATCH', `/1.0/instances/${instance}`, { devices });
+  }
+  console.log(`[app-network] Added ${services.length} nat-mode proxy devices for ${appId} on ${gatewayIP}`);
+}
+
+export async function removeSystemProxyDevices(appId: string): Promise<void> {
+  const prefix = systemProxyDeviceName(appId, '');
+  // nat-mode distributes doorways across the core instances they connect to,
+  // so scan every instance a system service can live on (not just control).
+  const allServices = await getSystemServices({ needsSharedDb: true, needsSSO: true });
+  const instances = Array.from(new Set(allServices.map((s) => s.containerName)));
+  for (const instance of instances) {
+    try {
+      const res = await incusRequest<{
+        devices: Record<string, Record<string, string>>;
+      }>('GET', `/1.0/instances/${instance}`);
+      const devices = { ...res.metadata.devices };
+      let removed = 0;
+      for (const name of Object.keys(devices)) {
+        if (name.startsWith(prefix)) {
+          delete devices[name];
+          removed++;
+        }
+      }
+      if (removed > 0) {
+        await incusRequest('PATCH', `/1.0/instances/${instance}`, { devices });
+        console.log(`[app-network] Removed ${removed} system proxy devices for ${appId} from ${instance}`);
+      }
+    } catch (err) {
+      console.warn(`[app-network] Failed to remove proxies for ${appId} from ${instance}:`, err);
+    }
+  }
+  // Tear down the per-app egress ACL too (best-effort; containers are gone by now).
+  await removeAppEgressAcl(appId);
+}
+
+// ─── Per-App Egress Isolation ACL ───────────────────────────
+
+function appAclName(appId: string): string {
+  return `ye-app-${appId.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 32)}-egress`;
+}
+
+/**
+ * Apply the per-app egress isolation ACL. An app may reach ONLY its bridge
+ * gateway (DNS + its proxied doorways) and the specific core services it is
+ * entitled to (UI, identity if SSO, shared Postgres if a DB app). Direct access
+ * to the CP dashboard, Caddy admin, Pi-Hole, and Postgres (for non-DB apps) is
+ * rejected.
+ *
+ * Rules MUST be port-specific: Incus orders reject rules before allow rules, so
+ * a broad subnet reject would shadow the allows — and would also break nat-mode,
+ * whose DNAT'd legitimate traffic arrives with a core-IP destination. See the
+ * master plan WS2.
+ */
+export async function applyAppEgressAcl(
+  appId: string,
+  containerNames: string[],
+  opts: { needsSharedDb: boolean; needsSSO: boolean },
+): Promise<void> {
+  const gatewayIP = await getAppBridgeGatewayIP(appId);
+  if (!gatewayIP) throw new Error(`Cannot apply egress ACL for ${appId}: app bridge gateway not found`);
+  const gwSubnet = `${gatewayIP.replace(/\.\d+$/, '.0')}/24`;
+
+  const ip = async (n: string) => (await getSystemStaticIP(n)) || (await getContainerIP(n));
+  const [uiIP, pgIP, controlIP, caddyIP, piholeIP] = await Promise.all([
+    ip('youeye-ui'), ip('youeye-postgres'), ip('youeye-control'), ip('youeye-caddy'), ip('youeye-pihole'),
+  ]);
+  if (!uiIP || !pgIP || !controlIP) {
+    throw new Error(`Cannot resolve core IPs for ${appId} egress ACL`);
+  }
+
+  const egress: Array<Record<string, string>> = [
+    { action: 'allow', destination: gwSubnet, description: 'gateway: DNS + proxied doorways' },
+    { action: 'allow', protocol: 'tcp', destination: `${uiIP}/32`, destination_port: '3000', description: 'UI bridge' },
+  ];
+  if (opts.needsSSO) {
+    egress.push({ action: 'allow', protocol: 'tcp', destination: `${controlIP}/32`, destination_port: '3001', description: 'identity service' });
+  }
+  if (opts.needsSharedDb) {
+    egress.push({ action: 'allow', protocol: 'tcp', destination: `${pgIP}/32`, destination_port: '5432', description: 'shared Postgres' });
+  }
+  egress.push({ action: 'reject', protocol: 'tcp', destination: `${controlIP}/32`, destination_port: '3000', description: 'block CP dashboard' });
+  if (!opts.needsSharedDb) {
+    egress.push({ action: 'reject', destination: `${pgIP}/32`, description: 'block Postgres (non-DB app)' });
+  }
+  if (caddyIP) egress.push({ action: 'reject', destination: `${caddyIP}/32`, description: 'block Caddy admin' });
+  if (piholeIP) egress.push({ action: 'reject', destination: `${piholeIP}/32`, description: 'block Pi-Hole' });
+
+  const name = appAclName(appId);
+  const body = { name, description: `Egress isolation for app ${appId}`, egress, ingress: [] as unknown[] };
+  try {
+    await incusRequest('POST', '/1.0/network-acls', body);
+  } catch {
+    // Already exists — replace its rules in place.
+    await incusRequest('PUT', `/1.0/network-acls/${name}`, { description: body.description, egress, ingress: [], config: {} });
+  }
+
+  for (const cn of containerNames) {
+    const res = await incusRequest<{ devices: Record<string, Record<string, string>> }>('GET', `/1.0/instances/${cn}`);
+    const devices = { ...res.metadata.devices };
+    if (devices.eth0) {
+      devices.eth0 = {
+        ...devices.eth0,
+        'security.acls': name,
+        'security.acls.default.egress.action': 'allow',
+        'security.acls.default.ingress.action': 'allow',
+      };
+      await incusRequest('PATCH', `/1.0/instances/${cn}`, { devices });
+    }
+  }
+  console.log(`[app-network] Applied egress ACL ${name} to ${containerNames.join(', ')}`);
+}
+
+/** Remove the per-app egress ACL (best-effort; safe once container holders are gone). */
+export async function removeAppEgressAcl(appId: string): Promise<void> {
+  const name = appAclName(appId);
+  try {
+    await incusRequest('DELETE', `/1.0/network-acls/${name}`);
+    console.log(`[app-network] Removed egress ACL ${name}`);
+  } catch {
+    // Not present, or still referenced by a not-yet-deleted container — harmless.
+  }
+}
+
+/**
+ * Remove all proxy devices from a container (cleanup on uninstall).
+ */
+export async function removeProxyDevices(containerName: string): Promise<void> {
+  try {
+    const res = await incusRequest<{
+      devices: Record<string, Record<string, string>>;
+    }>('GET', `/1.0/instances/${containerName}`);
+
+    const devices = { ...res.metadata.devices };
+    let removed = 0;
+
+    for (const [name, device] of Object.entries(devices)) {
+      if (device.type === 'proxy' && device.bind === 'instance') {
+        delete devices[name];
+        removed++;
+      }
+    }
+
+    if (removed > 0) {
+      await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices });
+      console.log(`[app-network] Removed ${removed} proxy devices from ${containerName}`);
+    }
+  } catch {
+    // Container may already be deleted
+  }
+}
+
+// ─── Cross-App NIC Permissions ──────────────────────────────
+
+/**
+ * Grant a container access to another app's bridge by hot-plugging a NIC.
+ * This is the NIC-based permission model: NIC on bridge = access granted.
+ *
+ * The container gets a new network interface that connects it to the target bridge.
+ * systemd-resolved automatically picks up the new DNS server (the target bridge's
+ * dnsmasq), so container names on the target bridge resolve immediately.
+ */
+export async function grantBridgeAccess(
+  containerName: string,
+  targetAppId: string,
+): Promise<void> {
+  const targetBridge = await getAppBridgeName(targetAppId);
+  if (!targetBridge) {
+    console.warn(`[app-network] No bridge found for target ${targetAppId}`);
+    return;
+  }
+
+  const deviceName = `net-${targetAppId}`;
+
+  if (!(await bridgeExists(targetBridge))) {
+    console.warn(`[app-network] Target bridge ${targetBridge} does not exist`);
+    return;
+  }
+
+  try {
+    const res = await incusRequest<{
+      devices: Record<string, Record<string, string>>;
+    }>('GET', `/1.0/instances/${containerName}`);
+
+    const devices = { ...res.metadata.devices };
+    if (devices[deviceName]) return; // Already has access
+
+    devices[deviceName] = {
+      type: 'nic',
+      network: targetBridge,
+      name: `eth-${targetAppId.substring(0, 11)}`,
+    };
+
+    await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices });
+    console.log(`[app-network] Granted ${containerName} access to ${targetBridge} (${targetAppId})`);
+
+    // Bring the hot-plugged NIC up and get a DHCP lease.
+    // Without this, the interface stays DOWN and DNS discovery fails.
+    const ifName = `eth-${targetAppId.substring(0, 11)}`;
+    try {
+      await new Promise((r) => setTimeout(r, 1500));
+      await execShell(containerName, `ip link set ${ifName} up && dhclient ${ifName} 2>/dev/null || udhcpc -i ${ifName} 2>/dev/null || true`, { timeout: 15000 });
+      console.log(`[app-network] Activated ${ifName} in ${containerName}`);
+
+      // Configure DNS scope on the new interface so container names resolve
+      // across bridges. The bridge gateway runs dnsmasq — point resolvectl at it.
+      // The ~youeye tilde prefix makes it a routing domain: queries for *.youeye
+      // go to the bridge gateway DNS, everything else uses default DNS.
+      try {
+        await execShell(
+          containerName,
+          `GATEWAY=$(ip -4 route | grep "dev ${ifName}" | grep via | awk '{print $3}' | head -1); ` +
+          `[ -z "$GATEWAY" ] && GATEWAY=$(ip -4 addr show ${ifName} | grep inet | awk '{print $2}' | cut -d/ -f1 | awk -F. '{print $1"."$2"."$3".1"}'); ` +
+          `resolvectl dns ${ifName} $GATEWAY 2>/dev/null && ` +
+          `resolvectl domain ${ifName} ~youeye 2>/dev/null || true`,
+          { timeout: 10000 },
+        );
+        console.log(`[app-network] Configured DNS scope for ${ifName} in ${containerName}`);
+      } catch (dnsErr) {
+        console.warn(`[app-network] DNS scope config failed for ${ifName} in ${containerName}:`, dnsErr);
+      }
+    } catch (activateErr) {
+      console.warn(`[app-network] NIC activation failed for ${ifName} in ${containerName}:`, activateErr);
+    }
+  } catch (err) {
+    console.warn(`[app-network] Failed to grant bridge access to ${containerName}:`, err);
+  }
+}
+
+/**
+ * Revoke a container's access to another app's bridge by removing the NIC.
+ */
+export async function revokeBridgeAccess(
+  containerName: string,
+  targetAppId: string,
+): Promise<void> {
+  const deviceName = `net-${targetAppId}`;
+
+  try {
+    const res = await incusRequest<{
+      devices: Record<string, Record<string, string>>;
+    }>('GET', `/1.0/instances/${containerName}`);
+
+    const devices = { ...res.metadata.devices };
+    if (!devices[deviceName]) return; // Doesn't have access
+
+    delete devices[deviceName];
+    // Use PUT with full metadata to properly remove the device
+    await incusRequest('PUT', `/1.0/instances/${containerName}`, {
+      ...res.metadata,
+      devices,
+    });
+    console.log(`[app-network] Revoked ${containerName} access to ye-appnet-${targetAppId}`);
+  } catch (err) {
+    console.warn(`[app-network] Failed to revoke bridge access from ${containerName}:`, err);
+  }
+}
+
+// ─── Container NIC Configuration ────────────────────────────
+
+/**
+ * Build NIC device config for a container on a per-app bridge.
+ * Returns the device map to include in container creation payload.
+ * Requires the bridge to already exist (subnet allocated).
+ */
+export async function buildAppNIC(appId: string): Promise<Record<string, Record<string, string>>> {
+  const bridgeName = await getAppBridgeName(appId);
+  if (!bridgeName) {
+    throw new Error(`No bridge allocated for app ${appId} — call createAppNetwork() first`);
+  }
+  return {
+    eth0: {
+      type: 'nic',
+      network: bridgeName,
+      name: 'eth0',
+    },
+  };
+}
+
+/**
+ * Change a running container's NIC from one network to another.
+ * Used during migration from incusbr0 to per-app bridge.
+ * The container must be stopped first.
+ */
+export async function switchContainerNetwork(
+  containerName: string,
+  newBridgeName: string,
+): Promise<void> {
+  try {
+    const res = await incusRequest<{
+      devices: Record<string, Record<string, string>>;
+      config: Record<string, string>;
+    }>('GET', `/1.0/instances/${containerName}`);
+
+    const instance = res.metadata;
+    const devices = { ...instance.devices };
+
+    // Remove ACL-related properties from eth0 (they belonged to the old system)
+    if (devices.eth0) {
+      delete devices.eth0['security.acls'];
+      delete devices.eth0['security.acls.default.egress.action'];
+      delete devices.eth0['security.acls.default.ingress.action'];
+    } else {
+      devices.eth0 = { type: 'nic', name: 'eth0' };
+    }
+
+    devices.eth0.network = newBridgeName;
+
+    await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices });
+    console.log(`[app-network] Switched ${containerName} to ${newBridgeName}`);
+  } catch (err) {
+    console.warn(`[app-network] Failed to switch network for ${containerName}:`, err);
+    throw err;
+  }
+}
+
+// ─── Migration Helper ───────────────────────────────────────
+
+/**
+ * Migrate an existing app from incusbr0 to a per-app bridge.
+ *
+ * Steps:
+ * 1. Create the app bridge
+ * 2. Stop container(s)
+ * 3. Switch NIC from incusbr0 to app bridge
+ * 4. Add proxy devices for system services
+ * 5. Start container(s)
+ * 6. Add Caddy NIC to app bridge
+ * 7. Verify container is reachable
+ */
+export async function migrateAppToPerAppBridge(
+  appId: string,
+  containerNames: string[],
+  options: {
+    nat: boolean;
+    needsSharedDb: boolean;
+    needsSSO: boolean;
+  },
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    // 1. Create bridge
+    const { bridgeName } = await createAppNetwork(appId, { nat: options.nat });
+
+    // 2. Stop containers
+    for (const cn of containerNames) {
+      try {
+        await incusRequest('PUT', `/1.0/instances/${cn}/state`, {
+          action: 'stop', force: true, timeout: 30,
+        });
+        await new Promise(r => setTimeout(r, 2000));
+      } catch {
+        // May already be stopped
+      }
+    }
+
+    // 3. Switch NICs
+    for (const cn of containerNames) {
+      await switchContainerNetwork(cn, bridgeName);
+    }
+
+    // 4. Add proxy devices
+    const services = await getSystemServices({
+      needsSharedDb: options.needsSharedDb,
+      needsSSO: options.needsSSO,
+    });
+    for (const cn of containerNames) {
+      await addProxyDevices(cn, services);
+    }
+
+    // 5. Start containers
+    for (const cn of containerNames) {
+      const startResult = await incusRequest('PUT', `/1.0/instances/${cn}/state`, {
+        action: 'start',
+      });
+      if (startResult.type === 'async' && startResult.operation) {
+        try {
+          await incusRequest('GET', `${startResult.operation}/wait?timeout=30`, undefined, { timeout: 40_000 });
+        } catch {}
+      }
+    }
+
+    // 6. Add Caddy NIC
+    await addCaddyToAppNetwork(appId);
+
+    // 7. Wait for containers to get IPs
+    await new Promise(r => setTimeout(r, 5000));
+
+    // Verify at least the first container got an IP on the new bridge
+    const firstIP = await getContainerIP(containerNames[0]);
+    if (!firstIP) {
+      return { success: false, error: `Container ${containerNames[0]} has no IP after migration` };
+    }
+
+    console.log(`[app-network] Migration complete: ${appId} → ${bridgeName} (${containerNames.length} containers)`);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+}
+
+// ─── Query Helpers ──────────────────────────────────────────
+
+/**
+ * List all per-app bridges.
+ */
+export async function listAppNetworks(): Promise<Array<{
+  appId: string;
+  bridgeName: string;
+  subnet: number;
+}>> {
+  const registry = await readRegistry();
+  return Object.entries(registry.allocated).map(([appId, subnet]) => ({
+    appId,
+    bridgeName: bridgeNameFromSubnet(subnet),
+    subnet,
+  }));
+}
+
+// System app IDs — the short names used in manifests and bridge records.
+// Used by bridges/manager.ts and bridges/route.ts to reject bridges to system containers.
+export const SYSTEM_APP_IDS = [
+  'postgres', 'caddy', 'pihole', 'control', 'ui',
+];
+
+export { SYSTEM_CONTAINERS, BRIDGE_PREFIX };
