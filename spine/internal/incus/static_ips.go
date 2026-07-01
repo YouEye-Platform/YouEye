@@ -14,7 +14,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/util"
+	"github.com/youeye-platform/YouEye/spine/internal/util"
 )
 
 // SystemContainerIPOffsets maps system container names to their static IP offset

@@ -8,7 +8,7 @@
  * snapshot all → stop all → rebuild all → start all → verify all.
  *
  * NOTE: This handles INFRASTRUCTURE OCI apps (Caddy, PiHole, Postgres).
- * Marketplace and native app updates go through market/updater.ts which supports
+ * Market-installed and native app updates go through market/updater.ts which supports
  * both OCI and LXD paths with migrations, variable context, and DB tracking.
  */
 

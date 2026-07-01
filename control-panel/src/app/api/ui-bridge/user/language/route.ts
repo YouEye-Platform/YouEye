@@ -38,7 +38,7 @@ export async function PATCH(request: NextRequest) {
     const appCount = await getLanguageSupportedAppCount();
 
     // Start propagation (runs sequentially but we respond immediately
-    // for the system + authentik parts, then apps continue in background)
+    // for the system identity parts, then apps continue in background)
     const resultPromise = propagateLanguageToAll(
       locale,
       authentikUserId ? Number(authentikUserId) : undefined

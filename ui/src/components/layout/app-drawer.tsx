@@ -327,7 +327,7 @@ export function AppDrawer({
           ) : gridApps.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 text-center">
               <p className="mb-3 text-sm text-muted-foreground">{q ? t("noMatchingApps") : t("noAppsInstalled")}</p>
-              {!q && isAdmin && <Link href="/market" target={embedded ? "_top" : undefined} className="text-sm text-primary hover:underline" onClick={() => setOpen(false)}>{t("visitMarketplace")}</Link>}
+              {!q && isAdmin && <Link href="/market" target={embedded ? "_top" : undefined} className="text-sm text-primary hover:underline" onClick={() => setOpen(false)}>{t("visitMarket")}</Link>}
             </div>
           ) : (
             <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>

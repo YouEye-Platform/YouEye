@@ -17,11 +17,11 @@ import (
 	"sync"
 	"time"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/backup"
-	"git.potemk.in/potemsla/YouEye/spine/internal/config"
-	"git.potemk.in/potemsla/YouEye/spine/internal/releases"
-	"git.potemk.in/potemsla/YouEye/spine/internal/update"
-	"git.potemk.in/potemsla/YouEye/spine/internal/util"
+	"github.com/youeye-platform/YouEye/spine/internal/backup"
+	"github.com/youeye-platform/YouEye/spine/internal/config"
+	"github.com/youeye-platform/YouEye/spine/internal/releases"
+	"github.com/youeye-platform/YouEye/spine/internal/update"
+	"github.com/youeye-platform/YouEye/spine/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1459,7 +1459,7 @@ func (s *Server) handleControlRestart(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
-// handleAuthentikCredentials returns Authentik credentials from host files.
+// handleAuthentikCredentials returns identity provider credentials from host files.
 func (s *Server) handleAuthentikCredentials(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1485,7 +1485,7 @@ func (s *Server) handleAuthentikCredentials(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Get Authentik container IP (use exact name match with regex anchor)
+	// Get identity provider container IP (use exact name match with regex anchor)
 	containerIP := ""
 	out, err := exec.Command("incus", "list", "^youeye-authentik$", "--format", "csv", "-c", "4").Output()
 	if err == nil {

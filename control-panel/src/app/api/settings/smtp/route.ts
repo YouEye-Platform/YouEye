@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
       await writeSmtpPassword(password);
     }
 
-    // Sync SMTP config to Authentik (best-effort)
+    // Sync SMTP config to the identity provider (best-effort)
     try {
       const smtpPassword = password || await readSmtpPassword();
       await configureAuthentikSmtp({

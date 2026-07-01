@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/config"
+	"github.com/youeye-platform/YouEye/spine/internal/config"
 )
 
 const (

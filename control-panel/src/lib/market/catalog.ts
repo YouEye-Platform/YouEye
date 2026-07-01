@@ -1,8 +1,8 @@
 /**
- * Catalog fetcher — pulls app manifests from AppMarket, app repos, or URLs.
+ * Catalog fetcher — pulls app manifests from Market, app repos, or URLs.
  *
  * Catalog format: flat `apps[]` list. Each entry has `repo` (manifest in
- * app's own repo) or `file` (manifest in AppMarket). Also supports install
+ * app's own repo) or `file` (manifest in Market). Also supports install
  * from arbitrary repo URL (any repo with youeye-app.yaml).
  */
 
@@ -140,7 +140,7 @@ export async function fetchCatalog(marketSource?: MarketSource): Promise<Catalog
 
 /**
  * Fetch a manifest by app ID from the catalog.
- * Entry has `repo` (manifest in app's own repo) or `file` (manifest in AppMarket).
+ * Entry has `repo` (manifest in app's own repo) or `file` (manifest in Market).
  */
 export async function fetchManifest(appId: string): Promise<AppManifest> {
   const cached = manifestCache.get(appId);

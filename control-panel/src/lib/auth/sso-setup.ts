@@ -1,7 +1,7 @@
 /**
  * SSO Setup Logic
  *
- * Creates the OAuth2 Provider and Application in Authentik
+ * Creates the OAuth2 provider and application in the identity provider
  * so that the Control Panel can use SSO login via subdomain.
  */
 
@@ -145,7 +145,7 @@ export async function checkSSOPrerequisites(): Promise<{
     controlUrl = `https://${controlSubdomain}`;
   }
 
-  // Check Authentik health
+  // Check identity provider health
   try {
     const config = await getAuthentikConfig();
     const res = await fetch(`${config.url}/-/health/ready/`);
@@ -184,12 +184,12 @@ export async function setupSSO(params: {
 }
 
 /**
- * Disable SSO: remove Authentik provider/application and Spine env vars
+ * Disable SSO: remove identity provider/application and Spine env vars
  */
 export async function disableSSO(): Promise<void> {
   const clientId = 'youeye-control';
 
-  // Remove from Authentik
+  // Remove from the identity provider
   try {
     const config = await getAuthentikConfig();
 

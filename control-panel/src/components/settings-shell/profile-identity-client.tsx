@@ -4,7 +4,7 @@
  * Profile Identity Client
  *
  * Lets users edit their own first name, last name, and avatar.
- * Changes are saved to Authentik via CP backend routes.
+ * Changes are saved to the identity provider via CP backend routes.
  * Avatar updates are pushed to UI storage by the CP backend.
  */
 
@@ -189,7 +189,7 @@ export function ProfileIdentityClient({ username, isAdmin }: ProfileIdentityClie
     try {
       const dataUrl = await readAsDataUrl(blob);
 
-      // Upload to CP → Authentik
+      // Upload to CP, then sync through the identity provider
       const formData = new FormData();
       formData.append("file", blob, "avatar.png");
       const res = await fetch("/api/user/avatar", { method: "POST", body: formData });

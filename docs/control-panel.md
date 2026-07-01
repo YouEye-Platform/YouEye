@@ -86,13 +86,13 @@ Pi-Hole provides ad blocking and DNS resolution for all containers on the platfo
 
 ---
 
-## People (SSO)
+## People
 
 <p align="center">
   <img src="assets/screenshots/control-panel/people.png" alt="People management" width="800">
 </p>
 
-User and authentication management powered by Authentik:
+User and authentication management powered by YouEye ID:
 
 - **Users** — View and manage all platform users
 - **Groups** — Organize users into groups with shared permissions
@@ -116,15 +116,15 @@ Control Panel configuration:
 
 ---
 
-## Marketplace (Admin View)
+## Market
 
 <p align="center">
-  <img src="assets/screenshots/control-panel/market.png" alt="Marketplace admin view" width="800">
+  <img src="assets/screenshots/control-panel/market.png" alt="Market admin view" width="800">
 </p>
 
-The admin marketplace view provides additional controls beyond what users see:
+The admin Market view provides additional controls beyond what users see:
 
 - **Catalog management** — View all available apps from the registry
 - **Deploy options** — Configure resource limits and container settings per app
 - **Version management** — Pin app versions or enable auto-updates
-- **Registry sources** — Configure where app manifests are fetched from
+- **Catalog sources** — Configure where app manifests are fetched from

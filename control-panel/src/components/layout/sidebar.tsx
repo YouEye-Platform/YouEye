@@ -21,7 +21,7 @@ const navItems = [
   { href: '/', labelKey: 'dashboard' as const, icon: LayoutDashboard },
   { href: '/health', labelKey: 'health' as const, icon: HeartPulse },
   { href: '/apps', labelKey: 'apps' as const, icon: Package },
-  { href: '/market', labelKey: 'appMarket' as const, icon: Store },
+  { href: '/market', labelKey: 'market' as const, icon: Store },
   { href: '/proxy', labelKey: 'reverseProxy' as const, icon: Globe },
   { href: '/dns', labelKey: 'dns' as const, icon: Shield },
   { href: '/people', labelKey: 'people' as const, icon: Users },

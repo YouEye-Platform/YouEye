@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/container"
-	"git.potemk.in/potemsla/YouEye/spine/internal/releases"
-	"git.potemk.in/potemsla/YouEye/spine/internal/update"
-	"git.potemk.in/potemsla/YouEye/spine/internal/util"
-	"git.potemk.in/potemsla/YouEye/spine/internal/version"
 	"github.com/spf13/cobra"
+	"github.com/youeye-platform/YouEye/spine/internal/container"
+	"github.com/youeye-platform/YouEye/spine/internal/releases"
+	"github.com/youeye-platform/YouEye/spine/internal/update"
+	"github.com/youeye-platform/YouEye/spine/internal/util"
+	"github.com/youeye-platform/YouEye/spine/internal/version"
 )
 
 // getServiceWorkingDir reads the actual WorkingDirectory from a systemd service

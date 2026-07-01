@@ -89,8 +89,8 @@
       "apps": "Apps",
       "permissions": "Autorisations",
       "appManagement": "Gestion des apps",
-      "appMarket": "Boutique d'apps",
-      "about": "A propos"
+      "about": "A propos",
+      "market": "Market"
     },
     "profile": {
       "title": "Profil",
@@ -123,7 +123,7 @@
       "userLanguage": "Votre langue",
       "systemDefault": "Par défaut du système",
       "systemLanguage": "Langue du système",
-      "systemLanguageDescription": "Définit la langue par défaut pour les nouveaux utilisateurs et les apps.",
+      "systemLanguageDescription": "Definit la langue par defaut pour les nouveaux utilisateurs, les apps natives et les apps installees depuis Market.",
       "resetToDefault": "Réinitialiser au défaut système",
       "saved": "Préférence de langue enregistrée",
       "error": "Erreur lors de l'enregistrement de la langue"
@@ -330,7 +330,7 @@
     "statusDown": "Hors service",
     "statusUnknown": "Inconnu",
     "manageApps": "Gérer les apps",
-    "visitMarketplace": "Visiter le Marketplace",
+    "visitMarket": "Visiter Market",
     "addApp": "Ajouter une app",
     "removeApp": "Retirer du tiroir",
     "allApps": "Toutes les apps",
@@ -404,29 +404,6 @@
     "default": "Par défaut",
     "transparent": "Verre",
     "custom": "Personnalisé"
-  },
-  "appMarket": {
-    "title": "Boutique d'apps",
-    "description": "Parcourez et installez des apps pour votre plateforme YouEye.",
-    "refresh": "Actualiser",
-    "noApps": "Aucune app disponible dans le catalogue",
-    "open": "Ouvrir",
-    "install": "Installer",
-    "uninstall": "Désinstaller",
-    "installed": "Installé",
-    "installTitle": "Installer {name}",
-    "installDescription": "Configurez et installez {name} sur votre plateforme YouEye.",
-    "subdomain": "Sous-domaine",
-    "enableSSO": "Activer le SSO (connexion via fournisseur d’identite)",
-    "resources": "Ressources : {memory} RAM, {cpu} CPU",
-    "url": "URL : https://{subdomain}.{domain}",
-    "uninstallConfirm": "Désinstaller {name} ?",
-    "uninstallDescription": "Cela supprimera {name} et toutes ses données. Cette action est irréversible.",
-    "uninstalled": "{name} désinstallé",
-    "ram": "RAM",
-    "tmdbApiKey": "Clé API TMDB",
-    "tmdbApiKeyPlaceholder": "Entrez votre clé API TMDB",
-    "tmdbApiKeyHelp": "Requise pour les films et séries. Obtenez une clé gratuite sur themoviedb.org/settings/api"
   },
   "permissions": {
     "title": "Permissions des apps",

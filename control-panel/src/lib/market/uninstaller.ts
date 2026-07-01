@@ -3,7 +3,7 @@
  * Handles all uninstall patterns driven by manifest + metadata.
  * Supports both OCI and LXD containers (determined by container.type).
  *
- * Cleanup includes: containers, Caddy routes, Authentik SSO,
+ * Cleanup includes: containers, Caddy routes, identity SSO,
  * Pi-Hole DNS, shared databases, and volume data.
  */
 
@@ -49,10 +49,10 @@ function normalizeContainerMeta(
 // ─── Unified Uninstall ────────────────────────────────────
 
 /**
- * Fully uninstall any app (marketplace or native):
+ * Fully uninstall any app (Market-installed or native):
  * 1. Stop and delete all containers
  * 2. Remove Caddy routes
- * 3. Clean up SSO (Authentik provider + application)
+ * 3. Clean up SSO (identity provider + application)
  * 4. Remove Pi-Hole DNS entries
  * 5. Drop shared database (if applicable)
  * 6. Remove volume data (if deleteData requested)
@@ -148,7 +148,7 @@ export async function uninstallApp(
     }
   }
 
-  // 3. Remove Authentik SSO app (OAuth2 + forward-auth proxy)
+  // 3. Remove identity SSO app (OAuth2 + forward-auth proxy)
   let authentikRemoved = false;
   const ssoSlug = metadata.ssoSlug || `youeye-app-${appId}`;
   try {
@@ -439,7 +439,7 @@ async function verifyUninstall(
     }
   }
 
-  // Verify Authentik app is gone (best effort)
+  // Verify identity provider app is gone (best effort)
   const authentikAppRemoved = true; // We trust the delete worked or it was 404
 
   // DNS verification

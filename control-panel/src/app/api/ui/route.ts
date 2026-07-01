@@ -38,7 +38,7 @@ export async function GET() {
  * 
  * This will:
  * 1. Ensure the youeye_ui database exists
- * 2. Create OAuth2 provider + application in Authentik
+ * 2. Create OAuth2 provider and application in the identity provider
  * 3. Configure Caddy route for the UI subdomain
  * 4. Set environment variables in UI container
  * 5. Start the UI service
@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Domain is required (e.g., youeye.local)' }, { status: 400 });
     }
 
-    // Get the current SSO config to find authentik external URL
+    // Get the current SSO config to find the identity provider external URL
     const { checkSSOPrerequisites } = await import('@/lib/auth/sso-setup');
     const prereqs = await checkSSOPrerequisites();
 
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Step 2-5: Enable UI (Authentik, Caddy, Spine)
+    // Step 2-5: enable UI through identity, Caddy, and Spine
     const result = await enableUI({
       domain,
       authentikExternalUrl: prereqs.authentikUrl,

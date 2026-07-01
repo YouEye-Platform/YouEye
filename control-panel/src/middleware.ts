@@ -241,7 +241,7 @@ function applySecurityHeaders(response: NextResponse, pathname: string, request?
   } else if (pathname.startsWith('/embed') || pathname === '/api/auth/sso' || pathname.startsWith('/api/auth/callback')) {
     // Embed pages AND the SSO auth chain need iframe-friendly CSP.
     // When an embed has no session, EmbedAuthError auto-redirects the iframe
-    // through /api/auth/sso → Authentik → /api/auth/callback → back to embed.
+    // through /api/auth/sso -> identity provider -> /api/auth/callback -> back to embed.
     // Without iframe-friendly headers on these paths, the browser blocks the
     // SSO redirect chain and the embed spinner hangs forever.
     const parentOrigin = getParentOrigin();

@@ -16,7 +16,7 @@ Spine is a single Go binary that installs on the host, sets up Incus, deploys th
 
 ```bash
 # One-line install
-curl -sSL https://get.youeye.app/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo bash -s --
 
 # Deploy the full stack
 youeye deploy
@@ -25,13 +25,13 @@ youeye deploy
 ### Install from a Branch
 
 ```bash
-curl -sSL https://get.youeye.app/install.sh | sh -s -- --branch dev
+curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo bash -s -- --release-channel dev
 ```
 
 ### Manual Install
 
 ```bash
-curl -LO https://get.youeye.app/spine-linux-amd64
+curl -LO https://github.com/YouEye-Platform/YouEye/releases/download/spine-v0.5.0/spine-linux-amd64
 chmod +x spine-linux-amd64
 mv spine-linux-amd64 /usr/local/bin/youeye
 youeye deploy
@@ -86,9 +86,9 @@ Spine runs a Unix socket server at `/var/run/youeye/youeye.sock`. The Control Pa
 
 Spine checks for new releases on the configured Git server. It supports branch-aware release channels:
 
-- **Main channel**: tags like `spine-v0.3.2` (stable releases)
-- **Dev channel**: tags like `spine-dev-v0.3.2.1` (development builds)
-- **Branch channels**: tags like `spine-mybranch-v0.3.2.1` (per-branch builds)
+- **Main channel**: tags like `spine-v0.5.0` (stable releases)
+- **Dev channel**: tags like `spine-dev-v0.5.0.1` (development builds)
+- **Branch channels**: tags like `spine-mybranch-v0.5.0.1` (per-branch builds)
 
 Switch channels with `youeye branch set <channel>`.
 
@@ -98,8 +98,8 @@ Switch channels with `youeye branch set <channel>`.
 cd spine
 
 # Build with version info
-go build -ldflags "-X git.potemk.in/potemsla/YouEye/spine/internal/cmd.Version=0.3.2 \
-  -X git.potemk.in/potemsla/YouEye/spine/internal/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+go build -ldflags "-X github.com/youeye-platform/YouEye/spine/internal/cmd.Version=0.5.0 \
+  -X github.com/youeye-platform/YouEye/spine/internal/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   -o youeye ./cmd/youeye
 
 # Cross-compile for ARM64

@@ -65,7 +65,7 @@ export interface UnifiedApp {
   systemManaged?: boolean;
   /** Links to existing management pages */
   managementLinks?: Array<{ label: string; href: string }>;
-  /** Health check status for marketplace/native apps */
+  /** Health check status for Market-installed/native apps */
   healthStatus?: 'healthy' | 'unhealthy' | 'unknown';
   /** Last health check timestamp */
   healthCheckedAt?: string | null;
@@ -205,7 +205,7 @@ export async function GET() {
       }
     });
 
-    // Get health statuses for marketplace apps
+    // Get health statuses for Market-installed apps
     const healthStatuses = getAllHealthStatuses();
     const lastHealthCheck = getLastHealthCheckAt();
 
@@ -308,7 +308,7 @@ export async function GET() {
       };
     });
 
-    // ── Marketplace apps: merge installed apps not in APP_DEFINITIONS ──────
+    // ── Market-installed apps: merge installed apps not in APP_DEFINITIONS ──────
     const definedContainers = new Set(
       apps.flatMap((a) => a.containers.map((c) => c.name))
     );
@@ -320,7 +320,7 @@ export async function GET() {
       return !names.some((n: string) => definedContainers.has(n));
     });
 
-    // Fetch container state for marketplace containers (not yet in containerStateMap)
+    // Fetch container state for Market-installed containers (not yet in containerStateMap)
     const marketContainerNames = filteredMarket.flatMap((meta) =>
       meta.containers.map((c: any) => typeof c === 'string' ? c : c.containerName)
     );
@@ -381,7 +381,7 @@ export async function GET() {
       return {
         id: meta.appId,
         displayName: manifest?.metadata.name || meta.appId,
-        description: manifest?.metadata.description || 'Marketplace app',
+        description: manifest?.metadata.description || 'Market app',
         icon: manifest?.metadata.iconUrl || manifest?.metadata.icon || 'Package',
         category: 'user' as const,
         type: 'docker-lxd',

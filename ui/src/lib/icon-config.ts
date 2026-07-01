@@ -1,7 +1,7 @@
 /**
  * Icon Configuration — shared type for the server icon/favicon system.
  *
- * The icon is server-wide (admin sets it). Used as favicon for UI, CP, and Authentik.
+ * The icon is server-wide (admin sets it). Used as favicon for UI, CP, and identity surfaces.
  * In "letter" mode the icon auto-derives from the current wordart style.
  */
 

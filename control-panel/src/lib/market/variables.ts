@@ -27,7 +27,7 @@
  *
  * Legacy namespaces still supported:
  *   ${app.id}, ${install.*}, ${secrets.*}, ${container.*},
- *   ${authentik.*}, ${smtp.*}, ${platform.*}, ${installParams.*}
+ *   legacy identity aliases, ${smtp.*}, ${platform.*}, ${installParams.*}
  */
 
 import type { VariableContext } from './types';

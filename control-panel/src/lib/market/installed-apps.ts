@@ -25,7 +25,7 @@ const STORE_PATH = statePath('installed-apps.json');
 export interface InstalledApp {
   id: number;
   appId: string;
-  type: 'native' | 'basic' | 'marketplace';
+  type: 'native' | 'basic' | 'market';
   installedVersion: string;
   catalogVersion: string | null;
   updateAvailable: boolean;
@@ -232,7 +232,7 @@ async function fetchUrlAppVersion(sourceUrl: string): Promise<string | null> {
     const timeout = setTimeout(() => controller.abort(), 5000);
     const res = await fetch(sourceUrl, {
       signal: controller.signal,
-      headers: { 'Accept': 'text/yaml, application/yaml, text/plain, */*', 'User-Agent': 'YouEye-AppMarket/1.0' },
+      headers: { 'Accept': 'text/yaml, application/yaml, text/plain, */*', 'User-Agent': 'YouEye-Market/1.0' },
     });
     clearTimeout(timeout);
 

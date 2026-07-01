@@ -5,7 +5,7 @@
  * Single format — apiVersion: v1. No backwards compatibility needed (pre-beta).
  *
  * Key structural decisions:
- *   - `integration: native|basic` — native = LXD containers from Gitea, basic = OCI images
+ *   - `integration: native|basic` — native = LXD containers from release artifacts, basic = OCI images
  *   - Every container has explicit `type: lxd|oci`
  *   - `env_mapping` with ${variable} substitution for all environment injection
  *   - `database.mode: shared|own|none` for database configuration
@@ -78,7 +78,7 @@ export const PostDeployStepSchema = z.object({
   timeout: z.number().int().positive().default(30_000),
 });
 
-// ─── Container Source (LXD-only: Gitea repo deploy) ───────
+// ─── Container Source (LXD-only release repo deploy) ───────
 
 export const ContainerSourceSchema = z.object({
   repo: z.string().min(1),

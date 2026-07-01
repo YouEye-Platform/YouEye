@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/config"
+	"github.com/youeye-platform/YouEye/spine/internal/config"
 )
 
 func TestIsMainTag(t *testing.T) {
@@ -117,19 +117,19 @@ func TestBuildDownloadURL(t *testing.T) {
 	cfg := config.Default()
 	cfg.Releases.RepoURL = ""
 	cfg.Releases.Provider = "gitea"
-	cfg.Releases.BaseURL = "https://git.potemk.in"
+	cfg.Releases.BaseURL = "https://forge.example.org"
 	cfg.Releases.APIPath = "/api/v1"
-	cfg.Releases.Organization = "potemsla"
+	cfg.Releases.Organization = "acme"
 
 	url := BuildDownloadURL(cfg, "TestSpine", "v0.2.5", "spine-linux-amd64")
-	expected := "https://git.potemk.in/potemsla/TestSpine/releases/download/v0.2.5/spine-linux-amd64"
+	expected := "https://forge.example.org/acme/TestSpine/releases/download/v0.2.5/spine-linux-amd64"
 	if url != expected {
 		t.Errorf("BuildDownloadURL() = %q, want %q", url, expected)
 	}
 
 	// Branch tag
 	url2 := BuildDownloadURL(cfg, "TestCP", "john-v0.2.5.1", "standalone.tar")
-	expected2 := "https://git.potemk.in/potemsla/TestCP/releases/download/john-v0.2.5.1/standalone.tar"
+	expected2 := "https://forge.example.org/acme/TestCP/releases/download/john-v0.2.5.1/standalone.tar"
 	if url2 != expected2 {
 		t.Errorf("BuildDownloadURL() = %q, want %q", url2, expected2)
 	}
@@ -364,7 +364,7 @@ func TestBuildReleasesAPIURL_Gitea(t *testing.T) {
 }
 
 func TestGitHubProviderHeaders(t *testing.T) {
-	// Verify that Gitea provider does NOT send GitHub-specific headers
+	// Verify that the forge-compatible provider does NOT send GitHub-specific headers
 	var gotAccept string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAccept = r.Header.Get("Accept")
@@ -391,7 +391,7 @@ func TestGetLatestVersionForBranch_GitHubProvider(t *testing.T) {
 	server := mockReleaseServer(t, mockReleases)
 	defer server.Close()
 
-	// Use gitea provider pointing at mock server (response format is identical)
+	// Use the forge-compatible provider pointing at mock server (response format is identical)
 	cfg := testConfig(server.URL)
 	cfg.Releases.Repositories.Spine = "YouEye"
 

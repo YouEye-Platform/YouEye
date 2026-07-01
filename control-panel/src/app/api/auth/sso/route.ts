@@ -1,7 +1,7 @@
 /**
  * SSO Initiation Route
  *
- * GET /api/auth/sso - Redirects user to Authentik OAuth2 authorize endpoint
+ * GET /api/auth/sso - redirects the user to the OAuth2 authorize endpoint
  *
  * Accepts optional ?redirect= param to return the user to a specific page
  * after authentication (used by embed auto-login flow).

@@ -170,7 +170,7 @@ async function addPortProxy(containerName: string, port: number): Promise<void> 
   await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices: newDevices });
 }
 
-/** Install Node.js and deploy the app from Gitea releases. */
+/** Install Node.js and deploy the app from the configured release source. */
 async function installNodeAndApp(
   spec: LXDContainerSpec,
   cfg: { giteaBaseURL: string; giteaOrg: string; giteaRepo: string; tagPrefix?: string }
@@ -203,7 +203,7 @@ async function installNodeAndApp(
   const isGitHub = releaseSource.provider === 'github';
   const readinessURL = isGitHub ? 'https://api.github.com/rate_limit' : `${releaseSource.base_url}${releaseSource.api_path}/version`;
   const acceptHeader = isGitHub ? 'Accept: application/vnd.github+json' : 'Accept: application/json';
-  const apiLabel = isGitHub ? 'GitHub' : 'Forgejo/Gitea';
+  const apiLabel = isGitHub ? 'GitHub' : 'configured release source';
   const attachmentBaseURL = isGitHub ? '' : `${releaseSource.base_url}/attachments`;
   await execShell(cn, `mkdir -p ${spec.appDir}`, { timeout: 10_000 });
 

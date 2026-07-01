@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/output"
 	"github.com/spf13/cobra"
+	"github.com/youeye-platform/YouEye/spine/internal/output"
 )
 
 var appCmd = &cobra.Command{
@@ -112,7 +112,7 @@ var appInstallURL string
 
 var appInstallCmd = &cobra.Command{
 	Use:   "install <name>",
-	Short: "Install an app from the marketplace",
+	Short: "Install an app from Market",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !requireCP() {

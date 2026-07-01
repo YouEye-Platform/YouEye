@@ -15,7 +15,7 @@ import { startUpdate, writeStatus, completeUpdate, failUpdate } from '@/lib/upda
 import { getAppDefinition } from '@/lib/apps/definitions';
 import { updateLXDApp } from '@/lib/apps/lxd-updater';
 import { getInstalledApp } from '@/lib/market/installed-apps';
-import { updateMarketplaceApp } from '@/lib/market/updater';
+import { updateMarketApp } from '@/lib/market/updater';
 
 export async function POST(
   request: NextRequest,
@@ -50,11 +50,11 @@ export async function POST(
       });
     }
 
-    // Check if this is a marketplace-installed app (native apps like Weather, Notes, etc.)
+    // Check if this is a Market-installed app (native apps like Weather, Notes, etc.)
     const installedApp = await getInstalledApp(component);
     if (installedApp) {
       let lastMessage = '';
-      const result = await updateMarketplaceApp(
+      const result = await updateMarketApp(
         { appId: component, force: true },
         (event) => {
           lastMessage = event.message;

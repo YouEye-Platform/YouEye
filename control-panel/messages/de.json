@@ -39,7 +39,6 @@
     "dashboard": "Dashboard",
     "health": "Zustand",
     "apps": "Apps",
-    "appMarket": "App-Markt",
     "reverseProxy": "Reverse-Proxy",
     "dns": "DNS",
     "people": "Benutzer",
@@ -47,7 +46,8 @@
     "settings": "Einstellungen",
     "appsLegacy": "Apps (veraltet)",
     "controlPanel": "Systemsteuerung",
-    "youeye": "YouEye"
+    "youeye": "YouEye",
+    "market": "Market"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -381,7 +381,7 @@
     "visitDashboard": "Dashboard besuchen",
     "visitDashboardDesc": "Sehen Sie den Status Ihrer Apps und Ihres Servers",
     "installApp": "Erste App installieren",
-    "installAppDesc": "Durchsuchen Sie den Marketplace und installieren Sie Apps mit einem Klick",
+    "installAppDesc": "Market durchsuchen und Apps mit einem Klick installieren",
     "readDocs": "Dokumentation lesen",
     "readDocsDesc": "Erfahren Sie, wie Sie das Beste aus Ihrem Server herausholen"
   },

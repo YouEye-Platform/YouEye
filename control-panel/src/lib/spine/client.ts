@@ -317,7 +317,7 @@ export class SpineClient {
   }
 
   /**
-   * Get Authentik credentials (DB password, secret key, bootstrap token, internal URL)
+   * Get identity provider credentials (DB password, secret key, bootstrap token, internal URL)
    */
   async getAuthentikCredentials(): Promise<SpineAuthentikCredentials> {
     return this.request('/api/authentik/credentials');

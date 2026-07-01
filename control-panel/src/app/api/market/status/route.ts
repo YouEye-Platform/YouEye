@@ -1,6 +1,6 @@
 /**
  * Unified Market status API.
- * Returns install status of all apps (marketplace + native).
+ * Returns install status of all apps (Market-installed + native).
  *
  * GET /api/market/status         — all installed apps
  * GET /api/market/status?app=id  — single app

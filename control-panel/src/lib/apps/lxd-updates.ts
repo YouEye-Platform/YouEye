@@ -2,10 +2,10 @@
  * LXD App Version & Update Checking
  *
  * Fetches installed versions from container filesystems and checks for
- * newer releases on Gitea. Results are cached in memory with a configurable TTL.
+ * newer releases on the configured release source. Results are cached in memory with a configurable TTL.
  *
  * - Installed version: read package.json from inside the container via execShell
- * - Latest version: query Gitea releases API (branch-aware, with fallback to main)
+ * - Latest version: query the configured releases API (branch-aware, with fallback to main)
  * - Cache: per-app results stored in memory, refreshed periodically
  */
 
@@ -111,7 +111,7 @@ export async function getLxdAppVersion(
 }
 
 /**
- * Get the latest release version for an LXD app from Gitea.
+ * Get the latest release version for an LXD app from the configured release source.
  * Branch-aware: checks for branch-prefixed tags first, then falls back to main.
  *
  * Fetches releases from inside an available container (CP's youeye-control) since

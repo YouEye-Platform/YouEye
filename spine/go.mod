@@ -1,4 +1,4 @@
-module git.potemk.in/potemsla/YouEye/spine
+module github.com/youeye-platform/YouEye/spine
 
 go 1.21
 

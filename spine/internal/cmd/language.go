@@ -35,7 +35,7 @@ The language setting controls UI translations across the platform:
 Control Panel, YouEye UI, and native apps.
 
 Users can override the system language in their personal settings.
-Marketplace apps receive the language via environment variables on
+Market-installed apps receive the language via environment variables on
 install and reconfigure.
 
 Examples:
@@ -188,7 +188,7 @@ func setLanguage(input string) error {
 	fmt.Println("  - Control Panel: on next page load")
 	fmt.Println("  - YouEye UI: on next page load (users with personal override are unaffected)")
 	fmt.Println("  - Native apps: within 60 seconds")
-	fmt.Println("  - Marketplace apps: after reconfigure (spine reconfigure or from CP settings)")
+	fmt.Println("  - Market-installed apps: after reconfigure (spine reconfigure or from CP settings)")
 
 	return nil
 }

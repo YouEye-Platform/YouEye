@@ -38,7 +38,7 @@ type ReleasesConfig struct {
 	// RepoURL is the canonical core monorepo URL for Spine, Control Panel, and UI releases.
 	RepoURL string `mapstructure:"repo_url" yaml:"repo_url"`
 
-	// Provider is the release provider type: "gitea", "github", or "custom"
+	// Provider is the release provider type.
 	// Deprecated: derived from RepoURL. Kept for old config files.
 	Provider string `mapstructure:"provider" yaml:"provider"`
 
@@ -46,7 +46,7 @@ type ReleasesConfig struct {
 	// Deprecated: derived from RepoURL. Kept for old config files.
 	BaseURL string `mapstructure:"base_url" yaml:"base_url"`
 
-	// APIPath is the API path prefix (e.g., "/api/v1" for Gitea)
+	// APIPath is the API path prefix for release API requests.
 	// Deprecated: derived from RepoURL. Kept for old config files.
 	APIPath string `mapstructure:"api_path" yaml:"api_path"`
 

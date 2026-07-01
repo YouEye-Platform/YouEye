@@ -30,19 +30,19 @@ func TestRawFileURLUsesProviderSpecificPublicPaths(t *testing.T) {
 		t.Fatalf("GitHub raw URL = %q, want %q", got, want)
 	}
 
-	got, err = rawFileURL("https://example.test/potemsla/YouEye", "dev", "spine/install.sh")
+	got, err = rawFileURL("https://example.test/acme/YouEye", "dev", "spine/install.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want = "https://example.test/potemsla/YouEye/raw/branch/dev/spine/install.sh"
+	want = "https://example.test/acme/YouEye/raw/branch/dev/spine/install.sh"
 	if got != want {
-		t.Fatalf("Gitea raw URL = %q, want %q", got, want)
+		t.Fatalf("forge-compatible raw URL = %q, want %q", got, want)
 	}
 }
 
 func TestSpineInstallCommandUsesConfiguredSource(t *testing.T) {
 	cfg := newConfig()
-	cfg.CoreRepoURL = "https://example.test/potemsla/YouEye"
+	cfg.CoreRepoURL = "https://example.test/acme/YouEye"
 	cfg.ReleaseChannel = "dev"
 
 	cmd, err := spineInstallCommand(cfg)
@@ -51,8 +51,8 @@ func TestSpineInstallCommandUsesConfiguredSource(t *testing.T) {
 	}
 
 	for _, needle := range []string{
-		"https://example.test/potemsla/YouEye/raw/branch/dev/spine/install.sh",
-		"RELEASE_REPO_URL='https://example.test/potemsla/YouEye'",
+		"https://example.test/acme/YouEye/raw/branch/dev/spine/install.sh",
+		"RELEASE_REPO_URL='https://example.test/acme/YouEye'",
 		"BRANCH='dev'",
 	} {
 		if !strings.Contains(cmd, needle) {
@@ -100,8 +100,8 @@ func TestConfigFromOptionsAllowsCustomAutomationSource(t *testing.T) {
 		Silent:         true,
 		Yes:            true,
 		Mode:           "host",
-		CoreRepoURL:    "https://example.test/potemsla/YouEye",
-		MarketRepoURL:  "https://example.test/potemsla/YE-AppMarket",
+		CoreRepoURL:    "https://example.test/YouEye-Platform/YouEye",
+		MarketRepoURL:  "https://example.test/YouEye-Platform/Market",
 		ReleaseChannel: "dev",
 	})
 	if err != nil {
@@ -110,10 +110,10 @@ func TestConfigFromOptionsAllowsCustomAutomationSource(t *testing.T) {
 	if cfg.Mode != modeHost {
 		t.Fatalf("Mode = %v, want modeHost", cfg.Mode)
 	}
-	if cfg.CoreRepoURL != "https://example.test/potemsla/YouEye" {
+	if cfg.CoreRepoURL != "https://example.test/YouEye-Platform/YouEye" {
 		t.Fatalf("CoreRepoURL = %q", cfg.CoreRepoURL)
 	}
-	if cfg.MarketRepoURL != "https://example.test/potemsla/YE-AppMarket" {
+	if cfg.MarketRepoURL != "https://example.test/YouEye-Platform/Market" {
 		t.Fatalf("MarketRepoURL = %q", cfg.MarketRepoURL)
 	}
 	if cfg.ReleaseChannel != "dev" {

@@ -13,10 +13,10 @@ import (
 	"syscall"
 	"time"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/config"
-	"git.potemk.in/potemsla/YouEye/spine/internal/util"
-	"git.potemk.in/potemsla/YouEye/spine/internal/version"
 	"github.com/spf13/cobra"
+	"github.com/youeye-platform/YouEye/spine/internal/config"
+	"github.com/youeye-platform/YouEye/spine/internal/util"
+	"github.com/youeye-platform/YouEye/spine/internal/version"
 )
 
 // ensureSpineUpToDate is invoked at the very top of `spine deploy`. It checks
@@ -576,7 +576,7 @@ Wants=youeye.service
 // These directories are used by Incus disk devices are mounted into containers.
 func createDataDirectories() {
 	basePath := "/var/lib/youeye"
-	
+
 	dirs := []string{
 		basePath,
 		basePath + "/caddy/config",
@@ -588,7 +588,7 @@ func createDataDirectories() {
 		basePath + "/control/data",
 		basePath + "/ui",
 	}
-	
+
 	fmt.Println("Creating YouEye data directories...")
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {

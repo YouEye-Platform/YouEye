@@ -225,7 +225,7 @@ export async function GET(request: NextRequest) {
         return app.status !== 'not-installed';
       });
 
-    // Add marketplace apps (from install metadata), skipping any whose
+    // Add Market-installed apps (from install metadata), skipping any whose
     // containers are already covered by APP_DEFINITIONS (prevents duplicates
     // for native apps like Search/Wiki that also have install.json files).
     const definedContainers = new Set(
@@ -290,7 +290,7 @@ export async function GET(request: NextRequest) {
       return {
         id: meta.appId,
         displayName: manifest?.metadata.name || meta.appId,
-        description: manifest?.metadata.description || 'Marketplace app',
+        description: manifest?.metadata.description || 'Market app',
         icon: manifest?.metadata.icon || 'Package',
         iconUrl: manifest?.metadata.iconUrl || undefined,
         category: 'user' as const,

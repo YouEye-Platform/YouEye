@@ -1,11 +1,11 @@
 /**
  * Unified Market uninstall API.
- * Removes an installed app (marketplace or native) and all its resources.
+ * Removes an installed app (Market-installed or native) and all its resources.
  *
  * POST /api/market/uninstall
  * Body: { appId, keepData?: boolean }
  *
- * keepData = true (default):  removes container, Caddy route, Authentik, DNS
+ * keepData = true (default): removes container, Caddy route, identity provider entries, DNS
  *                              but preserves volume data for reinstall
  * keepData = false:            removes everything including data volumes and shared DB
  */

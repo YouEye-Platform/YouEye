@@ -2,7 +2,7 @@
  * GET /api/market/image?url=<encoded-url>
  *
  * Proxies external images so the app drawer can display icons for
- * external/marketplace apps.  Icon URLs are stored in the DB as
+ * external/Market-installed apps.  Icon URLs are stored in the DB as
  * "/api/market/image?url=..." (relative to whichever host serves
  * the page).  The CP already has this endpoint; the UI mirrors it
  * so icons render on the UI domain too.
@@ -23,9 +23,6 @@ const ALLOWED_DOMAINS = [
   'usememos.com',
   'i.ibb.co',
   'jellyfin.org',
-  // YouEye Forgejo / App Market host — external app icons are served from the
-  // catalog repo's raw file URLs (e.g. git.potemk.in/.../raw/icons/<app>.svg).
-  'git.potemk.in',
 ];
 
 export async function GET(request: Request) {

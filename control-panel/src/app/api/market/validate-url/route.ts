@@ -169,7 +169,7 @@ export async function POST(request: NextRequest) {
       signal: controller.signal,
       headers: {
         'Accept': 'text/yaml, application/yaml, text/plain, */*',
-        'User-Agent': 'YouEye-AppMarket/1.0',
+        'User-Agent': 'YouEye-Market/1.0',
       },
     });
 

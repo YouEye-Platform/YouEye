@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/cmd"
+	"github.com/youeye-platform/YouEye/spine/internal/cmd"
 )
 
 func main() {

@@ -4,18 +4,18 @@ import (
 	"fmt"
 	"strings"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/output"
 	"github.com/spf13/cobra"
+	"github.com/youeye-platform/YouEye/spine/internal/output"
 )
 
 var marketCmd = &cobra.Command{
 	Use:   "market",
-	Short: "Browse the app marketplace",
+	Short: "Browse Market",
 }
 
 var marketSearchCmd = &cobra.Command{
 	Use:   "search <query>",
-	Short: "Search the marketplace catalog",
+	Short: "Search the Market catalog",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !requireCP() {
@@ -57,7 +57,7 @@ var marketSearchCmd = &cobra.Command{
 
 var marketInfoCmd = &cobra.Command{
 	Use:   "info <app-id>",
-	Short: "Show detailed marketplace entry",
+	Short: "Show detailed Market entry",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !requireCP() {
@@ -68,7 +68,7 @@ var marketInfoCmd = &cobra.Command{
 			return err
 		}
 
-		output.Section("Marketplace: " + args[0])
+		output.Section("Market: " + args[0])
 		output.StatusLine("Name", firstOf(data, "name"), "")
 		output.StatusLine("Description", firstOf(data, "description", "tagline"), "")
 		output.StatusLine("Category", firstOf(data, "category"), "")
@@ -88,12 +88,12 @@ var marketInfoCmd = &cobra.Command{
 
 var marketRepoCmd = &cobra.Command{
 	Use:   "repo",
-	Short: "Manage the Control Panel-owned AppMarket repository",
+	Short: "Manage the Control Panel-owned Market repository",
 }
 
 var marketRepoGetCmd = &cobra.Command{
 	Use:   "get",
-	Short: "Show the AppMarket repository",
+	Short: "Show the Market repository",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !requireCP() {
 			return nil
@@ -111,7 +111,7 @@ var marketRepoGetCmd = &cobra.Command{
 
 var marketRepoSetCmd = &cobra.Command{
 	Use:   "set <url>",
-	Short: "Set the AppMarket repository",
+	Short: "Set the Market repository",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !requireCP() {

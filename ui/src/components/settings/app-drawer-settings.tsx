@@ -405,7 +405,7 @@ export function AppDrawerSettings({ isAdmin = false }: AppDrawerSettingsProps) {
   if (apps.length === 0) {
     return (
       <p className="text-sm text-muted-foreground py-4">
-        No apps installed yet. Install apps from the marketplace to customize your drawer.
+        No apps installed yet. Install apps from Market to customize your drawer.
       </p>
     );
   }

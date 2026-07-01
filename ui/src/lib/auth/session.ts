@@ -45,7 +45,7 @@ export interface SessionPayload extends JWTPayload {
   name: string;
   /** Email address */
   email: string;
-  /** Whether user is an admin (in 'authentik Admins' group) */
+  /** Whether the user belongs to an admin identity group */
   isAdmin: boolean;
   /** identity provider group memberships */
   groups: string[];

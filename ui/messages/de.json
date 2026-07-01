@@ -89,8 +89,8 @@
       "apps": "Apps",
       "permissions": "Berechtigungen",
       "appManagement": "App-Verwaltung",
-      "appMarket": "App-Markt",
-      "about": "Info & Nutzung"
+      "about": "Info & Nutzung",
+      "market": "Market"
     },
     "profile": {
       "title": "Profil",
@@ -123,7 +123,7 @@
       "userLanguage": "Ihre Sprache",
       "systemDefault": "Systemstandard",
       "systemLanguage": "Systemsprache",
-      "systemLanguageDescription": "Legt die Standardsprache für neue Benutzer und Apps fest.",
+      "systemLanguageDescription": "Legt die Standardsprache für neue Benutzer, native Apps und Market-installierte Apps fest.",
       "resetToDefault": "Auf Systemstandard zurücksetzen",
       "saved": "Spracheinstellung gespeichert",
       "error": "Fehler beim Speichern der Spracheinstellung"
@@ -330,7 +330,7 @@
     "statusDown": "Ausgefallen",
     "statusUnknown": "Unbekannt",
     "manageApps": "Apps verwalten",
-    "visitMarketplace": "Zum Marktplatz",
+    "visitMarket": "Market besuchen",
     "addApp": "App hinzufügen",
     "removeApp": "Aus Leiste entfernen",
     "allApps": "Alle Apps",
@@ -404,29 +404,6 @@
     "default": "Standard",
     "transparent": "Glas",
     "custom": "Benutzerdefiniert"
-  },
-  "appMarket": {
-    "title": "App-Markt",
-    "description": "Durchsuchen und installieren Sie Apps für Ihre YouEye-Plattform.",
-    "refresh": "Aktualisieren",
-    "noApps": "Keine Apps im Katalog verfügbar",
-    "open": "Öffnen",
-    "install": "Installieren",
-    "uninstall": "Deinstallieren",
-    "installed": "Installiert",
-    "installTitle": "{name} installieren",
-    "installDescription": "Konfigurieren und installieren Sie {name} auf Ihrer YouEye-Plattform.",
-    "subdomain": "Subdomain",
-    "enableSSO": "SSO aktivieren (Anmeldung über den Identitätsanbieter)",
-    "resources": "Ressourcen: {memory} RAM, {cpu} CPU",
-    "url": "URL: https://{subdomain}.{domain}",
-    "uninstallConfirm": "{name} deinstallieren?",
-    "uninstallDescription": "Dies entfernt {name} und alle Daten. Diese Aktion kann nicht rückgängig gemacht werden.",
-    "uninstalled": "{name} deinstalliert",
-    "ram": "RAM",
-    "tmdbApiKey": "TMDB API-Schlüssel",
-    "tmdbApiKeyPlaceholder": "TMDB API-Schlüssel eingeben",
-    "tmdbApiKeyHelp": "Erforderlich für Film- und Serien-Inhalte. Kostenlosen API-Schlüssel auf themoviedb.org/settings/api erhalten"
   },
   "permissions": {
     "title": "App-Berechtigungen",

@@ -5,9 +5,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/container"
-	"git.potemk.in/potemsla/YouEye/spine/internal/incus"
-	hoststorage "git.potemk.in/potemsla/YouEye/spine/internal/storage"
+	"github.com/youeye-platform/YouEye/spine/internal/container"
+	"github.com/youeye-platform/YouEye/spine/internal/incus"
+	hoststorage "github.com/youeye-platform/YouEye/spine/internal/storage"
 )
 
 var installCmd = &cobra.Command{

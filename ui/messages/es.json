@@ -89,8 +89,8 @@
       "apps": "Apps",
       "permissions": "Permisos",
       "appManagement": "Gestión de apps",
-      "appMarket": "Tienda de apps",
-      "about": "Acerca de"
+      "about": "Acerca de",
+      "market": "Market"
     },
     "profile": {
       "title": "Perfil",
@@ -123,7 +123,7 @@
       "userLanguage": "Tu idioma",
       "systemDefault": "Por defecto del sistema",
       "systemLanguage": "Idioma del sistema",
-      "systemLanguageDescription": "Establece el idioma por defecto para nuevos usuarios y apps.",
+      "systemLanguageDescription": "Establece el idioma predeterminado para nuevos usuarios, apps nativas y apps instaladas desde Market.",
       "resetToDefault": "Restablecer al del sistema",
       "saved": "Idioma guardado",
       "error": "Error al guardar idioma"
@@ -330,7 +330,7 @@
     "statusDown": "Caído",
     "statusUnknown": "Desconocido",
     "manageApps": "Administrar Apps",
-    "visitMarketplace": "Visitar Marketplace",
+    "visitMarket": "Visitar Market",
     "addApp": "Añadir app",
     "removeApp": "Quitar del cajón",
     "allApps": "Todas las apps",
@@ -404,29 +404,6 @@
     "default": "Predeterminado",
     "transparent": "Cristal",
     "custom": "Personalizado"
-  },
-  "appMarket": {
-    "title": "Tienda de apps",
-    "description": "Explora e instala apps para tu plataforma YouEye.",
-    "refresh": "Actualizar",
-    "noApps": "No hay apps disponibles en el catálogo",
-    "open": "Abrir",
-    "install": "Instalar",
-    "uninstall": "Desinstalar",
-    "installed": "Instalado",
-    "installTitle": "Instalar {name}",
-    "installDescription": "Configura e instala {name} en tu plataforma YouEye.",
-    "subdomain": "Subdominio",
-    "enableSSO": "Activar SSO (inicio de sesión con proveedor de identidad)",
-    "resources": "Recursos: {memory} RAM, {cpu} CPU",
-    "url": "URL: https://{subdomain}.{domain}",
-    "uninstallConfirm": "¿Desinstalar {name}?",
-    "uninstallDescription": "Esto eliminará {name} y todos sus datos. Esta acción no se puede deshacer.",
-    "uninstalled": "{name} desinstalado",
-    "ram": "RAM",
-    "tmdbApiKey": "Clave de API de TMDB",
-    "tmdbApiKeyPlaceholder": "Introduce tu clave de API de TMDB",
-    "tmdbApiKeyHelp": "Necesaria para contenido de películas y series. Obtén una clave gratuita en themoviedb.org/settings/api"
   },
   "permissions": {
     "title": "Permisos de apps",

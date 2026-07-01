@@ -2,10 +2,10 @@
  * Core platform backup orchestrator.
  *
  * Backs up the YouEye platform infrastructure:
- * 1. Dump Authentik + youeye PostgreSQL databases (live, MVCC-safe)
+ * 1. Dump identity + youeye PostgreSQL databases (live, MVCC-safe)
  * 2. Collect youeye.yaml config
  * 3. Build installed-apps.json from install metadata
- * 4. Stage infra secrets, Caddy config, Pi-Hole config, Authentik media
+ * 4. Stage infra secrets, Caddy config, Pi-Hole config, identity media
  * 5. Call Spine for live volume backup of infrastructure directories
  * 6. Archive + encrypt
  * 7. Poll + relay events

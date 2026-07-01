@@ -21,6 +21,7 @@ import { setDefaultRoute, ensurePingRoute, ensureHeaderStrippingRoute } from '..
 import { execShell } from '../incus/server';
 import { applyResourcePolicy } from './resource-policy';
 import { applySystemImage, recordSystemContainerManifest, resolveSystemImageOverrides } from './system-market-manifests';
+import { getReleaseSource } from '../apps/release-source';
 
 const TOTAL_STEPS = 4;
 const PIHOLE_CONTAINER = 'youeye-pihole';
@@ -50,6 +51,19 @@ type EventCallback = (event: DeploymentEvent) => void;
 
 function emit(cb: EventCallback, step: number, status: DeploymentEvent['status'], message: string, detail?: string) {
   cb({ step, totalSteps: TOTAL_STEPS, status, message, detail });
+}
+
+async function deployUIContainerFromConfiguredSource(): Promise<void> {
+  const spec = uiContainerSpec();
+  const releaseSource = await getReleaseSource();
+
+  await deployLXDContainer(spec, {
+    spineSocketPath: '/var/run/youeye/youeye.sock',
+    giteaBaseURL: releaseSource.base_url,
+    giteaOrg: releaseSource.organization,
+    giteaRepo: releaseSource.repository || 'YouEye',
+    tagPrefix: 'ui',
+  });
 }
 
 /**
@@ -203,14 +217,7 @@ async function _deployInfrastructureInner(
   // ─── Step 4: YouEye UI ───────────────────────────────────
   emit(onEvent, 4, 'running', 'Deploying YouEye UI container...');
   try {
-    const spec = uiContainerSpec();
-    await deployLXDContainer(spec, {
-      spineSocketPath: '/var/run/youeye/youeye.sock',
-      giteaBaseURL: 'https://git.potemk.in',
-      giteaOrg: 'potemsla',
-      giteaRepo: 'YouEye',
-      tagPrefix: 'ui',
-    });
+    await deployUIContainerFromConfiguredSource();
     await applyResourcePolicy('youeye-ui', 'critical');
     emit(onEvent, 4, 'success', 'YouEye UI container deployed');
   } catch (err) {
@@ -387,14 +394,7 @@ export async function reconcileInfrastructure(
   if (missing.includes('youeye-ui')) {
     remit(4, 'running', 'Deploying missing YouEye UI container...');
     try {
-      const spec = uiContainerSpec();
-      await deployLXDContainer(spec, {
-        spineSocketPath: '/var/run/youeye/youeye.sock',
-        giteaBaseURL: 'https://git.potemk.in',
-        giteaOrg: 'potemsla',
-        giteaRepo: 'YouEye',
-        tagPrefix: 'ui',
-      });
+      await deployUIContainerFromConfiguredSource();
       await applyResourcePolicy('youeye-ui', 'critical');
       remit(4, 'success', 'YouEye UI container deployed');
     } catch (err) {

@@ -1,6 +1,6 @@
 /**
  * Unified Market catalog API.
- * Returns all available apps (marketplace + native) from the Market GitHub repo.
+ * Returns all available apps (Market-installed + native) from the Market GitHub repo.
  *
  * GET /api/market/catalog — all available apps
  */

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/config"
-	"git.potemk.in/potemsla/YouEye/spine/internal/util"
+	"github.com/youeye-platform/YouEye/spine/internal/config"
+	"github.com/youeye-platform/YouEye/spine/internal/util"
 )
 
 // Migration architecture (post-0.2.18.7 — see YE-Wiki/spine/host-ip-migration.md

@@ -1,6 +1,6 @@
 /**
  * Orphan resource detector.
- * Cross-references installed apps against Caddy routes, Authentik apps,
+ * Cross-references installed apps against Caddy routes, identity provider apps,
  * PostgreSQL databases, and volume directories to find orphaned resources
  * from previous unclean uninstalls.
  */
@@ -66,7 +66,7 @@ export async function detectOrphans(): Promise<OrphanResource[]> {
     // Caddy may be unavailable
   }
 
-  // 2. Orphaned Authentik apps
+    // 2. Orphaned identity provider apps
   try {
     const { authentikAPI, getAuthentikConfig } = await import('./authentik');
     const config = await getAuthentikConfig();
@@ -89,7 +89,7 @@ export async function detectOrphans(): Promise<OrphanResource[]> {
       }
     }
   } catch {
-    // Authentik may be unavailable
+    // The identity provider may be unavailable
   }
 
   // 3. Orphaned PostgreSQL databases

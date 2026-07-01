@@ -125,7 +125,7 @@ func showBranch() error {
 		fmt.Printf("  Spine:    %s-v<version>  (e.g., %s-v0.1.50)\n", branch, branch)
 		fmt.Printf("  CP:       %s-v<version>  (e.g., %s-v0.1.100)\n", branch, branch)
 		fmt.Printf("  UI:       %s-v<version>  (e.g., %s-v0.5.0)\n", branch, branch)
-		fmt.Printf("  AppMarket: git branch '%s'\n", branch)
+		fmt.Printf("  Market: git branch '%s'\n", branch)
 		fmt.Println()
 		fmt.Println("If a repo has no branch-specific release, main releases are used as fallback.")
 	}

@@ -89,9 +89,9 @@
       "apps": "Приложения",
       "permissions": "Разрешения",
       "appManagement": "Управление приложениями",
-      "appMarket": "Маркет приложений",
       "about": "О системе",
-      "backup": "Резервное копирование"
+      "backup": "Резервное копирование",
+      "market": "Маркет"
     },
     "profile": {
       "title": "Профиль",
@@ -124,7 +124,7 @@
       "userLanguage": "Ваш язык",
       "systemDefault": "По умолчанию (системный)",
       "systemLanguage": "Язык системы",
-      "systemLanguageDescription": "Устанавливает язык по умолчанию для новых пользователей и приложений.",
+      "systemLanguageDescription": "Устанавливает язык по умолчанию для новых пользователей, нативных приложений и приложений из Market.",
       "resetToDefault": "Сбросить на системный",
       "saved": "Настройка языка сохранена",
       "error": "Не удалось сохранить настройку языка"
@@ -331,7 +331,7 @@
     "statusDown": "Не работает",
     "statusUnknown": "Неизвестно",
     "manageApps": "Управление приложениями",
-    "visitMarketplace": "Перейти в Маркетплейс",
+    "visitMarket": "Открыть Market",
     "addApp": "Добавить приложение",
     "removeApp": "Убрать из панели",
     "allApps": "Все приложения",
@@ -405,29 +405,6 @@
     "default": "По умолчанию",
     "transparent": "Стекло",
     "custom": "Свой"
-  },
-  "appMarket": {
-    "title": "Маркет приложений",
-    "description": "Просматривайте и устанавливайте приложения для YouEye.",
-    "refresh": "Обновить",
-    "noApps": "В каталоге нет приложений",
-    "open": "Открыть",
-    "install": "Установить",
-    "uninstall": "Удалить",
-    "installed": "Установлено",
-    "installTitle": "Установить {name}",
-    "installDescription": "Настройте и установите {name} на вашу платформу YouEye.",
-    "subdomain": "Поддомен",
-    "enableSSO": "Включить SSO (единый вход через провайдера идентификации)",
-    "resources": "Ресурсы: {memory} ОЗУ, {cpu} ЦПУ",
-    "url": "URL: https://{subdomain}.{domain}",
-    "uninstallConfirm": "Удалить {name}?",
-    "uninstallDescription": "Это удалит {name} и все данные. Действие необратимо.",
-    "uninstalled": "{name} удалено",
-    "ram": "ОЗУ",
-    "tmdbApiKey": "API-ключ TMDB",
-    "tmdbApiKeyPlaceholder": "Введите ваш API-ключ TMDB",
-    "tmdbApiKeyHelp": "Необходим для загрузки фильмов и сериалов. Получите бесплатный ключ на themoviedb.org/settings/api"
   },
   "permissions": {
     "title": "Права приложений",

@@ -6,7 +6,7 @@
  * Streams real-time update progress via Server-Sent Events.
  * - Infrastructure LXD apps (UI) → apps/lxd-updater (tarball download + service restart)
  * - Infrastructure OCI apps (Caddy, Pi-Hole, Postgres) → apps/updater (Incus rebuild)
- * - Marketplace/native apps → market/updater (unified: OCI rebuild or LXD tarball + migrations)
+ * - Market-installed/native apps → market/updater (unified: OCI rebuild or LXD tarball + migrations)
  * - System components (Spine, Incus, host) → Spine API proxy
  */
 
@@ -15,7 +15,7 @@ import { getSession } from '@/lib/auth';
 import { getAppDefinition } from '@/lib/apps/definitions';
 import { updateOCIApp, type UpdateEvent } from '@/lib/apps/updater';
 import { updateLXDApp } from '@/lib/apps/lxd-updater';
-import { updateMarketplaceApp } from '@/lib/market/updater';
+import { updateMarketApp } from '@/lib/market/updater';
 import { getInstalledApp } from '@/lib/market/installed-apps';
 import { spineClient } from '@/lib/spine/client';
 
@@ -35,12 +35,12 @@ export async function POST(
   const { name } = await params;
   const appDef = getAppDefinition(name);
 
-  // If not in static definitions, check if it's a marketplace-installed app
+  // If not in static definitions, check if it's a Market-installed app
   if (!appDef) {
     const installedApp = await getInstalledApp(name);
     if (installedApp) {
       // Route to unified market updater (handles both OCI and LXD native apps)
-      return handleMarketplaceUpdate(name);
+      return handleMarketUpdate(name);
     }
     return new Response(JSON.stringify({ error: 'App not found' }), { status: 404 });
   }
@@ -91,15 +91,15 @@ export async function POST(
 }
 
 /**
- * Handle update for marketplace-installed apps via the unified updater.
+ * Handle update for Market-installed apps via the unified updater.
  * Supports both OCI and LXD native apps with migrations and DB tracking.
  */
-function handleMarketplaceUpdate(appId: string): Response {
+function handleMarketUpdate(appId: string): Response {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        const result = await updateMarketplaceApp(
+        const result = await updateMarketApp(
           { appId },
           (event) => {
             try {

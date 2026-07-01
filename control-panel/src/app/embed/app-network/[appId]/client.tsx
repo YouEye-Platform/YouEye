@@ -262,7 +262,7 @@ export function AppNetworkClient({ appId }: { appId: string }) {
 
               {tw.providers.length === 0 ? (
                 <div className="embed-muted" style={{ fontSize: 12, padding: "8px 14px", textAlign: "center", border: "1px dashed var(--embed-border)", borderRadius: 6 }}>
-                  No providers installed. Install a compatible app from the marketplace.
+                  No providers installed. Install a compatible app from Market.
                 </div>
               ) : (
                 tw.providers.map((p) => {

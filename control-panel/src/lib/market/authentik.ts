@@ -1,9 +1,9 @@
 /**
- * Authentik CRUD operations for market app SSO integration.
- * Handles OAuth2 provider/application management in Authentik.
+ * Identity provider CRUD operations for Market app SSO integration.
+ * Handles OAuth2 provider/application management in the identity provider.
  *
  * Extracted from temp-market/sso-setup.ts to be the permanent home
- * for Authentik integration used by the YAML-driven SSO engine.
+ * for identity integration used by the YAML-driven SSO engine.
  */
 
 import { spineClient } from '@/lib/spine/client';
@@ -48,7 +48,7 @@ export async function authentikAPI<T>(
 }
 
 /**
- * Check if Authentik is available and healthy for SSO integration.
+ * Check if the identity provider is available and healthy for SSO integration.
  */
 export async function isAuthentikAvailable(): Promise<boolean> {
   try {
@@ -63,10 +63,10 @@ export async function isAuthentikAvailable(): Promise<boolean> {
 }
 
 /**
- * Get the external Authentik URL from Caddy routes, with config-based fallback.
+ * Get the external identity provider URL from Caddy routes, with config-based fallback.
  *
  * Strategy:
- * 1. Search Caddy routes for a reverse_proxy targeting youeye-authentik
+ * 1. Search Caddy routes for a reverse_proxy targeting the identity provider
  *    - If the route has a host matcher, use that hostname
  *    - If the route exists but has no host matcher, fall back to config
  * 2. Fallback: construct URL from platform config (domain + auth subdomain)
@@ -112,7 +112,7 @@ export async function getAuthentikExternalUrl(): Promise<string | null> {
           }
         }
 
-        // Authentik route exists in Caddy but has no host matcher — fall through to config
+        // Identity provider route exists in Caddy but has no host matcher; fall through to config
         if (authentikRouteExists) {
           console.log('[authentik] Route found in Caddy without host matcher, falling back to config');
         }
@@ -137,7 +137,7 @@ export async function getAuthentikExternalUrl(): Promise<string | null> {
 }
 
 /**
- * Find a usable signing key in Authentik for RS256 JWT signing.
+ * Find a usable signing key in the identity provider for RS256 JWT signing.
  * Returns the certificate PK, or undefined if none found.
  */
 async function findSigningKey(config: AuthentikConfig): Promise<string | undefined> {
@@ -158,9 +158,9 @@ async function findSigningKey(config: AuthentikConfig): Promise<string | undefin
 
 /**
  * The normalized YouEye Groups expression.
- * Emits all Authentik group names AND adds "admin" when user is in "authentik Admins".
+ * Emits all identity group names and adds "admin" when the user is in the admin group.
  * This lets apps that check for "admin" in the groups claim (e.g. Nextcloud) auto-grant admin,
- * while apps that check "authentik Admins" directly (e.g. Jellyfin) still work.
+ * while apps that check the legacy admin group directly still work.
  */
 const GROUPS_EXPRESSION_NORMALIZED =
   'groups = [group.name for group in request.user.ak_groups.all()]\n' +
@@ -169,12 +169,12 @@ const GROUPS_EXPRESSION_NORMALIZED =
   'return {"groups": groups}';
 
 /**
- * Ensure the Authentik scope mappings needed for admin role detection.
+ * Ensure the identity provider scope mappings needed for admin role detection.
  *
  * - `type: groups` — updates the global "YouEye Groups" mapping to normalize
- *   "authentik Admins" → also includes the app-expected group name (e.g. "admin").
+ *   The legacy admin group also includes the app-expected group name (e.g. "admin").
  * - `type: roleClaim` — creates a per-app scope mapping that emits a custom claim
- *   (e.g. "immich_role": "admin") based on Authentik group membership.
+ *   (e.g. "app_role": "admin") based on identity group membership.
  *
  * Returns PKs of any scope mappings to attach to the OAuth2 provider.
  */
@@ -240,7 +240,7 @@ export async function ensureAdminScopeMapping(
 }
 
 /**
- * Create an OAuth2 provider and application in Authentik for a market app.
+ * Create an OAuth2 provider and application in the identity provider for a Market app.
  */
 export async function createAuthentikOAuth2App(params: {
   slug: string;
@@ -348,7 +348,7 @@ export async function createAuthentikOAuth2App(params: {
 
   // Create Application
   // policy_engine_mode: "any" = implicit consent (skips consent screen — BUG-004 fix)
-  // policy_engine_mode: "all" = explicit consent (default Authentik behavior)
+  // policy_engine_mode: "all" = explicit consent (default provider behavior)
   await authentikAPI(config, '/core/applications/', 'POST', {
     name: params.name,
     slug: clientId,
@@ -362,9 +362,9 @@ export async function createAuthentikOAuth2App(params: {
 }
 
 /**
- * Create an Authentik forward-auth proxy provider and application.
+ * Create a forward-auth proxy provider and application.
  * Used for apps without native OAuth2 — Caddy's forward_auth directive
- * checks the user's Authentik session before proxying to the app.
+ * checks the user's identity session before proxying to the app.
  */
 export async function createAuthentikForwardAuthApp(params: {
   slug: string;
@@ -382,7 +382,7 @@ export async function createAuthentikForwardAuthApp(params: {
   const implicitFlow = flows.results.find((f) => f.slug === 'default-provider-authorization-implicit-consent');
   const authFlowPk = (implicitFlow ?? flows.results[0]).pk;
 
-  // Find invalidation flow (required by Authentik for proxy providers)
+  // Find invalidation flow (required by the provider for proxy providers)
   const invalidationFlows = await authentikAPI<{ results: Array<{ pk: string; slug: string }> }>(
     config,
     '/flows/instances/?designation=invalidation'
@@ -449,7 +449,7 @@ export async function createAuthentikForwardAuthApp(params: {
       const updatedProviders = [...new Set([...embedded.providers, provider.pk])];
       const patchBody: Record<string, unknown> = { providers: updatedProviders };
 
-      // Ensure outpost has the external Authentik URL so forward-auth redirects
+      // Ensure outpost has the external identity URL so forward-auth redirects
       // go to auth.domain instead of the internal container IP
       if (!embedded.config?.authentik_host) {
         const externalUrl = await getAuthentikExternalUrl();
@@ -473,7 +473,7 @@ export async function createAuthentikForwardAuthApp(params: {
 }
 
 /**
- * Remove an Authentik forward-auth proxy provider and application.
+ * Remove a forward-auth proxy provider and application.
  */
 export async function removeAuthentikForwardAuthApp(slug: string): Promise<void> {
   try {
@@ -499,7 +499,7 @@ export async function removeAuthentikForwardAuthApp(slug: string): Promise<void>
 }
 
 /**
- * Remove an Authentik OAuth2 application and provider for a market app.
+ * Remove an OAuth2 application and provider for a Market app.
  */
 export async function removeAuthentikOAuth2App(slug: string): Promise<void> {
   try {

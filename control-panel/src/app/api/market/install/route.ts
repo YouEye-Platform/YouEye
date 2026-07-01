@@ -1,6 +1,6 @@
 /**
  * Unified Market install API — SSE endpoint.
- * Handles both marketplace (OCI) and native (LXD) app installation
+ * Handles both Market-installed (OCI) and native (LXD) app installation
  * through the single manifest-driven engine.
  *
  * POST /api/market/install
@@ -144,7 +144,7 @@ export async function POST(request: NextRequest) {
         config.plannedNativeIdentityIntegration = selectedStandaloneIntegrations.some((integration) => integration.type === 'identity');
         let baseInstallComplete = false;
 
-        // Unified install path — engine handles both native (LXD) and marketplace (OCI)
+        // Unified install path — engine handles both native (LXD) and Market-installed (OCI)
         await installApp(manifest, config, onEvent, abortController.signal);
         baseInstallComplete = true;
 

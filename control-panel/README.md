@@ -2,16 +2,16 @@
 
 Orchestration engine for the YouEye platform.
 
-The Control Panel is a Next.js application that runs inside an Incus container and manages all platform infrastructure: database, SSO, reverse proxy, DNS, the user-facing UI, native apps, and marketplace apps.
+The Control Panel is a Next.js application that runs inside an Incus container and manages all platform infrastructure: database, YouEye ID, reverse proxy, DNS, the user-facing UI, native apps, and Market-installed apps.
 
 ## What Control Panel Does
 
 - **Setup Wizard**: Guided first-run configuration (domain, DNS, SSO, services)
 - **Dashboard**: System health monitoring with service status and resource usage
-- **App Management**: Install, update, start, stop, and remove apps (native and marketplace)
+- **App Management**: Install, update, start, stop, and remove apps (native and Market-installed)
 - **Reverse Proxy**: Caddy route management with automatic TLS
 - **DNS**: Pi-Hole configuration, blocklists, local DNS records
-- **SSO**: Authentik integration for single sign-on across all apps
+- **SSO**: YouEye ID integration for single sign-on across all apps
 - **Updates**: Check and apply updates for all platform components
 - **Backups**: Multi-container backup engine with scheduling
 
@@ -21,7 +21,7 @@ Control Panel runs as a standalone Next.js app inside the `youeye-control` Incus
 
 - **Incus socket**: Container lifecycle management (create, start, stop, exec)
 - **Spine socket**: Privileged host operations (PAM auth, system updates)
-- **Bridge network**: Direct API calls to containers (Caddy, Pi-Hole, Authentik, PostgreSQL)
+- **Bridge network**: Direct API calls to containers (Caddy, Pi-Hole, YouEye ID, PostgreSQL)
 - **UI Bridge API**: One-way push endpoints for the UI (`/api/ui-bridge/*`)
 
 The UI bridge is one-way: Control Panel pushes data to the UI. The UI never calls back to Control Panel.
@@ -54,13 +54,15 @@ tar -cf standalone.tar .
 
 The tarball must be created from inside the component subdirectory with `server.js` at the root level. Use `tar -cf` (uncompressed), not `tar -czf`.
 
+The public release tag for this component is `cp-v0.5.0`.
+
 ## Key API Routes
 
 | Route | Description |
 |-------|-------------|
 | `/api/auth/login` | PAM authentication via Spine |
-| `/api/apps/unified` | Unified app listing (native + marketplace) |
-| `/api/apps/install` | Install an app from the marketplace |
+| `/api/apps/unified` | Unified app listing (native + Market-installed) |
+| `/api/apps/install` | Install an app from Market |
 | `/api/caddy/*` | Caddy reverse proxy management |
 | `/api/pihole/*` | Pi-Hole DNS management |
 | `/api/deploy/*` | Setup wizard deployment steps |

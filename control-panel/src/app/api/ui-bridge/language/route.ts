@@ -2,7 +2,7 @@
  * UI Bridge: Language
  *
  * GET /api/ui-bridge/language
- * GET /api/ui-bridge/language?userId=<authentik-sub>
+ * GET /api/ui-bridge/language?userId=<identity-sub>
  *
  * Returns the resolved language for a request.
  * Resolution order:

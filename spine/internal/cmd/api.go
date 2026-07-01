@@ -7,8 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/api"
 	"github.com/spf13/cobra"
+	"github.com/youeye-platform/YouEye/spine/internal/api"
 )
 
 var apiCmd = &cobra.Command{
@@ -39,10 +39,10 @@ func init() {
 
 func startAPIServer() error {
 	fmt.Println("Starting Spine API server...")
-	
+
 	// Get config
 	cfg := GetConfig()
-	
+
 	// Create socket directory from config path
 	socketDir := cfg.Paths.ConfigDir
 	// Actually, socket dir should be derived from socket path
@@ -57,7 +57,7 @@ func startAPIServer() error {
 	} else {
 		socketDir = "/var/run/youeye"
 	}
-	
+
 	if err := os.MkdirAll(socketDir, 0755); err != nil {
 		return fmt.Errorf("failed to create socket directory: %w", err)
 	}
@@ -71,7 +71,7 @@ func startAPIServer() error {
 	// Handle shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	
+
 	go func() {
 		<-sigChan
 		fmt.Println("\nShutting down...")

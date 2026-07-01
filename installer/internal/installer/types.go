@@ -209,8 +209,14 @@ func newConfigFromEnv(env envInfo) installConfig {
 		c.ContainerID = env.NextID
 	}
 
-	// Default storage pool from first available rootdir pool
-	if len(env.RootdirPools) > 0 {
+	// Default storage pool from first available VM image pool. The public
+	// Proxmox installer creates a VM, so rootdir-only stores like "local" are
+	// not valid for the imported OS disk.
+	if len(env.ImagePools) > 0 {
+		c.StoragePool = env.ImagePools[0].Name
+	} else if len(env.RootdirPools) > 0 {
+		// Keep a fallback for unusual/partial detection; installVM validates
+		// the live image-capable pools again before creating anything.
 		c.StoragePool = env.RootdirPools[0].Name
 	}
 

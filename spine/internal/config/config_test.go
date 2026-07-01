@@ -225,18 +225,18 @@ func TestGetRepoPath(t *testing.T) {
 }
 
 func TestParseReleaseRepoURLForgejo(t *testing.T) {
-	repo, err := ParseReleaseRepoURL("https://git.potemk.in/potemsla/YouEye.git")
+	repo, err := ParseReleaseRepoURL("https://forge.example.org/acme/YouEye.git")
 	if err != nil {
 		t.Fatalf("ParseReleaseRepoURL() error: %v", err)
 	}
 	if repo.Provider != "gitea" {
 		t.Errorf("Provider = %q, want gitea", repo.Provider)
 	}
-	if repo.BaseURL != "https://git.potemk.in" {
+	if repo.BaseURL != "https://forge.example.org" {
 		t.Errorf("BaseURL = %q", repo.BaseURL)
 	}
-	if repo.Organization != "potemsla" || repo.Repository != "YouEye" {
-		t.Errorf("repo = %s/%s, want potemsla/YouEye", repo.Organization, repo.Repository)
+	if repo.Organization != "acme" || repo.Repository != "YouEye" {
+		t.Errorf("repo = %s/%s, want acme/YouEye", repo.Organization, repo.Repository)
 	}
 	if repo.APIPath != "/api/v1" {
 		t.Errorf("APIPath = %q, want /api/v1", repo.APIPath)
@@ -247,13 +247,13 @@ func TestCoreReleaseRepoLegacyFallback(t *testing.T) {
 	cfg := Default()
 	cfg.Releases.RepoURL = ""
 	cfg.Releases.Provider = "gitea"
-	cfg.Releases.BaseURL = "https://git.potemk.in"
+	cfg.Releases.BaseURL = "https://forge.example.org"
 	cfg.Releases.APIPath = "/api/v1"
-	cfg.Releases.Organization = "potemsla"
+	cfg.Releases.Organization = "acme"
 	cfg.Releases.Repositories.Spine = "YouEye"
 
 	repo := cfg.CoreReleaseRepo()
-	if repo.RepoURL != "https://git.potemk.in/potemsla/YouEye" {
+	if repo.RepoURL != "https://forge.example.org/acme/YouEye" {
 		t.Errorf("RepoURL = %q", repo.RepoURL)
 	}
 	if repo.Provider != "gitea" {
@@ -277,7 +277,7 @@ deployment:
 		t.Fatalf("write config: %v", err)
 	}
 
-	if err := WriteCoreRepoURL(path, "https://git.potemk.in/potemsla/YouEye"); err != nil {
+	if err := WriteCoreRepoURL(path, "https://forge.example.org/acme/YouEye"); err != nil {
 		t.Fatalf("WriteCoreRepoURL() error: %v", err)
 	}
 
@@ -286,7 +286,7 @@ deployment:
 		t.Fatalf("read config: %v", err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "repo_url: https://git.potemk.in/potemsla/YouEye") {
+	if !strings.Contains(text, "repo_url: https://forge.example.org/acme/YouEye") {
 		t.Fatalf("repo_url not written:\n%s", text)
 	}
 	if strings.Contains(text, "provider:") || strings.Contains(text, "base_url:") || strings.Contains(text, "organization:") || strings.Contains(text, "repositories:") {

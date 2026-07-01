@@ -173,7 +173,7 @@ export function getAppByContainer(containerName: string): AppDefinition | undefi
 }
 
 /**
- * Generate an AppDefinition from a marketplace/native app manifest.
+ * Generate an AppDefinition from a Market-installed/native app manifest.
  * Used for dynamically-installed apps that aren't in the static APP_DEFINITIONS list.
  */
 export function appDefinitionFromManifest(

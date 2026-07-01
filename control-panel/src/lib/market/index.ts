@@ -45,7 +45,7 @@ export { resolveVariables, resolveVariablesDeep } from './variables';
 // Catalog
 export { fetchCatalog, fetchManifest, fetchAvailableApps, clearCatalogCache } from './catalog';
 
-// SSO & Authentik
+// SSO and identity provider integration
 export {
   isAuthentikAvailable,
   getAuthentikExternalUrl,

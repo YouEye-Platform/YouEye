@@ -5,11 +5,11 @@
  * 1. Decrypt + extract core backup
  * 2. Restore youeye.yaml config
  * 3. Restore infrastructure secrets
- * 4. Restore PostgreSQL databases (Authentik, youeye)
- * 5. Restart Authentik (picks up restored DB)
+ * 4. Restore PostgreSQL databases (identity, youeye)
+ * 5. Restart identity provider (picks up restored DB)
  * 6. Restore Caddy config + data
  * 7. Restore Pi-Hole config
- * 8. Restore Authentik media/templates
+ * 8. Restore identity provider media/templates
  * 9. For each app in installed-apps.json: restoreApp()
  * 10. Done
  */
@@ -204,7 +204,7 @@ export async function fullRestore(
       }
     }
 
-    // ── Step 4: Restart Authentik ───────────────────────────
+    // Step 4: restart identity provider
     emit('restart-authentik', 'Restarting Authentik to apply restored database...');
     try {
       await incusRequest('PUT', '/1.0/instances/youeye-authentik/state', {
@@ -212,7 +212,7 @@ export async function fullRestore(
         force: true,
         timeout: 60,
       });
-      // Wait for Authentik to come up
+      // Wait for the identity provider to come up
       await new Promise(resolve => setTimeout(resolve, 10000));
     } catch (err) {
       onEvent({
@@ -266,9 +266,9 @@ export async function fullRestore(
       }
     }
 
-    // ── Step 7: Restore Authentik media ────────────────────
+    // Step 7: restore identity provider media
     emit('restore-authentik-media', 'Restoring Authentik media and templates...');
-    // Authentik media is included in the volume backup — Spine handles this
+    // Identity provider media is included in the volume backup; Spine handles this
     onEvent({
       step,
       totalSteps,

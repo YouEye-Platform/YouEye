@@ -12,9 +12,9 @@ import (
 
 // BackupIndex is the top-level structure stored in backup.json at the target root.
 type BackupIndex struct {
-	LastUpdated string                      `json:"last_updated"`
-	Core        []BackupEntry               `json:"core"`
-	Apps        map[string][]BackupEntry    `json:"apps"`
+	LastUpdated string                   `json:"last_updated"`
+	Core        []BackupEntry            `json:"core"`
+	Apps        map[string][]BackupEntry `json:"apps"`
 }
 
 // BackupEntry represents a single backup archive in the index.

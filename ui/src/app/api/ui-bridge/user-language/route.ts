@@ -1,7 +1,7 @@
 /**
  * UI Bridge: User Language
  *
- * GET /api/ui-bridge/user-language?userId=<authentik-sub-id>
+ * GET /api/ui-bridge/user-language?userId=<identity-sub-id>
  *
  * Returns a specific user's language preference from userSettings.
  * Auth: X-UI-Bridge-Token (shared service token).

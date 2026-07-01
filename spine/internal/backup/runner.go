@@ -17,12 +17,12 @@ type BackupConfig struct {
 	TargetPath  string   `json:"target_path"`
 	Passphrase  string   `json:"passphrase"`
 	Containers  []string `json:"containers"`   // containers to stop/export (from CP)
-	VolumePaths []string `json:"volume_paths"`  // host-side volume paths to copy
-	StagingDir  string   `json:"staging_dir"`   // where CP placed dumps/configs
+	VolumePaths []string `json:"volume_paths"` // host-side volume paths to copy
+	StagingDir  string   `json:"staging_dir"`  // where CP placed dumps/configs
 	Hostname    string   `json:"hostname"`
-	Mode        string   `json:"mode"`          // "live" (default) or "stop"
-	BackupType  string   `json:"backup_type"`   // "app", "core", or "full"
-	AppID       string   `json:"app_id"`        // for per-app backups
+	Mode        string   `json:"mode"`        // "live" (default) or "stop"
+	BackupType  string   `json:"backup_type"` // "app", "core", or "full"
+	AppID       string   `json:"app_id"`      // for per-app backups
 }
 
 // BackupResult is returned upon completion.

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/config"
-	"git.potemk.in/potemsla/YouEye/spine/internal/incus"
-	"git.potemk.in/potemsla/YouEye/spine/internal/releases"
+	"github.com/youeye-platform/YouEye/spine/internal/config"
+	"github.com/youeye-platform/YouEye/spine/internal/incus"
+	"github.com/youeye-platform/YouEye/spine/internal/releases"
 )
 
 // DeployUIContainer creates and provisions the youeye-ui container.

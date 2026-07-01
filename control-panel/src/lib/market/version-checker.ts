@@ -62,7 +62,7 @@ export async function refreshVersionCheck(): Promise<InstalledApp[]> {
     // Clear catalog cache to get fresh data
     clearCatalogCache();
 
-    // Check marketplace + native apps via catalog
+    // Check Market-installed + native apps via catalog
     const appsWithUpdates = await checkForUpdates();
     lastResults = appsWithUpdates;
     lastCheckedAt = new Date().toISOString();

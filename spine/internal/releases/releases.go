@@ -2,7 +2,7 @@
 // Used by both the deploy path (container/) and update path (cmd/) to ensure
 // consistent branch-aware release selection across all Spine operations.
 //
-// Supports both Forgejo/Gitea and GitHub release repositories, derived from the
+// Supports both forge-compatible and GitHub release repositories, derived from the
 // releases.repo_url config field. The JSON response format is compatible
 // (tag_name, assets[].name, assets[].browser_download_url) and the download URL
 // format is identical for both providers.
@@ -29,8 +29,8 @@ import (
 	"strings"
 	"time"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/config"
-	"git.potemk.in/potemsla/YouEye/spine/internal/version"
+	"github.com/youeye-platform/YouEye/spine/internal/config"
+	"github.com/youeye-platform/YouEye/spine/internal/version"
 	"gopkg.in/yaml.v3"
 )
 
@@ -139,7 +139,7 @@ func BuildTag(ver, branch, tagPrefix string) string {
 }
 
 // BuildDownloadURL constructs the direct download URL for a release asset.
-// The URL format is identical for Gitea and GitHub:
+// The URL format is identical for forge-compatible and GitHub release APIs:
 //
 //	{BaseURL}/{org}/{repo}/releases/download/{tag}/{asset}
 func BuildDownloadURL(cfg *config.Config, repo, tag, assetName string) string {
@@ -156,7 +156,7 @@ func BuildDownloadURL(cfg *config.Config, repo, tag, assetName string) string {
 }
 
 // buildReleasesAPIURL constructs the API URL for fetching releases based on provider.
-// Gitea:  {BaseURL}/api/v1/repos/{org}/{repo}/releases?limit=50
+// Forge-compatible: {BaseURL}/api/v1/repos/{org}/{repo}/releases?limit=50
 // GitHub: https://api.github.com/repos/{org}/{repo}/releases?per_page=50
 func buildReleasesAPIURL(cfg *config.Config, repo string) string {
 	source := cfg.CoreReleaseRepo()
@@ -175,7 +175,7 @@ func buildReleasesAPIURL(cfg *config.Config, repo string) string {
 }
 
 // fetchReleases fetches releases from the configured provider's API.
-// Supports both Gitea and GitHub providers. Retries up to 3 times with
+// Supports both forge-compatible and GitHub providers. Retries up to 3 times with
 // backoff on network errors. Uses IPv4-only client to avoid IPv6 hangs
 // on fresh VMs without IPv6 routes.
 func fetchReleases(cfg *config.Config, repo string) ([]Release, error) {

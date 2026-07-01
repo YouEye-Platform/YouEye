@@ -1,7 +1,7 @@
 /**
- * Authentik SMTP Sync
+ * Identity Provider SMTP Sync
  *
- * Configures Authentik's email backend with SMTP credentials.
+ * Configures the identity provider email backend with SMTP credentials.
  * This enables password reset emails, verification emails, etc.
  */
 
@@ -54,7 +54,7 @@ async function authentikAPI<T>(
 }
 
 /**
- * Configure Authentik's email stage with SMTP credentials.
+ * Configure the identity provider email stage with SMTP credentials.
  * Updates the default authentication email stage and brand email settings.
  */
 export async function configureAuthentikSmtp(smtp: SmtpConfig): Promise<void> {

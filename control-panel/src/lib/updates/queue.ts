@@ -13,7 +13,7 @@ import { readJSON, writeJSON, statePath } from '@/lib/storage/json-store';
 import { getAppDefinition } from '@/lib/apps/definitions';
 import { updateOCIApp, type UpdateEvent } from '@/lib/apps/updater';
 import { updateLXDApp } from '@/lib/apps/lxd-updater';
-import { updateMarketplaceApp } from '@/lib/market/updater';
+import { updateMarketApp } from '@/lib/market/updater';
 import { getInstalledApp } from '@/lib/market/installed-apps';
 import { spineClient } from '@/lib/spine/client';
 
@@ -222,7 +222,7 @@ async function runUpdate(entry: QueueEntry): Promise<void> {
 
   const installed = await getInstalledApp(component);
   if (installed) {
-    const result = await updateMarketplaceApp(
+    const result = await updateMarketApp(
       { appId: component },
       (event) => {
         emit({
@@ -237,7 +237,7 @@ async function runUpdate(entry: QueueEntry): Promise<void> {
       }
     );
     if (!result.success) {
-      throw new Error(result.error || 'Marketplace update failed');
+      throw new Error(result.error || 'Market update failed');
     }
     return;
   }

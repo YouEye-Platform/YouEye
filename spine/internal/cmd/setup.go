@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"git.potemk.in/potemsla/YouEye/spine/internal/output"
 	"github.com/spf13/cobra"
+	"github.com/youeye-platform/YouEye/spine/internal/output"
 )
 
 var setupCmd = &cobra.Command{

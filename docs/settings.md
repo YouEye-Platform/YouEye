@@ -44,7 +44,7 @@ View and manage all installed apps:
 
 - See which apps are installed and their current versions
 - Uninstall apps you no longer use
-- Apps include both native (built-in) and marketplace (third-party) apps
+- Apps include both native apps and Market-installed apps
 
 ---
 
@@ -114,17 +114,17 @@ Network and connectivity configuration:
 
 ---
 
-## App Market
+## Market
 
 <p align="center">
-  <img src="assets/screenshots/settings/app-market.png" alt="App Market" width="800">
+  <img src="assets/screenshots/settings/app-market.png" alt="Market" width="800">
 </p>
 
-Browse and install apps from the marketplace:
+Browse and install apps from Market:
 
 - **Browse** — See all available apps with descriptions and screenshots
 - **Search** — Find apps by name or category
 - **Install** — One-click install deploys the app automatically
 - **Categories** — Filter by type (productivity, media, utilities, etc.)
 
-See [Apps → Marketplace](apps.md#marketplace) for more details.
+See [Apps -> Market](apps.md#market) for more details.

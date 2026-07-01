@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/config"
+	"github.com/youeye-platform/YouEye/spine/internal/config"
 )
 
 func testServer() *Server {
@@ -532,7 +532,7 @@ func TestHandleYouEyeConfig_PATCH_UpdatesReleaseSource(t *testing.T) {
 	defer config.Reset()
 
 	s := testServer()
-	body := `{"release_source":{"repo_url":"https://git.potemk.in/potemsla/YouEye.git"}}`
+	body := `{"release_source":{"repo_url":"https://forge.example.org/acme/YouEye.git"}}`
 	req := httptest.NewRequest("PATCH", "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -542,14 +542,14 @@ func TestHandleYouEyeConfig_PATCH_UpdatesReleaseSource(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
 	}
-	if got := s.cfg.CoreReleaseRepo().RepoURL; got != "https://git.potemk.in/potemsla/YouEye" {
+	if got := s.cfg.CoreReleaseRepo().RepoURL; got != "https://forge.example.org/acme/YouEye" {
 		t.Fatalf("runtime RepoURL = %q", got)
 	}
 	saved, err := os.ReadFile(spinePath)
 	if err != nil {
 		t.Fatalf("read spine config: %v", err)
 	}
-	if !strings.Contains(string(saved), "repo_url: https://git.potemk.in/potemsla/YouEye") {
+	if !strings.Contains(string(saved), "repo_url: https://forge.example.org/acme/YouEye") {
 		t.Fatalf("spine config did not persist normalized repo URL:\n%s", string(saved))
 	}
 
@@ -563,7 +563,7 @@ func TestHandleYouEyeConfig_PATCH_UpdatesReleaseSource(t *testing.T) {
 	if !ok {
 		t.Fatalf("release_source missing from response: %v", cfg)
 	}
-	if source["repo_url"] != "https://git.potemk.in/potemsla/YouEye" {
+	if source["repo_url"] != "https://forge.example.org/acme/YouEye" {
 		t.Errorf("response repo_url = %v", source["repo_url"])
 	}
 }

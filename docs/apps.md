@@ -1,6 +1,6 @@
 # Apps
 
-YouEye ships with six native apps and a marketplace for installing more. Every app runs in its own container with full SSO integration — sign in once, access everything.
+YouEye ships with six native apps and the Market for installing more. Every app runs in its own container with full SSO integration - sign in once, access everything.
 
 ## Native Apps
 
@@ -109,17 +109,17 @@ Privacy-friendly translation with history and bookmarks.
 
 ---
 
-## Marketplace
+## Market
 
-The App Marketplace lets you install third-party apps with one click. Available apps include productivity tools, media players, utilities, and more.
+Market lets you install third-party apps with one click. Available apps include productivity tools, media players, utilities, and more.
 
 <p align="center">
-  <img src="assets/screenshots/settings/app-market.png" alt="App Marketplace" width="800">
+  <img src="assets/screenshots/settings/app-market.png" alt="Market" width="800">
 </p>
 
 ### Installing Apps
 
-1. Open **Settings** → **App Market**
+1. Open **Settings** -> **Market**
 2. Browse or search available apps
 3. Click **Install** on any app
 4. The app is downloaded, configured, and deployed automatically
@@ -140,11 +140,11 @@ From here you can:
 
 ## App Integration
 
-All apps — native and marketplace — share these platform features:
+All apps - native and Market-installed - share these platform features:
 
 - **Single Sign-On** — One login works everywhere
 - **Theming** — Apps inherit your chosen colors and dark/light mode
 - **Language** — Apps follow your language preference
 - **Notifications** — Apps can send notifications to the dashboard
 - **Widgets** — Apps can provide dashboard widgets
-- **Subdomain Routing** — Each app gets its own subdomain (e.g., `wiki.yourdomain.com`)
+- **Subdomain Routing** - Each app gets its own subdomain (e.g., `wiki.yourdomain.com`)

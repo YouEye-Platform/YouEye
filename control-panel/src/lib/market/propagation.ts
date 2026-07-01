@@ -2,7 +2,7 @@
  * Settings Propagation Engine
  *
  * Propagates platform settings changes (SMTP, site name, timezone, locale)
- * to all running marketplace and native app containers.
+ * to all running Market-installed and native app containers.
  *
  * Two tiers:
  *   Tier A — SMTP: apps use the mail proxy (POST /api/mail/send), so SMTP

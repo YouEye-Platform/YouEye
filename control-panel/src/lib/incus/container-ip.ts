@@ -1,7 +1,7 @@
 /**
  * Incus Container IP Utility
  *
- * For system containers (postgres, authentik, caddy, pihole, ui, control),
+ * For system containers (postgres, identity, caddy, pihole, ui, control),
  * returns the deterministic static IP computed from the incusbr0 subnet.
  * This avoids an API call and works even when the container is stopped.
  *

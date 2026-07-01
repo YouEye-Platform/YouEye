@@ -529,7 +529,7 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
           </div>
           <div className="space-y-2">
             <Label htmlFor="release-repo-url">Repo URL</Label>
-            <Input id="release-repo-url" value={repoUrl} onChange={(event) => setRepoUrl(event.target.value)} disabled={sourceLoading || sourceSaving} placeholder="https://git.potemk.in/potemsla/YouEye" />
+            <Input id="release-repo-url" value={repoUrl} onChange={(event) => setRepoUrl(event.target.value)} disabled={sourceLoading || sourceSaving} placeholder="https://github.com/YouEye-Platform/YouEye" />
           </div>
         </div>
         {sourceError && <p className="text-sm text-destructive">{sourceError}</p>}

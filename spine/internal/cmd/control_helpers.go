@@ -5,8 +5,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/controlapi"
-	"git.potemk.in/potemsla/YouEye/spine/internal/output"
+	"github.com/youeye-platform/YouEye/spine/internal/controlapi"
+	"github.com/youeye-platform/YouEye/spine/internal/output"
 )
 
 // incusContainer holds basic container info from Incus CLI.

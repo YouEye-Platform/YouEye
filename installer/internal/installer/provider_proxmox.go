@@ -41,6 +41,30 @@ func clip(s string, n int) string {
 	return s
 }
 
+func storagePoolNames(pools []storagePool) []string {
+	names := make([]string, 0, len(pools))
+	for _, p := range pools {
+		names = append(names, p.Name)
+	}
+	return names
+}
+
+func validateVMImageStoragePool(storage string, imagePools []storagePool) error {
+	storage = strings.TrimSpace(storage)
+	if storage == "" {
+		return fmt.Errorf("no Proxmox VM image storage pool selected")
+	}
+	if len(imagePools) == 0 {
+		return fmt.Errorf("no Proxmox storage pool supports VM images; enable the images content type on a storage pool and rerun")
+	}
+	for _, p := range imagePools {
+		if p.Name == storage {
+			return nil
+		}
+	}
+	return fmt.Errorf("storage %q does not support VM images; choose one of: %s", storage, strings.Join(storagePoolNames(imagePools), ", "))
+}
+
 // qmGuestExec runs a command inside the VM via the guest agent.
 func qmGuestExec(vmid string, timeout int, args ...string) (guestExecResult, error) {
 	full := append([]string{"guest", "exec", vmid, "--timeout", strconv.Itoa(timeout), "--"}, args...)
@@ -134,6 +158,10 @@ func installVM(config installConfig, ch chan<- engineMsg) {
 	storage := config.StoragePool
 	if storage == "" {
 		storage = "local-lvm"
+	}
+	if err := validateVMImageStoragePool(storage, parseStoragePools("images")); err != nil {
+		sendErr(ch, fmt.Errorf("storage preflight: %w", err))
+		return
 	}
 	bridge := config.NetworkBridge
 	if bridge == "" {
@@ -304,7 +332,7 @@ if [ -s "$src" ]; then
 fi
 `, "/home/"+ciuser+"/.ssh/authorized_keys"))
 
-	// Prefer IPv4 for image pulls (CLAUDE.md pitfall #17). A fresh VM has no
+	// Prefer IPv4 for image pulls. A fresh VM has no
 	// IPv6 route, but Docker Hub's DNS returns AAAA records — skopeo (used by
 	// incus to pull Caddy & Pi-Hole) then tries IPv6 first and dies with
 	// "network is unreachable", silently half-deploying the platform. Disable

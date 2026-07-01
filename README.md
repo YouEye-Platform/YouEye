@@ -1,10 +1,10 @@
 # YouEye
 
-**Self-hosted personal cloud that feels like a consumer product.**
+**A self-hosted personal cloud with a polished dashboard, native apps, and one-click installs.**
 
-> **Not so public beta** - YouEye is under active development. Breaking changes can and will occur between releases. APIs, configuration formats, and database schemas may change without migration paths. Back up your data before upgrading.
+> **Public beta** - YouEye is under active development. Breaking changes can occur between releases. Back up your data before upgrading.
 
-One command installs a full platform: dashboard with widgets, six native apps, SSO, reverse proxy, DNS, and an app marketplace. Runs on a Debian/Ubuntu server or in a Debian VM created automatically on Proxmox VE.
+One command installs a full platform: dashboard with widgets, six native apps, SSO, reverse proxy, DNS, and the YouEye Market. Runs on a Debian/Ubuntu server or in a Debian VM created automatically on Proxmox VE.
 
 <p align="center">
   <img src="docs/assets/screenshots/homepage/dashboard.png" alt="YouEye Dashboard" width="800">
@@ -13,7 +13,7 @@ One command installs a full platform: dashboard with widgets, six native apps, S
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/install.sh | sudo bash -s --
+curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo bash -s --
 ```
 
 The bootstrap downloads the latest released `youeye-installer` binary, then the installer detects Proxmox or base Linux, installs YouEye, and shows progress in the terminal. When it finishes, open `https://your-server-ip` in your browser and create your account.
@@ -142,29 +142,28 @@ Each component is versioned and released independently.
 
 | Component | Version |
 |-----------|---------|
-| Spine | 0.4.12 (`spine-v0.4.12`) |
-| Installer | 0.1.0 (`installer-v0.1.0`) |
-| Control Panel | 0.4.68 (`cp-v0.4.68`) |
-| UI | 0.4.41 (`ui-v0.4.41`) |
-| Canvas | 0.3.12 (`v0.3.12`) |
-| Wiki | 0.4.15 (`v0.4.15`) |
-| Search | 0.4.17 (`v0.4.17`) |
-| Notes | 0.4.18 (`v0.4.18`) |
-| Cinema | 0.4.15 (`v0.4.15`) |
-| Weather | 0.4.14 (`v0.4.14`) |
-| Translate | 0.4.15 (`v0.4.15`) |
+| Spine | 0.5.0 (`spine-v0.5.0`) |
+| Installer | 0.5.1 (`installer-v0.5.1`) |
+| Control Panel | 0.5.0 (`cp-v0.5.0`) |
+| UI | 0.5.0 (`ui-v0.5.0`) |
+| Wiki | 0.5.0 (`v0.5.0`) |
+| Search | 0.5.0 (`v0.5.0`) |
+| Notes | 0.5.0 (`v0.5.0`) |
+| Cinema | 0.5.0 (`v0.5.0`) |
+| Weather | 0.5.0 (`v0.5.0`) |
+| Translate | 0.5.0 (`v0.5.0`) |
 
 ## Related Repositories
 
 | Repository | Description |
 |------------|-------------|
-| [Market](https://github.com/youeye-platform/Market) | App marketplace catalog (YAML manifests) |
-| [Wiki](https://github.com/youeye-platform/Wiki) | Wiki native app |
-| [Search](https://github.com/youeye-platform/Search) | Search native app |
-| [Notes](https://github.com/youeye-platform/Notes) | Notes native app |
-| [Cinema](https://github.com/youeye-platform/Cinema) | Cinema native app |
-| [Weather](https://github.com/youeye-platform/Weather) | Weather native app |
-| [Translate](https://github.com/youeye-platform/Translate) | Translate native app |
+| [Market](https://github.com/YouEye-Platform/Market) | Official Market catalog (YAML manifests) |
+| [Wiki](https://github.com/YouEye-Platform/Wiki) | Wiki native app |
+| [Search](https://github.com/YouEye-Platform/Search) | Search native app |
+| [Notes](https://github.com/YouEye-Platform/Notes) | Notes native app |
+| [Cinema](https://github.com/YouEye-Platform/Cinema) | Cinema native app |
+| [Weather](https://github.com/YouEye-Platform/Weather) | Weather native app |
+| [Translate](https://github.com/YouEye-Platform/Translate) | Translate native app |
 
 ## Documentation
 
@@ -172,7 +171,7 @@ Full documentation lives in the [`docs/`](docs/) folder:
 
 - [Getting Started](docs/getting-started.md) — Installation, first login, CLI commands
 - [Dashboard](docs/dashboard.md) — Widgets, backgrounds, edit mode
-- [Apps](docs/apps.md) — Native apps and marketplace
+- [Apps](docs/apps.md) — Native apps and Market
 - [Settings](docs/settings.md) — All configuration options
 - [Control Panel](docs/control-panel.md) — Infrastructure administration
 - [Architecture](docs/architecture.md) — System design, security model, diagrams
@@ -182,7 +181,7 @@ Full documentation lives in the [`docs/`](docs/) folder:
 ### One-Line Install (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/install.sh | sudo bash -s --
+curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo bash -s --
 ```
 
 This downloads the latest `installer-v*` release asset from GitHub and launches `youeye-installer`. On Proxmox it creates a Debian VM and installs YouEye inside it; on base Debian/Ubuntu it installs YouEye directly on the host. The interactive installer defaults to GitHub core and Market releases on the `main` channel, with editable source fields under Advanced Options.
@@ -190,13 +189,13 @@ This downloads the latest `installer-v*` release asset from GitHub and launches 
 ### Silent Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/install.sh | sudo bash -s -- --silent --yes
+curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo bash -s -- --silent --yes
 ```
 
 Automation can install another channel by selecting the installer binary channel before `bash` and the runtime release channel after `--`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/youeye-platform/YouEye/main/installer/scripts/install.sh | sudo env INSTALLER_CHANNEL=dev bash -s -- --silent --yes --release-channel dev
+curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo env INSTALLER_CHANNEL=dev bash -s -- --silent --yes --release-channel dev
 ```
 
 Automation can also override the bootstrap and runtime release sources explicitly:
@@ -213,7 +212,7 @@ curl -fsSL <installer-script-url> | sudo env INSTALLER_REPO_URL=<installer-relea
 
 ```bash
 # Download Spine binary directly
-curl -LO https://github.com/youeye-platform/YouEye/releases/download/spine-v0.4.1/spine-linux-amd64
+curl -LO https://github.com/YouEye-Platform/YouEye/releases/download/spine-v0.5.0/spine-linux-amd64
 chmod +x spine-linux-amd64
 mv spine-linux-amd64 /usr/local/bin/youeye
 
@@ -249,11 +248,11 @@ cd control-panel && pnpm install && pnpm dev
 cd ui && pnpm install && pnpm dev
 ```
 
-**Always use pnpm**, never npm. Branch from `dev`, never from `main`.
+Use `pnpm` for the Node.js projects in this repository.
 
 ## Contributing
 
-YouEye is in its **not so public beta**. Contributions are welcome, but expect breaking changes between releases.
+YouEye is in public beta. Contributions are welcome, but expect breaking changes between releases.
 
 1. Fork the repository
 2. Create your branch from `dev`

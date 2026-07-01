@@ -8,19 +8,19 @@
 - **Access:** Root privileges
 - **Network:** Public IP or LAN with port 443 accessible
 
-YouEye also runs inside a Proxmox LXC — create an unprivileged Debian 12 container with nesting enabled.
+On Proxmox VE, run the installer on the Proxmox host. It creates a Debian VM and installs YouEye inside it.
 
 ## Installation
 
 ### One-Line Install
 
 ```bash
-curl -sSL https://git.potemk.in/potemsla/YouEye/raw/branch/main/spine/install.sh | sh && youeye deploy
+curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo bash -s --
 ```
 
-This downloads the `youeye` CLI (called **Spine**) and deploys the full platform. The installer:
+This downloads the latest released `youeye-installer` binary from GitHub and deploys the full platform. The installer:
 
-1. Detects your environment (bare metal, VM, or LXC)
+1. Detects your environment
 2. Installs Incus (container runtime)
 3. Creates an unprivileged container
 4. Deploys the full platform stack inside it
@@ -32,7 +32,7 @@ The entire process takes approximately 5 minutes depending on your connection.
 
 ```bash
 # Download Spine binary
-curl -LO https://git.potemk.in/potemsla/YouEye/releases/download/spine-v0.4.1/spine-linux-amd64
+curl -LO https://github.com/YouEye-Platform/YouEye/releases/download/spine-v0.5.0/spine-linux-amd64
 chmod +x spine-linux-amd64
 mv spine-linux-amd64 /usr/local/bin/youeye
 

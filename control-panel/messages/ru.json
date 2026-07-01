@@ -39,7 +39,6 @@
     "dashboard": "Панель управления",
     "health": "Здоровье",
     "apps": "Приложения",
-    "appMarket": "Маркет приложений",
     "reverseProxy": "Обратный прокси",
     "dns": "DNS",
     "people": "Пользователи",
@@ -47,7 +46,8 @@
     "settings": "Настройки",
     "appsLegacy": "Приложения (устаревшие)",
     "controlPanel": "Панель управления",
-    "youeye": "YouEye"
+    "youeye": "YouEye",
+    "market": "Маркет"
   },
   "dashboard": {
     "title": "Панель управления",

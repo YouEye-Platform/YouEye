@@ -6,7 +6,7 @@ import { updateLXDApp } from '@/lib/apps/lxd-updater';
 import { updateOCIApp } from '@/lib/apps/updater';
 import { updateSystemFromMarket } from '@/lib/infrastructure/system-updater';
 import { getInstalledApp } from '@/lib/market/installed-apps';
-import { updateMarketplaceApp } from '@/lib/market/updater';
+import { updateMarketApp } from '@/lib/market/updater';
 import { startUpdate, writeStatus, completeUpdate, failUpdate } from '@/lib/updates/state';
 
 function statusComponentFor(appId: string): string {
@@ -105,7 +105,7 @@ export async function POST(
     const installedApp = await getInstalledApp(appId);
     if (installedApp) {
       let lastMessage = '';
-      const result = await updateMarketplaceApp({ appId, force: true }, (event) => {
+      const result = await updateMarketApp({ appId, force: true }, (event) => {
         lastMessage = event.message;
         const progress = event.totalSteps > 0
           ? Math.round((event.step / event.totalSteps) * 100)

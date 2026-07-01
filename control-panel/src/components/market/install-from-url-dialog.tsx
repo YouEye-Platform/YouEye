@@ -1,7 +1,7 @@
 /**
  * Install from URL Dialog
  *
- * Allows admins to paste a manifest YAML URL or Gitea repo URL,
+ * Allows admins to paste a manifest YAML URL or Git repository URL,
  * fetch and preview it with a rich detail view, then install the app.
  * Uses the validate-url endpoint for SSRF-safe manifest fetching
  * and schema validation.
@@ -207,7 +207,7 @@ export function InstallFromUrlDialog({
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Paste a direct URL to a youeye-app.yaml manifest, or a Gitea repository URL
+                  Paste a direct URL to a youeye-app.yaml manifest, or a Git repository URL
                   (the manifest will be loaded from the repo root automatically).
                 </p>
               </div>

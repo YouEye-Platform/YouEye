@@ -50,9 +50,9 @@ func TestCompareVersions(t *testing.T) {
 
 func TestIsNewer(t *testing.T) {
 	tests := []struct {
-		name              string
+		name               string
 		candidate, current string
-		expected          bool
+		expected           bool
 	}{
 		{"newer patch", "0.1.55", "0.1.54", true},
 		{"same version", "0.1.54", "0.1.54", false},

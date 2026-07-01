@@ -2,7 +2,7 @@
  * Server Reconfiguration Engine
  *
  * Handles changing YouEye's domain, site name, and subdomains after initial setup.
- * Orchestrates updates across all systems: youeye.yaml, Caddy, Pi-Hole, Authentik,
+ * Orchestrates updates across all systems: youeye.yaml, Caddy, Pi-Hole, identity,
  * Control Panel SSO, UI SSO, and all installed market apps.
  *
  * Key design decision: The CP orchestrates everything except its own restart.
@@ -50,7 +50,7 @@ export interface ReconfigureEvent {
 export type ReconfigureEventCallback = (event: ReconfigureEvent) => void;
 
 // NOTE: YouEye uses a HOMEGROUND OIDC provider (control-panel/src/lib/identity/*),
-// NOT Authentik — there is no youeye-authentik container. The old Authentik helpers
+// Not the legacy identity provider path: the old provider helpers
 // (getAuthentikConfig/authentikAPI/updateAuthentikProvider/getAuthentikExternalUrl)
 // were dead code that threw on every domain change; removed. App SSO re-sync now goes
 // through the homegrown `identity_clients` store + integration re-apply (see updateInstalledApp).
@@ -157,7 +157,7 @@ function escapeRegex(str: string): string {
 // ─── App Domain Update ────────────────────────────────────
 
 /**
- * Fetch an app manifest from the configured Market source (Forgejo, the active release
+ * Fetch an app manifest from the configured Market source (the active release
  * branch) via the catalog. The previous implementation hit a dead GitHub URL
  * (`raw.githubusercontent.com/YouEye-Platform/Market/main/apps/...`) and always returned
  * null, so every reconfigure fell back to naive env string-replacement.
@@ -173,7 +173,7 @@ async function fetchAppManifest(appId: string): Promise<Record<string, unknown> 
 
 /**
  * Update a single installed market app's domain.
- * Updates: container env vars, config files, Caddy route, Authentik SSO, metadata.
+ * Updates: container env vars, config files, Caddy route, identity SSO, metadata.
  */
 async function updateInstalledApp(
   meta: InstallMetadata,
@@ -342,8 +342,7 @@ async function updateInstalledApp(
   meta.domain = newDomain;
   await saveInstallMetadata(meta);
 
-  // Re-sync the homegrown OIDC client(s) to the new domain (NOT Authentik — removed;
-  // there is no youeye-authentik container).
+  // Re-sync the homegrown OIDC client(s) to the new domain.
   if (meta.enableSSO) {
     // (a) Base app client: domain-replace its redirect_uris, PRESERVING the secret.
     //     Covers env-OIDC apps (Vaultwarden, Mealie, ...). After Phase 1 the back-channel
@@ -613,7 +612,7 @@ export async function reconfigure(
     }
   }
 
-  // 11b. Propagate system language to installed marketplace apps
+  // 11b. Propagate system language to installed Market-installed apps
   // This ensures that apps with language.env_var in their manifest get the current system language
   if (installedApps.length > 0) {
     try {
@@ -699,7 +698,7 @@ async function getExistingUISecrets(): Promise<{
   }
 }
 
-// ─── Helper: Propagate language env var to a marketplace app ──
+// ─── Helper: Propagate language env var to a Market-installed app ──
 
 /**
  * Read the app's manifest from the catalog, check if it has a language config,

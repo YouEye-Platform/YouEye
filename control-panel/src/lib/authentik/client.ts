@@ -1,7 +1,7 @@
 /**
- * Authentik API v3 Client
+ * Identity provider API v3 client
  *
- * Server-side client that communicates with the Authentik container
+ * Server-side client that communicates with the identity provider container
  * via its internal IP. Uses the bootstrap token from Spine for auth.
  */
 
@@ -27,7 +27,7 @@ async function getAuthentikConfig(): Promise<{ url: string; token: string }> {
 }
 
 /**
- * Make an authenticated request to the Authentik API v3
+ * Make an authenticated request to the identity provider API v3
  */
 async function authentikRequest<T>(
   path: string,
@@ -56,7 +56,7 @@ async function authentikRequest<T>(
     throw new Error(`Authentik API error ${res.status}: ${text}`);
   }
 
-  // Some Authentik endpoints (e.g. set_password) return 204 No Content
+  // Some identity provider endpoints (e.g. set_password) return 204 No Content
   if (res.status === 204 || res.headers.get('content-length') === '0') {
     return undefined as T;
   }
@@ -108,7 +108,7 @@ export interface AuthentikConfig {
 // --- API Functions ---
 
 /**
- * Get Authentik system config (version, etc.)
+ * Get identity provider system config (version, etc.)
  */
 export async function getConfig(): Promise<AuthentikConfig> {
   return authentikRequest('/root/config/');
@@ -268,7 +268,7 @@ export async function updateFlow(
 }
 
 /**
- * Ensure Authentik uses attributes.avatar for custom user avatars.
+ * Ensure the identity provider uses attributes.avatar for custom user avatars.
  * Falls back to gravatar then initials if no custom avatar is set.
  */
 export async function ensureAvatarSettings(): Promise<void> {

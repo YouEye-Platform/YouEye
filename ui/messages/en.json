@@ -90,8 +90,8 @@
       "apps": "Apps",
       "permissions": "Permissions",
       "appManagement": "App Management",
-      "appMarket": "Market",
-      "about": "About & Usage"
+      "about": "About & Usage",
+      "market": "Market"
     },
     "profile": {
       "title": "Profile",
@@ -124,7 +124,7 @@
       "userLanguage": "Your language",
       "systemDefault": "System default",
       "systemLanguage": "System Language",
-      "systemLanguageDescription": "This sets the default language for new users, native apps, and marketplace apps.",
+      "systemLanguageDescription": "This sets the default language for new users, native apps, and Market-installed apps.",
       "resetToDefault": "Reset to system default",
       "saved": "Language preference saved",
       "error": "Failed to save language preference"
@@ -331,7 +331,7 @@
     "statusDown": "Down",
     "statusUnknown": "Unknown",
     "manageApps": "Manage Apps",
-    "visitMarketplace": "Visit Marketplace",
+    "visitMarket": "Visit Market",
     "addApp": "Add app",
     "removeApp": "Remove from drawer",
     "allApps": "All apps",
@@ -405,29 +405,6 @@
     "default": "Default",
     "transparent": "Glass",
     "custom": "Custom"
-  },
-  "appMarket": {
-    "title": "Market",
-    "description": "Browse and install apps and other items for your YouEye platform.",
-    "refresh": "Refresh",
-    "noApps": "No apps available in the catalog",
-    "open": "Open",
-    "install": "Install",
-    "uninstall": "Uninstall",
-    "installed": "Installed",
-    "installTitle": "Install {name}",
-    "installDescription": "Configure and install {name} on your YouEye platform.",
-    "subdomain": "Subdomain",
-    "enableSSO": "Enable SSO (identity provider sign-in)",
-    "resources": "Resources: {memory} RAM, {cpu} CPU",
-    "url": "URL: https://{subdomain}.{domain}",
-    "uninstallConfirm": "Uninstall {name}?",
-    "uninstallDescription": "This will remove {name} and all its data. This action cannot be undone.",
-    "uninstalled": "{name} uninstalled",
-    "ram": "RAM",
-    "tmdbApiKey": "TMDB API Key",
-    "tmdbApiKeyPlaceholder": "Enter your TMDB API key",
-    "tmdbApiKeyHelp": "Required for movie and TV content. Get a free API key at themoviedb.org/settings/api"
   },
   "permissions": {
     "title": "App Permissions",

@@ -17,25 +17,25 @@ graph TD
     subgraph Container["Control Panel Container (Incus, unprivileged)"]
         CP[Control Panel<br/>Next.js 16]
         Caddy
-        Auth[Authentik SSO]
+        ID[YouEye ID]
         DB[(PostgreSQL 17)]
         DNS[Pi-Hole v6]
         UI[YouEye UI<br/>Next.js 15]
         Apps[Native Apps]
-        Market[Marketplace Apps]
+        Market[Market Apps]
     end
     
     Caddy --> UI
     Caddy --> Apps
     Caddy --> Market
     Caddy --> CP
-    Caddy --> Auth
+    Caddy --> ID
     
     CP --> DB
-    CP --> Auth
+    CP --> ID
     CP --> DNS
     UI --> DB
-    Auth --> DB
+    ID --> DB
 ```
 
 ## Component Boundaries
@@ -50,19 +50,19 @@ Spine is a Go binary that runs on the host system. Its responsibilities are stri
 - Update itself and the Control Panel
 - Report platform status
 
-**Spine does NOT manage** the UI, native apps, marketplace apps, or any infrastructure inside the container. That's the Control Panel's job.
+**Spine does NOT manage** the UI, native apps, Market-installed apps, or any infrastructure inside the container. That's the Control Panel's job.
 
 ### Control Panel (Container)
 
 The Control Panel is the orchestration engine. It manages everything inside the container:
 
 - PostgreSQL database
-- Authentik (SSO/OIDC)
+- YouEye ID (SSO/OIDC)
 - Caddy (reverse proxy, TLS)
 - Pi-Hole (DNS)
 - YouEye UI deployment
 - Native app deployment
-- Marketplace app lifecycle
+- Market app lifecycle
 
 ### UI (Container)
 
@@ -79,7 +79,7 @@ The UI is the user-facing dashboard. It provides:
 Each native app runs as its own process with:
 
 - Its own subdomain route via Caddy
-- SSO integration via Authentik
+- SSO integration via YouEye ID
 - Access to the shared PostgreSQL database
 - Theme and language synchronization with the UI
 
@@ -93,7 +93,7 @@ graph LR
     
     subgraph Container["Unprivileged Container"]
         Caddy[Caddy<br/>TLS termination]
-        Auth[Authentik<br/>OIDC Provider]
+        ID[YouEye ID<br/>OIDC Provider]
         UI[UI]
         CP[Control Panel]
         Apps[Apps]
@@ -115,7 +115,7 @@ Key security principles:
 | **Unprivileged container** | The entire stack runs in an unprivileged Incus container — no root on the host |
 | **Single entry point** | All traffic enters through Caddy (port 443 only) |
 | **Automatic TLS** | Caddy provisions and renews certificates automatically |
-| **SSO everywhere** | Authentik gates every app and service — no separate logins |
+| **SSO everywhere** | YouEye ID gates apps and services - no separate logins |
 | **One-way bridge** | CP pushes data to UI via bridge API; UI cannot call CP |
 | **Network isolation** | UI container is firewalled from reaching CP directly |
 
@@ -127,7 +127,7 @@ Key security principles:
 sequenceDiagram
     participant B as Browser
     participant C as Caddy
-    participant A as Authentik
+    participant A as YouEye ID
     participant UI as YouEye UI
     
     B->>C: GET https://yourdomain.com
@@ -171,7 +171,7 @@ sequenceDiagram
 | **UI** | Next.js 15, Drizzle ORM, Radix UI, DND-Kit, Framer Motion | User dashboard |
 | **Native Apps** | Next.js 15 | Wiki, Search, Notes, Cinema, Weather, Translate |
 | **Database** | PostgreSQL 17 | Shared data store |
-| **SSO** | Authentik | OIDC identity provider |
+| **SSO** | YouEye ID | OIDC identity provider |
 | **Proxy** | Caddy | Reverse proxy with automatic HTTPS |
 | **DNS** | Pi-Hole v6 | DNS filtering and local resolution |
 | **Containers** | Incus (LXD fork) | Lightweight system containers |
@@ -212,8 +212,8 @@ graph TD
     CP -->|deploys| UI[UI]
     CP -->|deploys| Apps[Native Apps]
     
-    Registry[App Market Registry] -->|manifests| CP
-    CP -->|deploys| Market[Marketplace Apps]
+    Registry[Market Registry] -->|manifests| CP
+    CP -->|deploys| MarketApps[Market Apps]
 ```
 
 Updates are pulled from GitHub releases. Each component checks for newer tags matching its prefix and branch, downloads the artifact, and deploys it.

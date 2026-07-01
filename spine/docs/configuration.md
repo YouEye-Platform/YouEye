@@ -127,7 +127,7 @@ logging:
 All config options can be set via environment variables with `SPINE_` prefix:
 
 ```bash
-export SPINE_RELEASES_REPO_URL="https://git.potemk.in/potemsla/YouEye"
+export SPINE_RELEASES_REPO_URL="https://github.com/YouEye-Platform/YouEye"
 export SPINE_DEPLOYMENT_CONTAINER_NAME="my-container"
 export SPINE_API_SOCKET_PATH="/custom/socket.sock"
 export SPINE_LOGGING_LEVEL="debug"

@@ -13,16 +13,16 @@ import (
 
 // ScheduleConfig represents the backup schedule section in youeye.yaml.
 type ScheduleConfig struct {
-	Enabled    bool                          `yaml:"enabled" json:"enabled"`
-	TargetPath string                        `yaml:"target_path" json:"target_path"`
-	Schedule   ScheduleEntries               `yaml:"schedule" json:"schedule"`
+	Enabled    bool            `yaml:"enabled" json:"enabled"`
+	TargetPath string          `yaml:"target_path" json:"target_path"`
+	Schedule   ScheduleEntries `yaml:"schedule" json:"schedule"`
 }
 
 // ScheduleEntries holds the core schedule, default app schedule, and per-app overrides.
 type ScheduleEntries struct {
-	Core       ScheduleEntry                 `yaml:"core" json:"core"`
-	DefaultApp ScheduleEntry                 `yaml:"default_app" json:"default_app"`
-	Overrides  map[string]ScheduleEntry      `yaml:"overrides" json:"overrides"`
+	Core       ScheduleEntry            `yaml:"core" json:"core"`
+	DefaultApp ScheduleEntry            `yaml:"default_app" json:"default_app"`
+	Overrides  map[string]ScheduleEntry `yaml:"overrides" json:"overrides"`
 }
 
 // ScheduleEntry defines the schedule for a single backup target.

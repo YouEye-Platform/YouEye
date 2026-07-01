@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     const res = await fetch(manifestUrl, {
       signal: controller.signal,
-      headers: { 'Accept': 'text/yaml, application/yaml, text/plain, */*', 'User-Agent': 'YouEye-AppMarket/1.0' },
+      headers: { 'Accept': 'text/yaml, application/yaml, text/plain, */*', 'User-Agent': 'YouEye-Market/1.0' },
     });
     clearTimeout(timeout);
 

@@ -39,7 +39,6 @@
     "dashboard": "Dashboard",
     "health": "Health",
     "apps": "Apps",
-    "appMarket": "Market",
     "reverseProxy": "Reverse Proxy",
     "dns": "DNS",
     "people": "People",
@@ -47,7 +46,8 @@
     "settings": "Settings",
     "appsLegacy": "Apps (Legacy)",
     "controlPanel": "Control Panel",
-    "youeye": "YouEye"
+    "youeye": "YouEye",
+    "market": "Market"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -381,7 +381,7 @@
     "visitDashboard": "Visit your dashboard",
     "visitDashboardDesc": "See your apps and server status at a glance",
     "installApp": "Install your first app",
-    "installAppDesc": "Browse the marketplace and add apps with one click",
+    "installAppDesc": "Browse Market and add apps with one click",
     "readDocs": "Read the documentation",
     "readDocsDesc": "Learn how to get the most out of your server"
   },

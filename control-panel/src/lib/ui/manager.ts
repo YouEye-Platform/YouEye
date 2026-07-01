@@ -162,12 +162,12 @@ export async function enableUI(params: {
 }
 
 /**
- * Disable UI: Remove Authentik resources, stop service, remove Caddy route
+ * Disable UI: remove identity provider resources, stop service, remove Caddy route
  */
 export async function disableUI(): Promise<void> {
   const clientId = 'youeye-ui';
 
-  // Remove from Authentik
+  // Remove from the identity provider
   console.log('[UI] Disabling: Removing Authentik resources...');
   try {
     const authentikConfig = await getAuthentikConfig();

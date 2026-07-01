@@ -242,11 +242,11 @@ export interface InstallMetadata {
     manifestDigest?: string;
     installedAt: string;
   }[];
-  /** SSO entry URL path (e.g. /sso/OID/start/authentik) — appended to app URL for direct login */
+  /** SSO entry URL path (e.g. /sso/OID/start/provider) — appended to app URL for direct login */
   ssoEntryUrl?: string;
   /** Database mode from manifest — used by ACL migration to determine postgres access */
   databaseMode?: 'shared' | 'own' | 'none';
-  /** Whether this app has SSO configured — used by ACL migration to determine authentik access */
+  /** Whether this app has SSO configured — used by ACL migration to determine identity access */
   hasSSO?: boolean;
   /** Capability types this app provides (from manifest `provides` field) */
   provides?: ProvidesSpec[];

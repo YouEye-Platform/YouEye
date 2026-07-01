@@ -2,7 +2,7 @@
  * Unified App Updater — v2 app engine.
  *
  * Supports two update paths based on container.type:
- *   - LXD (container.type === 'lxd'): fetch tarball from Gitea, extract, restart service
+ *   - LXD (container.type === 'lxd'): fetch tarball from the configured release source, extract, restart service
  *   - OCI (container.type === 'oci'): stop → rebuild with new image → start
  *
  * Both paths support:
@@ -16,7 +16,7 @@
  * Key design decisions:
  *   - Secrets are ALWAYS preserved across updates (never regenerated)
  *   - Data volumes are preserved by default (configurable via manifest)
- *   - SSO configuration is preserved (Authentik app not recreated)
+ *   - SSO configuration is preserved (identity app not recreated)
  *   - Rollback via Incus snapshots on failure
  */
 
@@ -216,7 +216,7 @@ async function executeMigrationStep(
   }
 }
 
-// ─── Gitea Release Helpers (for LXD tarball updates) ─────
+// ─── Release Helpers (for LXD tarball updates) ─────
 
 interface ReleaseInfo {
   version: string;
@@ -393,7 +393,7 @@ async function updateLXDContainer(
   step++;
   emit(onEvent, step, totalSteps, 'running', 'Fetching latest release metadata...');
   const release = await getLatestGiteaRelease(giteaRepo, branch, tagPrefix);
-  if (!release) throw new Error('Could not fetch latest release from Gitea');
+  if (!release) throw new Error('Could not fetch latest release from the configured release source');
   emit(onEvent, step, totalSteps, 'success', `Latest version: v${release.version}`);
 
   let tempDir: string | null = null;
@@ -455,7 +455,7 @@ const SNAPSHOT_PREFIX = 'pre-update';
 
 /**
  * Update an installed app to the latest version from the catalog.
- * Handles both OCI (marketplace) and LXD (native) apps through a unified flow.
+ * Handles both OCI (Market-installed) and LXD (native) apps through a unified flow.
  *
  * Flow:
  *   1. Fetch latest manifest from catalog, compare versions
@@ -469,7 +469,7 @@ const SNAPSHOT_PREFIX = 'pre-update';
  *
  * On failure: rollback all containers to pre-update snapshots.
  */
-export async function updateMarketplaceApp(
+export async function updateMarketApp(
   config: UpdateConfig,
   onEvent: InstallEventCallback
 ): Promise<UpdateResult> {
@@ -641,7 +641,7 @@ export async function updateMarketplaceApp(
       const name = containerNames[i];
 
       if (spec.type === 'lxd' && spec.source) {
-        // ── LXD path: fetch tarball from Gitea, extract, restart service ──
+        // ── LXD path: fetch tarball from the configured release source, extract, restart service ──
         const giteaRepo = spec.source.repo?.includes('/')
           ? spec.source.repo.split('/').pop()!
           : (spec.source.repo || spec.name);

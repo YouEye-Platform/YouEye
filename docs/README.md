@@ -12,7 +12,7 @@ Welcome to the YouEye platform documentation. These guides cover installation, d
 |-------|-------------|
 | [Getting Started](getting-started.md) | Installation, first login, and initial setup |
 | [Dashboard](dashboard.md) | Widgets, animated backgrounds, edit mode, and personalization |
-| [Apps](apps.md) | Native apps, marketplace, and app management |
+| [Apps](apps.md) | Native apps, Market, and app management |
 | [Settings](settings.md) | Profile, appearance, language, users, and system configuration |
 | [Control Panel](control-panel.md) | Infrastructure management, health monitoring, and DNS |
 | [Architecture](architecture.md) | System design, security model, and component overview |
@@ -62,6 +62,6 @@ Welcome to the YouEye platform documentation. These guides cover installation, d
 
 - [Install YouEye](getting-started.md#installation) — one command, ~5 minutes
 - [Add widgets to your dashboard](dashboard.md#adding-widgets)
-- [Install apps from the marketplace](apps.md#marketplace)
+- [Install apps from Market](apps.md#market)
 - [Manage users](settings.md#users)
 - [Monitor system health](control-panel.md#health-monitoring)

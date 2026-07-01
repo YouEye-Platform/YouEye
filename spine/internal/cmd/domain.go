@@ -7,8 +7,8 @@ import (
 	"os"
 	"os/exec"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/output"
 	"github.com/spf13/cobra"
+	"github.com/youeye-platform/YouEye/spine/internal/output"
 )
 
 const domainImportPath = "/opt/youeye-control-data/byo-domain/import-bundle.json"

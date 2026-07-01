@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 const repoRoot = join(import.meta.dirname, '..', '..', '..');
 const youEyeRoot = join(repoRoot, 'YouEye');
 const controlPanelRoot = join(youEyeRoot, 'control-panel');
-const appMarketRoot = join(repoRoot, 'YE-AppMarket');
+const marketRoot = join(repoRoot, 'Market');
 
 function read(relativePath: string): string {
   return readFileSync(join(controlPanelRoot, relativePath), 'utf8');
@@ -32,8 +32,8 @@ test('setup flow creates YouEye ID routes and users without Authentik', () => {
 });
 
 test('system app catalog no longer advertises Authentik', () => {
-  const catalog = readFileSync(join(appMarketRoot, 'catalog.yaml'), 'utf8');
+  const catalog = readFileSync(join(marketRoot, 'catalog.yaml'), 'utf8');
 
   assert.doesNotMatch(catalog, /id:\s+authentik/);
-  assert.equal(existsSync(join(appMarketRoot, 'system', 'authentik.yaml')), false);
+  assert.equal(existsSync(join(marketRoot, 'system', 'authentik.yaml')), false);
 });

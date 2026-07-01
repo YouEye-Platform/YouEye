@@ -1,7 +1,7 @@
 #!/bin/sh
 # YouEye Spine Installer
 # Works on minimal Debian/Ubuntu systems (Proxmox LXC, etc.)
-# Usage: curl -sSL https://git.potemk.in/potemsla/YouEye/raw/branch/main/spine/install.sh | sh -s -- --branch sebastian
+# Usage: curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/spine/install.sh | sudo sh -s --
 #
 # Options:
 #   --repo <url>       Core platform release repository
@@ -184,7 +184,7 @@ ensure_curl() {
 
 # Get latest release version, filtered by BRANCH if set.
 # In the YouEye monorepo, Spine tags are prefixed: spine-v0.2.21, spine-dev-v0.2.21.1
-# Works with both Gitea and GitHub APIs (JSON response format is compatible).
+# Works with both forge-compatible and GitHub APIs (JSON response format is compatible).
 # NOTE: all output goes to stderr so the caller can capture only the version from stdout.
 get_latest_version() {
     # Fetch releases from the configured API endpoint
@@ -217,7 +217,8 @@ get_latest_version() {
     VERSION=$(echo "$SPINE_TAGS" | grep '^v[0-9]' | head -1 | sed 's/^v//')
 
     if [ -z "$VERSION" ]; then
-        echo "0.2.21"  # Fallback to known version
+        log_error "No Spine releases found in $RELEASE_REPO_URL" >&2
+        exit 1
     else
         echo "$VERSION"
     fi

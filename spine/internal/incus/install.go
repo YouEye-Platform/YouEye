@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/storage"
-	"git.potemk.in/potemsla/YouEye/spine/internal/util"
+	"github.com/youeye-platform/YouEye/spine/internal/storage"
+	"github.com/youeye-platform/YouEye/spine/internal/util"
 )
 
 // StorageDriver tracks the initialized storage driver type
@@ -195,7 +195,7 @@ func configureOCIRemote() {
 		}
 	}
 
-	// GitHub Container Registry remote (required for ghcr.io images like Authentik)
+	// GitHub Container Registry remote (required for ghcr.io system images)
 	if strings.Contains(remoteList, "ghcr,") {
 		fmt.Println("✓ GHCR OCI remote already configured")
 	} else {

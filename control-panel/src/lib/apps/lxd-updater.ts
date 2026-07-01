@@ -5,7 +5,7 @@
  * in the AppDefinition system (definitions.ts). Uses snapshot → update → verify
  * → rollback pattern, operating on systemd services inside containers.
  *
- * NOTE: Marketplace-installed native apps go through market/updater.ts which
+ * NOTE: Market-installed native apps go through market/updater.ts which
  * provides migration support, variable context, and DB version tracking.
  * This file handles infrastructure LXD apps (UI) and legacy definitions.
  *
@@ -195,7 +195,7 @@ export async function updateLXDApp(
 
   // 5. Get latest release
   const release = await getLatestRelease(containerName, giteaRepo, branch, tagPrefix);
-  if (!release) throw new Error('Could not fetch latest release from Gitea');
+  if (!release) throw new Error('Could not fetch latest release from the configured release source');
   emit({ stage: 'starting', message: `Latest version: ${release.version}`, progress: 10 });
 
   if (currentVersion === release.version || (currentVersion !== 'unknown' && !isNewer(release.version, currentVersion))) {

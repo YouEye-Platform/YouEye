@@ -1,6 +1,6 @@
 /**
  * Market deployment engine.
- * Unified YAML-driven installer — no more native/marketplace branching.
+ * Unified YAML-driven installer — no more native/Market-installed branching.
  *
  * Flow for ANY app:
  * 1. Parse & validate manifest
@@ -1226,7 +1226,7 @@ export async function installApp(
     ssoSlug,
     ssoClientId,
     forwardAuthSlug: rollbackCtx.forwardAuthSlug,
-    manifestSource: config.repoUrl || config.sourceRepoUrl || 'appmarket',
+    manifestSource: config.repoUrl || config.sourceRepoUrl || 'market',
     credentials: manifest.credentials?.length
       ? manifest.credentials.map((c) => ({ label: c.label, username: c.username, passwordSecret: c.passwordSecret }))
       : undefined,

@@ -1,11 +1,11 @@
 /**
  * SSO configuration engine for youeye-file.yaml manifests.
- * Executes declarative HTTP API steps to configure apps with Authentik SSO.
+ * Executes declarative HTTP API steps to configure apps with identity SSO.
  *
  * This replaces the per-app TypeScript SSO functions (configureMemosSSO,
  * configureImmichSSO) with a generic HTTP step executor driven by YAML.
  *
- * Re-exports Authentik CRUD operations from the existing sso-setup module.
+ * Re-exports identity provider CRUD operations from the existing SSO setup module.
  */
 
 import type { SSOConfig, SSOStep, VariableContext, InstallEvent } from './types';
@@ -60,7 +60,7 @@ export function redactVars(vars: Record<string, string>): Record<string, string>
   return redacted;
 }
 
-// Re-export Authentik CRUD operations
+// Re-export identity provider CRUD operations
 export {
   isAuthentikAvailable,
   getAuthentikExternalUrl,
@@ -127,7 +127,7 @@ async function executeStep(step: SSOStep, ctx: StepContext): Promise<void> {
   }
 
   // Evaluate condition — but skip pre-evaluation for forEach steps where the
-  // condition references the iteration variable (e.g., "provider.title contains 'Authentik'").
+  // condition references the iteration variable (e.g., a provider title match).
   // Those conditions are meant to filter each item, not gate the entire step.
   if (step.condition && !step.forEach && !evaluateCondition(step.condition, ctx)) {
     return;
@@ -432,7 +432,7 @@ function evaluateCondition(condition: string, ctx: StepContext): boolean {
     return !ctx.tokens[varName];
   }
 
-  // Contains: "provider.title contains 'Authentik'"
+  // Example contains condition over provider titles.
   const containsMatch = trimmed.match(/^(\S+)\s+contains\s+'([^']+)'$/);
   if (containsMatch) {
     const [, path, search] = containsMatch;

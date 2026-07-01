@@ -8,14 +8,14 @@ import (
 	"strings"
 	"time"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/config"
-	"git.potemk.in/potemsla/YouEye/spine/internal/releases"
-	"git.potemk.in/potemsla/YouEye/spine/internal/version"
+	"github.com/youeye-platform/YouEye/spine/internal/config"
+	"github.com/youeye-platform/YouEye/spine/internal/releases"
+	"github.com/youeye-platform/YouEye/spine/internal/version"
 )
 
 func runStatus() error {
 	cfg := GetConfig()
-	
+
 	fmt.Println("========================================")
 	fmt.Println("  YouEye Platform Status")
 	fmt.Println("========================================")
@@ -259,7 +259,7 @@ func getOSRelease() string {
 	if err != nil {
 		return "Unknown"
 	}
-	
+
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, "PRETTY_NAME=") {
 			return strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
@@ -298,7 +298,7 @@ func getIncusVersion() string {
 func getControlPanelStatus(cfg *config.Config) string {
 	containerName := cfg.Deployment.Container.Name
 	appDir := cfg.Deployment.ControlPanel.AppDir
-	
+
 	// Check if container exists
 	out, err := exec.Command("incus", "list", containerName, "--format", "csv", "-c", "s").Output()
 	if err != nil {
@@ -312,7 +312,7 @@ func getControlPanelStatus(cfg *config.Config) string {
 
 	if strings.ToUpper(status) == "RUNNING" {
 		// Try to get version
-		verOut, err := exec.Command("incus", "exec", containerName, "--", 
+		verOut, err := exec.Command("incus", "exec", containerName, "--",
 			"cat", appDir+"/package.json").Output()
 		if err == nil {
 			var pkg struct {

@@ -3,7 +3,7 @@
  *
  * The `.std` fallback row from `notifications.html`: a 30px icon tile + bold
  * title + description + optional action link. Used for notifications that have
- * no embed surface (external/marketplace apps, System notices) AND as the
+ * no embed surface (external/Market-installed apps, System notices) AND as the
  * <UnifiedEmbed kind="notification"> timeout fallback (never silent).
  */
 

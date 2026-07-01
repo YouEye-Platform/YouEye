@@ -12,11 +12,11 @@ function read(path) {
 test('Settings apps list exposes a real update action for pending app updates', () => {
   const client = read('src/components/settings-shell/apps-client.tsx');
 
-  assert.match(client, /function updateApp\(appId: string\)/);
+  assert.match(client, /function updateApp\(\s*appId: string,/);
   assert.match(client, /\/settings\/api\/auth\/csrf/);
   assert.match(client, /\/settings\/api\/apps\/\$\{encodeURIComponent\(appId\)\}\/update/);
   assert.match(client, /"X-CSRF-Token": csrfToken/);
-  assert.match(client, /onClick=\{\(\) => updateApp\(app\.id\)\}/);
+  assert.match(client, /onClick=\{\(\) => \(app\.systemManaged \? openConfirm\(app\) : updateApp\(app\.id\)\)\}/);
   assert.match(client, /isUpdating \? "Updating" : "Update"/);
   assert.doesNotMatch(client, /<Badge variant="secondary">Update<\/Badge>/);
 });
@@ -28,7 +28,7 @@ test('Settings app update route is admin-scoped and reuses existing update engin
   assert.match(route, /verifyCSRFToken/);
   assert.match(route, /session\?\.isAdmin/);
   assert.match(route, /updateLXDApp/);
-  assert.match(route, /updateMarketplaceApp/);
+  assert.match(route, /updateMarketApp/);
   assert.match(route, /updateOCIApp/);
   assert.match(route, /spineClient\.updateControl/);
   assert.match(route, /statusComponentFor\(appId\)/);

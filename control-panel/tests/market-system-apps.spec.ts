@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const controlRoot = process.env.CONTROL_PANEL_ROOT || join(testDir, '..');
-const marketRoot = process.env.MARKET_ROOT || join(controlRoot, '..', '..', 'YE-AppMarket');
+const marketRoot = process.env.MARKET_ROOT || join(controlRoot, '..', '..', 'Market');
 
 function readControl(path: string): string {
   return readFileSync(join(controlRoot, path), 'utf8');
@@ -42,7 +42,7 @@ test('system app manifests are first-class Market artifacts', () => {
   assert.match(systemUpdatesApi, /forceLegacy/);
   assert.match(systemUpdatesApi, /allowDatabaseUpdate/);
   assert.match(source, /DEFAULT_MARKET_REPO_URL = 'https:\/\/github\.com\/youeye-platform\/Market'/);
-  assert.doesNotMatch(engine, /GITEA_BASE|git\.potemk\.in/);
+  assert.doesNotMatch(engine, /git\.potemk\.in/);
   assert.match(engine, /getMarketSource/);
   assert.match(resolver, /resolveSystemImageOverrides/);
   assert.match(resolver, /Required Market system manifest/);

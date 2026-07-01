@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"testing"
 
-	"git.potemk.in/potemsla/YouEye/spine/internal/update"
+	"github.com/youeye-platform/YouEye/spine/internal/update"
 )
 
 func sha256Of(data string) string {
