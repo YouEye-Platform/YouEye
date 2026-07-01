@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/install
 ### Manual Install
 
 ```bash
-curl -LO https://github.com/YouEye-Platform/YouEye/releases/download/spine-v0.5.0/spine-linux-amd64
+curl -LO https://github.com/YouEye-Platform/YouEye/releases/download/spine-v0.5.1/spine-linux-amd64
 chmod +x spine-linux-amd64
 mv spine-linux-amd64 /usr/local/bin/youeye
 youeye deploy
@@ -86,9 +86,9 @@ Spine runs a Unix socket server at `/var/run/youeye/youeye.sock`. The Control Pa
 
 Spine checks for new releases on the configured Git server. It supports branch-aware release channels:
 
-- **Main channel**: tags like `spine-v0.5.0` (stable releases)
-- **Dev channel**: tags like `spine-dev-v0.5.0.1` (development builds)
-- **Branch channels**: tags like `spine-mybranch-v0.5.0.1` (per-branch builds)
+- **Main channel**: tags like `spine-v0.5.1` (stable releases)
+- **Dev channel**: tags like `spine-dev-v0.5.1.1` (development builds)
+- **Branch channels**: tags like `spine-mybranch-v0.5.1.1` (per-branch builds)
 
 Switch channels with `youeye branch set <channel>`.
 
@@ -98,7 +98,7 @@ Switch channels with `youeye branch set <channel>`.
 cd spine
 
 # Build with version info
-go build -ldflags "-X github.com/youeye-platform/YouEye/spine/internal/cmd.Version=0.5.0 \
+go build -ldflags "-X github.com/youeye-platform/YouEye/spine/internal/cmd.Version=0.5.1 \
   -X github.com/youeye-platform/YouEye/spine/internal/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   -o youeye ./cmd/youeye
 

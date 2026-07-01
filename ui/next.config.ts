@@ -1,4 +1,3 @@
-import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
 import withSerwistInit from "@serwist/next";
 
@@ -10,8 +9,8 @@ const withSerwist = withSerwistInit({
   disable: process.env.NODE_ENV === "development",
 });
 
-const nextConfig: NextConfig = {
-  output: "standalone",
+const nextConfig = {
+  output: "standalone" as const,
   async headers() {
     return [
       {

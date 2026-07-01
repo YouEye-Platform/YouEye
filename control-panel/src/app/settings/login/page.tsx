@@ -17,7 +17,7 @@ export default async function SettingsLoginPage({ searchParams }: SettingsLoginP
   const host = headerStore.get('host') || '';
   const params = await searchParams;
 
-  if (getAuthModeForHost(host) === 'sso') {
+  if (!params.error && getAuthModeForHost(host) === 'sso') {
     const returnTo = safeRelativeRedirect(params.redirect, '/settings');
     redirect(`/settings/api/auth/sso?redirect=${encodeURIComponent(returnTo)}`);
   }

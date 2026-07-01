@@ -17,7 +17,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const host = headerStore.get('host') || '';
   const params = await searchParams;
 
-  if (getAuthModeForHost(host) === 'sso') {
+  if (!params.error && getAuthModeForHost(host) === 'sso') {
     const returnTo = safeRelativeRedirect(params.redirect, '/');
     redirect(`/api/auth/sso?redirect=${encodeURIComponent(returnTo)}`);
   }

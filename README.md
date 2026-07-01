@@ -142,10 +142,10 @@ Each component is versioned and released independently.
 
 | Component | Version |
 |-----------|---------|
-| Spine | 0.5.0 (`spine-v0.5.0`) |
+| Spine | 0.5.1 (`spine-v0.5.1`) |
 | Installer | 0.5.1 (`installer-v0.5.1`) |
-| Control Panel | 0.5.0 (`cp-v0.5.0`) |
-| UI | 0.5.0 (`ui-v0.5.0`) |
+| Control Panel | 0.5.1 (`cp-v0.5.1`) |
+| UI | 0.5.1 (`ui-v0.5.1`) |
 | Wiki | 0.5.0 (`v0.5.0`) |
 | Search | 0.5.0 (`v0.5.0`) |
 | Notes | 0.5.0 (`v0.5.0`) |
@@ -212,7 +212,7 @@ curl -fsSL <installer-script-url> | sudo env INSTALLER_REPO_URL=<installer-relea
 
 ```bash
 # Download Spine binary directly
-curl -LO https://github.com/YouEye-Platform/YouEye/releases/download/spine-v0.5.0/spine-linux-amd64
+curl -LO https://github.com/YouEye-Platform/YouEye/releases/download/spine-v0.5.1/spine-linux-amd64
 chmod +x spine-linux-amd64
 mv spine-linux-amd64 /usr/local/bin/youeye
 

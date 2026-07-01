@@ -9,6 +9,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
+import { getAuthModeForHost } from '@/lib/auth/mode';
 import { isSettingsPath } from '@/lib/settings-public-path';
 
 // Public routes that don't require authentication
@@ -93,6 +94,20 @@ function getMiddlewareJWTSecret(): Uint8Array | null {
     return null;
   }
   return new TextEncoder().encode(secret);
+}
+
+function loginRedirectFor(request: NextRequest, pathname: string): URL {
+  const host = request.headers.get('host') || '';
+  const settingsPath = isSettingsPath(pathname);
+
+  if (getAuthModeForHost(host) === 'sso') {
+    const url = new URL(settingsPath ? '/settings/api/auth/sso' : '/api/auth/sso', request.url);
+    const returnTo = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+    url.searchParams.set('redirect', returnTo);
+    return url;
+  }
+
+  return new URL(settingsPath ? '/settings/login' : '/login', request.url);
 }
 
 /**
@@ -380,7 +395,7 @@ export async function middleware(request: NextRequest) {
         { status: 401 }
       );
     }
-    return NextResponse.redirect(new URL(isSettingsPath(pathname) ? '/settings/login' : '/login', request.url));
+    return NextResponse.redirect(loginRedirectFor(request, pathname));
   }
 
   // Verify JWT
@@ -398,7 +413,7 @@ export async function middleware(request: NextRequest) {
 
     const response = pathname.startsWith('/api/')
       ? NextResponse.json({ error: 'Session expired' }, { status: 401 })
-      : NextResponse.redirect(new URL(isSettingsPath(pathname) ? '/settings/login' : '/login', request.url));
+      : NextResponse.redirect(loginRedirectFor(request, pathname));
 
     response.cookies.delete('ye-session');
     response.cookies.delete('ye-csrf');

@@ -18,7 +18,7 @@ import (
 //	go build -ldflags "-X github.com/youeye-platform/YouEye/spine/internal/cmd.Version=0.2.4.1 -X github.com/youeye-platform/YouEye/spine/internal/cmd.BuildDate=2026-03-27"
 //
 // Defaults here are used only for development builds.
-var Version = "0.5.0"
+var Version = "0.5.1"
 var BuildDate = "dev"
 
 // Global configuration
@@ -90,6 +90,7 @@ func init() {
 	rootCmd.AddCommand(repoCmd)
 	rootCmd.AddCommand(branchCmd)
 	rootCmd.AddCommand(languageCmd)
+	rootCmd.AddCommand(networkCmd)
 
 	// Platform management commands (merged from CLI)
 	rootCmd.AddCommand(appCmd)

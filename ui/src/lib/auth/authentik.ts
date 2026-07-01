@@ -6,8 +6,8 @@
  *
  * Flow:
  * 1. User visits https://yourdomain.com
- * 2. Middleware redirects unauthenticated user to /login
- * 3. Login page redirects to /api/auth/sso → identity authorize URL
+ * 2. Middleware redirects unauthenticated user to /api/auth/sso
+ * 3. SSO route redirects to the identity authorize URL
  * 4. User authenticates with the identity provider
  * 5. The identity provider redirects back to /api/auth/callback with code
  * 6. We exchange code for tokens, extract user info, create JWT session
@@ -31,7 +31,7 @@ export function getOAuthConfig() {
     clientId,
     clientSecret,
     identityUrl,
-    authorizeUrl: `${identityUrl}/application/o/authorize/`,
+    authorizeUrl: `${identityUrl}/application/o/authorize`,
     tokenUrl: `${internalUrl}/application/o/token/`,
     userinfoUrl: `${internalUrl}/application/o/userinfo/`,
   };

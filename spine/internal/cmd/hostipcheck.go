@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/youeye-platform/YouEye/spine/internal/config"
+	incusutil "github.com/youeye-platform/YouEye/spine/internal/incus"
 	"github.com/youeye-platform/YouEye/spine/internal/util"
 )
 
@@ -65,6 +68,26 @@ func hostIPLog(format string, args ...interface{}) {
 	fmt.Printf("[host-ip-check] "+format+"\n", args...)
 }
 
+const (
+	hostIPMigrationLockPath = "/var/run/youeye/host-ip-migration.lock"
+	migrateMaxAttempts      = 3
+)
+
+type hostIPMigrationOptions struct {
+	Startup bool
+	Force   bool
+	Reason  string
+}
+
+type hostIPMigrationResult struct {
+	Stored    string
+	Current   string
+	Changed   bool
+	Migrated  bool
+	Refreshed bool
+	Seeded    bool
+}
+
 // runHostIPCheck is launched as a goroutine at the start of `spine api serve`
 // (cmd/api.go). It owns pihole's lifecycle at boot and runs the host-IP
 // migration if the host's primary IP has changed since the last successful
@@ -74,11 +97,43 @@ func runHostIPCheck(_ *config.Config) {
 	// interleaved with our startup banner.
 	time.Sleep(500 * time.Millisecond)
 
+	if _, err := runHostIPMigration(hostIPMigrationOptions{Startup: true, Reason: "startup"}); err != nil {
+		hostIPLog("ERROR: %v", err)
+	}
+}
+
+func runHostIPMigration(opts hostIPMigrationOptions) (hostIPMigrationResult, error) {
+	if opts.Reason == "" {
+		opts.Reason = "manual refresh"
+	}
+
+	unlock, err := acquireHostIPMigrationLock()
+	if err != nil {
+		return hostIPMigrationResult{}, err
+	}
+	defer unlock()
+
+	result := hostIPMigrationResult{}
+
 	current := util.GetPrimaryIP()
 	if current == "" || current == "<your-ip>" {
-		hostIPLog("ERROR: could not detect primary host IP (got %q); skipping", current)
-		return
+		return result, fmt.Errorf("could not detect primary host IP (got %q)", current)
 	}
+	result.Current = current
+
+	stored, err := util.ReadStoredHostIP()
+	if err != nil {
+		return result, fmt.Errorf("failed to read %s: %v", util.HostIPFile, err)
+	}
+	result.Stored = stored
+	result.Changed = stored != "" && stored != current
+
+	if !opts.Startup && !opts.Force && stored == current {
+		hostIPLog("%s: host IP unchanged (%s)", opts.Reason, current)
+		return result, nil
+	}
+
+	hostIPLog("%s: current host IP is %s", opts.Reason, current)
 
 	// ─── Step 0 — Ensure pihole has autostart disabled ─────────────────
 	// Idempotent migration for installs that predate the autostart=false
@@ -91,29 +146,44 @@ func runHostIPCheck(_ *config.Config) {
 	}
 
 	// ─── Step 1 — Update pihole proxy device to current host IP ────────
-	// Always run this, even if .host_ip hasn't changed. The call is fast
-	// and idempotent against a stopped container. With autostart=false,
-	// pihole IS stopped at this point on first run after boot.
+	// On startup we still refresh the proxy device even if .host_ip has not
+	// changed, because it repairs older installs and any manual drift. Manual
+	// refresh only reaches this path when the stored and current IP differ.
 	piholeRunning, _ := isContainerRunning("youeye-pihole")
-	if piholeRunning {
-		// This means we're not on the first run after a clean boot —
-		// somebody (us, or a stale autostart=true config) already started
-		// pihole. The device update against a running pihole CAN hang if
-		// the listen address is unbindable, so we use the timeout safety
-		// net and accept best-effort outcome.
-		hostIPLog("pihole is already running — proxy device update may hang against unbindable listen; will use timeout safety")
+	refreshPiholeProxy := true
+	if opts.Startup && !opts.Force && !result.Changed && piholeRunning {
+		refreshPiholeProxy = false
+		hostIPLog("pihole already running and host IP unchanged; leaving proxy device as-is")
 	}
-	if err := migratePiholeProxyDevice(current); err != nil {
-		hostIPLog("WARNING: pihole proxy device update failed: %v", err)
-		// Continue — pihole may still come up if the existing listen
-		// happens to be the same as `current`.
-	} else {
-		hostIPLog("✓ pihole proxy device → %s", current)
+
+	if refreshPiholeProxy && piholeRunning {
+		if err := stopContainer("youeye-pihole", 45*time.Second); err != nil {
+			if result.Changed {
+				return result, fmt.Errorf("failed to stop pihole before proxy device update: %v", err)
+			}
+			hostIPLog("WARNING: failed to stop pihole before proxy device update: %v", err)
+		}
+	}
+	if refreshPiholeProxy {
+		if err := migratePiholeProxyDevice(current); err != nil {
+			if result.Changed {
+				_ = ensureContainerRunning("youeye-pihole", 30*time.Second)
+				return result, fmt.Errorf("pihole proxy device update failed: %v", err)
+			}
+			hostIPLog("WARNING: pihole proxy device update failed: %v", err)
+			// Continue — pihole may still come up if the existing listen
+			// happens to be the same as `current`.
+		} else {
+			hostIPLog("✓ pihole proxy device → %s", current)
+		}
 	}
 
 	// ─── Step 2 — Start pihole (if not already running) ────────────────
 	if err := ensureContainerRunning("youeye-pihole", 60*time.Second); err != nil {
 		hostIPLog("ERROR: pihole did not come up: %v (DNS will be degraded; platform still reachable via FQDN through Caddy catch-all + LAN resolver)", err)
+		if result.Changed {
+			return result, fmt.Errorf("pihole did not come up: %v", err)
+		}
 		// Don't return — the rest of the migration (CP env, dnsmasq via
 		// CP, etc.) doesn't strictly need pihole running. The CP-side
 		// step will fail and log a warning, that's OK.
@@ -122,49 +192,47 @@ func runHostIPCheck(_ *config.Config) {
 	}
 
 	// ─── Step 3 — IP-change detection ──────────────────────────────────
-	stored, err := util.ReadStoredHostIP()
-	if err != nil {
-		hostIPLog("ERROR: failed to read %s: %v; skipping IP-change steps", util.HostIPFile, err)
-		return
-	}
-
 	if stored == "" {
 		// First run / upgrade-from-pre-feature-Spine: seed the file and
 		// exit. The pihole-lifecycle steps above already ran, so pihole
 		// is now correctly configured and running.
 		if err := util.WriteStoredHostIP(current); err != nil {
-			hostIPLog("WARNING: failed to seed %s with %s: %v", util.HostIPFile, current, err)
-			return
+			return result, fmt.Errorf("failed to seed %s with %s: %v", util.HostIPFile, current, err)
 		}
+		result.Seeded = true
 		hostIPLog("first run — recorded current IP %s", current)
-		return
+		if !opts.Force {
+			return result, nil
+		}
+		stored = current
+		result.Stored = current
 	}
 
-	if stored == current {
+	if !result.Changed && !opts.Force {
 		hostIPLog("host IP unchanged (%s); pihole lifecycle handled", current)
-		return
+		return result, nil
 	}
 
-	hostIPLog("HOST IP CHANGED: %s → %s; running CP-side migration", stored, current)
+	if result.Changed {
+		hostIPLog("HOST IP CHANGED: %s → %s; running CP-side migration", stored, current)
+	} else {
+		hostIPLog("host IP unchanged (%s); refreshing CP-side network state", current)
+	}
 
 	// ─── Step 4 — CP systemd HOST_IP env (strict) ──────────────────────
 	if err := ensureContainerRunning("youeye-control", 60*time.Second); err != nil {
 		hostIPLog("ERROR (strict): youeye-control container is not running: %v; aborting migration", err)
-		return
+		return result, fmt.Errorf("youeye-control container is not running: %v", err)
 	}
 	if err := migrateControlHostIPEnv(stored, current); err != nil {
 		hostIPLog("ERROR (strict): CP systemd HOST_IP update failed: %v; aborting migration", err)
-		return
+		return result, fmt.Errorf("CP systemd HOST_IP update failed: %v", err)
 	}
 	hostIPLog("✓ CP systemd HOST_IP → %s", current)
 
 	// ─── Step 5 — Wait for CP to come back up ──────────────────────────
 	if err := waitForCPHealthy(90 * time.Second); err != nil {
-		hostIPLog("WARNING: CP did not become healthy after restart: %v; skipping CP-side migration", err)
-		if err := util.WriteStoredHostIP(current); err != nil {
-			hostIPLog("ERROR: failed to persist new IP %s: %v", current, err)
-		}
-		return
+		return result, fmt.Errorf("CP did not become healthy after restart: %v; NOT persisting", err)
 	}
 	hostIPLog("✓ CP healthy after restart")
 
@@ -183,45 +251,104 @@ func runHostIPCheck(_ *config.Config) {
 	// goroutine never retried.
 	if err := waitForPiholeHealthy(60 * time.Second); err != nil {
 		hostIPLog("WARNING: pihole not reachable: %v; skipping CP-side migration AND skipping persist (next boot will retry)", err)
-		return
+		return result, fmt.Errorf("pihole not reachable: %v; NOT persisting", err)
 	}
 
 	// ─── Step 7 — CP-side dnsmasq + Caddy migration ────────────────────
-	// Now strict: parses the response and refuses to persist if either
-	// the dns or caddy step came back false.
-	if err := callCPHostIPMigrate(stored, current); err != nil {
-		hostIPLog("ERROR: CP /api/host-ip/migrate failed: %v; NOT persisting (next boot will retry)", err)
-		return
+	// Now strict: parses the response and refuses to persist if any required
+	// DNS step failed.
+	var migrateErr error
+	for attempt := 1; attempt <= migrateMaxAttempts; attempt++ {
+		migrateErr = callCPHostIPMigrate(stored, current, opts.Force)
+		if migrateErr == nil {
+			break
+		}
+		if attempt < migrateMaxAttempts {
+			hostIPLog("WARNING: CP /api/host-ip/migrate attempt %d/%d failed: %v; retrying in 5s", attempt, migrateMaxAttempts, migrateErr)
+			time.Sleep(5 * time.Second)
+		}
+	}
+	if migrateErr != nil {
+		return result, fmt.Errorf("CP /api/host-ip/migrate failed after %d attempts: %v; NOT persisting", migrateMaxAttempts, migrateErr)
 	}
 	hostIPLog("✓ CP migrated dnsmasq_lines + caddy route")
 
 	// ─── Persist ───────────────────────────────────────────────────────
 	if err := util.WriteStoredHostIP(current); err != nil {
-		hostIPLog("ERROR: failed to persist new IP %s to %s: %v", current, util.HostIPFile, err)
-		return
+		return result, fmt.Errorf("failed to persist new IP %s to %s: %v", current, util.HostIPFile, err)
 	}
-	hostIPLog("HOST IP MIGRATION COMPLETE: %s → %s", stored, current)
+	result.Migrated = result.Changed
+	result.Refreshed = !result.Changed
+	if result.Migrated {
+		hostIPLog("HOST IP MIGRATION COMPLETE: %s → %s", stored, current)
+	} else {
+		hostIPLog("HOST IP NETWORK REFRESH COMPLETE: %s", current)
+	}
+	return result, nil
 }
 
-// waitForPiholeHealthy polls Pi-Hole's HTTP /api endpoint from inside the
-// youeye-pihole container until it gets a response, or the timeout elapses.
-// Used by the goroutine before calling CP /api/host-ip/migrate, since that
-// endpoint depends on Pi-Hole being reachable for the dnsmasq_lines update.
+func acquireHostIPMigrationLock() (func(), error) {
+	if err := os.MkdirAll("/var/run/youeye", 0755); err != nil {
+		return nil, fmt.Errorf("create lock directory: %v", err)
+	}
+	f, err := os.OpenFile(hostIPMigrationLockPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("open migration lock: %v", err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		if err == syscall.EWOULDBLOCK || err == syscall.EAGAIN {
+			return nil, fmt.Errorf("host-IP migration already running")
+		}
+		return nil, fmt.Errorf("lock migration: %v", err)
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
+}
+
+// waitForPiholeHealthy polls Pi-Hole's HTTP /api endpoint from inside
+// youeye-control, using the same bridge network path that CP's setDomainDNS
+// call uses. Falling back to the old in-container loopback probe is allowed
+// only when we cannot resolve Pi-Hole's bridge IP at all.
 func waitForPiholeHealthy(timeout time.Duration) error {
+	piholeIP, err := containerIPv4("youeye-pihole")
+	if err != nil {
+		hostIPLog("WARNING: could not resolve youeye-pihole bridge IP: %v; falling back to in-container loopback health check", err)
+		return waitForPiholeHealthyLoopback(timeout)
+	}
+	return waitForPiholeHealthyFromControl(piholeIP, timeout)
+}
+
+func waitForPiholeHealthyFromControl(piholeIP string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	url := fmt.Sprintf("http://%s:80/api/auth", piholeIP)
 	for time.Now().Before(deadline) {
 		// Pi-Hole's /api endpoint without auth returns HTTP 401 (which is
-		// "alive" — the server is responding). curl -f returns non-zero
-		// for 4xx, so we use --output to discard and check connectivity
-		// via a successful TCP connection + HTTP response.
-		_, err := runWithTimeout(5*time.Second, "incus", "exec", "youeye-pihole", "--",
-			"sh", "-c", "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:80/api/auth | grep -q '^[0-9]'")
+		// "alive" — the server is responding). We do not use curl -f;
+		// any HTTP response proves the CP→Pi-Hole network path works.
+		_, err := runWithTimeout(5*time.Second, "incus", "exec", "youeye-control", "--",
+			"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", url)
 		if err == nil {
 			return nil
 		}
 		time.Sleep(2 * time.Second)
 	}
-	return fmt.Errorf("pihole did not respond on /api within %s", timeout)
+	return fmt.Errorf("pihole did not respond on %s from youeye-control within %s", url, timeout)
+}
+
+func waitForPiholeHealthyLoopback(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		_, err := runWithTimeout(5*time.Second, "incus", "exec", "youeye-pihole", "--",
+			"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "http://127.0.0.1:80/api/auth")
+		if err == nil {
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("pihole did not respond on container loopback within %s", timeout)
 }
 
 // runWithTimeout is a wrapper around exec.CommandContext that returns the
@@ -332,12 +459,73 @@ func ensureContainerRunning(name string, timeout time.Duration) error {
 	return fmt.Errorf("%s did not reach RUNNING within %s", name, timeout)
 }
 
+func stopContainer(name string, timeout time.Duration) error {
+	state, err := containerState(name)
+	if err != nil {
+		return fmt.Errorf("inspect: %v", err)
+	}
+	if state != "RUNNING" {
+		return nil
+	}
+
+	hostIPLog("stopping %s before host-IP network migration...", name)
+	if out, err := runWithTimeout(timeout, "incus", "stop", name); err != nil {
+		hostIPLog("WARNING: graceful stop of %s failed: %v: %s; forcing stop", name, err, strings.TrimSpace(string(out)))
+		if out, ferr := runWithTimeout(20*time.Second, "incus", "stop", name, "--force"); ferr != nil {
+			return fmt.Errorf("force stop: %v: %s", ferr, strings.TrimSpace(string(out)))
+		}
+	}
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		s, err := containerState(name)
+		if err == nil && s != "RUNNING" {
+			return nil
+		}
+		time.Sleep(1 * time.Second)
+	}
+	return fmt.Errorf("%s did not stop within %s", name, timeout)
+}
+
 func containerState(name string) (string, error) {
 	out, err := runWithTimeout(10*time.Second, "incus", "list", name, "-c", "s", "--format", "csv")
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func containerIPv4(name string) (string, error) {
+	out, err := runWithTimeout(10*time.Second, "incus", "list", name, "-c", "4", "--format", "csv")
+	if err == nil {
+		if ip := firstIPv4Token(string(out)); ip != "" {
+			return ip, nil
+		}
+	} else {
+		hostIPLog("WARNING: incus list IPv4 lookup for %s failed: %v: %s", name, err, strings.TrimSpace(string(out)))
+	}
+
+	if ip, staticErr := incusutil.GetSystemContainerIP(name); staticErr == nil && ip != "" {
+		return ip, nil
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("incus list IPv4 lookup failed: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return "", fmt.Errorf("incus list returned no IPv4 address for %s", name)
+}
+
+func firstIPv4Token(output string) string {
+	fields := strings.FieldsFunc(output, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\t' || r == ' ' || r == '(' || r == ')'
+	})
+	for _, field := range fields {
+		ip := net.ParseIP(strings.TrimSpace(field))
+		if ip != nil && ip.To4() != nil {
+			return ip.String()
+		}
+	}
+	return ""
 }
 
 // migrateControlHostIPEnv pulls the youeye-control systemd unit, replaces
@@ -444,14 +632,14 @@ func waitForCPHealthy(timeout time.Duration) error {
 // require both dns:true AND caddy:true (or caddy:false acceptable iff there
 // was no legacy IP-literal route to remove — but the endpoint reports
 // caddy:true on no-op as well, so this is conservatively strict).
-func callCPHostIPMigrate(oldIP, newIP string) error {
+func callCPHostIPMigrate(oldIP, newIP string, force bool) error {
 	secretBytes, err := os.ReadFile("/var/lib/youeye/control/.deploy_secret")
 	if err != nil {
 		return fmt.Errorf("read deploy secret: %v", err)
 	}
 	deploySecret := strings.TrimSpace(string(secretBytes))
 
-	body := fmt.Sprintf(`{"old":"%s","new":"%s"}`, oldIP, newIP)
+	body := fmt.Sprintf(`{"old":"%s","new":"%s","force":%t}`, oldIP, newIP, force)
 
 	// Note: NOT using `curl -f` here. We want the response body even on
 	// non-2xx, so we can include it in the error message.
@@ -467,10 +655,17 @@ func callCPHostIPMigrate(oldIP, newIP string) error {
 
 	// Parse {ok, dns, caddy, ...}
 	var resp struct {
-		OK    bool   `json:"ok"`
-		DNS   bool   `json:"dns"`
-		Caddy bool   `json:"caddy"`
-		Error string `json:"error"`
+		OK                     bool   `json:"ok"`
+		DNS                    bool   `json:"dns"`
+		DNSRequired            *bool  `json:"dnsRequired"`
+		ProviderDNS            bool   `json:"providerDns"`
+		ProviderDNSRequired    bool   `json:"providerDnsRequired"`
+		ProviderDNSError       string `json:"providerDnsError"`
+		YouEyeNamesDNS         bool   `json:"youeyeNamesDns"`
+		YouEyeNamesDNSRequired bool   `json:"youeyeNamesDnsRequired"`
+		YouEyeNamesError       string `json:"youeyeNamesError"`
+		Caddy                  bool   `json:"caddy"`
+		Error                  string `json:"error"`
 	}
 	if jerr := json.Unmarshal(bytes.TrimSpace(out), &resp); jerr != nil {
 		return fmt.Errorf("parse response %q: %v", strings.TrimSpace(string(out)), jerr)
@@ -478,11 +673,27 @@ func callCPHostIPMigrate(oldIP, newIP string) error {
 	if !resp.OK {
 		return fmt.Errorf("endpoint returned not-ok: %s", resp.Error)
 	}
+	dnsRequired := true
+	if resp.DNSRequired != nil {
+		dnsRequired = *resp.DNSRequired
+	}
 	// dns:false means setDomainDNS failed (most likely Pi-Hole was not
 	// reachable). This is the BUG-006 case — we MUST return an error so
 	// the caller does not persist .host_ip and the next boot retries.
-	if !resp.DNS {
+	if dnsRequired && !resp.DNS {
 		return fmt.Errorf("endpoint reported dns:false (Pi-Hole likely unreachable when CP tried setDomainDNS)")
+	}
+	if resp.ProviderDNSRequired && !resp.ProviderDNS {
+		if resp.ProviderDNSError != "" {
+			return fmt.Errorf("endpoint reported providerDns:false: %s", resp.ProviderDNSError)
+		}
+		return fmt.Errorf("endpoint reported providerDns:false")
+	}
+	if resp.YouEyeNamesDNSRequired && !resp.YouEyeNamesDNS {
+		if resp.YouEyeNamesError != "" {
+			return fmt.Errorf("endpoint reported youeyeNamesDns:false: %s", resp.YouEyeNamesError)
+		}
+		return fmt.Errorf("endpoint reported youeyeNamesDns:false")
 	}
 	// caddy:false on its own is OK if there was no legacy IP-literal
 	// route to remove (the endpoint logs "no legacy route" in that case

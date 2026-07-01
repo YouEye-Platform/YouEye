@@ -56,7 +56,7 @@ cp -r ../../../public ./public
 tar -cf standalone.tar .
 ```
 
-The public release tag for this component is `ui-v0.5.0`.
+The public release tag for this component is `ui-v0.5.1`.
 
 ## Environment Variables
 

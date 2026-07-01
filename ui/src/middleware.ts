@@ -46,6 +46,18 @@ function getJWTSecret(): Uint8Array | null {
   return new TextEncoder().encode(secret);
 }
 
+function isSSOConfiguredForMiddleware(): boolean {
+  return Boolean(
+    process.env.IDENTITY_URL &&
+      process.env.IDENTITY_CLIENT_ID &&
+      process.env.IDENTITY_CLIENT_SECRET
+  );
+}
+
+function loginRedirectFor(request: NextRequest): URL {
+  return new URL(isSSOConfiguredForMiddleware() ? "/api/auth/sso" : "/login", request.url);
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -87,7 +99,7 @@ export async function middleware(request: NextRequest) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    return NextResponse.redirect(new URL("/login", request.url));
+    return NextResponse.redirect(loginRedirectFor(request));
   }
 
   // Verify JWT
@@ -104,7 +116,7 @@ export async function middleware(request: NextRequest) {
     // Invalid or expired token — redirect to login
     const response = pathname.startsWith("/api/")
       ? NextResponse.json({ error: "Session expired" }, { status: 401 })
-      : NextResponse.redirect(new URL("/login", request.url));
+      : NextResponse.redirect(loginRedirectFor(request));
 
     response.cookies.delete("ye-ui-session");
     response.cookies.delete("ye-ui-csrf");
