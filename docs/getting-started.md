@@ -4,11 +4,11 @@
 
 - **OS:** Debian 12+ or Ubuntu 24.04+
 - **RAM:** 4 GB minimum (8 GB recommended)
-- **Disk:** 20 GB free space
+- **Disk:** 20 GB free space for direct Linux installs. On Proxmox, the VM installer defaults to a 25 GB OS disk plus a 64 GB dedicated Incus ZFS data disk.
 - **Access:** Root privileges
 - **Network:** Public IP or LAN with port 443 accessible
 
-On Proxmox VE, run the installer on the Proxmox host. It creates a Debian VM and installs YouEye inside it.
+On Proxmox VE, run the installer on the Proxmox host. It creates a Debian VM and installs YouEye inside it. The VM gets its own guest ZFS pool on a dedicated data disk so Incus can use ZFS snapshots and storage semantics inside the VM.
 
 ## Installation
 

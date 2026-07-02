@@ -124,9 +124,10 @@ type installConfig struct {
 	Hostname      string
 
 	// Resources
-	DiskGB   int
-	CPUCores int
-	RAMMB    int
+	DiskGB     int
+	IncusZFSGB int
+	CPUCores   int
+	RAMMB      int
 
 	// Network
 	StoragePool     string
@@ -180,6 +181,7 @@ func newConfig() installConfig {
 		ContainerID:    "100",
 		Hostname:       "youeye",
 		DiskGB:         25,
+		IncusZFSGB:     64,
 		CPUCores:       4,
 		RAMMB:          5120,
 		StoragePool:    "local-lvm",

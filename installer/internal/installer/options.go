@@ -16,7 +16,7 @@ const (
 	DefaultCoreRepoURL     = "https://github.com/youeye-platform/YouEye"
 	DefaultMarketRepoURL   = "https://github.com/youeye-platform/Market"
 	DefaultReleaseChannel  = "main"
-	InstallerVersion       = "0.5.1"
+	InstallerVersion       = "0.5.2"
 	defaultInstallerMode   = "auto"
 	defaultInstallerBranch = "main"
 )
@@ -39,6 +39,8 @@ type CLIOptions struct {
 	CPUCores         int
 	RAMMB            int
 	DiskGB           int
+	IncusZFSGB       int
+	IncusZFSGBSet    bool
 	RootPasswordFile string
 	RootPassword     string
 	NamesBundlePath  string
@@ -72,6 +74,7 @@ func ParseOptions(args []string, stdin io.Reader, stderr io.Writer) (CLIOptions,
 	fs.IntVar(&opts.CPUCores, "cpu", 0, "CPU cores")
 	fs.IntVar(&opts.RAMMB, "memory", 0, "memory in MiB")
 	fs.IntVar(&opts.DiskGB, "disk", 0, "disk size in GiB")
+	fs.IntVar(&opts.IncusZFSGB, "incus-zfs-disk", 0, "dedicated Incus ZFS disk size in GiB for Proxmox VMs; 0 disables")
 	fs.StringVar(&opts.RootPasswordFile, "root-password-file", "", "read VM root password from file")
 	rootPasswordStdin := fs.Bool("root-password-stdin", false, "read VM root password from stdin")
 	fs.StringVar(&opts.NamesBundlePath, "names-bundle", "", "YouEye Names export bundle to reuse")
@@ -80,6 +83,11 @@ func ParseOptions(args []string, stdin io.Reader, stderr io.Writer) (CLIOptions,
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "incus-zfs-disk" {
+			opts.IncusZFSGBSet = true
+		}
+	})
 
 	if opts.RootPasswordFile != "" {
 		data, err := os.ReadFile(opts.RootPasswordFile)
@@ -158,6 +166,9 @@ func applyOptionsToConfig(cfg *installConfig, opts CLIOptions) {
 	}
 	if opts.DiskGB > 0 {
 		cfg.DiskGB = opts.DiskGB
+	}
+	if opts.IncusZFSGBSet {
+		cfg.IncusZFSGB = opts.IncusZFSGB
 	}
 	if opts.RootPassword != "" {
 		cfg.RootPassword = opts.RootPassword

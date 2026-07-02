@@ -43,6 +43,13 @@ func RunSilent(opts CLIOptions) error {
 	fmt.Printf("Core repo: %s\n", cfg.CoreRepoURL)
 	fmt.Printf("Market repo: %s\n", cfg.MarketRepoURL)
 	fmt.Printf("Channel: %s\n", cfg.ReleaseChannel)
+	if cfg.Mode == modeVM {
+		if cfg.IncusZFSGB > 0 {
+			fmt.Printf("Incus ZFS disk: %d GiB\n", cfg.IncusZFSGB)
+		} else {
+			fmt.Println("Incus ZFS disk: disabled (guest will use Spine fallback storage)")
+		}
+	}
 	if cfg.Mode == modeVM && cfg.RootPassword == "" {
 		fmt.Println("Warning: no VM root password provided; console root password will not be set")
 	}

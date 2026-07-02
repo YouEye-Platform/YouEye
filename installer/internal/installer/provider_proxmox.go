@@ -23,6 +23,68 @@ const (
 	debian13ImageURL = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
 )
 
+func guestIncusZFSSetupScript() string {
+	return `set -euo pipefail
+
+if command -v zpool >/dev/null 2>&1 && zpool list -H default >/dev/null 2>&1; then
+  echo "default zpool already exists"
+  exit 0
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+systemctl stop apt-daily.service apt-daily-upgrade.service apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+
+# Debian ships OpenZFS from contrib. The genericcloud image can start with a
+# main-only deb822 source, so make the component set explicit before installing.
+if [ -f /etc/apt/sources.list.d/debian.sources ]; then
+  sed -i -E 's/^Components:.*/Components: main contrib non-free-firmware/' /etc/apt/sources.list.d/debian.sources
+fi
+if [ -f /etc/apt/sources.list ]; then
+  sed -i -E 's/^(deb(-src)?[[:space:]].*[[:space:]])main([[:space:]].*)?$/\1main contrib non-free-firmware/' /etc/apt/sources.list
+fi
+
+apt-get update
+apt-get install -y "linux-headers-$(uname -r)" zfsutils-linux || apt-get install -y linux-headers-cloud-amd64 zfsutils-linux
+modprobe zfs
+
+root_src="$(findmnt -n -o SOURCE /)"
+root_pk="$(lsblk -no PKNAME "$root_src" 2>/dev/null | head -n1 || true)"
+if [ -z "$root_pk" ]; then
+  root_pk="$(basename "$root_src" | sed -E 's/p?[0-9]+$//')"
+fi
+
+target=""
+while read -r name type; do
+  [ "$type" = "disk" ] || continue
+  case "$name" in loop*|sr*|zd*) continue ;; esac
+  [ "$name" = "$root_pk" ] && continue
+  if lsblk -nr -o MOUNTPOINT "/dev/$name" | grep -q '[^[:space:]]'; then
+    continue
+  fi
+  target="/dev/$name"
+  break
+done < <(lsblk -dn -o NAME,TYPE)
+
+if [ -z "$target" ]; then
+  echo "No dedicated unused disk found for Incus ZFS" >&2
+  exit 41
+fi
+
+wipefs -a "$target"
+zpool create -f -o ashift=12 -O compression=zstd -O atime=off -O xattr=sa -O acltype=posixacl default "$target"
+zpool set autotrim=on default >/dev/null 2>&1 || true
+zpool status default
+`
+}
+
+func prepareGuestIncusZFS(vmid string) error {
+	res, err := qmGuestExec(vmid, 900, "bash", "-lc", guestIncusZFSSetupScript())
+	if err != nil || res.ExitCode != 0 {
+		return fmt.Errorf("%v %s", err, clip(res.OutData+res.ErrData, 700))
+	}
+	return nil
+}
+
 // guestExecResult is the JSON `qm guest exec` returns. `qm guest exec` itself
 // exits 0 once the agent ran the command; the guest command's status is in
 // ExitCode.
@@ -243,6 +305,14 @@ func installVM(config installConfig, ch chan<- engineMsg) {
 		sendErr(ch, fmt.Errorf("disk import: %s", clip(out, 300)))
 		return
 	}
+	if config.IncusZFSGB > 0 {
+		send(ch, "Creating VM", fmt.Sprintf("Adding %d GiB Incus ZFS data disk...", config.IncusZFSGB), 0.22)
+		if out, err := run("qm", "set", vmid, "--scsi1",
+			fmt.Sprintf("%s:%d,discard=on,ssd=1,iothread=1", storage, config.IncusZFSGB)); err != nil {
+			sendErr(ch, fmt.Errorf("creating Incus ZFS data disk: %s", clip(out, 300)))
+			return
+		}
+	}
 	run("qm", "set", vmid, "--ide2", storage+":cloudinit")
 	run("qm", "set", vmid, "--boot", "order=scsi0")
 
@@ -343,6 +413,17 @@ fi
 			"sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true; "+
 			"printf 'net.ipv6.conf.all.disable_ipv6=1\\nnet.ipv6.conf.default.disable_ipv6=1\\n' > /etc/sysctl.d/99-youeye-ipv4.conf 2>/dev/null || true; "+
 			"grep -q '::ffff:0:0/96' /etc/gai.conf 2>/dev/null || echo 'precedence ::ffff:0:0/96  100' >> /etc/gai.conf 2>/dev/null || true")
+
+	if config.IncusZFSGB > 0 {
+		send(ch, "Configuring VM", "Creating guest ZFS pool for Incus...", 0.415)
+		if err := prepareGuestIncusZFS(vmid); err != nil {
+			sendErr(ch, fmt.Errorf("preparing guest Incus ZFS disk: %w", err))
+			return
+		}
+		send(ch, "Configuring VM", "Guest ZFS pool ready", 0.418)
+	} else {
+		send(ch, "Configuring VM", "Dedicated Incus ZFS disk disabled; Spine will use fallback storage.", 0.415)
+	}
 
 	// -- Install Spine inside the VM (guest agent runs as root) --
 	send(ch, "Installing Spine", fmt.Sprintf("Installing Spine (%s channel)...", config.ReleaseChannel), 0.42)

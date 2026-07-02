@@ -320,6 +320,13 @@ func (w *wizardModel) initStep() {
 		ram.SetValue(strconv.Itoa(w.config.RAMMB))
 		ram.Width = 10
 		w.inputs = []textinput.Model{disk, cpu, ram}
+		if w.config.Mode == modeVM {
+			zfs := textinput.New()
+			zfs.Placeholder = "64"
+			zfs.SetValue(strconv.Itoa(w.config.IncusZFSGB))
+			zfs.Width = 10
+			w.inputs = append(w.inputs, zfs)
+		}
 
 	case stepIPConfig:
 		ip := textinput.New()
@@ -464,6 +471,11 @@ func (w *wizardModel) saveStep() {
 			}
 			if v, err := strconv.Atoi(w.inputs[2].Value()); err == nil && v > 0 {
 				w.config.RAMMB = v
+			}
+			if len(w.inputs) >= 4 {
+				if v, err := strconv.Atoi(w.inputs[3].Value()); err == nil && v >= 0 {
+					w.config.IncusZFSGB = v
+				}
 			}
 		}
 
@@ -626,7 +638,7 @@ func (w wizardModel) handleKey(msg tea.KeyMsg) (wizardModel, tea.Cmd) {
 	case stepResources:
 		switch key {
 		case "tab":
-			w.focusField = (w.focusField + 1) % 3
+			w.focusField = (w.focusField + 1) % len(w.inputs)
 			cmds := make([]tea.Cmd, len(w.inputs))
 			for i := range w.inputs {
 				if i == w.focusField {
@@ -637,7 +649,7 @@ func (w wizardModel) handleKey(msg tea.KeyMsg) (wizardModel, tea.Cmd) {
 			}
 			return w, tea.Batch(cmds...)
 		case "shift+tab":
-			w.focusField = (w.focusField + 2) % 3
+			w.focusField = (w.focusField + len(w.inputs) - 1) % len(w.inputs)
 			cmds := make([]tea.Cmd, len(w.inputs))
 			for i := range w.inputs {
 				if i == w.focusField {
@@ -1050,6 +1062,9 @@ func (w wizardModel) viewText(s wizStep) string {
 
 func (w wizardModel) viewResources() string {
 	labels := []string{"Disk (GB):", "CPU Cores:", "RAM (MiB):"}
+	if w.config.Mode == modeVM {
+		labels = append(labels, "Incus ZFS:")
+	}
 	var rows []string
 	for i, lbl := range labels {
 		style := theme.Dim
@@ -1058,6 +1073,9 @@ func (w wizardModel) viewResources() string {
 		}
 		row := fmt.Sprintf("  %s  %s", style.Render(fmt.Sprintf("%-12s", lbl)), w.inputs[i].View())
 		rows = append(rows, row)
+	}
+	if w.config.Mode == modeVM {
+		rows = append(rows, "", theme.Dim.Render("  Dedicated data disk for the VM's Incus ZFS pool. Use 0 only for dir fallback."))
 	}
 	return strings.Join(rows, "\n")
 }
@@ -1188,6 +1206,13 @@ func (w wizardModel) viewConfirm() string {
 
 	if c.Mode != modeHost {
 		add("Disk", fmt.Sprintf("%d GB", c.DiskGB))
+		if c.Mode == modeVM {
+			zfsDisk := fmt.Sprintf("%d GB", c.IncusZFSGB)
+			if c.IncusZFSGB == 0 {
+				zfsDisk = "Disabled"
+			}
+			add("Incus ZFS Disk", zfsDisk)
+		}
 		add("CPU", fmt.Sprintf("%d cores", c.CPUCores))
 		add("RAM", fmt.Sprintf("%d MiB", c.RAMMB))
 	}

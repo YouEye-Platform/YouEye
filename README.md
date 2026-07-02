@@ -143,7 +143,7 @@ Each component is versioned and released independently.
 | Component | Version |
 |-----------|---------|
 | Spine | 0.5.2 (`spine-v0.5.2`) |
-| Installer | 0.5.1 (`installer-v0.5.1`) |
+| Installer | 0.5.2 (`installer-v0.5.2`) |
 | Control Panel | 0.5.1 (`cp-v0.5.1`) |
 | UI | 0.5.1 (`ui-v0.5.1`) |
 | Wiki | 0.5.0 (`v0.5.0`) |
@@ -184,7 +184,7 @@ Full documentation lives in the [`docs/`](docs/) folder:
 curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo bash -s --
 ```
 
-This downloads the latest `installer-v*` release asset from GitHub and launches `youeye-installer`. On Proxmox it creates a Debian VM and installs YouEye inside it; on base Debian/Ubuntu it installs YouEye directly on the host. The interactive installer defaults to GitHub core and Market releases on the `main` channel, with editable source fields under Advanced Options.
+This downloads the latest `installer-v*` release asset from GitHub and launches `youeye-installer`. On Proxmox it creates a Debian VM with a dedicated guest ZFS data disk for Incus and installs YouEye inside it; on base Debian/Ubuntu it installs YouEye directly on the host. The interactive installer defaults to GitHub core and Market releases on the `main` channel, with editable source fields under Advanced Options.
 
 ### Silent Install
 
@@ -223,6 +223,8 @@ youeye deploy
 ### Proxmox VE
 
 Run the one-line installer on the Proxmox host. It creates a Debian VM, installs YouEye inside it, and leaves the Proxmox host itself clean.
+
+The VM installer creates two disks by default: the OS disk (`--disk`, 25 GiB by default) and a dedicated Incus ZFS data disk (`--incus-zfs-disk`, 64 GiB by default). Set `--incus-zfs-disk 0` only when you intentionally want the guest to fall back to Spine's non-ZFS storage path.
 
 ## Platform Management
 
