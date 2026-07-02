@@ -70,7 +70,9 @@ func hostIPLog(format string, args ...interface{}) {
 
 const (
 	hostIPMigrationLockPath = "/var/run/youeye/host-ip-migration.lock"
-	migrateMaxAttempts      = 3
+	piholePasswordFile      = "/var/lib/youeye/pihole/.web_password"
+	migrateMaxAttempts      = 8
+	migrateRetryDelay       = 5 * time.Second
 )
 
 type hostIPMigrationOptions struct {
@@ -264,8 +266,8 @@ func runHostIPMigration(opts hostIPMigrationOptions) (hostIPMigrationResult, err
 			break
 		}
 		if attempt < migrateMaxAttempts {
-			hostIPLog("WARNING: CP /api/host-ip/migrate attempt %d/%d failed: %v; retrying in 5s", attempt, migrateMaxAttempts, migrateErr)
-			time.Sleep(5 * time.Second)
+			hostIPLog("WARNING: CP /api/host-ip/migrate attempt %d/%d failed: %v; retrying in %s", attempt, migrateMaxAttempts, migrateErr, migrateRetryDelay)
+			time.Sleep(migrateRetryDelay)
 		}
 	}
 	if migrateErr != nil {
@@ -308,47 +310,163 @@ func acquireHostIPMigrationLock() (func(), error) {
 	}, nil
 }
 
-// waitForPiholeHealthy polls Pi-Hole's HTTP /api endpoint from inside
-// youeye-control, using the same bridge network path that CP's setDomainDNS
-// call uses. Falling back to the old in-container loopback probe is allowed
-// only when we cannot resolve Pi-Hole's bridge IP at all.
+// waitForPiholeHealthy polls Pi-Hole's authenticated FTL API from inside
+// youeye-control, using the same bridge network path and credentials that
+// CP's setDomainDNS call uses. A bare HTTP response from /api/auth is not
+// enough: during cold starts the webserver can answer before the auth/session
+// subsystem is ready for config writes.
+//
+// Falling back to the in-container loopback probe is allowed only when we
+// cannot resolve Pi-Hole's bridge IP at all, and even that fallback uses the
+// real password/auth contract so it cannot go green before FTL auth works.
 func waitForPiholeHealthy(timeout time.Duration) error {
+	password, err := readStoredPiholePassword()
+	if err != nil {
+		return fmt.Errorf("read Pi-Hole password: %v", err)
+	}
+
 	piholeIP, err := containerIPv4("youeye-pihole")
 	if err != nil {
 		hostIPLog("WARNING: could not resolve youeye-pihole bridge IP: %v; falling back to in-container loopback health check", err)
-		return waitForPiholeHealthyLoopback(timeout)
+		return waitForPiholeHealthyLoopback(password, timeout)
 	}
-	return waitForPiholeHealthyFromControl(piholeIP, timeout)
+	return waitForPiholeHealthyFromControl(piholeIP, password, timeout)
 }
 
-func waitForPiholeHealthyFromControl(piholeIP string, timeout time.Duration) error {
+func waitForPiholeHealthyFromControl(piholeIP, password string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	url := fmt.Sprintf("http://%s:80/api/auth", piholeIP)
+	var lastErr error
 	for time.Now().Before(deadline) {
-		// Pi-Hole's /api endpoint without auth returns HTTP 401 (which is
-		// "alive" — the server is responding). We do not use curl -f;
-		// any HTTP response proves the CP→Pi-Hole network path works.
-		_, err := runWithTimeout(5*time.Second, "incus", "exec", "youeye-control", "--",
-			"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", url)
-		if err == nil {
+		if err := probePiholeAuth("youeye-control", url, password); err == nil {
 			return nil
+		} else {
+			lastErr = err
 		}
 		time.Sleep(2 * time.Second)
 	}
-	return fmt.Errorf("pihole did not respond on %s from youeye-control within %s", url, timeout)
+	return fmt.Errorf("pihole FTL auth did not become ready on %s from youeye-control within %s (last error: %v)", url, timeout, lastErr)
 }
 
-func waitForPiholeHealthyLoopback(timeout time.Duration) error {
+func waitForPiholeHealthyLoopback(password string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	url := "http://127.0.0.1:80/api/auth"
+	var lastErr error
 	for time.Now().Before(deadline) {
-		_, err := runWithTimeout(5*time.Second, "incus", "exec", "youeye-pihole", "--",
-			"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "http://127.0.0.1:80/api/auth")
-		if err == nil {
+		if err := probePiholeAuth("youeye-pihole", url, password); err == nil {
 			return nil
+		} else {
+			lastErr = err
 		}
 		time.Sleep(2 * time.Second)
 	}
-	return fmt.Errorf("pihole did not respond on container loopback within %s", timeout)
+	return fmt.Errorf("pihole FTL auth did not become ready on container loopback within %s (last error: %v)", timeout, lastErr)
+}
+
+func readStoredPiholePassword() (string, error) {
+	passwordBytes, err := os.ReadFile(piholePasswordFile)
+	if err == nil {
+		password := strings.TrimSpace(string(passwordBytes))
+		if password == "" {
+			return "", fmt.Errorf("%s is empty", piholePasswordFile)
+		}
+		return password, nil
+	}
+
+	password, migrateErr := migrateStoredPiholePasswordFromContainer()
+	if migrateErr != nil {
+		return "", fmt.Errorf("%s unavailable: %v; legacy env migration failed: %v", piholePasswordFile, err, migrateErr)
+	}
+	return password, nil
+}
+
+func migrateStoredPiholePasswordFromContainer() (string, error) {
+	keys := []string{
+		"environment.FTLCONF_webserver_api_password",
+		"environment.WEBPASSWORD",
+	}
+	for _, key := range keys {
+		out, err := runWithTimeout(10*time.Second, "incus", "config", "get", "youeye-pihole", key)
+		if err != nil {
+			continue
+		}
+		password := strings.TrimSpace(string(out))
+		if password == "" {
+			continue
+		}
+
+		if err := os.MkdirAll("/var/lib/youeye/pihole", 0700); err != nil {
+			return "", fmt.Errorf("create pihole password directory: %v", err)
+		}
+		if err := os.WriteFile(piholePasswordFile, []byte(password), 0600); err != nil {
+			return "", fmt.Errorf("save migrated password from %s: %v", key, err)
+		}
+		hostIPLog("migrated Pi-Hole password from %s to %s", key, piholePasswordFile)
+		return password, nil
+	}
+	return "", fmt.Errorf("no legacy Pi-Hole password env var found")
+}
+
+func probePiholeAuth(containerName, url, password string) error {
+	payload, err := json.Marshal(map[string]string{"password": password})
+	if err != nil {
+		return fmt.Errorf("build auth payload: %v", err)
+	}
+	out, err := runWithTimeoutInput(5*time.Second, string(payload), "incus", "exec", containerName, "--",
+		"curl", "-sS", "-X", "POST",
+		"-H", "Content-Type: application/json",
+		"--data-binary", "@-",
+		url)
+	if err != nil {
+		return fmt.Errorf("curl auth from %s: %v: %s", containerName, err, strings.TrimSpace(string(out)))
+	}
+	return validatePiholeAuthResponse(out)
+}
+
+func validatePiholeAuthResponse(out []byte) error {
+	trimmed := bytes.TrimSpace(out)
+	if len(trimmed) == 0 {
+		return fmt.Errorf("empty auth response")
+	}
+
+	var resp struct {
+		Session *struct {
+			Valid   bool   `json:"valid"`
+			SID     string `json:"sid"`
+			CSRF    string `json:"csrf"`
+			Message string `json:"message"`
+		} `json:"session"`
+		Error interface{} `json:"error"`
+	}
+	if err := json.Unmarshal(trimmed, &resp); err != nil {
+		return fmt.Errorf("parse auth response %q: %v", truncateForLog(string(trimmed), 240), err)
+	}
+	if resp.Session == nil {
+		return fmt.Errorf("auth response missing session")
+	}
+	if !resp.Session.Valid {
+		if resp.Session.Message != "" {
+			return fmt.Errorf("auth session invalid: %s", resp.Session.Message)
+		}
+		return fmt.Errorf("auth session invalid")
+	}
+	if resp.Session.SID == "" {
+		return fmt.Errorf("auth session valid but sid missing")
+	}
+	if resp.Session.CSRF == "" {
+		return fmt.Errorf("auth session valid but csrf missing")
+	}
+	return nil
+}
+
+func truncateForLog(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	if max <= 3 {
+		return s[:max]
+	}
+	return s[:max-3] + "..."
 }
 
 // runWithTimeout is a wrapper around exec.CommandContext that returns the
@@ -359,6 +477,18 @@ func runWithTimeout(timeout time.Duration, name string, args ...string) ([]byte,
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("timed out after %s running %s %s", timeout, name, strings.Join(args, " "))
+	}
+	return out, err
+}
+
+func runWithTimeoutInput(timeout time.Duration, input string, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdin = strings.NewReader(input)
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return out, fmt.Errorf("timed out after %s running %s %s", timeout, name, strings.Join(args, " "))
