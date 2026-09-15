@@ -3,14 +3,20 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ComponentType, CSSProperties } from "react";
+import Link from "next/link";
 import * as LucideIcons from "lucide-react";
-import { AlertCircle, ArrowLeft, ChevronRight, ExternalLink, Info, Loader2, Network, Palette, Power, PowerOff, RefreshCw, RotateCcw, Shield, Sliders, Unplug } from "lucide-react";
+import { AlertCircle, ArrowLeft, ChevronRight, ExternalLink, GitBranch, Info, Loader2, Network, Palette, Power, PowerOff, RefreshCw, RotateCcw, Shield, Sliders, Sparkles, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Alert } from "@/components/ui/alert";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import WordArtPickerInline from "@/components/setup/WordArtPickerInline";
 import type { SiteNameStyle } from "@/lib/wordart-presets";
 import { uiSettingsApi } from "./api-base";
+import { UpdateChannels } from "./update-channels";
 
 interface DrawerApp {
   id: string;
@@ -24,6 +30,7 @@ interface DrawerApp {
   subdomain?: string | null;
   containerUrl?: string | null;
   hasSettingsPanel?: boolean;
+  platform?: boolean;
 }
 
 interface UnifiedApp {
@@ -42,6 +49,13 @@ interface UnifiedApp {
   updateAvailable: boolean;
   updateInfo?: string;
   systemManaged?: boolean;
+  healthStatus?: "healthy" | "unhealthy" | "unknown";
+  appHealthState?: "starting" | "running" | "unhealthy" | "crash-looping" | "unknown";
+  failingLevel?: "L1" | "L2" | "L3";
+  healthDetail?: string | null;
+  healthCheckedAt?: string | null;
+  autoRestart?: boolean;
+  updateChannelKey?: string;
 }
 
 interface UpdateStatus {
@@ -70,7 +84,7 @@ interface Permission {
   scopes?: string[];
 }
 
-type AppTab = "app-settings" | "overview" | "branding" | "permissions" | "network" | "link-handling";
+type AppTab = "app-settings" | "overview" | "ai" | "branding" | "permissions" | "network" | "link-handling" | "update-channel";
 type BrandingScope = "user" | "server";
 
 const DEFAULT_APP_WORDART: SiteNameStyle = {
@@ -95,6 +109,25 @@ function isAppOff(app?: UnifiedApp | null) {
 
 function OffDot() {
   return <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-destructive" aria-hidden />;
+}
+
+function appHealthLabel(app?: UnifiedApp | null) {
+  if (!app?.appHealthState || app.appHealthState === "unknown") return null;
+  return app.failingLevel ? `${app.appHealthState} (${app.failingLevel})` : app.appHealthState;
+}
+
+function appHealthVariant(app?: UnifiedApp | null): "default" | "secondary" | "destructive" | "outline" {
+  switch (app?.appHealthState) {
+    case "running":
+      return "secondary";
+    case "unhealthy":
+    case "crash-looping":
+      return "destructive";
+    case "starting":
+      return "outline";
+    default:
+      return "outline";
+  }
 }
 
 async function fetchCSRFToken(): Promise<string> {
@@ -183,14 +216,14 @@ function InstalledAppsList({ onOpen }: { onOpen: (id: string) => void }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (initial = false) => {
+    if (initial) setLoading(true);
     setError("");
     try {
       const res = await fetch(uiSettingsApi("apps/drawer"));
       if (!res.ok) throw new Error("Failed to load apps");
       const data = await res.json();
-      setApps(data.apps || []);
+      setApps((data.apps || []).filter((app: DrawerApp) => !app.platform));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load apps");
     } finally {
@@ -206,7 +239,7 @@ function InstalledAppsList({ onOpen }: { onOpen: (id: string) => void }) {
     <section className="overflow-hidden rounded-xl border bg-card">
       <div className="flex items-center justify-between px-[18px] py-3">
         <h2 className="text-[15px] font-semibold">Installed apps</h2>
-        <a href="/market" className="text-[13px] font-medium text-primary hover:underline">Open Market</a>
+        <Link href="/market" className="text-[13px] font-medium text-primary hover:underline">Open Market</Link>
       </div>
       {loading ? (
         <div className="flex items-center justify-center gap-2 border-t py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading apps…</div>
@@ -254,8 +287,8 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
   const updates = apps.filter((app) => app.updateAvailable);
   const systemApps = apps.filter((app) => app.category !== "user");
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (initial = false) => {
+    if (initial) setLoading(true);
     const res = await fetch("/api/apps/unified");
     const data = res.ok ? await res.json() : { apps: [] };
     setApps(data.apps || []);
@@ -263,7 +296,7 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
   }, []);
 
   const loadStatuses = useCallback(async () => {
-    const res = await fetch("/api/updates/status");
+    const res = await fetch("/settings/api/updates/status");
     if (!res.ok) return;
     const data = await res.json();
     const next = new Map<string, UpdateStatus>();
@@ -273,17 +306,20 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
     setStatuses(next);
   }, []);
 
-  useEffect(() => { load(); loadStatuses(); }, [load, loadStatuses]);
+  useEffect(() => { load(true); loadStatuses(); }, [load, loadStatuses]);
+
+  const hasActiveUpdate = Array.from(statuses.values()).some(
+    (status) => !["idle", "completed", "failed"].includes(status.status),
+  );
 
   useEffect(() => {
-    const active = Array.from(statuses.values()).some((status) => !["idle", "completed", "failed"].includes(status.status));
-    if (!active) return;
+    if (!hasActiveUpdate) return;
     const timer = window.setInterval(() => {
       loadStatuses().catch((err) => console.warn("Failed to refresh update status", err));
       load().catch((err) => console.warn("Failed to refresh apps while updating", err));
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [load, loadStatuses, statuses]);
+  }, [hasActiveUpdate, load, loadStatuses]);
 
   async function checkUpdates() {
     setChecking(true);
@@ -412,8 +448,8 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
           )}
         </ConfirmDialog>
       )}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
+      <section className="overflow-hidden rounded-xl border bg-card">
+        <div className="flex items-center justify-between gap-4 px-[18px] py-3">
           <div>
             <h3 className="text-base font-semibold">{updates.length > 0 ? "Updates Available" : "Updates"}</h3>
             <p className="text-[13px] text-muted-foreground">{updates.length} {updates.length === 1 ? "update" : "updates"} found.</p>
@@ -423,14 +459,16 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
             {checking ? "Checking" : "Check for Updates"}
           </Button>
         </div>
-        {updates.length > 0 && (
-          <div className="space-y-1.5">
+        {updates.length === 0 ? (
+          <div className="border-t px-[18px] py-8 text-center text-sm text-muted-foreground">Everything is up to date.</div>
+        ) : (
+          <div>
             {updates.map((app) => {
               const component = updateStatusComponent(app.id);
               const status = statuses.get(component);
               const isUpdating = !!status && !["idle", "completed", "failed"].includes(status.status);
               return (
-                <div key={app.id} className="rounded-lg border px-3.5 py-2.5">
+                <div key={app.id} className="border-t px-[18px] py-3">
                   <div className="flex w-full items-center gap-3">
                     <button type="button" onClick={() => onOpen(app.id)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
                       <AppIcon app={app} />
@@ -466,14 +504,14 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
         )}
       </section>
 
-      <section className="space-y-3">
-        <div>
+      <section className="overflow-hidden rounded-xl border bg-card">
+        <div className="px-[18px] py-3">
           <h3 className="text-base font-semibold">System Components</h3>
           <p className="text-[13px] text-muted-foreground">Core services and infrastructure managed by YouEye.</p>
         </div>
-        <div className="space-y-1.5">
+        <div>
           {systemApps.map((app) => (
-            <button key={app.id} onClick={() => onOpen(app.id)} className="flex w-full items-center gap-3 rounded-lg border px-3.5 py-2.5 text-left hover:bg-accent/40">
+            <button key={app.id} onClick={() => onOpen(app.id)} className="flex w-full items-center gap-3 border-t px-[18px] py-3 text-left hover:bg-accent/40">
               <AppIcon app={app} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
@@ -481,6 +519,11 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
                   {app.version && <span className="font-mono text-xs text-muted-foreground">v{app.version}</span>}
                 </div>
                 <div className="mt-0.5 flex items-center gap-1"><StatusDot status={app.status} /><span className="text-xs text-muted-foreground">{app.status}</span></div>
+                {appHealthLabel(app) && (
+                  <div className="mt-1">
+                    <Badge variant={appHealthVariant(app)}>{appHealthLabel(app)}</Badge>
+                  </div>
+                )}
               </div>
               <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
             </button>
@@ -553,6 +596,179 @@ function AppSettingsEmbed({ app }: { app: DrawerApp }) {
   );
 }
 
+type AppAIStatus = {
+  supported: boolean;
+  enabled: boolean;
+  currentActorId: string;
+  connection: {
+    ownerUserId: string;
+    modelGroupId: string;
+    groupName: string;
+    keyPreview: string;
+    state: "active" | "disabled" | "needs_attention";
+  } | null;
+  installation: {
+    routingOwner: { externalSubject: string | null; displayName: string; state: string } | null;
+    drift: { codes: string[]; healthy: boolean };
+  } | null;
+  groups: Array<{
+    id: string;
+    name: string;
+    isDefault: boolean;
+    enabledModelCount: number;
+    unavailableRouteCount: number;
+    status: "empty" | "degraded" | "available";
+  }>;
+};
+
+function AppAISettings({ appId, title }: { appId: string; title: string }) {
+  const [status, setStatus] = useState<AppAIStatus | null>(null);
+  const [groupId, setGroupId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/market/app/${encodeURIComponent(appId)}/ai`, { cache: "no-store" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "AI Settings are unavailable");
+      const next = body as AppAIStatus;
+      setStatus(next);
+      setGroupId((current) => current
+        || next.groups.find((group) => group.id === next.connection?.modelGroupId)?.id
+        || next.groups.find((group) => group.isDefault)?.id
+        || next.groups[0]?.id
+        || "");
+      setError("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "AI Settings are unavailable");
+    } finally {
+      setLoading(false);
+    }
+  }, [appId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function mutate(action: "enable" | "disable" | "change_group" | "takeover", selectedGroupId?: string) {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const csrfToken = await fetchCSRFToken();
+      const response = await fetch(`/api/market/app/${encodeURIComponent(appId)}/ai`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({ action, ...(selectedGroupId ? { groupId: selectedGroupId } : {}) }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "AI Settings update failed");
+      setNotice(
+        action === "takeover"
+          ? "AI connection taken over"
+          : action === "change_group"
+            ? "Model group changed"
+            : action === "enable"
+              ? "AI Settings enabled"
+              : "AI Settings disabled"
+      );
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "AI Settings update failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (loading) return <div className="flex justify-center py-10"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>;
+  if (!status) return <Alert variant="destructive">{error || "AI Settings are unavailable"}</Alert>;
+  const ownerIsCurrent = !status.connection
+    || status.installation?.routingOwner?.externalSubject === status.currentActorId;
+  const needsAttention = status.connection?.state === "needs_attention"
+    || status.installation?.routingOwner?.state === "disabled"
+    || status.installation?.drift.codes.includes("routing_owner_unavailable");
+  const selectedGroup = status.groups.find((group) => group.id === groupId);
+
+  return (
+    <div className="space-y-4">
+      {error && <Alert variant="destructive">{error}</Alert>}
+      {notice && <Alert>{notice}</Alert>}
+      {needsAttention && (
+        <Alert variant="destructive">
+          This connection needs attention because its owner is unavailable. Another administrator can take it over explicitly.
+        </Alert>
+      )}
+      <div className="rounded-lg border bg-card p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <Sparkles className="size-4 text-primary" />
+              <h3 className="font-semibold">Use AI Settings</h3>
+              <Badge variant={status.enabled ? "default" : "secondary"}>{status.enabled ? "On" : "Off"}</Badge>
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Give {title} its own AI instance and models from the selected group. Native provider controls inside the app remain available.
+            </p>
+          </div>
+          <Switch
+            checked={status.enabled}
+            disabled={busy || (!ownerIsCurrent && !status.enabled) || (!status.connection && !groupId)}
+            onCheckedChange={(enabled) => void mutate(enabled ? "enable" : "disable", enabled ? groupId : undefined)}
+            aria-label={`Use AI Settings for ${title}`}
+          />
+        </div>
+
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor={`ai-group-${appId}`}>Model group</Label>
+            <Select
+              value={groupId}
+              disabled={busy || !ownerIsCurrent}
+              onValueChange={(value) => {
+                setGroupId(value);
+                if (status.connection && ownerIsCurrent) void mutate("change_group", value);
+              }}
+            >
+              <SelectTrigger id={`ai-group-${appId}`}><SelectValue placeholder="Choose a model group" /></SelectTrigger>
+              <SelectContent>
+                {status.groups.map((group) => (
+                  <SelectItem key={group.id} value={group.id} disabled={group.status === "empty"}>
+                    {group.name}{group.isDefault ? " · Default" : ""} · {group.enabledModelCount} model{group.enabledModelCount === 1 ? "" : "s"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selectedGroup?.unavailableRouteCount ? <p className="text-xs text-destructive">Some routes need a provider connection.</p> : null}
+          </div>
+          <div className="rounded-md bg-muted/40 p-3 text-sm">
+            <p className="font-medium">Connection</p>
+            <p className="mt-1 text-muted-foreground">
+              {status.connection
+                ? `${status.connection.groupName} · ${status.connection.keyPreview}`
+                : `Manual setup inside ${title}`}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">Default model alias: <code>default</code></p>
+          </div>
+        </div>
+
+        {!ownerIsCurrent && status.connection && (
+          <div className="mt-5 flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-medium">Owned by {status.installation?.routingOwner?.displayName || "another administrator"}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Future AI provider usage will belong to your account after takeover.</p>
+            </div>
+            <Button disabled={busy || !groupId} onClick={() => void mutate("takeover", groupId)}>
+              Take over AI connection
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; isAdmin: boolean; hasUserContext: boolean; onBack: () => void }) {
   const [tab, setTab] = useState<AppTab>("overview");
   const [drawerApps, setDrawerApps] = useState<DrawerApp[]>([]);
@@ -562,24 +778,30 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
   const [powerPending, setPowerPending] = useState<"start" | "stop" | "restart" | null>(null);
   const [powerError, setPowerError] = useState<string | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
+  const [healthPolicyPending, setHealthPolicyPending] = useState(false);
+  const [healthPolicyError, setHealthPolicyError] = useState<string | null>(null);
+  const [aiSupported, setAISupported] = useState(false);
   const drawerApp = drawerApps.find((app) => app.id === appId);
   const unifiedApp = unifiedApps.find((app) => app.id === appId);
   const title = drawerApp?.name || unifiedApp?.displayName || appId;
 
   const load = useCallback(async () => {
-      const [drawerRes, unifiedRes, permissionRes, identityPermissionRes] = await Promise.all([
+      const [drawerRes, unifiedRes, permissionRes, identityPermissionRes, aiRes] = await Promise.all([
         hasUserContext ? fetch(uiSettingsApi("apps/drawer")) : Promise.resolve(null),
         fetch("/api/apps/unified"),
         hasUserContext ? fetch(uiSettingsApi(`permissions/app/${encodeURIComponent(appId)}`)) : Promise.resolve(null),
         hasUserContext ? fetch(identityConsentApi(appId)) : Promise.resolve(null),
+        isAdmin ? fetch(`/api/market/app/${encodeURIComponent(appId)}/ai`, { cache: "no-store" }) : Promise.resolve(null),
       ]);
       if (drawerRes?.ok) setDrawerApps((await drawerRes.json()).apps || []);
       if (unifiedRes.ok) setUnifiedApps((await unifiedRes.json()).apps || []);
       const uiPermissions = permissionRes?.ok ? ((await permissionRes.json()).permissions || []) : [];
       const identityPermissions = identityPermissionRes?.ok ? ((await identityPermissionRes.json()).permissions || []) : [];
       setPermissions([...identityPermissions, ...uiPermissions]);
+      const aiPayload = aiRes ? await aiRes.json().catch(() => null) : null;
+      setAISupported(Boolean(aiPayload?.supported));
       setLoading(false);
-  }, [appId]);
+  }, [appId, hasUserContext, isAdmin]);
 
   useEffect(() => {
     load().catch(() => setLoading(false));
@@ -630,6 +852,26 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
     }
   }
 
+  async function setAutomaticRecovery(enabled: boolean) {
+    setHealthPolicyPending(true);
+    setHealthPolicyError(null);
+    try {
+      const csrfToken = await fetchCSRFToken();
+      const response = await fetch(`/api/apps/${encodeURIComponent(appId)}/health-policy`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({ autoRestart: enabled }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "Could not update automatic recovery");
+      await load();
+    } catch (error) {
+      setHealthPolicyError(error instanceof Error ? error.message : "Could not update automatic recovery");
+    } finally {
+      setHealthPolicyPending(false);
+    }
+  }
+
   const hasAppSettings = hasUserContext && !!drawerApp?.hasSettingsPanel && (!!drawerApp.url || !!drawerApp.subdomain);
   const off = isAppOff(unifiedApp);
   const controllable = isAdmin && unifiedApp?.category === "user" && (unifiedApp.containers?.length ?? 0) > 0;
@@ -641,9 +883,11 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
   const tabs = [
     { id: "app-settings", label: "App Settings", icon: <Sliders className="h-4 w-4" />, userOnly: true, hide: !hasAppSettings },
     { id: "overview", label: "Overview", icon: <Info className="h-4 w-4" /> },
+    { id: "ai", label: "AI", icon: <Sparkles className="h-4 w-4" />, adminOnly: true, hide: !aiSupported },
     { id: "branding", label: "Branding", icon: <Palette className="h-4 w-4" />, userOnly: true },
     { id: "permissions", label: "Permissions", icon: <Shield className="h-4 w-4" />, userOnly: true },
     { id: "network", label: "Network", icon: <Network className="h-4 w-4" />, adminOnly: true },
+    { id: "update-channel", label: "Update channel", icon: <GitBranch className="h-4 w-4" />, adminOnly: true, hide: !unifiedApp?.updateChannelKey },
     { id: "link-handling", label: "Link Handling", icon: <Unplug className="h-4 w-4" />, userOnly: true },
   ] satisfies Array<{ id: AppTab; label: string; icon: React.ReactNode; adminOnly?: boolean; userOnly?: boolean; hide?: boolean }>;
   const visibleTabs = tabs.filter((item) => (!item.adminOnly || isAdmin) && (!item.userOnly || hasUserContext) && !item.hide);
@@ -696,6 +940,7 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium">App status</span>
                 {off && <><OffDot /><span className="sr-only">Off</span></>}
+                {appHealthLabel(unifiedApp) && <Badge variant={appHealthVariant(unifiedApp)}>{appHealthLabel(unifiedApp)}</Badge>}
               </div>
               <p className="mt-1 text-[13px] text-muted-foreground">
                 {off
@@ -704,6 +949,9 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
                     ? `${title} is ${powerPending === "stop" ? "turning off" : powerPending === "start" ? "starting" : "restarting"}...`
                     : `${title} is ${unifiedApp?.status || "unknown"}.`}
               </p>
+              {unifiedApp?.healthDetail && unifiedApp.appHealthState && unifiedApp.appHealthState !== "running" && (
+                <p className="mt-1 text-[13px] text-muted-foreground">{unifiedApp.healthDetail}</p>
+              )}
               {powerError && <p className="mt-1 text-[13px] text-destructive">{powerError}</p>}
             </div>
             <div className="flex flex-wrap gap-2">
@@ -737,10 +985,28 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
           </div>
           <div className="grid gap-4 p-4 text-sm sm:grid-cols-2">
             <div><span className="text-muted-foreground">Status</span><p className="font-medium">{unifiedApp?.status || drawerApp?.status || "unknown"}</p></div>
+            <div><span className="text-muted-foreground">Health</span><p className="font-medium">{appHealthLabel(unifiedApp) || unifiedApp?.healthStatus || "unknown"}</p></div>
             <div><span className="text-muted-foreground">Version</span><p className="font-medium">{unifiedApp?.version || "—"}</p></div>
             <div><span className="text-muted-foreground">Type</span><p className="font-medium">{unifiedApp?.type || "app"}</p></div>
             <div><span className="text-muted-foreground">URL</span><p className="font-medium">{drawerApp?.url ? <a className="inline-flex items-center gap-1 text-primary hover:underline" href={drawerApp.url}><ExternalLink className="h-3 w-3" /> Open</a> : "—"}</p></div>
           </div>
+          {controllable && (
+            <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-medium">Automatic recovery</p>
+                <p className="mt-1 text-[13px] text-muted-foreground">
+                  Restart this app after repeated health-check failures. Turn this off while deliberately debugging it.
+                </p>
+                {healthPolicyError ? <p className="mt-1 text-[13px] text-destructive">{healthPolicyError}</p> : null}
+              </div>
+              <Switch
+                checked={unifiedApp?.autoRestart !== false}
+                disabled={healthPolicyPending}
+                onCheckedChange={setAutomaticRecovery}
+                aria-label={`Automatic recovery for ${title}`}
+              />
+            </div>
+          )}
           {unifiedApp?.containers?.map((container) => (
             <div key={container.name} className="flex items-center justify-between p-4 text-sm">
               <div><p className="font-medium">{container.name}</p><p className="text-xs text-muted-foreground">{container.ip || "No IP"}</p></div>
@@ -749,6 +1015,8 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
           ))}
         </div>
       )}
+
+      {tab === "ai" && isAdmin && aiSupported && <AppAISettings appId={appId} title={title} />}
 
       {tab === "branding" && <AppBranding appId={appId} isAdmin={isAdmin} appName={title} />}
 
@@ -783,6 +1051,10 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
         <div className="rounded-lg border p-4 text-sm text-muted-foreground">
           Direct access and subdomain networking are managed by Control Panel. Container details are shown in Overview.
         </div>
+      )}
+
+      {tab === "update-channel" && isAdmin && unifiedApp?.updateChannelKey && (
+        <UpdateChannels componentId={unifiedApp.updateChannelKey} />
       )}
 
       {tab === "link-handling" && (

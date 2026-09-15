@@ -11,12 +11,13 @@ import {
 } from '@/lib/wordart-presets';
 
 import SetupLanguage from '@/components/setup/SetupLanguage';
+import SetupApplianceUpdate from '@/components/setup/SetupApplianceUpdate';
 import SetupChoice from '@/components/setup/SetupChoice';
 import SetupRestore from '@/components/setup/SetupRestore';
 import SetupServerName, { type TlsChoice } from '@/components/setup/SetupServerName';
 import SetupWordArt from '@/components/setup/SetupWordArt';
 import SetupIcon from '@/components/setup/SetupIcon';
-import SetupAdminAccount from '@/components/setup/SetupAdminAccount';
+import SetupNamesVerification from '@/components/setup/SetupNamesVerification';
 import SetupProvisioning from '@/components/setup/SetupProvisioning';
 import SetupTls from '@/components/setup/SetupTls';
 import SetupDnsExplainer from '@/components/setup/SetupDnsExplainer';
@@ -52,10 +53,9 @@ function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Steps: -2=language, 0=serverName(+LE inline), 1=wordart, 2=icon, 3=admin,
+// Steps: -3=appliance update, -2=language, -1=new/restore, 0=serverName(+LE inline), 1=wordart, 2=icon,
 //        4=provisioning, 5=tls(upload only), 6=dns
-// Note: step -1 (choice) and 'restore' are disabled — backup feature is hidden
-type WizardStep = -2 | -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 'restore';
+type WizardStep = -3 | -2 | -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 'restore';
 
 // ─── Main Component ──────────────────────────────────────────
 
@@ -80,6 +80,11 @@ export default function SetupPage() {
   const [tlsChoice, setTlsChoice] = useState<TlsChoice>('youeye-names');
   const [acmeCertIssued, setAcmeCertIssued] = useState(false);
   const [yenName, setYenName] = useState('');
+  const [yenFqdn, setYenFqdn] = useState('');
+  const [yenTermsVersion, setYenTermsVersion] = useState('');
+  const [yenCtAccepted, setYenCtAccepted] = useState(false);
+  const [yenClaimProof, setYenClaimProof] = useState('');
+  const [yenReusing, setYenReusing] = useState(false);
   const [byoDomain, setByoDomain] = useState('');
   const [byoProviderToken, setByoProviderToken] = useState('');
 
@@ -88,13 +93,6 @@ export default function SetupPage() {
 
   // Step 2: Icon
   const [iconConfig, setIconConfig] = useState<IconConfig>(DEFAULT_ICON_CONFIG);
-
-  // Step 3: Admin account
-  const [adminFirstName, setAdminFirstName] = useState('');
-  const [adminLastName, setAdminLastName] = useState('');
-  const [adminUsername, setAdminUsername] = useState('');
-  const [adminEmail, setAdminEmail] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
 
   // Step 4: Provisioning
   const [setupSteps, setSetupSteps] = useState<SetupStep[]>([]);
@@ -115,7 +113,7 @@ export default function SetupPage() {
     if (hasLanguageCookie) {
       const match = document.cookie.match(/ye-setup-language=(\w+)/);
       if (match) setSelectedLanguage(match[1]);
-      setStep(0);
+      setStep(-3);
     }
     setLanguageChecked(true);
   }, []);
@@ -181,14 +179,14 @@ export default function SetupPage() {
       });
       window.location.reload();
     } catch {
-      goToStep(0);
+      goToStep(-3);
     }
   }, [goToStep]);
 
   // Full domain string — resolve custom TLD sentinel
   const effectiveTld = tld === '__custom__' ? (customTld.startsWith('.') ? customTld : `.${customTld}`) : tld;
   const domain = tlsChoice === 'youeye-names' && yenName
-    ? `${yenName}.youeye.me`
+    ? yenFqdn
     : tlsChoice === 'byo-provider'
       ? byoDomain.trim().replace(/^https?:\/\//, '').split('/')[0].replace(/\.+$/, '').toLowerCase()
       : `${domainSlug}${effectiveTld}`;
@@ -247,7 +245,7 @@ export default function SetupPage() {
       { id: 'config', label: t('savingConfig'), status: 'pending' },
       { id: 'caddy', label: t('settingUpProxy'), status: 'pending' },
       { id: 'dns', label: t('configuringDns'), status: 'pending' },
-      { id: 'admin', label: t('creatingAdmin'), status: 'pending' },
+      { id: 'ai', label: t('configuringAi'), status: 'pending' },
       { id: 'sso_control', label: t('configuringSsoControl'), status: 'pending' },
       { id: 'sso_ui', label: t('enablingSsoUi'), status: 'pending' },
       { id: 'finalize', label: t('finalizingSetup'), status: 'pending' },
@@ -268,21 +266,18 @@ export default function SetupPage() {
           site_name: siteName,
           domain,
           subdomains: { ...subdomains, ui: '' },
-          admin_first_name: adminFirstName,
-          admin_last_name: adminLastName,
-          admin_username: adminUsername,
-          admin_email: adminEmail,
-          admin_password: adminPassword,
           site_name_style: nameStyle,
           icon_config: iconConfig,
           identity_name: identityName || `${siteName} ID`,
           language: selectedLanguage || 'en',
           tls_choice: tlsChoice,
           yen_name: tlsChoice === 'youeye-names' ? yenName : undefined,
+          yen_terms_version: tlsChoice === 'youeye-names' ? yenTermsVersion : undefined,
+          yen_ct_accepted: tlsChoice === 'youeye-names' ? yenCtAccepted : undefined,
+          yen_human_verification_proof: tlsChoice === 'youeye-names' && !yenReusing ? yenClaimProof : undefined,
           byo_dns_provider: tlsChoice === 'byo-provider'
             ? { provider: 'cloudflare', token: byoProviderToken }
             : undefined,
-          current_ip: typeof window !== 'undefined' ? window.location.hostname : undefined,
         }),
       });
 
@@ -347,7 +342,7 @@ export default function SetupPage() {
     } catch (err) {
       setSetupError(err instanceof Error ? err.message : 'Setup failed');
     }
-  }, [siteName, domain, subdomains, nameStyle, iconConfig, adminUsername, adminEmail, adminPassword, identityName, adminFirstName, adminLastName, selectedLanguage, tlsChoice, yenName, byoProviderToken, t]);
+  }, [siteName, domain, subdomains, nameStyle, iconConfig, identityName, selectedLanguage, tlsChoice, yenName, yenTermsVersion, yenCtAccepted, yenClaimProof, yenReusing, byoProviderToken, t]);
 
   // Start provisioning when we enter step 4
   const provisioningStarted = useRef(false);
@@ -376,9 +371,9 @@ export default function SetupPage() {
     return 'opacity-100 translate-x-0 transition-all duration-300';
   };
 
-  // Step indicator dots (only for steps 0-3)
-  const showDots = typeof step === 'number' && step >= 0 && step <= 3;
-  const stepLabels = [t('serverSetup'), t('style'), 'Icon', t('adminAccount')];
+  // Step indicator dots (only for the three server identity steps)
+  const showDots = typeof step === 'number' && step >= 0 && step <= 2;
+  const stepLabels = [t('serverSetup'), t('style'), 'Icon'];
 
   return (
     <div className="w-full max-w-2xl px-4">
@@ -407,6 +402,10 @@ export default function SetupPage() {
           <SetupLanguage onSelect={handleLanguageSelect} />
         )}
 
+        {step === -3 && (
+          <SetupApplianceUpdate onContinue={() => goToStep(-1)} />
+        )}
+
         {step === -1 && (
           <SetupChoice
             onNewSetup={() => goToStep(0)}
@@ -416,7 +415,7 @@ export default function SetupPage() {
 
         {step === 'restore' && (
           <SetupRestore
-            onComplete={() => { router.replace('/'); }}
+            onComplete={() => { window.location.assign('/login'); }}
             onBack={() => goToStep(-1, 'back')}
           />
         )}
@@ -446,12 +445,20 @@ export default function SetupPage() {
             acmeCertIssued={acmeCertIssued}
             setAcmeCertIssued={setAcmeCertIssued}
             yenName={yenName}
-            setYenName={setYenName}
+            setYenName={(value) => { setYenName(value); setYenClaimProof(''); }}
+            yenFqdn={yenFqdn}
+            setYenFqdn={setYenFqdn}
+            yenTermsVersion={yenTermsVersion}
+            setYenTermsVersion={setYenTermsVersion}
+            yenCtAccepted={yenCtAccepted}
+            setYenCtAccepted={setYenCtAccepted}
+            setYenReusing={setYenReusing}
             byoDomain={byoDomain}
             setByoDomain={setByoDomain}
             byoProviderToken={byoProviderToken}
             setByoProviderToken={setByoProviderToken}
             onNext={() => goToStep(1)}
+            onBack={() => goToStep(-1, 'back')}
           />
         )}
 
@@ -471,24 +478,16 @@ export default function SetupPage() {
             siteNameStyle={nameStyle}
             iconConfig={iconConfig}
             setIconConfig={setIconConfig}
-            onNext={() => goToStep(3)}
+            onNext={() => goToStep(tlsChoice === 'youeye-names' && !yenReusing ? 3 : 4)}
             onBack={() => goToStep(1, 'back')}
           />
         )}
 
         {step === 3 && (
-          <SetupAdminAccount
-            firstName={adminFirstName}
-            setFirstName={setAdminFirstName}
-            lastName={adminLastName}
-            setLastName={setAdminLastName}
-            username={adminUsername}
-            setUsername={setAdminUsername}
-            email={adminEmail}
-            setEmail={setAdminEmail}
-            password={adminPassword}
-            setPassword={setAdminPassword}
-            onNext={() => goToStep(4)}
+          <SetupNamesVerification
+            name={yenName}
+            fqdn={yenFqdn}
+            onVerified={(proof) => { setYenClaimProof(proof); goToStep(4); }}
             onBack={() => goToStep(2, 'back')}
           />
         )}

@@ -44,8 +44,10 @@ test('control-header: applies the saved mode on load (not only on click)', () =>
   assert.match(header, /\}, \[themeMode, systemPref\]\)/);
   // Syncs when the Appearance page broadcasts a change.
   assert.match(header, /addEventListener\(THEME_MODE_EVENT/);
-  // The cycle button now routes through the shared applier (no ad-hoc toggle left).
-  assert.match(header, /applyThemeMode\(next as ThemeMode\)/);
+  // D14-revised: the ad-hoc cycle button was replaced by a Light/Dark/Auto
+  // segmented control whose setter routes through the shared applier
+  // (applyTheme -> applyThemeMode(mode)); no ad-hoc classList.toggle remains.
+  assert.match(header, /applyThemeMode\(mode\)/);
   assert.doesNotMatch(header, /classList\.toggle\("dark"/);
 });
 

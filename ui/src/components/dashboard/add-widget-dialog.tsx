@@ -12,7 +12,7 @@ import { useState, useEffect, useRef, type ComponentType } from "react";
 import { X, ChevronLeft, ChevronRight, Plus, Package, Languages, CloudSun, Film, StickyNote, BookOpen, Search, Home } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { WIDGET_CATALOG, type WidgetMeta, type WidgetComponentProps } from "@/components/widgets";
-import type { AppWidgetDef } from "./widget-grid";
+import type { AppWidgetDef } from "./widget-types";
 
 interface AddWidgetDialogProps {
   open: boolean;

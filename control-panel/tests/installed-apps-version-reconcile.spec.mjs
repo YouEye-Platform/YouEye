@@ -12,8 +12,9 @@ test('update checks reconcile installed app records from install metadata', () =
   assert.match(source, /app\.installedVersion = installMeta\.installedVersion/);
   assert.match(source, /app\.updateAvailable = false/);
   assert.match(source, /installMeta\?\.sourceId/);
+  assert.match(source, /projectUpdateAvailability/);
 
   const reconcileIndex = source.indexOf('const installMeta = await readInstallMetadata(app.appId)');
-  const compareIndex = source.indexOf('hasUpdate = isNewer(catalogVersion, app.installedVersion)');
-  assert.ok(reconcileIndex > -1 && compareIndex > -1 && reconcileIndex < compareIndex);
+  const projectionIndex = source.indexOf('const availability = projectUpdateAvailability');
+  assert.ok(reconcileIndex > -1 && projectionIndex > -1 && reconcileIndex < projectionIndex);
 });

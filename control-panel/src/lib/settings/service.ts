@@ -9,6 +9,7 @@
 import { spineClient } from '../spine/client';
 import { existsSync, readFileSync } from 'fs';
 import { parse } from 'yaml';
+import type { ReleaseChannelsConfig, Channel } from '@/lib/updates/channel-types';
 
 export interface PlatformSettings {
   siteName: string;
@@ -24,6 +25,7 @@ export interface PlatformSettings {
     organization?: string;
     repository?: string;
   };
+  releaseChannels?: ReleaseChannelsConfig;
   language?: string;
   smtpHost?: string;
   smtpPort?: number;
@@ -42,6 +44,7 @@ const KEY_MAP: Record<keyof PlatformSettings, string> = {
   setupCompleted: 'setup_completed',
   releaseBranch: 'release_branch',
   releaseSource: 'release_source',
+  releaseChannels: 'release_channels',
   language: 'language',
   smtpHost: 'smtp_host',
   smtpPort: 'smtp_port',
@@ -61,6 +64,7 @@ function fromRaw(raw: Record<string, unknown>): PlatformSettings {
     setupCompleted: (raw.setup_completed as boolean) || false,
     releaseBranch: raw.release_branch as string | undefined,
     releaseSource: raw.release_source as PlatformSettings['releaseSource'] | undefined,
+    releaseChannels: raw.release_channels as ReleaseChannelsConfig | undefined,
     language: raw.language as string | undefined,
     smtpHost: raw.smtp_host as string | undefined,
     smtpPort: raw.smtp_port as number | undefined,
@@ -156,7 +160,7 @@ class SettingsService {
    * Use this for call sites that need the raw format
    * (e.g. setup/config endpoint, bridge endpoints).
    */
-  async getRaw(): Promise<{ site_name: string; domain: string; subdomains: Record<string, string>; setup_completed: boolean; release_branch?: string; release_source?: PlatformSettings['releaseSource']; language?: string; smtp_host?: string; smtp_port?: number; smtp_username?: string; smtp_from?: string; smtp_require_tls?: boolean; [key: string]: unknown }> {
+  async getRaw(): Promise<{ site_name: string; domain: string; subdomains: Record<string, string>; setup_completed: boolean; release_branch?: string; release_source?: PlatformSettings['releaseSource']; release_channels?: ReleaseChannelsConfig; language?: string; smtp_host?: string; smtp_port?: number; smtp_username?: string; smtp_from?: string; smtp_require_tls?: boolean; [key: string]: unknown }> {
     const now = Date.now();
     if (this.cache && (now - this.cacheTimestamp) < this.CACHE_TTL_MS) {
       // Convert cached typed settings back to raw
@@ -167,6 +171,7 @@ class SettingsService {
         setup_completed: this.cache.setupCompleted,
         release_branch: this.cache.releaseBranch,
         release_source: this.cache.releaseSource,
+        release_channels: this.cache.releaseChannels,
         language: this.cache.language,
         smtp_host: this.cache.smtpHost,
         smtp_port: this.cache.smtpPort,
@@ -190,6 +195,30 @@ class SettingsService {
     this.cache = fromRaw(raw as unknown as Record<string, unknown>);
     this.cacheTimestamp = Date.now();
     return flattenExtra(raw) as Awaited<ReturnType<typeof this.getRaw>>;
+  }
+
+  /**
+   * Get the raw release_channels config block (as persisted in youeye.yaml).
+   * Reads through getRaw() so the local-file fallback applies. Returns an empty
+   * object when the block is absent (un-migrated boxes).
+   */
+  async getReleaseChannels(): Promise<ReleaseChannelsConfig> {
+    const raw = await this.getRaw();
+    const rc = raw.release_channels;
+    return rc && typeof rc === 'object' ? rc : {};
+  }
+
+  /**
+   * Update per-component release channels. Spine is the single writer, so this
+   * proxies to spineClient.patchConfig with a `release_channels` map keyed by
+   * component id ("default","spine","control","ui","app:<id>"). A value of null
+   * clears that component's override (spine merges per-component).
+   *
+   * This NEVER writes youeye.yaml directly — the local-file path is read-only.
+   */
+  async setReleaseChannels(patch: Record<string, Channel | null>): Promise<void> {
+    await spineClient.patchConfig({ release_channels: patch });
+    this.cache = null;
   }
 
   /** Invalidate the cache (call after external config changes) */

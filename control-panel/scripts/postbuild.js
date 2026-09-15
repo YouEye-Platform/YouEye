@@ -105,7 +105,10 @@ if (fs.existsSync(publicDest)) {
   fs.rmSync(publicDest, { recursive: true });
 }
 copyRecursive(publicSrc, publicDest);
-console.log('Done copying public folder');
+for (const legalFile of ['LICENSE', 'TRADEMARK.md', 'THIRD_PARTY_NOTICES.txt']) {
+  fs.copyFileSync(path.join(rootDir, '..', legalFile), path.join(appDir, legalFile));
+}
+console.log('Done copying public folder and legal notices');
 
 // Step 3: Fix pnpm node_modules — collect all packages from .pnpm versioned dirs
 console.log('Fixing pnpm modules...');

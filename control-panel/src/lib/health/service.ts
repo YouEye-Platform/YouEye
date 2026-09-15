@@ -76,6 +76,7 @@ const SERVICE_MAP: ReadonlyArray<{
   { name: 'Pi-Hole', slug: 'pihole', container: 'youeye-pihole', restartable: true },
   { name: 'Caddy', slug: 'caddy', container: 'youeye-caddy', restartable: true },
   { name: 'PostgreSQL', slug: 'postgres', container: 'youeye-postgres', restartable: true },
+  { name: 'YouEye AI', slug: 'pointer', container: 'youeye-pointer', restartable: true },
 ];
 
 function formatUptime(seconds: number): string {
@@ -214,6 +215,22 @@ async function checkPostgresHealth(container: string): Promise<{ status: Service
   }
 }
 
+async function checkPointerHealth(container: string): Promise<{ status: ServiceStatus; version: string }> {
+  try {
+    const result = await execShell(container, 'curl -fsS --max-time 5 http://127.0.0.1:4001/readyz', { timeout: 7000 });
+    if (result.exitCode !== 0) return { status: 'degraded', version: '' };
+    const body = JSON.parse(result.stdout) as { status?: string; build?: { version?: string } };
+    return {
+      status: body.status === 'ready' || body.status === 'ok'
+        ? 'running'
+        : body.status === 'degraded' ? 'degraded' : 'error',
+      version: body.build?.version || '',
+    };
+  } catch {
+    return { status: 'degraded', version: '' };
+  }
+}
+
 async function checkSpineHealth(): Promise<ServiceHealth> {
   // BUG-024: Retry Spine health check to reduce transient false positives
   // caused by socket connection timing or brief Spine restarts.
@@ -291,6 +308,12 @@ export async function getAllServicesHealth(): Promise<ServiceHealth[]> {
             const pg = await checkPostgresHealth(svc.container);
             appStatus = pg.status;
             version = pg.version;
+            break;
+          }
+          case 'pointer': {
+            const pointer = await checkPointerHealth(svc.container);
+            appStatus = pointer.status;
+            version = pointer.version;
             break;
           }
         }

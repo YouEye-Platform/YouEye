@@ -19,6 +19,7 @@ import type {
 
 import http from 'http';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
+import { getContainerIP } from '@/lib/incus/container-ip';
 
 /**
  * Default Caddy admin API URL
@@ -32,10 +33,16 @@ const DEFAULT_CADDY_URL = `http://youeye-caddy.${CONTAINER_DOMAIN}:2019`;
 const REQUEST_TIMEOUT = 10000;
 
 /**
- * Get Caddy admin URL from environment or use default
+ * Resolve Caddy admin URL from environment, deterministic system IP, or
+ * container DNS fallback.
  */
-function getCaddyUrl(): string {
-  return process.env.CADDY_ADMIN_URL || DEFAULT_CADDY_URL;
+async function getCaddyUrl(): Promise<string> {
+  if (process.env.CADDY_ADMIN_URL) return process.env.CADDY_ADMIN_URL;
+
+  const caddyIP = await getContainerIP('youeye-caddy').catch(() => null);
+  if (caddyIP) return `http://${caddyIP}:2019`;
+
+  return DEFAULT_CADDY_URL;
 }
 
 /**
@@ -94,12 +101,11 @@ async function caddyRequest<T>(
   body?: unknown,
   retries: number = 2
 ): Promise<T> {
-  const url = `${getCaddyUrl()}${path}`;
-  
   let lastError: Error | null = null;
   
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
+      const url = `${await getCaddyUrl()}${path}`;
       const bodyStr = body ? JSON.stringify(body) : undefined;
       const response = await httpRequest(method, url, bodyStr, REQUEST_TIMEOUT);
 
@@ -639,6 +645,34 @@ function ensureHTTPSConfig(server: HTTPServer): void {
 }
 
 /**
+ * Tell Caddy which subjects it must actively manage certificates for.
+ *
+ * automation.policies[].subjects only filters which policy applies after a
+ * subject has been selected for management. It does not select that subject.
+ * The certificates.automate loader is the explicit JSON API contract for
+ * selecting known subjects. Keep the two structures in sync whenever YouEye
+ * configures an internal-CA policy.
+ */
+function setAutomatedTLSSubjects(config: CaddyConfig, subjects: string[]): void {
+  if (!config.apps) config.apps = {};
+  if (!config.apps.tls) config.apps.tls = {};
+  if (!config.apps.tls.certificates) config.apps.tls.certificates = {};
+
+  config.apps.tls.certificates.automate = Array.from(new Set(subjects));
+}
+
+function addAutomatedTLSSubject(config: CaddyConfig, subject: string): void {
+  const existing = config.apps?.tls?.certificates?.automate || [];
+  setAutomatedTLSSubjects(config, [...existing, subject]);
+}
+
+function removeAutomatedTLSSubjects(config: CaddyConfig, subjects: string[]): void {
+  const removed = new Set(subjects);
+  const existing = config.apps?.tls?.certificates?.automate || [];
+  setAutomatedTLSSubjects(config, existing.filter((subject) => !removed.has(subject)));
+}
+
+/**
  * Ensure TLS automation includes hostname for certificate generation
  * Uses Caddy's internal CA for self-signed certificates (local LAN only)
  * 
@@ -668,15 +702,23 @@ function ensureTLSSubject(config: CaddyConfig, hostname: string): void {
   // Check ALL policies — if any policy already covers this hostname (exact or
   // wildcard), skip. This prevents duplicate subjects across policies, e.g. when
   // loadExternalCert() already added the hostname to an external-cert policy.
-  const allSubjects = config.apps.tls.automation.policies.flatMap(p => p.subjects || []);
-  if (allSubjects.includes(hostname)) {
+  const policies = config.apps.tls.automation.policies;
+  const exactPolicy = policies.find((policy) => policy.subjects?.includes(hostname));
+  if (exactPolicy) {
+    if (exactPolicy.issuers?.some((issuer) => issuer.module === 'internal')) {
+      addAutomatedTLSSubject(config, hostname);
+    }
     console.log(`[Caddy] Skipping TLS subject ${hostname} - already in a policy`);
     return;
   }
   const parts = hostname.split('.');
   if (parts.length >= 3) {
     const wildcardDomain = `*.${parts.slice(1).join('.')}`;
-    if (allSubjects.includes(wildcardDomain)) {
+    const wildcardPolicy = policies.find((policy) => policy.subjects?.includes(wildcardDomain));
+    if (wildcardPolicy) {
+      if (wildcardPolicy.issuers?.some((issuer) => issuer.module === 'internal')) {
+        addAutomatedTLSSubject(config, wildcardDomain);
+      }
       console.log(`[Caddy] Skipping TLS subject ${hostname} - covered by wildcard ${wildcardDomain}`);
       return;
     }
@@ -703,6 +745,7 @@ function ensureTLSSubject(config: CaddyConfig, hostname: string): void {
 
   console.log(`[Caddy] Adding TLS subject: ${hostname}`);
   internalPolicy.subjects.push(hostname);
+  addAutomatedTLSSubject(config, hostname);
 }
 
 /**
@@ -718,7 +761,16 @@ function sortRoutes(routes: CaddyRoute[]): CaddyRoute[] {
     const aHost = a.match?.[0]?.host?.[0];
     const bHost = b.match?.[0]?.host?.[0];
     
-    // Routes with host matchers come before catch-all
+    // Security middleware is non-terminal and must always run first. The
+    // host-less ping route is a deliberate global path invariant and must run
+    // before a host catch-all (the UI route), otherwise setup reachability and
+    // post-update health checks receive the UI's 401 response.
+    const rank = (route: CaddyRoute) => route['@id'] === 'security-header-strip' ? 0
+      : route['@id'] === 'api-ping-route' ? 1 : 2;
+    const rankDifference = rank(a) - rank(b);
+    if (rankDifference !== 0) return rankDifference;
+
+    // Routes with host matchers come before ordinary catch-all routes.
     if (aHost && !bHost) return -1;
     if (!aHost && bHost) return 1;
     
@@ -899,6 +951,9 @@ export function generateInitialConfig(hosts: string[]): CaddyConfig {
         },
       },
       tls: {
+        certificates: {
+          automate: validHosts,
+        },
         automation: {
           policies: validHosts.length > 0 ? [
             {
@@ -928,6 +983,7 @@ export async function updateTLS(hosts: string[]): Promise<void> {
       issuers: [{ module: 'internal' }],
     },
   ];
+  setAutomatedTLSSubjects(config, hosts);
 
   await setConfig(config);
 }
@@ -985,7 +1041,7 @@ export async function setContainerRoute(
       return { success: true };
     }
     
-    let warnings: string[] = [];
+    const warnings: string[] = [];
     
     if (routeType === 'subdomain') {
       // Subdomain routing: control.example.com -> container:port
@@ -1112,7 +1168,7 @@ export async function getConfiguredDomain(): Promise<string | undefined> {
         for (const subject of policy.subjects) {
           // setDomain() stores the configured platform domain itself plus
           // its wildcard. Return the full subject; leased names such as
-          // misty-spring.youeye.me must not collapse to youeye.me.
+          // misty-spring.ui.bingo must not collapse to ui.bingo.
           if (!subject.startsWith('*') && subject.includes('.')) {
             return subject;
           }
@@ -1411,6 +1467,7 @@ export async function setDomain(domain: string): Promise<void> {
       issuers: [{ module: 'internal' }],
     },
   ];
+  setAutomatedTLSSubjects(config, Array.from(cleanSubjects));
 
   // Ensure on_demand TLS permission is set (required by Caddy v2.7+)
   if (!config.apps.tls.automation.on_demand) {
@@ -1467,7 +1524,7 @@ export async function ensureControlSettingsRoute(
 
   const settingsRoute: CaddyRoute = {
     '@id': 'control-settings-route',
-    match: [{ host: [domain], path: ['/settings', '/settings/*'] }],
+    match: [{ host: [domain], path: ['/settings', '/settings/*', '/onboarding'] }],
     handle: [{
       handler: 'reverse_proxy',
       upstreams: [{ dial: upstreamDial }],
@@ -1490,6 +1547,8 @@ export async function ensureControlSettingsRoute(
       path: [
         '/_next/*',
         '/api/admin/*',
+        '/api/ai/*',
+        '/api/ai-system',
         '/api/apps/*',
         '/api/auth/session',
         '/api/health/*',
@@ -1498,18 +1557,21 @@ export async function ensureControlSettingsRoute(
         '/api/people/*',
         '/api/people*',
         '/api/setup/config',
+        '/api/setup/reconfigure',
         '/api/ui-bridge/*',
+        '/api/ui-settings/*',
         '/api/ui/*',
         '/api/user/*',
         '/api/tls/*',
         '/api/branding/*',
         '/api/bridges*',
         '/api/domain',
+        '/api/dns-providers*',
         '/api/internet-grants*',
         '/api/suggestions*',
       ],
       header: {
-        Referer: [`*://${domain}/settings*`, `*://${domain}/market*`],
+        Referer: [`*://${domain}/settings*`, `*://${domain}/market*`, `*://${domain}/onboarding*`],
       },
     } as any],
     handle: [{
@@ -1519,6 +1581,34 @@ export async function ensureControlSettingsRoute(
   };
 
   config.apps.http.servers[serverName].routes = [settingsRoute, marketRoute, supportRoute, ...routes];
+  await setConfig(config);
+}
+
+/** Route only Pointer's public inference contracts at the YouEye apex. */
+export async function ensurePointerInferenceRoutes(
+  domain: string,
+  containerName: string = 'youeye-pointer',
+  port: number = 4002,
+): Promise<void> {
+  const config = await getConfig();
+  if (!config.apps) config.apps = {};
+  if (!config.apps.http) config.apps.http = {};
+  if (!config.apps.http.servers) config.apps.http.servers = {};
+  const serverName = Object.keys(config.apps.http.servers)[0] || 'srv0';
+  if (!config.apps.http.servers[serverName]) {
+    config.apps.http.servers[serverName] = { listen: [':443'], routes: [], tls_connection_policies: [{}] };
+  }
+  ensureHTTPSConfig(config.apps.http.servers[serverName]);
+  ensureTLSSubject(config, domain);
+  const upstreamDial = await resolveCaddyUpstreamDial(containerName, port);
+  const routes = (config.apps.http.servers[serverName].routes || [])
+    .filter((route) => route['@id'] !== 'pointer-inference-route');
+  const inferenceRoute: CaddyRoute = {
+    '@id': 'pointer-inference-route',
+    match: [{ host: [domain], path: ['/v1', '/v1/*', '/v1beta', '/v1beta/*'] }],
+    handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: upstreamDial }] }],
+  };
+  config.apps.http.servers[serverName].routes = sortRoutes([inferenceRoute, ...routes]);
   await setConfig(config);
 }
 
@@ -1598,6 +1688,7 @@ export async function loadExternalCert(
       },
     ],
   };
+  removeAutomatedTLSSubjects(config, subjects);
 
   // Update automation policies:
   // 1. Tagged policy for our subjects (uses the loaded cert)
@@ -1676,6 +1767,10 @@ export async function removeExternalCert(): Promise<void> {
 
   if (!config.apps?.tls) return;
 
+  const externalSubjects = (config.apps.tls.automation?.policies || [])
+    .filter((policy) => policy.subjects?.length && !policy.issuers?.length && !policy.on_demand)
+    .flatMap((policy) => policy.subjects || []);
+
   // Remove load_pem entries
   if (config.apps.tls.certificates) {
     delete config.apps.tls.certificates.load_pem;
@@ -1696,6 +1791,24 @@ export async function removeExternalCert(): Promise<void> {
         on_demand: true,
         issuers: [{ module: 'internal' }],
       });
+    }
+
+    if (externalSubjects.length) {
+      let internalPolicy = config.apps.tls.automation.policies.find(
+        (policy) => policy.issuers?.some((issuer) => issuer.module === 'internal') && !policy.on_demand,
+      );
+      if (!internalPolicy) {
+        internalPolicy = { subjects: [], issuers: [{ module: 'internal' }] };
+        config.apps.tls.automation.policies.unshift(internalPolicy);
+      }
+      internalPolicy.subjects = Array.from(new Set([
+        ...(internalPolicy.subjects || []),
+        ...externalSubjects,
+      ]));
+      setAutomatedTLSSubjects(config, [
+        ...(config.apps.tls.certificates?.automate || []),
+        ...externalSubjects,
+      ]);
     }
   }
 
@@ -1850,26 +1963,24 @@ export async function addAppRoutes(
       match.path = [`${entrance.path}/*`];
     }
 
-    try {
-      const cfg = await getConfig();
-      if (!cfg?.apps?.http?.servers) continue;
-      const serverName = Object.keys(cfg.apps.http.servers)[0];
-      const server = cfg.apps.http.servers[serverName];
-      server.routes = server.routes || [];
-
-      // Remove existing route with same ID if present
-      const routeId = `app-${appId}-${entrance.name}`;
-      server.routes = server.routes.filter((r: any) => r['@id'] !== routeId);
-      server.routes.push({
-        '@id': routeId,
-        match: [match],
-        handle: handlers,
-        terminal: true,
-      });
-      await setConfig(cfg);
-    } catch (err) {
-      console.error(`[caddy] Failed to add entrance route ${entrance.name}:`, err);
+    const cfg = await getConfig();
+    if (!cfg?.apps?.http?.servers) {
+      throw new Error('Caddy has no HTTP server available for app routes');
     }
+    const serverName = Object.keys(cfg.apps.http.servers)[0];
+    const server = cfg.apps.http.servers[serverName];
+    server.routes = server.routes || [];
+
+    // Remove existing route with same ID if present
+    const routeId = `app-${appId}-${entrance.name}`;
+    server.routes = server.routes.filter((r: any) => r['@id'] !== routeId);
+    server.routes.push({
+      '@id': routeId,
+      match: [match],
+      handle: handlers,
+      terminal: true,
+    });
+    await setConfig(cfg);
   }
 }
 
@@ -1971,13 +2082,15 @@ export async function ensureScopedAppGrantDenyRoute(): Promise<void> {
  */
 export async function addScopedAppGrantRoute(route: ScopedAppGrantRoute): Promise<void> {
   const cfg = await getConfig();
-  if (!cfg?.apps?.http?.servers) return;
+  if (!cfg?.apps?.http?.servers || Object.keys(cfg.apps.http.servers).length === 0) {
+    throw new Error('Caddy has no HTTP server for the scoped app grant');
+  }
 
   const serverName = Object.keys(cfg.apps.http.servers)[0];
   const server = cfg.apps.http.servers[serverName];
   server.routes = server.routes || [];
 
-  server.routes = server.routes.filter((r: any) => r['@id'] !== route.id);
+  server.routes = server.routes.filter((candidate) => candidate['@id'] !== route.id);
 
   const match: Record<string, unknown> = {
     host: [route.hostname],
@@ -1998,7 +2111,7 @@ export async function addScopedAppGrantRoute(route: ScopedAppGrantRoute): Promis
     terminal: true,
   };
 
-  const stripIndex = server.routes.findIndex((r: any) => r['@id'] === 'security-header-strip');
+  const stripIndex = server.routes.findIndex((candidate) => candidate['@id'] === 'security-header-strip');
   if (stripIndex >= 0) {
     server.routes.splice(stripIndex, 0, grantRoute);
   } else {
@@ -2007,6 +2120,10 @@ export async function addScopedAppGrantRoute(route: ScopedAppGrantRoute): Promis
   server.routes = upsertScopedAppGrantDenyRoute(server.routes);
 
   await setConfig(cfg);
+  const readBack = await getConfig();
+  const persisted = Object.values(readBack.apps?.http?.servers ?? {}).some((server) =>
+    (server.routes ?? []).some((candidate) => candidate['@id'] === route.id));
+  if (!persisted) throw new Error('Scoped app grant did not read back after creation');
 }
 
 export async function removeScopedAppGrantRoute(id: string): Promise<void> {
@@ -2016,11 +2133,15 @@ export async function removeScopedAppGrantRoute(id: string): Promise<void> {
   let modified = false;
   for (const server of Object.values(cfg.apps.http.servers)) {
     const before = server.routes?.length ?? 0;
-    server.routes = (server.routes || []).filter((r: any) => r['@id'] !== id);
+    server.routes = (server.routes || []).filter((candidate) => candidate['@id'] !== id);
     if ((server.routes?.length ?? 0) !== before) modified = true;
   }
 
   if (modified) {
     await setConfig(cfg);
   }
+  const readBack = await getConfig();
+  const remains = Object.values(readBack.apps?.http?.servers ?? {}).some((server) =>
+    (server.routes ?? []).some((candidate) => candidate['@id'] === id));
+  if (remains) throw new Error('Scoped app grant remains after removal');
 }

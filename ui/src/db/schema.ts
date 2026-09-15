@@ -155,6 +155,8 @@ export const userAppConfig = pgTable("user_app_config", {
   customIconUrl: text("custom_icon_url"),
   /** Whether app is visible in user's drawer */
   visible: boolean("visible").default(true),
+  /** Whether app is present in the full-screen launcher */
+  launcherVisible: boolean("launcher_visible").default(true),
   /** User's preferred display order */
   displayOrder: integer("display_order").default(0),
   /** Section this app belongs to (references user_drawer_sections) */

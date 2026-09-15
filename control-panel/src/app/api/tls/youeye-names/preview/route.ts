@@ -14,7 +14,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
-import { previewName, previewNames } from '@/lib/youeye-names/client';
+import { namesErrorMessage, previewName, previewNames } from '@/lib/youeye-names/client';
 
 export async function POST(request: NextRequest) {
   try {
@@ -39,13 +39,11 @@ export async function POST(request: NextRequest) {
     const previews = await previewNames(count);
     return NextResponse.json({ previews });
   } catch (error) {
-    console.error('[TLS/YouEyeNames] preview failed:', error);
+    console.error('[TLS/YouEyeNames] preview failed');
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : 'Could not reach YouEye Names',
+          namesErrorMessage(error),
       },
       { status: 502 },
     );

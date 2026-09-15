@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     // Get recent queries to derive top queries and top blocked
     let topQueries: Array<{ domain: string; count: number }> = [];
     let topBlocked: Array<{ domain: string; count: number }> = [];
-    let gravitySize = stats.domainsBlocked;
+    const gravitySize = stats.domainsBlocked;
 
     try {
       const queries = await getQueryLog(1000);

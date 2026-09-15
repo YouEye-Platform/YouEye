@@ -46,20 +46,31 @@ export async function waitForPostgresHealth(
   user = 'postgres',
   timeoutMs = 60_000
 ): Promise<boolean> {
-  const { execShell } = await import('../incus/server');
+  if (!/^[A-Za-z_][A-Za-z0-9_$-]{0,62}$/.test(user)) {
+    throw new Error(`Invalid PostgreSQL health-check user: ${user}`);
+  }
+
+  const { execCommand } = await import('../incus/server');
   const deadline = Date.now() + timeoutMs;
+  let lastFailure = 'PostgreSQL did not accept the probe';
 
   while (Date.now() < deadline) {
-    try {
-      const result = await execShell(containerName, `pg_isready -U ${user}`, {
-        timeout: 5000,
-      });
-      if (result.stdout.includes('accepting connections')) return true;
-    } catch {
-      // Not ready
+    for (const executable of ['/usr/local/bin/pg_isready', '/usr/bin/pg_isready']) {
+      try {
+        const result = await execCommand(containerName, [executable, '-U', user], {
+          timeout: 5000,
+        });
+        if (result.exitCode === 0) return true;
+        lastFailure = `${executable} exited with status ${result.exitCode}`;
+        if (result.exitCode !== 127) break;
+      } catch (error) {
+        lastFailure = error instanceof Error ? error.message : 'PostgreSQL probe failed';
+        // Try the fallback path, then wait for PostgreSQL to become ready.
+      }
     }
     await new Promise((r) => setTimeout(r, 2000));
   }
 
+  console.warn(`[market] PostgreSQL health probe timed out for ${containerName}: ${lastFailure}`);
   return false;
 }

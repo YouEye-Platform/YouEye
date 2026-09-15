@@ -10,10 +10,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import { readInstallMetadata } from '@/lib/market/metadata';
 import { fetchManifest } from '@/lib/market/catalog';
+import { requireAuth } from '@/lib/auth/rbac';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
+  const auth = await requireAuth();
+  if (auth.error) return auth.error;
+
   const appId = request.nextUrl.searchParams.get('appId');
   if (!appId) {
     return NextResponse.json({ error: 'appId required' }, { status: 400 });

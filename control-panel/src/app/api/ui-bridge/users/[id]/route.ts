@@ -13,6 +13,7 @@ import {
   deleteUser,
   setPassword,
 } from '@/lib/identity/provider';
+import { validateIdentityPassword } from '@/lib/identity/password-policy';
 
 export async function PUT(
   request: NextRequest,
@@ -29,9 +30,8 @@ export async function PUT(
 
     switch (action) {
       case 'set-password': {
-        if (!password) {
-          return NextResponse.json({ error: 'password is required' }, { status: 400 });
-        }
+		const passwordError = validateIdentityPassword(password);
+		if (passwordError) return NextResponse.json({ error: passwordError }, { status: 400 });
         await setPassword(id, password);
         return NextResponse.json({ success: true });
       }
@@ -48,7 +48,7 @@ export async function PUT(
         const isAdmin = !user.is_superuser;
         const groups = isAdmin
           ? Array.from(new Set([...currentGroups, 'admin']))
-          : currentGroups.filter((g) => g !== 'admin' && g !== 'authentik Admins');
+          : currentGroups.filter((g) => g !== 'admin');
 
         await updateUser(id, { groups, isAdmin });
         return NextResponse.json({ success: true, is_superuser: isAdmin });

@@ -225,6 +225,10 @@ export async function buildCanonicalContext(
     }
   }
   const identityInternalUrl = useProxyDevices ? `http://${systemProxyHost}:3002` : identity.internalUrl;
+  const aiEnabled = config.aiSettings?.enabled === true;
+  const pointerInferenceBase = aiEnabled && systemProxyHost
+    ? `http://${systemProxyHost}:3003`
+    : '';
 
   // Caddy proxy IP
   let proxyIp = '';
@@ -289,7 +293,6 @@ export async function buildCanonicalContext(
       client_secret: ssoResult?.clientSecret || '',
       callback_url: manifest.sso
         ? `${appUrl}${manifest.sso.callback_path
-            .replace(/\$\{authentik\.name\}/g, identityDisplayName)
             .replace(/\$\{identity\.name\}/g, identityDisplayName)
             .replace(/\$\{sso\.slug\}/g, ssoSlug)
             .replace(/\$\{app\.id\}/g, config.appId)}`
@@ -303,19 +306,23 @@ export async function buildCanonicalContext(
       issuer: identity.issuer,
       discoveryUrl: identity.discoveryUrl,
     },
+    ai: {
+      enabled: aiEnabled,
+      openaiBaseUrl: pointerInferenceBase ? `${pointerInferenceBase}/v1` : '',
+      anthropicBaseUrl: pointerInferenceBase,
+      googleBaseUrl: pointerInferenceBase,
+      apiKey: aiEnabled ? config.aiSettings?.runtimeCredential || '' : '',
+      defaultModel: 'default',
+      groupId: aiEnabled ? config.aiSettings?.modelGroupId || '' : '',
+    },
     secrets: {},
     installParams: config.installParams || {},
 
-    // Legacy aliases for v1 SSO step compatibility
+    // Manifest aliases retained by the current v1 schema.
     install: {
       url: appUrl,
       subdomain: config.subdomain,
       domain,
-    },
-    authentik: {
-      externalUrl: identity.externalUrl,
-      internalUrl: identityInternalUrl,
-      name: identityDisplayName,
     },
     container: { ip: '', port: primaryPort },
   };

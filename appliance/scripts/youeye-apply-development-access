@@ -1,0 +1,376 @@
+#!/bin/sh
+set -eu
+
+state_root=${YOUEYE_STATE_ROOT:-/var/lib/youeye-state}
+system_root=${YOUEYE_SYSTEM_ROOT:-/}
+policy=$state_root/bootstrap/development-access.json
+status=$state_root/bootstrap/development-access-status.json
+dropin=$system_root/etc/ssh/sshd_config.d/90-youeye-development-access.conf
+ssh_reload_pending=$state_root/etc/development-access-ssh-reload.pending
+no_systemctl=${YOUEYE_DEV_ACCESS_NO_SYSTEMCTL:-false}
+scope_override=${YOUEYE_DEV_ACCESS_NETWORK_SCOPE:-}
+console_unit=getty@tty2.service
+
+local_console_requested=false
+local_console_persisted=false
+local_console_active=false
+local_console_effective=false
+password_ssh_requested=false
+effective_ssh=false
+network_scope=""
+detail="Secure defaults active"
+password_ready=false
+failure=0
+had_dropin=false
+ssh_changed=false
+previous_dropin=
+candidate_dropin=
+invalid_policy=false
+
+write_status() {
+	mkdir -p "$state_root/bootstrap" 2>/dev/null || return 1
+	tmp=$status.tmp
+	jq -n \
+		--argjson console_requested "$local_console_requested" \
+		--argjson console_persisted "$local_console_persisted" \
+		--argjson console_active "$local_console_active" \
+		--argjson console_effective "$local_console_effective" \
+		--argjson requested_ssh "$password_ssh_requested" \
+		--argjson effective_ssh "$effective_ssh" \
+		--arg network_scope "$network_scope" \
+		--arg detail "$detail" \
+		'{schema:"youeye.development-access-status.v2",
+		  local_root_console_requested:$console_requested,
+		  local_root_console_persisted:$console_persisted,
+		  local_root_console_active:$console_active,
+		  local_root_console_effective:$console_effective,
+		  root_password_ssh_requested:$requested_ssh,
+		  root_password_ssh_effective:$effective_ssh,
+		  network_scope:(if $network_scope == "" then null else $network_scope end),
+		  detail:$detail}' > "$tmp" || return 1
+	chmod 0600 "$tmp" || return 1
+	mv -f "$tmp" "$status" || return 1
+	sync -f "$state_root/bootstrap" 2>/dev/null || true
+}
+
+on_exit() {
+	exit_status=$?
+	trap - EXIT
+	# Status is the durable outcome record, including all unsuccessful paths.
+	if ! write_status; then
+		exit 1
+	fi
+	exit "$exit_status"
+}
+trap on_exit EXIT
+
+record_failure() {
+	failure=1
+	if [ "$detail" = "Secure defaults active" ] || [ "$detail" = "Developer password applied" ]; then
+		detail=$1
+	fi
+}
+
+mark_ssh_reload_pending() {
+	[ "$no_systemctl" = true ] && return 0
+	if ! (umask 077; : > "$ssh_reload_pending") || ! chmod 0600 "$ssh_reload_pending"; then
+		record_failure "SSH policy retry state could not be recorded"
+		return 1
+	fi
+	ssh_changed=true
+	return 0
+}
+
+apply_ssh_reload() {
+	[ "$no_systemctl" = true ] && return 0
+	[ "$ssh_changed" = true ] || return 0
+	if systemctl is-active --quiet ssh.service >/dev/null 2>&1; then
+		if ! systemctl try-reload-or-restart ssh.service >/dev/null 2>&1; then
+			effective_ssh=false
+			network_scope=""
+			record_failure "SSH service could not apply the requested policy"
+			return 1
+		fi
+	elif ! systemctl --no-block try-reload-or-restart ssh.service >/dev/null 2>&1; then
+		effective_ssh=false
+		network_scope=""
+		record_failure "SSH service could not apply the requested policy"
+		return 1
+	fi
+	if ! rm -f "$ssh_reload_pending"; then
+		effective_ssh=false
+		network_scope=""
+		record_failure "SSH policy retry state could not be cleared"
+		return 1
+	fi
+	ssh_changed=false
+	return 0
+}
+
+install -d -m 0700 "$state_root/bootstrap" || {
+	detail="Development access state could not be prepared"
+	exit 1
+}
+install -d -m 0755 "$state_root/etc" || {
+	detail="Development access state could not be prepared"
+	exit 1
+}
+if [ "$no_systemctl" != true ] && [ -e "$ssh_reload_pending" ]; then
+	ssh_changed=true
+fi
+install -d -m 0755 "$(dirname "$dropin")" || {
+	detail="Development access state could not be prepared"
+	exit 1
+}
+
+if [ ! -f "$policy" ]; then
+	printf '%s\n' '{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}' > "$policy" || {
+		detail="Development access policy could not be initialized"
+	exit 1
+	}
+	chmod 0600 "$policy" || {
+		detail="Development access policy could not be initialized"
+	exit 1
+	}
+fi
+
+if jq -e '
+  .schema == "youeye.development-access.v1" and
+  (.local_root_console | type == "boolean") and
+  (.root_password_ssh | type == "boolean") and
+  (if (.local_root_console or .root_password_ssh) then
+     (.password_hash | type == "string") and (.password_hash | startswith("$y$"))
+   else
+     ((.password_hash // "") == "")
+   end) and
+  (if .root_password_ssh then .ssh_network_scope == "local-subnet" else ((.ssh_network_scope // "") == "") end)
+' "$policy" >/dev/null; then
+	local_console_requested=$(jq -r '.local_root_console' "$policy")
+	password_ssh_requested=$(jq -r '.root_password_ssh' "$policy")
+else
+	invalid_policy=true
+	detail="Development access policy is invalid; secure defaults were requested"
+	failure=1
+fi
+
+if [ "$invalid_policy" = true ]; then
+	# Revoke managed password SSH before shadow staging can fail. Persist the
+	# pending reload first so interruption cannot lose the daemon convergence.
+	mark_ssh_reload_pending || true
+	if rm -f "$dropin"; then
+		apply_ssh_reload || true
+	else
+		record_failure "Root password SSH could not be disabled"
+	fi
+fi
+
+shadow=$system_root/etc/shadow
+shadow_lock=$state_root/etc/shadow.lock
+if ! (umask 077; : > "$shadow_lock"); then
+	record_failure "Root password state could not be updated"
+	exit 1
+fi
+chmod 0600 "$shadow_lock" || {
+	record_failure "Root password state could not be updated"
+	exit 1
+}
+exec 8>"$shadow_lock"
+if ! flock 8; then
+	record_failure "Root password state could not be updated"
+	exit 1
+fi
+
+write_shadow() {
+	tmp=$1
+	# /etc is sealed read-only. /etc/shadow is a writable bind-mounted State
+	# file, so replacing a sibling beneath /etc cannot work and replacing the
+	# State inode would leave the live bind mount pointing at the old inode.
+	if ! awk -F: '$1 == "root" {found++} END {exit found == 1 ? 0 : 1}' "$tmp"; then
+		rm -f "$tmp"
+		return 1
+	fi
+	if ! cat "$tmp" > "$shadow"; then
+		rm -f "$tmp"
+		return 1
+	fi
+	if ! chmod 0640 "$shadow"; then
+		rm -f "$tmp"
+		return 1
+	fi
+	sync -f "$shadow" 2>/dev/null || true
+	rm -f "$tmp"
+	return 0
+}
+
+update_shadow_hash() {
+	tmp=$(mktemp "$state_root/etc/.shadow.XXXXXX") || return 1
+	if ! {
+		jq -r '.password_hash' "$policy"
+		cat "$shadow"
+	} | awk -F: 'BEGIN {OFS=":"} NR==1 {hash=$0; next} $1=="root" {$2=hash; found=1} {print} END {if (!found) exit 1}' > "$tmp"; then
+		rm -f "$tmp"
+		return 1
+	fi
+	chmod 0640 "$tmp" || return 1
+	write_shadow "$tmp"
+}
+
+lock_shadow_root() {
+	tmp=$(mktemp "$state_root/etc/.shadow.XXXXXX") || return 1
+	if ! awk -F: 'BEGIN {OFS=":"} $1=="root" {$2="!"; found=1} {print} END {if (!found) exit 1}' "$shadow" > "$tmp"; then
+		rm -f "$tmp"
+		return 1
+	fi
+	chmod 0640 "$tmp" || return 1
+	write_shadow "$tmp"
+}
+
+if [ "$local_console_requested" = true ] || [ "$password_ssh_requested" = true ]; then
+	if update_shadow_hash; then
+		password_ready=true
+		detail="Developer password applied"
+	else
+		record_failure "Root password state could not be updated"
+	fi
+elif ! lock_shadow_root; then
+	record_failure "Root password state could not be updated"
+fi
+
+# SSH access is deliberately separate from the local console lifecycle. Build
+# the desired drop-in in State and reload ssh only if its content/existence
+# changes, so local-console-only convergence leaves SSH untouched.
+if [ -f "$dropin" ]; then
+	had_dropin=true
+	previous_dropin=$(mktemp "$state_root/etc/.sshd-dropin.XXXXXX") || {
+		detail="Root password SSH could not be configured"
+	exit 1
+	}
+	cat "$dropin" > "$previous_dropin" || {
+		rm -f "$previous_dropin"
+		detail="Root password SSH could not be configured"
+	exit 1
+	}
+fi
+candidate_dropin=$(mktemp "$state_root/etc/.sshd-dropin.XXXXXX") || {
+	detail="Root password SSH could not be configured"
+	exit 1
+}
+if [ "$password_ssh_requested" = true ] && [ "$password_ready" = true ]; then
+	network_scope=$scope_override
+	if [ -z "$network_scope" ]; then
+		device=$(/usr/sbin/ip -4 route show default 2>/dev/null | awk 'NR==1 {for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')
+		if [ -n "$device" ]; then
+			network_scope=$(/usr/sbin/ip -4 route show dev "$device" scope link 2>/dev/null | awk '$1 != "default" && $1 ~ /^[0-9]+\./ {print $1; exit}')
+		fi
+	fi
+	case "$network_scope" in
+		*/*) ;;
+		*) network_scope="" ;;
+	esac
+	if [ -n "$network_scope" ]; then
+		cat > "$candidate_dropin" <<EOF
+Match User root Address $network_scope
+    PasswordAuthentication yes
+    KbdInteractiveAuthentication no
+    PermitRootLogin yes
+EOF
+	else
+		detail="No directly connected IPv4 subnet was found; root password SSH stayed disabled"
+		failure=1
+	fi
+fi
+if [ -s "$candidate_dropin" ]; then
+	chmod 0600 "$candidate_dropin" || record_failure "Root password SSH could not be configured"
+	if [ "$had_dropin" = false ] || ! cmp -s "$candidate_dropin" "$previous_dropin"; then
+		if ! mark_ssh_reload_pending; then
+			record_failure "Root password SSH could not be configured"
+		elif ! cat "$candidate_dropin" > "$dropin" || ! chmod 0600 "$dropin"; then
+			record_failure "Root password SSH could not be configured"
+		fi
+	fi
+	if [ -f "$dropin" ] && [ "$system_root" = / ] && ! /usr/sbin/sshd -t; then
+		mark_ssh_reload_pending || true
+		rm -f "$dropin"
+		network_scope=""
+		record_failure "Root password SSH could not be configured"
+	fi
+	[ -f "$dropin" ] && effective_ssh=true
+elif [ "$had_dropin" = true ]; then
+	mark_ssh_reload_pending || true
+	if ! rm -f "$dropin"; then
+		record_failure "Root password SSH could not be configured"
+	fi
+fi
+rm -f "$candidate_dropin" "$previous_dropin"
+
+apply_ssh_reload || true
+if [ -e "$ssh_reload_pending" ]; then
+	effective_ssh=false
+	network_scope=""
+fi
+
+console_state() {
+	local_console_persisted=false
+	local_console_active=false
+	[ "$no_systemctl" = true ] && return
+	if systemctl is-enabled --quiet "$console_unit" >/dev/null 2>&1; then
+		local_console_persisted=true
+	fi
+	if systemctl is-active --quiet "$console_unit" >/dev/null 2>&1; then
+		local_console_active=true
+	fi
+}
+
+wait_for_console_active() {
+	attempt=0
+	while [ "$attempt" -lt 5 ]; do
+		if systemctl is-active --quiet "$console_unit" >/dev/null 2>&1; then
+			return 0
+		fi
+		attempt=$((attempt + 1))
+		sleep 1
+	done
+	return 1
+}
+
+wait_for_console_inactive() {
+	attempt=0
+	while [ "$attempt" -lt 5 ]; do
+		if ! systemctl is-active --quiet "$console_unit" >/dev/null 2>&1; then
+			return 0
+		fi
+		attempt=$((attempt + 1))
+		sleep 1
+	done
+	return 1
+}
+
+apply_console_lifecycle() {
+	[ "$no_systemctl" = true ] && return 0
+	if [ "$local_console_requested" = true ]; then
+		systemctl enable --runtime "$console_unit" >/dev/null 2>&1 || return 1
+		systemctl is-enabled --quiet "$console_unit" >/dev/null 2>&1 || return 1
+		systemctl start --no-block "$console_unit" >/dev/null 2>&1 || return 1
+		wait_for_console_active
+	else
+		systemctl disable --runtime "$console_unit" >/dev/null 2>&1 || return 1
+		if systemctl is-enabled --quiet "$console_unit" >/dev/null 2>&1; then
+			return 1
+		fi
+		systemctl stop --no-block "$console_unit" >/dev/null 2>&1 || return 1
+		wait_for_console_inactive
+	fi
+}
+
+if ! apply_console_lifecycle; then
+	record_failure "Local root console could not reach requested state"
+fi
+console_state
+if [ "$local_console_requested" = true ] && [ "$local_console_persisted" = true ] && \
+	[ "$local_console_active" = true ] && [ "$password_ready" = true ]; then
+	local_console_effective=true
+fi
+
+if [ "$failure" -ne 0 ]; then
+	exit 1
+fi

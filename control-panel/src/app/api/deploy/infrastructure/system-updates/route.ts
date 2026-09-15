@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth/rbac';
 import { planSystemUpdates, updateSystemFromMarket } from '@/lib/infrastructure/system-updater';
+import { assertNoCriticalIssues } from '@/lib/health/issues';
 import type { DeploymentEvent } from '@/lib/infrastructure/types';
 
 export const dynamic = 'force-dynamic';
@@ -56,6 +57,17 @@ export async function POST(request: NextRequest) {
       { error: 'hostIP is required for Pi-hole updates because its DNS proxy binds to the host IP' },
       { status: 400 },
     );
+  }
+
+  if (!body.dryRun) {
+    try {
+      await assertNoCriticalIssues('Pool/system operation');
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        { status: 423 },
+      );
+    }
   }
 
   const encoder = new TextEncoder();

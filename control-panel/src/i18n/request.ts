@@ -77,9 +77,9 @@ async function getSystemLanguage(): Promise<string> {
  * Fetch a user's language preference from YE-UI via bridge.
  * Returns null if no override is set or bridge is unreachable.
  */
-async function getUserLanguage(authentikSub: string): Promise<string | null> {
+async function getUserLanguage(userId: string): Promise<string | null> {
   const now = Date.now();
-  const cached = userLangCache.get(authentikSub);
+  const cached = userLangCache.get(userId);
   if (cached && now < cached.expiresAt) {
     return cached.locale;
   }
@@ -96,7 +96,7 @@ async function getUserLanguage(authentikSub: string): Promise<string | null> {
 
     const uiUrl = process.env.UI_INTERNAL_URL || `http://youeye-ui.${CONTAINER_DOMAIN}:3000`;
     const res = await fetch(
-      `${uiUrl}/api/ui-bridge/user-language?userId=${encodeURIComponent(authentikSub)}`,
+      `${uiUrl}/api/ui-bridge/user-language?userId=${encodeURIComponent(userId)}`,
       {
         headers: { "X-UI-Bridge-Token": token },
         signal: AbortSignal.timeout(5000),
@@ -106,7 +106,7 @@ async function getUserLanguage(authentikSub: string): Promise<string | null> {
     if (res.ok) {
       const data = await res.json();
       const lang = data.language || null;
-      userLangCache.set(authentikSub, { locale: lang, expiresAt: now + CACHE_TTL_MS });
+      userLangCache.set(userId, { locale: lang, expiresAt: now + CACHE_TTL_MS });
       return lang;
     }
   } catch {

@@ -19,9 +19,13 @@ import { NextRequest, NextResponse } from 'next/server';
 export async function GET(request: NextRequest) {
   if (request.nextUrl.searchParams.get('verify') === '1') {
     // Override the global CSP (frame-ancestors 'none') so this page can
-    // be embedded in the setup-complete iframe connectivity check.
+    // be embedded in the setup-complete iframe connectivity check. The
+    // receiver is the parent page, so targetOrigin must be the exact parent
+    // origin from the browser-provided referrer rather than this iframe's
+    // origin. The parent independently verifies this frame's sender origin
+    // and WindowProxy before accepting the non-sensitive success message.
     return new Response(
-      '<!DOCTYPE html><html><body><script>try{window.parent.postMessage({type:"ye-dns-ok"},"*")}catch(e){}</script></body></html>',
+      '<!DOCTYPE html><html><body><script>try{const target=new URL(document.referrer).origin;if(target!=="null")window.parent.postMessage({type:"ye-dns-ok"},target)}catch(e){}</script></body></html>',
       {
         status: 200,
         headers: {

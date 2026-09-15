@@ -7,10 +7,8 @@
  * Pattern: same setInterval + guard flag pattern as version-checker.ts
  */
 
-import { getAllInstalledApps, updateHealthStatus } from './installed-apps';
-import { readInstallMetadata } from './metadata';
-import { containerExists, getContainerIP } from '../infrastructure/oci-deployer';
-import { incusRequest } from '../incus/server';
+import { APP_PROBER_DEFAULT_PERIOD_MS, getAppProbeResults, probeInstalledApps, resetHealthyBackoff } from './app-prober';
+import { reconcileApps } from './reconciler';
 
 /** Whether a check is currently running */
 let isChecking = false;
@@ -19,9 +17,9 @@ let isChecking = false;
 let lastCheckedAt: string | null = null;
 
 /** Last check results */
-let lastResults: Map<string, 'healthy' | 'unhealthy' | 'unknown'> = new Map();
+const lastResults: Map<string, 'healthy' | 'unhealthy' | 'unknown'> = new Map();
 
-const CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const CHECK_INTERVAL_MS = APP_PROBER_DEFAULT_PERIOD_MS;
 
 // ─── Public API ───────────────────────────────────────────────
 
@@ -37,42 +35,12 @@ export function getLastHealthCheckAt(): string | null {
   return lastCheckedAt;
 }
 
+export function getAppProbeStatus() {
+  return getAppProbeResults();
+}
+
 export function isHealthCheckInProgress(): boolean {
   return isChecking;
-}
-
-// ─── Health Check Logic ──────────────────────────────────────
-
-async function isContainerRunning(name: string): Promise<boolean> {
-  try {
-    if (!(await containerExists(name))) return false;
-    const resp = await incusRequest<Record<string, unknown>>(
-      'GET',
-      `/1.0/instances/${name}/state`
-    );
-    const meta = resp.metadata as Record<string, unknown> | undefined;
-    return (meta?.status as string) === 'Running';
-  } catch {
-    return false;
-  }
-}
-
-async function checkAppHealth(
-  containerName: string,
-  port: number,
-  path: string = '/',
-): Promise<'healthy' | 'unhealthy'> {
-  try {
-    const ip = await getContainerIP(containerName);
-    if (!ip) return 'unhealthy';
-
-    const res = await fetch(`http://${ip}:${port}${path}`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    return res.ok || res.status === 401 || res.status === 403 ? 'healthy' : 'unhealthy';
-  } catch {
-    return 'unhealthy';
-  }
 }
 
 /**
@@ -83,46 +51,17 @@ export async function refreshHealthCheck(): Promise<void> {
 
   isChecking = true;
   try {
-    const apps = await getAllInstalledApps();
-
-    for (const app of apps) {
-      try {
-        const metadata = await readInstallMetadata(app.appId);
-        if (!metadata) {
-          lastResults.set(app.appId, 'unknown');
-          await updateHealthStatus(app.appId, 'unknown');
-          continue;
-        }
-
-        // Find primary container
-        const containers = metadata.containers || [];
-        const primary = containers.find((c: any) =>
-          typeof c === 'string' ? true : c.primary || containers.length === 1
-        );
-        const containerName = typeof primary === 'string'
-          ? primary
-          : primary?.containerName || `youeye-${app.appId}`;
-
-        // Check if container is running
-        const running = await isContainerRunning(containerName);
-        if (!running) {
-          lastResults.set(app.appId, 'unknown');
-          await updateHealthStatus(app.appId, 'unknown');
-          continue;
-        }
-
-        // HTTP health check on primary container — use stored port/path from install metadata
-        const port = (typeof primary !== 'string' && primary?.port) || 3000;
-        const path = (typeof primary !== 'string' && primary?.healthCheck?.type === 'http'
-          && primary.healthCheck.path) || '/';
-        const status = await checkAppHealth(containerName, port, path);
-        lastResults.set(app.appId, status);
-        await updateHealthStatus(app.appId, status);
-      } catch {
-        lastResults.set(app.appId, 'unknown');
-        try { await updateHealthStatus(app.appId, 'unknown'); } catch {}
-      }
+    const probeResults = await probeInstalledApps();
+    for (const result of probeResults) {
+      const status = result.state === 'running'
+        ? 'healthy'
+        : result.state === 'unhealthy' || result.state === 'crash-looping'
+          ? 'unhealthy'
+          : 'unknown';
+      lastResults.set(result.appId, status);
     }
+    await resetHealthyBackoff();
+    await reconcileApps();
 
     lastCheckedAt = new Date().toISOString();
   } catch (err) {
@@ -160,7 +99,6 @@ export function stopHealthChecker(): void {
   }
 }
 
-// Auto-start when module is imported in production
-if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
-  startHealthChecker();
-}
+// NO module-import auto-start. instrumentation.ts is the single owner of
+// background-job startup (see version-checker.ts for the youeye-id race
+// this pattern caused).

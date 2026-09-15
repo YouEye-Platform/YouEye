@@ -1,7 +1,8 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { LoginForm } from '@/components/auth/login-form';
-import { getAuthModeForHost } from '@/lib/auth/mode';
+import { ApplianceClaim } from '@/components/auth/appliance-claim';
+import { getAuthModeForHost, isApplianceSetupHost } from '@/lib/auth/mode';
 
 interface LoginPageProps {
   searchParams: Promise<{ error?: string; redirect?: string }>;
@@ -16,6 +17,10 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const headerStore = await headers();
   const host = headerStore.get('host') || '';
   const params = await searchParams;
+
+  if (isApplianceSetupHost(host)) {
+    return <ApplianceClaim />;
+  }
 
   if (!params.error && getAuthModeForHost(host) === 'sso') {
     const returnTo = safeRelativeRedirect(params.redirect, '/');

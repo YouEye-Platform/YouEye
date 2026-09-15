@@ -1,11 +1,8 @@
 package cmd
 
 import (
-	"bufio"
-	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -15,8 +12,19 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
+	hoststorage "github.com/youeye-platform/YouEye/spine/internal/storage"
 	"github.com/youeye-platform/YouEye/spine/internal/util"
 	"github.com/youeye-platform/YouEye/spine/internal/version"
+)
+
+// deployStorage* cache the storage decision resolved once at the top of
+// runDeploy so installIncus() reuses it (avoids re-resolving after the pool
+// already exists, which would classify differently). nil when `spine install
+// incus` runs standalone — installIncus() then resolves on its own.
+var (
+	deployStorageDecision *hoststorage.StorageDecision
+	deployStoragePlan     *hoststorage.Plan
+	deployStoragePolicy   *hoststorage.Policy
 )
 
 // ensureSpineUpToDate is invoked at the very top of `spine deploy`. It checks
@@ -75,6 +83,13 @@ var deployCmd = &cobra.Command{
 	},
 }
 
+var resumeDeployment bool
+
+func init() {
+	deployCmd.Flags().BoolVar(&resumeDeployment, "resume", false,
+		"reconcile existing infrastructure and resume required finalisation without reinstalling containers")
+}
+
 // waitForSocket waits for the API socket to become available
 func waitForSocket(socketPath string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
@@ -93,18 +108,55 @@ func waitForSocket(socketPath string, timeout time.Duration) error {
 
 func runDeploy() error {
 	cfg := GetConfig()
+	runtimeStatus, manifest, err := applianceRuntime()
+	if err != nil {
+		return err
+	}
+	isAppliance := runtimeStatus.Kind == "appliance-image"
+	if isAppliance {
+		if manifest == nil {
+			return fmt.Errorf("appliance manifest is unavailable")
+		}
+		if err := verifyApplianceImagePrerequisites(*manifest); err != nil {
+			return err
+		}
+		if err := verifyApplianceReleaseSet(*manifest, cfg); err != nil {
+			return fmt.Errorf("appliance release set: %w", err)
+		}
+	}
 
 	fmt.Println("========================================")
 	fmt.Println("  YouEye Full Deployment")
 	fmt.Println("========================================")
 	fmt.Println("")
+	if resumeDeployment {
+		if isAppliance {
+			decision, plan, policy, err := resolveStorageDecision()
+			if err != nil {
+				return err
+			}
+			if err := prepareApplianceStorage(decision); err != nil {
+				return err
+			}
+			deployStorageDecision = &decision
+			deployStoragePlan = &plan
+			deployStoragePolicy = &policy
+		}
+		// Resume must reconcile the exact Control Panel release as well as the
+		// infrastructure apps. In particular, a factory-reset reconstruction may
+		// leave a complete container but no host-side installed provenance.
+		if err := installControl(); err != nil {
+			return fmt.Errorf("Control Panel reconciliation failed: %w", err)
+		}
+		return resumeExistingDeployment()
+	}
 
 	// Step 0: ensure Spine itself is up to date before deploying.
 	// We never block the deploy on network failures — if the check or the
 	// update itself fails we log a warning and continue with the current
 	// binary. The SPINE_DEPLOY_UPDATED env var is used as a re-exec guard
 	// so a fresh post-update binary doesn't loop forever.
-	if os.Getenv("SPINE_DEPLOY_UPDATED") != "1" {
+	if !isAppliance && os.Getenv("SPINE_DEPLOY_UPDATED") != "1" {
 		ensureSpineUpToDate(cfg)
 	}
 
@@ -115,18 +167,51 @@ func runDeploy() error {
 	// race with the CP's infrastructure deployment (BUG: Pi-Hole "already running").
 	// Stop old spine.service OR new youeye.service (handles migration)
 	exec.Command("systemctl", "stop", "youeye").Run()
-	exec.Command("systemctl", "disable", "youeye").Run()
-	exec.Command("systemctl", "stop", "spine").Run()
-	exec.Command("systemctl", "disable", "spine").Run()
+	if isAppliance {
+		// Persistent /var/lib/incus must be mounted before the baked daemon is
+		// reconciled. Stop runtime activity; do not disable or rewrite its unit.
+		exec.Command("systemctl", "stop", "incus").Run()
+	}
+	if !isAppliance {
+		exec.Command("systemctl", "disable", "youeye").Run()
+		exec.Command("systemctl", "stop", "spine").Run()
+		exec.Command("systemctl", "disable", "spine").Run()
+	}
 
 	// Kill any remaining API processes (fallback if service wasn't active)
 	exec.Command("pkill", "-9", "-f", "youeye api serve").Run()
 	exec.Command("pkill", "-9", "-f", "spine api serve").Run()
 
-	// Create base data directories
+	// Resolve the storage decision and prepare dedicated-disk data storage
+	// BEFORE createDataDirectories(): for a dedicated-disk deploy the
+	// default/data dataset must be mounted at /var/lib/youeye so the data
+	// directories land on ZFS, not shadowed on the root filesystem.
+	emitFirstDeployProgress("storage", "Preparing persistent storage", 36)
+	decision, plan, policy, err := resolveStorageDecision()
+	if err != nil {
+		return err
+	}
+	if decision.Hint != "" {
+		fmt.Printf("  ℹ %s\n", decision.Hint)
+	}
+	if decision.Kind == hoststorage.DecisionFail {
+		return fmt.Errorf("storage: %s", decision.Reason)
+	}
+	fmt.Printf("Storage plan: %s — %s\n", decision.Kind, decision.Reason)
+	if err := prepareApplianceStorage(decision); err != nil {
+		return err
+	}
+	// Cache the resolved decision so installIncus() reuses it instead of
+	// re-resolving (which could differ once the pool exists).
+	deployStorageDecision = &decision
+	deployStoragePlan = &plan
+	deployStoragePolicy = &policy
+
+	// Create base data directories (now on ZFS when dedicated-disk-backed).
 	createDataDirectories()
 
 	// Step 1: Install Incus
+	emitFirstDeployProgress("incus", "Starting the container runtime", 42)
 	fmt.Println("[1/4] Installing Incus...")
 	if err := installIncus(); err != nil {
 		return fmt.Errorf("Incus installation failed: %w", err)
@@ -134,6 +219,7 @@ func runDeploy() error {
 	fmt.Println("")
 
 	// Step 2: Start API server (as detached process)
+	emitFirstDeployProgress("system_core", "Starting the System core", 48)
 	fmt.Println("[2/4] Starting YouEye API server...")
 
 	socketDir := "/var/run/youeye"
@@ -149,6 +235,10 @@ func runDeploy() error {
 	if err := apiCmd.Start(); err != nil {
 		fmt.Printf("Warning: could not start API server: %v\n", err)
 	} else {
+		// Start() leaves the API server as our child even though Setsid gives it
+		// an independent session. Always Wait in the background so a SIGTERM'd
+		// server is reaped instead of remaining a zombie until deploy exits.
+		reapDetachedProcess(apiCmd)
 		if err := waitForSocket(cfg.API.SocketPath, 5*time.Second); err != nil {
 			fmt.Printf("Warning: API socket not ready: %v\n", err)
 		}
@@ -157,9 +247,12 @@ func runDeploy() error {
 	fmt.Println("")
 
 	// Ensure swap exists as a safety net for memory pressure
-	ensureSwapFile()
+	if !isAppliance {
+		ensureSwapFile()
+	}
 
 	// Step 3: Deploy Control Panel container
+	emitFirstDeployProgress("server_interface", "Installing the Server interface", 55)
 	fmt.Println("[3/4] Deploying Control Panel...")
 	if err := installControl(); err != nil {
 		return fmt.Errorf("Control Panel deployment failed: %w", err)
@@ -171,23 +264,9 @@ func runDeploy() error {
 		return fmt.Errorf("Infrastructure deployment failed: %w", err)
 	}
 
-	// Provision the UI bridge token to both containers
-	provisionBridgeToken()
-
-	// Provision CLI authentication token for the `youeye` CLI tool
-	provisionCLIToken()
-
-	// Auto-enable Spine API on boot
-	enableSpineService()
-
 	ip := util.GetPrimaryIP()
-
-	// Persist the host IP so the next `spine api serve` startup recognises
-	// any future change. Without this seed, the first post-deploy boot
-	// would write the file as a no-op (first-run path) and any IP change
-	// between deploy and that boot would be missed.
-	if err := util.WriteStoredHostIP(ip); err != nil {
-		fmt.Printf("Warning: could not persist host IP %s to %s: %v\n", ip, util.HostIPFile, err)
+	if err := finalizeDeployment(ip); err != nil {
+		return fmt.Errorf("deployment finalisation incomplete: %w", err)
 	}
 
 	fmt.Println("")
@@ -203,6 +282,31 @@ func runDeploy() error {
 	return nil
 }
 
+func resumeExistingDeployment() error {
+	hostIP := util.GetPrimaryIP()
+	if err := requireContainerRunning("youeye-control"); err != nil {
+		return fmt.Errorf("cannot resume without the existing Control Panel: %w", err)
+	}
+	secretBytes, err := os.ReadFile("/var/lib/youeye/control/.deploy_secret")
+	if err != nil {
+		return fmt.Errorf("cannot read deploy secret: %w", err)
+	}
+	client := newDeploymentJobClient(deploymentBaseURL, strings.TrimSpace(string(secretBytes)))
+	if err := client.execute("reconcile", hostIP); err != nil {
+		return fmt.Errorf("infrastructure reconciliation failed: %w", err)
+	}
+	if err := finalizeDeployment(hostIP); err != nil {
+		return fmt.Errorf("deployment finalisation incomplete: %w", err)
+	}
+
+	fmt.Println("")
+	fmt.Println("========================================")
+	fmt.Println("  Deployment Resumed and Verified!")
+	fmt.Println("========================================")
+	fmt.Printf("Setup URL: https://%s\n", hostIP)
+	return nil
+}
+
 // deployInfrastructureViaCP calls the Control Panel SSE endpoint to deploy
 // all infrastructure apps (PostgreSQL, Caddy, Pi-Hole, UI).
 func deployInfrastructureViaCP() error {
@@ -215,70 +319,7 @@ func deployInfrastructureViaCP() error {
 	}
 	deploySecret := strings.TrimSpace(string(secretBytes))
 
-	// POST to Control Panel deployment endpoint
-	body := fmt.Sprintf(`{"host_ip":"%s"}`, hostIP)
-	req, err := http.NewRequest("POST", "http://127.0.0.1:3000/api/deploy/infrastructure", strings.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Deploy-Secret", deploySecret)
-
-	client := &http.Client{Timeout: 30 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to connect to Control Panel: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		bodyBytes := make([]byte, 1024)
-		n, _ := resp.Body.Read(bodyBytes)
-		return fmt.Errorf("Control Panel returned status %d: %s", resp.StatusCode, string(bodyBytes[:n]))
-	}
-
-	// Read SSE stream and print progress
-	scanner := bufio.NewScanner(resp.Body)
-	var lastEvent deploymentEvent
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-
-		jsonStr := strings.TrimPrefix(line, "data: ")
-		var event deploymentEvent
-		if err := json.Unmarshal([]byte(jsonStr), &event); err != nil {
-			continue
-		}
-		lastEvent = event
-
-		// Print progress
-		icon := "⏳"
-		switch event.Status {
-		case "success":
-			icon = "✓"
-		case "error":
-			icon = "✗"
-		case "skipped":
-			icon = "→"
-		}
-		fmt.Printf("  %s [%d/%d] %s\n", icon, event.Step, event.TotalSteps, event.Message)
-		if event.Detail != "" && event.Status == "error" {
-			fmt.Printf("    Detail: %s\n", event.Detail)
-		}
-	}
-
-	if scanner.Err() != nil {
-		return fmt.Errorf("error reading SSE stream: %w (last event: step=%d status=%s)", scanner.Err(), lastEvent.Step, lastEvent.Status)
-	}
-
-	// Check if last event indicates overall failure
-	if lastEvent.Status == "error" && lastEvent.Step <= 3 {
-		return fmt.Errorf("critical deployment step %d failed: %s", lastEvent.Step, lastEvent.Message)
-	}
-
-	return nil
+	return newDeploymentJobClient(deploymentBaseURL, deploySecret).execute("deploy", hostIP)
 }
 
 type deploymentEvent struct {
@@ -287,6 +328,7 @@ type deploymentEvent struct {
 	Status     string `json:"status"`
 	Message    string `json:"message"`
 	Detail     string `json:"detail,omitempty"`
+	Terminal   bool   `json:"terminal,omitempty"`
 }
 
 // provisionBridgeToken generates a shared bridge token and pushes it to both
@@ -296,7 +338,7 @@ type deploymentEvent struct {
 // The token is stored on the host at /var/lib/youeye/control/.bridge_token
 // and pushed to /etc/youeye/ui-bridge-token in both containers.
 // If a token already exists on the host, it is reused (idempotent).
-func provisionBridgeToken() {
+func provisionBridgeToken() error {
 	fmt.Println("Provisioning UI bridge token...")
 
 	hostTokenPath := "/var/lib/youeye/control/.bridge_token"
@@ -320,16 +362,35 @@ func provisionBridgeToken() {
 	}
 
 	// Always persist the token on the host
-	os.MkdirAll("/var/lib/youeye/control", 0700)
+	if err := os.MkdirAll("/var/lib/youeye/control", 0700); err != nil {
+		return fmt.Errorf("create bridge token directory: %w", err)
+	}
 	if err := os.WriteFile(hostTokenPath, []byte(token), 0600); err != nil {
-		fmt.Printf("  Warning: could not save bridge token to host: %v\n", err)
+		return fmt.Errorf("persist bridge token on host: %w", err)
+	}
+	if err := os.Chmod(hostTokenPath, 0600); err != nil {
+		return fmt.Errorf("restrict bridge token permissions: %w", err)
 	}
 
 	// Write token to a temp file for pushing to containers
-	tmpFile := "/tmp/.ye-bridge-token"
-	if err := os.WriteFile(tmpFile, []byte(token), 0600); err != nil {
-		fmt.Printf("  Warning: could not write temp token file: %v\n", err)
-		return
+	tmp, err := os.CreateTemp("/tmp", ".ye-bridge-token-*")
+	if err != nil {
+		return fmt.Errorf("create temporary bridge token: %w", err)
+	}
+	tmpFile := tmp.Name()
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		os.Remove(tmpFile)
+		return fmt.Errorf("restrict temporary bridge token: %w", err)
+	}
+	if _, err := tmp.WriteString(token); err != nil {
+		tmp.Close()
+		os.Remove(tmpFile)
+		return fmt.Errorf("write temporary bridge token: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpFile)
+		return fmt.Errorf("close temporary bridge token: %w", err)
 	}
 	defer os.Remove(tmpFile)
 
@@ -337,15 +398,14 @@ func provisionBridgeToken() {
 	containers := []string{"youeye-control", "youeye-ui"}
 	needCPRestart := false
 	for _, ctr := range containers {
-		// Check if container exists and is running
-		out, err := exec.Command("incus", "list", ctr, "--format", "csv", "-c", "s").Output()
-		if err != nil || !strings.Contains(strings.ToUpper(string(out)), "RUNNING") {
-			fmt.Printf("  Skipping %s (not running)\n", ctr)
-			continue
+		if err := requireContainerRunning(ctr); err != nil {
+			return err
 		}
 
 		// Ensure /etc/youeye directory exists inside container
-		exec.Command("incus", "exec", ctr, "--", "mkdir", "-p", "/etc/youeye").Run()
+		if out, err := exec.Command("incus", "exec", ctr, "--", "mkdir", "-p", "/etc/youeye").CombinedOutput(); err != nil {
+			return fmt.Errorf("create token directory in %s: %w: %s", ctr, err, strings.TrimSpace(string(out)))
+		}
 
 		// Check if the container already has the correct token
 		existingOut, _ := exec.Command("incus", "exec", ctr, "--", "cat", containerTokenPath).Output()
@@ -357,12 +417,13 @@ func provisionBridgeToken() {
 		// Push the token file
 		target := ctr + containerTokenPath
 		if err := util.RunCmdQuiet("incus", "file", "push", tmpFile, target); err != nil {
-			fmt.Printf("  Warning: could not push token to %s: %v\n", ctr, err)
-			continue
+			return fmt.Errorf("push bridge token to %s: %w", ctr, err)
 		}
 
 		// Set restrictive permissions
-		exec.Command("incus", "exec", ctr, "--", "chmod", "600", containerTokenPath).Run()
+		if out, err := exec.Command("incus", "exec", ctr, "--", "chmod", "600", containerTokenPath).CombinedOutput(); err != nil {
+			return fmt.Errorf("restrict bridge token in %s: %w: %s", ctr, err, strings.TrimSpace(string(out)))
+		}
 
 		fmt.Printf("  ✓ Token pushed to %s\n", ctr)
 
@@ -375,13 +436,26 @@ func provisionBridgeToken() {
 	// Restart CP if its token file changed (to clear the in-memory token cache)
 	if needCPRestart {
 		fmt.Println("  Restarting Control Panel to apply new token...")
-		exec.Command("incus", "exec", "youeye-control", "--",
-			"systemctl", "restart", "youeye-control").Run()
-		// Brief wait for CP to come back up
-		time.Sleep(3 * time.Second)
+		if out, err := exec.Command("incus", "exec", "youeye-control", "--",
+			"systemctl", "restart", "youeye-control").CombinedOutput(); err != nil {
+			return fmt.Errorf("restart Control Panel after bridge token update: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		if err := waitForContainerService("youeye-control", "youeye-control", 60*time.Second); err != nil {
+			return err
+		}
+	}
+
+	if err := verifyHostToken(hostTokenPath, token); err != nil {
+		return fmt.Errorf("verify host bridge token: %w", err)
+	}
+	for _, ctr := range containers {
+		if err := verifyContainerToken(ctr, containerTokenPath, token); err != nil {
+			return fmt.Errorf("verify bridge token in %s: %w", ctr, err)
+		}
 	}
 
 	fmt.Println("✓ Bridge token provisioned")
+	return nil
 }
 
 // provisionCLIToken generates a CLI authentication token and pushes it to the
@@ -390,7 +464,7 @@ func provisionBridgeToken() {
 //
 // The token is stored on the host at /var/lib/youeye/config/cli-token (0600)
 // and pushed to /etc/youeye/cli-token in the CP container.
-func provisionCLIToken() {
+func provisionCLIToken() error {
 	fmt.Println("Provisioning CLI authentication token...")
 
 	hostTokenPath := "/var/lib/youeye/config/cli-token"
@@ -407,45 +481,72 @@ func provisionCLIToken() {
 	}
 
 	// Persist on host
-	os.MkdirAll("/var/lib/youeye/config", 0700)
+	if err := os.MkdirAll("/var/lib/youeye/config", 0700); err != nil {
+		return fmt.Errorf("create CLI token directory: %w", err)
+	}
 	if err := os.WriteFile(hostTokenPath, []byte(token), 0600); err != nil {
-		fmt.Printf("  Warning: could not save CLI token: %v\n", err)
-		return
+		return fmt.Errorf("persist CLI token on host: %w", err)
+	}
+	if err := os.Chmod(hostTokenPath, 0600); err != nil {
+		return fmt.Errorf("restrict CLI token permissions: %w", err)
 	}
 
 	// Push to CP container
-	out, err := exec.Command("incus", "list", "youeye-control", "--format", "csv", "-c", "s").Output()
-	if err != nil || !strings.Contains(strings.ToUpper(string(out)), "RUNNING") {
-		fmt.Println("  Skipping Control Panel push (not running)")
-		return
+	if err := requireContainerRunning("youeye-control"); err != nil {
+		return err
 	}
 
-	exec.Command("incus", "exec", "youeye-control", "--", "mkdir", "-p", "/etc/youeye").Run()
+	if out, err := exec.Command("incus", "exec", "youeye-control", "--", "mkdir", "-p", "/etc/youeye").CombinedOutput(); err != nil {
+		return fmt.Errorf("create CLI token directory in Control Panel: %w: %s", err, strings.TrimSpace(string(out)))
+	}
 
 	existingOut, _ := exec.Command("incus", "exec", "youeye-control", "--", "cat", containerTokenPath).Output()
 	if strings.TrimSpace(string(existingOut)) == token {
 		fmt.Println("  ✓ Control Panel already has correct CLI token")
 	} else {
-		tmpFile := "/tmp/.ye-cli-token"
-		if err := os.WriteFile(tmpFile, []byte(token), 0600); err != nil {
-			fmt.Printf("  Warning: could not write temp CLI token: %v\n", err)
-			return
+		tmp, err := os.CreateTemp("/tmp", ".ye-cli-token-*")
+		if err != nil {
+			return fmt.Errorf("create temporary CLI token: %w", err)
+		}
+		tmpFile := tmp.Name()
+		if err := tmp.Chmod(0600); err != nil {
+			tmp.Close()
+			os.Remove(tmpFile)
+			return fmt.Errorf("restrict temporary CLI token: %w", err)
+		}
+		if _, err := tmp.WriteString(token); err != nil {
+			tmp.Close()
+			os.Remove(tmpFile)
+			return fmt.Errorf("write temporary CLI token: %w", err)
+		}
+		if err := tmp.Close(); err != nil {
+			os.Remove(tmpFile)
+			return fmt.Errorf("close temporary CLI token: %w", err)
 		}
 		defer os.Remove(tmpFile)
 
 		if err := util.RunCmdQuiet("incus", "file", "push", tmpFile, "youeye-control"+containerTokenPath); err != nil {
-			fmt.Printf("  Warning: could not push CLI token to Control Panel: %v\n", err)
-			return
+			return fmt.Errorf("push CLI token to Control Panel: %w", err)
 		}
-		exec.Command("incus", "exec", "youeye-control", "--", "chmod", "600", containerTokenPath).Run()
+		if out, err := exec.Command("incus", "exec", "youeye-control", "--", "chmod", "600", containerTokenPath).CombinedOutput(); err != nil {
+			return fmt.Errorf("restrict CLI token in Control Panel: %w: %s", err, strings.TrimSpace(string(out)))
+		}
 		fmt.Println("  ✓ CLI token pushed to Control Panel")
 	}
 
+	if err := verifyHostToken(hostTokenPath, token); err != nil {
+		return fmt.Errorf("verify host CLI token: %w", err)
+	}
+	if err := verifyContainerToken("youeye-control", containerTokenPath, token); err != nil {
+		return fmt.Errorf("verify CLI token in Control Panel: %w", err)
+	}
+
 	fmt.Println("✓ CLI token provisioned")
+	return nil
 }
 
 // enableSpineService creates and enables the Spine systemd service
-func enableSpineService() {
+func enableSpineService() error {
 	// Always update service file to ensure latest configuration
 	// (handles upgrades from older versions)
 	// We MUST order spine.service after network-online.target (not just
@@ -515,44 +616,51 @@ RestartSec=5
 WantedBy=multi-user.target
 `
 	// Remove old spine.service if it exists (migration)
-	os.Remove("/etc/systemd/system/spine.service")
+	if err := os.Remove("/etc/systemd/system/spine.service"); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove legacy spine service: %w", err)
+	}
 
 	if err := os.WriteFile("/etc/systemd/system/youeye.service", []byte(serviceContent), 0644); err != nil {
-		fmt.Printf("Warning: could not create service file: %v\n", err)
-		return
+		return fmt.Errorf("write youeye service: %w", err)
 	}
 
-	// Reload systemd and enable service
-	exec.Command("systemctl", "daemon-reload").Run()
-	if err := exec.Command("systemctl", "enable", "--now", "youeye").Run(); err != nil {
-		fmt.Printf("Warning: could not enable youeye service: %v\n", err)
-		return
+	if err := configureIncusStartupDependency(); err != nil {
+		return err
 	}
-	fmt.Println("✓ YouEye service enabled on boot")
-
-	// Configure Incus startup to wait for Spine socket
-	configureIncusStartupDependency()
+	if err := stopDetachedAPIServer(); err != nil {
+		return err
+	}
+	if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
+		return fmt.Errorf("reload systemd: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("systemctl", "enable", "--now", "youeye").CombinedOutput(); err != nil {
+		return fmt.Errorf("enable youeye service: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if err := verifySystemdState("youeye.service", "is-enabled", "enabled"); err != nil {
+		return err
+	}
+	if err := verifySystemdState("youeye.service", "is-active", "active"); err != nil {
+		return err
+	}
+	fmt.Println("✓ YouEye service and Incus dependency enabled")
+	return nil
 }
 
 // configureIncusStartupDependency creates a systemd override so incus-startup.service
 // waits for spine.service before starting containers. This ensures the Spine socket
 // exists before containers with spine-socket proxy devices try to start.
-func configureIncusStartupDependency() {
+func configureIncusStartupDependency() error {
 	overrideDir := "/etc/systemd/system/incus-startup.service.d"
 	overrideFile := overrideDir + "/youeye-dependency.conf"
 
 	// Remove old spine-dependency.conf if present (migration)
-	os.Remove(overrideDir + "/spine-dependency.conf")
-
-	// Check if override already exists
-	if _, err := os.Stat(overrideFile); err == nil {
-		return // Already configured
+	if err := os.Remove(overrideDir + "/spine-dependency.conf"); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove legacy Incus dependency: %w", err)
 	}
 
 	// Create override directory
 	if err := os.MkdirAll(overrideDir, 0755); err != nil {
-		fmt.Printf("Warning: could not create systemd override directory: %v\n", err)
-		return
+		return fmt.Errorf("create Incus dependency directory: %w", err)
 	}
 
 	// Create override file that makes incus-startup wait for spine
@@ -563,13 +671,9 @@ After=youeye.service
 Wants=youeye.service
 `
 	if err := os.WriteFile(overrideFile, []byte(overrideContent), 0644); err != nil {
-		fmt.Printf("Warning: could not create systemd override: %v\n", err)
-		return
+		return fmt.Errorf("write Incus dependency: %w", err)
 	}
-
-	// Reload systemd to pick up the new override
-	exec.Command("systemctl", "daemon-reload").Run()
-	fmt.Println("✓ Incus configured to wait for YouEye")
+	return nil
 }
 
 // createDataDirectories creates the base directory structure for app persistent storage.
@@ -601,18 +705,39 @@ func createDataDirectories() {
 // ensureSwapFile creates a swap file if none exists.
 // Swap converts memory pressure from "app gets killed" into "app slows down".
 // Skipped inside LXC containers (swap is managed by the host/Proxmox).
+//
+// The swapfile lives at /var/swapfile on the OS root filesystem — NOT under
+// /var/lib/youeye, which is now a ZFS dataset on dedicated-disk deploys. Swap
+// on ZFS is a documented deadlock hazard (OpenZFS), so swap must never sit on
+// the ZFS data dataset.
 func ensureSwapFile() {
-	const swapPath = "/var/lib/youeye/swapfile"
+	const swapPath = "/var/swapfile"
+	const legacySwapPath = "/var/lib/youeye/swapfile"
 
 	// Check if swap already exists
 	out, _ := exec.Command("swapon", "--show", "--noheadings").Output()
 	if len(strings.TrimSpace(string(out))) > 0 {
+		// Swap is already active. If it's the legacy path on a NON-ZFS
+		// filesystem, leave it working (migration: don't disturb a healthy
+		// ext4-backed swapfile). We only ever refuse to CREATE new swap on ZFS.
+		if strings.Contains(string(out), legacySwapPath) && fsTypeOf(legacySwapPath) == "zfs" {
+			fmt.Printf("Warning: active swapfile %s is on ZFS (deadlock hazard). "+
+				"Leaving it in place — recreate it on the OS filesystem manually if desired.\n", legacySwapPath)
+		}
 		return // swap already active
 	}
 
 	// Detect LXC environment — can't create swap inside a container
 	if err := exec.Command("systemd-detect-virt", "-c").Run(); err == nil {
 		fmt.Println("Running inside a container — skipping swap creation")
+		return
+	}
+
+	// Never create swap on ZFS (deadlock hazard). /var/swapfile lives on the
+	// filesystem backing /var — refuse if that is ZFS.
+	if fsTypeOf("/var") == "zfs" {
+		fmt.Println("Warning: /var is on ZFS — skipping swapfile creation (swap on ZFS deadlocks). " +
+			"Provision swap on a non-ZFS filesystem if needed.")
 		return
 	}
 
@@ -696,4 +821,15 @@ func ensureSwapFile() {
 	}
 
 	fmt.Printf("✓ Swap file created (%d MB)\n", swapMB)
+}
+
+// fsTypeOf returns the filesystem type backing a path (e.g. "ext4", "zfs"),
+// or "" if it cannot be determined. Uses findmnt with -T (target file) so it
+// resolves the mount that actually contains the path.
+func fsTypeOf(path string) string {
+	out, err := exec.Command("findmnt", "-n", "-o", "FSTYPE", "-T", path).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }

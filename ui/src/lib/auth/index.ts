@@ -10,7 +10,7 @@ export {
   fetchUserInfo,
   generateOAuthState,
   isSSOConfigured,
-} from "./authentik";
+} from "./oauth";
 
 export {
   createSession,

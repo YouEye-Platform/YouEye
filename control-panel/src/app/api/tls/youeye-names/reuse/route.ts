@@ -14,6 +14,22 @@ export async function GET() {
   if (!session?.isAdmin) {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
   }
-  const bundle = await getStagedBundle();
-  return NextResponse.json({ reuse: !!bundle, name: bundle?.name ?? null });
+  try {
+    const bundle = await getStagedBundle();
+    return NextResponse.json({
+      reuse: !!bundle,
+      name: bundle?.name ?? null,
+      fqdn: bundle?.fqdn ?? null,
+    });
+  } catch {
+    return NextResponse.json(
+      {
+        reuse: false,
+        name: null,
+        fqdn: null,
+        error: 'The saved YouEye Names bundle is damaged or has unsafe permissions. Replace or remove it before continuing.',
+      },
+      { status: 422 },
+    );
+  }
 }

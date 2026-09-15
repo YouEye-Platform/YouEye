@@ -1,14 +1,18 @@
 /**
  * Reconfigure API
  *
- * POST /api/setup/reconfigure — Change domain, site name, and/or subdomains.
- * Streams progress via Server-Sent Events.
+ * POST /api/setup/reconfigure — Change the server URL (domain), site name,
+ * and/or subdomains on a running platform. Streams progress via Server-Sent
+ * Events. Accepts admin browser sessions and the Spine CLI token
+ * (`youeye domain set` drives this endpoint).
  */
 
 import { NextRequest } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { reconfigure } from '@/lib/reconfigure';
-import type { ReconfigureRequest } from '@/lib/reconfigure';
+import type { ReconfigureRequest, ReconfigureTlsTarget } from '@/lib/reconfigure';
+
+const WIRE_TLS_TARGETS: ReconfigureTlsTarget[] = ['auto', 'selfsigned', 'provider'];
 
 export async function POST(request: NextRequest) {
   const session = await getSession();
@@ -21,7 +25,19 @@ export async function POST(request: NextRequest) {
     return new Response('Invalid CSRF token', { status: 403 });
   }
 
-  const body: ReconfigureRequest = await request.json();
+  const raw = await request.json();
+
+  // Allowlist wire fields — bundle-based TLS targets are programmatic-only and
+  // reachable exclusively through the dedicated apply endpoints, which install
+  // the bundle credentials before reconfiguring.
+  const body: ReconfigureRequest = {
+    site_name: typeof raw.site_name === 'string' ? raw.site_name : undefined,
+    domain: typeof raw.domain === 'string' ? raw.domain.trim().toLowerCase() : undefined,
+    subdomains: raw.subdomains && typeof raw.subdomains === 'object' ? raw.subdomains : undefined,
+    site_name_style: raw.site_name_style && typeof raw.site_name_style === 'object' ? raw.site_name_style : undefined,
+    identity_name: typeof raw.identity_name === 'string' ? raw.identity_name : undefined,
+    tls: WIRE_TLS_TARGETS.includes(raw.tls) ? raw.tls : undefined,
+  };
 
   // Validate at least one field is being changed
   if (!body.site_name && !body.domain && !body.subdomains && !body.site_name_style && !body.identity_name) {

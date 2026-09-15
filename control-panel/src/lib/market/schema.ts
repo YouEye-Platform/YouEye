@@ -47,28 +47,41 @@ export const HealthCheckSchema = z.discriminatedUnion('type', [
     type: z.literal('http'),
     path: z.string().default('/'),
     timeout: z.number().int().positive().default(120_000),
+    retries: z.number().int().positive().default(3),
+    startPeriod: z.number().int().nonnegative().default(0),
+    autoRestart: z.boolean().default(true),
   }),
   z.object({
     type: z.literal('postgres'),
     user: z.string().min(1),
     timeout: z.number().int().positive().default(60_000),
+    retries: z.number().int().positive().default(3),
+    startPeriod: z.number().int().nonnegative().default(0),
+    autoRestart: z.boolean().default(true),
   }),
 ]);
 
 // ─── Volume ───────────────────────────────────────────────
 
 export const VolumeSchema = z.object({
-  name: z.string().optional(),
-  host: z.string().min(1),
+  name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/, 'Volume name must be lowercase alphanumeric with dashes'),
   container: z.string().min(1),
   type: z.enum(['config', 'data', 'media', 'cache']).default('data'),
   containers: z.array(z.string()).optional(),
   read_only: z.boolean().default(false),
-  // Shared storage group — apps that declare the same `storageGroup` mount the SAME host
-  // dir (/var/lib/youeye/storage-groups/<group>), so they share files on one filesystem
-  // (hardlink-compatible, e.g. a `downloads` group for the *arr stack). When set, the
-  // per-app `host` above is ignored. Regex-restricted to block path traversal.
+  // Shared storage group — apps that declare the same group mount the same
+  // Incus custom filesystem volume. It is retained until the final consumer is removed.
   storageGroup: z.string().regex(/^[a-z0-9-]+$/, 'storageGroup must be lowercase alphanumeric with dashes').optional(),
+  /** Re-attach a subpath from another named volume in this container. */
+  sourceVolume: z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/).optional(),
+  sourcePath: z.string().regex(/^[a-zA-Z0-9._/-]+$/).optional(),
+}).superRefine((value, ctx) => {
+  if (Boolean(value.sourceVolume) !== Boolean(value.sourcePath)) {
+    ctx.addIssue({ code: 'custom', message: 'sourceVolume and sourcePath must be declared together' });
+  }
+  if (value.sourcePath && (value.sourcePath.startsWith('/') || value.sourcePath.split('/').includes('..'))) {
+    ctx.addIssue({ code: 'custom', message: 'sourcePath must remain inside its custom volume' });
+  }
 });
 
 // ─── Post-Deploy Step ─────────────────────────────────────
@@ -85,6 +98,7 @@ export const ContainerSourceSchema = z.object({
   nodeVersion: z.string().optional(),
   appDir: z.string().default('/opt/app'),
   tagPrefix: z.string().optional(),
+  artifactSHA256: z.string().regex(/^[0-9a-fA-F]{64}$/, 'artifactSHA256 must be a SHA-256 digest').optional(),
 });
 
 // ─── Container ────────────────────────────────────────────
@@ -140,6 +154,7 @@ export const DatabaseSchema = z.object({
 // ─── Config Files ──────────────────────────────────────────
 
 export const ConfigFileSchema = z.object({
+  container: z.string().regex(/^[a-z0-9-]+$/, 'Config file container must match a manifest container name'),
   path: z.string().min(1),
   permission: z.string().default('0o644'),
   directoryPermission: z.string().default('0o700'),
@@ -433,15 +448,11 @@ export const EntranceSchema = z.object({
 export const OwnPostgresSchema = z.object({
   container: z.string().min(1),
   database: z.string().min(1),
+  user: z.string().min(1).optional(),
 });
 
 export const BackupSchema = z.object({
-  strategy: z.enum(['stop-dump-export', 'live-export', 'snapshot']).optional().default('stop-dump-export'),
-  stopOrder: z.array(z.string()).optional().default([]),
-  startOrder: z.array(z.string()).optional().default([]),
   ownPostgres: OwnPostgresSchema.optional(),
-  volumes: z.array(z.string()).optional().default([]),
-  exclude: z.array(z.string()).optional().default([]),
 });
 
 // ─── Uninstall ─────────────────────────────────────────────
@@ -527,6 +538,22 @@ export const DetailSchema = z.object({
   screenshots: z.array(DetailScreenshotSchema).default([]),
 });
 
+// ─── Reconfigure hooks ────────────────────────────────────
+// Optional commands the reconfigure engine runs inside app containers after a
+// server URL change (env/config already updated, containers restarted).
+// Example: flush a sidecar cache that persists a stale OIDC discovery document
+// (Nextcloud's valkey caches the authorize endpoint across restarts).
+
+export const ReconfigureCommandSchema = z.object({
+  container: z.string().min(1),
+  command: z.string().min(1),
+  timeout: z.number().int().positive().optional().default(30000),
+});
+
+export const ReconfigureSchema = z.object({
+  commands: z.array(ReconfigureCommandSchema).optional().default([]),
+});
+
 // ─── Root Manifest ────────────────────────────────────────
 
 export const AppManifestSchema = z
@@ -563,6 +590,7 @@ export const AppManifestSchema = z
     sso: SSOSchema.optional(),
     integrations: z.array(IntegrationSchema).optional().default([]),
     backup: BackupSchema.optional(),
+    reconfigure: ReconfigureSchema.optional(),
     uninstall: UninstallSchema.optional(),
     update: UpdateSchema.optional(),
     detail: DetailSchema.optional(),

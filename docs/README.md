@@ -2,10 +2,6 @@
 
 Welcome to the YouEye platform documentation. These guides cover installation, daily usage, administration, and architecture.
 
-<p align="center">
-  <img src="assets/screenshots/homepage/dashboard.png" alt="YouEye Dashboard" width="800">
-</p>
-
 ## Contents
 
 | Guide | Description |
@@ -20,43 +16,7 @@ Welcome to the YouEye platform documentation. These guides cover installation, d
 
 ## Screenshots
 
-<details>
-<summary>Dashboard & Navigation</summary>
-
-| | |
-|---|---|
-| ![Dashboard](assets/screenshots/homepage/dashboard.png) | ![App Drawer](assets/screenshots/homepage/app-drawer.png) |
-| Dashboard with widgets | App drawer |
-| ![Notifications](assets/screenshots/homepage/notifications.png) | ![Edit Mode](assets/screenshots/homepage/edit-mode.png) |
-| Notifications panel | Widget edit mode |
-
-</details>
-
-<details>
-<summary>Native Apps</summary>
-
-| | |
-|---|---|
-| ![Wiki](assets/screenshots/apps/wiki/home.png) | ![Search](assets/screenshots/apps/search/home.png) |
-| Wiki | Search |
-| ![Notes](assets/screenshots/apps/notes/home.png) | ![Cinema](assets/screenshots/apps/cinema/home.png) |
-| Notes | Cinema |
-| ![Weather](assets/screenshots/apps/weather/home.png) | ![Translate](assets/screenshots/apps/translate/home.png) |
-| Weather | Translate |
-
-</details>
-
-<details>
-<summary>Control Panel</summary>
-
-| | |
-|---|---|
-| ![CP Dashboard](assets/screenshots/control-panel/dashboard.png) | ![Health](assets/screenshots/control-panel/health.png) |
-| Dashboard | Health monitoring |
-| ![Apps](assets/screenshots/control-panel/apps.png) | ![DNS](assets/screenshots/control-panel/dns.png) |
-| App management | DNS filtering |
-
-</details>
+Reviewed public screenshots are pending replacement captures from synthetic demo accounts. See [`assets/screenshots/README.md`](assets/screenshots/README.md) for the capture and review requirements.
 
 ## Quick Links
 

@@ -8,34 +8,55 @@ import (
 	"strings"
 	"time"
 
+	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 	"github.com/youeye-platform/YouEye/spine/internal/releases"
 	"github.com/youeye-platform/YouEye/spine/internal/version"
 )
 
+var statusJSON bool
+
 func runStatus() error {
 	cfg := GetConfig()
+	runtimeStatus, manifest, runtimeErr := appliance.Detect()
+	if statusJSON {
+		return writeStatusJSON(cfg, runtimeStatus, manifest, runtimeErr)
+	}
+	if runtimeErr != nil {
+		return fmt.Errorf("appliance runtime requires recovery: %w", runtimeErr)
+	}
 
 	fmt.Println("========================================")
 	fmt.Println("  YouEye Platform Status")
 	fmt.Println("========================================")
 	fmt.Println("")
 
-	// Spine version
-	fmt.Printf("Spine:           v%s", Version)
-	if update, newVer := checkSpineUpdate(cfg); update {
-		fmt.Printf(" → v%s available", newVer)
+	// Spine/image version. Appliance images never run package/release checks for
+	// image-owned components.
+	if runtimeStatus.Kind == appliance.RuntimeApplianceImage {
+		fmt.Printf("System Image:    v%s (image-managed)\n", runtimeStatus.ImageVersion)
+		fmt.Printf("Spine:           v%s (system image)\n", Version)
 	} else {
-		fmt.Print(" (latest)")
+		fmt.Printf("Spine:           v%s", Version)
+		if update, newVer := checkSpineUpdate(cfg); update {
+			fmt.Printf(" → v%s available", newVer)
+		} else {
+			fmt.Print(" (latest)")
+		}
+		fmt.Println("")
 	}
-	fmt.Println("")
 
 	// Host system
 	osRelease := getOSRelease()
 	fmt.Printf("Host System:     %s", osRelease)
-	upgrades := countUpgradablePackages()
+	upgrades := 0
+	if runtimeStatus.Capabilities.SystemUpdate {
+		upgrades = countUpgradablePackages()
+	}
 	if upgrades > 0 {
 		fmt.Printf(" - %d updates available", upgrades)
+	} else if !runtimeStatus.Capabilities.SystemUpdate {
+		fmt.Print(" (system image)")
 	}
 	fmt.Println("")
 
@@ -107,6 +128,20 @@ func runStatus() error {
 						}
 					}
 				}
+				if len(system) > 0 {
+					fmt.Println("System Apps:")
+					for _, app := range system {
+						name := firstOf(app, "displayName", "id")
+						ver := firstOf(app, "version")
+						status := firstOf(app, "status")
+						if ver != "" {
+							fmt.Printf("  %-16s %s (v%s)\n", name, status, ver)
+						} else {
+							fmt.Printf("  %-16s %s\n", name, status)
+						}
+					}
+					fmt.Println()
+				}
 				if len(infra) > 0 {
 					fmt.Println("Infrastructure:")
 					for _, app := range infra {
@@ -155,8 +190,10 @@ func runStatus() error {
 	}
 
 	// Suggestions
-	if update, _ := checkSpineUpdate(cfg); update {
-		fmt.Println("Run 'youeye update self' to update.")
+	if runtimeStatus.Capabilities.SpineUpdate {
+		if update, _ := checkSpineUpdate(cfg); update {
+			fmt.Println("Run 'youeye update self' to update.")
+		}
 	}
 	if upgrades > 0 {
 		fmt.Println("Run 'youeye update system' to update host OS.")
@@ -164,6 +201,48 @@ func runStatus() error {
 
 	return nil
 }
+
+func writeStatusJSON(cfg *config.Config, runtimeStatus appliance.RuntimeStatus, manifest *appliance.Manifest, runtimeErr error) error {
+	status := map[string]interface{}{
+		"schema_version": 1,
+		"runtime":        runtimeStatus,
+		"components": map[string]interface{}{
+			"spine":         map[string]string{"version": Version},
+			"incus":         map[string]string{"version": getIncusVersion()},
+			"control_panel": map[string]string{"status": getControlPanelStatus(cfg)},
+			"caddy":         map[string]string{"status": getAppStatus("youeye-caddy")},
+			"pihole":        map[string]string{"status": getAppStatus("youeye-pihole")},
+		},
+		"host": map[string]interface{}{
+			"os": getOSRelease(), "api_socket_present": pathExists(cfg.API.SocketPath),
+			"package_updates_supported": runtimeStatus.Capabilities.SystemUpdate,
+		},
+	}
+	if runtimeStatus.Capabilities.SystemUpdate {
+		status["host"].(map[string]interface{})["upgradeable_packages"] = countUpgradablePackages()
+	}
+	if runtimeStatus.Kind == appliance.RuntimeApplianceImage && manifest != nil {
+		persistent, err := appliance.InspectPersistentStatus(*manifest)
+		status["persistent_state"] = persistent
+		if err != nil {
+			status["warning"] = persistent.ErrorCode
+		}
+	}
+	if runtimeErr != nil {
+		status["warning"] = "appliance_recovery_required"
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(status); err != nil {
+		return err
+	}
+	if runtimeErr != nil {
+		return &ExitError{Code: healthExitUnhealthy, Message: "appliance runtime requires recovery"}
+	}
+	return nil
+}
+
+func pathExists(path string) bool { _, err := os.Stat(path); return err == nil }
 
 func checkSpineUpdate(cfg *config.Config) (bool, string) {
 	client := releases.NewIPv4Client(30 * time.Second)

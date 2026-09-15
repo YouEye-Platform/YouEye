@@ -11,11 +11,13 @@ import {
   type LucideIcon,
   Loader2,
   Package,
+  Plus,
   Search,
   Sparkles,
   Store,
 } from 'lucide-react';
 import type { MarketApp, AppStatusInfo, MarketCategory, MarketCuration, MarketBundle } from '@/lib/market/types';
+import { Input } from '@/components/ui/input';
 
 /* ─────────────────────────── helpers ─────────────────────────── */
 
@@ -73,7 +75,7 @@ function variantHref(app: MarketApp): string {
   return app.sourceId ? `/market/${app.id}?source=${encodeURIComponent(app.sourceId)}` : `/market/${app.id}`;
 }
 
-type Section = 'apps' | 'installed' | 'updates' | 'integrations';
+type Section = 'apps' | 'installed' | 'updates' | 'integrations' | 'added';
 
 /* ─────────────────────────── page ─────────────────────────── */
 
@@ -216,6 +218,7 @@ export default function MarketPage() {
     installed: realApps.filter(isInstalled).length,
     updates: realApps.filter(hasUpdate).length,
     integrations: integrations.length,
+    added: realApps.filter((app) => app.sourceId?.startsWith('direct:')).length,
   };
 
   // Category metadata index — data-driven labels/icons/tiles/order from the catalog.
@@ -282,6 +285,7 @@ export default function MarketPage() {
     if (section === 'installed') return dedupe(realApps.filter(isInstalled));
     if (section === 'updates') return dedupe(realApps.filter(hasUpdate));
     if (section === 'integrations') return dedupe(integrations);
+    if (section === 'added') return dedupe(realApps.filter((app) => app.sourceId?.startsWith('direct:')));
     return dedupe(realApps);
   })();
 
@@ -323,12 +327,12 @@ export default function MarketPage() {
         </div>
         <div className="relative w-full max-w-xs">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
+          <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search apps"
             aria-label="Search apps"
-            className="h-10 w-full rounded-full border bg-background pl-9 pr-4 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-10 rounded-full pl-9 pr-4"
           />
         </div>
       </section>
@@ -354,6 +358,10 @@ export default function MarketPage() {
         </button>
         <button type="button" className={pill(section === 'integrations')} onClick={() => setSection('integrations')}>
           <Sparkles className="h-3.5 w-3.5" /> Integrations
+        </button>
+        <button type="button" className={pill(section === 'added')} onClick={() => setSection('added')}>
+          <Plus className="h-3.5 w-3.5" /> Added
+          {counts.added > 0 && <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[11px]">{counts.added}</span>}
         </button>
 
         {usedCategories.length > 0 && <span className="mx-1 h-5 w-px bg-border" />}

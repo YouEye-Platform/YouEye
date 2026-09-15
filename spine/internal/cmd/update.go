@@ -1,11 +1,9 @@
 package cmd
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
@@ -13,6 +11,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/youeye-platform/YouEye/spine/internal/appliance"
+	"github.com/youeye-platform/YouEye/spine/internal/channels"
 	"github.com/youeye-platform/YouEye/spine/internal/container"
 	"github.com/youeye-platform/YouEye/spine/internal/releases"
 	"github.com/youeye-platform/YouEye/spine/internal/update"
@@ -93,6 +93,9 @@ systemctl restart youeye-id
 	if err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
+	if err := container.EnsureControlSocketReadiness(containerName); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -100,6 +103,8 @@ var updateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update components",
 }
+
+var updateAssumeYes bool
 
 var updateSelfCmd = &cobra.Command{
 	Use:   "self",
@@ -119,7 +124,7 @@ var updateIncusCmd = &cobra.Command{
 
 var updateSystemCmd = &cobra.Command{
 	Use:   "system",
-	Short: "Update host OS packages",
+	Short: "Update the host system or signed appliance image",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return updateSystem()
 	},
@@ -134,17 +139,72 @@ var updateControlCmd = &cobra.Command{
 }
 
 func init() {
+	updateSelfCmd.Flags().BoolVarP(&updateAssumeYes, "yes", "y", false, "confirm channel switch / downgrade without prompting")
+	updateControlCmd.Flags().BoolVarP(&updateAssumeYes, "yes", "y", false, "confirm channel switch / downgrade without prompting")
+
 	updateCmd.AddCommand(updateSelfCmd)
 	updateCmd.AddCommand(updateIncusCmd)
 	updateCmd.AddCommand(updateSystemCmd)
 	updateCmd.AddCommand(updateControlCmd)
 }
 
+// updateDecision captures the resolved candidate and whether an install should
+// proceed. A channel switch (different branch) installs even a lower version but
+// requires interactive confirmation unless assumeYes.
+type updateDecision struct {
+	proceed  bool
+	isSwitch bool
+}
+
+// decideUpdate compares the resolved candidate against the installed provenance
+// for a component and decides whether to install. A strictly newer candidate is
+// a plain update no matter which branch produced it — fallback overtaking a
+// branch install (main newer than a stale feature line) must not prompt. The
+// confirm gate exists only for moving to a NOT-newer candidate after a channel
+// change (downgrade/sidegrade). Missing provenance is treated as same-branch.
+func decideUpdate(component, currentVersion, candVersion, candBranch string, assumeYes bool) updateDecision {
+	prov, hasProv := update.GetProvenance(component)
+	installedBranch := ""
+	if hasProv {
+		installedBranch = prov.Branch
+	}
+	differentBranch := installedBranch != "" && installedBranch != candBranch
+
+	if version.IsNewer(candVersion, currentVersion) {
+		return updateDecision{proceed: true, isSwitch: differentBranch}
+	}
+	if !differentBranch {
+		return updateDecision{proceed: false}
+	}
+
+	// Channel switch to a not-newer candidate — install the exact candidate
+	// even though it is lower/equal, gated by confirmation.
+	relation := "downgrade"
+	if version.CompareVersions(candVersion, currentVersion) == 0 {
+		relation = "same version"
+	}
+
+	if !assumeYes {
+		fmt.Printf("Channel switch: %s %s → %s %s (%s). Continue? [y/N]: ",
+			installedBranch, version.FormatVersion(currentVersion),
+			candBranch, version.FormatVersion(candVersion), relation)
+		var resp string
+		fmt.Scanln(&resp)
+		if strings.ToLower(strings.TrimSpace(resp)) != "y" {
+			fmt.Println("Cancelled.")
+			return updateDecision{proceed: false, isSwitch: true}
+		}
+	}
+	return updateDecision{proceed: true, isSwitch: true}
+}
+
 func updateSelf() error {
+	if err := requireRuntimeCapability(appliance.ActionSpineUpdate); err != nil {
+		return err
+	}
 	fmt.Println("=== Updating Spine ===")
 
 	cfg := GetConfig()
-	branch := releases.ReadReleaseBranch()
 
 	update.Start("spine", Version)
 
@@ -158,29 +218,30 @@ func updateSelf() error {
 		return fmt.Errorf("unsupported architecture: %s", arch)
 	}
 
-	// Get latest release info from configured release source
-	if branch != "" && branch != "main" {
-		fmt.Printf("Release branch: %s\n", branch)
-	}
+	// Resolve the candidate release via the spine channel.
 	fmt.Println("Checking for updates...")
-	tag, effectiveBranch := releases.GetLatestTagForBranch(cfg, cfg.Releases.Repositories.Spine, branch, cfg.Releases.Repositories.SpineTagPrefix)
-	if tag == "" {
+	cand, err := releases.ResolveComponent(cfg, channels.ComponentSpine, cfg.Releases.Repositories.Spine, cfg.Releases.Repositories.SpineTagPrefix)
+	if err != nil {
 		fmt.Println("No releases found. You're running the development version.")
 		update.ClearStatus()
 		return nil
 	}
-	latestVersion := releases.ExtractVersionFromFullTag(tag, effectiveBranch, cfg.Releases.Repositories.SpineTagPrefix)
+	tag := cand.Tag
+	effectiveBranch := cand.Branch
+	latestVersion := cand.Version
 
-	// Log fallback so the agent knows which tag was used
-	if branch != "" && branch != "main" && effectiveBranch == "main" {
-		fmt.Printf("No %s-branch tag found — falling back to main tag: %s\n", branch, tag)
+	if effectiveBranch != "" && effectiveBranch != "main" {
+		fmt.Printf("Channel branch: %s\n", effectiveBranch)
 	}
 
-	fmt.Printf("Current version: %s\n", Version)
-	fmt.Printf("Latest version: %s\n", latestVersion)
+	fmt.Printf("Current version: %s\n", version.FormatVersion(Version))
+	fmt.Printf("Latest version: %s (%s)\n", version.FormatVersion(latestVersion), effectiveBranch)
 
-	if !version.IsNewer(latestVersion, Version) {
-		fmt.Println("✓ Spine is already up to date")
+	decision := decideUpdate(channels.ComponentSpine, Version, latestVersion, effectiveBranch, updateAssumeYes)
+	if !decision.proceed {
+		if !decision.isSwitch {
+			fmt.Println("✓ Spine is already up to date")
+		}
 		update.ClearStatus()
 		return nil
 	}
@@ -193,8 +254,8 @@ func updateSelf() error {
 
 	update.Emit("spine", update.StatusDownloading, 20, fmt.Sprintf("Downloading %s...", latestVersion))
 
-	// Download new binary using the resolved tag (may be main tag if branch tag not found)
-	downloadURL := releases.BuildDownloadURL(cfg, cfg.Releases.Repositories.Spine, tag, fmt.Sprintf("spine-linux-%s", arch))
+	// Download new binary using the resolved candidate (honors the channel source)
+	downloadURL := releases.BuildCandidateDownloadURL(cfg, cand, cfg.Releases.Repositories.Spine, fmt.Sprintf("spine-linux-%s", arch))
 	fmt.Printf("Downloading from %s...\n", downloadURL)
 
 	// Download to temp file with random suffix (IPv4-only to avoid IPv6 hangs)
@@ -221,6 +282,11 @@ func updateSelf() error {
 	if err != nil {
 		os.Remove(tmpFile)
 		return fmt.Errorf("failed to download: %w", err)
+	}
+	if err := releases.VerifySignedReleaseArtifact(dlClient, downloadURL, tmpFile, cand.ArtifactSHA256); err != nil {
+		os.Remove(tmpFile)
+		update.Fail("spine", Version, "release signature verification failed")
+		return fmt.Errorf("verify signed Spine release: %w", err)
 	}
 
 	// Make executable
@@ -311,6 +377,17 @@ func updateSelf() error {
 
 	update.Emit("spine", update.StatusRestarting, 90, "Restarting Spine service...")
 
+	// Record provenance BEFORE restart — after restart, old process is gone.
+	if err := update.WriteProvenance(channels.ComponentSpine, update.ProvenanceEntry{
+		Version:        latestVersion,
+		Tag:            tag,
+		Branch:         effectiveBranch,
+		Source:         cand.Source,
+		ArtifactSHA256: cand.ArtifactSHA256,
+	}); err != nil {
+		fmt.Printf("Warning: could not record provenance: %v\n", err)
+	}
+
 	// Write completed status BEFORE restart — after restart, old process is gone
 	update.Complete("spine", Version, latestVersion)
 
@@ -387,6 +464,9 @@ func copyFile(src, dst string) error {
 }
 
 func updateIncus() error {
+	if err := requireRuntimeCapability(appliance.ActionIncusUpdate); err != nil {
+		return err
+	}
 	fmt.Println("=== Updating Incus ===")
 
 	// Get current version
@@ -413,6 +493,16 @@ func updateIncus() error {
 }
 
 func updateSystem() error {
+	runtimeStatus, _, runtimeErr := applianceRuntime()
+	if runtimeErr != nil {
+		return runtimeErr
+	}
+	if runtimeStatus.Kind == appliance.RuntimeApplianceImage {
+		return runSystemUpdateStatus(false)
+	}
+	if err := requireRuntimeCapability(appliance.ActionSystemUpdate); err != nil {
+		return err
+	}
 	fmt.Println("=== Updating Host System ===")
 	fmt.Println("")
 	fmt.Println("⚠️  WARNING: This will update all system packages.")
@@ -465,7 +555,6 @@ func updateControl() error {
 	fmt.Println("=== Updating Control Panel ===")
 
 	cfg := GetConfig()
-	branch := releases.ReadReleaseBranch()
 	containerName := cfg.Deployment.Container.Name
 	port := cfg.Deployment.ControlPanel.Port
 
@@ -480,27 +569,33 @@ func updateControl() error {
 
 	// Get current version
 	currentVersion := getControlPanelVersion()
-	fmt.Printf("Current version: %s\n", currentVersion)
+	fmt.Printf("Current version: %s\n", version.FormatVersion(currentVersion))
 
-	// Get latest version from configured release source
-	if branch != "" && branch != "main" {
-		fmt.Printf("Release branch: %s\n", branch)
-	}
+	// Resolve the candidate release via the control channel.
 	fmt.Println("Checking for updates...")
-	cpTag, cpEffectiveBranch := releases.GetLatestTagForBranch(cfg, cfg.Releases.Repositories.ControlPanel, branch, cfg.Releases.Repositories.ControlPanelTagPrefix)
-	if cpTag == "" {
-		return fmt.Errorf("could not determine latest version")
+	cand, err := releases.ResolveComponent(cfg, channels.ComponentControl, cfg.Releases.Repositories.ControlPanel, cfg.Releases.Repositories.ControlPanelTagPrefix)
+	if err != nil {
+		return fmt.Errorf("could not determine latest version: %w", err)
 	}
-	latestVersion := releases.ExtractVersionFromFullTag(cpTag, cpEffectiveBranch, cfg.Releases.Repositories.ControlPanelTagPrefix)
-
-	// Log fallback so the agent knows which tag was used
-	if branch != "" && branch != "main" && cpEffectiveBranch == "main" {
-		fmt.Printf("No %s-branch tag found — falling back to main tag: %s\n", branch, cpTag)
+	cpTag := cand.Tag
+	cpEffectiveBranch := cand.Branch
+	latestVersion := cand.Version
+	channelConfig, err := channels.Load()
+	if err != nil {
+		return fmt.Errorf("load Control Panel release channel: %w", err)
 	}
+	controlChannel := channelConfig.Effective(channels.ComponentControl, cfg)
 
-	fmt.Printf("Latest version: %s\n", latestVersion)
+	if cpEffectiveBranch != "" && cpEffectiveBranch != "main" {
+		fmt.Printf("Channel branch: %s\n", cpEffectiveBranch)
+	}
+	fmt.Printf("Latest version: %s (%s)\n", version.FormatVersion(latestVersion), cpEffectiveBranch)
 
-	if !version.IsNewer(latestVersion, currentVersion) {
+	decision := decideUpdate(channels.ComponentControl, currentVersion, latestVersion, cpEffectiveBranch, updateAssumeYes)
+	if !decision.proceed {
+		if decision.isSwitch {
+			return nil
+		}
 		if err := ensureControlIdentityService(containerName, appDir); err != nil {
 			return fmt.Errorf("Control Panel is up to date, but YouEye ID service repair failed: %w", err)
 		}
@@ -508,18 +603,20 @@ func updateControl() error {
 		return nil
 	}
 
-	fmt.Printf("Updating from %s to %s...\n", currentVersion, latestVersion)
+	fmt.Printf("Updating from %s to %s...\n", version.FormatVersion(currentVersion), version.FormatVersion(latestVersion))
 
 	// Create snapshot before update
 	fmt.Println("Creating snapshot...")
 	snapshotName := "pre-update"
-	util.RunCmd("incus", "snapshot", "delete", containerName, snapshotName)
+	// Absence is the normal first-update state; remove an older rollback point
+	// quietly so it is not misreported as a failed snapshot operation.
+	_ = util.RunCmdQuiet("incus", "snapshot", "delete", containerName, snapshotName)
 	if err := util.RunCmd("incus", "snapshot", "create", containerName, snapshotName); err != nil {
-		fmt.Println("Warning: could not create snapshot")
+		return fmt.Errorf("could not create required pre-update snapshot: %w", err)
 	}
 
 	// Download the release tarball using the resolved tag (may be main tag if branch tag not found)
-	downloadURL := releases.BuildDownloadURL(cfg, cfg.Releases.Repositories.ControlPanel, cpTag, "standalone.tar")
+	downloadURL := releases.BuildCandidateDownloadURL(cfg, cand, cfg.Releases.Repositories.ControlPanel, "standalone.tar")
 	fmt.Printf("Downloading from %s...\n", downloadURL)
 
 	tmpFile := "/tmp/control-update.tar"
@@ -542,6 +639,9 @@ func updateControl() error {
 	f.Close()
 	if err != nil {
 		return fmt.Errorf("failed to download: %w", err)
+	}
+	if err := releases.VerifySignedReleaseArtifact(cpDlClient, downloadURL, tmpFile, controlChannel.ArtifactSHA256); err != nil {
+		return fmt.Errorf("verify signed Control Panel release artifact: %w", err)
 	}
 
 	fmt.Println("Stopping Control Panel...")
@@ -604,25 +704,62 @@ func updateControl() error {
 		return fmt.Errorf("update failed, rolled back to previous version")
 	}
 
-	// Re-provision the bridge token to ensure both containers have it
-	provisionBridgeToken()
+	// Record provenance for the installed Control Panel release.
+	if err := update.WriteProvenance(channels.ComponentControl, update.ProvenanceEntry{
+		Version:        latestVersion,
+		Tag:            cpTag,
+		Branch:         cpEffectiveBranch,
+		Source:         cand.Source,
+		ArtifactSHA256: cand.ArtifactSHA256,
+	}); err != nil {
+		fmt.Printf("Warning: could not record provenance: %v\n", err)
+	}
 
-	// Re-provision CLI token for the `youeye` CLI tool
-	provisionCLIToken()
+	if err := runControlUpdateFinalization(controlUpdateFinalizers{
+		reconcileInfrastructure: reconcileInfrastructureViaCP,
+		provisionBridgeToken:    provisionBridgeToken,
+		provisionCLIToken:       provisionCLIToken,
+		enforceUIEgressBlock:    container.EnforceUIEgressBlock,
+		repairControlProxy: func() error {
+			return container.RepairControlPanelPortProxy(containerName, port)
+		},
+	}); err != nil {
+		return err
+	}
 
-	// Enforce UI→CP egress block (one-way bridge)
-	container.EnforceUIEgressBlock()
+	fmt.Printf("✓ Control Panel updated successfully to %s\n", version.FormatVersion(latestVersion))
 
-	fmt.Printf("✓ Control Panel updated successfully to %s\n", latestVersion)
+	return nil
+}
 
-	// Reconcile infrastructure: deploy any missing containers.
-	// This handles the case where infrastructure containers (Pi-Hole, Caddy, etc.)
-	// were lost or never deployed, ensuring `spine update control` restores them.
+type controlUpdateFinalizers struct {
+	reconcileInfrastructure func() error
+	provisionBridgeToken    func() error
+	provisionCLIToken       func() error
+	enforceUIEgressBlock    func() error
+	repairControlProxy      func() error
+}
+
+// runControlUpdateFinalization restores infrastructure before pushing credentials
+// and policy into the UI. Reconciliation may replace an unhealthy UI container,
+// so doing it last would discard the newly provisioned bridge token.
+func runControlUpdateFinalization(finalizers controlUpdateFinalizers) error {
 	fmt.Println("\nReconciling infrastructure...")
-	if err := reconcileInfrastructureViaCP(); err != nil {
-		fmt.Printf("⚠ Infrastructure reconciliation failed: %v\n", err)
-		fmt.Println("  You can retry with: spine deploy")
-		// Non-fatal — the CP update itself succeeded
+	if err := finalizers.reconcileInfrastructure(); err != nil {
+		return fmt.Errorf("Control Panel updated, but infrastructure reconciliation failed: %w", err)
+	}
+
+	if err := finalizers.provisionBridgeToken(); err != nil {
+		return fmt.Errorf("re-provision bridge token: %w", err)
+	}
+	if err := finalizers.provisionCLIToken(); err != nil {
+		return fmt.Errorf("re-provision CLI token: %w", err)
+	}
+	if err := finalizers.enforceUIEgressBlock(); err != nil {
+		return fmt.Errorf("failed to enforce UI→Control Panel egress block: %w", err)
+	}
+	if err := finalizers.repairControlProxy(); err != nil {
+		return fmt.Errorf("failed to repair Control Panel localhost proxy: %w", err)
 	}
 
 	return nil
@@ -640,59 +777,7 @@ func reconcileInfrastructureViaCP() error {
 	}
 	deploySecret := strings.TrimSpace(string(secretBytes))
 
-	// POST to Control Panel reconcile endpoint
-	body := fmt.Sprintf(`{"host_ip":"%s"}`, hostIP)
-	req, err := http.NewRequest("POST", "http://127.0.0.1:3000/api/deploy/infrastructure/reconcile", strings.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Deploy-Secret", deploySecret)
-
-	client := &http.Client{Timeout: 30 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to connect to Control Panel: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		bodyBytes := make([]byte, 1024)
-		n, _ := resp.Body.Read(bodyBytes)
-		return fmt.Errorf("Control Panel returned status %d: %s", resp.StatusCode, string(bodyBytes[:n]))
-	}
-
-	// Read SSE stream and print progress
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-
-		jsonStr := strings.TrimPrefix(line, "data: ")
-		var event deploymentEvent
-		if err := json.Unmarshal([]byte(jsonStr), &event); err != nil {
-			continue
-		}
-
-		icon := "⏳"
-		switch event.Status {
-		case "success":
-			icon = "✓"
-		case "error":
-			icon = "✗"
-		case "skipped":
-			icon = "→"
-		}
-		fmt.Printf("  %s [%d/%d] %s\n", icon, event.Step, event.TotalSteps, event.Message)
-	}
-
-	if scanner.Err() != nil {
-		return fmt.Errorf("error reading SSE stream: %w", scanner.Err())
-	}
-
-	return nil
+	return newDeploymentJobClient(deploymentBaseURL, deploySecret).execute("reconcile", hostIP)
 }
 
 // getControlPanelVersion gets the current version from container

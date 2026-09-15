@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth/session';
+import { getSession, verifyCSRFToken } from '@/lib/auth/session';
 import { ensureClient, ensureUser } from '@/lib/identity/store';
+import { validateIdentityPassword } from '@/lib/identity/password-policy';
 
 export async function POST(request: NextRequest) {
   const session = await getSession();
   if (!session?.isAdmin) {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
   }
+	const csrf = request.headers.get('X-CSRF-Token');
+	if (!csrf || !(await verifyCSRFToken(csrf))) return NextResponse.json({ error: 'Invalid CSRF token' }, { status: 403 });
 
   const body = await request.json();
   const required = ['username', 'password', 'clientId', 'clientSecret', 'redirectUri'];
@@ -15,6 +18,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Missing required field: ${key}` }, { status: 400 });
     }
   }
+	const passwordError = validateIdentityPassword(body.password);
+	if (passwordError) return NextResponse.json({ error: passwordError }, { status: 400 });
 
   const user = await ensureUser({
     username: body.username,
@@ -48,4 +53,3 @@ export async function POST(request: NextRequest) {
     },
   });
 }
-

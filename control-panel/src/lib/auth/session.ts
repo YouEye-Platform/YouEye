@@ -8,11 +8,13 @@
 import { cookies, headers } from 'next/headers';
 import { SignJWT, jwtVerify, type JWTPayload } from 'jose';
 import { readFileSync } from 'fs';
+import { randomBytes } from 'crypto';
 
 // Configuration
 const SESSION_COOKIE = 'ye-session';
 const CSRF_COOKIE = 'ye-csrf';
 const SESSION_DURATION = 60 * 60 * 24; // 24 hours in seconds
+const SETUP_SESSION_DURATION = 60 * 60 * 2; // 2 hours in seconds
 
 /**
  * Get JWT secret - enforces JWT_SECRET environment variable is set
@@ -49,7 +51,9 @@ export interface SessionPayload extends JWTPayload {
   username: string;
   isAdmin: boolean;
   groups: string[];
-  authMethod?: 'pam' | 'sso' | 'cli';
+  authMethod?: 'pam' | 'sso' | 'cli' | 'setup';
+  setupOwnerId?: string;
+  setupSessionId?: string;
   iat: number;
   exp: number;
 }
@@ -77,6 +81,26 @@ export async function createSession(
     .sign(getJWTSecret());
 
   return token;
+}
+
+/** Create a constrained session used only by the claimed appliance owner during setup. */
+export async function createSetupSession(input: {
+  ownerId: string;
+  username: string;
+}): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  return new SignJWT({
+    username: input.username,
+    isAdmin: true,
+    groups: ['youeye-users', 'admin'],
+    authMethod: 'setup',
+    setupOwnerId: input.ownerId,
+    setupSessionId: randomBytes(24).toString('hex'),
+  })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt(now)
+    .setExpirationTime(now + SETUP_SESSION_DURATION)
+    .sign(getJWTSecret());
 }
 
 /**

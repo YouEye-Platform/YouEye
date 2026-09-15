@@ -24,12 +24,11 @@ import {
   checkLxdAppUpdate,
   type LxdUpdateResult,
 } from '@/lib/apps/lxd-updates';
-import { getAllHealthStatuses, getLastHealthCheckAt } from '@/lib/market/health-checker';
 import { listInstalledApps } from '@/lib/market/metadata';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
 import { fetchManifest } from '@/lib/market/catalog';
 import { planSystemUpdates, type SystemUpdatePlan } from '@/lib/infrastructure/system-updater';
-import { isNewer } from '@/lib/version';
+import { componentUpdatePresentation } from '@/lib/updates/presentation';
 
 // ─── Response types ───────────────────────────────────────────────────────────
 
@@ -67,6 +66,12 @@ export interface UnifiedApp {
   managementLinks?: Array<{ label: string; href: string }>;
   /** Health check status for Market-installed/native apps */
   healthStatus?: 'healthy' | 'unhealthy' | 'unknown';
+  appHealthState?: 'starting' | 'running' | 'unhealthy' | 'crash-looping' | 'unknown';
+  failingLevel?: 'L1' | 'L2' | 'L3';
+  healthDetail?: string | null;
+  autoRestart?: boolean;
+  /** Per-app release channel key. Omitted for external and infrastructure apps. */
+  updateChannelKey?: string;
   /** Last health check timestamp */
   healthCheckedAt?: string | null;
 }
@@ -205,12 +210,9 @@ export async function GET() {
       }
     });
 
-    // Get health statuses for Market-installed apps
-    const healthStatuses = getAllHealthStatuses();
-    const lastHealthCheck = getLastHealthCheckAt();
-
     // Build the unified list
     const apps: UnifiedApp[] = APP_DEFINITIONS.map((def) => {
+      const installedApp = dbAppsMap.get(def.id);
       // Container info
       const containers: ContainerInfo[] = def.containers.map((c) => {
         const state = containerStateMap.get(c.name);
@@ -248,13 +250,15 @@ export async function GET() {
 
       // Spine-managed update detection
       if (def.updatedBy === 'spine' && updates) {
-        if (def.id === 'spine' && updates.spine?.available) {
-          updateAvailable = true;
-          updateInfo = `${updates.spine.current} → ${updates.spine.latest}`;
+        if (def.id === 'spine' && updates.spine) {
+          const presentation = componentUpdatePresentation(updates.spine);
+          updateAvailable = presentation.available;
+          updateInfo = presentation.available ? `${presentation.current} → ${presentation.candidate}` : undefined;
         }
-        if (def.id === 'control-panel' && updates.control?.available) {
-          updateAvailable = true;
-          updateInfo = `${updates.control.current} → ${updates.control.latest}`;
+        if (def.id === 'control-panel' && updates.control) {
+          const presentation = componentUpdatePresentation(updates.control);
+          updateAvailable = presentation.available;
+          updateInfo = presentation.available ? `${presentation.current} → ${presentation.candidate}` : undefined;
         }
         if (def.id === 'incus' && updates.incus?.upgradeable) {
           updateAvailable = true;
@@ -303,8 +307,17 @@ export async function GET() {
         updateInfo,
         systemManaged: !!def.marketSystemId,
         managementLinks: def.managementLinks,
-        healthStatus: healthStatuses[def.id] ?? undefined,
-        healthCheckedAt: lastHealthCheck,
+        healthStatus: installedApp?.healthStatus,
+        appHealthState: installedApp?.appHealthState,
+        failingLevel: installedApp?.failingLevel,
+        healthDetail: installedApp?.healthDetail ?? null,
+        healthCheckedAt: installedApp?.healthCheckedAt ?? null,
+        updateChannelKey:
+          def.releaseChannelKey ? def.releaseChannelKey
+          : def.id === 'spine' && status?.runtime?.kind === 'mutable-host' ? 'spine'
+          : def.id === 'control-panel' ? 'control'
+          : def.id === 'ui' ? 'ui'
+          : undefined,
       };
     });
 
@@ -358,7 +371,12 @@ export async function GET() {
       const dbEntry = dbAppsMap.get(meta.appId);
       const catV = dbEntry?.catalogVersion;
       const insV = dbEntry?.installedVersion;
-      const marketUpdate = !!(catV && insV && isNewer(catV, insV));
+      // The shared Market checker has already classified the exact recorded
+      // source versus native channel and projected update/switch state. Do not
+      // manufacture a different answer from version numbers alone here: after
+      // a Market-source change, a numerically newer manifest is not actionable
+      // until the installed app is explicitly switched to that source.
+      const marketUpdate = dbEntry?.updateAvailable === true;
       const manifest = manifestResults[i].status === 'fulfilled'
         ? manifestResults[i].value
         : null;
@@ -394,8 +412,13 @@ export async function GET() {
         databaseMode: meta.databaseMode ?? 'none',
         updateAvailable: marketUpdate,
         updateInfo: marketUpdate && catV ? `${insV} → ${catV}` : undefined,
-        healthStatus: healthStatuses[meta.appId] ?? undefined,
-        healthCheckedAt: lastHealthCheck,
+        healthStatus: dbEntry?.healthStatus,
+        appHealthState: dbEntry?.appHealthState,
+        failingLevel: dbEntry?.failingLevel,
+        healthDetail: dbEntry?.healthDetail ?? null,
+        healthCheckedAt: dbEntry?.healthCheckedAt ?? null,
+        autoRestart: meta.autoRestart !== false,
+        updateChannelKey: manifest?.integration === 'native' ? `app:${meta.appId}` : undefined,
       };
     });
 

@@ -1,7 +1,6 @@
 import { randomBytes } from 'crypto';
 import { spineClient } from '@/lib/spine/client';
 import { getIdentityProviderConfig, createOAuthClient } from './provider';
-import { ensureUser } from './store';
 
 function secret(bytes = 32): string {
   return randomBytes(bytes).toString('hex');
@@ -39,22 +38,6 @@ function uiRedirectUris(uiExternalUrl: string): string[] {
   ]));
 }
 
-export async function ensureIdentityAdminUser(params: {
-  username: string;
-  password: string;
-  name: string;
-  email: string;
-}): Promise<void> {
-  await ensureUser({
-    username: params.username,
-    password: params.password,
-    name: params.name || params.username,
-    email: params.email,
-    groups: ['youeye-users', 'admin'],
-    isAdmin: true,
-  });
-}
-
 export async function configureControlPanelIdentitySSO(params: {
   controlExternalUrl: string;
   settingsExternalUrl?: string;
@@ -73,7 +56,7 @@ export async function configureControlPanelIdentitySSO(params: {
     internal_url: 'http://127.0.0.1:3001',
     identity_internal_url: 'http://127.0.0.1:3001',
     control_url: params.controlExternalUrl,
-  });
+  }, false);
 
   return client;
 }

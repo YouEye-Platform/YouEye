@@ -79,6 +79,10 @@ if (fs.existsSync(publicSrc)) {
 } else {
   console.log('No public/ folder found, skipping');
 }
+for (const legalFile of ['LICENSE', 'TRADEMARK.md', 'THIRD_PARTY_NOTICES.txt']) {
+  fs.copyFileSync(path.join(rootDir, '..', legalFile), path.join(standalonePath, legalFile));
+}
+console.log('Done copying legal notices');
 
 // Step 3: Fix pnpm node_modules structure
 console.log('Fixing pnpm modules...');

@@ -1,273 +1,107 @@
-// Package installer implements the full YouEye install experience:
-//
-//	detect → wizard/confirmation → progress → complete / error
-//
-// On Proxmox: detect → VM wizard → progress → complete / error
-// On bare Linux: detect → minimal confirmation → progress → complete / error
 package installer
 
-import (
-	"strings"
+import tea "github.com/charmbracelet/bubbletea"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-
-	"github.com/youeye-platform/YouEye/installer/internal/installer/theme"
-)
-
-// QuitMsg is emitted to return to the main menu / exit.
 type QuitMsg struct{}
 
-// phase tracks where we are in the install flow.
 type phase int
 
 const (
-	phaseDetect          phase = iota
-	phaseProxmoxNotReady       // Proxmox detected but helper script not ready
-	phaseWizard                // Proxmox only: mode, path, steps, confirm
-	phaseProgress              // real install + games
-	phaseComplete              // success summary
-	phaseError                 // failure details
+	phaseInstallerWizard phase = iota
+	phaseProgress
+	phaseComplete
+	phaseError
 )
 
-// Model is the top-level installer model.
 type Model struct {
 	phase phase
-	opts  CLIOptions
 
-	detect   detectModel
-	wizard   wizardModel
-	progress progressModel
-	complete completeModel
-	errModel errorModel
+	installer applianceWizardModel
+	progress  progressModel
+	complete  completeModel
+	errModel  errorModel
 
-	width, height int
+	width  int
+	height int
 }
 
-// New constructs a fresh installer.
-func New() Model {
-	return NewWithOptions(CLIOptions{
-		Mode:           defaultInstallerMode,
-		CoreRepoURL:    DefaultCoreRepoURL,
-		MarketRepoURL:  DefaultMarketRepoURL,
-		ReleaseChannel: DefaultReleaseChannel,
-	})
-}
-
-// NewWithOptions constructs a fresh installer using CLI/env overrides as
-// defaults for the TUI.
 func NewWithOptions(opts CLIOptions) Model {
-	if opts.CoreRepoURL == "" {
-		opts.CoreRepoURL = DefaultCoreRepoURL
-	}
-	if opts.MarketRepoURL == "" {
-		opts.MarketRepoURL = DefaultMarketRepoURL
-	}
-	if opts.ReleaseChannel == "" {
-		opts.ReleaseChannel = DefaultReleaseChannel
-	}
-	if opts.Mode == "" {
-		opts.Mode = defaultInstallerMode
-	}
 	return Model{
-		phase:  phaseDetect,
-		opts:   opts,
-		detect: newDetectModel(),
+		phase:     phaseInstallerWizard,
+		installer: newApplianceWizardModel(configFromOptions(opts), shellApplianceRunner{}),
 	}
 }
 
-// Init kicks off the detect animation + real detection.
-func (m Model) Init() tea.Cmd {
-	return m.detect.Init()
+func (model Model) Init() tea.Cmd {
+	return model.installer.Init()
 }
 
-// Update routes messages through the active phase.
-func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
-	// Broadcast window size to all phases.
-	if ws, ok := msg.(tea.WindowSizeMsg); ok {
-		m.width, m.height = ws.Width, ws.Height
+func (model Model) Update(message tea.Msg) (Model, tea.Cmd) {
+	if size, ok := message.(tea.WindowSizeMsg); ok {
+		model.width, model.height = size.Width, size.Height
 	}
-
-	// Global quit.
-	if km, ok := msg.(tea.KeyMsg); ok {
-		switch km.String() {
+	if key, ok := message.(tea.KeyMsg); ok {
+		switch key.String() {
 		case "q", "esc":
-			switch m.phase {
-			case phaseProxmoxNotReady:
-				return m, func() tea.Msg { return QuitMsg{} }
-			case phaseProgress:
-				if m.progress.ready {
-					// Not yet installing — safe to go back
-					return m, func() tea.Msg { return QuitMsg{} }
-				}
-				// During installation, q/esc does nothing (can't cancel mid-install)
-				return m, nil
-			case phaseComplete, phaseError:
-				return m, func() tea.Msg { return QuitMsg{} }
-			case phaseDetect:
-				if m.detect.done && m.detect.env.IsContainer {
-					return m, func() tea.Msg { return QuitMsg{} }
-				}
-				if m.detect.done && m.detect.err != nil {
-					return m, func() tea.Msg { return QuitMsg{} }
-				}
-				if m.detect.scanning {
-					return m, func() tea.Msg { return QuitMsg{} }
-				}
-			case phaseWizard:
-				if km.String() == "esc" && m.wizard.current == 0 {
-					return m, func() tea.Msg { return QuitMsg{} }
-				}
+			if model.phase == phaseInstallerWizard && model.installer.atFirstStep() {
+				return model, func() tea.Msg { return QuitMsg{} }
 			}
-
+			if model.phase == phaseComplete || model.phase == phaseError {
+				return model, func() tea.Msg { return QuitMsg{} }
+			}
 		case "enter", " ":
-			switch m.phase {
-			case phaseProxmoxNotReady:
-				return m, func() tea.Msg { return QuitMsg{} }
-			case phaseComplete:
-				return m, func() tea.Msg { return QuitMsg{} }
-			case phaseError:
-				return m, func() tea.Msg { return QuitMsg{} }
+			if model.phase == phaseComplete || model.phase == phaseError {
+				return model, func() tea.Msg { return QuitMsg{} }
 			}
 		}
 	}
 
-	var cmd tea.Cmd
-
-	switch m.phase {
-	case phaseDetect:
-		m.detect, cmd = m.detect.Update(msg)
-		if m.detect.done {
-			// If running inside a container, stay on detect screen (shows error)
-			if m.detect.env.IsContainer {
-				return m, cmd
-			}
-			if m.detect.err != nil {
-				return m, cmd
-			}
-
-			cfg, err := configFromEnvAndOptions(m.detect.env, m.opts)
-			if err != nil {
-				m.errModel = newErrorModel(cfg, err)
-				m.errModel.width, m.errModel.height = m.width, m.height
-				m.phase = phaseError
-				return m, m.errModel.Init()
-			}
-
-			// Both Proxmox and bare Linux now pass through the same compact
-			// wizard shell: Install uses defaults, Advanced Options exposes
-			// editable source/channel fields plus platform-specific controls.
-			m.wizard = newWizardModelWithConfig(m.detect.env, cfg)
-			m.wizard.width, m.wizard.height = m.width, m.height
-			m.phase = phaseWizard
-			return m, m.wizard.Init()
+	var command tea.Cmd
+	switch model.phase {
+	case phaseInstallerWizard:
+		model.installer, command = model.installer.Update(message)
+		if model.installer.done {
+			model.progress = newProgressModel(model.installer.config)
+			model.progress.width, model.progress.height = model.width, model.height
+			model.progress.engineCh = startEngine(model.installer.config)
+			model.phase = phaseProgress
+			return model, model.progress.Init()
 		}
-		return m, cmd
-
-	case phaseProxmoxNotReady:
-		// Static screen — no updates needed
-		return m, nil
-
-	case phaseWizard:
-		m.wizard, cmd = m.wizard.Update(msg)
-		if m.wizard.done {
-			m.progress = newProgressModel(m.wizard.config)
-			m.progress.width, m.progress.height = m.width, m.height
-			m.phase = phaseProgress
-			return m, m.progress.Init()
-		}
-		return m, cmd
-
 	case phaseProgress:
-		m.progress, cmd = m.progress.Update(msg)
-		if m.progress.done {
-			if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "enter" || km.String() == " ") {
-				if m.progress.err != nil {
-					cfg := m.progress.config
-					m.errModel = newErrorModel(cfg, m.progress.err)
-					m.errModel.width, m.errModel.height = m.width, m.height
-					m.phase = phaseError
-					return m, m.errModel.Init()
+		model.progress, command = model.progress.Update(message)
+		if model.progress.done {
+			if key, ok := message.(tea.KeyMsg); ok && (key.String() == "enter" || key.String() == " ") {
+				if model.progress.err != nil {
+					model.errModel = newErrorModel(model.progress.err)
+					model.errModel.width, model.errModel.height = model.width, model.height
+					model.phase = phaseError
+					return model, nil
 				}
-				cfg := m.progress.config
-				cfg.ResultIP = m.progress.resultIP
-				m.complete = newCompleteModel(cfg)
-				m.complete.width, m.complete.height = m.width, m.height
-				m.phase = phaseComplete
-				return m, m.complete.Init()
+				model.complete = newCompleteModel()
+				model.complete.width, model.complete.height = model.width, model.height
+				model.phase = phaseComplete
+				return model, nil
 			}
 		}
-		return m, cmd
-
 	case phaseComplete:
-		m.complete, cmd = m.complete.Update(msg)
-		return m, cmd
-
+		model.complete, command = model.complete.Update(message)
 	case phaseError:
-		m.errModel, cmd = m.errModel.Update(msg)
-		return m, cmd
+		model.errModel, command = model.errModel.Update(message)
 	}
-
-	return m, nil
+	return model, command
 }
 
-// View dispatches to the active phase.
-func (m Model) View() string {
-	switch m.phase {
-	case phaseDetect:
-		return m.detect.View()
-	case phaseProxmoxNotReady:
-		return m.viewProxmoxNotReady()
-	case phaseWizard:
-		return m.wizard.View()
+func (model Model) View() string {
+	switch model.phase {
+	case phaseInstallerWizard:
+		return model.installer.View()
 	case phaseProgress:
-		return m.progress.View()
+		return model.progress.View()
 	case phaseComplete:
-		return m.complete.View()
+		return model.complete.View()
 	case phaseError:
-		return m.errModel.View()
+		return model.errModel.View()
+	default:
+		return ""
 	}
-	return ""
-}
-
-// viewProxmoxNotReady renders a message telling the user the Proxmox
-// helper script is not ready yet.
-func (m Model) viewProxmoxNotReady() string {
-	var rows []string
-	rows = append(rows,
-		"",
-		theme.Title.Render("  Proxmox VE Detected"),
-		"",
-	)
-
-	if m.detect.env.PVEVersion != "" {
-		rows = append(rows, theme.Body.Render("  Version: "+m.detect.env.PVEVersion))
-		rows = append(rows, "")
-	}
-
-	rows = append(rows,
-		theme.Body.Render("  The Proxmox helper script is not ready yet."),
-		"",
-		theme.Dim.Render("  The Proxmox installer (LXC/VM creation, wizard,"),
-		theme.Dim.Render("  and automated provisioning) is under development."),
-		"",
-		theme.Dim.Render("  For now, you can install YouEye on bare Linux:"),
-		"",
-		theme.Body.Render("    1. Create a Debian 13 LXC/VM manually"),
-		theme.Body.Render("    2. Run this installer inside it"),
-		"",
-	)
-
-	divider := theme.Dim.Render(strings.Repeat("─", 50))
-	rows = append(rows, divider)
-	rows = append(rows, theme.Hint.Render("  Press any key to exit"))
-	rows = append(rows, "")
-
-	body := strings.Join(rows, "\n")
-	boxed := theme.BoxAccent.Render(body)
-
-	if m.width > 0 {
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, boxed)
-	}
-	return boxed
 }

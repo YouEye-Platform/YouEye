@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { applyIntegration } from '@/lib/market/integration-runner';
+import { requireAdmin } from '@/lib/auth/rbac';
 import type { InstallEvent } from '@/lib/market/types';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
+  const auth = await requireAdmin();
+  if (auth.error) return auth.error;
+
   let body: { integrationId?: string; sourceId?: string };
   try {
     body = await request.json();

@@ -1,0 +1,11 @@
+{
+  "image": {
+    "version": "0.5.6.1",
+    "minimum_current_version": "0.5.6",
+    "release_source": "https://github.com/YouEye-Platform/YouEye",
+    "release_branch": "beta",
+    "debian_snapshot": "20260805T142647Z"
+  },
+  "market_branch": "beta",
+  "schema": "youeye.appliance.recipe.v1"
+}

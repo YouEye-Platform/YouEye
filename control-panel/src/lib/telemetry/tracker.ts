@@ -23,6 +23,7 @@ export interface CpTelemetryReport {
   version: string;
   component: "control-panel";
   enabled: boolean;
+  explicit_opt_in_at?: string;
   period_start: string;
   last_flush: string;
   routes: Record<string, number>;
@@ -33,7 +34,7 @@ function emptyReport(): CpTelemetryReport {
   return {
     version: "1",
     component: "control-panel",
-    enabled: true,
+    enabled: false,
     period_start: new Date().toISOString(),
     last_flush: new Date().toISOString(),
     routes: {},
@@ -57,8 +58,12 @@ class CpUsageTracker {
         const raw = readFileSync(DATA_FILE, "utf-8");
         const parsed = JSON.parse(raw) as CpTelemetryReport;
         if (parsed.routes) {
-          // Default to enabled for files written before the toggle existed.
-          parsed.enabled = parsed.enabled !== false;
+          // Legacy trackers wrote enabled:true by default, so only a dedicated
+          // opt-in marker preserves collection after the security patch.
+          parsed.enabled =
+            parsed.enabled === true &&
+            typeof parsed.explicit_opt_in_at === "string" &&
+            parsed.explicit_opt_in_at.length > 0;
           return parsed;
         }
       }
@@ -148,6 +153,11 @@ class CpUsageTracker {
   setEnabled(value: boolean): void {
     if (this.data.enabled === value) return;
     this.data.enabled = value;
+    if (value) {
+      this.data.explicit_opt_in_at = this.data.explicit_opt_in_at || new Date().toISOString();
+    } else {
+      delete this.data.explicit_opt_in_at;
+    }
     this.dirty = true;
     this.writeToDisk();
   }

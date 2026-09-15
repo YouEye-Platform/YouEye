@@ -24,7 +24,7 @@ import { upsertUser } from "@/lib/db/queries/users";
 const SESSION_DURATION = 60 * 60 * 24 * 7; // 7 days
 
 function hasAdminClaim(groups: string[], isAdminClaim?: boolean): boolean {
-  return isAdminClaim === true || groups.includes("admin") || groups.includes("authentik Admins");
+  return isAdminClaim === true || groups.includes("admin");
 }
 
 export async function GET(request: NextRequest) {

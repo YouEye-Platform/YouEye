@@ -14,7 +14,6 @@ import { readFile, writeFile, mkdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { spineClient } from '@/lib/spine/client';
-import { execShell } from '@/lib/incus/server';
 import { readInstallMetadata } from '@/lib/market/metadata';
 import { fetchManifest } from '@/lib/market/catalog';
 import { getRoutes } from '@/lib/caddy/client';
@@ -24,8 +23,12 @@ import type {
   BackupEventCallback,
   ManifestBackupSection,
 } from './types';
+import { BACKUP_STAGING_ROOT, runningContainers, volumeMappings } from './workspace';
+import { readCurrentBackupSourceIdentity } from './compatibility';
+import { dumpPostgresDatabase, PLATFORM_POSTGRES_ADMIN, PLATFORM_POSTGRES_CONTAINER } from './postgres';
+import { resolveOwnPostgres } from './manifest-values';
 
-const STAGING_BASE = '/tmp/youeye-backup';
+const STAGING_BASE = path.join(BACKUP_STAGING_ROOT, 'create');
 const YOUEYE_DATA_DIR = '/var/lib/youeye';
 
 /**
@@ -79,8 +82,10 @@ export async function backupApp(
     emit('fetch-manifest', `Fetching manifest for ${appId}...`);
     let backupSection: ManifestBackupSection | undefined;
     let manifestVersion = installMeta.installedVersion || 'unknown';
+    let frozenManifest: Awaited<ReturnType<typeof fetchManifest>> | null = null;
     try {
       const manifest = await fetchManifest(appId);
+      frozenManifest = manifest;
       // Save a frozen copy of the manifest
       await writeFile(
         path.join(stagingDir, 'manifest.json'),
@@ -95,15 +100,8 @@ export async function backupApp(
           backupSection = raw as ManifestBackupSection;
         }
       }
-    } catch {
-      // Manifest not available from remote — continue without it
-      onEvent({
-        step,
-        totalSteps,
-        status: 'progress',
-        stage: 'fetch-manifest',
-        message: `Warning: Could not fetch manifest for ${appId} — continuing with defaults`,
-      });
+    } catch (error) {
+      throw new Error(`Could not freeze the installed manifest for ${appId}: ${error}`);
     }
 
     // ── Step 3: Extract Caddy routes ───────────────────────
@@ -145,85 +143,49 @@ export async function backupApp(
     emit('dump-databases', `Dumping databases for ${appId}...`);
 
     // Shared PostgreSQL dump
-    const manifest = await fetchManifest(appId).catch(() => null);
+    const manifest = frozenManifest;
     const features = manifest
       ? (manifest as Record<string, unknown>).features as Record<string, unknown> | undefined
       : undefined;
 
-    if (features?.requiresSharedPostgres) {
+    if (features?.requiresSharedPostgres || typeof installMeta.databaseName === 'string') {
       try {
-        const dumpResult = await execShell(
-          'youeye-postgres',
-          `pg_dump -U postgres ${appId}`,
-          { timeout: 120000 }
-        );
-        if (dumpResult.exitCode === 0) {
-          await writeFile(
-            path.join(stagingDir, 'databases', `${appId}-shared.sql`),
-            dumpResult.stdout
-          );
-        } else {
-          onEvent({
-            step,
-            totalSteps,
-            status: 'progress',
-            stage: 'dump-databases',
-            message: `Warning: pg_dump for shared DB ${appId} returned exit code ${dumpResult.exitCode}`,
-            detail: dumpResult.stderr,
-          });
-        }
-      } catch (err) {
-        onEvent({
-          step,
-          totalSteps,
-          status: 'progress',
-          stage: 'dump-databases',
-          message: `Warning: Failed to dump shared DB ${appId}: ${err}`,
+        const manifestDatabase = (manifest as Record<string, unknown>).database as Record<string, unknown> | undefined;
+        const database = typeof installMeta.databaseName === 'string'
+          ? installMeta.databaseName
+          : typeof manifestDatabase?.name === 'string' ? manifestDatabase.name : appId;
+        const dump = await dumpPostgresDatabase({
+          container: PLATFORM_POSTGRES_CONTAINER,
+          database,
+          user: PLATFORM_POSTGRES_ADMIN,
         });
+        await writeFile(path.join(stagingDir, 'databases', `${appId}-shared.sql`), dump);
+      } catch (err) {
+		throw new Error(`Required shared database dump failed for ${appId}: ${err}`);
       }
     }
 
     // Own PostgreSQL dump (from manifest backup section)
     if (backupSection?.ownPostgres) {
-      const { container, database } = backupSection.ownPostgres;
+      const { container, database, user } = resolveOwnPostgres(backupSection.ownPostgres, appId);
       try {
-        const dumpResult = await execShell(
-          container,
-          `pg_dump -U postgres ${database}`,
-          { timeout: 120000 }
-        );
-        if (dumpResult.exitCode === 0) {
-          await writeFile(
-            path.join(stagingDir, 'databases', `${appId}-own.sql`),
-            dumpResult.stdout
-          );
-        }
+        const dump = await dumpPostgresDatabase({ container, database, user });
+        await writeFile(path.join(stagingDir, 'databases', `${appId}-own.sql`), dump);
       } catch (err) {
-        onEvent({
-          step,
-          totalSteps,
-          status: 'progress',
-          stage: 'dump-databases',
-          message: `Warning: Failed to dump own DB for ${appId}: ${err}`,
-        });
+		throw new Error(`Required application database dump failed for ${appId}: ${err}`);
       }
     }
 
     // Write backup-meta.json
-    let platformVersion = 'unknown';
-    try {
-      const spineVersion = await spineClient.version();
-      platformVersion = spineVersion.version;
-    } catch {
-      // Non-fatal
-    }
+    const sourceIdentity = config.sourceIdentity ?? await readCurrentBackupSourceIdentity();
 
     await writeFile(
       path.join(stagingDir, 'backup-meta.json'),
       JSON.stringify({
+        schema: 'youeye.backup.app-meta.v1',
         appId,
         appVersion: manifestVersion,
-        platformVersion,
+        source: sourceIdentity,
         timestamp: new Date().toISOString(),
         containers: installMeta.containers.map((c: any) => typeof c === 'string' ? c : c.containerName),
         subdomain: installMeta.subdomain,
@@ -234,26 +196,9 @@ export async function backupApp(
     // ── Step 5: Call Spine for live volume backup ───────────
     emit('spine-backup', `Starting live volume backup for ${appId}...`);
 
-    // Collect volume paths (skip cache volumes from manifest)
+    // Host paths now contain only protected YouEye metadata/secrets. App
+    // persistence is exported from Incus custom volumes below.
     const volumePaths: string[] = [];
-    const cacheVolumePaths = new Set<string>();
-    if (manifest) {
-      const manifestContainers = (manifest as Record<string, unknown>).containers as Array<Record<string, unknown>> | undefined;
-      if (manifestContainers) {
-        for (const mc of manifestContainers) {
-          const volumes = mc.volumes as Array<Record<string, unknown>> | undefined;
-          if (!volumes) continue;
-          for (const vol of volumes) {
-            if (vol.type === 'cache') {
-              const hostPath = (vol.host as string || '')
-                .replace(/\$\{app\.id\}/g, appId)
-                .replace(/\$\{app\.name\}/g, appId);
-              if (hostPath) cacheVolumePaths.add(hostPath);
-            }
-          }
-        }
-      }
-    }
 
     // Secrets directory
     const secretsPath = path.join(YOUEYE_DATA_DIR, `app-${appId}`);
@@ -261,43 +206,45 @@ export async function backupApp(
       volumePaths.push(secretsPath);
     }
 
-    // App data directory
-    const appDataPath = path.join(YOUEYE_DATA_DIR, 'apps', appId);
-    if (existsSync(appDataPath)) {
-      volumePaths.push(appDataPath);
-    }
-
-    // Get container names for volume paths (v2 format: objects, v1: strings)
+    // Get container names for runtime quiescing (object and historical string
+    // metadata both normalize to the exact Incus instance name here).
     const volumeContainerNames = installMeta.containers.map((c: any) =>
       typeof c === 'string' ? c : c.containerName
     );
 
-    // Per-container volume paths for multi-container apps
-    for (const containerName of volumeContainerNames) {
-      const containerPath = path.join(YOUEYE_DATA_DIR, `app-${appId}-${containerName}`);
-      if (existsSync(containerPath) && !cacheVolumePaths.has(containerPath)) {
-        volumePaths.push(containerPath);
-      }
-      // Also check the bare container path
-      const barePath = path.join(YOUEYE_DATA_DIR, containerName);
-      if (existsSync(barePath) && !cacheVolumePaths.has(barePath)) {
-        volumePaths.push(barePath);
-      }
-    }
+    // An app-owned PostgreSQL container is recovered from the required logical
+    // dump above. Exporting its crash-consistent raw data volume as well would
+    // replay an old database runtime before importing that dump.
+    const logicalDatabaseContainer = backupSection?.ownPostgres
+      ? resolveOwnPostgres(backupSection.ownPostgres, appId).container
+      : null;
 
     // Start backup on Spine with live mode (freeze instead of stop)
     const spineResult = await spineClient.startBackup({
       target_path: config.targetPath,
       passphrase: config.passphrase,
-      containers: volumeContainerNames,
-      volume_paths: volumePaths,
+      use_stored_passphrase: config.useStoredPassphrase,
+      containers: await runningContainers(volumeContainerNames),
+      volume_mappings: volumeMappings(volumePaths),
+      incus_runtimes: installMeta.containers.map((container: any) => ({
+        name: typeof container === 'string' ? container : container.containerName,
+        type: typeof container === 'string' ? 'lxd' : container.type,
+      })),
+      incus_volumes: [...new Map(
+        (installMeta.storageVolumes ?? [])
+          .filter((volume) => !volume.attachmentOnly && volume.containerName !== logicalDatabaseContainer)
+          .map((volume) => [`${volume.pool}/${volume.name}`, { pool: volume.pool, name: volume.name }]),
+      ).values()],
       staging_dir: stagingDir,
       hostname: `app-${appId}`,
+      backup_type: 'app',
+      app_id: appId,
     });
 
     // Poll Spine status until complete
     const backupId = spineResult.backup_id;
     let completed = false;
+    let terminalError = '';
     const pollInterval = 2000;
     const maxPollTime = 30 * 60 * 1000;
     const startTime = Date.now();
@@ -333,6 +280,7 @@ export async function backupApp(
           });
         } else if (status.status === 'failed') {
           completed = true;
+          terminalError = status.error || `Backup of ${appId} failed`;
           onEvent({
             step,
             totalSteps,
@@ -353,6 +301,8 @@ export async function backupApp(
       }
     }
 
+    if (terminalError) throw new Error(terminalError);
+
     if (!completed) {
       onEvent({
         step,
@@ -361,6 +311,7 @@ export async function backupApp(
         stage: 'timeout',
         message: `App backup for ${appId} timed out after 30 minutes`,
       });
+      throw new Error(`App backup for ${appId} timed out after 30 minutes`);
     }
   } finally {
     // Clean up staging directory

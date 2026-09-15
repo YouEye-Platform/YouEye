@@ -1,6 +1,7 @@
-import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import { execShell } from '@/lib/incus/server';
 import { POSTGRES_MANIFEST } from '@/lib/apps/manifest';
+import { requireIdentityPassword } from './password-policy';
 
 const CONTAINER = POSTGRES_MANIFEST.containerName;
 
@@ -8,9 +9,12 @@ export interface IdentityUser {
   id: string;
   username: string;
   name: string;
+  first_name: string;
+  last_name: string;
   email: string;
   groups: string[];
   is_admin: boolean;
+  is_active: boolean;
 }
 
 export interface IdentityClient {
@@ -36,6 +40,13 @@ export interface AuthCode {
   redirect_uri: string;
   scope: string;
   nonce: string | null;
+}
+
+export interface ApplianceClaimStatus {
+  claimed: boolean;
+  ownerUsername: string | null;
+  setupCompleted: boolean;
+  operationActive: boolean;
 }
 
 function sql(value: string | number | boolean | null): string {
@@ -72,6 +83,12 @@ async function queryRows<T>(selectSql: string): Promise<T[]> {
   return JSON.parse(line) as T[];
 }
 
+async function queryCommandRows<T>(command: string): Promise<T[]> {
+  const out = await psql(command);
+  const line = out.split('\n').filter(Boolean).pop() || '[]';
+  return JSON.parse(line) as T[];
+}
+
 export async function ensureIdentitySchema(): Promise<void> {
   await psql(`
     CREATE TABLE IF NOT EXISTS identity_users (
@@ -79,12 +96,29 @@ export async function ensureIdentitySchema(): Promise<void> {
       username text UNIQUE NOT NULL,
       password_hash text NOT NULL,
       name text NOT NULL DEFAULT '',
+      first_name text NOT NULL,
+      last_name text NOT NULL DEFAULT '',
       email text NOT NULL DEFAULT '',
       groups jsonb NOT NULL DEFAULT '[]'::jsonb,
       is_admin boolean NOT NULL DEFAULT false,
+      is_active boolean NOT NULL DEFAULT true,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
+    ALTER TABLE identity_users
+      ADD COLUMN IF NOT EXISTS first_name text;
+    ALTER TABLE identity_users
+      ADD COLUMN IF NOT EXISTS last_name text;
+    ALTER TABLE identity_users
+      ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
+    UPDATE identity_users
+    SET first_name = COALESCE(NULLIF(btrim(first_name), ''), NULLIF(btrim(name), ''), username),
+        last_name = COALESCE(last_name, '')
+    WHERE first_name IS NULL OR btrim(first_name) = '' OR last_name IS NULL;
+    ALTER TABLE identity_users
+      ALTER COLUMN first_name SET NOT NULL,
+      ALTER COLUMN last_name SET DEFAULT '',
+      ALTER COLUMN last_name SET NOT NULL;
     CREATE TABLE IF NOT EXISTS identity_clients (
       client_id text PRIMARY KEY,
       client_secret text NOT NULL,
@@ -117,13 +151,205 @@ export async function ensureIdentitySchema(): Promise<void> {
       updated_at timestamptz NOT NULL DEFAULT now(),
       PRIMARY KEY (user_id, client_id)
     );
-    -- Upgrade path: the nonce column was added after identity_auth_codes shipped,
-    -- so add it to installs whose table predates it (CREATE IF NOT EXISTS won't).
-    ALTER TABLE identity_auth_codes ADD COLUMN IF NOT EXISTS nonce text;
+    CREATE TABLE IF NOT EXISTS identity_appliance_claim (
+      singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+      owner_user_id uuid UNIQUE REFERENCES identity_users(id) ON DELETE RESTRICT,
+      claimed_at timestamptz,
+      setup_completed_at timestamptz,
+      operation_session_id text,
+      operation_expires_at timestamptz
+    );
+    CREATE TABLE IF NOT EXISTS identity_setup_handoffs (
+      code_hash text PRIMARY KEY,
+      user_id uuid NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
+      target_origin text NOT NULL,
+      expires_at timestamptz NOT NULL,
+      used_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+    INSERT INTO identity_appliance_claim (singleton) VALUES (true)
+    ON CONFLICT (singleton) DO NOTHING;
   `);
 }
 
+export async function getApplianceClaimStatus(): Promise<ApplianceClaimStatus> {
+  await ensureIdentitySchema();
+  const rows = await queryRows<{
+    claimed: boolean;
+    owner_username: string | null;
+    setup_completed: boolean;
+    operation_active: boolean;
+  }>(`
+    SELECT
+      c.owner_user_id IS NOT NULL AS claimed,
+      u.username AS owner_username,
+      c.setup_completed_at IS NOT NULL AS setup_completed,
+      c.operation_session_id IS NOT NULL AND c.operation_expires_at > now() AS operation_active
+    FROM identity_appliance_claim c
+    LEFT JOIN identity_users u ON u.id = c.owner_user_id
+    WHERE c.singleton = true
+  `);
+  const status = rows[0];
+  return {
+    claimed: Boolean(status?.claimed),
+    ownerUsername: status?.owner_username || null,
+    setupCompleted: Boolean(status?.setup_completed),
+    operationActive: Boolean(status?.operation_active),
+  };
+}
+
+export async function claimApplianceOwner(input: {
+  username: string;
+  password: string;
+  firstName: string;
+  lastName?: string;
+  email: string;
+}): Promise<IdentityUser | null> {
+  await ensureIdentitySchema();
+  requireIdentityPassword(input.password);
+  const passwordHash = hashPassword(input.password);
+  const firstName = input.firstName.trim();
+  const lastName = input.lastName?.trim() || '';
+  const name = [firstName, lastName].filter(Boolean).join(' ');
+  const rows = await queryCommandRows<IdentityUser>(`
+    WITH available AS (
+      SELECT singleton
+      FROM identity_appliance_claim
+      WHERE singleton = true AND owner_user_id IS NULL
+      FOR UPDATE
+    ), created AS (
+      INSERT INTO identity_users (username, password_hash, name, first_name, last_name, email, groups, is_admin)
+      SELECT ${sql(input.username)}, ${sql(passwordHash)}, ${sql(name)}, ${sql(firstName)}, ${sql(lastName)}, ${sql(input.email)}, ${sqlJson(['youeye-users', 'admin'])}, true
+      FROM available
+      ON CONFLICT (username) DO NOTHING
+      RETURNING id, username, name, first_name, last_name, email, groups, is_admin, is_active
+    ), linked AS (
+      UPDATE identity_appliance_claim c
+      SET owner_user_id = created.id,
+          claimed_at = now()
+      FROM created
+      WHERE c.singleton = true AND c.owner_user_id IS NULL
+      RETURNING created.id::text, created.username, created.name, created.first_name, created.last_name, created.email, created.groups, created.is_admin, created.is_active
+    )
+    SELECT COALESCE(json_agg(row_to_json(linked)), '[]'::json)::text FROM linked
+  `);
+  return rows[0] || null;
+}
+
+export async function verifyApplianceOwner(username: string, password: string): Promise<IdentityUser | null> {
+  const user = await verifyUser(username, password);
+  if (!user) return null;
+  const rows = await queryRows<{ owner_user_id: string }>(`
+    SELECT owner_user_id::text
+    FROM identity_appliance_claim
+    WHERE singleton = true AND owner_user_id = ${sql(user.id)}
+  `);
+  return rows[0] ? user : null;
+}
+
+export async function acquireSetupOperation(ownerId: string, sessionId: string): Promise<boolean> {
+  await ensureIdentitySchema();
+  const rows = await queryRows<{ acquired: boolean }>(`
+    UPDATE identity_appliance_claim
+    SET operation_session_id = ${sql(sessionId)},
+        operation_expires_at = now() + interval '5 minutes'
+    WHERE singleton = true
+      AND owner_user_id = ${sql(ownerId)}
+      AND setup_completed_at IS NULL
+      AND (
+        operation_session_id IS NULL
+        OR operation_expires_at <= now()
+        OR operation_session_id = ${sql(sessionId)}
+      )
+    RETURNING true AS acquired
+  `);
+  return Boolean(rows[0]?.acquired);
+}
+
+export async function heartbeatSetupOperation(ownerId: string, sessionId: string): Promise<void> {
+  await ensureIdentitySchema();
+  const rows = await queryRows<{ renewed: boolean }>(`
+    UPDATE identity_appliance_claim
+    SET operation_expires_at = now() + interval '5 minutes'
+    WHERE singleton = true
+      AND owner_user_id = ${sql(ownerId)}
+      AND operation_session_id = ${sql(sessionId)}
+    RETURNING true AS renewed
+  `);
+  if (!rows[0]?.renewed) throw new Error('The active setup operation lease was lost. Reload setup before retrying.');
+}
+
+export async function releaseSetupOperation(ownerId: string, sessionId: string): Promise<void> {
+  await ensureIdentitySchema();
+  await psql(`
+    UPDATE identity_appliance_claim
+    SET operation_session_id = NULL, operation_expires_at = NULL
+    WHERE singleton = true
+      AND owner_user_id = ${sql(ownerId)}
+      AND operation_session_id = ${sql(sessionId)}
+  `);
+}
+
+export async function markApplianceSetupComplete(ownerId: string, sessionId: string): Promise<void> {
+  await ensureIdentitySchema();
+  const rows = await queryRows<{ completed: boolean }>(`
+    UPDATE identity_appliance_claim
+    SET setup_completed_at = COALESCE(setup_completed_at, now()),
+        operation_session_id = NULL,
+        operation_expires_at = NULL
+    WHERE singleton = true
+      AND owner_user_id = ${sql(ownerId)}
+      AND operation_session_id = ${sql(sessionId)}
+    RETURNING true AS completed
+  `);
+  if (!rows[0]?.completed) throw new Error('Could not finalize the appliance owner claim.');
+}
+
+/** Repair the one-way boundary when platform config committed before the claim marker. */
+export async function reconcileApplianceSetupComplete(): Promise<void> {
+  await ensureIdentitySchema();
+  await psql(`
+    UPDATE identity_appliance_claim
+    SET setup_completed_at = COALESCE(setup_completed_at, now()),
+        operation_session_id = NULL,
+        operation_expires_at = NULL
+    WHERE singleton = true AND owner_user_id IS NOT NULL
+  `);
+}
+
+export async function createSetupHandoff(userId: string, targetOrigin: string): Promise<string> {
+  await ensureIdentitySchema();
+  const code = randomBytes(32).toString('base64url');
+  const codeHash = createHash('sha256').update(code).digest('hex');
+  await psql(`
+    DELETE FROM identity_setup_handoffs WHERE expires_at <= now() OR used_at IS NOT NULL;
+    INSERT INTO identity_setup_handoffs (code_hash, user_id, target_origin, expires_at)
+    SELECT ${sql(codeHash)}, owner_user_id, ${sql(targetOrigin)}, now() + interval '5 minutes'
+    FROM identity_appliance_claim
+    WHERE singleton = true
+      AND owner_user_id = ${sql(userId)}
+      AND setup_completed_at IS NOT NULL
+  `);
+  return code;
+}
+
+export async function consumeSetupHandoff(code: string, targetOrigin: string): Promise<IdentityUser | null> {
+  await ensureIdentitySchema();
+  const codeHash = createHash('sha256').update(code).digest('hex');
+  const rows = await queryRows<{ user_id: string }>(`
+    UPDATE identity_setup_handoffs
+    SET used_at = now()
+    WHERE code_hash = ${sql(codeHash)}
+      AND target_origin = ${sql(targetOrigin)}
+      AND used_at IS NULL
+      AND expires_at > now()
+    RETURNING user_id::text
+  `);
+  return rows[0] ? getUserById(rows[0].user_id) : null;
+}
+
 export function hashPassword(password: string): string {
+  requireIdentityPassword(password);
   const salt = randomBytes(16).toString('hex');
   const hash = scryptSync(password, salt, 64).toString('hex');
   return `scrypt$${salt}$${hash}`;
@@ -146,18 +372,23 @@ export async function ensureUser(input: {
   isAdmin: boolean;
 }): Promise<IdentityUser> {
   await ensureIdentitySchema();
+  requireIdentityPassword(input.password);
   const passwordHash = hashPassword(input.password);
+  const firstName = input.name.trim();
   const rows = await queryRows<IdentityUser>(`
-    INSERT INTO identity_users (username, password_hash, name, email, groups, is_admin)
-    VALUES (${sql(input.username)}, ${sql(passwordHash)}, ${sql(input.name)}, ${sql(input.email)}, ${sqlJson(input.groups)}, ${sql(input.isAdmin)})
+    INSERT INTO identity_users (username, password_hash, name, first_name, last_name, email, groups, is_admin, is_active)
+    VALUES (${sql(input.username)}, ${sql(passwordHash)}, ${sql(firstName)}, ${sql(firstName)}, '', ${sql(input.email)}, ${sqlJson(input.groups)}, ${sql(input.isAdmin)}, true)
     ON CONFLICT (username) DO UPDATE SET
       password_hash = EXCLUDED.password_hash,
       name = EXCLUDED.name,
+      first_name = EXCLUDED.first_name,
+      last_name = EXCLUDED.last_name,
       email = EXCLUDED.email,
       groups = EXCLUDED.groups,
       is_admin = EXCLUDED.is_admin,
+      is_active = true,
       updated_at = now()
-    RETURNING id::text, username, name, email, groups, is_admin
+    RETURNING id::text, username, name, first_name, last_name, email, groups, is_admin, is_active
   `);
   return rows[0];
 }
@@ -165,20 +396,23 @@ export async function ensureUser(input: {
 export async function verifyUser(username: string, password: string): Promise<IdentityUser | null> {
   await ensureIdentitySchema();
   const rows = await queryRows<IdentityUser & { password_hash: string }>(`
-    SELECT id::text, username, password_hash, name, email, groups, is_admin
+    SELECT id::text, username, password_hash, name, first_name, last_name, email, groups, is_admin, is_active
     FROM identity_users
     WHERE username = ${sql(username)}
     LIMIT 1
   `);
   const user = rows[0];
-  if (!user || !verifyPassword(password, user.password_hash)) return null;
+  if (!user || !user.is_active || !verifyPassword(password, user.password_hash)) return null;
   const safeUser: IdentityUser = {
     id: user.id,
     username: user.username,
     name: user.name,
+    first_name: user.first_name,
+    last_name: user.last_name,
     email: user.email,
     groups: user.groups,
     is_admin: user.is_admin,
+    is_active: user.is_active,
   };
   return safeUser;
 }
@@ -186,7 +420,7 @@ export async function verifyUser(username: string, password: string): Promise<Id
 export async function getUserById(id: string): Promise<IdentityUser | null> {
   await ensureIdentitySchema();
   const rows = await queryRows<IdentityUser>(`
-    SELECT id::text, username, name, email, groups, is_admin
+    SELECT id::text, username, name, first_name, last_name, email, groups, is_admin, is_active
     FROM identity_users
     WHERE id = ${sql(id)}
     LIMIT 1
@@ -197,7 +431,7 @@ export async function getUserById(id: string): Promise<IdentityUser | null> {
 export async function getUserByUsername(username: string): Promise<IdentityUser | null> {
   await ensureIdentitySchema();
   const rows = await queryRows<IdentityUser>(`
-    SELECT id::text, username, name, email, groups, is_admin
+    SELECT id::text, username, name, first_name, last_name, email, groups, is_admin, is_active
     FROM identity_users
     WHERE username = ${sql(username)}
     LIMIT 1
@@ -211,7 +445,7 @@ export async function listIdentityUsers(search?: string): Promise<IdentityUser[]
     ? `WHERE username ILIKE '%' || ${sql(search)} || '%' OR name ILIKE '%' || ${sql(search)} || '%' OR email ILIKE '%' || ${sql(search)} || '%'`
     : '';
   return queryRows<IdentityUser>(`
-    SELECT id::text, username, name, email, groups, is_admin
+    SELECT id::text, username, name, first_name, last_name, email, groups, is_admin, is_active
     FROM identity_users
     ${where}
     ORDER BY username ASC
@@ -221,42 +455,69 @@ export async function listIdentityUsers(search?: string): Promise<IdentityUser[]
 export async function createIdentityUser(input: {
   username: string;
   password: string;
-  name: string;
+  firstName: string;
+  lastName?: string;
   email?: string;
   groups?: string[];
   isAdmin?: boolean;
+  isActive?: boolean;
 }): Promise<IdentityUser> {
   await ensureIdentitySchema();
+  requireIdentityPassword(input.password);
   const passwordHash = hashPassword(input.password);
   const groups = input.groups || (input.isAdmin ? ['admin'] : ['youeye-users']);
+  const firstName = input.firstName.trim();
+  const lastName = input.lastName?.trim() || '';
+  const name = [firstName, lastName].filter(Boolean).join(' ');
   const rows = await queryRows<IdentityUser>(`
-    INSERT INTO identity_users (username, password_hash, name, email, groups, is_admin)
-    VALUES (${sql(input.username)}, ${sql(passwordHash)}, ${sql(input.name)}, ${sql(input.email || '')}, ${sqlJson(groups)}, ${sql(Boolean(input.isAdmin))})
-    RETURNING id::text, username, name, email, groups, is_admin
+    INSERT INTO identity_users (username, password_hash, name, first_name, last_name, email, groups, is_admin, is_active)
+    VALUES (${sql(input.username)}, ${sql(passwordHash)}, ${sql(name)}, ${sql(firstName)}, ${sql(lastName)}, ${sql(input.email || '')}, ${sqlJson(groups)}, ${sql(Boolean(input.isAdmin))}, ${sql(input.isActive !== false)})
+    RETURNING id::text, username, name, first_name, last_name, email, groups, is_admin, is_active
   `);
   return rows[0];
 }
 
 export async function updateIdentityUser(id: string, patch: {
   name?: string;
+  firstName?: string;
+  lastName?: string;
   email?: string;
   groups?: string[];
   isAdmin?: boolean;
+  isActive?: boolean;
   password?: string;
 }): Promise<IdentityUser> {
   await ensureIdentitySchema();
   const assignments: string[] = ['updated_at = now()'];
-  if (typeof patch.name === 'string') assignments.push(`name = ${sql(patch.name)}`);
+  if (typeof patch.firstName === 'string' || typeof patch.lastName === 'string') {
+    const current = await getUserById(id);
+    if (!current) throw new Error(`Identity user not found: ${id}`);
+    const firstName = typeof patch.firstName === 'string' ? patch.firstName.trim() : current.first_name;
+    const lastName = typeof patch.lastName === 'string' ? patch.lastName.trim() : current.last_name;
+    const name = [firstName, lastName].filter(Boolean).join(' ');
+    assignments.push(`name = ${sql(name)}`, `first_name = ${sql(firstName)}`, `last_name = ${sql(lastName)}`);
+  } else if (typeof patch.name === 'string') {
+    // Compatibility callers may still supply a combined display name. Preserve
+    // the existing family name rather than clearing it.
+    const current = await getUserById(id);
+    if (!current) throw new Error(`Identity user not found: ${id}`);
+    const name = patch.name.trim();
+    assignments.push(`name = ${sql(name)}`, `first_name = ${sql(name || current.first_name)}`);
+  }
   if (typeof patch.email === 'string') assignments.push(`email = ${sql(patch.email)}`);
   if (Array.isArray(patch.groups)) assignments.push(`groups = ${sqlJson(patch.groups)}`);
   if (typeof patch.isAdmin === 'boolean') assignments.push(`is_admin = ${sql(patch.isAdmin)}`);
-  if (typeof patch.password === 'string') assignments.push(`password_hash = ${sql(hashPassword(patch.password))}`);
+  if (typeof patch.isActive === 'boolean') assignments.push(`is_active = ${sql(patch.isActive)}`);
+  if (typeof patch.password === 'string') {
+    requireIdentityPassword(patch.password);
+    assignments.push(`password_hash = ${sql(hashPassword(patch.password))}`);
+  }
 
   const rows = await queryRows<IdentityUser>(`
     UPDATE identity_users
     SET ${assignments.join(', ')}
     WHERE id = ${sql(id)}
-    RETURNING id::text, username, name, email, groups, is_admin
+    RETURNING id::text, username, name, first_name, last_name, email, groups, is_admin, is_active
   `);
   if (!rows[0]) throw new Error(`Identity user not found: ${id}`);
   return rows[0];

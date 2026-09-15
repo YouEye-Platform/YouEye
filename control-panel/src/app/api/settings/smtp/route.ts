@@ -9,7 +9,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { settingsService } from '@/lib/settings';
 import { readSmtpPassword, writeSmtpPassword } from '@/lib/smtp/secrets';
-import { configureAuthentikSmtp } from '@/lib/smtp/authentik-sync';
 import { propagateSmtpToApps } from '@/lib/market/propagation';
 import { emitEvent } from '@/lib/events/emitter';
 
@@ -69,21 +68,6 @@ export async function POST(request: NextRequest) {
     // Store password securely on disk
     if (password) {
       await writeSmtpPassword(password);
-    }
-
-    // Sync SMTP config to the identity provider (best-effort)
-    try {
-      const smtpPassword = password || await readSmtpPassword();
-      await configureAuthentikSmtp({
-        host,
-        port: Number(port),
-        username,
-        password: smtpPassword,
-        from,
-        useTls: requireTls ?? true,
-      });
-    } catch (err) {
-      console.error('[SMTP] identity provider sync failed (non-blocking):', err);
     }
 
     // Emit settings change event

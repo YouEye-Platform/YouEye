@@ -1,77 +1,60 @@
 package installer
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 )
 
-// RunSilent performs a non-interactive install for automation and fresh-install
-// tests. It uses the same detection and providers as the TUI, but prints plain
-// progress lines instead of starting Bubble Tea.
-func RunSilent(opts CLIOptions) error {
+type applianceProgressRecord struct {
+	Schema    string  `json:"schema"`
+	Operation string  `json:"operation"`
+	State     string  `json:"state"`
+	Stage     string  `json:"stage,omitempty"`
+	Detail    string  `json:"detail,omitempty"`
+	Percent   float64 `json:"percent"`
+	Result    string  `json:"result,omitempty"`
+}
+
+func RunInstallerMediaSilent(opts CLIOptions) error {
 	if !opts.Yes {
 		return fmt.Errorf("--silent requires --yes")
 	}
+	return runSilentInstaller(configFromOptions(opts), os.Stdout)
+}
 
-	env, err := detectEnvironment()
-	if err != nil {
-		return fmt.Errorf("detecting environment: %w", err)
+func runSilentInstaller(config installConfig, output io.Writer) error {
+	encoder := json.NewEncoder(output)
+	if err := encoder.Encode(applianceProgressRecord{
+		Schema: "youeye.installer.progress.v1", Operation: "install", State: "starting", Percent: 0,
+	}); err != nil {
+		return fmt.Errorf("write installer progress: %w", err)
 	}
-	if env.IsContainer {
-		return fmt.Errorf("cannot install inside a container (%s)", env.ContainerType)
-	}
-
-	cfg, err := configFromEnvAndOptions(env, opts)
-	if err != nil {
-		return err
-	}
-	if cfg.Mode == modeVM && !env.IsProxmox {
-		return fmt.Errorf("--mode proxmox-vm requires running on a Proxmox host")
-	}
-	if cfg.Mode == modeHost && env.IsProxmox {
-		return fmt.Errorf("refusing direct host install on Proxmox; use --mode proxmox-vm")
-	}
-	if err := validateConfigSources(cfg); err != nil {
-		return err
-	}
-
-	fmt.Println("YouEye silent installer")
-	fmt.Printf("Mode: %s\n", cfg.Mode.String())
-	if cfg.Mode != modeHost {
-		fmt.Printf("Target ID: %s\n", cfg.ContainerID)
-	}
-	fmt.Printf("Hostname: %s\n", cfg.Hostname)
-	fmt.Printf("Core repo: %s\n", cfg.CoreRepoURL)
-	fmt.Printf("Market repo: %s\n", cfg.MarketRepoURL)
-	fmt.Printf("Channel: %s\n", cfg.ReleaseChannel)
-	if cfg.Mode == modeVM {
-		if cfg.IncusZFSGB > 0 {
-			fmt.Printf("Incus ZFS disk: %d GiB\n", cfg.IncusZFSGB)
-		} else {
-			fmt.Println("Incus ZFS disk: disabled (guest will use Spine fallback storage)")
+	for message := range startEngine(config) {
+		record := applianceProgressRecord{
+			Schema: "youeye.installer.progress.v1", Operation: "install",
+			State: "running", Stage: message.StepName, Detail: message.LogLine, Percent: message.Percent,
 		}
-	}
-	if cfg.Mode == modeVM && cfg.RootPassword == "" {
-		fmt.Println("Warning: no VM root password provided; console root password will not be set")
-	}
-	fmt.Println()
-
-	var lastStep string
-	for msg := range startEngine(cfg) {
-		if msg.Err != nil {
-			return msg.Err
+		if message.Err != nil {
+			record.State = "failed"
+			record.Detail = message.Err.Error()
+			if err := encoder.Encode(record); err != nil {
+				return fmt.Errorf("write installer failure progress: %w", err)
+			}
+			return message.Err
 		}
-		if msg.StepName != "" && msg.StepName != lastStep {
-			lastStep = msg.StepName
-			fmt.Printf("[%3.0f%%] %s\n", msg.Percent*100, msg.StepName)
+		if message.Done {
+			record.State = "complete"
+			record.Percent = 1
+			record.Result = message.ResultIP
 		}
-		if msg.LogLine != "" {
-			fmt.Printf("  %s\n", msg.LogLine)
+		if err := encoder.Encode(record); err != nil {
+			return fmt.Errorf("write installer progress: %w", err)
 		}
-		if msg.Done {
-			fmt.Printf("Installation complete: %s\n", msg.ResultIP)
+		if message.Done {
 			return nil
 		}
 	}
-
 	return fmt.Errorf("installer stopped before completion")
 }

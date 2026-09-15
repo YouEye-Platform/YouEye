@@ -60,14 +60,6 @@ export function redactVars(vars: Record<string, string>): Record<string, string>
   return redacted;
 }
 
-// Re-export identity provider CRUD operations
-export {
-  isAuthentikAvailable,
-  getAuthentikExternalUrl,
-  createAuthentikOAuth2App,
-  removeAuthentikOAuth2App,
-} from './authentik';
-
 /**
  * Runtime context for SSO step execution.
  * Tracks extracted tokens and saved responses across steps.

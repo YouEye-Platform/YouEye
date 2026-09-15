@@ -47,14 +47,15 @@ test('scoped app-token proxy routes deny unapproved app-token fallthrough', () =
   assert.match(manager, /action: 'restart'/);
   const addGrantIndex = manager.indexOf('await addScopedAppGrantRoute');
   const injectCaIndex = manager.indexOf('await injectCaddyRootCA(fromContainer)');
-  const restartIndex = manager.indexOf("action: 'restart'", injectCaIndex);
+  const restartIndex = manager.indexOf('await restartInstanceExact(fromContainer)', injectCaIndex);
   assert.ok(addGrantIndex > -1);
   assert.ok(injectCaIndex > addGrantIndex);
   assert.ok(restartIndex > injectCaIndex);
 
-  assert.match(caddyCa, /NODE_EXTRA_CA_CERTS=\/usr\/local\/share\/ca-certificates\/caddy-root\.crt/);
-  assert.match(caddyCa, /SSL_CERT_FILE=\/usr\/local\/share\/ca-certificates\/caddy-root\.crt/);
-  assert.match(caddyCa, /REQUESTS_CA_BUNDLE=\/usr\/local\/share\/ca-certificates\/caddy-root\.crt/);
+  assert.match(caddyCa, /CONTAINER_TRUST_BUNDLE = '\/etc\/youeye\/trust\/ca-bundle\.crt'/);
+  assert.match(caddyCa, /NODE_EXTRA_CA_CERTS=\$\{CONTAINER_TRUST_BUNDLE\}/);
+  assert.match(caddyCa, /SSL_CERT_FILE=\$\{CONTAINER_TRUST_BUNDLE\}/);
+  assert.match(caddyCa, /REQUESTS_CA_BUNDLE=\$\{CONTAINER_TRUST_BUNDLE\}/);
   assert.match(caddyCa, /youeye-caddy-ca\.conf/);
 
   assert.match(schema, /ProxyScopeSchema/);
@@ -69,9 +70,11 @@ test('bridge JSON stores use atomic temp-file rename writes', () => {
   const internetStore = read('src/lib/bridges/internet-store.ts');
   const suggestionsStore = read('src/lib/bridges/suggestions.ts');
 
-  assert.match(helper, /const tmpPath = `\$\{filePath\}\.tmp-\$\{process\.pid\}-\$\{Date\.now\(\)\}`/);
-  assert.match(helper, /await writeFile\(tmpPath, JSON\.stringify\(value, null, 2\)\)/);
+  assert.match(helper, /const tmpPath = `\$\{filePath\}\.tmp-\$\{process\.pid\}-\$\{randomUUID\(\)\}`/);
+  assert.match(helper, /await open\(tmpPath, 'wx', 0o600\)/);
+  assert.match(helper, /await handle\.sync\(\)/);
   assert.match(helper, /await rename\(tmpPath, filePath\)/);
+  assert.match(helper, /await directoryHandle\.sync\(\)/);
   assert.match(helper, /await rm\(tmpPath, \{ force: true \}\)/);
 
   assert.match(bridgeStore, /writeJsonAtomically\(BRIDGES_FILE, bridges\)/);

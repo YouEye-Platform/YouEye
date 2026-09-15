@@ -7,17 +7,26 @@
  * Pi-Hole DNS, shared databases, and volume data.
  */
 
-import { incusRequest } from '../incus/server';
+import { execCommand, incusRequest } from '../incus/server';
 import { containerExists } from '../infrastructure/oci-deployer';
 import { getRoutes, removeRoute, removeAppRoutes } from '../caddy/client';
-import { readInstallMetadata, removeInstallMetadata } from './metadata';
-import { removeInstalledApp } from './installed-apps';
-import { removeAuthentikOAuth2App } from './sso-engine';
-import { removeAuthentikForwardAuthApp } from './authentik';
-import type { UninstallOptions, UninstallVerification } from './types';
+import { readInstallMetadata, removeInstallMetadata, removeInstallMetadataRecord } from './metadata';
+import { getInstalledApp, removeInstalledApp } from './installed-apps';
+import { removeForwardAuth, removeOAuthClient } from '@/lib/identity/provider';
+import { cleanupAppByScan, isAppRegisteredWithUI } from './reconciler';
+import type { StorageVolumeMeta, UninstallVerification } from './types';
+import {
+  deleteAppNetwork,
+  getAppNetworkLease,
+  markAppNetworkCleanupPending,
+  removeCaddyFromAppNetwork,
+  removeSystemProxyDevices,
+  withAppNetworkOperationLock,
+} from '../incus/app-network';
+import { archivePointerManagedAppIfPresent } from '@/lib/pointer/managed-apps';
+import { deleteAppStorage, verifyAppStorageRemoval } from './storage';
 
 const POSTGRES_CONTAINER = 'youeye-postgres';
-const CONTAINER_DOMAIN = '.youeye';
 
 // ─── Container Metadata Helpers ──────────────────────────
 
@@ -66,18 +75,60 @@ export async function uninstallApp(
     keepData?: boolean;
   } = {}
 ): Promise<{ success: boolean; errors: string[]; verification: UninstallVerification }> {
+  return withAppNetworkOperationLock(appId, 'remove', () => uninstallAppLocked(appId, options));
+}
+
+async function uninstallAppLocked(
+  appId: string,
+  options: {
+    dropSharedDatabase?: boolean;
+    keepData?: boolean;
+  },
+): Promise<{ success: boolean; errors: string[]; verification: UninstallVerification }> {
   const metadata = await readInstallMetadata(appId);
   if (!metadata) {
+    const scanned = await cleanupAppByScan(appId, {
+      keepData: options.keepData ?? true,
+      dropDatabase: options.dropSharedDatabase ?? false,
+    });
+    const verification = await verifyUninstall(
+      appId,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [],
+      options.dropSharedDatabase ?? false,
+      options.keepData ?? true,
+    );
+    const success = scanned.unresolved.length === 0
+      && verification.networkRemoved
+      && verification.leaseReleased;
     return {
-      success: false,
-      errors: [`No install metadata found for app: ${appId}`],
-      verification: emptyVerification(),
+      success,
+      errors: success ? [] : [`No install metadata found for app: ${appId}`, ...scanned.unresolved],
+      verification,
     };
   }
 
   const errors: string[] = [];
   const keepData = options.keepData ?? true;
   const dropDb = options.dropSharedDatabase ?? false;
+
+  const aiExternalInstallationId =
+    metadata.aiConnection?.externalInstallationId
+    || metadata.aiConnectionPending?.externalInstallationId;
+  if (aiExternalInstallationId) {
+    try {
+      const archived = await archivePointerManagedAppIfPresent(aiExternalInstallationId);
+      if (!archived.archived || !archived.credentialsRevoked) {
+        throw new Error('Pointer did not confirm credential revocation');
+      }
+    } catch {
+      errors.push('Pointer AI connection cleanup or verification failed');
+    }
+  }
 
   // Normalize containers to v2 object format (handles legacy string[] format)
   const containers = normalizeContainerMeta(metadata.containers);
@@ -87,33 +138,31 @@ export async function uninstallApp(
   for (const c of containers) {
     try {
       await stopAndDeleteContainer(c.containerName);
-    } catch (err) {
-      errors.push(`Failed to remove container ${c.containerName}: ${err}`);
+    } catch {
+      errors.push(`Container ${c.containerName} cleanup or verification failed`);
     }
   }
 
-  // 1b. Clean up per-app bridge network
-  try {
-    const { removeCaddyFromAppNetwork, removeSystemProxyDevices, deleteAppNetwork } = await import('../incus/app-network');
-    // Remove Control-owned service proxies before deleting the bridge address they bind to
-    await removeSystemProxyDevices(appId);
-    // Remove Caddy NIC first (before deleting the bridge)
-    await removeCaddyFromAppNetwork(appId);
-    // Delete the bridge (containers already deleted above, so bridge should be empty)
-    await deleteAppNetwork(appId);
-  } catch (err) {
-    errors.push(`Failed to remove app network: ${err}`);
-  }
-
-  // 1c. Clean up bridge records referencing this app
+  // 1b. Clean up bridge records and scoped secondary NIC grants before the
+  // target primary bridge can be deleted.
   try {
     const { getBridgesForApp, deleteBridge } = await import('../bridges/manager');
     const bridges = await getBridgesForApp(appId);
     for (const bridge of bridges) {
       await deleteBridge(bridge.id);
     }
-  } catch (err) {
-    errors.push(`Failed to clean up bridges: ${err}`);
+    if ((await getBridgesForApp(appId)).length > 0) throw new Error('integration records remain');
+  } catch {
+    errors.push('Explicit integration cleanup or verification failed');
+  }
+
+  // 1c. Remove Control-owned proxy and Caddy attachments. Retain the bridge
+  // and lease as the durable cleanup owner until every later step succeeds.
+  try {
+    await removeSystemProxyDevices(appId);
+    await removeCaddyFromAppNetwork(appId);
+  } catch {
+    errors.push('App network attachment cleanup or verification failed');
   }
 
   // 2. Remove Caddy routes
@@ -143,101 +192,134 @@ export async function uninstallApp(
 
       // Also remove multi-entrance routes (app-{appId}-* pattern)
       await removeAppRoutes(appId);
-    } catch (err) {
-      errors.push(`Failed to remove Caddy route: ${err}`);
+      const remaining = await getRoutes();
+      if (remaining.some((route) => route.hostname === hostname
+        || route.id.startsWith(`app-${appId}-`)
+        || containers.some((container) => route.upstream === container.containerName))) {
+        throw new Error('one or more app routes remain');
+      }
+    } catch {
+      errors.push('Caddy route cleanup or verification failed');
     }
   }
 
   // 3. Remove identity SSO app (OAuth2 + forward-auth proxy)
-  let authentikRemoved = false;
-  const ssoSlug = metadata.ssoSlug || `youeye-app-${appId}`;
-  try {
-    await removeAuthentikOAuth2App(ssoSlug);
-    authentikRemoved = true;
-  } catch (err) {
-    const errMsg = String(err);
-    if (errMsg.includes('404') || errMsg.includes('not found')) {
-      authentikRemoved = true;
-    } else {
-      errors.push(`Failed to remove Authentik SSO app: ${err}`);
+  const ssoClientId = metadata.ssoClientId || metadata.ssoSlug;
+  if (ssoClientId) {
+    try {
+      await removeOAuthClient(ssoClientId);
+      const { getClient } = await import('@/lib/identity/store');
+      if (await getClient(ssoClientId)) throw new Error('identity client remains');
+    } catch {
+      errors.push('Identity OAuth client cleanup or verification failed');
     }
   }
 
-  // Also remove forward-auth proxy provider if it exists
-  const faSlug = metadata.forwardAuthSlug || `youeye-fa-${appId}`;
-  try {
-    await removeAuthentikForwardAuthApp(faSlug);
-  } catch {
-    // Forward-auth may not have been created — best effort
+  if (metadata.forwardAuthEnabled && metadata.subdomain && metadata.domain) {
+    try {
+      await removeForwardAuth({ hostname: `${metadata.subdomain}.${metadata.domain}` });
+    } catch {
+      errors.push('Identity forward-auth cleanup failed');
+    }
   }
 
   // 4. Remove Pi-Hole DNS entries for app subdomain
-  let dnsRemoved = false;
   if (metadata.subdomain && metadata.domain) {
     try {
       await removePiholeDNSForApp(metadata.subdomain, metadata.domain);
-      dnsRemoved = true;
-    } catch (err) {
-      errors.push(`Failed to remove Pi-Hole DNS: ${err}`);
+    } catch {
+      errors.push('Pi-Hole DNS cleanup or verification failed');
     }
   }
 
   // 5. Drop shared database if applicable
-  let dbDropped: boolean | null = null;
   if (dropDb) {
     try {
-      await dropSharedPostgresDatabase(appId);
-      dbDropped = true;
-    } catch (err) {
-      dbDropped = false;
-      errors.push(`Failed to drop shared database: ${err}`);
+      await dropSharedPostgresDatabase(
+        metadata.databaseName || appId,
+        metadata.databaseUser || appId,
+      );
+    } catch {
+      errors.push('Shared database cleanup or verification failed');
     }
   }
 
   // 6. Remove volume data if not keeping
-  let dataRemoved: boolean | null = null;
   if (!keepData) {
     try {
-      await removeAppVolumeData(appId);
-      dataRemoved = true;
-    } catch (err) {
-      dataRemoved = false;
-      errors.push(`Failed to remove volume data: ${err}`);
+      await deleteAppStorage(metadata.storageVolumes ?? []);
+    } catch {
+      errors.push('App data cleanup or verification failed');
     }
   }
 
-  // 7. Remove metadata (but keep directory if keepData)
-  if (keepData) {
-    // Only remove install.json, not the whole directory
-    await removeInstallMetadata(appId);
-  } else {
-    await removeInstallMetadata(appId);
-  }
-
-  // 7b. Remove from installed_apps DB table
+  // 7. Remove from installed_apps so cleanup_pending is never presented as a
+  // successful install. Install metadata remains the exact recovery map until
+  // all cleanup postconditions pass.
   try {
     await removeInstalledApp(appId);
+    if (await getInstalledApp(appId)) throw new Error('installed-app record remains');
   } catch {
-    // Non-fatal — DB tracking is secondary to file-based metadata
+    errors.push('Installed-app state cleanup or verification failed');
   }
 
-  // 7c. Deregister from YE-UI dashboard (remove from app drawer)
+  // 7b. Deregister from YE-UI dashboard (remove from app drawer)
   try {
     await deregisterAppFromUI(appId);
+    if (await isAppRegisteredWithUI(appId)) throw new Error('UI registration remains');
   } catch {
-    // Non-fatal — app drawer entry is secondary
+    errors.push('Dashboard registration cleanup or verification failed');
   }
 
-  // 8. Post-uninstall verification
+  // 8. Delete and release the primary network only after every dependency is
+  // absent. Any earlier failure deliberately retains cleanup_pending ownership.
+  if (errors.length === 0) {
+    try {
+      await deleteAppNetwork(appId);
+    } catch {
+      errors.push('App network cleanup or verification failed');
+    }
+  } else {
+    await markAppNetworkCleanupPending(appId, 'uninstall', errors.join('; ')).catch(() => {
+      errors.push('Failed to persist cleanup_pending lease');
+    });
+  }
+
+  // 9. Metadata is removed only after the network lease has been released.
+  if (errors.length === 0) {
+    try {
+      if (keepData) await removeInstallMetadataRecord(appId);
+      else await removeInstallMetadata(appId);
+    } catch (error) {
+      errors.push('Install metadata cleanup or verification failed');
+      await markAppNetworkCleanupPending(appId, 'uninstall-metadata', error).catch(() => undefined);
+    }
+  }
+
+  // 10. Post-uninstall verification
   const verification = await verifyUninstall(
     appId,
     containerNames,
     metadata.subdomain,
     metadata.domain,
-    ssoSlug,
+    ssoClientId,
+    metadata.databaseName || appId,
+    metadata.storageVolumes ?? [],
     dropDb,
     keepData
   );
+
+  if (!verification.containerRemoved
+    || !verification.networkRemoved
+    || !verification.leaseReleased
+    || !verification.caddyRouteRemoved
+    || !verification.identityClientRemoved
+    || !verification.dnsRemoved
+    || verification.databaseDropped === false
+    || verification.dataRemoved === false
+    || verification.warnings.length > 0) {
+    errors.push(`Post-uninstall verification failed: ${verification.warnings.join('; ') || 'one or more cleanup postconditions are false'}`);
+  }
 
   return {
     success: errors.length === 0,
@@ -251,20 +333,25 @@ export async function uninstallApp(
 async function deregisterAppFromUI(appId: string): Promise<void> {
   const { getContainerIP } = await import('../incus/container-ip');
   const uiIP = await getContainerIP('youeye-ui');
-  if (!uiIP) return;
+  if (!uiIP) throw new Error('YE-UI container IP is unavailable');
 
   let bridgeToken: string | null = null;
   try {
     const { readFileSync } = await import('fs');
     bridgeToken = readFileSync('/etc/youeye/ui-bridge-token', 'utf-8').trim();
   } catch {
-    bridgeToken = process.env.UI_BRIDGE_TOKEN ?? null;
+    bridgeToken = process.env.UI_BRIDGE_TOKEN?.trim() ?? null;
   }
 
-  await fetch(`http://${uiIP}:3000/api/v1/apps/${appId}/unregister`, {
+  if (!bridgeToken) throw new Error('UI bridge token is unavailable');
+
+  const response = await fetch(`http://${uiIP}:3000/api/v1/apps/${appId}/unregister`, {
     method: 'DELETE',
-    headers: bridgeToken ? { 'X-UI-Bridge-Token': bridgeToken } : {},
+    headers: { 'X-UI-Bridge-Token': bridgeToken },
   });
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`YE-UI unregister failed with HTTP ${response.status}`);
+  }
 }
 
 // ─── Container Management ─────────────────────────────────
@@ -274,27 +361,35 @@ async function stopAndDeleteContainer(name: string): Promise<void> {
 
   // Force stop
   try {
-    await incusRequest('PUT', `/1.0/instances/${name}/state`, {
+    const stopped = await incusRequest('PUT', `/1.0/instances/${name}/state`, {
       action: 'stop',
       force: true,
       timeout: 30,
     });
-    await new Promise((r) => setTimeout(r, 3000));
-  } catch {
-    // May already be stopped
+    if (stopped.type === 'error' && stopped.error_code !== 404 && stopped.status_code !== 404) {
+      throw new Error('container stop failed');
+    }
+    if (stopped.type === 'async' && stopped.operation) {
+      const waited = await incusRequest('GET', `${stopped.operation}/wait?timeout=30`, undefined, { timeout: 40_000 });
+      if (waited.type === 'error') throw new Error('container stop wait failed');
+    }
+  } catch (error) {
+    if (await containerExists(name)) throw error;
+    return;
   }
 
   // Delete
   const result = await incusRequest('DELETE', `/1.0/instances/${name}`);
-  if (result.type === 'async' && result.operation) {
-    try {
-      await incusRequest('GET', `${result.operation}/wait?timeout=30`, undefined, {
-        timeout: 40_000,
-      });
-    } catch {
-      // Timeout on wait is non-fatal
-    }
+  if (result.type === 'error' && result.error_code !== 404 && result.status_code !== 404) {
+    throw new Error('container delete failed');
   }
+  if (result.type === 'async' && result.operation) {
+    const waited = await incusRequest('GET', `${result.operation}/wait?timeout=30`, undefined, {
+      timeout: 40_000,
+    });
+    if (waited.type === 'error') throw new Error('container delete wait failed');
+  }
+  if (await containerExists(name)) throw new Error('container remains after delete');
 }
 
 // ─── Pi-Hole DNS Cleanup ──────────────────────────────────
@@ -304,8 +399,7 @@ async function stopAndDeleteContainer(name: string): Promise<void> {
  * Apps typically have a CNAME: subdomain.domain → control-panel container IP.
  */
 async function removePiholeDNSForApp(subdomain: string, domain: string): Promise<void> {
-  try {
-    const { getCNAMERecords, removeCNAMERecord, getDNSRecords, removeDNSRecord } = await import('../apps/pihole-api');
+  const { getCNAMERecords, removeCNAMERecord, getDNSRecords, removeDNSRecord } = await import('../apps/pihole-api');
 
     // Remove CNAME records matching the app subdomain
     const hostname = `${subdomain}.${domain}`;
@@ -323,82 +417,49 @@ async function removePiholeDNSForApp(subdomain: string, domain: string): Promise
         await removeDNSRecord(record.ip, record.domain);
       }
     }
-  } catch {
-    // Pi-Hole may not be available — best effort
-  }
+    const [remainingCNAMEs, remainingRecords] = await Promise.all([getCNAMERecords(), getDNSRecords()]);
+    if (remainingCNAMEs.some((record) => record.domain === hostname)
+      || remainingRecords.some((record) => record.domain === hostname)) {
+      throw new Error('app DNS records remain after cleanup');
+    }
 }
 
 // ─── Shared PostgreSQL ────────────────────────────────────
 
-async function dropSharedPostgresDatabase(appId: string): Promise<void> {
-  const { execShell } = await import('../incus/server');
+async function dropSharedPostgresDatabase(databaseName: string, databaseUser: string): Promise<void> {
+  const { execCommand } = await import('../incus/server');
+  const identifierPattern = /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/;
+  if (!identifierPattern.test(databaseName) || !identifierPattern.test(databaseUser)) {
+    throw new Error('Invalid shared database cleanup identifiers');
+  }
 
   // Check if postgres is reachable first
-  try {
-    const check = await execShell(POSTGRES_CONTAINER, 'pg_isready -U youeye', { timeout: 5_000 });
-    if (check.exitCode !== 0) {
-      console.warn(`[uninstaller] PostgreSQL unreachable — skipping DB cleanup for ${appId}.`);
-      return;
-    }
-  } catch {
-    console.warn(`[uninstaller] PostgreSQL unreachable — skipping DB cleanup for ${appId}.`);
-    return;
-  }
+  const check = await execCommand(POSTGRES_CONTAINER, ['/usr/local/bin/pg_isready', '-U', 'youeye'], { timeout: 5_000 });
+  if (check.exitCode !== 0) throw new Error('PostgreSQL is unreachable');
 
-  try {
-    // Terminate active connections first
-    await execShell(
-      POSTGRES_CONTAINER,
-      `psql -U youeye -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${appId}' AND pid <> pg_backend_pid();"`,
-      { timeout: 10_000 }
-    );
-  } catch {
-    // Best effort
-  }
+  const database = `"${databaseName}"`;
+  const role = `"${databaseUser}"`;
 
-  try {
-    await execShell(
-      POSTGRES_CONTAINER,
-      `psql -U youeye -c "DROP DATABASE IF EXISTS ${appId}"`,
-      { timeout: 10_000 }
-    );
-    await execShell(
-      POSTGRES_CONTAINER,
-      `psql -U youeye -c "DROP USER IF EXISTS ${appId}"`,
-      { timeout: 10_000 }
-    );
-  } catch {
-    // Best effort
-  }
-}
-
-// ─── Volume Data Cleanup ──────────────────────────────────
-
-async function removeAppVolumeData(appId: string): Promise<void> {
-  const { execShell } = await import('../incus/server');
-
-  // Remove volume dirs on the host via the CP container (has access to /var/lib/youeye)
-  // The metadata dir is at /var/lib/youeye/app-{appId}
-  // Volume data for OCI apps is at /var/lib/youeye/apps/{appId}/
-  // Secrets are at /var/lib/youeye/secrets/app-{appId}/
-  const paths = [
-    `/var/lib/youeye/app-${appId}`,
-    `/var/lib/youeye/apps/${appId}`,
-    `/var/lib/youeye/secrets/app-${appId}`,
-  ];
-
-  for (const path of paths) {
-    try {
-      // Use the control panel's own filesystem (runs inside control container)
-      const { rm } = await import('fs/promises');
-      const { existsSync } = await import('fs');
-      if (existsSync(path)) {
-        await rm(path, { recursive: true, force: true });
-      }
-    } catch {
-      // Best effort
-    }
-  }
+  const cleanup = await execCommand(
+    POSTGRES_CONTAINER,
+    [
+      '/usr/local/bin/psql', '-v', 'ON_ERROR_STOP=1', '-U', 'youeye', '-d', 'postgres',
+      '-c', `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${databaseName}' AND pid <> pg_backend_pid();`,
+      '-c', `DROP DATABASE IF EXISTS ${database}`,
+      '-c', `DROP ROLE IF EXISTS ${role}`,
+    ],
+    { timeout: 15_000 },
+  );
+  if (cleanup.exitCode !== 0) throw new Error('database cleanup failed');
+  const verify = await execCommand(
+    POSTGRES_CONTAINER,
+    [
+      '/usr/local/bin/psql', '-v', 'ON_ERROR_STOP=1', '-U', 'youeye', '-d', 'postgres', '-tAc',
+      `SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_database WHERE datname='${databaseName}') OR EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${databaseUser}') THEN 1 ELSE 0 END`,
+    ],
+    { timeout: 10_000 },
+  );
+  if (verify.exitCode !== 0 || verify.stdout.trim() === '1') throw new Error('database resources remain after cleanup');
 }
 
 // ─── Post-Uninstall Verification ──────────────────────────
@@ -408,7 +469,9 @@ async function verifyUninstall(
   containerNames: string[],
   subdomain?: string,
   domain?: string,
-  ssoSlug?: string,
+  ssoClientId?: string,
+  databaseName?: string,
+  storageVolumes: StorageVolumeMeta[] = [],
   droppedDb?: boolean,
   keptData?: boolean
 ): Promise<UninstallVerification> {
@@ -435,35 +498,94 @@ async function verifyUninstall(
         warnings.push(`Caddy route for ${hostname} still exists`);
       }
     } catch {
-      // Can't verify — skip
+      caddyRouteRemoved = false;
+      warnings.push('Unable to verify Caddy route removal');
     }
   }
 
-  // Verify identity provider app is gone (best effort)
-  const authentikAppRemoved = true; // We trust the delete worked or it was 404
+  // Verify the YouEye ID client is absent rather than trusting a
+  // successful delete response.
+  let identityClientRemoved = true;
+  if (ssoClientId) {
+    try {
+      const { getClient } = await import('@/lib/identity/store');
+      identityClientRemoved = await getClient(ssoClientId) === null;
+      if (!identityClientRemoved) warnings.push(`Identity OAuth client ${ssoClientId} still exists`);
+    } catch {
+      identityClientRemoved = false;
+      warnings.push('Unable to verify identity OAuth client removal');
+    }
+  }
 
-  // DNS verification
-  const dnsRemoved = true; // Pi-Hole cleanup is best-effort
+  let dnsRemoved = true;
+  if (subdomain && domain) {
+    try {
+      const { getCNAMERecords, getDNSRecords } = await import('../apps/pihole-api');
+      const hostname = `${subdomain}.${domain}`;
+      const [cnames, records] = await Promise.all([getCNAMERecords(), getDNSRecords()]);
+      dnsRemoved = !cnames.some((record) => record.domain === hostname)
+        && !records.some((record) => record.domain === hostname);
+      if (!dnsRemoved) warnings.push(`Pi-Hole records for ${hostname} still exist`);
+    } catch {
+      dnsRemoved = false;
+      warnings.push('Unable to verify Pi-Hole cleanup');
+    }
+  }
+
+  // `false` means database cleanup was not requested, not that cleanup failed.
+  // Keep that inapplicable postcondition null so non-database apps do not
+  // report a false failed uninstall after every owned resource is gone.
+  let databaseDropped: boolean | null = droppedDb ? false : null;
+  if (droppedDb) {
+    try {
+      const result = await execCommand(
+        POSTGRES_CONTAINER,
+        ['psql', '-v', 'ON_ERROR_STOP=1', '-U', 'youeye', '-d', 'postgres', '-tAc', `SELECT 1 FROM pg_database WHERE datname='${(databaseName || appId).replace(/'/g, "''")}'`],
+        { timeout: 10_000 },
+      );
+      databaseDropped = result.exitCode === 0 && result.stdout.trim() !== '1';
+      if (!databaseDropped) warnings.push(`Shared database for ${appId} still exists or could not be queried`);
+    } catch {
+      databaseDropped = false;
+      warnings.push('Unable to verify shared database cleanup');
+    }
+  }
+
+  let dataRemoved = keptData === false ? true : null;
+  if (keptData === false) {
+    try {
+      dataRemoved = await verifyAppStorageRemoval(storageVolumes);
+      if (!dataRemoved) warnings.push(`One or more Incus app volumes still exist for ${appId}`);
+    } catch {
+      dataRemoved = false;
+      warnings.push(`Unable to verify Incus app storage removal for ${appId}`);
+    }
+  }
+
+  // The allocator is the source of truth for network ownership. It releases a
+  // lease only after Incus confirms that the managed bridge is absent.
+  let networkRemoved = false;
+  let leaseReleased = false;
+  try {
+    const lease = await getAppNetworkLease(appId);
+    networkRemoved = lease === null;
+    leaseReleased = lease === null;
+    if (lease) {
+      warnings.push(`App network ${lease.bridgeName} remains in ${lease.state} state`);
+    }
+  } catch {
+    warnings.push('Unable to verify app network cleanup');
+  }
 
   return {
     containerRemoved,
+    networkRemoved,
+    leaseReleased,
     caddyRouteRemoved,
-    authentikAppRemoved,
+    identityClientRemoved,
     dnsRemoved,
-    databaseDropped: droppedDb ?? null,
-    dataRemoved: keptData === false ? true : null,
+    databaseDropped,
+    dataRemoved,
     warnings,
-  };
-}
-
-function emptyVerification(): UninstallVerification {
-  return {
-    containerRemoved: false,
-    caddyRouteRemoved: false,
-    authentikAppRemoved: false,
-    dnsRemoved: false,
-    databaseDropped: null,
-    dataRemoved: null,
-    warnings: [],
   };
 }

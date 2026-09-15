@@ -1,0 +1,6 @@
+[Unit]
+Description=YouEye Recovery
+Requires=basic.target
+Wants=youeye-recovery.service
+After=basic.target
+AllowIsolate=yes

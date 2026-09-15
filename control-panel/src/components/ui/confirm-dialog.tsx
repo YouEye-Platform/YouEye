@@ -15,6 +15,7 @@ interface ConfirmDialogProps {
   confirmLabel?: string;
   cancelLabel?: string;
   confirmDisabled?: boolean;
+  destructive?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   children?: ReactNode;
@@ -27,6 +28,7 @@ export function ConfirmDialog({
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
   confirmDisabled,
+  destructive = false,
   onConfirm,
   onCancel,
   children,
@@ -48,7 +50,7 @@ export function ConfirmDialog({
           <Button variant="ghost" size="sm" onClick={onCancel}>
             {cancelLabel}
           </Button>
-          <Button size="sm" disabled={confirmDisabled} onClick={onConfirm}>
+          <Button variant={destructive ? "destructive" : "default"} size="sm" disabled={confirmDisabled} onClick={onConfirm}>
             {confirmLabel}
           </Button>
         </div>

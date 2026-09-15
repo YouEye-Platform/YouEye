@@ -29,14 +29,17 @@ test('updater merges durable update-plan gates and records idempotency', () => {
   assert.match(updater, /mergeMigrationSources/);
   assert.match(updater, /manifest\.update\?\.migrations \|\| \[\], durableMigrationPlan\.migrations/);
   assert.match(planner, /appliedKeys\.has\(migration\.idempotencyKey\)/);
-  assert.match(updater, /recordAppliedMigration/);
+  // Idempotency is recorded via stageAppliedMigration (stages the applied-migration
+  // record into installMeta.appliedMigrations before the metadata is persisted).
+  assert.match(updater, /stageAppliedMigration/);
   assert.match(updater, /source:\s*migration\.source/);
 });
 
-test('LXD app updates are downloaded by Control Panel without app NAT window', () => {
+test('LXD app updates are preflighted by Control Panel without app NAT window', () => {
   const updater = read('src/lib/market/updater.ts');
 
-  assert.match(updater, /downloadReleaseTarball/);
+  assert.match(updater, /stageMarketNativeArtifacts/);
+  assert.match(updater, /Staging preflighted/);
   assert.match(updater, /pushFileToContainer/);
   assert.match(updater, /incusUploadFile/);
   assert.match(updater, /The app container never receives broad internet\/NAT for code updates/);

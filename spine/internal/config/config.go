@@ -2,7 +2,7 @@
 // Configuration is loaded from multiple sources with the following precedence:
 // 1. CLI flags (highest priority)
 // 2. Environment variables (SPINE_*)
-// 3. Config file (/etc/spine/config.yaml or ~/.spine/config.yaml)
+// 3. Config file (/var/lib/youeye/config, /etc/youeye, or legacy user paths)
 // 4. Default values (lowest priority)
 package config
 
@@ -249,7 +249,7 @@ type LoggingConfig struct {
 func (c *Config) GetReleasesAPIURL() string {
 	repo := c.CoreReleaseRepo()
 	if repo.Provider == "github" {
-		return "https://api.github.com/repos/" + repo.Organization + "/" + repo.Repository + "/releases?per_page=50"
+		return "https://api.github.com/repos/" + repo.Organization + "/" + repo.Repository + "/releases?per_page=100"
 	}
 	return repo.BaseURL + repo.APIPath + "/repos/" + repo.Organization + "/" + repo.Repository + "/releases?limit=50"
 }

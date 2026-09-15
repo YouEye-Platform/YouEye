@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { fetchAvailableApps } from '@/lib/market/catalog';
+import { directMarketAppToMarketApp, getDirectMarketApp } from '@/lib/market/direct-apps';
 import { readInstallMetadata, saveInstallMetadata } from '@/lib/market/metadata';
 import { upsertInstalledApp } from '@/lib/market/installed-apps';
 
@@ -28,8 +29,14 @@ export async function PATCH(
     return NextResponse.json({ error: `App "${appId}" is not installed` }, { status: 404 });
   }
 
-  const apps = await fetchAvailableApps();
-  const selected = apps.find((app) => app.id === appId && app.sourceId === sourceId);
+  const directEntry = sourceId.startsWith('direct:')
+    ? await getDirectMarketApp(sourceId, appId)
+    : null;
+  const selected = directEntry
+    ? directMarketAppToMarketApp(directEntry)
+    : sourceId.startsWith('direct:')
+      ? undefined
+      : (await fetchAvailableApps()).find((app) => app.id === appId && app.sourceId === sourceId);
   if (!selected) {
     return NextResponse.json(
       { error: `App "${appId}" was not found in Market source "${sourceId}"` },

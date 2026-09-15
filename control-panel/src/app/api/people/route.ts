@@ -8,10 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { createUser, listUsers } from '@/lib/identity/provider';
-
-/** Usernames / types hidden by default */
-const HIDDEN_USERNAMES = ['akadmin'];
-const HIDDEN_TYPES = ['service_account', 'internal_service_account'];
+import { validateIdentityPassword } from '@/lib/identity/password-policy';
 
 export async function GET(request: NextRequest) {
   try {
@@ -20,26 +17,22 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const showHidden = request.nextUrl.searchParams.get('showHidden') === 'true';
     const search = request.nextUrl.searchParams.get('search') || undefined;
 
     const data = await listUsers({ search, page_size: 200 });
 
-    let users = data.results.map(u => ({
+    const users = data.results.map(u => ({
       pk: u.pk,
       username: u.username,
       name: u.name,
+      firstName: u.firstName,
+      lastName: u.lastName,
       email: u.email,
       isActive: u.is_active,
       isAdmin: u.is_superuser,
       type: u.type,
       lastLogin: u.last_login || null,
-      hidden: HIDDEN_USERNAMES.includes(u.username) || HIDDEN_TYPES.includes(u.type),
     }));
-
-    if (!showHidden) {
-      users = users.filter(u => !u.hidden);
-    }
 
     return NextResponse.json({ users, adminGroupPk: 'admin' });
   } catch (error) {
@@ -64,19 +57,26 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { username, name, email, password, isAdmin: makeAdmin } = body as {
+    const { username, firstName, lastName, email, password, repeatPassword, isAdmin: makeAdmin } = body as {
       username: string;
-      name: string;
-      email?: string;
+      firstName: string;
+      lastName?: string;
+      email: string;
       password?: string;
+      repeatPassword?: string;
       isAdmin?: boolean;
     };
 
-    if (!username || !name) {
-      return NextResponse.json({ error: 'Username and name are required' }, { status: 400 });
+    if (!username || !firstName || !email || !password || !repeatPassword) {
+      return NextResponse.json({ error: 'First name, username, email, password, and repeat password are required' }, { status: 400 });
     }
+	if (password !== repeatPassword) return NextResponse.json({ error: 'Passwords do not match' }, { status: 400 });
+	if (password !== undefined) {
+	  const passwordError = validateIdentityPassword(password);
+	  if (passwordError) return NextResponse.json({ error: passwordError }, { status: 400 });
+	}
 
-    const user = await createUser({ username, name, email, password, isAdmin: makeAdmin });
+    const user = await createUser({ username, firstName, lastName, email, password, isAdmin: makeAdmin });
 
     return NextResponse.json({ user, success: true });
   } catch (error) {

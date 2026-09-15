@@ -1,7 +1,7 @@
 /**
  * Orphan resource detector.
- * Cross-references installed apps against Caddy routes, identity provider apps,
- * PostgreSQL databases, and volume directories to find orphaned resources
+ * Cross-references installed apps against Caddy routes, PostgreSQL databases,
+ * Incus instances, and custom volumes to find orphaned resources
  * from previous unclean uninstalls.
  */
 
@@ -11,16 +11,11 @@ import type { OrphanResource } from './types';
 
 // Known infrastructure containers/routes — never orphaned
 const INFRA_CONTAINERS = new Set([
-  'youeye-authentik',
   'youeye-postgres',
   'youeye-caddy',
   'youeye-pihole',
   'youeye-ui',
-]);
-
-const INFRA_SLUGS = new Set([
-  'youeye-ui',
-  'youeye-admin',
+  'youeye-pointer',
 ]);
 
 /**
@@ -39,11 +34,11 @@ export async function detectOrphans(): Promise<OrphanResource[]> {
       .filter((m) => m.subdomain && m.domain)
       .map((m) => `${m.subdomain}.${m.domain}`)
   );
-  const installedSsoSlugs = new Set(
-    installed
-      .filter((m) => m.ssoSlug)
-      .map((m) => m.ssoSlug!)
-  );
+  const installedVolumes = new Set(installed.flatMap((metadata) =>
+    (metadata.storageVolumes ?? [])
+      .filter((volume) => !volume.attachmentOnly)
+      .map((volume) => `${volume.pool}/${volume.name}`)
+  ));
 
   // 1. Orphaned Caddy routes
   try {
@@ -66,33 +61,7 @@ export async function detectOrphans(): Promise<OrphanResource[]> {
     // Caddy may be unavailable
   }
 
-    // 2. Orphaned identity provider apps
-  try {
-    const { authentikAPI, getAuthentikConfig } = await import('./authentik');
-    const config = await getAuthentikConfig();
-
-    const appsResp = await authentikAPI<{ results: Array<{ slug: string; name: string; pk: string }> }>(
-      config,
-      '/api/v3/core/applications/?page_size=100'
-    );
-
-    for (const app of appsResp.results) {
-      if (INFRA_SLUGS.has(app.slug)) continue;
-      // Check if app slug matches any installed app's SSO slug
-      if (!installedSsoSlugs.has(app.slug) && !isInfraSsoSlug(app.slug)) {
-        orphans.push({
-          type: 'authentik-app',
-          identifier: app.slug,
-          detail: `Name: ${app.name}`,
-          action: 'can-remove',
-        });
-      }
-    }
-  } catch {
-    // The identity provider may be unavailable
-  }
-
-  // 3. Orphaned PostgreSQL databases
+  // 2. Orphaned PostgreSQL databases
   try {
     const { execShell } = await import('../incus/server');
     const result = await execShell(
@@ -120,7 +89,7 @@ export async function detectOrphans(): Promise<OrphanResource[]> {
     // PostgreSQL may be unavailable
   }
 
-  // 4. Orphaned containers (app-* that aren't tracked)
+  // 3. Orphaned containers (app-* that aren't tracked)
   try {
     const { incusRequest } = await import('../incus/server');
     const resp = await incusRequest<string[]>('GET', '/1.0/instances');
@@ -141,45 +110,36 @@ export async function detectOrphans(): Promise<OrphanResource[]> {
     // Incus may be unavailable
   }
 
-  // 5. Orphaned volume directories
+  // 4. Orphaned YouEye-owned Incus custom volumes
   try {
-    const { readdir } = await import('fs/promises');
-    const { existsSync } = await import('fs');
-
-    // Check /var/lib/youeye/app-* directories
-    if (existsSync('/var/lib/youeye')) {
-      const entries = await readdir('/var/lib/youeye');
-      for (const entry of entries) {
-        if (!entry.startsWith('app-')) continue;
-        const appId = entry.slice(4);
-        if (installedAppIds.has(appId)) continue;
-        // Check if there's an install.json (orphaned metadata = orphaned volume)
-        if (!existsSync(`/var/lib/youeye/${entry}/install.json`)) {
-          orphans.push({
-            type: 'volume-dir',
-            identifier: `/var/lib/youeye/${entry}`,
-            detail: `App: ${appId}`,
-            action: 'can-remove',
-          });
-        }
-      }
-    }
-
-    // Check /var/lib/youeye/apps/* directories
-    if (existsSync('/var/lib/youeye/apps')) {
-      const entries = await readdir('/var/lib/youeye/apps');
-      for (const entry of entries) {
-        if (installedAppIds.has(entry)) continue;
+    const { incusRequest } = await import('../incus/server');
+    const pools = await incusRequest<string[]>('GET', '/1.0/storage-pools');
+    for (const poolPath of Array.isArray(pools.metadata) ? pools.metadata : []) {
+      const pool = poolPath.split('/').pop() || '';
+      if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(pool)) continue;
+      const response = await incusRequest<Array<{
+        name: string;
+        type: string;
+        config?: Record<string, string>;
+        used_by?: string[];
+      }>>('GET', `/1.0/storage-pools/${encodeURIComponent(pool)}/volumes/custom?recursion=1`);
+      for (const volume of Array.isArray(response.metadata) ? response.metadata : []) {
+        const kind = volume.config?.['user.youeye.kind'];
+        if (volume.type !== 'custom' || (kind !== 'app' && kind !== 'shared')) continue;
+        const identifier = `${pool}/${volume.name}`;
+        if (installedVolumes.has(identifier)) continue;
         orphans.push({
-          type: 'volume-dir',
-          identifier: `/var/lib/youeye/apps/${entry}`,
-          detail: `App: ${entry}`,
+          type: 'storage-volume',
+          identifier,
+          detail: (volume.used_by?.length ?? 0) > 0
+            ? `YouEye-owned storage is still attached to ${volume.used_by!.length} instance(s)`
+            : `Untracked YouEye-owned ${kind} storage`,
           action: 'can-remove',
         });
       }
     }
   } catch {
-    // Filesystem scan failed
+    // Storage inventory may be unavailable
   }
 
   return orphans;
@@ -198,12 +158,6 @@ export async function cleanupOrphan(orphan: OrphanResource): Promise<{ success: 
             await removeRoute(route.id);
           }
         }
-        return { success: true };
-      }
-
-      case 'authentik-app': {
-        const { removeAuthentikOAuth2App } = await import('./sso-engine');
-        await removeAuthentikOAuth2App(orphan.identifier);
         return { success: true };
       }
 
@@ -248,9 +202,27 @@ export async function cleanupOrphan(orphan: OrphanResource): Promise<{ success: 
         return { success: true };
       }
 
-      case 'volume-dir': {
-        const { rm } = await import('fs/promises');
-        await rm(orphan.identifier, { recursive: true, force: true });
+      case 'storage-volume': {
+        const match = orphan.identifier.match(/^([a-z0-9][a-z0-9-]{0,62})\/([a-z0-9][a-z0-9-]{0,62})$/);
+        if (!match) throw new Error('Invalid storage volume identifier');
+        const [, pool, volume] = match;
+        const { incusRequest: incReq } = await import('../incus/server');
+        const current = await incReq<{
+          config?: Record<string, string>;
+          used_by?: string[];
+        }>('GET', `/1.0/storage-pools/${encodeURIComponent(pool)}/volumes/custom/${encodeURIComponent(volume)}`);
+        if (current.type === 'error' && (current.error_code === 404 || current.status_code === 404)) {
+          return { success: true };
+        }
+        const kind = current.metadata?.config?.['user.youeye.kind'];
+        if (kind !== 'app' && kind !== 'shared') throw new Error('Storage is not owned by YouEye');
+        if ((current.metadata?.used_by?.length ?? 0) > 0) throw new Error('Storage is still attached to an instance');
+        const deleted = await incReq('DELETE', `/1.0/storage-pools/${encodeURIComponent(pool)}/volumes/custom/${encodeURIComponent(volume)}`);
+        if (deleted.type === 'error') throw new Error('Incus refused to delete app storage');
+        if (deleted.type === 'async' && deleted.operation) {
+          const waited = await incReq('GET', `${deleted.operation}/wait?timeout=60`, undefined, { timeout: 70_000 });
+          if (waited.type === 'error') throw new Error('App storage deletion failed');
+        }
         return { success: true };
       }
 
@@ -317,11 +289,7 @@ function isKnownHostname(hostname: string, appIds: Set<string>): boolean {
   return appIds.has(subdomain);
 }
 
-function isInfraSsoSlug(slug: string): boolean {
-  return slug.startsWith('youeye-') && !slug.startsWith('youeye-app-');
-}
-
 function isInfraDatabase(name: string): boolean {
-  const infraDbs = new Set(['authentik', 'pihole']);
+  const infraDbs = new Set(['pihole', 'pointer']);
   return infraDbs.has(name);
 }

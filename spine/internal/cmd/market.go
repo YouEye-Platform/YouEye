@@ -105,6 +105,13 @@ var marketRepoGetCmd = &cobra.Command{
 		source, _ := data["source"].(map[string]interface{})
 		output.StatusLine("Market repository", firstOf(source, "repo_url"), "")
 		output.StatusLine("Provider", firstOf(source, "provider"), "")
+		output.StatusLine("Channel", firstOf(source, "branch"), "")
+		output.StatusLine("Resolved commit", firstOf(source, "resolved_commit"), "")
+		if refreshError := firstOf(source, "refresh_error"); refreshError != "" {
+			output.StatusLine("Last refresh", "failed: "+refreshError, "")
+		} else {
+			output.StatusLine("Last refresh", firstOf(source, "resolved_at"), "")
+		}
 		return nil
 	},
 }

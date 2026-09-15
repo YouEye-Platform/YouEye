@@ -125,46 +125,52 @@ export function parseOCIImage(image: string): { server: string; protocol: string
 }
 
 /**
- * Read the base image fingerprint an OCI/image instance was created or last rebuilt
- * from (`volatile.base_image`). This is the rollback point for an OCI update: the
- * rebuild API requires the pre-update snapshot to be deleted, but it preserves volumes
- * and config, so the only thing that changes is the image — re-imaging back to this
- * fingerprint is the correct rollback. The fingerprint stays in the local image store
- * across the update, so the rollback rebuild needs no network pull.
- * Returns null if the instance has no base image (e.g. a pure LXD container).
+ * Convert the OCI identity persisted by Incus into a pullable image reference.
+ * `image.id` is the exact alias/tag used for the running rootfs, while
+ * `image.description` preserves its registry. `volatile.base_image` cannot be
+ * used for rollback because cached OCI image records can be garbage-collected.
  */
-export async function getContainerBaseImage(name: string): Promise<string | null> {
+export function resolveOCIImageReference(
+  imageId: unknown,
+  description: unknown,
+): string | null {
+  if (typeof imageId !== 'string' || imageId.length === 0) return null;
+  if (typeof description !== 'string' || !description.endsWith(' (OCI)')) return null;
+
+  const describedImage = description.slice(0, -' (OCI)'.length);
+  const slash = describedImage.indexOf('/');
+  if (slash <= 0) return null;
+  const registry = describedImage.slice(0, slash);
+  if (!registry.includes('.') && registry !== 'localhost') return null;
+
+  const firstPart = imageId.split('/')[0];
+  if (firstPart.includes('.') || firstPart.includes(':') || firstPart === 'localhost') {
+    return imageId;
+  }
+  return `${registry}/${imageId}`;
+}
+
+export async function getContainerOCIImageReference(name: string): Promise<string | null> {
   try {
     const resp = await incusRequest<Record<string, unknown>>('GET', `/1.0/instances/${name}`);
     const meta = resp.metadata as Record<string, unknown> | undefined;
     const cfg = meta?.config as Record<string, unknown> | undefined;
-    const fp = cfg?.['volatile.base_image'];
-    return typeof fp === 'string' && fp.length > 0 ? fp : null;
+    if (cfg?.['image.type'] !== 'oci') return null;
+    return resolveOCIImageReference(cfg['image.id'], cfg['image.description']);
   } catch {
     return null;
   }
 }
 
-/**
- * Rebuild an existing container from an image already in the LOCAL image store, by
- * fingerprint (no server/protocol → Incus does not pull from a registry). Used to roll
- * an OCI container back to its previous image after a failed update — see
- * getContainerBaseImage. Like rebuildContainer, the instance must have no snapshots.
- */
-export async function rebuildContainerFromFingerprint(name: string, fingerprint: string): Promise<void> {
-  const resp = await incusRequest<Record<string, unknown>>(
-    'POST', `/1.0/instances/${name}/rebuild`,
-    {
-      source: {
-        type: 'image',
-        fingerprint,
-      },
+export function buildOCIRebuildRequest(image: string) {
+  const source = parseOCIImage(image);
+  return {
+    source: {
+      type: 'image',
+      mode: 'pull',
+      ...source,
     },
-    { timeout: 660_000 }
-  );
-
-  if (resp.error && resp.error !== '') throw new Error(`Rollback rebuild failed: ${resp.error}`);
-  if (resp.type === 'async' && resp.operation) await waitForOperation(resp.operation, 600);
+  };
 }
 
 /**
@@ -173,22 +179,112 @@ export async function rebuildContainerFromFingerprint(name: string, fingerprint:
  * IMPORTANT: Snapshots must be deleted before rebuild (Incus requirement).
  */
 export async function rebuildContainer(name: string, image: string): Promise<void> {
-  const source = parseOCIImage(image);
-
   const resp = await incusRequest<Record<string, unknown>>(
     'POST', `/1.0/instances/${name}/rebuild`,
-    {
-      source: {
-        type: 'image',
-        mode: 'pull',
-        ...source,
-      },
-    },
+    buildOCIRebuildRequest(image),
     { timeout: 660_000 } // 11 min for image download
   );
 
   if (resp.error && resp.error !== '') throw new Error(`Rebuild failed: ${resp.error}`);
   if (resp.type === 'async' && resp.operation) await waitForOperation(resp.operation, 600);
+}
+
+function assertInstanceOperation(
+  response: Awaited<ReturnType<typeof incusRequest>>,
+  operation: string,
+): void {
+  if (response.type === 'error' || response.status_code >= 400 || response.error) {
+    throw new Error(`${operation} failed: ${response.error || response.status || response.status_code}`);
+  }
+}
+
+async function instanceExistsStrict(name: string): Promise<boolean> {
+  const response = await incusRequest<Record<string, unknown>>('GET', `/1.0/instances/${name}`);
+  if (response.status_code === 404 || response.error_code === 404) return false;
+  assertInstanceOperation(response, `Observe instance ${name}`);
+  return true;
+}
+
+export function buildRollbackCopyRequest(sourceName: string, backupName: string) {
+  return {
+    name: backupName,
+    instance_only: true,
+    source: { type: 'copy', source: sourceName },
+  };
+}
+
+export function buildRollbackRenameRequest(canonicalName: string) {
+  return { name: canonicalName };
+}
+
+/** A stopped, independent rootfs copy that survives rebuilding the source. */
+export async function createRollbackInstanceBackup(sourceName: string, backupName: string): Promise<void> {
+  if (!/^ye-rollback-[a-f0-9]{12}-\d+$/.test(backupName)) {
+    throw new Error('Invalid rollback instance backup name');
+  }
+  if ((await containerState(sourceName)) === 'Running') {
+    throw new Error(`Rollback backup source ${sourceName} must be stopped`);
+  }
+  const response = await incusRequest<Record<string, unknown>>(
+    'POST',
+    '/1.0/instances',
+    buildRollbackCopyRequest(sourceName, backupName),
+    { timeout: 660_000 },
+  );
+  assertInstanceOperation(response, `Copy ${sourceName} to rollback instance ${backupName}`);
+  if (response.type === 'async' && response.operation) await waitForOperation(response.operation, 600);
+
+  const observed = await incusRequest<Record<string, unknown>>('GET', `/1.0/instances/${backupName}`);
+  assertInstanceOperation(observed, `Verify rollback instance ${backupName}`);
+  if ((await containerState(backupName)) !== 'Stopped') {
+    await stopContainer(backupName);
+  }
+  if ((await containerState(backupName)) !== 'Stopped') {
+    throw new Error(`Rollback instance ${backupName} did not verify as Stopped`);
+  }
+}
+
+export async function deleteInstance(name: string): Promise<void> {
+  if (!(await instanceExistsStrict(name))) return;
+  const state = await containerState(name);
+  if (state === 'Unknown') throw new Error(`Cannot determine state for existing instance ${name}`);
+  if (state === 'Running') await stopContainer(name);
+  const response = await incusRequest<Record<string, unknown>>(
+    'DELETE',
+    `/1.0/instances/${name}`,
+    undefined,
+    { timeout: 330_000 },
+  );
+  assertInstanceOperation(response, `Delete instance ${name}`);
+  if (response.type === 'async' && response.operation) await waitForOperation(response.operation, 300);
+  if (await instanceExistsStrict(name)) {
+    throw new Error(`Instance ${name} remains after deletion`);
+  }
+}
+
+/**
+ * Replace a failed canonical instance by renaming its verified independent
+ * rollback copy. The backup remains intact unless canonical deletion succeeds.
+ */
+export async function restoreRollbackInstanceBackup(
+  canonicalName: string,
+  backupName: string,
+): Promise<void> {
+  if (!(await instanceExistsStrict(backupName))) {
+    throw new Error(`Rollback instance ${backupName} is missing`);
+  }
+  await deleteInstance(canonicalName);
+  const response = await incusRequest<Record<string, unknown>>(
+    'POST',
+    `/1.0/instances/${backupName}`,
+    buildRollbackRenameRequest(canonicalName),
+    { timeout: 330_000 },
+  );
+  assertInstanceOperation(response, `Restore ${canonicalName} from ${backupName}`);
+  if (response.type === 'async' && response.operation) await waitForOperation(response.operation, 300);
+  if (!(await instanceExistsStrict(canonicalName))) {
+    throw new Error(`Restored instance ${canonicalName} is missing after rename`);
+  }
 }
 
 // ─── LXD Service Helpers ─────────────────────────────────────────────────────

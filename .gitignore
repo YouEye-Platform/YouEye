@@ -5,6 +5,11 @@ node_modules/
 
 # Go
 spine/spine-linux-*
+spine/youeye
+
+# Appliance build outputs
+.build/
+dist/
 
 # IDE
 .idea/

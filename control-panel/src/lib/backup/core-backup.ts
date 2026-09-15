@@ -2,7 +2,7 @@
  * Core platform backup orchestrator.
  *
  * Backs up the YouEye platform infrastructure:
- * 1. Dump identity + youeye PostgreSQL databases (live, MVCC-safe)
+ * 1. Dump the YouEye ID, UI, and AI PostgreSQL databases (live, MVCC-safe)
  * 2. Collect youeye.yaml config
  * 3. Build installed-apps.json from install metadata
  * 4. Stage infra secrets, Caddy config, Pi-Hole config, identity media
@@ -11,7 +11,7 @@
  * 7. Poll + relay events
  */
 
-import { readFile, writeFile, mkdir, rm } from 'fs/promises';
+import { chmod, copyFile, readdir, writeFile, mkdir, rm, stat } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
@@ -24,26 +24,70 @@ import type {
   BackupEvent,
   BackupEventCallback,
 } from './types';
+import { BACKUP_STAGING_ROOT, runningContainers, volumeMappings } from './workspace';
+import {
+  dumpPostgresDatabase,
+  platformDatabaseExists,
+  PLATFORM_DATABASES,
+  PLATFORM_POSTGRES_ADMIN,
+  PLATFORM_POSTGRES_CONTAINER,
+} from './postgres';
+import { readCurrentBackupSourceIdentity } from './compatibility';
 
-const STAGING_BASE = '/tmp/youeye-backup';
+const STAGING_BASE = path.join(BACKUP_STAGING_ROOT, 'create');
 const YOUEYE_DATA_DIR = '/var/lib/youeye';
 
 /** Infrastructure containers to freeze during core backup */
 const INFRA_CONTAINERS = [
   'youeye-postgres',
-  'youeye-authentik',
   'youeye-caddy',
   'youeye-pihole',
+  'youeye-pointer',
 ];
 
 /** Infrastructure volume paths to back up */
 const INFRA_VOLUME_PATHS = [
-  `${YOUEYE_DATA_DIR}/postgres/`,
-  `${YOUEYE_DATA_DIR}/authentik/`,
   `${YOUEYE_DATA_DIR}/caddy/`,
   `${YOUEYE_DATA_DIR}/pihole/`,
-  `${YOUEYE_DATA_DIR}/control/`,
+  `${YOUEYE_DATA_DIR}/config/`,
+  `${YOUEYE_DATA_DIR}/networks/`,
+  `${YOUEYE_DATA_DIR}/ui/`,
+  `${YOUEYE_DATA_DIR}/pointer/`,
 ];
+
+async function stageAppNetworkRecoveryState(stagingDir: string): Promise<void> {
+  const source = `${YOUEYE_DATA_DIR}/networks`;
+  if (!existsSync(source)) return;
+  const destination = path.join(stagingDir, 'networks');
+  await mkdir(destination, { recursive: true, mode: 0o700 });
+  await chmod(destination, 0o700);
+
+  const copyProtectedJson = async (input: string, output: string): Promise<void> => {
+    const inputStat = await stat(input);
+    if (!inputStat.isFile() || (inputStat.mode & 0o077) !== 0) {
+      throw new Error(`Refusing to back up app network state with insecure permissions: ${path.basename(input)}`);
+    }
+    await copyFile(input, output);
+    await chmod(output, 0o600);
+  };
+
+  const ipam = path.join(source, 'ipam.json');
+  if (existsSync(ipam)) await copyProtectedJson(ipam, path.join(destination, 'ipam.json'));
+
+  const operations = path.join(source, 'operations');
+  if (existsSync(operations)) {
+    const outputOperations = path.join(destination, 'operations');
+    await mkdir(outputOperations, { recursive: true, mode: 0o700 });
+    await chmod(outputOperations, 0o700);
+    for (const entry of await readdir(operations, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+      await copyProtectedJson(
+        path.join(operations, entry.name),
+        path.join(outputOperations, entry.name),
+      );
+    }
+  }
+}
 
 /**
  * Back up the core YouEye platform.
@@ -80,39 +124,28 @@ export async function backupCore(
     await mkdir(path.join(stagingDir, 'caddy'), { recursive: true });
 
     // ── Step 1: Dump PostgreSQL databases ──────────────────
-    emit('dump-databases', 'Dumping infrastructure databases (Authentik, youeye)...');
+    emit('dump-databases', 'Dumping YouEye ID, UI, and AI databases...');
 
-    const dbNames = ['authentik', 'youeye'];
-    for (const dbName of dbNames) {
+    const backedUpDatabases: string[] = [];
+    for (const dbName of PLATFORM_DATABASES) {
       try {
-        const dumpResult = await execShell(
-          'youeye-postgres',
-          `pg_dump -U postgres ${dbName}`,
-          { timeout: 120000 }
-        );
-        if (dumpResult.exitCode === 0) {
-          await writeFile(
-            path.join(stagingDir, 'databases', `${dbName}-${timestamp}.sql`),
-            dumpResult.stdout
-          );
-        } else {
-          onEvent({
-            step,
-            totalSteps,
-            status: 'progress',
-            stage: 'dump-databases',
-            message: `Warning: pg_dump for ${dbName} exited with code ${dumpResult.exitCode}`,
-            detail: dumpResult.stderr,
-          });
+        // Appliances updating from a pre-AI release legitimately have no
+        // Pointer database until infrastructure reconciliation provisions it.
+        if (dbName === 'pointer' && !(await platformDatabaseExists(dbName))) {
+          continue;
         }
-      } catch (err) {
-        onEvent({
-          step,
-          totalSteps,
-          status: 'progress',
-          stage: 'dump-databases',
-          message: `Warning: Failed to dump ${dbName}: ${err}`,
+        const dump = await dumpPostgresDatabase({
+          container: PLATFORM_POSTGRES_CONTAINER,
+          database: dbName,
+          user: PLATFORM_POSTGRES_ADMIN,
         });
+        await writeFile(
+          path.join(stagingDir, 'databases', `${dbName}-${timestamp}.sql`),
+          dump
+        );
+        backedUpDatabases.push(dbName);
+      } catch (err) {
+        throw new Error(`Failed to dump ${dbName}: ${err}`);
       }
     }
 
@@ -124,14 +157,8 @@ export async function backupCore(
         path.join(stagingDir, 'configs', 'youeye-config.json'),
         JSON.stringify(spineConfig, null, 2)
       );
-    } catch (err) {
-      onEvent({
-        step,
-        totalSteps,
-        status: 'progress',
-        stage: 'collect-config',
-        message: `Warning: Could not read Spine config: ${err}`,
-      });
+    } catch (error) {
+      throw new Error(`Could not read persistent platform configuration: ${error}`);
     }
 
     // ── Step 3: Build installed-apps.json ──────────────────
@@ -142,15 +169,13 @@ export async function backupCore(
         path.join(stagingDir, 'installed-apps.json'),
         JSON.stringify(installedApps, null, 2)
       );
-    } catch (err) {
-      onEvent({
-        step,
-        totalSteps,
-        status: 'progress',
-        stage: 'installed-apps',
-        message: `Warning: Could not enumerate installed apps: ${err}`,
-      });
+    } catch (error) {
+      throw new Error(`Could not freeze the installed-app inventory: ${error}`);
     }
+    // Atomic JSON files are copied individually into the encrypted staging
+    // archive. Transient allocator/per-app lock directories are intentionally
+    // excluded so a restored PID can never inherit a stale lock owner.
+    await stageAppNetworkRecoveryState(stagingDir);
 
     // ── Step 4: Stage Caddy config ─────────────────────────
     emit('stage-caddy', 'Staging Caddy configuration...');
@@ -167,17 +192,11 @@ export async function backupCore(
         JSON.stringify(routes, null, 2)
       );
     } catch (err) {
-      onEvent({
-        step,
-        totalSteps,
-        status: 'progress',
-        stage: 'stage-caddy',
-        message: `Warning: Could not stage Caddy config: ${err}`,
-      });
+	  throw new Error(`Could not back up the server routing configuration: ${err}`);
     }
 
     // ── Step 5: Stage Pi-Hole config ───────────────────────
-    emit('stage-pihole', 'Staging Pi-Hole and Authentik configuration...');
+    emit('stage-pihole', 'Staging Network shield configuration...');
     try {
       // Read pihole.toml from the container
       const piholeResult = await execShell(
@@ -191,31 +210,23 @@ export async function backupCore(
           path.join(stagingDir, 'pihole', 'pihole.toml'),
           piholeResult.stdout
         );
+	  } else {
+		throw new Error('Network shield did not return its configuration');
       }
     } catch (err) {
-      onEvent({
-        step,
-        totalSteps,
-        status: 'progress',
-        stage: 'stage-pihole',
-        message: `Warning: Could not stage Pi-Hole config: ${err}`,
-      });
+	  throw new Error(`Could not back up the network shield configuration: ${err}`);
     }
 
     // Write backup-meta.json
-    let platformVersion = 'unknown';
-    try {
-      const spineVersion = await spineClient.version();
-      platformVersion = spineVersion.version;
-    } catch {
-      // Non-fatal
-    }
+    const sourceIdentity = config.sourceIdentity ?? await readCurrentBackupSourceIdentity();
 
     await writeFile(
       path.join(stagingDir, 'backup-meta.json'),
       JSON.stringify({
+        schema: 'youeye.backup.core-meta.v1',
         type: 'core',
-        platformVersion,
+        source: sourceIdentity,
+        databases: backedUpDatabases,
         timestamp: new Date().toISOString(),
         hostname: config.hostname || os.hostname(),
         infraContainers: INFRA_CONTAINERS,
@@ -232,15 +243,18 @@ export async function backupCore(
     const spineResult = await spineClient.startBackup({
       target_path: config.targetPath,
       passphrase: config.passphrase,
-      containers: INFRA_CONTAINERS,
-      volume_paths: existingVolumePaths,
+      use_stored_passphrase: config.useStoredPassphrase,
+      containers: await runningContainers([...INFRA_CONTAINERS, 'youeye-control', 'youeye-ui']),
+      volume_mappings: volumeMappings(existingVolumePaths),
       staging_dir: stagingDir,
       hostname,
+      backup_type: 'core',
     });
 
     // Poll Spine status until complete
     const backupId = spineResult.backup_id;
     let completed = false;
+    let terminalError = '';
     const pollInterval = 2000;
     const maxPollTime = 30 * 60 * 1000;
     const startTime = Date.now();
@@ -276,6 +290,7 @@ export async function backupCore(
           });
         } else if (status.status === 'failed') {
           completed = true;
+          terminalError = status.error || 'Core backup failed';
           onEvent({
             step,
             totalSteps,
@@ -296,6 +311,8 @@ export async function backupCore(
       }
     }
 
+    if (terminalError) throw new Error(terminalError);
+
     if (!completed) {
       onEvent({
         step,
@@ -304,6 +321,7 @@ export async function backupCore(
         stage: 'timeout',
         message: 'Core backup timed out after 30 minutes',
       });
+      throw new Error('Core backup timed out after 30 minutes');
     }
   } finally {
     // Clean up staging directory

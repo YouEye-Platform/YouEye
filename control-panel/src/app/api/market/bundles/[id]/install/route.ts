@@ -10,11 +10,15 @@
 import { NextRequest } from 'next/server';
 import { fetchBundle } from '@/lib/market/catalog';
 import { installBundle } from '@/lib/market/bundle-installer';
+import { requireAdmin } from '@/lib/auth/rbac';
 import type { InstallEvent } from '@/lib/market/types';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireAdmin();
+  if (auth.error) return auth.error;
+
   const { id } = await params;
 
   let bundle;

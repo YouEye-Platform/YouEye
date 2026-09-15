@@ -95,21 +95,6 @@
       "saved": "Язык успешно обновлён",
       "error": "Не удалось обновить язык"
     },
-    "sso": {
-      "title": "Аутентификация",
-      "description": "Настройка единого входа (SSO) через провайдера идентификации для доступа по поддомену",
-      "status": "Статус SSO",
-      "configured": "Включено",
-      "notConfigured": "Не настроено",
-      "domain": "Домен",
-      "authentikUrl": "URL провайдера идентификации",
-      "controlUrl": "URL панели управления",
-      "prerequisitesMet": "Предварительные условия выполнены",
-      "configure": "Настроить SSO",
-      "remove": "Удалить SSO",
-      "prerequisites": "Предварительные условия",
-      "howItWorks": "Как работает SSO"
-    },
     "ui": {
       "title": "YouEye UI",
       "status": "Статус UI",
@@ -244,6 +229,7 @@
     "savingConfig": "Сохранение конфигурации",
     "settingUpProxy": "Настройка обратного прокси",
     "configuringDns": "Настройка DNS",
+    "configuringAi": "Подключение YouEye AI",
     "creatingAdmin": "Создание учётной записи администратора",
     "configuringSsoControl": "Настройка SSO для панели управления",
     "enablingSsoUi": "Включение YouEye UI",
@@ -375,7 +361,7 @@
     "certHint": "{domain} использует самоподписанный сертификат. Чтобы избежать предупреждений браузера, установите корневой CA на каждом устройстве:",
     "downloadCert": "Скачать сертификат",
     "goTo": "Перейти к {name}",
-    "noDomain": "Домен не настроен. Доступ к панели управления через порт 3000 для перенастройки.",
+    "noDomain": "Домен не настроен. Используйте IP сервера через Caddy для перенастройки; localhost:3000 зарезервирован для локального восстановления на хосте.",
     "welcomeUser": "Добро пожаловать в YouEye, {name}!",
     "quickStart": "Быстрый старт",
     "visitDashboard": "Открыть панель управления",
@@ -435,7 +421,16 @@
     "resources": "Ресурсы",
     "nativeApps": "Нативные приложения",
     "builtForYouEye": "Создано для YouEye",
-    "orphanScanPrompt": "Поиск ресурсов от предыдущих установок"
+    "orphanScanPrompt": "Поиск ресурсов от предыдущих установок",
+    "uninstallTitle": "Удалить",
+    "uninstallDescription": "Выберите, что нужно удалить",
+    "uninstallKeepData": "Удалить приложение (сохранить данные)",
+    "uninstallKeepDataDescription": "Удалить приложение, но сохранить его данные для будущей переустановки",
+    "uninstallDeleteData": "Удалить приложение и все данные",
+    "uninstallDeleteDataDescription": "Удалить приложение и все его данные. Это действие нельзя отменить.",
+    "willBeRemoved": "Будет удалено",
+    "uninstallDeleteButton": "Удалить всё",
+    "uninstallKeepButton": "Удалить"
   },
   "proxy": {
     "title": "Обратный прокси",

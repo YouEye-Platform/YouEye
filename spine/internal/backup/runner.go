@@ -14,15 +14,17 @@ import (
 
 // BackupConfig is the request body for POST /api/backup/run.
 type BackupConfig struct {
-	TargetPath  string   `json:"target_path"`
-	Passphrase  string   `json:"passphrase"`
-	Containers  []string `json:"containers"`   // containers to stop/export (from CP)
-	VolumePaths []string `json:"volume_paths"` // host-side volume paths to copy
-	StagingDir  string   `json:"staging_dir"`  // where CP placed dumps/configs
-	Hostname    string   `json:"hostname"`
-	Mode        string   `json:"mode"`        // "live" (default) or "stop"
-	BackupType  string   `json:"backup_type"` // "app", "core", or "full"
-	AppID       string   `json:"app_id"`      // for per-app backups
+	TargetPath          string            `json:"target_path"`
+	Passphrase          string            `json:"passphrase"`
+	UseStoredPassphrase bool              `json:"use_stored_passphrase"`
+	Containers          []string          `json:"containers"`      // containers to quiesce/snapshot (from CP)
+	VolumeMapping       []VolumeMapping   `json:"volume_mappings"` // exact source/archive mappings
+	IncusRuntimes       []IncusRuntimeRef `json:"incus_runtimes"`
+	IncusVolumes        []IncusVolumeRef  `json:"incus_volumes"`
+	StagingDir          string            `json:"staging_dir"` // shared YE-DATA staging directory
+	Hostname            string            `json:"hostname"`
+	BackupType          string            `json:"backup_type"` // "app" or "core"
+	AppID               string            `json:"app_id"`      // for per-app backups
 }
 
 // BackupResult is returned upon completion.
@@ -42,12 +44,10 @@ func generateBackupID() string {
 // Run executes the backup pipeline in the background.
 // CP orchestrates the sequence; Spine handles host-level operations.
 func Run(cfg BackupConfig) (string, error) {
-	backupID := generateBackupID()
-
-	// Default mode to "live" if not specified
-	if cfg.Mode == "" {
-		cfg.Mode = "live"
+	if err := validateIncusPlan(cfg.IncusRuntimes, cfg.IncusVolumes); err != nil {
+		return "", err
 	}
+	backupID := generateBackupID()
 
 	// Resolve structured output directory based on backup type
 	targetPath := resolveTargetPath(cfg.TargetPath, cfg.BackupType, cfg.AppID)
@@ -58,23 +58,19 @@ func Run(cfg BackupConfig) (string, error) {
 		return "", fmt.Errorf("target path not writable: %w", err)
 	}
 
-	// Build stages list based on mode
+	// Build stages for the live, point-in-time backup pipeline.
 	stages := []string{}
-	if len(cfg.Containers) > 0 {
-		if cfg.Mode == "live" {
-			stages = append(stages, "snapshot-containers")
-		} else {
-			stages = append(stages, "stop-containers")
-		}
+	if len(cfg.Containers) > 0 || len(cfg.IncusRuntimes) > 0 || len(cfg.IncusVolumes) > 0 {
+		stages = append(stages, "snapshot-containers")
 	}
-	if len(cfg.VolumePaths) > 0 {
+	if len(cfg.VolumeMapping) > 0 {
 		stages = append(stages, "export-volumes")
 	}
-	stages = append(stages, "archive", "encrypt", "write-target")
-	if len(cfg.Containers) > 0 && cfg.Mode == "stop" {
-		stages = append(stages, "restart-containers")
+	if len(cfg.IncusRuntimes) > 0 || len(cfg.IncusVolumes) > 0 {
+		stages = append(stages, "export-incus")
 	}
-	if len(cfg.Containers) > 0 && cfg.Mode == "live" {
+	stages = append(stages, "archive", "encrypt", "write-target")
+	if len(cfg.Containers) > 0 || len(cfg.IncusRuntimes) > 0 || len(cfg.IncusVolumes) > 0 {
 		stages = append(stages, "cleanup-snapshots")
 	}
 
@@ -88,7 +84,6 @@ func Run(cfg BackupConfig) (string, error) {
 // resolveTargetPath returns the structured output directory for backups.
 // Per-app: {target}/youeye/apps/{appId}/
 // Core:    {target}/youeye/core/
-// Full:    {target}/youeye/full/
 func resolveTargetPath(basePath, backupType, appID string) string {
 	switch backupType {
 	case "app":
@@ -98,8 +93,6 @@ func resolveTargetPath(basePath, backupType, appID string) string {
 		return filepath.Join(basePath, "youeye", "apps")
 	case "core":
 		return filepath.Join(basePath, "youeye", "core")
-	case "full":
-		return filepath.Join(basePath, "youeye", "full")
 	default:
 		return basePath
 	}
@@ -115,8 +108,6 @@ func resolveArchiveName(backupType, appID, timestamp string) string {
 		return fmt.Sprintf("app-%s.tar", timestamp)
 	case "core":
 		return fmt.Sprintf("core-%s.tar", timestamp)
-	case "full":
-		return fmt.Sprintf("full-%s.tar", timestamp)
 	default:
 		return fmt.Sprintf("youeye-backup-%s.tar", timestamp)
 	}
@@ -124,6 +115,11 @@ func resolveArchiveName(backupType, appID, timestamp string) string {
 
 func runPipeline(backupID string, cfg BackupConfig, stages []string) {
 	stepIndex := 0
+	mappings, err := prepareVolumeMappings(cfg.StagingDir, cfg.VolumeMapping)
+	if err != nil {
+		Fail(backupID, fmt.Sprintf("Invalid volume plan: %v", err))
+		return
+	}
 
 	// Helper to advance the step counter
 	nextStep := func(status, stage, message string, progress int) {
@@ -131,116 +127,125 @@ func runPipeline(backupID string, cfg BackupConfig, stages []string) {
 		Emit(backupID, status, stage, message, progress, stepIndex, len(stages))
 	}
 
-	// Track snapshot names for cleanup
+	// Track native-instance, custom-volume, and protected host-data snapshots
+	// independently so every success/failure path releases exact ownership.
 	var snapshotNames []string
+	var incusVolumeSnapshots []IncusVolumeRef
+	var dataSnapshots []zfsDataSnapshot
+	containersFrozen := false
+	snapshotName := "backup-temp-" + backupID
 
-	if cfg.Mode == "stop" {
-		// Stop mode: ensure containers are restarted even on failure
-		defer func() {
-			if len(cfg.Containers) > 0 {
-				nextStep(StatusRestarting, "restart-containers", "Restarting containers...", 85)
-				for _, c := range cfg.Containers {
-					restartContainer(c)
-				}
-			}
-		}()
-	} else {
-		// Live mode: ensure cleanup happens even on failure
-		defer func() {
-			driver := DetectStorageDriver()
-			if driver == "zfs" {
-				// Clean up snapshots
-				for _, c := range cfg.Containers {
-					deleteSnapshot(c, "backup-temp")
-				}
-			} else {
-				// Unfreeze any frozen containers
-				for _, c := range cfg.Containers {
-					unfreezeContainer(c)
-				}
-			}
-		}()
-	}
-
-	// 1. Prepare containers based on mode
-	if len(cfg.Containers) > 0 {
-		if cfg.Mode == "stop" {
-			// Legacy stop mode
-			nextStep(StatusStopping, "stop-containers", "Stopping containers...", 5)
+	// Cleanup and unfreeze even when a later stage fails.
+	defer func() {
+		for _, volume := range incusVolumeSnapshots {
+			deleteIncusVolumeSnapshot(volume, snapshotName)
+		}
+		for _, snapshot := range dataSnapshots {
+			deleteDataSnapshot(snapshot)
+		}
+		for _, c := range snapshotNames {
+			deleteSnapshot(c, snapshotName)
+		}
+		if containersFrozen {
 			for _, c := range cfg.Containers {
-				Emit(backupID, StatusStopping, "stop-containers",
-					fmt.Sprintf("Stopping %s...", c), 5, stepIndex, len(stages))
-				if err := stopContainer(c); err != nil {
-					Fail(backupID, fmt.Sprintf("Failed to stop container %s: %v", c, err))
-					return
-				}
-				if err := waitContainerStopped(c, 60*time.Second); err != nil {
-					Fail(backupID, fmt.Sprintf("Container %s did not stop in time: %v", c, err))
-					return
-				}
-			}
-		} else {
-			// Live mode
-			driver := DetectStorageDriver()
-			if driver == "zfs" {
-				nextStep(StatusExporting, "snapshot-containers", "Creating ZFS snapshots...", 5)
-				for _, c := range cfg.Containers {
-					Emit(backupID, StatusExporting, "snapshot-containers",
-						fmt.Sprintf("Snapshotting %s...", c), 5, stepIndex, len(stages))
-					if err := createSnapshot(c, "backup-temp"); err != nil {
-						Fail(backupID, fmt.Sprintf("Failed to snapshot container %s: %v", c, err))
-						return
-					}
-					snapshotNames = append(snapshotNames, c)
-				}
-			} else {
-				// Dir backend: freeze containers
-				nextStep(StatusExporting, "snapshot-containers", "Freezing containers...", 5)
-				for _, c := range cfg.Containers {
-					Emit(backupID, StatusExporting, "snapshot-containers",
-						fmt.Sprintf("Freezing %s...", c), 5, stepIndex, len(stages))
-					if err := freezeContainer(c); err != nil {
-						Fail(backupID, fmt.Sprintf("Failed to freeze container %s: %v", c, err))
-						return
-					}
-				}
+				_ = unfreezeContainer(c)
 			}
 		}
+	}()
+
+	// 1. Freeze every running app instance while taking the point-in-time native
+	// root, custom-volume, and protected host-metadata boundaries.
+	if len(cfg.Containers) > 0 || len(cfg.IncusRuntimes) > 0 || len(cfg.IncusVolumes) > 0 {
+		nextStep(StatusExporting, "snapshot-containers", "Quiescing services for a consistent snapshot...", 5)
+		for _, c := range cfg.Containers {
+			if err := freezeContainer(c); err != nil {
+				Fail(backupID, fmt.Sprintf("Failed to quiesce container %s: %v", c, err))
+				return
+			}
+		}
+		containersFrozen = true
+
+		driver := DetectStorageDriver()
+		snapshotTargets := []string{}
+		for _, runtime := range cfg.IncusRuntimes {
+			if runtime.Type == "lxd" {
+				snapshotTargets = append(snapshotTargets, runtime.Name)
+			}
+		}
+		if len(cfg.IncusRuntimes) == 0 && driver == "zfs" {
+			snapshotTargets = append(snapshotTargets, cfg.Containers...)
+		}
+		for _, c := range snapshotTargets {
+			Emit(backupID, StatusExporting, "snapshot-containers",
+				fmt.Sprintf("Snapshotting %s...", c), 5, stepIndex, len(stages))
+			if err := createSnapshot(c, snapshotName); err != nil {
+				Fail(backupID, fmt.Sprintf("Failed to snapshot container %s: %v", c, err))
+				return
+			}
+			snapshotNames = append(snapshotNames, c)
+		}
+		if len(cfg.IncusVolumes) > 0 {
+			incusVolumeSnapshots, err = createIncusVolumeSnapshots(cfg.IncusVolumes, snapshotName)
+			if err != nil {
+				Fail(backupID, fmt.Sprintf("Failed to snapshot custom app storage: %v", err))
+				return
+			}
+		}
+		if driver == "zfs" {
+			var snapshotErr error
+			dataSnapshots, snapshotErr = createDataSnapshots(mappings, snapshotName)
+			if snapshotErr != nil {
+				Fail(backupID, fmt.Sprintf("Failed to snapshot persistent YouEye data: %v", snapshotErr))
+				return
+			}
+		}
+		for _, c := range cfg.Containers {
+			if err := unfreezeContainer(c); err != nil {
+				Fail(backupID, fmt.Sprintf("Failed to resume container %s after snapshot: %v", c, err))
+				return
+			}
+		}
+		containersFrozen = false
 	}
 
 	// 2. Export volumes (filesystem copy)
-	if len(cfg.VolumePaths) > 0 {
+	if len(cfg.VolumeMapping) > 0 {
 		nextStep(StatusExporting, "export-volumes", "Exporting volumes...", 20)
-		for _, volPath := range cfg.VolumePaths {
-			if _, err := os.Stat(volPath); os.IsNotExist(err) {
+		for _, mapping := range mappings {
+			snapshotSource := dataSnapshotSource(mapping.Source, dataSnapshots)
+			if _, err := os.Stat(snapshotSource); os.IsNotExist(err) {
 				continue
 			}
-			destDir := filepath.Join(cfg.StagingDir, "volumes", filepath.Base(volPath))
-			if err := os.MkdirAll(filepath.Dir(destDir), 0755); err != nil {
-				Fail(backupID, fmt.Sprintf("Failed to create volume dest dir: %v", err))
+			if err := validateVolumeTree(snapshotSource); err != nil {
+				Fail(backupID, fmt.Sprintf("Volume validation failed: %v", err))
+				return
+			}
+			destination := filepath.Join(cfg.StagingDir, filepath.FromSlash(mapping.ArchivePath))
+			if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+				Fail(backupID, fmt.Sprintf("Failed to create volume destination: %v", err))
 				return
 			}
 			Emit(backupID, StatusExporting, "export-volumes",
-				fmt.Sprintf("Copying %s...", volPath), 25, stepIndex, len(stages))
-			cmd := exec.Command("cp", "-a", volPath, destDir)
+				fmt.Sprintf("Copying %s...", mapping.Source), 25, stepIndex, len(stages))
+			cmd := exec.Command("cp", "-a", "--", snapshotSource, destination)
 			if out, err := cmd.CombinedOutput(); err != nil {
-				Fail(backupID, fmt.Sprintf("Volume copy failed for %s: %v\n%s", volPath, err, string(out)))
+				Fail(backupID, fmt.Sprintf("Volume copy failed for %s: %v\n%s", mapping.Source, err, string(out)))
 				return
 			}
 		}
 	}
 
-	// In live mode, release containers now that volumes are copied
-	if cfg.Mode == "live" && len(cfg.Containers) > 0 {
-		driver := DetectStorageDriver()
-		if driver == "zfs" {
-			nextStep(StatusExporting, "cleanup-snapshots", "Cleaning up snapshots...", 35)
-			for _, c := range snapshotNames {
-				deleteSnapshot(c, "backup-temp")
-			}
-			// Clear so deferred cleanup doesn't double-delete
-			snapshotNames = nil
-		} else {
+	if len(cfg.IncusRuntimes) > 0 || len(cfg.IncusVolumes) > 0 {
+		nextStep(StatusExporting, "export-incus", "Exporting exact app runtime and storage...", 35)
+		if err := exportIncusAssets(cfg.StagingDir, backupID, snapshotName, cfg.IncusRuntimes, cfg.IncusVolumes); err != nil {
+			Fail(backupID, fmt.Sprintf("Incus recovery export failed: %v", err))
+			return
+		}
+	}
+
+	// Release temporary immutable snapshots after all exports complete.
+	if len(cfg.Containers) > 0 || len(cfg.IncusRuntimes) > 0 || len(cfg.IncusVolumes) > 0 {
+		if containersFrozen {
 			nextStep(StatusExporting, "cleanup-snapshots", "Unfreezing containers...", 35)
 			for _, c := range cfg.Containers {
 				if err := unfreezeContainer(c); err != nil {
@@ -248,7 +253,22 @@ func runPipeline(backupID string, cfg BackupConfig, stages []string) {
 					return
 				}
 			}
+			containersFrozen = false
+		} else {
+			nextStep(StatusExporting, "cleanup-snapshots", "Releasing temporary snapshots...", 35)
 		}
+		for _, snapshot := range dataSnapshots {
+			deleteDataSnapshot(snapshot)
+		}
+		dataSnapshots = nil
+		for _, c := range snapshotNames {
+			deleteSnapshot(c, snapshotName)
+		}
+		snapshotNames = nil
+		for _, volume := range incusVolumeSnapshots {
+			deleteIncusVolumeSnapshot(volume, snapshotName)
+		}
+		incusVolumeSnapshots = nil
 	}
 
 	// 3. Archive staging dir as tar
@@ -259,15 +279,17 @@ func runPipeline(backupID string, cfg BackupConfig, stages []string) {
 		hostname = "youeye"
 	}
 
-	var archiveName string
-	if cfg.BackupType != "" {
-		archiveName = resolveArchiveName(cfg.BackupType, cfg.AppID, timestamp)
-	} else {
-		archiveName = fmt.Sprintf("youeye-backup-%s-%s.tar", hostname, timestamp)
+	archiveName := resolveArchiveName(cfg.BackupType, cfg.AppID, timestamp)
+	tarFile, err := os.CreateTemp(filepath.Dir(cfg.StagingDir), ".youeye-backup-*.tar")
+	if err != nil {
+		Fail(backupID, fmt.Sprintf("Create archive staging file: %v", err))
+		return
 	}
-	tarPath := filepath.Join(cfg.StagingDir, archiveName)
+	tarPath := tarFile.Name()
+	tarFile.Close()
+	defer os.Remove(tarPath)
 
-	tarCmd := exec.Command("tar", "-cf", tarPath, "-C", cfg.StagingDir, ".")
+	tarCmd := exec.Command("tar", "--numeric-owner", "-cf", tarPath, "-C", cfg.StagingDir, ".")
 	if out, err := tarCmd.CombinedOutput(); err != nil {
 		Fail(backupID, fmt.Sprintf("Archive creation failed: %v\n%s", err, string(out)))
 		return
@@ -276,8 +298,9 @@ func runPipeline(backupID string, cfg BackupConfig, stages []string) {
 	// 4. Encrypt with AES-256-CBC
 	nextStep(StatusEncrypting, "encrypt", "Encrypting archive...", 65)
 	encPath := tarPath + ".enc"
-	encCmd := exec.Command("openssl", "enc", "-aes-256-cbc", "-salt", "-pbkdf2",
-		"-in", tarPath, "-out", encPath, "-pass", "pass:"+cfg.Passphrase)
+	defer os.Remove(encPath)
+	encCmd := opensslWithPassphrase(cfg.Passphrase, "enc", "-aes-256-cbc", "-salt", "-pbkdf2",
+		"-in", tarPath, "-out", encPath)
 	if out, err := encCmd.CombinedOutput(); err != nil {
 		Fail(backupID, fmt.Sprintf("Encryption failed: %v\n%s", err, string(out)))
 		return
@@ -290,15 +313,10 @@ func runPipeline(backupID string, cfg BackupConfig, stages []string) {
 		"# YouEye Backup Restore Instructions\n\n"+
 			"Backup created: %s\n"+
 			"Hostname: %s\n\n"+
-			"## Decrypt\n\n"+
-			"openssl enc -d -aes-256-cbc -pbkdf2 -in %s -out backup.tar -pass pass:YOUR_PASSPHRASE\n\n"+
-			"## Extract\n\n"+
-			"mkdir restore && tar -xf backup.tar -C restore\n\n"+
-			"## Contents\n\n"+
-			"- configs/     — platform configuration files\n"+
-			"- databases/   — PostgreSQL dump files (.sql)\n"+
-			"- volumes/     — application data volumes\n",
-		timestamp, hostname, filepath.Base(encPath),
+			"Keep every .tar.enc file beside its .hmac file. Restore through YouEye "+
+			"Settings, the youeye CLI, or first-browser Recovery so ciphertext "+
+			"authentication, path validation, service quiescing, and health checks run.\n",
+		timestamp, hostname,
 	)
 	os.WriteFile(filepath.Join(cfg.StagingDir, "RESTORE.txt"), []byte(restoreContent), 0644)
 
@@ -312,6 +330,11 @@ func runPipeline(backupID string, cfg BackupConfig, stages []string) {
 		Fail(backupID, fmt.Sprintf("Failed to write archive to target: %v", err))
 		return
 	}
+	if err := writeArchiveMAC(finalEncPath, cfg.Passphrase); err != nil {
+		os.Remove(finalEncPath)
+		Fail(backupID, fmt.Sprintf("Failed to authenticate archive: %v", err))
+		return
+	}
 	moveOrCopy(filepath.Join(cfg.StagingDir, "RESTORE.txt"), finalRestorePath)
 
 	var archiveSize int64
@@ -319,25 +342,78 @@ func runPipeline(backupID string, cfg BackupConfig, stages []string) {
 		archiveSize = info.Size()
 	}
 
-	// Update backup index
-	if cfg.BackupType != "" {
-		entry := BackupEntry{
-			Timestamp:   timestamp,
-			ArchivePath: finalEncPath,
-			ArchiveSize: archiveSize,
-			Version:     "", // populated by CP if needed
-		}
-		// Use the base target path (strip structured subdirectory) for the index
-		baseTarget := cfg.TargetPath
-		if cfg.BackupType == "app" && cfg.AppID != "" {
-			baseTarget = filepath.Dir(filepath.Dir(filepath.Dir(cfg.TargetPath)))
-		} else if cfg.BackupType == "core" || cfg.BackupType == "full" {
-			baseTarget = filepath.Dir(filepath.Dir(cfg.TargetPath))
-		}
-		AddEntry(baseTarget, cfg.BackupType, cfg.AppID, entry)
-	}
-
 	Complete(backupID, finalEncPath, archiveSize)
+}
+
+type zfsDataSnapshot struct {
+	Dataset    string
+	Mountpoint string
+	Name       string
+}
+
+func zfsDatasets() ([]zfsDataSnapshot, error) {
+	output, err := exec.Command("zfs", "list", "-H", "-o", "name,mountpoint", "-t", "filesystem").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("list ZFS datasets: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	var datasets []zfsDataSnapshot
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		fields := strings.SplitN(line, "\t", 2)
+		if len(fields) != 2 || fields[1] == "none" || fields[1] == "legacy" || !filepath.IsAbs(fields[1]) {
+			continue
+		}
+		datasets = append(datasets, zfsDataSnapshot{Dataset: fields[0], Mountpoint: filepath.Clean(fields[1])})
+	}
+	return datasets, nil
+}
+
+func createDataSnapshots(mappings []VolumeMapping, snapshotName string) ([]zfsDataSnapshot, error) {
+	datasets, err := zfsDatasets()
+	if err != nil {
+		return nil, err
+	}
+	selected := make(map[string]zfsDataSnapshot)
+	for _, mapping := range mappings {
+		var best zfsDataSnapshot
+		for _, dataset := range datasets {
+			if pathWithin(dataset.Mountpoint, mapping.Source) && len(dataset.Mountpoint) > len(best.Mountpoint) {
+				best = dataset
+			}
+		}
+		if best.Dataset == "" {
+			return nil, fmt.Errorf("persistent path %s is not covered by a ZFS dataset", mapping.Source)
+		}
+		best.Name = snapshotName
+		selected[best.Dataset] = best
+	}
+	created := make([]zfsDataSnapshot, 0, len(selected))
+	for _, snapshot := range selected {
+		output, snapshotErr := exec.Command("zfs", "snapshot", snapshot.Dataset+"@"+snapshot.Name).CombinedOutput()
+		if snapshotErr != nil {
+			for _, existing := range created {
+				deleteDataSnapshot(existing)
+			}
+			return nil, fmt.Errorf("snapshot %s: %w: %s", snapshot.Dataset, snapshotErr, strings.TrimSpace(string(output)))
+		}
+		created = append(created, snapshot)
+	}
+	return created, nil
+}
+
+func dataSnapshotSource(source string, snapshots []zfsDataSnapshot) string {
+	for _, snapshot := range snapshots {
+		if pathWithin(snapshot.Mountpoint, source) {
+			relative, err := filepath.Rel(snapshot.Mountpoint, source)
+			if err == nil {
+				return filepath.Join(snapshot.Mountpoint, ".zfs", "snapshot", snapshot.Name, relative)
+			}
+		}
+	}
+	return source
+}
+
+func deleteDataSnapshot(snapshot zfsDataSnapshot) {
+	_ = exec.Command("zfs", "destroy", snapshot.Dataset+"@"+snapshot.Name).Run()
 }
 
 // DetectStorageDriver checks the Incus default storage pool driver.
@@ -407,45 +483,6 @@ func deleteSnapshot(name, snapshotName string) error {
 		}
 		return fmt.Errorf("delete snapshot %s/%s: %s: %s", name, snapshotName, err, string(out))
 	}
-	return nil
-}
-
-// stopContainer stops an Incus container.
-func stopContainer(name string) error {
-	cmd := exec.Command("incus", "stop", name)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		// Already stopped is not an error
-		if strings.Contains(string(out), "already stopped") ||
-			strings.Contains(string(out), "The instance is already stopped") {
-			return nil
-		}
-		return fmt.Errorf("%s: %s", err, string(out))
-	}
-	return nil
-}
-
-// restartContainer starts an Incus container.
-func restartContainer(name string) {
-	exec.Command("incus", "start", name).Run()
-}
-
-// waitContainerStopped polls until the container reports STOPPED status.
-func waitContainerStopped(name string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		out, err := exec.Command("incus", "list", name, "--format", "csv", "-c", "s").Output()
-		if err != nil {
-			return err
-		}
-		status := strings.ToLower(strings.TrimSpace(string(out)))
-		if status == "stopped" {
-			return nil
-		}
-		time.Sleep(1 * time.Second)
-	}
-	// Force stop as last resort
-	exec.Command("incus", "stop", name, "--force").Run()
 	return nil
 }
 

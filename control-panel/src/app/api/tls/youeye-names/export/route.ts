@@ -20,7 +20,7 @@ export async function GET() {
   const bundle = await exportBundle();
   if (!bundle) {
     return NextResponse.json(
-      { error: 'No YouEye Names certificate to export (this server is not using a *.youeye.me address).' },
+      { error: 'No active YouEye Names certificate is available to export.' },
       { status: 404 },
     );
   }

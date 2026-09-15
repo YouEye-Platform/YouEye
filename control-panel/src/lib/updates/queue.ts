@@ -5,8 +5,11 @@
  * /var/lib/youeye/state/update-queue.json. Updates are enqueued via
  * enqueueUpdate() and processed one at a time by a background worker.
  *
- * The worker starts on module import (production only) and polls every 2s.
- * Updates run to completion regardless of client connections — fire and forget.
+ * The worker is started ONLY from Next instrumentation (src/instrumentation.ts)
+ * and polls every 2s. It must never start as a module-import side effect —
+ * that pattern started a second worker inside the identity service
+ * (youeye-id.service), racing this one on the same JSON store. Updates run
+ * to completion regardless of client connections — fire and forget.
  */
 
 import { readJSON, writeJSON, statePath } from '@/lib/storage/json-store';
@@ -323,9 +326,4 @@ export function stopWorker(): void {
     clearInterval(workerTimer);
     workerTimer = null;
   }
-}
-
-// Auto-start in production
-if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
-  startWorker();
 }

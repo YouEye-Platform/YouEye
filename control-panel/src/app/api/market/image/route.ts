@@ -18,6 +18,31 @@ const ALLOWED_DOMAINS = [
   'i.ibb.co',
   'jellyfin.org',
 ];
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+function isTrustedImageURL(raw: string): boolean {
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === 'https:' && !parsed.username && !parsed.password && !parsed.hash
+      && ALLOWED_DOMAINS.some((domain) => parsed.hostname === domain || parsed.hostname.endsWith('.' + domain));
+  } catch {
+    return false;
+  }
+}
+
+async function fetchTrustedImage(raw: string): Promise<Response> {
+  let current = raw;
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    if (!isTrustedImageURL(current)) throw new Error('Image URL or redirect is not trusted');
+    const response = await fetch(current, { redirect: 'manual', signal: AbortSignal.timeout(10_000) });
+    if (!REDIRECT_STATUSES.has(response.status)) return response;
+    if (redirects === 5) throw new Error('Image download exceeded five redirects');
+    const location = response.headers.get('location');
+    if (!location) throw new Error('Image redirect omitted Location');
+    current = new URL(location, current).toString();
+  }
+  throw new Error('Image download did not terminate');
+}
 
 function placeholderImageResponse() {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-label="App icon"><rect width="96" height="96" rx="20" fill="#eff6ff"/><path d="M28 30h24l16 16v20H28V30zm23 3v14h14" fill="none" stroke="#2563eb" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
@@ -53,14 +78,14 @@ function defaultBranchFallbackUrl(imageUrl: string): string | null {
 }
 
 async function fetchImage(imageUrl: string): Promise<Response> {
-  const res = await fetch(imageUrl, { signal: AbortSignal.timeout(10_000) });
+  const res = await fetchTrustedImage(imageUrl);
   if (res.ok) {
     return res;
   }
 
   const fallbackUrl = defaultBranchFallbackUrl(imageUrl);
   if (fallbackUrl) {
-    const fallbackRes = await fetch(fallbackUrl, { signal: AbortSignal.timeout(10_000) });
+    const fallbackRes = await fetchTrustedImage(fallbackUrl);
     if (fallbackRes.ok) {
       return fallbackRes;
     }
@@ -84,7 +109,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
   }
 
-  if (!ALLOWED_DOMAINS.some((d) => parsed.hostname === d || parsed.hostname.endsWith('.' + d))) {
+  if (!isTrustedImageURL(parsed.toString())) {
     return NextResponse.json({ error: 'Domain not allowed' }, { status: 403 });
   }
 

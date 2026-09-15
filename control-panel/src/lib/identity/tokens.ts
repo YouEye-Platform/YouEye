@@ -1,4 +1,4 @@
-import { createHash, createPrivateKey, createPublicKey } from 'crypto';
+import { createHash, createPrivateKey, createPublicKey, randomUUID } from 'crypto';
 import {
   calculateJwkThumbprint,
   exportPKCS8,
@@ -24,8 +24,10 @@ export async function createIdentityToken(user: IdentityUser, maxAgeSeconds = 86
   const secret = await getSigningSecret();
   const config = await getIdentityConfig();
   return new SignJWT({
-    preferred_username: user.username,
-    name: user.name,
+	preferred_username: user.username,
+	name: user.name,
+	given_name: user.first_name,
+	family_name: user.last_name,
     email: user.email,
     groups: user.groups,
     is_admin: user.is_admin,
@@ -49,7 +51,8 @@ export async function verifyIdentityToken(token: string): Promise<IdentityUser |
     });
     const sub = result.payload.sub;
     if (!sub) return null;
-    return getUserById(sub);
+    const user = await getUserById(sub);
+    return user?.is_active ? user : null;
   } catch {
     return null;
   }
@@ -85,10 +88,12 @@ async function getOAuthPublicJwk(): Promise<JWK> {
 
 function oauthClaims(user: IdentityUser, scope = ''): Record<string, unknown> {
   const groups = Array.from(new Set(user.groups || []));
-  const isAdmin = user.is_admin || groups.includes('admin') || groups.includes('authentik Admins');
+  const isAdmin = user.is_admin || groups.includes('admin');
   const claims: Record<string, unknown> = {
     preferred_username: user.username,
-    name: user.name,
+	name: user.name,
+	given_name: user.first_name,
+	family_name: user.last_name,
     email: user.email,
     // YouEye owns the account lifecycle and sets the email at creation, so it is
     // verified by definition. Some clients (e.g. Vaultwarden, django-allauth)
@@ -171,6 +176,97 @@ export async function getOAuthJWKS(): Promise<{ keys: JWK[] }> {
 export async function getOAuthKeyId(): Promise<string> {
   const jwk = await getOAuthPublicJwk();
   return String(jwk.kid || createHash('sha256').update(JSON.stringify(jwk)).digest('hex'));
+}
+
+export const POINTER_PLATFORM_AUDIENCE = 'pointer-management';
+export const POINTER_PLATFORM_SUBJECT = 'youeye-control';
+
+export interface PointerLifecycleActor {
+  id: string;
+  name: string;
+  isAdmin: boolean;
+}
+
+export const POINTER_SYSTEM_LIFECYCLE_ACTOR: PointerLifecycleActor = {
+  id: 'youeye-system-lifecycle',
+  name: 'YouEye system lifecycle',
+  isAdmin: true,
+};
+
+/**
+ * Mint the short-lived, user-attributed assertion used only on Pointer's
+ * private management listener. The stable YouEye identity UUID is the actor
+ * subject; username is presentation only and can change safely.
+ */
+export async function createPointerManagementAssertion(user: IdentityUser): Promise<string> {
+  const [privateKey, jwk, identity] = await Promise.all([
+    getOAuthPrivateKey(),
+    getOAuthPublicJwk(),
+    getIdentityConfig(),
+  ]);
+  const permissions = [
+    'management.read',
+    'providers.manage',
+    'groups.manage',
+    'applications.provision',
+    'usage.read',
+    'test.inference',
+    ...(user.is_admin ? ['settings.manage'] : []),
+  ];
+  return new SignJWT({
+    pointer_admin: user.is_admin,
+    pointer_owner_scope: 'actor',
+    pointer_permissions: permissions,
+    act: {
+      iss: identity.issuer,
+      sub: user.id,
+      name: user.name || user.username,
+    },
+  })
+    .setProtectedHeader({ alg: 'RS256', kid: String(jwk.kid) })
+    .setIssuer(identity.issuer)
+    .setAudience(POINTER_PLATFORM_AUDIENCE)
+    .setSubject(POINTER_PLATFORM_SUBJECT)
+    .setJti(randomUUID())
+    .setIssuedAt()
+    .setExpirationTime('2m')
+    .sign(privateKey);
+}
+
+/**
+ * Mint a service-authority assertion for the narrowly scoped application
+ * lifecycle API. The actor remains explicit for audit and, during install or
+ * takeover, becomes the application's routing owner only when the request asks
+ * Pointer to do so.
+ */
+export async function createPointerLifecycleAssertion(
+  actor: PointerLifecycleActor
+): Promise<string> {
+  if (!actor.isAdmin || !actor.id.trim() || !actor.name.trim()) {
+    throw new Error('Pointer application lifecycle requires an exact administrator actor');
+  }
+  const [privateKey, jwk, identity] = await Promise.all([
+    getOAuthPrivateKey(),
+    getOAuthPublicJwk(),
+    getIdentityConfig(),
+  ]);
+  return new SignJWT({
+    pointer_admin: true,
+    pointer_permissions: ['management.read', 'applications.provision'],
+    act: {
+      iss: identity.issuer,
+      sub: actor.id,
+      name: actor.name,
+    },
+  })
+    .setProtectedHeader({ alg: 'RS256', kid: String(jwk.kid) })
+    .setIssuer(identity.issuer)
+    .setAudience(POINTER_PLATFORM_AUDIENCE)
+    .setSubject(POINTER_PLATFORM_SUBJECT)
+    .setJti(randomUUID())
+    .setIssuedAt()
+    .setExpirationTime('2m')
+    .sign(privateKey);
 }
 
 export { SESSION_COOKIE };

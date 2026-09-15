@@ -6,10 +6,6 @@ The Control Panel is the infrastructure management interface for platform admini
 
 ## Dashboard
 
-<p align="center">
-  <img src="assets/screenshots/control-panel/dashboard.png" alt="Control Panel Dashboard" width="800">
-</p>
-
 The Control Panel dashboard shows:
 
 - **System overview** — CPU, memory, and disk usage
@@ -20,10 +16,6 @@ The Control Panel dashboard shows:
 ---
 
 ## Health Monitoring
-
-<p align="center">
-  <img src="assets/screenshots/control-panel/health.png" alt="Health monitoring" width="800">
-</p>
 
 Real-time health checks for every platform component:
 
@@ -38,10 +30,6 @@ Health checks run continuously. Issues are flagged with colored indicators (gree
 
 ## App Management
 
-<p align="center">
-  <img src="assets/screenshots/control-panel/apps.png" alt="App management" width="800">
-</p>
-
 Manage all deployed apps from the admin perspective:
 
 - **View containers** — See every app's container, resource allocation, and status
@@ -53,10 +41,6 @@ Manage all deployed apps from the admin perspective:
 ---
 
 ## Reverse Proxy
-
-<p align="center">
-  <img src="assets/screenshots/control-panel/proxy.png" alt="Reverse proxy" width="800">
-</p>
 
 Caddy reverse proxy configuration:
 
@@ -71,10 +55,6 @@ Caddy handles TLS automatically — certificates are provisioned on first reques
 
 ## DNS Filtering
 
-<p align="center">
-  <img src="assets/screenshots/control-panel/dns.png" alt="DNS filtering" width="800">
-</p>
-
 Pi-Hole v6 integration for network-wide DNS filtering:
 
 - **Query log** — See all DNS queries and their resolution status
@@ -88,10 +68,6 @@ Pi-Hole provides ad blocking and DNS resolution for all containers on the platfo
 
 ## People
 
-<p align="center">
-  <img src="assets/screenshots/control-panel/people.png" alt="People management" width="800">
-</p>
-
 User and authentication management powered by YouEye ID:
 
 - **Users** — View and manage all platform users
@@ -103,10 +79,6 @@ User and authentication management powered by YouEye ID:
 
 ## Settings
 
-<p align="center">
-  <img src="assets/screenshots/control-panel/cp-settings.png" alt="Control Panel settings" width="800">
-</p>
-
 Control Panel configuration:
 
 - **General** — Platform name, domain, and branding
@@ -117,10 +89,6 @@ Control Panel configuration:
 ---
 
 ## Market
-
-<p align="center">
-  <img src="assets/screenshots/control-panel/market.png" alt="Market admin view" width="800">
-</p>
 
 The admin Market view provides additional controls beyond what users see:
 

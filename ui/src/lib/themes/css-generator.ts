@@ -294,7 +294,7 @@ ak-flow-executor::part(main) {
 }
 
 /* Branding/logo area — via ::part(branding) (Shadow DOM)
-   The SVG logo <img> is needed for the Authentik dashboard sidebar.
+   The SVG logo <img> is needed by identity and compact navigation surfaces.
    On the login flow, we hide the img via visibility:hidden on the
    parent and visibility:visible on ::after for pixel-perfect WordArt. */
 ak-flow-executor::part(branding) {

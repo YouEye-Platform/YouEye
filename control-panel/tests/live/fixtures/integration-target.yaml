@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: app
+integration: basic
+version: 1.0.0
+metadata:
+  id: session-target
+  name: Session Target
+  description: Session-only explicit integration target fixture.
+  icon: server
+  category: development
+  defaultSubdomain: session-target
+database:
+  mode: none
+containers:
+  - name: web
+    type: oci
+    primary: true
+    image: docker.io/library/nginx:1.27.4-alpine
+    port: 80
+    healthCheck:
+      type: http
+      path: /
+      timeout: 60000
+      retries: 3
+provides:
+  - type: session-http
+    description: Session HTTP target.
+    port: 80
+    scope: service
+internet:
+  hosts: []
+entrances:
+  - name: web
+    port: 80
+    container: web
+    authLevel: none

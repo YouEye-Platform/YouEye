@@ -15,6 +15,10 @@ var (
 
 	// configFile holds the path to the loaded config file (if any)
 	configFile string
+
+	// loadConfig is replaceable by package tests so Get's fallback path can be
+	// exercised without depending on the host's /etc/youeye configuration.
+	loadConfig = Load
 )
 
 // Load loads configuration from all sources with proper precedence.
@@ -27,6 +31,9 @@ func Load() (*Config, error) {
 	v.SetConfigType("yaml")
 
 	// Add config file search paths (in priority order)
+	// Persistent appliance/user configuration outranks image-baked defaults.
+	// Mutable hosts also accept this path for forward compatibility.
+	v.AddConfigPath("/var/lib/youeye/config/")
 	v.AddConfigPath("/etc/youeye/")
 	v.AddConfigPath("/etc/spine/") // legacy fallback
 	if home, err := os.UserHomeDir(); err == nil {
@@ -110,7 +117,7 @@ func LoadFromFile(path string) (*Config, error) {
 // If not loaded yet, it loads using default paths.
 func Get() *Config {
 	if globalConfig == nil {
-		cfg, err := Load()
+		cfg, err := loadConfig()
 		if err != nil {
 			// If loading fails, return defaults
 			return Default()

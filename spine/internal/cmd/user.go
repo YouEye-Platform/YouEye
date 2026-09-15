@@ -45,7 +45,12 @@ var userListCmd = &cobra.Command{
 	},
 }
 
-var userCreateEmail string
+var (
+	userCreateEmail         string
+	userCreateFirstName     string
+	userCreateLastName      string
+	userCreatePasswordStdin bool
+)
 
 var userCreateCmd = &cobra.Command{
 	Use:   "create <username>",
@@ -57,6 +62,25 @@ var userCreateCmd = &cobra.Command{
 		}
 		username := args[0]
 
+		if userCreateFirstName == "" {
+			fmt.Print("First name: ")
+			scanner := bufio.NewScanner(os.Stdin)
+			if scanner.Scan() {
+				userCreateFirstName = strings.TrimSpace(scanner.Text())
+			}
+		}
+		if userCreateFirstName == "" {
+			return fmt.Errorf("first name is required")
+		}
+
+		if !cmd.Flags().Changed("last-name") {
+			fmt.Print("Last name (optional): ")
+			scanner := bufio.NewScanner(os.Stdin)
+			if scanner.Scan() {
+				userCreateLastName = strings.TrimSpace(scanner.Text())
+			}
+		}
+
 		if userCreateEmail == "" {
 			fmt.Print("Email: ")
 			scanner := bufio.NewScanner(os.Stdin)
@@ -65,12 +89,29 @@ var userCreateCmd = &cobra.Command{
 			}
 		}
 
-		password := readPassword("Password: ")
+		var password, repeatPassword string
+		if userCreatePasswordStdin {
+			scanner := bufio.NewScanner(os.Stdin)
+			if !scanner.Scan() {
+				return fmt.Errorf("password could not be read from stdin")
+			}
+			password = scanner.Text()
+			repeatPassword = password
+		} else {
+			password = readPassword("Password: ")
+			repeatPassword = readPassword("Repeat password: ")
+		}
+		if password != repeatPassword {
+			return fmt.Errorf("passwords do not match")
+		}
 
 		result, err := controlClient.Post("/api/people", map[string]interface{}{
-			"username": username,
-			"email":    userCreateEmail,
-			"password": password,
+			"username":       username,
+			"firstName":      userCreateFirstName,
+			"lastName":       userCreateLastName,
+			"email":          userCreateEmail,
+			"password":       password,
+			"repeatPassword": repeatPassword,
 		})
 		if err != nil {
 			return err
@@ -148,7 +189,8 @@ var userPasswordCmd = &cobra.Command{
 		password := readPassword("New password: ")
 
 		_, err = controlClient.Post("/api/people/"+userID+"/password", map[string]interface{}{
-			"password": password,
+			"password":       password,
+			"repeatPassword": password,
 		})
 		if err != nil {
 			return err
@@ -191,7 +233,10 @@ var userInfoCmd = &cobra.Command{
 }
 
 func init() {
+	userCreateCmd.Flags().StringVar(&userCreateFirstName, "first-name", "", "User first name")
+	userCreateCmd.Flags().StringVar(&userCreateLastName, "last-name", "", "User last name (optional)")
 	userCreateCmd.Flags().StringVar(&userCreateEmail, "email", "", "User email address")
+	userCreateCmd.Flags().BoolVar(&userCreatePasswordStdin, "password-stdin", false, "Read one password from stdin without echoing it in arguments")
 
 	userCmd.AddCommand(userListCmd)
 	userCmd.AddCommand(userCreateCmd)

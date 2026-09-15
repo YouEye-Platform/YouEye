@@ -35,8 +35,9 @@ import { removeIPLiteralRoute } from '@/lib/caddy/client';
 import { tlsStorage } from '@/lib/acme/storage';
 import { getByoDnsProviderConfig } from '@/lib/dns-providers/config';
 import { syncByoDomainDns } from '@/lib/dns-providers/sync';
-import { NAMES_ZONE, updateIp } from '@/lib/youeye-names/client';
+import { updateIp } from '@/lib/youeye-names/client';
 import { IDENTITY_FILE_PATH } from '@/lib/youeye-names/identity';
+import { readNamesLifecycleState } from '@/lib/youeye-names/state';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,17 +47,6 @@ function isIPv4(s: string): boolean {
 
 function normalizeDomain(value: string): string {
   return value.trim().toLowerCase().replace(/\.+$/, '');
-}
-
-function leaseNameFromDomain(domain: string): string | null {
-  const normalized = normalizeDomain(domain);
-  const zone = normalizeDomain(NAMES_ZONE);
-  const suffix = `.${zone}`;
-  if (!normalized.endsWith(suffix)) return null;
-
-  const label = normalized.slice(0, -suffix.length);
-  if (!label || label.includes('.')) return null;
-  return label;
 }
 
 async function hasYouEyeNamesIdentity(): Promise<boolean> {
@@ -188,7 +178,10 @@ export async function POST(request: NextRequest) {
   let youeyeNamesDnsRequired = false;
   let youeyeNamesDnsOk = false;
   let youeyeNamesError: string | undefined;
-  const leaseName = domain ? leaseNameFromDomain(domain) : null;
+  const lifecycle = await readNamesLifecycleState().catch(() => null);
+  const leaseName = lifecycle && lifecycle.status !== 'released' && normalizeDomain(lifecycle.fqdn) === domain
+    ? lifecycle.name
+    : null;
   if (leaseName) {
     try {
       const cert = await tlsStorage.getCert();

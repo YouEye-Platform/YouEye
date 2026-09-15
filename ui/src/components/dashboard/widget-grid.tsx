@@ -24,6 +24,7 @@ import { BackgroundSettingsDialog } from "@/components/backgrounds/background-se
 import { WIDGET_REGISTRY, WIDGET_CATALOG, getWidgetMeta } from "@/components/widgets";
 import { WidgetSettingsDialog } from "./widget-settings-dialog";
 import { AddWidgetDialog } from "./add-widget-dialog";
+import type { AppWidgetDef } from "./widget-types";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -62,20 +63,6 @@ const DEFAULT_WIDGETS: Omit<WidgetData, "id">[] = [
   { widgetType: "clock", positionX: 82, positionY: 5, width: 14, height: 6, settings: {}, order: 2 },
   { widgetType: "bookmarks", positionX: 25, positionY: 80, width: 45, height: 14, settings: {}, order: 3 },
 ];
-
-export interface AppWidgetDef {
-  id: string;
-  widget_id: string;
-  name: string;
-  description: string;
-  app_url: string | null;
-  embed_path: string;
-  default_size: { width: number; height: number };
-  min_size?: { width: number; height: number };
-  max_size?: { width: number; height: number };
-  app_id: string;
-  app_name: string;
-}
 
 type Size = { width: number; height: number };
 

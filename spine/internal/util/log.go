@@ -23,11 +23,6 @@ func LogError(msg string) {
 	fmt.Printf("  ✗ %s\n", msg)
 }
 
-// LogWarning prints a warning message with a warning indicator.
-func LogWarning(msg string) {
-	fmt.Printf("  ⚠ %s\n", msg)
-}
-
 // LogDebug prints a debug message.
 func LogDebug(msg string) {
 	fmt.Printf("  [debug] %s\n", msg)

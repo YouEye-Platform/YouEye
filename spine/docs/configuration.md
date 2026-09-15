@@ -53,7 +53,7 @@ Configure where Spine fetches updates from:
 
 ```yaml
 releases:
-  repo_url: "https://github.com/youeye-platform/YouEye"
+  repo_url: "https://github.com/YouEye-Platform/YouEye"
   repositories:
     spine_tag_prefix: "spine"
     control_panel_tag_prefix: "cp"
@@ -143,7 +143,7 @@ Environment variables use underscore-separated paths matching the YAML structure
 
 # Release source configuration
 releases:
-  repo_url: "https://github.com/youeye-platform/YouEye"
+  repo_url: "https://github.com/YouEye-Platform/YouEye"
   repositories:
     spine_tag_prefix: "spine"
     control_panel_tag_prefix: "cp"
@@ -202,7 +202,7 @@ Spine 0.1.0 introduces the configuration system. Previous versions used hardcode
 
 | Previous Hardcoded | Config Path | Default |
 |-------------------|-------------|---------|
-| `https://github.com/youeye-platform/YouEye` | `releases.repo_url` | `https://github.com/youeye-platform/YouEye` |
+| `https://github.com/youeye-platform/YouEye` | `releases.repo_url` | `https://github.com/YouEye-Platform/YouEye` |
 | `youeye-control` | `deployment.container.name` | `youeye-control` |
 | `/opt/app` | `deployment.control_panel.app_dir` | `/opt/app` |
 | `/opt/youeye-ui` | `deployment.ui.app_dir` | `/opt/youeye-ui` |

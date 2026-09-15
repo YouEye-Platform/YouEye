@@ -7,29 +7,102 @@
  *   - security.nesting removed (not needed without sockets)
  */
 
-import { incusRequest, execShell } from '../incus/server';
+import { incusRequest, execShell, incusUploadFile } from '../incus/server';
 import { applyStaticIP } from '../incus/static-ips';
 import type { LXDContainerSpec } from './types';
 import { containerExists } from './oci-deployer';
-import { buildReleasesAPIURL, type ReleaseSource } from '../apps/release-source';
+import type { ReleaseSource } from '../apps/release-source';
+import {
+  resolveExactInfrastructureStandaloneRelease,
+  resolveInfrastructureStandaloneRelease,
+  type ResolvedInfrastructureRelease,
+} from './release-resolver';
+import { signedReleaseVerificationShell } from '@/lib/releases/verify';
+import { effectiveChannel } from '@/lib/updates/channels';
+import {
+  readStagedMarketNativeArtifact,
+  type StagedMarketNativeArtifact,
+} from '@/lib/market/native-artifact';
+
+type LXDDeploymentConfig = {
+  spineSocketPath: string;
+  giteaBaseURL: string;
+  giteaOrg: string;
+  giteaRepo: string;
+  releaseChannelKey?: string;
+  tagPrefix?: string;
+  exposeHostPort?: boolean;
+};
+
+function storageDevices(spec: LXDContainerSpec): Record<string, Record<string, string>> {
+  return Object.fromEntries((spec.volumes ?? []).map((volume, index) => [
+    `volume${index}`,
+    volume.kind === 'custom'
+      ? {
+          type: 'disk',
+          pool: volume.pool,
+          source: volume.source,
+          path: volume.container,
+          ...(volume.readOnly ? { readonly: 'true' } : {}),
+        }
+      : {
+          type: 'disk',
+          source: volume.host,
+          path: volume.container,
+          shift: 'true',
+          ...(volume.readOnly ? { readonly: 'true' } : {}),
+        },
+  ]));
+}
 
 /**
  * Deploy an LXD container from a spec.
- * Creates Debian container, installs Node.js, adds socket proxies, downloads app.
+ * Resolves the release, creates a Debian container, installs Node.js, and downloads the app.
  * Idempotent — skips if container already exists.
  */
 export async function deployLXDContainer(
   spec: LXDContainerSpec,
-  cfg: {
-    spineSocketPath: string;
-    giteaBaseURL: string;
-    giteaOrg: string;
-    giteaRepo: string;
-    tagPrefix?: string;
-  },
+  cfg: LXDDeploymentConfig,
   nicDevices?: Record<string, Record<string, string>>,
-): Promise<void> {
-  if (await containerExists(spec.containerName)) return;
+): Promise<ResolvedInfrastructureRelease | null> {
+  return deployLXDContainerInternal(spec, cfg, nicDevices);
+}
+
+/**
+ * Market-only native app deployment. The Market engine must have downloaded,
+ * inspected, classified, and digest-bound these exact bytes before it creates
+ * any app-owned resources. Platform callers deliberately cannot select this
+ * policy through deployLXDContainer; Pointer and stock YouEye LXD releases
+ * remain signature-required there.
+ */
+export async function deployMarketLXDContainer(
+  spec: LXDContainerSpec,
+  cfg: LXDDeploymentConfig,
+  artifact: StagedMarketNativeArtifact,
+  nicDevices?: Record<string, Record<string, string>>,
+): Promise<ResolvedInfrastructureRelease | null> {
+  return deployLXDContainerInternal(spec, cfg, nicDevices, artifact);
+}
+
+async function deployLXDContainerInternal(
+  spec: LXDContainerSpec,
+  cfg: LXDDeploymentConfig,
+  nicDevices?: Record<string, Record<string, string>>,
+  marketArtifact?: StagedMarketNativeArtifact,
+): Promise<ResolvedInfrastructureRelease | null> {
+  if (await containerExists(spec.containerName)) return null;
+
+  // Resolve the exact asset before mutating Incus. This avoids leaving a
+  // half-created container merely because the desired release was beyond the
+  // first API page or did not carry standalone.tar.
+  const release = marketArtifact
+    ? {
+        tag: marketArtifact.tag,
+        version: marketArtifact.version,
+        url: '',
+        artifactSHA256: marketArtifact.artifactSHA256,
+      }
+    : await resolveLXDRelease(cfg);
 
   // Create the LXD container
   const createPayload: Record<string, unknown> = {
@@ -41,14 +114,13 @@ export async function deployLXDContainer(
       alias: spec.image,
     },
     config: {
+      'boot.autostart': 'true',
       'security.privileged': 'false',
     },
   };
 
   // If per-app bridge NIC provided, attach to container at creation time
-  if (nicDevices) {
-    createPayload.devices = nicDevices;
-  }
+  createPayload.devices = { ...storageDevices(spec), ...(nicDevices ?? {}) };
 
   const result = await incusRequest<Record<string, unknown>>(
     'POST',
@@ -113,7 +185,7 @@ export async function deployLXDContainer(
   // v2: Socket proxies removed — apps no longer get Incus/Spine access
 
   // Add port proxy for the app (skip if port conflicts)
-  if (spec.port) {
+  if (spec.port && cfg.exposeHostPort !== false) {
     try {
       await addPortProxy(spec.containerName, spec.port);
     } catch {
@@ -123,7 +195,94 @@ export async function deployLXDContainer(
   }
 
   // Install Node.js and deploy the application
-  await installNodeAndApp(spec, cfg);
+  const artifactSHA256 = await installNodeAndApp(
+    spec,
+    release.url,
+    release.artifactSHA256,
+    marketArtifact,
+  );
+  return { ...release, artifactSHA256 };
+}
+
+/** Adopt an exact instance imported from a YouEye recovery point. */
+export async function adoptRestoredLXDContainer(
+  spec: LXDContainerSpec,
+  nicDevices?: Record<string, Record<string, string>>,
+): Promise<void> {
+  const current = await incusRequest<{
+    architecture?: string;
+    config?: Record<string, string>;
+    profiles?: string[];
+    description?: string;
+    status?: string;
+  }>('GET', `/1.0/instances/${encodeURIComponent(spec.containerName)}`);
+  if (current.type === 'error') throw new Error('Imported application runtime is unavailable');
+  if (current.metadata.status !== 'Stopped') throw new Error('Imported application runtime must be stopped before adoption');
+  const update = await incusRequest(
+    'PUT',
+    `/1.0/instances/${encodeURIComponent(spec.containerName)}`,
+    {
+      architecture: current.metadata.architecture,
+      config: {
+        ...(current.metadata.config ?? {}),
+        'boot.autostart': 'true',
+        'security.privileged': 'false',
+      },
+      devices: { ...storageDevices(spec), ...(nicDevices ?? {}) },
+      profiles: current.metadata.profiles ?? ['default'],
+      ephemeral: false,
+      description: current.metadata.description ?? '',
+    },
+  );
+  if (update.type === 'error') throw new Error('Imported application runtime could not be reconciled');
+  if (update.type === 'async' && update.operation) await waitForLXDOperation(update.operation, 60);
+  await applyStaticIP(spec.containerName);
+  const started = await incusRequest<Record<string, unknown>>(
+    'PUT',
+    `/1.0/instances/${encodeURIComponent(spec.containerName)}/state`,
+    { action: 'start' },
+  );
+  if (started.type === 'error') throw new Error('Imported application runtime could not start');
+  if (started.type === 'async' && started.operation) await waitForLXDOperation(started.operation, 60);
+  await waitForContainerReady(spec.containerName);
+}
+
+/**
+ * Replace a partial or unhealthy full-OS container, then deploy it from the
+ * currently resolved release. LXD application containers do not carry their
+ * persistent data inside the deployment directory.
+ */
+export async function redeployLXDContainer(
+  spec: LXDContainerSpec,
+  cfg: LXDDeploymentConfig,
+  nicDevices?: Record<string, Record<string, string>>,
+): Promise<ResolvedInfrastructureRelease | null> {
+  if (await containerExists(spec.containerName)) {
+    const stopped = await incusRequest<Record<string, unknown>>(
+      'PUT',
+      `/1.0/instances/${encodeURIComponent(spec.containerName)}/state`, {
+        action: 'stop', force: true, timeout: 30,
+      },
+    );
+    if (stopped.error) throw new Error(`Failed to stop ${spec.containerName}: ${stopped.error}`);
+    if (stopped.type === 'async' && stopped.operation) {
+      await waitForLXDOperation(stopped.operation, 60);
+    }
+
+    const deleted = await incusRequest<Record<string, unknown>>(
+      'DELETE',
+      `/1.0/instances/${encodeURIComponent(spec.containerName)}`,
+    );
+    if (deleted.error) throw new Error(`Failed to delete ${spec.containerName}: ${deleted.error}`);
+    if (deleted.type === 'async' && deleted.operation) {
+      await waitForLXDOperation(deleted.operation, 60);
+    }
+    if (await containerExists(spec.containerName)) {
+      throw new Error(`Failed to delete ${spec.containerName}: instance still exists after delete operation`);
+    }
+  }
+
+  return deployLXDContainer(spec, cfg, nicDevices);
 }
 
 /** Wait for an async Incus operation. */
@@ -170,11 +329,57 @@ async function addPortProxy(containerName: string, port: number): Promise<void> 
   await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices: newDevices });
 }
 
+async function resolveLXDRelease(cfg: LXDDeploymentConfig) {
+  const releaseSource: ReleaseSource = {
+    provider: cfg.giteaBaseURL.includes('github.com') ? 'github' : 'gitea',
+    base_url: cfg.giteaBaseURL.replace(/\/$/, ''),
+    api_path: cfg.giteaBaseURL.includes('github.com') ? '' : '/api/v1',
+    organization: cfg.giteaOrg,
+  };
+
+  let releaseBranch = 'main';
+  let exactTag = '';
+  let artifactSHA256 = '';
+  try {
+    const channel = await effectiveChannel(cfg.releaseChannelKey || 'ui');
+    if (/^[a-zA-Z0-9._/-]+$/.test(channel.branch)) releaseBranch = channel.branch;
+    exactTag = channel.tag || '';
+    artifactSHA256 = channel.artifact_sha256 || '';
+  } catch {
+    // Stable main remains the explicit fallback when Spine config is unavailable.
+  }
+
+  if (exactTag || artifactSHA256) {
+    if (!exactTag || !artifactSHA256) {
+      throw new Error('Exact UI release requires both a tag and artifact SHA-256');
+    }
+    return resolveExactInfrastructureStandaloneRelease(
+      releaseSource,
+      cfg.giteaRepo,
+      exactTag,
+      artifactSHA256,
+    );
+  }
+
+  return resolveInfrastructureStandaloneRelease(
+    releaseSource,
+    cfg.giteaRepo,
+    cfg.tagPrefix || '',
+    releaseBranch,
+  );
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
 /** Install Node.js and deploy the app from the configured release source. */
 async function installNodeAndApp(
   spec: LXDContainerSpec,
-  cfg: { giteaBaseURL: string; giteaOrg: string; giteaRepo: string; tagPrefix?: string }
-): Promise<void> {
+  releaseURL: string,
+  artifactSHA256?: string,
+  marketArtifact?: StagedMarketNativeArtifact,
+): Promise<string> {
   const cn = spec.containerName;
 
   // Install prerequisites
@@ -182,57 +387,43 @@ async function installNodeAndApp(
     timeout: 120_000,
   });
 
-  // Set random root password
-  const pwd = (await import('./secrets')).generatePassword(32);
-  await execShell(cn, `echo 'root:${pwd}' | chpasswd`, { timeout: 10_000 });
+  // The container root account is not a login surface. Lock it instead of
+  // generating a throwaway password that would have to cross a shell argv.
+  await execShell(cn, 'passwd --lock root', { timeout: 10_000 });
 
-  // Install Node.js
-  await execShell(cn, `curl -fsSL https://deb.nodesource.com/setup_${spec.nodeVersion} | bash -`, {
-    timeout: 60_000,
-  });
-  await execShell(cn, 'apt-get install -y nodejs', { timeout: 60_000 });
+  // Node applications use the established repository install. Bun applications
+  // carry their exact runtime inside the signed release artifact so deployment
+  // never executes an unpinned runtime installer from the network.
+  if (spec.runtime !== 'bun') {
+    await execShell(cn, `curl -fsSL https://deb.nodesource.com/setup_${spec.nodeVersion} | bash -`, {
+      timeout: 60_000,
+    });
+    await execShell(cn, 'apt-get install -y nodejs', { timeout: 60_000 });
+  }
 
-  // Download and deploy app from the configured release source (branch-aware).
-  const releaseSource: ReleaseSource = {
-    provider: cfg.giteaBaseURL.includes('github.com') ? 'github' : 'gitea',
-    base_url: cfg.giteaBaseURL.replace(/\/$/, ''),
-    api_path: cfg.giteaBaseURL.includes('github.com') ? '' : '/api/v1',
-    organization: cfg.giteaOrg,
-  };
-  const releasesURL = buildReleasesAPIURL(releaseSource, cfg.giteaRepo);
-  const isGitHub = releaseSource.provider === 'github';
-  const readinessURL = isGitHub ? 'https://api.github.com/rate_limit' : `${releaseSource.base_url}${releaseSource.api_path}/version`;
-  const acceptHeader = isGitHub ? 'Accept: application/vnd.github+json' : 'Accept: application/json';
-  const apiLabel = isGitHub ? 'GitHub' : 'configured release source';
-  const attachmentBaseURL = isGitHub ? '' : `${releaseSource.base_url}/attachments`;
+  // The Control Panel resolves the exact release across every API page before
+  // creating the container. The container only downloads that selected asset.
   await execShell(cn, `mkdir -p ${spec.appDir}`, { timeout: 10_000 });
 
-  // Read the configured release branch from Spine config
-  let releaseBranch = '';
-  try {
-    const { settingsService } = await import('../settings');
-    const config = await settingsService.getRaw();
-    releaseBranch = config.release_branch || '';
-  } catch { /* default to main */ }
+  if (marketArtifact) {
+    const bytes = await readStagedMarketNativeArtifact(marketArtifact);
+    await incusUploadFile(cn, '/tmp/app.tar', bytes, { timeout: 300_000, mode: '0600' });
+  }
 
-  // Validate release branch — only alphanumeric + hyphen/underscore to prevent shell injection
-  const safeBranch = (releaseBranch && releaseBranch !== 'main' && /^[a-zA-Z0-9_-]+$/.test(releaseBranch))
-    ? releaseBranch
-    : '';
+  const downloadURL = marketArtifact ? '' : shellQuote(releaseURL);
+  const artifactPreparation = marketArtifact
+    ? `
+    echo "Using preflighted Market artifact..."
+    test "$(sha256sum /tmp/app.tar | awk '{print $1}')" = ${shellQuote(marketArtifact.artifactSHA256)}
+    `
+    : `
+    echo "Downloading selected standalone release..."
+    retry 3 5 curl -fsSL ${downloadURL} -o /tmp/app.tar
+    ${signedReleaseVerificationShell(releaseURL, '/tmp/app.tar', artifactSHA256)}
+    `;
 
   const downloadScript = `
     set -e
-
-    # Wait for DNS/network to be ready (release API must resolve and respond)
-    echo "Waiting for network readiness..."
-    for i in 1 2 3 4 5 6 7 8 9 10; do
-      if curl -sSf -o /dev/null -w '' -H 'User-Agent: YouEye-Installer' '${readinessURL}' 2>/dev/null; then
-        echo "Network ready (attempt \$i)"
-        break
-      fi
-      echo "Network not ready, waiting... (attempt \$i)"
-      sleep 3
-    done
 
     # Retry helper: retry <max_attempts> <delay_seconds> <command...>
     retry() {
@@ -248,103 +439,8 @@ async function installNodeAndApp(
       done
     }
 
-    # Write the Python filter to a temp file to avoid shell quoting issues
-    cat > /tmp/filter_releases.py << 'PYEOF'
-import sys, json, re
-
-branch = sys.argv[1] if len(sys.argv) > 1 else ''
-tag_prefix = sys.argv[2] if len(sys.argv) > 2 else ''
-attachment_base = sys.argv[3] if len(sys.argv) > 3 else ''
-
-with open('/tmp/releases.json') as f:
-    releases = json.load(f)
-
-def parse_ver(v):
-    return [int(x) for x in v.split('.')]
-
-def ver_gt(a, b):
-    pa, pb = parse_ver(a), parse_ver(b)
-    for i in range(max(len(pa), len(pb))):
-        va = pa[i] if i < len(pa) else 0
-        vb = pb[i] if i < len(pb) else 0
-        if va != vb: return va > vb
-    return False
-
-best_branch_url = None
-best_branch_ver = None
-best_main_url = None
-best_main_ver = None
-
-for r in releases:
-    tag = r['tag_name']
-    stripped = tag
-    if tag_prefix:
-        pfx = tag_prefix + '-'
-        if not tag.startswith(pfx):
-            continue
-        stripped = tag[len(pfx):]
-    tar_url = None
-    for a in r['assets']:
-        if a['name'] == 'standalone.tar':
-            if attachment_base and a.get('uuid'):
-                tar_url = f"{attachment_base}/{a['uuid']}"
-            else:
-                tar_url = a.get('browser_download_url')
-            break
-    if not tar_url:
-        continue
-    if branch and stripped.startswith(branch + '-v'):
-        ver = stripped[len(branch)+2:]
-        if best_branch_ver is None or ver_gt(ver, best_branch_ver):
-            best_branch_ver = ver
-            best_branch_url = tar_url
-    elif re.match(r'^v\\d', stripped):
-        ver = stripped[1:]
-        if best_main_ver is None or ver_gt(ver, best_main_ver):
-            best_main_ver = ver
-            best_main_url = tar_url
-
-url = None
-if best_branch_ver and best_main_ver:
-    url = best_main_url if ver_gt(best_main_ver, best_branch_ver) else best_branch_url
-elif best_branch_ver:
-    url = best_branch_url
-elif best_main_ver:
-    url = best_main_url
-
-if url:
-    print(url)
-else:
-    print(f'No matching release found (tag_prefix={tag_prefix!r}, branch={branch!r}, total={len(releases)})', file=sys.stderr)
-    for r in releases:
-        if isinstance(r, dict):
-            t = r.get('tag_name', '?')
-            a = [x['name'] for x in r.get('assets', [])]
-            print(f'  {t}: {a}', file=sys.stderr)
-    sys.exit(1)
-PYEOF
-
-    fetch_release_url() {
-      HTTP_CODE=\$(curl -sSL -o /tmp/releases.json -w '%{http_code}' -H '${acceptHeader}' -H 'User-Agent: YouEye-Installer' '${releasesURL}')
-
-      if [ "\$HTTP_CODE" != "200" ]; then
-        echo "${apiLabel} API returned HTTP \$HTTP_CODE" >&2
-        head -5 /tmp/releases.json >&2
-        return 1
-      fi
-
-      python3 /tmp/filter_releases.py '${safeBranch}' '${cfg.tagPrefix || ''}' '${attachmentBaseURL}'
-    }
-
-    DOWNLOAD_URL=$(retry 3 5 fetch_release_url)
-
-    if [ -z "$DOWNLOAD_URL" ]; then
-      echo "ERROR: Could not find standalone.tar in releases after retries"
-      exit 1
-    fi
-
-    echo "Downloading from: $DOWNLOAD_URL"
-    curl -sSL "$DOWNLOAD_URL" -o /tmp/app.tar
+    ${artifactPreparation}
+    sha256sum /tmp/app.tar | awk '{print \$1}' > ${spec.appDir}/.youeye-artifact-sha256
     tar -xf /tmp/app.tar -C ${spec.appDir} --no-same-owner
     rm /tmp/app.tar
 
@@ -354,6 +450,7 @@ PYEOF
       ls -la ${spec.appDir}
       exit 1
     fi
+    ${spec.runtime === 'bun' ? `test -x "${spec.appDir}/bun" || { echo "ERROR: signed Bun runtime is missing or not executable"; exit 1; }` : ''}
     echo "App downloaded and verified successfully"
   `;
   const dlResult = await execShell(cn, downloadScript, { timeout: 300_000 });
@@ -378,7 +475,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=${spec.appDir}
-ExecStart=/usr/bin/node ${spec.appDir}/${spec.entryFile ?? 'server.js'}
+ExecStart=${spec.runtime === 'bun' ? `${spec.appDir}/bun` : '/usr/bin/node'} ${spec.appDir}/${spec.entryFile ?? 'server.js'}
 EnvironmentFile=-/etc/${spec.containerName}.env
 Environment=NODE_ENV=production
 Environment=PORT=${spec.port}
@@ -397,4 +494,14 @@ WantedBy=multi-user.target
   // Enable and start the service
   await execShell(cn, 'systemctl daemon-reload', { timeout: 10_000 });
   await execShell(cn, `systemctl enable --now ${serviceName}`, { timeout: 15_000 });
+
+  const digestResult = await execShell(cn, `cat ${spec.appDir}/.youeye-artifact-sha256`, { timeout: 10_000 });
+  const verifiedDigest = digestResult.stdout.trim().toLowerCase();
+  if (digestResult.exitCode !== 0 || !/^[0-9a-f]{64}$/.test(verifiedDigest)) {
+    throw new Error(`Signed artifact digest was not retained for ${cn}`);
+  }
+  if (artifactSHA256 && verifiedDigest !== artifactSHA256.toLowerCase()) {
+    throw new Error(`Retained artifact digest does not match the exact channel for ${cn}`);
+  }
+  return verifiedDigest;
 }

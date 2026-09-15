@@ -7,7 +7,7 @@
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { trackRoute, trackFeature, trackAppLaunch, trackError } from "@/lib/telemetry/tracker";
+import { isTelemetryEnabled, trackRoute, trackFeature, trackAppLaunch, trackError } from "@/lib/telemetry/tracker";
 
 interface TelemetryEvent {
   type: "route" | "feature" | "app_launch" | "error";
@@ -16,6 +16,9 @@ interface TelemetryEvent {
 }
 
 export async function POST(request: NextRequest) {
+  if (!isTelemetryEnabled()) {
+    return NextResponse.json({ ok: true, recorded: 0 });
+  }
   try {
     const body = await request.json();
     const events: TelemetryEvent[] = Array.isArray(body.events) ? body.events : [];

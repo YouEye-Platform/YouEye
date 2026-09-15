@@ -1,0 +1,16 @@
+[Unit]
+Description=YouEye System core
+Wants=network-online.target
+Requires=youeye-appliance-storage.service youeye-appliance-incus-sockets.service
+After=network-online.target youeye-appliance-storage.service youeye-appliance-incus-sockets.service
+
+[Service]
+Type=simple
+ExecStartPre=/bin/mkdir -p /var/run/youeye
+ExecStart=/usr/local/bin/youeye api serve
+ExecStartPost=/bin/sh -c 'for i in $(seq 1 50); do test -S /var/run/youeye/youeye.sock && exit 0; sleep 0.1; done; exit 1'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

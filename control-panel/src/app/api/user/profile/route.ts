@@ -37,15 +37,10 @@ export async function GET() {
       return NextResponse.json({ error: "User not found in the identity provider" }, { status: 404 });
     }
 
-    // Split the "name" field into first/last for the UI
-    const nameParts = (user.name || "").split(" ", 2);
-    const firstName = nameParts[0] || "";
-    const lastName = nameParts.length > 1 ? user.name.substring(firstName.length + 1) : "";
-
     return NextResponse.json({
       username: user.username,
-      firstName,
-      lastName,
+      firstName: user.firstName,
+      lastName: user.lastName,
       email: user.email,
       isAdmin: session.isAdmin,
     });
@@ -82,17 +77,11 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "User not found in the identity provider" }, { status: 404 });
     }
 
-    // Build the combined "name" field for the identity provider.
-    // Preserve existing parts if only one field is being updated
-    const currentParts = (user.name || "").split(" ", 2);
-    const currentFirst = currentParts[0] || "";
-    const currentLast = currentParts.length > 1 ? user.name.substring(currentFirst.length + 1) : "";
+    const newFirst = firstName !== undefined ? firstName : user.firstName;
+    const newLast = lastName !== undefined ? lastName : user.lastName;
+    if (!newFirst) return NextResponse.json({ error: "First name is required" }, { status: 400 });
 
-    const newFirst = firstName !== undefined ? firstName : currentFirst;
-    const newLast = lastName !== undefined ? lastName : currentLast;
-    const fullName = [newFirst, newLast].filter(Boolean).join(" ") || user.username;
-
-    await updateUser(String(user.pk), { name: fullName });
+    await updateUser(String(user.pk), { firstName: newFirst, lastName: newLast });
 
     // Push name change to UI via bridge (server-to-server, non-fatal)
     pushNameToUI(session.username, newFirst, newLast).catch((err) =>

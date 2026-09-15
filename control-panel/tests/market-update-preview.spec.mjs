@@ -10,8 +10,12 @@ function read(path) {
 }
 
 test('market update checks expose migration preview metadata', () => {
+  // The migration-preview metadata (updatePath / migrationsRequired /
+  // migrationGates) is computed in installed-apps.ts. The market embed client
+  // that rendered it (src/app/embed/market/client.tsx) was removed when the
+  // market UI was restructured; the metadata contract itself is what update
+  // consumers rely on, so assert on the source of truth.
   const installedApps = read('src/lib/market/installed-apps.ts');
-  const marketClient = read('src/app/embed/market/client.tsx');
 
   assert.match(installedApps, /fetchUpdatePlanMigrationsFromSource/);
   assert.match(installedApps, /findApplicableMigrations/);
@@ -22,9 +26,4 @@ test('market update checks expose migration preview metadata', () => {
   assert.match(installedApps, /app\.updatePath = describeUpdatePath/);
   assert.match(installedApps, /app\.migrationsRequired = applicableMigrations\.length/);
   assert.match(installedApps, /app\.migrationGates = applicableMigrations\.map/);
-
-  assert.match(marketClient, /updatePath\?: string \| null/);
-  assert.match(marketClient, /migrationsRequired\?: number/);
-  assert.match(marketClient, /Path: \{app\.updatePath\}/);
-  assert.match(marketClient, /required migration/);
 });

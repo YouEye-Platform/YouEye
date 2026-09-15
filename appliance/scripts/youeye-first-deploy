@@ -1,0 +1,143 @@
+#!/bin/sh
+set -eu
+
+state_dir=${YOUEYE_FIRST_DEPLOY_STATE_DIR:-/var/lib/youeye-state/first-deploy}
+journal="$state_dir/progress.json"
+complete="$state_dir/complete"
+lock="$state_dir/lock"
+setup_gate=${YOUEYE_SETUP_GATE:-/usr/local/libexec/youeye-setup-gate}
+seed_market=${YOUEYE_SEED_MARKET:-/usr/local/libexec/youeye-seed-market}
+bootstrap_network=${YOUEYE_BOOTSTRAP_NETWORK:-/usr/local/libexec/youeye-bootstrap-network}
+release_policy=${YOUEYE_RELEASE_POLICY:-/var/lib/youeye-state/bootstrap/release-policy.json}
+youeye=${YOUEYE_BIN:-/usr/local/bin/youeye}
+incus=${INCUS_BIN:-incus}
+curl_bin=${CURL_BIN:-curl}
+control_secret=${YOUEYE_CONTROL_SECRET:-/var/lib/youeye/control/.deploy_secret}
+max_attempts=${YOUEYE_FIRST_DEPLOY_MAX_ATTEMPTS:-8}
+
+install -d -m 0700 "$state_dir"
+exec 9>"$lock"
+flock -n 9 || exit 0
+
+if [ -e "$complete" ]; then
+    exit 0
+fi
+
+attempt=1
+previous_stage=
+if [ -s "$journal" ]; then
+    attempt="$(jq -r '.attempt // 0' "$journal" 2>/dev/null || printf '0')"
+    previous_stage="$(jq -r '.stage // ""' "$journal" 2>/dev/null || true)"
+    attempt=$((attempt + 1))
+fi
+
+if [ "$previous_stage" = needs_attention ] && [ "$attempt" -gt "$max_attempts" ]; then
+    exit 0
+fi
+
+write_progress() {
+    stage=$1
+    detail=$2
+    percent=$3
+    state=${4:-running}
+    previous_percent=0
+    if [ -s "$journal" ]; then
+        previous_percent=$(jq -r '.percent // 0' "$journal" 2>/dev/null || printf '0')
+    fi
+    [ "$percent" -ge "$previous_percent" ] || percent=$previous_percent
+    tmp="${journal}.tmp"
+    jq -n \
+        --arg schema youeye.appliance.progress.v2 \
+        --arg stage "$stage" \
+        --arg detail "$detail" \
+        --arg state "$state" \
+        --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --argjson attempt "$attempt" \
+        --argjson percent "$percent" \
+        '{schema:$schema,operation:"first-deploy",state:$state,stage:$stage,detail:$detail,percent:$percent,attempt:$attempt,updated_at:$updated_at}' > "$tmp"
+    chmod 0600 "$tmp"
+    mv -f "$tmp" "$journal"
+    sync -f "$state_dir"
+}
+
+current_stage=preparing
+on_exit() {
+    status=$?
+    trap - EXIT
+    if [ "$status" -ne 0 ]; then
+        if [ "$attempt" -ge "$max_attempts" ]; then
+            write_progress needs_attention "First deployment stopped after $attempt attempts during $current_stage; inspect the journal and retry from Recovery" 99 needs_attention
+            exit 0
+        fi
+        write_progress retrying "Attempt $attempt failed during $current_stage; the appliance will retry" 0 retrying
+    fi
+    exit "$status"
+}
+trap on_exit EXIT
+
+write_progress network "Checking the saved wired network profile" 5
+current_stage=network
+"$bootstrap_network"
+
+current_stage=release_convergence
+write_progress release_convergence "Resolving and verifying one signed platform bundle" 18
+convergence="$state_dir/convergence.json"
+"$youeye" update system converge --policy "$release_policy" --reboot --json > "${convergence}.tmp"
+chmod 0600 "${convergence}.tmp"
+mv -f "${convergence}.tmp" "$convergence"
+if jq -e '.reboot_requested == true' "$convergence" >/dev/null; then
+    write_progress system_restart "A newer signed System was written to the inactive slot; restarting to continue" 28
+    trap - EXIT
+    exit 0
+fi
+
+write_progress preparing "Preparing the exact sealed release set" 30
+current_stage=seeding_market
+write_progress market_seed "Preparing the signed Market source" 32
+"$seed_market"
+control_state="$($incus list youeye-control -c s --format csv 2>/dev/null || true)"
+if [ -n "$control_state" ]; then
+    if [ "$control_state" != RUNNING ]; then
+        if ! "$incus" start youeye-control; then
+            # incus-startup may win the race between the state read and the
+            # explicit start. Accept that narrow race only after readback.
+            control_state="$($incus list youeye-control -c s --format csv 2>/dev/null || true)"
+            [ "$control_state" = RUNNING ] || exit 1
+        fi
+    fi
+    if "$incus" exec youeye-control -- sh -c \
+        'test -e /opt/app/server.js && test -e /etc/systemd/system/youeye-control.service && test -e /etc/systemd/system/youeye-id.service' \
+        && [ -s "$control_secret" ]; then
+        current_stage=resuming
+        write_progress server_interface "Reconciling an interrupted complete platform deployment" 52
+        YOUEYE_FIRST_DEPLOY_PROGRESS_PATH="$journal" YOUEYE_FIRST_DEPLOY_ATTEMPT="$attempt" "$youeye" deploy --resume
+    else
+        current_stage=continuing
+        write_progress server_interface "Continuing an interrupted Server interface transaction" 52
+        YOUEYE_FIRST_DEPLOY_PROGRESS_PATH="$journal" YOUEYE_FIRST_DEPLOY_ATTEMPT="$attempt" "$youeye" deploy
+    fi
+else
+    current_stage=deploying
+    write_progress storage "Starting persistent storage and platform deployment" 36
+    YOUEYE_FIRST_DEPLOY_PROGRESS_PATH="$journal" YOUEYE_FIRST_DEPLOY_ATTEMPT="$attempt" "$youeye" deploy
+fi
+
+current_stage=verifying
+write_progress verifying "Running durable appliance health checks" 94
+"$youeye" appliance health --profile=operational --json > "$state_dir/health.json.tmp"
+chmod 0600 "$state_dir/health.json.tmp"
+mv -f "$state_dir/health.json.tmp" "$state_dir/health.json"
+
+write_progress setup "Opening first setup after all health gates passed" 98
+if ! "$setup_gate" open; then
+    exit 1
+fi
+current_stage=https
+if ! "$curl_bin" --fail --silent --show-error --insecure --max-time 30 --output /dev/null https://127.0.0.1/; then
+    "$setup_gate" close || true
+    exit 1
+fi
+install -m 0600 /dev/null "$complete"
+sync -f "$state_dir"
+write_progress complete "Exact platform release is healthy and first setup is reachable over HTTPS" 100 complete
+trap - EXIT

@@ -7,14 +7,15 @@
  * Auth: X-UI-Bridge-Token (shared service token).
  *
  * This is the server-to-server path for avatar persistence. When a user
- * changes their avatar via the Control Panel embed, Control Panel saves to the identity provider and then
- * pushes the image data here so UI can persist it locally (disk + DB).
+ * changes their avatar in Control Panel, Control Panel pushes the image data
+ * here so UI can persist it locally (disk + DB).
  * This ensures the avatar survives page navigation and browser refresh.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getBridgeToken } from "@/lib/admin/bridge-client";
 import { saveAvatar, deleteAvatar } from "@/lib/avatar/storage";
+import { ensureBridgeUser } from "@/lib/db/queries/users";
 import { db } from "@/db";
 import { users, userAssets } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -26,7 +27,7 @@ function validateToken(request: NextRequest): boolean {
   return expected !== null && provided === expected;
 }
 
-/** Resolve a username to UI's internal user ID */
+/** Resolve a username to UI's internal user ID. */
 async function resolveUserId(username: string): Promise<string | null> {
   const result = await db
     .select({ id: users.id })
@@ -52,13 +53,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const userId = await resolveUserId(username);
-    if (!userId) {
-      return NextResponse.json(
-        { error: `User '${username}' not found in UI database` },
-        { status: 404 }
-      );
-    }
+    const userId = (await ensureBridgeUser(username)).id;
 
     // Convert data URL to buffer
     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
@@ -126,10 +121,9 @@ export async function DELETE(request: NextRequest) {
 
     const userId = await resolveUserId(username);
     if (!userId) {
-      return NextResponse.json(
-        { error: `User '${username}' not found in UI database` },
-        { status: 404 }
-      );
+      // Removal is idempotent. A user who has not opened UI has no avatar
+      // mirror to remove, so the requested end state is already satisfied.
+      return NextResponse.json({ success: true });
     }
 
     await deleteAvatar(userId);

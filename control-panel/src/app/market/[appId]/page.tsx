@@ -51,6 +51,13 @@ const ICON_MAP: Record<string, typeof Search> = {
   plug: Plug,
 };
 
+const preparingInstallEvent: InstallEvent = {
+  step: 0,
+  totalSteps: 0,
+  status: 'running',
+  message: 'Preparing installation...',
+};
+
 // Colorful app-icon tile by category (mockup palette — intentionally light in both
 // themes, like an OS home-screen icon).
 const HERO_TILE: Record<string, { background: string; color: string }> = {
@@ -84,6 +91,9 @@ export default function AppDetailPage() {
   const [installing, setInstalling] = useState(false);
   const [installEvents, setInstallEvents] = useState<InstallEvent[]>([]);
   const [installDone, setInstallDone] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const [installOperationAppId, setInstallOperationAppId] = useState<string | null>(null);
+  const [pollingAppId, setPollingAppId] = useState<string | null>(null);
   const [switchingSource, setSwitchingSource] = useState(false);
   const [sourceSwitchMessage, setSourceSwitchMessage] = useState<string | null>(null);
   const [syncingManifest, setSyncingManifest] = useState(false);
@@ -95,6 +105,7 @@ export default function AppDetailPage() {
   // Uninstall state
   const [showUninstallDialog, setShowUninstallDialog] = useState(false);
   const [uninstalling, setUninstalling] = useState(false);
+  const [removingDirectEntry, setRemovingDirectEntry] = useState(false);
 
   // Credentials state
   const [credentials, setCredentials] = useState<{ label: string; username: string; password: string }[]>([]);
@@ -171,16 +182,30 @@ export default function AppDetailPage() {
 
   // ── Polling for install progress ─────────────────────────────
 
-  const [pollingAppId, setPollingAppId] = useState<string | null>(null);
+  useEffect(() => {
+    // Next can preserve this client component while changing a dynamic route.
+    // Never let one app's terminal operation state appear on another app.
+    setInstalling(false);
+    setInstallEvents([]);
+    setInstallDone(false);
+    setInstallError(null);
+    setInstallOperationAppId(null);
+    setPollingAppId(null);
+  }, [appId]);
 
   useEffect(() => {
-    if (!pollingAppId) return;
-    const interval = setInterval(async () => {
+    if (!pollingAppId || pollingAppId !== appId) return;
+    let active = true;
+    const expectedAppId = pollingAppId;
+    const poll = async () => {
       try {
-        const res = await fetch(`/api/market/install-status?app=${encodeURIComponent(pollingAppId)}`);
+        const res = await fetch(`/api/market/install-status?app=${encodeURIComponent(expectedAppId)}`);
         if (res.ok) {
           const data = await res.json();
-          setInstallEvents(data.events || []);
+          if (!active || data.appId !== expectedAppId || expectedAppId !== appId) return;
+          setInstallOperationAppId(expectedAppId);
+          if (data.events?.length) setInstallEvents(data.events);
+          setInstallError(data.error || null);
           if (data.done) {
             setInstallDone(true);
             clearInterval(interval);
@@ -189,20 +214,49 @@ export default function AppDetailPage() {
           }
         }
       } catch { /* ignore */ }
-    }, 1500);
-    return () => clearInterval(interval);
-  }, [pollingAppId, fetchStatus]);
+    };
+    const interval = setInterval(poll, 1500);
+    void poll();
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [appId, pollingAppId, fetchStatus]);
 
   // Check on mount if there's already an active install for this app
   useEffect(() => {
+    let active = true;
     async function checkExistingInstall() {
       try {
         const res = await fetch(`/api/market/install-status?app=${encodeURIComponent(appId)}`);
         if (res.ok) {
           const data = await res.json();
-          if (data.events && data.events.length > 0) {
+          if (!active || data.appId !== appId) return;
+          if (!data.done && (!data.events || data.events.length === 0)) {
             setInstalling(true);
+            setInstallOperationAppId(appId);
+            setInstallEvents([preparingInstallEvent]);
+            setInstallError(null);
+            setPollingAppId(appId);
+            return;
+          }
+          if (data.events && data.events.length > 0) {
+            // Successful terminal history is useful across refreshes while the
+            // app exists. Once it has been uninstalled, however, replaying an
+            // old "installed successfully" card hides the real install action.
+            // Keep failed history visible, and retain the durable record for
+            // diagnostics, but suppress stale success presentation.
+            if (data.done && !data.error) {
+              const statusRes = await fetch(`/api/market/status?app=${encodeURIComponent(appId)}`);
+              if (statusRes.ok) {
+                const currentStatus = await statusRes.json();
+                if (!active || currentStatus.status === 'not-installed') return;
+              }
+            }
+            setInstalling(true);
+            setInstallOperationAppId(appId);
             setInstallEvents(data.events);
+            setInstallError(data.error || null);
             if (data.done) {
               setInstallDone(true);
             } else {
@@ -212,7 +266,8 @@ export default function AppDetailPage() {
         }
       } catch { /* ignore */ }
     }
-    checkExistingInstall();
+    void checkExistingInstall();
+    return () => { active = false; };
   }, [appId]);
 
   // ── Install handler ────────────────────────────────────────
@@ -220,8 +275,10 @@ export default function AppDetailPage() {
   const handleInstall = async (config: InstallConfig) => {
     setShowInstallDialog(false);
     setInstalling(true);
-    setInstallEvents([]);
+    setInstallOperationAppId(config.appId);
+    setInstallEvents([preparingInstallEvent]);
     setInstallDone(false);
+    setInstallError(null);
 
     // Fire and forget — the server handles everything in the background
     try {
@@ -248,6 +305,7 @@ export default function AppDetailPage() {
         message: 'Failed to start install',
         detail: String(err),
       }]);
+      setInstallError(err instanceof Error ? err.message : String(err));
       setInstallDone(true);
       return;
     }
@@ -374,6 +432,23 @@ export default function AppDetailPage() {
     }
   };
 
+  const handleRemoveDirectEntry = async () => {
+    if (!app?.sourceId?.startsWith('direct:')) return;
+    setRemovingDirectEntry(true);
+    try {
+      const res = await authenticatedFetch(`/api/market/direct/${encodeURIComponent(app.sourceId)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not remove this app from Market');
+      router.push('/market');
+    } catch (err) {
+      setSourceSwitchMessage(err instanceof Error ? err.message : 'Could not remove this app from Market');
+    } finally {
+      setRemovingDirectEntry(false);
+    }
+  };
+
   // ── Loading state ──────────────────────────────────────────
 
   if (loading) {
@@ -419,6 +494,7 @@ export default function AppDetailPage() {
   const appStatus = status?.status ?? 'not-installed';
   const isIntegration = app.itemKind === 'integration';
   const isInstalled = !isIntegration && appStatus !== 'not-installed';
+  const isDirectEntry = !!app.sourceId?.startsWith('direct:');
   const targetIsInstalled = !!targetStatus?.status && targetStatus.status !== 'not-installed';
   const integrationInstalled = isIntegration
     && !!targetStatus?.installedIntegrations?.some((integration) => integration.id === app.id);
@@ -458,7 +534,9 @@ export default function AppDetailPage() {
   const installPercent = latestInstallEvent?.totalSteps
     ? Math.round((latestInstallEvent.step / latestInstallEvent.totalSteps) * 100)
     : 0;
-  const installFailed = installDone && latestInstallEvent?.status === 'error';
+  const installFailed = installOperationAppId === appId
+    && installDone
+    && (!!installError || latestInstallEvent?.status === 'error');
 
   return (
     <div className="space-y-6 max-w-6xl">
@@ -512,16 +590,28 @@ export default function AppDetailPage() {
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Version</span><span className="text-[13.5px] font-semibold">{app.version ? `v${app.version}` : '—'}</span></div>
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Category</span><span className="text-[13.5px] font-semibold capitalize">{app.category || '—'}</span></div>
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Source</span><span className="truncate text-[13.5px] font-semibold">{app.sourceName || app.sourceId || 'Market'}</span></div>
-        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Developer</span><span className="truncate text-[13.5px] font-semibold">{app.developer || (app.integration === 'native' ? 'YouEye (official)' : (app.sourceName || '—'))}</span></div>
+        <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Developer</span><span className="truncate text-[13.5px] font-semibold">{app.developer || app.sourceName || '—'}</span></div>
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">License</span><span className="text-[13.5px] font-semibold">{app.license ? <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[12px] font-semibold">{app.license}</span> : '—'}</span></div>
         <div className="grid gap-0.5"><span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Account login</span><span className="flex items-center gap-1.5 text-[13.5px] font-semibold">{!isIntegration && (app.supportsSSO || app.forwardAuth !== 'disabled') && <Shield className="h-3.5 w-3.5 text-green-600" />}{app.supportsSSO ? 'Built in' : status?.forwardAuthEnabled ? 'Protected' : app.forwardAuth === 'disabled' ? 'Unavailable' : 'Optional'}</span></div>
       </div>
+
+      {isDirectEntry && (
+        <div className="flex items-start gap-3 rounded-xl border bg-muted/40 p-4">
+          <Globe className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-semibold text-foreground">Added directly to this server</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              This app comes from the saved source shown below. YouEye records the exact content it installs, but has not verified who published it.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Access surface — plain-language "who can reach this app" + a live full-URL chip */}
       {accessLevel && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4">
           <div className="flex items-center gap-3">
-            <div className={`rounded-md p-2 ${accessLevel === 'public' ? 'bg-amber-50 text-amber-600' : accessLevel === 'internal' ? 'bg-slate-100 text-slate-600' : 'bg-blue-50 text-blue-600'}`}>
+            <div className={`rounded-md p-2 ${accessLevel === 'public' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-500' : accessLevel === 'internal' ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary'}`}>
               {accessLevel === 'public' ? <Globe className="h-4 w-4" /> : accessLevel === 'internal' ? <EyeOff className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
             </div>
             <div>
@@ -545,10 +635,7 @@ export default function AppDetailPage() {
       <div className="grid gap-3.5 sm:grid-cols-2">
         {(screenshots.length > 0 ? screenshots.slice(0, 2) : [null, null]).map((shot, i) =>
           shot ? (
-            <div key={i} className="relative overflow-hidden rounded-2xl border bg-muted/30" style={{ aspectRatio: '16 / 10' }}>
-              <Image src={shot.url} alt={shot.caption || `Screenshot ${i + 1}`} fill className="object-cover" unoptimized />
-              {shot.caption && <div className="absolute inset-x-0 bottom-0 bg-background/85 px-3.5 py-2 text-[12.5px] text-muted-foreground">{shot.caption}</div>}
-            </div>
+            <FeaturedScreenshot key={shot.url} screenshot={shot} index={i} />
           ) : (
             <div key={i} className="flex items-center justify-center rounded-2xl border bg-muted/30 text-muted-foreground/40" style={{ aspectRatio: '16 / 10' }}>
               <Camera className="h-7 w-7" />
@@ -746,7 +833,7 @@ export default function AppDetailPage() {
         </div>
 
         {isDifferentSourceVariant && (
-          <div className="mt-5 rounded-lg border border-primary/30 bg-primary/10p-4">
+          <div className="mt-5 rounded-lg border border-primary/30 bg-primary/10 p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-foreground">
@@ -901,7 +988,11 @@ export default function AppDetailPage() {
                 <span className="text-sm font-medium text-foreground">
                   {isIntegration
                     ? integrationInstalled ? 'Applied' : 'Available'
-                    : isInstalled ? appStatus : 'Ready to install'}
+                    : isInstalled
+                      ? appStatus
+                      : installing && installOperationAppId === appId && !installDone
+                        ? 'Installing'
+                        : 'Ready to install'}
                 </span>
                 {isInstalled && (
                   <HealthDot
@@ -912,7 +1003,7 @@ export default function AppDetailPage() {
               </div>
             </div>
 
-            {installing && installEvents.length > 0 ? (
+            {installing && installOperationAppId === appId && installEvents.length > 0 ? (
               <div className="space-y-4">
                 <div>
                   <div className="flex items-center justify-between text-sm">
@@ -1008,9 +1099,21 @@ export default function AppDetailPage() {
                     </Button>
                   )
                 ) : !isInstalled ? (
-                  <Button onClick={() => setShowInstallDialog(true)}>
-                    Install {app.name}
-                  </Button>
+                  <>
+                    <Button onClick={() => setShowInstallDialog(true)}>
+                      Install {app.name}
+                    </Button>
+                    {isDirectEntry && (
+                      <Button
+                        variant="outline"
+                        onClick={handleRemoveDirectEntry}
+                        disabled={removingDirectEntry}
+                      >
+                        {removingDirectEntry ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                        Remove from Market
+                      </Button>
+                    )}
+                  </>
                 ) : (
                   <>
                     {status?.url && (
@@ -1096,8 +1199,54 @@ interface ScreenshotGalleryProps {
   screenshots: { url: string; caption?: string }[];
 }
 
+function FeaturedScreenshot({
+  screenshot,
+  index,
+}: {
+  screenshot: { url: string; caption?: string };
+  index: number;
+}) {
+  const [unavailable, setUnavailable] = useState(false);
+  const label = screenshot.caption || `Screenshot ${index + 1}`;
+
+  return (
+    <div className="relative overflow-hidden rounded-2xl border bg-muted/30" style={{ aspectRatio: '16 / 10' }}>
+      {unavailable ? (
+        <div
+          role="img"
+          aria-label={`${label} unavailable`}
+          className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground/60"
+        >
+          <Camera className="h-7 w-7" />
+          <span className="text-xs">Screenshot unavailable</span>
+        </div>
+      ) : (
+        <Image
+          src={screenshot.url}
+          alt={label}
+          fill
+          className="object-cover"
+          unoptimized
+          onError={() => setUnavailable(true)}
+        />
+      )}
+      {screenshot.caption && (
+        <div className="absolute inset-x-0 bottom-0 bg-background/85 px-3.5 py-2 text-[12.5px] text-muted-foreground">
+          {screenshot.caption}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ScreenshotGallery({ screenshots }: ScreenshotGalleryProps) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [unavailable, setUnavailable] = useState<Set<number>>(new Set());
+
+  const markUnavailable = (index: number) => {
+    setUnavailable((current) => new Set(current).add(index));
+    setSelectedIndex((current) => current === index ? null : current);
+  };
 
   return (
     <>
@@ -1107,16 +1256,29 @@ function ScreenshotGallery({ screenshots }: ScreenshotGalleryProps) {
           <button
             key={i}
             onClick={() => setSelectedIndex(i)}
+            disabled={unavailable.has(i)}
             className="shrink-0 rounded-lg overflow-hidden border border-border hover:border-primary transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
           >
-            <Image
-              src={shot.url}
-              alt={shot.caption || `Screenshot ${i + 1}`}
-              width={280}
-              height={180}
-              className="h-[180px] w-auto object-cover"
-              unoptimized
-            />
+            {unavailable.has(i) ? (
+              <div
+                role="img"
+                aria-label={`${shot.caption || `Screenshot ${i + 1}`} unavailable`}
+                className="flex h-[180px] w-[280px] flex-col items-center justify-center gap-2 bg-muted/30 text-muted-foreground/60"
+              >
+                <Camera className="h-7 w-7" />
+                <span className="text-xs">Screenshot unavailable</span>
+              </div>
+            ) : (
+              <Image
+                src={shot.url}
+                alt={shot.caption || `Screenshot ${i + 1}`}
+                width={280}
+                height={180}
+                className="h-[180px] w-auto object-cover"
+                unoptimized
+                onError={() => markUnavailable(i)}
+              />
+            )}
             {shot.caption && (
               <p className="text-xs text-muted-foreground px-2 py-1.5 bg-muted truncate max-w-[280px]">
                 {shot.caption}
@@ -1165,6 +1327,7 @@ function ScreenshotGallery({ screenshots }: ScreenshotGalleryProps) {
               height={800}
               className="rounded-lg max-h-[85vh] w-auto object-contain"
               unoptimized
+              onError={() => markUnavailable(selectedIndex)}
             />
 
             {/* Caption */}

@@ -2,13 +2,14 @@
  * Install App from URL — SSE endpoint
  *
  * POST /api/market/install-url
- * Body: { manifestUrl, subdomain, domain }
+ * Body: { manifestUrl, subdomain?, domain? }. The supported Spine CLI sends
+ * `{ url }`; that alias derives the subdomain from the validated manifest.
  *
  * Fetches a manifest from a URL, validates it, then installs the app
  * using the same engine as catalog-based installs. Tracks the source
  * as 'url' for installed app metadata.
  *
- * Audit: Logs every URL install attempt with the full manifest URL.
+ * Audit: Logs every URL install attempt using only the manifest origin host.
  */
 
 import { NextRequest } from 'next/server';
@@ -16,10 +17,12 @@ import { parse as parseYAML } from 'yaml';
 import { AppManifestSchema } from '@/lib/market/schema';
 import { installApp } from '@/lib/market/engine';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
-import { startTracking, trackEvent, finishTracking } from '@/lib/market/install-tracker';
+import { finishTracking, sanitiseInstallEvent, sensitivitySafeInstallError, startTracking, trackEvent } from '@/lib/market/install-tracker';
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
 import { settingsService } from '@/lib/settings';
+import { requireAdmin } from '@/lib/auth/rbac';
 import type { InstallConfig, InstallEvent } from '@/lib/market/types';
+import { saveDirectMarketApp } from '@/lib/market/direct-apps';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,7 +71,10 @@ async function canonicalPlatformDomain(): Promise<string> {
 }
 
 export async function POST(request: NextRequest) {
-  let body: { manifestUrl?: string; subdomain?: string; domain?: string };
+  const auth = await requireAdmin();
+  if (auth.error) return auth.error;
+
+  let body: { manifestUrl?: string; url?: string; subdomain?: string; domain?: string; acceptUnverifiedPublisher?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -77,17 +83,24 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const { manifestUrl } = body;
-  const subdomain = body.subdomain?.trim().toLowerCase();
+  const manifestUrl = (body.manifestUrl ?? body.url)?.trim();
+  const requestedSubdomain = body.subdomain?.trim().toLowerCase();
 
-  if (!manifestUrl || !subdomain) {
+  if (!manifestUrl) {
     return new Response(
-      JSON.stringify({ error: 'Missing required fields: manifestUrl, subdomain' }),
+      JSON.stringify({ error: 'Missing required field: manifestUrl' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } },
     );
   }
 
-  if (!validAppSubdomain(subdomain)) {
+  if (body.acceptUnverifiedPublisher !== true) {
+    return new Response(
+      JSON.stringify({ error: 'Confirm that you trust this Added app source before installing' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  if (requestedSubdomain && !validAppSubdomain(requestedSubdomain)) {
     return new Response(
       JSON.stringify({ error: 'Subdomain must be a single DNS label using lowercase letters, numbers, and hyphens' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } },
@@ -100,9 +113,9 @@ export async function POST(request: NextRequest) {
     if (body.domain && body.domain !== domain) {
       console.warn(`[Market] Ignoring client-supplied URL install domain "${body.domain}", using platform domain "${domain}"`);
     }
-  } catch (err) {
+  } catch {
     return new Response(
-      JSON.stringify({ error: err instanceof Error ? err.message : 'Platform domain is not configured' }),
+      JSON.stringify({ error: 'Platform domain is not configured' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } },
     );
   }
@@ -117,11 +130,13 @@ export async function POST(request: NextRequest) {
 
   // Fetch and parse manifest
   let manifest;
+  let yamlText = '';
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     const res = await fetch(manifestUrl, {
       signal: controller.signal,
+      redirect: 'error',
       headers: { 'Accept': 'text/yaml, application/yaml, text/plain, */*', 'User-Agent': 'YouEye-Market/1.0' },
     });
     clearTimeout(timeout);
@@ -132,7 +147,19 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const yamlText = await res.text();
+    if (res.headers.get('content-type')?.toLowerCase().includes('text/html')) {
+      return new Response(JSON.stringify({ error: 'Manifest URL returned an HTML document' }), {
+        status: 400, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const contentLength = Number(res.headers.get('content-length') || '0');
+    if (contentLength > MAX_SIZE_BYTES) {
+      return new Response(JSON.stringify({ error: 'Manifest exceeds 1MB size limit' }), {
+        status: 400, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    yamlText = await res.text();
     if (yamlText.length > MAX_SIZE_BYTES) {
       return new Response(JSON.stringify({ error: 'Manifest exceeds 1MB size limit' }), {
         status: 400, headers: { 'Content-Type': 'application/json' },
@@ -148,46 +175,72 @@ export async function POST(request: NextRequest) {
       });
     }
     manifest = result.data;
-  } catch (err) {
-    return new Response(JSON.stringify({ error: `Manifest fetch failed: ${err}` }), {
+  } catch {
+    return new Response(JSON.stringify({ error: 'Manifest fetch or verification failed' }), {
       status: 400, headers: { 'Content-Type': 'application/json' },
     });
   }
 
+  const subdomain = requestedSubdomain
+    || manifest.metadata.defaultSubdomain.trim().toLowerCase()
+    || manifest.metadata.id;
+  if (!validAppSubdomain(subdomain)) {
+    return new Response(
+      JSON.stringify({ error: 'Manifest default subdomain must be a single lowercase DNS label' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
   // Audit log
-  console.log(`[Market] URL install started: ${manifestUrl} — app: ${manifest.metadata.id} v${manifest.version || 'unknown'} — subdomain: ${subdomain}.${domain}`);
+  const sourceHost = (() => {
+    try { return new URL(manifestUrl).host; } catch { return 'invalid-source'; }
+  })();
+  console.log(`[Market] URL install started from ${sourceHost} — app: ${manifest.metadata.id} v${manifest.version || 'unknown'} — subdomain: ${subdomain}.${domain}`);
 
   const appName = manifest.metadata?.name || manifest.metadata.id;
+  const directEntry = await saveDirectMarketApp({ manifestUrl, manifestText: yamlText, manifest });
   const config: InstallConfig = {
     appId: manifest.metadata.id,
+    catalogKey: `${directEntry.sourceId}:app:${manifest.metadata.id}`,
+    sourceId: directEntry.sourceId,
+    sourceName: 'Added',
+    sourceRepoUrl: directEntry.manifestUrl,
+    manifestPath: directEntry.manifestUrl,
+    manifestDigest: directEntry.manifestDigest,
     subdomain,
     domain,
   };
 
   // Start tracking this install for reconnection support
-  startTracking(config.appId, appName);
+  try {
+    startTracking(config.appId, appName);
+  } catch (err) {
+    return new Response(
+      JSON.stringify({ error: err instanceof Error ? err.message : 'Install operation could not start' }),
+      { status: 409, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
 
   // SSE stream installation progress
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
+      let baseInstallComplete = false;
       const onEvent = (event: InstallEvent) => {
-        trackEvent(config.appId, event);
+        const safeEvent = sanitiseInstallEvent(event);
+        trackEvent(config.appId, safeEvent);
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(safeEvent)}\n\n`));
         } catch { /* Stream closed */ }
       };
 
       try {
         await installApp(manifest, config, onEvent);
+        baseInstallComplete = true;
 
         // After install, update metadata to track URL source
-        try {
-          const { updateInstalledAppSource } = await import('@/lib/market/installed-apps');
-          await updateInstalledAppSource(manifest.metadata.id, 'url', manifestUrl);
-        } catch {
-          // Non-fatal — metadata tracking is optional
-        }
+        const { updateInstalledAppSource } = await import('@/lib/market/installed-apps');
+        await updateInstalledAppSource(manifest.metadata.id, 'url', manifestUrl);
 
         // Install succeeded
         finishTracking(config.appId);
@@ -200,7 +253,22 @@ export async function POST(request: NextRequest) {
           appId: config.appId,
         }).catch(() => { /* best effort */ });
       } catch (err) {
-        const errorMsg = String(err);
+        const errorMsg = sensitivitySafeInstallError(err);
+        if (baseInstallComplete) {
+          const { uninstallApp } = await import('@/lib/market/uninstaller');
+          const rollback = await uninstallApp(config.appId, {
+            keepData: false,
+            dropSharedDatabase: true,
+          }).catch(() => null);
+          if (!rollback?.success) {
+            onEvent({
+              step: 0,
+              totalSteps: 0,
+              status: 'warning',
+              message: 'URL install rollback retained cleanup_pending resources',
+            });
+          }
+        }
         finishTracking(config.appId, errorMsg);
 
         const errorEvent: InstallEvent = {
@@ -214,7 +282,7 @@ export async function POST(request: NextRequest) {
 
         await sendNotificationToUI({
           title: `${appName} installation failed`,
-          message: `Failed to install ${appName}: ${errorMsg}`,
+          message: `Failed to install ${appName}; open System Health for cleanup and repair status.`,
           type: 'error',
           source: 'system',
           userId: null,

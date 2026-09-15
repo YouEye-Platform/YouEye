@@ -10,6 +10,10 @@ var setupCmd = &cobra.Command{
 	Short: "Setup wizard status and control",
 }
 
+func setupIsCompleted(data map[string]interface{}) bool {
+	return firstOf(data, "setup_completed", "setupCompleted", "completed") == "true"
+}
+
 var setupStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Check if setup wizard has been completed",
@@ -22,8 +26,7 @@ var setupStatusCmd = &cobra.Command{
 			return err
 		}
 
-		completed := firstOf(data, "setupCompleted", "completed")
-		if completed == "true" {
+		if setupIsCompleted(data) {
 			output.Success("Setup is complete")
 		} else {
 			output.Warn("Setup has not been completed")

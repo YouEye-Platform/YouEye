@@ -1,7 +1,6 @@
 package installer
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -10,190 +9,91 @@ import (
 	"github.com/youeye-platform/YouEye/installer/internal/installer/theme"
 )
 
-// completeModel shows the post-install summary.
-type completeModel struct {
-	width, height int
-	config        installConfig
-}
+type completeModel struct{ width, height int }
 
-func newCompleteModel(config installConfig) completeModel {
-	return completeModel{config: config}
-}
-
-func (c completeModel) Init() tea.Cmd { return nil }
-
-func (c completeModel) Update(msg tea.Msg) (completeModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		c.width, c.height = msg.Width, msg.Height
+func newCompleteModel() completeModel     { return completeModel{} }
+func (model completeModel) Init() tea.Cmd { return nil }
+func (model completeModel) Update(message tea.Msg) (completeModel, tea.Cmd) {
+	if size, ok := message.(tea.WindowSizeMsg); ok {
+		model.width, model.height = size.Width, size.Height
 	}
-	return c, nil
+	return model, nil
 }
-
-func (c completeModel) View() string {
-	cfg := c.config
-
-	// Determine the URL to display
-	address := cfg.ResultIP
-	if address == "" {
-		// Fallback: use hostname or static IP
-		address = cfg.Hostname
-		if cfg.IPMode == "Static" && cfg.StaticIP != "" {
-			address = strings.Split(cfg.StaticIP, "/")[0]
-		}
-	}
-
-	url := fmt.Sprintf("https://%s", address)
-	target := fmt.Sprintf("%s (%s)", cfg.ContainerID, cfg.Hostname)
-	resources := fmt.Sprintf("%d CPU / %d MB / %d GB", cfg.CPUCores, cfg.RAMMB, cfg.DiskGB)
-
-	checkMark := lipgloss.NewStyle().Foreground(theme.NeonGreen).Bold(true).Render("✓")
-
-	var rows []string
-	rows = append(rows,
+func (model completeModel) View() string {
+	rows := []string{
 		"",
-		fmt.Sprintf("         %s  YouEye is ready!", checkMark),
+		theme.Title.Render("  YouEye installed"),
 		"",
-	)
-
-	// URL on its own line, plain text so it's easy to select/copy
-	rows = append(rows, "  Open in browser:")
-	rows = append(rows, "")
-	rows = append(rows, fmt.Sprintf("    %s", url))
-	rows = append(rows, "")
-	rows = append(rows, theme.Dim.Render("  First visit runs the YouEye setup wizard — you create"))
-	rows = append(rows, theme.Dim.Render("  your admin account there (no web password is preset)."))
-	rows = append(rows, "")
-
-	// VM console / SSH login is a SEPARATE thing from the web login above.
-	if cfg.Mode != modeHost {
-		login := "  VM login:   root"
-		if cfg.RootPassword != "" {
-			login += "  —  password: the one you set"
-		} else {
-			login += "  —  SSH key only (no password set)"
-		}
-		rows = append(rows, login)
-		rows = append(rows, theme.Dim.Render("  Reach it via the Proxmox Console button (noVNC)."))
-		rows = append(rows, "")
+		theme.Body.Render("  System A is active. System B and Recovery are installed."),
+		theme.Body.Render("  Written images and UEFI boot assets passed readback checks."),
+		"",
+		theme.Selected.Render("  Remove the installer media, then reboot."),
+		"",
+		theme.Dim.Render("  First boot installs the exact signed platform release set."),
+		theme.Dim.Render("  Web setup appears only after durable health checks pass."),
+		theme.Dim.Render("  Local root login requires the password you configured."),
+		theme.Dim.Render("  Password SSH is available only if you enabled its local-subnet option."),
+		"",
+		theme.Hint.Render("  Press Enter to exit"),
+		"",
 	}
-
-	if cfg.Mode != modeHost {
-		rows = append(rows, fmt.Sprintf("  %s:   %s", cfg.Mode, target))
-	}
-	rows = append(rows, fmt.Sprintf("  Resources:  %s", resources))
-
-	if cfg.ResultIP != "" {
-		rows = append(rows, fmt.Sprintf("  IP Address: %s", cfg.ResultIP))
-	}
-
-	rows = append(rows, "")
-	rows = append(rows, theme.Dim.Render("  Your browser may show a certificate warning — this is"))
-	rows = append(rows, theme.Dim.Render("  expected for self-signed TLS. Accept it to continue."))
-	rows = append(rows, "")
-	rows = append(rows, theme.Hint.Render("  Press Enter to exit"))
-	rows = append(rows, "")
-
-	body := strings.Join(rows, "\n")
-	boxed := theme.BoxAccent.Render(body)
-
-	if c.width > 0 {
-		return lipgloss.Place(c.width, c.height, lipgloss.Center, lipgloss.Center, boxed)
+	boxed := theme.BoxAccent.Render(strings.Join(rows, "\n"))
+	if model.width > 0 {
+		return lipgloss.Place(model.width, model.height, lipgloss.Center, lipgloss.Center, boxed)
 	}
 	return boxed
 }
-
-// ---------------------------------------------------------------------------
-// Error screen — shown when installation fails
-// ---------------------------------------------------------------------------
 
 type errorModel struct {
 	width, height int
 	err           error
-	config        installConfig
 }
 
-func newErrorModel(config installConfig, err error) errorModel {
-	return errorModel{config: config, err: err}
-}
-
-func (e errorModel) Init() tea.Cmd { return nil }
-
-func (e errorModel) Update(msg tea.Msg) (errorModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		e.width, e.height = msg.Width, msg.Height
+func newErrorModel(err error) errorModel { return errorModel{err: err} }
+func (model errorModel) Init() tea.Cmd   { return nil }
+func (model errorModel) Update(message tea.Msg) (errorModel, tea.Cmd) {
+	if size, ok := message.(tea.WindowSizeMsg); ok {
+		model.width, model.height = size.Width, size.Height
 	}
-	return e, nil
+	return model, nil
 }
-
-func (e errorModel) View() string {
-	x := lipgloss.NewStyle().Foreground(theme.Red).Bold(true).Render("✗")
-
-	var rows []string
-	rows = append(rows,
+func (model errorModel) View() string {
+	rows := []string{
 		"",
-		fmt.Sprintf("         %s  Installation Failed", x),
+		theme.Danger.Render("  Installation failed"),
 		"",
-	)
-
-	// Error message (wrap long lines)
-	errStr := e.err.Error()
-	errLines := wrapText(errStr, 60)
-	for _, line := range errLines {
-		rows = append(rows, "  "+theme.Danger.Render(line))
+		theme.Danger.Render("  " + model.err.Error()),
+		"",
+		theme.Dim.Render("  No further disk mutations will be attempted."),
+		"",
+		theme.Hint.Render("  Press Enter to exit"),
+		"",
 	}
-
-	rows = append(rows, "")
-
-	// Context
-	rows = append(rows, theme.Dim.Render(fmt.Sprintf("  Mode: %s", e.config.Mode)))
-	if e.config.Mode != modeHost {
-		rows = append(rows, theme.Dim.Render(fmt.Sprintf("  ID:   %s (%s)", e.config.ContainerID, e.config.Hostname)))
-	}
-
-	rows = append(rows, "")
-
-	// Cleanup hint
-	if e.config.Mode == modeLXC {
-		rows = append(rows, theme.Dim.Render(fmt.Sprintf("  To clean up: pct destroy %s --purge", e.config.ContainerID)))
-	} else if e.config.Mode == modeVM {
-		rows = append(rows, theme.Dim.Render(fmt.Sprintf("  To clean up: qm destroy %s --purge", e.config.ContainerID)))
-	}
-
-	rows = append(rows, "")
-	rows = append(rows, theme.Hint.Render("  Press Enter to exit"))
-	rows = append(rows, "")
-
-	body := strings.Join(rows, "\n")
-	boxed := theme.Box.Render(body)
-
-	if e.width > 0 {
-		return lipgloss.Place(e.width, e.height, lipgloss.Center, lipgloss.Center, boxed)
+	boxed := theme.Box.Render(strings.Join(rows, "\n"))
+	if model.width > 0 {
+		return lipgloss.Place(model.width, model.height, lipgloss.Center, lipgloss.Center, boxed)
 	}
 	return boxed
 }
 
-// wrapText breaks a string into lines of at most width characters.
-func wrapText(s string, width int) []string {
-	if len(s) <= width {
-		return []string{s}
+func wrapText(value string, width int) []string {
+	if len(value) <= width {
+		return []string{value}
 	}
 	var lines []string
-	for len(s) > width {
-		// Find last space within width
+	for len(value) > width {
 		cut := width
-		for cut > 0 && s[cut] != ' ' {
+		for cut > 0 && value[cut] != ' ' {
 			cut--
 		}
 		if cut == 0 {
-			cut = width // no space found, hard break
+			cut = width
 		}
-		lines = append(lines, s[:cut])
-		s = strings.TrimLeft(s[cut:], " ")
+		lines = append(lines, value[:cut])
+		value = strings.TrimLeft(value[cut:], " ")
 	}
-	if len(s) > 0 {
-		lines = append(lines, s)
+	if value != "" {
+		lines = append(lines, value)
 	}
 	return lines
 }

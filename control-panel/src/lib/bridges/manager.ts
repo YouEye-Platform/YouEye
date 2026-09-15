@@ -14,9 +14,10 @@ import {
 import {
   grantBridgeAccess, revokeBridgeAccess,
   SYSTEM_APP_IDS,
+  withAppNetworkOperationLock,
 } from '../incus/app-network';
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
-import { execShell, incusRequest } from '../incus/server';
+import { incusDownloadFile, incusRequest, incusUploadFile } from '../incus/server';
 import { CONTAINER_DOMAIN } from '../market/constants';
 import { readInstallMetadata, listInstalledApps } from '../market/metadata';
 import { fetchManifest, fetchManifestFromSource } from '../market/catalog';
@@ -24,6 +25,7 @@ import { injectCaddyRootCA } from '../market/caddy-ca';
 import { readFile } from 'fs/promises';
 import { listInternetGrants } from './internet-store';
 import { addScopedAppGrantRoute, removeScopedAppGrantRoute } from '../caddy/client';
+import type { ContainerMeta, InstallMetadata } from '../market/types';
 
 // ─── UI Connection Push ──────────────────────────────────────
 // Push bridge/connection state to YE-UI whenever bridges change.
@@ -34,6 +36,74 @@ const UI_CONTAINER = 'youeye-ui';
 let _bridgeToken: string | null = null;
 let _uiIP: string | null = null;
 
+function withBridgeLifecycleLock<T>(operation: string, work: () => Promise<T>): Promise<T> {
+  return withAppNetworkOperationLock('bridge-lifecycle', operation, work, { waitMs: 30_000 });
+}
+
+async function restartInstanceExact(containerName: string): Promise<void> {
+  const response = await incusRequest('PUT', `/1.0/instances/${encodeURIComponent(containerName)}/state`, {
+    action: 'restart',
+    force: false,
+    timeout: 30,
+  });
+  if (response.type === 'error') throw new Error('Container restart failed');
+  if (response.type === 'async' && response.operation) {
+    const waited = await incusRequest('GET', `${response.operation}/wait?timeout=60`, undefined, { timeout: 70_000 });
+    if (waited.type === 'error') throw new Error('Container restart wait failed');
+  }
+  const readBack = await incusRequest<{ status?: string }>(
+    'GET',
+    `/1.0/instances/${encodeURIComponent(containerName)}`,
+  );
+  if (readBack.type === 'error' || readBack.metadata?.status !== 'Running') {
+    throw new Error('Container did not read back as Running after restart');
+  }
+}
+
+async function writeContainerFileExact(
+  containerName: string,
+  filePath: string,
+  content: Buffer,
+): Promise<void> {
+  await incusUploadFile(containerName, filePath, content, { timeout: 10_000, mode: '0600' });
+  if (!content.equals(await incusDownloadFile(containerName, filePath))) {
+    throw new Error('Container file did not read back exactly');
+  }
+}
+
+function applyResolvedMappings(content: string, mappings: EnvMapping[]): string {
+  const lines = content.split('\n').filter(Boolean);
+  for (const mapping of mappings) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(mapping.key)
+      || mapping.resolved === undefined || /[\r\n\0]/.test(mapping.resolved)) {
+      throw new Error('Connection environment mapping is invalid');
+    }
+    const lineIndex = lines.findIndex((line) => line.startsWith(`${mapping.key}=`));
+    const newLine = `${mapping.key}=${mapping.resolved}`;
+    if (lineIndex >= 0) lines[lineIndex] = newLine;
+    else lines.push(newLine);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+function removeResolvedMappings(content: string, mappings: EnvMapping[]): string {
+  const keys = new Set(mappings.map((mapping) => mapping.key));
+  const lines = content.split('\n').filter((line) =>
+    line.length > 0 && ![...keys].some((key) => line.startsWith(`${key}=`)));
+  return lines.length > 0 ? `${lines.join('\n')}\n` : '';
+}
+
+function primaryContainer(meta: InstallMetadata | null | undefined): ContainerMeta | undefined {
+  const containers = (meta?.containers ?? []) as Array<ContainerMeta | string>;
+  const selected = containers.length > 1
+    ? containers.find((container) => typeof container !== 'string'
+      && (container.primary || container.name === 'main' || container.name === 'server')) ?? containers[0]
+    : containers[0];
+  return typeof selected === 'string'
+    ? { name: selected, containerName: selected, type: 'oci' }
+    : selected;
+}
+
 /**
  * Compute the list of available backends for an app based on its manifest wants.
  * Used by pushConnectionsToUI to populate the `available` field so Canvas
@@ -41,10 +111,8 @@ let _uiIP: string | null = null;
  */
 async function computeAvailableBackends(appId: string): Promise<Array<Record<string, unknown>>> {
   const available: Array<Record<string, unknown>> = [];
-  async function installedTarget(meta: any, fallbackPort?: number): Promise<{ host?: string; port?: number }> {
-    const primary = meta?.containers && meta.containers.length > 1
-      ? (meta.containers.find((c: any) => c.name === 'main' || c.name === 'server') || meta.containers[0])
-      : meta?.containers?.[0];
+  async function installedTarget(meta: InstallMetadata, fallbackPort?: number): Promise<{ host?: string; port?: number }> {
+    const primary = primaryContainer(meta);
     const containerName = primary?.containerName || (meta?.appId ? `app-${meta.appId}` : undefined);
     const host = containerName ? await getIncusContainerIP(containerName) : undefined;
     return {
@@ -83,7 +151,7 @@ async function computeAvailableBackends(appId: string): Promise<Array<Record<str
           if (!providesType) {
             try {
               const m = await fetchManifest(meta.appId);
-              providesType = m.provides?.some((p: any) => p.type === want.type) ?? false;
+              providesType = m.provides?.some((provider) => provider.type === want.type) ?? false;
               name = m.metadata.name;
             } catch {
               // skip unknown manifests
@@ -152,9 +220,7 @@ export async function pushConnectionsToUI(appId: string): Promise<void> {
         const meta = await readInstallMetadata(targetId);
         // For multi-container apps, find the primary container (named "main" or "server"),
         // not just the first one (which may be a sidecar like Redis).
-        const primary = meta?.containers && meta.containers.length > 1
-          ? (meta.containers.find((c: any) => c.name === 'main' || c.name === 'server') || meta.containers[0])
-          : meta?.containers?.[0];
+        const primary = primaryContainer(meta);
         const containerName = primary?.containerName || `app-${targetId}`;
         const ip = await getIncusContainerIP(containerName);
         const port = primary?.port || 8080;
@@ -200,9 +266,9 @@ export async function pushConnectionsToUI(appId: string): Promise<void> {
       },
       body: JSON.stringify(payload),
     });
-  } catch (err) {
+  } catch {
     // Non-fatal — UI might not have the endpoint yet during upgrades
-    console.warn(`[bridges] Failed to push connections to UI for ${appId}:`, err);
+    console.warn(`[bridges] Failed to push connections to UI for ${appId}`);
   }
 }
 
@@ -216,9 +282,7 @@ async function resolveContainerName(appId: string): Promise<string> {
   const meta = await readInstallMetadata(appId);
   if (meta?.containers && meta.containers.length > 1) {
     // Multi-container app — find the primary or use first
-    const primary = meta.containers.find((c: any) => c.name === 'main' || c.name === 'server')
-      || meta.containers[0];
-    const cn = typeof primary === 'string' ? primary : primary.containerName;
+    const cn = primaryContainer(meta)?.containerName;
     if (cn) return cn;
   }
   return `app-${appId}`;
@@ -286,8 +350,10 @@ export async function createBridge(params: {
     approvedAt: new Date().toISOString(),
   };
 
-  await addBridge(bridge);
-  return bridge;
+  return withBridgeLifecycleLock('bridge-create', async () => {
+    await addBridge(bridge);
+    return bridge;
+  });
 }
 
 /**
@@ -345,8 +411,8 @@ async function getProxyScopeSpec(from: string, to: string): Promise<{ paths: str
         methods: want.proxy.methods?.length ? want.proxy.methods : ['GET'],
       };
     }
-  } catch (err) {
-    console.warn(`[bridges] Could not resolve manifest scoped grant for ${from}->${to}:`, err);
+  } catch {
+    console.warn(`[bridges] Could not resolve manifest scoped grant for ${from}->${to}`);
   }
 
   return null;
@@ -359,12 +425,11 @@ async function createScopedProxyGrant(bridge: Bridge): Promise<{ url: string; pa
 
   const fromContainer = await resolveContainerName(bridge.from);
   const toContainer = await resolveContainerName(bridge.to);
-  const tokenResult = await execShell(
-    fromContainer,
-    `awk -F= '$1=="YOUEYE_APP_TOKEN"{print $2}' /etc/${fromContainer}.env 2>/dev/null | tail -n 1`,
-    { timeout: 5_000 },
-  );
-  const appToken = tokenResult.stdout.trim();
+  const envContent = (await incusDownloadFile(fromContainer, `/etc/${fromContainer}.env`)).toString('utf8');
+  const appToken = envContent.split(/\r?\n/)
+    .filter((line) => line.startsWith('YOUEYE_APP_TOKEN='))
+    .map((line) => line.slice('YOUEYE_APP_TOKEN='.length))
+    .at(-1)?.trim();
   if (!appToken) throw new Error(`Could not resolve app token for ${fromContainer}`);
 
   const targetMeta = await readInstallMetadata(bridge.to);
@@ -372,9 +437,7 @@ async function createScopedProxyGrant(bridge: Bridge): Promise<{ url: string; pa
     throw new Error(`Could not resolve target hostname for ${bridge.to}`);
   }
 
-  const targetPrimary = targetMeta.containers && targetMeta.containers.length > 1
-    ? (targetMeta.containers.find((c: any) => c.name === 'main' || c.name === 'server') || targetMeta.containers[0])
-    : targetMeta.containers?.[0];
+  const targetPrimary = primaryContainer(targetMeta);
   const targetContainer = targetPrimary?.containerName || toContainer;
   const targetIp = await getIncusContainerIP(targetContainer);
   if (!targetIp) throw new Error(`Could not resolve target IP for ${targetContainer}`);
@@ -390,12 +453,17 @@ async function createScopedProxyGrant(bridge: Bridge): Promise<{ url: string; pa
     methods,
     appToken,
   });
-  await injectCaddyRootCA(fromContainer);
-  await incusRequest('PUT', `/1.0/instances/${fromContainer}/state`, {
-    action: 'restart',
-    force: false,
-    timeout: 30,
-  });
+  try {
+    await injectCaddyRootCA(fromContainer);
+    await restartInstanceExact(fromContainer);
+  } catch {
+    try {
+      await removeScopedAppGrantRoute(getScopedGrantRouteId(bridge.from, bridge.to));
+    } catch {
+      throw new Error('Scoped proxy activation failed and route rollback could not be verified');
+    }
+    throw new Error('Scoped proxy activation failed; route rollback verified');
+  }
 
   return {
     url: `https://${hostname}`,
@@ -411,101 +479,135 @@ async function createScopedProxyGrant(bridge: Bridge): Promise<{ url: string; pa
  * Legacy apps (incusbr0): ACL rules
  */
 export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
+  return withBridgeLifecycleLock('bridge-activate', () => activateBridgeLocked(bridgeId));
+}
+
+async function activateBridgeLocked(bridgeId: string): Promise<Bridge | null> {
   const bridge = await getBridge(bridgeId);
   if (!bridge || bridge.active) return bridge;
 
   // Resolve actual container names (handles multi-container apps)
   const fromContainer = await resolveContainerName(bridge.from);
   const toContainer = await resolveContainerName(bridge.to);
-  const scopedGrant = await createScopedProxyGrant(bridge);
+  let scopedGrant: Awaited<ReturnType<typeof createScopedProxyGrant>> = null;
+  let forwardGranted = false;
+  let reverseGranted = false;
+  let previousEnv: Buffer | null = null;
+  let envFile: string | null = null;
+  let envModified = false;
 
-  if (!scopedGrant) {
-    try {
+  try {
+    scopedGrant = await createScopedProxyGrant(bridge);
+
+    if (!scopedGrant) {
       await grantBridgeAccess(fromContainer, bridge.to);
+      forwardGranted = true;
       if (bridge.direction === 'both-ways') {
         await grantBridgeAccess(toContainer, bridge.from);
+        reverseGranted = true;
       }
-    } catch (err) {
-      console.warn(`[bridges] Network access grant failed for ${bridgeId}:`, err);
     }
-  }
 
-  // Inject resolved env vars into source container
-  const resolvedMappings = bridge.envMappings.filter(m => m.resolved);
-  if (resolvedMappings.length > 0) {
-    try {
-      const envFile = `/etc/${fromContainer}.env`;
-      const existingEnv = await execShell(fromContainer, `cat ${envFile} 2>/dev/null || echo ""`, { timeout: 5000 });
-      const lines = existingEnv.stdout.split('\n').filter(Boolean);
+    // Inject resolved env vars into source container. The file payload is kept
+    // out of command arguments so connection values cannot leak in process or
+    // command logging.
+    const resolvedMappings = bridge.envMappings.filter(m => m.resolved);
+    if (resolvedMappings.length > 0) {
+      envFile = `/etc/${fromContainer}.env`;
+      previousEnv = await incusDownloadFile(fromContainer, envFile);
+      const newEnv = Buffer.from(applyResolvedMappings(previousEnv.toString('utf8'), resolvedMappings), 'utf8');
+      await writeContainerFileExact(fromContainer, envFile, newEnv);
+      envModified = true;
+      await restartInstanceExact(fromContainer);
+    }
 
-      for (const mapping of resolvedMappings) {
-        const lineIdx = lines.findIndex(l => l.startsWith(`${mapping.key}=`));
-        const newLine = `${mapping.key}=${mapping.resolved}`;
-        if (lineIdx >= 0) {
-          lines[lineIdx] = newLine;
-        } else {
-          lines.push(newLine);
-        }
+    const updated = await updateBridge(bridgeId, {
+      active: true,
+      activatedAt: new Date().toISOString(),
+      accessMode: scopedGrant ? 'proxy' : 'network',
+      url: scopedGrant?.url,
+      allowedPaths: scopedGrant?.paths,
+      allowedMethods: scopedGrant?.methods,
+    });
+    if (!updated?.active) throw new Error('Bridge record did not become active');
+
+    // Push updated connection state to UI (non-blocking)
+    pushConnectionsToUI(bridge.from).catch(() => {});
+    if (bridge.direction === 'both-ways') {
+      pushConnectionsToUI(bridge.to).catch(() => {});
+    }
+
+    return updated;
+  } catch {
+    const rollbackErrors: string[] = [];
+    if (envModified && envFile && previousEnv) {
+      try {
+        await writeContainerFileExact(fromContainer, envFile, previousEnv);
+        await restartInstanceExact(fromContainer);
+      } catch {
+        rollbackErrors.push('environment');
       }
-
-      const newEnv = lines.join('\n') + '\n';
-      const b64 = Buffer.from(newEnv).toString('base64');
-      await execShell(fromContainer, `echo '${b64}' | base64 -d > ${envFile}`, { timeout: 5000 });
-
-      // Restart the source container to pick up new env vars
-      const { incusRequest } = await import('../incus/server');
-      await incusRequest('PUT', `/1.0/instances/${fromContainer}/state`, {
-        action: 'restart',
-        force: false,
-        timeout: 30,
-      });
-    } catch (err) {
-      console.warn(`[bridges] Env injection failed for ${bridgeId}:`, err);
     }
+    if (scopedGrant) {
+      try {
+        await removeScopedAppGrantRoute(getScopedGrantRouteId(bridge.from, bridge.to));
+      } catch {
+        rollbackErrors.push('scoped route');
+      }
+    }
+    if (reverseGranted) {
+      try {
+        await revokeBridgeAccess(toContainer, bridge.from);
+      } catch {
+        rollbackErrors.push('reverse grant');
+      }
+    }
+    if (forwardGranted) {
+      try {
+        await revokeBridgeAccess(fromContainer, bridge.to);
+      } catch {
+        rollbackErrors.push('forward grant');
+      }
+    }
+    const suffix = rollbackErrors.length > 0 ? `; rollback failed: ${rollbackErrors.join(', ')}` : '';
+    throw new Error(`Bridge activation ${bridgeId} failed${suffix}`);
   }
-
-  const updated = await updateBridge(bridgeId, {
-    active: true,
-    activatedAt: new Date().toISOString(),
-    accessMode: scopedGrant ? 'proxy' : 'network',
-    url: scopedGrant?.url,
-    allowedPaths: scopedGrant?.paths,
-    allowedMethods: scopedGrant?.methods,
-  });
-
-  // Push updated connection state to UI (non-blocking)
-  pushConnectionsToUI(bridge.from).catch(() => {});
-  if (bridge.direction === 'both-ways') {
-    pushConnectionsToUI(bridge.to).catch(() => {});
-  }
-
-  return updated;
 }
 
 /**
  * Deactivate a bridge: revoke network access.
  */
 export async function deactivateBridge(bridgeId: string): Promise<Bridge | null> {
+  return withBridgeLifecycleLock('bridge-deactivate', () => deactivateBridgeLocked(bridgeId));
+}
+
+async function deactivateBridgeLocked(bridgeId: string): Promise<Bridge | null> {
   const bridge = await getBridge(bridgeId);
   if (!bridge) return null;
 
   const fromContainer = await resolveContainerName(bridge.from);
   const toContainer = await resolveContainerName(bridge.to);
 
-  try {
-    if (bridge.accessMode === 'proxy' || bridge.accessMode === 'caddy') {
-      await removeScopedAppGrantRoute(getScopedGrantRouteId(bridge.from, bridge.to));
-    } else {
-      await revokeBridgeAccess(fromContainer, bridge.to);
-      if (bridge.direction === 'both-ways') {
-        await revokeBridgeAccess(toContainer, bridge.from);
-      }
+  if (bridge.accessMode === 'proxy' || bridge.accessMode === 'caddy') {
+    await removeScopedAppGrantRoute(getScopedGrantRouteId(bridge.from, bridge.to));
+  } else {
+    await revokeBridgeAccess(fromContainer, bridge.to);
+    if (bridge.direction === 'both-ways') {
+      await revokeBridgeAccess(toContainer, bridge.from);
     }
-  } catch (err) {
-    console.warn(`[bridges] Network access revocation failed for ${bridgeId}:`, err);
+  }
+
+  const resolvedMappings = bridge.envMappings.filter((mapping) => mapping.resolved);
+  if (resolvedMappings.length > 0) {
+    const envFile = `/etc/${fromContainer}.env`;
+    const current = await incusDownloadFile(fromContainer, envFile);
+    const updatedContent = Buffer.from(removeResolvedMappings(current.toString('utf8'), resolvedMappings), 'utf8');
+    await writeContainerFileExact(fromContainer, envFile, updatedContent);
+    await restartInstanceExact(fromContainer);
   }
 
   const updated = await updateBridge(bridgeId, { active: false });
+  if (!updated || updated.active) throw new Error('Bridge record did not become inactive');
 
   // Push updated connection state to UI (non-blocking)
   if (bridge) {
@@ -522,28 +624,19 @@ export async function deactivateBridge(bridgeId: string): Promise<Bridge | null>
  * Delete a bridge entirely.
  */
 export async function deleteBridge(bridgeId: string): Promise<boolean> {
+  return withBridgeLifecycleLock('bridge-delete', () => deleteBridgeLocked(bridgeId));
+}
+
+async function deleteBridgeLocked(bridgeId: string): Promise<boolean> {
   const bridge = await getBridge(bridgeId);
   if (!bridge) return false;
 
   if (bridge.active) {
-    const fromContainer = await resolveContainerName(bridge.from);
-    const toContainer = await resolveContainerName(bridge.to);
-
-    try {
-      if (bridge.accessMode === 'proxy' || bridge.accessMode === 'caddy') {
-        await removeScopedAppGrantRoute(getScopedGrantRouteId(bridge.from, bridge.to));
-      } else {
-        await revokeBridgeAccess(fromContainer, bridge.to);
-        if (bridge.direction === 'both-ways') {
-          await revokeBridgeAccess(toContainer, bridge.from);
-        }
-      }
-    } catch (err) {
-      console.warn(`[bridges] Network access cleanup failed during delete for ${bridge.id}:`, err);
-    }
+    await deactivateBridgeLocked(bridgeId);
   }
 
   const removed = await removeBridge(bridgeId);
+  if (await getBridge(bridgeId)) throw new Error('Bridge record remains after deletion');
 
   // Push updated connection state to UI (non-blocking)
   if (bridge) {

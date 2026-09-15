@@ -7,7 +7,9 @@
  */
 
 import { readJSON, writeJSON, statePath } from '@/lib/storage/json-store';
+import { SerializedExecutor } from '@/lib/storage/serialized-executor';
 import { spineClient } from '@/lib/spine/client';
+import { randomUUID } from 'crypto';
 
 const STORE_PATH = statePath('update-status.json');
 
@@ -19,6 +21,8 @@ function validateComponent(component: string): void {
 }
 
 export interface UpdateStatusRecord {
+  attempt_id: string;
+  authority: 'control-panel' | 'spine';
   component: string;
   status: string;
   progress: number;
@@ -47,11 +51,18 @@ interface UpdateStatusStore {
 }
 
 let store: UpdateStatusStore | null = null;
+let storeLoad: Promise<UpdateStatusStore> | null = null;
+const mutations = new SerializedExecutor();
 
 async function loadStore(): Promise<UpdateStatusStore> {
   if (store) return store;
-  store = await readJSON<UpdateStatusStore>(STORE_PATH) ?? { statuses: {} };
-  return store;
+  if (!storeLoad) {
+    storeLoad = readJSON<UpdateStatusStore>(STORE_PATH).then((loaded) => {
+      store = loaded ?? { statuses: {} };
+      return store;
+    });
+  }
+  return storeLoad;
 }
 
 async function saveStore(): Promise<void> {
@@ -71,25 +82,31 @@ export async function writeStatus(
     versionAfter?: string;
     error?: string;
     startedAt?: string;
+    attemptId?: string;
+    authority?: 'control-panel' | 'spine';
   }
 ): Promise<void> {
   validateComponent(component);
-  const s = await loadStore();
-  const existing = s.statuses[component];
+  await mutations.run(async () => {
+    const s = await loadStore();
+    const existing = s.statuses[component];
 
-  s.statuses[component] = {
-    component,
-    status,
-    progress,
-    message,
-    version_before: opts?.versionBefore ?? existing?.version_before ?? null,
-    version_after: opts?.versionAfter ?? null,
-    error: opts?.error ?? null,
-    started_at: opts?.startedAt ?? existing?.started_at ?? new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
+    s.statuses[component] = {
+      attempt_id: opts?.attemptId ?? existing?.attempt_id ?? randomUUID(),
+      authority: opts?.authority ?? existing?.authority ?? 'control-panel',
+      component,
+      status,
+      progress,
+      message,
+      version_before: opts?.versionBefore ?? existing?.version_before ?? null,
+      version_after: opts?.versionAfter ?? null,
+      error: opts?.error ?? null,
+      started_at: opts?.startedAt ?? existing?.started_at ?? new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
 
-  await saveStore();
+    await saveStore();
+  });
 }
 
 export async function readStatus(component: string): Promise<UpdateStatusRecord | null> {
@@ -107,9 +124,11 @@ export async function readAllStatuses(): Promise<UpdateStatusRecord[]> {
 
 export async function clearStatus(component: string): Promise<void> {
   validateComponent(component);
-  const s = await loadStore();
-  delete s.statuses[component];
-  await saveStore();
+  await mutations.run(async () => {
+    const s = await loadStore();
+    delete s.statuses[component];
+    await saveStore();
+  });
 }
 
 /**
@@ -150,6 +169,8 @@ export async function getUnifiedStatuses(): Promise<UpdateStatusRecord[]> {
     if (!isStale) {
       const component = spineStatus.component || 'spine';
       result.set(component, {
+        attempt_id: spineStatus.attempt_id || `spine-${spineStatus.started_at || spineStatus.updated_at}`,
+        authority: 'spine',
         component,
         status: spineStatus.status,
         progress: spineStatus.progress || 0,
@@ -166,16 +187,27 @@ export async function getUnifiedStatuses(): Promise<UpdateStatusRecord[]> {
   return Array.from(result.values());
 }
 
-export async function startUpdate(component: string, versionBefore: string): Promise<void> {
+export async function startUpdate(component: string, versionBefore: string): Promise<string> {
+  const attemptId = randomUUID();
   await writeStatus(component, 'checking', 0, 'Checking for updates...', {
     versionBefore,
+    attemptId,
+    authority: 'control-panel',
   });
+  return attemptId;
 }
 
 export async function completeUpdate(component: string, versionBefore: string, versionAfter: string): Promise<void> {
   await writeStatus(component, 'completed', 100, 'Update completed successfully', {
     versionBefore,
     versionAfter,
+  });
+}
+
+export async function completeNoOp(component: string, version = ''): Promise<void> {
+  await writeStatus(component, 'completed', 100, 'Already up to date', {
+    versionBefore: version,
+    versionAfter: version,
   });
 }
 

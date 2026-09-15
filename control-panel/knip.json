@@ -1,0 +1,17 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/app/sw.ts!"
+  ],
+  "project": [
+    "scripts/*.{js,mjs}!",
+    "src/**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}!"
+  ],
+  "ignore": [
+    "scripts/**"
+  ],
+  "ignoreDependencies": [
+    "serwist",
+    "tw-animate-css"
+  ]
+}

@@ -13,7 +13,7 @@ import {
   hexToRgb,
   getPresetBackground,
   type AnimatedBackgroundProps,
-} from "./index";
+} from "./shared";
 
 /** Simple hash-based noise (avoids external dependency) */
 function pseudoNoise(x: number, y: number, seed: number): number {

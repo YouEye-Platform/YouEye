@@ -1,0 +1,7 @@
+{
+  "keys": {
+    "beta": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAVi0aLbxkZrilqlsDVSNI3ukJLzNdriZM08Wye3YP8ok=\n-----END PUBLIC KEY-----\n",
+    "stable": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEATDcZkxI90DbHw/7AauXbwwrEY6rDikxk8u0Y8IIwhkc=\n-----END PUBLIC KEY-----\n"
+  },
+  "schema": "youeye.public-trust.v1"
+}

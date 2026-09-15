@@ -7,7 +7,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchManifest, fetchManifestFromSource, fetchAvailableApps } from '@/lib/market/catalog';
+import { fetchManifestFromSource, fetchAvailableApps } from '@/lib/market/catalog';
+import { directMarketAppToMarketApp, getDirectMarketApp } from '@/lib/market/direct-apps';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,6 +24,12 @@ export async function GET(
   }
 
   try {
+    if (sourceId?.startsWith('direct:')) {
+      const direct = await getDirectMarketApp(sourceId, appId);
+      if (!direct) return NextResponse.json({ error: `App "${appId}" not found` }, { status: 404 });
+      return NextResponse.json({ app: directMarketAppToMarketApp(direct) });
+    }
+
     // Try to find the app in the full catalog first (gives us the MarketApp shape)
     const allApps = await fetchAvailableApps();
     const app = allApps.find((a) => a.id === appId && (!sourceId || a.sourceId === sourceId));

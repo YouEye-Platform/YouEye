@@ -67,8 +67,10 @@ test('ConfirmDialog primitive exists, dependency-free', () => {
 });
 
 test('check-updates busts the catalog cache; ui-bridge has market-detection parity', () => {
-  const ch = read('src/app/api/apps/check-updates/route.ts');
-  assert.match(ch, /clearCatalogCache/);
+  // The dedicated check-updates route was folded into POST /api/market/updates,
+  // which busts the catalog cache via refreshVersionCheck() -> clearCatalogCache().
+  const ch = read('src/app/api/market/updates/route.ts');
+  assert.match(ch, /refreshVersionCheck/);
   const ub = read('src/app/api/ui-bridge/apps/route.ts');
   assert.match(ub, /planSystemUpdates/);
   assert.match(ub, /def\.marketSystemId/);
@@ -80,4 +82,15 @@ test('id mapping: definition id "postgres" maps to market system id "postgresql"
   const d = read('src/lib/apps/definitions.ts');
   // the postgres def block carries marketSystemId 'postgresql'
   assert.match(d, /id: 'postgres',[\s\S]*?marketSystemId: 'postgresql'/);
+});
+
+test('UI update restores persistent database and identity environment before every restart', () => {
+  const updater = read('src/lib/apps/lxd-updater.ts');
+  assert.match(updater, /PERSISTENT_UI_ENV_PATH = '\/var\/lib\/youeye\/ui\/\.env'/);
+  assert.match(updater, /await incusUploadFile\(containerName, '\/etc\/youeye-ui\.env', environment, \{ mode: '0600' \}\)/);
+  const repair = updater.indexOf('await restorePersistentUIEnvironment(appDef.id, containerName)');
+  const noOpRestart = updater.indexOf('if (releaseIsCurrent)');
+  const updateRestart = updater.indexOf('// 11. Start service');
+  assert.ok(repair > 0 && repair < noOpRestart && repair < updateRestart,
+    'persistent UI environment repair must precede no-op and real update restarts');
 });

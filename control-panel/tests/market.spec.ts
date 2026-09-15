@@ -26,7 +26,10 @@ test('Browse uses real catalog/status data + category-coloured icon tiles', () =
   const m = read('src/app/market/page.tsx');
   assert.match(m, /\/api\/market\/catalog/);
   assert.match(m, /\/api\/market\/status/);
-  assert.match(m, /CATEGORY_TILE/);
+  // Category tiles are DATA-DRIVEN from the catalog `categories:` section (catIndex
+  // + catTile), not a hardcoded CATEGORY_TILE map.
+  assert.match(m, /catIndex/);
+  assert.match(m, /const catTile =/);
   assert.match(m, /function MarketIcon/);
   // rows/tiles navigate to the detail page
   assert.match(m, /function variantHref/);

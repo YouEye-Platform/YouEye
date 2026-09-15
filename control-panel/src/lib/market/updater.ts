@@ -21,9 +21,7 @@
  */
 
 import { execShell, incusUploadFile } from '@/lib/incus/server';
-import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { readFile } from 'fs/promises';
 import {
   createSnapshot,
   restoreSnapshot,
@@ -31,35 +29,55 @@ import {
   stopContainer,
   startContainer,
   rebuildContainer,
-  getContainerBaseImage,
-  rebuildContainerFromFingerprint,
+  containerState,
+  createRollbackInstanceBackup,
+  deleteInstance,
+  restoreRollbackInstanceBackup,
   getServiceWorkingDir,
   healthCheckViaExec,
   waitForContainerExec,
+  waitForRunning,
 } from '@/lib/incus/snapshot';
-import { fetchManifestFromSource, fetchManifestReferenceFromSource, fetchUpdatePlanMigrationsFromSource, clearCatalogCache } from './catalog';
+import { fetchUpdatePlanMigrationsFromSource, clearCatalogCache, resolveCatalogApp } from './catalog';
 import { readInstallMetadata, saveInstallMetadata } from './metadata';
-import { getInstalledApp, updateInstalledVersion } from './installed-apps';
+import {
+  getInstalledApp,
+  recordAppProvenance,
+  recordCatalogAppUpdate,
+  restoreInstalledAppUpdateState,
+  type InstalledAppUpdateState,
+} from './installed-apps';
 import { getContainerName } from './engine-helpers';
-import { resolveVariables, resolveEnvironment } from './variables';
+import { resolveVariables } from './variables';
 import { buildCanonicalContext } from './platform-env';
 import { getOrCreateSecret } from '../infrastructure/secrets';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
-import { settingsService } from '@/lib/settings';
-import { isNewer, compareVersions, sortVersionsDesc } from '@/lib/version';
-import { buildMarketReleasesAPIURL, getMarketReleaseAssetDownloadURL, getMarketSource, type MarketReleaseAsset } from './source';
+import { isNewer } from '@/lib/version';
+import { parseMarketRepoURL } from './source';
+import { effectiveChannel, resolveCandidate, getReleaseChannelsConfig, APP_PREFIX, type ResolvedCandidate } from '@/lib/updates/channels';
+import { fetchRepoFile } from './catalog';
+import { parseManifest } from './parser';
 import { syncAppManifestObjectToUI } from './ui-manifest-sync';
+import {
+  classifyAppUpdateRouting,
+  isChannelSwitchConfirmationRequired,
+  recordedCatalogSourceIds,
+} from './update-routing';
 import {
   describeUpdatePath,
   findApplicableMigrations,
   mergeMigrationSources,
   type MigrationWithSource,
 } from './migration-planner';
+import { beginContainerMaintenance } from '@/lib/maintenance/container-maintenance';
+import { observeIssue, resolveIssue } from '@/lib/health/issues';
+import { recoverOriginallyRunningContainers } from './update-recovery';
+import { refreshDirectMarketApp } from './direct-apps';
+import { stageMarketNativeArtifacts, type StagedMarketNativeArtifact } from './native-artifact';
 import type {
   AppManifest,
   InstallEventCallback,
   InstallEvent,
-  MigrationSpec,
   MigrationStep,
   InstallMetadata,
   VariableContext,
@@ -71,6 +89,8 @@ export interface UpdateConfig {
   appId: string;
   /** Force update even if versions match */
   force?: boolean;
+  /** Confirm installing a NOT-newer candidate after a channel change (downgrade/sidegrade) */
+  confirmSwitch?: boolean;
 }
 
 export interface UpdateResult {
@@ -216,141 +236,6 @@ async function executeMigrationStep(
   }
 }
 
-// ─── Release Helpers (for LXD tarball updates) ─────
-
-interface ReleaseInfo {
-  version: string;
-  downloadURL: string;
-}
-
-async function getReleaseBranch(): Promise<string> {
-  try {
-    const config = await settingsService.getRaw();
-    return config.release_branch || '';
-  } catch {
-    return '';
-  }
-}
-
-function isMainTag(tag: string): boolean {
-  return /^v\d/.test(tag);
-}
-
-/**
- * Get the latest release from the CP-owned Market source for an LXD app.
- * Branch-aware: checks branch-prefixed tags first, falls back to main.
- */
-async function getLatestGiteaRelease(
-  giteaRepo: string,
-  branch?: string,
-  tagPrefix?: string
-): Promise<ReleaseInfo | null> {
-  const releaseSource = await getMarketSource();
-  const releasesURL = buildMarketReleasesAPIURL(releaseSource, giteaRepo);
-
-  try {
-    const res = await fetch(releasesURL, {
-      headers: { 'User-Agent': 'youeye-control' },
-    });
-    if (!res.ok) return null;
-
-    const allReleases = await res.json();
-    if (!Array.isArray(allReleases) || allReleases.length === 0) return null;
-
-    const pfx = tagPrefix ? `${tagPrefix}-` : '';
-    const releases = pfx
-      ? allReleases.filter((r: { tag_name: string }) => r.tag_name.startsWith(pfx))
-      : allReleases;
-
-    const stripPfx = (tag: string) => pfx ? tag.slice(pfx.length) : tag;
-    const effectiveBranch = branch || '';
-    let matchedRelease = null;
-
-    // Collect main releases
-    const mainReleases = releases.filter((r: { tag_name: string }) => isMainTag(stripPfx(r.tag_name)));
-    let bestMainVersion: string | null = null;
-    let bestMainRelease = null;
-    if (mainReleases.length > 0) {
-      const sortedMain = sortVersionsDesc(
-        mainReleases.map((r: { tag_name: string }) => stripPfx(r.tag_name).replace(/^v/, ''))
-      );
-      bestMainVersion = sortedMain[0];
-      bestMainRelease = mainReleases.find(
-        (r: { tag_name: string }) => stripPfx(r.tag_name) === `v${bestMainVersion}`
-      );
-    }
-
-    // Try branch-specific releases
-    if (effectiveBranch && effectiveBranch !== 'main') {
-      const branchTagPrefix = `${effectiveBranch}-v`;
-      const branchReleases = releases.filter((r: { tag_name: string }) =>
-        stripPfx(r.tag_name).startsWith(branchTagPrefix)
-      );
-      if (branchReleases.length > 0) {
-        const sortedBranch = sortVersionsDesc(
-          branchReleases.map((r: { tag_name: string }) => stripPfx(r.tag_name).replace(branchTagPrefix, ''))
-        );
-        const bestBranchVersion = sortedBranch[0];
-        const bestBranchRelease = branchReleases.find(
-          (r: { tag_name: string }) => stripPfx(r.tag_name) === `${branchTagPrefix}${bestBranchVersion}`
-        );
-
-        if (bestMainVersion && isNewer(bestMainVersion, bestBranchVersion)) {
-          matchedRelease = bestMainRelease;
-        } else {
-          matchedRelease = bestBranchRelease;
-        }
-      }
-    }
-
-    if (!matchedRelease && bestMainRelease) matchedRelease = bestMainRelease;
-    if (!matchedRelease && releases.length > 0) matchedRelease = releases[0];
-    if (!matchedRelease) return null;
-
-    // Extract version from tag
-    const tag = matchedRelease.tag_name as string || '';
-    const strippedTag = stripPfx(tag);
-    let version: string;
-    if (effectiveBranch && effectiveBranch !== 'main' && strippedTag.startsWith(`${effectiveBranch}-v`)) {
-      version = strippedTag.replace(`${effectiveBranch}-v`, '');
-    } else {
-      version = strippedTag.replace(/^v/, '');
-    }
-
-    // Find standalone.tar in assets
-    const assets = matchedRelease.assets as MarketReleaseAsset[];
-    const tarAsset = assets?.find((a) => a.name === 'standalone.tar');
-    if (!tarAsset || !version) return null;
-    const downloadURL = getMarketReleaseAssetDownloadURL(releaseSource, tarAsset);
-    if (!downloadURL) return null;
-
-    return { version, downloadURL };
-  } catch {
-    return null;
-  }
-}
-
-// ─── LXD Tarball Update ──────────────────────────────────
-
-async function downloadReleaseTarball(downloadURL: string): Promise<{ dir: string; tarPath: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'youeye-app-update-'));
-  const tarPath = join(dir, 'standalone.tar');
-  try {
-    const res = await fetch(downloadURL, {
-      headers: { 'User-Agent': 'youeye-control' },
-    });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-    const bytes = Buffer.from(await res.arrayBuffer());
-    await writeFile(tarPath, bytes);
-    return { dir, tarPath };
-  } catch (err) {
-    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
-    throw new Error(`Download failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
 async function pushFileToContainer(
   localPath: string,
   containerName: string,
@@ -371,12 +256,11 @@ async function pushFileToContainer(
  */
 async function updateLXDContainer(
   containerName: string,
-  giteaRepo: string,
   appDir: string,
   serviceName: string,
   port: number,
   healthEndpoint: string,
-  tagPrefix: string | undefined,
+  artifact: StagedMarketNativeArtifact,
   onEvent: InstallEventCallback,
   step: number,
   totalSteps: number,
@@ -387,16 +271,8 @@ async function updateLXDContainer(
     emit(onEvent, step, totalSteps, 'running', `Service runs from ${resolvedDir} (configured: ${appDir})`);
   }
 
-  const branch = await getReleaseBranch();
-
-  // Get latest release
   step++;
-  emit(onEvent, step, totalSteps, 'running', 'Fetching latest release metadata...');
-  const release = await getLatestGiteaRelease(giteaRepo, branch, tagPrefix);
-  if (!release) throw new Error('Could not fetch latest release from the configured release source');
-  emit(onEvent, step, totalSteps, 'success', `Latest version: v${release.version}`);
-
-  let tempDir: string | null = null;
+  emit(onEvent, step, totalSteps, 'success', `Preflight accepted v${artifact.version} (${artifact.signature.status === 'unsigned' ? 'manifest-authorized' : 'verified release'})`);
 
   // Stop systemd service (NOT the container)
   step++;
@@ -404,34 +280,31 @@ async function updateLXDContainer(
   await execShell(containerName, `systemctl stop ${serviceName}`, { timeout: 30_000 });
   emit(onEvent, step, totalSteps, 'success', `${serviceName} stopped`);
 
-  // Download new tarball
   step++;
-  emit(onEvent, step, totalSteps, 'running', `Downloading v${release.version} via Control Panel...`);
-  try {
-    const artifact = await downloadReleaseTarball(release.downloadURL);
-    tempDir = artifact.dir;
-    await pushFileToContainer(artifact.tarPath, containerName, '/tmp/update.tar');
-    emit(onEvent, step, totalSteps, 'success', 'Artifact downloaded and staged');
+  emit(onEvent, step, totalSteps, 'running', `Staging preflighted v${artifact.version} bytes...`);
+  await pushFileToContainer(artifact.path, containerName, '/tmp/update.tar');
+  const stagedDigest = await execShell(
+    containerName,
+    `test "$(sha256sum /tmp/update.tar | awk '{print $1}')" = '${artifact.artifactSHA256}'`,
+    { timeout: 30_000 },
+  );
+  if (stagedDigest.exitCode !== 0) throw new Error('Staged update artifact changed before extraction');
+  emit(onEvent, step, totalSteps, 'success', 'Exact preflighted artifact staged');
 
-    // Extract tarball
-    step++;
-    emit(onEvent, step, totalSteps, 'running', 'Extracting files...');
-    await execShell(containerName, `rm -rf ${resolvedDir}`, { timeout: 30_000 });
-    await execShell(containerName, `mkdir -p ${resolvedDir}`, { timeout: 10_000 });
-    const extractResult = await execShell(
-      containerName,
-      `tar -xf /tmp/update.tar -C ${resolvedDir} --no-same-owner`,
-      { timeout: 60_000 }
-    );
-    if (extractResult.exitCode !== 0) {
-      throw new Error(`Extraction failed: ${extractResult.stderr}`);
-    }
-    await execShell(containerName, 'rm -f /tmp/update.tar', { timeout: 10_000 });
-  } finally {
-    if (tempDir) {
-      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-    }
+  // Extract tarball
+  step++;
+  emit(onEvent, step, totalSteps, 'running', 'Extracting files...');
+  await execShell(containerName, `rm -rf ${resolvedDir}`, { timeout: 30_000 });
+  await execShell(containerName, `mkdir -p ${resolvedDir}`, { timeout: 10_000 });
+  const extractResult = await execShell(
+    containerName,
+    `tar -xf /tmp/update.tar -C ${resolvedDir} --no-same-owner`,
+    { timeout: 60_000 }
+  );
+  if (extractResult.exitCode !== 0) {
+    throw new Error(`Extraction failed: ${extractResult.stderr}`);
   }
+  await execShell(containerName, 'rm -f /tmp/update.tar', { timeout: 10_000 });
   emit(onEvent, step, totalSteps, 'success', 'Files extracted');
 
   // Start service
@@ -446,7 +319,7 @@ async function updateLXDContainer(
   await healthCheckViaExec(containerName, port, healthEndpoint, 15);
   emit(onEvent, step, totalSteps, 'success', 'Health check passed');
 
-  return { step, version: release.version };
+  return { step, version: artifact.version };
 }
 
 // ─── Main Update Function ─────────────────────────────────
@@ -482,28 +355,121 @@ export async function updateMarketApp(
 
   const installMeta = await readInstallMetadata(appId);
   if (!installMeta) throw new Error(`No install metadata found for "${appId}"`);
+  const originalInstallMeta = structuredClone(installMeta);
+  const originalInstalledAppState: InstalledAppUpdateState = {
+    installedVersion: installedApp.installedVersion,
+    catalogVersion: installedApp.catalogVersion,
+    updateAvailable: installedApp.updateAvailable,
+    switchPending: installedApp.switchPending,
+    installedTag: installedApp.installedTag,
+    installedBranch: installedApp.installedBranch,
+    channelSource: installedApp.channelSource,
+    candidateVersion: installedApp.candidateVersion,
+    candidateBranch: installedApp.candidateBranch,
+    candidateTag: installedApp.candidateTag,
+  };
 
   clearCatalogCache();
 
+  const directSourceId = installMeta.sourceId?.startsWith('direct:')
+    ? installMeta.sourceId
+    : installedApp.sourceId?.startsWith('direct:') ? installedApp.sourceId : null;
+  const directEntry = directSourceId ? await refreshDirectMarketApp(directSourceId) : null;
+  let resolvedCatalog: Awaited<ReturnType<typeof resolveCatalogApp>> | null = null;
+  if (!directEntry) {
+    try {
+      resolvedCatalog = await resolveCatalogApp(
+        appId,
+        recordedCatalogSourceIds(installedApp, installMeta),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to resolve Market source for "${appId}": ${message}`);
+    }
+  }
+
+  // Classify before any release lookup or runtime mutation. A historical
+  // `installedBranch: main` is not native evidence: external catalog updates
+  // used to write that synthetic value after every successful update.
+  let channelCandidate: ResolvedCandidate | null = null;
+  let channelSourceUrl: string | null = null;
+  const chCfg = await getReleaseChannelsConfig();
+  const routing = resolvedCatalog ? classifyAppUpdateRouting({
+    appId,
+    installed: installedApp,
+    installMetadata: installMeta,
+    catalog: {
+      sourceId: resolvedCatalog.source.id,
+      sourceRepoUrl: resolvedCatalog.source.repo_url,
+      sourceRepoUrls: resolvedCatalog.configuredSourceRepoUrls,
+      entry: resolvedCatalog.entry,
+      manifestIntegration: resolvedCatalog.manifest.integration,
+    },
+    hasExplicitChannelOverride: !!chCfg.apps?.[appId],
+  }) : null;
+  if (routing?.kind === 'channel') {
+    const ch = await effectiveChannel(APP_PREFIX + appId, {
+      config: chCfg,
+      appDefaultSource: routing.channelDefaultSource,
+    });
+    channelSourceUrl = ch.source;
+    channelCandidate = await resolveCandidate(ch, null);
+    if (!channelCandidate) {
+      throw new Error(`Channel for "${appId}" (${ch.branch} @ ${ch.source}) has no resolvable releases`);
+    }
+  }
+
   let manifest: AppManifest;
-  try {
-    manifest = await fetchManifestFromSource(appId, installMeta.sourceId || installedApp.sourceId || undefined);
-  } catch (err) {
-    throw new Error(`Failed to fetch manifest for "${appId}": ${err}`);
+  if (channelCandidate && channelSourceUrl) {
+    try {
+      const srcLike = parseMarketRepoURL(channelSourceUrl);
+      const yamlText = await fetchRepoFile(
+        srcLike.organization, srcLike.repository, 'youeye-app.yaml', channelCandidate.tag, srcLike,
+      );
+      manifest = parseManifest(yamlText);
+    } catch (err) {
+      throw new Error(`Failed to fetch manifest for "${appId}" at ${channelCandidate.tag}: ${err}`);
+    }
+  } else {
+    manifest = directEntry?.manifest ?? resolvedCatalog!.manifest;
   }
 
   const installedVersion = installedApp.installedVersion || '0.0.0';
-  const targetVersion = manifest.version || '0.0.0';
+  const targetVersion = channelCandidate ? channelCandidate.version : (manifest.version || '0.0.0');
   const containerSpecs = manifest.containers || [];
-  const sourceId = installMeta.sourceId || installedApp.sourceId || undefined;
+  const sourceId = directEntry?.sourceId ?? resolvedCatalog!.source.id;
   let durableMigrationPlan: Awaited<ReturnType<typeof fetchUpdatePlanMigrationsFromSource>> = { migrations: [], references: [] };
-  try {
-    durableMigrationPlan = await fetchUpdatePlanMigrationsFromSource(appId, sourceId);
-  } catch (err) {
-    throw new Error(`Failed to fetch durable update plan for "${appId}": ${err}`);
+  if (!directEntry) {
+    try {
+      durableMigrationPlan = await fetchUpdatePlanMigrationsFromSource(appId, sourceId);
+    } catch (err) {
+      throw new Error(`Failed to fetch durable update plan for "${appId}": ${err}`);
+    }
   }
 
-  if (!config.force && !isNewer(targetVersion, installedVersion)) {
+  if (channelCandidate) {
+    // Exact-tag semantics: the channel resolver + check already decided; only
+    // no-op when the exact candidate tag is what's installed.
+    if (!config.force && installedApp.installedTag === channelCandidate.tag) {
+      emit(onEvent, 1, 1, 'success', `${appId} is already up to date (${channelCandidate.tag})`);
+      return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0 };
+    }
+    // Not-newer candidate on a different branch = channel switch — confirm-gated
+    // exactly like spine/control/ui.
+    const installedBranch = installedApp.installedBranch || 'main';
+    if (isChannelSwitchConfirmationRequired({
+      force: !!config.force,
+      confirmSwitch: !!config.confirmSwitch,
+      installedBranch,
+      candidateBranch: channelCandidate.branch,
+      candidateIsNewer: isNewer(channelCandidate.version, installedVersion),
+    })) {
+      throw new Error(
+        `Channel switch requires confirmation: ${installedBranch} ${installedVersion} → ` +
+        `${channelCandidate.branch} ${channelCandidate.version} (downgrade/sidegrade). ` +
+        `Re-run with confirmation (CLI: -y).`);
+    }
+  } else if (!config.force && !isNewer(targetVersion, installedVersion)) {
     emit(onEvent, 1, 1, 'success', `${appId} is already up to date (v${installedVersion})`);
     return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0 };
   }
@@ -584,31 +550,69 @@ export async function updateMarketApp(
 
   emit(onEvent, step, totalSteps, 'success', 'Preflight checks passed');
 
-  // OCI rollback points: name → previous image fingerprint. The Incus rebuild API
-  // requires the pre-update snapshot to be deleted (so snapshot-based rollback is
-  // impossible for OCI), but rebuild preserves volumes/config — so the rollback is to
-  // re-image back to the previous fingerprint. Captured before any destructive change.
-  const ociRollbackImages = new Map<string, string>();
+  const stagedNativeArtifacts = await stageMarketNativeArtifacts(
+    manifest,
+    {
+      appId,
+      subdomain: installMeta.subdomain,
+      domain: installMeta.domain,
+      sourceId,
+      sourceName: directEntry ? 'Added' : resolvedCatalog!.source.name,
+      sourceRepoUrl: directEntry?.manifestUrl ?? resolvedCatalog!.source.repo_url,
+    },
+    channelCandidate && channelSourceUrl ? {
+      releases: Object.fromEntries(lxdContainers.map((container) => [container.name, {
+        tag: channelCandidate!.tag,
+        version: channelCandidate!.version,
+        sourceRepo: channelSourceUrl!,
+      }])),
+    } : {},
+  );
+
+  // OCI rebuild deletes the root dataset and cannot retain snapshots. Each OCI
+  // container therefore gets an independent stopped Incus copy before any
+  // destructive mutation; that dataset remains until the whole app commits.
+  const ociRollbackBackups = new Map<string, string>();
+  const originalContainerStates = new Map<string, string>();
+  const ociRebuildStarted = new Set<string>();
+  let maintenance: ReturnType<typeof beginContainerMaintenance>;
+  try {
+    maintenance = beginContainerMaintenance(containerNames, {
+      operation: `market-update:${appId}:${installedVersion}->${targetVersion}`,
+    });
+  } catch (error) {
+    await stagedNativeArtifacts.cleanup();
+    throw error;
+  }
+  let retainMaintenance = false;
 
   try {
+    for (const name of containerNames) {
+      originalContainerStates.set(name, await containerState(name));
+    }
+
     // ── Step 2: Snapshot container(s) + capture OCI rollback image ──
 
     for (let i = 0; i < containerNames.length; i++) {
       const name = containerNames[i];
       const spec = containerSpecs[i];
       step++;
-      emit(onEvent, step, totalSteps, 'running', `Creating snapshot of ${name}...`);
-      await createSnapshot(name, SNAPSHOT_PREFIX);
+      emit(onEvent, step, totalSteps, 'running', `Creating rollback point for ${name}...`);
       if (spec?.type === 'oci') {
-        const baseImage = await getContainerBaseImage(name);
-        if (!baseImage) {
-          // Fail loud before touching anything: with no rollback image, a failed OCI
-          // rebuild would be unrecoverable (the snapshot must be deleted to rebuild).
-          throw new Error(`Cannot capture rollback image for OCI container ${name} (no volatile.base_image); aborting before any destructive change`);
+        if (originalContainerStates.get(name) === 'Running') {
+          await stopContainer(name);
         }
-        ociRollbackImages.set(name, baseImage);
+        const backupName = `ye-rollback-${maintenance.id.replaceAll('-', '').slice(0, 12)}-${i}`;
+        await createRollbackInstanceBackup(name, backupName);
+        ociRollbackBackups.set(name, backupName);
+        if (originalContainerStates.get(name) === 'Running') {
+          await startContainer(name);
+          await waitForRunning(name);
+        }
+      } else {
+        await createSnapshot(name, SNAPSHOT_PREFIX);
       }
-      emit(onEvent, step, totalSteps, 'success', `Snapshot created for ${name}`);
+      emit(onEvent, step, totalSteps, 'success', `Rollback point verified for ${name}`);
     }
 
     // ── Step 3: Pre-update hooks ─────────────────────────
@@ -642,19 +646,16 @@ export async function updateMarketApp(
 
       if (spec.type === 'lxd' && spec.source) {
         // ── LXD path: fetch tarball from the configured release source, extract, restart service ──
-        const giteaRepo = spec.source.repo?.includes('/')
-          ? spec.source.repo.split('/').pop()!
-          : (spec.source.repo || spec.name);
         const appDir = spec.source.appDir || '/opt/app';
         const healthEndpoint = spec.healthCheck?.type === 'http'
           ? (spec.healthCheck.path || '/api/health')
           : '/api/health';
         const port = spec.port || 3000;
-        const tagPrefix = spec.source.tagPrefix;
-
+        const stagedArtifact = stagedNativeArtifacts.byContainerName.get(spec.name);
+        if (!stagedArtifact) throw new Error(`Native artifact preflight is missing for ${spec.name}`);
         const result = await updateLXDContainer(
-          name, giteaRepo, appDir, name,
-          port, healthEndpoint, tagPrefix, onEvent, step, totalSteps
+          name, appDir, name,
+          port, healthEndpoint, stagedArtifact, onEvent, step, totalSteps,
         );
         step = result.step;
       } else {
@@ -666,17 +667,21 @@ export async function updateMarketApp(
 
         step++;
         emit(onEvent, step, totalSteps, 'running', `Rebuilding ${name} with ${spec.image}...`);
-        await deleteSnapshot(name, SNAPSHOT_PREFIX);
+        ociRebuildStarted.add(name);
         await rebuildContainer(name, spec.image);
         emit(onEvent, step, totalSteps, 'success', `${name} rebuilt`);
 
         step++;
-        emit(onEvent, step, totalSteps, 'running', `Starting ${name}...`);
-        await startContainer(name);
-        emit(onEvent, step, totalSteps, 'success', `${name} started`);
+        if (originalContainerStates.get(name) === 'Running') {
+          emit(onEvent, step, totalSteps, 'running', `Starting ${name}...`);
+          await startContainer(name);
+          emit(onEvent, step, totalSteps, 'success', `${name} started`);
+        } else {
+          emit(onEvent, step, totalSteps, 'success', `${name} remains intentionally stopped`);
+        }
 
         // Health check for OCI container
-        if (spec.healthCheck) {
+        if (spec.healthCheck && originalContainerStates.get(name) === 'Running') {
           step++;
           emit(onEvent, step, totalSteps, 'running', `Waiting for ${name} to be healthy...`);
 
@@ -709,41 +714,95 @@ export async function updateMarketApp(
 
     step++;
     emit(onEvent, step, totalSteps, 'running', 'Updating version records...');
-    await updateInstalledVersion(appId, targetVersion);
     installMeta.installedVersion = targetVersion;
-    if (!installMeta.sourceId) {
-      try {
-        const source = await getMarketSource();
-        installMeta.catalogKey = `${source.id}:app:${appId}`;
-        installMeta.itemKind = 'app';
-        installMeta.sourceId = source.id;
-        installMeta.sourceName = source.name;
-        installMeta.sourceRepoUrl = source.repo_url;
-        installMeta.manifestSource = source.repo_url;
-      } catch {
-        // Source metadata is best-effort for legacy installs.
-      }
+    installMeta.catalogKey = `${sourceId}:app:${appId}`;
+    installMeta.itemKind = 'app';
+    installMeta.sourceId = sourceId;
+    installMeta.sourceName = directEntry ? 'Added' : resolvedCatalog!.source.name;
+    installMeta.sourceRepoUrl = directEntry?.manifestUrl ?? resolvedCatalog!.source.repo_url;
+    installMeta.manifestSource = directEntry?.manifestUrl ?? resolvedCatalog!.source.repo_url;
+    if (directEntry) {
+      installMeta.manifestPath = directEntry.manifestUrl;
+      installMeta.manifestDigest = directEntry.manifestDigest;
+    } else if (routing?.kind === 'catalog') {
+      installMeta.manifestPath = resolvedCatalog!.reference.path;
+      installMeta.manifestRepo = resolvedCatalog!.reference.repo;
+      installMeta.manifestBranch = resolvedCatalog!.reference.branch;
+      installMeta.manifestDigest = resolvedCatalog!.reference.digest;
     }
-    try {
-      const reference = await fetchManifestReferenceFromSource(appId, installMeta.sourceId || installedApp.sourceId || undefined);
-      installMeta.manifestPath = reference.path;
-      installMeta.manifestRepo = reference.repo;
-      installMeta.manifestBranch = reference.branch;
-      installMeta.manifestDigest = reference.digest;
-    } catch {
-      // Manifest audit metadata is best-effort for legacy or custom installs.
-    }
+    installMeta.nativeArtifacts = [...stagedNativeArtifacts.byContainerName.values()].map((artifact) => ({
+      containerName: artifact.containerName,
+      sourceRepo: artifact.sourceRepo,
+      releaseTag: artifact.tag,
+      version: artifact.version,
+      artifactName: artifact.artifactName,
+      sha256: artifact.artifactSHA256,
+      bytes: artifact.artifactBytes,
+      signature: artifact.signature.status === 'unsigned' ? 'unsigned' : 'verified-development',
+      signatureKeyId: artifact.signature.status === 'verified-development' ? artifact.signature.keyId : undefined,
+    }));
+    installMeta.containers = installMeta.containers.map((container) => {
+      const spec = containerSpecs.find((candidate) => candidate.name === container.name);
+      if (!spec) return container;
+      return {
+        ...container,
+        healthCheck: spec.healthCheck ? {
+          type: spec.healthCheck.type,
+          path: 'path' in spec.healthCheck ? spec.healthCheck.path : undefined,
+          timeout: spec.healthCheck.timeout,
+          retries: spec.healthCheck.retries,
+          startPeriod: spec.healthCheck.startPeriod,
+          autoRestart: spec.healthCheck.autoRestart,
+        } : undefined,
+      };
+    });
+    installMeta.entrances = manifest.entrances?.map((entrance) => ({ ...entrance }));
     await saveInstallMetadata(installMeta);
+    // Provenance: what tag/branch/source is actually installed now.
+    if (channelCandidate) {
+      await recordAppProvenance(appId, {
+        version: channelCandidate.version,
+        tag: channelCandidate.tag,
+        branch: channelCandidate.branch,
+        source: channelSourceUrl,
+      });
+    } else {
+      await recordCatalogAppUpdate(appId, targetVersion);
+    }
     emit(onEvent, step, totalSteps, 'success', 'Version updated');
 
     // ── Step N: Cleanup snapshots ────────────────────────
 
     step++;
-    emit(onEvent, step, totalSteps, 'running', 'Cleaning up snapshots...');
-    for (const name of containerNames) {
-      await deleteSnapshot(name, SNAPSHOT_PREFIX);
+    emit(onEvent, step, totalSteps, 'running', 'Cleaning up rollback points...');
+    for (let i = 0; i < containerNames.length; i++) {
+      if (containerSpecs[i]?.type === 'oci') continue;
+      await deleteSnapshot(containerNames[i], SNAPSHOT_PREFIX);
     }
-    emit(onEvent, step, totalSteps, 'success', 'Snapshots cleaned up');
+    const cleanupFailures: string[] = [];
+    for (const [name, backup] of ociRollbackBackups) {
+      try {
+        await deleteInstance(backup);
+      } catch (error) {
+        cleanupFailures.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (cleanupFailures.length > 0) {
+      await observeIssue({
+        id: `app.${appId}.update-rollback-cleanup`,
+        severity: 'warning',
+        source: 'market-updater',
+        title: `${appId} retained a rollback copy after a successful update`,
+        body: 'The application update committed, but one or more stopped rollback copies require cleanup.',
+        fixable: false,
+        debounce: 1,
+      });
+    } else {
+      await resolveIssue(`app.${appId}.update-rollback-cleanup`);
+    }
+    emit(onEvent, step, totalSteps, 'success', cleanupFailures.length > 0
+      ? 'Update committed; rollback copy cleanup requires attention'
+      : 'Rollback points cleaned up');
 
     emit(onEvent, step, totalSteps, 'success',
       `${appId} updated successfully from v${installedVersion} to v${targetVersion}`);
@@ -757,6 +816,9 @@ export async function updateMarketApp(
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     emit(onEvent, step, totalSteps, 'error', `Update failed, rolling back: ${errMsg}`);
+    maintenance.markRollback(errMsg);
+    const rollbackFailures: string[] = [];
+    const rollbackCleanupFailures: string[] = [];
 
     // ── Rollback ─────────────────────────────────────────
     for (let i = 0; i < containerNames.length; i++) {
@@ -764,20 +826,20 @@ export async function updateMarketApp(
       const spec = containerSpecs[i];
       try {
         if (spec?.type === 'oci') {
-          // OCI rollback: the pre-rebuild snapshot was (or must be) deleted to satisfy
-          // the Incus rebuild API, so a snapshot restore is impossible. Re-image back to
-          // the captured previous fingerprint instead — rebuild preserves volumes/config,
-          // and the old image is still in the local store (no network pull).
-          const oldImage = ociRollbackImages.get(name);
-          await deleteSnapshot(name, SNAPSHOT_PREFIX); // rebuild requires no snapshot (idempotent)
-          if (oldImage) {
-            await stopContainer(name);
-            await rebuildContainerFromFingerprint(name, oldImage);
-            await startContainer(name);
-          } else {
-            // No rollback image captured (should not happen — capture or abort above).
-            console.error(`[updater] No rollback image for OCI ${name}; leaving current image, restarting`);
-            await startContainer(name);
+          const backup = ociRollbackBackups.get(name);
+          if (ociRebuildStarted.has(name)) {
+            if (!backup) throw new Error('verified OCI rollback instance is missing');
+            await restoreRollbackInstanceBackup(name, backup);
+            if (originalContainerStates.get(name) === 'Running') {
+              await startContainer(name);
+              await waitForRunning(name);
+            }
+          } else if (backup) {
+            try {
+              await deleteInstance(backup);
+            } catch (cleanupError) {
+              rollbackCleanupFailures.push(`${name}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+            }
           }
         } else {
           // LXD rollback: the snapshot is intact (LXD updates in place) — restore it.
@@ -787,17 +849,81 @@ export async function updateMarketApp(
         }
       } catch (rollbackErr) {
         console.error(`[updater] Rollback failed for ${name}:`, rollbackErr);
+        const rollbackMessage = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
+        rollbackFailures.push(`${name}: ${rollbackMessage}`);
       }
-      // Clean up snapshot after rollback (idempotent — no-op if already gone)
-      await deleteSnapshot(name, SNAPSHOT_PREFIX);
+      if (spec?.type !== 'oci') {
+        // Clean up LXD snapshot after rollback (idempotent).
+        await deleteSnapshot(name, SNAPSHOT_PREFIX);
+      }
+    }
+
+    const recoveryFailures = await recoverOriginallyRunningContainers(
+      originalContainerStates,
+      {
+        state: containerState,
+        start: startContainer,
+        waitForRunning: (name) => waitForRunning(name),
+      },
+    );
+
+    // Version/audit metadata is part of the same update outcome as the runtime
+    // image. If a late write failed after either store advanced, restore both
+    // records to the exact pre-update state and surface any restoration error.
+    try {
+      await saveInstallMetadata(originalInstallMeta);
+    } catch (metadataRestoreError) {
+      console.error(`[updater] Failed to restore install metadata for ${appId}:`, metadataRestoreError);
+      rollbackFailures.push(`install metadata: ${metadataRestoreError instanceof Error ? metadataRestoreError.message : String(metadataRestoreError)}`);
+    }
+    try {
+      await restoreInstalledAppUpdateState(appId, originalInstalledAppState);
+    } catch (stateRestoreError) {
+      console.error(`[updater] Failed to restore installed-app update state for ${appId}:`, stateRestoreError);
+      rollbackFailures.push(`installed app state: ${stateRestoreError instanceof Error ? stateRestoreError.message : String(stateRestoreError)}`);
+    }
+
+    if (rollbackCleanupFailures.length > 0) {
+      await observeIssue({
+        id: `app.${appId}.update-rollback-cleanup`,
+        severity: 'warning',
+        source: 'market-updater',
+        title: `${appId} retained an unused rollback copy`,
+        body: 'The original application remained intact, but a stopped rollback copy requires cleanup.',
+        fixable: false,
+        debounce: 1,
+      });
+    } else {
+      await resolveIssue(`app.${appId}.update-rollback-cleanup`);
+    }
+
+    if (rollbackFailures.length > 0 || recoveryFailures.length > 0) {
+      retainMaintenance = true;
+      maintenance.markFailed([...rollbackFailures, ...recoveryFailures].join('; '));
+      await observeIssue({
+        id: `app.${appId}.update-rollback-failed`,
+        severity: 'critical',
+        source: 'market-updater',
+        title: `${appId} update rollback requires attention`,
+        body: 'Automatic rollback or desired-state recovery was incomplete. Watchdog recovery remains suppressed by the durable maintenance record.',
+        fixable: false,
+        debounce: 1,
+      });
+    } else {
+      await resolveIssue(`app.${appId}.update-rollback-failed`);
     }
 
     return {
       success: false,
       previousVersion: installedVersion,
       newVersion: installedVersion,
-      error: errMsg,
+      error: rollbackFailures.length > 0 || recoveryFailures.length > 0
+        ? `${errMsg}; rollback/recovery incomplete: ${[...rollbackFailures, ...recoveryFailures].join('; ')}`
+        : errMsg,
       migrationsRun: 0,
     };
+  } finally {
+    await stagedNativeArtifacts.cleanup();
+    if (!retainMaintenance) maintenance.release();
   }
 }

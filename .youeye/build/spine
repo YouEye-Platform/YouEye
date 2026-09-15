@@ -1,0 +1,28 @@
+#!/bin/bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+. "$script_dir/lib.sh"
+youeye_prepare_contract
+for command in go date sha256sum; do youeye_require_command "$command"; done
+
+version="$(sed -n 's/^var Version = "\([^"]*\)"/\1/p' "$YOUEYE_SOURCE_DIR/spine/internal/cmd/root.go")"
+[[ -n $version ]] || youeye_build_fail 'could not determine the Spine version'
+build_date="$(date -u -d "@$SOURCE_DATE_EPOCH" +%F)"
+temporary="$YOUEYE_WORK_DIR/spine-linux-amd64.partial"
+output="$YOUEYE_OUTPUT_DIR/spine-linux-amd64"
+rm -f -- "$temporary" "$output"
+install -d -m 0755 "$YOUEYE_WORK_DIR/go-cache" "$YOUEYE_WORK_DIR/go" "$YOUEYE_WORK_DIR/go-mod-cache"
+export GOCACHE="${YOUEYE_GOCACHE:-$YOUEYE_WORK_DIR/go-cache}"
+export GOPATH="$YOUEYE_WORK_DIR/go"
+export GOMODCACHE="${YOUEYE_GOMODCACHE:-$YOUEYE_WORK_DIR/go-mod-cache}"
+install -d -m 0755 "$GOCACHE" "$GOMODCACHE"
+
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$YOUEYE_SOURCE_DIR/spine" build \
+    -trimpath -buildvcs=false \
+    -ldflags="-s -w -buildid= -X github.com/youeye-platform/YouEye/spine/internal/cmd.Version=$version -X github.com/youeye-platform/YouEye/spine/internal/cmd.BuildDate=$build_date" \
+    -o "$temporary" ./cmd/youeye
+"$temporary" version | grep -Fq "$version" || youeye_build_fail 'Spine binary does not report the source version'
+install -m 0755 "$temporary" "$output"
+rm -f -- "$temporary"
+sha256sum "$output"

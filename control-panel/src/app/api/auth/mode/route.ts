@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthModeForHost } from '@/lib/auth/mode';
-import { isSSOConfigured } from '@/lib/auth/authentik';
+import { isSSOConfigured } from '@/lib/auth/oauth';
 
 export async function GET(request: NextRequest) {
   const host = request.headers.get('host') || '';

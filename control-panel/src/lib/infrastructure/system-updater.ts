@@ -1,4 +1,4 @@
-import { incusRequest, execShell } from '@/lib/incus/server';
+import { execCommand, incusRequest } from '@/lib/incus/server';
 import {
   rebuildContainer,
   startContainer,
@@ -6,7 +6,7 @@ import {
   waitForRunning,
 } from '@/lib/incus/snapshot';
 import { applyResourcePolicy } from './resource-policy';
-import { generatePassword, getOrCreateSecret } from './secrets';
+import { generatePassword, getOrCreateSecret, readSecret } from './secrets';
 import { waitForCaddy, waitForPiHole, waitForPostgres } from './health-checks';
 import {
   getRequiredSystemContainerName,
@@ -219,7 +219,10 @@ export async function planSystemUpdates(): Promise<SystemUpdatePlan[]> {
 }
 
 async function verifySystemHealth(systemId: SystemId): Promise<boolean> {
-  if (systemId === 'postgresql') return waitForPostgres();
+  if (systemId === 'postgresql') {
+    const password = await readSecret('postgres', '.pg_password');
+    return password ? waitForPostgres(password) : false;
+  }
   if (systemId === 'caddy') return waitForCaddy();
   return waitForPiHole();
 }
@@ -230,7 +233,12 @@ async function postUpdateRepair(systemId: SystemId): Promise<void> {
 
   if (systemId === 'pihole') {
     const webPassword = await getOrCreateSecret('pihole', '.web_password', () => generatePassword(24));
-    const result = await execShell(containerName, `pihole setpassword ${webPassword}`, { timeout: 30_000 });
+    const result = await execCommand(containerName, [
+      '/bin/sh', '-c', 'pihole setpassword "$YOUEYE_PIHOLE_PASSWORD"',
+    ], {
+      environment: { YOUEYE_PIHOLE_PASSWORD: webPassword },
+      timeout: 30_000,
+    });
     if (result.exitCode !== 0) {
       throw new Error(`pihole setpassword failed after update: ${result.stderr || result.stdout}`);
     }

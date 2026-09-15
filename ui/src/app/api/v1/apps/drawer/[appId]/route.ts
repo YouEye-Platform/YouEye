@@ -25,6 +25,7 @@ export async function PUT(
       customName: body.custom_name,
       customIconUrl: body.custom_icon_url,
       visible: body.visible,
+      launcherVisible: body.launcher_visible,
       displayOrder: body.order,
       sectionId: body.section_id,
       folderId: body.folder_id,

@@ -153,25 +153,23 @@ async function createNotificationInUI(
  * Fetch admin user IDs from YE-UI's users API.
  */
 async function fetchAdminUserIds(baseUrl: string, token: string): Promise<string[]> {
-  try {
-    const res = await fetch(`${baseUrl}/api/v1/users?role=admin`, {
-      headers: {
-        'X-UI-Bridge-Token': token,
-      },
-      signal: AbortSignal.timeout(10_000),
-    });
+  const res = await fetch(`${baseUrl}/api/v1/users?role=admin`, {
+    headers: {
+      'X-UI-Bridge-Token': token,
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
 
-    if (!res.ok) return [];
-
-    const data = await res.json();
-    // Handle both array and object response formats
-    const users = Array.isArray(data) ? data : data.users || [];
-    return users
-      .filter((u: { isAdmin?: boolean; is_admin?: boolean }) => u.isAdmin || u.is_admin)
-      .map((u: { id: string }) => u.id);
-  } catch {
-    return [];
+  if (!res.ok) {
+    throw new Error(`YE-UI admin lookup failed with HTTP ${res.status}`);
   }
+
+  const data = await res.json();
+  // Handle both array and object response formats
+  const users = Array.isArray(data) ? data : data.users || [];
+  return users
+    .filter((u: { isAdmin?: boolean; is_admin?: boolean }) => u.isAdmin || u.is_admin)
+    .map((u: { id: string }) => u.id);
 }
 
 /**

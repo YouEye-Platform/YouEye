@@ -16,6 +16,9 @@ interface Props {
   standalone?: boolean;
   /** TLS choice from step 0 — determines whether cert install section shows */
   tlsChoice?: TlsChoice;
+  onContinue?: () => void;
+  continuing?: boolean;
+  continueError?: string | null;
 }
 
 type Platform = 'windows' | 'macos' | 'linux' | 'ios' | 'android';
@@ -45,7 +48,9 @@ function useConnectivityCheck(domain: string) {
     let active = true;
 
     const onMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'ye-dns-ok' && active) {
+      const expectedOrigin = `https://${domain}`;
+      if (event.data?.type === 'ye-dns-ok' && active &&
+          event.origin === expectedOrigin && event.source === iframeRef.current?.contentWindow) {
         setReachable(true);
         setChecking(false);
       }
@@ -316,7 +321,15 @@ function CertStep({ serverIp, platform, t }: {
 
 // ─── Main component ──────────────────────────────────────────
 
-export default function SetupDnsExplainer({ domain, siteName, standalone = false, tlsChoice }: Props) {
+export default function SetupDnsExplainer({
+  domain,
+  siteName,
+  standalone = false,
+  tlsChoice,
+  onContinue,
+  continuing = false,
+  continueError = null,
+}: Props) {
   const t = useTranslations('setup');
   const [platform, setPlatform] = useState<Platform>('windows');
   const { reachable, checking } = useConnectivityCheck(domain);
@@ -387,17 +400,34 @@ export default function SetupDnsExplainer({ domain, siteName, standalone = false
 
       {/* Go to server */}
       <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200">
-        <a
-          href={`https://${domain}`}
-          className={`inline-flex items-center gap-2 rounded-lg px-6 py-3 text-sm font-medium transition-all w-full justify-center ${
-            reachable
-              ? 'bg-primary text-white hover:bg-primary/90 shadow-lg shadow-primary/25'
-              : 'bg-muted text-muted-foreground hover:bg-muted/80'
-          }`}
-        >
-          {t('goTo', { name: siteName })}
-          <ExternalLink className="h-4 w-4" />
-        </a>
+        {onContinue ? (
+          <button
+            type="button"
+            onClick={onContinue}
+            disabled={continuing}
+            className={`inline-flex w-full items-center justify-center gap-2 rounded-lg px-6 py-3 text-sm font-medium transition-all disabled:opacity-60 ${
+              reachable
+                ? 'bg-primary text-white hover:bg-primary/90 shadow-lg shadow-primary/25'
+                : 'bg-muted text-muted-foreground hover:bg-muted/80'
+            }`}
+          >
+            {continuing ? 'Signing you in…' : t('goTo', { name: siteName })}
+            <ExternalLink className="h-4 w-4" />
+          </button>
+        ) : (
+          <a
+            href={`https://${domain}`}
+            className={`inline-flex w-full items-center justify-center gap-2 rounded-lg px-6 py-3 text-sm font-medium transition-all ${
+              reachable
+                ? 'bg-primary text-white hover:bg-primary/90 shadow-lg shadow-primary/25'
+                : 'bg-muted text-muted-foreground hover:bg-muted/80'
+            }`}
+          >
+            {t('goTo', { name: siteName })}
+            <ExternalLink className="h-4 w-4" />
+          </a>
+        )}
+        {continueError && <p className="mt-2 text-center text-xs text-destructive">{continueError}</p>}
       </div>
     </div>
   );

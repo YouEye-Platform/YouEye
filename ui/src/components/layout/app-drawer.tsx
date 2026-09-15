@@ -37,9 +37,16 @@ interface DrawerApp {
   pinned?: boolean;
   order: number;
   section_id: string | null;
+  folder_id: string | null;
+  launcher_visible: boolean;
   status: string | null;
   url: string | null;
 }
+
+interface DrawerFolder { id: string; name: string; order: number; }
+type DrawerGridItem =
+  | { kind: "app"; id: string; order: number; app: DrawerApp }
+  | { kind: "folder"; id: string; order: number; folder: DrawerFolder; members: DrawerApp[] };
 
 interface DrawerPrefs {
   columns: number;
@@ -100,6 +107,8 @@ export function AppDrawer({
 }) {
   const [open, setOpen] = useState(false);
   const [allApps, setAllApps] = useState<DrawerApp[]>([]);
+  const [folders, setFolders] = useState<DrawerFolder[]>([]);
+  const [openFolderId, setOpenFolderId] = useState<string | null>(null);
   const [appsLoaded, setAppsLoaded] = useState(false);
   const [appsError, setAppsError] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -124,6 +133,7 @@ export function AppDrawer({
       }
       const data = await res.json();
       setAllApps(data.apps ?? []);
+      setFolders(data.folders ?? []);
       setAppsLoaded(true);
     } catch {
       setAppsError(true);
@@ -158,6 +168,7 @@ export function AppDrawer({
       setAddMode(false);
       setQuery("");
       setAddQuery("");
+      setOpenFolderId(null);
     };
     window.addEventListener("message", handleVisibility);
     return () => window.removeEventListener("message", handleVisibility);
@@ -205,8 +216,19 @@ export function AppDrawer({
   );
   const unpinnedApps = useMemo(() => [...allApps].filter((a) => !a.visible).sort((a, b) => a.name.localeCompare(b.name)), [allApps]);
 
+  const membersOf = useMemo(() => {
+    const map = new Map<string, DrawerApp[]>();
+    for (const app of pinnedApps) if (app.folder_id) map.set(app.folder_id, [...(map.get(app.folder_id) ?? []), app]);
+    return map;
+  }, [pinnedApps]);
+  const validFolders = useMemo(() => folders.filter((folder) => (membersOf.get(folder.id)?.length ?? 0) > 0), [folders, membersOf]);
+  const gridItems = useMemo<DrawerGridItem[]>(() => [
+    ...pinnedApps.filter((app) => !app.folder_id).map((app) => ({ kind: "app" as const, id: app.id, order: app.order ?? 999, app })),
+    ...validFolders.map((folder) => ({ kind: "folder" as const, id: folder.id, order: folder.order ?? 999, folder, members: membersOf.get(folder.id) ?? [] })),
+  ].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id)), [membersOf, pinnedApps, validFolders]);
+
   const q = query.trim().toLowerCase();
-  const gridApps = useMemo(
+  const searchApps = useMemo(
     () => (q ? [...allApps].filter((a) => a.url && a.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name)) : pinnedApps),
     [q, allApps, pinnedApps]
   );
@@ -215,47 +237,82 @@ export function AppDrawer({
 
   // ── Live reorder (pointer drag) ──
   const reorderPinned = useCallback((draggedId: string, toIndex: number) => {
-    setAllApps((prev) => {
-      const pinned = prev.filter((a) => a.visible).sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
-      const ids = pinned.map((a) => a.id);
-      const from = ids.indexOf(draggedId);
-      if (from < 0 || from === toIndex) return prev;
-      ids.splice(from, 1);
-      ids.splice(toIndex, 0, draggedId);
-      const orderMap = new Map(ids.map((id, i) => [id, i] as const));
-      return prev.map((a) => (orderMap.has(a.id) ? { ...a, order: orderMap.get(a.id)! } : a));
-    });
-  }, []);
+    const ids = gridItems.map((item) => item.id);
+    const from = ids.indexOf(draggedId);
+    if (from < 0 || from === toIndex) return;
+    ids.splice(from, 1);
+    ids.splice(toIndex, 0, draggedId);
+    const orderMap = new Map(ids.map((id, index) => [id, index] as const));
+    setAllApps((prev) => prev.map((app) => orderMap.has(app.id) ? { ...app, order: orderMap.get(app.id)! } : app));
+    setFolders((prev) => prev.map((folder) => orderMap.has(folder.id) ? { ...folder, order: orderMap.get(folder.id)! } : folder));
+  }, [gridItems]);
 
   const persistOrder = useCallback(() => {
-    const pinned = [...allApps].filter((a) => a.visible).sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
-    pinned.forEach((a, i) => {
-      fetch(`/api/v1/apps/drawer/${a.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ order: i }) }).catch(() => {});
-    });
-  }, [allApps]);
+    gridItems.forEach((item, index) => { if (item.kind === "app") fetch(`/api/v1/apps/drawer/${item.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ order: index }) }).catch(() => {}); });
+    fetch("/api/v1/apps/drawer/folders", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folders: folders.map((folder) => ({ ...folder, order: gridItems.findIndex((item) => item.id === folder.id) })) }) }).catch(() => {});
+  }, [folders, gridItems]);
+
+  const persistFolders = useCallback((next: DrawerFolder[]) => fetch("/api/v1/apps/drawer/folders", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folders: next }) }).catch(() => {}), []);
+  const setFolder = useCallback((appId: string, folderId: string | null) => fetch(`/api/v1/apps/drawer/${appId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folder_id: folderId }) }).catch(() => {}), []);
+  const onMerge = useCallback((draggedId: string, targetId: string) => {
+    const dragged = allApps.find((app) => app.id === draggedId && app.visible && !app.folder_id);
+    if (!dragged) return;
+    const targetFolder = folders.find((folder) => folder.id === targetId);
+    if (targetFolder) {
+      setAllApps((prev) => prev.map((app) => app.id === draggedId ? { ...app, folder_id: targetFolder.id } : app));
+      void setFolder(draggedId, targetFolder.id);
+      return;
+    }
+    const target = allApps.find((app) => app.id === targetId && app.visible && !app.folder_id);
+    if (!target) return;
+    const id = `f-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    const nextFolders = [...folders, { id, name: "Folder", order: target.order ?? folders.length }];
+    setFolders(nextFolders);
+    setAllApps((prev) => prev.map((app) => app.id === draggedId || app.id === targetId ? { ...app, folder_id: id } : app));
+    void setFolder(draggedId, id); void setFolder(targetId, id); void persistFolders(nextFolders);
+  }, [allApps, folders, persistFolders, setFolder]);
+
+  const removeFromFolder = useCallback((appId: string) => {
+    const nextApps = allApps.map((app) => app.id === appId ? { ...app, folder_id: null } : app);
+    const nextFolders = folders.filter((folder) => nextApps.some((app) => app.folder_id === folder.id));
+    setAllApps(nextApps); setFolders(nextFolders); void setFolder(appId, null);
+    if (nextFolders.length !== folders.length) void persistFolders(nextFolders);
+  }, [allApps, folders, persistFolders, setFolder]);
+
+  const renameFolder = useCallback((folderId: string, name: string) => {
+    const next = folders.map((folder) => folder.id === folderId ? { ...folder, name } : folder);
+    setFolders(next); void persistFolders(next);
+  }, [folders, persistFolders]);
 
   const drag = useGridDrag({
-    order: pinnedApps.map((a) => a.id),
+    order: gridItems.map((item) => item.id),
     enabled: editMode && !q,
     onReorder: reorderPinned,
     onCommit: persistOrder,
+    onMerge,
+    canMerge: (draggedId) => allApps.some((app) => app.id === draggedId && app.visible && !app.folder_id),
+    reorderDelayMs: 0,
   });
 
   const cols = prefs.columns;
   const iconPx = 40 * prefs.iconScale;
-  const draggedApp = drag.draggingId ? allApps.find((a) => a.id === drag.draggingId) : null;
+  const draggedItem = drag.draggingId ? gridItems.find((item) => item.id === drag.draggingId) : null;
 
   const renderTile = (app: DrawerApp, mode: "open" | "edit" | "add") => {
     const up = isAppUp(app.status);
     const off = app.status === "stopped";
     const dragging = drag.draggingId === app.id;
+    const merge = drag.mergeTargetId === app.id;
     return (
       <div
         key={app.id}
         ref={mode === "edit" ? drag.register(app.id) : undefined}
+        role={mode === "edit" ? undefined : "button"}
+        tabIndex={mode === "edit" ? undefined : 0}
+        aria-label={mode === "add" ? `Add ${app.name}` : mode === "open" ? `Open ${app.name}` : undefined}
         className={`relative flex flex-col items-center rounded-xl p-2 transition-[transform,opacity] duration-150 ${
           mode === "edit" ? "cursor-grab touch-none select-none active:cursor-grabbing hover:bg-accent/40" : "cursor-pointer hover:scale-105 hover:bg-accent/40"
-        }${up ? "" : " opacity-40 grayscale"}${dragging ? " scale-95 opacity-30" : ""}`}
+        }${up ? "" : " opacity-40 grayscale"}${dragging ? " scale-95 opacity-30" : ""}${merge ? " scale-110 ring-2 ring-primary" : ""}`}
         onPointerDown={mode === "edit" ? (e) => drag.startDrag(e, app.id) : undefined}
         onMouseDown={mode === "edit" ? (e) => drag.startDrag(e, app.id) : undefined}
         onClick={
@@ -265,6 +322,12 @@ export function AppDrawer({
               ? () => setPinned(app.id, true)
               : (e) => { e.stopPropagation(); }
         }
+        onKeyDown={mode === "edit" ? undefined : (event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          if (mode === "add") setPinned(app.id, true);
+          else handleAppClick(app);
+        }}
         title={off ? `${app.name} is off` : app.name}
       >
         {off && <span className="absolute left-2 top-2 h-1.5 w-1.5 rounded-full bg-destructive"><span className="sr-only">Off</span></span>}
@@ -290,6 +353,18 @@ export function AppDrawer({
       </div>
     );
   };
+
+  const renderFolder = (folder: DrawerFolder, members: DrawerApp[]) => {
+    const dragging = drag.draggingId === folder.id;
+    const merge = drag.mergeTargetId === folder.id;
+    return <button key={folder.id} type="button" ref={editMode ? drag.register(folder.id) : undefined} onPointerDown={editMode ? (event) => drag.startDrag(event, folder.id) : undefined} onMouseDown={editMode ? (event) => drag.startDrag(event, folder.id) : undefined} onClick={() => { if (!drag.consumeClick()) setOpenFolderId(folder.id); }} className={`grid touch-none select-none justify-items-center rounded-xl p-2 transition-[transform,opacity] hover:bg-accent/40 ${editMode ? "cursor-grab" : "hover:scale-105"} ${dragging ? "scale-95 opacity-30" : ""} ${merge ? "scale-110 ring-2 ring-primary" : ""}`} title={folder.name}>
+      <span className="grid grid-cols-2 gap-0.5 rounded-xl border bg-card p-1" style={{ width: iconPx, height: iconPx }}>{members.slice(0, 4).map((app) => <span key={app.id} className="grid place-items-center overflow-hidden rounded-sm"><AppIcon icon={app.icon} customIconUrl={app.custom_icon_url} name={app.name} size={Math.max(12, iconPx / 2 - 4)} /></span>)}</span>
+      <span className="mt-1.5 line-clamp-1 w-full text-center text-[11px] leading-tight text-foreground/80">{folder.name}</span>
+    </button>;
+  };
+
+  const openFolder = openFolderId ? validFolders.find((folder) => folder.id === openFolderId) : null;
+  const openMembers = openFolderId ? membersOf.get(openFolderId) ?? [] : [];
 
   const content = (
     <div className={`flex flex-col ${embedded ? "w-full" : ""}`}>
@@ -324,14 +399,14 @@ export function AppDrawer({
               <p className="mb-3 text-sm text-muted-foreground">Apps could not be loaded.</p>
               <button type="button" onClick={fetchApps} className="text-sm text-primary hover:underline">Retry</button>
             </div>
-          ) : gridApps.length === 0 ? (
+          ) : (q ? searchApps.length === 0 : gridItems.length === 0) ? (
             <div className="flex flex-col items-center justify-center py-10 text-center">
               <p className="mb-3 text-sm text-muted-foreground">{q ? t("noMatchingApps") : t("noAppsInstalled")}</p>
               {!q && isAdmin && <Link href="/market" target={embedded ? "_top" : undefined} className="text-sm text-primary hover:underline" onClick={() => setOpen(false)}>{t("visitMarket")}</Link>}
             </div>
           ) : (
             <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
-              {gridApps.map((app) => renderTile(app, editMode ? "edit" : "open"))}
+              {q ? searchApps.map((app) => renderTile(app, "open")) : gridItems.map((item) => item.kind === "app" ? renderTile(item.app, editMode ? "edit" : "open") : renderFolder(item.folder, item.members))}
             </div>
           )}
 
@@ -382,16 +457,25 @@ export function AppDrawer({
           <button type="button" onClick={() => { onOpenLauncher(); setOpen(false); }} className="flex w-full items-center justify-center gap-2 rounded-lg py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><LayoutGrid className="h-4 w-4" /> {t("allApps")}</button>
         </div>
       )}
+
+      {openFolder && (
+        <div className="absolute inset-0 z-30 grid place-items-center bg-background/70 p-4 backdrop-blur-sm" onClick={() => setOpenFolderId(null)}>
+          <div className="w-[min(320px,92%)] rounded-2xl border bg-popover p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <input value={openFolder.name} onChange={(event) => renameFolder(openFolder.id, event.target.value)} className="mb-3 w-full rounded-md bg-transparent text-center text-sm font-semibold outline-none focus:bg-accent/40" aria-label="Folder name" />
+            <div className="grid grid-cols-3 gap-2">{openMembers.map((app) => <div key={app.id} className="relative">{renderTile(app, "open")}{editMode && <button type="button" onClick={() => removeFromFolder(app.id)} className="absolute right-0 top-0 grid h-5 w-5 place-items-center rounded-full border bg-background" aria-label={`Remove ${app.name} from folder`}><X className="h-3 w-3" /></button>}</div>)}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
   // Lifted ghost following the cursor (portaled to body to escape the
   // popover's backdrop-filter containing block).
-  const ghost = drag.ghost && draggedApp && typeof document !== "undefined"
+  const ghost = drag.ghost && draggedItem && typeof document !== "undefined"
     ? createPortal(
         <div className="pointer-events-none fixed z-[200] -translate-x-1/2 -translate-y-1/2 opacity-90" style={{ left: drag.ghost.x, top: drag.ghost.y }}>
           <div className="grid place-items-center overflow-hidden rounded-xl border bg-card shadow-2xl" style={{ width: iconPx, height: iconPx }}>
-            <AppIcon icon={draggedApp.icon} customIconUrl={draggedApp.custom_icon_url} name={draggedApp.name} size={iconPx} />
+            {draggedItem.kind === "app" ? <AppIcon icon={draggedItem.app.icon} customIconUrl={draggedItem.app.custom_icon_url} name={draggedItem.app.name} size={iconPx} /> : <LayoutGrid className="h-5 w-5" />}
           </div>
         </div>,
         document.body

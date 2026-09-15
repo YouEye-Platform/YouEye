@@ -12,30 +12,16 @@ Spine is a single Go binary that installs on the host, sets up Incus, deploys th
 4. Exposes a Unix socket API for privileged operations (PAM auth, system updates)
 5. Manages its own updates and Control Panel updates via release channels
 
-## Install
+## Installation boundary
 
-```bash
-# One-line install
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo bash -s --
+Spine is installed as an exact signed component of a YouEye appliance release.
+Use the [YouEye Installer](../docs/getting-started.md) from signed ISO media or
+its Proxmox mode. Installing a Spine binary onto an arbitrary mutable
+Debian/Ubuntu host is no longer a supported platform installation path.
 
-# Deploy the full stack
-youeye deploy
-```
-
-### Install from a Branch
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo bash -s -- --release-channel dev
-```
-
-### Manual Install
-
-```bash
-curl -LO https://github.com/YouEye-Platform/YouEye/releases/download/spine-v0.5.1/spine-linux-amd64
-chmod +x spine-linux-amd64
-mv spine-linux-amd64 /usr/local/bin/youeye
-youeye deploy
-```
+For source development, `go build ./cmd/youeye` builds a local binary. Running
+`youeye deploy` is an appliance lifecycle operation and must not be treated as
+a replacement for the image installer.
 
 ## CLI Commands
 
@@ -128,3 +114,7 @@ WantedBy=multi-user.target
 ## License
 
 [Business Source License 1.1](../LICENSE) — converts to AGPL-3.0 on 2030-05-15.
+
+## Troubleshooting: deploy log
+
+If `youeye deploy` reports a stage failure, the full deploy transcript is at `/var/log/youeye-deploy.log` on the host. `youeye deploy` is not idempotent — recover with a clean reinstall on a fresh VM rather than re-running it.

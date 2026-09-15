@@ -39,6 +39,16 @@ test('setup completion persists and reuses the selected TLS path', () => {
   assert.match(settings, /function flattenExtra/);
 });
 
+test('setup defers the Control Panel restart until the durable transaction is complete', () => {
+  const run = read('src/app/api/setup/run/route.ts');
+  const clients = read('src/lib/identity/core-clients.ts');
+  const spine = read('src/lib/spine/client.ts');
+
+  assert.match(clients, /setControlSSO\([\s\S]*\}, false\)/);
+  assert.match(spine, /control\/sso\?restart=\$\{restartControl\}/);
+  assert.match(run, /markApplianceSetupComplete\([\s\S]*restartControl\(5\)[\s\S]*complete: true/);
+});
+
 test('fallback favicon is the transparent blue Y used during initial setup', () => {
   const favicon = read('src/app/api/branding/favicon/route.ts');
   const middleware = read('src/middleware.ts');
@@ -50,6 +60,17 @@ test('fallback favicon is the transparent blue Y used during initial setup', () 
   assert.match(middleware, /setupAllowedPaths[\s\S]*'\/api\/branding\/favicon'/);
   assert.match(middleware, /setupAllowedPaths[\s\S]*'\/api\/dns-providers\/cloudflare\/validate'/);
   assert.ok(staticFavicon.length > 1000);
+});
+
+test('IP setup-complete routing uses IPv4 loopback and completed login handoff', () => {
+  const middleware = read('src/middleware.ts');
+  const login = read('src/components/auth/login-form.tsx');
+
+  assert.match(middleware, /http:\/\/127\.0\.0\.1:3000\/api\/setup\/config/);
+  assert.doesNotMatch(middleware, /http:\/\/localhost:3000\/api\/setup\/config/);
+  assert.match(middleware, /setup completion check failed; treating setup as incomplete/);
+  assert.match(login, /fetch\('\/api\/setup\/config', \{ cache: 'no-store' \}\)/);
+  assert.match(login, /setupConfig\.setup_completed \? '\/setup-complete' : '\/setup'/);
 });
 
 test('PAM login tree is the default full-screen root emergency door asset', () => {

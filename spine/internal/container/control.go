@@ -2,6 +2,7 @@
 package container
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,9 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/youeye-platform/YouEye/spine/internal/channels"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 	"github.com/youeye-platform/YouEye/spine/internal/incus"
 	"github.com/youeye-platform/YouEye/spine/internal/releases"
+	"github.com/youeye-platform/YouEye/spine/internal/update"
 	"github.com/youeye-platform/YouEye/spine/internal/util"
 )
 
@@ -23,26 +26,65 @@ func DeployControlPanel(cfg *config.Config) error {
 	containerName := cfg.Deployment.Container.Name
 	port := cfg.Deployment.ControlPanel.Port
 	socketPath := cfg.API.SocketPath
+	appDir := cfg.Deployment.ControlPanel.AppDir
 
 	// Check if Incus is available
 	if _, err := exec.LookPath("incus"); err != nil {
 		return fmt.Errorf("Incus not found. Run 'spine install incus' first")
 	}
 
-	// Check if container already exists — silently skip (same as OCI apps)
-	out, _ := exec.Command("incus", "list", "--format", "csv", "-c", "n").Output()
-	if strings.Contains(string(out), containerName) {
-		util.LogSuccess(fmt.Sprintf("Control Panel container '%s' already exists, skipping", containerName))
-		return nil
+	exists, err := exactContainerExists(containerName)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if err := writeControlProvisionJournal(containerName, "creating-container"); err != nil {
+			return err
+		}
+		if err := createContainer(containerName); err != nil {
+			return err
+		}
+	} else {
+		if _, err := util.RunCmdCapture("incus", "start", containerName); err != nil {
+			state, stateErr := util.RunCmdCapture("incus", "list", containerName, "--format", "csv", "-c", "s")
+			if stateErr != nil || strings.TrimSpace(state) != "RUNNING" {
+				return fmt.Errorf("start existing Control Panel container: %w", err)
+			}
+		}
 	}
 
-	// Create container
-	if err := createContainer(containerName); err != nil {
+	if err := waitForContainer(containerName); err != nil {
 		return err
 	}
 
-	// Wait for container
-	if err := waitForContainer(containerName); err != nil {
+	observation := inspectControlPanel(containerName, appDir)
+	_, journalOwned := readControlProvisionJournal(containerName)
+	if observation.AppBundle && observation.ControlUnit && observation.IdentityUnit && !observation.HostDeploySecret {
+		if err := recoverDeploySecret(containerName); err != nil && !journalOwned {
+			return fmt.Errorf("existing Control Panel deployment is incomplete and cannot be adopted safely: %w", err)
+		}
+		observation = inspectControlPanel(containerName, appDir)
+	}
+	if !canContinueControlProvisioning(observation, journalOwned) {
+		return fmt.Errorf("existing Control Panel container is an unjournaled ambiguous partial deployment; refusing to overwrite it")
+	}
+	if observation.ready() {
+		util.LogSuccess(fmt.Sprintf("Control Panel container '%s' is complete; reconciling it", containerName))
+		if err := RepairControlPanelPortProxy(containerName, port); err != nil {
+			return fmt.Errorf("failed to repair Control Panel localhost proxy: %w", err)
+		}
+		// A factory reset can reconstruct Incus around an already complete
+		// application container while the host-side provenance file is absent.
+		// Re-resolve and record the exact configured release even when no app
+		// extraction is needed, so appliance health never has to infer identity
+		// from container contents alone.
+		recordControlProvenance(cfg, containerName, appDir)
+		if err := writeControlProvisionJournal(containerName, "control-ready"); err != nil {
+			return err
+		}
+		return nil
+	}
+	if err := writeControlProvisionJournal(containerName, "container-ready"); err != nil {
 		return err
 	}
 
@@ -55,9 +97,15 @@ func DeployControlPanel(cfg *config.Config) error {
 	if err := addPortProxy(containerName, port); err != nil {
 		return err
 	}
+	if err := writeControlProvisionJournal(containerName, "interfaces-ready"); err != nil {
+		return err
+	}
 
 	// Install Node.js
 	if err := installNodeJS(containerName); err != nil {
+		return err
+	}
+	if err := writeControlProvisionJournal(containerName, "runtime-ready"); err != nil {
 		return err
 	}
 
@@ -79,11 +127,15 @@ func DeployControlPanel(cfg *config.Config) error {
 		fmt.Println("You can deploy manually later using 'spine update control'")
 		return err
 	}
+	if err := writeControlProvisionJournal(containerName, "control-ready"); err != nil {
+		return err
+	}
 
 	ip := util.GetPrimaryIP()
 	fmt.Println("\n=== Control Panel Installation Complete ===")
 	fmt.Println("")
-	fmt.Printf("Access Control Panel at: http://%s:%d\n", ip, port)
+	fmt.Printf("Access YouEye through Caddy at: http://%s/ or https://%s/\n", ip, ip)
+	fmt.Printf("Local recovery probe remains available on this host at: http://127.0.0.1:%d\n", port)
 	fmt.Println("")
 
 	return nil
@@ -258,10 +310,9 @@ func setupIncusHTTPS(containerName string) error {
 func addSocketProxies(containerName, spineSocketPath string) error {
 	util.LogStep(3, 7, "Adding socket proxies...")
 
-	// Incus API access over HTTPS (replaces the legacy incus-socket forkproxy,
-	// which copied every API byte in userspace and grew unboundedly — 1.3 GiB
-	// observed on bykapc). The CP connects to the Incus HTTPS API with a trusted
-	// client certificate instead. See plans/platform-ram-and-isolation-master-plan WS3.
+	// Incus API access over HTTPS replaces the legacy incus-socket forkproxy,
+	// which copied every API byte in userspace and could grow without a useful
+	// bound. The CP connects with a trusted client certificate instead.
 	if err := setupIncusHTTPS(containerName); err != nil {
 		util.LogDebug(fmt.Sprintf("Incus HTTPS setup warning: %v", err))
 	}
@@ -303,26 +354,94 @@ func addSocketProxies(containerName, spineSocketPath string) error {
 	return nil
 }
 
+const controlSocketReadinessDropIn = `[Service]
+Environment=SPINE_SOCKET=/var/run/youeye/youeye.sock
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 100); do test -S /var/run/youeye/youeye.sock && exit 0; sleep 0.1; done; echo "YouEye Spine socket was not ready after 10 seconds" >&2; exit 1'
+`
+
+// EnsureControlSocketReadiness makes the canonical proxied Spine socket
+// explicit and prevents Control Panel or Identity from winning the Incus proxy
+// listener startup race. It is called on both fresh deployment and updates so
+// existing units converge to the same contract.
+func EnsureControlSocketReadiness(containerName string) error {
+	encoded := base64.StdEncoding.EncodeToString([]byte(controlSocketReadinessDropIn))
+	script := fmt.Sprintf(`set -eu
+for unit in youeye-control youeye-id; do
+  test -f "/etc/systemd/system/${unit}.service" || continue
+  install -d -m 0755 "/etc/systemd/system/${unit}.service.d"
+  printf %%s %q | base64 -d > "/etc/systemd/system/${unit}.service.d/spine-socket.conf"
+done
+systemctl daemon-reload
+`, encoded)
+	out, err := exec.Command("incus", "exec", containerName, "--", "bash", "-c", script).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("reconcile Control Panel Spine socket readiness: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // addPortProxy adds port proxy to expose the Control Panel.
 func addPortProxy(containerName string, port int) error {
 	util.LogSubStep(fmt.Sprintf("Adding port %d proxy...", port))
-	util.LogDebug(fmt.Sprintf("This exposes the Control Panel on host port %d", port))
+	util.LogDebug(fmt.Sprintf("This exposes the Control Panel on localhost port %d for setup/recovery", port))
 
-	if cmdOut, err := util.RunCmdCapture("incus", "config", "device", "add", containerName, fmt.Sprintf("port%d", port), "proxy",
-		"bind=host",
-		fmt.Sprintf("listen=tcp:0.0.0.0:%d", port),
-		fmt.Sprintf("connect=tcp:127.0.0.1:%d", port)); err != nil {
-		util.LogError(fmt.Sprintf("Failed to add port proxy: %s", strings.TrimSpace(cmdOut)))
-		return fmt.Errorf("failed to add port %d proxy: %w", port, err)
+	if err := RepairControlPanelPortProxy(containerName, port); err != nil {
+		return err
 	}
 
-	util.LogSuccess(fmt.Sprintf("Port %d proxy added", port))
+	util.LogSuccess(fmt.Sprintf("Port %d localhost proxy added", port))
+	return nil
+}
+
+func controlPanelPortProxyArgs(containerName string, port int) []string {
+	return []string{"config", "device", "add", containerName, fmt.Sprintf("port%d", port), "proxy",
+		"bind=host",
+		fmt.Sprintf("listen=tcp:127.0.0.1:%d", port),
+		fmt.Sprintf("connect=tcp:127.0.0.1:%d", port)}
+}
+
+// RepairControlPanelPortProxy makes the raw Control Panel host proxy
+// localhost-only. Existing installs previously exposed this on 0.0.0.0:3000;
+// update/reconcile paths call this to repair that drift in place.
+func RepairControlPanelPortProxy(containerName string, port int) error {
+	deviceName := fmt.Sprintf("port%d", port)
+	_ = exec.Command("incus", "config", "device", "remove", containerName, deviceName).Run()
+
+	if cmdOut, err := util.RunCmdCapture("incus", controlPanelPortProxyArgs(containerName, port)...); err != nil {
+		util.LogError(fmt.Sprintf("Failed to add localhost port proxy: %s", strings.TrimSpace(cmdOut)))
+		return fmt.Errorf("failed to add localhost port %d proxy: %w", port, err)
+	}
+
+	return VerifyControlPanelPortProxy(containerName, port)
+}
+
+func VerifyControlPanelPortProxy(containerName string, port int) error {
+	out, err := util.RunCmdCapture("incus", "config", "device", "show", containerName)
+	if err != nil {
+		return fmt.Errorf("read %s devices: %w: %s", containerName, err, strings.TrimSpace(out))
+	}
+	deviceName := fmt.Sprintf("port%d:", port)
+	wantListen := fmt.Sprintf("listen: tcp:127.0.0.1:%d", port)
+	wantConnect := fmt.Sprintf("connect: tcp:127.0.0.1:%d", port)
+	for _, want := range []string{deviceName, "bind: host", wantListen, wantConnect, "type: proxy"} {
+		if !strings.Contains(out, want) {
+			return fmt.Errorf("%s proxy missing %q", containerName, want)
+		}
+	}
+	if strings.Contains(out, fmt.Sprintf("listen: tcp:0.0.0.0:%d", port)) {
+		return fmt.Errorf("%s proxy still listens on all interfaces", containerName)
+	}
 	return nil
 }
 
 // installNodeJS installs Node.js in the container.
 func installNodeJS(containerName string) error {
 	util.LogStep(4, 7, "Installing Node.js in container...")
+	if exec.Command("incus", "exec", containerName, "--", "sh", "-c",
+		"test -x /usr/bin/node && command -v curl >/dev/null && command -v pamtester >/dev/null").Run() == nil {
+		util.LogSuccess("Node.js and Control Panel prerequisites are already installed")
+		return nil
+	}
 
 	if err := preflightContainerNetwork(containerName); err != nil {
 		return err
@@ -340,7 +459,7 @@ func installNodeJS(containerName string) error {
 
 	util.LogSubStep("Setting random container root password...")
 	containerPassword := util.GenerateRandomPassword(32)
-	if err := util.RunIncusExec(containerName, "bash", "-c", fmt.Sprintf("echo 'root:%s' | chpasswd", containerPassword)); err != nil {
+	if err := setContainerRootPassword(containerName, containerPassword); err != nil {
 		return fmt.Errorf("failed to set container root password in %s: %w", containerName, err)
 	}
 
@@ -362,6 +481,26 @@ func installNodeJS(containerName string) error {
 	return nil
 }
 
+func containerRootPasswordCommand(containerName, password string) *exec.Cmd {
+	cmd := exec.Command("incus", "exec", containerName, "--", "chpasswd")
+	cmd.Stdin = strings.NewReader("root:" + password + "\n")
+	return cmd
+}
+
+func setContainerRootPassword(containerName, password string) error {
+	out, err := containerRootPasswordCommand(containerName, password).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("chpasswd: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+var (
+	containerNetworkPreflightAttempts = 12
+	containerNetworkPreflightDelay    = 2 * time.Second
+	containerNetworkSleep             = time.Sleep
+)
+
 func preflightContainerNetwork(containerName string) error {
 	util.LogSubStep("Verifying container IPv4 networking...")
 
@@ -375,15 +514,34 @@ func preflightContainerNetwork(containerName string) error {
 		{"Debian mirror TCP", "timeout 10 bash -c '</dev/tcp/deb.debian.org/80'"},
 	}
 
-	for _, check := range checks {
-		out, err := exec.Command("incus", "exec", containerName, "--", "bash", "-c", check.cmd).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("container network preflight failed (%s): %w: %s", check.name, err, strings.TrimSpace(string(out)))
+	var lastErr error
+	for attempt := 1; attempt <= containerNetworkPreflightAttempts; attempt++ {
+		lastErr = nil
+		for _, check := range checks {
+			out, err := exec.Command("incus", "exec", containerName, "--", "bash", "-c", check.cmd).CombinedOutput()
+			if err != nil {
+				lastErr = fmt.Errorf("%s: %w: %s", check.name, err, strings.TrimSpace(string(out)))
+				break
+			}
+		}
+		if lastErr == nil {
+			util.LogSuccess("Container IPv4 networking verified")
+			return nil
+		}
+		if attempt < containerNetworkPreflightAttempts {
+			util.LogDebug(fmt.Sprintf("Container network is not ready (attempt %d/%d): %v", attempt, containerNetworkPreflightAttempts, lastErr))
+			containerNetworkSleep(containerNetworkPreflightDelay)
 		}
 	}
 
-	util.LogSuccess("Container IPv4 networking verified")
-	return nil
+	diagnostics, _ := exec.Command("incus", "exec", containerName, "--", "sh", "-c",
+		"printf 'addresses: '; ip -4 -brief addr show dev eth0 2>&1; printf 'routes: '; ip -4 route 2>&1; printf 'resolver: '; tr '\\n' ' ' </etc/resolv.conf 2>&1").CombinedOutput()
+	diagnosticText := strings.TrimSpace(string(diagnostics))
+	if len(diagnosticText) > 4096 {
+		diagnosticText = diagnosticText[:4096]
+	}
+	return fmt.Errorf("container network did not become ready after %d attempts (%v); diagnostics: %s",
+		containerNetworkPreflightAttempts, lastErr, diagnosticText)
 }
 
 // DeployControlPanelApp downloads and deploys the Control Panel application.
@@ -392,9 +550,13 @@ func DeployControlPanelApp(cfg *config.Config) error {
 	appDir := cfg.Deployment.ControlPanel.AppDir
 	port := cfg.Deployment.ControlPanel.Port
 
-	// Get download URL from release assets
+	// Get download URL from release assets.
 	util.LogSubStep("Fetching latest release info...")
-	downloadURL, err := GetControlPanelDownloadURL(cfg)
+	effectiveChannel, err := controlPanelReleaseChannel(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to load release channel: %w", err)
+	}
+	downloadURL, err := releases.AssetURLForChannel(cfg, effectiveChannel, cfg.Releases.Repositories.ControlPanel, "standalone.tar", cfg.Releases.Repositories.ControlPanelTagPrefix)
 	if err != nil {
 		return fmt.Errorf("failed to get download URL: %w", err)
 	}
@@ -427,6 +589,9 @@ func DeployControlPanelApp(cfg *config.Config) error {
 	}
 	util.LogSuccess(fmt.Sprintf("Downloaded %.2f MB", float64(written)/1024/1024))
 	defer os.Remove(tmpFile)
+	if err := releases.VerifySignedReleaseArtifact(client, downloadURL, tmpFile, effectiveChannel.ArtifactSHA256); err != nil {
+		return fmt.Errorf("verify signed Control Panel release artifact: %w", err)
+	}
 
 	// Deploy to container
 	util.LogStep(6, 7, "Deploying to container...")
@@ -535,6 +700,9 @@ WantedBy=multi-user.target
 
 	util.RunIncusExec(containerName, "bash", "-c",
 		fmt.Sprintf("cat > /etc/systemd/system/youeye-id.service << 'EOF'\n%sEOF", identityServiceContent))
+	if err := EnsureControlSocketReadiness(containerName); err != nil {
+		return err
+	}
 
 	// Start service
 	util.LogStep(7, 7, "Starting Control Panel service...")
@@ -576,6 +744,9 @@ WantedBy=multi-user.target
 	version := GetInstalledVersion(containerName, appDir)
 	util.LogSuccess(fmt.Sprintf("Control Panel v%s deployed successfully", version))
 
+	// Record channel provenance for the installed release.
+	recordControlProvenance(cfg, containerName, appDir)
+
 	return nil
 }
 
@@ -595,11 +766,44 @@ func verifyControlPanelArtifact(containerName, appDir string) error {
 	return nil
 }
 
-// GetControlPanelDownloadURL gets the download URL for standalone.tar from the
-// latest release matching the configured release branch. Uses the shared releases
-// package to ensure consistent branch-aware filtering across deploy and update paths.
-func GetControlPanelDownloadURL(cfg *config.Config) (string, error) {
-	return releases.GetAssetURLForBranch(cfg, cfg.Releases.Repositories.ControlPanel, "standalone.tar", cfg.Releases.Repositories.ControlPanelTagPrefix)
+func controlPanelReleaseChannel(cfg *config.Config) (channels.Channel, error) {
+	chCfg, err := channels.Load()
+	if err != nil {
+		return channels.Channel{}, err
+	}
+	return chCfg.Effective(channels.ComponentControl, cfg), nil
+}
+
+// recordControlProvenance records the installed Control Panel release into the
+// core provenance file after a deploy. Resolution failures are non-fatal — the
+// deploy already succeeded — but are logged.
+func recordControlProvenance(cfg *config.Config, containerName, appDir string) {
+	chCfg, err := channels.Load()
+	if err != nil {
+		util.LogDebug(fmt.Sprintf("provenance: load channels failed: %v", err))
+		return
+	}
+	cand, err := releases.ResolveComponent(cfg, channels.ComponentControl, cfg.Releases.Repositories.ControlPanel, cfg.Releases.Repositories.ControlPanelTagPrefix)
+	if err != nil {
+		util.LogDebug(fmt.Sprintf("provenance: resolve control failed: %v", err))
+		return
+	}
+	// Prefer the actually-installed package.json version when available.
+	installedVer := GetInstalledVersion(containerName, appDir)
+	ver := cand.Version
+	if installedVer != "" && installedVer != "unknown" {
+		ver = installedVer
+	}
+	_ = chCfg
+	if err := update.WriteProvenance(channels.ComponentControl, update.ProvenanceEntry{
+		Version:        ver,
+		Tag:            cand.Tag,
+		Branch:         cand.Branch,
+		Source:         cand.Source,
+		ArtifactSHA256: cand.ArtifactSHA256,
+	}); err != nil {
+		util.LogDebug(fmt.Sprintf("provenance: write control failed: %v", err))
+	}
 }
 
 // GetInstalledVersion gets the version from the installed package.json.

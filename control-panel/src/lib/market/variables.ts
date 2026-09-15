@@ -24,6 +24,12 @@
  *   ${sso.client_secret}        - OAuth2 client secret
  *   ${sso.callback_url}         - OAuth2 callback URL
  *   ${sso.logout_url}           - OIDC logout URL
+ *   ${ai.openaiBaseUrl}         - Private Pointer OpenAI-compatible base URL
+ *   ${ai.anthropicBaseUrl}      - Private Pointer Anthropic-compatible base URL
+ *   ${ai.googleBaseUrl}         - Private Pointer Google-compatible base URL
+ *   ${ai.apiKey}                - Per-installation Pointer credential
+ *   ${ai.defaultModel}          - Stable hidden default alias
+ *   ${ai.groupId}               - Exact selected Pointer model group
  *
  * Legacy namespaces still supported:
  *   ${app.id}, ${install.*}, ${secrets.*}, ${container.*},

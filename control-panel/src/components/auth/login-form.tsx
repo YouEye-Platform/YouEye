@@ -59,23 +59,35 @@ export function LoginForm({ initialError = null, settingsFlow = false }: LoginFo
         return;
       }
 
-      startTransition(() => {
-        const host = window.location.host;
-        const hostname = host.split(':')[0];
-        const port = host.split(':')[1];
-        const isIP = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
-        const isDirectControlAccess = (isIP || hostname === 'localhost' || hostname === '127.0.0.1') && port === '3000';
-        const isCaddyAccess = isIP && port !== '3000';
+      const host = window.location.host;
+      const hostname = host.split(':')[0];
+      const port = host.split(':')[1];
+      const isIP = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
+      const isDirectControlAccess = (isIP || hostname === 'localhost' || hostname === '127.0.0.1') && port === '3000';
+      const isCaddyAccess = isIP && port !== '3000';
 
-        if (isCaddyAccess) {
-          router.push('/setup');
-        } else if (isDirectControlAccess) {
-          router.push('/settings/system');
-        } else if (settingsFlow || pathname.startsWith('/settings')) {
-          router.push('/settings');
-        } else {
-          router.push('/');
+      let nextPath = '/';
+      if (isCaddyAccess) {
+        nextPath = '/setup';
+        try {
+          const setupResponse = await fetch('/api/setup/config', { cache: 'no-store' });
+          if (setupResponse.ok) {
+            const setupConfig = await setupResponse.json();
+            nextPath = setupConfig.setup_completed ? '/setup-complete' : '/setup';
+          } else {
+            console.warn(`Setup config check failed after login: HTTP ${setupResponse.status}`);
+          }
+        } catch (setupError) {
+          console.warn('Setup config check failed after login:', setupError);
         }
+      } else if (isDirectControlAccess) {
+        nextPath = '/settings/system';
+      } else if (settingsFlow || pathname.startsWith('/settings')) {
+        nextPath = '/settings';
+      }
+
+      startTransition(() => {
+        router.push(nextPath);
         router.refresh();
       });
     } catch (err) {

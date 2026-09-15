@@ -1,0 +1,16 @@
+[Unit]
+Description=Apply queued YouEye recovery operation
+DefaultDependencies=no
+Requires=youeye-appliance-storage.service
+After=youeye-appliance-storage.service
+Before=youeye-appliance-incus-sockets.service incus.socket incus-user.socket incus.service youeye.service youeye-first-deploy.service
+ConditionPathExists=/usr/lib/youeye/appliance-release
+ConditionPathExists=/var/lib/youeye-state/recovery/request.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/youeye-recovery-apply
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

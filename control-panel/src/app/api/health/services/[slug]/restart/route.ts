@@ -14,6 +14,7 @@ const SLUG_TO_CONTAINER: Record<string, string> = {
   pihole: 'youeye-pihole',
   caddy: 'youeye-caddy',
   postgres: 'youeye-postgres',
+  pointer: 'youeye-pointer',
 };
 
 export async function POST(

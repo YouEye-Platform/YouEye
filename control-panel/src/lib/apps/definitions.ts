@@ -36,6 +36,8 @@ export interface AppDefinition {
   marketSystemId?: 'postgresql' | 'caddy' | 'pihole';
   /** Who performs the update */
   updatedBy: 'control-panel' | 'spine';
+  /** Per-app release channel used by a statically defined native app. */
+  releaseChannelKey?: `app:${string}`;
   /** Web UI port inside the container (if applicable) */
   webPort?: number;
   /** LXD app configuration for updates (required when type=lxd and updatedBy=control-panel) */
@@ -46,6 +48,10 @@ export interface AppDefinition {
     appDir: string;
     serviceName: string;
     healthEndpoint?: string;
+    /** Safe, credential-free command run after replacement and before restart. */
+    migrationCommand?: string;
+    /** Next.js standalone bundles need styled-jsx repaired; other runtimes do not. */
+    installStyledJsx?: boolean;
   };
   /** Links to existing management pages (temporary) */
   managementLinks?: Array<{ label: string; href: string }>;
@@ -156,6 +162,27 @@ export const APP_DEFINITIONS: AppDefinition[] = [
       serviceName: 'youeye-ui',
       healthEndpoint: '/api/health',
     },
+  },
+  {
+    id: 'pointer',
+    displayName: 'YouEye AI',
+    description: 'Personal AI accounts, model routes, instances, and API keys',
+    icon: 'Sparkles',
+    category: 'infrastructure',
+    type: 'lxd',
+    containers: [{ name: 'youeye-pointer', canControl: true }],
+    updatedBy: 'control-panel',
+    releaseChannelKey: 'app:pointer',
+    webPort: 4001,
+    lxdConfig: {
+      giteaRepo: 'Pointer',
+      appDir: '/opt/pointer',
+      serviceName: 'youeye-pointer',
+      healthEndpoint: '/readyz',
+      migrationCommand: 'set -a; . /etc/youeye-pointer.env; set +a; /opt/pointer/bun /opt/pointer/migrate.js --expect-database pointer',
+      installStyledJsx: false,
+    },
+    managementLinks: [{ label: 'AI Settings', href: '/settings/ai' }],
   },
 
 ];

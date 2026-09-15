@@ -3,12 +3,13 @@
  *
  * Pointer-based drag for an icon grid, replacing HTML5 native DnD (which is
  * drop-only, has no live reflow, and can't be driven by tests). Gives:
- *  - **live reorder**: while dragging, the item moves to the hovered item's
- *    index every frame, so the grid reflows live;
+ *  - **live reorder**: while dragging, the item moves to a deliberately
+ *    hovered item's index, so passing across an icon does not instantly push
+ *    the intended folder target out of the way;
  *  - a "lifted" ghost the caller renders at `ghost` (portal it to body to escape
  *    backdrop-filter containing blocks);
- *  - **dwell-to-merge**: pausing ~450ms over a mergeable item highlights it
- *    (`mergeTargetId`); releasing there fires `onMerge` (folder create/add).
+ *  - **center-to-merge**: the central area of a mergeable target highlights
+ *    immediately (`mergeTargetId`); releasing there fires `onMerge`.
  *
  * A press that doesn't move past the threshold stays a click — call
  * `consumeClick()` at the top of the tile's onClick to swallow the click that
@@ -17,7 +18,8 @@
 
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { classifyGridPointer } from "./grid-drag-geometry.mjs";
 
 /** Minimal shape of a pointer event (avoids depending on the React namespace in a .ts file). */
 type PointerLike = { clientX: number; clientY: number; button?: number; pointerId?: number };
@@ -32,9 +34,10 @@ export interface UseGridDragOptions {
   onCommit?: () => void;
   /** Whether `draggedId` may merge into `targetId` (e.g. app→app or app→folder). */
   canMerge?: (draggedId: string, targetId: string) => boolean;
-  /** Fired on drop over a dwelled merge target. */
+  /** Fired on drop over the central area of a merge target. */
   onMerge?: (draggedId: string, targetId: string) => void;
-  dwellMs?: number;
+  /** Delay before an edge hover reorders. Lets a pointer cross into the merge centre first. */
+  reorderDelayMs?: number;
 }
 
 export interface GridDragState {
@@ -56,13 +59,17 @@ export function useGridDrag(opts: UseGridDragOptions): GridDragState {
 
   const els = useRef(new Map<string, HTMLElement>());
   const optsRef = useRef(opts);
-  optsRef.current = opts;
+  useEffect(() => {
+    optsRef.current = opts;
+  }, [opts]);
 
   const pending = useRef<{ id: string; x: number; y: number } | null>(null);
   const active = useRef(false);
   const mergeRef = useRef<string | null>(null);
-  const dwell = useRef<{ id: string | null; t: ReturnType<typeof setTimeout> | null }>({ id: null, t: null });
+  const reorderDwell = useRef<{ id: string | null; t: ReturnType<typeof setTimeout> | null }>({ id: null, t: null });
   const suppressClick = useRef(false);
+  const onUpRef = useRef<() => void>(() => {});
+  const onUpEvent = useCallback(() => onUpRef.current(), []);
 
   // Stable ref-callback per id (avoids churn while the grid re-renders during a drag).
   const refCbs = useRef(new Map<string, (el: HTMLElement | null) => void>());
@@ -80,9 +87,9 @@ export function useGridDrag(opts: UseGridDragOptions): GridDragState {
     return false;
   }, []);
 
-  const clearDwell = () => {
-    if (dwell.current.t) clearTimeout(dwell.current.t);
-    dwell.current = { id: null, t: null };
+  const clearReorderDwell = () => {
+    if (reorderDwell.current.t) clearTimeout(reorderDwell.current.t);
+    reorderDwell.current = { id: null, t: null };
   };
 
   const onMove = useCallback((e: PointerEvent | MouseEvent) => {
@@ -96,48 +103,57 @@ export function useGridDrag(opts: UseGridDragOptions): GridDragState {
     setGhost({ x: e.clientX, y: e.clientY });
 
     const o = optsRef.current;
-    let overId: string | null = null;
-    let center = false;
+    const rects = [];
     for (const [id, el] of els.current) {
-      if (id === p.id) continue;
       const r = el.getBoundingClientRect();
-      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
-        overId = id;
-        const cx = r.left + r.width / 2;
-        const cy = r.top + r.height / 2;
-        center = Math.abs(e.clientX - cx) <= r.width * 0.3 && Math.abs(e.clientY - cy) <= r.height * 0.3;
-        break;
-      }
+      rects.push({ id, left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height });
+    }
+    const decision = classifyGridPointer(
+      p.id,
+      e.clientX,
+      e.clientY,
+      rects,
+      o.order,
+      (draggedId, targetId) => !!o.onMerge && (o.canMerge ? o.canMerge(draggedId, targetId) : true),
+    );
+
+    if (decision.kind === "merge") {
+      clearReorderDwell();
+      mergeRef.current = decision.targetId;
+      setMergeTargetId(decision.targetId);
+      return;
     }
 
-    if (overId) {
-      const mergeable = !!o.onMerge && (o.canMerge ? o.canMerge(p.id, overId) : true);
-      if (mergeable && center) {
-        if (dwell.current.id !== overId) {
-          clearDwell();
-          const target = overId;
-          dwell.current.id = target;
-          dwell.current.t = setTimeout(() => { mergeRef.current = target; setMergeTargetId(target); }, o.dwellMs ?? 450);
-        }
-      } else {
-        clearDwell();
-        if (mergeRef.current) { mergeRef.current = null; setMergeTargetId(null); }
-        const idx = o.order.indexOf(overId);
-        if (idx >= 0) o.onReorder(p.id, idx);
+    if (mergeRef.current) { mergeRef.current = null; setMergeTargetId(null); }
+    if (decision.kind === "reorder") {
+      if (reorderDwell.current.id === decision.targetId) return;
+      clearReorderDwell();
+      const delay = o.reorderDelayMs ?? 0;
+      if (delay <= 0) {
+        o.onReorder(p.id, decision.toIndex);
+        return;
       }
+      const targetId = decision.targetId;
+      reorderDwell.current.id = targetId;
+      reorderDwell.current.t = setTimeout(() => {
+        const latest = optsRef.current;
+        const toIndex = latest.order.indexOf(targetId);
+        if (toIndex >= 0 && pending.current?.id === p.id) latest.onReorder(p.id, toIndex);
+        reorderDwell.current = { id: null, t: null };
+      }, delay);
     } else {
-      clearDwell();
+      clearReorderDwell();
       if (mergeRef.current) { mergeRef.current = null; setMergeTargetId(null); }
     }
   }, []);
 
   const onUp = useCallback(() => {
     window.removeEventListener("pointermove", onMove);
-    window.removeEventListener("pointerup", onUp);
-    window.removeEventListener("pointercancel", onUp);
+    window.removeEventListener("pointerup", onUpEvent);
+    window.removeEventListener("pointercancel", onUpEvent);
     window.removeEventListener("mousemove", onMove);
-    window.removeEventListener("mouseup", onUp);
-    clearDwell();
+    window.removeEventListener("mouseup", onUpEvent);
+    clearReorderDwell();
     const o = optsRef.current;
     const p = pending.current;
     if (active.current && p) {
@@ -151,7 +167,10 @@ export function useGridDrag(opts: UseGridDragOptions): GridDragState {
     setDraggingId(null);
     setGhost(null);
     setMergeTargetId(null);
-  }, [onMove]);
+  }, [onMove, onUpEvent]);
+  useEffect(() => {
+    onUpRef.current = onUp;
+  }, [onUp]);
 
   const startDrag = useCallback((e: PointerLike, id: string) => {
     if (optsRef.current.enabled === false) return;
@@ -171,11 +190,11 @@ export function useGridDrag(opts: UseGridDragOptions): GridDragState {
     // Listen for both pointer and mouse streams (mouse is the fallback for
     // environments — incl. some automation — that don't emit pointer events).
     window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
+    window.addEventListener("pointerup", onUpEvent);
+    window.addEventListener("pointercancel", onUpEvent);
     window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  }, [onMove, onUp]);
+    window.addEventListener("mouseup", onUpEvent);
+  }, [onMove, onUpEvent]);
 
   return { draggingId, ghost, mergeTargetId, register, startDrag, consumeClick };
 }

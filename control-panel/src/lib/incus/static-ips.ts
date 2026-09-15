@@ -18,6 +18,7 @@ export const SYSTEM_IP_OFFSETS: Record<string, number> = {
   'youeye-pihole': 14,
   'youeye-ui': 15,
   'youeye-control': 16,
+  'youeye-pointer': 17,
 };
 
 /** Cached subnet base to avoid repeated API calls. */
@@ -77,6 +78,18 @@ export async function applyStaticIP(containerName: string): Promise<void> {
         'ipv4.address': ip,
       },
     },
+  });
+
+  // Static leases do not create dnsmasq lease records. Reconcile explicit
+  // system host records here as well as in Spine so a newly introduced core
+  // service is resolvable immediately on an existing appliance update.
+  const base = await getSubnetBase();
+  const rawDnsmasq = Object.entries(SYSTEM_IP_OFFSETS)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, offset]) => `host-record=${name}.youeye,${base}.${offset}`)
+    .join('\n');
+  await incusRequest('PATCH', '/1.0/networks/incusbr0', {
+    config: { 'raw.dnsmasq': rawDnsmasq },
   });
 
   console.log(`[static-ips] Assigned ${ip} to ${containerName}`);

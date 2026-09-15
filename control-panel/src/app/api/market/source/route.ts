@@ -43,7 +43,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'repo_url or active_sources is required' }, { status: 400 });
     }
 
-    const source = await setMarketSource(body.repo_url);
+    const source = await setMarketSource(body.repo_url, typeof body.branch === 'string' ? body.branch : undefined);
     clearCatalogCache();
     return NextResponse.json({ status: 'ok', source });
   } catch (error) {

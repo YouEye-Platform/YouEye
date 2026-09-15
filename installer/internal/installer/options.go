@@ -1,333 +1,252 @@
 package installer
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
-	"path"
-	"strconv"
 	"strings"
 )
 
 const (
-	DefaultCoreRepoURL     = "https://github.com/youeye-platform/YouEye"
-	DefaultMarketRepoURL   = "https://github.com/youeye-platform/Market"
-	DefaultReleaseChannel  = "main"
-	InstallerVersion       = "0.5.2"
-	defaultInstallerMode   = "auto"
-	defaultInstallerBranch = "main"
+	InstallerVersion              = "0.5.6.0.2.17"
+	defaultApplianceArtifactRoot  = "/run/youeye-appliance/artifacts"
+	defaultApplianceManifestPath  = defaultApplianceArtifactRoot + "/appliance-manifest.json"
+	defaultApplianceSignaturePath = defaultApplianceArtifactRoot + "/appliance-manifest.json.sig"
+	defaultApplianceTrustKeyPath  = "/usr/share/youeye/appliance-development.pub"
+	defaultApplianceProvider      = "github"
+	defaultApplianceReleasesAPI   = "https://api.github.com/repos/YouEye-Platform/YouEye/releases"
 )
 
-// CLIOptions holds command-line overrides shared by the interactive TUI and
-// silent installer.
+type InstallerMode string
+
+const (
+	InstallerModeInstall InstallerMode = "install"
+	InstallerModeProxmox InstallerMode = "proxmox"
+	InstallerModeNetwork InstallerMode = "network"
+	InstallerModeAccess  InstallerMode = "development-access"
+	InstallerModeConsole InstallerMode = "console"
+)
+
+// CLIOptions covers the two supported installer surfaces: booted signed media
+// and Proxmox provisioning of that exact media. The retired mutable-host and
+// Debian-cloud-VM installers are intentionally absent.
 type CLIOptions struct {
-	Silent bool
-	Yes    bool
+	Silent  bool
+	Yes     bool
+	Command string
+	Mode    string
 
-	Mode           string
-	CoreRepoURL    string
-	MarketRepoURL  string
-	ReleaseChannel string
+	ContainerID   string
+	Hostname      string
+	NetworkBridge string
+	CPUCores      int
+	RAMMB         int
 
-	ContainerID      string
-	Hostname         string
-	StoragePool      string
-	NetworkBridge    string
-	CPUCores         int
-	RAMMB            int
-	DiskGB           int
-	IncusZFSGB       int
-	IncusZFSGBSet    bool
-	RootPasswordFile string
-	RootPassword     string
-	NamesBundlePath  string
-	DomainBundlePath string
+	ApplianceSeedPath      string
+	ApplianceAnswerPath    string
+	ApplianceManifestPath  string
+	ApplianceSignaturePath string
+	ApplianceTrustKeyPath  string
+	ApplianceTargetDisk    string
+	ApplianceTargetDiskGB  int
+	AppliancePlanOnly      bool
+
+	ProxmoxOperation         string
+	ProxmoxTargetStorage     string
+	ProxmoxISOStorage        string
+	ProxmoxTargetDiskGB      int
+	ProxmoxNetworkMode       string
+	ProxmoxAddress           string
+	ProxmoxGateway           string
+	ProxmoxDNS               string
+	ProxmoxImportHostSSHKeys bool
+	ProxmoxSSHKeysPath       string
+	ProxmoxEraseConfirmed    bool
+	ApplianceChannel         string
+	ApplianceReleaseBranch   string
+	ApplianceFreshness       string
+	ApplianceReleaseTag      string
+	ApplianceISOSHA256       string
+	InstallerBootstrapSHA256 string
+	ApplianceReleaseProvider string
+	ApplianceReleasesAPI     string
+	ConsoleKind              string
 }
 
-// ParseOptions parses installer flags. It intentionally uses only the stdlib
-// flag package so the public bootstrap stays small and predictable.
-func ParseOptions(args []string, stdin io.Reader, stderr io.Writer) (CLIOptions, error) {
+func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, error) {
+	commandArg := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		commandArg, args = args[0], args[1:]
+	}
+	provider := envOrDefault("YOUEYE_INSTALLER_PROVIDER", defaultApplianceProvider)
+	releasesAPI := strings.TrimSpace(os.Getenv("YOUEYE_INSTALLER_RELEASES_API"))
+	if releasesAPI == "" && strings.EqualFold(provider, defaultApplianceProvider) {
+		releasesAPI = defaultApplianceReleasesAPI
+	}
 	opts := CLIOptions{
-		Mode:           envOrDefault("YOUEYE_INSTALL_MODE", defaultInstallerMode),
-		CoreRepoURL:    envOrDefault("YOUEYE_CORE_REPO", DefaultCoreRepoURL),
-		MarketRepoURL:  envOrDefault("YOUEYE_MARKET_REPO", DefaultMarketRepoURL),
-		ReleaseChannel: envOrDefault("YOUEYE_RELEASE_CHANNEL", DefaultReleaseChannel),
+		Mode:                     "auto",
+		ProxmoxOperation:         "create",
+		ProxmoxTargetDiskGB:      128,
+		ProxmoxNetworkMode:       "dhcp",
+		ProxmoxImportHostSSHKeys: true,
+		ApplianceChannel:         "stable",
+		ApplianceFreshness:       "require-current",
+		ApplianceReleaseProvider: provider,
+		ApplianceReleasesAPI:     releasesAPI,
 	}
 
 	fs := flag.NewFlagSet("youeye-installer", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.BoolVar(&opts.Silent, "silent", false, "run without the interactive TUI")
+	fs.BoolVar(&opts.Silent, "silent", false, "run without the interactive interface")
 	fs.BoolVar(&opts.Yes, "yes", false, "confirm a silent installation")
-	fs.StringVar(&opts.Mode, "mode", opts.Mode, "install mode: auto, proxmox-vm, or host")
-	fs.StringVar(&opts.CoreRepoURL, "core-repo", opts.CoreRepoURL, "core YouEye release repository")
-	fs.StringVar(&opts.MarketRepoURL, "market-repo", opts.MarketRepoURL, "Market catalog repository")
-	fs.StringVar(&opts.ReleaseChannel, "release-channel", opts.ReleaseChannel, "release channel/branch")
-	fs.StringVar(&opts.ReleaseChannel, "branch", opts.ReleaseChannel, "alias for --release-channel")
+	fs.StringVar(&opts.Mode, "mode", opts.Mode, "compatibility selector: install or proxmox")
 	fs.StringVar(&opts.ContainerID, "vmid", "", "Proxmox VM ID")
 	fs.StringVar(&opts.ContainerID, "id", "", "alias for --vmid")
-	fs.StringVar(&opts.Hostname, "hostname", "", "installed host/VM hostname")
-	fs.StringVar(&opts.StoragePool, "storage", "", "Proxmox storage pool")
+	fs.StringVar(&opts.Hostname, "hostname", "", "Proxmox VM name")
 	fs.StringVar(&opts.NetworkBridge, "bridge", "", "Proxmox network bridge")
 	fs.IntVar(&opts.CPUCores, "cpu", 0, "CPU cores")
 	fs.IntVar(&opts.RAMMB, "memory", 0, "memory in MiB")
-	fs.IntVar(&opts.DiskGB, "disk", 0, "disk size in GiB")
-	fs.IntVar(&opts.IncusZFSGB, "incus-zfs-disk", 0, "dedicated Incus ZFS disk size in GiB for Proxmox VMs; 0 disables")
-	fs.StringVar(&opts.RootPasswordFile, "root-password-file", "", "read VM root password from file")
-	rootPasswordStdin := fs.Bool("root-password-stdin", false, "read VM root password from stdin")
-	fs.StringVar(&opts.NamesBundlePath, "names-bundle", "", "YouEye Names export bundle to reuse")
-	fs.StringVar(&opts.DomainBundlePath, "domain-bundle", "", "BYO domain export bundle to reuse")
+
+	fs.StringVar(&opts.ApplianceSeedPath, "seed", "", "Infra automation seed JSON")
+	fs.StringVar(&opts.ApplianceAnswerPath, "answer", "", "non-secret installer answer JSON")
+	fs.StringVar(&opts.ApplianceManifestPath, "manifest", "", "signed installer manifest JSON")
+	fs.StringVar(&opts.ApplianceSignaturePath, "signature", "", "detached installer manifest signature")
+	fs.StringVar(&opts.ApplianceTrustKeyPath, "trust-key", "", "trusted Ed25519 installer public key")
+	fs.StringVar(&opts.ApplianceTargetDisk, "target-disk", "", "installation drive path for plan-only validation")
+	fs.IntVar(&opts.ApplianceTargetDiskGB, "target-disk-size-gb", 0, "installation drive size in GiB for plan-only validation")
+	fs.BoolVar(&opts.AppliancePlanOnly, "plan-only", false, "verify and print the disk plan without writing")
+
+	fs.StringVar(&opts.ProxmoxOperation, "operation", opts.ProxmoxOperation, "Proxmox operation: create or reinstall")
+	fs.StringVar(&opts.ProxmoxTargetStorage, "target-storage", "", "Proxmox storage for the installation drive")
+	fs.StringVar(&opts.ProxmoxISOStorage, "iso-storage", "", "Proxmox ISO-capable storage")
+	fs.IntVar(&opts.ProxmoxTargetDiskGB, "target-disk-gb", opts.ProxmoxTargetDiskGB, "installation drive size in GiB")
+	fs.StringVar(&opts.ProxmoxNetworkMode, "network-mode", opts.ProxmoxNetworkMode, "guest network mode: dhcp or static")
+	fs.StringVar(&opts.ProxmoxAddress, "address", "", "static guest IPv4 address in CIDR form")
+	fs.StringVar(&opts.ProxmoxGateway, "gateway", "", "static guest IPv4 gateway")
+	fs.StringVar(&opts.ProxmoxDNS, "dns", "", "static guest IPv4 DNS server")
+	fs.BoolVar(&opts.ProxmoxImportHostSSHKeys, "import-host-ssh-keys", opts.ProxmoxImportHostSSHKeys, "import Proxmox root public keys")
+	fs.StringVar(&opts.ProxmoxSSHKeysPath, "ssh-keys-file", "", "additional public SSH keys file")
+	fs.BoolVar(&opts.ProxmoxEraseConfirmed, "erase-confirmed", false, "confirm destructive reinstall disk erasure")
+	fs.StringVar(&opts.ApplianceChannel, "channel", opts.ApplianceChannel, "signed image track: stable, development, branch, or exact")
+	fs.StringVar(&opts.ApplianceReleaseBranch, "release-branch", "", "signed branch-associated release track (never a raw branch checkout)")
+	fs.StringVar(&opts.ApplianceFreshness, "freshness", opts.ApplianceFreshness, "first-boot policy: require-current or prefer-current")
+	fs.StringVar(&opts.ApplianceReleaseTag, "release-tag", "", "exact image release tag")
+	fs.StringVar(&opts.ApplianceISOSHA256, "iso-sha256", "", "required ISO SHA-256 for exact selection")
+	fs.StringVar(&opts.InstallerBootstrapSHA256, "installer-sha256", "", "signed Installer binary SHA-256 used by the bootstrap")
+	fs.StringVar(&opts.ApplianceReleaseProvider, "provider", opts.ApplianceReleaseProvider, "release provider: github, forgejo, or custom")
+	fs.StringVar(&opts.ApplianceReleasesAPI, "releases-api", opts.ApplianceReleasesAPI, "HTTPS image releases API (required for Forgejo or custom)")
+	fs.StringVar(&opts.ConsoleKind, "console-kind", "physical", "local status console kind: physical or serial")
 
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "incus-zfs-disk" {
-			opts.IncusZFSGBSet = true
-		}
-	})
-
-	if opts.RootPasswordFile != "" {
-		data, err := os.ReadFile(opts.RootPasswordFile)
-		if err != nil {
-			return opts, fmt.Errorf("reading --root-password-file: %w", err)
-		}
-		opts.RootPassword = strings.TrimRight(string(data), "\r\n")
+	if commandArg == "" && len(fs.Args()) == 1 {
+		commandArg = fs.Args()[0]
+	} else if len(fs.Args()) > 0 {
+		return opts, fmt.Errorf("unexpected installer arguments: %s", strings.Join(fs.Args(), " "))
 	}
-	if *rootPasswordStdin {
-		data, err := io.ReadAll(stdin)
-		if err != nil {
-			return opts, fmt.Errorf("reading --root-password-stdin: %w", err)
+	if commandArg != "" {
+		opts.Command = strings.ToLower(strings.TrimSpace(commandArg))
+		switch opts.Command {
+		case "install":
+			opts.Mode = "install"
+		case "proxmox":
+			opts.Mode = "proxmox"
+		case "network":
+			opts.Mode = "network"
+		case "development-access":
+			opts.Mode = "development-access"
+		case "console":
+			opts.Mode = "console"
+		default:
+			return opts, fmt.Errorf("unsupported installer command %q (use install, proxmox, network, or development-access)", commandArg)
 		}
-		opts.RootPassword = strings.TrimRight(string(data), "\r\n")
 	}
-
-	opts.CoreRepoURL = normalizeRepoURL(opts.CoreRepoURL)
-	opts.MarketRepoURL = normalizeRepoURL(opts.MarketRepoURL)
-	opts.ReleaseChannel = normalizeReleaseChannel(opts.ReleaseChannel)
-	if opts.Mode == "" {
-		opts.Mode = defaultInstallerMode
+	opts.Mode = strings.ToLower(strings.TrimSpace(opts.Mode))
+	opts.ProxmoxOperation = strings.ToLower(strings.TrimSpace(opts.ProxmoxOperation))
+	opts.ProxmoxNetworkMode = strings.ToLower(strings.TrimSpace(opts.ProxmoxNetworkMode))
+	opts.ApplianceChannel = strings.ToLower(strings.TrimSpace(opts.ApplianceChannel))
+	opts.ApplianceReleaseBranch = strings.TrimSpace(opts.ApplianceReleaseBranch)
+	opts.ApplianceFreshness = strings.ToLower(strings.TrimSpace(opts.ApplianceFreshness))
+	opts.ApplianceReleaseTag = strings.TrimSpace(opts.ApplianceReleaseTag)
+	opts.ApplianceISOSHA256 = strings.ToLower(strings.TrimSpace(opts.ApplianceISOSHA256))
+	opts.InstallerBootstrapSHA256 = strings.ToLower(strings.TrimSpace(opts.InstallerBootstrapSHA256))
+	opts.ApplianceReleaseProvider = strings.ToLower(strings.TrimSpace(opts.ApplianceReleaseProvider))
+	opts.ApplianceReleasesAPI = strings.TrimSpace(opts.ApplianceReleasesAPI)
+	opts.ConsoleKind = strings.ToLower(strings.TrimSpace(opts.ConsoleKind))
+	if opts.ApplianceReleaseProvider == "" {
+		opts.ApplianceReleaseProvider = defaultApplianceProvider
 	}
-
+	if opts.ApplianceReleasesAPI == "" && opts.ApplianceReleaseProvider == defaultApplianceProvider {
+		opts.ApplianceReleasesAPI = defaultApplianceReleasesAPI
+	}
 	return opts, nil
 }
 
+func SelectedInstallerMode(opts CLIOptions) (InstallerMode, error) {
+	switch opts.Mode {
+	case "install":
+		return InstallerModeInstall, nil
+	case "proxmox":
+		return InstallerModeProxmox, nil
+	case "network":
+		return InstallerModeNetwork, nil
+	case "development-access":
+		return InstallerModeAccess, nil
+	case "console":
+		if opts.ConsoleKind != "physical" && opts.ConsoleKind != "serial" {
+			return "", fmt.Errorf("unsupported console kind %q", opts.ConsoleKind)
+		}
+		return InstallerModeConsole, nil
+	case "", "auto":
+		return "", fmt.Errorf("choose an installer target: youeye-installer install or youeye-installer proxmox")
+	case "host", "baremetal", "linux", "vm", "proxmox-vm":
+		return "", fmt.Errorf("the mutable-host installer was retired; use the signed ISO directly or the proxmox command")
+	default:
+		return "", fmt.Errorf("unsupported --mode %q", opts.Mode)
+	}
+}
+
+func IsProxmoxMode(opts CLIOptions) bool {
+	mode, err := SelectedInstallerMode(opts)
+	return err == nil && mode == InstallerModeProxmox
+}
+
+func configFromOptions(opts CLIOptions) installConfig {
+	cfg := newConfig()
+	if opts.ApplianceSeedPath != "" {
+		cfg.ApplianceSeedPath = opts.ApplianceSeedPath
+	}
+	if opts.ApplianceAnswerPath != "" {
+		cfg.ApplianceAnswerPath = opts.ApplianceAnswerPath
+	}
+	if opts.ApplianceManifestPath != "" {
+		cfg.ApplianceManifestPath = opts.ApplianceManifestPath
+	}
+	if opts.ApplianceSignaturePath != "" {
+		cfg.ApplianceSignaturePath = opts.ApplianceSignaturePath
+	}
+	if opts.ApplianceTrustKeyPath != "" {
+		cfg.ApplianceTrustKeyPath = opts.ApplianceTrustKeyPath
+	}
+	if opts.ApplianceTargetDisk != "" {
+		cfg.ApplianceTargetDisk = opts.ApplianceTargetDisk
+	}
+	if opts.ApplianceTargetDiskGB > 0 {
+		cfg.ApplianceTargetDiskGB = opts.ApplianceTargetDiskGB
+	}
+	cfg.AppliancePlanOnly = opts.AppliancePlanOnly
+	return cfg
+}
+
 func envOrDefault(name, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-		return v
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
 	}
 	return fallback
 }
 
-func normalizeReleaseChannel(channel string) string {
-	channel = strings.TrimSpace(channel)
-	if channel == "" {
-		return DefaultReleaseChannel
-	}
-	return channel
-}
-
-func normalizeRepoURL(repoURL string) string {
-	repoURL = strings.TrimSpace(repoURL)
-	repoURL = strings.TrimRight(repoURL, "/")
-	repoURL = strings.TrimSuffix(repoURL, ".git")
-	return repoURL
-}
-
-func applyOptionsToConfig(cfg *installConfig, opts CLIOptions) {
-	if opts.CoreRepoURL != "" {
-		cfg.CoreRepoURL = normalizeRepoURL(opts.CoreRepoURL)
-	}
-	if opts.MarketRepoURL != "" {
-		cfg.MarketRepoURL = normalizeRepoURL(opts.MarketRepoURL)
-	}
-	if opts.ReleaseChannel != "" {
-		cfg.ReleaseChannel = normalizeReleaseChannel(opts.ReleaseChannel)
-	}
-	if opts.ContainerID != "" {
-		cfg.ContainerID = opts.ContainerID
-	}
-	if opts.Hostname != "" {
-		cfg.Hostname = opts.Hostname
-	}
-	if opts.StoragePool != "" {
-		cfg.StoragePool = opts.StoragePool
-	}
-	if opts.NetworkBridge != "" {
-		cfg.NetworkBridge = opts.NetworkBridge
-	}
-	if opts.CPUCores > 0 {
-		cfg.CPUCores = opts.CPUCores
-	}
-	if opts.RAMMB > 0 {
-		cfg.RAMMB = opts.RAMMB
-	}
-	if opts.DiskGB > 0 {
-		cfg.DiskGB = opts.DiskGB
-	}
-	if opts.IncusZFSGBSet {
-		cfg.IncusZFSGB = opts.IncusZFSGB
-	}
-	if opts.RootPassword != "" {
-		cfg.RootPassword = opts.RootPassword
-	}
-	if opts.NamesBundlePath != "" {
-		cfg.NamesBundlePath = opts.NamesBundlePath
-	}
-	if opts.DomainBundlePath != "" {
-		cfg.DomainBundlePath = opts.DomainBundlePath
-	}
-}
-
-func configFromEnvAndOptions(env envInfo, opts CLIOptions) (installConfig, error) {
-	cfg := newConfigFromEnv(env)
-	applyOptionsToConfig(&cfg, opts)
-
-	switch opts.Mode {
-	case "", "auto":
-		if env.IsProxmox {
-			cfg.Mode = modeVM
-		} else {
-			cfg.Mode = modeHost
-		}
-	case "proxmox-vm", "vm":
-		cfg.Mode = modeVM
-	case "host", "baremetal", "linux":
-		cfg.Mode = modeHost
-	default:
-		return cfg, fmt.Errorf("unsupported --mode %q (use auto, proxmox-vm, or host)", opts.Mode)
-	}
-
-	return cfg, nil
-}
-
-func validateConfigSources(cfg installConfig) error {
-	if _, err := parseRepoURL(cfg.CoreRepoURL); err != nil {
-		return fmt.Errorf("core repo: %w", err)
-	}
-	if _, err := parseRepoURL(cfg.MarketRepoURL); err != nil {
-		return fmt.Errorf("market repo: %w", err)
-	}
-	return nil
-}
-
-type repoRef struct {
-	Provider     string
-	BaseURL      string
-	Organization string
-	Repository   string
-}
-
-func parseRepoURL(repoURL string) (repoRef, error) {
-	trimmed := normalizeRepoURL(repoURL)
-	if trimmed == "" {
-		return repoRef{}, fmt.Errorf("repository URL is required")
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil {
-		return repoRef{}, fmt.Errorf("must be a valid URL")
-	}
-	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return repoRef{}, fmt.Errorf("must start with http:// or https://")
-	}
-	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-		return repoRef{}, fmt.Errorf("must include owner and repository")
-	}
-	base := parsed.Scheme + "://" + parsed.Host
-	provider := "gitea"
-	if strings.EqualFold(parsed.Hostname(), "github.com") {
-		provider = "github"
-	}
-	return repoRef{
-		Provider:     provider,
-		BaseURL:      base,
-		Organization: parts[0],
-		Repository:   strings.TrimSuffix(parts[1], ".git"),
-	}, nil
-}
-
-func rawFileURL(repoURL, channel, filePath string) (string, error) {
-	ref, err := parseRepoURL(repoURL)
-	if err != nil {
-		return "", err
-	}
-	branch := normalizeReleaseChannel(channel)
-	cleanPath := path.Clean(strings.TrimPrefix(filePath, "/"))
-	if ref.Provider == "github" {
-		return fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s", ref.Organization, ref.Repository, url.PathEscape(branch), cleanPath), nil
-	}
-	return fmt.Sprintf("%s/%s/%s/raw/branch/%s/%s", ref.BaseURL, ref.Organization, ref.Repository, url.PathEscape(branch), cleanPath), nil
-}
-
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
-type marketSourceRecord struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	RepoURL      string `json:"repo_url"`
-	Enabled      bool   `json:"enabled"`
-	Priority     int    `json:"priority"`
-	Trust        string `json:"trust"`
-	Provider     string `json:"provider"`
-	BaseURL      string `json:"base_url"`
-	APIPath      string `json:"api_path"`
-	Organization string `json:"organization"`
-	Repository   string `json:"repository"`
-}
-
-func marketSourceRecordFor(repoURL string) (marketSourceRecord, error) {
-	ref, err := parseRepoURL(repoURL)
-	if err != nil {
-		return marketSourceRecord{}, err
-	}
-	apiPath := "/api/v1"
-	if ref.Provider == "github" {
-		apiPath = ""
-	}
-	return marketSourceRecord{
-		ID:           "official",
-		Name:         "Official YouEye Market",
-		RepoURL:      fmt.Sprintf("%s/%s/%s", ref.BaseURL, ref.Organization, ref.Repository),
-		Enabled:      true,
-		Priority:     0,
-		Trust:        "official",
-		Provider:     ref.Provider,
-		BaseURL:      ref.BaseURL,
-		APIPath:      apiPath,
-		Organization: ref.Organization,
-		Repository:   ref.Repository,
-	}, nil
-}
-
-func marketSourceJSON(repoURL string) ([]byte, []byte, error) {
-	source, err := marketSourceRecordFor(repoURL)
-	if err != nil {
-		return nil, nil, err
-	}
-	legacy, err := json.MarshalIndent(struct {
-		RepoURL string `json:"repo_url"`
-	}{RepoURL: source.RepoURL}, "", "  ")
-	if err != nil {
-		return nil, nil, err
-	}
-	multi, err := json.MarshalIndent(struct {
-		ActiveSources []marketSourceRecord `json:"active_sources"`
-	}{ActiveSources: []marketSourceRecord{source}}, "", "  ")
-	if err != nil {
-		return nil, nil, err
-	}
-	return append(legacy, '\n'), append(multi, '\n'), nil
-}
-
-func parsePositiveInt(raw string) int {
-	v, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || v <= 0 {
-		return 0
-	}
-	return v
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }

@@ -43,6 +43,29 @@ export async function findUserByUsername(username: string) {
   return result[0] ?? null;
 }
 
+/**
+ * Resolve the UI profile mirror used by the Control Panel bridge, creating the
+ * smallest valid row when an identity has not opened UI yet. The normal SSO
+ * upsert later attaches the identity subject and fills the profile fields while
+ * preserving settings and assets already written through the bridge.
+ */
+export async function ensureBridgeUser(username: string) {
+  const existing = await findUserByUsername(username);
+  if (existing) return existing;
+
+  await ensureSchema();
+  const inserted = await db
+    .insert(users)
+    .values({ username, name: username })
+    .onConflictDoNothing({ target: users.username })
+    .returning();
+  if (inserted[0]) return inserted[0];
+
+  const raced = await findUserByUsername(username);
+  if (!raced) throw new Error("Unable to create UI profile mirror");
+  return raced;
+}
+
 type ExistingUser = NonNullable<
   Awaited<ReturnType<typeof findUserByIdentityId>>
 >;

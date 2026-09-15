@@ -12,8 +12,10 @@
 import { execShell } from '@/lib/incus/server';
 import { settingsService } from '@/lib/settings';
 import { isNewer, sortVersionsDesc } from '@/lib/version';
+import { effectiveChannel, resolveCandidate, type EffectiveChannel, type ResolvedCandidate } from '@/lib/updates/channels';
+import { getCoreProvenance, type CoreProvenance } from '@/lib/updates/provenance';
 import { APP_DEFINITIONS, type AppDefinition } from './definitions';
-import { buildReleasesAPIURL, getReleaseSource } from './release-source';
+import { buildReleasesAPIURL, buildRepositoryURL, getReleaseSource } from './release-source';
 
 const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours (must exceed the 3-hour background check interval)
 
@@ -23,8 +25,17 @@ export interface LxdUpdateResult {
   appId: string;
   installedVersion: string | undefined;
   latestVersion: string | undefined;
+  latestBranch?: string;
+  latestTag?: string;
+  source?: string;
   hasUpdate: boolean;
   error?: string;
+}
+
+export interface LxdAppChannelResolution {
+  channel: EffectiveChannel;
+  candidate: ResolvedCandidate | null;
+  installed: CoreProvenance | null;
 }
 
 interface CacheEntry {
@@ -55,6 +66,18 @@ export function getAllCachedLxdUpdates(): Map<string, LxdUpdateResult> {
 
 export function clearLxdUpdateCache(appId: string): void {
   lxdCache.delete(appId);
+}
+
+export async function resolveLxdAppChannel(appDef: AppDefinition): Promise<LxdAppChannelResolution | null> {
+  if (!appDef.releaseChannelKey || !appDef.lxdConfig) return null;
+  const releaseSource = await getReleaseSource();
+  const appDefaultSource = buildRepositoryURL(releaseSource, appDef.lxdConfig.giteaRepo);
+  const channel = await effectiveChannel(appDef.releaseChannelKey, { appDefaultSource });
+  const [candidate, installed] = await Promise.all([
+    resolveCandidate(channel, appDef.lxdConfig.tagPrefix ?? null),
+    getCoreProvenance(appDef.releaseChannelKey),
+  ]);
+  return { channel, candidate, installed };
 }
 
 // ─── Version Fetching ────────────────────────────────────────────────────────
@@ -209,19 +232,40 @@ export async function getLxdAppLatestVersion(
 /**
  * Check a single LXD app for version and updates. Results are cached.
  */
-export async function checkLxdAppUpdate(appDef: AppDefinition): Promise<LxdUpdateResult> {
+export async function checkLxdAppUpdate(appDef: AppDefinition, refresh = false): Promise<LxdUpdateResult> {
   if (!appDef.lxdConfig || appDef.containers.length === 0) {
     return { appId: appDef.id, installedVersion: undefined, latestVersion: undefined, hasUpdate: false };
   }
 
   // Return cached result if fresh
-  const cached = getCachedLxdUpdate(appDef.id);
-  if (cached) return cached;
+  if (!refresh) {
+    const cached = getCachedLxdUpdate(appDef.id);
+    if (cached) return cached;
+  }
 
   const containerName = appDef.containers[0].name;
   const { giteaRepo, tagPrefix, appDir, serviceName } = appDef.lxdConfig;
 
   try {
+    if (appDef.releaseChannelKey) {
+      const [installed, resolved] = await Promise.all([
+        getLxdAppVersion(containerName, appDir, serviceName),
+        resolveLxdAppChannel(appDef),
+      ]);
+      const candidate = resolved?.candidate ?? null;
+      const result: LxdUpdateResult = {
+        appId: appDef.id,
+        installedVersion: installed,
+        latestVersion: candidate?.version,
+        latestBranch: candidate?.branch,
+        latestTag: candidate?.tag,
+        source: resolved?.channel.source,
+        hasUpdate: !!candidate && (!installed || isNewer(candidate.version, installed)),
+      };
+      lxdCache.set(appDef.id, { result, cachedAt: Date.now() });
+      return result;
+    }
+
     // Get release branch from Spine config
     let releaseBranch = '';
     try {
@@ -285,6 +329,25 @@ export async function checkAllLxdUpdates(): Promise<Map<string, LxdUpdateResult>
     lxdApps.map(async (appDef) => {
       const containerName = appDef.containers[0].name;
       const { giteaRepo, tagPrefix, appDir, serviceName } = appDef.lxdConfig!;
+
+      if (appDef.releaseChannelKey) {
+        const [installed, resolved] = await Promise.all([
+          getLxdAppVersion(containerName, appDir, serviceName),
+          resolveLxdAppChannel(appDef),
+        ]);
+        const candidate = resolved?.candidate ?? null;
+        const result: LxdUpdateResult = {
+          appId: appDef.id,
+          installedVersion: installed,
+          latestVersion: candidate?.version,
+          latestBranch: candidate?.branch,
+          latestTag: candidate?.tag,
+          source: resolved?.channel.source,
+          hasUpdate: !!candidate && (!installed || isNewer(candidate.version, installed)),
+        };
+        lxdCache.set(appDef.id, { result, cachedAt: Date.now() });
+        return result;
+      }
 
       const [installed, latest] = await Promise.all([
         getLxdAppVersion(containerName, appDir, serviceName),

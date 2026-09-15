@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/youeye-platform/YouEye/spine/internal/config"
+	"github.com/youeye-platform/YouEye/spine/internal/container"
 	incusutil "github.com/youeye-platform/YouEye/spine/internal/incus"
 	"github.com/youeye-platform/YouEye/spine/internal/util"
 )
@@ -21,10 +22,9 @@ import (
 // for the full story including the two earlier failed designs).
 //
 // Spine is the canonical owner of youeye-pihole's lifecycle at boot. The
-// container is created with `boot.autostart=false` (see piholeManifest in
-// YE-ControlPanel/src/lib/infrastructure/manifests.ts), so Incus does NOT
-// start it automatically. Instead, this goroutine runs at the start of
-// every `spine api serve` and:
+// container is created with `boot.autostart=false`, so Incus does NOT start it
+// automatically. Instead, this goroutine runs at the start of every
+// `spine api serve` and:
 //
 //   1. Ensures pihole has boot.autostart=false (idempotent migration for
 //      installs that predate this feature).
@@ -37,7 +37,10 @@ import (
 //   3. Starts pihole. With the proxy device matching the current host IP,
 //      the bind succeeds and pihole comes up cleanly.
 //
-//   4. If the stored .host_ip differs from the current IP, runs the rest
+//   4. Ensures the Control Panel container is running. Spine owns the
+//      Spine↔CP boundary; CP owns the rest of the platform.
+//
+//   5. If the stored .host_ip differs from the current IP, runs the rest
 //      of the migration: CP HOST_IP env, dnsmasq_lines, Caddy IP-literal
 //      route. Persists the new IP to .host_ip last.
 //
@@ -73,12 +76,31 @@ const (
 	piholePasswordFile      = "/var/lib/youeye/pihole/.web_password"
 	migrateMaxAttempts      = 8
 	migrateRetryDelay       = 5 * time.Second
+
+	// Incus readiness budgets. A socket-activated incusd on a freshly cloned
+	// VM has been observed to need anywhere from 20s (normal cold start) to
+	// 10.5 minutes (first-boot incusd SIGKILL + waitready hanging on the dead
+	// socket until systemd's TimeoutStartSec=600 restarts the unit — clone
+	// .77, 2026-07-03). The startup budget must cover the worst case.
+	startupIncusReadyBudget     = 15 * time.Minute
+	manualIncusReadyBudget      = 90 * time.Second
+	steadyStateIncusReadyBudget = 10 * time.Minute
+
+	// Steady-state self-healing guard cadence. Failures must be observed
+	// twice, steadyStateConfirmDelay apart, before the guard acts — so a
+	// container that is briefly down for an update or manual maintenance is
+	// not fought over.
+	steadyStateInterval     = 5 * time.Minute
+	steadyStateConfirmDelay = 30 * time.Second
 )
 
 type hostIPMigrationOptions struct {
 	Startup bool
 	Force   bool
 	Reason  string
+	// IncusReadyBudget bounds how long the migration waits for the Incus
+	// daemon to answer before giving up. Zero means manualIncusReadyBudget.
+	IncusReadyBudget time.Duration
 }
 
 type hostIPMigrationResult struct {
@@ -94,14 +116,149 @@ type hostIPMigrationResult struct {
 // (cmd/api.go). It owns pihole's lifecycle at boot and runs the host-IP
 // migration if the host's primary IP has changed since the last successful
 // migration.
+//
+// This is a CONVERGENCE LOOP, not a one-shot check. On cloned/template boots
+// the first attempts routinely race a cold (or crashed-and-restarting) Incus
+// daemon; a single attempt that logs warnings and gives up leaves the platform
+// permanently degraded (pihole down, .host_ip stale — clones .77/.78,
+// 2026-07-03). Instead we retry with backoff until the boot state converges,
+// then hand off to the steady-state guard for the rest of the process
+// lifetime.
 func runHostIPCheck(_ *config.Config) {
 	// Small delay so the first lines of "spine api serve" output are not
 	// interleaved with our startup banner.
 	time.Sleep(500 * time.Millisecond)
 
-	if _, err := runHostIPMigration(hostIPMigrationOptions{Startup: true, Reason: "startup"}); err != nil {
-		hostIPLog("ERROR: %v", err)
+	for attempt := 1; ; attempt++ {
+		reason := "startup"
+		if attempt > 1 {
+			reason = fmt.Sprintf("startup retry %d", attempt)
+		}
+		_, err := runHostIPMigration(hostIPMigrationOptions{
+			Startup:          true,
+			Reason:           reason,
+			IncusReadyBudget: startupIncusReadyBudget,
+		})
+		if err == nil {
+			if attempt > 1 {
+				hostIPLog("boot state converged after %d attempts", attempt)
+			}
+			break
+		}
+		delay := bootRetryDelay(attempt)
+		hostIPLog("ERROR: %v — retrying in %s (attempt %d)", err, delay, attempt)
+		time.Sleep(delay)
 	}
+
+	runSteadyStateGuard()
+}
+
+// bootRetryDelay implements the boot-convergence backoff: quick retries first
+// (a healthy Incus cold start is ~20s), then a steady once-a-minute cadence
+// through the incusd worst case, then a low-noise five-minute cadence forever.
+// The loop never gives up — on an appliance there is nobody to try again.
+func bootRetryDelay(attempt int) time.Duration {
+	switch {
+	case attempt <= 1:
+		return 5 * time.Second
+	case attempt == 2:
+		return 10 * time.Second
+	case attempt == 3:
+		return 30 * time.Second
+	case attempt <= 15:
+		return time.Minute
+	default:
+		return 5 * time.Minute
+	}
+}
+
+// runSteadyStateGuard is the long-lived self-healing loop for the pieces of
+// the platform Spine owns: pihole (proxy devices + running state) and the
+// Control Panel container. CP's own watchdog covers everything else and
+// explicitly excludes these two. Runs in the runHostIPCheck goroutine after
+// boot convergence.
+func runSteadyStateGuard() {
+	hostIPLog("steady-state guard active (checks every %s)", steadyStateInterval)
+	for {
+		time.Sleep(steadyStateInterval)
+		issues := checkSteadyState()
+		if len(issues) == 0 {
+			continue
+		}
+		hostIPLog("steady-state: detected %s; confirming in %s", strings.Join(issues, "; "), steadyStateConfirmDelay)
+		time.Sleep(steadyStateConfirmDelay)
+		issues = checkSteadyState()
+		if len(issues) == 0 {
+			hostIPLog("steady-state: cleared on re-check; no action")
+			continue
+		}
+		hostIPLog("steady-state: confirmed %s; reconciling", strings.Join(issues, "; "))
+		if _, err := runHostIPMigration(hostIPMigrationOptions{
+			Startup:          true,
+			Reason:           "steady-state repair",
+			IncusReadyBudget: steadyStateIncusReadyBudget,
+		}); err != nil {
+			hostIPLog("steady-state: reconcile failed: %v (next check in %s)", err, steadyStateInterval)
+		}
+	}
+}
+
+// checkSteadyState returns a list of human-readable divergences from the
+// desired steady state, or nil when everything Spine owns looks healthy.
+func checkSteadyState() []string {
+	var issues []string
+
+	current := util.GetPrimaryIP()
+	if current == "" || current == "<your-ip>" {
+		// Without a host IP there is no desired state to reconcile toward;
+		// the network is more broken than anything this loop could repair.
+		return nil
+	}
+
+	if stored, err := util.ReadStoredHostIP(); err == nil && stored != "" && stored != current {
+		issues = append(issues, fmt.Sprintf("host IP changed (%s -> %s)", stored, current))
+	}
+
+	piholeRunning, err := isContainerRunning("youeye-pihole")
+	if err != nil {
+		// Incus itself unreachable — reconcile will wait for readiness.
+		return append(issues, fmt.Sprintf("incus unreachable (%v)", err))
+	}
+	if !piholeRunning {
+		issues = append(issues, "youeye-pihole not running")
+	}
+
+	for _, dev := range piholeProxyDevices {
+		desired := fmt.Sprintf("%s:%s:53", dev.proto, current)
+		if listen, err := getProxyListen(dev.name); err == nil && listen != desired {
+			issues = append(issues, fmt.Sprintf("%s listen is %s (want %s)", dev.name, listen, desired))
+		}
+	}
+
+	if cpRunning, err := isContainerRunning("youeye-control"); err == nil && !cpRunning {
+		issues = append(issues, "youeye-control not running")
+	} else if err == nil && cpRunning {
+		if err := container.VerifyControlPanelPortProxy("youeye-control", 3000); err != nil {
+			issues = append(issues, fmt.Sprintf("Control Panel localhost proxy drift (%v)", err))
+		}
+
+		// Unit HOST_IP env drift (read-only probe; repair happens in the
+		// reconcile pass via verifyCPUnitHostIPEnv). Only checked while the
+		// container is running — a stopped container is already an issue.
+		for _, service := range cpHostIPServices {
+			val, err := readUnitHostIP(service)
+			if err != nil {
+				continue
+			}
+			if val != current {
+				issues = append(issues, fmt.Sprintf("%s.service HOST_IP is %s (want %s)", service, val, current))
+			}
+		}
+	}
+
+	issues = append(issues, container.CheckUIEgressBlock()...)
+
+	return issues
 }
 
 func runHostIPMigration(opts hostIPMigrationOptions) (hostIPMigrationResult, error) {
@@ -137,6 +294,29 @@ func runHostIPMigration(opts hostIPMigrationOptions) (hostIPMigrationResult, err
 
 	hostIPLog("%s: current host IP is %s", opts.Reason, current)
 
+	// ─── Step 0a — Wait for Incus to be ready ──────────────────────────
+	// Every step below shells out to the incus CLI. On cloned boots the
+	// daemon is socket-activated moments before we run and is NOT ready:
+	// calls fail with EOF or time out client-side while still being applied
+	// server-side later (the torn proxy0/proxy1 split observed on clone
+	// .78). Never mutate a daemon that has not proven it can answer reads.
+	incusBudget := opts.IncusReadyBudget
+	if incusBudget <= 0 {
+		incusBudget = manualIncusReadyBudget
+	}
+	if err := waitForIncusReady(incusBudget); err != nil {
+		return result, fmt.Errorf("incus not ready: %v", err)
+	}
+	if opts.Startup {
+		repairIncusStartupUnit()
+	}
+
+	// bootIssues collects best-effort failures on the unchanged-IP path.
+	// Historically these were logged and swallowed, so the startup call
+	// reported success while pihole stayed down forever. Returning them as
+	// an error lets the boot convergence loop retry until they clear.
+	var bootIssues []string
+
 	// ─── Step 0 — Ensure pihole has autostart disabled ─────────────────
 	// Idempotent migration for installs that predate the autostart=false
 	// change in CP 0.2.18.5. New installs already have autostart=false set
@@ -153,9 +333,9 @@ func runHostIPMigration(opts hostIPMigrationOptions) (hostIPMigrationResult, err
 	// refresh only reaches this path when the stored and current IP differ.
 	piholeRunning, _ := isContainerRunning("youeye-pihole")
 	refreshPiholeProxy := true
-	if opts.Startup && !opts.Force && !result.Changed && piholeRunning {
+	if opts.Startup && !opts.Force && !result.Changed && piholeRunning && piholeProxyDevicesMatch(current) {
 		refreshPiholeProxy = false
-		hostIPLog("pihole already running and host IP unchanged; leaving proxy device as-is")
+		hostIPLog("pihole already running, host IP unchanged, proxy devices verified; leaving as-is")
 	}
 
 	if refreshPiholeProxy && piholeRunning {
@@ -173,6 +353,7 @@ func runHostIPMigration(opts hostIPMigrationOptions) (hostIPMigrationResult, err
 				return result, fmt.Errorf("pihole proxy device update failed: %v", err)
 			}
 			hostIPLog("WARNING: pihole proxy device update failed: %v", err)
+			bootIssues = append(bootIssues, fmt.Sprintf("pihole proxy device update failed: %v", err))
 			// Continue — pihole may still come up if the existing listen
 			// happens to be the same as `current`.
 		} else {
@@ -186,11 +367,53 @@ func runHostIPMigration(opts hostIPMigrationOptions) (hostIPMigrationResult, err
 		if result.Changed {
 			return result, fmt.Errorf("pihole did not come up: %v", err)
 		}
+		bootIssues = append(bootIssues, fmt.Sprintf("pihole did not come up: %v", err))
 		// Don't return — the rest of the migration (CP env, dnsmasq via
 		// CP, etc.) doesn't strictly need pihole running. The CP-side
 		// step will fail and log a warning, that's OK.
 	} else {
 		hostIPLog("✓ youeye-pihole running")
+	}
+
+	// ─── Step 2b — Ensure Control Panel is running ─────────────────────
+	// Spine owns the Spine↔Control Panel boundary. CP owns the rest of the
+	// platform, so CP must be alive even when the host IP is unchanged and no
+	// network migration is needed. Without this, a cloned/template VM whose CP
+	// container is stopped can boot with only Incus-autostart containers running.
+	if err := ensureControlPanelBootRunning(60 * time.Second); err != nil {
+		if result.Changed || opts.Force {
+			return result, fmt.Errorf("control panel boot guarantee failed: %v", err)
+		}
+		hostIPLog("WARNING: control panel boot guarantee failed: %v", err)
+		bootIssues = append(bootIssues, fmt.Sprintf("control panel boot guarantee failed: %v", err))
+	}
+
+	// ─── Step 2c — Repair Spine-owned security posture ────────────────
+	// These are independent of host-IP changes: existing installs may have
+	// missing/stale UI ACLs or the legacy LAN-wide CP :3000 proxy.
+	if err := container.RepairControlPanelPortProxy("youeye-control", 3000); err != nil {
+		hostIPLog("WARNING: Control Panel localhost proxy repair failed: %v", err)
+		bootIssues = append(bootIssues, fmt.Sprintf("Control Panel localhost proxy repair failed: %v", err))
+	} else {
+		hostIPLog("✓ Control Panel raw proxy is localhost-only")
+	}
+	if err := container.EnforceUIEgressBlock(); err != nil {
+		hostIPLog("WARNING: UI→CP ACL repair failed: %v", err)
+		bootIssues = append(bootIssues, fmt.Sprintf("UI→CP ACL repair failed: %v", err))
+	} else {
+		hostIPLog("✓ UI→CP ACL enforced")
+	}
+
+	// ─── Step 2d — Verify CP unit HOST_IP env (unchanged path too) ─────
+	// A stale Environment=HOST_IP= (youeye-id was never migrated before
+	// 0.5.7) can never be repaired by the IP-change path once .host_ip
+	// matches the live IP, so verify the unit files on every boot and
+	// steady-state pass. The changed path re-syncs them in Step 4 anyway.
+	if !result.Changed {
+		if err := verifyCPUnitHostIPEnv(current); err != nil {
+			hostIPLog("WARNING: CP unit HOST_IP verification failed: %v", err)
+			bootIssues = append(bootIssues, fmt.Sprintf("CP unit HOST_IP verification failed: %v", err))
+		}
 	}
 
 	// ─── Step 3 — IP-change detection ──────────────────────────────────
@@ -204,6 +427,9 @@ func runHostIPMigration(opts hostIPMigrationOptions) (hostIPMigrationResult, err
 		result.Seeded = true
 		hostIPLog("first run — recorded current IP %s", current)
 		if !opts.Force {
+			if len(bootIssues) > 0 {
+				return result, fmt.Errorf("startup issues: %s", strings.Join(bootIssues, "; "))
+			}
 			return result, nil
 		}
 		stored = current
@@ -211,6 +437,9 @@ func runHostIPMigration(opts hostIPMigrationOptions) (hostIPMigrationResult, err
 	}
 
 	if !result.Changed && !opts.Force {
+		if len(bootIssues) > 0 {
+			return result, fmt.Errorf("startup issues: %s", strings.Join(bootIssues, "; "))
+		}
 		hostIPLog("host IP unchanged (%s); pihole lifecycle handled", current)
 		return result, nil
 	}
@@ -517,25 +746,158 @@ func ensurePiholeAutostartDisabled() error {
 	return nil
 }
 
-// migratePiholeProxyDevice rewrites the listen address of youeye-pihole's
-// port-53 proxy devices to the new host IP. With autostart=false, this is
-// always called against a stopped container at the start of spine api
-// serve, so it is a pure metadata edit and cannot trigger Incus's hot
-// proxy-reconcile path (which is what hangs when the old listen IP is
-// unbindable). The 15s per-call timeout is a safety net for the
-// degraded case where someone or something has already started pihole
-// before this routine ran.
-func migratePiholeProxyDevice(newIP string) error {
-	tcpListen := fmt.Sprintf("listen=tcp:%s:53", newIP)
-	udpListen := fmt.Sprintf("listen=udp:%s:53", newIP)
-
-	if out, err := runWithTimeout(15*time.Second, "incus", "config", "device", "set",
-		"youeye-pihole", "proxy0", tcpListen); err != nil {
-		return fmt.Errorf("proxy0 (tcp): %v: %s", err, strings.TrimSpace(string(out)))
+func ensureControlPanelBootRunning(timeout time.Duration) error {
+	state, err := containerState("youeye-control")
+	if err != nil {
+		return fmt.Errorf("inspect: %v", err)
 	}
-	if out, err := runWithTimeout(15*time.Second, "incus", "config", "device", "set",
-		"youeye-pihole", "proxy1", udpListen); err != nil {
-		return fmt.Errorf("proxy1 (udp): %v: %s", err, strings.TrimSpace(string(out)))
+	if state == "" {
+		hostIPLog("youeye-control container not present yet; skipping CP boot guarantee")
+		return nil
+	}
+	if err := ensureContainerRunning("youeye-control", timeout); err != nil {
+		return err
+	}
+	if err := waitForCPHealthy(90 * time.Second); err != nil {
+		return err
+	}
+	hostIPLog("✓ youeye-control running")
+	return nil
+}
+
+// waitForIncusReady blocks until the Incus daemon answers a cheap instances
+// query, or the budget elapses. The probe exercises the same CLI + unix
+// socket + DB path that every mutation below uses, so a green probe means
+// config/device calls will be answered (not queued behind a starting daemon).
+// A poll loop of short probes is deliberately used instead of one long
+// blocking call — a probe against a dead-but-socket-activated daemon fails
+// fast with EOF instead of hanging (which is exactly how `incusd waitready`
+// got stuck for 600s on clone .77).
+func waitForIncusReady(budget time.Duration) error {
+	deadline := time.Now().Add(budget)
+	var lastErr error
+	for attempt := 1; ; attempt++ {
+		out, err := runWithTimeout(8*time.Second, "incus", "list", "youeye-pihole", "-c", "s", "--format", "csv")
+		if err == nil {
+			if attempt > 1 {
+				hostIPLog("✓ incus ready after %d probes", attempt)
+			}
+			return nil
+		}
+		lastErr = fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+		if time.Now().After(deadline) {
+			return fmt.Errorf("incus did not become ready within %s (last probe: %v)", budget, lastErr)
+		}
+		if attempt == 1 || attempt%10 == 0 {
+			hostIPLog("waiting for incus to become ready (probe %d: %v)", attempt, lastErr)
+		}
+		time.Sleep(4 * time.Second)
+	}
+}
+
+// repairIncusStartupUnit restarts incus-startup.service if it failed at boot.
+// On cloned boots the unit races the socket-activated daemon, gets an EOF,
+// and fails permanently (clone .77). A failed oneshot never reaches its
+// RemainAfterExit state, so its ExecStop clean-shutdown coordination is lost
+// for the whole session. Best-effort: only runs once Incus is known ready.
+func repairIncusStartupUnit() {
+	out, err := runWithTimeout(10*time.Second, "systemctl", "is-failed", "incus-startup.service")
+	if err != nil || strings.TrimSpace(string(out)) != "failed" {
+		// `systemctl is-failed` exits 0 only when the unit is failed.
+		return
+	}
+	hostIPLog("incus-startup.service failed at boot (raced incusd activation); restarting it now that incus is ready")
+	if out, err := runWithTimeout(90*time.Second, "systemctl", "restart", "incus-startup.service"); err != nil {
+		hostIPLog("WARNING: could not repair incus-startup.service: %v: %s", err, strings.TrimSpace(string(out)))
+		return
+	}
+	hostIPLog("✓ incus-startup.service repaired")
+}
+
+// piholeProxyDevices are youeye-pihole's host port-53 proxy devices. Both
+// must always listen on the same host IP; a split (tcp on one IP, udp on
+// another) leaves the container unable to start when the stale IP is no
+// longer assigned to the host.
+var piholeProxyDevices = []struct {
+	name  string
+	proto string
+}{
+	{"proxy0", "tcp"},
+	{"proxy1", "udp"},
+}
+
+func getProxyListen(device string) (string, error) {
+	out, err := runWithTimeout(10*time.Second, "incus", "config", "device", "get", "youeye-pihole", device, "listen")
+	if err != nil {
+		return "", fmt.Errorf("get %s listen: %v: %s", device, err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// piholeProxyDevicesMatch reports whether both proxy devices already listen
+// on the given host IP. Any read error counts as a mismatch so the caller
+// takes the full verified-refresh path.
+func piholeProxyDevicesMatch(hostIP string) bool {
+	for _, dev := range piholeProxyDevices {
+		desired := fmt.Sprintf("%s:%s:53", dev.proto, hostIP)
+		listen, err := getProxyListen(dev.name)
+		if err != nil || listen != desired {
+			return false
+		}
+	}
+	return true
+}
+
+// waitForProxyListen polls a proxy device's listen value until it matches
+// the desired address or the timeout elapses. Used as the write-verification
+// step: a device set that timed out client-side may still land server-side
+// a few seconds later.
+func waitForProxyListen(device, desired string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var last string
+	var lastErr error
+	for time.Now().Before(deadline) {
+		last, lastErr = getProxyListen(device)
+		if lastErr == nil && last == desired {
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if lastErr != nil {
+		return fmt.Errorf("%s listen could not be verified as %s within %s (last error: %v)", device, desired, timeout, lastErr)
+	}
+	return fmt.Errorf("%s listen is %q, want %q (unverified after %s)", device, last, desired, timeout)
+}
+
+// migratePiholeProxyDevice rewrites the listen address of youeye-pihole's
+// port-53 proxy devices to the new host IP and VERIFIES each write by
+// reading the device back.
+//
+// Two hard-won rules encoded here (clone .78, 2026-07-03):
+//   - A client-side timeout on `incus config device set` does NOT mean the
+//     change failed. Incus can apply the update after the CLI gives up.
+//     Treating the timeout as failure and aborting left proxy0 on the new
+//     IP and proxy1 on the old one — a torn state that kept pihole from
+//     ever starting. Timeouts are "unknown"; only the read-back decides.
+//   - Both devices are reconciled independently and idempotently, so this
+//     function also REPAIRS a pre-existing split state on the next run.
+//
+// With autostart=false this normally runs against a stopped container (pure
+// metadata edit). The per-call timeout is a safety net for the degraded case
+// where something already started pihole before this routine ran.
+func migratePiholeProxyDevice(newIP string) error {
+	for _, dev := range piholeProxyDevices {
+		desired := fmt.Sprintf("%s:%s:53", dev.proto, newIP)
+		if current, err := getProxyListen(dev.name); err == nil && current == desired {
+			continue
+		}
+		if out, err := runWithTimeout(15*time.Second, "incus", "config", "device", "set",
+			"youeye-pihole", dev.name, "listen="+desired); err != nil {
+			hostIPLog("WARNING: %s (%s) device set returned %v: %s; verifying actual state", dev.name, dev.proto, err, strings.TrimSpace(string(out)))
+		}
+		if err := waitForProxyListen(dev.name, desired, 30*time.Second); err != nil {
+			return fmt.Errorf("%s (%s): %v", dev.name, dev.proto, err)
+		}
 	}
 	return nil
 }
@@ -658,64 +1020,178 @@ func firstIPv4Token(output string) string {
 	return ""
 }
 
-// migrateControlHostIPEnv pulls the youeye-control systemd unit, replaces
-// the Environment=HOST_IP=... line, pushes it back, daemon-reloads systemd
-// inside the container, and restarts the youeye-control service.
-func migrateControlHostIPEnv(oldIP, newIP string) error {
-	const unitPath = "/etc/systemd/system/youeye-control.service"
-	const containerPath = "youeye-control" + unitPath
+// cpHostIPServices are the systemd services inside the youeye-control
+// container that carry an Environment=HOST_IP= line in their unit file.
+// youeye-control is strict (the migration aborts if it cannot be updated);
+// youeye-id is best-effort (identity keeps serving on a stale IP until the
+// next converge pass repairs it). Before 0.5.7 only youeye-control was
+// migrated — observed live on clone .80 with youeye-id two IP generations
+// stale, unrepairable because .host_ip already matched the live IP.
+var cpHostIPServices = []string{"youeye-control", "youeye-id"}
 
-	// `incus file pull` to stdout via runWithTimeout requires capturing
-	// stdout, not combined output. Use exec.CommandContext directly.
+// errHostIPUnitMissing marks a unit file (or its HOST_IP line) that does not
+// exist in the container — callers decide whether that is fatal per service.
+var errHostIPUnitMissing = fmt.Errorf("unit file or HOST_IP line not found")
+
+// pullUnitFile reads /etc/systemd/system/<service>.service from the
+// youeye-control container. Returns errHostIPUnitMissing when the file does
+// not exist.
+func pullUnitFile(service string) (string, error) {
+	containerPath := "youeye-control/etc/systemd/system/" + service + ".service"
+
+	// `incus file pull` to stdout requires capturing stdout, not combined
+	// output. Use exec.CommandContext directly.
 	pullCtx, pullCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer pullCancel()
 	pullCmd := exec.CommandContext(pullCtx, "incus", "file", "pull", containerPath, "-")
-	var pulled bytes.Buffer
+	var pulled, pullErr bytes.Buffer
 	pullCmd.Stdout = &pulled
-	pullCmd.Stderr = os.Stderr
+	pullCmd.Stderr = &pullErr
 	if err := pullCmd.Run(); err != nil {
 		if pullCtx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("incus file pull: timed out after 15s")
+			return "", fmt.Errorf("incus file pull %s: timed out after 15s", service)
 		}
-		return fmt.Errorf("incus file pull: %v", err)
+		stderr := strings.ToLower(pullErr.String())
+		if strings.Contains(stderr, "not found") || strings.Contains(stderr, "no such file") {
+			return "", errHostIPUnitMissing
+		}
+		return "", fmt.Errorf("incus file pull %s: %v: %s", service, err, strings.TrimSpace(pullErr.String()))
 	}
+	return pulled.String(), nil
+}
 
-	original := pulled.String()
+// readUnitHostIP returns the current value of the Environment=HOST_IP= line
+// in a service's unit file (read-only; used by the steady-state check).
+func readUnitHostIP(service string) (string, error) {
+	unit, err := pullUnitFile(service)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(unit, "\n") {
+		trimmed := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(trimmed, "Environment=HOST_IP=") {
+			return strings.TrimSpace(strings.TrimPrefix(trimmed, "Environment=HOST_IP=")), nil
+		}
+	}
+	return "", errHostIPUnitMissing
+}
+
+// syncUnitHostIP ensures the service's unit file has Environment=HOST_IP=newIP.
+// Returns whether the file was changed. Does NOT daemon-reload or restart —
+// callers batch that via reloadAndRestartUnits.
+func syncUnitHostIP(service, newIP string) (bool, error) {
+	original, err := pullUnitFile(service)
+	if err != nil {
+		return false, err
+	}
 	if !strings.Contains(original, "Environment=HOST_IP=") {
-		return fmt.Errorf("HOST_IP line not found in unit file")
+		return false, errHostIPUnitMissing
 	}
 
 	updated := replaceHostIPLine(original, newIP)
 	if updated == original {
-		hostIPLog("CP unit already has HOST_IP=%s (no change)", newIP)
-		return nil
+		return false, nil
 	}
 
-	tmp, err := os.CreateTemp("", "youeye-control.service.*")
+	tmp, err := os.CreateTemp("", service+".service.*")
 	if err != nil {
-		return fmt.Errorf("tempfile: %v", err)
+		return false, fmt.Errorf("tempfile: %v", err)
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.WriteString(updated); err != nil {
 		tmp.Close()
-		return fmt.Errorf("write tempfile: %v", err)
+		return false, fmt.Errorf("write tempfile: %v", err)
 	}
 	tmp.Close()
 
+	containerPath := "youeye-control/etc/systemd/system/" + service + ".service"
 	if out, err := runWithTimeout(15*time.Second, "incus", "file", "push", tmp.Name(), containerPath); err != nil {
-		return fmt.Errorf("incus file push: %v: %s", err, strings.TrimSpace(string(out)))
+		return false, fmt.Errorf("incus file push %s: %v: %s", service, err, strings.TrimSpace(string(out)))
 	}
+	return true, nil
+}
 
+// reloadAndRestartUnits daemon-reloads once and restarts each changed service
+// inside the youeye-control container.
+func reloadAndRestartUnits(services []string) error {
+	if len(services) == 0 {
+		return nil
+	}
 	if out, err := runWithTimeout(15*time.Second, "incus", "exec", "youeye-control", "--",
 		"systemctl", "daemon-reload"); err != nil {
 		return fmt.Errorf("daemon-reload: %v: %s", err, strings.TrimSpace(string(out)))
 	}
-	if out, err := runWithTimeout(20*time.Second, "incus", "exec", "youeye-control", "--",
-		"systemctl", "restart", "youeye-control"); err != nil {
-		return fmt.Errorf("restart youeye-control: %v: %s", err, strings.TrimSpace(string(out)))
+	for _, service := range services {
+		if out, err := runWithTimeout(20*time.Second, "incus", "exec", "youeye-control", "--",
+			"systemctl", "restart", service); err != nil {
+			return fmt.Errorf("restart %s: %v: %s", service, err, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
+}
+
+// migrateControlHostIPEnv updates the Environment=HOST_IP= line in every
+// CP-container service unit (youeye-control strict, youeye-id best-effort),
+// then daemon-reloads and restarts the changed services.
+func migrateControlHostIPEnv(oldIP, newIP string) error {
+	var changed []string
+
+	ctrlChanged, err := syncUnitHostIP("youeye-control", newIP)
+	if err != nil {
+		return fmt.Errorf("youeye-control: %v", err)
+	}
+	if ctrlChanged {
+		changed = append(changed, "youeye-control")
+	} else {
+		hostIPLog("CP unit already has HOST_IP=%s (no change)", newIP)
+	}
+
+	idChanged, idErr := syncUnitHostIP("youeye-id", newIP)
+	switch {
+	case idErr == errHostIPUnitMissing:
+		hostIPLog("youeye-id unit has no HOST_IP line (or no unit); skipping")
+	case idErr != nil:
+		hostIPLog("WARNING: youeye-id HOST_IP update failed: %v (identity service repaired on a later converge pass)", idErr)
+	case idChanged:
+		changed = append(changed, "youeye-id")
+	}
+
+	if err := reloadAndRestartUnits(changed); err != nil {
+		return err
 	}
 
 	_ = oldIP
+	return nil
+}
+
+// verifyCPUnitHostIPEnv repairs any CP-container unit whose HOST_IP env does
+// not match the current host IP. Runs on the unchanged-IP boot path and via
+// steady-state repair — this is what heals a youeye-id left stale by
+// pre-0.5.7 migrations, where the IP-change path can never fire again
+// because .host_ip already matches the live IP.
+func verifyCPUnitHostIPEnv(current string) error {
+	var changed []string
+	var errs []string
+	for _, service := range cpHostIPServices {
+		unitChanged, err := syncUnitHostIP(service, current)
+		if err == errHostIPUnitMissing {
+			continue
+		}
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", service, err))
+			continue
+		}
+		if unitChanged {
+			hostIPLog("repaired stale HOST_IP in %s.service → %s", service, current)
+			changed = append(changed, service)
+		}
+	}
+	if err := reloadAndRestartUnits(changed); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
 	return nil
 }
 

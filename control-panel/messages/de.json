@@ -95,21 +95,6 @@
       "saved": "Sprache aktualisiert",
       "error": "Fehler beim Aktualisieren der Sprache"
     },
-    "sso": {
-      "title": "Authentifizierung",
-      "description": "Single Sign-On (SSO) über den Identitätsanbieter konfigurieren",
-      "status": "SSO-Status",
-      "configured": "Aktiviert",
-      "notConfigured": "Nicht konfiguriert",
-      "domain": "Domain",
-      "authentikUrl": "Identitätsanbieter-URL",
-      "controlUrl": "Systemsteuerungs-URL",
-      "prerequisitesMet": "Voraussetzungen erfüllt",
-      "configure": "SSO konfigurieren",
-      "remove": "SSO entfernen",
-      "prerequisites": "Voraussetzungen",
-      "howItWorks": "Wie SSO funktioniert"
-    },
     "ui": {
       "title": "YouEye UI",
       "status": "UI-Status",
@@ -244,6 +229,7 @@
     "savingConfig": "Konfiguration speichern",
     "settingUpProxy": "Reverse-Proxy einrichten",
     "configuringDns": "DNS konfigurieren",
+    "configuringAi": "YouEye AI verbinden",
     "creatingAdmin": "Admin-Konto erstellen",
     "configuringSsoControl": "SSO für Systemsteuerung konfigurieren",
     "enablingSsoUi": "YouEye UI aktivieren",
@@ -375,7 +361,7 @@
     "certHint": "{domain} verwendet ein selbstsigniertes Zertifikat. Installieren Sie das Root-CA auf jedem Gerät:",
     "downloadCert": "Zertifikat herunterladen",
     "goTo": "Zu {name}",
-    "noDomain": "Keine Domain konfiguriert. Zugriff auf Port 3000 zur Neukonfiguration.",
+    "noDomain": "Keine Domain konfiguriert. Verwende die Server-IP über Caddy zur Neukonfiguration; localhost:3000 ist nur für lokale Wiederherstellung auf dem Host.",
     "welcomeUser": "Willkommen bei YouEye, {name}!",
     "quickStart": "Schnellstart",
     "visitDashboard": "Dashboard besuchen",
@@ -435,7 +421,16 @@
     "resources": "Ressourcen",
     "nativeApps": "Native Apps",
     "builtForYouEye": "Entwickelt für YouEye",
-    "orphanScanPrompt": "Nach verwaisten Ressourcen früherer Installationen suchen"
+    "orphanScanPrompt": "Nach verwaisten Ressourcen früherer Installationen suchen",
+    "uninstallTitle": "Deinstallieren",
+    "uninstallDescription": "Wählen Sie aus, was entfernt werden soll",
+    "uninstallKeepData": "Deinstallieren (Daten behalten)",
+    "uninstallKeepDataDescription": "App entfernen, aber ihre Daten für eine spätere Neuinstallation behalten",
+    "uninstallDeleteData": "Deinstallieren und alle Daten löschen",
+    "uninstallDeleteDataDescription": "App und alle zugehörigen Daten entfernen. Dies kann nicht rückgängig gemacht werden.",
+    "willBeRemoved": "Wird entfernt",
+    "uninstallDeleteButton": "Alles löschen",
+    "uninstallKeepButton": "Deinstallieren"
   },
   "proxy": {
     "title": "Reverse-Proxy",

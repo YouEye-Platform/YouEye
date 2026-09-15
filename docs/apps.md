@@ -8,11 +8,6 @@ YouEye ships with six native apps and the Market for installing more. Every app 
 
 A Wikipedia-style article browser with full-text search, infobox parsing, and reading lists.
 
-| | |
-|---|---|
-| ![Wiki Home](assets/screenshots/apps/wiki/home.png) | ![Wiki Article](assets/screenshots/apps/wiki/article.png) |
-| Featured articles and categories | Article with parsed infobox |
-
 **Features:**
 - Browse and search Wikipedia articles
 - Parsed infoboxes with structured data
@@ -20,18 +15,11 @@ A Wikipedia-style article browser with full-text search, infobox parsing, and re
 - Full-text search with instant results
 - Dashboard widget for quick access
 
-![Wiki Search](assets/screenshots/apps/wiki/search.png)
-
 ---
 
 ### Search
 
 Unified search across all platform apps and services.
-
-| | |
-|---|---|
-| ![Search Home](assets/screenshots/apps/search/home.png) | ![Search Results](assets/screenshots/apps/search/results.png) |
-| Search home | Results across apps |
 
 **Features:**
 - Search across all installed apps from one place
@@ -44,10 +32,6 @@ Unified search across all platform apps and services.
 ### Notes
 
 Card-based note-taking with tags, checklists, and reminders.
-
-<p align="center">
-  <img src="assets/screenshots/apps/notes/home.png" alt="Notes" width="800">
-</p>
 
 **Features:**
 - Create notes with rich text, checklists, and tags
@@ -62,10 +46,6 @@ Card-based note-taking with tags, checklists, and reminders.
 
 Movie and TV discovery powered by TMDB with watchlists and sharing.
 
-<p align="center">
-  <img src="assets/screenshots/apps/cinema/home.png" alt="Cinema" width="800">
-</p>
-
 **Features:**
 - Browse trending movies and TV shows
 - Search the TMDB catalog
@@ -78,10 +58,6 @@ Movie and TV discovery powered by TMDB with watchlists and sharing.
 ### Weather
 
 Multi-location weather with detailed forecasts powered by Open-Meteo.
-
-<p align="center">
-  <img src="assets/screenshots/apps/weather/home.png" alt="Weather" width="800">
-</p>
 
 **Features:**
 - Add multiple locations
@@ -96,10 +72,6 @@ Multi-location weather with detailed forecasts powered by Open-Meteo.
 
 Privacy-friendly translation with history and bookmarks.
 
-<p align="center">
-  <img src="assets/screenshots/apps/translate/home.png" alt="Translate" width="800">
-</p>
-
 **Features:**
 - Translate between 100+ languages
 - Auto-detect source language
@@ -113,10 +85,6 @@ Privacy-friendly translation with history and bookmarks.
 
 Market lets you install third-party apps with one click. Available apps include productivity tools, media players, utilities, and more.
 
-<p align="center">
-  <img src="assets/screenshots/settings/app-market.png" alt="Market" width="800">
-</p>
-
 ### Installing Apps
 
 1. Open **Settings** -> **Market**
@@ -125,18 +93,27 @@ Market lets you install third-party apps with one click. Available apps include 
 4. The app is downloaded, configured, and deployed automatically
 5. It appears in your app drawer immediately
 
+AI-capable apps add a **Use AI Settings** choice to this install screen. It is
+on by default and lets the installing administrator select one of their Pointer
+model groups. YouEye creates a dedicated AI instance and protected app key, so
+the app opens with its models and the `default` alias ready. Changes inside the
+selected group propagate without reinstalling the app. Turning the option off
+leaves the app's native provider setup untouched for manual configuration.
+
 ### Managing Apps
 
 Installed apps can be managed from **Settings** → **Apps**:
-
-<p align="center">
-  <img src="assets/screenshots/settings/apps.png" alt="Installed Apps" width="800">
-</p>
 
 From here you can:
 - View all installed apps
 - Uninstall apps you no longer need
 - Check app versions and update status
+- Change an AI-capable app's model group, disable or enable its YouEye AI
+  connection, and explicitly take over a connection whose owner is unavailable
+
+Stopping an AI-capable app also disables its Pointer key. Starting it enables
+the same instance again; restart and update preserve the owner, group and key;
+uninstall archives the AI instance and revokes the credential.
 
 ## App Integration
 

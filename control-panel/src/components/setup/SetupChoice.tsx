@@ -20,7 +20,7 @@ export default function SetupChoice({ onNewSetup, onRestore }: Props) {
       <div className="grid gap-4 animate-in fade-in slide-in-from-bottom-6 duration-500 delay-100">
         <button
           onClick={onNewSetup}
-          className="flex items-start gap-5 px-6 py-5 rounded-xl border border-border/60 bg-white/80 backdrop-blur-sm hover:border-primary/40 hover:bg-primary/5 hover:shadow-md transition-all duration-200 text-left group"
+          className="flex items-start gap-5 px-6 py-5 rounded-xl border border-border bg-card hover:border-primary/40 hover:bg-accent/50 transition-colors text-left group"
         >
           <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-primary/10 shrink-0 group-hover:bg-primary/20 transition-colors">
             <Sparkles className="h-6 w-6 text-primary" />
@@ -30,14 +30,14 @@ export default function SetupChoice({ onNewSetup, onRestore }: Props) {
               Set up a new YouEye
             </h2>
             <p className="text-sm text-muted-foreground mt-1">
-              Configure your server name, admin account, and start fresh.
+              Configure this server&apos;s name, appearance, domain, and services.
             </p>
           </div>
         </button>
 
         <button
           onClick={onRestore}
-          className="flex items-start gap-5 px-6 py-5 rounded-xl border border-border/60 bg-white/80 backdrop-blur-sm hover:border-primary/40 hover:bg-primary/5 hover:shadow-md transition-all duration-200 text-left group"
+          className="flex items-start gap-5 px-6 py-5 rounded-xl border border-border bg-card hover:border-primary/40 hover:bg-accent/50 transition-colors text-left group"
         >
           <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-orange-500/10 shrink-0 group-hover:bg-orange-500/20 transition-colors">
             <ArchiveRestore className="h-6 w-6 text-orange-600" />
@@ -47,7 +47,7 @@ export default function SetupChoice({ onNewSetup, onRestore }: Props) {
               Restore from backup
             </h2>
             <p className="text-sm text-muted-foreground mt-1">
-              Restore your platform from a previous backup archive, including all apps and settings.
+              Restore server settings and accounts, then choose which backed-up apps to bring back.
             </p>
           </div>
         </button>

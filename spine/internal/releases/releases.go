@@ -19,19 +19,30 @@
 package releases
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/youeye-platform/YouEye/spine/internal/channels"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
-	"github.com/youeye-platform/YouEye/spine/internal/version"
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	githubReleasePageSize = 100
+	forgeReleasePageSize  = 50
+	maxReleasePages       = 200
 )
 
 // NewIPv4Client returns an HTTP client that forces IPv4 connections.
@@ -147,6 +158,16 @@ func BuildDownloadURL(cfg *config.Config, repo, tag, assetName string) string {
 	if cfg.Releases.RepoURL != "" || repo == "" {
 		repo = source.Repository
 	}
+	return buildDownloadURLFromSource(source, repo, tag, assetName)
+}
+
+// buildDownloadURLFromSource builds a release asset download URL against an
+// explicit source repo (channel-aware). When repo is empty the source's own
+// repository name is used.
+func buildDownloadURLFromSource(source config.ReleaseRepo, repo, tag, assetName string) string {
+	if repo == "" {
+		repo = source.Repository
+	}
 	return fmt.Sprintf("%s/%s/%s/releases/download/%s/%s",
 		source.BaseURL,
 		source.Organization,
@@ -157,21 +178,31 @@ func BuildDownloadURL(cfg *config.Config, repo, tag, assetName string) string {
 
 // buildReleasesAPIURL constructs the API URL for fetching releases based on provider.
 // Forge-compatible: {BaseURL}/api/v1/repos/{org}/{repo}/releases?limit=50
-// GitHub: https://api.github.com/repos/{org}/{repo}/releases?per_page=50
+// GitHub: https://api.github.com/repos/{org}/{repo}/releases?per_page=100
 func buildReleasesAPIURL(cfg *config.Config, repo string) string {
 	source := cfg.CoreReleaseRepo()
 	if cfg.Releases.RepoURL != "" || repo == "" {
 		repo = source.Repository
 	}
-	if source.Provider == "github" {
-		return fmt.Sprintf("https://api.github.com/repos/%s/%s/releases?per_page=50",
-			source.Organization, repo)
+	return buildReleasesAPIURLFromSource(source, repo)
+}
+
+// buildReleasesAPIURLFromSource is the source-explicit variant used by the
+// channel-aware resolver. When repo is empty the source's repository is used.
+func buildReleasesAPIURLFromSource(source config.ReleaseRepo, repo string) string {
+	if repo == "" {
+		repo = source.Repository
 	}
-	return fmt.Sprintf("%s%s/repos/%s/%s/releases?limit=50",
+	if source.Provider == "github" {
+		return fmt.Sprintf("https://api.github.com/repos/%s/%s/releases?per_page=%d",
+			source.Organization, repo, githubReleasePageSize)
+	}
+	return fmt.Sprintf("%s%s/repos/%s/%s/releases?limit=%d",
 		source.BaseURL,
 		source.APIPath,
 		source.Organization,
-		repo)
+		repo,
+		forgeReleasePageSize)
 }
 
 // fetchReleases fetches releases from the configured provider's API.
@@ -179,23 +210,62 @@ func buildReleasesAPIURL(cfg *config.Config, repo string) string {
 // backoff on network errors. Uses IPv4-only client to avoid IPv6 hangs
 // on fresh VMs without IPv6 routes.
 func fetchReleases(cfg *config.Config, repo string) ([]Release, error) {
+	return fetchReleasesFromSource(cfg, cfg.CoreReleaseRepo(), repo)
+}
+
+// fetchReleasesFromSource fetches releases from an explicit source repo,
+// generalizing fetchReleases for channel-aware resolution. Provider is
+// auto-detected from the source (github vs forge), like config does.
+func fetchReleasesFromSource(_ *config.Config, source config.ReleaseRepo, repo string) ([]Release, error) {
 	client := NewIPv4Client(30 * time.Second)
+	baseURL, err := url.Parse(buildReleasesAPIURLFromSource(source, repo))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse releases API URL: %w", err)
+	}
+	pageSize := forgeReleasePageSize
+	if source.Provider == "github" {
+		pageSize = githubReleasePageSize
+	}
 
-	apiURL := buildReleasesAPIURL(cfg, repo)
+	var releases []Release
+	seenTags := make(map[string]struct{})
+	for page := 1; page <= maxReleasePages; page++ {
+		pageURL := *baseURL
+		query := pageURL.Query()
+		query.Set("page", fmt.Sprint(page))
+		pageURL.RawQuery = query.Encode()
+		pageReleases, err := fetchReleasePage(client, source, pageURL.String(), page)
+		if err != nil {
+			return nil, err
+		}
+		for _, release := range pageReleases {
+			if _, exists := seenTags[release.TagName]; exists {
+				return nil, fmt.Errorf("releases API returned duplicate tag %q", release.TagName)
+			}
+			seenTags[release.TagName] = struct{}{}
+			releases = append(releases, release)
+		}
+		if len(pageReleases) < pageSize {
+			return releases, nil
+		}
+		if page == maxReleasePages {
+			return nil, fmt.Errorf("release discovery exceeded %d pages; configure an exact tag", maxReleasePages)
+		}
+	}
+	return nil, fmt.Errorf("release discovery did not terminate")
+}
 
+func fetchReleasePage(client *http.Client, source config.ReleaseRepo, apiURL string, page int) ([]Release, error) {
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
-		req, err := http.NewRequest("GET", apiURL, nil)
+		req, err := http.NewRequest(http.MethodGet, apiURL, nil)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
+			return nil, fmt.Errorf("failed to create releases page %d request: %w", page, err)
 		}
-
-		// GitHub API requires Accept and User-Agent headers
-		if cfg.CoreReleaseRepo().Provider == "github" {
+		if source.Provider == "github" {
 			req.Header.Set("Accept", "application/vnd.github+json")
 			req.Header.Set("User-Agent", "youeye-spine")
 		}
-
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
@@ -203,225 +273,70 @@ func fetchReleases(cfg *config.Config, repo string) ([]Release, error) {
 				time.Sleep(time.Duration(attempt*2) * time.Second)
 				continue
 			}
-			return nil, fmt.Errorf("failed to fetch releases after %d attempts: %w", attempt, lastErr)
+			return nil, fmt.Errorf("failed to fetch releases page %d after %d attempts: %w", page, attempt, lastErr)
 		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			return nil, fmt.Errorf("releases API returned status: %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("releases API page %d returned status: %d", page, resp.StatusCode)
 		}
-
-		var rels []Release
-		if err := json.NewDecoder(resp.Body).Decode(&rels); err != nil {
-			return nil, fmt.Errorf("failed to decode releases: %w", err)
+		var releases []Release
+		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&releases)
+		closeErr := resp.Body.Close()
+		if decodeErr != nil {
+			return nil, fmt.Errorf("failed to decode releases page %d: %w", page, decodeErr)
 		}
-
-		return rels, nil
+		if closeErr != nil {
+			return nil, fmt.Errorf("failed to close releases page %d: %w", page, closeErr)
+		}
+		return releases, nil
 	}
+	return nil, fmt.Errorf("failed to fetch releases page %d: %w", page, lastErr)
+}
 
-	return nil, fmt.Errorf("failed to fetch releases: %w", lastErr)
+// legacyChannel builds the channel that reproduces the historical
+// [branch, main] union/newest-wins behavior for a bare branch name. When branch
+// is empty or "main", the fallback would duplicate the own branch and is
+// deduped by the resolver.
+func legacyChannel(branch string) channels.Channel {
+	if branch == "" {
+		branch = "main"
+	}
+	return channels.Channel{Branch: branch, Fallback: []string{"main"}}
 }
 
 // GetLatestVersionForBranch fetches all releases and returns the highest version
 // matching the given branch and component tag prefix. Falls back to main releases
 // if no branch-specific releases exist. Returns "unknown" on failure.
 //
-// tagPrefix filters releases to a specific component (e.g. "spine", "cp", "ui").
-// When empty, no prefix filtering is applied (backwards compatible).
+// Retained as a thin shim over the channel-aware resolver so existing callers
+// keep working; the default-channel behavior is identical to before.
 func GetLatestVersionForBranch(cfg *config.Config, repo, branch, tagPrefix string) string {
-	rels, err := fetchReleases(cfg, repo)
-	if err != nil || len(rels) == 0 {
+	cand, err := resolveWithChannel(cfg, legacyChannel(branch), repo, tagPrefix)
+	if err != nil {
 		return "unknown"
 	}
-
-	// If no branch or "main", find the highest main release version
-	if branch == "" || branch == "main" {
-		var mainVersions []string
-		for _, r := range rels {
-			stripped, ok := stripTagPrefix(r.TagName, tagPrefix)
-			if !ok {
-				continue
-			}
-			if IsMainTag(stripped) {
-				mainVersions = append(mainVersions, strings.TrimPrefix(stripped, "v"))
-			}
-		}
-		if len(mainVersions) > 0 {
-			version.SortVersionsDesc(mainVersions)
-			return mainVersions[0]
-		}
-		return "unknown"
-	}
-
-	// Collect branch-specific and main releases
-	branchPrefix := branch + "-v"
-	var branchVersions []string
-	var mainVersions []string
-	for _, r := range rels {
-		stripped, ok := stripTagPrefix(r.TagName, tagPrefix)
-		if !ok {
-			continue
-		}
-		if strings.HasPrefix(stripped, branchPrefix) {
-			branchVersions = append(branchVersions, strings.TrimPrefix(stripped, branchPrefix))
-		} else if IsMainTag(stripped) {
-			mainVersions = append(mainVersions, strings.TrimPrefix(stripped, "v"))
-		}
-	}
-
-	// Find highest of each
-	var bestBranch, bestMain string
-	if len(branchVersions) > 0 {
-		version.SortVersionsDesc(branchVersions)
-		bestBranch = branchVersions[0]
-	}
-	if len(mainVersions) > 0 {
-		version.SortVersionsDesc(mainVersions)
-		bestMain = mainVersions[0]
-	}
-
-	// Compare branch winner vs main winner — use whichever is newer
-	if bestBranch != "" && bestMain != "" {
-		if version.CompareVersions(bestBranch, bestMain) >= 0 {
-			return bestBranch
-		}
-		return bestMain
-	}
-	if bestBranch != "" {
-		return bestBranch
-	}
-	if bestMain != "" {
-		return bestMain
-	}
-
-	return "unknown"
-}
-
-// GetLatestTagForBranch returns the full release tag (e.g. "spine-v0.2.12" or
-// "spine-dev-v0.2.12.1") for the highest matching release on the given branch,
-// with fallback to main. Returns ("", "") on failure.
-//
-// The second return value indicates which branch was actually used ("main" or
-// the requested branch), so callers can log the fallback.
-//
-// tagPrefix filters releases to a specific component (e.g. "spine", "cp", "ui").
-func GetLatestTagForBranch(cfg *config.Config, repo, branch, tagPrefix string) (tag string, effectiveBranch string) {
-	rels, err := fetchReleases(cfg, repo)
-	if err != nil || len(rels) == 0 {
-		return "", ""
-	}
-
-	type taggedRelease struct {
-		ver     string // version number only (e.g. "0.2.21")
-		fullTag string // original full tag (e.g. "spine-v0.2.21")
-	}
-
-	// No branch or "main" — find highest main release
-	if branch == "" || branch == "main" {
-		var mainCandidates []taggedRelease
-		for _, r := range rels {
-			stripped, ok := stripTagPrefix(r.TagName, tagPrefix)
-			if !ok {
-				continue
-			}
-			if IsMainTag(stripped) {
-				mainCandidates = append(mainCandidates, taggedRelease{
-					ver:     strings.TrimPrefix(stripped, "v"),
-					fullTag: r.TagName,
-				})
-			}
-		}
-		if len(mainCandidates) > 0 {
-			best := mainCandidates[0]
-			for _, c := range mainCandidates[1:] {
-				if version.CompareVersions(c.ver, best.ver) > 0 {
-					best = c
-				}
-			}
-			return best.fullTag, "main"
-		}
-		return "", ""
-	}
-
-	// Branch set — collect branch-specific and main releases
-	branchPrefix := branch + "-v"
-	var branchCandidates []taggedRelease
-	var mainCandidates []taggedRelease
-	for _, r := range rels {
-		stripped, ok := stripTagPrefix(r.TagName, tagPrefix)
-		if !ok {
-			continue
-		}
-		if strings.HasPrefix(stripped, branchPrefix) {
-			branchCandidates = append(branchCandidates, taggedRelease{
-				ver:     strings.TrimPrefix(stripped, branchPrefix),
-				fullTag: r.TagName,
-			})
-		} else if IsMainTag(stripped) {
-			mainCandidates = append(mainCandidates, taggedRelease{
-				ver:     strings.TrimPrefix(stripped, "v"),
-				fullTag: r.TagName,
-			})
-		}
-	}
-
-	bestOf := func(candidates []taggedRelease) taggedRelease {
-		if len(candidates) == 0 {
-			return taggedRelease{}
-		}
-		best := candidates[0]
-		for _, c := range candidates[1:] {
-			if version.CompareVersions(c.ver, best.ver) > 0 {
-				best = c
-			}
-		}
-		return best
-	}
-
-	bestBranch := bestOf(branchCandidates)
-	bestMain := bestOf(mainCandidates)
-
-	// Compare branch winner vs main winner — use whichever is newer
-	if bestBranch.fullTag != "" && bestMain.fullTag != "" {
-		if version.CompareVersions(bestBranch.ver, bestMain.ver) >= 0 {
-			return bestBranch.fullTag, branch
-		}
-		return bestMain.fullTag, "main"
-	}
-	if bestBranch.fullTag != "" {
-		return bestBranch.fullTag, branch
-	}
-	if bestMain.fullTag != "" {
-		return bestMain.fullTag, "main"
-	}
-
-	return "", ""
-}
-
-// ExtractVersionFromFullTag extracts the version number from a full tag
-// that may include a component prefix and branch.
-// Examples:
-//
-//	ExtractVersionFromFullTag("spine-v0.2.21", "main", "spine")     → "0.2.21"
-//	ExtractVersionFromFullTag("spine-dev-v0.2.21.1", "dev", "spine") → "0.2.21.1"
-//	ExtractVersionFromFullTag("v0.2.21", "main", "")                → "0.2.21"
-func ExtractVersionFromFullTag(fullTag, effectiveBranch, tagPrefix string) string {
-	stripped, ok := stripTagPrefix(fullTag, tagPrefix)
-	if !ok {
-		stripped = fullTag
-	}
-	return ExtractVersion(stripped, effectiveBranch)
+	return cand.Version
 }
 
 // GetAssetURLForBranch reads the release branch from youeye.yaml, finds the
 // latest matching release, and returns the download URL for the named asset.
 // This is the primary entry point for branch-aware asset downloads.
 //
-// tagPrefix filters releases to a specific component (e.g. "spine", "cp", "ui").
+// Retained as a thin shim over the channel-aware resolver. It reads the default
+// channel branch (mirrored from youeye.yaml) to preserve today's behavior.
 func GetAssetURLForBranch(cfg *config.Config, repo, assetName, tagPrefix string) (string, error) {
 	branch := ReadReleaseBranch()
+	return AssetURLForChannel(cfg, legacyChannel(branch), repo, assetName, tagPrefix)
+}
 
-	rels, err := fetchReleases(cfg, repo)
+// AssetURLForChannel resolves the newest release for a given channel and
+// returns the download URL for the named asset. When the release list carries
+// a matching asset entry (browser_download_url) it is used verbatim; otherwise
+// the URL is constructed from the resolved source + tag, so downloads work even
+// when the API omits per-asset URLs.
+func AssetURLForChannel(cfg *config.Config, eff channels.Channel, repo, assetName, tagPrefix string) (string, error) {
+	src := resolveSource(cfg, eff.Source)
+	rels, err := fetchReleasesFromSource(cfg, src, repo)
 	if err != nil {
 		return "", err
 	}
@@ -429,105 +344,44 @@ func GetAssetURLForBranch(cfg *config.Config, repo, assetName, tagPrefix string)
 		return "", fmt.Errorf("no releases found")
 	}
 
-	// Find the best matching release based on branch
-	type taggedRelease struct {
-		ver   string
-		index int
+	cand, err := resolveWithChannel(cfg, eff, repo, tagPrefix)
+	if err != nil {
+		return "", err
 	}
 
-	var matched *Release
-	if branch != "" && branch != "main" {
-		// Collect branch-specific and main releases
-		var branchCandidates []taggedRelease
-		var mainCandidates []taggedRelease
-		branchPrefix := branch + "-v"
-		for i, r := range rels {
-			stripped, ok := stripTagPrefix(r.TagName, tagPrefix)
-			if !ok {
-				continue
-			}
-			if strings.HasPrefix(stripped, branchPrefix) {
-				branchCandidates = append(branchCandidates, taggedRelease{
-					ver:   strings.TrimPrefix(stripped, branchPrefix),
-					index: i,
-				})
-			} else if IsMainTag(stripped) {
-				mainCandidates = append(mainCandidates, taggedRelease{
-					ver:   strings.TrimPrefix(stripped, "v"),
-					index: i,
-				})
-			}
+	for i := range rels {
+		if rels[i].TagName != cand.Tag {
+			continue
 		}
-
-		// Sort both by version descending
-		sortTagged := func(c []taggedRelease) {
-			for i := 1; i < len(c); i++ {
-				for j := i; j > 0 && version.CompareVersions(c[j].ver, c[j-1].ver) > 0; j-- {
-					c[j], c[j-1] = c[j-1], c[j]
-				}
-			}
+		if asset := rels[i].FindAsset(assetName); asset != nil && asset.BrowserDownloadURL != "" {
+			return asset.BrowserDownloadURL, nil
 		}
-		sortTagged(branchCandidates)
-		sortTagged(mainCandidates)
-
-		// Compare branch winner vs main winner — use whichever is newer
-		if len(branchCandidates) > 0 && len(mainCandidates) > 0 {
-			if version.CompareVersions(branchCandidates[0].ver, mainCandidates[0].ver) >= 0 {
-				matched = &rels[branchCandidates[0].index]
-			} else {
-				matched = &rels[mainCandidates[0].index]
-			}
-		} else if len(branchCandidates) > 0 {
-			matched = &rels[branchCandidates[0].index]
-		} else if len(mainCandidates) > 0 {
-			matched = &rels[mainCandidates[0].index]
-		}
+		break
 	}
+	return buildDownloadURLFromSource(src, repo, cand.Tag, assetName), nil
+}
 
-	// No branch set or no candidates found — use highest main release
-	if matched == nil {
-		var mainCandidates []taggedRelease
-		for i, r := range rels {
-			stripped, ok := stripTagPrefix(r.TagName, tagPrefix)
-			if !ok {
-				continue
-			}
-			if IsMainTag(stripped) {
-				mainCandidates = append(mainCandidates, taggedRelease{
-					ver:   strings.TrimPrefix(stripped, "v"),
-					index: i,
-				})
-			}
-		}
-		if len(mainCandidates) > 0 {
-			for i := 1; i < len(mainCandidates); i++ {
-				for j := i; j > 0 && version.CompareVersions(mainCandidates[j].ver, mainCandidates[j-1].ver) > 0; j-- {
-					mainCandidates[j], mainCandidates[j-1] = mainCandidates[j-1], mainCandidates[j]
-				}
-			}
-			matched = &rels[mainCandidates[0].index]
-		}
+// VerifyFileSHA256 checks a downloaded release artifact before it is used.
+// An empty expected digest keeps the legacy unpinned channel behaviour.
+func VerifyFileSHA256(path, expected string) error {
+	if strings.TrimSpace(expected) == "" {
+		return nil
 	}
-
-	// Last resort: first release with correct prefix
-	if matched == nil {
-		for i, r := range rels {
-			if _, ok := stripTagPrefix(r.TagName, tagPrefix); ok {
-				matched = &rels[i]
-				break
-			}
-		}
+	want, err := hex.DecodeString(strings.TrimSpace(expected))
+	if err != nil || len(want) != sha256.Size {
+		return fmt.Errorf("invalid expected SHA-256 digest")
 	}
-
-	if matched == nil {
-		return "", fmt.Errorf("no releases found matching prefix %q", tagPrefix)
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open release artifact for digest verification: %w", err)
 	}
-
-	// Find the requested asset
-	asset := matched.FindAsset(assetName)
-	if asset != nil {
-		return asset.BrowserDownloadURL, nil
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("hash release artifact: %w", err)
 	}
-
-	return "", fmt.Errorf("asset %s not found in release %s", assetName, matched.TagName)
+	if !bytes.Equal(h.Sum(nil), want) {
+		return fmt.Errorf("release artifact SHA-256 mismatch")
+	}
+	return nil
 }
