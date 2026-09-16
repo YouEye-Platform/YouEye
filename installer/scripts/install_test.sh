@@ -17,7 +17,7 @@ grep -Fq 'INSTALLER_RELEASE_BRANCH:-' "$install_script"
 grep -Fq 'browser_download_url' "$install_script"
 grep -Fq 'openssl pkeyutl -verify -pubin' "$install_script"
 grep -Fq 'Signed checksum entry count does not match the appliance contract' "$install_script"
-grep -Fq 'exact 18-asset appliance set' "$install_script"
+grep -Fq 'exact {len(required)}-asset appliance set' "$install_script"
 grep -Fq 'Signed appliance trust anchor does not match the embedded installer authority' "$install_script"
 grep -Fq 'GitHub Installer download redirected to an untrusted host' "$install_script"
 grep -Fq 'Installer download exceeded five redirects.' "$install_script"
@@ -90,7 +90,16 @@ if [ "${CURL_CROSS_ORIGIN:-0}" = 1 ]; then
             ;;
     esac
 fi
+manifest() {
+    python3 - <<'PYMANIFEST'
+import json, os
+x = os.environ.get("FIXTURE_RELEASE_TAG", "appliance-dev-v0.5.6.0.3")
+branch, version = x[len("appliance-"):].rsplit("-v", 1)
+print(json.dumps({"schema":"youeye.appliance.manifest.v1", "image_version":version, "source_commit":"a"*40, "trust":{"class":"development"}, "release_set":{"source":"https://forgejo.example.test/owner/YouEye", "branch":branch}}))
+PYMANIFEST
+}
 case "$url" in
+    */appliance-manifest.json) manifest > "$output" ;;
     *page=1)
         python3 - > "$output" <<'PY'
 import json
@@ -133,6 +142,7 @@ PY
             case "$name" in
                 appliance-development.pub) digest=fe591510ae710cb1bf46b9be8c4bbde6f3446e4b3664ff5996565e6ab9712984 ;;
                 youeye-installer-linux-amd64) digest="$FIXTURE_DIGEST" ;;
+                appliance-manifest.json) digest="$(manifest | sha256sum | awk '{print $1}')" ;;
                 *) digest=0000000000000000000000000000000000000000000000000000000000000000 ;;
             esac
             printf '%s  %s\n' "$digest" "$name"

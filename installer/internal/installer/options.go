@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	InstallerVersion              = "0.5.6.0.2.17"
+	InstallerVersion              = "0.5.7.0.0.0.1"
 	defaultApplianceArtifactRoot  = "/run/youeye-appliance/artifacts"
 	defaultApplianceManifestPath  = defaultApplianceArtifactRoot + "/appliance-manifest.json"
 	defaultApplianceSignaturePath = defaultApplianceArtifactRoot + "/appliance-manifest.json.sig"

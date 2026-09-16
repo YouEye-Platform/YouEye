@@ -27,14 +27,20 @@ func publicReleaseAnchor(class string) ([]byte, error) {
 	return raw, nil
 }
 func applianceReleaseAnchor(release applianceRelease) ([]byte, error) {
-	if privateForgejoMainRelease(release) {
-		return embeddedApplianceDevelopmentTrust, nil
-	}
-	if strings.HasPrefix(release.TagName, "appliance-v") {
-		return publicReleaseAnchor("stable")
-	}
-	if strings.HasPrefix(release.TagName, "appliance-beta-v") {
-		return publicReleaseAnchor("beta")
+	if class := applianceReleaseTrustClass(release); class != "development" {
+		return publicReleaseAnchor(class)
 	}
 	return embeddedApplianceDevelopmentTrust, nil
+}
+
+func applianceReleaseTrustClass(release applianceRelease) string {
+	if !privateForgejoMainRelease(release) {
+		if strings.HasPrefix(release.TagName, "appliance-v") {
+			return "stable"
+		}
+		if strings.HasPrefix(release.TagName, "appliance-beta-v") {
+			return "beta"
+		}
+	}
+	return "development"
 }

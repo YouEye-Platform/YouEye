@@ -52,6 +52,7 @@ trust_class="${APPLIANCE_TRUST_CLASS:-development}"
 if [[ $trust_class != development && $trust_class != beta && $trust_class != stable ]]; then echo "Invalid appliance trust class" >&2; exit 1; fi
 if [[ $trust_class != development ]]; then
     signing_public_key="$source_dir/installer/internal/installer/appliance-public.pub"
+    python3 "$source_dir/installer/scripts/embed-public-trust.py" --source "$source_dir" --check --require "$trust_class"
     release_lock_validate_public_recipe "$release_lock" "$source_dir/appliance/release-recipe.json" || { echo "$release_lock_error" >&2; exit 1; }
     [[ $release_branch == beta && $trust_class == beta || $release_branch == main && $trust_class == stable ]] || { echo "Public trust/branch mismatch" >&2; exit 1; }
 fi
@@ -521,8 +522,11 @@ system_uuid="$(deterministic_uuid "$source_commit-system")"
 recovery_uuid="$(deterministic_uuid "$source_commit-recovery")"
 make_ext4_image "$artifacts/system-root.img" 8G YE-SYSTEM-IMAGE "$system_uuid"
 make_ext4_image "$artifacts/internal-recovery.img" 4G YE-RECOVERY-IMG "$recovery_uuid"
-zstd -q -T1 -19 --long=27 -f "$artifacts/system-root.img" -o "$artifacts/system-root.img.zst"
-zstd -q -T1 -19 --long=27 -f "$artifacts/internal-recovery.img" -o "$artifacts/internal-recovery.img.zst"
+# Compression is a source-owned reproducibility input, never host-adaptive.
+# One worker stays within each bounded executor slot when A/B run together.
+[[ $(zstd --version) == *"v1.5.7,"* ]] || { printf 'Expected Zstandard 1.5.7 for reproducible appliance compression.\n' >&2; exit 1; }
+zstd -q -T1 -10 --long=27 -f "$artifacts/system-root.img" -o "$artifacts/system-root.img.zst"
+zstd -q -T1 -10 --long=27 -f "$artifacts/internal-recovery.img" -o "$artifacts/internal-recovery.img.zst"
 
 printf '[6/8] Building A, B, and Recovery UKIs\n'
 kernel="$(find "$rootfs/boot" -maxdepth 1 -type f -name 'vmlinuz-*' | sort -V | tail -n 1)"

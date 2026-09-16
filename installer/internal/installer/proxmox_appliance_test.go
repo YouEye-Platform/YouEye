@@ -76,7 +76,11 @@ func TestResolveApplianceReleaseNeverFallsBackChannels(t *testing.T) {
 	var serverURL string
 	assets := func(tag string) []applianceReleaseAsset {
 		var result []applianceReleaseAsset
-		for _, name := range append(append([]string{}, applianceSignedAssetNames...), applianceChecksumsFilename, applianceChecksumsSigName) {
+		names := append(append([]string{}, applianceSignedAssetNames...), applianceChecksumsFilename, applianceChecksumsSigName)
+		if strings.HasPrefix(tag, "appliance-v") {
+			names = append(names, applianceReleaseLockName)
+		}
+		for _, name := range names {
 			result = append(result, applianceReleaseAsset{Name: name, BrowserDownloadURL: serverURL + "/owner/YouEye/releases/download/" + tag + "/" + name})
 		}
 		return result

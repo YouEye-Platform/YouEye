@@ -28,6 +28,7 @@ const (
 	applianceManifestSigName   = "appliance-manifest.json.sig"
 	applianceChecksumsFilename = "SHA256SUMS"
 	applianceChecksumsSigName  = "SHA256SUMS.sig"
+	applianceReleaseLockName   = "release-lock.json"
 	applianceGitHubPageSize    = 100
 	applianceForgejoPageSize   = 50
 	applianceReleaseMaxPages   = 200
@@ -291,6 +292,11 @@ func validateApplianceReleaseAssets(provider string, apiURL *url.URL, release ap
 	}
 	required[applianceChecksumsFilename] = false
 	required[applianceChecksumsSigName] = false
+	// Public snapshots require the detached lock. Older Development bundles
+	// retain their exact 18-asset contract; if a lock is present it is verified.
+	if releaseNeedsDetachedLock(release) {
+		required[applianceReleaseLockName] = false
+	}
 	for _, asset := range release.Assets {
 		if _, ok := required[asset.Name]; !ok {
 			return fmt.Errorf("appliance release %s contains unexpected asset %s", release.TagName, asset.Name)
@@ -431,6 +437,9 @@ func downloadVerifiedApplianceRelease(ctx context.Context, client *http.Client, 
 	if err != nil {
 		return verifiedApplianceRelease{}, err
 	}
+	if manifest.Trust.Class != applianceReleaseTrustClass(release) {
+		return verifiedApplianceRelease{}, fmt.Errorf("signed appliance trust class differs from selected release")
+	}
 	if release.sourceProvider == "github" {
 		class := "development"
 		if strings.HasPrefix(release.TagName, "appliance-v") {
@@ -452,6 +461,32 @@ func downloadVerifiedApplianceRelease(ctx context.Context, client *http.Client, 
 	}
 	if release.TagName != expectedTag {
 		return verifiedApplianceRelease{}, fmt.Errorf("appliance release tag %q does not match signed image version %q", release.TagName, manifest.ImageVersion)
+	}
+	if releaseNeedsDetachedLock(release) {
+		for _, name := range []string{"provenance.json", applianceReleaseLockName} {
+			asset, err := findApplianceReleaseAsset(release, name)
+			if err != nil {
+				return verifiedApplianceRelease{}, err
+			}
+			paths[name] = filepath.Join(cacheDir, name)
+			if err := downloadApplianceAsset(ctx, client, asset, paths[name], 16<<20, false); err != nil {
+				return verifiedApplianceRelease{}, err
+			}
+		}
+		if err := verifyPathSHA256(paths["provenance.json"], checksums["provenance.json"]); err != nil {
+			return verifiedApplianceRelease{}, err
+		}
+		provenance, err := os.ReadFile(paths["provenance.json"])
+		if err != nil {
+			return verifiedApplianceRelease{}, err
+		}
+		lock, err := os.ReadFile(paths[applianceReleaseLockName])
+		if err != nil {
+			return verifiedApplianceRelease{}, err
+		}
+		if err := validateDetachedApplianceLock(provenance, lock, manifest); err != nil {
+			return verifiedApplianceRelease{}, err
+		}
 	}
 	manifestDigest := sha256.Sum256(manifestRaw)
 	isoSHA := checksums[applianceISOFilename]

@@ -29,13 +29,14 @@ Proxmox mode create and install the VM.
 ### Proxmox
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo sh
+curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sh
 ```
 
-This is the canonical public Stable command. It becomes installable when the
-separately keyed Stable appliance release is published to GitHub; development
-builds deliberately fail closed instead of accepting their development key as
-Stable authority. The bootstrap defaults to that official GitHub Stable lane and supports
+Run this command from the Proxmox host's root shell; `sudo` is not required.
+The canonical public bootstrap verifies the separately provisioned Stable key,
+signed checksums, release identity, and provenance-bound `release-lock.json`.
+Unprovisioned source builds fail closed; Development keys never authorize Stable.
+The bootstrap defaults to the official GitHub Stable lane and supports
 explicit Forgejo or custom HTTPS sources without prefilled private endpoints.
 It paginates the selected provider, verifies its signed checksum set and exact
 installer digest, then opens the YouEye Installer TUI. Quick mode creates a
@@ -43,8 +44,8 @@ Q35/OVMF VM with 4 vCPU, 8 GiB RAM, and one 128 GiB installation drive. The
 host-side flow provisions the VM and media; the booted ISO owns disk discovery,
 destructive confirmation, imaging, and installed-system setup.
 
-Development and beta releases are selected explicitly and retain Development
-trust. They are not the no-argument GitHub Stable path. Each published release
+Development and beta releases are selected explicitly. Public beta uses its
+own provisioned beta anchor; Development uses Development trust. Each published release
 page carries the exact source commit, signed checksums, manifests, provenance,
 SBOM, and component release set required for independent verification.
 
@@ -56,10 +57,11 @@ boot it in UEFI mode. The interactive `youeye-installer install` flow performs
 the same installation used by Proxmox.
 After exact first deployment becomes healthy, open the HTTPS address shown on
 the appliance console and create the single YouEye ID owner. There is no
-default appliance password. Root remains locked and SSH remains key-only unless
-the installer user explicitly enables Development access and chooses a strong
-root password. Local TTY2 login and local-subnet root password SSH are separate
-opt-ins; the password itself is never written to answer media or State.
+default appliance password. The interactive installer requires a root password
+for local console recovery. SSH is key-only unless **Root password SSH** is
+explicitly enabled; that option permits the same password only from the directly
+connected IPv4 subnet. Public-key import is separate. Only a password hash is
+stored in protected answer media and State. See the [SSH troubleshooting guide](docs/getting-started.md#root-ssh-access).
 
 > Proxmox mode requires root access, Q35/OVMF support, an ISO storage pool, and
 > an eligible VM-image storage pool. Direct installation requires x86-64 UEFI

@@ -2,10 +2,10 @@
 # YouEye Installer bootstrap for Proxmox VE.
 #
 # Stable:
-#   curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo sh
+#   curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sh
 # Development from an explicit Forgejo-compatible source:
 #   curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh |
-#     sudo sh -s -- --provider forgejo --releases-api https://forge.example.test/api/v1/repos/example/YouEye/releases --channel development
+#     sh -s -- --provider forgejo --releases-api https://forge.example.test/api/v1/repos/example/YouEye/releases --channel development
 #
 # The booted YouEye ISO runs the same binary as `youeye-installer install`.
 set -eu
@@ -20,6 +20,15 @@ iso_sha256="${INSTALLER_ISO_SHA256:-}"
 cache_root="${YOUEYE_INSTALLER_CACHE:-/var/cache/youeye-installer/bootstrap}"
 asset=youeye-installer-linux-amd64
 max_pages=200
+
+# Generated from the compiled public trust policy before a public snapshot is
+# committed. Never obtain a replacement authority from a release/download URL.
+public_trust_policy=$(cat <<'YOUEYE_PUBLIC_TRUST'
+# BEGIN GENERATED PUBLIC TRUST
+{"keys":{"beta":"-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAVi0aLbxkZrilqlsDVSNI3ukJLzNdriZM08Wye3YP8ok=\n-----END PUBLIC KEY-----\n","stable":"-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEATDcZkxI90DbHw/7AauXbwwrEY6rDikxk8u0Y8IIwhkc=\n-----END PUBLIC KEY-----\n"},"schema":"youeye.public-trust.v1"}
+# END GENERATED PUBLIC TRUST
+YOUEYE_PUBLIC_TRUST
+)
 
 parse_bootstrap_options() {
     while [ "$#" -gt 0 ]; do
@@ -322,8 +331,19 @@ if not candidates:
     raise SystemExit(f"No exact signed appliance release was found for {requested}; refusing channel fallback")
 candidates.sort(key=lambda item: item[0], reverse=True)
 release = candidates[0][1]
-if stable_pattern.fullmatch(release["tag_name"]):
-    raise SystemExit("Stable appliance trust is not provisioned in this development Installer")
+tag = release["tag_name"]
+parts = source_url.path.strip("/").split("/")
+private_main = (provider == "forgejo" and len(parts) == 6 and
+                parts[:3] == ["api", "v1", "repos"] and parts[5] == "releases" and
+                source_url.hostname not in ("github.com", "api.github.com") and
+                not source_url.hostname.endswith(".github.com") and
+                re.fullmatch(r"appliance-v\d+(?:\.\d+){4}", tag) is not None)
+trust_class = "development"
+if not private_main:
+    if stable_pattern.fullmatch(tag):
+        trust_class = "stable"
+    elif tag.startswith("appliance-beta-v"):
+        trust_class = "beta"
 
 checksum_assets = {
     "appliance-development.pub",
@@ -344,6 +364,8 @@ checksum_assets = {
     "youeye-system-updater-linux-amd64",
 }
 required = checksum_assets | {"SHA256SUMS", "SHA256SUMS.sig"}
+if trust_class != "development" or any(a.get("name") == "release-lock.json" for a in release.get("assets", [])):
+    required.add("release-lock.json")
 assets = {}
 for entry in release.get("assets", []):
     name = entry.get("name", "")
@@ -376,19 +398,29 @@ if set(assets) != required:
         detail.append(f"missing {', '.join(missing)}")
     if unexpected:
         detail.append(f"unexpected {', '.join(unexpected)}")
-    raise SystemExit(f"Release {release['tag_name']} is not the exact 18-asset appliance set: {'; '.join(detail)}")
+    raise SystemExit(f"Release {release['tag_name']} is not the exact {len(required)}-asset appliance set: {'; '.join(detail)}")
 
 with open(destination, "w", encoding="utf-8", newline="\n") as output:
     output.write(release["tag_name"] + "\n")
     output.write(assets["SHA256SUMS"] + "\n")
     output.write(assets["SHA256SUMS.sig"] + "\n")
     output.write(assets["youeye-installer-linux-amd64"] + "\n")
+    output.write(trust_class + "\n")
+    output.write(assets["appliance-manifest.json"] + "\n")
+    output.write(assets["provenance.json"] + "\n")
+    output.write(assets.get("release-lock.json", "-") + "\n")
+    output.write((source_url.scheme + "://" + source_url.netloc + "/" + parts[3] + "/" + parts[4] if private_main else "-") + "\n")
 PY
 
 selected_tag="$(sed -n '1p' "$selection")"
 checksums_url="$(sed -n '2p' "$selection")"
 signature_url="$(sed -n '3p' "$selection")"
 installer_url="$(sed -n '4p' "$selection")"
+trust_class="$(sed -n '5p' "$selection")"
+manifest_url="$(sed -n '6p' "$selection")"
+provenance_url="$(sed -n '7p' "$selection")"
+lock_url="$(sed -n '8p' "$selection")"
+private_source="$(sed -n '9p' "$selection")"
 release_cache="$cache_root/$selected_tag"
 install -d -m 0700 "$release_cache"
 
@@ -398,6 +430,19 @@ cat > "$trust_key" <<'EOF'
 MCowBQYDK2VwAyEAha3Qt2DxI8tDarUb24mmRRekCa1acvk/ttqyJ14y1OE=
 -----END PUBLIC KEY-----
 EOF
+if [ "$trust_class" != development ]; then
+    python3 - "$trust_class" "$public_trust_policy" "$trust_key" <<'PY'
+import json
+import sys
+class_name, policy, destination = sys.argv[1:]
+policy = json.loads("\n".join(line for line in policy.splitlines() if not line.startswith("#")))
+key = policy.get("keys", {}).get(class_name)
+if policy.get("schema") != "youeye.public-trust.v1" or not isinstance(key, str) or not key:
+    raise SystemExit(f"Public {class_name} trust is not provisioned in this Installer")
+with open(destination, "w", encoding="ascii", newline="\n") as output:
+    output.write(key)
+PY
+fi
 
 checksums_tmp="$release_cache/.SHA256SUMS.$$"
 signature_tmp="$release_cache/.SHA256SUMS.sig.$$"
@@ -464,9 +509,85 @@ if [ -n "$installer_sha256" ] && [ "$signed_digest" != "$installer_sha256" ]; th
 fi
 printf '%s  %s\n' "$signed_digest" "$installer_tmp" | sha256sum -c - >/dev/null
 
+# Bind execution to the signed release identity, including the detached public
+# lock. A provenance-bound lock does not change the 16-entry checksum contract.
+manifest_tmp="$release_cache/.appliance-manifest.json.$$"
+download_https "$manifest_url" "$manifest_tmp"
+provenance_tmp="$release_cache/.provenance.json.$$"
+lock_tmp="$release_cache/.release-lock.json.$$"
+if [ "$lock_url" != - ]; then
+    download_https "$provenance_url" "$provenance_tmp"
+    download_https "$lock_url" "$lock_tmp"
+fi
+python3 - "$checksums_tmp" "$manifest_tmp" "$provenance_tmp" "$lock_tmp" "$lock_url" "$trust_class" "$selected_tag" "$private_source" <<'PY'
+import hashlib
+import json
+import re
+import sys
+from pathlib import Path
+
+sums_path, manifest_path, provenance_path, lock_path, lock_url, trust_class, tag, private_source = sys.argv[1:]
+sums = {line.split()[1].lstrip("*"): line.split()[0] for line in Path(sums_path).read_text().splitlines()}
+def reject(message):
+    raise SystemExit(message)
+def verified_json(path, digest):
+    raw = Path(path).read_bytes()
+    if not re.fullmatch(r"[0-9a-f]{64}", digest or "") or hashlib.sha256(raw).hexdigest() != digest:
+        reject("Signed appliance metadata digest mismatch")
+    return json.loads(raw)
+
+manifest = verified_json(manifest_path, sums["appliance-manifest.json"])
+release = manifest.get("release_set", {})
+branch = release.get("branch")
+version = manifest.get("image_version")
+expected_tag = f"appliance-v{version}" if branch == "main" else f"appliance-{branch}-v{version}"
+commit = manifest.get("source_commit", "")
+if (manifest.get("schema") != "youeye.appliance.manifest.v1" or
+    manifest.get("trust", {}).get("class") != trust_class or tag != expected_tag or
+    not re.fullmatch(r"[0-9a-f]{40}", commit)):
+    reject("Signed appliance trust/source identity differs from selected release")
+if trust_class != "development" and (release.get("source") != "https://github.com/YouEye-Platform/YouEye" or
+    branch != {"stable": "main", "beta": "beta"}[trust_class]):
+    reject("Signed public appliance source/channel mismatch")
+if private_source != "-" and (release.get("source") != private_source or branch != "main"):
+    reject("Signed appliance source differs from selected Forgejo main repository")
+if lock_url != "-":
+    provenance = verified_json(provenance_path, sums["provenance.json"])
+    lock = verified_json(lock_path, provenance.get("resolved_lock_sha256"))
+    image = lock.get("image", {})
+    source = provenance.get("source", {})
+    if (provenance.get("schema") != "youeye.appliance.provenance.v2" or
+        lock.get("schema") != "youeye.appliance.release-lock.v1" or
+        image.get("version") != version or image.get("release_source") != release.get("source") or
+        image.get("release_branch") != branch or not image.get("debian_snapshot") or
+        image.get("debian_snapshot") != provenance.get("debian_snapshot") or
+        provenance.get("source_commit") != commit or source.get("commit") != commit or source.get("branch") != branch or
+        provenance.get("release_set") != release or release.get("fallback", [])):
+        reject("Detached lock/provenance differs from signed appliance identity")
+    components = lock.get("components", {})
+    if set(components) != {"spine", "control_panel", "ui"}:
+        reject("Detached lock component set mismatch")
+    for name, component in components.items():
+        pin = {key: component.get(key) for key in ("version", "tag", "source_commit", "artifact_sha256")}
+        if pin != release.get(name) or (trust_class != "development" and pin["source_commit"] != commit):
+            reject("Detached lock component source/pin mismatch")
+    market = lock.get("market", {})
+    bound_market = provenance.get("market", {})
+    if (not market.get("source") or not market.get("branch") or not re.fullmatch(r"[0-9a-f]{40}", market.get("commit", "")) or
+        market.get("source") != bound_market.get("source") or market.get("branch") != bound_market.get("branch") or
+        market.get("commit") != bound_market.get("source_commit") or
+        (trust_class != "development" and market.get("source") != "https://github.com/YouEye-Platform/Market")):
+        reject("Detached lock Market differs from signed provenance")
+PY
+
 mv "$checksums_tmp" "$release_cache/SHA256SUMS"
 mv "$signature_tmp" "$release_cache/SHA256SUMS.sig"
 mv "$installer_tmp" "$release_cache/$asset"
+mv "$manifest_tmp" "$release_cache/appliance-manifest.json"
+if [ "$lock_url" != - ]; then
+    mv "$provenance_tmp" "$release_cache/provenance.json"
+    mv "$lock_tmp" "$release_cache/release-lock.json"
+fi
 chmod 0700 "$release_cache/$asset"
 
 printf 'Launching signed YouEye Installer %s...\n' "$selected_tag"

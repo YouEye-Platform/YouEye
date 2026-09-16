@@ -38,19 +38,18 @@ bridge.
 Stable channel:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo sh
+curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sh
 ```
 
-This is the canonical no-argument public path. It requires a separately keyed
-Stable appliance release on official GitHub. The development candidate does
-not provision Stable trust and therefore fails closed if that release is not
-present; it never reuses the development key.
+Run this canonical public command from the Proxmox root shell. It does not
+depend on `sudo` being installed. Public Stable uses its embedded Stable anchor;
+unprovisioned source builds fail closed and never reuse the Development key.
 
 Development channel from an explicitly selected Forgejo-compatible provider:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | \
-  sudo sh -s -- --provider forgejo \
+  sh -s -- --provider forgejo \
     --releases-api https://forge.example.test/api/v1/repos/example/YouEye/releases \
     --channel development
 ```
@@ -59,7 +58,9 @@ The bootstrap defaults to the official GitHub Stable release API, paginates the
 selected GitHub, Forgejo, or custom HTTPS API, refuses cross-channel
 fallback, requires API-provided release download URLs, verifies the detached
 Ed25519 signature over the complete checksum set, and verifies the exact
-installer binary digest before executing it. Alternative providers are never
+installer binary digest before executing it. Public releases additionally
+require the exact detached `release-lock.json`, whose digest is bound by signed
+provenance, and matching source and component identities. Alternative providers are never
 prefilled. Exact selection requires the release tag plus both Installer and ISO
 SHA-256 digests without replacing signed verification.
 
@@ -112,9 +113,9 @@ verification.
 
 The console shows the HTTPS setup address only after first deployment passes
 its durable health gates. Open it and create the single initial YouEye ID owner.
-There is no default appliance password. Root password login is locked; root SSH
-is available only for public keys supplied by the installer or later managed in
-Settings.
+There is no default appliance password. The interactive installer requires a
+root password for local console recovery. SSH public keys and optional local
+password SSH are configured separately, as described below.
 
 On the appliance console, the authoritative operational check is:
 
@@ -132,6 +133,50 @@ The operational profile must report healthy. All five required platform
 containers—Control Panel (`youeye-control`), PostgreSQL, Caddy, Pi-hole, and
 YouEye UI—must be running. `youeye-id.service` is a separately verified process
 inside the Control Panel container; it is not a sixth container.
+
+## Root SSH access
+
+The Installer's **Root password SSH** option permits root password login only
+from the directly connected IPv4 subnet. It uses the password chosen for the
+local console. Leaving it off keeps SSH key-only, even when local console login
+works. The **Development access** page name does not select the software release
+channel. Public-key import supplies a separate way to authenticate and does not
+enable password SSH. Routed networks and VPN clients may fall outside the
+permitted subnet.
+
+If SSH reports `Permission denied (publickey)`, inspect the applied policy from
+the appliance's local root console before changing authentication settings:
+
+```sh
+cat /var/lib/youeye-state/bootstrap/development-access-status.json
+systemctl status youeye-development-access.service --no-pager
+passwd -S root
+```
+
+The status JSON contains requested/effective access, the detected subnet and a
+non-secret failure explanation. `passwd -S` reports account state, not the
+password or hash. Do not share `development-access.json` or `/etc/shadow`, which
+contain password hashes. If password SSH was requested but is not effective,
+investigate the reported policy, network or service failure first.
+
+To inspect sshd's effective policy for the connecting client, replace the
+example client address below with that client's actual IPv4 address:
+
+```sh
+/usr/sbin/sshd -T -C user=root,addr=192.0.2.10,host=client | \
+  grep -E '^(permitrootlogin|passwordauthentication|pubkeyauthentication|authenticationmethods|authorizedkeysfile) '
+```
+
+To recover key access without enabling password login, bring your **public**
+key to the console as a file and register it with the managed key command:
+
+```sh
+youeye appliance ssh-key add --file /path/to/your-public-key.pub
+youeye appliance ssh-key list
+```
+
+Keep the private key on the client. Do not weaken global sshd settings or
+reinstall the appliance merely to diagnose SSH authentication.
 
 ## Platform management
 
