@@ -27,7 +27,7 @@ test('Caddy configured-domain helper preserves leased subdomain domains', () => 
   const policyBranch = helper.slice(0, helper.indexOf('// Try to extract from existing routes'));
 
   assert.match(policyBranch, /return subject/);
-  assert.match(policyBranch, /must not collapse to youeye\.me/);
+  assert.match(policyBranch, /must not collapse to ui\.bingo/);
   assert.doesNotMatch(policyBranch, /parts\.slice\(-2\)\.join\('\.'\)/);
 });
 
@@ -51,5 +51,7 @@ test('URL installs canonicalize browser-supplied domains server-side', () => {
   assert.match(source, /domain = await canonicalPlatformDomain\(\)/);
   assert.match(source, /Ignoring client-supplied URL install domain/);
   assert.match(source, /Subdomain must be a single DNS label/);
+  assert.match(source, /body\.manifestUrl \?\? body\.url/);
+  assert.match(source, /manifest\.metadata\.defaultSubdomain\.trim\(\)\.toLowerCase\(\)/);
   assert.doesNotMatch(source, /Missing required fields: manifestUrl, subdomain, domain/);
 });

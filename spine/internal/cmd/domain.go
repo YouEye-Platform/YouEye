@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/youeye-platform/YouEye/spine/internal/output"
@@ -39,22 +40,63 @@ var domainShowCmd = &cobra.Command{
 	},
 }
 
+var domainSetTLS string
+var domainSetYes bool
+
 var domainSetCmd = &cobra.Command{
 	Use:   "set <domain>",
-	Short: "Set the platform base domain",
-	Args:  cobra.ExactArgs(1),
+	Short: "Change the server URL (full platform reconfigure)",
+	Long: "Changes the server URL on a running platform. This is a FULL reconfigure:\n" +
+		"YouEye ID, the dashboard, the Control Panel, the reverse proxy, local DNS,\n" +
+		"the TLS certificate, and every installed app (native and market) move to\n" +
+		"the new name. Progress is streamed step by step.\n\n" +
+		"Certificate handling (--tls):\n" +
+		"  auto        provider re-issue when a DNS provider manages the platform\n" +
+		"              domain, otherwise a fresh self-signed certificate (default)\n" +
+		"  selfsigned  fresh self-signed certificate for the new name (any name)\n" +
+		"  provider    re-issue via the connected DNS provider (Let's Encrypt)\n\n" +
+		"To move to a saved YouEye Name or exported domain instead, use\n" +
+		"'youeye names import <bundle>' or 'youeye domain import <bundle>'.",
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !requireCP() {
 			return nil
 		}
-		_, err := controlClient.Post("/api/domain", map[string]interface{}{
-			"domain": args[0],
-		})
-		if err != nil {
-			return err
+		newDomain := strings.ToLower(strings.TrimSpace(args[0]))
+		if newDomain == "" {
+			return fmt.Errorf("domain is required")
 		}
-		output.Success("Domain set to " + args[0])
-		return nil
+		switch domainSetTLS {
+		case "", "auto", "selfsigned", "provider":
+		default:
+			return fmt.Errorf("--tls must be auto, selfsigned or provider (got %q)", domainSetTLS)
+		}
+
+		state := readPlatformYaml()
+		if !state.SetupCompleted {
+			// Pre-setup there is nothing to migrate — keep the lightweight path.
+			_, err := controlClient.Post("/api/domain", map[string]interface{}{"domain": newDomain})
+			if err != nil {
+				return err
+			}
+			output.Success("Domain set to " + newDomain)
+			return nil
+		}
+		if state.Domain == newDomain {
+			output.Info("The server URL is already " + newDomain)
+			return nil
+		}
+
+		selfsigned := domainSetTLS == "selfsigned" || domainSetTLS == "" || domainSetTLS == "auto"
+		if !confirmURLChange(newDomain, state.Domain, selfsigned, domainSetYes) {
+			return nil
+		}
+
+		payload := map[string]interface{}{"domain": newDomain}
+		if domainSetTLS != "" {
+			payload["tls"] = domainSetTLS
+		}
+		return streamURLChange("/api/setup/reconfigure", payload)
 	},
 }
 
@@ -96,12 +138,17 @@ var domainExportCmd = &cobra.Command{
 	},
 }
 
+var domainImportYes bool
+
 var domainImportCmd = &cobra.Command{
 	Use:   "import <bundle.json>",
-	Short: "Stage a BYO domain bundle so the next setup reuses its domain + cert",
-	Long: "Stages a bundle from 'youeye domain export' into the Control Panel so the setup\n" +
-		"wizard restores the domain certificate and DNS provider automation. Run after\n" +
-		"'youeye deploy', before opening setup.",
+	Short: "Use a saved domain bundle — live URL switch when set up, staged for setup otherwise",
+	Long: "With setup already completed, switches the RUNNING platform to the bundle's\n" +
+		"domain: the DNS provider connection is restored, the bundled certificate is\n" +
+		"reused (or re-issued when expired and the bundle carries the DNS token), and\n" +
+		"the whole platform — YouEye ID, dashboard, every app — moves to that domain.\n\n" +
+		"Before setup, stages the bundle so the setup wizard restores the domain\n" +
+		"certificate and DNS provider automation (run after 'youeye deploy').",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		raw, err := os.ReadFile(args[0])
@@ -132,6 +179,27 @@ var domainImportCmd = &cobra.Command{
 			return fmt.Errorf("%s is not a valid YouEye BYO domain bundle", args[0])
 		}
 
+		state := readPlatformYaml()
+		if state.SetupCompleted {
+			// Live switch: the platform is running — apply the bundle now.
+			if !requireCP() {
+				return nil
+			}
+			if state.Domain == strings.ToLower(b.Domain) {
+				output.Info("The server URL is already " + b.Domain + " — nothing to do")
+				return nil
+			}
+			if !confirmURLChange(strings.ToLower(b.Domain), state.Domain, false, domainImportYes) {
+				return nil
+			}
+			var payload map[string]interface{}
+			if err := json.Unmarshal(raw, &payload); err != nil {
+				return fmt.Errorf("parsing bundle: %w", err)
+			}
+			return streamURLChange("/api/tls/domain/apply", payload)
+		}
+
+		// Pre-setup: stage for the wizard (original behavior).
 		if out, err := exec.Command("incus", "exec", "youeye-control", "--", "mkdir", "-p", domainImportDir).CombinedOutput(); err != nil {
 			return fmt.Errorf("preparing container dir: %v (%s)", err, string(out))
 		}
@@ -148,6 +216,9 @@ var domainImportCmd = &cobra.Command{
 }
 
 func init() {
+	domainSetCmd.Flags().StringVar(&domainSetTLS, "tls", "auto", "certificate for the new name: auto, selfsigned or provider")
+	domainSetCmd.Flags().BoolVarP(&domainSetYes, "yes", "y", false, "skip the confirmation prompt")
+	domainImportCmd.Flags().BoolVarP(&domainImportYes, "yes", "y", false, "skip the confirmation prompt (live switch)")
 	domainExportCmd.Flags().StringVarP(&domainExportOutput, "output", "o", "", "write the bundle to a file (default: stdout)")
 	domainExportCmd.Flags().BoolVar(&domainExportIncludeToken, "include-token", false, "include the DNS provider token in the bundle")
 	domainCmd.AddCommand(domainShowCmd)

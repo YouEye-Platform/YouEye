@@ -1,13 +1,15 @@
 import { incusRequest } from '@/lib/incus/server';
 import { listInstalledApps, readInstallMetadata, saveInstallMetadata } from '@/lib/market/metadata';
 import type { ContainerMeta, InstallMetadata } from '@/lib/market/types';
+import { setPointerManagedAppEnabled } from '@/lib/pointer/managed-apps';
 import { pushAppRuntimeStatusToUI } from '@/lib/ui/app-status';
+import { randomUUID } from 'crypto';
 
 export type AppPowerAction = 'start' | 'stop' | 'restart' | 'status';
 export type AppRuntimeStatus = 'running' | 'stopped' | 'partial' | 'not-installed' | 'unknown';
 
 export interface AppLifecycleResult {
-  success: true;
+  success: boolean;
   appId: string;
   action: AppPowerAction;
   enabled: boolean;
@@ -19,7 +21,12 @@ export interface AppLifecycleResult {
     status: string;
     role: ContainerMeta['role'];
     primary: boolean;
+    error?: string;
   }>;
+  intentPersisted: boolean;
+  operationState: 'applying' | 'completed' | 'partial';
+  observationErrors: string[];
+  repairRequired: boolean;
   uiStatusSynced?: boolean;
   message: string;
 }
@@ -163,6 +170,7 @@ function aggregateStatus(statuses: string[]): AppRuntimeStatus {
   if (statuses.length === 0) return 'unknown';
   const running = statuses.filter((s) => s === 'running').length;
   if (running === statuses.length) return 'running';
+  if (statuses.some((s) => s === 'unknown')) return running > 0 ? 'partial' : 'unknown';
   if (running === 0) {
     if (statuses.every((s) => s === 'not-found')) return 'not-installed';
     return 'stopped';
@@ -185,10 +193,19 @@ async function buildResult(
   containers: ContainerTarget[],
   uiStatusSynced?: boolean,
 ): Promise<AppLifecycleResult> {
-  const statuses = await Promise.all(containers.map(async (container) => ({
-    ...container,
-    status: await getContainerStatus(container.name),
-  })));
+  const statuses: Array<ContainerTarget & { status: string; error?: string }> = await Promise.all(
+    containers.map(async (container) => {
+      try {
+        return { ...container, status: await getContainerStatus(container.name) };
+      } catch (error) {
+        return {
+          ...container,
+          status: 'unknown',
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }),
+  );
   const status = aggregateStatus(statuses.map((container) => container.status));
   const enabled = meta.enabled !== false && meta.desiredState !== 'stopped';
   const desiredState: 'running' | 'stopped' = enabled ? 'running' : 'stopped';
@@ -200,8 +217,13 @@ async function buildResult(
     status: `${label} is ${status}`,
   };
 
+  const observationErrors = statuses
+    .filter((container) => container.error)
+    .map((container) => `${container.name}: ${container.error}`);
+  const operationState = meta.lifecycleOperation?.state ?? 'completed';
+
   return {
-    success: true,
+    success: operationState === 'completed' && observationErrors.length === 0,
     appId: meta.appId,
     action,
     enabled,
@@ -213,10 +235,74 @@ async function buildResult(
       status: container.status,
       role: container.role,
       primary: container.primary,
+      error: container.error,
     })),
+    intentPersisted: true,
+    operationState,
+    observationErrors,
+    repairRequired: operationState === 'partial' || observationErrors.length > 0,
     uiStatusSynced,
     message: actionMessage[action],
   };
+}
+
+function desiredStateFor(action: Exclude<AppPowerAction, 'status'>): 'running' | 'stopped' {
+  return action === 'stop' ? 'stopped' : 'running';
+}
+
+async function beginLifecycleOperation(
+  meta: InstallMetadata,
+  action: Exclude<AppPowerAction, 'status'>,
+  actor: string,
+  containers: ContainerTarget[],
+): Promise<void> {
+  const now = new Date().toISOString();
+  const desiredState = desiredStateFor(action);
+  meta.enabled = desiredState === 'running';
+  meta.desiredState = desiredState;
+  meta.lastPowerAction = action;
+  if (desiredState === 'stopped') {
+    meta.disabledAt = now;
+    meta.disabledBy = actor;
+  } else {
+    delete meta.disabledAt;
+    delete meta.disabledBy;
+  }
+  meta.lifecycleOperation = {
+    id: randomUUID(),
+    action,
+    desiredState,
+    state: 'applying',
+    actor,
+    startedAt: now,
+    updatedAt: now,
+    containers: containers.map((container) => ({
+      name: container.name,
+      bootAutostart: 'pending',
+      runtime: 'pending',
+    })),
+  };
+  await saveInstallMetadata(meta);
+}
+
+async function updateLifecycleProgress(
+  meta: InstallMetadata,
+  containerName: string,
+  field: 'bootAutostart' | 'runtime',
+): Promise<void> {
+  const progress = meta.lifecycleOperation?.containers.find((entry) => entry.name === containerName);
+  if (progress) progress[field] = 'applied';
+  if (meta.lifecycleOperation) meta.lifecycleOperation.updatedAt = new Date().toISOString();
+  await saveInstallMetadata(meta);
+}
+
+async function finishLifecycleOperation(meta: InstallMetadata, error?: unknown): Promise<void> {
+  if (!meta.lifecycleOperation) return;
+  meta.lifecycleOperation.state = error ? 'partial' : 'completed';
+  meta.lifecycleOperation.updatedAt = new Date().toISOString();
+  if (error) meta.lifecycleOperation.error = error instanceof Error ? error.message : String(error);
+  else delete meta.lifecycleOperation.error;
+  await saveInstallMetadata(meta);
 }
 
 export async function controlInstalledApp(
@@ -240,19 +326,26 @@ export async function controlInstalledApp(
   }
 
   let uiStatusSynced: boolean | undefined;
-  const now = new Date().toISOString();
-
   if (action === 'stop') {
     const ordered = orderContainers(containers, 'stop');
-    for (const container of ordered) await setBootAutostart(container.name, false);
-    for (const container of ordered) await changeContainerState(container.name, 'stop', true);
-
-    meta.enabled = false;
-    meta.desiredState = 'stopped';
-    meta.disabledAt = now;
-    meta.disabledBy = actor;
-    meta.lastPowerAction = 'stop';
-    await saveInstallMetadata(meta);
+    if (meta.aiConnection) {
+      await setPointerManagedAppEnabled(meta.aiConnection.externalInstallationId, false);
+      meta.aiConnection.state = 'disabled';
+    }
+    await beginLifecycleOperation(meta, action, actor, ordered);
+    try {
+      for (const container of ordered) {
+        await setBootAutostart(container.name, false);
+        await updateLifecycleProgress(meta, container.name, 'bootAutostart');
+      }
+      for (const container of ordered) {
+        await changeContainerState(container.name, 'stop', true);
+        await updateLifecycleProgress(meta, container.name, 'runtime');
+      }
+      await finishLifecycleOperation(meta);
+    } catch (error) {
+      await finishLifecycleOperation(meta, error);
+    }
 
     uiStatusSynced = await pushAppRuntimeStatusToUI(meta.appId, 'stopped');
     return buildResult(meta, action, containers, uiStatusSynced);
@@ -260,15 +353,33 @@ export async function controlInstalledApp(
 
   if (action === 'start') {
     const ordered = orderContainers(containers, 'start');
-    for (const container of ordered) await setBootAutostart(container.name, true);
-    for (const container of ordered) await changeContainerState(container.name, 'start', options.force === true);
-
-    meta.enabled = true;
-    meta.desiredState = 'running';
-    delete meta.disabledAt;
-    delete meta.disabledBy;
-    meta.lastPowerAction = 'start';
-    await saveInstallMetadata(meta);
+    let aiEnabledForStart = false;
+    if (meta.aiConnection) {
+      await setPointerManagedAppEnabled(meta.aiConnection.externalInstallationId, true);
+      meta.aiConnection.state = 'active';
+      aiEnabledForStart = true;
+    }
+    await beginLifecycleOperation(meta, action, actor, ordered);
+    try {
+      for (const container of ordered) {
+        await setBootAutostart(container.name, true);
+        await updateLifecycleProgress(meta, container.name, 'bootAutostart');
+      }
+      for (const container of ordered) {
+        await changeContainerState(container.name, 'start', options.force === true);
+        await updateLifecycleProgress(meta, container.name, 'runtime');
+      }
+      await finishLifecycleOperation(meta);
+    } catch (error) {
+      if (aiEnabledForStart && meta.aiConnection) {
+        await setPointerManagedAppEnabled(
+          meta.aiConnection.externalInstallationId,
+          false
+        ).catch(() => undefined);
+        meta.aiConnection.state = 'disabled';
+      }
+      await finishLifecycleOperation(meta, error);
+    }
 
     const result = await buildResult(meta, action, containers);
     uiStatusSynced = await pushAppRuntimeStatusToUI(meta.appId, result.status === 'running' ? 'healthy' : 'unhealthy');
@@ -282,16 +393,21 @@ export async function controlInstalledApp(
 
     const stopOrder = orderContainers(containers, 'stop');
     const startOrder = orderContainers(containers, 'start');
-    for (const container of startOrder) await setBootAutostart(container.name, true);
-    for (const container of stopOrder) await changeContainerState(container.name, 'stop', true);
-    for (const container of startOrder) await changeContainerState(container.name, 'start', true);
-
-    meta.enabled = true;
-    meta.desiredState = 'running';
-    delete meta.disabledAt;
-    delete meta.disabledBy;
-    meta.lastPowerAction = 'restart';
-    await saveInstallMetadata(meta);
+    await beginLifecycleOperation(meta, action, actor, startOrder);
+    try {
+      for (const container of startOrder) {
+        await setBootAutostart(container.name, true);
+        await updateLifecycleProgress(meta, container.name, 'bootAutostart');
+      }
+      for (const container of stopOrder) await changeContainerState(container.name, 'stop', true);
+      for (const container of startOrder) {
+        await changeContainerState(container.name, 'start', true);
+        await updateLifecycleProgress(meta, container.name, 'runtime');
+      }
+      await finishLifecycleOperation(meta);
+    } catch (error) {
+      await finishLifecycleOperation(meta, error);
+    }
 
     const result = await buildResult(meta, action, containers);
     uiStatusSynced = await pushAppRuntimeStatusToUI(meta.appId, result.status === 'running' ? 'healthy' : 'unhealthy');

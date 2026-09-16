@@ -14,6 +14,10 @@ interface MarketSourceConfig {
   id: string;
   name: string;
   repo_url: string;
+  branch: string;
+  resolved_commit?: string;
+  resolved_at?: string;
+  refresh_error?: string;
   enabled: boolean;
   priority: number;
   trust: 'official' | 'community' | 'custom';
@@ -123,6 +127,7 @@ export default function MarketSourcesPage() {
         id: `custom-${sources.length + 1}`,
         name: newName.trim() || 'Custom Market',
         repo_url: newUrl.trim(),
+        branch: 'main',
         enabled: true,
         priority: sources.length,
         trust: 'custom',
@@ -200,6 +205,11 @@ export default function MarketSourcesPage() {
                     {count != null ? ` · ${count} app${count === 1 ? '' : 's'}` : ''}
                     {s.enabled ? '' : ' · disabled'}
                   </div>
+                  <div className="truncate font-mono text-[11px] text-muted-foreground">
+                    Channel {s.branch || 'main'}
+                    {s.resolved_commit ? ` · resolved ${s.resolved_commit.slice(0, 12)}` : ' · not resolved yet'}
+                  </div>
+                  {s.refresh_error && <div className="truncate text-[11px] text-destructive">Last refresh failed: {s.refresh_error}</div>}
                 </div>
                 <Switch checked={s.enabled} disabled={saving} onCheckedChange={(v) => toggle(i, v)} aria-label={`Enable ${s.name}`} />
                 <button

@@ -1,6 +1,10 @@
 package incus
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 func TestIncusBridgeDnsmasqStale(t *testing.T) {
 	tests := []struct {
@@ -110,5 +114,42 @@ func TestManagedLoopSource(t *testing.T) {
 	}
 	if managedLoopSource("/dev/nvme0n1p4") {
 		t.Fatal("expected block device source to be ignored")
+	}
+}
+
+// ZFS survival across unattended kernel upgrades: installZFS must install
+// the kernel-headers META package (not only the exact headers) on both the
+// fresh-install and already-installed paths, so the zfs-dkms kernel hook can
+// build the module for a NEW kernel before its first boot. Clones .79/.80
+// (2026-07-03) booted kernel 6.12.94 with a module built only for 6.12.90 —
+// zero containers could start.
+func TestInstallZFSEnsuresHeadersMeta(t *testing.T) {
+	sourceBytes, err := os.ReadFile("install.go")
+	if err != nil {
+		t.Fatalf("read install.go: %v", err)
+	}
+	source := string(sourceBytes)
+
+	if strings.Count(source, "ensureKernelHeadersMeta()") < 2 {
+		t.Fatalf("installZFS must call ensureKernelHeadersMeta on both the already-installed and fresh-install paths")
+	}
+	if !strings.Contains(source, `"linux-headers-cloud-amd64"`) || !strings.Contains(source, `meta := "linux-headers-amd64"`) {
+		t.Fatalf("ensureKernelHeadersMeta must pick the headers meta-package by kernel flavor")
+	}
+}
+
+func TestInstallZFSRepairsEarlyModuleServiceFailure(t *testing.T) {
+	sourceBytes, err := os.ReadFile("install.go")
+	if err != nil {
+		t.Fatalf("read install.go: %v", err)
+	}
+	source := string(sourceBytes)
+
+	if strings.Count(source, "repairZFSModuleService()") < 3 {
+		t.Fatalf("installZFS must repair the ZFS module unit on both the already-installed and fresh-install paths")
+	}
+	if !strings.Contains(source, `"reset-failed", "zfs-load-module.service"`) ||
+		!strings.Contains(source, `"start", "zfs-load-module.service"`) {
+		t.Fatalf("ZFS module repair must clear the premature DKMS failure and restart the oneshot unit")
 	}
 }

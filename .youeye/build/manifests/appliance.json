@@ -1,0 +1,32 @@
+{
+  "schema": "youeye.build.v2",
+  "component": "appliance",
+  "build_kind": "appliance-release-set",
+  "entrypoint": ".youeye/build/appliance",
+  "working_directory": ".",
+  "inputs": [{"path": ".", "kind": "directory"}],
+  "submodules": [],
+  "executor": {"id": "koshka-lxc-625-v1", "digest": "92f4846683a50b2547e0bbf7c368ae1f34a1ed7388e6ebd6dfedc4770f8909cc"},
+  "build_kit": {"id": "youeye-permanent-build-kit-v1", "digest": "ed478630fc45ad7a6fa6946d142962a71d32bbd7dfc9c7d6dcf77f4da48e3d11"},
+  "public_inputs": {},
+  "public_input_schema": {"image_version": "version", "release_branch": "branch"},
+  "environment": {"locale": "C.UTF-8", "timezone": "UTC", "source_date_epoch": 0, "variables": {"APPLIANCE_BUILD_MODE": "unsigned", "LIVE_BUILD_APT_PROXY": "http://127.0.0.1:3142"}},
+  "network": {"mode": "deny", "external_inputs": []},
+  "unsigned_outputs": [
+    {"name": "internal-recovery.img.zst", "role": "internal-recovery", "media_type": "application/zstd", "minimum_size_bytes": 1000000, "structural_checks": ["zstd", "ext4"]},
+    {"name": "recovery.efi", "role": "recovery-uki", "media_type": "application/vnd.microsoft.portable-executable", "minimum_size_bytes": 1000000, "structural_checks": ["pe32-efi", "uki-sections"]},
+    {"name": "system-a.efi", "role": "system-a-uki", "media_type": "application/vnd.microsoft.portable-executable", "minimum_size_bytes": 1000000, "structural_checks": ["pe32-efi", "uki-sections"]},
+    {"name": "system-b.efi", "role": "system-b-uki", "media_type": "application/vnd.microsoft.portable-executable", "minimum_size_bytes": 1000000, "structural_checks": ["pe32-efi", "uki-sections"]},
+    {"name": "system-root.img.zst", "role": "system-root", "media_type": "application/zstd", "minimum_size_bytes": 100000000, "structural_checks": ["zstd", "ext4", "release-identity"]},
+    {"name": "youeye-appliance-amd64.iso", "role": "installer-iso", "media_type": "application/x-iso9660-image", "minimum_size_bytes": 100000000, "structural_checks": ["uefi-el-torito", "gpt", "embedded-payloads"]},
+    {"name": "youeye-installer-linux-amd64", "role": "installer-binary", "media_type": "application/vnd.youeye.installer", "minimum_size_bytes": 1000000, "structural_checks": ["amd64-elf", "embedded-trust"]},
+    {"name": "youeye-system-update-bootstrap", "role": "update-bootstrap", "media_type": "text/x-shellscript", "minimum_size_bytes": 100, "structural_checks": ["shell-script"]},
+    {"name": "youeye-system-updater-linux-amd64", "role": "system-updater", "media_type": "application/vnd.youeye.system-updater", "minimum_size_bytes": 1000000, "structural_checks": ["amd64-elf"]}
+  ],
+  "reproducibility": {"class": "bit-for-bit", "comparator": "sha256-set-v1", "exceptions": []},
+  "validation_profile": "appliance-deep-v1",
+  "sbom_profile": "spdx-2.3-v1",
+  "provenance_profile": "slsa-provenance-v1",
+  "publication_lane": "development",
+  "privilege_class": "appliance-image"
+}

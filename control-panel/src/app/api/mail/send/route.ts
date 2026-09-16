@@ -9,6 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { readFileSync } from 'fs';
 import { settingsService } from '@/lib/settings';
 import { readSmtpPassword } from '@/lib/smtp/secrets';
 import { sendEmail } from '@/lib/smtp/mailer';
@@ -18,8 +19,7 @@ function validateAuth(request: NextRequest): { appId: string } | null {
   const bridgeToken = request.headers.get('X-UI-Bridge-Token');
   if (bridgeToken) {
     try {
-      const fs = require('fs');
-      const expected = fs.readFileSync('/etc/youeye/ui-bridge-token', 'utf-8').trim();
+      const expected = readFileSync('/etc/youeye/ui-bridge-token', 'utf-8').trim();
       if (bridgeToken === expected) {
         return { appId: 'system' };
       }

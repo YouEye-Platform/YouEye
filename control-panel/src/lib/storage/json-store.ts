@@ -1,5 +1,5 @@
-import { readFile, writeFile, mkdir, rename } from 'fs/promises';
-import { existsSync } from 'fs';
+import { readFile, writeFile, mkdir, rename, rm } from 'fs/promises';
+import { randomUUID } from 'crypto';
 import path from 'path';
 
 const STATE_DIR = '/var/lib/youeye/state';
@@ -22,12 +22,14 @@ export async function readJSON<T>(filePath: string): Promise<T | null> {
  */
 export async function writeJSON<T>(filePath: string, data: T): Promise<void> {
   const dir = path.dirname(filePath);
-  if (!existsSync(dir)) {
-    await mkdir(dir, { recursive: true, mode: 0o700 });
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const tmp = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    await writeFile(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
+    await rename(tmp, filePath);
+  } finally {
+    await rm(tmp, { force: true }).catch(() => {});
   }
-  const tmp = filePath + '.tmp';
-  await writeFile(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
-  await rename(tmp, filePath);
 }
 
 /**

@@ -83,7 +83,7 @@ export function checkRoleClaimScope(manifest: AppManifest): ValidationItem | nul
           severity: 'warning',
           message: `Admin mapping may fail: scope in configure step ${stepIndex + 1} does not include "${claimName}"`,
           detail: `Field "${path}" has value "${value}" — missing custom claim "${claimName}". ` +
-                  `Authentik only sends claims for scopes the client requests. Without "${claimName}" in the scope, ` +
+                  `YouEye ID only sends claims for scopes the client requests. Without "${claimName}" in the scope, ` +
                   `the admin role claim will be silently excluded from the token.`,
         };
       }
@@ -133,10 +133,10 @@ export async function validateManifest(
     'platform.domain', 'platform.ip', 'platform.protocol', 'platform.locale_full',
     'identity.externalUrl', 'identity.internalUrl', 'identity.name',
     'identity.issuer', 'identity.discoveryUrl',
-    'authentik.clientId', 'authentik.clientSecret', 'authentik.slug',
-    'authentik.externalUrl', 'authentik.name',
     'sso.client_id', 'sso.client_secret', 'sso.slug',
     'database.host', 'database.port', 'database.name', 'database.user', 'database.password',
+    'ai.enabled', 'ai.openaiBaseUrl', 'ai.anthropicBaseUrl', 'ai.googleBaseUrl',
+    'ai.apiKey', 'ai.defaultModel', 'ai.groupId',
     'container.ip', 'container.port',
   ]);
   // Add secret names
@@ -162,7 +162,7 @@ export async function validateManifest(
       // For dotted paths, check if the root is known
       const root = varName.split('.')[0];
       const knownRoots = new Set(['secrets', 'container', 'containers', 'database',
-        'platform', 'app', 'install', 'identity', 'authentik', 'sso', 'smtp', 'provider', 'integration']);
+        'platform', 'app', 'install', 'identity', 'sso', 'smtp', 'provider', 'integration', 'ai']);
       // Also accept container names declared in the manifest (e.g. containers.valkey.*)
       for (const c of manifest.containers) { if (c.name) knownRoots.add(c.name); }
       if (!knownVars.has(root) && !knownRoots.has(root)) {

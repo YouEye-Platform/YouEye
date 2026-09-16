@@ -1,0 +1,20 @@
+[Unit]
+Description=YouEye exact first platform deployment
+Requires=youeye-appliance-storage.service youeye-appliance-incus-sockets.service
+Wants=network-online.target youeye.service
+After=network-online.target youeye-appliance-storage.service youeye-appliance-incus-sockets.service youeye.service
+ConditionPathExists=/usr/lib/youeye/appliance-release
+ConditionPathExists=!/var/lib/youeye-state/first-deploy/complete
+StartLimitIntervalSec=30min
+StartLimitBurst=8
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/youeye-first-deploy
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

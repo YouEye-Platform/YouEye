@@ -54,7 +54,9 @@ tar -cf standalone.tar .
 
 The tarball must be created from inside the component subdirectory with `server.js` at the root level. Use `tar -cf` (uncompressed), not `tar -czf`.
 
-The public release tag for this component is `cp-v0.5.1`.
+The current main-promotion candidate for this component is
+`0.5.22.0.1`; publish it as `cp-v0.5.22.0.1` only from the exact
+accepted main commit.
 
 ## Key API Routes
 

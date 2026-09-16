@@ -13,7 +13,7 @@ import {
   hexToRgb,
   getPresetBackground,
   type AnimatedBackgroundProps,
-} from "./index";
+} from "./shared";
 
 export function SmoothWavy({
   colorPreset,

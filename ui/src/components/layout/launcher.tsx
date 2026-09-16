@@ -4,23 +4,22 @@
  * The `launcher.html` app launcher, served at `/embed/launcher` (UI origin) and
  * opened by the UI header as a near-full-screen overlay. ONE implementation:
  * native apps host it as a UI-served iframe (E1 security fix). Search + a single
- * **ordered grid** of the user's apps AND iOS-style **folders** + Market/Settings
+ * **ordered grid** of all the user's apps AND iOS-style **folders** + Market/Settings
  * system tiles. Data from the UI's own `/api/v1/apps/drawer` (never CP).
  *
- * Drag (pointer-based, useGridDrag): reorder any tile live; **pause over an app**
- * to merge → a folder is created **right there** (at the target's position);
- * pause over a folder to add. Folder tile = 2×2 preview; click opens a centered
- * panel (rename + × remove); empty folders auto-delete. Folders are launcher-only
- * and independent of the drawer's sections.
+ * Fine-pointer desktop users drag directly. Coarse-pointer/mobile users enter
+ * rearrange mode first so ordinary vertical scrolling remains native. A central
+ * app drop creates a folder; a central folder drop adds to it. The launcher has
+ * no hide/remove path — moving an app out of a folder returns it to this grid.
  */
 
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import * as LucideIcons from "lucide-react";
 import type { ComponentType } from "react";
-import { Search, Store, Settings, Package, X } from "lucide-react";
+import { Check, Package, Pencil, Search, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useGridDrag } from "@/lib/hooks/use-grid-drag";
 
@@ -34,6 +33,8 @@ interface LauncherApp {
   url: string | null;
   order: number;
   folder_id: string | null;
+  launcher_visible: boolean;
+  platform?: boolean;
 }
 
 interface Folder {
@@ -102,10 +103,20 @@ function FolderPreview({ members }: { members: LauncherApp[] }) {
   );
 }
 
-interface SystemTile { key: string; name: string; href: string; Icon: ComponentType<{ className?: string }>; }
-
 function genFolderId(): string {
   return `f-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function useFinePointer(): boolean {
+  const [finePointer, setFinePointer] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia("(hover: hover) and (pointer: fine)");
+    const update = () => setFinePointer(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return finePointer;
 }
 
 export function Launcher({ embedded = false, onClose }: { embedded?: boolean; onClose?: () => void }) {
@@ -115,6 +126,9 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
   const [loadError, setLoadError] = useState(false);
   const [query, setQuery] = useState("");
   const [openFolderId, setOpenFolderId] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const finePointer = useFinePointer();
+  const layoutSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const t = useTranslations("nav");
 
   const fetchApps = useCallback(() => {
@@ -151,24 +165,20 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
       }
       setQuery("");
       setOpenFolderId(null);
+      setEditMode(false);
     };
     window.addEventListener("message", handleVisibility);
     return () => window.removeEventListener("message", handleVisibility);
   }, [embedded, fetchApps]);
 
-  const systemTiles: SystemTile[] = useMemo(() => [
-    { key: "market", name: "Market", href: "/market", Icon: Store },
-    { key: "settings", name: t("settings"), href: "/settings", Icon: Settings },
-  ], [t]);
-
-  const withUrl = useMemo(() => apps.filter((a) => a.url), [apps]);
+  const allWithUrl = useMemo(() => apps.filter((a) => a.url), [apps]);
   const membersOf = useMemo(() => {
     const m = new Map<string, LauncherApp[]>();
-    for (const a of withUrl) if (a.folder_id) { const arr = m.get(a.folder_id) ?? []; arr.push(a); m.set(a.folder_id, arr); }
+    for (const a of allWithUrl) if (a.folder_id) { const arr = m.get(a.folder_id) ?? []; arr.push(a); m.set(a.folder_id, arr); }
     return m;
-  }, [withUrl]);
+  }, [allWithUrl]);
   const validFolders = useMemo(() => folders.filter((f) => (membersOf.get(f.id)?.length ?? 0) > 0), [folders, membersOf]);
-  const looseApps = useMemo(() => withUrl.filter((a) => !a.folder_id), [withUrl]);
+  const looseApps = useMemo(() => allWithUrl.filter((a) => !a.folder_id), [allWithUrl]);
 
   // One unified ordered grid of apps + folders.
   const gridItems: GridItem[] = useMemo(() => {
@@ -180,8 +190,7 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
   }, [looseApps, validFolders, membersOf]);
 
   const q = query.trim().toLowerCase();
-  const searchHits = useMemo(() => (q ? withUrl.filter((a) => a.name.toLowerCase().includes(q)) : []), [q, withUrl]);
-  const gridSystem = q ? systemTiles.filter((s) => s.name.toLowerCase().includes(q)) : systemTiles;
+  const searchHits = useMemo(() => (q ? allWithUrl.filter((a) => a.name.toLowerCase().includes(q)) : []), [q, allWithUrl]);
   const searching = q.length > 0;
 
   const go = useCallback((href: string) => {
@@ -190,10 +199,24 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
   }, [embedded]);
 
   // ── Persistence ──
-  const persistFolders = useCallback((fs: Folder[]) =>
-    fetch("/api/v1/apps/drawer/folders", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folders: fs.map((f) => ({ id: f.id, name: f.name, order: f.order })) }) }).catch(() => {}), []);
-  const setAppFolder = useCallback((appId: string, folderId: string | null, order?: number) =>
-    fetch(`/api/v1/apps/drawer/${appId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(order !== undefined ? { folder_id: folderId, order } : { folder_id: folderId }) }).catch(() => {}), []);
+  const persistLayout = useCallback((nextApps: LauncherApp[], nextFolders: Folder[]) => {
+    const body = JSON.stringify({
+      folders: nextFolders.map((folder) => ({ id: folder.id, name: folder.name, order: folder.order })),
+      layout: nextApps.filter((app) => app.url).map((app) => ({ id: app.id, folder_id: app.folder_id, order: app.order })),
+    });
+    layoutSaveQueue.current = layoutSaveQueue.current
+      .catch(() => undefined)
+      .then(async () => {
+        const response = await fetch("/api/v1/apps/launcher/layout", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body,
+        });
+        if (!response.ok) throw new Error("Launcher layout was not saved");
+      })
+      .catch(() => { fetchApps(); });
+    return layoutSaveQueue.current;
+  }, [fetchApps]);
   const pruneFolders = (nextApps: LauncherApp[], base: Folder[], keepId?: string) => base.filter((f) => f.id === keepId || nextApps.some((a) => a.url && a.folder_id === f.id));
 
   // ── Reorder (live, then persist on drop) ──
@@ -209,11 +232,11 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
   }, [gridItems]);
 
   const persistGrid = useCallback(() => {
-    gridItems.forEach((g, i) => {
-      if (g.kind === "app") setAppFolder(g.id, null, i);
-    });
-    persistFolders(folders.map((f) => { const idx = gridItems.findIndex((g) => g.id === f.id); return idx >= 0 ? { ...f, order: idx } : f; }));
-  }, [gridItems, folders, setAppFolder, persistFolders]);
+    const orderMap = new Map(gridItems.map((item, index) => [item.id, index] as const));
+    const nextApps = apps.map((app) => orderMap.has(app.id) ? { ...app, order: orderMap.get(app.id)! } : app);
+    const nextFolders = folders.map((folder) => orderMap.has(folder.id) ? { ...folder, order: orderMap.get(folder.id)! } : folder);
+    void persistLayout(nextApps, nextFolders);
+  }, [apps, gridItems, folders, persistLayout]);
 
   // ── Folder ops ──
   const createFolder = useCallback((targetId: string, draggedId: string) => {
@@ -225,10 +248,8 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
     const nextFolders = pruneFolders(nextApps, [...folders, { id, name: t("folder"), order }], id);
     setApps(nextApps);
     setFolders(nextFolders);
-    setAppFolder(targetId, id);
-    setAppFolder(draggedId, id);
-    persistFolders(nextFolders);
-  }, [apps, folders, t, setAppFolder, persistFolders]);
+    void persistLayout(nextApps, nextFolders);
+  }, [apps, folders, t, persistLayout]);
 
   const addToFolder = useCallback((appId: string, folderId: string) => {
     if (apps.find((a) => a.id === appId)?.folder_id === folderId) return;
@@ -236,9 +257,8 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
     const nextFolders = pruneFolders(nextApps, folders, folderId);
     setApps(nextApps);
     setFolders(nextFolders);
-    setAppFolder(appId, folderId);
-    if (nextFolders.length !== folders.length) persistFolders(nextFolders);
-  }, [apps, folders, setAppFolder, persistFolders]);
+    void persistLayout(nextApps, nextFolders);
+  }, [apps, folders, persistLayout]);
 
   const removeFromFolder = useCallback((appId: string) => {
     const maxOrder = Math.max(0, ...apps.map((a) => a.order ?? 0), ...folders.map((f) => f.order ?? 0));
@@ -246,18 +266,15 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
     const nextFolders = pruneFolders(nextApps, folders);
     setApps(nextApps);
     setFolders(nextFolders);
-    setAppFolder(appId, null, maxOrder + 1);
-    if (nextFolders.length !== folders.length) {
-      persistFolders(nextFolders);
-      if (openFolderId && !nextFolders.some((f) => f.id === openFolderId)) setOpenFolderId(null);
-    }
-  }, [apps, folders, openFolderId, setAppFolder, persistFolders]);
+    void persistLayout(nextApps, nextFolders);
+    if (openFolderId && !nextFolders.some((f) => f.id === openFolderId)) setOpenFolderId(null);
+  }, [apps, folders, openFolderId, persistLayout]);
 
   const renameFolder = useCallback((folderId: string, name: string) => {
     const nextFolders = folders.map((f) => (f.id === folderId ? { ...f, name } : f));
     setFolders(nextFolders);
-    persistFolders(nextFolders);
-  }, [folders, persistFolders]);
+    void persistLayout(apps, nextFolders);
+  }, [apps, folders, persistLayout]);
 
   // ── Drag wiring ──
   const onMerge = useCallback((draggedId: string, targetId: string) => {
@@ -272,13 +289,14 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
 
   const drag = useGridDrag({
     order: gridItems.map((g) => g.id),
-    enabled: !searching,
+    enabled: !searching && (finePointer || editMode),
     onReorder: reorderGrid,
     onCommit: persistGrid,
     onMerge,
     canMerge,
-    dwellMs: 450,
+    reorderDelayMs: 140,
   });
+  const dragEnabled = !searching && (finePointer || editMode);
 
   const openFolder = openFolderId ? validFolders.find((f) => f.id === openFolderId) : null;
   const openMembers = openFolderId ? membersOf.get(openFolderId) ?? [] : [];
@@ -310,7 +328,7 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
         onPointerDown={(e) => drag.startDrag(e, app.id)}
         onMouseDown={(e) => drag.startDrag(e, app.id)}
         onClick={() => { if (!drag.consumeClick() && app.url && !off) go(app.url); }}
-        className={`relative grid touch-none select-none justify-items-center gap-2 rounded-xl p-1 text-center transition-[transform,opacity] hover:scale-105 ${unavailable ? "opacity-40 grayscale" : ""} ${dragging ? "scale-95 opacity-30" : ""} ${merge ? "scale-110" : ""}`}
+        className={`relative grid select-none justify-items-center gap-2 rounded-xl p-1 text-center transition-[transform,opacity] hover:scale-105 ${dragEnabled ? "touch-none cursor-grab active:cursor-grabbing" : "touch-pan-y"} ${unavailable ? "opacity-40 grayscale" : ""} ${dragging ? "scale-95 opacity-30" : ""} ${merge ? "scale-110" : ""}`}
         title={off ? `${app.name} is off` : app.name}
       >
         {off && <span className="absolute left-2 top-2 h-1.5 w-1.5 rounded-full bg-destructive"><span className="sr-only">Off</span></span>}
@@ -333,7 +351,7 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
         onPointerDown={(e) => drag.startDrag(e, folder.id)}
         onMouseDown={(e) => drag.startDrag(e, folder.id)}
         onClick={() => { if (!drag.consumeClick()) setOpenFolderId(folder.id); }}
-        className={`grid touch-none select-none justify-items-center gap-2 rounded-xl p-1 text-center transition-[transform,opacity] hover:scale-105 ${dragging ? "scale-95 opacity-30" : ""} ${merge ? "scale-110" : ""}`}
+        className={`grid select-none justify-items-center gap-2 rounded-xl p-1 text-center transition-[transform,opacity] hover:scale-105 ${dragEnabled ? "touch-none cursor-grab active:cursor-grabbing" : "touch-pan-y"} ${dragging ? "scale-95 opacity-30" : ""} ${merge ? "scale-110" : ""}`}
         title={folder.name}
       >
         <div className={merge ? "rounded-2xl ring-2 ring-primary ring-offset-2 ring-offset-transparent" : ""}>
@@ -352,10 +370,13 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
         </button>
       )}
 
-      <div className="relative w-[min(440px,90%)]">
-        <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
-        <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("searchApps")} className="h-11 w-full rounded-full border bg-card/70 pl-11 pr-4 text-sm outline-none focus:ring-2 focus:ring-ring" />
+      <div className="flex w-[min(500px,90%)] items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
+          <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("searchApps")} className="h-11 w-full rounded-full border bg-card/70 pl-11 pr-4 text-sm outline-none focus:ring-2 focus:ring-ring" />
+        </div>
+        {!finePointer && <button type="button" onClick={() => { setEditMode((value) => !value); setQuery(""); }} className={`grid h-11 w-11 place-items-center rounded-full border ${editMode ? "bg-primary text-primary-foreground" : "bg-card/70 text-muted-foreground"}`} aria-label={editMode ? "Done rearranging launcher" : "Rearrange launcher"}>{editMode ? <Check className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}</button>}
       </div>
 
       {!loaded ? (
@@ -372,7 +393,7 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
           <p>Apps could not be loaded.</p>
           <button type="button" onClick={() => window.location.reload()} className="text-primary hover:underline">Retry</button>
         </div>
-      ) : (searching ? searchHits.length === 0 && gridSystem.length === 0 : gridItems.length === 0 && gridSystem.length === 0) ? (
+      ) : (searching ? searchHits.length === 0 : gridItems.length === 0) ? (
         <p className="mt-6 text-sm text-muted-foreground">{t("noAppsFound")}</p>
       ) : (
         <div className="grid w-full max-w-3xl grid-cols-[repeat(auto-fill,minmax(84px,96px))] justify-center gap-x-9 gap-y-7">
@@ -384,13 +405,6 @@ export function Launcher({ embedded = false, onClose }: { embedded?: boolean; on
                 </button>
               ))
             : gridItems.map((g) => (g.kind === "app" ? renderApp(g.app) : renderFolder(g.folder, g.members)))}
-
-          {gridSystem.map(({ key, name, href, Icon }) => (
-            <button key={key} type="button" onClick={() => go(href)} className="grid justify-items-center gap-2 rounded-xl p-1 text-center transition-transform hover:scale-105" title={name}>
-              <div className="grid h-16 w-16 place-items-center rounded-2xl border border-border/50 bg-card/60 text-foreground/70 shadow-sm"><Icon className="h-7 w-7" /></div>
-              <b className={labelCls}>{name}</b>
-            </button>
-          ))}
         </div>
       )}
 

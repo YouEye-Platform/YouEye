@@ -49,6 +49,8 @@ export async function GET(request: NextRequest) {
       // quick drawer. The launcher ignores it (shows all). Both sent for back-compat.
       visible: a.visible,
       pinned: a.visible,
+      launcher_visible: a.launcherVisible,
+      platform: a.platform,
       order: a.displayOrder,
       section_id: a.sectionId,
       folder_id: a.folderId,

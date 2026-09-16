@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Globe, ChevronDown, ChevronUp, ArrowRight, AlertTriangle,
+  Globe, ChevronDown, ChevronUp, ArrowLeft, ArrowRight, AlertTriangle,
   Lock, ShieldAlert, Upload, Check, Copy, Loader2, ShieldCheck,
   RotateCcw, Sparkles, RefreshCw, Info, KeyRound, Cloud,
 } from 'lucide-react';
@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { TLD_OPTIONS } from '@/lib/wordart-presets';
 import { useTranslations } from 'next-intl';
+import { acceptRegistrationProof, runNamesEnrollment } from '@/lib/youeye-names/popup';
 
 export type TlsChoice = 'youeye-names' | 'byo-provider' | 'letsencrypt' | 'selfsigned' | 'upload';
 
@@ -27,6 +28,40 @@ interface NamePreview {
   fqdn: string;
   wildcardFqdn: string;
   available: boolean;
+}
+
+interface NamesDisclosure {
+  terms: {
+    version: string;
+    summary: string;
+    certificateTransparencyRequired: true;
+  };
+  privacy: {
+    version: string;
+    accountRequired: boolean;
+    rawSourceIpStoredByApplication: boolean;
+    certificateTransparencyPublic: boolean;
+    rotatingAbuseIdentifiers: { individualIpHours: number; subnetDays: number };
+  };
+  service?: { privacyPolicyUrl?: string };
+}
+
+interface NamesReadinessView {
+  reachable: boolean;
+  service?: { managedZone: string };
+  readiness?: {
+    installation: {
+      canProceedNow: boolean;
+      state: 'ready' | 'challenge' | 'degraded' | 'paused' | 'blocked';
+      reasonCodes: string[];
+    };
+    dns?: { state: string };
+    initialCertificate?: {
+      primary: { provider: string; state: string };
+      fallback: { provider: string; state: string };
+    };
+  };
+  error?: string;
 }
 
 interface DomainReuseSummary {
@@ -58,11 +93,19 @@ interface Props {
   /** Chosen YouEye Names subdomain (e.g. "quiet-wood-9e"). */
   yenName: string;
   setYenName: (v: string) => void;
+  yenFqdn: string;
+  setYenFqdn: (v: string) => void;
+  yenTermsVersion: string;
+  setYenTermsVersion: (v: string) => void;
+  yenCtAccepted: boolean;
+  setYenCtAccepted: (v: boolean) => void;
+  setYenReusing?: (v: boolean) => void;
   byoDomain: string;
   setByoDomain: (v: string) => void;
   byoProviderToken: string;
   setByoProviderToken: (v: string) => void;
   onNext: () => void;
+  onBack: () => void;
 }
 
 function slugify(s: string): string {
@@ -122,9 +165,13 @@ export default function SetupServerName({
   tlsChoice, setTlsChoice,
   acmeCertIssued, setAcmeCertIssued,
   yenName, setYenName,
+  yenFqdn, setYenFqdn,
+  yenTermsVersion, setYenTermsVersion,
+  yenCtAccepted, setYenCtAccepted,
+  setYenReusing,
   byoDomain, setByoDomain,
   byoProviderToken, setByoProviderToken,
-  onNext,
+  onNext, onBack,
 }: Props) {
   const t = useTranslations('setup');
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -138,9 +185,11 @@ export default function SetupServerName({
   const [yenLoading, setYenLoading] = useState(false);
   const [yenError, setYenError] = useState('');
   const currentYen = yenOptions[yenIndex];
+  const [yenDisclosure, setYenDisclosure] = useState<NamesDisclosure | null>(null);
+  const [yenReadiness, setYenReadiness] = useState<NamesReadinessView | null>(null);
+  const [yenRegistered, setYenRegistered] = useState(false);
   // Reuse: a bundle staged by the installer (--names-bundle) locks the address.
   const [reusing, setReusing] = useState(false);
-  const [reuseChecked, setReuseChecked] = useState(false);
 
   // ACME inline flow state (the "connect your own domain" path)
   const [acmePhase, setAcmePhase] = useState<AcmePhase>('choice');
@@ -177,7 +226,7 @@ export default function SetupServerName({
       const res = await fetch('/api/tls/youeye-names/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-        body: JSON.stringify({ count: 5 }),
+        body: JSON.stringify({ count: 3 }),
         signal: AbortSignal.timeout(20_000),
       });
       const data = await res.json();
@@ -197,21 +246,73 @@ export default function SetupServerName({
     }
   }, [t]);
 
+  const startNamesEnrollment = useCallback(async () => {
+    if (yenReadiness?.readiness && !yenReadiness.readiness.installation.canProceedNow) {
+      setYenError('YouEye Names cannot start a new address right now. Try again later or choose another address option.');
+      return;
+    }
+    setYenLoading(true);
+    setYenError('');
+    try {
+      await runNamesEnrollment('install_register', { accept: acceptRegistrationProof });
+      setYenRegistered(true);
+      await fetchPreviews();
+    } catch (error) {
+      setYenError(error instanceof Error ? error.message : 'Could not verify this installation.');
+    } finally {
+      setYenLoading(false);
+    }
+  }, [fetchPreviews, yenReadiness]);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/tls/youeye-names/readiness', { cache: 'no-store' })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({})) as NamesReadinessView;
+        if (!active) return;
+        setYenReadiness(body);
+      })
+      .catch(() => {
+        if (active) setYenReadiness({ reachable: false, error: 'Could not reach YouEye Names.' });
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/tls/youeye-names/disclosure', { cache: 'no-store' })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not load the YouEye Names notice.');
+        return data as NamesDisclosure;
+      })
+      .then((data) => {
+        if (!active) return;
+        setYenDisclosure(data);
+        setYenTermsVersion(data.terms.version);
+      })
+      .catch((error) => {
+        if (active) setYenError(error instanceof Error ? error.message : 'Could not load the YouEye Names notice.');
+      });
+    return () => { active = false; };
+  }, [setYenTermsVersion]);
+
   // Check once for a staged reuse bundle (installer --names-bundle).
   useEffect(() => {
     let active = true;
     fetch('/api/tls/youeye-names/reuse')
       .then((r) => r.json())
       .then((d) => {
-        if (active && d?.reuse && d.name) {
+        if (active && d?.reuse && d.name && d.fqdn) {
           setReusing(true);
+          setYenReusing?.(true);
           setYenName(d.name);
+          setYenFqdn(d.fqdn);
         }
       })
       .catch(() => {})
-      .finally(() => { if (active) setReuseChecked(true); });
     return () => { active = false; };
-  }, [setYenName]);
+  }, [setYenFqdn, setYenName, setYenReusing]);
 
   // Check once for a staged BYO domain bundle (installer --domain-bundle).
   useEffect(() => {
@@ -231,21 +332,17 @@ export default function SetupServerName({
     return () => { active = false; };
   }, [setByoDomain, setTlsChoice]);
 
-  // Fetch a first address when YouEye Names is active (and not reusing).
-  useEffect(() => {
-    if (tlsChoice === 'youeye-names' && reuseChecked && !reusing && yenOptions.length === 0 && !yenLoading && !yenError) {
-      fetchPreviews();
-    }
-  }, [tlsChoice, reuseChecked, reusing, yenOptions.length, yenLoading, yenError, fetchPreviews]);
-
   // Keep the lifted name in sync with the shown address.
   useEffect(() => {
-    if (currentYen) setYenName(currentYen.name);
-  }, [currentYen, setYenName]);
+    if (currentYen) {
+      setYenName(currentYen.name);
+      setYenFqdn(currentYen.fqdn);
+    }
+  }, [currentYen, setYenFqdn, setYenName]);
 
   const refreshYen = () => {
-    if (yenIndex + 1 < yenOptions.length) setYenIndex((i) => i + 1);
-    else fetchPreviews();
+    if (yenRegistered) void fetchPreviews();
+    else void startNamesEnrollment();
   };
 
   const effectiveTld = isCustomTld ? (customTld.startsWith('.') ? customTld : `.${customTld}`) : tld;
@@ -268,7 +365,10 @@ export default function SetupServerName({
 
   const canProceed = siteName.trim().length > 0 && (
     tlsChoice === 'youeye-names'
-      ? (reusing ? !!yenName : !!currentYen)
+      ? (reusing
+          ? !!yenName && !!yenFqdn
+          : !!currentYen && !!yenDisclosure && !!yenTermsVersion && yenCtAccepted &&
+            yenReadiness?.readiness?.installation.canProceedNow === true)
       : tlsChoice === 'byo-provider'
         ? providerDomain.length > 0 && (usingStagedDomainToken || byoProviderToken.trim().length > 0)
         : domainSlug.length > 0 && (!isCustomTld || customTld.length > 0)
@@ -479,46 +579,113 @@ export default function SetupServerName({
             </span>
           </div>
 
-          <div className="rounded-xl border border-primary/40 bg-primary/[0.04] ring-1 ring-primary/20 p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-primary/10 shrink-0">
-                <ShieldCheck className="h-4 w-4 text-primary" />
-              </div>
-              <div className="flex-1 min-w-0">
-                {reusing ? (
-                  <p className="font-mono text-base font-medium truncate" title={`${yenName}.youeye.me`}>
-                    {yenName}.youeye.me
-                  </p>
-                ) : yenError ? (
-                  <p className="text-sm text-amber-700 dark:text-amber-300">{yenError}</p>
-                ) : currentYen ? (
-                  <p className="font-mono text-base font-medium truncate" title={currentYen.fqdn}>
-                    {currentYen.fqdn}
-                  </p>
-                ) : (
-                  <p className="text-sm text-muted-foreground flex items-center gap-2">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> {t('yenLoading')}
-                  </p>
+          {yenReadiness && (
+            <div className="flex items-start gap-2 rounded-lg border bg-card px-3 py-2 text-xs">
+              <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                !yenReadiness.reachable || !yenReadiness.readiness?.installation.canProceedNow
+                  ? 'bg-red-500'
+                  : yenReadiness.readiness.installation.state === 'degraded'
+                    ? 'bg-amber-500'
+                    : 'bg-green-500'
+              }`} />
+              <div>
+                <p className="font-medium text-foreground">
+                  {!yenReadiness.reachable
+                    ? 'YouEye Names is offline'
+                    : yenReadiness.readiness?.installation.state === 'degraded'
+                      ? 'Available with reduced redundancy'
+                      : yenReadiness.readiness?.installation.canProceedNow
+                        ? `Available for ${yenReadiness.service?.managedZone || 'your secure address'}`
+                        : 'New addresses are paused'}
+                </p>
+                {yenReadiness.readiness?.installation.state === 'degraded' && (
+                  <p className="mt-0.5 text-muted-foreground">Setup may continue; the service will use its available DNS and certificate paths.</p>
                 )}
+                {!yenReadiness.reachable && <p className="mt-0.5 text-muted-foreground">Choose another address option or try again later.</p>}
               </div>
-              {!reusing && (
-                <button
-                  type="button"
-                  onClick={refreshYen}
-                  disabled={yenLoading}
-                  title={t('yenRefresh')}
-                  aria-label={t('yenRefresh')}
-                  className="p-2 rounded-lg border hover:bg-muted transition-colors disabled:opacity-50 shrink-0"
-                >
-                  <RefreshCw className={`h-4 w-4 text-muted-foreground ${yenLoading ? 'animate-spin' : ''}`} />
-                </button>
-              )}
             </div>
+          )}
+
+          <div className="rounded-xl border border-primary/40 bg-primary/[0.04] ring-1 ring-primary/20 p-4">
+            {reusing ? (
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-primary/10 shrink-0">
+                  <ShieldCheck className="h-4 w-4 text-primary" />
+                </div>
+                <p className="font-mono text-base font-medium truncate" title={yenFqdn}>
+                  {yenFqdn}
+                </p>
+              </div>
+            ) : yenError ? (
+              <p className="text-sm text-amber-700 dark:text-amber-300">{yenError}</p>
+            ) : yenOptions.length > 0 ? (
+              <div className="space-y-2" role="radiogroup" aria-label="Choose your YouEye address">
+                {yenOptions.map((option, index) => (
+                  <button
+                    key={option.fqdn}
+                    type="button"
+                    role="radio"
+                    aria-checked={yenIndex === index}
+                    onClick={() => setYenIndex(index)}
+                    className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors ${yenIndex === index ? 'border-primary bg-background shadow-sm' : 'border-border/70 hover:bg-background/60'}`}
+                  >
+                    <span className={`flex h-4 w-4 items-center justify-center rounded-full border ${yenIndex === index ? 'border-primary' : 'border-muted-foreground/50'}`}>
+                      {yenIndex === index && <span className="h-2 w-2 rounded-full bg-primary" />}
+                    </span>
+                    <span className="truncate font-mono text-sm font-medium">{option.fqdn}</span>
+                  </button>
+                ))}
+                <Button type="button" variant="ghost" size="sm" onClick={refreshYen} disabled={yenLoading} className="w-full gap-2">
+                  <RefreshCw className={`h-3.5 w-3.5 ${yenLoading ? 'animate-spin' : ''}`} />
+                  Show other names
+                </Button>
+              </div>
+            ) : yenLoading ? (
+              <p className="text-sm text-muted-foreground flex items-center gap-2">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Verification is in progress…
+              </p>
+            ) : (
+              <Button
+                type="button"
+                onClick={() => void startNamesEnrollment()}
+                disabled={yenReadiness?.readiness?.installation.canProceedNow === false || yenReadiness?.reachable === false}
+                className="w-full gap-2"
+              >
+                <ShieldCheck className="h-4 w-4" /> Get a secure address
+              </Button>
+            )}
             <p className="text-xs text-muted-foreground mt-3 flex items-start gap-1.5">
               <Sparkles className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary/70" />
               <span>{reusing ? t('yenReuseNote') : t('yenDesc')}</span>
             </p>
           </div>
+
+          {!reusing && yenDisclosure && (
+            <div className="rounded-xl border bg-card p-4 text-xs text-muted-foreground">
+              <label className="flex cursor-pointer items-start gap-3 text-sm text-foreground">
+                <input
+                  type="checkbox"
+                  checked={yenCtAccepted}
+                  onChange={(event) => setYenCtAccepted(event.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-input accent-primary"
+                />
+                <span>
+                  I understand that this public address and its certificates appear in public Certificate Transparency logs.
+                </span>
+              </label>
+              <details className="mt-3">
+                <summary className="cursor-pointer font-medium text-foreground">Privacy and certificate notice</summary>
+                <div className="mt-2 space-y-1.5 leading-relaxed">
+                  <p>{yenDisclosure.terms.summary}</p>
+                  <p>No account is required. The service does not store your raw source IP in application records; short-lived rotating abuse identifiers are retained for {yenDisclosure.privacy.rotatingAbuseIdentifiers.individualIpHours} hours per address and {yenDisclosure.privacy.rotatingAbuseIdentifiers.subnetDays} days per subnet.</p>
+                  <p>Notice {yenDisclosure.privacy.version} · certificate terms {yenDisclosure.terms.version}</p>
+                  {yenDisclosure.service?.privacyPolicyUrl && (
+                    <p><a className="underline" href={yenDisclosure.service.privacyPolicyUrl} target="_blank" rel="noreferrer">Read the full privacy notice</a></p>
+                  )}
+                </div>
+              </details>
+            </div>
+          )}
 
           {/* Secondary options — buttons underneath (hidden when reusing) */}
           {!reusing && (
@@ -847,7 +1014,7 @@ export default function SetupServerName({
                         className="rounded-r-none border-r-0 h-8 text-xs font-mono"
                       />
                       <span className="h-8 flex items-center px-2 rounded-r-md border border-input bg-muted text-xs font-mono text-muted-foreground">
-                        .{onYouEyeNames ? (yenName || 'name') + '.youeye.me' : `${domainSlug}${effectiveTld}`}
+                        .{onYouEyeNames ? (yenFqdn || 'name') : `${domainSlug}${effectiveTld}`}
                       </span>
                     </div>
                   </div>
@@ -865,11 +1032,15 @@ export default function SetupServerName({
 
       {/* Next button */}
       {acmePhase !== 'records' && acmePhase !== 'verifying' && (
-        <div className="pt-2 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-[400ms]">
+        <div className="flex gap-2 pt-2 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-[400ms]">
+          <Button type="button" variant="outline" size="icon" onClick={onBack} title="Back">
+            <ArrowLeft className="h-4 w-4" />
+            <span className="sr-only">Back</span>
+          </Button>
           <Button
             onClick={handleContinue}
             disabled={!canProceed || acmeLoading || providerLoading}
-            className="w-full h-12 text-base gap-2"
+            className="h-12 flex-1 text-base gap-2"
           >
             {acmeLoading && <Loader2 className="h-4 w-4 animate-spin" />}
             {providerLoading && <Loader2 className="h-4 w-4 animate-spin" />}

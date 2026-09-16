@@ -18,7 +18,7 @@ import (
 //	go build -ldflags "-X github.com/youeye-platform/YouEye/spine/internal/cmd.Version=0.2.4.1 -X github.com/youeye-platform/YouEye/spine/internal/cmd.BuildDate=2026-03-27"
 //
 // Defaults here are used only for development builds.
-var Version = "0.5.2"
+var Version = "0.5.18"
 var BuildDate = "dev"
 
 // Global configuration
@@ -28,8 +28,10 @@ var cfg *config.Config
 var cfgFile string
 
 var rootCmd = &cobra.Command{
-	Use:   "youeye",
-	Short: "YouEye - Platform management CLI",
+	Use:           "youeye",
+	Short:         "YouEye - Platform management CLI",
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	Long: `YouEye is the unified management tool for the YouEye platform.
 
 It bootstraps infrastructure (Incus, Control Panel), manages apps,
@@ -71,10 +73,11 @@ func GetConfig() *config.Config {
 
 func init() {
 	// Persistent flags (available to all subcommands)
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: /etc/youeye/config.yaml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (persistent appliance config or /etc/youeye/config.yaml)")
 
 	// Version command flags
 	versionCmd.Flags().BoolVar(&versionCheckFlag, "check", false, "Check for available updates")
+	statusCmd.Flags().BoolVar(&statusJSON, "json", false, "emit machine-readable runtime and component status")
 
 	// Infrastructure commands (existing)
 	rootCmd.AddCommand(installCmd)
@@ -82,6 +85,7 @@ func init() {
 	rootCmd.AddCommand(apiCmd)
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(statusCmd)
+	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(logsCmd)
 	rootCmd.AddCommand(cleanupCmd)
@@ -89,6 +93,7 @@ func init() {
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(repoCmd)
 	rootCmd.AddCommand(branchCmd)
+	rootCmd.AddCommand(channelCmd)
 	rootCmd.AddCommand(languageCmd)
 	rootCmd.AddCommand(networkCmd)
 
@@ -116,8 +121,15 @@ var versionCheckFlag bool
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Show all component versions",
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
+		runtimeStatus, _, err := applianceRuntime()
+		if err != nil {
+			return err
+		}
 		output.Header("YouEye Versions")
+		if runtimeStatus.Kind == "appliance-image" {
+			output.StatusLine("System image", runtimeStatus.ImageVersion+" (image-managed)", "")
+		}
 		output.StatusLine("Spine", Version+" (built "+BuildDate+")", output.Cyan)
 
 		// Incus version
@@ -148,6 +160,10 @@ var versionCmd = &cobra.Command{
 		if versionCheckFlag {
 			fmt.Println()
 			fmt.Println("Checking for updates...")
+			if !runtimeStatus.Capabilities.SpineUpdate {
+				output.StatusLine("System image", "image-managed; in-place Spine updates unavailable", output.Green)
+				return nil
+			}
 			if update, newVer := checkSpineUpdate(cfg); update {
 				cmp := version.CompareVersions(newVer, Version)
 				if cmp > 0 {
@@ -160,6 +176,7 @@ var versionCmd = &cobra.Command{
 				output.Success("Spine is up to date")
 			}
 		}
+		return nil
 	},
 }
 

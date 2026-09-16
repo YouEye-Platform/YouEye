@@ -12,7 +12,9 @@ export function userinfo(user: IdentityUser) {
   return {
     sub: user.id,
     preferred_username: user.username,
-    name: user.name || user.username,
+	name: user.name || user.username,
+	given_name: user.first_name,
+	family_name: user.last_name,
     email: user.email,
     email_verified: true,
     groups: user.groups,
@@ -30,4 +32,3 @@ export function setIdentityCookie(response: NextResponse, token: string, cookieD
     domain: cookieDomain,
   });
 }
-

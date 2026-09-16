@@ -16,20 +16,42 @@ import { isNextProductionBuild } from "@/lib/runtime-phase";
 
 const connectionString = process.env.DATABASE_URL!;
 
-const queryClient = postgres(connectionString);
+const queryClient = postgres(connectionString, {
+  // Idempotent DDL in ensureSchema() emits "relation already exists,
+  // skipping" NOTICEs on every boot — drop those, surface anything else so
+  // real schema problems stay visible in the journal.
+  onnotice: (notice) => {
+    if (/already exists, skipping/.test(notice.message ?? "")) return;
+    console.log("[db notice]", notice.message);
+  },
+});
 
 export const db = drizzle(queryClient, { schema });
 
 let schemaReady = false;
+let schemaInitInFlight: Promise<void> | null = null;
 
 /**
- * Ensure all required tables exist. Safe to call multiple times —
- * uses CREATE TABLE IF NOT EXISTS and a singleton guard.
+ * Ensure all required tables exist. Safe to call multiple times and safe
+ * under concurrency — the guard is single-flight, so parallel first requests
+ * await the same init run instead of each running the full DDL sequence
+ * (which double-ran the whole init on boot). A failed run clears the memo so
+ * the next request retries.
  */
 export async function ensureSchema() {
   if (schemaReady) return;
   if (isNextProductionBuild()) return;
 
+  if (!schemaInitInFlight) {
+    schemaInitInFlight = initSchema().catch((e) => {
+      schemaInitInFlight = null;
+      throw e;
+    });
+  }
+  return schemaInitInFlight;
+}
+
+async function initSchema() {
   try {
     await queryClient`
       CREATE TABLE IF NOT EXISTS users (
@@ -144,6 +166,7 @@ export async function ensureSchema() {
 
     // Plan 5: launcher folder membership (which launcher folder an app is in)
     await queryClient`ALTER TABLE user_app_config ADD COLUMN IF NOT EXISTS folder_id TEXT`;
+    await queryClient`ALTER TABLE user_app_config ADD COLUMN IF NOT EXISTS launcher_visible BOOLEAN DEFAULT TRUE`;
 
     await queryClient`
       CREATE TABLE IF NOT EXISTS user_drawer_sections (

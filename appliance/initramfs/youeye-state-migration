@@ -1,0 +1,27 @@
+#!/bin/sh
+
+migrate_youeye_state_file() {
+    state_file=$1
+    image_file=$2
+    mode=$3
+
+    if [ -e "$state_file" ]; then
+        [ -f "$state_file" ] && [ ! -L "$state_file" ]
+        return
+    fi
+    [ ! -L "$state_file" ] || return 1
+    [ -f "$image_file" ] && [ ! -L "$image_file" ] || return 1
+    [ -d "$(dirname "$state_file")" ] || return 1
+
+    temporary="$state_file.migrate.$$"
+    [ ! -e "$temporary" ] && [ ! -L "$temporary" ] || return 1
+    if ! (umask 077 && cp "$image_file" "$temporary"); then
+        rm -f "$temporary"
+        return 1
+    fi
+    if ! chmod "$mode" "$temporary" || ! mv "$temporary" "$state_file"; then
+        rm -f "$temporary"
+        return 1
+    fi
+    sync
+}

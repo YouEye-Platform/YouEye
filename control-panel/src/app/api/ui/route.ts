@@ -2,8 +2,8 @@
  * UI Management API
  *
  * GET  /api/ui - Get UI status
- * POST /api/ui - Enable UI (create SSO, configure Caddy, start service)
- * DELETE /api/ui - Disable UI (remove SSO, stop service, remove Caddy route)
+ * POST /api/ui - Enable UI (configure YouEye ID, Caddy, and service)
+ * DELETE /api/ui - Disable UI (remove YouEye ID client, stop service, remove Caddy route)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -38,7 +38,7 @@ export async function GET() {
  * 
  * This will:
  * 1. Ensure the youeye_ui database exists
- * 2. Create OAuth2 provider and application in the identity provider
+ * 2. Create the UI OAuth2 client in YouEye ID
  * 3. Configure Caddy route for the UI subdomain
  * 4. Set environment variables in UI container
  * 5. Start the UI service
@@ -66,16 +66,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Domain is required (e.g., youeye.local)' }, { status: 400 });
     }
 
-    // Get the current SSO config to find the identity provider external URL
-    const { checkSSOPrerequisites } = await import('@/lib/auth/sso-setup');
-    const prereqs = await checkSSOPrerequisites();
-
-    if (!prereqs.ssoConfigured || !prereqs.authentikUrl) {
-      return NextResponse.json(
-        { error: 'SSO must be configured for Control Panel first. Set up SSO in Settings before enabling UI.' },
-        { status: 400 }
-      );
-    }
+    const { getIdentityProviderConfig } = await import('@/lib/identity/provider');
+    await getIdentityProviderConfig();
 
     console.log(`[UI] Enabling UI at domain: ${domain} by ${session.username}`);
 
@@ -92,10 +84,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 2-5: enable UI through identity, Caddy, and Spine
-    const result = await enableUI({
-      domain,
-      authentikExternalUrl: prereqs.authentikUrl,
-    });
+    const result = await enableUI({ domain });
 
     return NextResponse.json({
       success: result.success,

@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
-import { getConfiguredDomain, setDomain, checkHealth } from '@/lib/caddy/client';
+import { checkHealth, ensurePointerInferenceRoutes, getConfiguredDomain, setDomain } from '@/lib/caddy/client';
 import { setDomainDNS } from '@/lib/apps/pihole-api';
 import { settingsService } from '@/lib/settings';
 import { getByoDnsProviderConfig } from '@/lib/dns-providers/config';
@@ -139,6 +139,7 @@ export async function POST(request: NextRequest) {
     }
 
     await setDomain(domain);
+    await ensurePointerInferenceRoutes(domain);
 
     // Sync domain to Spine config
     try {

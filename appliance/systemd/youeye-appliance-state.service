@@ -1,0 +1,15 @@
+[Unit]
+Description=YouEye appliance persistent state
+DefaultDependencies=no
+After=systemd-udev-settle.service local-fs-pre.target
+Wants=systemd-udev-settle.service
+Before=local-fs.target youeye-appliance-storage.service
+ConditionPathExists=/usr/lib/youeye/appliance-release
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/youeye appliance prepare --phase=state
+RemainAfterExit=yes
+
+[Install]
+WantedBy=local-fs.target

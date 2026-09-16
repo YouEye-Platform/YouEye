@@ -14,8 +14,12 @@ import {
   type InternetGrant,
 } from '@/lib/bridges/internet-store';
 import { setAppNetworkNAT } from '@/lib/incus/app-network';
+import { requireAdmin, requireAuth } from '@/lib/auth/rbac';
 
 export async function GET(request: Request) {
+  const auth = await requireAuth();
+  if (auth.error) return auth.error;
+
   const url = new URL(request.url);
   const appId = url.searchParams.get('appId') ?? undefined;
   const grants = await listInternetGrants(appId);
@@ -23,6 +27,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAdmin();
+  if (auth.error) return auth.error;
+
   const body = await request.json();
   const { appId, containerName, hosts, blanket, approvedBy } = body;
 

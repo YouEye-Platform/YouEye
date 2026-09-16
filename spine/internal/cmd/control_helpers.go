@@ -163,26 +163,6 @@ func requireCP() bool {
 	return true
 }
 
-// nested safely extracts a value from a nested map like {"spine": {"version": "1.0"}}.
-func nested(m map[string]interface{}, keys ...string) string {
-	current := m
-	for i, key := range keys {
-		v, ok := current[key]
-		if !ok {
-			return ""
-		}
-		if i == len(keys)-1 {
-			return fmt.Sprintf("%v", v)
-		}
-		next, ok := v.(map[string]interface{})
-		if !ok {
-			return ""
-		}
-		current = next
-	}
-	return ""
-}
-
 // str gets a string value from a map.
 func str(m map[string]interface{}, key string) string {
 	if v, ok := m[key]; ok {
@@ -228,8 +208,12 @@ func truncate(s string, n int) string {
 
 // sseHandler formats SSE progress events for terminal output.
 func sseHandler(event controlapi.SSEEvent) {
-	output.SSEProgress(event.Step, event.TotalSteps, event.Status, event.Message)
-	if event.Detail != "" && (event.Status == "error" || event.Status == "failed") {
+	status := event.Status
+	if status == "" {
+		status = event.Stage
+	}
+	output.SSEProgress(event.Step, event.TotalSteps, status, event.Message)
+	if event.Detail != "" && (status == "error" || status == "failed") {
 		fmt.Printf("    %s%s%s\n", output.Red, event.Detail, output.Reset)
 	}
 }

@@ -1,0 +1,14 @@
+[Unit]
+Description=YouEye appliance Incus sockets after persistent storage
+Requires=youeye-appliance-storage.service youeye-recovery-apply.service incus.socket incus-user.socket
+After=youeye-appliance-storage.service youeye-recovery-apply.service incus.socket incus-user.socket
+Before=youeye.service youeye-first-deploy.service
+ConditionPathExists=/usr/lib/youeye/appliance-release
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/true
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

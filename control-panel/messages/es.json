@@ -95,21 +95,6 @@
       "saved": "Idioma actualizado",
       "error": "Error al actualizar el idioma"
     },
-    "sso": {
-      "title": "Autenticación",
-      "description": "Configura SSO a través del proveedor de identidad",
-      "status": "Estado SSO",
-      "configured": "Activado",
-      "notConfigured": "No configurado",
-      "domain": "Dominio",
-      "authentikUrl": "URL del proveedor de identidad",
-      "controlUrl": "URL del panel",
-      "prerequisitesMet": "Requisitos cumplidos",
-      "configure": "Configurar SSO",
-      "remove": "Eliminar SSO",
-      "prerequisites": "Requisitos previos",
-      "howItWorks": "Cómo funciona SSO"
-    },
     "ui": {
       "title": "YouEye UI",
       "status": "Estado de UI",
@@ -244,6 +229,7 @@
     "savingConfig": "Guardando configuración",
     "settingUpProxy": "Configurando proxy inverso",
     "configuringDns": "Configurando DNS",
+    "configuringAi": "Conectando YouEye AI",
     "creatingAdmin": "Creando cuenta de administrador",
     "configuringSsoControl": "Configurando SSO para el panel",
     "enablingSsoUi": "Activando YouEye UI",
@@ -375,7 +361,7 @@
     "certHint": "{domain} usa un certificado autofirmado. Para evitar advertencias del navegador, instala el CA raíz en cada dispositivo:",
     "downloadCert": "Descargar certificado",
     "goTo": "Ir a {name}",
-    "noDomain": "Sin dominio configurado. Accede al panel en el puerto 3000 para reconfigurar.",
+    "noDomain": "No hay dominio configurado. Usa la IP del servidor a través de Caddy para reconfigurar; localhost:3000 queda reservado para recuperación local en el host.",
     "welcomeUser": "Bienvenido a YouEye, {name}!",
     "quickStart": "Inicio rápido",
     "visitDashboard": "Visita tu panel",
@@ -435,7 +421,16 @@
     "resources": "Recursos",
     "nativeApps": "Aplicaciones nativas",
     "builtForYouEye": "Hecho para YouEye",
-    "orphanScanPrompt": "Buscar recursos huérfanos de instalaciones anteriores"
+    "orphanScanPrompt": "Buscar recursos huérfanos de instalaciones anteriores",
+    "uninstallTitle": "Desinstalar",
+    "uninstallDescription": "Elige qué quieres eliminar",
+    "uninstallKeepData": "Desinstalar (conservar datos)",
+    "uninstallKeepDataDescription": "Eliminar la app, pero conservar sus datos para una futura reinstalación",
+    "uninstallDeleteData": "Desinstalar y eliminar todos los datos",
+    "uninstallDeleteDataDescription": "Eliminar la app y todos sus datos. Esta acción no se puede deshacer.",
+    "willBeRemoved": "Se eliminará",
+    "uninstallDeleteButton": "Eliminar todo",
+    "uninstallKeepButton": "Desinstalar"
   },
   "proxy": {
     "title": "Proxy inverso",

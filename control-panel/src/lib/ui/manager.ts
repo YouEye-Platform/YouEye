@@ -12,42 +12,7 @@
 import { spineClient } from '@/lib/spine/client';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import { configureUIIdentitySSO } from '@/lib/identity/core-clients';
-
-interface AuthentikConfig {
-  url: string;
-  token: string;
-}
-
-async function getAuthentikConfig(): Promise<AuthentikConfig> {
-  const creds = await spineClient.getAuthentikCredentials();
-  const ip = await getContainerIP('youeye-authentik');
-  const url = ip ? `http://${ip}:9000` : creds.internal_url;
-  return { url, token: creds.bootstrap_token };
-}
-
-async function authentikAPI<T>(
-  config: AuthentikConfig,
-  path: string,
-  method: string = 'GET',
-  body?: Record<string, unknown>
-): Promise<T> {
-  const options: RequestInit = {
-    method,
-    headers: {
-      Authorization: `Bearer ${config.token}`,
-      'Content-Type': 'application/json',
-    },
-  };
-  if (body) options.body = JSON.stringify(body);
-
-  const res = await fetch(`${config.url}/api/v3${path}`, options);
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Authentik API ${res.status}: ${text}`);
-  }
-  if (res.status === 204) return {} as T;
-  return res.json() as Promise<T>;
-}
+import { removeOAuthClient } from '@/lib/identity/provider';
 
 export interface UIStatus {
   installed: boolean;
@@ -117,7 +82,6 @@ export async function getUIStatus(): Promise<UIStatus> {
  */
 export async function enableUI(params: {
   domain: string;
-  authentikExternalUrl: string;
 }): Promise<{ success: boolean; message: string }> {
   const uiDomain = params.domain;
 
@@ -162,29 +126,18 @@ export async function enableUI(params: {
 }
 
 /**
- * Disable UI: remove identity provider resources, stop service, remove Caddy route
+ * Disable UI: remove its YouEye ID client, stop service, remove Caddy route
  */
 export async function disableUI(): Promise<void> {
   const clientId = 'youeye-ui';
 
-  // Remove from the identity provider
-  console.log('[UI] Disabling: Removing Authentik resources...');
+  // Remove the UI OAuth client from YouEye ID.
+  console.log('[UI] Disabling: Removing YouEye ID client...');
   try {
-    const authentikConfig = await getAuthentikConfig();
-    try {
-      await authentikAPI(authentikConfig, `/core/applications/${clientId}/`, 'DELETE');
-      console.log('[UI] Deleted Authentik application');
-    } catch { /* may not exist */ }
-
-    const providers = await authentikAPI<{ results: Array<{ pk: number }> }>(
-      authentikConfig, `/providers/oauth2/?search=${encodeURIComponent(clientId)}`
-    );
-    for (const p of providers.results || []) {
-      await authentikAPI(authentikConfig, `/providers/oauth2/${p.pk}/`, 'DELETE');
-      console.log(`[UI] Deleted provider pk=${p.pk}`);
-    }
+    await removeOAuthClient(clientId);
+    console.log('[UI] Deleted YouEye ID client');
   } catch (e) {
-    console.error('[UI] Failed to clean up Authentik resources:', e);
+    console.error('[UI] Failed to remove YouEye ID client:', e);
   }
 
   // Remove Caddy route

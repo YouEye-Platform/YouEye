@@ -138,6 +138,7 @@ var appInstallCmd = &cobra.Command{
 }
 
 var appUpdateAll bool
+var appUpdateAssumeYes bool
 
 var appUpdateCmd = &cobra.Command{
 	Use:   "update <name>",
@@ -161,9 +162,7 @@ var appUpdateCmd = &cobra.Command{
 						if updateAvail, _ := app["updateAvailable"].(bool); updateAvail {
 							name := firstOf(app, "appId", "name")
 							output.Info("Updating " + name + "...")
-							if err := controlClient.PostSSE("/api/market/update", map[string]interface{}{
-								"appId": name,
-							}, sseHandler); err != nil {
+							if err := controlClient.PostSSE("/api/apps/"+name+"/update", nil, sseHandler); err != nil {
 								output.Error("Failed to update " + name + ": " + err.Error())
 							}
 							count++
@@ -182,9 +181,14 @@ var appUpdateCmd = &cobra.Command{
 		}
 
 		output.Info("Updating " + args[0] + "...")
-		return controlClient.PostSSE("/api/market/update", map[string]interface{}{
-			"appId": args[0],
-		}, sseHandler)
+		// Canonical CP route; /api/market/update remains as a CP-side alias for
+		// older CLIs. -y confirms installing a not-newer candidate after a
+		// channel change (downgrade/sidegrade).
+		var payload interface{}
+		if appUpdateAssumeYes {
+			payload = map[string]bool{"confirm_switch": true}
+		}
+		return controlClient.PostSSE("/api/apps/"+args[0]+"/update", payload, sseHandler)
 	},
 }
 
@@ -206,13 +210,27 @@ var appRemoveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if msg := str(result, "message"); msg != "" {
-			output.Success(msg)
-		} else {
-			output.Success(args[0] + " removed")
+		message, err := appRemoveMessage(args[0], result)
+		if err != nil {
+			return err
 		}
+		output.Success(message)
 		return nil
 	},
+}
+
+func appRemoveMessage(appName string, result map[string]interface{}) (string, error) {
+	success, ok := result["success"].(bool)
+	if !ok {
+		return "", fmt.Errorf("control panel returned an invalid uninstall result")
+	}
+	if !success {
+		return "", fmt.Errorf("removal of %s did not complete; some cleanup may have succeeded -- check 'youeye logs control' before retrying", appName)
+	}
+	if msg := str(result, "message"); msg != "" {
+		return msg, nil
+	}
+	return appName + " removed", nil
 }
 
 func newAppControlCmd(action string) *cobra.Command {
@@ -309,6 +327,7 @@ var appCheckUpdatesCmd = &cobra.Command{
 func init() {
 	appInstallCmd.Flags().StringVar(&appInstallURL, "url", "", "Install from a custom repository URL")
 	appUpdateCmd.Flags().BoolVar(&appUpdateAll, "all", false, "Update all apps with available updates")
+	appUpdateCmd.Flags().BoolVarP(&appUpdateAssumeYes, "yes", "y", false, "confirm channel switch / downgrade without prompting")
 	appRemoveCmd.Flags().BoolVar(&appRemoveKeepData, "keep-data", false, "Preserve app data volumes")
 
 	appCmd.AddCommand(appListCmd)

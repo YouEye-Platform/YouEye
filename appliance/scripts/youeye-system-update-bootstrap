@@ -1,0 +1,87 @@
+#!/bin/sh
+set -eu
+
+usage() {
+	printf 'Usage: %s <https-manifest-url> [https-signature-url] [--activate]\n' "$0" >&2
+	exit 2
+}
+
+[ "$#" -ge 1 ] && [ "$#" -le 3 ] || usage
+manifest_url=$1
+shift
+signature_url="${manifest_url}.sig"
+activate=false
+if [ "$#" -gt 0 ] && [ "$1" != "--activate" ]; then
+	signature_url=$1
+	shift
+fi
+if [ "$#" -gt 0 ]; then
+	[ "$1" = "--activate" ] || usage
+	activate=true
+	shift
+fi
+[ "$#" -eq 0 ] || usage
+
+for source in "$manifest_url" "$signature_url"; do
+	case "$source" in
+		https://*) ;;
+		*) printf 'The Plan 1 bootstrap accepts public HTTPS artifact URLs only.\n' >&2; exit 2 ;;
+	esac
+	case "$source" in
+		*'?'*|*'#'*) printf 'Query and fragment artifact URLs are not accepted.\n' >&2; exit 2 ;;
+	esac
+done
+
+trust_key=/usr/share/youeye/appliance-development.pub
+cache=/var/lib/youeye/system-update/bootstrap
+install -d -m 0700 "$cache"
+manifest=$cache/system-update-manifest.json
+signature=$manifest.sig
+
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+	--output "$manifest.tmp" "$manifest_url"
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+	--output "$signature.tmp" "$signature_url"
+openssl pkeyutl -verify -pubin -inkey "$trust_key" -rawin \
+	-in "$manifest.tmp" -sigfile "$signature.tmp" >/dev/null 2>&1 || {
+	printf 'The system update manifest signature is invalid.\n' >&2
+	exit 1
+}
+
+jq -e '
+	.schema == "youeye.system-update.v1" and
+	.artifact_kind == "development" and
+	([.artifacts[] | select(.role == "system-updater")] | length == 1)
+' "$manifest.tmp" >/dev/null
+updater_path=$(jq -r '.artifacts[] | select(.role == "system-updater") | .path' "$manifest.tmp")
+updater_sha=$(jq -r '.artifacts[] | select(.role == "system-updater") | .sha256' "$manifest.tmp")
+updater_size=$(jq -r '.artifacts[] | select(.role == "system-updater") | .size_bytes' "$manifest.tmp")
+case "$updater_path" in
+	""|*/*|*..*) printf 'The signed updater path is unsafe.\n' >&2; exit 1 ;;
+esac
+if [ "${#updater_sha}" -ne 64 ]; then
+	printf 'The signed updater digest is invalid.\n' >&2
+	exit 1
+fi
+case "$updater_sha" in
+	*[!0-9a-f]*) printf 'The signed updater digest is invalid.\n' >&2; exit 1 ;;
+esac
+
+base_url=${manifest_url%/*}
+updater=$cache/youeye-system-updater
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+	--output "$updater.tmp" "$base_url/$updater_path"
+test "$(stat -c %s "$updater.tmp")" = "$updater_size"
+printf '%s  %s\n' "$updater_sha" "$updater.tmp" | sha256sum --check --status
+chmod 0755 "$updater.tmp"
+mv -f "$manifest.tmp" "$manifest"
+mv -f "$signature.tmp" "$signature"
+mv -f "$updater.tmp" "$updater"
+sync -f "$cache"
+
+"$updater" update system stage --bootstrap-plan1 --manifest "$manifest_url" --signature "$signature_url"
+if [ "$activate" = true ]; then
+	exec "$updater" update system activate --bootstrap-plan1 --reboot
+fi
+
+printf 'The signed update is staged. Activate it with:\n  %s update system activate --bootstrap-plan1 --reboot\n' "$updater"

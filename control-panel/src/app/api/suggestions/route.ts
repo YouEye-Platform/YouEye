@@ -13,13 +13,20 @@ import { updateBridge } from '@/lib/bridges/store';
 import { readInstallMetadata } from '@/lib/market/metadata';
 import { fetchManifest } from '@/lib/market/catalog';
 import { settingsService } from '@/lib/settings';
+import { requireAdmin, requireAuth } from '@/lib/auth/rbac';
 
 export async function GET() {
+  const auth = await requireAuth();
+  if (auth.error) return auth.error;
+
   const suggestions = await listSuggestions();
   return NextResponse.json(suggestions);
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAdmin();
+  if (auth.error) return auth.error;
+
   const body = await request.json();
   const { action, id, suggestionId } = body;
   const sid = id || suggestionId;

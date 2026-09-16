@@ -13,8 +13,12 @@ import {
   getBridgesForApp,
 } from '@/lib/bridges/manager';
 import { SYSTEM_APP_IDS } from '@/lib/incus/app-network';
+import { requireAdmin, requireAuth } from '@/lib/auth/rbac';
 
 export async function GET(request: Request) {
+  const auth = await requireAuth();
+  if (auth.error) return auth.error;
+
   const url = new URL(request.url);
   const appId = url.searchParams.get('appId');
 
@@ -26,6 +30,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAdmin();
+  if (auth.error) return auth.error;
+
   const body = await request.json();
   const { from, to, direction, envMappings, approvedBy, activate } = body;
 

@@ -7,7 +7,7 @@ import { updateOCIApp } from '@/lib/apps/updater';
 import { updateSystemFromMarket } from '@/lib/infrastructure/system-updater';
 import { getInstalledApp } from '@/lib/market/installed-apps';
 import { updateMarketApp } from '@/lib/market/updater';
-import { startUpdate, writeStatus, completeUpdate, failUpdate } from '@/lib/updates/state';
+import { startUpdate, writeStatus, completeUpdate, completeNoOp, failUpdate } from '@/lib/updates/state';
 
 function statusComponentFor(appId: string): string {
   if (appId === 'control-panel') return 'control';
@@ -204,7 +204,9 @@ export async function POST(
         return NextResponse.json({ error: `No update handler for ${appId}` }, { status: 404 });
     }
 
-    if (!['spine', 'control'].includes(component)) {
+    if (['spine', 'control'].includes(component) && result.status === 'up-to-date') {
+      await completeNoOp(component, result.new_version || result.old_version || '');
+    } else if (!['spine', 'control'].includes(component)) {
       await markCompleted(component, result.new_version || '');
     }
     return NextResponse.json(result);

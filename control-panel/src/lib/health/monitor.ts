@@ -21,6 +21,10 @@ import { getAllServicesHealth, type ServiceHealth, type ServiceStatus } from './
 import { sendNotificationToUI } from './notification-bridge';
 import { spineClient } from '@/lib/spine/client';
 import { readFileSync } from 'fs';
+import { observeIssue, resolveIssue, recordTimelineEvent } from './issues';
+import { isContainerMaintenanceActive } from '@/lib/maintenance/container-maintenance';
+import { listInstalledApps } from '@/lib/market/metadata';
+import { inspectAppStorage } from '@/lib/market/storage';
 
 // ─── State Tracking ───────────────────────────────────────────
 
@@ -108,6 +112,25 @@ async function notify(
 
 // ─── Service Health Checks ────────────────────────────────────
 
+export function serviceFailureCopy(
+  service: Pick<ServiceHealth, 'slug' | 'name'>,
+  previous: ServiceStatus,
+  current: ServiceStatus,
+): { title: string; body: string; notification: string } {
+  if (service.slug === 'spine') {
+    return {
+      title: 'Control Panel cannot reach Spine',
+      body: `The local Spine API socket was unavailable (${previous} to ${current}). This does not prove that the host Spine service is down.`,
+      notification: 'The Control Panel could not reach the local Spine API socket. Check System Health for transport details.',
+    };
+  }
+  return {
+    title: `${service.name} is down`,
+    body: `${service.name} transitioned from ${previous} to ${current}.`,
+    notification: `${service.name} has transitioned from ${previous} to ${current}. Check the Health Dashboard for details.`,
+  };
+}
+
 async function checkServiceHealth(): Promise<void> {
   let services: ServiceHealth[];
   try {
@@ -122,33 +145,62 @@ async function checkServiceHealth(): Promise<void> {
     const prevStatus = prev?.status ?? 'unknown';
     const currentStatus = svc.status;
 
-    // Only notify on state transitions
+    if (currentStatus === 'stopped' || currentStatus === 'error') {
+      const copy = serviceFailureCopy(svc, prevStatus, currentStatus);
+      await observeIssue({
+        id: `service.${svc.slug}.down`,
+        severity: svc.slug === 'postgres' || svc.slug === 'caddy' || svc.slug === 'pointer' ? 'critical' : 'error',
+        source: 'health-monitor',
+        title: copy.title,
+        body: copy.body,
+        fixable: svc.restartable,
+        repairFn: svc.restartable ? `restart-service:${svc.slug}` : null,
+        debounce: 2,
+      });
+    } else if (currentStatus === 'degraded') {
+      await observeIssue({
+        id: `service.${svc.slug}.down`,
+        severity: 'warning',
+        source: 'health-monitor',
+        title: `${svc.name} is degraded`,
+        body: `${svc.name} is responding but not fully healthy.`,
+        fixable: svc.restartable,
+        repairFn: svc.restartable ? `restart-service:${svc.slug}` : null,
+        debounce: 2,
+      });
+    }
+
+    // Notify only on state transitions.
     if (prevStatus !== currentStatus) {
       if (currentStatus === 'stopped' || currentStatus === 'error') {
+        const copy = serviceFailureCopy(svc, prevStatus, currentStatus);
         await notify(
-          `${svc.name} is down`,
-          `${svc.name} has transitioned from ${prevStatus} to ${currentStatus}. Check the Health Dashboard for details.`,
+          copy.title,
+          copy.notification,
           'error',
-          '/health'
+          '/settings/system/health'
         );
       } else if (currentStatus === 'degraded') {
         await notify(
           `${svc.name} is degraded`,
           `${svc.name} is responding but not fully healthy. Monitor the Health Dashboard.`,
           'warning',
-          '/health'
+          '/settings/system/health'
         );
       } else if (
         currentStatus === 'running' &&
         (prevStatus === 'stopped' || prevStatus === 'error' || prevStatus === 'degraded')
       ) {
+        await resolveIssue(`service.${svc.slug}.down`);
         await notify(
           `${svc.name} is back online`,
           `${svc.name} has recovered and is now running normally.`,
           'info',
-          '/health'
+          '/settings/system/health'
         );
       }
+    } else if (currentStatus === 'running') {
+      await resolveIssue(`service.${svc.slug}.down`);
     }
 
     serviceStates.set(svc.slug, {
@@ -170,6 +222,34 @@ async function checkContainerWatchdog(): Promise<void> {
     if (!resp.metadata) return;
 
     const now = Date.now();
+    const intentionallyStopped = new Set<string>();
+    const recoverySuppressed = new Set<string>();
+    let appIntentObservationComplete = false;
+    try {
+      for (const app of await listInstalledApps()) {
+        const stopIntent = app.enabled === false || app.desiredState === 'stopped'
+          || (app.lifecycleOperation?.desiredState === 'stopped' && app.lifecycleOperation.state !== 'completed');
+        let storageUnavailable = false;
+        try {
+          storageUnavailable = !(await inspectAppStorage(app.storageVolumes)).available;
+        } catch (error) {
+          // Reachability uncertainty is a fail-closed recovery boundary. The
+          // app prober records the detailed issue; the watchdog must not race
+          // it by starting a container against missing persistent storage.
+          storageUnavailable = true;
+          console.error(`[watchdog] Could not prove storage reachability for ${app.appId}; automatic recovery is paused:`, error);
+        }
+        for (const container of app.containers ?? []) {
+          const name = typeof container === 'string' ? container : container.containerName;
+          if (!name) continue;
+          if (stopIntent) intentionallyStopped.add(name);
+          if (storageUnavailable) recoverySuppressed.add(name);
+        }
+      }
+      appIntentObservationComplete = true;
+    } catch (error) {
+      console.error('[watchdog] Could not read durable app intent; automatic app recovery is paused:', error);
+    }
 
     for (const instance of resp.metadata) {
       const name: string = instance.name;
@@ -180,6 +260,30 @@ async function checkContainerWatchdog(): Promise<void> {
       const isInfra = name.startsWith('youeye-');
       if (!isApp && !isInfra) continue;
       if (WATCHDOG_EXCLUDE.has(name)) continue;
+      if (isApp && !appIntentObservationComplete) continue;
+      if (isApp && (intentionallyStopped.has(name) || recoverySuppressed.has(name))) {
+        const state = watchStates.get(name) ?? { previousStatus: status, restarts: [], crashLoopDetected: false };
+        state.previousStatus = status;
+        state.restarts = [];
+        state.crashLoopDetected = false;
+        watchStates.set(name, state);
+        continue;
+      }
+
+      // App updates intentionally stop/rebuild containers. The updater holds a
+      // durable filesystem-backed maintenance lease for the entire mutation
+      // and rollback/recovery window. Separate Next.js bundles and a restarted
+      // CP therefore observe the same fail-closed suppression boundary.
+      if (isContainerMaintenanceActive(name)) {
+        const state = watchStates.get(name) ?? {
+          previousStatus: status,
+          restarts: [],
+          crashLoopDetected: false,
+        };
+        state.previousStatus = status;
+        watchStates.set(name, state);
+        continue;
+      }
 
       // Desired-state reconcile: start a container that SHOULD be running but is
       // Stopped — even one we never observed Running (e.g. it crashed at boot,
@@ -202,7 +306,16 @@ async function checkContainerWatchdog(): Promise<void> {
               s.restarts = [...recent, now];
               if (s.restarts.length >= CRASH_LOOP_THRESHOLD) {
                 s.crashLoopDetected = true;
-                await notify(`${name} keeps crashing`, `${name} failed to stay running after ${s.restarts.length} starts in 5 minutes. Auto-start paused.`, 'error', '/health');
+                await observeIssue({
+                  id: `container.${name}.crash-loop`,
+                  severity: 'error',
+                  source: 'watchdog',
+                  title: `${name} keeps crashing`,
+                  body: `${name} failed to stay running after ${s.restarts.length} starts in 5 minutes. Auto-start paused.`,
+                  fixable: false,
+                  debounce: 1,
+                });
+                await notify(`${name} keeps crashing`, `${name} failed to stay running after ${s.restarts.length} starts in 5 minutes. Auto-start paused.`, 'error', '/settings/system/health');
               }
               s.previousStatus = 'Running';
               watchStates.set(name, s);
@@ -239,6 +352,7 @@ async function checkContainerWatchdog(): Promise<void> {
           state.crashLoopDetected = false;
           state.restarts = [];
           console.log(`[watchdog] ${name} — crash loop cleared after stability period`);
+          await resolveIssue(`container.${name}.crash-loop`);
         }
       }
 
@@ -281,13 +395,28 @@ async function checkContainerWatchdog(): Promise<void> {
           if (state.restarts.length >= CRASH_LOOP_THRESHOLD) {
             state.crashLoopDetected = true;
             console.error(`[watchdog] ${name} — crash loop detected (${state.restarts.length} restarts in 5 min)`);
+            await observeIssue({
+              id: `container.${name}.crash-loop`,
+              severity: 'error',
+              source: 'watchdog',
+              title: `${name} keeps crashing`,
+              body: `${name} restarted ${state.restarts.length} times in the last 5 minutes. Auto-restart stopped.`,
+              fixable: false,
+              debounce: 1,
+            });
             await notify(
               `${name} keeps crashing`,
               `${name} has restarted ${state.restarts.length} times in the last 5 minutes. Auto-restart stopped. Your server may not have enough resources for all installed apps.`,
               'error',
-              '/health'
+              '/settings/system/health'
             );
           } else {
+            await recordTimelineEvent({
+              id: `container.${name}.self-healed.${now}`,
+              source: 'watchdog',
+              title: `${name} self-healed`,
+              body: `${name} stopped unexpectedly and was restarted by the watchdog.`,
+            });
             // Notify about the restart
             const notifType = isInfra ? 'warning' as const : 'info' as const;
             const suffix = isInfra ? ' — monitor the Health Dashboard' : '';
@@ -295,7 +424,7 @@ async function checkContainerWatchdog(): Promise<void> {
               `${name} was restarted automatically`,
               `${name} stopped unexpectedly and was restarted by the watchdog${suffix}.`,
               notifType,
-              '/health'
+              '/settings/system/health'
             );
           }
         } catch (err) {
@@ -348,24 +477,52 @@ async function checkDiskSpace(): Promise<void> {
 
     if (newLevel !== lastDiskAlertLevel) {
       if (newLevel === 'critical') {
+        await observeIssue({
+          id: 'host.disk.root',
+          severity: 'critical',
+          source: 'disk-watcher',
+          title: 'Disk usage is critical',
+          body: `Root disk usage is at ${usage}%. Risky operations are blocked until this clears.`,
+          fixable: false,
+          debounce: 1,
+        });
         await notify(
           'Critical: Disk space at 95%+',
           `Disk usage is at ${usage}%. Immediate action required — consider cleaning up old backups or expanding storage.`,
           'error'
         );
       } else if (newLevel === 'error') {
+        await observeIssue({
+          id: 'host.disk.root',
+          severity: 'error',
+          source: 'disk-watcher',
+          title: 'Disk usage is high',
+          body: `Root disk usage is at ${usage}%.`,
+          fixable: false,
+          debounce: 1,
+        });
         await notify(
           'Disk space at 90%+',
           `Disk usage is at ${usage}%. Consider freeing up space soon.`,
           'error'
         );
       } else if (newLevel === 'warning') {
+        await observeIssue({
+          id: 'host.disk.root',
+          severity: 'warning',
+          source: 'disk-watcher',
+          title: 'Disk usage warning',
+          body: `Root disk usage is at ${usage}%.`,
+          fixable: false,
+          debounce: 2,
+        });
         await notify(
           'Disk space warning',
           `Disk usage is at ${usage}%. Monitor and plan for cleanup.`,
           'warning'
         );
       } else if (newLevel === 'none' && lastDiskAlertLevel !== 'none') {
+        await resolveIssue('host.disk.root');
         await notify(
           'Disk space recovered',
           `Disk usage has dropped below 75%. No action needed.`,
@@ -406,14 +563,24 @@ async function checkMemory(): Promise<void> {
 
     if (lowMemoryCount >= MEMORY_CONSECUTIVE_THRESHOLD && !memoryAlertActive) {
       memoryAlertActive = true;
+      await observeIssue({
+        id: 'host.memory.low',
+        severity: 'warning',
+        source: 'memory-watcher',
+        title: 'Low memory',
+        body: `Available RAM has been below 512 MB for ${lowMemoryCount} consecutive checks (${availableMB} MB available now).`,
+        fixable: false,
+        debounce: 1,
+      });
       await notify(
         'Low memory warning',
         `Available RAM has been below 512 MB for ${lowMemoryCount} consecutive checks (${availableMB} MB available now).`,
         'warning',
-        '/health'
+        '/settings/system/health'
       );
     } else if (lowMemoryCount === 0 && memoryAlertActive) {
       memoryAlertActive = false;
+      await resolveIssue('host.memory.low');
       await notify(
         'Memory recovered',
         `Available RAM is now ${availableMB} MB — above the 512 MB threshold.`,
@@ -491,7 +658,7 @@ async function checkMemoryThrottle(): Promise<void> {
           'Server memory is low',
           'Apps are running slower to stay stable. Consider closing unused apps or adding more RAM.',
           'warning',
-          '/health'
+          '/settings/system/health'
         );
       }
     } else if (totalAvailableKB > THROTTLE_EXIT_KB && isThrottled) {
@@ -520,7 +687,7 @@ async function checkMemoryThrottle(): Promise<void> {
         'Memory recovered',
         'All apps running at full speed again.',
         'info',
-        '/health'
+        '/settings/system/health'
       );
     }
   } catch (err) {
@@ -702,9 +869,4 @@ export function stopHealthMonitor(): void {
     clearInterval(throttleTimer);
     throttleTimer = null;
   }
-}
-
-// Auto-start when module is imported in production
-if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
-  startHealthMonitor();
 }

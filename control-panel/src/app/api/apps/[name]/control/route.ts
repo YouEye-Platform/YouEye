@@ -44,7 +44,7 @@ export async function POST(
       { force: body.force === true },
     );
 
-    return NextResponse.json(result);
+    return NextResponse.json(result, { status: result.success ? 200 : 207 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const status = message.startsWith('Unknown installed app') ? 404 : 500;

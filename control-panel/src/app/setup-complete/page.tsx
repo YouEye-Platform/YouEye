@@ -25,6 +25,8 @@ export default function SetupCompletePage() {
   const [config, setConfig] = useState<SetupConfig | null>(null);
   const [tlsChoice, setTlsChoice] = useState<TlsChoice | undefined>(undefined);
   const [loading, setLoading] = useState(true);
+  const [continuing, setContinuing] = useState(false);
+  const [continueError, setContinueError] = useState<string | null>(null);
 
   useEffect(() => {
     const queryChoice = new URLSearchParams(window.location.search).get('tls');
@@ -49,6 +51,36 @@ export default function SetupCompletePage() {
       });
   }, []);
 
+  async function continueToServer() {
+    setContinuing(true);
+    setContinueError(null);
+    try {
+      const csrfResponse = await fetch('/api/auth/csrf', { cache: 'no-store' });
+      const { csrfToken } = await csrfResponse.json();
+      if (!csrfToken) throw new Error('Sign in as the appliance owner to continue.');
+      const response = await fetch('/api/appliance/handoff', {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': csrfToken },
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not continue to the server.');
+
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = body.action;
+      const code = document.createElement('input');
+      code.type = 'hidden';
+      code.name = 'code';
+      code.value = body.code;
+      form.appendChild(code);
+      document.body.appendChild(form);
+      form.submit();
+    } catch (error) {
+      setContinueError(error instanceof Error ? error.message : 'Could not continue to the server.');
+      setContinuing(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
@@ -63,6 +95,9 @@ export default function SetupCompletePage() {
       siteName={config?.site_name || 'YouEye'}
       tlsChoice={tlsChoice}
       standalone
+      onContinue={continueToServer}
+      continuing={continuing}
+      continueError={continueError}
     />
   );
 }

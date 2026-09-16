@@ -1,0 +1,9 @@
+{
+  "schema": "youeye.release-destination.v1",
+  "provider": "forgejo",
+  "branch": "main",
+  "version_depth": 5,
+  "trust_class": "development",
+  "appliance_tag": "appliance-v{version}",
+  "source_binding": "signed-manifest-matches-selected-repository"
+}

@@ -12,26 +12,13 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getBridgeToken } from "@/lib/admin/bridge-client";
-import { updateUserProfile } from "@/lib/db/queries/users";
-import { db } from "@/db";
-import { users } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { ensureBridgeUser, updateUserProfile } from "@/lib/db/queries/users";
 
 function validateToken(request: NextRequest): boolean {
   const provided = request.headers.get("X-UI-Bridge-Token");
   if (!provided) return false;
   const expected = getBridgeToken();
   return expected !== null && provided === expected;
-}
-
-/** Resolve a username to UI's internal user ID */
-async function resolveUserId(username: string): Promise<string | null> {
-  const result = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.username, username))
-    .limit(1);
-  return result[0]?.id ?? null;
 }
 
 export async function POST(request: NextRequest) {
@@ -50,13 +37,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const userId = await resolveUserId(username);
-    if (!userId) {
-      return NextResponse.json(
-        { error: `User '${username}' not found in UI database` },
-        { status: 404 }
-      );
-    }
+    const userId = (await ensureBridgeUser(username)).id;
 
     const name = [firstName, lastName].filter(Boolean).join(" ") || undefined;
 

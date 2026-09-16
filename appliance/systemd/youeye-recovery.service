@@ -1,0 +1,16 @@
+[Unit]
+Description=YouEye recovery console
+After=systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+
+[Service]
+Type=idle
+ExecStart=/usr/local/libexec/youeye-recovery-console
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+Restart=always
+RestartSec=2

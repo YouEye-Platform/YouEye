@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,11 +11,11 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := Default()
 
-	if cfg.Releases.RepoURL != "https://github.com/youeye-platform/YouEye" {
-		t.Errorf("default RepoURL = %q, want %q", cfg.Releases.RepoURL, "https://github.com/youeye-platform/YouEye")
+	if cfg.Releases.RepoURL != "https://github.com/YouEye-Platform/YouEye" {
+		t.Errorf("default RepoURL = %q, want the official GitHub repository", cfg.Releases.RepoURL)
 	}
-	if cfg.CoreReleaseRepo().Organization != "youeye-platform" {
-		t.Errorf("default Organization = %q, want %q", cfg.CoreReleaseRepo().Organization, "youeye-platform")
+	if cfg.CoreReleaseRepo().Organization != "YouEye-Platform" {
+		t.Errorf("default Organization = %q, want YouEye-Platform", cfg.CoreReleaseRepo().Organization)
 	}
 	if cfg.Releases.Repositories.Spine != "YouEye" {
 		t.Errorf("default Spine repo = %q, want %q", cfg.Releases.Repositories.Spine, "YouEye")
@@ -204,7 +205,7 @@ func TestValidateValidLogFormats(t *testing.T) {
 func TestGetReleasesAPIURL(t *testing.T) {
 	cfg := Default()
 	url := cfg.GetReleasesAPIURL()
-	expected := "https://api.github.com/repos/youeye-platform/YouEye/releases?per_page=50"
+	expected := "https://api.github.com/repos/YouEye-Platform/YouEye/releases?per_page=100"
 	if url != expected {
 		t.Errorf("GetReleasesAPIURL() = %q, want %q", url, expected)
 	}
@@ -213,13 +214,13 @@ func TestGetReleasesAPIURL(t *testing.T) {
 func TestGetRepoPath(t *testing.T) {
 	cfg := Default()
 
-	if path := cfg.GetSpineRepoPath(); path != "youeye-platform/YouEye" {
+	if path := cfg.GetSpineRepoPath(); path != "YouEye-Platform/YouEye" {
 		t.Errorf("GetSpineRepoPath() = %q", path)
 	}
-	if path := cfg.GetControlPanelRepoPath(); path != "youeye-platform/YouEye" {
+	if path := cfg.GetControlPanelRepoPath(); path != "YouEye-Platform/YouEye" {
 		t.Errorf("GetControlPanelRepoPath() = %q", path)
 	}
-	if path := cfg.GetUIRepoPath(); path != "youeye-platform/YouEye" {
+	if path := cfg.GetUIRepoPath(); path != "YouEye-Platform/YouEye" {
 		t.Errorf("GetUIRepoPath() = %q", path)
 	}
 }
@@ -407,12 +408,17 @@ func TestReset(t *testing.T) {
 }
 
 func TestGetReturnsDefault(t *testing.T) {
+	originalLoad := loadConfig
+	loadConfig = func() (*Config, error) {
+		return nil, errors.New("test load failure")
+	}
+	t.Cleanup(func() { loadConfig = originalLoad })
 	Reset()
 	cfg := Get()
 	if cfg == nil {
 		t.Fatal("Get() should never return nil")
 	}
-	if cfg.CoreReleaseRepo().RepoURL != "https://github.com/youeye-platform/YouEye" {
-		t.Errorf("Get() should return defaults when loading fails, got BaseURL=%q", cfg.Releases.BaseURL)
+	if cfg.CoreReleaseRepo().RepoURL != "https://github.com/YouEye-Platform/YouEye" {
+		t.Errorf("Get() should return defaults when loading fails, got RepoURL=%q", cfg.CoreReleaseRepo().RepoURL)
 	}
 }

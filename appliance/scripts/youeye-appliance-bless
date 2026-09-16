@@ -1,0 +1,139 @@
+#!/bin/sh
+set -eu
+
+efivars=${YOUEYE_EFIVARS_DIR:-/sys/firmware/efi/efivars}
+state_dir=${YOUEYE_STATE_DIR:-/var/lib/youeye-state/boot}
+youeye_bin=${YOUEYE_BIN:-/usr/local/bin/youeye}
+bless_boot_bin=${YOUEYE_BLESS_BOOT_BIN:-/usr/lib/systemd/systemd-bless-boot}
+boot_id_file=${YOUEYE_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}
+first_deploy_complete=${YOUEYE_FIRST_DEPLOY_COMPLETE:-/var/lib/youeye-state/first-deploy/complete}
+reboot_bin=${YOUEYE_REBOOT_BIN:-systemctl}
+update_health_grace_attempts=${YOUEYE_UPDATE_HEALTH_GRACE_ATTEMPTS:-24}
+boot_count_path="$(find "$efivars" -maxdepth 1 -type f -name 'LoaderBootCountPath-*' -print -quit 2>/dev/null || true)"
+health="$state_dir/last-bless-health.json"
+record="$state_dir/last-bless.json"
+pending="$state_dir/pending-bless.json"
+update_reconcile="$state_dir/last-system-update-reconcile.json"
+update_health_wait="$state_dir/system-update-health-wait.json"
+boot_id="$(cat "$boot_id_file")"
+
+case "$update_health_grace_attempts" in
+	''|*[!0-9]*) printf 'Invalid system update health grace attempt count.\n' >&2; exit 1 ;;
+esac
+[ "$update_health_grace_attempts" -gt 0 ] || {
+	printf 'System update health grace attempt count must be positive.\n' >&2
+	exit 1
+}
+
+refresh_health() {
+	set +e
+	"$youeye_bin" appliance health --profile=operational --json > "$health.tmp"
+	status=$?
+	set -e
+	chmod 0600 "$health.tmp"
+	mv -f "$health.tmp" "$health"
+	sync -f "$state_dir"
+	return "$status"
+}
+
+reconcile_update() {
+	"$youeye_bin" update system reconcile --json > "$update_reconcile.tmp"
+	chmod 0600 "$update_reconcile.tmp"
+	mv -f "$update_reconcile.tmp" "$update_reconcile"
+	sync -f "$state_dir"
+}
+
+handle_health_failure() {
+	if jq -e '.status.state == "trial"' "$update_reconcile" >/dev/null 2>&1; then
+		attempt=1
+		if [ -f "$update_health_wait" ]; then
+			previous=$(jq -r --arg boot_id "$boot_id" \
+				'if .boot_id == $boot_id then .attempts else 0 end' \
+				"$update_health_wait" 2>/dev/null || printf '0')
+			case "$previous" in ''|*[!0-9]*) previous=0 ;; esac
+			attempt=$((previous + 1))
+		fi
+		jq -n --arg boot_id "$boot_id" --argjson attempts "$attempt" \
+			'{schema:"youeye.system-update.health-wait.v1",boot_id:$boot_id,attempts:$attempts}' \
+			> "$update_health_wait.tmp"
+		chmod 0600 "$update_health_wait.tmp"
+		mv -f "$update_health_wait.tmp" "$update_health_wait"
+		sync -f "$state_dir"
+		if [ "$attempt" -lt "$update_health_grace_attempts" ]; then
+			return 1
+		fi
+	fi
+	rm -f "$update_health_wait"
+	set +e
+	"$youeye_bin" update system reconcile --health-failed --json > "$update_reconcile.tmp"
+	status=$?
+	set -e
+	if [ "$status" -eq 0 ]; then
+		chmod 0600 "$update_reconcile.tmp"
+		mv -f "$update_reconcile.tmp" "$update_reconcile"
+		sync -f "$state_dir"
+		if jq -e '.reboot_required == true' "$update_reconcile" >/dev/null 2>&1; then
+			"$reboot_bin" --no-block reboot
+			exit 0
+		fi
+	fi
+	rm -f "$update_reconcile.tmp"
+	return 1
+}
+
+write_boot_record() {
+    path=$1
+    status=$2
+    jq -n \
+        --arg schema youeye.appliance.boot-bless.v1 \
+        --arg boot_id "$boot_id" \
+        --arg status "$status" \
+        '{schema:$schema,boot_id:$boot_id,status:$status}' > "$path.tmp"
+    chmod 0600 "$path.tmp"
+    mv -f "$path.tmp" "$path"
+    sync -f "$state_dir"
+}
+
+finish_blessing() {
+	"$youeye_bin" appliance commit-healthy-slot
+	"$youeye_bin" update system mark-healthy --json > "$update_reconcile.tmp"
+	chmod 0600 "$update_reconcile.tmp"
+	mv -f "$update_reconcile.tmp" "$update_reconcile"
+	refresh_health
+    write_boot_record "$record" healthy
+	rm -f "$pending" "$update_health_wait"
+    sync -f "$state_dir"
+}
+
+install -d -m 0700 "$state_dir"
+[ -e "$first_deploy_complete" ] || {
+	printf 'First platform deployment is not durably complete; refusing to bless this boot.\n' >&2
+	exit 1
+}
+reconcile_update
+
+if [ -z "$boot_count_path" ]; then
+    if jq -e --arg boot_id "$boot_id" \
+        '.schema == "youeye.appliance.boot-bless.v1" and .boot_id == $boot_id and .status == "validated"' \
+        "$pending" >/dev/null 2>&1; then
+        finish_blessing
+        exit 0
+    fi
+
+    # An already-blessed entry has no boot counter, but it can still be a
+    # different slot from the last trial. Revalidate this boot before making
+    # the durable slot record match the UKI-selected root.
+	if ! refresh_health; then
+		handle_health_failure
+	fi
+	finish_blessing
+	exit 0
+fi
+
+if ! refresh_health; then
+	handle_health_failure
+fi
+write_boot_record "$pending" validated
+
+"$bless_boot_bin" good
+finish_blessing

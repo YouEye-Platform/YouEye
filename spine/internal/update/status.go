@@ -1,7 +1,10 @@
 package update
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -21,6 +24,8 @@ const (
 
 // StatusFile represents the persistent update status written to disk.
 type StatusFile struct {
+	AttemptID     string `json:"attempt_id,omitempty"`
+	Authority     string `json:"authority,omitempty"`
 	Component     string `json:"component"`
 	Status        string `json:"status"`
 	Progress      int    `json:"progress"`
@@ -91,6 +96,8 @@ func ClearStatus() {
 func Emit(component, status string, progress int, message string) {
 	existing := ReadStatus()
 	sf := StatusFile{
+		AttemptID:     existing.AttemptID,
+		Authority:     existing.Authority,
 		Component:     component,
 		Status:        status,
 		Progress:      progress,
@@ -102,9 +109,19 @@ func Emit(component, status string, progress int, message string) {
 	WriteStatus(sf)
 }
 
+func newAttemptID() string {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return fmt.Sprintf("update-%d", time.Now().UTC().UnixNano())
+	}
+	return hex.EncodeToString(raw)
+}
+
 // Start initializes a new update session for a component.
 func Start(component, versionBefore string) {
 	WriteStatus(StatusFile{
+		AttemptID:     newAttemptID(),
+		Authority:     "spine",
 		Component:     component,
 		Status:        StatusChecking,
 		Progress:      0,
@@ -116,26 +133,49 @@ func Start(component, versionBefore string) {
 
 // Complete marks the update as completed with the new version.
 func Complete(component, versionBefore, versionAfter string) {
+	existing := ReadStatus()
 	WriteStatus(StatusFile{
+		AttemptID:     existing.AttemptID,
+		Authority:     "spine",
 		Component:     component,
 		Status:        StatusCompleted,
 		Progress:      100,
 		Message:       "Update completed successfully",
 		VersionBefore: versionBefore,
 		VersionAfter:  versionAfter,
-		StartedAt:     ReadStatus().StartedAt,
+		StartedAt:     existing.StartedAt,
+	})
+}
+
+// NoOp records a legitimate already-current result as a terminal attempt.
+func NoOp(component, version string) {
+	Start(component, version)
+	existing := ReadStatus()
+	WriteStatus(StatusFile{
+		AttemptID:     existing.AttemptID,
+		Authority:     "spine",
+		Component:     component,
+		Status:        StatusCompleted,
+		Progress:      100,
+		Message:       "Already up to date",
+		VersionBefore: version,
+		VersionAfter:  version,
+		StartedAt:     existing.StartedAt,
 	})
 }
 
 // Fail marks the update as failed with an error message.
 func Fail(component, versionBefore, errMsg string) {
+	existing := ReadStatus()
 	WriteStatus(StatusFile{
+		AttemptID:     existing.AttemptID,
+		Authority:     "spine",
 		Component:     component,
 		Status:        StatusFailed,
 		Progress:      0,
 		Message:       "Update failed",
 		VersionBefore: versionBefore,
 		Error:         errMsg,
-		StartedAt:     ReadStatus().StartedAt,
+		StartedAt:     existing.StartedAt,
 	})
 }

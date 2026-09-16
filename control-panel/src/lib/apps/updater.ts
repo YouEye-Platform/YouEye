@@ -2,10 +2,10 @@
  * OCI Container Updater (Infrastructure)
  *
  * Updates OCI containers managed by the Control Panel via the Incus REST API.
- * Uses snapshot → stop → rebuild → start → verify with automatic rollback on failure.
+ * Uses independent instance backup → rebuild → verify with automatic rollback.
  *
  * For multi-container infrastructure apps, all containers are updated atomically:
- * snapshot all → stop all → rebuild all → start all → verify all.
+ * stop/copy all → rebuild all → restore desired runtime state → verify all.
  *
  * NOTE: This handles INFRASTRUCTURE OCI apps (Caddy, PiHole, Postgres).
  * Market-installed and native app updates go through market/updater.ts which supports
@@ -13,16 +13,19 @@
  */
 
 import {
-  createSnapshot,
-  restoreSnapshot,
-  deleteSnapshot,
   stopContainer,
   startContainer,
   rebuildContainer,
   waitForRunning,
+  containerState,
+  createRollbackInstanceBackup,
+  deleteInstance,
+  restoreRollbackInstanceBackup,
 } from '@/lib/incus/snapshot';
 import { type AppDefinition } from './definitions';
 import { markAppUpdated } from './update-cache';
+import { beginContainerMaintenance } from '@/lib/maintenance/container-maintenance';
+import { observeIssue, resolveIssue } from '@/lib/health/issues';
 
 export type UpdateStage =
   | 'starting'
@@ -45,8 +48,6 @@ export interface UpdateEvent {
 
 type EventEmitter = (event: UpdateEvent) => void;
 
-const SNAPSHOT_NAME = 'pre-update';
-
 /**
  * Update an OCI app by rebuilding its containers with the latest image.
  */
@@ -63,69 +64,147 @@ export async function updateOCIApp(
   let currentStep = 0;
 
   const progress = () => Math.min(Math.round((currentStep / totalSteps) * 100), 99);
+  const originalStates = new Map<string, string>();
+  const rollbackBackups = new Map<string, string>();
+  const rebuildStarted = new Set<string>();
+  const maintenance = beginContainerMaintenance(containers, {
+    operation: `infrastructure-update:${appDef.id}`,
+  });
+  let retainMaintenance = false;
 
   emit({ stage: 'starting', message: `Starting update for ${appDef.displayName}`, progress: 0 });
 
   try {
-    // 1. Snapshot all containers
-    for (const name of containers) {
-      emit({ stage: 'snapshot', message: `Creating snapshot of ${name}`, container: name, progress: progress() });
-      await createSnapshot(name, SNAPSHOT_NAME);
-      currentStep++;
-    }
-
-    // 2. Stop all containers
-    for (const name of containers) {
-      emit({ stage: 'stopping', message: `Stopping ${name}`, container: name, progress: progress() });
+    // 1. Stop and independently copy every rootfs before any rebuild.
+    for (let index = 0; index < containers.length; index++) {
+      const name = containers[index];
+      originalStates.set(name, await containerState(name));
+      emit({ stage: 'snapshot', message: `Creating independent rollback copy of ${name}`, container: name, progress: progress() });
       await stopContainer(name);
+      const backup = `ye-rollback-${maintenance.id.replaceAll('-', '').slice(0, 12)}-${index}`;
+      await createRollbackInstanceBackup(name, backup);
+      rollbackBackups.set(name, backup);
       currentStep++;
     }
 
-    // 3. Rebuild all containers (snapshots must be deleted first)
+    // 2. Rebuild only after all rollback datasets have verified.
     for (const name of containers) {
       emit({ stage: 'rebuilding', message: `Rebuilding ${name} with latest image`, container: name, progress: progress() });
-      await deleteSnapshot(name, SNAPSHOT_NAME);
+      rebuildStarted.add(name);
       await rebuildContainer(name, appDef.imageRef);
       currentStep++;
     }
 
-    // 4. Start all containers
+    // 3. Restore the exact pre-update desired runtime state.
     for (const name of containers) {
-      emit({ stage: 'starting-container', message: `Starting ${name}`, container: name, progress: progress() });
-      await startContainer(name);
+      if (originalStates.get(name) === 'Running') {
+        emit({ stage: 'starting-container', message: `Starting ${name}`, container: name, progress: progress() });
+        await startContainer(name);
+      } else {
+        emit({ stage: 'starting-container', message: `${name} remains stopped`, container: name, progress: progress() });
+      }
       currentStep++;
     }
 
-    // 5. Verify
+    // 4. Verify every container that was originally running.
     emit({ stage: 'verifying', message: 'Verifying containers are running', progress: progress() });
     for (const name of containers) {
-      await waitForRunning(name, 30);
-    }
-    currentStep++;
-
-    // 6. Cleanup snapshots
-    for (const name of containers) {
-      await deleteSnapshot(name, SNAPSHOT_NAME);
+      if (originalStates.get(name) === 'Running') await waitForRunning(name, 30);
     }
     currentStep++;
 
     markAppUpdated(appDef.id);
 
+    // 5. Commit cleanup happens only after runtime and metadata succeed.
+    const cleanupFailures: string[] = [];
+    for (const backup of rollbackBackups.values()) {
+      try {
+        await deleteInstance(backup);
+      } catch (error) {
+        cleanupFailures.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+    if (cleanupFailures.length > 0) {
+      await observeIssue({
+        id: `service.${appDef.id}.update-rollback-cleanup`,
+        severity: 'warning',
+        source: 'infrastructure-updater',
+        title: `${appDef.displayName} retained a rollback copy after update`,
+        body: 'The update committed, but one or more stopped rollback copies require cleanup.',
+        fixable: false,
+        debounce: 1,
+      });
+    } else {
+      await resolveIssue(`service.${appDef.id}.update-rollback-cleanup`);
+    }
+    currentStep++;
+
     emit({ stage: 'completed', message: `${appDef.displayName} updated successfully`, progress: 100 });
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     emit({ stage: 'rolling-back', message: `Update failed, rolling back: ${errMsg}`, progress: progress() });
+    maintenance.markRollback(errMsg);
+    const rollbackFailures: string[] = [];
+    const rollbackCleanupFailures: string[] = [];
 
     for (const name of containers) {
       try {
-        await restoreSnapshot(name, SNAPSHOT_NAME);
-        await startContainer(name);
+        const backup = rollbackBackups.get(name);
+        if (rebuildStarted.has(name)) {
+          if (!backup) throw new Error('verified rollback instance is missing');
+          await restoreRollbackInstanceBackup(name, backup);
+        } else if (backup) {
+          try {
+            await deleteInstance(backup);
+          } catch (cleanupError) {
+            rollbackCleanupFailures.push(`${name}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+          }
+        }
+        if (originalStates.get(name) === 'Running') {
+          await startContainer(name);
+          await waitForRunning(name, 30);
+        }
       } catch (rollbackErr) {
         console.error(`[updater] Rollback failed for ${name}:`, rollbackErr);
+        rollbackFailures.push(`${name}: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
       }
     }
 
-    emit({ stage: 'failed', message: errMsg, error: errMsg, progress: 0 });
-    throw error;
+    if (rollbackFailures.length > 0) {
+      retainMaintenance = true;
+      maintenance.markFailed(rollbackFailures.join('; '));
+      await observeIssue({
+        id: `service.${appDef.id}.update-rollback-failed`,
+        severity: 'critical',
+        source: 'infrastructure-updater',
+        title: `${appDef.displayName} update rollback requires attention`,
+        body: 'Automatic rollback was incomplete. Watchdog recovery remains suppressed by the durable maintenance record.',
+        fixable: false,
+        debounce: 1,
+      });
+    } else {
+      await resolveIssue(`service.${appDef.id}.update-rollback-failed`);
+    }
+    if (rollbackCleanupFailures.length > 0) {
+      await observeIssue({
+        id: `service.${appDef.id}.update-rollback-cleanup`,
+        severity: 'warning',
+        source: 'infrastructure-updater',
+        title: `${appDef.displayName} retained an unused rollback copy`,
+        body: 'The original container remained intact, but a stopped rollback copy requires cleanup.',
+        fixable: false,
+        debounce: 1,
+      });
+    } else {
+      await resolveIssue(`service.${appDef.id}.update-rollback-cleanup`);
+    }
+
+    const finalError = rollbackFailures.length > 0
+      ? `${errMsg}; rollback incomplete: ${rollbackFailures.join('; ')}`
+      : errMsg;
+    emit({ stage: 'failed', message: finalError, error: finalError, progress: 0 });
+    throw new Error(finalError, { cause: error });
+  } finally {
+    if (!retainMaintenance) maintenance.release();
   }
 }

@@ -1,0 +1,62 @@
+{
+  "schema": "youeye.third-party-assets.v1",
+  "assets": [
+    {
+      "id": "yescrypt-go",
+      "kind": "vendored-source",
+      "paths": ["installer/third_party/openwall/yescrypt-go"],
+      "upstream": "https://github.com/openwall/yescrypt-go",
+      "license": "BSD-3-Clause",
+      "notice": "legal/text/yescrypt-go-BSD-3-Clause.txt",
+      "review": "approved"
+    },
+    {
+      "id": "lobehub-ai-brand-icons",
+      "kind": "icon-set",
+      "paths": ["control-panel/src/assets/ai-brands", "control-panel/public/icons/ai-brands"],
+      "upstream": "https://github.com/lobehub/lobe-icons",
+      "version": "1.94.0",
+      "license": "MIT",
+      "notice": "legal/text/lobehub-icons-MIT.txt",
+      "trademark_review": "required"
+    },
+    {
+      "id": "noto-color-emoji-avatars",
+      "kind": "rendered-artwork",
+      "paths": ["control-panel/public/profile-avatar-art", "legal/noto-avatar-inventory.json", "legal/upstream/noto-emoji-2.051/svg"],
+      "upstream": "https://github.com/googlefonts/noto-emoji",
+      "version": "8998f5dd683424a73e2314a8c1f1e359c19e8742",
+      "license": "OFL-1.1",
+      "notice": "legal/text/Noto-Color-Emoji-OFL-1.1.txt",
+      "review": "immutable-source-and-output-mapped; historical-render-recipe-unavailable"
+    },
+    {
+      "id": "control-panel-font-bundle",
+      "kind": "webfonts",
+      "paths": ["control-panel/public/fonts", "legal/font-inventory.json"],
+      "upstream": "https://github.com/google/fonts",
+      "version": "77669fa9a8a89271bce79dfc05fd2529efb1a187",
+      "license": "OFL-1.1 AND Apache-2.0",
+      "notices": ["legal/font-inventory.md", "legal/text/fonts/OFL-1.1.txt", "legal/text/fonts/Apache-2.0.txt"],
+      "review": "mapped"
+    },
+    {
+      "id": "ui-font-bundle",
+      "kind": "webfonts",
+      "paths": ["ui/public/fonts", "legal/font-inventory.json"],
+      "upstream": "https://github.com/google/fonts",
+      "version": "77669fa9a8a89271bce79dfc05fd2529efb1a187",
+      "license": "OFL-1.1 AND Apache-2.0",
+      "notices": ["legal/font-inventory.md", "legal/text/fonts/OFL-1.1.txt", "legal/text/fonts/Apache-2.0.txt"],
+      "review": "mapped"
+    },
+    {
+      "id": "product-screenshots",
+      "kind": "documentation-artwork",
+      "paths": ["legal/screenshot-inventory.json"],
+      "upstream": "YouEye product captures",
+      "license": "LicenseRef-YouEye-Product",
+      "review": "removed-pending-reviewed-replacements"
+    }
+  ]
+}

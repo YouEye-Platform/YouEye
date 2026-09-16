@@ -25,6 +25,7 @@ var SystemContainerIPOffsets = map[string]int{
 	"youeye-pihole":   14,
 	"youeye-ui":       15,
 	"youeye-control":  16,
+	"youeye-pointer":  17,
 }
 
 // GetSubnetBase reads the incusbr0 bridge configuration and returns the subnet

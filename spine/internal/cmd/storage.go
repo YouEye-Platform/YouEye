@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -91,21 +92,81 @@ func printStorageStatus(result hoststorage.Result) {
 	} else {
 		fmt.Printf("  Root action: unchanged (%s)\n", joinOrDash(plan.RootSkipReasons))
 	}
-	if snap.IncusPool != nil {
-		fmt.Printf("  Incus pool: %s %s, source %s\n", snap.IncusPool.Driver, emptyDash(snap.IncusPool.ConfigSize), emptyDash(snap.IncusPool.Source))
-	} else {
-		fmt.Println("  Incus pool: not initialized")
-	}
-	if plan.IncusTargetBytes > 0 {
-		fmt.Printf("  Incus target: %s\n", hoststorage.FormatBytes(plan.IncusTargetBytes))
-	} else {
-		fmt.Printf("  Incus target: unavailable (%s)\n", joinOrDash(plan.IncusSkipReasons))
-	}
+
+	// ── Pool layout ──
+	printPoolLayout(snap)
+
 	if plan.IncusGrow {
 		fmt.Printf("  Incus action: grow by %s\n", hoststorage.FormatBytes(plan.IncusGrowBytes))
-	} else {
-		fmt.Printf("  Incus action: unchanged (%s)\n", joinOrDash(plan.IncusSkipReasons))
+	} else if plan.IncusTargetBytes > 0 {
+		fmt.Printf("  Incus loop target: %s (managed loop pools only)\n", hoststorage.FormatBytes(plan.IncusTargetBytes))
 	}
+}
+
+// printPoolLayout describes the live storage topology: dedicated-disk (ZFS
+// pool with YouEye marker + datasets), managed loop pool, or dir driver.
+func printPoolLayout(snap hoststorage.Snapshot) {
+	if snap.IncusPool == nil {
+		fmt.Println("  Incus pool: not initialized")
+		return
+	}
+	pool := snap.IncusPool
+
+	switch {
+	case pool.Driver == "dir":
+		fmt.Printf("  Storage mode: dir (directory-backed, no quotas), source %s\n", emptyDash(pool.Source))
+		fmt.Println("  Data location: /var/lib/youeye on the root filesystem")
+	case pool.Driver == "zfs" && pool.ManagedLoop:
+		fmt.Printf("  Storage mode: managed ZFS loop pool\n")
+		fmt.Printf("  Loop image: %s\n", emptyDash(pool.Source))
+		fmt.Printf("  Pool size: planned %s\n", emptyDash(pool.ConfigSize))
+		printLivePoolSize()
+		fmt.Println("  Data location: /var/lib/youeye on the root filesystem")
+	case pool.Driver == "zfs":
+		// Real ZFS pool: dedicated-disk (source default/incus) or legacy (default).
+		marker := hoststorage.PoolComment(hoststorage.PoolName)
+		if marker == hoststorage.PoolMarker {
+			fmt.Printf("  Storage mode: dedicated-disk ZFS pool (YouEye-owned, marker=%q)\n", marker)
+		} else {
+			fmt.Printf("  Storage mode: ZFS pool (legacy layout, no YouEye marker)\n")
+		}
+		fmt.Printf("  Incus source: %s\n", emptyDash(pool.Source))
+		printDatasetLayout()
+		printLivePoolSize()
+	default:
+		fmt.Printf("  Incus pool: %s, source %s\n", pool.Driver, emptyDash(pool.Source))
+	}
+}
+
+// printDatasetLayout lists the YouEye pool datasets and where default/data is
+// mounted.
+func printDatasetLayout() {
+	if hoststorage.DatasetExists(hoststorage.IncusDataset) {
+		fmt.Printf("  Dataset %s: Incus-owned container storage\n", hoststorage.IncusDataset)
+	}
+	if hoststorage.DatasetExists(hoststorage.DataDataset) {
+		mounted := "not mounted"
+		if hoststorage.DatasetMounted(hoststorage.DataDataset) {
+			mounted = "mounted at " + hoststorage.DataMountpoint
+		}
+		fmt.Printf("  Dataset %s: YouEye app data (%s)\n", hoststorage.DataDataset, mounted)
+	}
+}
+
+// printLivePoolSize prints the actual zpool size when readable.
+func printLivePoolSize() {
+	out, err := exec.Command("zpool", "list", "-Hp", "-o", "size,alloc,free", hoststorage.PoolName).Output()
+	if err != nil {
+		return
+	}
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	if len(fields) < 3 {
+		return
+	}
+	fmt.Printf("  Pool size: actual %s (%s allocated, %s free)\n",
+		hoststorage.FormatBytes(hoststorage.ParseSizeBytes(fields[0])),
+		hoststorage.FormatBytes(hoststorage.ParseSizeBytes(fields[1])),
+		hoststorage.FormatBytes(hoststorage.ParseSizeBytes(fields[2])))
 }
 
 func printStorageJSON(result hoststorage.Result) error {

@@ -1,0 +1,15 @@
+#!/bin/bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+. "$script_dir/lib.sh"
+youeye_prepare_contract
+youeye_require_pnpm
+
+cd "$YOUEYE_SOURCE_DIR"
+pnpm install --frozen-lockfile --offline --package-import-method=copy --store-dir "$YOUEYE_PNPM_STORE_DIR"
+rm -rf -- control-panel/.next control-panel/node_modules/.cache
+export YOUEYE_SOURCE_COMMIT
+pnpm --dir control-panel run build
+standalone_root="$(youeye_find_standalone_root "$YOUEYE_SOURCE_DIR/control-panel/.next/standalone")"
+youeye_package_standalone "$standalone_root"

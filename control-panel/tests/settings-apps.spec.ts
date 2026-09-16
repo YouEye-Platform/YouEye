@@ -20,8 +20,10 @@ test('rows show real subdomain + status (no fabricated version/surfaces — pitf
   const c = read('src/components/settings-shell/apps-client.tsx');
   // subdomain rendered as <sub>.<host>, host from window.location
   assert.match(c, /\$\{app\.subdomain\}\.\$\{host\}/);
-  // "unknown" status is suppressed rather than shown as a fake "Running"
-  assert.match(c, /app\.status !== "unknown"/);
+  // No fabricated status (pitfall #28): the row only shows an "off" indicator when
+  // the app is actually stopped — "unknown"/"running" are NOT rendered as a fake
+  // "Running" label. (Replaces the earlier `app.status !== "unknown"` phrasing.)
+  assert.match(c, /app\.status === "stopped"/);
   assert.match(c, />Manage</);
 });
 

@@ -12,6 +12,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { getContainerIP } from "@/lib/incus/container-ip";
 import { readFile } from "fs/promises";
+import { join } from "path";
+import { getProfileIconPreset } from "@/lib/profile-icon-presets";
 
 const MAX_INPUT_SIZE = 5 * 1024 * 1024; // 5MB
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
@@ -24,7 +26,7 @@ const BRIDGE_TOKEN_PATH = "/etc/youeye/ui-bridge-token";
 async function pushAvatarToUI(
   username: string,
   dataUrl: string | null
-): Promise<void> {
+): Promise<string | null> {
   try {
     const token = (await readFile(BRIDGE_TOKEN_PATH, "utf-8")).trim();
     const uiIP = await getContainerIP("youeye-ui");
@@ -52,9 +54,42 @@ async function pushAvatarToUI(
       const text = await res.text().catch(() => "");
       throw new Error(`UI avatar sync failed: ${res.status} ${text}`);
     }
+    const response = await res.json().catch(() => ({}));
+    return typeof response.url === "string" ? response.url : null;
   } catch (err) {
     throw new Error(err instanceof Error ? err.message : "UI avatar sync failed");
   }
+}
+
+function escapeXml(value: unknown): string {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+async function renderPresetDataUrl(presetId: string): Promise<string | null> {
+  const preset = getProfileIconPreset(presetId);
+  if (!preset) return null;
+
+  // Keep preset rendering independent of the browser/guest emoji font set. The
+  // packaged transparent artwork is embedded into the stored SVG, so avatars
+  // remain identical in onboarding, Settings, the UI, and connected apps.
+  const artwork = await readFile(join(process.cwd(), "public", "profile-avatar-art", `${preset.id}.png`));
+  const artworkDataUrl = `data:image/png;base64,${artwork.toString("base64")}`;
+
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">',
+    '<defs><linearGradient id="avatar-bg" x1="0" y1="0" x2="1" y2="1">',
+    `<stop offset="0" stop-color="${escapeXml(preset.background[0])}"/>`,
+    `<stop offset="1" stop-color="${escapeXml(preset.background[1])}"/>`,
+    "</linearGradient></defs>",
+    '<circle cx="128" cy="128" r="128" fill="url(#avatar-bg)"/>',
+    `<image href="${artworkDataUrl}" x="50" y="50" width="156" height="156" preserveAspectRatio="xMidYMid meet"/>`,
+    "</svg>",
+  ].join("");
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
 export async function POST(request: NextRequest) {
@@ -64,6 +99,15 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    if (request.headers.get("content-type")?.includes("application/json")) {
+      const body = await request.json().catch(() => ({}));
+      const presetId = typeof body.presetId === "string" ? body.presetId : "";
+      const dataUrl = await renderPresetDataUrl(presetId);
+      if (!dataUrl) return NextResponse.json({ error: "Unknown profile icon" }, { status: 400 });
+      const url = await pushAvatarToUI(session.username, dataUrl);
+      return NextResponse.json({ success: true, presetId, url });
+    }
+
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
 
@@ -89,9 +133,9 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(await file.arrayBuffer());
     const dataUrl = `data:${file.type};base64,${buffer.toString("base64")}`;
 
-    await pushAvatarToUI(session.username, dataUrl);
+    const url = await pushAvatarToUI(session.username, dataUrl);
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, url });
   } catch (error) {
     console.error("[Avatar] Upload failed:", error);
     return NextResponse.json(

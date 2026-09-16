@@ -8,7 +8,7 @@ YouEye uses a layered architecture where each component has a single responsibil
 graph TD
     User[User Browser] -->|HTTPS| Caddy[Caddy Reverse Proxy]
     
-    subgraph Host["Host (Debian/Ubuntu)"]
+    subgraph Host["Signed YouEye appliance"]
         Spine[Spine CLI]
     end
     
@@ -166,7 +166,8 @@ sequenceDiagram
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| **Spine** | Go 1.21+, Cobra, Bubble Tea | Host-level CLI and TUI installer |
+| **Spine** | Go 1.21+, Cobra, Bubble Tea | Host lifecycle and signed-release manager |
+| **Installer** | Go, Bubble Tea | Signed ISO and Proxmox installation flows |
 | **Control Panel** | Next.js 16, TypeScript | Infrastructure orchestration |
 | **UI** | Next.js 15, Drizzle ORM, Radix UI, DND-Kit, Framer Motion | User dashboard |
 | **Native Apps** | Next.js 15 | Wiki, Search, Notes, Cinema, Weather, Translate |
@@ -180,10 +181,11 @@ sequenceDiagram
 
 ```
 YouEye/
+├── installer/          # YouEye Installer binary and Proxmox bootstrap
+├── appliance/          # Signed A/B/Recovery image lifecycle
 ├── spine/              # Go CLI (Spine)
 │   ├── cmd/            # CLI entry point
-│   ├── internal/       # Commands, config, TUI
-│   └── install.sh      # One-line installer script
+│   └── internal/       # Commands, config, release and lifecycle services
 ├── control-panel/      # Next.js 16 (Control Panel)
 │   ├── src/            # Application source
 │   ├── prisma/         # Database schema (unused, legacy)
@@ -203,12 +205,12 @@ Spine manages updates for itself and the Control Panel. The Control Panel manage
 
 ```mermaid
 graph TD
-    GH[GitHub Releases] -->|spine-v*| Spine
-    GH -->|cp-v*| Spine
+    F[Signed release provider] -->|spine-v*| Spine
+    F -->|cp-v*| Spine
     Spine -->|deploys| CP[Control Panel]
     
-    GH -->|ui-v*| CP
-    GH -->|app tags| CP
+    F -->|ui-v*| CP
+    F -->|app tags| CP
     CP -->|deploys| UI[UI]
     CP -->|deploys| Apps[Native Apps]
     
@@ -216,4 +218,8 @@ graph TD
     CP -->|deploys| MarketApps[Market Apps]
 ```
 
-Updates are pulled from GitHub releases. Each component checks for newer tags matching its prefix and branch, downloads the artifact, and deploys it.
+Updates default to official GitHub Stable releases. An administrator may select
+an explicit Forgejo or custom HTTPS source without changing distributed build
+defaults. Each mutation requires signed checksum metadata, the exact artifact
+digest, and any configured channel digest. Missing releases do not fall back
+across channels.

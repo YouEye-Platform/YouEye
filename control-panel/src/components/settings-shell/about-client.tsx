@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ChevronRight, Globe, Loader2, type LucideIcon, RefreshCw, Server } from "lucide-react";
+import { ChevronRight, Copy, Globe, Loader2, type LucideIcon, Network, RefreshCw, Server } from "lucide-react";
 import { PageHeader } from "@/components/settings-shell/page-header";
 
 interface SystemInfo {
   hostname: string;
   os: string;
   uptime: string;
+  primary_ip: string;
 }
 interface ServiceHealth {
   slug: string;
@@ -25,12 +26,6 @@ function showVersion(v: string | undefined): string {
   return v.startsWith("v") || /[a-z]/i.test(v) ? v : `v${v}`;
 }
 
-function channelLabel(branch: string | undefined): string {
-  if (!branch || branch === "main") return "Stable";
-  if (branch === "dev") return "Beta · dev channel";
-  return `Custom · ${branch}`;
-}
-
 function seriesOf(v: string | undefined): string {
   const m = v?.match(/^(\d+)\.(\d+)/);
   return m ? `YouEye ${m[1]}.${m[2]} series` : "YouEye";
@@ -41,7 +36,6 @@ const joinDot = (parts: Array<string | false | undefined | null>) => parts.filte
 export function AboutClient({ cpVersion }: { cpVersion?: string }) {
   const [sys, setSys] = useState<SystemInfo | null>(null);
   const [siteName, setSiteName] = useState("This server");
-  const [channel, setChannel] = useState<string | undefined>(undefined);
   const [coreVersion, setCoreVersion] = useState("");
   const [domain, setDomain] = useState<string | null>(null);
   const [caddyRunning, setCaddyRunning] = useState(true);
@@ -64,7 +58,6 @@ export function AboutClient({ cpVersion }: { cpVersion?: string }) {
     if (settingsR.status === "fulfilled" && settingsR.value.ok) {
       const s = await settingsR.value.json().catch(() => null);
       if (s?.siteName) setSiteName(s.siteName);
-      setChannel(s?.releaseBranch);
     } else {
       console.error("[About] settings load failed", settingsR);
     }
@@ -129,6 +122,7 @@ export function AboutClient({ cpVersion }: { cpVersion?: string }) {
         <div className="space-y-6">
           <Section title="This server">
             <Row icon={Server} title={siteName} sub={serverSub} />
+            <Row icon={Network} title="IP address" sub={sys?.primary_ip || "Unavailable"} right={sys?.primary_ip && sys.primary_ip !== "unknown" ? <ButtonCopy value={sys.primary_ip} /> : undefined} />
             <Row icon={Globe} title={domain || "No domain set"} sub={reach} />
           </Section>
 
@@ -149,15 +143,6 @@ export function AboutClient({ cpVersion }: { cpVersion?: string }) {
               right={<span className="text-[13px] text-muted-foreground">{versionMeta}</span>}
             />
             <Row
-              title="Update channel"
-              sub={channelLabel(channel)}
-              right={
-                <Link href="/settings/system" className="text-[13px] font-medium text-primary hover:underline">
-                  Change
-                </Link>
-              }
-            />
-            <Row
               href="/settings/about/licenses"
               title="Open source licenses"
               sub="YouEye is built on open software"
@@ -168,6 +153,11 @@ export function AboutClient({ cpVersion }: { cpVersion?: string }) {
       )}
     </div>
   );
+}
+
+function ButtonCopy({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return <button type="button" className="inline-flex items-center gap-1.5 text-[13px] font-medium text-primary hover:underline" onClick={() => navigator.clipboard.writeText(value).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1200); })}><Copy className="size-3.5" />{copied ? "Copied" : "Copy"}</button>;
 }
 
 function Section({ title, headerRight, children }: { title: string; headerRight?: ReactNode; children: ReactNode }) {

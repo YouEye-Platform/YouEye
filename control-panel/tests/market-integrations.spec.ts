@@ -30,11 +30,11 @@ test('legacy api and cli SSO setup is exposed as the identity provider integrati
 });
 
 test('market install UIs send selected integrations', () => {
+  // The market embed client (src/app/embed/market/client.tsx) was consolidated
+  // into the single shared install dialog — it is now the one install UI that
+  // sends the selected integrations, so assert on it directly.
   const dialog = read('src/components/market/install-dialog.tsx');
-  const embed = read('src/app/embed/market/client.tsx');
 
   assert.match(dialog, /selectedIntegrations:/);
   assert.match(dialog, /integrationToggles/);
-  assert.match(embed, /selectedIntegrations:/);
-  assert.match(embed, /integrationToggles/);
 });

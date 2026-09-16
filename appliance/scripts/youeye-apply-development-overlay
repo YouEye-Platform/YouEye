@@ -1,0 +1,224 @@
+#!/bin/sh
+set -eu
+
+state_root=${YOUEYE_DEVELOPMENT_OVERLAY_STATE_ROOT:-/var/lib/youeye-state/development-overlays}
+runtime_root=${YOUEYE_DEVELOPMENT_OVERLAY_RUNTIME_ROOT:-/run/youeye/development-overlay}
+systemd_root=${YOUEYE_DEVELOPMENT_OVERLAY_SYSTEMD_ROOT:-/run/systemd/system}
+no_systemctl=${YOUEYE_DEVELOPMENT_OVERLAY_NO_SYSTEMCTL:-false}
+required_uid=${YOUEYE_DEVELOPMENT_OVERLAY_REQUIRED_UID:-0}
+component=installer
+marker=$state_root/active/$component.json
+status_root=$state_root/status
+status=$status_root/$component.json
+runtime_status=$runtime_root/$component.json
+
+for root in "$state_root" "$runtime_root" "$systemd_root"; do
+	case "$root" in
+		/*) [ "$root" != / ] || { printf '%s\n' 'unsafe development overlay root' >&2; exit 2; } ;;
+		*) printf '%s\n' 'development overlay roots must be absolute' >&2; exit 2 ;;
+	esac
+done
+
+safe_id() {
+	printf '%s\n' "$1" | grep -Eq '^devart-b-[0-9]+-[0-9]+$'
+}
+
+safe_hex() {
+	case "$1" in
+		*[!0-9a-f]*|'') return 1 ;;
+	esac
+	[ "${#1}" -eq "$2" ]
+}
+
+write_status() {
+	state=$1
+	reason=$2
+	id=${3:-}
+	commit=${4:-}
+	digest=${5:-}
+	install -d -m 0700 "$status_root"
+	tmp=$(mktemp "$status_root/.installer.XXXXXX")
+	jq -n -S \
+		--arg state "$state" --arg reason "$reason" --arg artifact_id "$id" \
+		--arg source_commit "$commit" --arg sha256 "$digest" \
+		'{schema:"youeye.development-overlay-status.v1",component:"installer",state:$state,reason:$reason,artifact_id:$artifact_id,source_commit:$source_commit,sha256:$sha256}' > "$tmp"
+	chmod 0600 "$tmp"
+	mv -f "$tmp" "$status"
+}
+
+remove_runtime() {
+	rm -rf "$runtime_root"
+	rm -f \
+		"$systemd_root/youeye-console-status.service.d/90-youeye-development-overlay.conf" \
+		"$systemd_root/youeye-console-serial.service.d/90-youeye-development-overlay.conf" \
+		"$systemd_root/youeye-development-access.service.d/90-youeye-development-overlay.conf"
+	for directory in \
+		"$systemd_root/youeye-console-status.service.d" \
+		"$systemd_root/youeye-console-serial.service.d" \
+		"$systemd_root/youeye-development-access.service.d"; do
+		rmdir "$directory" 2>/dev/null || true
+	done
+	if [ "$no_systemctl" != true ]; then
+		systemctl daemon-reload
+	fi
+}
+
+fallback() {
+	reason=$1
+	id=${2:-}
+	commit=${3:-}
+	digest=${4:-}
+	remove_runtime
+	if safe_id "$id"; then
+		rm -rf "$state_root/artifacts/$id/runtime" "$state_root/artifacts/$id/.runtime-next"
+	fi
+	if [ -f "$marker" ]; then
+		install -d -m 0700 "$state_root/failed"
+		mv -f "$marker" "$state_root/failed/$component.json"
+	fi
+	write_status fallback "$reason" "$id" "$commit" "$digest"
+}
+
+deactivate() {
+	expected=${1:-}
+	if [ -n "$expected" ] && ! safe_id "$expected"; then
+		printf '%s\n' 'invalid development artifact identity' >&2
+		exit 2
+	fi
+	if [ -f "$marker" ] && [ -n "$expected" ]; then
+		current=$(jq -er '.artifact_id // empty' "$marker" 2>/dev/null || true)
+		if [ "$current" != "$expected" ]; then
+			printf '%s\n' 'active development artifact does not match requested deactivation' >&2
+			exit 1
+		fi
+	fi
+	rm -f "$marker"
+	remove_runtime
+	if [ -n "$expected" ]; then
+		rm -rf "$state_root/artifacts/$expected/runtime" "$state_root/artifacts/$expected/.runtime-next"
+	fi
+	write_status inactive operator-deactivated "$expected"
+}
+
+activate() {
+	boot=$1
+	if [ ! -f "$marker" ]; then
+		remove_runtime
+		write_status inactive no-active-marker
+		return 0
+	fi
+	if [ "$(stat -c %u "$marker" 2>/dev/null || printf x)" != "$required_uid" ] || [ "$(stat -c %a "$marker" 2>/dev/null || printf x)" != 600 ]; then
+		fallback unsafe-marker-permissions
+		[ "$boot" = true ] && return 0
+		return 1
+	fi
+
+	schema=$(jq -er '.schema // empty' "$marker" 2>/dev/null || true)
+	marker_component=$(jq -er '.component // empty' "$marker" 2>/dev/null || true)
+	id=$(jq -er '.artifact_id // empty' "$marker" 2>/dev/null || true)
+	commit=$(jq -er '.source_commit // empty' "$marker" 2>/dev/null || true)
+	digest=$(jq -er '.sha256 // empty' "$marker" 2>/dev/null || true)
+	if [ "$schema" != youeye.development-overlay.v1 ] || [ "$marker_component" != "$component" ] || \
+		! safe_id "$id" || ! safe_hex "$commit" 40 || ! safe_hex "$digest" 64; then
+		fallback invalid-marker "$id" "$commit" "$digest"
+		[ "$boot" = true ] && return 0
+		return 1
+	fi
+
+	artifact_root=$state_root/artifacts/$id
+	payload=$artifact_root/installer-runtime-overlay.tar
+	execution_root=$artifact_root/runtime
+	if [ "$(stat -c %u "$artifact_root" 2>/dev/null || printf x)" != "$required_uid" ] || \
+		[ "$(stat -c %a "$artifact_root" 2>/dev/null || printf x)" != 700 ] || \
+		[ "$(stat -c %u "$payload" 2>/dev/null || printf x)" != "$required_uid" ] || \
+		[ "$(stat -c %a "$payload" 2>/dev/null || printf x)" != 600 ] || \
+		[ "$(sha256sum "$payload" 2>/dev/null | awk '{print $1}')" != "$digest" ]; then
+		fallback artifact-verification-failed "$id" "$commit" "$digest"
+		[ "$boot" = true ] && return 0
+		return 1
+	fi
+
+	listing=$(mktemp)
+	verbose=$(mktemp)
+	trap 'rm -f "$listing" "$verbose"' EXIT INT TERM
+	if ! tar -tf "$payload" > "$listing" 2>/dev/null || ! tar -tvf "$payload" > "$verbose" 2>/dev/null; then
+		fallback invalid-archive "$id" "$commit" "$digest"
+		[ "$boot" = true ] && return 0
+		return 1
+	fi
+	while IFS= read -r entry; do
+		case "$entry" in
+			/*)
+				fallback unsafe-archive-path "$id" "$commit" "$digest"
+				[ "$boot" = true ] && return 0
+				return 1 ;;
+		esac
+		clean=${entry#./}
+		[ -n "$clean" ] && [ "$clean" != . ] || continue
+		case "/$clean/" in
+			*/../*)
+				fallback unsafe-archive-path "$id" "$commit" "$digest"
+				[ "$boot" = true ] && return 0
+				return 1 ;;
+		esac
+	done < "$listing"
+	if awk 'substr($0,1,1) != "-" && substr($0,1,1) != "d" {exit 1}' "$verbose"; then :; else
+		fallback unsafe-archive-type "$id" "$commit" "$digest"
+		[ "$boot" = true ] && return 0
+		return 1
+	fi
+
+	next=$artifact_root/.runtime-next
+	rm -rf "$next"
+	install -d -m 0700 "$next"
+	if ! tar -xf "$payload" -C "$next" --no-same-owner --no-same-permissions; then
+		fallback extraction-failed "$id" "$commit" "$digest"
+		[ "$boot" = true ] && return 0
+		return 1
+	fi
+	for executable in bin/youeye-installer libexec/youeye-apply-development-access; do
+		if [ ! -f "$next/$executable" ] || [ -L "$next/$executable" ]; then
+			fallback incomplete-artifact "$id" "$commit" "$digest"
+			[ "$boot" = true ] && return 0
+			return 1
+		fi
+		chmod 0755 "$next/$executable"
+	done
+	rm -rf "$execution_root"
+	mv "$next" "$execution_root"
+
+	for unit in youeye-console-status youeye-console-serial; do
+		install -d -m 0755 "$systemd_root/$unit.service.d"
+		tmp=$(mktemp "$systemd_root/$unit.service.d/.overlay.XXXXXX")
+		kind=physical
+		[ "$unit" = youeye-console-serial ] && kind=serial
+		printf '[Service]\nExecStart=\nExecStart=%s/bin/youeye-installer console --console-kind %s\n' "$execution_root" "$kind" > "$tmp"
+		chmod 0644 "$tmp"
+		mv -f "$tmp" "$systemd_root/$unit.service.d/90-youeye-development-overlay.conf"
+	done
+	install -d -m 0755 "$systemd_root/youeye-development-access.service.d"
+	tmp=$(mktemp "$systemd_root/youeye-development-access.service.d/.overlay.XXXXXX")
+	printf '[Service]\nExecStart=\nExecStart=%s/libexec/youeye-apply-development-access\n' "$execution_root" > "$tmp"
+	chmod 0644 "$tmp"
+	mv -f "$tmp" "$systemd_root/youeye-development-access.service.d/90-youeye-development-overlay.conf"
+
+	install -d -m 0755 "$runtime_root"
+	tmp=$(mktemp "$runtime_root/.installer.XXXXXX")
+	jq -n -S --arg artifact_id "$id" --arg source_commit "$commit" --arg sha256 "$digest" \
+		'{schema:"youeye.development-overlay-runtime.v1",component:"installer",state:"active",unsigned:true,artifact_id:$artifact_id,source_commit:$source_commit,sha256:$sha256}' > "$tmp"
+	chmod 0644 "$tmp"
+	mv -f "$tmp" "$runtime_status"
+	write_status active verified-and-activated "$id" "$commit" "$digest"
+	if [ "$no_systemctl" != true ]; then
+		systemctl daemon-reload
+	fi
+	rm -f "$listing" "$verbose"
+	trap - EXIT INT TERM
+}
+
+case "${1:-activate}" in
+	activate) activate false ;;
+	boot) activate true ;;
+	deactivate) deactivate "${2:-}" ;;
+	*) printf 'usage: %s [activate|boot|deactivate [artifact-id]]\n' "$0" >&2; exit 2 ;;
+esac

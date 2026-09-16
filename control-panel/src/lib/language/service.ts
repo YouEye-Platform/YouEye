@@ -3,15 +3,13 @@
  *
  * Handles cascading language changes across the platform:
  *   1. Update youeye.yaml (system language via SettingsService)
- *   2. Sync identity provider user locale
- *   3. Update app container env vars for language-supporting apps
+ *   2. Update app container env vars for language-supporting apps
  *
  * All app operations are non-blocking — they run asynchronously
  * and failures are logged but never block the UI response.
  */
 
 import { settingsService } from '../settings';
-import type { AppManifest } from '../market/types';
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -23,11 +21,6 @@ export interface LanguagePropagationResult {
   errors: string[];
 }
 
-interface InstalledAppInfo {
-  appId: string;
-  containers: string[];
-}
-
 // ─── Full-word language names ─────────────────────────────────
 
 const FULL_LANG_NAMES: Record<string, string> = {
@@ -37,61 +30,6 @@ const FULL_LANG_NAMES: Record<string, string> = {
   de: 'german',
   fr: 'french',
 };
-
-/** Map ISO 639-1 code to identity provider locale format */
-const IDENTITY_LOCALE_MAP: Record<string, string> = {
-  en: 'en',
-  ru: 'ru',
-  es: 'es',
-  de: 'de',
-  fr: 'fr',
-};
-
-// ─── Identity Provider Locale Sync ────────────────────────────
-
-/**
- * Update a user's locale in the identity provider.
- * Uses the upstream API v3 PATCH /core/users/{pk}/ with settings.locale.
- */
-async function syncIdentityUserLocale(
-  identityUserId: number,
-  locale: string
-): Promise<boolean> {
-  try {
-    const { updateUser } = await import('../authentik/client');
-    // The upstream provider stores locale in the user's attributes/settings.
-    // The PATCH endpoint accepts arbitrary fields including settings
-    const identityLocale = IDENTITY_LOCALE_MAP[locale] || locale;
-    await updateUser(identityUserId, {
-      // The provider uses 'attributes' for custom user data.
-    } as Record<string, unknown>);
-
-    // Directly call the provider API with settings field.
-    const { spineClient } = await import('../spine/client');
-    const { getContainerIP } = await import('../incus/container-ip');
-    const creds = await spineClient.getAuthentikCredentials();
-    const ip = await getContainerIP('youeye-authentik');
-    const baseUrl = ip ? `http://${ip}:9000` : creds.internal_url;
-
-    const res = await fetch(`${baseUrl}/api/v3/core/users/${identityUserId}/`, {
-      method: 'PATCH',
-      headers: {
-        'Authorization': `Bearer ${creds.bootstrap_token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        attributes: {
-          settings: { locale: identityLocale },
-        },
-      }),
-    });
-
-    return res.ok;
-  } catch (err) {
-    console.error('[LanguageService] Identity provider locale sync failed:', err);
-    return false;
-  }
-}
 
 // ─── App Container Language Update ────────────────────────────
 
@@ -270,14 +208,12 @@ function formatLangValue(lang: string, format: 'iso639' | 'full'): string {
  *
  * Steps:
  *   1. Update youeye.yaml via SettingsService
- *   2. Sync identity provider user locale (if userId provided)
- *   3. Update all language-supporting app containers
+ *   2. Update all language-supporting app containers
  *
  * Returns immediately for the UI — app updates run in the background.
  */
 export async function propagateLanguageToAll(
-  locale: string,
-  identityUserId?: number
+  locale: string
 ): Promise<LanguagePropagationResult> {
   const result: LanguagePropagationResult = {
     systemUpdated: false,
@@ -295,16 +231,7 @@ export async function propagateLanguageToAll(
     result.errors.push(`System language update failed: ${err}`);
   }
 
-  // Step 2: Sync identity provider locale (non-blocking)
-  if (identityUserId) {
-    try {
-      result.identityUpdated = await syncIdentityUserLocale(identityUserId, locale);
-    } catch (err) {
-      result.errors.push(`Identity provider sync failed: ${err}`);
-    }
-  }
-
-  // Step 3: Propagate to apps (sequential to avoid overloading)
+  // Step 2: Propagate to apps (sequential to avoid overloading)
   const apps = await getAppsWithLanguageSupport();
   for (const app of apps) {
     const value = formatLangValue(locale, app.format);

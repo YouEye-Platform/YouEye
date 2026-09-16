@@ -5,10 +5,23 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 	"gopkg.in/yaml.v3"
 )
 
 const DefaultConfigFilePath = "/etc/youeye/config.yaml"
+const PersistentConfigFilePath = "/var/lib/youeye/config/config.yaml"
+
+func writableDefaultConfigFilePath() (string, error) {
+	status, _, err := appliance.Detect()
+	if err != nil {
+		return "", fmt.Errorf("resolve runtime configuration path: %w", err)
+	}
+	if status.Kind == appliance.RuntimeApplianceImage {
+		return PersistentConfigFilePath, nil
+	}
+	return DefaultConfigFilePath, nil
+}
 
 // WriteCoreRepoURL persists the canonical core release repository URL.
 // It removes deprecated split release-source fields so future loads derive
@@ -18,7 +31,11 @@ func WriteCoreRepoURL(path, repoURL string) error {
 		path = GetConfigFile()
 	}
 	if path == "" {
-		path = DefaultConfigFilePath
+		var err error
+		path, err = writableDefaultConfigFilePath()
+		if err != nil {
+			return err
+		}
 	}
 
 	raw := map[string]interface{}{}

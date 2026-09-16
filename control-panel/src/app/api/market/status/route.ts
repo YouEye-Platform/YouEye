@@ -12,6 +12,7 @@ import { containerExists, getContainerIP } from '@/lib/infrastructure/oci-deploy
 import { incusRequest } from '@/lib/incus/server';
 import { getInstalledApp } from '@/lib/market/installed-apps';
 import type { AppStatusInfo, ContainerStatusInfo, AppStatus } from '@/lib/market/types';
+import { inspectAppStorage } from '@/lib/market/storage';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,7 +63,8 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
     // Handle both v1 (string[]) and v2 (ContainerMeta[]) formats
     const containerNames = metadata.containers.map((c: any) => typeof c === 'string' ? c : c.containerName);
     const containers = await Promise.all(containerNames.map(getContainerStatus));
-    const status = deriveAppStatus(containers);
+    const storage = await inspectAppStorage(metadata.storageVolumes);
+    const status = storage.available ? deriveAppStatus(containers) : 'error';
 
     // Enrich with health + forward-auth data from DB
     let healthStatus: 'healthy' | 'unhealthy' | 'unknown' = 'unknown';
@@ -101,6 +103,8 @@ async function getAppStatus(appId: string): Promise<AppStatusInfo> {
       updateAvailable,
       healthStatus,
       healthCheckedAt,
+      storageStatus: storage.available ? 'connected' : 'disconnected',
+      storageDetail: storage.detail,
       forwardAuthEnabled,
       catalogKey: metadata.catalogKey,
       sourceId: metadata.sourceId,

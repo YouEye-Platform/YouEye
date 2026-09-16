@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateBridgeToken } from '@/lib/ui-bridge/auth';
 import { createUser, listUsers } from '@/lib/identity/provider';
+import { validateIdentityPassword } from '@/lib/identity/password-policy';
 
 export async function GET(request: NextRequest) {
   const authError = await validateBridgeToken(request);
@@ -54,6 +55,8 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+	const passwordError = validateIdentityPassword(password);
+	if (passwordError) return NextResponse.json({ error: passwordError }, { status: 400 });
 
     const user = await createUser({ username, name, email: email || '', password });
 

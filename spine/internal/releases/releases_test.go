@@ -2,6 +2,7 @@ package releases
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -343,9 +344,51 @@ func TestBuildReleasesAPIURL_GitHub(t *testing.T) {
 	cfg := config.Default()
 	cfg.Releases.RepoURL = "https://github.com/YouEye-Platform/YouEye"
 	url := buildReleasesAPIURL(cfg, "YouEye")
-	expected := "https://api.github.com/repos/YouEye-Platform/YouEye/releases?per_page=50"
+	expected := "https://api.github.com/repos/YouEye-Platform/YouEye/releases?per_page=100"
 	if url != expected {
 		t.Errorf("buildReleasesAPIURL(github) = %q, want %q", url, expected)
+	}
+}
+
+func TestFetchReleasesFromSourcePaginatesForge(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if got := r.URL.Query().Get("limit"); got != "50" {
+			t.Fatalf("limit = %q, want 50", got)
+		}
+		page := r.URL.Query().Get("page")
+		var releases []Release
+		switch page {
+		case "1":
+			for index := 0; index < forgeReleasePageSize; index++ {
+				releases = append(releases, Release{TagName: fmt.Sprintf("cp-dev-v0.5.22.0.1.%d", index)})
+			}
+		case "2":
+			releases = []Release{{TagName: "cp-dev-v0.5.22.0.2.3"}}
+		default:
+			t.Fatalf("unexpected page %q", page)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(releases); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer server.Close()
+
+	source, err := config.ParseReleaseRepoURL(server.URL + "/owner/YouEye")
+	if err != nil {
+		t.Fatal(err)
+	}
+	releases, err := fetchReleasesFromSource(config.Default(), source, "YouEye")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 || len(releases) != forgeReleasePageSize+1 {
+		t.Fatalf("requests = %d, releases = %d", requests, len(releases))
+	}
+	if got := releases[len(releases)-1].TagName; got != "cp-dev-v0.5.22.0.2.3" {
+		t.Fatalf("last tag = %q", got)
 	}
 }
 

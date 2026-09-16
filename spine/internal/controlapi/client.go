@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,11 +18,19 @@ const (
 	CLITokenPath = "/var/lib/youeye/config/cli-token"
 )
 
+// ErrSSETerminalFailure reports that a Control Panel stream completed with a
+// terminal error event. The event handler has already rendered the bounded,
+// operator-facing diagnostics; this error deliberately carries no response
+// payload so callers can return a truthful non-zero status without repeating
+// potentially sensitive details.
+var ErrSSETerminalFailure = errors.New("control panel operation failed")
+
 // SSEEvent represents a server-sent event from the Control Panel.
 type SSEEvent struct {
 	Step       int    `json:"step,omitempty"`
 	TotalSteps int    `json:"totalSteps,omitempty"`
 	Status     string `json:"status,omitempty"`
+	Stage      string `json:"stage,omitempty"`
 	Message    string `json:"message,omitempty"`
 	Detail     string `json:"detail,omitempty"`
 	Progress   int    `json:"progress,omitempty"`
@@ -73,6 +82,10 @@ func (c *Client) doRequest(method, path string, body io.Reader) (*http.Response,
 		return nil, err
 	}
 	req.Header.Set("X-CLI-Token", c.token)
+	// CSRF routes pre-check that the header EXISTS before the CLI-token bypass
+	// in verifyCSRFToken can apply — send a placeholder; the CLI token is the
+	// real credential.
+	req.Header.Set("X-CSRF-Token", "cli")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -232,6 +245,64 @@ func (c *Client) Delete(path string) (map[string]interface{}, error) {
 	return result, nil
 }
 
+// PostSSEJSON sends a POST and streams raw SSE `data:` payloads (JSON strings)
+// to the handler. Use this for endpoints whose events don't fit the numeric
+// SSEEvent shape (e.g. the reconfigure engine's string step keys).
+//
+// Unlike the default client, this uses NO overall timeout — a server URL
+// change restarts every installed app and can legitimately run for many
+// minutes; only the response headers are deadline-bound.
+func (c *Client) PostSSEJSON(path string, payload interface{}, handler func(raw string)) error {
+	var bodyReader io.Reader
+	if payload != nil {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		bodyReader = strings.NewReader(string(data))
+	}
+
+	req, err := http.NewRequest("POST", c.baseURL+path, bodyReader)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-CLI-Token", c.token)
+	req.Header.Set("X-CSRF-Token", "cli")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	streamClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+			ResponseHeaderTimeout: 2 * time.Minute,
+		},
+	}
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("control panel unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 401 {
+		return fmt.Errorf("unauthorized -- CLI token missing or invalid")
+	}
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("control panel returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		handler(strings.TrimPrefix(line, "data: "))
+	}
+	return scanner.Err()
+}
+
 // PostSSE sends a POST and streams SSE events, calling handler for each event.
 func (c *Client) PostSSE(path string, payload interface{}, handler func(event SSEEvent)) error {
 	var bodyReader io.Reader
@@ -243,7 +314,19 @@ func (c *Client) PostSSE(path string, payload interface{}, handler func(event SS
 		bodyReader = strings.NewReader(string(data))
 	}
 
-	resp, err := c.doRequest("POST", path, bodyReader)
+	req, err := http.NewRequest("POST", c.baseURL+path, bodyReader)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-CLI-Token", c.token)
+	req.Header.Set("X-CSRF-Token", "cli")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	streamClient := &http.Client{Transport: &http.Transport{
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+		ResponseHeaderTimeout: 2 * time.Minute,
+	}}
+	resp, err := streamClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("control panel unreachable: %w", err)
 	}
@@ -252,52 +335,49 @@ func (c *Client) PostSSE(path string, payload interface{}, handler func(event SS
 	if resp.StatusCode == 401 {
 		return fmt.Errorf("unauthorized -- CLI token missing or invalid")
 	}
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("control panel returned %d: %s", resp.StatusCode, string(body))
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		jsonStr := strings.TrimPrefix(line, "data: ")
-		var event SSEEvent
-		if err := json.Unmarshal([]byte(jsonStr), &event); err != nil {
-			event = SSEEvent{Message: jsonStr}
-		}
-		handler(event)
-	}
-	return scanner.Err()
+	return scanSSEEvents(resp.Body, handler)
 }
 
-// GetSSE sends a GET and streams SSE events.
-func (c *Client) GetSSE(path string, handler func(event SSEEvent)) error {
-	resp, err := c.doRequest("GET", path, nil)
-	if err != nil {
-		return fmt.Errorf("control panel unreachable: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("control panel returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	scanner := bufio.NewScanner(resp.Body)
+func scanSSEEvents(reader io.Reader, handler func(event SSEEvent)) error {
+	scanner := bufio.NewScanner(reader)
+	terminalFailure := false
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
 		jsonStr := strings.TrimPrefix(line, "data: ")
+		if jsonStr == "[DONE]" {
+			if terminalFailure {
+				return ErrSSETerminalFailure
+			}
+			return nil
+		}
 		var event SSEEvent
 		if err := json.Unmarshal([]byte(jsonStr), &event); err != nil {
 			event = SSEEvent{Message: jsonStr}
 		}
+		status := strings.ToLower(strings.TrimSpace(event.Status))
+		if status == "" {
+			status = strings.ToLower(strings.TrimSpace(event.Stage))
+		}
+		if status == "error" || status == "failed" {
+			terminalFailure = true
+		}
 		handler(event)
 	}
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		// Preserve transport/scanner errors when both the stream and transport
+		// fail. The terminal event was still delivered to the handler above.
+		return err
+	}
+	if terminalFailure {
+		return ErrSSETerminalFailure
+	}
+	return nil
 }

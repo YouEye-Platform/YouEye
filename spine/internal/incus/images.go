@@ -160,14 +160,6 @@ func importVerifiedBaseImageFromMirrors(alias string) error {
 	return lastErr
 }
 
-func latestDebian12ImageSpec() (verifiedBaseImage, error) {
-	specs, err := debian12ImageSpecs()
-	if err != nil {
-		return verifiedBaseImage{}, err
-	}
-	return specs[0], nil
-}
-
 func debian12ImageSpecs() ([]verifiedBaseImage, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Get(officialSimpleStreamsIndex)

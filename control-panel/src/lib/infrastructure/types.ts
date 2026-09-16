@@ -7,7 +7,9 @@
 export interface OCIManifest {
   name: string;
   displayName: string;
-  image: string; // e.g. "docker.io/library/caddy" or "ghcr.io/goauthentik/server:2025.12"
+  image: string; // e.g. "docker.io/library/caddy" or "ghcr.io/example/app:1.0"
+  /** Exact locally imported recovery image; avoids any registry dependency. */
+  imageFingerprint?: string;
   containerName: string;
   command?: string; // OCI entrypoint override (e.g. "dumb-init -- ak server")
   ports: PortMapping[];
@@ -31,13 +33,19 @@ export interface PortMapping {
   protocol: 'tcp' | 'udp';
 }
 
-/** Volume mount between host filesystem and container */
-export interface VolumeMapping {
+/** Incus-managed custom volume or a platform-owned read-only bind mount. */
+export type VolumeMapping = {
+  kind: 'custom';
+  pool: string;
+  source: string;
+  container: string;
+  readOnly?: boolean;
+} | {
+  kind: 'bind';
   host: string;
   container: string;
-  /** Mount read-only (Incus disk `readonly`) — honoured even though the shared host dir is writable. */
   readOnly?: boolean;
-}
+};
 
 /** LXD container spec — full OS containers (Debian) with manual app setup */
 export interface LXDContainerSpec {
@@ -51,7 +59,9 @@ export interface LXDContainerSpec {
   appDir: string;
   port: number;
   entryFile?: string;
+  runtime?: 'node' | 'bun';
   postInstallCommands?: string[];
+  volumes?: VolumeMapping[];
 }
 
 /** Deployment progress event sent via SSE to caller */
@@ -61,4 +71,32 @@ export interface DeploymentEvent {
   status: 'running' | 'success' | 'error' | 'skipped';
   message: string;
   detail?: string;
+  deploymentId?: string;
+  sequence?: number;
+  terminal?: boolean;
+}
+
+export type DeploymentJobKind = 'deploy' | 'reconcile';
+
+export type DeploymentJobStatus =
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'indeterminate';
+
+export interface DeploymentJobState {
+  id: string;
+  kind: DeploymentJobKind;
+  hostIP: string;
+  status: DeploymentJobStatus;
+  ownerPID: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  events: DeploymentEvent[];
+  failure?: {
+    step: number;
+    message: string;
+    detail?: string;
+  };
 }

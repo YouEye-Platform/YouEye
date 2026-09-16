@@ -1,0 +1,198 @@
+#!/bin/sh
+set -eu
+
+profile=${YOUEYE_NETWORK_PROFILE:-/var/lib/youeye-state/bootstrap/network-profile.json}
+release_policy=${YOUEYE_RELEASE_POLICY:-/var/lib/youeye-state/bootstrap/release-policy.json}
+network_file=${YOUEYE_NETWORK_FILE:-/etc/systemd/network/20-youeye.network}
+status_file=${YOUEYE_NETWORK_STATUS:-/var/lib/youeye-state/bootstrap/network-status.json}
+last_good=${YOUEYE_NETWORK_LAST_GOOD:-/var/lib/youeye-state/bootstrap/network-last-good.network}
+last_good_profile=${YOUEYE_NETWORK_LAST_GOOD_PROFILE:-/var/lib/youeye-state/bootstrap/network-last-good-profile.json}
+ip_bin=${IP_BIN:-ip}
+networkctl_bin=${NETWORKCTL_BIN:-networkctl}
+getent_bin=${GETENT_BIN:-getent}
+curl_bin=${CURL_BIN:-curl}
+date_bin=${DATE_BIN:-date}
+max_attempts=${YOUEYE_NETWORK_MAX_ATTEMPTS:-6}
+base_delay=${YOUEYE_NETWORK_RETRY_SECONDS:-5}
+
+case "$max_attempts:$base_delay" in
+    *[!0-9:]*) exit 2 ;;
+esac
+[ "$max_attempts" -ge 1 ] && [ "$max_attempts" -le 20 ] || exit 2
+
+status_dir=$(dirname "$status_file")
+network_dir=$(dirname "$network_file")
+install -d -m 0700 "$status_dir"
+install -d -m 0755 "$network_dir"
+
+write_status() {
+    phase=$1
+    code=$2
+    detail=$3
+    attempt=$4
+    percent=$5
+    temp="${status_file}.tmp"
+    jq -n \
+        --arg phase "$phase" --arg code "$code" --arg detail "$detail" \
+        --arg interface "${interface:-}" --arg mode "${mode:-}" \
+        --arg updated_at "$($date_bin -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --argjson attempt "$attempt" --argjson percent "$percent" \
+        '{schema:"youeye.bootstrap-network.v1",phase:$phase,interface:$interface,kind:"ethernet",ipv4_mode:$mode,attempt:$attempt,percent:$percent,updated_at:$updated_at}
+         + if $code != "" then {error_code:$code,detail:$detail} else {} end' > "$temp"
+    chmod 0600 "$temp"
+    mv -f "$temp" "$status_file"
+    sync -f "$status_dir"
+}
+
+jq -e '
+  .schema == "youeye.network-profile.v1" and .id == "primary" and .kind == "ethernet" and
+  ((keys - ["schema","id","kind","adapter_mac","ipv4"]) | length == 0) and
+  ((.adapter_mac // "") | type == "string") and
+  ((.adapter_mac // "") == "" or ((.adapter_mac // "") | (. != "00:00:00:00:00:00" and test("^[0-9a-f][02468ace](:[0-9a-f]{2}){5}$")))) and
+  (.ipv4 | type == "object") and
+  if .ipv4.mode == "dhcp" then
+    ((.ipv4 | keys) == ["mode"])
+  elif .ipv4.mode == "static" then
+    ((.ipv4 | keys | sort) == ["address","dns","gateway","mode"]) and
+    (.ipv4.address | type == "string" and contains("/")) and
+    (.ipv4.gateway | type == "string") and
+    (.ipv4.dns | (type == "array" and length == 1 and (.[0] | type == "string")))
+  else false end
+' "$profile" >/dev/null || {
+    interface=
+    mode=
+    write_status needs_attention invalid_profile "The saved wired network profile is invalid" 1 0
+    exit 1
+}
+
+mode=$(jq -r '.ipv4.mode' "$profile")
+selector=$(jq -r '.adapter_mac // ""' "$profile")
+interface=$($ip_bin -j link show | jq -r --arg selector "$selector" '
+  [.[] |
+    select(.ifname != "lo") |
+    select((.ifname | test("^(incusbr|lxdbr|docker|virbr|veth|br-|fwbr|tap|tun)")) | not) |
+    select((.link_type // "ether") != "bridge") |
+    select($selector == "" or ((.address // "") | ascii_downcase) == $selector) |
+    .ifname] | sort | .[0] // empty
+')
+if [ -z "$interface" ]; then
+    write_status needs_attention no_adapter "No supported wired Ethernet adapter was found" 1 0
+    exit 1
+fi
+
+candidate="${network_file}.candidate"
+backup="${network_file}.previous"
+rm -f "$candidate" "$backup"
+if [ -e "$network_file" ]; then
+    cp -p "$network_file" "$backup"
+fi
+
+network_match="Name=$interface"
+if [ -n "$selector" ]; then
+    network_match="MACAddress=$selector"
+fi
+if [ "$mode" = static ]; then
+    address=$(jq -r '.ipv4.address' "$profile")
+    gateway=$(jq -r '.ipv4.gateway' "$profile")
+    dns=$(jq -r '.ipv4.dns[0]' "$profile")
+    cat > "$candidate" <<EOF
+[Match]
+$network_match
+
+[Network]
+Address=$address
+Gateway=$gateway
+DNS=$dns
+IPv6AcceptRA=no
+LinkLocalAddressing=no
+EOF
+else
+    cat > "$candidate" <<EOF
+[Match]
+$network_match
+
+[Network]
+DHCP=ipv4
+IPv6AcceptRA=no
+LinkLocalAddressing=ipv4
+EOF
+fi
+chmod 0644 "$candidate"
+mv -f "$candidate" "$network_file"
+$networkctl_bin reload
+$networkctl_bin reconfigure "$interface"
+
+source_api=$(jq -r '
+  if .provider == "github" and ((.releases_api // "") == "") then
+    "https://api.github.com/repos/YouEye-Platform/YouEye/releases"
+  else (.releases_api // "") end
+' "$release_policy")
+case "$source_api" in
+    https://*/*) ;;
+    *) write_status needs_attention invalid_source "The selected release source is not a safe HTTPS API" 1 0; exit 1 ;;
+esac
+source_host=$(printf '%s' "$source_api" | sed -E 's#^https://([^/:]+).*$#\1#')
+source_index="${status_dir}/release-index.json"
+
+last_code=unavailable
+last_detail="Wired connectivity is not ready"
+attempt=1
+while [ "$attempt" -le "$max_attempts" ]; do
+    write_status checking "" "" "$attempt" 10
+    carrier=${YOUEYE_NETWORK_CARRIER:-/sys/class/net/$interface/carrier}
+    if [ ! -r "$carrier" ] || [ "$(cat "$carrier" 2>/dev/null || true)" != 1 ]; then
+        last_code=link_down
+        last_detail="The wired adapter has no link"
+    elif ! $ip_bin -4 -j addr show dev "$interface" | jq -e 'any(.[].addr_info[]?; .scope == "global" and .local != "")' >/dev/null; then
+        last_code=address_unavailable
+        last_detail="The wired adapter has no usable IPv4 address"
+    elif ! $ip_bin -4 route show default dev "$interface" | grep -q '^default '; then
+        last_code=route_unavailable
+        last_detail="No IPv4 default route is available"
+    elif ! $getent_bin ahostsv4 "$source_host" >/dev/null 2>&1; then
+        last_code=dns_unavailable
+        last_detail="DNS cannot resolve the selected release source"
+    elif [ "$($date_bin +%s)" -lt 1704067200 ]; then
+        last_code=clock_unusable
+        last_detail="The system clock is too old for HTTPS verification"
+    elif ! $curl_bin --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+        --max-time 30 --output "${source_index}.tmp" "$source_api"; then
+        last_code=source_unavailable
+        last_detail="The selected HTTPS release source is unavailable"
+    elif ! jq -e 'type == "array"' "${source_index}.tmp" >/dev/null; then
+        last_code=source_invalid
+        last_detail="The selected release source returned an invalid index"
+    else
+        chmod 0600 "${source_index}.tmp"
+        mv -f "${source_index}.tmp" "$source_index"
+        cp -p "$network_file" "${last_good}.tmp"
+        chmod 0600 "${last_good}.tmp"
+        mv -f "${last_good}.tmp" "$last_good"
+        cp -p "$profile" "${last_good_profile}.tmp"
+        chmod 0600 "${last_good_profile}.tmp"
+        mv -f "${last_good_profile}.tmp" "$last_good_profile"
+        rm -f "$backup"
+        write_status ready "" "" "$attempt" 100
+        exit 0
+    fi
+    rm -f "${source_index}.tmp"
+    if [ "$attempt" -lt "$max_attempts" ]; then
+        delay=$((base_delay * attempt))
+        [ "$delay" -le 30 ] || delay=30
+        sleep "$delay"
+    fi
+    attempt=$((attempt + 1))
+done
+
+if [ -e "$backup" ]; then
+    mv -f "$backup" "$network_file"
+    $networkctl_bin reload || true
+    $networkctl_bin reconfigure "$interface" || true
+fi
+if [ -s "$last_good_profile" ]; then
+    cp -p "$last_good_profile" "${profile}.tmp"
+    chmod 0600 "${profile}.tmp"
+    mv -f "${profile}.tmp" "$profile"
+fi
+write_status needs_attention "$last_code" "$last_detail; the previous network configuration was restored where available" "$max_attempts" 10
+exit 1

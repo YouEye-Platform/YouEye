@@ -13,8 +13,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { uninstallApp } from '@/lib/market/uninstaller';
 import { emitEvent } from '@/lib/events/emitter';
+import { requireAdmin } from '@/lib/auth/rbac';
 
 export async function POST(request: NextRequest) {
+  const auth = await requireAdmin();
+  if (auth.error) return auth.error;
+
   let body: { appId?: string; keepData?: boolean };
   try {
     body = await request.json();
@@ -45,8 +49,10 @@ export async function POST(request: NextRequest) {
       dropSharedDatabase,
       keepData,
     });
-    emitEvent('app.uninstalled', { appId: body.appId, keepData });
-    return NextResponse.json(result);
+    if (result.success) {
+      emitEvent('app.uninstalled', { appId: body.appId, keepData });
+    }
+    return NextResponse.json(result, { status: result.success ? 200 : 409 });
   } catch (err) {
     return NextResponse.json(
       { success: false, errors: [String(err)] },

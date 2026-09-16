@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { setPassword } from '@/lib/identity/provider';
+import { validateIdentityPassword } from '@/lib/identity/password-policy';
 
 export async function POST(
   request: NextRequest,
@@ -25,11 +26,12 @@ export async function POST(
 
     const { id } = await params;
     const body = await request.json();
-    const { password } = body as { password: string };
+    const { password, repeatPassword } = body as { password: string; repeatPassword: string };
 
-    if (!password || password.length < 8) {
-      return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
-    }
+	if (password !== repeatPassword) return NextResponse.json({ error: 'Passwords do not match' }, { status: 400 });
+
+	const passwordError = validateIdentityPassword(password);
+	if (passwordError) return NextResponse.json({ error: passwordError }, { status: 400 });
 
     await setPassword(id, password);
     return NextResponse.json({ success: true });

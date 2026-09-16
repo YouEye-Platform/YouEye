@@ -19,11 +19,12 @@ var StorageDriver string = "dir"
 type InstallOptions struct {
 	DesiredZFSSize string
 	AutoGrowZFS    bool
-}
 
-// Install installs and initializes Incus with proper storage configuration.
-func Install() error {
-	return InstallWithOptions(InstallOptions{})
+	// Decision is the resolved deploy storage decision (adopt/create/loop/dir).
+	// When Kind is DecisionUnset, initialization falls back to the legacy
+	// behavior driven by DesiredZFSSize (used by `install incus` without a full
+	// deploy context and by older callers).
+	Decision storage.StorageDecision
 }
 
 // InstallWithOptions installs and initializes Incus with proper storage configuration.
@@ -142,9 +143,10 @@ func InstallWithOptions(opts InstallOptions) error {
 
 		// Reinitialize with preferred driver
 		fmt.Println("Reinitializing Incus storage...")
-		exec.Command("incus", "storage", "delete", "default", "--force").Run()
 		exec.Command("incus", "profile", "device", "remove", "default", "root").Run()
-		exec.Command("incus", "network", "delete", "incusbr0", "--force").Run()
+		exec.Command("incus", "storage", "delete", "default").Run()
+		exec.Command("incus", "profile", "device", "remove", "default", "eth0").Run()
+		exec.Command("incus", "network", "delete", "incusbr0").Run()
 	}
 
 	// Initialize Incus with best available storage
@@ -158,6 +160,14 @@ func InstallWithOptions(opts InstallOptions) error {
 	// - On LXC (where dir driver is used), we may need privileged fallback
 
 	fmt.Println("✓ Incus initialized")
+
+	// Post-init verification: assert reality matches the plan before we build
+	// any containers on top of a wrong (e.g. implicit 3 GiB) pool. Fail loudly.
+	if opts.Decision.Kind != storage.DecisionUnset {
+		if err := VerifyStorageMatchesDecision(opts.Decision); err != nil {
+			return err
+		}
+	}
 
 	if err := ensureIncusBridgeReady(); err != nil {
 		return err
@@ -208,6 +218,20 @@ func configureOCIRemote() {
 	}
 }
 
+// ZFSAvailable reports whether ZFS can work in this environment. Exported so
+// the deploy storage decision tree (cmd package) can probe availability
+// without re-implementing the check.
+func ZFSAvailable() bool {
+	return checkZFSAvailable()
+}
+
+// InstallZFS installs ZFS utilities and loads the kernel module. Exported so
+// the deploy decision tree can install ZFS on single-disk machines before
+// creating an explicitly-sized loop pool (replacing the old dir fallback).
+func InstallZFS() error {
+	return installZFS()
+}
+
 // checkZFSAvailable checks if ZFS can work in this environment.
 func checkZFSAvailable() bool {
 	// Check if /dev/zfs exists or can be created (not possible in LXC containers)
@@ -232,26 +256,151 @@ func zpoolExists(name string) bool {
 	return err == nil
 }
 
-// initializeWithPreseed initializes Incus using preseed configuration.
-func initializeWithPreseed(zfsAvailable bool, opts InstallOptions) error {
-	driver := "dir"
-	driverConfig := ""
+// planPreseedStorage returns the (driver, driverConfig-yaml-fragment) pair for
+// the preseed storage pool, driven by the resolved StorageDecision when one is
+// present. driverConfig is the YAML lines appended after `- config:` (or "").
+//
+// The decision cases map to Incus storage sources as:
+//   - AdoptMarkedPool / CreateOnDisk / AdoptAppliancePartition → source: default/incus (dataset within
+//     the YouEye pool; Incus creates default/incus with mountpoint=legacy).
+//   - ReuseLegacyPool               → source: default (whole legacy pool).
+//   - LoopPool                      → size: <explicit> (managed loop file).
+//   - Dir                           → dir driver, no config.
+//
+// When Decision is unset (older callers / `install incus`), fall back to the
+// legacy behavior: reuse an existing `default` pool as source=default, else use
+// DesiredZFSSize.
+func planPreseedStorage(zfsAvailable bool, opts InstallOptions) (driver, driverConfig string) {
+	switch opts.Decision.Kind {
+	case storage.DecisionAdoptMarkedPool, storage.DecisionCreateOnDisk, storage.DecisionAdoptAppliancePartition:
+		fmt.Printf("Initializing Incus with ZFS dataset source %s...\n", storage.IncusDataset)
+		return "zfs", "\n    source: " + storage.IncusDataset
+	case storage.DecisionReuseLegacyPool:
+		fmt.Println("Initializing Incus reusing legacy ZFS pool (source: default)...")
+		return "zfs", "\n    source: " + storage.PoolName
+	case storage.DecisionLoopPool:
+		size := opts.Decision.LoopSizeBytes
+		sizeStr := fmt.Sprintf("%dGiB", size/storage.GiB)
+		fmt.Printf("Initializing Incus with managed ZFS loop pool sized %s...\n", storage.FormatBytes(size))
+		return "zfs", "\n    size: " + sizeStr
+	case storage.DecisionDir:
+		fmt.Println("Initializing Incus with dir storage...")
+		return "dir", ""
+	}
+
+	// ── Legacy / decision-unset fallback ──
 	if zfsAvailable {
-		driver = "zfs"
-		// Check if a ZFS pool named "default" already exists (e.g. from a previous install)
-		// If so, tell Incus to reuse it via source: instead of creating a new loop-backed pool
 		if zpoolExists("default") {
 			fmt.Println("Found existing ZFS pool 'default', reusing it...")
-			driverConfig = "\n    source: default"
-		} else if strings.TrimSpace(opts.DesiredZFSSize) != "" {
-			driverConfig = "\n    size: " + strings.TrimSpace(opts.DesiredZFSSize)
-		} else {
-			driverConfig = ""
+			return "zfs", "\n    source: default"
+		}
+		if strings.TrimSpace(opts.DesiredZFSSize) != "" {
+			fmt.Println("Initializing Incus with ZFS storage...")
+			return "zfs", "\n    size: " + strings.TrimSpace(opts.DesiredZFSSize)
 		}
 		fmt.Println("Initializing Incus with ZFS storage...")
-	} else {
-		fmt.Println("Initializing Incus with dir storage...")
+		return "zfs", ""
 	}
+	fmt.Println("Initializing Incus with dir storage...")
+	return "dir", ""
+}
+
+// VerifyStorageMatchesDecision asserts, after Incus init, that the live pool
+// matches the plan. It fails loudly on any mismatch (plan step 2):
+//   - dedicated-disk expectation → source must be default/incus (or default for
+//     legacy reuse), NOT a /var/lib/incus/disks/*.img loop path.
+//   - loop expectation → the pool size must equal the planned explicit size.
+//   - any ZFS pool below MinPoolBytes is a hard failure regardless of kind.
+func VerifyStorageMatchesDecision(decision storage.StorageDecision) error {
+	// dir driver installs have no ZFS pool to verify.
+	if decision.Kind == storage.DecisionDir {
+		return nil
+	}
+
+	out, err := util.RunCmdCapture("incus", "storage", "show", "default")
+	if err != nil {
+		return fmt.Errorf("post-init verification: could not read storage pool: %w", err)
+	}
+	info := parseStorageShow(out)
+
+	switch decision.Kind {
+	case storage.DecisionAdoptMarkedPool, storage.DecisionCreateOnDisk, storage.DecisionAdoptAppliancePartition:
+		if strings.HasPrefix(info.source, "/var/lib/incus/disks/") {
+			return fmt.Errorf("post-init verification FAILED: expected a dedicated-disk pool (source %s) but Incus created a loop-backed pool (source %s). "+
+				"Aborting to avoid a tiny implicit pool", storage.IncusDataset, info.source)
+		}
+		if info.source != storage.IncusDataset {
+			return fmt.Errorf("post-init verification FAILED: expected storage source %q, got %q", storage.IncusDataset, info.source)
+		}
+		if !verifyPoolMinimumSize() {
+			return fmt.Errorf("post-init verification FAILED: pool %q is below the %s minimum", storage.PoolName, storage.FormatBytes(storage.MinPoolBytes))
+		}
+		if decision.Kind == storage.DecisionAdoptAppliancePartition {
+			if err := storage.ValidateAppliancePartitionPool(decision.Disk, decision.PartUUID, decision.LayoutVersion, decision.ZFSCompatibilityProfile); err != nil {
+				return fmt.Errorf("post-init verification FAILED: %w", err)
+			}
+		}
+		fmt.Printf("✓ Storage verified: dedicated-disk pool, source %s\n", info.source)
+	case storage.DecisionReuseLegacyPool:
+		if strings.HasPrefix(info.source, "/var/lib/incus/disks/") {
+			return fmt.Errorf("post-init verification FAILED: expected legacy pool reuse (source %s) but got loop-backed pool (source %s)", storage.PoolName, info.source)
+		}
+		fmt.Printf("✓ Storage verified: legacy pool reuse, source %s\n", info.source)
+	case storage.DecisionLoopPool:
+		wantBytes := decision.LoopSizeBytes
+		gotBytes := storage.ParseSizeBytes(info.size)
+		if gotBytes < storage.MinPoolBytes {
+			return fmt.Errorf("post-init verification FAILED: loop pool size %s is below the %s minimum (Incus may have created an implicit pool)",
+				storage.FormatBytes(gotBytes), storage.FormatBytes(storage.MinPoolBytes))
+		}
+		// Allow a small rounding tolerance between GiB/GB reporting.
+		if wantBytes > 0 && gotBytes+storage.GiB < wantBytes {
+			return fmt.Errorf("post-init verification FAILED: expected loop pool ~%s, got %s",
+				storage.FormatBytes(wantBytes), storage.FormatBytes(gotBytes))
+		}
+		fmt.Printf("✓ Storage verified: managed loop pool sized %s\n", storage.FormatBytes(gotBytes))
+	}
+	return nil
+}
+
+// verifyPoolMinimumSize reports whether the live zpool is at least MinPoolBytes.
+func verifyPoolMinimumSize() bool {
+	out, err := exec.Command("zpool", "list", "-Hp", "-o", "size", storage.PoolName).Output()
+	if err != nil {
+		// If we can't read it, don't hard-fail here — the caller already
+		// verified source. Missing zpool binary shouldn't block a valid pool.
+		return true
+	}
+	size := storage.ParseSizeBytes(strings.TrimSpace(string(out)))
+	return size == 0 || size >= storage.MinPoolBytes
+}
+
+// manualZFSCreateArgs builds the `incus storage create default zfs ...` args
+// for the manual (preseed-failed) fallback path, driven by the decision.
+func manualZFSCreateArgs(opts InstallOptions) []string {
+	base := []string{"storage", "create", "default", "zfs"}
+	switch opts.Decision.Kind {
+	case storage.DecisionAdoptMarkedPool, storage.DecisionCreateOnDisk, storage.DecisionAdoptAppliancePartition:
+		return append(base, "source="+storage.IncusDataset)
+	case storage.DecisionReuseLegacyPool:
+		return append(base, "source="+storage.PoolName)
+	case storage.DecisionLoopPool:
+		return append(base, fmt.Sprintf("size=%dGiB", opts.Decision.LoopSizeBytes/storage.GiB))
+	}
+	// Legacy fallback.
+	if zpoolExists("default") {
+		util.LogDebug("Found existing ZFS pool 'default', reusing via source=default")
+		return append(base, "source=default")
+	}
+	if strings.TrimSpace(opts.DesiredZFSSize) != "" {
+		return append(base, "size="+strings.TrimSpace(opts.DesiredZFSSize))
+	}
+	return base
+}
+
+// initializeWithPreseed initializes Incus using preseed configuration.
+func initializeWithPreseed(zfsAvailable bool, opts InstallOptions) error {
+	driver, driverConfig := planPreseedStorage(zfsAvailable, opts)
 
 	preseed := fmt.Sprintf(`config:
   core.https_address: '[::]:8443'
@@ -309,6 +458,11 @@ func initializeManually(preseedErr error, zfsAvailable bool, opts InstallOptions
 	if zfsAvailable {
 		driver = "zfs"
 	}
+	if opts.Decision.Kind == storage.DecisionDir {
+		driver = "dir"
+	} else if opts.Decision.Kind != storage.DecisionUnset {
+		driver = "zfs"
+	}
 
 	// Clean up any partial state from failed preseed
 	util.LogSubStep("Cleaning up partial initialization state...")
@@ -347,15 +501,7 @@ func initializeManually(preseedErr error, zfsAvailable bool, opts InstallOptions
 	if !storageExists {
 		var createArgs []string
 		if driver == "zfs" {
-			// Check if a ZFS pool named "default" already exists
-			if zpoolExists("default") {
-				util.LogDebug("Found existing ZFS pool 'default', reusing via source=default")
-				createArgs = []string{"storage", "create", "default", "zfs", "source=default"}
-			} else if strings.TrimSpace(opts.DesiredZFSSize) != "" {
-				createArgs = []string{"storage", "create", "default", "zfs", "size=" + strings.TrimSpace(opts.DesiredZFSSize)}
-			} else {
-				createArgs = []string{"storage", "create", "default", "zfs"}
-			}
+			createArgs = manualZFSCreateArgs(opts)
 		} else {
 			createArgs = []string{"storage", "create", "default", "dir"}
 		}
@@ -771,7 +917,7 @@ func ConfigureSubuidSubgid() {
 
 // capZFSARC bounds the ZFS ARC to 2 GiB, persistently (modprobe.d) and live.
 // Uncapped, the ARC grows toward all RAM and counts against MemAvailable,
-// starving containers (observed on bykapc). Safe to re-run.
+// which can starve containers. Safe to re-run.
 func capZFSARC() {
 	const max = "2147483648" // 2 GiB
 	util.RunCmdQuiet("bash", "-c", "printf 'options zfs zfs_arc_max="+max+"\\n' > /etc/modprobe.d/zfs.conf")
@@ -780,6 +926,14 @@ func capZFSARC() {
 }
 
 // installZFS installs ZFS utilities required for ZFS storage driver.
+//
+// Debian ships OpenZFS in `contrib` — genericcloud images start with
+// `main`-only sources, so `zfsutils-linux` has no installation candidate
+// until contrib is enabled (BUG-4, live-tested 2026-07-02). The DKMS build
+// also needs kernel headers matching the RUNNING kernel: the meta-package
+// (linux-headers-cloud-amd64) can resolve to a different version than
+// `uname -r`, producing a module the running kernel can't load, so the
+// exact package is tried first.
 func installZFS() error {
 	// Always (re)assert the ARC cap, even if ZFS is already installed.
 	capZFSARC()
@@ -787,22 +941,124 @@ func installZFS() error {
 	// Check if zfs command is already available
 	if _, err := exec.LookPath("zfs"); err == nil {
 		fmt.Println("✓ ZFS is already installed")
+		ensureKernelHeadersMeta()
+		if err := repairZFSModuleService(); err != nil {
+			return err
+		}
 		return nil
 	}
 
 	fmt.Println("Installing ZFS utilities...")
 
-	// Update package list if not recently updated
+	enableDebianContrib()
+
+	// Update package list so contrib packages (and exact header versions)
+	// are visible before resolution.
 	util.RunCmdQuiet("apt-get", "update")
 
-	// Install zfsutils-linux
+	// Kernel headers for the RUNNING kernel first — DKMS builds against
+	// these. Fall back to the meta-packages only if the exact version is
+	// unavailable; a meta resolving to a different kernel version means the
+	// built module cannot load, which the modprobe verification below
+	// catches loudly instead of silently shipping dir storage.
+	kernelOut, _ := util.RunCmdCapture("uname", "-r")
+	kernel := strings.TrimSpace(kernelOut)
+	if kernel != "" {
+		if err := util.RunCmd("apt-get", "install", "-y", "linux-headers-"+kernel); err != nil {
+			fmt.Printf("Warning: exact kernel headers linux-headers-%s unavailable, trying meta-package\n", kernel)
+			if err := util.RunCmd("apt-get", "install", "-y", "linux-headers-cloud-amd64"); err != nil {
+				util.RunCmd("apt-get", "install", "-y", "linux-headers-amd64")
+			}
+		}
+	}
+
+	// Install zfsutils-linux (pulls zfs-dkms; the DKMS build can take
+	// 5-15 minutes on small VMs — that is expected, not a hang).
+	fmt.Println("  Installing zfsutils-linux (DKMS build can take 5-15 minutes)...")
 	if err := util.RunCmd("apt-get", "install", "-y", "zfsutils-linux"); err != nil {
 		return fmt.Errorf("failed to install ZFS: %w", err)
 	}
 
-	// Load ZFS kernel module
+	// Load and VERIFY the ZFS kernel module. A DKMS build against the wrong
+	// headers installs fine but cannot load — that must fail here, loudly.
 	util.RunCmdQuiet("modprobe", "zfs")
+	if _, err := os.Stat("/dev/zfs"); err != nil {
+		return fmt.Errorf("ZFS installed but kernel module failed to load (kernel %s — headers/kernel mismatch? reboot into the updated kernel and re-run deploy)", kernel)
+	}
+	if err := repairZFSModuleService(); err != nil {
+		return err
+	}
+
+	ensureKernelHeadersMeta()
 
 	fmt.Println("✓ ZFS installed")
 	return nil
+}
+
+// repairZFSModuleService clears the failed state left when Debian's package
+// hooks try to start zfs-load-module.service before DKMS has finished building
+// the module. The explicit modprobe verification above proves the module is
+// now loadable; starting the oneshot again makes systemd state match reality
+// and prevents a clean install from completing with a failed unit.
+func repairZFSModuleService() error {
+	unitFiles, err := exec.Command("systemctl", "list-unit-files", "zfs-load-module.service", "--no-legend").CombinedOutput()
+	if err != nil || !strings.Contains(string(unitFiles), "zfs-load-module.service") {
+		return nil
+	}
+
+	util.RunCmdQuiet("systemctl", "reset-failed", "zfs-load-module.service")
+	if err := util.RunCmdQuiet("systemctl", "start", "zfs-load-module.service"); err != nil {
+		return fmt.Errorf("ZFS module loaded but zfs-load-module.service did not recover: %w", err)
+	}
+	return nil
+}
+
+// ensureKernelHeadersMeta installs the kernel-headers meta-package matching
+// the running kernel's flavor, IN ADDITION to the exact headers installed
+// above. The exact package covers the DKMS build for the kernel running
+// right now; the meta-package is what makes unattended kernel upgrades pull
+// matching headers in the same run, so the zfs-dkms kernel hook builds the
+// module for the NEW kernel before its first boot.
+//
+// Without it the box is a time bomb: unattended-upgrades installs a new
+// linux-image (via linux-image-cloud-amd64) with no headers, dkms builds
+// nothing, and the first reboot boots a kernel with no ZFS module — Incus
+// cannot start a single container and the whole platform is down (observed
+// live on clones .79/.80, 2026-07-03: template built on 6.12.90,
+// unattended-upgrades pulled 6.12.94, reboot → `modprobe zfs` FATAL).
+func ensureKernelHeadersMeta() {
+	kernelOut, _ := util.RunCmdCapture("uname", "-r")
+	kernel := strings.TrimSpace(kernelOut)
+	meta := "linux-headers-amd64"
+	if strings.Contains(kernel, "cloud") {
+		meta = "linux-headers-cloud-amd64"
+	}
+	if err := util.RunCmd("apt-get", "install", "-y", meta); err != nil {
+		fmt.Printf("Warning: could not install %s — future unattended kernel upgrades will lack a ZFS module until matching headers are installed\n", meta)
+	}
+}
+
+// enableDebianContrib makes sure the `contrib` component is enabled in APT
+// sources — OpenZFS lives there on Debian. Handles both the deb822 format
+// used by cloud images (/etc/apt/sources.list.d/debian.sources) and the
+// classic one-line format (/etc/apt/sources.list). No-op when contrib is
+// already present or the files don't exist (non-Debian hosts).
+func enableDebianContrib() {
+	deb822 := "/etc/apt/sources.list.d/debian.sources"
+	if data, err := os.ReadFile(deb822); err == nil {
+		if !strings.Contains(string(data), "contrib") {
+			fmt.Println("  Enabling Debian contrib component (OpenZFS lives there)...")
+			util.RunCmdQuiet("sed", "-i", "-E",
+				"s/^Components:.*/Components: main contrib non-free-firmware/", deb822)
+		}
+	}
+	classic := "/etc/apt/sources.list"
+	if data, err := os.ReadFile(classic); err == nil {
+		content := string(data)
+		if strings.Contains(content, "deb ") && !strings.Contains(content, "contrib") {
+			fmt.Println("  Enabling contrib in /etc/apt/sources.list...")
+			util.RunCmdQuiet("sed", "-i", "-E",
+				"/^deb(-src)? /s/ main( |$)/ main contrib\\1/", classic)
+		}
+	}
 }

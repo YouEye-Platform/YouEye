@@ -1,11 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Loader2, CheckCircle2, XCircle, FolderOpen, Lock, RotateCw } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, HardDrive, Lock, RotateCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { FUNNY_LOADING_MESSAGES } from '@/lib/wordart-presets';
 
 type StepStatus = 'pending' | 'running' | 'done' | 'error';
 
@@ -20,29 +19,38 @@ interface Props {
   onBack: () => void;
 }
 
+interface RecoveryPoint {
+  backupId: string;
+  createdAt: string;
+  apps: string[];
+  mediaId?: string;
+  driveName?: string;
+}
+
 export default function SetupRestore({ onComplete, onBack }: Props) {
-  const [backupPath, setBackupPath] = useState('/mnt/backup');
+  const [recoveryPoints, setRecoveryPoints] = useState<RecoveryPoint[]>([]);
+  const [selectedBackupId, setSelectedBackupId] = useState('');
+  const [selectedApps, setSelectedApps] = useState<string[]>([]);
   const [passphrase, setPassphrase] = useState('');
   const [restoring, setRestoring] = useState(false);
   const [steps, setSteps] = useState<RestoreStep[]>([]);
   const [isComplete, setIsComplete] = useState(false);
   const [error, setError] = useState('');
-  const [funnyMessage, setFunnyMessage] = useState(FUNNY_LOADING_MESSAGES[0]);
-  const [messageIndex, setMessageIndex] = useState(0);
   const hasCompleted = useRef(false);
 
-  // Cycle funny messages during restore
   useEffect(() => {
-    if (!restoring || isComplete || error) return;
-    const interval = setInterval(() => {
-      setMessageIndex(prev => {
-        const next = (prev + 1) % FUNNY_LOADING_MESSAGES.length;
-        setFunnyMessage(FUNNY_LOADING_MESSAGES[next]);
-        return next;
-      });
-    }, 2500);
-    return () => clearInterval(interval);
-  }, [restoring, isComplete, error]);
+    fetch('/api/setup/restore', { cache: 'no-store' })
+      .then(response => response.ok ? response.json() : { recoveryPoints: [] })
+      .then(body => {
+        const points = Array.isArray(body.recoveryPoints) ? body.recoveryPoints as RecoveryPoint[] : [];
+        setRecoveryPoints(points);
+        if (points[0]) {
+          setSelectedBackupId(points[0].backupId);
+          setSelectedApps(points[0].apps);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Auto-advance on completion
   useEffect(() => {
@@ -53,7 +61,8 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
     }
   }, [isComplete, onComplete]);
 
-  const canStart = backupPath.trim().length > 0 && passphrase.trim().length > 0;
+  const selectedPoint = recoveryPoints.find(point => point.backupId === selectedBackupId);
+  const canStart = Boolean(selectedPoint && passphrase.trim().length >= 12);
 
   const handleStartRestore = async () => {
     setRestoring(true);
@@ -62,11 +71,16 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
     setIsComplete(false);
 
     try {
+      const csrfResponse = await fetch('/api/auth/csrf', { cache: 'no-store' });
+      const csrfBody = await csrfResponse.json().catch(() => ({}));
+      if (!csrfResponse.ok || typeof csrfBody.csrfToken !== 'string') throw new Error('Could not start a protected restore action.');
       const res = await fetch('/api/setup/restore', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfBody.csrfToken },
         body: JSON.stringify({
-          backupPath: backupPath.trim(),
+          mediaId: selectedPoint?.mediaId,
+          backupId: selectedPoint?.backupId,
+          appIds: selectedApps,
           passphrase: passphrase.trim(),
         }),
       });
@@ -142,27 +156,40 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
       <div className="w-full max-w-md mx-auto space-y-8">
         <div className="text-center animate-in fade-in slide-in-from-bottom-4 duration-500">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-5">
-            <FolderOpen className="h-8 w-8 text-primary" />
+            <HardDrive className="h-8 w-8 text-primary" />
           </div>
           <h1 className="text-2xl font-bold mb-2">Restore from Backup</h1>
           <p className="text-muted-foreground text-sm">
-            Provide the path to your backup archive and the encryption passphrase used when the backup was created.
+            Restore the required YouEye configuration, then choose which applications to bring back.
           </p>
         </div>
 
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-6 duration-500 delay-100">
           <div className="space-y-2">
-            <Label htmlFor="backupPath">Backup path</Label>
-            <Input
-              id="backupPath"
-              value={backupPath}
-              onChange={(e) => setBackupPath(e.target.value)}
-              placeholder="/mnt/backup"
-            />
-            <p className="text-xs text-muted-foreground">
-              Full path to the backup directory or archive file on this server.
-            </p>
+            <Label htmlFor="recoveryPoint">Recovery point</Label>
+            <select
+              id="recoveryPoint"
+              value={selectedBackupId}
+              onChange={(event) => {
+                const point = recoveryPoints.find(item => item.backupId === event.target.value);
+                setSelectedBackupId(event.target.value);
+                setSelectedApps(point?.apps ?? []);
+              }}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              {recoveryPoints.length === 0 && <option value="">No backup drive found</option>}
+              {recoveryPoints.map(point => <option key={point.backupId} value={point.backupId}>{point.createdAt ? new Date(point.createdAt).toLocaleString() : point.backupId}{point.driveName ? ` — ${point.driveName}` : ''}</option>)}
+            </select>
+            <p className="text-xs text-muted-foreground">YouEye configuration, accounts, and server identity are always restored.</p>
           </div>
+
+          {selectedPoint && selectedPoint.apps.length > 0 && <fieldset className="space-y-2 rounded-lg border p-4">
+            <legend className="px-1 text-sm font-medium">Applications</legend>
+            {selectedPoint.apps.map(appId => <label key={appId} className="flex items-center gap-3 text-sm">
+              <input type="checkbox" checked={selectedApps.includes(appId)} onChange={event => setSelectedApps(current => event.target.checked ? [...current, appId] : current.filter(item => item !== appId))} className="size-4 rounded border-input accent-primary" />
+              <span>{appId}</span>
+            </label>)}
+          </fieldset>}
 
           <div className="space-y-2">
             <Label htmlFor="passphrase">Encryption passphrase</Label>
@@ -219,16 +246,11 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
 
         <div className="h-8 flex items-center justify-center">
           {isComplete ? (
-            <p className="text-green-600 font-medium animate-in fade-in duration-300">Restore complete! Redirecting...</p>
+			<p className="text-green-600 font-medium animate-in fade-in duration-300">Restore complete. Sign in with a restored account…</p>
           ) : error ? (
             <p className="text-red-600 text-sm">{error}</p>
           ) : (
-            <p
-              key={messageIndex}
-              className="text-muted-foreground text-sm animate-in fade-in slide-in-from-bottom-2 duration-300"
-            >
-              {funnyMessage}
-            </p>
+            <p className="text-muted-foreground text-sm">{steps.at(-1)?.message || 'Validating encrypted recovery point…'}</p>
           )}
         </div>
 

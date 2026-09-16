@@ -44,6 +44,13 @@ func init() {
 }
 
 func runUninstallSelf() error {
+	runtimeStatus, _, runtimeErr := applianceRuntime()
+	if runtimeErr != nil {
+		return runtimeErr
+	}
+	if runtimeStatus.Kind == "appliance-image" {
+		return fmt.Errorf("uninstall self is unavailable on a sealed appliance image; use appliance cleanup to remove platform resources, or boot recovery for a factory reset")
+	}
 	fmt.Println("=== YouEye Complete Uninstall ===")
 	fmt.Println()
 	fmt.Println("This will remove ALL YouEye components including Spine itself.")

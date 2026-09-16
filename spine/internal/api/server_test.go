@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -110,6 +111,26 @@ func TestHandleAuthVerify_EmptyCredentials(t *testing.T) {
 	}
 }
 
+func TestControlSSORestartRequested(t *testing.T) {
+	tests := []struct {
+		url  string
+		want bool
+	}{
+		{url: "/api/control/sso", want: true},
+		{url: "/api/control/sso?restart=true", want: true},
+		{url: "/api/control/sso?restart=false", want: false},
+		{url: "/api/control/sso?restart=FALSE", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tt.url, nil)
+			if got := controlSSORestartRequested(req); got != tt.want {
+				t.Fatalf("controlSSORestartRequested() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestJsonResponse(t *testing.T) {
 	w := httptest.NewRecorder()
 	data := map[string]string{"key": "value"}
@@ -157,6 +178,79 @@ func TestNewServer(t *testing.T) {
 	if s.authLimiter == nil {
 		t.Error("authLimiter should not be nil")
 	}
+}
+
+func TestPrepareSocketPathRefusesReachableListener(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "youeye.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	if err := prepareSocketPath(socketPath); err == nil || !strings.Contains(err.Error(), "already served") {
+		t.Fatalf("prepareSocketPath error = %v, want active-listener refusal", err)
+	}
+	if _, err := os.Stat(socketPath); err != nil {
+		t.Fatalf("active socket path was removed: %v", err)
+	}
+}
+
+func TestPrepareSocketPathRemovesStaleSocket(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "youeye.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unixListener, ok := listener.(*net.UnixListener)
+	if !ok {
+		t.Fatal("expected Unix listener")
+	}
+	unixListener.SetUnlinkOnClose(false)
+	listener.Close()
+
+	if err := prepareSocketPath(socketPath); err != nil {
+		t.Fatalf("prepareSocketPath rejected stale path: %v", err)
+	}
+	if _, err := os.Stat(socketPath); !os.IsNotExist(err) {
+		t.Fatalf("stale socket path remains: %v", err)
+	}
+}
+
+func TestPrepareSocketPathRefusesUnexpectedFile(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "youeye.sock")
+	if err := os.WriteFile(socketPath, []byte("do not remove"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareSocketPath(socketPath); err == nil || !strings.Contains(err.Error(), "non-socket") {
+		t.Fatalf("unexpected-file result = %v", err)
+	}
+	if raw, err := os.ReadFile(socketPath); err != nil || string(raw) != "do not remove" {
+		t.Fatalf("unexpected file was changed: %q %v", raw, err)
+	}
+}
+
+func TestSocketOwnershipPreventsConcurrentStaleProbe(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "youeye.sock")
+	owner, err := acquireSocketOwnership(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	if err := prepareSocketPath(socketPath); err == nil || !strings.Contains(err.Error(), "ownership") {
+		t.Fatalf("concurrent prepare result = %v", err)
+	}
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("owned listener became unreachable: %v", err)
+	}
+	conn.Close()
 }
 
 func TestRateLimiter_AllowsUnderLimit(t *testing.T) {
@@ -481,6 +575,35 @@ func TestHandleYouEyeConfig_GET_DefaultsWhenNoFile(t *testing.T) {
 	}
 	if subdomains["auth"] == "auth" {
 		t.Errorf("default auth subdomain should not be restored after Authentik removal")
+	}
+}
+
+func TestHandleYouEyeConfig_PATCHAtomicallyProtectsConfig(t *testing.T) {
+	cleanup := setupTestConfig(t, "site_name: Before\n")
+	defer cleanup()
+
+	s := testServer()
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(`{"site_name":"After"}`))
+	w := httptest.NewRecorder()
+	s.handleYouEyeConfig(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+	info, err := os.Stat(youeyeConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("config mode = %04o, want 0600", info.Mode().Perm())
+	}
+	entries, err := os.ReadDir(filepath.Dir(youeyeConfigPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".youeye.yaml.") {
+			t.Fatalf("temporary config remains: %s", entry.Name())
+		}
 	}
 }
 

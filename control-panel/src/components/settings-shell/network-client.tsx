@@ -34,6 +34,42 @@ interface DnsProviderState {
     nextCertRenewalDueAt: string | null;
   };
 }
+interface NamesStatus {
+  active: boolean;
+  certificateMatches: boolean;
+  serviceReachable: boolean;
+  readiness: null | {
+    installation: { canProceedNow: boolean; state: "ready" | "challenge" | "degraded" | "paused" | "blocked"; reasonCodes: string[] };
+    dns: { state: string };
+    initialCertificate: {
+      available: boolean;
+      primary: { provider: "google-public-ca" | "letsencrypt"; state: string };
+      fallback: { provider: "google-public-ca" | "letsencrypt"; state: string };
+    };
+  };
+  currentTerms: null | {
+    version: string;
+    summary: string;
+    certificateTransparencyRequired: true;
+  };
+  state: null | {
+    name: string;
+    fqdn: string;
+    status: "provisioning" | "healthy" | "renewing" | "attention" | "released";
+    termsVersion: string | null;
+    certificateTransparencyAcceptedAt: string | null;
+    certificate: null | {
+      fingerprint: string;
+      provider: "letsencrypt" | "google-public-ca" | null;
+      issuedAt: string;
+      expiresAt: string;
+    };
+    lastBrokerContactAt: string | null;
+    lastHeartbeatAt: string | null;
+    nextCheckAt: string | null;
+    lastError: null | { code: string; requestId: string | null; at: string };
+  };
+}
 
 // FTL puts its status string in `reply`; treat gravity/deny/black/regex/block as blocked.
 const isBlockedReply = (reply: string) => /gravity|deny|black|regex|block/i.test(reply || "");
@@ -67,12 +103,10 @@ function tabFromSearch(): NetworkTab {
   return "dns";
 }
 
-export function NetworkClient() {
-  const [active, setActive] = useState<NetworkTab>("dns");
-
-  useEffect(() => {
-    setActive(tabFromSearch());
-  }, []);
+export function NetworkClient({ initialTab }: { initialTab?: NetworkTab } = {}) {
+  // Initial tab derived synchronously (server passes it from searchParams) —
+  // no default-then-sync flash (pitfall #21).
+  const [active, setActive] = useState<NetworkTab>(() => initialTab ?? tabFromSearch());
 
   function selectTab(tab: NetworkTab) {
     setActive(tab);
@@ -427,16 +461,25 @@ function DomainPanel() {
   const [caddyRunning, setCaddyRunning] = useState(true);
   const [tls, setTls] = useState<TlsStatus | null>(null);
   const [provider, setProvider] = useState<DnsProviderState | null>(null);
+  const [names, setNames] = useState<NamesStatus | null>(null);
   const [edit, setEdit] = useState("");
   const [providerDomain, setProviderDomain] = useState("");
   const [providerToken, setProviderToken] = useState("");
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
   const [providerBusy, setProviderBusy] = useState<string | null>(null);
+  const [namesBusy, setNamesBusy] = useState<string | null>(null);
+  const [releaseConfirmation, setReleaseConfirmation] = useState("");
+  const [namesNoticeAccepted, setNamesNoticeAccepted] = useState(false);
   const [replacingToken, setReplacingToken] = useState(false);
   const [saved, setSaved] = useState("");
+  // Server URL change flow
+  const [tlsChoice, setTlsChoice] = useState<"selfsigned" | "provider">("selfsigned");
+  const [confirming, setConfirming] = useState(false);
+  const [progress, setProgress] = useState<Array<{ step: string; status: string; message?: string }>>([]);
+  const [changeRunning, setChangeRunning] = useState(false);
+  const [changeDone, setChangeDone] = useState<null | { newUrl: string }>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -452,19 +495,96 @@ function DomainPanel() {
     if (tRes.ok) setTls(await tRes.json());
     const pRes = await fetch("/api/dns-providers");
     if (pRes.ok) setProvider(await pRes.json());
+    const nRes = await fetch("/api/tls/youeye-names/status", { cache: "no-store" });
+    if (nRes.ok) setNames(await nRes.json());
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  async function saveDomain() {
-    if (!edit.trim()) return;
-    setSaving(true); setError(""); setSaved("");
+  /**
+   * Full server-URL change: streams the reconfigure engine's SSE progress.
+   * (The old shallow POST /api/domain path left apps, SSO and env files on the
+   * previous domain — every URL change now goes through /api/setup/reconfigure.)
+   */
+  async function runSse(url: string, body: unknown) {
+    setProgress([]); setChangeDone(null); setChangeRunning(true); setError(""); setSaved("");
     try {
-      const res = await fetch("/api/domain", { method: "POST", headers: await csrfHeaders(), body: JSON.stringify({ domain: edit.trim() }) });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to set domain");
-      setSaved("Domain updated"); setEditing(false); load();
-    } catch (e) { setError(e instanceof Error ? e.message : "Failed to set domain"); }
-    finally { setSaving(false); }
+      const res = await fetch(url, { method: "POST", headers: await csrfHeaders(), body: JSON.stringify(body) });
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error || "Request failed");
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let sawComplete: { newUrl: string } | null = null;
+      for (;;) {
+        // The Control Panel restarts itself ~2s after the final event; a dropped
+        // connection after `complete` is success, not an error.
+        let done = false; let value: Uint8Array | undefined;
+        try { ({ done, value } = await reader.read()); } catch { done = true; }
+        if (value) buf += decoder.decode(value, { stream: true });
+        const chunks = buf.split("\n\n");
+        buf = chunks.pop() || "";
+        for (const chunk of chunks) {
+          const line = chunk.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          const payload = line.slice(6);
+          if (payload === "[DONE]") continue;
+          let evt: { step?: string; status?: string; message?: string; complete?: boolean; newUrl?: string; error?: string };
+          try { evt = JSON.parse(payload); } catch { continue; }
+          if (evt.error) throw new Error(evt.error);
+          if (evt.complete && evt.newUrl) { sawComplete = { newUrl: evt.newUrl }; continue; }
+          if (evt.step && evt.step !== "complete") {
+            setProgress((prev) => {
+              const next = [...prev];
+              const idx = next.findIndex((p) => p.step === evt.step);
+              const entry = { step: evt.step!, status: evt.status || "running", message: evt.message };
+              if (idx >= 0) next[idx] = entry; else next.push(entry);
+              return next;
+            });
+          }
+        }
+        if (done) break;
+      }
+      if (!sawComplete) throw new Error("The change did not complete — check the server and try again.");
+      setChangeDone(sawComplete);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Server URL change failed");
+    } finally {
+      setChangeRunning(false);
+    }
+  }
+
+  async function startUrlChange() {
+    setConfirming(false); setEditing(false);
+    await runSse("/api/setup/reconfigure", { domain: hostOnly(edit), tls: tlsChoice });
+  }
+
+  /** Import a saved YouEye Names / BYO domain bundle and switch to it live. */
+  async function importBundleFile(file: File) {
+    setError(""); setSaved("");
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch {
+      setError("That file is not a valid bundle (expected JSON).");
+      return;
+    }
+    let url: string;
+    if (parsed?.type === "youeye-byo-domain") {
+      url = "/api/tls/domain/apply";
+    } else if (parsed?.name && parsed?.identity && parsed?.tls) {
+      url = "/api/tls/youeye-names/apply";
+    } else {
+      setError("Unrecognized bundle — expected a YouEye Names bundle or a youeye-byo-domain export.");
+      return;
+    }
+    await runSse(url, parsed);
+  }
+
+  function resetChangeFlow() {
+    setProgress([]); setChangeDone(null); setEdit(domain ?? ""); load();
   }
 
   async function connectProvider() {
@@ -562,6 +682,60 @@ function DomainPanel() {
     finally { setProviderBusy(null); }
   }
 
+  async function namesAction(action: "check-now" | "accept-current-terms") {
+    setNamesBusy(action); setError(""); setSaved("");
+    try {
+      const response = await fetch("/api/tls/youeye-names/status", {
+        method: "POST",
+        headers: await csrfHeaders(),
+        body: JSON.stringify({ action }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "YouEye Names check failed");
+      setSaved(action === "accept-current-terms" ? "Current certificate notice accepted" : "YouEye Names checked");
+      if (action === "accept-current-terms") setNamesNoticeAccepted(false);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "YouEye Names check failed"); }
+    finally { setNamesBusy(null); }
+  }
+
+  async function downloadNamesFile(path: "export" | "service-data") {
+    setNamesBusy(path); setError(""); setSaved("");
+    try {
+      const response = await fetch(`/api/tls/youeye-names/${path}`, { cache: "no-store" });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "YouEye Names export failed");
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get("content-disposition") || "";
+      const filename = /filename="([^"]+)"/.exec(disposition)?.[1] || `youeye-names-${path}.json`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url; link.download = filename;
+      document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+      setSaved(path === "export" ? "Recovery bundle exported" : "Service data exported");
+    } catch (e) { setError(e instanceof Error ? e.message : "YouEye Names export failed"); }
+    finally { setNamesBusy(null); }
+  }
+
+  async function releaseNamesAddress() {
+    setNamesBusy("release"); setError(""); setSaved("");
+    try {
+      const response = await fetch("/api/tls/youeye-names/release", {
+        method: "POST",
+        headers: await csrfHeaders(),
+        body: JSON.stringify({ confirmation: releaseConfirmation }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Could not release the name");
+      setReleaseConfirmation("");
+      setSaved("YouEye Name released and certificate revocation queued");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not release the name"); }
+    finally { setNamesBusy(null); }
+  }
+
   if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
 
   const internalCert = tls?.mode === "internal" || !tls?.hasExternalCert;
@@ -571,27 +745,205 @@ function DomainPanel() {
     <div className="space-y-6">
       {error && <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2 text-sm text-destructive">{error}</div>}
 
-      {/* Domain */}
+      {/* Server URL */}
       <div className="rounded-xl border bg-card p-[22px]">
-        <h2 className="text-[15px] font-semibold">Domain</h2>
-        <p className="mt-1 text-sm text-muted-foreground">The address people use to reach this server.</p>
-        {!caddyRunning && <p className="mt-3 text-sm text-destructive">The web gateway is not running, so the domain cannot be changed right now.</p>}
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          {editing ? (
-            <>
-              <Input value={edit} onChange={(e) => setEdit(e.target.value)} placeholder="example.com" className="h-9 w-72" />
-              <Button size="sm" className="h-9" disabled={saving || !edit.trim()} onClick={saveDomain}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}Save</Button>
-              <Button size="sm" variant="ghost" className="h-9" onClick={() => { setEditing(false); setEdit(domain ?? ""); }}>Cancel</Button>
-            </>
-          ) : (
-            <>
-              <span className="font-mono text-sm">{domain || <span className="text-muted-foreground">Not set</span>}</span>
-              {caddyRunning && <Button size="sm" variant="outline" className="h-8" onClick={() => setEditing(true)}>Change</Button>}
-            </>
-          )}
-        </div>
+        <h2 className="text-[15px] font-semibold">Server URL</h2>
+        <p className="mt-1 text-sm text-muted-foreground">The address people use to reach this server. Changing it moves YouEye ID, the dashboard, and every installed app to the new name.</p>
+        {!caddyRunning && <p className="mt-3 text-sm text-destructive">The web gateway is not running, so the server URL cannot be changed right now.</p>}
+
+        {(changeRunning || changeDone || progress.length > 0) ? (
+          <div className="mt-4 space-y-3">
+            <div className="rounded-lg border bg-muted/30 p-3">
+              <ul className="space-y-1.5">
+                {progress.map((p) => (
+                  <li key={p.step} className="flex items-start gap-2 text-sm">
+                    {p.status === "running" ? <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+                      : p.status === "error" ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
+                      : <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-600 dark:text-green-500" />}
+                    <span className={cn(p.status === "error" && "text-destructive")}>
+                      <span className="font-medium">{stepLabel(p.step)}</span>
+                      {p.message ? <span className="text-muted-foreground"> — {p.message}</span> : null}
+                    </span>
+                  </li>
+                ))}
+                {progress.length === 0 && changeRunning && (
+                  <li className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />Starting…</li>
+                )}
+              </ul>
+            </div>
+            {changeDone && (
+              <div className="rounded-lg border border-green-600/30 bg-green-500/5 p-3 text-sm">
+                <p className="font-medium text-green-700 dark:text-green-500">Server URL changed.</p>
+                <p className="mt-1 text-muted-foreground">The server is restarting on its new address. Everyone must sign in again{tlsChoice === "selfsigned" ? ", and browsers must trust the new certificate" : ""}.</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Button size="sm" className="h-8" onClick={() => { window.location.href = changeDone.newUrl; }}>Continue to {changeDone.newUrl.replace(/^https:\/\//, "")}</Button>
+                  <Button size="sm" variant="ghost" className="h-8" onClick={resetChangeFlow}>Stay here</Button>
+                </div>
+              </div>
+            )}
+            {!changeRunning && !changeDone && (
+              <Button size="sm" variant="outline" className="h-8" onClick={resetChangeFlow}>Back</Button>
+            )}
+          </div>
+        ) : editing ? (
+          <div className="mt-4 space-y-4">
+            <div className="space-y-1.5">
+              <LabelText>New server URL</LabelText>
+              <Input value={edit} onChange={(e) => setEdit(e.target.value)} placeholder="my-server.example.com" className="h-9 w-72 font-mono" />
+            </div>
+            <div className="space-y-2">
+              <LabelText>Certificate for the new name</LabelText>
+              <label className="flex cursor-pointer items-start gap-2 text-sm">
+                <input type="radio" className="mt-1" checked={tlsChoice === "selfsigned"} onChange={() => setTlsChoice("selfsigned")} />
+                <span><span className="font-medium">Self-signed</span> <span className="text-muted-foreground">— works for any name; browsers warn until the new certificate is trusted.</span></span>
+              </label>
+              <label className={cn("flex items-start gap-2 text-sm", connection ? "cursor-pointer" : "cursor-not-allowed opacity-50")}>
+                <input type="radio" className="mt-1" disabled={!connection} checked={tlsChoice === "provider"} onChange={() => setTlsChoice("provider")} />
+                <span><span className="font-medium">Let&apos;s Encrypt via {connection ? `Cloudflare (${connection.zoneName})` : "a DNS provider"}</span> <span className="text-muted-foreground">— trusted certificate; the new name must live in the connected zone.</span></span>
+              </label>
+              <p className="text-xs text-muted-foreground">For a saved YouEye Name or exported domain, use “Import saved name” instead. Let&apos;s Encrypt for a new public domain: connect its DNS provider below after (or before) the change.</p>
+            </div>
+            {confirming ? (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
+                <p className="font-medium">Change the server URL to <span className="font-mono">{hostOnly(edit)}</span>?</p>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
+                  <li>Everyone is signed out and must sign in again at the new address.</li>
+                  <li>Installed apps restart briefly while they move to the new name.</li>
+                  <li>Other devices need your DNS to point <span className="font-mono">{hostOnly(edit)}</span> and <span className="font-mono">*.{hostOnly(edit)}</span> at this server.</li>
+                  {tlsChoice === "selfsigned" && <li>Browsers will warn until the new self-signed certificate is trusted.</li>}
+                </ul>
+                <div className="mt-3 flex gap-2">
+                  <Button size="sm" className="h-8" onClick={startUrlChange}>Yes, change the server URL</Button>
+                  <Button size="sm" variant="ghost" className="h-8" onClick={() => setConfirming(false)}>Back</Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <Button size="sm" className="h-9" disabled={!edit.trim() || hostOnly(edit) === (domain || "")} onClick={() => setConfirming(true)}>Continue</Button>
+                <Button size="sm" variant="ghost" className="h-9" onClick={() => { setEditing(false); setConfirming(false); setEdit(domain ?? ""); }}>Cancel</Button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <span className="font-mono text-sm">{domain || <span className="text-muted-foreground">Not set</span>}</span>
+            {caddyRunning && <Button size="sm" variant="outline" className="h-8" onClick={() => { setEditing(true); setConfirming(false); }}>Change</Button>}
+            {caddyRunning && (
+              <label className="inline-flex">
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (f) importBundleFile(f);
+                  }}
+                />
+                <span className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground">
+                  <Download className="h-3.5 w-3.5" />Import saved name
+                </span>
+              </label>
+            )}
+          </div>
+        )}
         {saved && <p className="mt-2 text-sm text-green-600 dark:text-green-500">{saved}</p>}
       </div>
+
+      {/* YouEye Names lifecycle */}
+      {names?.state && (
+        <div className="rounded-xl border bg-card p-[22px]">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-[15px] font-semibold">YouEye Names</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Lease, DNS and certificate lifecycle for your managed address.</p>
+            </div>
+            <span className="inline-flex items-center gap-1.5 text-sm font-medium capitalize">
+              <span className={cn("h-2 w-2 rounded-full", names.state.status === "healthy" ? "bg-green-500" : names.state.status === "renewing" ? "bg-blue-500" : names.state.status === "released" ? "bg-muted-foreground" : "bg-amber-500")} />
+              {names.state.status}
+            </span>
+          </div>
+          <div className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
+            <Field label="Managed address" value={names.state.fqdn} />
+            <Field label="Certificate expires" value={names.state.certificate ? fmtDate(names.state.certificate.expiresAt) : "Provisioning"} />
+            <Field label="Last service contact" value={fmtDateTime(names.state.lastBrokerContactAt)} />
+            <Field label="Next automatic check" value={fmtDateTime(names.state.nextCheckAt)} />
+          </div>
+          <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm">
+            <div className="flex items-center gap-2">
+              <span className={cn("h-2 w-2 rounded-full", !names.serviceReachable || !names.readiness?.installation.canProceedNow ? "bg-red-500" : names.readiness.installation.state === "degraded" ? "bg-amber-500" : "bg-green-500")} />
+              <span className="font-medium">
+                {!names.serviceReachable ? "Service offline" : names.readiness?.installation.state === "degraded" ? "Service available with reduced redundancy" : names.readiness?.installation.canProceedNow ? "Service available" : "New addresses paused"}
+              </span>
+            </div>
+            {names.readiness && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                DNS {names.readiness.dns.state}; {names.readiness.initialCertificate.primary.provider === "google-public-ca" ? "Google Public CA" : "Let's Encrypt"} {names.readiness.initialCertificate.primary.state}; fallback {names.readiness.initialCertificate.fallback.state}. Availability is not an issuance promise.
+              </p>
+            )}
+            {names.readiness?.installation.reasonCodes?.length ? (
+              <details className="mt-2 text-xs text-muted-foreground">
+                <summary className="cursor-pointer">Technical details</summary>
+                <p className="mt-1 font-mono">{names.readiness.installation.reasonCodes.join(", ")}</p>
+              </details>
+            ) : null}
+          </div>
+          {!names.certificateMatches && names.state.status !== "released" && (
+            <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+              The active certificate does not match this managed address. Your existing certificate was left unchanged.
+            </div>
+          )}
+          {names.state.lastError && (
+            <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+              {names.state.lastError.code === "certificate_terms_version_required"
+                ? "The certificate notice changed and needs your review before renewal."
+                : "The latest lifecycle check needs attention."}
+              {names.state.lastError.requestId ? ` Reference: ${names.state.lastError.requestId}` : ""}
+            </div>
+          )}
+          {names.currentTerms && (
+            <div className="mt-3 rounded-lg border bg-muted/30 p-3">
+              <p className="text-sm font-medium">Certificate and privacy notice</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{names.currentTerms.summary}</p>
+              <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm">
+                <input type="checkbox" checked={namesNoticeAccepted} onChange={(event) => setNamesNoticeAccepted(event.target.checked)} className="mt-0.5 h-4 w-4 rounded border-input accent-primary" />
+                <span>I understand that this address and its certificates appear in public Certificate Transparency logs.</span>
+              </label>
+              <p className="mt-2 text-xs text-muted-foreground">Certificate terms {names.currentTerms.version}</p>
+            </div>
+          )}
+          {names.state.status !== "released" && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" className="h-8" disabled={!!namesBusy} onClick={() => namesAction("check-now")}>
+                {namesBusy === "check-now" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}Check now
+              </Button>
+              {(!names.state.termsVersion || names.state.lastError?.code === "certificate_terms_version_required") && (
+                <Button size="sm" variant="outline" className="h-8" disabled={!!namesBusy || !namesNoticeAccepted || !names.currentTerms} onClick={() => namesAction("accept-current-terms")}>
+                  <Shield className="h-3.5 w-3.5" />Review and accept current notice
+                </Button>
+              )}
+              <Button size="sm" variant="outline" className="h-8" disabled={!!namesBusy} onClick={() => downloadNamesFile("export")}>
+                <Download className="h-3.5 w-3.5" />Recovery bundle
+              </Button>
+              <Button size="sm" variant="ghost" className="h-8" disabled={!!namesBusy} onClick={() => downloadNamesFile("service-data")}>
+                <Download className="h-3.5 w-3.5" />Service data
+              </Button>
+            </div>
+          )}
+          {names.state.status !== "released" && (
+            <details className="mt-4 border-t pt-3">
+              <summary className="cursor-pointer text-sm font-medium text-destructive">Release this name</summary>
+              <p className="mt-2 text-xs text-muted-foreground">First change the server URL above. Releasing removes DNS and queues certificate revocation; it does not change this server’s URL for you.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Input value={releaseConfirmation} onChange={(event) => setReleaseConfirmation(event.target.value)} placeholder={`Type ${names.state.fqdn}`} className="h-8 max-w-xs font-mono text-xs" />
+                <Button size="sm" variant="destructive" className="h-8" disabled={!!namesBusy || releaseConfirmation !== names.state.fqdn} onClick={releaseNamesAddress}>
+                  {namesBusy === "release" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}Release name
+                </Button>
+              </div>
+            </details>
+          )}
+        </div>
+      )}
 
       {/* DNS provider */}
       <div className="rounded-xl border bg-card p-[22px]">
@@ -672,7 +1024,7 @@ function DomainPanel() {
                   <span className="group relative inline-flex">
                     <Info className="h-3.5 w-3.5 text-muted-foreground" />
                     <span className="pointer-events-none absolute right-0 z-10 mt-5 hidden w-72 rounded-xl border bg-popover p-3 text-xs text-popover-foreground shadow-lg group-hover:block">
-                      Create a Cloudflare API token from the Edit zone DNS template. Scope it to this domain's zone and grant Zone - Zone - Read plus Zone - DNS - Edit.
+                      Create a Cloudflare API token from the Edit zone DNS template. Scope it to this domain&apos;s zone and grant Zone - Zone - Read plus Zone - DNS - Edit.
                     </span>
                   </span>
                 </div>
@@ -731,6 +1083,30 @@ function DomainPanel() {
 }
 
 /* ─────────────────────────── shared bits ─────────────────────────── */
+
+/** Friendly labels for reconfigure SSE step keys (app_* → "App: <id>"). */
+function stepLabel(step: string): string {
+  const labels: Record<string, string> = {
+    config: "Reading configuration",
+    preflight: "DNS preflight",
+    apps: "Finding installed apps",
+    yaml: "Site configuration",
+    caddy: "Web gateway routes",
+    ai: "YouEye AI identity",
+    dns: "Local DNS",
+    dns_provider: "DNS provider",
+    tls: "HTTPS certificate",
+    sso_cp: "Control Panel sign-in",
+    sso_ui: "Dashboard sign-in",
+    ui_db: "Dashboard branding",
+    identity: "YouEye ID",
+    identity_import: "Name identity",
+    cp_env: "Control Panel restart",
+  };
+  if (labels[step]) return labels[step];
+  if (step.startsWith("app_")) return `App: ${step.slice(4)}`;
+  return step;
+}
 
 function StatCard({ k, v, d }: { k: string; v: string; d: string }) {
   return (

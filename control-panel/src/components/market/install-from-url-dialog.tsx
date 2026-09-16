@@ -10,13 +10,14 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Loader2, ExternalLink, AlertCircle, Shield, Globe, HardDrive,
-  CheckCircle2, X, Lock, Tag, ChevronLeft, ChevronRight,
+  CheckCircle2, X, Tag, ChevronLeft, ChevronRight,
   Package,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -45,6 +46,7 @@ export function InstallFromUrlDialog({
   onClose,
   onInstallComplete,
 }: InstallFromUrlDialogProps) {
+  const router = useRouter();
   const [phase, setPhase] = useState<Phase>('input');
   const [url, setUrl] = useState('');
   const [fetching, setFetching] = useState(false);
@@ -78,13 +80,19 @@ export function InstallFromUrlDialog({
       const res = await authenticatedFetch('/api/market/validate-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ manifestUrl: url.trim() }),
+        body: JSON.stringify({ manifestUrl: url.trim(), addToMarket: true }),
       });
 
       const data = await res.json();
 
       if (!data.valid) {
         setValidationErrors(data.errors || ['Unknown validation error']);
+        return;
+      }
+
+      if (typeof data.href === 'string' && data.href.startsWith('/market/')) {
+        onClose();
+        router.push(data.href);
         return;
       }
 
@@ -97,7 +105,7 @@ export function InstallFromUrlDialog({
     } finally {
       setFetching(false);
     }
-  }, [url]);
+  }, [url, onClose, router]);
 
   // Install from URL
   const handleInstall = useCallback(async () => {

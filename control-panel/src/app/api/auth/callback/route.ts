@@ -14,7 +14,7 @@ import {
   exchangeCodeForToken,
   fetchUserInfo,
   isSSOConfigured,
-} from '@/lib/auth/authentik';
+} from '@/lib/auth/oauth';
 import {
   createSession,
   setSessionCookies,
@@ -23,7 +23,7 @@ import {
 import { isSettingsPath, getSettingsPublicUrl } from '@/lib/settings-public-path';
 
 function hasAdminClaim(groups: string[], isAdminClaim?: boolean): boolean {
-  return isAdminClaim === true || groups.includes('admin') || groups.includes('authentik Admins');
+  return isAdminClaim === true || groups.includes('admin');
 }
 
 export async function GET(request: NextRequest) {

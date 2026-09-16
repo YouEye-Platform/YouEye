@@ -17,7 +17,7 @@ test('app network creation requires Pi-Hole DNS forwarding', () => {
   assert.match(appNetwork, /config\['raw\.dnsmasq'\] = `server=\$\{piholeIP\}`/);
   assert.doesNotMatch(appNetwork, /DNS forwarding will not work/);
 
-  assert.match(engine, /Failed to create Pi-Hole-backed app network/);
+  assert.match(engine, /await createAppNetwork\(appId/);
   assert.match(engine, /await rollbackInstall\(rollbackCtx, onEvent, totalSteps\)/);
   assert.doesNotMatch(engine, /falling back to incusbr0/);
 });

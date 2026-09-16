@@ -13,8 +13,12 @@ import { NextResponse } from 'next/server';
 import { getAllInstalledApps } from '@/lib/market/installed-apps';
 import { fetchManifest } from '@/lib/market/catalog';
 import { generateSuggestionsForApp } from '@/lib/bridges/suggestions';
+import { requireAdmin } from '@/lib/auth/rbac';
 
 export async function POST() {
+  const auth = await requireAdmin();
+  if (auth.error) return auth.error;
+
   const installed = await getAllInstalledApps();
   let totalGenerated = 0;
   const results: { appId: string; generated: number; error?: string }[] = [];

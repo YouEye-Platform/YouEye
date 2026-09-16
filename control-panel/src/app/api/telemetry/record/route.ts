@@ -7,9 +7,12 @@
  */
 
 import { NextResponse } from "next/server";
-import { trackRoute } from "@/lib/telemetry/tracker";
+import { isTelemetryEnabled, trackRoute } from "@/lib/telemetry/tracker";
 
 export async function POST(request: Request) {
+  if (!isTelemetryEnabled()) {
+    return NextResponse.json({ ok: true, recorded: false });
+  }
   try {
     const body = await request.json();
     if (body.route && typeof body.route === "string") {

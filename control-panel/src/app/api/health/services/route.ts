@@ -8,8 +8,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { getAllServicesHealth } from '@/lib/health';
-// Side-effect import: starts health monitor background job
-import '@/lib/health/monitor';
 // Side-effect import: starts version checker background job
 import '@/lib/market/version-checker';
 

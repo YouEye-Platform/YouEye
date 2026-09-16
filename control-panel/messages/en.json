@@ -95,21 +95,6 @@
       "saved": "Language updated successfully",
       "error": "Failed to update language"
     },
-    "sso": {
-      "title": "Authentication",
-      "description": "Configure Single Sign-On (SSO) via the identity provider for subdomain access",
-      "status": "SSO Status",
-      "configured": "Enabled",
-      "notConfigured": "Not Configured",
-      "domain": "Domain",
-      "authentikUrl": "Identity Provider URL",
-      "controlUrl": "Control Panel URL",
-      "prerequisitesMet": "Prerequisites met",
-      "configure": "Configure SSO",
-      "remove": "Remove SSO",
-      "prerequisites": "Prerequisites",
-      "howItWorks": "How SSO works"
-    },
     "ui": {
       "title": "YouEye UI",
       "status": "UI Status",
@@ -244,6 +229,7 @@
     "savingConfig": "Saving configuration",
     "settingUpProxy": "Setting up reverse proxy routes",
     "configuringDns": "Configuring DNS",
+    "configuringAi": "Connecting YouEye AI",
     "creatingAdmin": "Creating admin account",
     "configuringSsoControl": "Configuring SSO for Control Panel",
     "enablingSsoUi": "Enabling YouEye UI",
@@ -375,7 +361,7 @@
     "certHint": "Your server uses a self-signed certificate. Install the root CA to avoid browser warnings:",
     "downloadCert": "Download Certificate",
     "goTo": "Go to {name}",
-    "noDomain": "No domain configured. Access the Control Panel on port 3000 to reconfigure.",
+    "noDomain": "No domain configured. Use the server IP through Caddy to reconfigure; localhost:3000 is reserved for host-local recovery.",
     "welcomeUser": "Welcome to YouEye, {name}!",
     "quickStart": "Quick Start",
     "visitDashboard": "Visit your dashboard",
@@ -435,7 +421,16 @@
     "resources": "Resources",
     "nativeApps": "Native Apps",
     "builtForYouEye": "Built for YouEye",
-    "orphanScanPrompt": "Scan for orphaned resources from previous installs"
+    "orphanScanPrompt": "Scan for orphaned resources from previous installs",
+    "uninstallTitle": "Uninstall",
+    "uninstallDescription": "Choose what to remove",
+    "uninstallKeepData": "Uninstall (keep data)",
+    "uninstallKeepDataDescription": "Remove the app but keep its data for a future reinstall",
+    "uninstallDeleteData": "Uninstall and delete all data",
+    "uninstallDeleteDataDescription": "Remove the app and all of its data. This cannot be undone.",
+    "willBeRemoved": "Will be removed",
+    "uninstallDeleteButton": "Delete everything",
+    "uninstallKeepButton": "Uninstall"
   },
   "proxy": {
     "title": "Reverse Proxy",

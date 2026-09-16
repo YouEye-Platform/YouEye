@@ -28,11 +28,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { validateBridgeToken } from '@/lib/ui-bridge/auth';
 import { getRoutes, removeRoute, addRoute } from '@/lib/caddy/client';
 import { readInstallMetadata, saveInstallMetadata } from '@/lib/market/metadata';
-import {
-  authentikAPI,
-  getAuthentikConfig,
-  isAuthentikAvailable,
-} from '@/lib/market/authentik';
+import { createOAuthClient } from '@/lib/identity/provider';
+import { getClient } from '@/lib/identity/store';
 
 interface SubdomainChangeRequest {
   appId: string;
@@ -111,60 +108,32 @@ export async function PUT(request: NextRequest) {
     results.caddy = { success: false, error: String(err) };
   }
 
-  // ── Step 2: Update identity provider OAuth2 redirect URIs ───────
+  // ── Step 2: Update YouEye ID OAuth2 redirect URIs ─────────
 
-  if (meta.enableSSO && meta.ssoSlug) {
+  const ssoClientId = meta.ssoClientId || meta.ssoSlug;
+  if (meta.enableSSO && ssoClientId) {
     try {
-      const authentikAvailable = await isAuthentikAvailable();
-      if (authentikAvailable) {
-        const config = await getAuthentikConfig();
-
-        // Find the OAuth2 provider for this app
-        const providers = await authentikAPI<{
-          results: Array<{ pk: number; client_id?: string; redirect_uris: Array<{ url: string; matching_mode: string }> }>;
-        }>(config, '/providers/oauth2/?page_size=100');
-
-        const provider = providers.results?.find(
-          (p) => p.client_id === meta.ssoSlug
-        );
-
-        if (provider) {
-          // Update redirect URIs: replace old subdomain with new
-          const updatedUris = provider.redirect_uris.map((uri) => ({
-            ...uri,
-            url: uri.url.replace(oldSubdomain, newSubdomain),
-          }));
-
-          await authentikAPI(
-            config,
-            `/providers/oauth2/${provider.pk}/`,
-            'PATCH',
-            { redirect_uris: updatedUris }
-          );
-
-          // Update application launch URL
-          await authentikAPI(
-            config,
-            `/core/applications/${meta.ssoSlug}/`,
-            'PATCH',
-            { meta_launch_url: `https://${newHostname}` }
-          );
-
-          results.authentik = { success: true };
-        } else {
-          results.authentik = {
-            success: false,
-            error: `No OAuth2 provider found with client_id '${meta.ssoSlug}'`,
-          };
-        }
+      const client = await getClient(ssoClientId);
+      if (client) {
+        await createOAuthClient({
+          clientId: client.client_id,
+          clientSecret: client.client_secret,
+          name: client.name,
+          redirectUris: client.redirect_uris.map((uri) => uri.replace(oldHostname, newHostname)),
+          scopes: client.scopes,
+        });
+        results.identity = { success: true };
       } else {
-        results.authentik = { success: false, error: 'identity provider not available' };
+        results.identity = {
+          success: false,
+          error: `No YouEye ID OAuth client found with client_id '${ssoClientId}'`,
+        };
       }
     } catch (err) {
-      results.authentik = { success: false, error: String(err) };
+      results.identity = { success: false, error: String(err) };
     }
   } else {
-    results.authentik = { success: true };
+    results.identity = { success: true };
   }
 
   // ── Step 3: Update install metadata ─────────────────────

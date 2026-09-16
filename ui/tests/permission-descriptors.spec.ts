@@ -23,5 +23,6 @@ test('UI permission APIs return descriptors for user-visible grants', () => {
 
   assert.match(bridge, /descriptor: describePermission\(permission\.permission\)/);
   assert.match(appApi, /descriptor: describePermission\(permission\.permission\)/);
-  assert.match(requestApi, /permissions: permissions\.map/);
+  assert.match(requestApi, /buildPermissionApproval/);
+  assert.match(requestApi, /permissions: approval\.permissions/);
 });

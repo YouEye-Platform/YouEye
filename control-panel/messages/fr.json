@@ -95,21 +95,6 @@
       "saved": "Langue mise à jour",
       "error": "Erreur lors de la mise à jour de la langue"
     },
-    "sso": {
-      "title": "Authentification",
-      "description": "Configurer le SSO via le fournisseur d’identite",
-      "status": "Statut SSO",
-      "configured": "Activé",
-      "notConfigured": "Non configuré",
-      "domain": "Domaine",
-      "authentikUrl": "URL провайдера идентификации",
-      "controlUrl": "URL du panneau",
-      "prerequisitesMet": "Prérequis remplis",
-      "configure": "Configurer SSO",
-      "remove": "Supprimer SSO",
-      "prerequisites": "Prérequis",
-      "howItWorks": "Comment fonctionne le SSO"
-    },
     "ui": {
       "title": "YouEye UI",
       "status": "Statut UI",
@@ -244,6 +229,7 @@
     "savingConfig": "Sauvegarde de la configuration",
     "settingUpProxy": "Configuration du proxy inverse",
     "configuringDns": "Configuration DNS",
+    "configuringAi": "Connexion de YouEye AI",
     "creatingAdmin": "Création du compte administrateur",
     "configuringSsoControl": "Configuration SSO pour le panneau",
     "enablingSsoUi": "Activation de YouEye UI",
@@ -375,7 +361,7 @@
     "certHint": "{domain} utilise un certificat auto-signé. Installez le CA racine sur chaque appareil :",
     "downloadCert": "Télécharger le certificat",
     "goTo": "Aller à {name}",
-    "noDomain": "Pas de domaine configuré. Accédez au panneau sur le port 3000.",
+    "noDomain": "Aucun domaine configuré. Utilisez l’IP du serveur via Caddy pour reconfigurer; localhost:3000 est réservé à la récupération locale sur l’hôte.",
     "welcomeUser": "Bienvenue sur YouEye, {name} !",
     "quickStart": "Démarrage rapide",
     "visitDashboard": "Visiter votre tableau de bord",
@@ -435,7 +421,16 @@
     "resources": "Ressources",
     "nativeApps": "Applications natives",
     "builtForYouEye": "Conçu pour YouEye",
-    "orphanScanPrompt": "Rechercher les ressources orphelines des installations précédentes"
+    "orphanScanPrompt": "Rechercher les ressources orphelines des installations précédentes",
+    "uninstallTitle": "Désinstaller",
+    "uninstallDescription": "Choisissez les éléments à supprimer",
+    "uninstallKeepData": "Désinstaller (conserver les données)",
+    "uninstallKeepDataDescription": "Supprimer l’app tout en conservant ses données pour une réinstallation ultérieure",
+    "uninstallDeleteData": "Désinstaller et supprimer toutes les données",
+    "uninstallDeleteDataDescription": "Supprimer l’app et toutes ses données. Cette action est irréversible.",
+    "willBeRemoved": "Sera supprimé",
+    "uninstallDeleteButton": "Tout supprimer",
+    "uninstallKeepButton": "Désinstaller"
   },
   "proxy": {
     "title": "Proxy inverse",

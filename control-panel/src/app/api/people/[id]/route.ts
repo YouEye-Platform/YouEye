@@ -26,15 +26,17 @@ export async function PATCH(
 
     const { id } = await params;
     const body = await request.json();
-    const { isActive, isAdmin, name, email } = body as {
+    const { isActive, isAdmin, firstName, lastName, email } = body as {
       isActive?: boolean;
       isAdmin?: boolean;
-      name?: string;
+      firstName?: string;
+      lastName?: string;
       email?: string;
     };
 
     const patch: Record<string, unknown> = {};
-    if (typeof name === 'string') patch.name = name;
+    if (typeof firstName === 'string') patch.firstName = firstName;
+    if (typeof lastName === 'string') patch.lastName = lastName;
     if (typeof email === 'string') patch.email = email;
     if (typeof isActive === 'boolean') patch.is_active = isActive;
     if (typeof isAdmin === 'boolean') {
@@ -42,7 +44,7 @@ export async function PATCH(
       const currentGroups = currentUser.groups || [];
       patch.groups = isAdmin
         ? Array.from(new Set([...currentGroups, 'admin']))
-        : currentGroups.filter((g: string) => g !== 'admin' && g !== 'authentik Admins');
+        : currentGroups.filter((g: string) => g !== 'admin');
       patch.isAdmin = isAdmin;
     }
 

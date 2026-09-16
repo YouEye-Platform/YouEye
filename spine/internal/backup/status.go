@@ -88,13 +88,6 @@ func ReadStatus() StatusFile {
 	return s
 }
 
-// ClearStatus removes the status file (sets back to idle).
-func ClearStatus() {
-	mu.Lock()
-	defer mu.Unlock()
-	os.Remove(statusPath())
-}
-
 // Emit writes a progress update for the backup operation.
 func Emit(backupID, status, stage, message string, progress, currentStep, totalSteps int) {
 	existing := ReadStatus()

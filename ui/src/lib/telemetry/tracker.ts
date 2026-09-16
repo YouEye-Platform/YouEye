@@ -17,13 +17,14 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 
-const DISABLED = process.env.TELEMETRY_DISABLED === "true";
+const ENABLED = process.env.TELEMETRY_ENABLED === "true" && process.env.TELEMETRY_DISABLED !== "true";
 const DATA_DIR = process.env.TELEMETRY_DATA_DIR || "/opt/youeye-ui-data";
 const DATA_FILE = join(DATA_DIR, "telemetry.json");
 const FLUSH_INTERVAL_MS = 60_000; // 1 minute
 
 export interface TelemetryReport {
   version: string;
+  enabled: boolean;
   period_start: string;
   last_flush: string;
   routes: Record<string, number>;
@@ -35,6 +36,7 @@ export interface TelemetryReport {
 function emptyReport(): TelemetryReport {
   return {
     version: "1",
+    enabled: ENABLED,
     period_start: new Date().toISOString(),
     last_flush: new Date().toISOString(),
     routes: {},
@@ -62,6 +64,7 @@ class UsageTracker {
         const parsed = JSON.parse(raw) as TelemetryReport;
         // Validate basic structure
         if (parsed.routes && parsed.features && parsed.apps_launched) {
+          parsed.enabled = ENABLED;
           return parsed;
         }
       }
@@ -94,7 +97,7 @@ class UsageTracker {
 
   /** Track a route/page hit */
   trackRoute(pathname: string): void {
-    if (DISABLED) return;
+    if (!ENABLED) return;
     // Normalize: strip query params, collapse dynamic segments
     const normalized = this.normalizeRoute(pathname);
     this.data.routes[normalized] = (this.data.routes[normalized] || 0) + 1;
@@ -103,20 +106,21 @@ class UsageTracker {
 
   /** Track a named feature usage */
   trackFeature(featureId: string): void {
-    if (DISABLED) return;
+    if (!ENABLED) return;
     this.data.features[featureId] = (this.data.features[featureId] || 0) + 1;
     this.dirty = true;
   }
 
   /** Track an app launch */
   trackAppLaunch(appSlug: string): void {
-    if (DISABLED) return;
+    if (!ENABLED) return;
     this.data.apps_launched[appSlug] = (this.data.apps_launched[appSlug] || 0) + 1;
     this.dirty = true;
   }
 
   /** Track an error occurrence */
   trackError(route: string, message: string): void {
+    if (!ENABLED) return;
     const existing = this.data.errors.find(
       (e) => e.route === route && e.message === message
     );
@@ -211,4 +215,8 @@ export function getTelemetryReport(): TelemetryReport {
 
 export function resetTelemetry(): void {
   tracker.reset();
+}
+
+export function isTelemetryEnabled(): boolean {
+  return ENABLED;
 }

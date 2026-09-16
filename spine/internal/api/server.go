@@ -17,11 +17,20 @@ import (
 	"sync"
 	"time"
 
+	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 	"github.com/youeye-platform/YouEye/spine/internal/backup"
+	"github.com/youeye-platform/YouEye/spine/internal/channels"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
+	"github.com/youeye-platform/YouEye/spine/internal/container"
+	"github.com/youeye-platform/YouEye/spine/internal/developmentaccess"
+	"github.com/youeye-platform/YouEye/spine/internal/networkstatus"
 	"github.com/youeye-platform/YouEye/spine/internal/releases"
+	"github.com/youeye-platform/YouEye/spine/internal/remoteaccess"
+	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"github.com/youeye-platform/YouEye/spine/internal/update"
 	"github.com/youeye-platform/YouEye/spine/internal/util"
+	"github.com/youeye-platform/YouEye/spine/internal/version"
+	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v3"
 )
 
@@ -107,11 +116,17 @@ func (l *authRateLimiter) cleanup() {
 }
 
 type Server struct {
-	version     string
-	socketPath  string
-	mux         *http.ServeMux
-	cfg         *config.Config
-	authLimiter *authRateLimiter
+	version           string
+	socketPath        string
+	mux               *http.ServeMux
+	cfg               *config.Config
+	authLimiter       *authRateLimiter
+	runtimeDetect     func() (appliance.RuntimeStatus, *appliance.Manifest, error)
+	systemUpdate      systemUpdateService
+	remoteAccess      remoteAccessService
+	developmentAccess developmentAccessService
+	networkStatus     networkStatusService
+	releaseHTTP       *http.Client
 
 	// Status cache — avoids shelling out on every request
 	statusMu    sync.Mutex
@@ -126,14 +141,86 @@ type Server struct {
 
 func NewServer(version string, cfg *config.Config) *Server {
 	s := &Server{
-		version:     version,
-		socketPath:  cfg.API.SocketPath,
-		mux:         http.NewServeMux(),
-		cfg:         cfg,
-		authLimiter: newAuthRateLimiter(cfg),
+		version:           version,
+		socketPath:        cfg.API.SocketPath,
+		mux:               http.NewServeMux(),
+		cfg:               cfg,
+		authLimiter:       newAuthRateLimiter(cfg),
+		runtimeDetect:     appliance.Detect,
+		systemUpdate:      systemupdate.NewDefault(),
+		remoteAccess:      remoteaccess.NewDefault(),
+		developmentAccess: developmentaccess.NewDefault(),
+		networkStatus:     networkstatus.NewDefault(),
+		releaseHTTP:       systemupdate.ReleaseHTTPClient(),
 	}
 	s.setupRoutes()
 	return s
+}
+
+type socketOwnership struct {
+	file *os.File
+}
+
+func acquireSocketOwnership(socketPath string) (*socketOwnership, error) {
+	lockPath := socketPath + ".lock"
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("open API socket ownership lock: %w", err)
+	}
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("API socket ownership is already held for %s", socketPath)
+	}
+	return &socketOwnership{file: file}, nil
+}
+
+func (o *socketOwnership) Close() error {
+	if o == nil || o.file == nil {
+		return nil
+	}
+	_ = unix.Flock(int(o.file.Fd()), unix.LOCK_UN)
+	return o.file.Close()
+}
+
+func prepareSocketPath(socketPath string) error {
+	ownership, err := acquireSocketOwnership(socketPath)
+	if err != nil {
+		return err
+	}
+	defer ownership.Close()
+	return prepareSocketPathOwned(socketPath)
+}
+
+func prepareSocketPathOwned(socketPath string) error {
+	before, err := os.Lstat(socketPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect API socket: %w", err)
+	}
+	if before.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("refusing to remove non-socket API path %s", socketPath)
+	}
+	conn, err := net.DialTimeout("unix", socketPath, 100*time.Millisecond)
+	if err == nil {
+		conn.Close()
+		return fmt.Errorf("API socket is already served at %s", socketPath)
+	}
+	after, err := os.Lstat(socketPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reinspect stale API socket: %w", err)
+	}
+	if after.Mode()&os.ModeSocket == 0 || !os.SameFile(before, after) {
+		return fmt.Errorf("API socket path changed during stale-socket verification")
+	}
+	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale API socket: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) setupRoutes() {
@@ -149,28 +236,48 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/update/app/", s.handleUpdateApp)
 	s.mux.HandleFunc("/api/postgres/credentials", s.handlePostgresCredentials)
 	s.mux.HandleFunc("/api/pihole/credentials", s.handlePiholeCredentials)
-	s.mux.HandleFunc("/api/authentik/credentials", s.handleAuthentikCredentials)
 	s.mux.HandleFunc("/api/control/sso", s.handleControlSSO)
 	s.mux.HandleFunc("/api/control/restart", s.handleControlRestart)
 	s.mux.HandleFunc("/api/ui/sso", s.handleUISSO)
 	// UI updates are handled by the Control Panel directly (lxd-updater), not Spine
 	s.mux.HandleFunc("/api/config", s.handleYouEyeConfig)
 	s.mux.HandleFunc("/api/update/status", s.handleUpdateStatus)
+	s.mux.HandleFunc("/api/appliance/system-update/status", s.handleSystemUpdateStatus)
+	s.mux.HandleFunc("/api/appliance/system-update/check", s.handleSystemUpdateCheck)
+	s.mux.HandleFunc("/api/appliance/system-update/stage", s.handleSystemUpdateStage)
+	s.mux.HandleFunc("/api/appliance/system-update/activate", s.handleSystemUpdateActivate)
+	s.mux.HandleFunc("/api/appliance/remote-access/keys", s.handleRemoteAccessKeys)
+	s.mux.HandleFunc("/api/appliance/remote-access/keys/", s.handleRemoteAccessKey)
+	s.mux.HandleFunc("/api/appliance/development-access", s.handleDevelopmentAccess)
+	s.mux.HandleFunc("/api/appliance/network", s.handleNetworkStatus)
 	s.mux.HandleFunc("/api/registry/digest", s.handleRegistryDigest)
 	s.mux.HandleFunc("/api/backup/run", s.handleBackupRun)
 	s.mux.HandleFunc("/api/backup/status", s.handleBackupStatus)
-	s.mux.HandleFunc("/api/backup/volumes", s.handleBackupVolumes)
 	s.mux.HandleFunc("/api/backup/storage-driver", s.handleStorageDriver)
-	s.mux.HandleFunc("/api/backup/list", s.handleBackupList)
 	s.mux.HandleFunc("/api/backup/config", s.handleBackupConfig)
 	s.mux.HandleFunc("/api/backup/restore", s.handleBackupRestore)
-	s.mux.HandleFunc("/api/backup/prune", s.handleBackupPrune)
+	s.mux.HandleFunc("/api/backup/apply-volumes", s.handleBackupApplyVolumes)
+	s.mux.HandleFunc("/api/backup/incus/prepare", s.handleBackupIncusPrepare)
+	s.mux.HandleFunc("/api/backup/incus/import-instance", s.handleBackupIncusImportInstance)
+	s.mux.HandleFunc("/api/backup/media", s.handleBackupMedia)
+	s.mux.HandleFunc("/api/backup/media/prepare", s.handleBackupMediaPrepare)
+	s.mux.HandleFunc("/api/backup/media/eject", s.handleBackupMediaEject)
+	s.mux.HandleFunc("/api/backup/repository/store", s.handleBackupRepositoryStore)
+	s.mux.HandleFunc("/api/backup/repository/import", s.handleBackupRepositoryImport)
+	s.mux.HandleFunc("/api/backup/repository/catalog", s.handleBackupRepositoryCatalog)
+	s.mux.HandleFunc("/api/backup/recovery-key", s.handleBackupRecoveryKey)
 	s.mux.HandleFunc("/api/metrics", s.handleMetrics)
 }
 
 func (s *Server) ListenAndServe() error {
-	// Remove existing socket
-	os.Remove(s.socketPath)
+	ownership, err := acquireSocketOwnership(s.socketPath)
+	if err != nil {
+		return err
+	}
+	defer ownership.Close()
+	if err := prepareSocketPathOwned(s.socketPath); err != nil {
+		return err
+	}
 
 	// Create Unix socket listener
 	listener, err := net.Listen("unix", s.socketPath)
@@ -194,9 +301,6 @@ func (s *Server) ListenAndServe() error {
 		}
 	}()
 
-	// Start backup scheduler
-	backup.StartScheduler("")
-
 	fmt.Printf("API server listening on %s\n", s.socketPath)
 
 	return http.Serve(listener, s.mux)
@@ -208,15 +312,46 @@ func jsonResponse(w http.ResponseWriter, data interface{}) {
 	json.NewEncoder(w).Encode(data)
 }
 
+func jsonStatusResponse(w http.ResponseWriter, data interface{}, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(data)
+}
+
 func errorResponse(w http.ResponseWriter, message string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
+func (s *Server) runtimeCapabilityGuard(w http.ResponseWriter, action string) bool {
+	status, _, detectErr := s.runtimeDetect()
+	if detectErr != nil {
+		jsonStatusResponse(w, map[string]interface{}{
+			"code": "appliance_recovery_required", "message": "sealed appliance marker is invalid; boot recovery",
+			"runtime": status,
+		}, http.StatusServiceUnavailable)
+		return false
+	}
+	if err := appliance.RequireCapability(status, action); err != nil {
+		if capabilityErr, ok := err.(*appliance.CapabilityError); ok {
+			jsonStatusResponse(w, capabilityErr, http.StatusConflict)
+		} else {
+			errorResponse(w, err.Error(), http.StatusConflict)
+		}
+		return false
+	}
+	return true
+}
+
 // Handlers
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, map[string]string{"status": "ok"})
+	status, _, err := s.runtimeDetect()
+	if err != nil {
+		jsonStatusResponse(w, map[string]interface{}{"status": "recovery-required", "code": "appliance_recovery_required", "runtime": status}, http.StatusServiceUnavailable)
+		return
+	}
+	jsonResponse(w, map[string]interface{}{"status": "ok", "runtime": status.Kind})
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
@@ -250,12 +385,24 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	go func() { defer wg.Done(); osRel = getOSRelease() }()
 	wg.Wait()
 
+	runtimeStatus, manifest, runtimeErr := s.runtimeDetect()
 	status := map[string]interface{}{
 		"spine":         map[string]string{"version": s.version},
 		"incus":         map[string]string{"version": incusVer},
 		"control_panel": controlSt,
 		"ui":            uiSt,
 		"host":          map[string]string{"os": osRel},
+		"runtime":       runtimeStatus,
+	}
+	if runtimeStatus.Kind == appliance.RuntimeApplianceImage && manifest != nil {
+		persistent, err := appliance.InspectPersistentStatus(*manifest)
+		status["persistent_state"] = persistent
+		if err != nil {
+			status["runtime_warning"] = persistent.ErrorCode
+		}
+	}
+	if runtimeErr != nil {
+		status["runtime_warning"] = "appliance_recovery_required"
 	}
 
 	s.statusMu.Lock()
@@ -284,18 +431,27 @@ func (s *Server) handleUpdatesCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	s.updatesMu.Unlock()
 
+	runtimeStatus, _, runtimeErr := s.runtimeDetect()
+	if runtimeErr != nil {
+		jsonStatusResponse(w, map[string]interface{}{"code": "appliance_recovery_required", "runtime": runtimeStatus}, http.StatusServiceUnavailable)
+		return
+	}
+
 	// Parallel version + release checks
 	var wg sync.WaitGroup
 	var controlVer, uiVer string
 	var spineLatestRel, controlLatestRel, uiLatestRel string
 
-	wg.Add(5)
+	wg.Add(4)
 	go func() { defer wg.Done(); controlVer = s.getControlVersion() }()
 	go func() { defer wg.Done(); uiVer = s.getUIVersion() }()
-	go func() {
-		defer wg.Done()
-		spineLatestRel = s.getLatestRelease(s.cfg.Releases.Repositories.Spine, s.cfg.Releases.Repositories.SpineTagPrefix)
-	}()
+	if runtimeStatus.Capabilities.SpineUpdate {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			spineLatestRel = s.getLatestRelease(s.cfg.Releases.Repositories.Spine, s.cfg.Releases.Repositories.SpineTagPrefix)
+		}()
+	}
 	go func() {
 		defer wg.Done()
 		controlLatestRel = s.getLatestRelease(s.cfg.Releases.Repositories.ControlPanel, s.cfg.Releases.Repositories.ControlPanelTagPrefix)
@@ -308,20 +464,24 @@ func (s *Server) handleUpdatesCheck(w http.ResponseWriter, r *http.Request) {
 
 	updates := map[string]interface{}{
 		"checked_at": time.Now().UTC().Format(time.RFC3339),
+		"runtime":    runtimeStatus,
 		"spine": map[string]interface{}{
 			"current":   s.version,
 			"latest":    spineLatestRel,
 			"available": false,
+			"supported": runtimeStatus.Capabilities.SpineUpdate,
 		},
 		"control": map[string]interface{}{
 			"current":   controlVer,
 			"latest":    controlLatestRel,
 			"available": false,
+			"supported": runtimeStatus.Capabilities.ControlUpdate,
 		},
 		"ui": map[string]interface{}{
 			"current":   uiVer,
 			"latest":    uiLatestRel,
 			"available": false,
+			"supported": runtimeStatus.Capabilities.UIUpdate,
 		},
 	}
 
@@ -346,9 +506,23 @@ func (s *Server) handleUpdatesCheck(w http.ResponseWriter, r *http.Request) {
 		uiUpdate["available"] = true
 	}
 
+	// Channel-aware enrichment (keeps the legacy current/latest/available keys
+	// above for old Control Panels). Each entry gains channel + installed +
+	// candidate detail and switch_pending.
+	if runtimeStatus.Capabilities.SpineUpdate {
+		s.resolveComponentUpdate(channels.ComponentSpine, s.cfg.Releases.Repositories.Spine, s.cfg.Releases.Repositories.SpineTagPrefix, s.version).merge(spineUpdate)
+	} else {
+		spineUpdate["managed_by"] = "system-image"
+	}
+	s.resolveComponentUpdate(channels.ComponentControl, s.cfg.Releases.Repositories.ControlPanel, s.cfg.Releases.Repositories.ControlPanelTagPrefix, controlVer).merge(controlUpdate)
+	s.resolveComponentUpdate(channels.ComponentUI, s.cfg.Releases.Repositories.UI, s.cfg.Releases.Repositories.UITagPrefix, uiVer).merge(uiUpdate)
+
 	// Single apt call for both incus upgrade check and system count
-	aptOutput, _ := exec.Command("apt", "list", "--upgradeable").CombinedOutput()
-	aptLines := string(aptOutput)
+	aptLines := ""
+	if runtimeStatus.Capabilities.IncusUpdate || runtimeStatus.Capabilities.SystemUpdate {
+		aptOutput, _ := exec.Command("apt", "list", "--upgradeable").CombinedOutput()
+		aptLines = string(aptOutput)
+	}
 	incusUpgradeable := strings.Contains(aptLines, "incus/")
 	upgradeableCount := 0
 	for _, line := range strings.Split(strings.TrimSpace(aptLines), "\n") {
@@ -358,13 +532,27 @@ func (s *Server) handleUpdatesCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updates["incus"] = map[string]interface{}{
-		"current":   getIncusVersion(),
-		"available": incusUpgradeable,
+		"current":    getIncusVersion(),
+		"available":  incusUpgradeable,
+		"supported":  runtimeStatus.Capabilities.IncusUpdate,
+		"managed_by": map[bool]string{true: "package-manager", false: "system-image"}[runtimeStatus.Capabilities.IncusUpdate],
 	}
-	updates["system"] = map[string]interface{}{
-		"current":           getOSRelease(),
-		"upgradeable_count": upgradeableCount,
-		"available":         upgradeableCount > 0,
+	if runtimeStatus.Kind == appliance.RuntimeApplianceImage {
+		imageStatus, imageErr := s.systemUpdate.Status()
+		system := map[string]interface{}{
+			"current": runtimeStatus.ImageVersion, "available": imageStatus.State == systemupdate.PhaseAvailable,
+			"supported": runtimeStatus.Capabilities.ImageUpdate, "managed_by": "system-image", "transaction": imageStatus,
+		}
+		if imageErr != nil {
+			system["error"] = imageErr.Error()
+		}
+		updates["system"] = system
+	} else {
+		updates["system"] = map[string]interface{}{
+			"current": getOSRelease(), "upgradeable_count": upgradeableCount,
+			"available": upgradeableCount > 0, "supported": runtimeStatus.Capabilities.SystemUpdate,
+			"managed_by": "package-manager",
+		}
 	}
 
 	// OCI app updates — check each deployed container's image fingerprint
@@ -391,11 +579,9 @@ func (s *Server) handleUpdatesCheck(w http.ResponseWriter, r *http.Request) {
 	for _, a := range ociApps {
 		status := getAppContainerStatus(a.container)
 		// Extract image tag from the image reference
-		imageTag := a.image
-		if idx := strings.LastIndex(a.image, ":"); idx > 0 {
+		imageTag := "latest"
+		if idx := strings.LastIndex(a.image, ":"); idx > strings.LastIndex(a.image, "/") {
 			imageTag = a.image[idx+1:]
-		} else {
-			imageTag = "latest"
 		}
 		appUpdates = append(appUpdates, ociAppCheck{
 			Name:          a.name,
@@ -484,13 +670,27 @@ func (s *Server) handleUpdateSelf(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !s.runtimeCapabilityGuard(w, appliance.ActionSpineUpdate) {
+		return
+	}
+
+	confirmSwitch := readConfirmSwitch(r)
+
+	// If resolution shows a channel switch and the caller did not confirm, refuse
+	// with 409 so the Control Panel can prompt.
+	if switchErr := s.channelSwitchGuard(channels.ComponentSpine, s.cfg.Releases.Repositories.Spine, s.cfg.Releases.Repositories.SpineTagPrefix, s.version, confirmSwitch); switchErr != nil {
+		errorResponse(w, switchErr.Error(), http.StatusConflict)
+		return
+	}
 
 	// Write initial status before starting background update
 	update.Start("spine", s.version)
 
-	// Run update in background — the CLI now writes status to disk at each stage
+	// Run update in background — the CLI now writes status to disk at each stage.
+	// -y is passed so the CLI does not block on its own confirmation prompt; the
+	// switch guard above already enforced explicit confirmation.
 	go func() {
-		cmd := exec.Command("youeye", "update", "self")
+		cmd := exec.Command("youeye", "update", "self", "-y")
 		cmd.Run()
 	}()
 
@@ -498,6 +698,47 @@ func (s *Server) handleUpdateSelf(w http.ResponseWriter, r *http.Request) {
 		"status":  "started",
 		"message": "Spine update initiated",
 	})
+}
+
+// readConfirmSwitch parses an optional {"confirm_switch": true} body.
+func readConfirmSwitch(r *http.Request) bool {
+	if r.Body == nil {
+		return false
+	}
+	var body struct {
+		ConfirmSwitch bool `json:"confirm_switch"`
+	}
+	// Ignore decode errors — an empty/absent body means "not confirmed".
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	return body.ConfirmSwitch
+}
+
+// channelSwitchGuard returns a descriptive error when the resolved candidate for
+// a component is a channel switch (different branch than installed) and the
+// caller has not confirmed it. Returns nil when it is a normal same-branch
+// update, when the candidate is newer on the new branch (surfaced as an update),
+// or when confirmSwitch is true.
+func (s *Server) channelSwitchGuard(component, repo, tagPrefix, currentVersion string, confirmSwitch bool) error {
+	if confirmSwitch {
+		return nil
+	}
+	cand, err := releases.ResolveComponent(s.cfg, component, repo, tagPrefix)
+	if err != nil {
+		return nil // resolution failure is handled by the update path itself
+	}
+	installedBranch := ""
+	if prov, ok := update.GetProvenance(component); ok {
+		installedBranch = prov.Branch
+	}
+	if installedBranch == "" || installedBranch == cand.Branch {
+		return nil // same branch — normal update rules apply
+	}
+	if version.IsNewer(cand.Version, currentVersion) {
+		return nil // newer on the new branch — surfaces as a normal update
+	}
+	return fmt.Errorf("channel switch requires confirmation: %s %s → %s %s (set confirm_switch=true)",
+		installedBranch, version.FormatVersion(currentVersion),
+		cand.Branch, version.FormatVersion(cand.Version))
 }
 
 // handleUpdateStatus returns the current update status from the status file.
@@ -512,6 +753,9 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateIncus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.runtimeCapabilityGuard(w, appliance.ActionIncusUpdate) {
 		return
 	}
 
@@ -536,6 +780,9 @@ func (s *Server) handleUpdateIncus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateSystem(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.runtimeCapabilityGuard(w, appliance.ActionSystemUpdate) {
 		return
 	}
 
@@ -567,6 +814,11 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !s.runtimeCapabilityGuard(w, appliance.ActionControlUpdate) {
+		return
+	}
+
+	confirmSwitch := readConfirmSwitch(r)
 
 	containerName := s.cfg.Deployment.Container.Name
 	port := s.cfg.Deployment.ControlPanel.Port
@@ -574,7 +826,22 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 
 	// Get current and latest versions
 	currentVersion := s.getControlVersion()
-	latestVersion := s.getLatestRelease(s.cfg.Releases.Repositories.ControlPanel, s.cfg.Releases.Repositories.ControlPanelTagPrefix)
+
+	// Refuse an unconfirmed channel switch before doing any work.
+	if switchErr := s.channelSwitchGuard(channels.ComponentControl, s.cfg.Releases.Repositories.ControlPanel, s.cfg.Releases.Repositories.ControlPanelTagPrefix, currentVersion, confirmSwitch); switchErr != nil {
+		errorResponse(w, switchErr.Error(), http.StatusConflict)
+		return
+	}
+
+	// Resolve the candidate through the control channel (may differ from
+	// getLatestRelease when a per-component source/branch is set).
+	cpCand, cpErr := releases.ResolveComponent(s.cfg, channels.ComponentControl, s.cfg.Releases.Repositories.ControlPanel, s.cfg.Releases.Repositories.ControlPanelTagPrefix)
+	latestVersion := ""
+	if cpErr == nil {
+		latestVersion = cpCand.Version
+	} else {
+		latestVersion = s.getLatestRelease(s.cfg.Releases.Repositories.ControlPanel, s.cfg.Releases.Repositories.ControlPanelTagPrefix)
+	}
 
 	if latestVersion == "" || latestVersion == "unknown" {
 		errorResponse(w, "could not determine latest version", http.StatusInternalServerError)
@@ -586,6 +853,7 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, fmt.Sprintf("Control Panel is up to date, but identity provider service repair failed: %v", err), http.StatusInternalServerError)
 			return
 		}
+		update.NoOp("control", currentVersion)
 		jsonResponse(w, map[string]string{
 			"status":  "up-to-date",
 			"message": fmt.Sprintf("Control Panel is already at version %s", currentVersion),
@@ -596,17 +864,25 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 	update.Start("control", currentVersion)
 	update.Emit("control", update.StatusDownloading, 10, "Creating snapshot...")
 
-	// Create snapshot before update
-	exec.Command("incus", "snapshot", "delete", containerName, "pre-update").Run()
-	if err := exec.Command("incus", "snapshot", "create", containerName, "pre-update").Run(); err != nil {
-		fmt.Printf("Warning: could not create snapshot: %v\n", err)
+	// A verified rollback point is mandatory before any service or file mutation.
+	if err := prepareIncusSnapshot(containerName, "pre-update", runIncusCommand); err != nil {
+		update.Fail("control", currentVersion, err.Error())
+		errorResponse(w, err.Error(), http.StatusConflict)
+		return
 	}
 
-	// Get download URL from release assets
-	downloadURL, err := s.getAssetDownloadURL(s.cfg.Releases.Repositories.ControlPanel, "standalone.tar", s.cfg.Releases.Repositories.ControlPanelTagPrefix)
-	if err != nil {
-		errorResponse(w, fmt.Sprintf("failed to get download URL: %v", err), http.StatusInternalServerError)
-		return
+	// Get download URL from the resolved candidate (honors the control channel
+	// source), falling back to the default-channel asset resolver.
+	var downloadURL string
+	if cpErr == nil {
+		downloadURL = releases.BuildCandidateDownloadURL(s.cfg, cpCand, s.cfg.Releases.Repositories.ControlPanel, "standalone.tar")
+	} else {
+		url, err := s.getAssetDownloadURL(s.cfg.Releases.Repositories.ControlPanel, "standalone.tar", s.cfg.Releases.Repositories.ControlPanelTagPrefix)
+		if err != nil {
+			errorResponse(w, fmt.Sprintf("failed to get download URL: %v", err), http.StatusInternalServerError)
+			return
+		}
+		downloadURL = url
 	}
 	fmt.Printf("Downloading from %s...\n", downloadURL)
 
@@ -637,10 +913,23 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 	defer os.Remove(tmpFile.Name())
 
 	_, err = io.Copy(tmpFile, resp.Body)
-	tmpFile.Close()
+	closeErr := tmpFile.Close()
 	if err != nil {
+		update.Fail("control", currentVersion, fmt.Sprintf("download failed: %v", err))
 		errorResponse(w, fmt.Sprintf("failed to download: %v", err), http.StatusInternalServerError)
 		return
+	}
+	if closeErr != nil {
+		update.Fail("control", currentVersion, fmt.Sprintf("download close failed: %v", closeErr))
+		errorResponse(w, fmt.Sprintf("failed to finish download: %v", closeErr), http.StatusInternalServerError)
+		return
+	}
+	if cpErr == nil {
+		if err := releases.VerifySignedReleaseArtifact(dlClient, downloadURL, tmpFile.Name(), cpCand.ArtifactSHA256); err != nil {
+			update.Fail("control", currentVersion, err.Error())
+			errorResponse(w, err.Error(), http.StatusConflict)
+			return
+		}
 	}
 
 	update.Emit("control", update.StatusInstalling, 40, "Stopping Control Panel...")
@@ -726,10 +1015,26 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 	}
 
 	update.Complete("control", currentVersion, latestVersion)
+	if out, err := runIncusCommand("snapshot", "delete", containerName, "pre-update"); err != nil {
+		fmt.Printf("Warning: Control Panel updated but rollback snapshot cleanup failed: %v: %s\n", err, strings.TrimSpace(string(out)))
+	}
+
+	// Record channel provenance for the installed release.
+	if cpErr == nil {
+		if err := update.WriteProvenance(channels.ComponentControl, update.ProvenanceEntry{
+			Version:        latestVersion,
+			Tag:            cpCand.Tag,
+			Branch:         cpCand.Branch,
+			Source:         cpCand.Source,
+			ArtifactSHA256: cpCand.ArtifactSHA256,
+		}); err != nil {
+			fmt.Printf("Warning: could not record provenance: %v\n", err)
+		}
+	}
 
 	jsonResponse(w, map[string]string{
 		"status":      "success",
-		"message":     fmt.Sprintf("Control Panel updated from %s to %s", currentVersion, latestVersion),
+		"message":     fmt.Sprintf("Control Panel updated from %s to %s", version.FormatVersion(currentVersion), version.FormatVersion(latestVersion)),
 		"old_version": currentVersion,
 		"new_version": latestVersion,
 	})
@@ -798,6 +1103,9 @@ systemctl restart youeye-id
 	if err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
+	if err := container.EnsureControlSocketReadiness(containerName); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -806,6 +1114,17 @@ systemctl restart youeye-id
 func (s *Server) reconcileInfrastructure() {
 	fmt.Println("[reconcile] Starting infrastructure reconciliation...")
 	hostIP := util.GetPrimaryIP()
+
+	if err := container.RepairControlPanelPortProxy(s.cfg.Deployment.Container.Name, s.cfg.Deployment.ControlPanel.Port); err != nil {
+		fmt.Printf("[reconcile] Control Panel localhost proxy repair failed: %v\n", err)
+	} else {
+		fmt.Println("[reconcile] Control Panel raw proxy verified localhost-only")
+	}
+	if err := container.EnforceUIEgressBlock(); err != nil {
+		fmt.Printf("[reconcile] UI→CP ACL repair failed: %v\n", err)
+	} else {
+		fmt.Println("[reconcile] UI→CP ACL verified")
+	}
 
 	// Read deploy secret
 	secretBytes, err := os.ReadFile("/var/lib/youeye/control/.deploy_secret")
@@ -882,6 +1201,9 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !s.runtimeCapabilityGuard(w, appliance.ActionAppUpdate) {
+		return
+	}
 
 	// Extract app name from URL path
 	appName := strings.TrimPrefix(r.URL.Path, "/api/update/app/")
@@ -915,9 +1237,11 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create snapshot before update
-	exec.Command("incus", "snapshot", "delete", containerName, "pre-update").Run()
-	exec.Command("incus", "snapshot", "create", containerName, "pre-update").Run()
+	// Refuse mutation unless the rollback snapshot is known-good.
+	if err := prepareIncusSnapshot(containerName, "pre-update", runIncusCommand); err != nil {
+		errorResponse(w, err.Error(), http.StatusConflict)
+		return
+	}
 
 	// Stop the container
 	exec.Command("incus", "stop", containerName, "--force").Run()
@@ -959,11 +1283,42 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, "container did not start after update", http.StatusInternalServerError)
 		return
 	}
+	if out, err := runIncusCommand("snapshot", "delete", containerName, "pre-update"); err != nil {
+		fmt.Printf("Warning: %s updated but rollback snapshot cleanup failed: %v: %s\n", appName, err, strings.TrimSpace(string(out)))
+	}
 
 	jsonResponse(w, map[string]string{
 		"status":  "success",
 		"message": fmt.Sprintf("%s updated to latest image", appName),
 	})
+}
+
+type incusCommandRunner func(args ...string) ([]byte, error)
+
+func runIncusCommand(args ...string) ([]byte, error) {
+	return exec.Command("incus", args...).CombinedOutput()
+}
+
+func prepareIncusSnapshot(containerName, snapshotName string, run incusCommandRunner) error {
+	out, err := run("snapshot", "list", containerName, "--format", "csv", "-c", "n")
+	if err != nil {
+		return fmt.Errorf("inspect rollback snapshots before update: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) != snapshotName {
+			continue
+		}
+		deleteOut, deleteErr := run("snapshot", "delete", containerName, snapshotName)
+		if deleteErr != nil {
+			return fmt.Errorf("remove stale rollback snapshot before update: %w: %s", deleteErr, strings.TrimSpace(string(deleteOut)))
+		}
+		break
+	}
+	createOut, createErr := run("snapshot", "create", containerName, snapshotName)
+	if createErr != nil {
+		return fmt.Errorf("create rollback snapshot before update: %w: %s", createErr, strings.TrimSpace(string(createOut)))
+	}
+	return nil
 }
 
 // handlePostgresCredentials returns PostgreSQL connection credentials.
@@ -1246,15 +1601,6 @@ func (s *Server) migratePiholePassword(passwordFile string) string {
 	return password
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 func getInstanceIPv4(instanceName string) (string, error) {
 	out, err := exec.Command("incus", "list", "^"+instanceName+"$", "--format", "csv", "-c", "4").Output()
 	if err != nil {
@@ -1292,7 +1638,15 @@ func ensureUIIdentityProxy(uiContainerName string) error {
 // handleControlSSO manages SSO environment variables for the Control Panel container.
 // GET: Check if SSO is configured
 // POST: Write SSO env vars, create systemd drop-in, daemon-reload, restart (delayed)
+//
+//	unless restart=false is requested by a transaction that will schedule
+//	its own restart after durable completion.
+//
 // DELETE: Remove SSO config, daemon-reload, restart (delayed)
+func controlSSORestartRequested(r *http.Request) bool {
+	return !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("restart")), "false")
+}
+
 func (s *Server) handleControlSSO(w http.ResponseWriter, r *http.Request) {
 	containerName := s.cfg.Deployment.Container.Name
 
@@ -1394,17 +1748,23 @@ func (s *Server) handleControlSSO(w http.ResponseWriter, r *http.Request) {
 		// Daemon-reload
 		exec.Command("incus", "exec", containerName, "--", "systemctl", "daemon-reload").Run()
 
-		// Return success before restart
+		restart := controlSSORestartRequested(r)
+		message := "SSO environment configured"
+		if restart {
+			message += ", restarting Control Panel..."
+		}
 		jsonResponse(w, map[string]string{
 			"status":  "configured",
-			"message": "SSO environment configured, restarting Control Panel...",
+			"message": message,
 		})
 
-		// Restart CP after a short delay so the response can be sent
-		go func() {
-			time.Sleep(2 * time.Second)
-			exec.Command("incus", "exec", containerName, "--", "systemctl", "restart", "youeye-control").Run()
-		}()
+		if restart {
+			// Restart CP after a short delay so the response can be sent.
+			go func() {
+				time.Sleep(2 * time.Second)
+				exec.Command("incus", "exec", containerName, "--", "systemctl", "restart", "youeye-control").Run()
+			}()
+		}
 
 	case "DELETE":
 		// Remove SSO configuration
@@ -1457,53 +1817,6 @@ func (s *Server) handleControlRestart(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(time.Duration(delay) * time.Second)
 		exec.Command("incus", "exec", containerName, "--", "systemctl", "restart", "youeye-control").Run()
 	}()
-}
-
-// handleAuthentikCredentials returns identity provider credentials from host files.
-func (s *Server) handleAuthentikCredentials(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	authentikDir := "/var/lib/youeye/authentik"
-	readFile := func(name string) string {
-		data, err := os.ReadFile(authentikDir + "/" + name)
-		if err != nil {
-			return ""
-		}
-		return strings.TrimSpace(string(data))
-	}
-
-	dbPassword := readFile(".db_password")
-	secretKey := readFile(".secret_key")
-	bootstrapToken := readFile(".bootstrap_token")
-	bootstrapPassword := readFile(".bootstrap_password")
-
-	if dbPassword == "" && secretKey == "" {
-		errorResponse(w, "Authentik not deployed or credentials not found", http.StatusNotFound)
-		return
-	}
-
-	// Get identity provider container IP (use exact name match with regex anchor)
-	containerIP := ""
-	out, err := exec.Command("incus", "list", "^youeye-authentik$", "--format", "csv", "-c", "4").Output()
-	if err == nil {
-		ipLine := strings.TrimSpace(string(out))
-		if idx := strings.Index(ipLine, " "); idx > 0 {
-			containerIP = ipLine[:idx]
-		} else if ipLine != "" {
-			containerIP = ipLine
-		}
-	}
-
-	jsonResponse(w, map[string]string{
-		"db_password":        dbPassword,
-		"secret_key":         secretKey,
-		"bootstrap_token":    bootstrapToken,
-		"bootstrap_password": bootstrapPassword,
-		"internal_url":       fmt.Sprintf("http://%s:9000", containerIP),
-	})
 }
 
 // getUIStatus returns the status of the UI container and service.
@@ -1862,10 +2175,27 @@ type YouEyeConfig struct {
 	ReleaseBranch  string            `yaml:"release_branch,omitempty" json:"release_branch"`
 	Language       string            `yaml:"language,omitempty" json:"language"`
 	ReleaseSource  *ReleaseSource    `yaml:"-" json:"release_source,omitempty"`
+	// ReleaseChannels is populated on GET only (effective + raw override view).
+	// It is never written back through this struct — channels.Save is the single
+	// writer for the release_channels block.
+	ReleaseChannels *channelsView `yaml:"-" json:"release_channels,omitempty"`
 	// Extra holds arbitrary key-value pairs that the Control Panel needs
 	// to persist (e.g. tls_acme_account_key, tls_cert_pem). Spine doesn't
 	// interpret these — it just stores and returns them.
 	Extra map[string]string `yaml:"extra,omitempty" json:"extra,omitempty"`
+	// Foreign holds top-level yaml blocks Spine doesn't model (e.g. the CP's
+	// nested identity config). They round-trip through GET/PATCH and survive
+	// every save. A nil value marks the key for deletion on save.
+	Foreign map[string]interface{} `yaml:"-" json:"-"`
+}
+
+// structOwnedConfigKeys are the top-level youeye.yaml keys produced by the
+// YouEyeConfig struct marshal. Anything else in the file is foreign and is
+// preserved verbatim across saves (release_channels, identity, …).
+var structOwnedConfigKeys = map[string]bool{
+	"site_name": true, "domain": true, "subdomains": true,
+	"setup_completed": true, "release_branch": true, "language": true,
+	"extra": true,
 }
 
 type ReleaseSource struct {
@@ -1878,6 +2208,7 @@ type ReleaseSource struct {
 }
 
 var youeyeConfigPath = "/var/lib/youeye/config/youeye.yaml"
+var youeyeConfigMu sync.Mutex
 
 func (s *Server) releaseSource() *ReleaseSource {
 	repo := s.cfg.CoreReleaseRepo()
@@ -1889,6 +2220,17 @@ func (s *Server) releaseSource() *ReleaseSource {
 		Organization: repo.Organization,
 		Repository:   repo.Repository,
 	}
+}
+
+// attachChannels populates the release_channels view on a config response.
+// A load failure is non-fatal — the rest of the config still returns.
+func (s *Server) attachChannels(cfg *YouEyeConfig) {
+	chCfg, err := channels.Load()
+	if err != nil {
+		return
+	}
+	view := s.buildChannelsView(chCfg)
+	cfg.ReleaseChannels = &view
 }
 
 func releaseRepoURLFromPatch(patch map[string]interface{}) (string, bool, error) {
@@ -1967,10 +2309,46 @@ func loadYouEyeConfig() (*YouEyeConfig, error) {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
+	// Collect foreign top-level keys so they round-trip through GET/PATCH.
+	// release_channels is excluded: it is exposed via the channelsView instead.
+	var raw map[string]interface{}
+	if yaml.Unmarshal(data, &raw) == nil {
+		for key, val := range raw {
+			if structOwnedConfigKeys[key] || key == "release_channels" {
+				continue
+			}
+			if cfg.Foreign == nil {
+				cfg.Foreign = make(map[string]interface{})
+			}
+			cfg.Foreign[key] = val
+		}
+	}
+
 	return cfg, nil
 }
 
-// saveYouEyeConfig writes the youeye.yaml config file
+// configJSON merges the struct-owned fields with foreign blocks for API
+// responses, so keys like the CP's identity config round-trip through GET.
+func configJSON(cfg *YouEyeConfig) map[string]interface{} {
+	out := map[string]interface{}{}
+	if data, err := json.Marshal(cfg); err == nil {
+		_ = json.Unmarshal(data, &out)
+	}
+	for key, val := range cfg.Foreign {
+		if val == nil {
+			continue
+		}
+		if _, present := out[key]; !present {
+			out[key] = val
+		}
+	}
+	return out
+}
+
+// saveYouEyeConfig writes the youeye.yaml config file. The struct marshal only
+// produces struct-owned keys, so every foreign top-level block in the existing
+// file (release_channels, identity, …) is preserved, and cfg.Foreign edits are
+// applied on top (nil = delete).
 func saveYouEyeConfig(cfg *YouEyeConfig) error {
 	if err := os.MkdirAll(filepath.Dir(youeyeConfigPath), 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
@@ -1981,16 +2359,100 @@ func saveYouEyeConfig(cfg *YouEyeConfig) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	header := "# YouEye Configuration\n# Managed by Spine API - do not edit manually unless you know what you're doing\n\n"
-	if err := os.WriteFile(youeyeConfigPath, []byte(header+string(data)), 0644); err != nil {
-		return fmt.Errorf("failed to write config: %w", err)
+	// The struct marshal only produces struct-owned keys. Preserve every
+	// foreign block from the existing file (release_channels, identity, …),
+	// then overlay cfg.Foreign edits (nil value = delete the key).
+	var merged map[string]yaml.Node
+	if yaml.Unmarshal(data, &merged) != nil || merged == nil {
+		merged = map[string]yaml.Node{}
+	}
+	if existing, err := os.ReadFile(youeyeConfigPath); err == nil {
+		var doc map[string]yaml.Node
+		if yaml.Unmarshal(existing, &doc) == nil {
+			for key, node := range doc {
+				if structOwnedConfigKeys[key] {
+					continue
+				}
+				if _, present := merged[key]; !present {
+					merged[key] = node
+				}
+			}
+		}
+	}
+	for key, val := range cfg.Foreign {
+		if val == nil {
+			delete(merged, key)
+			continue
+		}
+		encoded, err := yaml.Marshal(val)
+		if err != nil {
+			return fmt.Errorf("failed to marshal foreign key %q: %w", key, err)
+		}
+		var node yaml.Node
+		if err := yaml.Unmarshal(encoded, &node); err != nil {
+			return fmt.Errorf("failed to encode foreign key %q: %w", key, err)
+		}
+		// Unmarshal wraps the value in a document node — unwrap it.
+		if node.Kind == yaml.DocumentNode && len(node.Content) == 1 {
+			merged[key] = *node.Content[0]
+		} else {
+			merged[key] = node
+		}
+	}
+	if remarshaled, err := yaml.Marshal(merged); err == nil {
+		data = remarshaled
+	} else {
+		return fmt.Errorf("failed to merge config document: %w", err)
 	}
 
+	header := "# YouEye Configuration\n# Managed by Spine API - do not edit manually unless you know what you're doing\n\n"
+	directory := filepath.Dir(youeyeConfigPath)
+	temporary, err := os.CreateTemp(directory, ".youeye.yaml.*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary config: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	cleanup := func() {
+		_ = temporary.Close()
+		_ = os.Remove(temporaryPath)
+	}
+	if err := temporary.Chmod(0600); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to protect temporary config: %w", err)
+	}
+	if _, err := temporary.Write([]byte(header + string(data))); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to write temporary config: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to sync temporary config: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(temporaryPath)
+		return fmt.Errorf("failed to close temporary config: %w", err)
+	}
+	if err := os.Rename(temporaryPath, youeyeConfigPath); err != nil {
+		_ = os.Remove(temporaryPath)
+		return fmt.Errorf("failed to replace config atomically: %w", err)
+	}
+	dir, err := os.Open(directory)
+	if err != nil {
+		return fmt.Errorf("failed to open config directory for sync: %w", err)
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("failed to sync config directory: %w", err)
+	}
 	return nil
 }
 
 // handleYouEyeConfig handles GET/PUT/PATCH for the site-level youeye.yaml config
 func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut || r.Method == http.MethodPatch {
+		youeyeConfigMu.Lock()
+		defer youeyeConfigMu.Unlock()
+	}
 	switch r.Method {
 	case "GET":
 		cfg, err := loadYouEyeConfig()
@@ -1999,7 +2461,8 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cfg.ReleaseSource = s.releaseSource()
-		jsonResponse(w, cfg)
+		s.attachChannels(cfg)
+		jsonResponse(w, configJSON(cfg))
 
 	case "PUT":
 		var newCfg YouEyeConfig
@@ -2022,9 +2485,10 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		newCfg.ReleaseSource = s.releaseSource()
+		s.attachChannels(&newCfg)
 		jsonResponse(w, map[string]interface{}{
 			"status": "saved",
-			"config": newCfg,
+			"config": configJSON(&newCfg),
 		})
 
 	case "PATCH":
@@ -2073,14 +2537,39 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Store any unrecognized keys in Extra — this allows the
-		// Control Panel to persist arbitrary settings (TLS certs,
-		// ACME account keys, etc.) without Spine needing to know
-		// about each field.
+		// Validate release_channels up-front so a bad patch fails before we
+		// write anything. The actual channel write happens AFTER
+		// saveYouEyeConfig below, because saveYouEyeConfig marshals a partial
+		// struct that would otherwise clobber the release_channels block.
+		var chCfg *channels.Config
+		if raw, ok := patch["release_channels"]; ok {
+			chPatch, ok := raw.(map[string]interface{})
+			if !ok {
+				errorResponse(w, "release_channels must be an object", http.StatusBadRequest)
+				return
+			}
+			loaded, err := channels.Load()
+			if err != nil {
+				errorResponse(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if err := applyChannelsPatch(loaded, chPatch); err != nil {
+				errorResponse(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			chCfg = loaded
+		}
+
+		// Store unrecognized keys so the Control Panel can persist arbitrary
+		// settings without Spine knowing each field: strings go to Extra
+		// (legacy behavior — TLS certs, ACME keys), any other JSON value
+		// (nested identity config, lists, …) round-trips as a foreign yaml
+		// block, and an explicit null deletes the foreign key.
 		knownKeys := map[string]bool{
 			"site_name": true, "domain": true, "subdomains": true,
 			"setup_completed": true, "release_branch": true, "language": true,
 			"release_source": true, "repo_url": true, "extra": true,
+			"release_channels": true,
 		}
 		for key, val := range patch {
 			if knownKeys[key] {
@@ -2091,17 +2580,36 @@ func (s *Server) handleYouEyeConfig(w http.ResponseWriter, r *http.Request) {
 					existing.Extra = make(map[string]string)
 				}
 				existing.Extra[key] = s
+				continue
 			}
+			if existing.Foreign == nil {
+				existing.Foreign = make(map[string]interface{})
+			}
+			existing.Foreign[key] = val // nil (JSON null) marks deletion
 		}
 
 		if err := saveYouEyeConfig(existing); err != nil {
 			errorResponse(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
+		// Persist channels AFTER the youeye.yaml write. channels.Save does a
+		// read-modify-write of the full document, re-adding release_channels (and
+		// mirroring the default branch into release_branch) without disturbing the
+		// keys just written.
+		if chCfg != nil {
+			if err := chCfg.Save(); err != nil {
+				errorResponse(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			s.clearUpdatesCache()
+		}
+
 		existing.ReleaseSource = s.releaseSource()
+		s.attachChannels(existing)
 		jsonResponse(w, map[string]interface{}{
 			"status": "updated",
-			"config": existing,
+			"config": configJSON(existing),
 		})
 
 	default:
@@ -2166,7 +2674,7 @@ func (s *Server) handleRegistryDigest(w http.ResponseWriter, r *http.Request) {
 //	"postgres"                      → ("docker.io", "library/postgres")
 //	"pihole/pihole"                 → ("docker.io", "pihole/pihole")
 //	"docker.io/library/caddy"       → ("docker.io", "library/caddy")
-//	"ghcr.io/goauthentik/server"    → ("ghcr.io",   "goauthentik/server")
+//	"ghcr.io/example/app"           → ("ghcr.io",   "example/app")
 func parseImageRef(image string) (registry, namespace string) {
 	parts := strings.SplitN(image, "/", 2)
 	if len(parts) < 2 {
@@ -2291,7 +2799,9 @@ func (s *Server) handleBackupRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var cfg backup.BackupConfig
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 2*1024*1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
 		errorResponse(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -2300,12 +2810,28 @@ func (s *Server) handleBackupRun(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, "target_path is required", http.StatusBadRequest)
 		return
 	}
+	if cfg.Passphrase == "" && cfg.UseStoredPassphrase {
+		stored, err := backup.ReadPassphrase("/var/lib/youeye/control/.deploy_secret")
+		if err != nil {
+			errorResponse(w, "stored recovery key is unavailable", http.StatusBadRequest)
+			return
+		}
+		cfg.Passphrase = stored
+	}
 	if cfg.Passphrase == "" {
 		errorResponse(w, "passphrase is required", http.StatusBadRequest)
 		return
 	}
 	if cfg.StagingDir == "" {
 		errorResponse(w, "staging_dir is required", http.StatusBadRequest)
+		return
+	}
+	if cfg.BackupType != "core" && cfg.BackupType != "app" {
+		errorResponse(w, "backup_type must be core or app", http.StatusBadRequest)
+		return
+	}
+	if cfg.BackupType == "app" && cfg.AppID == "" {
+		errorResponse(w, "app_id is required for app backups", http.StatusBadRequest)
 		return
 	}
 
@@ -2321,6 +2847,158 @@ func (s *Server) handleBackupRun(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleBackupMedia detects eligible non-system drives without mutating them.
+func (s *Server) handleBackupMedia(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	media, err := backup.ListMedia()
+	if err != nil {
+		errorResponse(w, fmt.Sprintf("Failed to inspect backup drives: %v", err), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]interface{}{"media": media})
+}
+
+func (s *Server) handleBackupMediaPrepare(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request struct {
+		MediaID      string `json:"media_id"`
+		Confirmation string `json:"confirmation"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 64*1024))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&request) != nil || request.MediaID == "" {
+		errorResponse(w, "media_id and confirmation are required", http.StatusBadRequest)
+		return
+	}
+	media, err := backup.PrepareMedia(request.MediaID, request.Confirmation)
+	if err != nil {
+		errorResponse(w, fmt.Sprintf("Could not prepare backup drive: %v", err), http.StatusBadRequest)
+		return
+	}
+	jsonResponse(w, media)
+}
+
+func (s *Server) handleBackupMediaEject(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request struct {
+		MediaID string `json:"media_id"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 16*1024))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&request) != nil || request.MediaID == "" {
+		errorResponse(w, "media_id is required", http.StatusBadRequest)
+		return
+	}
+	if err := backup.UnmountMedia(request.MediaID); err != nil {
+		errorResponse(w, fmt.Sprintf("Could not eject backup drive: %v", err), http.StatusBadRequest)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "ejected"})
+}
+
+func (s *Server) handleBackupRepositoryStore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request backup.RepositoryStoreRequest
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 128*1024))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&request) != nil {
+		errorResponse(w, "invalid repository store request", http.StatusBadRequest)
+		return
+	}
+	if request.Passphrase == "" && request.UseStoredPassphrase {
+		stored, err := backup.ReadPassphrase("/var/lib/youeye/control/.deploy_secret")
+		if err != nil {
+			errorResponse(w, "stored recovery key is unavailable", http.StatusBadRequest)
+			return
+		}
+		request.Passphrase = stored
+	}
+	if err := backup.StoreBackupSet(request); err != nil {
+		errorResponse(w, fmt.Sprintf("Could not store recovery point: %v", err), http.StatusBadRequest)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "stored", "backup_id": request.BackupID})
+}
+
+func (s *Server) handleBackupRepositoryImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request backup.RepositoryImportRequest
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 64*1024))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&request) != nil {
+		errorResponse(w, "invalid repository import request", http.StatusBadRequest)
+		return
+	}
+	if request.Passphrase == "" && request.UseStoredPassphrase {
+		stored, err := backup.ReadPassphrase("/var/lib/youeye/control/.deploy_secret")
+		if err != nil {
+			errorResponse(w, "stored recovery key is unavailable", http.StatusBadRequest)
+			return
+		}
+		request.Passphrase = stored
+	}
+	importPath, err := backup.ImportBackupSet(request)
+	if err != nil {
+		errorResponse(w, fmt.Sprintf("Could not import recovery point: %v", err), http.StatusBadRequest)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "imported", "backup_path": importPath})
+}
+
+func (s *Server) handleBackupRepositoryCatalog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	mediaID := r.URL.Query().Get("media_id")
+	if mediaID == "" {
+		errorResponse(w, "media_id is required", http.StatusBadRequest)
+		return
+	}
+	points, err := backup.RecoveryPoints(mediaID)
+	if err != nil {
+		errorResponse(w, fmt.Sprintf("Could not read recovery catalog: %v", err), http.StatusBadRequest)
+		return
+	}
+	jsonResponse(w, map[string]interface{}{"recovery_points": points})
+}
+
+func (s *Server) handleBackupRecoveryKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request struct {
+		Passphrase string `json:"passphrase"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 8*1024))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&request) != nil || len(request.Passphrase) < 12 || len(request.Passphrase) > 256 {
+		errorResponse(w, "recovery key must contain 12 to 256 characters", http.StatusBadRequest)
+		return
+	}
+	if err := backup.StorePassphrase(request.Passphrase, "/var/lib/youeye/control/.deploy_secret"); err != nil {
+		errorResponse(w, "could not protect the recurring backup recovery key", http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "stored"})
+}
+
 // handleBackupStatus returns the current backup status from the status file.
 // GET /api/backup/status
 func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
@@ -2329,49 +3007,6 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, backup.ReadStatus())
-}
-
-// handleBackupVolumes runs a live volume backup (freeze/snapshot instead of stop).
-// POST /api/backup/volumes
-func (s *Server) handleBackupVolumes(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var cfg backup.BackupConfig
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-		errorResponse(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if cfg.TargetPath == "" {
-		errorResponse(w, "target_path is required", http.StatusBadRequest)
-		return
-	}
-	if cfg.Passphrase == "" {
-		errorResponse(w, "passphrase is required", http.StatusBadRequest)
-		return
-	}
-	if cfg.StagingDir == "" {
-		errorResponse(w, "staging_dir is required", http.StatusBadRequest)
-		return
-	}
-
-	// Force live mode for this endpoint
-	cfg.Mode = "live"
-
-	backupID, err := backup.Run(cfg)
-	if err != nil {
-		errorResponse(w, fmt.Sprintf("Failed to start live backup: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	jsonResponse(w, map[string]string{
-		"status":    "started",
-		"backup_id": backupID,
-		"mode":      "live",
-	})
 }
 
 // handleStorageDriver returns the detected Incus storage driver.
@@ -2385,36 +3020,6 @@ func (s *Server) handleStorageDriver(w http.ResponseWriter, r *http.Request) {
 	driver := backup.DetectStorageDriver()
 	jsonResponse(w, map[string]string{
 		"driver": driver,
-	})
-}
-
-// handleBackupList returns backup entries from the index.
-// GET /api/backup/list?type=core&app_id=immich&target_path=/mnt/backup
-func (s *Server) handleBackupList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	targetPath := r.URL.Query().Get("target_path")
-	if targetPath == "" {
-		errorResponse(w, "target_path query param required", http.StatusBadRequest)
-		return
-	}
-
-	backupType := r.URL.Query().Get("type")
-	appID := r.URL.Query().Get("app_id")
-
-	entries, err := backup.ListEntries(targetPath, backupType, appID)
-	if err != nil {
-		errorResponse(w, fmt.Sprintf("Failed to list backups: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	jsonResponse(w, map[string]interface{}{
-		"entries": entries,
-		"type":    backupType,
-		"app_id":  appID,
 	})
 }
 
@@ -2492,42 +3097,68 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, result)
 }
 
-// handleBackupPrune runs retention cleanup for backup entries.
-// POST /api/backup/prune
-func (s *Server) handleBackupPrune(w http.ResponseWriter, r *http.Request) {
+// handleBackupApplyVolumes atomically restores the persistent-data paths
+// declared by a decrypted, validated YouEye backup archive.
+// POST /api/backup/apply-volumes
+func (s *Server) handleBackupApplyVolumes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	var req struct {
-		TargetPath string `json:"target_path"`
-		BackupType string `json:"backup_type"`
-		AppID      string `json:"app_id"`
-		Retention  int    `json:"retention"`
+	var request struct {
+		StagingDir string `json:"staging_dir"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errorResponse(w, "invalid request body", http.StatusBadRequest)
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 64*1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || request.StagingDir == "" {
+		errorResponse(w, "staging_dir is required", http.StatusBadRequest)
 		return
 	}
-
-	if req.TargetPath == "" {
-		errorResponse(w, "target_path is required", http.StatusBadRequest)
+	restored, err := backup.ApplyVolumes(request.StagingDir)
+	if err != nil {
+		errorResponse(w, fmt.Sprintf("Volume restore failed: %v", err), http.StatusBadRequest)
 		return
 	}
-	if req.Retention <= 0 {
-		errorResponse(w, "retention must be > 0", http.StatusBadRequest)
+	jsonResponse(w, map[string]interface{}{"status": "ok", "restored": restored})
+}
+
+func (s *Server) handleBackupIncusPrepare(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	if err := backup.PruneEntries(req.TargetPath, req.BackupType, req.AppID, req.Retention); err != nil {
-		errorResponse(w, fmt.Sprintf("Prune failed: %v", err), http.StatusInternalServerError)
+	var request backup.IncusPrepareRequest
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 64*1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || request.StagingDir == "" {
+		errorResponse(w, "invalid Incus recovery request", http.StatusBadRequest)
 		return
 	}
+	result, err := backup.PrepareIncusRecovery(request)
+	if err != nil {
+		errorResponse(w, fmt.Sprintf("Incus recovery preparation failed: %v", err), http.StatusBadRequest)
+		return
+	}
+	jsonResponse(w, result)
+}
 
-	jsonResponse(w, map[string]string{
-		"status": "pruned",
-	})
+func (s *Server) handleBackupIncusImportInstance(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request backup.IncusInstanceImportRequest
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 64*1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		errorResponse(w, "invalid Incus instance import request", http.StatusBadRequest)
+		return
+	}
+	if err := backup.ImportIncusInstance(request); err != nil {
+		errorResponse(w, fmt.Sprintf("Incus instance import failed: %v", err), http.StatusBadRequest)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "imported", "name": request.Name})
 }
 
 // handleMetrics returns real host-level CPU, memory, disk, and system info.
@@ -2547,6 +3178,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		hostname = "unknown"
 	}
 	result["hostname"] = hostname
+	result["primary_ip"] = util.GetPrimaryIP()
 
 	// OS
 	result["os"] = getOSRelease()

@@ -1,10 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Key, Type, Globe, Eye, EyeOff, ChevronDown, ChevronRight, Settings2, Wifi, Plug, ShieldCheck, ShieldOff } from 'lucide-react';
+import { X, Key, Type, Globe, Eye, EyeOff, ChevronDown, ChevronRight, Settings2, Wifi, Plug, ShieldCheck, ShieldOff, Sparkles, HardDrive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -26,6 +29,28 @@ interface InstallDialogProps {
 }
 
 type ParamDef = NonNullable<MarketApp['installParams']>[number];
+type AIGroup = {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  enabledModelCount: number;
+  unavailableRouteCount: number;
+  status: 'empty' | 'degraded' | 'available';
+};
+type StorageLocation = {
+  id: string;
+  name: string;
+  driver: string;
+  internal: boolean;
+  availableBytes: number | null;
+  totalBytes: number | null;
+};
+
+function formatBytes(value: number | null): string {
+  if (value === null) return 'Space unavailable';
+  if (value < 1024 ** 3) return `${Math.round(value / 1024 ** 2)} MB available`;
+  return `${(value / 1024 ** 3).toFixed(value < 10 * 1024 ** 3 ? 1 : 0)} GB available`;
+}
 
 /** Slugify a string for use as subdomain: lowercase, replace spaces/special chars with hyphens */
 function slugify(s: string): string {
@@ -69,6 +94,20 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
   // optional extra gate, off by default and fully operable. Plain apps drive the gate from
   // `protectWithAccountLogin` instead, so this stays false/ignored for them.
   const [forwardAuthGate, setForwardAuthGate] = useState(false);
+  const supportsAI = app.capabilities?.ai_api === true;
+  const [useAISettings, setUseAISettings] = useState(supportsAI);
+  const [aiGroups, setAIGroups] = useState<AIGroup[]>([]);
+  const [aiGroupId, setAIGroupId] = useState('');
+  const [aiGroupsLoading, setAIGroupsLoading] = useState(supportsAI);
+  const [aiGroupsError, setAIGroupsError] = useState('');
+  const isDirectEntry = app.sourceId?.startsWith('direct:') === true;
+  const [directSourceAccepted, setDirectSourceAccepted] = useState(!isDirectEntry);
+  const [storageLocations, setStorageLocations] = useState<StorageLocation[]>([]);
+  const [storagePool, setStoragePool] = useState('');
+  const [storageLoading, setStorageLoading] = useState(true);
+  const [storageError, setStorageError] = useState('');
+  const [showStorageAdvanced, setShowStorageAdvanced] = useState(false);
+  const [storagePlacements, setStoragePlacements] = useState<Partial<Record<'config' | 'data' | 'media', string>>>({});
 
   // Initialize defaults
   useEffect(() => {
@@ -102,6 +141,50 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
       })
       .catch(() => {});
   }, [app.id]);
+
+  useEffect(() => {
+    if (!supportsAI) return;
+    let cancelled = false;
+    setAIGroupsLoading(true);
+    fetch('/api/market/ai/groups', { cache: 'no-store' })
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || 'AI model groups are unavailable');
+        return payload as { groups: AIGroup[]; defaultGroupId: string | null };
+      })
+      .then((payload) => {
+        if (cancelled) return;
+        setAIGroups(payload.groups);
+        setAIGroupId(payload.defaultGroupId || payload.groups[0]?.id || '');
+        setAIGroupsError('');
+      })
+      .catch((error) => {
+        if (!cancelled) setAIGroupsError(error instanceof Error ? error.message : 'AI model groups are unavailable');
+      })
+      .finally(() => { if (!cancelled) setAIGroupsLoading(false); });
+    return () => { cancelled = true; };
+  }, [supportsAI]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/market/storage/locations', { cache: 'no-store' })
+      .then(async (response) => {
+        const payload = await response.json() as { locations?: StorageLocation[]; defaultPool?: string; error?: string };
+        if (!response.ok || !payload.locations?.length) throw new Error(payload.error || 'Storage locations are unavailable');
+        return payload;
+      })
+      .then((payload) => {
+        if (cancelled) return;
+        setStorageLocations(payload.locations!);
+        setStoragePool(payload.defaultPool || payload.locations![0].id);
+        setStorageError('');
+      })
+      .catch((error) => {
+        if (!cancelled) setStorageError(error instanceof Error ? error.message : 'Storage locations are unavailable');
+      })
+      .finally(() => { if (!cancelled) setStorageLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   // Auto-slugify subdomain when name changes (unless user manually edited subdomain)
   useEffect(() => {
@@ -170,6 +253,9 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
   const installDisabled =
     !displayName.trim() ||
     !subdomain.trim() ||
+    !directSourceAccepted ||
+    (supportsAI && useAISettings && (aiGroupsLoading || !aiGroupId || Boolean(aiGroupsError))) ||
+    storageLoading || !storagePool || Boolean(storageError) ||
     requiredParams.some((p) => !installParamsState[p.name]?.trim());
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -193,6 +279,7 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
       sourceId: app.sourceId,
       sourceName: app.sourceName,
       sourceRepoUrl: app.sourceRepoUrl,
+      acceptUnverifiedPublisher: isDirectEntry ? directSourceAccepted : undefined,
       manifestPath: app.manifestPath,
       manifestRepo: app.manifestRepo,
       manifestBranch: app.manifestBranch,
@@ -205,6 +292,15 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
       protectWithAccountLogin,
       forwardAuthGate,
       allowInternet,
+      aiSettings: supportsAI
+        ? { enabled: useAISettings, ...(useAISettings ? { modelGroupId: aiGroupId } : {}) }
+        : undefined,
+      storage: {
+        pool: storagePool,
+        placements: showStorageAdvanced && Object.keys(storagePlacements).length > 0
+          ? storagePlacements
+          : undefined,
+      },
     });
   };
 
@@ -248,6 +344,19 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
 
         {/* Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6 overflow-y-auto">
+          {isDirectEntry && (
+            <Alert>
+              <ShieldOff className="h-4 w-4" />
+              <AlertTitle>Review this app before installing</AlertTitle>
+              <AlertDescription>
+                <p>You added this app directly. YouEye checked its manifest and install package for safety, but has not verified who published it.</p>
+                <label className="mt-2 flex cursor-pointer items-center gap-2 text-foreground">
+                  <Switch checked={directSourceAccepted} onCheckedChange={setDirectSourceAccepted} />
+                  I trust this source and want to install it
+                </label>
+              </AlertDescription>
+            </Alert>
+          )}
           <section className="space-y-4">
             <div>
               <h3 className="text-sm font-semibold text-gray-900">Basics</h3>
@@ -297,10 +406,67 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
             </div>
           </section>
 
+          {storageLocations.length > 1 && (
+            <section className="space-y-3">
+              <div>
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <HardDrive className="size-4 text-primary" />
+                  Storage location
+                </h3>
+                <p className="mt-1 text-sm text-muted-foreground">Choose where this app keeps its files.</p>
+              </div>
+              <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
+                <Select value={storagePool} onValueChange={setStoragePool} disabled={storageLoading}>
+                  <SelectTrigger aria-label="Storage location">
+                    <SelectValue placeholder="Choose storage" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {storageLocations.map((location) => (
+                      <SelectItem key={location.id} value={location.id}>
+                        {location.name} · {formatBytes(location.availableBytes)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-auto px-0 text-primary hover:bg-transparent hover:text-primary/80"
+                  onClick={() => setShowStorageAdvanced((value) => !value)}
+                >
+                  {showStorageAdvanced ? 'Hide advanced placement' : 'Advanced placement'}
+                </Button>
+                {showStorageAdvanced && (
+                  <div className="grid gap-3 border-t pt-3 sm:grid-cols-3">
+                    {(['config', 'data', 'media'] as const).map((type) => (
+                      <div key={type} className="space-y-2">
+                        <Label htmlFor={`storage-${type}`} className="capitalize">{type}</Label>
+                        <Select
+                          value={storagePlacements[type] || storagePool}
+                          onValueChange={(value) => setStoragePlacements((current) => ({ ...current, [type]: value }))}
+                        >
+                          <SelectTrigger id={`storage-${type}`}><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {storageLocations.map((location) => (
+                              <SelectItem key={location.id} value={location.id}>{location.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {storageError && <Alert variant="destructive"><AlertDescription>{storageError}</AlertDescription></Alert>}
+
           <section className="space-y-3">
             <div>
               <h3 className="text-sm font-semibold text-gray-900">Access</h3>
-              <p className="mt-1 text-sm text-gray-500">Choose whether this app should require account login.</p>
+              <p className="mt-1 text-sm text-gray-500">Protect this app with account login.</p>
             </div>
             <div className="flex items-center justify-between gap-4 rounded-lg border border-gray-200 bg-gray-50/60 p-4">
               <div className="flex items-start gap-3">
@@ -380,6 +546,66 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
                     }`}
                   />
                 </button>
+              </div>
+            </section>
+          )}
+
+          {supportsAI && (
+            <section className="space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="flex items-center gap-2 text-sm font-semibold">
+                    <Sparkles className="size-4 text-primary" />
+                    AI models
+                  </h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Use models from your AI Settings so {app.name} works immediately.
+                  </p>
+                </div>
+                <Switch
+                  checked={useAISettings}
+                  onCheckedChange={setUseAISettings}
+                  aria-label="Use AI Settings"
+                />
+              </div>
+              <div className="rounded-lg border bg-muted/30 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium">Use AI Settings</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {useAISettings
+                        ? `A separate AI instance will be created for ${app.name}.`
+                        : `You’ll configure AI providers inside ${app.name} after installation.`}
+                    </p>
+                  </div>
+                  <Badge variant={useAISettings ? 'default' : 'secondary'}>
+                    {useAISettings ? 'On' : 'Off'}
+                  </Badge>
+                </div>
+                {useAISettings && (
+                  <div className="mt-4 space-y-2">
+                    <Label htmlFor="ai-model-group">Model group</Label>
+                    <Select value={aiGroupId} onValueChange={setAIGroupId} disabled={aiGroupsLoading}>
+                      <SelectTrigger id="ai-model-group">
+                        <SelectValue placeholder={aiGroupsLoading ? 'Loading model groups…' : 'Choose a model group'} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {aiGroups.map((group) => (
+                          <SelectItem key={group.id} value={group.id} disabled={group.status === 'empty'}>
+                            {group.name}{group.isDefault ? ' · Default' : ''} · {group.enabledModelCount} model{group.enabledModelCount === 1 ? '' : 's'}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {aiGroupsError && <Alert variant="destructive">{aiGroupsError}</Alert>}
+                    {aiGroups.find((group) => group.id === aiGroupId)?.unavailableRouteCount ? (
+                      <Alert variant="destructive">Some routes in this group need a provider connection.</Alert>
+                    ) : null}
+                    <p className="text-xs text-muted-foreground">
+                      You can still add other providers inside {app.name}. The initial model is the group&apos;s <code>default</code> alias.
+                    </p>
+                  </div>
+                )}
               </div>
             </section>
           )}

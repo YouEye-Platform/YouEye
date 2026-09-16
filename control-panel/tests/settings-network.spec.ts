@@ -74,6 +74,6 @@ test('Domain & HTTPS tab uses real domain + tls status; honest on-demand copy, n
   const c = read('src/components/settings-shell/network-client.tsx');
   assert.match(c, /\/api\/domain/);
   assert.match(c, /\/api\/tls\/status/);
-  // on-demand/internal TLS is presented honestly as automatic, not faked cert fields
-  assert.match(c, /Automatic/);
+  // on-demand/internal TLS is presented honestly, not faked cert fields
+  assert.match(c, /Private\/local certificate/);
 });

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
@@ -7,24 +8,28 @@ import {
   Clock,
   Cpu,
   Database,
-  GitBranch,
   HardDrive,
+  KeyRound,
   Loader2,
   type LucideIcon,
   MemoryStick,
   Monitor,
+  PackageCheck,
   RefreshCw,
   Route,
-  Save,
   Server,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { ApplianceSystemUpdate } from "@/components/settings-shell/appliance-system-update";
+import { DevelopmentAccessCard } from "@/components/settings-shell/development-access-card";
+import { HostNetworkCard } from "@/components/settings-shell/host-network-card";
+import type { SpinePersistentStatus, SpineRuntimeStatus } from "@/lib/spine/client";
 
 interface SystemInfo {
   hostname: string;
@@ -37,6 +42,8 @@ interface SystemInfo {
   disk: null | { total_gb: number; used_gb: number; free_gb: number };
   incus: { version: string; storage_pool: string };
   containers: { total: number; running: number; stopped: number; items: Array<{ name: string; status: string }> };
+  runtime: SpineRuntimeStatus;
+  persistent_state: SpinePersistentStatus | null;
 }
 
 interface ServiceHealth {
@@ -48,19 +55,6 @@ interface ServiceHealth {
   memory: number; // MB
   restartable: boolean;
   uptime: string;
-}
-
-interface ReleaseSource {
-  repo_url?: string;
-  provider?: string;
-  base_url?: string;
-  organization?: string;
-  repository?: string;
-}
-
-interface PlatformSettings {
-  releaseBranch?: string;
-  releaseSource?: ReleaseSource;
 }
 
 type TrackingStatus = "tracked" | "legacy-compatible" | "legacy-untracked" | "missing";
@@ -141,11 +135,12 @@ function StatCard({
 }
 
 function StatusDot({ status }: { status: string }) {
-  const ok = status === "running" || status === "ok" || status === "healthy";
+  const ok = status === "running" || status === "ok" || status === "healthy" || status === "image-managed";
+  const label = status === "image-managed" ? "Image-managed" : ok ? "Running" : status;
   return (
     <span className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
       <span className={`inline-block size-2 rounded-full ${ok ? "bg-green-500" : "bg-amber-500"}`} />
-      {ok ? "Running" : status}
+      {label}
     </span>
   );
 }
@@ -164,12 +159,6 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
   const [confirmPlan, setConfirmPlan] = useState<SystemUpdatePlan | null>(null);
   const [confirmName, setConfirmName] = useState("");
   const [maintenanceConfirmed, setMaintenanceConfirmed] = useState(false);
-  const [releaseBranch, setReleaseBranch] = useState("");
-  const [repoUrl, setRepoUrl] = useState("");
-  const [sourceLoading, setSourceLoading] = useState(true);
-  const [sourceSaving, setSourceSaving] = useState(false);
-  const [sourceError, setSourceError] = useState("");
-  const [sourceMessage, setSourceMessage] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -192,21 +181,6 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
     }
   }, []);
 
-  const loadUpdateSource = useCallback(async () => {
-    setSourceLoading(true);
-    setSourceError("");
-    setSourceMessage("");
-    const res = await fetch("/settings/api/settings");
-    if (res.ok) {
-      const settings = (await res.json()) as PlatformSettings;
-      setReleaseBranch(settings.releaseBranch || "main");
-      setRepoUrl(settings.releaseSource?.repo_url || "");
-    } else {
-      setSourceError((await res.json().catch(() => ({}))).error || "Failed to load update source");
-    }
-    setSourceLoading(false);
-  }, []);
-
   const loadSystemPlans = useCallback(async () => {
     setPlansLoading(true);
     setPlanError("");
@@ -223,8 +197,7 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
   useEffect(() => {
     load();
     loadSystemPlans();
-    loadUpdateSource();
-  }, [load, loadSystemPlans, loadUpdateSource]);
+  }, [load, loadSystemPlans]);
 
   // Live usage refreshes every 5s.
   useEffect(() => {
@@ -243,55 +216,6 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
       // surfaced via the next health poll; keep the button responsive.
     } finally {
       setRestarting(null);
-    }
-  }
-
-  async function saveUpdateSource() {
-    const branch = releaseBranch.trim();
-    const normalizedRepoUrl = repoUrl.trim().replace(/\/$/, "").replace(/\.git$/, "");
-    setSourceError("");
-    setSourceMessage("");
-
-    if (!branch) {
-      setSourceError("Release branch is required");
-      return;
-    }
-    if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.includes("..")) {
-      setSourceError("Release branch contains unsupported characters");
-      return;
-    }
-    try {
-      const parsed = new URL(normalizedRepoUrl);
-      const parts = parsed.pathname.split("/").filter(Boolean);
-      if (!["http:", "https:"].includes(parsed.protocol) || parts.length < 2) {
-        throw new Error("Repo URL must include an owner and repository");
-      }
-    } catch (err) {
-      setSourceError(err instanceof Error ? err.message : "Repo URL is invalid");
-      return;
-    }
-
-    setSourceSaving(true);
-    try {
-      const res = await fetch("/settings/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          releaseBranch: branch,
-          releaseSource: { repo_url: normalizedRepoUrl },
-        }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || "Failed to save update source");
-      const updated = body as PlatformSettings;
-      setReleaseBranch(updated.releaseBranch || branch);
-      setRepoUrl(updated.releaseSource?.repo_url || normalizedRepoUrl);
-      setSourceMessage("Update source saved");
-      await loadSystemPlans();
-    } catch (err) {
-      setSourceError(err instanceof Error ? err.message : "Failed to save update source");
-    } finally {
-      setSourceSaving(false);
     }
   }
 
@@ -390,17 +314,27 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
     load();
     loadHealth();
     loadSystemPlans();
-    loadUpdateSource();
-  }, [load, loadHealth, loadSystemPlans, loadUpdateSource]);
+  }, [load, loadHealth, loadSystemPlans]);
 
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
   if (error) return <div className="rounded-lg border p-6 text-sm text-destructive">{error}</div>;
   if (!data) return null;
 
   const healthBySlug = Object.fromEntries(health.map((h) => [h.slug, h]));
+  const isAppliance = data.runtime.kind === "appliance-image";
   const platformRows = PLATFORM_ORDER.map((slug) => {
     if (slug === "__cp__") {
       return { key: "__cp__", icon: Monitor, name: "Server interface", desc: "This dashboard and settings", version: cpVersion ? `v${cpVersion}` : "", status: "running" };
+    }
+    if (slug === "spine" && isAppliance) {
+      return {
+        key: "spine",
+        icon: PackageCheck,
+        name: "System image",
+        desc: "Operating system, System core, and container engine",
+        version: showVersion(data.runtime.image_version),
+        status: data.runtime.repair_required ? "repair-required" : "image-managed",
+      };
     }
     const h = healthBySlug[slug];
     const meta = SERVICE_META[slug];
@@ -432,6 +366,41 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
         <p className="mt-1 text-sm text-muted-foreground">Your server at a glance — live usage, services, and updates</p>
       </div>
 
+      <Card className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-[15px] font-semibold">Health and repairs</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Durable issue registry, self-heal timeline, and one-click repair actions.
+          </p>
+        </div>
+        <Button asChild>
+          <Link href="/settings/system/health">Open Health</Link>
+        </Button>
+      </Card>
+
+      {isAppliance && (
+        <Card className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-start gap-3">
+            <KeyRound className="mt-0.5 size-5 text-primary" />
+            <div>
+              <h2 className="text-[15px] font-semibold">Secure shell access</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Manage authorised keys for appliance administration.</p>
+            </div>
+          </div>
+          <Button asChild><Link href="/settings/system/ssh">SSH</Link></Button>
+        </Card>
+      )}
+      <Card className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-start gap-3">
+          <Sparkles className="mt-0.5 size-5 text-primary" />
+          <div>
+            <h2 className="text-[15px] font-semibold">AI service</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Version, readiness, database migration, and backup health.</p>
+          </div>
+        </div>
+        <Button variant="outline" asChild><Link href="/settings/system/ai">Open AI health</Link></Button>
+      </Card>
+
       {/* Stat row */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard icon={Cpu} label="CPU" value={`${Math.round(cpuUsage)}%`} meter={cpuUsage} />
@@ -439,6 +408,10 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
         <StatCard icon={HardDrive} label="Disk" value={`${diskUsed} GB`} meter={pct(diskUsed, diskTotal)} warn={pct(diskUsed, diskTotal) >= 85} />
         <StatCard icon={Clock} label="Uptime" value={data.uptime} sub={data.hostname} />
       </div>
+
+      {isAppliance && <HostNetworkCard />}
+      {isAppliance && <ApplianceSystemUpdate />}
+      {isAppliance && <DevelopmentAccessCard />}
 
       {/* Platform services */}
       <Card className="gap-0 py-0">
@@ -509,32 +482,6 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
           </div>
         )}
       </Card>
-
-      {/* Core Update Source (admin) — release source for Spine, Server interface, and the dashboard. */}
-      <div className="space-y-4 rounded-xl border bg-card p-4 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h3 className="flex items-center gap-2 text-[15px] font-semibold"><GitBranch className="h-4 w-4" />Core update source</h3>
-            <p className="mt-1 text-sm text-muted-foreground">Where core platform releases are discovered (System core, Server interface, dashboard).</p>
-          </div>
-          <Button size="sm" onClick={saveUpdateSource} disabled={sourceLoading || sourceSaving}>
-            {sourceSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Save
-          </Button>
-        </div>
-        <div className="grid gap-4 md:grid-cols-[minmax(180px,240px)_1fr]">
-          <div className="space-y-2">
-            <Label htmlFor="release-branch">Release branch</Label>
-            <Input id="release-branch" value={releaseBranch} onChange={(event) => setReleaseBranch(event.target.value)} disabled={sourceLoading || sourceSaving} placeholder="main" />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="release-repo-url">Repo URL</Label>
-            <Input id="release-repo-url" value={repoUrl} onChange={(event) => setRepoUrl(event.target.value)} disabled={sourceLoading || sourceSaving} placeholder="https://github.com/YouEye-Platform/YouEye" />
-          </div>
-        </div>
-        {sourceError && <p className="text-sm text-destructive">{sourceError}</p>}
-        {sourceMessage && <p className="text-sm text-muted-foreground">{sourceMessage}</p>}
-      </div>
 
       {/* Market System Manifests (admin) — image tracking + maintenance-window update flow (unchanged). */}
       <div className="space-y-3">

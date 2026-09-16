@@ -28,11 +28,11 @@ export function caddyManifest(): OCIManifest {
     },
     volumes: [
       // /data persists TLS certificates across container recreation
-      { host: '/var/lib/youeye/caddy/data', container: '/data' },
+      { kind: 'bind', host: '/var/lib/youeye/caddy/data', container: '/data' },
       // /config persists autosave.json (Caddy's --resume config) across container recreation.
       // Without this, container recreation loses the API-pushed config and Caddy falls back
       // to the default Caddyfile (:80 file_server), breaking HTTPS.
-      { host: '/var/lib/youeye/caddy/config', container: '/config' },
+      { kind: 'bind', host: '/var/lib/youeye/caddy/config', container: '/config' },
     ],
   };
 }
@@ -61,8 +61,8 @@ export function piholeManifest(hostIP: string): OCIManifest {
       FTLCONF_webserver_port: '80',
     },
     volumes: [
-      { host: '/var/lib/youeye/pihole/etc', container: '/etc/pihole' },
-      { host: '/var/lib/youeye/pihole/dnsmasq', container: '/etc/dnsmasq.d' },
+      { kind: 'bind', host: '/var/lib/youeye/pihole/etc', container: '/etc/pihole' },
+      { kind: 'bind', host: '/var/lib/youeye/pihole/dnsmasq', container: '/etc/dnsmasq.d' },
     ],
     // CRITICAL: pihole's port-53 proxy device is bound to the host's primary
     // LAN IP (see oci-deployer.ts:125-127). If the host's IP changes between
@@ -90,7 +90,7 @@ export function postgresManifest(password: string): OCIManifest {
       PGDATA: '/var/lib/postgresql/data',
     },
     volumes: [
-      { host: '/var/lib/youeye/postgres/data', container: '/var/lib/postgresql/data' },
+      { kind: 'bind', host: '/var/lib/youeye/postgres/data', container: '/var/lib/postgresql/data' },
     ],
   };
 }
@@ -106,5 +106,21 @@ export function uiContainerSpec(): LXDContainerSpec {
     nodeVersion: '22.x',
     appDir: '/opt/youeye-ui',
     port: 3000,
+  };
+}
+
+export function pointerContainerSpec(): LXDContainerSpec {
+  return {
+    name: 'pointer',
+    displayName: 'YouEye AI service',
+    containerName: 'youeye-pointer',
+    image: 'debian/12',
+    imageServer: 'https://images.linuxcontainers.org',
+    imageProtocol: 'simplestreams',
+    nodeVersion: '22.x',
+    appDir: '/opt/pointer',
+    port: 4001,
+    entryFile: 'server.js',
+    runtime: 'bun',
   };
 }

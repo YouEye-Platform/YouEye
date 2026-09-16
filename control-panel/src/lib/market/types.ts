@@ -114,6 +114,8 @@ export interface InstallConfig {
   sourceId?: string;
   sourceName?: string;
   sourceRepoUrl?: string;
+  /** In-memory acknowledgement required for the first install of an Added source. */
+  acceptUnverifiedPublisher?: boolean;
   /** Resolved manifest location and content hash used for catalog installs */
   manifestPath?: string;
   manifestRepo?: string;
@@ -160,6 +162,29 @@ export interface InstallConfig {
   }[];
   /** User's explicit internet/LAN access choice at install time */
   allowInternet?: boolean;
+  /**
+   * AI Settings choice. The route overwrites owner identity and all runtime
+   * fields server-side; callers may select only enabled/modelGroupId.
+   */
+  aiSettings?: {
+    enabled: boolean;
+    modelGroupId?: string;
+    ownerUserId?: string;
+    ownerDisplayName?: string;
+    /** In-memory only during install; never written to metadata or logs. */
+    runtimeCredential?: string;
+    externalInstallationId?: string;
+    pointerInstallationId?: string;
+    pointerInstanceId?: string;
+    pointerOwnerId?: string;
+    groupName?: string;
+    keyPreview?: string;
+  };
+  /** App data placement. Hidden when only one eligible pool exists. */
+  storage?: {
+    pool?: string;
+    placements?: Partial<Record<'config' | 'data' | 'media', string>>;
+  };
 }
 
 /** A connection approved by the user at install time */
@@ -187,6 +212,9 @@ export interface ContainerMeta {
     type: 'http' | 'postgres' | 'none';
     path?: string;
     timeout?: number;
+    retries?: number;
+    startPeriod?: number;
+    autoRestart?: boolean;
   };
 }
 
@@ -196,8 +224,29 @@ export interface CredentialMeta {
   passwordSecret: string;
 }
 
+export interface StorageVolumeMeta {
+  appId: string;
+  name: string;
+  logicalName: string;
+  pool: string;
+  containerName: string;
+  containerPath: string;
+  type: 'config' | 'data' | 'media';
+  sharedGroup?: string;
+  sourcePath?: string;
+  attachmentOnly?: boolean;
+  readOnly: boolean;
+  backup: true;
+}
+
 export interface InstallMetadata {
   appId: string;
+  /** Durable lifecycle marker. `installing` is the restart-recovery map; `active` is user-visible state. */
+  lifecycleState?: 'installing' | 'active';
+  /** Restores retain pre-existing datasets when an interrupted install is reconciled. */
+  recoveryPreserveData?: boolean;
+  /** Exact Incus custom-volume ownership and attachment map. */
+  storageVolumes?: StorageVolumeMeta[];
   catalogKey?: string;
   itemKind?: 'app' | string;
   sourceId?: string;
@@ -207,6 +256,17 @@ export interface InstallMetadata {
   manifestRepo?: string;
   manifestBranch?: string;
   manifestDigest?: string;
+  nativeArtifacts?: Array<{
+    containerName: string;
+    sourceRepo: string;
+    releaseTag: string;
+    version: string;
+    artifactName: 'standalone.tar';
+    sha256: string;
+    bytes: number;
+    signature: 'unsigned' | 'verified-development';
+    signatureKeyId?: string;
+  }>;
   integration: 'native' | 'basic';
   subdomain: string;
   domain: string;
@@ -215,13 +275,44 @@ export interface InstallMetadata {
   protectWithAccountLogin?: boolean;
   installedAt: string;
   installedVersion?: string;
+  /** Catalog version at install time — persisted so update detection never
+   *  starts from a null baseline (0.5.5 install-metadata fix) */
+  catalogVersion?: string;
   /** False when the owner intentionally turned this app off */
   enabled?: boolean;
   /** Persisted desired runtime state for watchdog/reboot reconciliation */
   desiredState?: 'running' | 'stopped';
+  /** Owner-controlled automatic recovery policy; defaults to enabled. */
+  autoRestart?: boolean;
+  /** Durable route description used by reconciliation to recreate every entrance. */
+  entrances?: {
+    name: string;
+    path: string;
+    port: number;
+    container?: string;
+    protocol?: 'http' | 'tcp';
+    authLevel?: 'private' | 'public' | 'internal' | 'none';
+    stripPath?: boolean;
+  }[];
   disabledAt?: string;
   disabledBy?: string;
   lastPowerAction?: 'start' | 'stop' | 'restart';
+  /** Crash-safe lifecycle intent and per-container convergence record. */
+  lifecycleOperation?: {
+    id: string;
+    action: 'start' | 'stop' | 'restart';
+    desiredState: 'running' | 'stopped';
+    state: 'applying' | 'completed' | 'partial';
+    actor: string;
+    startedAt: string;
+    updatedAt: string;
+    error?: string;
+    containers: Array<{
+      name: string;
+      bootAutostart: 'pending' | 'applied';
+      runtime: 'pending' | 'applied';
+    }>;
+  };
   containers: ContainerMeta[];
   ssoSlug?: string;
   ssoClientId?: string;
@@ -246,6 +337,9 @@ export interface InstallMetadata {
   ssoEntryUrl?: string;
   /** Database mode from manifest — used by ACL migration to determine postgres access */
   databaseMode?: 'shared' | 'own' | 'none';
+  /** Exact shared-database resources recorded before creation for restart-safe cleanup. */
+  databaseName?: string;
+  databaseUser?: string;
   /** Whether this app has SSO configured — used by ACL migration to determine identity access */
   hasSSO?: boolean;
   /** Capability types this app provides (from manifest `provides` field) */
@@ -253,6 +347,25 @@ export interface InstallMetadata {
   /** Connection wants this app declares (from manifest `wants` field). Persisted so the
    *  reverse-scan can suggest connections to existing consumers when a provider installs. */
   wants?: WantSpec[];
+  /** Non-secret Pointer lifecycle state for a Market-managed AI connection. */
+  aiConnection?: {
+    externalInstallationId: string;
+    pointerInstallationId: string;
+    pointerInstanceId: string;
+    ownerUserId: string;
+    pointerOwnerId: string;
+    modelGroupId: string;
+    groupName: string;
+    keyPreview: string;
+    credentialSecret: 'pointer_api_key';
+    defaultModel: 'default';
+    state: 'active' | 'disabled' | 'needs_attention';
+  };
+  /** Crash-recovery owner recorded before Pointer provisioning begins. */
+  aiConnectionPending?: {
+    externalInstallationId: string;
+    ownerUserId: string;
+  };
   /** @deprecated All apps use per-app bridge networking now. Kept for install.json compat. */
   usePerAppBridge?: boolean;
   /** Required migration gates already completed for this install. */
@@ -304,6 +417,8 @@ export interface AppStatusInfo {
   updateAvailable?: boolean;
   healthStatus?: 'healthy' | 'unhealthy' | 'unknown';
   healthCheckedAt?: string | null;
+  storageStatus?: 'connected' | 'disconnected';
+  storageDetail?: string;
   forwardAuthEnabled?: boolean;
   catalogKey?: string;
   sourceId?: string;
@@ -394,6 +509,15 @@ export interface VariableContext {
     from: string;
     security: string;
   };
+  ai: {
+    enabled: boolean;
+    openaiBaseUrl: string;
+    anthropicBaseUrl: string;
+    googleBaseUrl: string;
+    apiKey: string;
+    defaultModel: string;
+    groupId: string;
+  };
   secrets: Record<string, string>;
   installParams: Record<string, string>;
 
@@ -404,9 +528,8 @@ export interface VariableContext {
     to: { id: string; host: string; port?: number; apiKey?: string; url?: string };
   };
 
-  // Legacy aliases — kept for SSO step compat (v1 manifests reference these)
+  // Manifest aliases retained by the current v1 schema.
   install: { url: string; subdomain: string; domain: string };
-  authentik: { externalUrl: string; internalUrl: string; name: string };
   container: { ip: string; port: number };
 }
 
@@ -498,6 +621,7 @@ export interface MarketApp {
     widgets?: boolean;
     notifications?: boolean | 'push';
     smtp?: boolean;
+    ai_api?: boolean;
     link_handlers?: Array<{ type: string; description: string; endpoint?: string; triggers: string[] }>;
   };
   surfaces?: SurfaceSpec[];
@@ -515,6 +639,10 @@ export interface RestoreOptions {
   skipSecrets: boolean;
   skipDatabase: boolean;
   skipConfigFiles: boolean;
+  runtimeImages?: Record<string, string>;
+  runtimeInstances?: Record<string, { archivePath: string; pool: string }>;
+  /** Imported recovery volumes owned by this transaction and removed on rollback. */
+  recoveryCreatedStorage?: string[];
 }
 
 // ─── Uninstall Options ────────────────────────────────────
@@ -527,8 +655,10 @@ export interface UninstallOptions {
 
 export interface UninstallVerification {
   containerRemoved: boolean;
+  networkRemoved: boolean;
+  leaseReleased: boolean;
   caddyRouteRemoved: boolean;
-  authentikAppRemoved: boolean;
+  identityClientRemoved: boolean;
   dnsRemoved: boolean;
   databaseDropped: boolean | null;
   dataRemoved: boolean | null;
@@ -537,7 +667,7 @@ export interface UninstallVerification {
 
 // ─── Orphan Resource ──────────────────────────────────────
 
-export type OrphanType = 'caddy-route' | 'authentik-app' | 'authentik-provider' | 'postgres-db' | 'dns-entry' | 'volume-dir' | 'container';
+export type OrphanType = 'caddy-route' | 'postgres-db' | 'dns-entry' | 'storage-volume' | 'container';
 
 export interface OrphanResource {
   type: OrphanType;

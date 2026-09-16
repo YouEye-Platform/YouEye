@@ -1,29 +1,27 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { KeyRound, Loader2, Plus, RefreshCw, ShieldCheck, X } from "lucide-react";
+import { Loader2, Plus, RefreshCw, ShieldCheck, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { IDENTITY_PASSWORD_MAX_LENGTH, IDENTITY_PASSWORD_MIN_LENGTH, validateIdentityPassword } from "@/lib/identity/password-policy";
 
 interface IdentityUser {
   pk?: string | number;
   id?: string | number;
   username: string;
   name: string;
+  firstName: string;
+  lastName: string;
   email: string;
   is_active: boolean;
   is_superuser: boolean;
   last_login: string | null;
   type?: string;
   path?: string;
-}
-
-function isSystemUser(user: IdentityUser) {
-  if (user.username === "akadmin") return true;
-  if (user.type === "service_account" || user.type === "internal_service_account") return true;
-  return !!user.path?.includes("goauthentik.io");
 }
 
 function userId(user: IdentityUser) {
@@ -38,13 +36,6 @@ function initialsOf(user: IdentityUser) {
     .join("")
     .toUpperCase()
     .slice(0, 2);
-}
-
-const TILE_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ec4899", "#8b5cf6", "#14b8a6"];
-function tileColor(key: string) {
-  let hash = 0;
-  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-  return TILE_COLORS[hash % TILE_COLORS.length];
 }
 
 function lastSeen(iso: string | null) {
@@ -65,29 +56,30 @@ function lastSeen(iso: string | null) {
 export function UsersClient() {
   const [users, setUsers] = useState<IdentityUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showSystem, setShowSystem] = useState(false);
   const [error, setError] = useState("");
-  const [siteName, setSiteName] = useState("YouEye");
-  const [serverIp, setServerIp] = useState<string | null>(null);
 
   // Create ("Add person")
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const [newUsername, setNewUsername] = useState("");
-  const [newName, setNewName] = useState("");
+  const [newFirstName, setNewFirstName] = useState("");
+  const [newLastName, setNewLastName] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [newRepeatPassword, setNewRepeatPassword] = useState("");
   const [newRole, setNewRole] = useState<"user" | "admin">("user");
   const [newActive, setNewActive] = useState(true);
 
   // Manage
   const [manage, setManage] = useState<IdentityUser | null>(null);
-  const [mName, setMName] = useState("");
+  const [mFirstName, setMFirstName] = useState("");
+  const [mLastName, setMLastName] = useState("");
   const [mEmail, setMEmail] = useState("");
   const [mAdmin, setMAdmin] = useState(false);
   const [mActive, setMActive] = useState(true);
   const [mPassword, setMPassword] = useState("");
+  const [mRepeatPassword, setMRepeatPassword] = useState("");
   const [mBusy, setMBusy] = useState(false);
   const [mError, setMError] = useState("");
   const [deleteArmed, setDeleteArmed] = useState(false);
@@ -109,24 +101,20 @@ export function UsersClient() {
     load();
   }, [load]);
 
-  useEffect(() => {
-    fetch("/api/setup/config")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((config) => {
-        if (!config) return;
-        if (config.site_name) setSiteName(config.site_name);
-        if (config.ip) setServerIp(config.ip);
-      })
-      .catch(() => {});
-  }, []);
-
-  const visible = showSystem ? users : users.filter((user) => !isSystemUser(user));
+  async function mutationHeaders() {
+	const response = await fetch("/settings/api/auth/csrf", { cache: "no-store" });
+	const body = await response.json();
+	if (!response.ok || !body.csrfToken) throw new Error("Could not prepare a protected request");
+	return { "Content-Type": "application/json", "X-CSRF-Token": body.csrfToken as string };
+  }
 
   function resetCreateForm() {
     setNewUsername("");
-    setNewName("");
+    setNewFirstName("");
+    setNewLastName("");
     setNewEmail("");
     setNewPassword("");
+    setNewRepeatPassword("");
     setNewRole("user");
     setNewActive(true);
     setCreateError("");
@@ -134,19 +122,30 @@ export function UsersClient() {
 
   async function createUser() {
     const username = newUsername.trim();
-    const name = newName.trim();
+    const firstName = newFirstName.trim();
+    const lastName = newLastName.trim();
     const email = newEmail.trim();
     setCreateError("");
-    if (!username || !name || !newPassword) {
-      setCreateError("Username, display name, and password are required");
+    if (!firstName || !username || !email || !newPassword || !newRepeatPassword) {
+      setCreateError("First name, username, email, password, and repeat password are required");
       return;
     }
+	if (newPassword !== newRepeatPassword) {
+	  setCreateError("Passwords do not match");
+	  return;
+	}
+	const passwordError = validateIdentityPassword(newPassword);
+	if (passwordError) {
+	  setCreateError(passwordError);
+	  return;
+	}
     setCreating(true);
     try {
+	  const headers = await mutationHeaders();
       const res = await fetch("/api/apps/identity/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, name, email, password: newPassword, is_active: newActive, isAdmin: newRole === "admin" }),
+		method: "POST",
+		headers,
+        body: JSON.stringify({ username, firstName, lastName, email, password: newPassword, repeatPassword: newRepeatPassword, is_active: newActive, isAdmin: newRole === "admin" }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to add person");
       setCreateOpen(false);
@@ -161,11 +160,13 @@ export function UsersClient() {
 
   function openManage(user: IdentityUser) {
     setManage(user);
-    setMName(user.name || "");
+    setMFirstName(user.firstName || user.name?.split(" ")[0] || "");
+    setMLastName(user.lastName || "");
     setMEmail(user.email || "");
     setMAdmin(user.is_superuser);
     setMActive(user.is_active);
     setMPassword("");
+    setMRepeatPassword("");
     setMError("");
     setDeleteArmed(false);
   }
@@ -174,18 +175,32 @@ export function UsersClient() {
     if (!manage) return;
     setMBusy(true);
     setMError("");
+	if (mPassword) {
+	  if (mPassword !== mRepeatPassword) {
+		setMError("Passwords do not match");
+		setMBusy(false);
+		return;
+	  }
+	  const passwordError = validateIdentityPassword(mPassword);
+	  if (passwordError) {
+		setMError(passwordError);
+		setMBusy(false);
+		return;
+	  }
+	}
     try {
+	  const headers = await mutationHeaders();
       const res = await fetch(`/api/apps/identity/users/${userId(manage)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: mName.trim(), email: mEmail.trim(), is_active: mActive, is_superuser: mAdmin }),
+		method: "PATCH",
+		headers,
+        body: JSON.stringify({ firstName: mFirstName.trim(), lastName: mLastName.trim(), email: mEmail.trim(), is_active: mActive, is_superuser: mAdmin }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Save failed");
       if (mPassword) {
         const pr = await fetch(`/api/apps/identity/users/${userId(manage)}/password`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password: mPassword }),
+		  headers,
+          body: JSON.stringify({ password: mPassword, repeatPassword: mRepeatPassword }),
         });
         if (!pr.ok) throw new Error((await pr.json().catch(() => ({}))).error || "Password update failed");
       }
@@ -203,7 +218,8 @@ export function UsersClient() {
     setMBusy(true);
     setMError("");
     try {
-      const res = await fetch(`/api/apps/identity/users/${userId(manage)}`, { method: "DELETE" });
+	  const headers = await mutationHeaders();
+	  const res = await fetch(`/api/apps/identity/users/${userId(manage)}`, { method: "DELETE", headers });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Remove failed");
       setManage(null);
       await load();
@@ -224,11 +240,8 @@ export function UsersClient() {
       {/* People list */}
       <Card className="gap-0 py-0">
         <div className="flex items-center justify-between gap-4 border-b p-4">
-          <h2 className="text-[15px] font-semibold">{loading ? "People" : `${visible.length} ${visible.length === 1 ? "person" : "people"}`}</h2>
+          <h2 className="text-[15px] font-semibold">{loading ? "People" : `${users.length} ${users.length === 1 ? "person" : "people"}`}</h2>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setShowSystem((v) => !v)}>
-              {showSystem ? "Hide system" : "Show system"}
-            </Button>
             <Button variant="ghost" size="icon-sm" onClick={load} aria-label="Refresh">
               <RefreshCw className="size-4" />
             </Button>
@@ -244,15 +257,14 @@ export function UsersClient() {
           </div>
         ) : error ? (
           <div className="p-6 text-sm text-destructive">{error}</div>
-        ) : visible.length === 0 ? (
+        ) : users.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">No people yet. Add the first person above.</div>
         ) : (
           <div className="divide-y">
-            {visible.map((user) => (
+            {users.map((user) => (
               <div key={userId(user) || user.username} className={`flex items-center gap-3 p-4 ${user.is_active ? "" : "opacity-60"}`}>
                 <div
-                  className="flex size-8 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold text-white"
-                  style={{ background: tileColor(user.username) }}
+                  className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[12px] font-semibold text-primary"
                 >
                   {initialsOf(user)}
                 </div>
@@ -280,40 +292,6 @@ export function UsersClient() {
         )}
       </Card>
 
-      {/* Sign-in */}
-      <Card className="gap-0 py-0">
-        <div className="border-b p-4">
-          <h2 className="text-[15px] font-semibold">Sign-in</h2>
-        </div>
-        <div className="divide-y">
-          <div className="flex items-center gap-3 p-4">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
-              <ShieldCheck className="size-4" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="font-medium">{siteName} ID</p>
-              <p className="text-[13px] text-muted-foreground">Everyone signs in with their server account, on every app</p>
-            </div>
-            <span className="flex shrink-0 items-center gap-1.5 text-[13px] text-muted-foreground">
-              <span className="inline-block size-2 rounded-full bg-green-500" />
-              Active
-            </span>
-          </div>
-          <div className="flex items-center gap-3 p-4">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
-              <KeyRound className="size-4" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="font-medium">Emergency local access</p>
-              <p className="text-[13px] text-muted-foreground">
-                {serverIp ? `http://${serverIp}:3000` : "the server's local address on port 3000"} — admin sign-in with the server password
-              </p>
-            </div>
-            <span className="shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Always on</span>
-          </div>
-        </div>
-      </Card>
-
       {/* Add person modal */}
       {createOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
@@ -329,20 +307,28 @@ export function UsersClient() {
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="new-username">Username</Label>
-                <Input id="new-username" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} disabled={creating} />
+                <Label htmlFor="new-first-name">First name</Label>
+                <Input id="new-first-name" value={newFirstName} onChange={(e) => setNewFirstName(e.target.value)} disabled={creating} autoComplete="given-name" />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="new-name">Display name</Label>
-                <Input id="new-name" value={newName} onChange={(e) => setNewName(e.target.value)} disabled={creating} />
+                <Label htmlFor="new-last-name">Last name <span className="text-muted-foreground">(optional)</span></Label>
+                <Input id="new-last-name" value={newLastName} onChange={(e) => setNewLastName(e.target.value)} disabled={creating} autoComplete="family-name" />
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="new-username">Username</Label>
+                <Input id="new-username" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} disabled={creating} autoComplete="username" />
               </div>
               <div className="space-y-2 sm:col-span-2">
                 <Label htmlFor="new-email">Email</Label>
                 <Input id="new-email" type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} disabled={creating} />
               </div>
-              <div className="space-y-2 sm:col-span-2">
+              <div className="space-y-2">
                 <Label htmlFor="new-password">Password</Label>
-                <Input id="new-password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} disabled={creating} />
+				<Input id="new-password" type="password" minLength={IDENTITY_PASSWORD_MIN_LENGTH} maxLength={IDENTITY_PASSWORD_MAX_LENGTH} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} disabled={creating} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="new-repeat-password">Repeat password</Label>
+                <Input id="new-repeat-password" type="password" minLength={IDENTITY_PASSWORD_MIN_LENGTH} maxLength={IDENTITY_PASSWORD_MAX_LENGTH} value={newRepeatPassword} onChange={(e) => setNewRepeatPassword(e.target.value)} disabled={creating} />
               </div>
             </div>
             <div className="space-y-2">
@@ -364,10 +350,7 @@ export function UsersClient() {
                 ))}
               </div>
             </div>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={newActive} onChange={(e) => setNewActive(e.target.checked)} disabled={creating} />
-              <span>Active</span>
-            </label>
+            <div className="flex items-center justify-between gap-3 text-sm"><Label htmlFor="new-active">Active</Label><Switch id="new-active" checked={newActive} onCheckedChange={setNewActive} disabled={creating} /></div>
             {createError && <p className="text-sm text-destructive">{createError}</p>}
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => { setCreateOpen(false); resetCreateForm(); }} disabled={creating}>
@@ -397,10 +380,14 @@ export function UsersClient() {
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="m-name">Display name</Label>
-                <Input id="m-name" value={mName} onChange={(e) => setMName(e.target.value)} disabled={mBusy} />
+                <Label htmlFor="m-first-name">First name</Label>
+                <Input id="m-first-name" value={mFirstName} onChange={(e) => setMFirstName(e.target.value)} disabled={mBusy} />
               </div>
               <div className="space-y-2">
+                <Label htmlFor="m-last-name">Last name <span className="text-muted-foreground">(optional)</span></Label>
+                <Input id="m-last-name" value={mLastName} onChange={(e) => setMLastName(e.target.value)} disabled={mBusy} />
+              </div>
+              <div className="space-y-2 sm:col-span-2">
                 <Label htmlFor="m-email">Email</Label>
                 <Input id="m-email" type="email" value={mEmail} onChange={(e) => setMEmail(e.target.value)} disabled={mBusy} />
               </div>
@@ -424,20 +411,25 @@ export function UsersClient() {
                 ))}
               </div>
             </div>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={mActive} onChange={(e) => setMActive(e.target.checked)} disabled={mBusy} />
-              <span>Active (can sign in)</span>
-            </label>
+            <div className="flex items-center justify-between gap-3 text-sm"><Label htmlFor="manage-active">Active (can sign in)</Label><Switch id="manage-active" checked={mActive} onCheckedChange={setMActive} disabled={mBusy} /></div>
+            <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="m-password">Reset password</Label>
               <Input
                 id="m-password"
                 type="password"
-                value={mPassword}
+				value={mPassword}
+				minLength={IDENTITY_PASSWORD_MIN_LENGTH}
+				maxLength={IDENTITY_PASSWORD_MAX_LENGTH}
                 onChange={(e) => setMPassword(e.target.value)}
                 disabled={mBusy}
                 placeholder="Leave blank to keep current"
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="m-repeat-password">Repeat password</Label>
+              <Input id="m-repeat-password" type="password" value={mRepeatPassword} minLength={IDENTITY_PASSWORD_MIN_LENGTH} maxLength={IDENTITY_PASSWORD_MAX_LENGTH} onChange={(e) => setMRepeatPassword(e.target.value)} disabled={mBusy} placeholder="Leave blank to keep current" />
+            </div>
             </div>
             {mError && <p className="text-sm text-destructive">{mError}</p>}
             <div className="flex items-center justify-between gap-2 border-t pt-4">

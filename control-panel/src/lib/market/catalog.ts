@@ -6,14 +6,14 @@
  * from arbitrary repo URL (any repo with youeye-app.yaml).
  */
 
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile, writeFile, mkdir, rename } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
 import { parseBundle, parseCatalog, parseIntegrationManifest, parseManifest, parseStore, parseSystemManifest, parseUpdatePlan } from './parser';
 import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp, MarketBundle, MarketCategory, MarketCuration, MigrationSpec, StoreDescriptor, SystemAppManifest, SystemCatalogEntry, UpdatePlanCatalogEntry } from './types';
 import { settingsService } from '@/lib/settings';
-import { buildMarketRawURL, getMarketSource, getMarketSources, isGitHubMarketSource, type MarketSource } from './source';
+import { buildMarketRawURL, getMarketSource, getMarketSources, isGitHubMarketSource, recordMarketSourceResolution, resolveMarketSourceCommit, type MarketSource } from './source';
 
 const CATALOG_CACHE_DIR = '/var/lib/youeye';
 const CATALOG_CACHE_PATH = path.join(CATALOG_CACHE_DIR, 'catalog-cache.json');
@@ -30,6 +30,12 @@ export interface ManifestReference {
 export interface ManifestFetchResult {
   manifest: AppManifest;
   reference: ManifestReference;
+}
+
+export interface ResolvedCatalogApp extends ManifestFetchResult {
+  source: MarketSource;
+  entry: CatalogEntry;
+  configuredSourceRepoUrls: string[];
 }
 
 export interface IntegrationManifestFetchResult {
@@ -49,7 +55,29 @@ export interface SystemManifestFetchResult {
 
 // ─── Branch Resolution ────────────────────────────────────
 
-export async function getEffectiveBranch(): Promise<string> {
+/**
+ * The branch a catalog/manifest fetch reads from.
+ *
+ * The branch is now a property of each MarketSource (`source.branch`, default
+ * "main") rather than a single global `release_branch`. Callers that already
+ * hold a source should pass it. For repo-type entries of INSTALLED native apps,
+ * the per-app channel branch (release_channels) takes precedence — resolved by
+ * installed-apps.ts, not here.
+ *
+ * When no source is supplied this resolves the primary market source's branch,
+ * falling back to the legacy `release_branch` for un-migrated boxes and finally
+ * to "main". This keeps behavior identical for callers that never adopted the
+ * per-source branch.
+ */
+export async function getEffectiveBranch(source?: MarketSource): Promise<string> {
+  if (source?.resolved_commit) return source.resolved_commit;
+  if (source?.branch) return source.branch;
+  try {
+    const primary = await getMarketSource();
+    if (primary.branch) return primary.branch;
+  } catch {
+    // fall through to legacy/global
+  }
   try {
     const config = await settingsService.getRaw();
     return config.release_branch || DEFAULT_BRANCH;
@@ -60,7 +88,7 @@ export async function getEffectiveBranch(): Promise<string> {
 
 // ─── File Fetching ────────────────────────────────────────
 
-export async function fetchFile(filePath: string, branch?: string, marketSource?: MarketSource): Promise<string> {
+export async function fetchFile(filePath: string, branch?: string, marketSource?: MarketSource, allowMainFallback = true): Promise<string> {
   const source = marketSource || await getMarketSource();
   const owner = source.organization;
   const repo = source.repository;
@@ -68,7 +96,7 @@ export async function fetchFile(filePath: string, branch?: string, marketSource?
   const url = buildMarketRawURL(source, owner, repo, filePath, effectiveBranch);
   const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
 
-  if (!res.ok && effectiveBranch !== DEFAULT_BRANCH) {
+  if (!res.ok && allowMainFallback && effectiveBranch !== DEFAULT_BRANCH) {
     const fallbackUrl = buildMarketRawURL(source, owner, repo, filePath, DEFAULT_BRANCH);
     const fallbackRes = await fetch(fallbackUrl, { signal: AbortSignal.timeout(15_000) });
     if (!fallbackRes.ok) throw new Error(`Failed to fetch ${filePath}: ${fallbackRes.status}`);
@@ -109,9 +137,7 @@ function digestManifest(yamlText: string): string {
 
 export async function fetchCatalog(marketSource?: MarketSource): Promise<Catalog> {
   if (marketSource) {
-    const branch = await getEffectiveBranch();
-    const yamlText = await fetchFile('catalog.yaml', branch, marketSource);
-    return parseCatalog(yamlText);
+    return fetchValidatedSourceCatalog(marketSource);
   }
 
   if (catalogCache && Date.now() - catalogCacheTime < CACHE_TTL) {
@@ -119,9 +145,8 @@ export async function fetchCatalog(marketSource?: MarketSource): Promise<Catalog
   }
 
   try {
-    const branch = await getEffectiveBranch();
-    const yamlText = await fetchFile('catalog.yaml', branch);
-    catalogCache = parseCatalog(yamlText);
+    const source = await getMarketSource();
+    catalogCache = await fetchValidatedSourceCatalog(source);
     catalogCacheTime = Date.now();
     saveCatalogToFile(catalogCache).catch(() => {});
     return catalogCache;
@@ -133,6 +158,30 @@ export async function fetchCatalog(marketSource?: MarketSource): Promise<Catalog
       return catalogCache;
     }
     throw err;
+  }
+}
+
+async function fetchValidatedSourceCatalog(source: MarketSource): Promise<Catalog> {
+  const previousCommit = source.resolved_commit;
+  try {
+    const commit = await resolveMarketSourceCommit(source);
+    const yamlText = await fetchFile('catalog.yaml', commit, source, false);
+    const catalog = parseCatalog(yamlText);
+    source.resolved_commit = commit;
+    source.resolved_at = new Date().toISOString();
+    source.refresh_error = undefined;
+    await recordMarketSourceResolution(source.id, { commit });
+    return catalog;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Market refresh failed';
+    source.refresh_error = message;
+    await recordMarketSourceResolution(source.id, { error: message }).catch(() => {});
+    if (previousCommit) {
+      const yamlText = await fetchFile('catalog.yaml', previousCommit, source, false);
+      source.resolved_commit = previousCommit;
+      return parseCatalog(yamlText);
+    }
+    throw error;
   }
 }
 
@@ -149,12 +198,12 @@ export async function fetchManifest(appId: string): Promise<AppManifest> {
   }
 
   const catalog = await fetchCatalog();
-  const branch = await getEffectiveBranch();
+  const source = await getMarketSource();
+  const branch = await getEffectiveBranch(source);
   const entry = catalog.apps.find(e => e.id === appId);
 
   if (!entry) throw new Error(`App "${appId}" not found in catalog`);
 
-  const source = await getMarketSource();
   const result = await fetchManifestFromCatalogEntry(entry, branch, source);
 
   manifestCache.set(appId, { manifest: result.manifest, reference: result.reference, fetchedAt: Date.now() });
@@ -180,13 +229,83 @@ export async function fetchManifestFromSource(appId: string, sourceId?: string):
   }
 
   const catalog = await fetchCatalog(source);
-  const branch = await getEffectiveBranch();
+  const branch = await getEffectiveBranch(source);
   const entry = catalog.apps.find((e) => e.id === appId);
   if (!entry) throw new Error(`App "${appId}" not found in Market source "${sourceId}"`);
 
   const result = await fetchManifestFromCatalogEntry(entry, branch, source);
   manifestCache.set(cacheKey, { manifest: result.manifest, reference: result.reference, fetchedAt: Date.now() });
   return result.manifest;
+}
+
+/**
+ * Resolve an app against the exact recorded Market source identity. When old
+ * installed-apps and install.json records disagree, try each recorded source
+ * in order and keep the first pair that actually contains the app. Never fall
+ * back to an unrelated source after an explicit recorded identity is present.
+ */
+export async function resolveCatalogApp(
+  appId: string,
+  sourceIds: Array<string | null | undefined> = [],
+): Promise<ResolvedCatalogApp> {
+  const requestedSourceIds = sourceIds
+    .map((sourceId) => sourceId?.trim())
+    .filter((sourceId, index): sourceId is string => (
+      !!sourceId && sourceIds.findIndex((candidate) => candidate?.trim() === sourceId) === index
+    ));
+  const configuredSources = await getMarketSources();
+  const sources = configuredSources.length > 0
+    ? configuredSources
+    : [await getMarketSource()];
+  const candidates = requestedSourceIds.length > 0
+    ? requestedSourceIds
+    : [sources[0].id];
+  const failures: string[] = [];
+
+  for (const sourceId of candidates) {
+    const source = sources.find((candidate) => candidate.id === sourceId);
+    if (!source) {
+      failures.push(`${sourceId}: source is not configured or enabled`);
+      continue;
+    }
+
+    let catalog: Catalog;
+    try {
+      catalog = await fetchCatalog(source);
+    } catch {
+      failures.push(`${sourceId}: catalog could not be loaded`);
+      continue;
+    }
+
+    const entry = catalog.apps.find((candidate) => candidate.id === appId);
+    if (!entry) {
+      failures.push(`${sourceId}: app is not present`);
+      continue;
+    }
+
+    let result: ManifestFetchResult;
+    try {
+      result = await fetchManifestFromCatalogEntry(entry, await getEffectiveBranch(source), source);
+    } catch {
+      failures.push(`${sourceId}: app manifest could not be loaded`);
+      continue;
+    }
+    manifestCache.set(`${source.id}:app:${appId}`, {
+      manifest: result.manifest,
+      reference: result.reference,
+      fetchedAt: Date.now(),
+    });
+    return {
+      source,
+      entry,
+      configuredSourceRepoUrls: sources.map((candidate) => candidate.repo_url),
+      ...result,
+    };
+  }
+
+  throw new Error(
+    `App "${appId}" could not be resolved from its recorded Market source (${failures.join('; ')})`,
+  );
 }
 
 export async function fetchManifestReferenceFromSource(appId: string, sourceId?: string): Promise<ManifestReference> {
@@ -196,7 +315,7 @@ export async function fetchManifestReferenceFromSource(appId: string, sourceId?:
   if (!source) throw new Error(`Market source "${sourceId}" not found`);
 
   const catalog = await fetchCatalog(source);
-  const branch = await getEffectiveBranch();
+  const branch = await getEffectiveBranch(source);
   const entry = catalog.apps.find((e) => e.id === appId);
   if (!entry) throw new Error(`App "${appId}" not found in Market source "${source.id}"`);
 
@@ -210,7 +329,7 @@ export async function fetchIntegrationManifestFromSource(integrationId: string, 
   if (!source) throw new Error(`Market source "${sourceId}" not found`);
 
   const catalog = await fetchCatalog(source);
-  const branch = await getEffectiveBranch();
+  const branch = await getEffectiveBranch(source);
   const entry = (catalog.integrations ?? []).find((e) => e.id === integrationId);
   if (!entry) throw new Error(`Integration "${integrationId}" not found in Market source "${source.id}"`);
 
@@ -225,7 +344,7 @@ export async function fetchIntegrationManifestReferenceFromSource(integrationId:
   if (!source) throw new Error(`Market source "${sourceId}" not found`);
 
   const catalog = await fetchCatalog(source);
-  const branch = await getEffectiveBranch();
+  const branch = await getEffectiveBranch(source);
   const entry = (catalog.integrations ?? []).find((e) => e.id === integrationId);
   if (!entry) throw new Error(`Integration "${integrationId}" not found in Market source "${source.id}"`);
 
@@ -239,7 +358,7 @@ export async function fetchUpdatePlanMigrationsFromSource(appId: string, sourceI
   if (!source) throw new Error(`Market source "${sourceId}" not found`);
 
   const catalog = await fetchCatalog(source);
-  const branch = await getEffectiveBranch();
+  const branch = await getEffectiveBranch(source);
   const entries = (catalog.updatePlans ?? []).filter((entry) => entry.appId === appId);
   const migrations: MigrationSpec[] = [];
   const references: ManifestReference[] = [];
@@ -495,7 +614,7 @@ function getDisplayIntegrations(manifest: AppManifest): NonNullable<MarketApp['i
   return integrations;
 }
 
-function manifestToMarketApp(manifest: AppManifest, source?: MarketSource, reference?: ManifestReference): MarketApp {
+export function manifestToMarketApp(manifest: AppManifest, source?: MarketSource, reference?: ManifestReference): MarketApp {
   const hasNotificationSurface = manifest.surfaces.some(
     (surface) => surface.kind === 'notification' && surface.placement === 'notification-center'
   );
@@ -503,6 +622,7 @@ function manifestToMarketApp(manifest: AppManifest, source?: MarketSource, refer
     widgets: manifest.capabilities?.widgets,
     notifications: manifest.capabilities?.notifications || (hasNotificationSurface ? true : undefined),
     smtp: manifest.capabilities?.smtp,
+    ai_api: manifest.capabilities?.ai_api,
     link_handlers: manifest.capabilities?.link_handlers,
   } : undefined;
 
@@ -697,7 +817,7 @@ export async function fetchAvailableApps(): Promise<MarketApp[]> {
 
   const results = await Promise.allSettled(sources.flatMap(async (source) => {
     const catalog = await fetchCatalog(source);
-    const branch = await getEffectiveBranch();
+    const branch = await getEffectiveBranch(source);
     const appItems = await Promise.all(catalog.apps.map(async (entry) => {
       const result = await fetchManifestFromCatalogEntry(entry, branch, source);
       return manifestToMarketApp(result.manifest, source, result.reference);
@@ -763,10 +883,10 @@ export async function fetchCuration(): Promise<MarketCuration | null> {
  */
 export async function fetchBundles(): Promise<MarketBundle[]> {
   const sources = await getMarketSources();
-  const branch = await getEffectiveBranch();
   const out: MarketBundle[] = [];
   const seen = new Set<string>();
   for (const source of sources) {
+    const branch = await getEffectiveBranch(source);
     let catalog: Catalog;
     try {
       catalog = await fetchCatalog(source);
@@ -800,7 +920,7 @@ export async function fetchBundle(id: string): Promise<MarketBundle | null> {
  */
 export async function fetchStoreDescriptor(marketSource?: MarketSource): Promise<StoreDescriptor | null> {
   try {
-    const branch = await getEffectiveBranch();
+    const branch = await getEffectiveBranch(marketSource);
     const yamlText = await fetchFile('store.yaml', branch, marketSource);
     return parseStore(yamlText);
   } catch {
@@ -814,7 +934,7 @@ export async function fetchAvailableSystemApps(): Promise<MarketApp[]> {
 
   const results = await Promise.allSettled(sources.flatMap(async (source) => {
     const catalog = await fetchCatalog(source);
-    const branch = await getEffectiveBranch();
+    const branch = await getEffectiveBranch(source);
     return Promise.all((catalog.system ?? []).map(async (entry) => {
       const result = await fetchSystemManifestFromCatalogEntry(entry, branch, source);
       return systemManifestToMarketApp(result.manifest, source, result.reference);
@@ -885,7 +1005,9 @@ interface CatalogCacheFile {
 async function saveCatalogToFile(catalog: Catalog): Promise<void> {
   try {
     if (!existsSync(CATALOG_CACHE_DIR)) await mkdir(CATALOG_CACHE_DIR, { recursive: true });
-    await writeFile(CATALOG_CACHE_PATH, JSON.stringify({ catalog, savedAt: new Date().toISOString() }, null, 2));
+    const temporary = `${CATALOG_CACHE_PATH}.tmp-${process.pid}-${Date.now()}`;
+    await writeFile(temporary, JSON.stringify({ catalog, savedAt: new Date().toISOString() }, null, 2));
+    await rename(temporary, CATALOG_CACHE_PATH);
   } catch {}
 }
 

@@ -16,7 +16,9 @@ test('Market app manifests support unified app surfaces', () => {
   const catalog = read('src/lib/market/catalog.ts');
 
   assert.match(schema, /SurfaceSchema/);
-  assert.match(schema, /kind: z\.enum\(\['widget', 'info-card', 'timeline-card', 'notification'\]\)/);
+  // 'settings-panel' was added when app settings panels adopted the unified
+  // surface protocol (design skill E6).
+  assert.match(schema, /kind: z\.enum\(\['widget', 'info-card', 'timeline-card', 'notification', 'settings-panel'\]\)/);
   assert.match(schema, /placement: z\.enum\(\['dashboard', 'timeline', 'notification-center', 'app-settings', 'app-detail'\]\)/);
   assert.match(schema, /surfaces: z\.array\(SurfaceSchema\)\.optional\(\)\.default\(\[\]\)/);
   assert.match(schema, /UserPreferenceFieldSchema/);

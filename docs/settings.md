@@ -4,10 +4,6 @@ Access settings from the user menu (top-right avatar → Settings) or navigate d
 
 ## Profile
 
-<p align="center">
-  <img src="assets/screenshots/settings/profile.png" alt="Profile settings" width="800">
-</p>
-
 Manage your account identity:
 
 - **Display Name** — How your name appears across the platform
@@ -18,10 +14,6 @@ Manage your account identity:
 ---
 
 ## Appearance
-
-<p align="center">
-  <img src="assets/screenshots/settings/appearance.png" alt="Appearance settings" width="800">
-</p>
 
 Customize the look and feel of your dashboard:
 
@@ -36,23 +28,17 @@ The OKLCH color system ensures perceptually uniform colors — themes look consi
 
 ## Apps
 
-<p align="center">
-  <img src="assets/screenshots/settings/apps.png" alt="Apps settings" width="800">
-</p>
-
 View and manage all installed apps:
 
 - See which apps are installed and their current versions
 - Uninstall apps you no longer use
 - Apps include both native apps and Market-installed apps
+- AI-capable apps have an **AI** tab for their YouEye AI connection, selected
+  model group, key preview, and explicit administrator takeover
 
 ---
 
 ## Language
-
-<p align="center">
-  <img src="assets/screenshots/settings/language.png" alt="Language settings" width="800">
-</p>
 
 Set your preferred language. The choice propagates across the entire platform:
 
@@ -67,10 +53,6 @@ Supported languages are added with each release.
 
 ## Users
 
-<p align="center">
-  <img src="assets/screenshots/settings/users.png" alt="Users settings" width="800">
-</p>
-
 Manage platform users (admin only):
 
 - **Create users** — Add new users to your platform
@@ -83,10 +65,6 @@ Users are managed through YouEye's provider-neutral identity layer — changes s
 ---
 
 ## System
-
-<p align="center">
-  <img src="assets/screenshots/settings/system.png" alt="System settings" width="800">
-</p>
 
 Platform-wide system settings:
 
@@ -101,10 +79,6 @@ Platform-wide system settings:
 
 ## Network
 
-<p align="center">
-  <img src="assets/screenshots/settings/network.png" alt="Network settings" width="800">
-</p>
-
 Network and connectivity configuration:
 
 - **DNS** — View DNS filtering status (Pi-Hole integration)
@@ -115,10 +89,6 @@ Network and connectivity configuration:
 ---
 
 ## Market
-
-<p align="center">
-  <img src="assets/screenshots/settings/app-market.png" alt="Market" width="800">
-</p>
 
 Browse and install apps from Market:
 

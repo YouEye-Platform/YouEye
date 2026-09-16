@@ -13,6 +13,13 @@ const withSerwist = withSerwistInit({
 const nextConfig: NextConfig = {
   output: 'standalone',
   reactCompiler: true,
+  generateBuildId: async () => {
+    const buildId = process.env.YOUEYE_BUILD_ID;
+    if (!buildId || !/^[0-9a-f]{40}$/.test(buildId)) {
+      throw new Error('YOUEYE_BUILD_ID must be the exact 40-character source commit');
+    }
+    return buildId;
+  },
   // Allow remote images from GitHub (Market icons)
   images: {
     remotePatterns: [

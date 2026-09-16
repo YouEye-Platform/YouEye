@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBridgeToken } from "@/lib/admin/bridge-client";
-import { findUserByUsername, updateUserProfile } from "@/lib/db/queries/users";
+import { completeOnboarding, ensureBridgeUser, hasCompletedOnboarding, updateUserProfile } from "@/lib/db/queries/users";
 import { getUserSettings } from "@/lib/db/queries/settings";
 import { listThemes, createTheme, getUserActiveTheme, setUserActiveTheme, getDefaultTheme } from "@/lib/db/queries/themes";
 import { generateCSSVariables } from "@/lib/themes/css-generator";
@@ -27,8 +27,7 @@ async function getBridgeUser(request: NextRequest) {
   if (!validateToken(request)) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   const username = request.headers.get("X-YouEye-Username");
   if (!username) return { error: NextResponse.json({ error: "Missing user" }, { status: 400 }) };
-  const user = await findUserByUsername(username);
-  if (!user) return { error: NextResponse.json({ error: "User not found" }, { status: 404 }) };
+  const user = await ensureBridgeUser(username);
   const isAdmin = request.headers.get("X-YouEye-Is-Admin") === "true" || user.isAdmin;
   return { user, isAdmin };
 }
@@ -125,6 +124,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
   if (auth.error) return auth.error;
   const { user } = auth;
   const path = (await context.params).path.join("/");
+
+  if (path === "onboarding") {
+    return NextResponse.json({ completed: await hasCompletedOnboarding(user.id) });
+  }
 
   if (path === "profile") {
     const uiBaseUrl = getUiBaseUrl(request);
@@ -270,8 +273,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
         icon: a.icon,
         custom_icon_url: a.customIconUrl,
         visible: a.visible,
+        launcher_visible: a.launcherVisible,
+        platform: a.platform,
         order: a.displayOrder,
         section_id: a.sectionId,
+        folder_id: a.folderId,
         status: a.status,
         url: buildAppUrl(a.subdomain, a.containerUrl, a.id, host, a.ssoEntryUrl, proto),
         subdomain: a.subdomain ?? null,
@@ -284,6 +290,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
         order: s.displayOrder,
         collapsed: s.collapsed,
       })),
+      folders: data.folders.map((f) => ({ id: f.folderId, name: f.name, order: f.displayOrder })),
     });
   }
 
@@ -434,7 +441,15 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
   if (path.startsWith("apps/drawer/")) {
     const appId = path.slice("apps/drawer/".length);
-    const updated = await updateAppConfig(user.id, appId, body);
+    const updated = await updateAppConfig(user.id, appId, {
+      customName: body.custom_name,
+      customIconUrl: body.custom_icon_url,
+      visible: body.visible,
+      launcherVisible: body.launcher_visible,
+      displayOrder: body.order,
+      sectionId: body.section_id,
+      folderId: body.folder_id,
+    });
     return NextResponse.json(updated);
   }
 
@@ -474,6 +489,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (auth.error) return auth.error;
   const path = (await context.params).path.join("/");
   const body = await request.json().catch(() => ({}));
+
+  if (path === "onboarding/complete") {
+    await completeOnboarding(auth.user.id);
+    return NextResponse.json({ completed: true });
+  }
 
   if (path === "pin/create") {
     try {

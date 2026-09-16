@@ -39,8 +39,9 @@ test('resize is clamped to the widget declared min/max (not just a global floor)
 
 test('app widgets carry their declared bounds (min_size/max_size) into settings on add', () => {
   const g = read('src/components/dashboard/widget-grid.tsx');
-  assert.match(g, /min_size\?: \{ width: number; height: number \}/);
-  assert.match(g, /max_size\?: \{ width: number; height: number \}/);
+  const types = read('src/components/dashboard/widget-types.ts');
+  assert.match(types, /min_size\?: \{ width: number; height: number \}/);
+  assert.match(types, /max_size\?: \{ width: number; height: number \}/);
   assert.match(g, /fetch\("\/api\/v1\/apps\/surfaces"\)/);
   assert.match(g, /surface\.kind === "widget"/);
   assert.match(g, /surface\.placement === "dashboard"/);

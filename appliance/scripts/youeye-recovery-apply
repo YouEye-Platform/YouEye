@@ -1,0 +1,78 @@
+#!/bin/sh
+set -eu
+
+request_dir=${YOUEYE_RECOVERY_REQUEST_DIR:-/var/lib/youeye-state/recovery}
+request="$request_dir/request.json"
+result="$request_dir/last-result.json"
+first_deploy=${YOUEYE_RECOVERY_FIRST_DEPLOY:-/var/lib/youeye-state/first-deploy}
+youeye=${YOUEYE_RECOVERY_YOUEYE:-/usr/local/bin/youeye}
+development_access_apply=${YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_APPLY:-/usr/local/libexec/youeye-apply-development-access}
+development_access_policy=${YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_POLICY:-/var/lib/youeye-state/bootstrap/development-access.json}
+development_access_status=${YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_STATUS:-/var/lib/youeye-state/bootstrap/development-access-status.json}
+
+[ -s "$request" ] || exit 0
+install -d -m 0700 "$request_dir"
+exec 9>"$request_dir/apply.lock"
+flock -n 9 || exit 0
+
+operation=$(jq -er 'if .schema == "youeye.appliance.recovery.v1" and
+    (.operation == "reset-platform" or .operation == "factory-reset") and
+    (.stage == "queued" or .stage == "applying" or .stage == "failed") and
+    (.transaction_id | type == "string" and test("^[0-9a-f]{32}$"))
+  then .operation else error("invalid recovery request") end' "$request")
+
+write_stage() {
+    stage=$1
+    error_message=${2:-}
+    tmp="$request.tmp"
+    jq --arg stage "$stage" --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg error "$error_message" \
+        '.stage=$stage | .updated_at=$updated_at |
+         if $error == "" then del(.error) else .error=$error end' "$request" > "$tmp"
+    chmod 0600 "$tmp"
+    sync -f "$tmp"
+    mv -f "$tmp" "$request"
+    sync -f "$request_dir"
+}
+
+on_exit() {
+    status=$?
+    trap - EXIT
+    if [ "$status" -ne 0 ]; then
+        write_stage failed "Recovery apply failed; retry remains pending"
+    fi
+    exit "$status"
+}
+trap on_exit EXIT
+
+write_stage applying
+case "$operation" in
+    reset-platform)
+        "$youeye" cleanup --yes --keep-data
+        ;;
+    factory-reset)
+        "$youeye" cleanup --yes
+        # Development access is persistent State, not sealed System content.
+        # Factory reset must therefore replace it explicitly, then apply the
+        # secure default so the persistent shadow file and sshd drop-in cannot
+        # survive the reset or an A/B slot transition.
+        install -d -m 0700 "$(dirname "$development_access_policy")"
+        printf '%s\n' '{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false}' \
+            > "${development_access_policy}.tmp"
+        chmod 0600 "${development_access_policy}.tmp"
+        mv -f "${development_access_policy}.tmp" "$development_access_policy"
+        rm -f "$development_access_status"
+        "$development_access_apply"
+        ;;
+esac
+
+rm -rf "$first_deploy"
+tmp="$result.tmp"
+jq --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '.stage="complete" | .completed_at=$completed_at | del(.error)' "$request" > "$tmp"
+chmod 0600 "$tmp"
+sync -f "$tmp"
+mv -f "$tmp" "$result"
+rm -f "$request"
+sync -f "$request_dir"
+trap - EXIT

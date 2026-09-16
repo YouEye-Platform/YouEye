@@ -1,6 +1,7 @@
 export { authenticatePAM, getUserGroups, isAdmin } from './pam';
 export {
   createSession,
+  createSetupSession,
   verifySession,
   getSession,
   setSessionCookies,

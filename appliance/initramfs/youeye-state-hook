@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "${1:-}" in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+copy_exec /usr/sbin/findfs
+copy_file config /usr/lib/youeye/initramfs/youeye-network-state
+copy_file config /usr/lib/youeye/initramfs/youeye-state-migration

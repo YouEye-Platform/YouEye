@@ -20,7 +20,7 @@ test('C2: settings nav has Personal + Administration section labels (Admin renam
 
 test('C2: active nav item uses the soft-blue accent, not shadcn gray bg-accent', () => {
   const shell = read('src/components/settings-shell/settings-shell.tsx');
-  assert.match(shell, /bg-primary\/10 text-primary/);
+  assert.match(shell, /bg-primary\/5 text-primary/);
   assert.doesNotMatch(shell, /bg-accent text-accent-foreground/);
 });
 
@@ -31,6 +31,16 @@ test('C2: nav uses People (not Users) and Market is not in Settings (D9)', () =>
   assert.doesNotMatch(shell, /href:\s*"\/settings\/market"/);
 });
 
+test('C2: narrow Settings uses one compact role-gated navigation menu', () => {
+  const shell = read('src/components/settings-shell/settings-shell.tsx');
+  assert.match(shell, /className="md:hidden"/);
+  assert.match(shell, /className="hidden w-full shrink-0 md:block md:w-52"/);
+  assert.match(shell, /aria-label="Open Settings navigation"/);
+  assert.match(shell, /DropdownMenuContent/);
+  assert.match(shell, /hasUserContext && \(/);
+  assert.match(shell, /isAdmin && \(/);
+});
+
 test('C2: Profile is built on shadcn primitives and matches the mockup copy', () => {
   const profile = read('src/components/settings-shell/profile-client.tsx');
   assert.match(profile, /from "@\/components\/ui\/card"/);
@@ -39,13 +49,17 @@ test('C2: Profile is built on shadcn primitives and matches the mockup copy', ()
   assert.match(profile, /from "@\/components\/ui\/avatar"/);
   assert.match(profile, /Your account on this server/);
   assert.match(profile, />Details</);
-  assert.match(profile, /Change photo/);
+  assert.match(profile, /Choose icon/);
+  assert.match(profile, /Upload photo/);
   assert.match(profile, /Save changes/);
+  assert.match(profile, /flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto/);
 });
 
-test('C2: Profile omits dead UI — no "Change password" button, no fabricated join date (pitfall #28)', () => {
+test('C2: Profile exposes real password management and no fabricated join date (pitfall #28)', () => {
   const profile = read('src/components/settings-shell/profile-client.tsx');
-  assert.doesNotMatch(profile, /Change password/);
+  assert.match(profile, /Change password/);
+  assert.match(profile, /currentPassword/);
+  assert.match(profile, /repeatPassword/);
   assert.doesNotMatch(profile, /joined|Joined/);
 });
 
@@ -71,21 +85,23 @@ test('C2: Language rebuilt to the two-card layout (Your language + Server defaul
   assert.doesNotMatch(lang, /function tabClass/);
 });
 
-test('C2: People page — list reshape + Sign-in section + real Manage flow (no fake data)', () => {
+test('C2: People page — complete user list + explicit person form + real Manage flow', () => {
   const people = read('src/components/settings-shell/users-client.tsx');
   assert.match(people, /<h1 className="text-2xl font-bold tracking-tight">People<\/h1>/);
   assert.match(people, /Who can sign in to this server/);
   assert.match(people, /Add person/);
-  assert.match(people, />Sign-in</);
-  assert.match(people, /Emergency local access/);
+  assert.match(people, /First name/);
+  assert.match(people, /Last name/);
+  assert.match(people, /Repeat password/);
+  assert.doesNotMatch(people, />Sign-in</);
+  assert.doesNotMatch(people, /Emergency local access/);
+  assert.doesNotMatch(people, /showSystem|isSystemUser/);
   assert.match(people, /from "@\/components\/ui\/card"/);
   // Manage is a real backend flow (PATCH update, password reset, DELETE remove).
   assert.match(people, /userId\(manage\)/);
   assert.match(people, /method: "PATCH"/);
   assert.match(people, /method: "DELETE"/);
   assert.match(people, /\/password/);
-  // Emergency access IP is derived from server config — never a hardcoded LAN address.
-  assert.match(people, /config\.ip/);
   assert.doesNotMatch(people, /\b192\.168\.\d+\.\d+\b/);
 });
 
@@ -106,9 +122,8 @@ test('C2: System page — stat row + human-named Platform + live usage + preserv
   // The maintenance-window image-update flow is preserved (not broken by the redesign).
   assert.match(sys, /confirmMaintenanceWindow/);
   assert.match(sys, /system-updates/);
-  // Core Update Source uses the CP-guaranteed /settings/api/* prefix (root /api/settings 404s at the domain).
-  assert.match(sys, /\/settings\/api\/settings/);
-  assert.doesNotMatch(sys, /fetch\("\/api\/settings"/);
+  assert.match(sys, /href="\/settings\/system\/ssh"/);
+  assert.doesNotMatch(sys, /UpdateChannels/);
 });
 
 test('C2: System page passes the running CP version for the Server interface row', () => {

@@ -22,6 +22,8 @@ const PUBLIC_ROUTES = [
   '/api/auth/callback',
   '/api/auth/popup-close',  // SSO popup close page
   '/api/auth/mode',
+  '/api/appliance/claim',
+  '/api/appliance/handoff',
   '/api/setup/config',
   '/api/setup/ca-cert',
   '/api/setup/check-dns',
@@ -40,6 +42,7 @@ const PUBLIC_ROUTES = [
   '/api/market/app',      // Internal: app detail + connections endpoints
   '/api/branding/favicon', // Public favicon (proxied from UI)
   '/identity/login',
+  '/identity/handoff',
   '/application/o',
   '/oauth',
   '/forward-auth/caddy',
@@ -64,12 +67,30 @@ const PUBLIC_ROUTES_EXACT = [
 
 const IDENTITY_SERVICE_ROUTES = [
   '/identity/login',
+  '/identity/handoff',
   '/application/o',
   '/oauth',
   '/forward-auth/caddy',
   '/.well-known/openid-configuration',
   '/api/branding/favicon',
 ];
+
+const SETUP_SESSION_ROUTES = [
+  '/setup',
+  '/setup-complete',
+  '/api/setup',
+  '/api/appliance',
+  '/api/auth/csrf',
+  '/api/auth/logout',
+  '/api/ping',
+  '/api/tls',
+  '/api/dns-providers/cloudflare/validate',
+  '/api/branding/favicon',
+];
+
+function setupSessionAllows(pathname: string): boolean {
+  return SETUP_SESSION_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
+}
 
 // Static resources that should be skipped
 const STATIC_PATTERNS = [
@@ -98,7 +119,7 @@ function getMiddlewareJWTSecret(): Uint8Array | null {
 
 function loginRedirectFor(request: NextRequest, pathname: string): URL {
   const host = request.headers.get('host') || '';
-  const settingsPath = isSettingsPath(pathname);
+  const settingsPath = isSettingsPath(pathname) || pathname === '/onboarding';
 
   if (getAuthModeForHost(host) === 'sso') {
     const url = new URL(settingsPath ? '/settings/api/auth/sso' : '/api/auth/sso', request.url);
@@ -111,15 +132,15 @@ function loginRedirectFor(request: NextRequest, pathname: string): URL {
 }
 
 /**
- * Check if request is coming via IP address through Caddy (not port 3000).
- * Port 3000 = direct CP access (bypass setup flow).
+ * Check if request is coming via IP address through Caddy.
+ * Raw port 3000 is localhost-only recovery and should not be used for LAN browsing.
  * Ports 80/443 via Caddy with IP host = setup flow.
  */
 function isIPViaCaddy(host: string): boolean {
   const [hostname, portStr] = host.split(':');
   const port = portStr ? parseInt(portStr, 10) : 443;
 
-  // Port 3000 = direct access, not through Caddy
+  // Port 3000 is localhost-only recovery, not the Caddy setup/browser path.
   if (port === 3000) return false;
 
   // Check if hostname is an IP address
@@ -135,21 +156,25 @@ async function isSetupCompleted(): Promise<boolean> {
   if (setupCompletedCache && now - setupCompletedCache.ts < SETUP_CACHE_TTL) {
     return setupCompletedCache.value;
   }
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-    const res = await fetch(`http://localhost:3000/api/setup/config`, {
+    timeout = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(`http://127.0.0.1:3000/api/setup/config`, {
       signal: controller.signal,
     });
-    clearTimeout(timeout);
     if (res.ok) {
       const config = await res.json();
       const completed = !!config.setup_completed;
       setupCompletedCache = { value: completed, ts: now };
       return completed;
     }
-  } catch {
-    // If we can't check, assume not completed to allow setup
+    console.warn(`[Middleware] setup completion check returned HTTP ${res.status}; treating setup as incomplete`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[Middleware] setup completion check failed; treating setup as incomplete: ${message}`);
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
   return setupCompletedCache?.value ?? false;
 }
@@ -262,6 +287,10 @@ function applySecurityHeaders(response: NextResponse, pathname: string, request?
     const parentOrigin = getParentOrigin();
     response.headers.set('Content-Security-Policy',
       `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src ${imageSourcesForCsp(request)}; font-src 'self' data:; connect-src 'self'; frame-ancestors ${parentOrigin};`);
+  } else if (pathname === '/setup-complete') {
+    response.headers.set('X-Frame-Options', 'DENY');
+    response.headers.set('Content-Security-Policy',
+      `default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src ${imageSourcesForCsp(request)}; font-src 'self' data:; connect-src 'self'; frame-src https:; form-action 'self' https:; frame-ancestors 'none';`);
   } else {
     response.headers.set('X-Frame-Options', 'DENY');
     response.headers.set('Content-Security-Policy',
@@ -297,6 +326,57 @@ export async function middleware(request: NextRequest) {
   }
 
   const host = request.headers.get('host') || '';
+  const sessionCookie = request.cookies.get('ye-session');
+  let verifiedSession: Record<string, unknown> | null = null;
+  if (sessionCookie?.value) {
+    const secret = getMiddlewareJWTSecret();
+    if (secret) {
+      try {
+        verifiedSession = (await jwtVerify(sessionCookie.value, secret)).payload;
+      } catch {
+        verifiedSession = null;
+      }
+    }
+  }
+
+  // --- IP-via-Caddy setup flow ---
+  // When accessed via IP through Caddy (ports 80/443), setup routing must win
+  // before legacy Control Panel shell redirects. After setup completes, the IP
+  // address is a DNS/trust handoff page, never the Settings surface.
+  if (isIPViaCaddy(host)) {
+    // Allow these paths through (needed for setup flow to work)
+    const setupAllowedPaths = [
+      '/setup', '/setup-complete', '/login',
+      '/api/auth/', '/api/setup/', '/api/deploy/', '/api/tls/',
+      '/api/appliance/',
+      '/api/dns-providers/cloudflare/validate',
+      '/api/branding/favicon',
+    ];
+    const isSetupPath = setupAllowedPaths.some(p => pathname === p || pathname.startsWith(p));
+
+    if (!isSetupPath) {
+      const completed = await isSetupCompleted();
+      return NextResponse.redirect(new URL(completed ? '/setup-complete' : '/login', request.url));
+    }
+
+    // For /setup-complete, if setup is NOT completed, redirect to login.
+    if (pathname === '/setup-complete') {
+      const completed = await isSetupCompleted();
+      if (!completed) {
+        return NextResponse.redirect(new URL('/login', request.url));
+      }
+    }
+
+    if (pathname === '/setup' && verifiedSession?.authMethod !== 'setup') {
+      return NextResponse.redirect(new URL('/login', request.url));
+    }
+  }
+
+  if (verifiedSession?.authMethod === 'setup' && !setupSessionAllows(pathname)) {
+    return pathname.startsWith('/api/')
+      ? NextResponse.json({ error: 'The setup session is restricted to appliance onboarding.' }, { status: 403 })
+      : NextResponse.redirect(new URL('/setup', request.url));
+  }
 
   // --- Retire the legacy control.<domain> / (dashboard) shell (D4) ---
   // The old admin shell is replaced by the unified Settings. Redirect its
@@ -313,40 +393,6 @@ export async function middleware(request: NextRequest) {
       return shellHost.startsWith('control.')
         ? NextResponse.redirect(`${getParentOrigin()}/settings`)
         : NextResponse.redirect(new URL('/settings', request.url));
-    }
-  }
-
-  // --- IP-via-Caddy setup flow ---
-  // When accessed via IP through Caddy (ports 80/443), redirect to setup flow
-  if (isIPViaCaddy(host)) {
-    // Allow these paths through (needed for setup flow to work)
-    const setupAllowedPaths = [
-      '/setup', '/setup-complete', '/login',
-      '/api/auth/', '/api/setup/', '/api/deploy/', '/api/tls/',
-      '/api/dns-providers/cloudflare/validate',
-      '/api/branding/favicon',
-    ];
-    const isSetupPath = setupAllowedPaths.some(p => pathname === p || pathname.startsWith(p));
-
-    if (!isSetupPath) {
-      // Redirect based on setup state
-      const completed = await isSetupCompleted();
-      if (completed) {
-        // After setup, IP access shows the DNS explainer page so users learn
-        // how to configure DNS and access YouEye via its domain name.
-        // Direct Control Panel access on :3000 still works for admin use.
-        return NextResponse.redirect(new URL('/setup-complete', request.url));
-      } else {
-        return NextResponse.redirect(new URL('/login', request.url));
-      }
-    }
-
-    // For /setup-complete, if setup is NOT completed, redirect to login  
-    if (pathname === '/setup-complete') {
-      const completed = await isSetupCompleted();
-      if (!completed) {
-        return NextResponse.redirect(new URL('/login', request.url));
-      }
     }
   }
 
@@ -385,8 +431,6 @@ export async function middleware(request: NextRequest) {
   }
 
   // Get session cookie
-  const sessionCookie = request.cookies.get('ye-session');
-
   if (!sessionCookie?.value) {
     // No session - redirect to login for pages, return 401 for API
     if (pathname.startsWith('/api/')) {
@@ -406,7 +450,7 @@ export async function middleware(request: NextRequest) {
   }
 
   try {
-    await jwtVerify(sessionCookie.value, secret);
+    if (!verifiedSession) await jwtVerify(sessionCookie.value, secret);
     return applySecurityHeaders(NextResponse.next(), pathname, request);
   } catch (error) {
     console.log('[Middleware] Invalid JWT token, redirecting to login');

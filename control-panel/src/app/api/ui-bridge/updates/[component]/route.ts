@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateBridgeToken } from '@/lib/ui-bridge/auth';
 import { spineClient } from '@/lib/spine/client';
-import { startUpdate, writeStatus, completeUpdate, failUpdate } from '@/lib/updates/state';
+import { startUpdate, writeStatus, completeUpdate, completeNoOp, failUpdate } from '@/lib/updates/state';
 import { getAppDefinition } from '@/lib/apps/definitions';
 import { updateLXDApp } from '@/lib/apps/lxd-updater';
 import { getInstalledApp } from '@/lib/market/installed-apps';
@@ -107,7 +107,9 @@ export async function POST(
         break;
     }
 
-    if (!['spine', 'control'].includes(component)) {
+    if (['spine', 'control'].includes(component) && result.status === 'up-to-date') {
+      await completeNoOp(component, result.new_version || result.old_version || '');
+    } else if (!['spine', 'control'].includes(component)) {
       const newVer = result.new_version || '';
       await completeUpdate(component, '', newVer).catch(() => {});
     }

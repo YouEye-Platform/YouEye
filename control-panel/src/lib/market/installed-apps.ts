@@ -12,10 +12,18 @@
 
 import { readJSON, writeJSON, statePath } from '@/lib/storage/json-store';
 import { listInstalledApps, readInstallMetadata } from './metadata';
-import { fetchCatalog, fetchManifestFromSource, fetchRepoFile, fetchUpdatePlanMigrationsFromSource, getEffectiveBranch } from './catalog';
+import { fetchCatalog, fetchUpdatePlanMigrationsFromSource, resolveCatalogApp } from './catalog';
 import { parse as parseYAML } from 'yaml';
-import { isNewer } from '@/lib/version';
 import { describeUpdatePath, findApplicableMigrations, mergeMigrationSources } from './migration-planner';
+import { effectiveChannel, resolveCandidate, getReleaseChannelsConfig, APP_PREFIX } from '@/lib/updates/channels';
+import {
+  catalogUpdateState,
+  classifyAppUpdateRouting,
+  hasRecordedCatalogIdentity,
+  projectUpdateAvailability,
+  recordedCatalogSourceIds,
+  repositoriesMatch,
+} from './update-routing';
 import type { AppManifest } from './types';
 
 const STORE_PATH = statePath('installed-apps.json');
@@ -29,18 +37,48 @@ export interface InstalledApp {
   installedVersion: string;
   catalogVersion: string | null;
   updateAvailable: boolean;
+  /**
+   * A pending CHANNEL SWITCH — the app's effective channel resolves to a release
+   * on a DIFFERENT branch than what is installed. This is NOT a normal update
+   * (the resolved version may even be numerically lower); it is surfaced
+   * separately and never auto-applied. Requires an explicit confirm to install.
+   */
+  switchPending?: boolean;
   installedAt: string;
   subdomain: string;
   ssoSlug: string | null;
   forwardAuthEnabled: boolean;
   healthStatus: 'healthy' | 'unhealthy' | 'unknown';
   healthCheckedAt: string | null;
+  appHealthState?: 'starting' | 'running' | 'unhealthy' | 'crash-looping' | 'unknown';
+  failingLevel?: 'L1' | 'L2' | 'L3';
+  healthDetail?: string | null;
+  healthProbeState?: {
+    failures: number;
+    backoffMs: number;
+    capCycles: number;
+    lastRestartAt: number;
+    healthySince: number | null;
+  };
   source: 'catalog' | 'url';
   sourceUrl: string | null;
   catalogKey?: string | null;
   sourceId?: string | null;
   sourceName?: string | null;
   sourceRepoUrl?: string | null;
+  // ─── Provenance (channel-aware) ───────────────────────────
+  /** Full release tag the installed version came from (e.g. "f-drawer-v0.5.0.0.0.0.1"). */
+  installedTag?: string | null;
+  /** Branch the installed version came from (e.g. "main", "f-drawer"). */
+  installedBranch?: string | null;
+  /** Repo URL the installed version was pulled from. */
+  channelSource?: string | null;
+  /** Candidate version the effective channel currently resolves to. */
+  candidateVersion?: string | null;
+  /** Candidate branch the effective channel currently resolves to. */
+  candidateBranch?: string | null;
+  /** Candidate tag the effective channel currently resolves to. */
+  candidateTag?: string | null;
   updatePath?: string | null;
   migrationsRequired?: number;
   migrationGates?: Array<{
@@ -57,12 +95,24 @@ interface InstalledAppsStore {
   nextId: number;
 }
 
+export type InstalledAppUpdateState = Pick<InstalledApp,
+  | 'installedVersion'
+  | 'catalogVersion'
+  | 'updateAvailable'
+  | 'switchPending'
+  | 'installedTag'
+  | 'installedBranch'
+  | 'channelSource'
+  | 'candidateVersion'
+  | 'candidateBranch'
+  | 'candidateTag'
+>;
+
 // ─── Store Management ─────────────────────────────────────────
 
 let store: InstalledAppsStore | null = null;
 
 async function loadStore(): Promise<InstalledAppsStore> {
-  if (store) return store;
   store = await readJSON<InstalledAppsStore>(STORE_PATH) ?? { apps: {}, nextId: 1 };
   return store;
 }
@@ -90,6 +140,9 @@ export async function upsertInstalledApp(data: {
   appId: string;
   type: string;
   installedVersion: string;
+  /** Catalog version at install time — persisting it here means update
+   *  detection never starts from a null baseline (0.5.5 fix) */
+  catalogVersion?: string | null;
   subdomain: string;
   ssoSlug?: string | null;
   forwardAuthEnabled?: boolean;
@@ -97,6 +150,10 @@ export async function upsertInstalledApp(data: {
   sourceId?: string | null;
   sourceName?: string | null;
   sourceRepoUrl?: string | null;
+  /** Provenance recorded at install/update time. */
+  installedTag?: string | null;
+  installedBranch?: string | null;
+  channelSource?: string | null;
 }): Promise<void> {
   const s = await loadStore();
   const existing = s.apps[data.appId];
@@ -104,6 +161,7 @@ export async function upsertInstalledApp(data: {
   if (existing) {
     existing.type = data.type as InstalledApp['type'];
     existing.installedVersion = data.installedVersion;
+    existing.catalogVersion = data.catalogVersion ?? existing.catalogVersion ?? null;
     existing.subdomain = data.subdomain;
     existing.ssoSlug = data.ssoSlug ?? existing.ssoSlug;
     existing.forwardAuthEnabled = data.forwardAuthEnabled ?? existing.forwardAuthEnabled;
@@ -111,13 +169,16 @@ export async function upsertInstalledApp(data: {
     existing.sourceId = data.sourceId ?? existing.sourceId ?? null;
     existing.sourceName = data.sourceName ?? existing.sourceName ?? null;
     existing.sourceRepoUrl = data.sourceRepoUrl ?? existing.sourceRepoUrl ?? null;
+    if (data.installedTag !== undefined) existing.installedTag = data.installedTag;
+    if (data.installedBranch !== undefined) existing.installedBranch = data.installedBranch;
+    if (data.channelSource !== undefined) existing.channelSource = data.channelSource;
   } else {
     s.apps[data.appId] = {
       id: s.nextId++,
       appId: data.appId,
       type: data.type as InstalledApp['type'],
       installedVersion: data.installedVersion,
-      catalogVersion: null,
+      catalogVersion: data.catalogVersion ?? null,
       updateAvailable: false,
       installedAt: new Date().toISOString(),
       subdomain: data.subdomain,
@@ -125,18 +186,69 @@ export async function upsertInstalledApp(data: {
       forwardAuthEnabled: data.forwardAuthEnabled ?? false,
       healthStatus: 'unknown',
       healthCheckedAt: null,
+      appHealthState: 'unknown',
+      healthDetail: null,
       source: 'catalog',
       sourceUrl: null,
       catalogKey: data.catalogKey ?? null,
       sourceId: data.sourceId ?? null,
       sourceName: data.sourceName ?? null,
       sourceRepoUrl: data.sourceRepoUrl ?? null,
+      installedTag: data.installedTag ?? null,
+      installedBranch: data.installedBranch ?? null,
+      channelSource: data.channelSource ?? null,
       updatePath: null,
       migrationsRequired: 0,
       migrationGates: [],
     };
   }
 
+  await saveStore();
+}
+
+/**
+ * Record provenance for an installed native app after a successful install or
+ * update. Called by the install/update flows once the artifact is applied so
+ * subsequent channel-aware checks can tell "update within my channel" from
+ * "channel switch".
+ */
+export async function recordAppProvenance(
+  appId: string,
+  provenance: { version?: string; tag?: string | null; branch?: string | null; source?: string | null },
+): Promise<void> {
+  const s = await loadStore();
+  const app = s.apps[appId];
+  if (!app) return;
+  if (provenance.version !== undefined) app.installedVersion = provenance.version;
+  if (provenance.tag !== undefined) app.installedTag = provenance.tag;
+  if (provenance.branch !== undefined) app.installedBranch = provenance.branch;
+  if (provenance.source !== undefined) app.channelSource = provenance.source;
+  app.updateAvailable = false;
+  app.switchPending = false;
+  await saveStore();
+}
+
+/**
+ * Record a successful external catalog update without manufacturing native
+ * release-channel provenance. Clearing legacy synthetic values is safe only
+ * after the app was positively classified and updated through its Market source.
+ */
+export async function recordCatalogAppUpdate(appId: string, version: string): Promise<void> {
+  const s = await loadStore();
+  const app = s.apps[appId];
+  if (!app) return;
+  Object.assign(app, catalogUpdateState(version));
+  await saveStore();
+}
+
+export async function restoreInstalledAppUpdateState(
+  appId: string,
+  previous: InstalledAppUpdateState,
+): Promise<void> {
+  const s = await loadStore();
+  const app = s.apps[appId];
+  if (!app) throw new Error(`Cannot restore update state for missing app "${appId}"`);
+  Object.assign(app, previous);
   await saveStore();
 }
 
@@ -186,6 +298,10 @@ export async function migrateFromInstallJson(): Promise<number> {
   let migrated = 0;
 
   for (const meta of jsonApps) {
+    // Provisional install/restore metadata is a recovery record, not an
+    // installed app. Publishing it here lets background reconciliation race
+    // the installer and enforce its intentionally stopped pre-commit state.
+    if (meta.lifecycleState !== 'active') continue;
     if (existingIds.has(meta.appId)) continue;
 
     await upsertInstalledApp({
@@ -209,22 +325,6 @@ export async function migrateFromInstallJson(): Promise<number> {
 }
 
 // ─── Update Detection ─────────────────────────────────────────
-
-async function fetchNativeAppVersion(
-  repo: string,
-  manifestFile: string,
-  branch: string,
-): Promise<string | null> {
-  try {
-    const [owner, repoName] = repo.split('/');
-    const manifestYaml = await fetchRepoFile(owner, repoName, manifestFile, branch);
-    const parsed = parseYAML(manifestYaml);
-    return parsed?.version ?? null;
-  } catch (err) {
-    console.warn('[installed-apps] Failed to fetch app version from repo:', err);
-    return null;
-  }
-}
 
 async function fetchUrlAppVersion(sourceUrl: string): Promise<string | null> {
   try {
@@ -254,20 +354,19 @@ async function fetchUrlAppVersion(sourceUrl: string): Promise<string | null> {
  * Single load + single save instead of N psql roundtrips.
  */
 export async function checkForUpdates(): Promise<InstalledApp[]> {
-  let catalog;
+  let catalog = null;
   try {
     catalog = await fetchCatalog();
   } catch (err) {
     console.error('[installed-apps] Failed to fetch catalog for update check:', err);
-    return [];
   }
 
-  const branch = await getEffectiveBranch();
+  const channelsConfig = await getReleaseChannelsConfig();
   const s = await loadStore();
   const installed = Object.values(s.apps);
 
   const entryMap = new Map<string, { path?: string; file?: string; repo?: string; manifest?: string; latestVersion?: string; integration?: string }>();
-  for (const e of catalog.apps) {
+  for (const e of catalog?.apps ?? []) {
     entryMap.set(e.id, e);
   }
 
@@ -286,55 +385,91 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
 
     let catalogVersion: string | null = null;
     let sourceManifest: AppManifest | null = null;
-
-    if (app.sourceId) {
-      try {
-        sourceManifest = await fetchManifestFromSource(app.appId, app.sourceId);
-        catalogVersion = sourceManifest.version ?? null;
-      } catch (err) {
-        console.warn('[installed-apps] Failed to fetch source-specific version:', app.appId, app.sourceId, err);
-      }
-    }
-
-    const entry = catalogVersion ? undefined : entryMap.get(app.appId);
-
-    if (entry?.repo) {
-      catalogVersion = await fetchNativeAppVersion(entry.repo, entry.manifest || 'youeye-app.yaml', branch);
-    } else if (entry?.latestVersion) {
-      catalogVersion = entry.latestVersion;
-    } else if (!entry && app.source === 'url' && app.sourceUrl) {
+    let resolvedCatalog: Awaited<ReturnType<typeof resolveCatalogApp>> | null = null;
+    const recordedSourceIds = recordedCatalogSourceIds(app, installMeta ?? {});
+    const defaultEntry = entryMap.get(app.appId);
+    if (recordedSourceIds.length > 0 || hasRecordedCatalogIdentity(app, installMeta ?? {}) || defaultEntry) {
+      resolvedCatalog = await resolveCatalogApp(app.appId, recordedSourceIds);
+      sourceManifest = resolvedCatalog.manifest;
+      catalogVersion = sourceManifest.version ?? resolvedCatalog.entry.latestVersion ?? null;
+    } else if (app.source === 'url' && app.sourceUrl) {
       catalogVersion = await fetchUrlAppVersion(app.sourceUrl);
     }
 
-    let hasUpdate = false;
-    if (catalogVersion) {
-      if (app.installedVersion) {
-        try {
-          hasUpdate = isNewer(catalogVersion, app.installedVersion);
-        } catch {
-          hasUpdate = false;
+    const routing = classifyAppUpdateRouting({
+      appId: app.appId,
+      installed: app,
+      installMetadata: installMeta ?? {},
+      catalog: resolvedCatalog ? {
+        sourceId: resolvedCatalog.source.id,
+        sourceRepoUrl: resolvedCatalog.source.repo_url,
+        sourceRepoUrls: resolvedCatalog.configuredSourceRepoUrls,
+        entry: resolvedCatalog.entry,
+        manifestIntegration: resolvedCatalog.manifest.integration,
+      } : null,
+      hasExplicitChannelOverride: !!channelsConfig.apps?.[app.appId],
+    });
+    if (resolvedCatalog) {
+      app.sourceId = resolvedCatalog.source.id;
+      app.sourceName = resolvedCatalog.source.name;
+      if (!app.sourceRepoUrl || resolvedCatalog.configuredSourceRepoUrls.some(
+        (sourceUrl) => repositoriesMatch(app.sourceRepoUrl, sourceUrl),
+      )) {
+        app.sourceRepoUrl = resolvedCatalog.source.repo_url;
+      }
+      app.catalogKey = `${resolvedCatalog.source.id}:app:${app.appId}`;
+    }
+
+    // ─── Channel-aware resolution ─────────────────────────────
+    // Resolve the app's effective channel and its candidate release. For a
+    // repo-type native app this drives both the catalog version and the
+    // update-vs-switch decision. External catalog records never enter this path.
+    let candidate: { version: string; branch: string; tag: string } | null = null;
+
+    if (routing.kind === 'channel') {
+      try {
+        const ch = await effectiveChannel(APP_PREFIX + app.appId, {
+          config: channelsConfig,
+          appDefaultSource: routing.channelDefaultSource,
+        });
+        // Native apps use bare tags (no component prefix). The effective
+        // channel already carries the right source (explicit override, else
+        // the app's own repo) — do not pass an override here.
+        candidate = await resolveCandidate(ch, null);
+        if (candidate) {
+          catalogVersion = candidate.version;
         }
-      } else {
-        // App installed without version tracking — flag as update available.
-        // After one update cycle, installedVersion gets recorded and future checks work normally.
-        hasUpdate = true;
+      } catch (err) {
+        console.warn('[installed-apps] Channel resolution failed for', app.appId, err);
       }
     }
 
-    app.catalogVersion = catalogVersion;
-    app.updateAvailable = hasUpdate;
+    const availability = projectUpdateAvailability({
+      routing,
+      installedVersion: app.installedVersion,
+      installedBranch: app.installedBranch,
+      catalogVersion,
+      candidate,
+    });
+    catalogVersion = availability.catalogVersion;
+    const hasUpdate = availability.updateAvailable;
+    app.catalogVersion = availability.catalogVersion;
+    app.updateAvailable = availability.updateAvailable;
+    app.switchPending = availability.switchPending;
+    app.candidateVersion = availability.candidateVersion;
+    app.candidateBranch = availability.candidateBranch;
+    app.candidateTag = availability.candidateTag;
     app.updatePath = null;
     app.migrationsRequired = 0;
     app.migrationGates = [];
 
     if (hasUpdate && catalogVersion && app.installedVersion) {
       try {
-        if (!sourceManifest && (app.sourceId || installMeta?.sourceId)) {
-          sourceManifest = await fetchManifestFromSource(app.appId, app.sourceId || installMeta?.sourceId);
-        }
-
         if (sourceManifest) {
-          const durablePlan = await fetchUpdatePlanMigrationsFromSource(app.appId, app.sourceId || installMeta?.sourceId || undefined);
+          const durablePlan = await fetchUpdatePlanMigrationsFromSource(
+            app.appId,
+            resolvedCatalog?.source.id || app.sourceId || installMeta?.sourceId || undefined,
+          );
           const allMigrations = mergeMigrationSources(sourceManifest.update?.migrations || [], durablePlan.migrations);
           const applicableMigrations = findApplicableMigrations(
             allMigrations,
@@ -381,6 +516,16 @@ export async function getAppsWithUpdatesAvailable(): Promise<InstalledApp[]> {
   return Object.values(s.apps).filter(a => a.updateAvailable).sort((a, b) => a.appId.localeCompare(b.appId));
 }
 
+/**
+ * Apps whose effective channel resolves to a release on a DIFFERENT branch than
+ * what is installed (a pending channel switch). These are never plain updates —
+ * they require an explicit confirmed switch to apply.
+ */
+export async function getAppsWithSwitchPending(): Promise<InstalledApp[]> {
+  const s = await loadStore();
+  return Object.values(s.apps).filter(a => a.switchPending).sort((a, b) => a.appId.localeCompare(b.appId));
+}
+
 // ─── Forward-Auth Toggle ─────────────────────────────────────
 
 export async function updateForwardAuthEnabled(appId: string, enabled: boolean): Promise<void> {
@@ -396,11 +541,30 @@ export async function updateForwardAuthEnabled(appId: string, enabled: boolean):
 export async function updateHealthStatus(
   appId: string,
   status: 'healthy' | 'unhealthy' | 'unknown',
+  probe?: {
+    appHealthState?: 'starting' | 'running' | 'unhealthy' | 'crash-looping' | 'unknown';
+    failingLevel?: 'L1' | 'L2' | 'L3';
+    healthDetail?: string | null;
+  },
 ): Promise<void> {
   const s = await loadStore();
   if (s.apps[appId]) {
     s.apps[appId].healthStatus = status;
     s.apps[appId].healthCheckedAt = new Date().toISOString();
+    s.apps[appId].appHealthState = probe?.appHealthState ?? 'unknown';
+    s.apps[appId].failingLevel = probe?.failingLevel;
+    s.apps[appId].healthDetail = probe?.healthDetail ?? null;
+    await saveStore();
+  }
+}
+
+export async function updateHealthProbeState(
+  appId: string,
+  probeState: NonNullable<InstalledApp['healthProbeState']>,
+): Promise<void> {
+  const s = await loadStore();
+  if (s.apps[appId]) {
+    s.apps[appId].healthProbeState = { ...probeState };
     await saveStore();
   }
 }

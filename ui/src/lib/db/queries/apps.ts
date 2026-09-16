@@ -26,6 +26,8 @@ interface AppWithConfig {
   customName: string | null;
   customIconUrl: string | null;
   visible: boolean;
+  launcherVisible: boolean;
+  platform: boolean;
   displayOrder: number;
   sectionId: string | null;
   /** Launcher folder this app is in (null = loose in the launcher grid) */
@@ -92,6 +94,8 @@ export async function getUserAppsWithConfig(userId: string): Promise<{
       customName: config?.customName ?? null,
       customIconUrl: config?.customIconUrl ?? null,
       visible: config?.visible ?? true,
+      launcherVisible: config?.launcherVisible ?? true,
+      platform: false,
       displayOrder: config?.displayOrder ?? app.displayOrder ?? 0,
       sectionId: config?.sectionId ?? null,
       folderId: config?.folderId ?? null,
@@ -101,6 +105,34 @@ export async function getUserAppsWithConfig(userId: string): Promise<{
       adminHeaderDisplayMode: adminMode,
     };
   });
+
+  for (const platform of [
+    { id: "platform-market", name: "Market", icon: "Store", containerUrl: "/market" },
+    { id: "platform-settings", name: "Settings", icon: "Settings", containerUrl: "/settings" },
+  ]) {
+    const config = configMap.get(platform.id);
+    mergedApps.push({
+      ...platform,
+      subdomain: null,
+      ssoEntryUrl: null,
+      status: "running",
+      version: null,
+      enabled: true,
+      manifest: null,
+      customName: config?.customName ?? null,
+      customIconUrl: config?.customIconUrl ?? null,
+      visible: config?.visible ?? false,
+      launcherVisible: config?.launcherVisible ?? false,
+      platform: true,
+      displayOrder: config?.displayOrder ?? 1000,
+      sectionId: config?.sectionId ?? null,
+      folderId: config?.folderId ?? null,
+      brandingWordart: null,
+      headerDisplayMode: "logo-text",
+      adminBrandingWordart: null,
+      adminHeaderDisplayMode: "logo-text",
+    });
+  }
 
   mergedApps.sort((a, b) => a.displayOrder - b.displayOrder);
 
@@ -131,6 +163,7 @@ export async function updateAppConfig(
     customName?: string | null;
     customIconUrl?: string | null;
     visible?: boolean;
+    launcherVisible?: boolean;
     displayOrder?: number;
     sectionId?: string | null;
     folderId?: string | null;
@@ -152,6 +185,7 @@ export async function updateAppConfig(
         customName: data.customName !== undefined ? data.customName : existing.customName,
         customIconUrl: data.customIconUrl !== undefined ? data.customIconUrl : existing.customIconUrl,
         visible: data.visible !== undefined ? data.visible : existing.visible,
+        launcherVisible: data.launcherVisible !== undefined ? data.launcherVisible : existing.launcherVisible,
         displayOrder: data.displayOrder !== undefined ? data.displayOrder : existing.displayOrder,
         sectionId: data.sectionId !== undefined ? data.sectionId : existing.sectionId,
         folderId: data.folderId !== undefined ? data.folderId : existing.folderId,
@@ -168,7 +202,8 @@ export async function updateAppConfig(
       appId,
       customName: data.customName ?? null,
       customIconUrl: data.customIconUrl ?? null,
-      visible: data.visible ?? true,
+      visible: data.visible ?? !appId.startsWith("platform-"),
+      launcherVisible: data.launcherVisible ?? !appId.startsWith("platform-"),
       displayOrder: data.displayOrder ?? 0,
       sectionId: data.sectionId ?? null,
       folderId: data.folderId ?? null,
@@ -203,6 +238,64 @@ export async function updateLauncherFolders(
   }));
 
   return db.insert(userLauncherFolders).values(rows).returning();
+}
+
+/**
+ * Persist the complete full-screen launcher layout in one database transaction.
+ * Folder rows and app membership/order must never be observed half-updated: a
+ * failed request leaves the previous layout intact and the client can refetch it.
+ */
+export async function updateLauncherLayout(
+  userId: string,
+  folders: { id: string; name: string; order: number }[],
+  layout: { id: string; folderId: string | null; order: number }[],
+) {
+  await ensureSchema();
+
+  return db.transaction(async (tx) => {
+    await tx
+      .delete(userLauncherFolders)
+      .where(eq(userLauncherFolders.userId, userId));
+
+    if (folders.length > 0) {
+      await tx.insert(userLauncherFolders).values(folders.map((folder) => ({
+        userId,
+        folderId: folder.id,
+        name: folder.name,
+        displayOrder: folder.order,
+      })));
+    }
+
+    const existingRows = await tx
+      .select()
+      .from(userAppConfig)
+      .where(eq(userAppConfig.userId, userId));
+    const existingByApp = new Map(existingRows.map((row) => [row.appId, row]));
+
+    for (const item of layout) {
+      const existing = existingByApp.get(item.id);
+      if (existing) {
+        await tx
+          .update(userAppConfig)
+          .set({ folderId: item.folderId, displayOrder: item.order })
+          .where(eq(userAppConfig.id, existing.id));
+        continue;
+      }
+
+      await tx.insert(userAppConfig).values({
+        userId,
+        appId: item.id,
+        visible: !item.id.startsWith("platform-"),
+        // Kept true for older clients; the current full-screen launcher is an
+        // all-app surface and no longer reads this legacy placement flag.
+        launcherVisible: true,
+        displayOrder: item.order,
+        folderId: item.folderId,
+      });
+    }
+
+    return { folders, layout };
+  });
 }
 
 export async function updateDrawerSections(

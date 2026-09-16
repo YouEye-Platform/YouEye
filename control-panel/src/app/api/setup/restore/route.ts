@@ -9,16 +9,54 @@
  * On completion, marks setup as complete via spineClient.patchConfig.
  */
 
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import path from 'node:path';
+import { realpath, stat } from 'node:fs/promises';
+import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { spineClient } from '@/lib/spine/client';
 import { fullRestore } from '@/lib/backup/full-restore';
+import { recoveryImportErrorMessage, validateBackupPassphrase } from '@/lib/backup/platform-backup';
 
 interface RestoreRequest {
-  backupPath: string;
+  mediaId?: string;
+  backupId?: string;
+  appIds?: string[];
   passphrase: string;
 }
 
+export async function GET() {
+  const session = await getSession();
+  if (!session?.isAdmin || !session.setupOwnerId) {
+    return NextResponse.json({ error: 'Claimed owner access required' }, { status: 403 });
+  }
+  try {
+    const media = await spineClient.getBackupMedia().catch(() => ({ media: [] }));
+    const external = (await Promise.all(media.media
+      .filter(item => item.state === 'available' || item.state === 'ready')
+      .map(async item => {
+        const catalog = await spineClient.getExternalRecoveryPoints(item.id).catch(() => ({ recovery_points: [] }));
+        return catalog.recovery_points.map(point => ({
+          backupId: point.backup_id,
+          createdAt: point.created_at,
+          apps: point.apps,
+          mediaId: item.id,
+          driveName: item.model || 'Backup drive',
+        }));
+      }))).flat();
+    return NextResponse.json({ recoveryPoints: external.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) });
+  } catch {
+    return NextResponse.json({ recoveryPoints: [] });
+  }
+}
+
 export async function POST(request: NextRequest) {
+  const session = await getSession();
+  if (!session?.isAdmin || !session.setupOwnerId) {
+    return new Response('Claimed owner access required', { status: 403 });
+  }
+  if (!(await verifyCSRFToken(request.headers.get('X-CSRF-Token') ?? ''))) {
+    return new Response('Invalid CSRF token', { status: 403 });
+  }
   // Guard: only available during initial setup
   try {
     const config = await spineClient.getConfig();
@@ -36,24 +74,60 @@ export async function POST(request: NextRequest) {
     return new Response('Invalid request body', { status: 400 });
   }
 
-  if (!body.backupPath || typeof body.backupPath !== 'string') {
-    return new Response('backupPath is required', { status: 400 });
+  try {
+    body.passphrase = validateBackupPassphrase(body.passphrase);
+  } catch (error) {
+    return new Response(error instanceof Error ? error.message : 'Invalid recovery key', { status: 400 });
   }
-  if (!body.passphrase || typeof body.passphrase !== 'string') {
-    return new Response('passphrase is required', { status: 400 });
+  if (!Array.isArray(body.appIds)
+    || body.appIds.some(appId => typeof appId !== 'string' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(appId))
+    || new Set(body.appIds).size !== body.appIds.length) {
+    return new Response('appIds must be an array', { status: 400 });
+  }
+
+  if (typeof body.mediaId !== 'string' || typeof body.backupId !== 'string') {
+    return new Response('An attached backup drive and recovery point are required', { status: 400 });
+  }
+  let backupPath: string;
+  try {
+      const imported = await spineClient.importBackupSet({
+        media_id: body.mediaId,
+        backup_id: body.backupId,
+        passphrase: body.passphrase,
+      });
+      backupPath = await realpath(imported.backup_path);
+  } catch (error) {
+    return new Response(recoveryImportErrorMessage(error), { status: 400 });
+  }
+  try {
+	const allowedRoots = await Promise.all(['/var/lib/youeye/backups'].map(async root => {
+      try { return await realpath(root); } catch { return path.resolve(root); }
+    }));
+    if (!allowedRoots.some(root => backupPath === root || backupPath.startsWith(`${root}${path.sep}`))) {
+	  return new Response('Backup path must be under the protected YouEye backup root', { status: 400 });
+    }
+    if (!(await stat(backupPath)).isDirectory()) {
+      return new Response('Backup path must be a directory', { status: 400 });
+    }
+  } catch {
+    return new Response('Backup path does not exist or cannot be read', { status: 400 });
   }
 
   const stream = new ReadableStream({
     async start(controller) {
+      let connected = true;
       function send(data: Record<string, unknown>) {
-        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`));
+        if (!connected) return;
+        try { controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`)); } catch { connected = false; }
       }
 
       try {
         await fullRestore(
           {
-            backupPath: body.backupPath,
+            backupPath,
             passphrase: body.passphrase,
+            appIds: body.appIds,
+            setupMode: true,
           },
           (event) => {
             send({
@@ -70,21 +144,21 @@ export async function POST(request: NextRequest) {
 
         // Mark setup as complete — the restored config includes setup_completed
         // but we explicitly set it to ensure the wizard redirects to dashboard
-        try {
-          await spineClient.patchConfig({ setup_completed: true });
-        } catch (err) {
-          console.warn('[restore] Failed to mark setup as complete via Spine:', err);
-        }
+        await spineClient.patchConfig({ setup_completed: true });
 
         send({ complete: true });
-        controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+        if (connected) {
+          try { controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n')); } catch { connected = false; }
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error';
         send({ error: message });
         console.error('[restore] Full restore failed:', err);
       }
 
-      controller.close();
+      if (connected) {
+        try { controller.close(); } catch { /* Client disconnected; restore state is authoritative. */ }
+      }
     },
   });
 

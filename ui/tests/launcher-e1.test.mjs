@@ -9,14 +9,16 @@ import assert from 'node:assert/strict';
 const root = process.env.UI_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(root, p), 'utf8');
 
-test('Launcher renders search + app grid + Market/Settings system tiles', () => {
+test('Launcher renders search and one app/folder grid including platform apps from the drawer API', () => {
   const l = read('src/components/layout/launcher.tsx');
   assert.match(l, /t\("searchApps"\)/);
   assert.match(l, /searchHits\.map/);
   assert.match(l, /gridItems\.map/);
-  assert.match(l, /systemTiles/);
-  assert.match(l, /href: "\/market"/);
-  assert.match(l, /href: "\/settings"/);
+  assert.match(l, /const allWithUrl/);
+  assert.doesNotMatch(l, /\.filter\(\(a\) => a\.launcher_visible\)/);
+  assert.doesNotMatch(l, /systemTiles/);
+  assert.doesNotMatch(l, /href: "\/market"/);
+  assert.doesNotMatch(l, /href: "\/settings"/);
 });
 
 test('Launcher data comes from the UI drawer API only — never CP (pitfall #25)', () => {

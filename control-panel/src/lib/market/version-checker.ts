@@ -128,7 +128,7 @@ export function stopVersionChecker(): void {
   }
 }
 
-// Auto-start when module is imported in production
-if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
-  startVersionChecker();
-}
+// NO module-import auto-start. instrumentation.ts is the single owner of
+// background-job startup — an import side effect here started a second
+// version-checker inside youeye-id.service and the two instances raced the
+// installed-apps.json atomic rename (ENOENT on .tmp, devvm1 2026-07-02).

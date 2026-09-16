@@ -1,24 +1,70 @@
 # YouEye
 
+## Repository-owned builds and signed releases
+
+The executable unsigned entrypoints and strict manifests under `.youeye/build/`
+belong to this repository. The release control plane binds the exact branch,
+commit and version, executes isolated builds with a pinned toolchain, validates
+declared outputs, generates provenance and SPDX metadata, and signs outside the
+builder. Entrypoints never receive credentials or signing material, and Node
+dependency installation is frozen and offline.
+
+Development Spine, Control Panel, UI and native-app runtime update paths verify
+the embedded development Ed25519 trust identity, the detached signature over
+the exact checksum document, the artifact digest and any configured channel
+digest before mutation. Stable promotion remains separately keyed and independently authorized;
+development trust is not Stable authority.
+
 **A self-hosted personal cloud with a polished dashboard, native apps, and one-click installs.**
 
 > **Public beta** - YouEye is under active development. Breaking changes can occur between releases. Back up your data before upgrading.
 
-One command installs a full platform: dashboard with widgets, six native apps, SSO, reverse proxy, DNS, and the YouEye Market. Runs on a Debian/Ubuntu server or in a Debian VM created automatically on Proxmox VE.
-
-<p align="center">
-  <img src="docs/assets/screenshots/homepage/dashboard.png" alt="YouEye Dashboard" width="800">
-</p>
+The YouEye Installer writes one verified appliance image with A/B system slots,
+independent Recovery, persistent State and Data, then performs a health-gated
+first deployment. Run it from the signed ISO on a physical machine or let its
+Proxmox mode create and install the VM.
 
 ## Quick Start
 
+### Proxmox
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo bash -s --
+curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo sh
 ```
 
-The bootstrap downloads the latest released `youeye-installer` binary, then the installer detects Proxmox or base Linux, installs YouEye, and shows progress in the terminal. When it finishes, open `https://your-server-ip` in your browser and create your account.
+This is the canonical public Stable command. It becomes installable when the
+separately keyed Stable appliance release is published to GitHub; development
+builds deliberately fail closed instead of accepting their development key as
+Stable authority. The bootstrap defaults to that official GitHub Stable lane and supports
+explicit Forgejo or custom HTTPS sources without prefilled private endpoints.
+It paginates the selected provider, verifies its signed checksum set and exact
+installer digest, then opens the YouEye Installer TUI. Quick mode creates a
+Q35/OVMF VM with 4 vCPU, 8 GiB RAM, and one 128 GiB installation drive. The
+host-side flow provisions the VM and media; the booted ISO owns disk discovery,
+destructive confirmation, imaging, and installed-system setup.
 
-> Requires a fresh Debian 12+ or Ubuntu 24.04+ system with root access, or a Proxmox VE host for the VM installer. See [full install guide](docs/getting-started.md) for Proxmox, silent installs, and manual setup.
+Development and beta releases are selected explicitly and retain Development
+trust. They are not the no-argument GitHub Stable path. Each published release
+page carries the exact source commit, signed checksums, manifests, provenance,
+SBOM, and component release set required for independent verification.
+
+### Signed ISO
+
+Download `youeye-appliance-amd64.iso`, `SHA256SUMS`, and `SHA256SUMS.sig` from
+the same appliance release, verify them, write the ISO to removable media, and
+boot it in UEFI mode. The interactive `youeye-installer install` flow performs
+the same installation used by Proxmox.
+After exact first deployment becomes healthy, open the HTTPS address shown on
+the appliance console and create the single YouEye ID owner. There is no
+default appliance password. Root remains locked and SSH remains key-only unless
+the installer user explicitly enables Development access and chooses a strong
+root password. Local TTY2 login and local-subnet root password SSH are separate
+opt-ins; the password itself is never written to answer media or State.
+
+> Proxmox mode requires root access, Q35/OVMF support, an ISO storage pool, and
+> an eligible VM-image storage pool. Direct installation requires x86-64 UEFI
+> hardware and a dedicated 32 GiB or larger drive. See the
+> [full install guide](docs/getting-started.md).
 
 ## Features
 
@@ -35,36 +81,8 @@ The bootstrap downloads the latest released `youeye-installer` binary, then the 
 | **Backups** | Multi-container backup engine with scheduled snapshots |
 | **PWA** | Install as a Progressive Web App on any device |
 
-### Screenshots
-
-<table>
-  <tr>
-    <td><img src="docs/assets/screenshots/homepage/dashboard.png" alt="Dashboard" width="400"></td>
-    <td><img src="docs/assets/screenshots/homepage/app-drawer.png" alt="App Drawer" width="400"></td>
-  </tr>
-  <tr>
-    <td align="center"><em>Dashboard with widgets</em></td>
-    <td align="center"><em>App drawer</em></td>
-  </tr>
-  <tr>
-    <td><img src="docs/assets/screenshots/control-panel/dashboard.png" alt="Control Panel" width="400"></td>
-    <td><img src="docs/assets/screenshots/settings/appearance.png" alt="Themes" width="400"></td>
-  </tr>
-  <tr>
-    <td align="center"><em>Control Panel</em></td>
-    <td align="center"><em>Theme customization</em></td>
-  </tr>
-  <tr>
-    <td><img src="docs/assets/screenshots/apps/wiki/home.png" alt="Wiki App" width="400"></td>
-    <td><img src="docs/assets/screenshots/apps/weather/home.png" alt="Weather App" width="400"></td>
-  </tr>
-  <tr>
-    <td align="center"><em>Wiki app</em></td>
-    <td align="center"><em>Weather app</em></td>
-  </tr>
-</table>
-
-> See [full documentation](docs/) for more screenshots and detailed guides.
+Public screenshots will be added from synthetic demo accounts after the privacy
+and third-party-content review defined in `docs/assets/screenshots/README.md`.
 
 ## Architecture
 
@@ -72,7 +90,7 @@ The bootstrap downloads the latest released `youeye-installer` binary, then the 
 graph TD
     User[User Browser] -->|HTTPS| Caddy
 
-    subgraph Host["Host (Debian/Ubuntu)"]
+    subgraph Host["YouEye appliance host"]
         Spine["youeye CLI (Spine)"]
     end
 
@@ -124,34 +142,31 @@ Six apps ship with the platform, each running in its own container with full SSO
 | **Weather** | Multi-location weather with Open-Meteo, forecasts, and dashboard widgets |
 | **Translate** | Privacy-friendly translation with history, bookmarks, and auto-detect |
 
-Each app provides dashboard widgets and integrates with the platform's theme, language, and notification systems. See [Apps documentation](docs/apps.md) for screenshots and details.
+Each app provides dashboard widgets and integrates with the platform's theme, language, and notification systems. See [Apps documentation](docs/apps.md) for feature and integration details.
 
 ## Monorepo Structure
 
-This repository contains the three core components:
+This repository contains the core platform and installer components:
 
 | Directory | Component | Description |
 |-----------|-----------|-------------|
 | `spine/` | [Spine](spine/) | Go CLI that bootstraps and manages the platform |
 | `control-panel/` | [Control Panel](control-panel/) | Next.js orchestration engine for all infrastructure |
 | `ui/` | [UI](ui/) | Next.js user-facing dashboard with widgets and themes |
+| `installer/` | YouEye Installer | Signed-media and Proxmox installation flows |
+| `appliance/` | Appliance image | A/B/Recovery image construction and boot lifecycle |
 
-Each component is versioned and released independently.
+Core components are versioned independently. Appliance releases bind their
+exact Spine, Control Panel, and UI source commits, tags, and signed digests.
 
-## Current Versions
+## Versions and releases
 
-| Component | Version |
-|-----------|---------|
-| Spine | 0.5.2 (`spine-v0.5.2`) |
-| Installer | 0.5.2 (`installer-v0.5.2`) |
-| Control Panel | 0.5.1 (`cp-v0.5.1`) |
-| UI | 0.5.1 (`ui-v0.5.1`) |
-| Wiki | 0.5.0 (`v0.5.0`) |
-| Search | 0.5.0 (`v0.5.0`) |
-| Notes | 0.5.0 (`v0.5.0`) |
-| Cinema | 0.5.0 (`v0.5.0`) |
-| Weather | 0.5.0 (`v0.5.0`) |
-| Translate | 0.5.0 (`v0.5.0`) |
+Core components are versioned independently. The Installer is an
+appliance-owned overlay shipped inside the appliance release; it has no
+independent release version or publication lane. See the repository's release
+page for the current signed appliance identity, component source identities,
+checksums, and downloadable assets. Development and Stable are separate signing
+and publication boundaries.
 
 ## Related Repositories
 
@@ -164,6 +179,15 @@ Each component is versioned and released independently.
 | [Cinema](https://github.com/YouEye-Platform/Cinema) | Cinema native app |
 | [Weather](https://github.com/YouEye-Platform/Weather) | Weather native app |
 | [Translate](https://github.com/YouEye-Platform/Translate) | Translate native app |
+
+## Licensing and third-party material
+
+YouEye source is distributed under [LICENSE](LICENSE), and product marks follow
+[TRADEMARK.md](TRADEMARK.md). Bundled third-party material is recorded in
+[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) and the source registry at
+[`legal/third-party-assets.json`](legal/third-party-assets.json). Entries marked
+for owner, trademark, privacy, or provenance review must be resolved before a
+public Stable release.
 
 ## Documentation
 
@@ -178,53 +202,76 @@ Full documentation lives in the [`docs/`](docs/) folder:
 
 ## Install Options
 
-### One-Line Install (recommended)
+### Proxmox beta or development release
+
+Use the same public bootstrap and explicitly select a credential-free HTTPS
+release source. For example:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo bash -s --
+curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | \
+  sudo sh -s -- --provider forgejo \
+    --releases-api https://forge.example.test/api/v1/repos/example/YouEye/releases \
+    --channel development
 ```
 
-This downloads the latest `installer-v*` release asset from GitHub and launches `youeye-installer`. On Proxmox it creates a Debian VM with a dedicated guest ZFS data disk for Incus and installs YouEye inside it; on base Debian/Ubuntu it installs YouEye directly on the host. The interactive installer defaults to GitHub core and Market releases on the `main` channel, with editable source fields under Advanced Options.
+Quick mode uses six focused pages: VM, resources, storage/network, read-only
+Official GitHub Stable software policy, access, and review. It defaults to 4
+vCPU, 8 GiB RAM, one 128 GiB installation drive and wired DHCP. Advanced mode
+uses eight pages and adds independent storage, network, signed software source,
+SSH, and Development-access controls. It supports Stable, Development, a safe
+branch-associated signed release track, or an immutable exact tag/digest.
+Branches select published signed releases only; raw source and mutable branch
+archives are never installed, and no missing or invalid selection falls back.
 
-### Silent Install
+The mutable Debian/Ubuntu host installer and Debian-cloud Proxmox VM/LXC
+providers are retired; they did not implement the signed appliance layout,
+Recovery, A/B updates, or sealed-image guarantees.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo bash -s -- --silent --yes
-```
+Create provisions a new Q35/OVMF VM with persistent EFI variables, serial console, one stably identified installation drive, installer ISO, and non-secret answer media. Reinstall accepts only a stopped compatible layout-3 appliance VM, displays its drive identity and discovered GPT contents, and requires the generated phrase naming that target before reuse. The helper never writes guest partitions: the signed ISO verifies the same bundle again and owns all disk mutation, A/B/Recovery installation, first boot, and setup readiness.
 
-Automation can install another channel by selecting the installer binary channel before `bash` and the runtime release channel after `--`:
+Recovery boots from its own read-only image and can inspect the offline appliance, select either System slot once, verify and repair signed boot assets, and export support evidence. Its interactive session remains on the local tty1 display and is mirrored read-only to the serial console for remote observation and acceptance. For support export, prepare a FAT32, ext4, or exFAT filesystem labelled `YOUEYE-SUP`; Recovery mounts it with restrictive options, writes one timestamped evidence file, syncs it, and unmounts it. The earlier `YOUEYE-SUPPORT` ext4 label remains accepted for development compatibility.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sudo env INSTALLER_CHANNEL=dev bash -s -- --silent --yes --release-channel dev
-```
+Appliance system updates verify one exact signed `youeye.system-update.v1` manifest, cache artifacts on `YE-DATA`, write and read back only the inactive 8 GiB System slot, and arm a three-attempt systemd-boot trial. Operationally healthy trials are explicitly blessed; failed trials automatically return to the prior known-good slot while State, Recovery, and `YE-DATA` remain unchanged. Settings checks Stable or Development metadata automatically every six hours, but download/preparation and restart always require an administrator action. The CLI exposes the same `status`, `check`, `stage`, and `activate --reboot` transaction.
 
-Automation can also override the bootstrap and runtime release sources explicitly:
+Appliance builds also seal one exact official Market commit into the signed
+System root. First deployment seeds that immutable catalog identity before
+Control Panel deployment, without replacing an existing owner-selected Market
+source. Development builders may supply an explicit HTTPS source and exact
+commit without changing distributed defaults.
 
-```bash
-curl -fsSL <installer-script-url> | sudo env INSTALLER_REPO_URL=<installer-release-repo> INSTALLER_CHANNEL=<channel> bash -s -- \
-  --silent --yes \
-  --core-repo <core-release-repo> \
-  --market-repo <market-repo> \
-  --release-channel <channel>
-```
+The signed appliance source commit identifies the complete image/installer build. Its embedded Spine, Control Panel, and UI release set independently pins each consumed component's exact tag, source commit, and artifact digest. Those identities may differ after an appliance-only or single-component repair; every pin remains mandatory and verified, so unrelated unchanged components are not rebuilt merely to make commit strings equal.
 
-### Manual Install
+Development release identities may use a safe multi-segment source branch such
+as `codex/phase1-repository-builds`. Every segment is validated as a bounded
+Git-ref component; empty/traversal-like components, `.lock` suffixes, ref
+metacharacters, and tags that do not exactly match the branch and version are
+rejected.
 
-```bash
-# Download Spine binary directly
-curl -LO https://github.com/YouEye-Platform/YouEye/releases/download/spine-v0.5.2/spine-linux-amd64
-chmod +x spine-linux-amd64
-mv spine-linux-amd64 /usr/local/bin/youeye
+Direct ISO installation captures the same release and access policy before it
+erases a disk. A stable Ethernet MAC selector is recorded when available, so a
+multi-adapter machine does not silently switch uplinks after an A/B update.
+Before the Server interface exists, the local TTY1/serial bootstrap verifies
+link, IPv4 address, route, DNS, usable clock, HTTPS reachability, and the
+selected release index. Failed changes restore the last-known-good wired
+profile. This release supports Ethernet DHCP/static IPv4 only; it does not
+pretend to support Wi-Fi hardware without an approved chipset and firmware
+matrix.
 
-# Deploy
-youeye deploy
-```
+The first-boot transaction freezes one signed appliance identity, follows only
+declared signed System bridges when an older bootstrap cannot jump directly,
+writes the inactive A/B slot, resumes after reboot, and installs the exact
+signed Server-interface and UI tags and digests. TTY1 reports bounded real
+deployment stages. TTY2 is a normal PAM root login only when locally enabled;
+`youeye-installer network` and `youeye-installer development-access` provide
+the supported on-device repair paths. An administrator may inspect or disable
+Development access in Settings, but enabling it or changing its password stays
+physical-console-only.
 
-### Proxmox VE
-
-Run the one-line installer on the Proxmox host. It creates a Debian VM, installs YouEye inside it, and leaves the Proxmox host itself clean.
-
-The VM installer creates two disks by default: the OS disk (`--disk`, 25 GiB by default) and a dedicated Incus ZFS data disk (`--incus-zfs-disk`, 64 GiB by default). Set `--incus-zfs-disk 0` only when you intentionally want the guest to fall back to Spine's non-ZFS storage path.
+The supported minimum is 2 vCPU, 4 GiB RAM, and one 32 GiB installation drive;
+128 GiB is recommended. Below 64 GiB the Installer shows a strong capacity
+warning. The ISO always creates one GPT containing a 1 GiB ESP, 4 GiB Recovery,
+equal 8 GiB System A/B roots, 4 GiB State, and `YE-DATA` across the remaining
+capacity (about 7 GiB at the minimum size).
 
 ## Platform Management
 

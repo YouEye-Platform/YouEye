@@ -1,15 +1,15 @@
 package config
 
 // Default returns a Config with all default values.
-// The public default points at the canonical GitHub release repository.
+// The public default points at the official GitHub release repository.
 func Default() *Config {
 	return &Config{
 		Releases: ReleasesConfig{
-			RepoURL:      "https://github.com/youeye-platform/YouEye",
+			RepoURL:      "https://github.com/YouEye-Platform/YouEye",
 			Provider:     "github",
 			BaseURL:      "https://github.com",
 			APIPath:      "",
-			Organization: "youeye-platform",
+			Organization: "YouEye-Platform",
 			Repositories: RepositoriesConfig{
 				Spine:                 "YouEye",
 				ControlPanel:          "YouEye",

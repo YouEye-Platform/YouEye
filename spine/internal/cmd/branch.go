@@ -3,15 +3,16 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/youeye-platform/YouEye/spine/internal/channels"
 	"gopkg.in/yaml.v3"
 )
 
 const youeyeConfigPath = "/var/lib/youeye/config/youeye.yaml"
 
-// branchConfig represents the youeye.yaml structure (subset for branch management)
+// branchConfig is a minimal youeye.yaml view retained for the cleanup and
+// language read paths that only need site metadata + release_branch.
 type branchConfig struct {
 	SiteName       string            `yaml:"site_name,omitempty"`
 	Domain         string            `yaml:"domain,omitempty"`
@@ -20,22 +21,44 @@ type branchConfig struct {
 	ReleaseBranch  string            `yaml:"release_branch,omitempty"`
 }
 
+// loadBranchConfig reads the minimal youeye.yaml view. Retained for the cleanup
+// and language paths; the branch command itself uses the channels package.
+func loadBranchConfig() (*branchConfig, error) {
+	cfg := &branchConfig{
+		SiteName: "YouEye",
+		Subdomains: map[string]string{
+			"control": "control",
+			"auth":    "auth",
+			"dns":     "dns",
+		},
+	}
+	data, err := os.ReadFile(youeyeConfigPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return cfg, nil
+		}
+		return nil, fmt.Errorf("failed to read config: %w", err)
+	}
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+	return cfg, nil
+}
+
 var branchCmd = &cobra.Command{
 	Use:   "branch",
-	Short: "Show or set the release branch for updates",
-	Long: `Manage the release branch used for fetching updates.
+	Short: "Show or set the default release branch (deprecated — use 'youeye channel')",
+	Long: `Manage the default release branch used for fetching updates.
 
-When a branch is set, spine update commands will look for releases tagged with
-the branch prefix (e.g., "alpha-v0.1.50" for branch "alpha").
-If no branch-specific release exists for a repo, it falls back to main releases.
-
-This is used for multi-agent development where each agent works on a separate
-branch across YouEye repos and needs isolated update paths.
+DEPRECATED: 'youeye branch' now maps onto the default release channel. Prefer
+'youeye channel set default --branch <branch>' and the per-component channel
+commands, which also support per-component sources and configurable fallback
+chains.
 
 Examples:
-  spine branch              Show current branch
-  spine branch set alpha    Set branch to "alpha"
-  spine branch reset        Reset to main (default) branch`,
+  youeye branch              Show current default branch
+  youeye branch set alpha    Set default branch to "alpha"
+  youeye branch reset        Reset to main (default) branch`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return showBranch()
 	},
@@ -63,125 +86,71 @@ func init() {
 	branchCmd.AddCommand(branchResetCmd)
 }
 
-func loadBranchConfig() (*branchConfig, error) {
-	cfg := &branchConfig{
-		SiteName: "YouEye",
-		Subdomains: map[string]string{
-			"control": "control",
-			"auth":    "auth",
-			"dns":     "dns",
-		},
-	}
-
-	data, err := os.ReadFile(youeyeConfigPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return cfg, nil
-		}
-		return nil, fmt.Errorf("failed to read config: %w", err)
-	}
-
-	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config: %w", err)
-	}
-
-	return cfg, nil
-}
-
-func saveBranchConfig(cfg *branchConfig) error {
-	if err := os.MkdirAll("/var/lib/youeye/config", 0755); err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
-	}
-
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	header := "# YouEye Configuration\n# Managed by Spine - do not edit manually unless you know what you're doing\n\n"
-	if err := os.WriteFile(youeyeConfigPath, []byte(header+string(data)), 0644); err != nil {
-		return fmt.Errorf("failed to write config: %w", err)
-	}
-
-	return nil
+// deprecationNote nudges callers toward the channel command.
+func deprecationNote() {
+	fmt.Println("Note: 'youeye branch' is deprecated. Use 'youeye channel set default --branch <branch>'.")
 }
 
 func showBranch() error {
-	cfg, err := loadBranchConfig()
+	cfgCh, err := channels.Load()
 	if err != nil {
 		return err
 	}
 
-	branch := cfg.ReleaseBranch
-	if branch == "" {
-		branch = "main"
-	}
-
-	fmt.Printf("Release branch: %s\n", branch)
+	branch := cfgCh.DefaultBranch()
+	fmt.Printf("Default release branch: %s\n", branch)
 
 	if branch != "main" {
 		fmt.Println()
 		fmt.Println("Release tag convention:")
-		fmt.Printf("  Spine:    %s-v<version>  (e.g., %s-v0.1.50)\n", branch, branch)
-		fmt.Printf("  CP:       %s-v<version>  (e.g., %s-v0.1.100)\n", branch, branch)
-		fmt.Printf("  UI:       %s-v<version>  (e.g., %s-v0.5.0)\n", branch, branch)
-		fmt.Printf("  Market: git branch '%s'\n", branch)
+		fmt.Printf("  Spine:  %s-v<version>  (e.g., %s-v0.1.50)\n", branch, branch)
+		fmt.Printf("  CP:     %s-v<version>  (e.g., %s-v0.1.100)\n", branch, branch)
+		fmt.Printf("  UI:     %s-v<version>  (e.g., %s-v0.5.0)\n", branch, branch)
 		fmt.Println()
-		fmt.Println("If a repo has no branch-specific release, main releases are used as fallback.")
+		fmt.Println("If a repo has no branch-specific release, the fallback chain is used.")
 	}
-
+	fmt.Println()
+	deprecationNote()
 	return nil
 }
 
+// setBranch maps the deprecated branch command onto the default channel branch,
+// preserving the default channel's fallback chain.
 func setBranch(branch string) error {
-	// Validate branch name: only alphanumeric, hyphens, underscores
+	newBranch := "main"
 	if branch != "" {
-		for _, c := range branch {
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
-				return fmt.Errorf("invalid branch name: only alphanumeric characters, hyphens, and underscores are allowed")
-			}
+		normalized, err := channels.NormalizeBranch(branch)
+		if err != nil {
+			return err
 		}
-		// Normalize to lowercase
-		branch = strings.ToLower(branch)
+		newBranch = normalized
 	}
 
-	cfg, err := loadBranchConfig()
+	cfgCh, err := channels.Load()
 	if err != nil {
 		return err
 	}
 
-	oldBranch := cfg.ReleaseBranch
-	if oldBranch == "" {
-		oldBranch = "main"
+	oldBranch := cfgCh.DefaultBranch()
+
+	def := cfgCh.Default
+	def.Branch = newBranch
+	if def.Fallback == nil {
+		def.Fallback = []string{"main"}
 	}
-
-	cfg.ReleaseBranch = branch
-
-	if err := saveBranchConfig(cfg); err != nil {
+	if err := cfgCh.SetChannel(channels.ComponentDefault, def); err != nil {
+		return err
+	}
+	if err := cfgCh.Save(); err != nil {
 		return err
 	}
 
-	newBranch := branch
-	if newBranch == "" {
-		newBranch = "main"
-	}
-
 	if oldBranch == newBranch {
-		fmt.Printf("Release branch is already set to: %s\n", newBranch)
-		return nil
-	}
-
-	fmt.Printf("Release branch changed: %s → %s\n", oldBranch, newBranch)
-
-	if newBranch != "main" {
-		fmt.Println()
-		fmt.Println("Updates will now look for releases tagged with prefix:")
-		fmt.Printf("  %s-v<version>\n", newBranch)
-		fmt.Println()
-		fmt.Println("Run 'spine update self' to update to the latest branch release.")
+		fmt.Printf("Default release branch is already set to: %s\n", newBranch)
 	} else {
-		fmt.Println("Updates will now use main (default) releases.")
+		fmt.Printf("Default release branch changed: %s → %s\n", oldBranch, newBranch)
 	}
-
+	fmt.Println()
+	deprecationNote()
 	return nil
 }

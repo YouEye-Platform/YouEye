@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { buildAuthorizeUrl, generateOAuthState, isSSOConfigured } from '@/lib/auth/authentik';
+import { buildAuthorizeUrl, generateOAuthState, isSSOConfigured } from '@/lib/auth/oauth';
 import { isSettingsPath, getSettingsPublicUrl } from '@/lib/settings-public-path';
 
 export async function GET(request: NextRequest) {

@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Upload } from "lucide-react";
+import { KeyRound, Loader2, Shapes, Upload, X } from "lucide-react";
 import { uiSettingsApi } from "./api-base";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { ProfileIconPicker } from "./profile-icon-picker";
+import { IDENTITY_PASSWORD_MAX_LENGTH, IDENTITY_PASSWORD_MIN_LENGTH, validateIdentityPassword } from "@/lib/identity/password-policy";
 
 interface ProfileClientProps {
   userId?: string;
@@ -63,6 +65,15 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [avatarUploading, setAvatarUploading] = useState(false);
+  const [iconPickerOpen, setIconPickerOpen] = useState(false);
+  const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [repeatPassword, setRepeatPassword] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -199,6 +210,65 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
     }
   }
 
+  async function choosePreset(presetId: string) {
+    setSelectedPreset(presetId);
+    setAvatarUploading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/user/avatar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ presetId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Profile icon update failed");
+      if (body.url) {
+        setAvatarUrl(body.url);
+        broadcastAvatarUpdate(body.url);
+      }
+      setIconPickerOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Profile icon update failed");
+    } finally {
+      setAvatarUploading(false);
+    }
+  }
+
+  function resetPasswordForm() {
+    setCurrentPassword("");
+    setNewPassword("");
+    setRepeatPassword("");
+    setPasswordError("");
+  }
+
+  async function changePassword() {
+    setPasswordError("");
+    setPasswordMessage("");
+    const policyError = validateIdentityPassword(newPassword);
+    if (policyError) return setPasswordError(policyError);
+    if (newPassword !== repeatPassword) return setPasswordError("Passwords do not match");
+    setPasswordBusy(true);
+    try {
+      const csrfRes = await fetch("/settings/api/auth/csrf", { cache: "no-store" });
+      const csrfBody = await csrfRes.json().catch(() => ({}));
+      if (!csrfRes.ok || !csrfBody.csrfToken) throw new Error("Could not prepare a protected request");
+      const res = await fetch("/settings/api/user/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfBody.csrfToken },
+        body: JSON.stringify({ currentPassword, newPassword, repeatPassword }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Password change failed");
+      resetPasswordForm();
+      setPasswordOpen(false);
+      setPasswordMessage("Password changed. Your current session stays signed in.");
+    } catch (err) {
+      setPasswordError(err instanceof Error ? err.message : "Password change failed");
+    } finally {
+      setPasswordBusy(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -235,7 +305,7 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
 
       {/* Identity card */}
       <Card className="gap-0 py-0">
-        <div className="flex items-center gap-4 p-5">
+        <div className="flex flex-wrap items-center gap-4 p-5">
           <div className="relative">
             <Avatar className="size-16">
               {avatarUrl ? <AvatarImage src={avatarUrl} alt="" className="object-cover" /> : null}
@@ -249,11 +319,20 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
               </div>
             )}
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="truncate text-[17px] font-bold leading-tight">{fullName}</p>
             <p className="mt-0.5 text-sm text-muted-foreground">{isAdmin ? "Administrator" : "User"}</p>
           </div>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={avatarUploading}
+              onClick={() => setIconPickerOpen(true)}
+            >
+              <Shapes className="size-4" /> Choose icon
+            </Button>
             <Button
               type="button"
               variant="secondary"
@@ -261,7 +340,7 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
               disabled={avatarUploading}
               onClick={() => fileInputRef.current?.click()}
             >
-              <Upload className="size-4" /> Change photo
+              <Upload className="size-4" /> Upload photo
             </Button>
             {avatarUrl && (
               <Button type="button" variant="ghost" size="sm" disabled={avatarUploading} onClick={removeAvatar}>
@@ -282,6 +361,12 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
           </div>
         </div>
       </Card>
+
+      {iconPickerOpen && (
+        <Card className="p-5">
+          <ProfileIconPicker selectedId={selectedPreset} busy={avatarUploading} onChoose={choosePreset} onClose={() => setIconPickerOpen(false)} />
+        </Card>
+      )}
 
       {/* Details card */}
       <Card className="gap-0 py-0">
@@ -354,6 +439,50 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
           <p className="text-xs text-muted-foreground">User ID: {local.userId || userId || "—"}</p>
         </div>
       </Card>
+
+      <Card className="gap-0 py-0">
+        <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="flex items-center gap-2 text-[15px] font-semibold"><KeyRound className="size-4" /> Security</h2>
+            <p className="mt-1 text-[13px] text-muted-foreground">Change the password you use to sign in to this server.</p>
+          </div>
+          <Button type="button" variant="outline" onClick={() => { resetPasswordForm(); setPasswordOpen(true); }}>Change password</Button>
+        </div>
+        {passwordMessage && <p className="border-t px-5 py-3 text-sm text-primary">{passwordMessage}</p>}
+      </Card>
+
+      {passwordOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md space-y-4 rounded-xl border bg-card p-5 shadow-lg" role="dialog" aria-modal="true" aria-labelledby="change-password-title">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 id="change-password-title" className="text-[19px] font-semibold">Change password</h3>
+                <p className="mt-1 text-[13px] text-muted-foreground">Your current session stays signed in. Other sessions expire normally.</p>
+              </div>
+              <Button type="button" variant="ghost" size="icon-sm" onClick={() => setPasswordOpen(false)} disabled={passwordBusy} aria-label="Close"><X className="size-4" /></Button>
+            </div>
+            <label className="block space-y-1.5">
+              <span className={FIELD_LABEL}>Current password</span>
+              <Input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} disabled={passwordBusy} />
+            </label>
+            <label className="block space-y-1.5">
+              <span className={FIELD_LABEL}>New password</span>
+              <Input type="password" autoComplete="new-password" minLength={IDENTITY_PASSWORD_MIN_LENGTH} maxLength={IDENTITY_PASSWORD_MAX_LENGTH} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} disabled={passwordBusy} />
+            </label>
+            <label className="block space-y-1.5">
+              <span className={FIELD_LABEL}>Repeat new password</span>
+              <Input type="password" autoComplete="new-password" minLength={IDENTITY_PASSWORD_MIN_LENGTH} maxLength={IDENTITY_PASSWORD_MAX_LENGTH} value={repeatPassword} onChange={(event) => setRepeatPassword(event.target.value)} disabled={passwordBusy} />
+            </label>
+            {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setPasswordOpen(false)} disabled={passwordBusy}>Cancel</Button>
+              <Button type="button" onClick={changePassword} disabled={passwordBusy || !currentPassword || !newPassword || !repeatPassword}>
+                {passwordBusy && <Loader2 className="size-4 animate-spin" />} Change password
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

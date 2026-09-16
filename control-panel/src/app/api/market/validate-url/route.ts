@@ -20,6 +20,8 @@ import { parse as parseYAML } from 'yaml';
 import { AppManifestSchema } from '@/lib/market/schema';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import type { AppManifest, MarketApp } from '@/lib/market/types';
+import { requireAdmin } from '@/lib/auth/rbac';
+import { saveDirectMarketApp } from '@/lib/market/direct-apps';
 
 export const dynamic = 'force-dynamic';
 
@@ -124,7 +126,10 @@ function manifestToPreview(manifest: AppManifest): MarketApp {
 }
 
 export async function POST(request: NextRequest) {
-  let body: { manifestUrl?: string };
+  const auth = await requireAdmin();
+  if (auth.error) return auth.error;
+
+  let body: { manifestUrl?: string; addToMarket?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -146,9 +151,23 @@ export async function POST(request: NextRequest) {
   // Pattern: https://github.com/{owner}/{repo} (with optional trailing slash)
   const githubRepoPattern = /^https:\/\/github\.com\/([^/]+)\/([^/]+?)\/?$/;
   const githubMatch = manifestUrl.match(githubRepoPattern);
+  let forgejoManifestUrl: string | null = null;
+  if (!githubMatch) {
+    try {
+      const repository = new URL(manifestUrl);
+      const parts = repository.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '').split('/');
+      if (repository.protocol === 'https:' && !repository.username && !repository.password &&
+          !repository.search && !repository.hash && parts.length === 2 && parts.every(Boolean) &&
+          !isPrivateHostname(repository.hostname)) {
+        forgejoManifestUrl = `${repository.origin}/api/v1/repos/${parts.map(encodeURIComponent).join('/')}/raw/youeye-app.yaml?ref=main`;
+      }
+    } catch {
+      forgejoManifestUrl = null;
+    }
+  }
   const resolvedUrl = githubMatch
     ? `https://raw.githubusercontent.com/${githubMatch[1]}/${githubMatch[2]}/main/youeye-app.yaml`
-    : manifestUrl;
+    : forgejoManifestUrl ?? manifestUrl;
 
   // Step 1: Validate URL safety
   const urlError = validateUrl(resolvedUrl);
@@ -167,6 +186,7 @@ export async function POST(request: NextRequest) {
 
     const res = await fetch(resolvedUrl, {
       signal: controller.signal,
+      redirect: 'error',
       headers: {
         'Accept': 'text/yaml, application/yaml, text/plain, */*',
         'User-Agent': 'YouEye-Market/1.0',
@@ -178,6 +198,13 @@ export async function POST(request: NextRequest) {
     if (!res.ok) {
       return NextResponse.json(
         { valid: false, errors: [`Failed to fetch manifest: HTTP ${res.status}`] },
+        { status: 400 }
+      );
+    }
+
+    if (res.headers.get('content-type')?.toLowerCase().includes('text/html')) {
+      return NextResponse.json(
+        { valid: false, errors: ['Manifest URL returned an HTML document'] },
         { status: 400 }
       );
     }
@@ -241,6 +268,9 @@ export async function POST(request: NextRequest) {
   // Step 5: Return validated manifest preview
   const manifest = result.data;
   const preview = manifestToPreview(manifest);
+  const directEntry = body.addToMarket
+    ? await saveDirectMarketApp({ manifestUrl: resolvedUrl, manifestText: yamlText, manifest })
+    : null;
 
   // Log the URL install attempt for audit
   console.log(`[Market] Manifest validated from URL: ${resolvedUrl} — app: ${manifest.metadata.id} v${manifest.version || 'unknown'}`);
@@ -248,6 +278,11 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     valid: true,
     manifest: preview,
+    sourceId: directEntry?.sourceId,
+    appId: directEntry?.manifest.metadata.id,
+    href: directEntry
+      ? `/market/${encodeURIComponent(directEntry.manifest.metadata.id)}?source=${encodeURIComponent(directEntry.sourceId)}`
+      : undefined,
     capabilities: {
       sso: !!manifest.sso,
       sharedPostgres: manifest.database?.mode === 'shared',

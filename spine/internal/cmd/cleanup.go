@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	hoststorage "github.com/youeye-platform/YouEye/spine/internal/storage"
 	"gopkg.in/yaml.v3"
 )
 
@@ -43,6 +44,13 @@ func init() {
 func runCleanup() error {
 	fmt.Println("=== Spine Cleanup ===")
 	fmt.Println()
+	runtimeStatus, _, runtimeErr := applianceRuntime()
+	if runtimeErr != nil {
+		return runtimeErr
+	}
+	if runtimeStatus.Kind == "appliance-image" {
+		return runApplianceCleanup()
+	}
 
 	// Check if Incus is installed
 	if _, err := exec.LookPath("incus"); err != nil {
@@ -247,6 +255,12 @@ func runCleanup() error {
 	os.RemoveAll("/var/lib/incus")
 	os.RemoveAll("/var/log/incus")
 	os.RemoveAll("/var/cache/incus")
+
+	// Remove the spine-created swapfile at its OS-filesystem path (deploy.go
+	// creates /var/swapfile). Cleanup only undoes what install did. The legacy
+	// /var/lib/youeye/swapfile is handled by the /var/lib/youeye removal below
+	// (and swapoff already ran in destroyZFSPools).
+	removeSpineSwapfile()
 
 	// Step 11: Remove YouEye app data (unless --keep-data)
 	if !cleanupKeepData {
@@ -654,6 +668,31 @@ func removeZFSPackages() {
 	fmt.Println("  Removed ZFS packages (scoped — does not touch unrelated packages)")
 }
 
+// removeSpineSwapfile swaps off and removes the spine-created swapfile at
+// /var/swapfile and strips its /etc/fstab line. Best-effort — only touches the
+// exact path Spine writes.
+func removeSpineSwapfile() {
+	const swapPath = "/var/swapfile"
+	if _, err := os.Stat(swapPath); err != nil {
+		return
+	}
+	exec.Command("swapoff", swapPath).Run()
+	if err := os.Remove(swapPath); err == nil {
+		fmt.Println("  Removed swapfile /var/swapfile")
+	}
+	// Strip the fstab line for our swapfile.
+	if data, err := os.ReadFile("/etc/fstab"); err == nil {
+		var kept []string
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), swapPath+" ") {
+				continue
+			}
+			kept = append(kept, line)
+		}
+		os.WriteFile("/etc/fstab", []byte(strings.Join(kept, "\n")), 0644)
+	}
+}
+
 // destroyZFSPools destroys any ZFS pools that were created by Incus.
 // This prevents orphaned zpools from blocking ZFS re-initialization
 // on the next 'spine deploy'.
@@ -681,6 +720,27 @@ func destroyZFSPools() {
 		return
 	}
 
+	// Record the pool's member devices BEFORE destroying it. After destroy we
+	// clear ZFS labels on these so the disk is truly blank and deploy path (b)
+	// re-adopts it on reinstall. `zpool status -P` prints full device paths.
+	members := hoststorage.PoolMemberDevices("default")
+	// Whole-disk wipes are only safe on pools YouEye created (whole-disk
+	// layout, ownership marker). A legacy/manual pool may live on a partition
+	// of a disk that also holds unrelated data.
+	ownedPool := hoststorage.IsYouEyeMarkedPool("default")
+
+	// Swap off + remove any spine-created swapfile that may sit on the ZFS
+	// data dataset (legacy path) so the dataset can unmount cleanly. New
+	// installs put swap at /var/swapfile (off-ZFS), but a legacy install may
+	// have it under /var/lib/youeye.
+	for _, sw := range []string{"/var/lib/youeye/swapfile", "/var/swapfile"} {
+		exec.Command("swapoff", sw).Run()
+	}
+
+	// Unmount the data dataset (mounted at /var/lib/youeye on dedicated-disk
+	// installs) before tearing datasets down.
+	exec.Command("zfs", "unmount", "default/data").Run()
+
 	// First, destroy all child datasets to release any holds/mounts.
 	// We must go deepest-first (reverse order of `zfs list -r`).
 	fmt.Println("  Destroying ZFS datasets...")
@@ -702,9 +762,86 @@ func destroyZFSPools() {
 
 	// Now destroy the pool itself
 	fmt.Println("  Destroying ZFS pool 'default'...")
+	poolDestroyed := false
 	if out, err := exec.Command("zpool", "destroy", "-f", "default").CombinedOutput(); err != nil {
 		fmt.Printf("  Warning: could not destroy ZFS pool: %s\n", strings.TrimSpace(string(out)))
 	} else {
+		poolDestroyed = true
 		fmt.Println("  ✓ ZFS pool 'default' destroyed")
+	}
+
+	// Clear ZFS labels on every device the pool used, then wipe filesystem
+	// signatures. ZFS keeps 4 label copies (2 at the END of the device) that
+	// survive `wipefs -a`; `zpool labelclear` alone leaves the GPT/partition
+	// table. Both are required to leave a truly blank disk that deploy path (b)
+	// re-adopts. Only touch actual pool members.
+	if poolDestroyed && len(members) > 0 {
+		clearPoolMemberDevices(members, ownedPool)
+	}
+
+	// Loop-pool case: remove the backing image so a fresh deploy doesn't
+	// re-adopt a stale loop file.
+	if _, err := os.Stat("/var/lib/incus/disks/default.img"); err == nil {
+		if err := os.Remove("/var/lib/incus/disks/default.img"); err == nil {
+			fmt.Println("  Removed loop-pool image /var/lib/incus/disks/default.img")
+		}
+	}
+}
+
+// clearPoolMemberDevices runs `zpool labelclear -f` on each recorded member
+// device. For YouEye-owned pools (whole-disk layout, ownership marker) it also
+// clears the parent whole-disk device and runs `wipefs -a` on it, leaving a
+// truly blank disk that reinstall re-adopts. For pools YouEye did not create,
+// only the member vdevs themselves are cleared — the parent disk may hold
+// unrelated partitions and must not be wiped. Idempotent and best-effort per
+// device — a device may already be blank.
+func clearPoolMemberDevices(members []string, ownedPool bool) {
+	fmt.Println("  Clearing ZFS labels + filesystem signatures on pool devices...")
+	wholeDisks := map[string]bool{}
+	for _, dev := range members {
+		// Loop-pool members are backing files, not block devices — the image
+		// file is removed separately, nothing to labelclear.
+		if !strings.HasPrefix(dev, "/dev/") {
+			continue
+		}
+		// labelclear the member device itself (may be a partition like sdb1).
+		exec.Command("zpool", "labelclear", "-f", dev).Run()
+		if !ownedPool {
+			continue
+		}
+		// And its parent whole-disk device (end-of-disk labels live here).
+		whole := hoststorage.WholeDiskOf(dev)
+		if whole != "" && whole != dev {
+			exec.Command("zpool", "labelclear", "-f", whole).Run()
+		}
+		if whole != "" {
+			wholeDisks[whole] = true
+		}
+	}
+	for disk := range wholeDisks {
+		// Wipe partition signatures first (zfs_member on sdb1 etc.), then the
+		// disk itself (GPT + protective MBR, including the backup GPT at the
+		// end of the disk). Partition nodes vanish once the table is gone.
+		if out, err := exec.Command("lsblk", "-nro", "PATH", disk).Output(); err == nil {
+			for _, part := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				part = strings.TrimSpace(part)
+				if part == "" || part == disk {
+					continue
+				}
+				exec.Command("wipefs", "-a", part).Run()
+			}
+		}
+		if out, err := exec.Command("wipefs", "-a", disk).CombinedOutput(); err != nil {
+			fmt.Printf("  Warning: wipefs %s: %s\n", disk, strings.TrimSpace(string(out)))
+		} else {
+			fmt.Printf("  ✓ Wiped %s (blank, re-adoptable on reinstall)\n", disk)
+		}
+		// Refresh the kernel partition table view so a follow-up deploy's
+		// lsblk/blkid probes see the blank disk immediately.
+		exec.Command("partprobe", disk).Run()
+	}
+	exec.Command("udevadm", "settle").Run()
+	if !ownedPool {
+		fmt.Println("  ℹ  Pool was not YouEye-created (no ownership marker) — cleared member vdev labels only, parent disks left untouched")
 	}
 }
