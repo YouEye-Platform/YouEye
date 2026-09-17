@@ -17,6 +17,7 @@ import (
 )
 
 const (
+	applianceAnswerCacheSchema  = "youeye.appliance.answer.v4"
 	applianceAnswerSchema       = "youeye.appliance.answer.v3"
 	applianceAnswerLegacySchema = "youeye.appliance.answer.v2"
 	releasePolicySchema         = "youeye.release-policy.v1"
@@ -24,15 +25,16 @@ const (
 )
 
 type applianceAnswer struct {
-	Schema         string                  `json:"schema"`
-	Operation      string                  `json:"operation"`
-	TransactionID  string                  `json:"transaction_id,omitempty"`
-	TargetSerial   string                  `json:"target_serial,omitempty"`
-	EraseConfirmed bool                    `json:"erase_confirmed,omitempty"`
-	Network        applianceAnswerNetwork  `json:"network"`
-	ReleasePolicy  applianceReleasePolicy  `json:"release_policy,omitempty"`
-	Development    developmentAccessPolicy `json:"development_access,omitempty"`
-	AuthorizedKeys []string                `json:"authorized_keys,omitempty"`
+	ReleaseCacheSHA256 string                  `json:"release_cache_sha256,omitempty"`
+	Schema             string                  `json:"schema"`
+	Operation          string                  `json:"operation"`
+	TransactionID      string                  `json:"transaction_id,omitempty"`
+	TargetSerial       string                  `json:"target_serial,omitempty"`
+	EraseConfirmed     bool                    `json:"erase_confirmed,omitempty"`
+	Network            applianceAnswerNetwork  `json:"network"`
+	ReleasePolicy      applianceReleasePolicy  `json:"release_policy,omitempty"`
+	Development        developmentAccessPolicy `json:"development_access,omitempty"`
+	AuthorizedKeys     []string                `json:"authorized_keys,omitempty"`
 }
 
 type applianceAnswerNetwork struct {
@@ -95,11 +97,14 @@ func parseApplianceAnswer(raw []byte) (applianceAnswer, error) {
 }
 
 func validateApplianceAnswer(answer applianceAnswer) error {
-	if answer.Schema != applianceAnswerSchema && answer.Schema != applianceAnswerLegacySchema {
+	if answer.Schema != applianceAnswerCacheSchema && answer.Schema != applianceAnswerSchema && answer.Schema != applianceAnswerLegacySchema {
 		return fmt.Errorf("unsupported appliance answer schema %q", answer.Schema)
 	}
 	if answer.Operation != "erase-install" && answer.Operation != "preserve-reinstall" && answer.Operation != "resume" && answer.Operation != "cancel" {
 		return fmt.Errorf("unsupported appliance answer operation %q", answer.Operation)
+	}
+	if answer.ReleaseCacheSHA256 != "" && (answer.Schema != applianceAnswerCacheSchema || !validSHA256Hex(answer.ReleaseCacheSHA256)) {
+		return fmt.Errorf("release cache requires schema v4 and an exact digest")
 	}
 	if answer.Operation != "cancel" && !validApplianceTransactionID(answer.TransactionID) {
 		return fmt.Errorf("appliance answer transaction_id must be 32 lowercase hexadecimal characters")
@@ -119,7 +124,7 @@ func validateApplianceAnswer(answer applianceAnswer) error {
 	if answer.Network.AdapterMAC != "" && !validEthernetMAC(answer.Network.AdapterMAC) {
 		return fmt.Errorf("appliance answer adapter_mac must be a unicast Ethernet MAC address")
 	}
-	if answer.Schema == applianceAnswerSchema {
+	if answer.Schema == applianceAnswerSchema || answer.Schema == applianceAnswerCacheSchema {
 		if err := validateApplianceReleasePolicy(answer.ReleasePolicy); err != nil {
 			return err
 		}

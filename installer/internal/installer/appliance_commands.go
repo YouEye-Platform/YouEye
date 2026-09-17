@@ -393,7 +393,7 @@ chmod 0644 "$state_root/etc/systemd/network/20-youeye.network"
 
 # Persist desired bootstrap policy outside the sealed System slots. The answer
 # file is protected and the password hash is never copied through argv or logs.
-if jq -e '.schema == "youeye.appliance.answer.v3"' "$answer" >/dev/null 2>&1; then
+if jq -e '.schema == "youeye.appliance.answer.v3" or .schema == "youeye.appliance.answer.v4"' "$answer" >/dev/null 2>&1; then
   jq -e '.release_policy' "$answer" > "$state_root/bootstrap/release-policy.json.tmp"
   jq -e '.development_access' "$answer" > "$state_root/bootstrap/development-access.json.tmp"
 else
@@ -410,6 +410,31 @@ for file in release-policy development-access network-profile; do
   mv -f "$state_root/bootstrap/$file.json.tmp" "$state_root/bootstrap/$file.json"
 done
 sync -f "$state_root/bootstrap"
+# Optional transport cache from the same answer medium. Artifact signatures and
+# sealed component pins remain mandatory when these bytes are consumed.
+cache_digest=$(jq -r '.release_cache_sha256 // empty' "$answer")
+if [ -n "$cache_digest" ]; then
+  cache_source="$(dirname "$answer")/release-cache"
+  test "$(sha256sum "$cache_source/index.json" | awk '{print $1}')" = "$cache_digest"
+  test ! -e "$state_root/release-cache"
+  mkdir -p "$state_root/release-cache/objects"
+  cp -- "$cache_source/index.json" "$state_root/release-cache/index.json"
+  # The full digest is split across short path segments on ISO9660 media.
+  # Restore the normal content-addressed layout only after verifying each object.
+  jq -er '.objects | type == "object"' "$cache_source/index.json" >/dev/null
+  jq -r '.objects[].sha256' "$cache_source/index.json" | sort -u | while IFS= read -r digest; do
+    printf '%s\n' "$digest" | grep -Eq '^[0-9a-f]{64}$'
+    relative=$(printf '%s\n' "$digest" | awk '{print substr($0,1,16) "/" substr($0,17,16) "/" substr($0,33,16) "/" substr($0,49,16)}')
+    source="$cache_source/objects/$relative"
+    test -f "$source" && test ! -L "$source"
+    test "$(sha256sum "$source" | awk '{print $1}')" = "$digest"
+    cp -- "$source" "$state_root/release-cache/objects/$digest"
+    chmod 0400 "$state_root/release-cache/objects/$digest"
+  done
+  chmod 0400 "$state_root/release-cache/index.json"
+  chmod 0700 "$state_root/release-cache" "$state_root/release-cache/objects"
+fi
+
 
 if [ "$#" -gt 0 ]; then
   printf '%s\n' "$@" > "$state_root/root/.ssh/authorized_keys"

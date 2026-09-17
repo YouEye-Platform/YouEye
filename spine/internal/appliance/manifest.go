@@ -318,9 +318,9 @@ func (m Manifest) Validate() error {
 		return fmt.Errorf("invalid data schema compatibility range")
 	}
 	switch m.ArtifactKind {
-	case "production", "development", "test":
+	case "production", "stable", "beta", "development", "test":
 	default:
-		return fmt.Errorf("artifact_kind must be production, development, or test")
+		return fmt.Errorf("artifact_kind must be production, stable, beta, development, or test")
 	}
 	if m.ReleaseSet != nil {
 		if err := m.ReleaseSet.Validate(); err != nil {

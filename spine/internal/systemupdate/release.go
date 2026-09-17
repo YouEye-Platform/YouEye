@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"io"
 	"net/http"
 	"net/url"
@@ -58,7 +59,8 @@ type release struct {
 
 func ReleaseHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: 30 * time.Second,
+		Transport: releasecache.Wrap(nil),
+		Timeout:   30 * time.Second,
 		CheckRedirect: func(request *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return errors.New("too many release API redirects")

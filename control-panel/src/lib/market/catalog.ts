@@ -1,3 +1,4 @@
+import { releaseCacheFetch } from '../releases/cache';
 /**
  * Catalog fetcher — pulls app manifests from Market, app repos, or URLs.
  *
@@ -94,11 +95,11 @@ export async function fetchFile(filePath: string, branch?: string, marketSource?
   const repo = source.repository;
   const effectiveBranch = branch || DEFAULT_BRANCH;
   const url = buildMarketRawURL(source, owner, repo, filePath, effectiveBranch);
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  const res = await releaseCacheFetch(url, { signal: AbortSignal.timeout(15_000) });
 
   if (!res.ok && allowMainFallback && effectiveBranch !== DEFAULT_BRANCH) {
     const fallbackUrl = buildMarketRawURL(source, owner, repo, filePath, DEFAULT_BRANCH);
-    const fallbackRes = await fetch(fallbackUrl, { signal: AbortSignal.timeout(15_000) });
+    const fallbackRes = await releaseCacheFetch(fallbackUrl, { signal: AbortSignal.timeout(15_000) });
     if (!fallbackRes.ok) throw new Error(`Failed to fetch ${filePath}: ${fallbackRes.status}`);
     return fallbackRes.text();
   }
@@ -110,11 +111,11 @@ export async function fetchFile(filePath: string, branch?: string, marketSource?
 export async function fetchRepoFile(owner: string, repo: string, filePath: string, branch: string, marketSource?: MarketSource): Promise<string> {
   const source = marketSource || await getMarketSource();
   const url = buildMarketRawURL(source, owner, repo, filePath, branch);
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  const res = await releaseCacheFetch(url, { signal: AbortSignal.timeout(15_000) });
 
   if (!res.ok && branch !== DEFAULT_BRANCH) {
     const fallbackUrl = buildMarketRawURL(source, owner, repo, filePath, DEFAULT_BRANCH);
-    const fallbackRes = await fetch(fallbackUrl, { signal: AbortSignal.timeout(15_000) });
+    const fallbackRes = await releaseCacheFetch(fallbackUrl, { signal: AbortSignal.timeout(15_000) });
     if (!fallbackRes.ok) throw new Error(`Failed to fetch ${owner}/${repo}/${filePath}: ${fallbackRes.status}`);
     return fallbackRes.text();
   }

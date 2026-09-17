@@ -1,0 +1,7 @@
+{
+  "schema": "youeye.candidate-install.v1",
+  "transport": "youeye.release-cache.v1",
+  "answer": "youeye.appliance.answer.v4",
+  "verification": "original-source-signatures-and-pins",
+  "answer_cache_layout": "sha256-split-v1"
+}

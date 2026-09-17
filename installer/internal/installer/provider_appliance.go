@@ -1,8 +1,12 @@
 package installer
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/youeye-platform/YouEye/appliance/ordering"
@@ -199,6 +203,28 @@ func loadApplianceInstallInput(cfg installConfig) (applianceInstallInput, error)
 		answer, err := parseApplianceAnswer(raw)
 		if err != nil {
 			return applianceInstallInput{}, err
+		}
+		if answer.ReleaseCacheSHA256 != "" {
+			raw, err := os.ReadFile(filepath.Join(filepath.Dir(cfg.ApplianceAnswerPath), "release-cache", "index.json"))
+			if err != nil {
+				return applianceInstallInput{}, err
+			}
+			digest := sha256.Sum256(raw)
+			if hex.EncodeToString(digest[:]) != answer.ReleaseCacheSHA256 {
+				return applianceInstallInput{}, fmt.Errorf("answer release cache digest differs")
+			}
+			cacheRoot := filepath.Join(filepath.Dir(cfg.ApplianceAnswerPath), "release-cache")
+			index, err := releasecache.Load(cacheRoot)
+			if err != nil {
+				return applianceInstallInput{}, err
+			}
+			for source := range index.Objects {
+				f, _, err := releasecache.OpenMedia(cacheRoot, source)
+				if err != nil {
+					return applianceInstallInput{}, fmt.Errorf("answer cache object rejected before disk changes: %w", err)
+				}
+				f.Close()
+			}
 		}
 		policy, development := answer.ReleasePolicy, answer.Development
 		if answer.Schema == applianceAnswerLegacySchema {

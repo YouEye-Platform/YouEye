@@ -1,3 +1,4 @@
+import { releaseCacheFetch } from '../releases/cache';
 import { mkdir, readFile, rename, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
@@ -260,7 +261,7 @@ export async function setMarketSources(sources: StoredMarketSource[]): Promise<M
 
 export async function resolveMarketSourceCommit(
   source: MarketSource,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = releaseCacheFetch,
 ): Promise<string> {
   const encodedRef = encodeURIComponent(source.branch);
   const url = isGitHubMarketSource(source)

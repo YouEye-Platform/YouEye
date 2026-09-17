@@ -176,3 +176,20 @@ func TestCompatibilityMatrix(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicImageKindsRecognizedWithoutRelaxingValidation(t *testing.T) {
+	for _, kind := range []string{"stable", "beta"} {
+		raw := strings.Replace(validManifest, `"artifact_kind": "test"`, `"artifact_kind": "`+kind+`"`, 1)
+		if _, err := ParseManifest([]byte(raw)); err != nil {
+			t.Fatal(kind, err)
+		}
+		bad := strings.Replace(raw, `"schema_version": 1`, `"schema_version": 999`, 1)
+		if _, err := ParseManifest([]byte(bad)); err == nil {
+			t.Fatal("invalid schema accepted", kind)
+		}
+	}
+	raw := strings.Replace(validManifest, `"artifact_kind": "test"`, `"artifact_kind": "unknown"`, 1)
+	if _, err := ParseManifest([]byte(raw)); err == nil {
+		t.Fatal("unknown kind accepted")
+	}
+}

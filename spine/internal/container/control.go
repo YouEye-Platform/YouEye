@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"io"
 	"os"
 	"os/exec"
@@ -618,6 +619,17 @@ func DeployControlPanelApp(cfg *config.Config) error {
 		return err
 	}
 
+	// Staged signed-release bytes remain separate from the installed package.
+	if _, cacheErr := releasecache.Load(releasecache.Root()); cacheErr == nil {
+		if err := util.RunIncusExec(containerName, "mkdir", "-p", "/var/lib/youeye-state"); err != nil {
+			return err
+		}
+		if _, err := util.RunCmdCapture("incus", "file", "push", "--recursive", releasecache.Root(), containerName+"/var/lib/youeye-state/"); err != nil {
+			return fmt.Errorf("stage release transport cache: %w", err)
+		}
+	} else if !os.IsNotExist(cacheErr) {
+		return cacheErr
+	}
 	// Create systemd service
 	util.LogSubStep("Creating systemd service...")
 	jwtSecret := util.GenerateJWTSecret()

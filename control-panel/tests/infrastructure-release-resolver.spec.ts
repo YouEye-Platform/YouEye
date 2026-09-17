@@ -7,6 +7,7 @@ import type { ReleaseSource } from '../src/lib/apps/release-source';
 import {
   listInfrastructureReleases,
   resolveInfrastructureStandaloneRelease,
+  resolveExactInfrastructureStandaloneRelease,
   selectExactInfrastructureStandaloneRelease,
   selectInfrastructureStandaloneRelease,
   type InfrastructureRelease,
@@ -208,4 +209,12 @@ test('system UI never claims a raw host port', async () => {
   assert.match(deployer, /exactUIProvenanceMatchesConfiguredSource[\s\S]*provenance\.artifact_sha256 === channel\.artifact_sha256/);
   assert.match(deployer, /exactUIProvenanceMatchesConfiguredSource\(\)\) === false[\s\S]*deployUIContainerFromConfiguredSource\(true\)/);
   assert.match(lxdDeployer, /spec\.port && cfg\.exposeHostPort !== false/);
+});
+
+test('digest-pinned UI resolution does not consult an exhausted API', async () => {
+  const failFetch = async () => { throw new Error('API must not be requested'); };
+  const result = await resolveExactInfrastructureStandaloneRelease(forgejo, 'YouEye', 'ui-v0.5.5', 'a'.repeat(64), failFetch as typeof fetch);
+  assert.equal(result.url, 'https://forge.example.test/youeye/YouEye/releases/download/ui-v0.5.5/standalone.tar');
+  await assert.rejects(resolveExactInfrastructureStandaloneRelease(forgejo, 'YouEye', '../bad', 'a'.repeat(64), failFetch as typeof fetch));
+  await assert.rejects(resolveExactInfrastructureStandaloneRelease(forgejo, 'YouEye', 'ui-v0.5.5', 'BAD', failFetch as typeof fetch));
 });

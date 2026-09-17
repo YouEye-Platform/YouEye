@@ -357,10 +357,18 @@ func (m *Manager) downloadHTTP(ctx context.Context, source, partial string, expe
 	}
 	response, err := m.config.HTTPClient.Do(request)
 	if err != nil {
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			return fmt.Errorf("system update HTTP request failed: %w", urlErr.Err)
+		}
 		return err
 	}
 	defer response.Body.Close()
-	if err := validateRemoteURL(response.Request.URL); err != nil {
+	origin, err := url.Parse(source)
+	if err != nil {
+		return err
+	}
+	if err := validateSystemUpdateDownloadURL(response.Request.URL, origin); err != nil {
 		return err
 	}
 	flags := os.O_CREATE | os.O_WRONLY

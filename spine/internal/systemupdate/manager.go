@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -144,7 +146,8 @@ func DefaultConfig() Config {
 		KernelCmdlinePath:   "/proc/cmdline",
 		ESPMountpoint:       "/efi",
 		HTTPClient: &http.Client{
-			Timeout: 0,
+			Transport: releasecache.Wrap(nil),
+			Timeout:   0,
 			CheckRedirect: func(request *http.Request, via []*http.Request) error {
 				return validateSystemUpdateRedirect(request, via)
 			},
@@ -163,13 +166,14 @@ func validateSystemUpdateRedirect(request *http.Request, via []*http.Request) er
 	if len(via) >= 5 {
 		return errors.New("too many system update redirects")
 	}
-	if err := validateRemoteURL(request.URL); err != nil {
-		return err
-	}
 	if len(via) == 0 {
-		return nil
+		return validateRemoteURL(request.URL)
 	}
 	origin := via[0].URL
+	if err := validateSystemUpdateDownloadURL(request.URL, origin); err != nil {
+		return err
+	}
+
 	if strings.EqualFold(origin.Hostname(), "github.com") {
 		switch strings.ToLower(request.URL.Hostname()) {
 		case "github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com":
@@ -922,4 +926,24 @@ func cloneBytes(values map[string]int64) map[string]int64 {
 		clone[key] = value
 	}
 	return clone
+}
+
+// Signed CDN query parameters are transport details, not manifest source inputs.
+// Only GitHub's HTTPS release redirect may introduce them.
+func validateSystemUpdateDownloadURL(target, origin *url.URL) error {
+	if err := validateRemoteURL(origin); err != nil {
+		return err
+	}
+	if target == nil {
+		return validateRemoteURL(target)
+	}
+	if origin.Scheme == "https" && target.Scheme != "https" {
+		return errors.New("system update redirect must preserve HTTPS")
+	}
+	candidate := *target
+	if origin.Scheme == "https" && strings.EqualFold(origin.Host, "github.com") &&
+		target.Scheme == "https" && (strings.EqualFold(target.Host, "release-assets.githubusercontent.com") || strings.EqualFold(target.Host, "objects.githubusercontent.com")) {
+		candidate.RawQuery = ""
+	}
+	return validateRemoteURL(&candidate)
 }

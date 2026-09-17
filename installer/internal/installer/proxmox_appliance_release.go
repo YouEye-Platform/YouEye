@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"io"
 	"net/http"
 	"net/url"
@@ -640,7 +641,8 @@ func safeReleaseCacheName(tag string) string {
 
 func applianceHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: 45 * time.Minute,
+		Transport: releasecache.Wrap(nil),
+		Timeout:   45 * time.Minute,
 		CheckRedirect: func(request *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return fmt.Errorf("appliance download exceeded five redirects")

@@ -109,3 +109,18 @@ func TestApplianceAnswerAcceptsPreserveReinstallWithoutEraseConfirmation(t *test
 		t.Fatalf("unexpected preserve answer: %+v", answer)
 	}
 }
+
+func TestCandidateCacheAnswerRequiresVersionedHash(t *testing.T) {
+	raw := `{"schema":"youeye.appliance.answer.v3","operation":"erase-install","transaction_id":"0123456789abcdef0123456789abcdef","target_serial":"TARGET","erase_confirmed":true,"network":{"mode":"dhcp"},"release_policy":{"schema":"youeye.release-policy.v1","provider":"github","mode":"track","track":"stable","freshness":"require-current"},"development_access":{"schema":"youeye.development-access.v1","local_root_console":false,"root_password_ssh":false},"release_cache_sha256":"` + strings.Repeat("a", 64) + `"}`
+	if _, err := parseApplianceAnswer([]byte(raw)); err == nil {
+		t.Fatal("legacy schema accepted cache transport")
+	}
+	raw = strings.Replace(raw, "answer.v3", "answer.v4", 1)
+	if _, err := parseApplianceAnswer([]byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	raw = strings.Replace(raw, strings.Repeat("a", 64), "../untrusted", 1)
+	if _, err := parseApplianceAnswer([]byte(raw)); err == nil {
+		t.Fatal("invalid cache digest accepted")
+	}
+}

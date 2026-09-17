@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+import { cachedReleaseBytes } from '../releases/cache';
 /**
  * LXD container deployment via Incus REST API (v2).
  * Used for full-OS containers (Debian) that run Node.js apps.
@@ -17,7 +19,7 @@ import {
   resolveInfrastructureStandaloneRelease,
   type ResolvedInfrastructureRelease,
 } from './release-resolver';
-import { signedReleaseVerificationShell } from '@/lib/releases/verify';
+import { signedReleaseVerificationShell, verifySignedReleaseArtifactBuffer } from '@/lib/releases/verify';
 import { effectiveChannel } from '@/lib/updates/channels';
 import {
   readStagedMarketNativeArtifact,
@@ -410,8 +412,15 @@ async function installNodeAndApp(
     await incusUploadFile(cn, '/tmp/app.tar', bytes, { timeout: 300_000, mode: '0600' });
   }
 
+  const cachedRelease = marketArtifact ? null : await cachedReleaseBytes(releaseURL);
+  if (cachedRelease) {
+    await verifySignedReleaseArtifactBuffer(releaseURL, cachedRelease, 'standalone.tar', artifactSHA256);
+    await incusUploadFile(cn, '/tmp/app.tar', cachedRelease, { timeout: 300_000, mode: '0600' });
+  }
   const downloadURL = marketArtifact ? '' : shellQuote(releaseURL);
-  const artifactPreparation = marketArtifact
+  const artifactPreparation = cachedRelease
+    ? `test "$(sha256sum /tmp/app.tar | awk '{print $1}')" = ${shellQuote(artifactSHA256 || createHash('sha256').update(cachedRelease).digest('hex'))}`
+    : marketArtifact
     ? `
     echo "Using preflighted Market artifact..."
     test "$(sha256sum /tmp/app.tar | awk '{print $1}')" = ${shellQuote(marketArtifact.artifactSHA256)}

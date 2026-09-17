@@ -156,8 +156,13 @@ export async function resolveExactInfrastructureStandaloneRelease(
   artifactSHA256: string,
   fetchImpl: FetchLike = fetch,
 ): Promise<ResolvedInfrastructureRelease> {
-  const releases = await listInfrastructureReleases(source, repo, fetchImpl);
-  const resolved = selectExactInfrastructureStandaloneRelease(source, releases, exactTag, artifactSHA256);
+  // Exact tag plus digest already identifies the artifact. Signature and digest
+  // verification remain mandatory at download; API discovery adds no trust.
+  const direct = `${source.base_url.replace(/\/$/, '')}/${encodeURIComponent(source.organization)}/${encodeURIComponent(repo)}/releases/download/${encodeURIComponent(exactTag)}/standalone.tar`;
+  const resolved = selectExactInfrastructureStandaloneRelease(source, [{
+    tag_name: exactTag, assets: [{ name: 'standalone.tar', browser_download_url: direct }],
+  }], exactTag, artifactSHA256);
+  void fetchImpl;
   if (!resolved) {
     throw new Error(`Exact signed standalone release ${exactTag} was not found or did not match its configured identity`);
   }

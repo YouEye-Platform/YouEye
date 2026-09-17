@@ -31,3 +31,18 @@ func publicReleaseKey(class string) (ed25519.PublicKey, error) {
 	}
 	return key, nil
 }
+
+// PublicReleaseTrustAnchor returns the provisioned channel authority for signed
+// component artifacts as well as System images. Callers must select the class
+// from their trusted source/channel context, never from a downloaded key.
+func PublicReleaseTrustAnchor(class string) ([]byte, error) {
+	key, err := publicReleaseKey(class)
+	if err != nil {
+		return nil, err
+	}
+	der, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), nil
+}

@@ -36,3 +36,7 @@ require (
 	golang.org/x/text v0.28.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 )
+
+require github.com/youeye-platform/YouEye/releasecache v0.0.0
+
+replace github.com/youeye-platform/YouEye/releasecache => ../releasecache

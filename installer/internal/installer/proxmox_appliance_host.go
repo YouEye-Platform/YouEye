@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"io"
 	"net"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -521,6 +523,30 @@ func emitProxmoxProgress(progress chan<- proxmoxApplianceProgress, stage, detail
 }
 
 func writeApplianceAnswerISO(destination string, answer applianceAnswer) error {
+	cacheRoot := releasecache.Root()
+	guestIndex, e := os.ReadFile(filepath.Join(cacheRoot, "guest-index.json"))
+	var cached releasecache.Index
+	var hostIndex releasecache.Index
+	if e == nil {
+		if json.Unmarshal(guestIndex, &cached) != nil || cached.Schema != "youeye.release-cache.v1" {
+			return fmt.Errorf("invalid guest release cache")
+		}
+		hostIndex, e = releasecache.Load(cacheRoot)
+		if e != nil {
+			return e
+		}
+		for source, object := range cached.Objects {
+			if hostIndex.Objects[source] != object {
+				return fmt.Errorf("guest release cache differs from verified host cache")
+			}
+		}
+		digest := sha256.Sum256(guestIndex)
+		answer.ReleaseCacheSHA256 = hex.EncodeToString(digest[:])
+		answer.Schema = applianceAnswerCacheSchema
+	} else if !os.IsNotExist(e) {
+		return e
+	}
+
 	if err := validateApplianceAnswer(answer); err != nil {
 		return err
 	}
@@ -539,6 +565,32 @@ func writeApplianceAnswerISO(destination string, answer applianceAnswer) error {
 	defer writer.Cleanup()
 	if err := writer.AddFile(bytes.NewReader(raw), "appliance-answer.json"); err != nil {
 		return fmt.Errorf("add appliance answer to ISO: %w", err)
+	}
+	if guestIndex != nil {
+		if err := writer.AddFile(bytes.NewReader(guestIndex), "release-cache/index.json"); err != nil {
+			return err
+		}
+		names := make([]string, 0, len(cached.Objects))
+		for u := range cached.Objects {
+			names = append(names, u)
+		}
+		sort.Strings(names)
+		seen := map[string]bool{}
+		for _, u := range names {
+			obj := cached.Objects[u]
+			if seen[obj.SHA256] {
+				continue
+			}
+			f, _, err := releasecache.Open(cacheRoot, u)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			if err = writer.AddFile(f, "release-cache/objects/"+filepath.ToSlash(releasecache.MediaObjectPath(obj.SHA256))); err != nil {
+				return err
+			}
+			seen[obj.SHA256] = true
+		}
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(destination), ".answer-*.iso")
 	if err != nil {

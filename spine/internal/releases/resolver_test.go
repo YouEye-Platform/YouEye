@@ -1,8 +1,11 @@
 package releases
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/youeye-platform/YouEye/spine/internal/channels"
@@ -280,5 +283,45 @@ func TestResolveExactTagFailsClosed(t *testing.T) {
 		if _, err := resolveWithChannel(cfg, eff, "YouEye", "cp"); err == nil {
 			t.Fatalf("exact tag %q unexpectedly resolved", tag)
 		}
+	}
+}
+
+func TestPinnedReleaseDoesNotRequestRateLimitedAPI(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(403) }))
+	defer server.Close()
+	cfg := resolverConfig(server.URL)
+	eff := disabledFallback("main")
+	eff.Tag = "cp-v0.5.25"
+	eff.ArtifactSHA256 = strings.Repeat("a", 64)
+	cand, err := resolveWithChannel(cfg, eff, "YouEye", "cp")
+	if err != nil || cand.Tag != eff.Tag || cand.Version != "0.5.25" || cand.ArtifactSHA256 != eff.ArtifactSHA256 {
+		t.Fatalf("candidate=%+v error=%v", cand, err)
+	}
+	got, err := AssetURLForChannel(cfg, eff, "YouEye", "standalone.tar", "cp")
+	want := server.URL + "/potemsla/YouEye/releases/download/cp-v0.5.25/standalone.tar"
+	if err != nil || got != want {
+		t.Fatalf("url=%q error=%v", got, err)
+	}
+	if calls != 0 {
+		t.Fatalf("pinned resolution made %d API requests", calls)
+	}
+	for _, tc := range []struct{ tag, digest string }{
+		{"ui-v0.5.25", eff.ArtifactSHA256}, {"cp-dev-v0.5.25", eff.ArtifactSHA256},
+		{"cp-v../bad", eff.ArtifactSHA256}, {eff.Tag, "bad"}, {eff.Tag, strings.Repeat("z", 64)},
+	} {
+		bad := eff
+		bad.Tag = tc.tag
+		bad.ArtifactSHA256 = tc.digest
+		if _, err := AssetURLForChannel(cfg, bad, "YouEye", "standalone.tar", "cp"); err == nil {
+			t.Fatalf("accepted invalid pin %+v", bad)
+		}
+	}
+	eff.ArtifactSHA256 = ""
+	if _, err := resolveWithChannel(cfg, eff, "YouEye", "cp"); err == nil {
+		t.Fatal("unpinned resolution must still consult API")
+	}
+	if calls != 1 {
+		t.Fatalf("unpinned requests=%d", calls)
 	}
 }

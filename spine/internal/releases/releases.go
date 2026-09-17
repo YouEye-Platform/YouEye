@@ -26,6 +26,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"io"
 	"net"
 	"net/http"
@@ -53,7 +54,7 @@ func NewIPv4Client(timeout time.Duration) *http.Client {
 		Timeout:   10 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	return &http.Client{
+	client := &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -65,6 +66,8 @@ func NewIPv4Client(timeout time.Duration) *http.Client {
 			IdleConnTimeout:     30 * time.Second,
 		},
 	}
+	client.Transport = releasecache.Wrap(client.Transport)
+	return client
 }
 
 // YouEyeConfigPath is the path to the runtime youeye.yaml config file.
@@ -336,6 +339,14 @@ func GetAssetURLForBranch(cfg *config.Config, repo, assetName, tagPrefix string)
 // when the API omits per-asset URLs.
 func AssetURLForChannel(cfg *config.Config, eff channels.Channel, repo, assetName, tagPrefix string) (string, error) {
 	src := resolveSource(cfg, eff.Source)
+	if eff.Tag != "" && eff.ArtifactSHA256 != "" {
+		cand, err := pinnedCandidate(src, eff, tagPrefix)
+		if err != nil {
+			return "", err
+		}
+		return buildDownloadURLFromSource(src, repo, cand.Tag, assetName), nil
+	}
+
 	rels, err := fetchReleasesFromSource(cfg, src, repo)
 	if err != nil {
 		return "", err

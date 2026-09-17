@@ -111,3 +111,87 @@ func TestSignedReleaseSiblingURLRejectsNestedAsset(t *testing.T) {
 		t.Fatal("nested release metadata asset was accepted")
 	}
 }
+
+func TestPublicComponentTrustIsChannelBound(t *testing.T) {
+	previous := componentPublicTrustAnchor
+	t.Cleanup(func() { componentPublicTrustAnchor = previous })
+	componentPublicTrustAnchor = func(class string) ([]byte, error) { return []byte(class), nil }
+	for _, tc := range []struct{ tag, class string }{{"cp-v0.5.25", "stable"}, {"ui-beta-v0.5.5", "beta"}} {
+		u, _ := url.Parse("https://github.com/YouEye-Platform/YouEye/releases/download/" + tc.tag + "/standalone.tar")
+		name, anchor, err := componentReleaseTrust(u)
+		if err != nil || name != "release-public.pub" || string(anchor) != tc.class {
+			t.Fatalf("name=%q anchor=%q error=%v", name, anchor, err)
+		}
+	}
+	for _, raw := range []string{
+		"http://github.com/a/b/releases/download/cp-v1.0.0/standalone.tar",
+		"https://github.com:8443/a/b/releases/download/cp-v1.0.0/standalone.tar",
+		"https://github.com/a/b/releases/download/cp-dev-v1.0.0/standalone.tar",
+		"https://github.com/a/b/releases/download/cp-v1.0.0/standalone.tar?token=x",
+	} {
+		u, _ := url.Parse(raw)
+		if _, _, err := componentReleaseTrust(u); err == nil {
+			t.Fatalf("accepted invalid public source %s", raw)
+		}
+	}
+	componentPublicTrustAnchor = func(string) ([]byte, error) { return nil, fmt.Errorf("unprovisioned") }
+	u, _ := url.Parse("https://github.com/a/b/releases/download/cp-v1.0.0/standalone.tar")
+	if _, _, err := componentReleaseTrust(u); err == nil {
+		t.Fatal("missing public authority fell back to development")
+	}
+}
+
+type publicSignatureTransport func(*http.Request) (*http.Response, error)
+
+func (f publicSignatureTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestPublicComponentSignatureUsesProvisionedKey(t *testing.T) {
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	der, _ := x509.MarshalPKIXPublicKey(publicKey)
+	trust := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	previous := componentPublicTrustAnchor
+	t.Cleanup(func() { componentPublicTrustAnchor = previous })
+	componentPublicTrustAnchor = func(class string) ([]byte, error) {
+		if class != "stable" {
+			return nil, fmt.Errorf("wrong channel")
+		}
+		return trust, nil
+	}
+	artifact := []byte("signed public artifact")
+	artifactDigest := sha256.Sum256(artifact)
+	trustDigest := sha256.Sum256(trust)
+	sums := []byte(fmt.Sprintf("%x  standalone.tar\n%x  release-public.pub\n%s  provenance.json\n%s  sbom.spdx.json\n", artifactDigest, trustDigest, strings.Repeat("1", 64), strings.Repeat("2", 64)))
+	sig := ed25519.Sign(privateKey, sums)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch filepath.Base(r.URL.Path) {
+		case "release-public.pub":
+			w.Write(trust)
+		case "SHA256SUMS":
+			w.Write(sums)
+		case "SHA256SUMS.sig":
+			w.Write(sig)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	upstream, _ := url.Parse(server.URL)
+	client := &http.Client{Transport: publicSignatureTransport(func(r *http.Request) (*http.Response, error) {
+		clone := r.Clone(r.Context())
+		u := *r.URL
+		u.Scheme = upstream.Scheme
+		u.Host = upstream.Host
+		clone.URL = &u
+		return http.DefaultTransport.RoundTrip(clone)
+	})}
+	local := filepath.Join(t.TempDir(), "artifact")
+	os.WriteFile(local, artifact, 0600)
+	remote := "https://github.com/a/b/releases/download/cp-v1.0.0/standalone.tar"
+	if err := VerifySignedReleaseArtifact(client, remote, local, fmt.Sprintf("%x", artifactDigest)); err != nil {
+		t.Fatal(err)
+	}
+	sig[0] ^= 1
+	if err := VerifySignedReleaseArtifact(client, remote, local, fmt.Sprintf("%x", artifactDigest)); err == nil {
+		t.Fatal("invalid public signature accepted")
+	}
+}

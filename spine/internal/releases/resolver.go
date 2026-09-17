@@ -1,6 +1,8 @@
 package releases
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -65,6 +67,10 @@ func ResolveComponent(cfg *config.Config, component, repo, tagPrefix string) (Ca
 // already-resolved channel (and tests) can drive it directly.
 func resolveWithChannel(cfg *config.Config, eff channels.Channel, repo, tagPrefix string) (Candidate, error) {
 	src := resolveSource(cfg, eff.Source)
+
+	if eff.Tag != "" && eff.ArtifactSHA256 != "" {
+		return pinnedCandidate(src, eff, tagPrefix)
+	}
 
 	rels, err := fetchReleasesFromSource(cfg, src, repo)
 	if err != nil {
@@ -167,4 +173,25 @@ func normalizeBranchKey(branch string) string {
 		return "main"
 	}
 	return strings.ToLower(branch)
+}
+
+// A tag and digest fully identify a pinned artifact. Its download still has to
+// pass signed checksum verification; listing other releases adds no trust.
+func pinnedCandidate(src config.ReleaseRepo, eff channels.Channel, tagPrefix string) (Candidate, error) {
+	digest, err := hex.DecodeString(eff.ArtifactSHA256)
+	if err != nil || len(digest) != sha256.Size {
+		return Candidate{}, fmt.Errorf("invalid pinned release SHA-256 digest")
+	}
+	stripped, ok := stripTagPrefix(eff.Tag, tagPrefix)
+	if !ok {
+		return Candidate{}, fmt.Errorf("exact release tag %q does not match component prefix %q", eff.Tag, tagPrefix)
+	}
+	ver, ok := versionForBranch(stripped, eff.Branch)
+	if !ok {
+		return Candidate{}, fmt.Errorf("exact release tag %q does not belong to branch %q", eff.Tag, eff.Branch)
+	}
+	if _, err := version.ParseVersionStrict(ver); err != nil {
+		return Candidate{}, fmt.Errorf("exact release tag %q: %w", eff.Tag, err)
+	}
+	return Candidate{Tag: eff.Tag, Version: ver, Branch: eff.Branch, Source: src.RepoURL, ArtifactSHA256: eff.ArtifactSHA256}, nil
 }

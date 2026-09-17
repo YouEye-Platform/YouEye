@@ -796,3 +796,89 @@ func TestPrivateForgejoMainTrustIsProviderAndDepthBound(t *testing.T) {
 		}
 	}
 }
+
+func TestAnswerISOTransportsFullCacheDigestsAndPreflightsObjects(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("YOUEYE_RELEASE_CACHE", cache)
+	if err := os.Mkdir(filepath.Join(cache, "objects"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	objects := map[string]map[string]any{}
+	for i, body := range []string{"original signed component bytes", "original signed provenance bytes"} {
+		digest := fmt.Sprintf("%x", sha256.Sum256([]byte(body)))
+		if err := os.WriteFile(filepath.Join(cache, "objects", digest), []byte(body), 0400); err != nil {
+			t.Fatal(err)
+		}
+		objects[fmt.Sprintf("https://example.test/releases/download/test/object-%d", i)] = map[string]any{"sha256": digest, "bytes": len(body)}
+	}
+	index, _ := json.Marshal(map[string]any{"schema": "youeye.release-cache.v1", "objects": objects})
+	for _, name := range []string{"index.json", "guest-index.json"} {
+		if err := os.WriteFile(filepath.Join(cache, name), index, 0400); err != nil {
+			t.Fatal(err)
+		}
+	}
+	destination := filepath.Join(t.TempDir(), "answer.iso")
+	answer := applianceAnswer{Schema: applianceAnswerSchema, Operation: "erase-install", EraseConfirmed: true, TransactionID: "0123456789abcdef0123456789abcdef", TargetSerial: "TARGET-TEST", Network: applianceAnswerNetwork{Mode: "dhcp"}, ReleasePolicy: defaultApplianceReleasePolicy(), Development: defaultDevelopmentAccessPolicy()}
+	if err := writeApplianceAnswerISO(destination, answer); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	image, err := iso9660.OpenImage(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := image.RootDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	extracted := t.TempDir()
+	var extract func(*iso9660.File, string)
+	extract = func(dir *iso9660.File, target string) {
+		children, err := dir.GetChildren()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, child := range children {
+			path := filepath.Join(target, child.Name())
+			if child.IsDir() {
+				if err := os.Mkdir(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+				extract(child, path)
+			} else {
+				raw, err := io.ReadAll(child.Reader())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, raw, 0400); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	extract(root, extracted)
+	cfg := installConfig{ApplianceAnswerPath: filepath.Join(extracted, "appliance-answer.json")}
+	if _, err := loadApplianceInstallInput(cfg); err != nil {
+		t.Fatalf("actual ISO cache failed install preflight: %v", err)
+	}
+	// Digest identity must survive ISO serialization and missing media must fail
+	// before partitioning, rather than only at first deployment.
+	for _, obj := range objects {
+		digest := obj["sha256"].(string)
+		path := filepath.Join(extracted, "release-cache", "objects", digest[:16], digest[16:32], digest[32:48], digest[48:])
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("ISO truncated digest %s: %v", digest, err)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadApplianceInstallInput(cfg); err == nil {
+			t.Fatal("missing cache object passed destructive-install preflight")
+		}
+		break
+	}
+}
