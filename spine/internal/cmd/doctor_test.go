@@ -218,3 +218,42 @@ func TestDoctorIPv4LookupRejectsInvalidServer(t *testing.T) {
 		t.Fatal("doctorIPv4Lookup accepted an invalid DNS server")
 	}
 }
+
+func TestDoctorDoesNotInferApplicationReadinessFromRunningContainer(t *testing.T) {
+	check := doctorReportedAppCheck(map[string]interface{}{"id": "example", "status": "running"})
+	if check.Status != doctorUnknown || !strings.Contains(check.Summary, "not reported") {
+		t.Fatalf("unverified readiness: %+v", check)
+	}
+}
+
+func TestDoctorPointerRequiresApplicationReadiness(t *testing.T) {
+	oldRun := doctorRunCommand
+	t.Cleanup(func() { doctorRunCommand = oldRun })
+	for _, tc := range []struct {
+		name, body   string
+		commandError bool
+		want         doctorStatus
+	}{
+		{"ready", `{"status":"ok"}`, false, doctorOK},
+		{"degraded", `{"status":"degraded"}`, false, doctorWarn},
+		{"missing-server", "", true, doctorFail},
+		{"invalid-body", "not-json", false, doctorFail},
+		{"empty-object", `{}`, false, doctorFail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doctorRunCommand = func(name string, args ...string) (string, error) {
+				if name != "incus" || !strings.Contains(strings.Join(args, " "), "127.0.0.1:4001/readyz") {
+					t.Fatalf("unexpected readiness command: %s %v", name, args)
+				}
+				if tc.commandError {
+					return "", errors.New("connection refused")
+				}
+				return tc.body, nil
+			}
+			check := doctorReportedAppCheck(map[string]interface{}{"id": "pointer", "status": "running"})
+			if check.Status != tc.want {
+				t.Fatalf("check=%+v, want %s", check, tc.want)
+			}
+		})
+	}
+}

@@ -502,7 +502,9 @@ WantedBy=multi-user.target
 
   // Enable and start the service
   await execShell(cn, 'systemctl daemon-reload', { timeout: 10_000 });
-  await execShell(cn, `systemctl enable --now ${serviceName}`, { timeout: 15_000 });
+  if (!spec.deferStart) {
+    await execShell(cn, `systemctl enable --now ${serviceName}`, { timeout: 15_000 });
+  }
 
   const digestResult = await execShell(cn, `cat ${spec.appDir}/.youeye-artifact-sha256`, { timeout: 10_000 });
   const verifiedDigest = digestResult.stdout.trim().toLowerCase();

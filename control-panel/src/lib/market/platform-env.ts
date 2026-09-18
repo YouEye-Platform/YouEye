@@ -303,8 +303,10 @@ export async function buildCanonicalContext(
       externalUrl: identity.externalUrl,
       internalUrl: identityInternalUrl,
       name: identityDisplayName,
-      issuer: identity.issuer,
-      discoveryUrl: identity.discoveryUrl,
+      // Match the per-client authority used by SSO tokens. There is no
+      // generic root discovery document for a client-specific issuer.
+      issuer: ssoResult ? `${identityInternalUrl}/application/o/${ssoSlug}/` : '',
+      discoveryUrl: ssoResult ? `${identityInternalUrl}/application/o/${ssoSlug}/.well-known/openid-configuration` : '',
     },
     ai: {
       enabled: aiEnabled,

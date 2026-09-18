@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -96,6 +97,7 @@ type SourceOptions struct {
 	ReleaseNotes           string
 	ExpectedReleaseBranch  string
 	AllowCurrent           bool
+	discoveryOnly          bool
 }
 
 type ReconcileOptions struct {
@@ -285,6 +287,10 @@ func (m *Manager) Discover(ctx context.Context, options SourceOptions) (Status, 
 		return Status{}, err
 	}
 	defer unlock()
+	// Discovery may observe the exact installed release without treating it as
+	// an upgrade. Stage retains its stricter ordering guard.
+	options.AllowCurrent = true
+	options.discoveryOnly = true
 	_, _, _, _, err = m.resolve(ctx, options)
 	if err != nil {
 		return Status{}, err
@@ -766,6 +772,16 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 		if err := m.verifyBootstrapExecutable(verified.Manifest); err != nil {
 			return VerifiedManifest{}, Layout{}, state, Journal{}, err
 		}
+	}
+
+	if options.discoveryOnly && verified.Manifest.TargetImageVersion == current.ImageVersion {
+		// Equality is only a no-op for the installed signed source and component
+		// set. A same-version rebuild must not replace the installed identity.
+		if verified.Manifest.SourceCommit != current.SourceCommit || current.ReleaseSet == nil ||
+			!reflect.DeepEqual(verified.Manifest.ReleaseSet, *current.ReleaseSet) {
+			return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("same-version system release does not match the installed identity")
+		}
+		return verified, layout, state, Journal{}, nil
 	}
 
 	existing, existingErr := loadJournal(m.config.JournalPath)

@@ -72,7 +72,7 @@ function releaseAPIFromRepository(raw: string): Pick<ApplianceSystemUpdateSelect
 }
 
 export function deriveSystemUpdateSelection(runtime: SpineRuntimeStatus): ApplianceSystemUpdateSelection {
-  if (runtime.artifact_kind === 'production') return officialSelection('stable');
+  if (runtime.artifact_kind === 'production' || runtime.artifact_kind === 'stable') return officialSelection('stable');
   const derived = runtime.release_source ? releaseAPIFromRepository(runtime.release_source) : null;
   if (derived) return { ...derived, channel: 'development' };
   return officialSelection('development');

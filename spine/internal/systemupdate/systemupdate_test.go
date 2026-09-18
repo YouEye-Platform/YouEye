@@ -941,3 +941,46 @@ func TestCandidateBlessingAndAutomaticFallbackState(t *testing.T) {
 		}
 	})
 }
+
+func TestDiscoverInstalledReleaseIsNoOpAndStageStillRejectsReplay(t *testing.T) {
+	fixture := newManagerFixture(t)
+	fixture.update.TargetImageVersion = "0.6.0-dev.26"
+	fixture.update.SourceCommit = baselineCommit
+	fixture.update.ReleaseSet = testReleaseSet(baselineCommit)
+	fixture.manifestPath, fixture.signaturePath = writeSignedBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
+	status, err := fixture.manager.Discover(context.Background(), fixture.sourceOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != PhaseHealthy || status.TransactionID != "" || len(fixture.writes) != 0 || fixture.bootInstalls != 0 {
+		t.Fatalf("discovery mutated installed release: %+v", status)
+	}
+	if _, err := os.Stat(fixture.manager.config.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("discovery created a journal: %v", err)
+	}
+	if _, err := fixture.manager.Stage(context.Background(), fixture.sourceOptions()); err == nil {
+		t.Fatal("stage accepted a replay")
+	}
+}
+
+func TestDiscoverRejectsSameVersionDifferentSignedIdentity(t *testing.T) {
+	fixture := newManagerFixture(t)
+	fixture.update.TargetImageVersion = "0.6.0-dev.26"
+	fixture.manifestPath, fixture.signaturePath = writeSignedBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
+	if _, err := fixture.manager.Discover(context.Background(), fixture.sourceOptions()); err == nil || !strings.Contains(err.Error(), "installed identity") {
+		t.Fatalf("same-version replacement result: %v", err)
+	}
+}
+
+func TestDiscoverInstalledReleaseStillChecksRequestedBranch(t *testing.T) {
+	fixture := newManagerFixture(t)
+	fixture.update.TargetImageVersion = "0.6.0-dev.26"
+	fixture.update.SourceCommit = baselineCommit
+	fixture.update.ReleaseSet = testReleaseSet(baselineCommit)
+	fixture.manifestPath, fixture.signaturePath = writeSignedBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
+	options := fixture.sourceOptions()
+	options.ExpectedReleaseBranch = "main"
+	if _, err := fixture.manager.Discover(context.Background(), options); err == nil || !strings.Contains(err.Error(), "requested branch") {
+		t.Fatalf("wrong-branch result: %v", err)
+	}
+}

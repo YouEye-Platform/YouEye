@@ -41,8 +41,26 @@ test('public artifact verification checks the pinned key, signature and artifact
   const url='https://github.com/YouEye-Platform/YouEye/releases/download/ui-v0.5.5/standalone.tar';
   try {
     assert.equal(await verifySignedReleaseArtifactBuffer(url,bytes,'standalone.tar',sha(bytes)),sha(bytes));
+    const pointerURL='https://github.com/YouEye-Platform/Pointer/releases/download/v0.5.1/standalone.tar';
+    assert.equal(await verifySignedReleaseArtifactBuffer(pointerURL,bytes,'standalone.tar',sha(bytes)),sha(bytes));
+    await assert.rejects(verifySignedReleaseArtifactBuffer(pointerURL,Buffer.from('tampered')),/signed checksum/);
     await assert.rejects(verifySignedReleaseArtifactBuffer(url,Buffer.from('tampered'),'standalone.tar',sha(bytes)),/signed checksum/);
     signature=Buffer.alloc(64);
     await assert.rejects(verifySignedReleaseArtifactBuffer(url,bytes),/signature is invalid/);
   } finally {policy.keys=originalKeys;globalThis.fetch=originalFetch;}
+});
+
+
+test('official Pointer tags use public stable or beta trust without widening other repositories', () => {
+  const policy = {schema:'youeye.public-trust.v1',keys:{stable:key(),beta:key()}};
+  const base = 'https://github.com/YouEye-Platform/Pointer/releases/download/';
+  assert.equal(releaseArtifactTrust(base+'v0.5.1/standalone.tar',policy).pem, policy.keys.stable);
+  assert.equal(releaseArtifactTrust(base+'beta-v0.5.1/standalone.tar',policy).pem, policy.keys.beta);
+  for (const url of [
+    base+'dev-v0.5.1/standalone.tar',
+    base+'cp-v0.5.1/standalone.tar',
+    base.replace('/Pointer/', '/YouEye/')+'v0.5.1/standalone.tar',
+    base.replace('/YouEye-Platform/', '/unrelated/')+'v0.5.1/standalone.tar',
+    base+'v0.5.1/standalone.tar?channel=stable',
+  ]) assert.throws(() => releaseArtifactTrust(url,policy));
 });

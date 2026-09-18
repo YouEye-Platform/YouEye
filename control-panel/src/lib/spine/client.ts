@@ -60,7 +60,7 @@ export interface SpineRuntimeStatus {
   firmware_mode?: string;
   disk_layout_version?: number;
   recovery_version?: string;
-  artifact_kind?: 'production' | 'development' | 'test';
+  artifact_kind?: 'production' | 'stable' | 'beta' | 'development' | 'test';
   release_source?: string;
   release_branch?: string;
   capabilities: SpineRuntimeCapabilities;

@@ -28,6 +28,11 @@ test('sealed production and development images derive safe automatic release sou
     provider: 'github', channel: 'stable',
   });
   assert.deepEqual(deriveSystemUpdateSelection(runtime({
+    artifact_kind: 'stable',
+    release_source: 'https://github.com/YouEye-Platform/YouEye',
+    release_branch: 'main',
+  })), { provider: 'github', channel: 'stable' });
+  assert.deepEqual(deriveSystemUpdateSelection(runtime({
     artifact_kind: 'development',
     release_source: 'https://forgejo.example.test/youeye/YouEye',
   })), {

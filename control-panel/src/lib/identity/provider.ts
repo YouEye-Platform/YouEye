@@ -19,7 +19,6 @@ export interface IdentityProviderConfig {
   externalUrl: string;
   internalUrl: string;
   issuer: string;
-  discoveryUrl: string;
   name: string;
   containerName: string;
   port: number;
@@ -117,7 +116,6 @@ export async function getIdentityProviderConfig(): Promise<IdentityProviderConfi
     externalUrl: config.externalUrl,
     internalUrl: config.internalUrl,
     issuer: config.issuer,
-    discoveryUrl: `${config.externalUrl}/.well-known/openid-configuration`,
     name: configuredName,
     containerName: config.containerName,
     port: config.port,

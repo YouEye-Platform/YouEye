@@ -16,7 +16,12 @@ export function releaseArtifactTrust(artifactURL: string, policy: PublicTrustPol
   if (url.protocol !== 'https:' || url.host !== 'github.com' || url.username || url.password || url.search || url.hash || parts.length !== 6 || parts[2] !== 'releases' || parts[3] !== 'download') {
     throw new Error('Public component release URL is invalid');
   }
-  const match = /^(?:spine|cp|ui)-(beta-)?v[0-9]+(?:\.[0-9]+)*$/.exec(parts[4]);
+  // Pointer publishes unprefixed tags under the same public signing authority.
+  // Keep that exception scoped to the official Pointer repository.
+  const tagPattern = parts[0] === 'YouEye-Platform' && parts[1] === 'Pointer'
+    ? /^(beta-)?v[0-9]+(?:\.[0-9]+)*$/
+    : /^(?:spine|cp|ui)-(beta-)?v[0-9]+(?:\.[0-9]+)*$/;
+  const match = tagPattern.exec(parts[4]);
   if (!match) throw new Error('Public component tag has no supported signing channel');
   const trustClass = match[1] ? 'beta' : 'stable';
   const pem = policy.keys[trustClass];

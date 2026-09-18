@@ -122,5 +122,6 @@ export function pointerContainerSpec(): LXDContainerSpec {
     port: 4001,
     entryFile: 'server.js',
     runtime: 'bun',
+    deferStart: true,
   };
 }

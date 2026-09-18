@@ -34,7 +34,23 @@ export async function configurePointerService() {
   await injectCaddyRootCA(POINTER_CONTAINER);
 
   const databaseUrl = `postgresql://youeye:${encodeURIComponent(postgresPassword)}@youeye-postgres.${CONTAINER_DOMAIN}:5432/${POINTER_DATABASE}`;
+  // This file is inside the signed release artifact. Forward its public
+  // identity so readiness reports the deployed build instead of a dev default.
+  const release = await execCommand(POINTER_CONTAINER, [
+    '/bin/cat', '/opt/pointer/release-manifest.json',
+  ], { timeout: 10_000 });
+  const build = release.exitCode === 0 ? JSON.parse(release.stdout) as Record<string, unknown> : {};
+  const buildFields: Record<string, unknown> = {
+    POINTER_COMPONENT_VERSION: build.version,
+    POINTER_BUILD_REPOSITORY: build.repository,
+    POINTER_BUILD_BRANCH: build.branch,
+    POINTER_BUILD_COMMIT: build.commit,
+  };
+  const buildEnvironment = Object.fromEntries(Object.entries(buildFields).filter(
+    (entry): entry is [string, string] => typeof entry[1] === 'string' && /^[A-Za-z0-9:/._-]+$/.test(entry[1]),
+  ));
   const environment = {
+    ...buildEnvironment,
     POINTER_DATABASE_URL: databaseUrl,
     POINTER_JWT_SECRET: jwtSecret,
     POINTER_ENCRYPTION_SECRET: encryptionSecret,
@@ -68,6 +84,7 @@ export async function configurePointerService() {
     'printf "%s\\n" \'MANAGED_SERVICE_PRINCIPAL_NAME="YouEye managed applications"\'',
     'printf "%s\\n" "POINTER_PROVIDERS_DIR=$POINTER_PROVIDERS_DIR"',
     'printf "%s\\n" "POINTER_MIGRATIONS_DIR=$POINTER_MIGRATIONS_DIR"',
+    ...Object.keys(buildEnvironment).map((key) => `printf "%s\\n" "${key}=$${key}"`),
     '} > /etc/youeye-pointer.env',
   ].join('; ')], { environment, timeout: 15_000 });
   if (writeEnvironment.exitCode !== 0) throw new Error('Pointer service configuration failed');

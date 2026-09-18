@@ -38,6 +38,34 @@ The appliance build checks this parity without modifying source; a coordinator
 that only writes the Go policy must add this preparation step before freezing
 the source commit. Do not generate a different bootstrap after the commit.
 
+Public Pointer releases use `v<version>` (Stable) or `beta-v<version>`
+(Beta), while core components use their `spine-`, `cp-`, and `ui-` prefixes.
+The component verifier recognizes unprefixed tags only in the official
+`YouEye-Platform/Pointer` repository and still requires the embedded public
+channel key, signed checksum document, and matching artifact digest.
+
+A sealed runtime reports public Stable images with `artifact_kind: stable`.
+Control Panel maps both this value and the legacy `production` value to the
+Stable system-update channel; it must not infer Development from the newer
+name. Explicit saved update-source selections continue to take precedence.
+
+System-update discovery treats an already-installed signed release as a no-op
+only when its source commit and component release set match the installed
+identity. It still verifies signatures, requested branch and exact digests;
+staging retains its replay rejection. Discovery does not create a new update
+transaction for the installed release.
+
+Managed Pointer configuration forwards the public build identity from its
+signed artifact's `release-manifest.json` to readiness reporting. App identity
+variables use the app's client-specific issuer and discovery URL, matching the
+SSO token authority; no generic root OIDC discovery endpoint is advertised.
+
+Pointer deployment installs its signed runtime and service definition without
+starting the service until managed configuration and database migration finish.
+The doctor probes Pointer's application readiness directly; other apps without
+reported readiness are shown as unknown rather than inferred healthy from a
+running container alone.
+
 Public appliance releases contain exactly 19 assets: the existing 16
 checksum-covered assets, `SHA256SUMS`, `SHA256SUMS.sig`, and the detached
 `release-lock.json`. The lock is bound by `resolved_lock_sha256` in
