@@ -1,6 +1,7 @@
 package releasecache
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -12,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -126,5 +128,42 @@ func TestDistributionRetainsRollbackWatermarkAcrossRestart(t *testing.T) {
 	c.Sequence = 1
 	if _, _, e = DistributionBytes(context.Background(), next, p, source); e == nil || !strings.Contains(e.Error(), "rollback") {
 		t.Fatal("rollback after restart accepted", e)
+	}
+}
+
+func TestDistributionServiceWithoutHomeEnvironment(t *testing.T) {
+	p, c, key := distributionFixture(t)
+	p.Origin = "https://envless-service.example.test"
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CACHE_HOME", "")
+	calls := 0
+	next := distributionRT(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "envless-service.example.test" {
+			t.Fatalf("API fallback: %s", r.URL)
+		}
+		calls++
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(signDistribution(c, key)))}, nil
+	})
+	data, handled, err := DistributionBytes(context.Background(), next, p, "https://api.github.com/repos/YouEye-Platform/YouEye/releases")
+	if err != nil || !handled || calls != 1 || !bytes.Contains(data, []byte("appliance-v1.0.0")) {
+		t.Fatalf("service discovery: %s %v %v calls=%d", data, handled, err, calls)
+	}
+	files, err := filepath.Glob(filepath.Join(os.Getenv("YOUEYE_DISTRIBUTION_STATE"), "youeye-distribution", "go", "*.json"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("durable override not used: %v %v", files, err)
+	}
+}
+
+func TestDistributionServiceCacheUsesRegisteredHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("YOUEYE_DISTRIBUTION_STATE", "")
+	account, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := distributionCacheRoot()
+	if err != nil || got != filepath.Join(account.HomeDir, ".cache") {
+		t.Fatalf("service cache: %q %v", got, err)
 	}
 }

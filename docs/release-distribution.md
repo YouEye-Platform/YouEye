@@ -26,6 +26,8 @@ The Go transport, Control Panel and shell reader validate signatures, channel,
 expiry and artifact origins before resolving releases. They cache verified
 catalogs for 15 minutes and retain sequence/digest state across restarts in the
 process user's cache directory (the bootstrap uses its installer cache).
+Services without a home environment use the account's registered home directory;
+on the appliance, root's home is backed by persistent State.
 `YOUEYE_DISTRIBUTION_STATE` redirects the Go/Control Panel cache for isolated
 tests. An existing signed local staging cache takes precedence for explicitly
 staged releases. Deleting the retained cache also removes its replay watermark;

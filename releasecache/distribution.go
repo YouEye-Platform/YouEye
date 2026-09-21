@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -173,6 +174,24 @@ func verifyDistribution(raw []byte, channel, publicKey string, now time.Time, re
 	return catalog, hex.EncodeToString(digest[:]), nil
 }
 
+// System services may have neither HOME nor XDG_CACHE_HOME. Use the account's
+// registered home in that case; on the appliance /root is backed by State.
+// An explicit state location must work even when the process has no home env.
+func distributionCacheRoot() (string, error) {
+	if override := os.Getenv("YOUEYE_DISTRIBUTION_STATE"); override != "" {
+		return override, nil
+	}
+	root, err := os.UserCacheDir()
+	if err == nil {
+		return root, nil
+	}
+	account, lookupErr := user.Current()
+	if lookupErr != nil || !filepath.IsAbs(account.HomeDir) {
+		return "", err
+	}
+	return filepath.Join(account.HomeDir, ".cache"), nil
+}
+
 // DistributionBytes never falls back to GitHub when the configured service is
 // unavailable or returns invalid metadata. A missing channel is an empty list;
 // the existing exact/channel resolver then reports no matching signed release.
@@ -202,12 +221,9 @@ func DistributionBytes(ctx context.Context, next http.RoundTripper, policy Distr
 		cacheKey := endpoint + fmt.Sprintf("#%x", keyHash)
 		entry, exists := distributionEntries[cacheKey]
 		now := time.Now().UTC()
-		cacheRoot, e := os.UserCacheDir()
+		cacheRoot, e := distributionCacheRoot()
 		if e != nil {
 			return nil, true, e
-		}
-		if override := os.Getenv("YOUEYE_DISTRIBUTION_STATE"); override != "" {
-			cacheRoot = override
 		}
 		saved := filepath.Join(cacheRoot, "youeye-distribution", "go", fmt.Sprintf("%x.json", sha256.Sum256([]byte(cacheKey))))
 		if !exists {
