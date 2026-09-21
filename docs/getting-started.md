@@ -38,7 +38,7 @@ bridge.
 Stable channel:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sh
+curl -fsSL https://releases.youeye.me/install.sh | sh
 ```
 
 Run this canonical public command from the Proxmox root shell. It does not
@@ -48,7 +48,7 @@ unprovisioned source builds fail closed and never reuse the Development key.
 Development channel from an explicitly selected Forgejo-compatible provider:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | \
+curl -fsSL https://releases.youeye.me/install.sh | \
   sh -s -- --provider forgejo \
     --releases-api https://forge.example.test/api/v1/repos/example/YouEye/releases \
     --channel development

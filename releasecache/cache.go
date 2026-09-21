@@ -3,6 +3,7 @@
 package releasecache
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -133,6 +134,13 @@ func (t transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	f, n, e := Open(Root(), req.URL.String())
 	if os.IsNotExist(e) {
+		data, handled, err := DistributionBytes(req.Context(), t.next, DistributionPolicyFromSource(), req.URL.String())
+		if err != nil {
+			return nil, err
+		}
+		if handled {
+			return &http.Response{StatusCode: 200, Status: "200 OK", Header: http.Header{"Content-Type": []string{"application/json"}, "X-YouEye-Release-Transport": []string{"signed-distribution"}}, Body: io.NopCloser(bytes.NewReader(data)), ContentLength: int64(len(data)), Request: req}, nil
+		}
 		return t.next.RoundTrip(req)
 	}
 	if e != nil {

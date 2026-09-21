@@ -1,3 +1,4 @@
+import { releaseCacheFetch } from '../releases/cache';
 /**
  * LXD App Version & Update Checking
  *
@@ -165,7 +166,7 @@ export async function getLxdAppLatestVersion(
   // Fallback: try Node.js fetch directly
   if (!releasesJson) {
     try {
-      const resp = await fetch(releasesURL, { signal: AbortSignal.timeout(10_000) });
+      const resp = await releaseCacheFetch(releasesURL, { signal: AbortSignal.timeout(10_000) });
       if (resp.ok) {
         releasesJson = await resp.text();
       }

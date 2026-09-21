@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { lstat, readFile } from 'fs/promises';
 import path from 'path';
+import { distributionBytes } from './distribution';
 
 type CacheObject = { sha256: string; bytes: number };
 const cacheRoot = () => process.env.YOUEYE_RELEASE_CACHE || '/var/lib/youeye-state/release-cache';
@@ -34,6 +35,8 @@ export async function releaseCacheFetch(input: string | URL | Request, init?: Re
   if (method.toUpperCase() === 'GET') {
     const cached = await cachedReleaseBytes(url);
     if (cached) return new Response(new Uint8Array(cached), { status: 200, headers: { 'X-YouEye-Release-Transport': 'verified-local-cache' } });
+    const distributed = await distributionBytes(url);
+    if (distributed) return new Response(new Uint8Array(distributed), { status: 200, headers: { 'Content-Type': 'application/json', 'X-YouEye-Release-Transport': 'signed-distribution' } });
   }
   return fetch(input, init);
 }

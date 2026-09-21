@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the piped bootstrap with real Ed25519 signatures and fake transport."""
+import base64
+import datetime
 import hashlib
 import json
 import os
@@ -35,6 +37,10 @@ class BootstrapPublicTests(unittest.TestCase):
         self.policy = self.source / "installer/internal/installer"
         self.scripts.mkdir(parents=True)
         self.policy.mkdir(parents=True)
+        for name in ["releasecache/distribution-policy.json", "releasecache/distribution.py", "appliance/scripts/youeye-bootstrap-network"]:
+            target = self.source / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / name, target)
         for name in ["install.sh", "embed-public-trust.py"]:
             shutil.copyfile(ROOT / "installer/scripts" / name, self.scripts / name)
         shutil.copyfile(ROOT / "installer/internal/installer/appliance-development.pub", self.policy / "appliance-development.pub")
@@ -127,6 +133,41 @@ print('200',end='')
                     else:
                         self.assertNotEqual(result.returncode, 0, result.stdout.decode())
                         self.assertNotIn(b"VERIFIED-LAUNCH", result.stdout)
+
+    def test_distribution_bootstrap_without_github_api(self):
+        self.fixture("stable", "valid")
+        policy = self.source / "releasecache/distribution-policy.json"
+        value = json.loads(policy.read_text()); value["origin"] = "https://releases.example.test"
+        policy.write_text(json.dumps(value))
+        subprocess.run(["python3", str(self.scripts / "embed-public-trust.py")], check=True)
+        (self.root / "sitecustomize.py").write_text('''import io, os, urllib.request, urllib.error
+from pathlib import Path
+def distribution_open(self, request, *args, **kwargs):
+    url = request.full_url
+    if not url.startswith("https://releases.example.test/"): raise AssertionError("Unexpected network request: " + url)
+    if url.endswith("beta.json"): raise urllib.error.HTTPError(url, 404, "missing", {}, None)
+    return io.BytesIO((Path(os.environ["FIXTURE_ROOT"])/"catalog.json").read_bytes())
+urllib.request.OpenerDirector.open = distribution_open
+''')
+        now = datetime.datetime.now(datetime.timezone.utc)
+        for fault in ["valid", "signature", "expired"]:
+            with self.subTest(fault=fault):
+                expiry = now + datetime.timedelta(days=1) if fault != "expired" else now - datetime.timedelta(hours=1)
+                payload = encoded({"schema":"youeye.distribution.v1", "channel":"stable", "sequence":1,
+                    "issued_at":(now-datetime.timedelta(days=1)).isoformat(), "expires_at":expiry.isoformat(),
+                    "repositories":{"YouEye":{"releases":json.loads((self.root/"index.json").read_bytes())}}})
+                envelope = {"payload":base64.b64encode(payload).decode(), "signature":base64.b64encode(self.sign(payload,"wrong" if fault == "signature" else "stable")).decode()}
+                (self.root/"catalog.json").write_text(json.dumps(envelope))
+                (self.root/"requests").write_text("")
+                env = dict(os.environ, PATH=str(self.bin)+":"+os.environ["PATH"], PYTHONPATH=str(self.root), FIXTURE_ROOT=str(self.root), YOUEYE_INSTALLER_CACHE=str(self.root/("cache-"+fault)))
+                result = subprocess.run(["sh","-s","--"],input=(self.scripts/"install.sh").read_bytes(),env=env,capture_output=True)
+                self.assertNotIn("api.github.com",(self.root/"requests").read_text())
+                if fault == "valid":
+                    self.assertEqual(result.returncode,0,result.stderr.decode())
+                    self.assertIn(b"VERIFIED-LAUNCH",result.stdout)
+                else:
+                    self.assertNotEqual(result.returncode,0)
+                    self.assertNotIn(b"VERIFIED-LAUNCH",result.stdout)
 
     def test_public_projection_gate(self):
         command = ["python3", str(self.scripts / "embed-public-trust.py"), "--check", "--require", "stable"]

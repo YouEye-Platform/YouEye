@@ -41,6 +41,33 @@ def main():
     generated, count = re.subn(pattern, lambda m: m[1] + json.dumps(policy, separators=(",", ":"), sort_keys=True) + "\n" + m[2], original, flags=re.S)
     if count != 1:
         parser.error("bootstrap must contain exactly one public trust block")
+    distribution_path = args.source / "releasecache/distribution-policy.json"
+    distribution = json.loads(distribution_path.read_text())
+    distribution["keys"] = keys
+    distribution_raw = json.dumps(distribution, separators=(",", ":"), sort_keys=True) + "\n"
+    if args.check:
+        if json.loads(distribution_path.read_text()) != distribution:
+            parser.error("distribution anchors differ from the compiled policy")
+    else:
+        distribution_path.write_text(distribution_raw)
+    # JSON public policy has no shell secrets, but quote it as shell data.
+    import shlex
+    generated, n = re.subn(r"(?m)^distribution_policy=.* # GENERATED DISTRIBUTION POLICY$", lambda _: "distribution_policy=" + shlex.quote(distribution_raw.strip()) + " # GENERATED DISTRIBUTION POLICY", generated)
+    if n != 1:
+        parser.error("bootstrap must contain one distribution policy")
+    reader = (args.source / "releasecache/distribution.py").read_text()
+    generated, n = re.subn(r"(?ms)(^# BEGIN GENERATED DISTRIBUTION READER\n).*?(^# END GENERATED DISTRIBUTION READER$)", lambda m: m[1] + reader + m[2], generated)
+    if n != 1:
+        parser.error("bootstrap must contain one distribution reader")
+    network_path = args.source / "appliance/scripts/youeye-bootstrap-network"
+    network = network_path.read_text()
+    network_generated = re.sub(r"(?m)^distribution_policy=.* # GENERATED DISTRIBUTION POLICY$", lambda _: "distribution_policy=" + shlex.quote(distribution_raw.strip()) + " # GENERATED DISTRIBUTION POLICY", network)
+    network_generated = re.sub(r"(?ms)(^# BEGIN GENERATED DISTRIBUTION READER\n).*?(^# END GENERATED DISTRIBUTION READER$)", lambda m: m[1] + reader + m[2], network_generated)
+    if args.check:
+        if network_generated != network:
+            parser.error("network distribution reader differs from source")
+    else:
+        network_path.write_text(network_generated)
     if args.check:
         if generated != original:
             parser.error("bootstrap public trust differs from compiled policy; run embed-public-trust.py before committing the snapshot")

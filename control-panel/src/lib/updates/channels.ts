@@ -1,3 +1,4 @@
+import { releaseCacheFetch } from '../releases/cache';
 /**
  * Release channels — Control-Panel side.
  *
@@ -213,7 +214,7 @@ interface Release {
 export async function listReleaseTags(repoUrl: string): Promise<string[]> {
   const source: MarketSource = parseMarketRepoURL(repoUrl);
   const url = buildMarketReleasesAPIURL(source, source.repository);
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  const res = await releaseCacheFetch(url, { signal: AbortSignal.timeout(15_000) });
   if (!res.ok) {
     throw new Error(`Failed to list releases for ${repoUrl}: ${res.status}`);
   }

@@ -29,7 +29,7 @@ Proxmox mode create and install the VM.
 ### Proxmox
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sh
+curl -fsSL https://releases.youeye.me/install.sh | sh
 ```
 
 Run this command from the Proxmox host's root shell; `sudo` is not required.
@@ -38,7 +38,8 @@ signed checksums, release identity, and provenance-bound `release-lock.json`.
 Unprovisioned source builds fail closed; Development keys never authorize Stable.
 The bootstrap defaults to the official GitHub Stable lane and supports
 explicit Forgejo or custom HTTPS sources without prefilled private endpoints.
-It paginates the selected provider, verifies its signed checksum set and exact
+Public discovery uses a signed [release catalog](docs/release-distribution.md)
+without a GitHub token. It verifies the signed checksum set and exact
 installer digest, then opens the YouEye Installer TUI. Quick mode creates a
 Q35/OVMF VM with 4 vCPU, 8 GiB RAM, and one 128 GiB installation drive. The
 host-side flow provisions the VM and media; the booted ISO owns disk discovery,
@@ -210,7 +211,7 @@ Use the same public bootstrap and explicitly select a credential-free HTTPS
 release source. For example:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | \
+curl -fsSL https://releases.youeye.me/install.sh | \
   sudo sh -s -- --provider forgejo \
     --releases-api https://forge.example.test/api/v1/repos/example/YouEye/releases \
     --channel development
