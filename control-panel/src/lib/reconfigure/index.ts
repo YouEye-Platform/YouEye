@@ -77,6 +77,9 @@ import {
   validateCertificateMaterial,
 } from '@/lib/youeye-names/certificate';
 import { configurePointerForPlatform } from '@/lib/infrastructure/deployer';
+import { identityConfigFromSettings } from '@/lib/identity/config';
+import { transitionPointerIdentity } from '@/lib/pointer/identity-transition';
+import { changePointerIdentity } from '@/lib/pointer/identity-rename';
 
 /**
  * TLS target for the new domain.
@@ -919,7 +922,16 @@ async function applyTlsTarget(
  * Reconfigure YouEye's domain, site name, and/or subdomains.
  * This is the main orchestration function.
  */
-export async function reconfigure(
+const renameState = globalThis as typeof globalThis & { youeyeReconfigureRunning?: boolean };
+
+export async function reconfigure(req: ReconfigureRequest, onEvent: ReconfigureEventCallback): Promise<{ newUrl: string }> {
+  if (renameState.youeyeReconfigureRunning) throw new Error('A server reconfiguration is already running');
+  renameState.youeyeReconfigureRunning = true;
+  try { return await reconfigureLocked(req, onEvent); }
+  finally { renameState.youeyeReconfigureRunning = false; }
+}
+
+async function reconfigureLocked(
   req: ReconfigureRequest,
   onEvent: ReconfigureEventCallback
 ): Promise<{ newUrl: string }> {
@@ -936,6 +948,13 @@ export async function reconfigure(
   onEvent({ step: 'config', status: 'done', message: 'Configuration loaded' });
 
   const hostIP = process.env.HOST_IP;
+
+  const oldIssuer = identityConfigFromSettings({ domain: oldDomain, subdomains: oldSubdomains }).issuer;
+  const newIssuer = identityConfigFromSettings({ domain: newDomain, subdomains: newSubdomains }).issuer;
+  const identityChange = oldIssuer !== newIssuer ? { oldIssuer, newIssuer } : null;
+  // Capability, database ownership and exact old identity are checked before any site mutation.
+  if (identityChange) await transitionPointerIdentity(identityChange, true);
+  const previousCaddy = identityChange ? await caddy.getConfig() : null;
 
   // Resolve the effective TLS target up front.
   let tlsTarget: Exclude<ReconfigureTlsTarget, 'auto'>;
@@ -991,28 +1010,45 @@ export async function reconfigure(
       name: req.identity_name,
     };
   }
-  await settingsService.setRaw(patchData);
-  onEvent({ step: 'yaml', status: 'done', message: 'Site configuration updated' });
+  const applySiteConfiguration = async () => {
+    await settingsService.setRaw(patchData);
+    onEvent({ step: 'yaml', status: 'done', message: 'Site configuration updated' });
+    if (domainChanged || subdomainsChanged) {
+      onEvent({ step: 'caddy', status: 'running', message: 'Updating reverse proxy routes...' });
+      await updateCaddyDomain(oldDomain, newDomain, oldSubdomains, newSubdomains);
+      await caddy.setDomain(newDomain);
+      await caddy.ensureControlSettingsRoute(newDomain);
+      await caddy.ensurePointerInferenceRoutes(newDomain);
+      onEvent({ step: 'caddy', status: 'done', message: 'Reverse proxy updated' });
+    }
+  };
+  const startPointer = async () => {
+    if (domainChanged || subdomainsChanged) {
+      onEvent({ step: 'ai', status: 'running', message: 'Refreshing YouEye AI identity configuration...' });
+      await configurePointerForPlatform();
+      onEvent({ step: 'ai', status: 'done', message: 'YouEye AI identity configuration refreshed' });
+    }
+  };
+  if (identityChange && previousCaddy) {
+    await changePointerIdentity(identityChange, {
+      transition: transitionPointerIdentity,
+      apply: applySiteConfiguration,
+      restore: async () => {
+        await settingsService.setRaw({
+          site_name: currentConfig.site_name, domain: oldDomain, subdomains: oldSubdomains,
+          setup_completed: currentConfig.setup_completed,
+          ...(req.identity_name ? { identity: currentConfig.identity || { provider: 'youeye-id' } } : {}),
+        });
+        await caddy.setConfig(previousCaddy);
+      },
+      start: startPointer,
+    });
+  } else {
+    await applySiteConfiguration();
+    await startPointer();
+  }
 
-  // 4. Update Caddy (routes + TLS) — only if domain or subdomains changed
   if (domainChanged || subdomainsChanged) {
-    onEvent({ step: 'caddy', status: 'running', message: 'Updating reverse proxy routes...' });
-    await updateCaddyDomain(oldDomain, newDomain, oldSubdomains, newSubdomains);
-    // Also ensure TLS subjects are correct. NOTE: setDomain resets TLS automation
-    // to the internal issuer — external-cert targets re-load their cert in the
-    // TLS step right below.
-    await caddy.setDomain(newDomain);
-    // Regenerate the canonical root-domain CP-surface routes (/settings, /market
-    // + the Referer-gated asset/API support route) from the current generator so
-    // allowlist additions reach existing installs on their next URL change.
-    await caddy.ensureControlSettingsRoute(newDomain);
-    await caddy.ensurePointerInferenceRoutes(newDomain);
-    onEvent({ step: 'caddy', status: 'done', message: 'Reverse proxy updated' });
-
-    onEvent({ step: 'ai', status: 'running', message: 'Refreshing YouEye AI identity configuration...' });
-    await configurePointerForPlatform();
-    onEvent({ step: 'ai', status: 'done', message: 'YouEye AI identity configuration refreshed' });
-
     // 5. Update Pi-Hole DNS
     onEvent({ step: 'dns', status: 'running', message: 'Updating DNS configuration...' });
     if (hostIP) {

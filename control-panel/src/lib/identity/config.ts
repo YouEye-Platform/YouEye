@@ -32,6 +32,10 @@ function normalizeDomain(value: unknown): string {
 
 export async function getIdentityConfig(): Promise<IdentityConfig> {
   const raw = await settingsService.getRaw();
+  return identityConfigFromSettings(raw);
+}
+
+export function identityConfigFromSettings(raw: { domain?: unknown; subdomains?: { identity?: unknown } }): IdentityConfig {
   const domain = normalizeDomain(raw.domain);
   const subdomain = normalizeSubdomain(raw.subdomains?.identity);
   const host = `${subdomain}.${domain}`;
