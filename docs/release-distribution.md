@@ -55,3 +55,36 @@ Offline installation requires the existing verified staged-release workflow.
 Artifact hosting still depends on GitHub download availability. Moving large
 artifacts to another object store is a separate migration; this change removes
 anonymous API quota from normal first-party release discovery.
+
+## Independent service installation
+
+A public channel may carry an `installation` selection with schema
+`youeye.installation.v1`. The signed envelope binds one exact appliance version,
+tag, source commit, manifest digest and baked Spine digest to independently
+versioned Control Panel and UI artifacts. Each service records its immutable tag,
+source commit and artifact SHA-256. This is an accepted combination, not a request
+to choose unrelated latest releases at installation time.
+
+Compatible appliances resolve this selection during tracked public first boot.
+They verify the normal distribution signature, expiry and rollback watermark,
+check that the selection names the running image and Spine, then durably save
+its signed envelope before changing service pins. A retry verifies and reuses
+that protected snapshot, including after metadata expiry; expiry prevents new
+selections, not recovery of an already accepted deployment. Service downloads
+retain their existing signed-checksum and artifact verification.
+
+Exact-image installation defaults to the image's sealed service pins. The native
+installer's `--service-selection current` explicitly requests current compatible
+services for that exact image. `--service-selection sealed` retains image pins
+for a tracked installation too. Private providers retain their existing sealed
+selection behavior. A missing or incompatible public selection fails closed.
+
+Fresh-install health checks use the frozen service selection while continuing to
+verify baked Spine against the sealed image. This does not rewrite image
+provenance or authorize a host-image update. Existing installations continue to
+use ordinary independent service updates.
+
+Older appliances predate this reader and still use sealed pins. Moving first
+boot to this contract therefore requires an appliance containing the updated
+Spine; later service releases can reuse that image. Original image releases,
+pins and exact-install recovery remain available.

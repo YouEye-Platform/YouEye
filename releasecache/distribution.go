@@ -40,6 +40,7 @@ type DistributionEnvelope struct {
 	Signature string `json:"signature"`
 }
 type DistributionCatalog struct {
+	Installation *InstallationSet                  `json:"installation,omitempty"`
 	Schema       string                            `json:"schema"`
 	Channel      string                            `json:"channel"`
 	Sequence     int64                             `json:"sequence"`
@@ -170,6 +171,11 @@ func verifyDistribution(raw []byte, channel, publicKey string, now time.Time, re
 			}
 		}
 	}
+	if catalog.Installation != nil {
+		if err := catalog.Installation.Validate(channel); err != nil {
+			return catalog, "", err
+		}
+	}
 	digest := sha256.Sum256(payload)
 	return catalog, hex.EncodeToString(digest[:]), nil
 }
@@ -216,69 +222,12 @@ func DistributionBytes(ctx context.Context, next http.RoundTripper, policy Distr
 		if key == "" {
 			continue
 		}
-		endpoint := policy.Origin + "/v1/" + channel + ".json"
-		keyHash := sha256.Sum256([]byte(key))
-		cacheKey := endpoint + fmt.Sprintf("#%x", keyHash)
-		entry, exists := distributionEntries[cacheKey]
-		now := time.Now().UTC()
-		cacheRoot, e := distributionCacheRoot()
+		entry, e := loadDistributionChannel(ctx, next, policy, channel)
 		if e != nil {
 			return nil, true, e
 		}
-		saved := filepath.Join(cacheRoot, "youeye-distribution", "go", fmt.Sprintf("%x.json", sha256.Sum256([]byte(cacheKey))))
-		if !exists {
-			info, e := os.Lstat(saved)
-			if e != nil && !os.IsNotExist(e) {
-				return nil, true, e
-			}
-			if e == nil {
-				if !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 || info.Size() > 16<<20 {
-					return nil, true, fmt.Errorf("invalid distribution cache")
-				}
-				raw, e := os.ReadFile(saved)
-				if e != nil {
-					return nil, true, e
-				}
-				c, d, e := verifyDistribution(raw, channel, key, now, true)
-				if e != nil {
-					return nil, true, e
-				}
-				entry, exists = distributionEntry{c, d, info.ModTime()}, true
-			}
-		}
-		if !exists || now.Sub(entry.fetched) >= 15*time.Minute || !entry.catalog.ExpiresAt.After(now) {
-			req, e := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-			if e != nil {
-				return nil, true, e
-			}
-			req.Header.Set("User-Agent", "youeye-distribution/1")
-			response, e := next.RoundTrip(req)
-			if e != nil {
-				return nil, true, fmt.Errorf("release distribution unavailable: %w", e)
-			}
-			raw, e := io.ReadAll(io.LimitReader(response.Body, (16<<20)+1))
-			response.Body.Close()
-			if e != nil {
-				return nil, true, e
-			}
-			if response.StatusCode == 404 && !exists {
-				continue
-			}
-			if response.StatusCode != 200 {
-				return nil, true, fmt.Errorf("release distribution returned HTTP %d", response.StatusCode)
-			}
-			catalog, digest, e := VerifyDistribution(raw, channel, key, now)
-			if e != nil {
-				return nil, true, e
-			}
-			if exists && (catalog.Sequence < entry.catalog.Sequence || (catalog.Sequence == entry.catalog.Sequence && digest != entry.digest)) {
-				return nil, true, fmt.Errorf("distribution rollback or sequence conflict rejected")
-			}
-			if e := saveDistributionEnvelope(saved, raw); e != nil {
-				return nil, true, e
-			}
-			entry = distributionEntry{catalog, digest, now}
-			distributionEntries[cacheKey] = entry
+		if entry.catalog.Schema == "" {
+			continue
 		}
 		r := entry.catalog.Repositories[repo]
 		releases = append(releases, r.Releases...)
@@ -347,4 +296,75 @@ func saveDistributionEnvelope(path string, raw []byte) error {
 		return e
 	}
 	return os.Rename(f.Name(), path)
+}
+
+// Caller holds distributionMu. Consumers share signature, freshness and
+// persistent anti-rollback checks rather than implementing another transport.
+func loadDistributionChannel(ctx context.Context, next http.RoundTripper, policy DistributionPolicy, channel string) (distributionEntry, error) {
+	key := policy.Keys[channel]
+	endpoint := policy.Origin + "/v1/" + channel + ".json"
+	keyHash := sha256.Sum256([]byte(key))
+	cacheKey := endpoint + fmt.Sprintf("#%x", keyHash)
+	entry, exists := distributionEntries[cacheKey]
+	now := time.Now().UTC()
+	cacheRoot, e := distributionCacheRoot()
+	if e != nil {
+		return distributionEntry{}, e
+	}
+	saved := filepath.Join(cacheRoot, "youeye-distribution", "go", fmt.Sprintf("%x.json", sha256.Sum256([]byte(cacheKey))))
+	if !exists {
+		info, e := os.Lstat(saved)
+		if e != nil && !os.IsNotExist(e) {
+			return distributionEntry{}, e
+		}
+		if e == nil {
+			if !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 || info.Size() > 16<<20 {
+				return distributionEntry{}, fmt.Errorf("invalid distribution cache")
+			}
+			raw, e := os.ReadFile(saved)
+			if e != nil {
+				return distributionEntry{}, e
+			}
+			c, d, e := verifyDistribution(raw, channel, key, now, true)
+			if e != nil {
+				return distributionEntry{}, e
+			}
+			entry, exists = distributionEntry{c, d, info.ModTime()}, true
+		}
+	}
+	if !exists || now.Sub(entry.fetched) >= 15*time.Minute || !entry.catalog.ExpiresAt.After(now) {
+		req, e := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if e != nil {
+			return distributionEntry{}, e
+		}
+		req.Header.Set("User-Agent", "youeye-distribution/1")
+		response, e := next.RoundTrip(req)
+		if e != nil {
+			return distributionEntry{}, fmt.Errorf("release distribution unavailable: %w", e)
+		}
+		raw, e := io.ReadAll(io.LimitReader(response.Body, (16<<20)+1))
+		response.Body.Close()
+		if e != nil {
+			return distributionEntry{}, e
+		}
+		if response.StatusCode == 404 && !exists {
+			return distributionEntry{}, nil
+		}
+		if response.StatusCode != 200 {
+			return distributionEntry{}, fmt.Errorf("release distribution returned HTTP %d", response.StatusCode)
+		}
+		catalog, digest, e := VerifyDistribution(raw, channel, key, now)
+		if e != nil {
+			return distributionEntry{}, e
+		}
+		if exists && (catalog.Sequence < entry.catalog.Sequence || (catalog.Sequence == entry.catalog.Sequence && digest != entry.digest)) {
+			return distributionEntry{}, fmt.Errorf("distribution rollback or sequence conflict rejected")
+		}
+		if e := saveDistributionEnvelope(saved, raw); e != nil {
+			return distributionEntry{}, e
+		}
+		entry = distributionEntry{catalog, digest, now}
+		distributionEntries[cacheKey] = entry
+	}
+	return entry, nil
 }

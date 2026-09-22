@@ -21,15 +21,16 @@ import (
 const ReleasePolicySchema = "youeye.release-policy.v1"
 
 type ReleasePolicy struct {
-	Schema         string `json:"schema"`
-	Provider       string `json:"provider"`
-	ReleasesAPI    string `json:"releases_api,omitempty"`
-	Mode           string `json:"mode"`
-	Track          string `json:"track,omitempty"`
-	Branch         string `json:"branch,omitempty"`
-	ExactTag       string `json:"exact_tag,omitempty"`
-	ManifestSHA256 string `json:"manifest_sha256,omitempty"`
-	Freshness      string `json:"freshness"`
+	ServiceSelection string `json:"service_selection,omitempty"`
+	Schema           string `json:"schema"`
+	Provider         string `json:"provider"`
+	ReleasesAPI      string `json:"releases_api,omitempty"`
+	Mode             string `json:"mode"`
+	Track            string `json:"track,omitempty"`
+	Branch           string `json:"branch,omitempty"`
+	ExactTag         string `json:"exact_tag,omitempty"`
+	ManifestSHA256   string `json:"manifest_sha256,omitempty"`
+	Freshness        string `json:"freshness"`
 }
 
 type exactBundleManifest struct {
@@ -142,6 +143,12 @@ func LoadReleasePolicy(path string) (ReleasePolicy, error) {
 func (policy ReleasePolicy) Validate() error {
 	if policy.Schema != ReleasePolicySchema {
 		return fmt.Errorf("unsupported first-boot release policy schema %q", policy.Schema)
+	}
+	if policy.ServiceSelection != "" && policy.ServiceSelection != "sealed" && policy.ServiceSelection != "current" {
+		return fmt.Errorf("service selection must be sealed or current")
+	}
+	if policy.ServiceSelection == "current" && policy.Provider != "github" {
+		return fmt.Errorf("current service selection requires official public distribution")
 	}
 	if policy.Freshness != "require-current" && policy.Freshness != "prefer-current" {
 		return errors.New("first-boot freshness must be require-current or prefer-current")

@@ -360,6 +360,12 @@ func validateInstalledReleaseIdentity(name string, expected appliance.ComponentR
 }
 
 func addFirstDeployReleaseSetChecks(manifest appliance.Manifest, add func(string, string, string)) {
+	selected, err := pinnedDeploymentManifest(manifest)
+	if err != nil {
+		add("first-deploy service selection", "fail", err.Error())
+		return
+	}
+	manifest = selected
 	if manifest.ReleaseSet == nil {
 		add("first-deploy release identity", "fail", "the sealed System has no exact signed release set")
 		return

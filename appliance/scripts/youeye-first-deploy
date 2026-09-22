@@ -91,7 +91,7 @@ if jq -e '.reboot_requested == true' "$convergence" >/dev/null; then
     exit 0
 fi
 
-write_progress preparing "Preparing the exact sealed release set" 30
+write_progress preparing "Preparing the verified installation selection" 30
 current_stage=seeding_market
 write_progress market_seed "Preparing the signed Market source" 32
 "$seed_market"

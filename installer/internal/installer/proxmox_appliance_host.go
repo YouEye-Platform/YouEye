@@ -70,6 +70,7 @@ type proxmoxApplianceConfig struct {
 	Channel           string
 	ReleaseBranch     string
 	Freshness         string
+	ServiceSelection  string
 	ReleaseTag        string
 	ISOSHA256         string
 	ReleaseProvider   string
@@ -209,7 +210,7 @@ func proxmoxApplianceConfigFromOptions(opts CLIOptions, inventory proxmoxApplian
 		ImportHostSSHKeys: opts.ProxmoxImportHostSSHKeys, SSHKeysPath: opts.ProxmoxSSHKeysPath,
 		EraseConfirmed: opts.ProxmoxEraseConfirmed,
 		Channel:        opts.ApplianceChannel, ReleaseTag: opts.ApplianceReleaseTag,
-		ReleaseBranch: opts.ApplianceReleaseBranch, Freshness: opts.ApplianceFreshness,
+		ReleaseBranch: opts.ApplianceReleaseBranch, Freshness: opts.ApplianceFreshness, ServiceSelection: opts.ApplianceServiceSelection,
 		ISOSHA256: opts.ApplianceISOSHA256, ReleaseProvider: opts.ApplianceReleaseProvider,
 		ReleasesAPI: opts.ApplianceReleasesAPI,
 		CacheRoot:   "/var/cache/youeye-installer/releases",
@@ -226,7 +227,7 @@ func (config proxmoxApplianceConfig) releasePolicy(manifestSHA256 string) applia
 		Schema: releasePolicySchema, Provider: config.ReleaseProvider,
 		ReleasesAPI: nonDefaultReleaseAPI(config.ReleaseProvider, config.ReleasesAPI),
 		Mode:        "track", Track: config.Channel, Branch: config.ReleaseBranch,
-		Freshness: config.Freshness,
+		Freshness: config.Freshness, ServiceSelection: config.ServiceSelection,
 	}
 	if policy.Freshness == "" {
 		policy.Freshness = "require-current"

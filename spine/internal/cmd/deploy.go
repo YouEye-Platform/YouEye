@@ -120,7 +120,11 @@ func runDeploy() error {
 		if err := verifyApplianceImagePrerequisites(*manifest); err != nil {
 			return err
 		}
-		if err := verifyApplianceReleaseSet(*manifest, cfg); err != nil {
+		deployment, err := selectApplianceServices(*manifest)
+		if err != nil {
+			return fmt.Errorf("appliance service selection: %w", err)
+		}
+		if err := verifyApplianceReleaseSet(deployment, cfg); err != nil {
 			return fmt.Errorf("appliance release set: %w", err)
 		}
 	}

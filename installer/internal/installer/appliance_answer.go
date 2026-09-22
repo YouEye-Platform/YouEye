@@ -49,15 +49,16 @@ type applianceAnswerNetwork struct {
 // first-boot bootstrap. A branch identifies a signed release track; it never
 // authorizes a mutable branch archive or raw source checkout.
 type applianceReleasePolicy struct {
-	Schema         string `json:"schema"`
-	Provider       string `json:"provider"`
-	ReleasesAPI    string `json:"releases_api,omitempty"`
-	Mode           string `json:"mode"`
-	Track          string `json:"track,omitempty"`
-	Branch         string `json:"branch,omitempty"`
-	ExactTag       string `json:"exact_tag,omitempty"`
-	ManifestSHA256 string `json:"manifest_sha256,omitempty"`
-	Freshness      string `json:"freshness"`
+	ServiceSelection string `json:"service_selection,omitempty"`
+	Schema           string `json:"schema"`
+	Provider         string `json:"provider"`
+	ReleasesAPI      string `json:"releases_api,omitempty"`
+	Mode             string `json:"mode"`
+	Track            string `json:"track,omitempty"`
+	Branch           string `json:"branch,omitempty"`
+	ExactTag         string `json:"exact_tag,omitempty"`
+	ManifestSHA256   string `json:"manifest_sha256,omitempty"`
+	Freshness        string `json:"freshness"`
 }
 
 type developmentAccessPolicy struct {
@@ -182,6 +183,12 @@ func validateApplianceReleasePolicy(policy applianceReleasePolicy) error {
 		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 			return fmt.Errorf("non-default release policy requires an HTTPS releases API without credentials, query, or fragment")
 		}
+	}
+	if policy.ServiceSelection != "" && policy.ServiceSelection != "sealed" && policy.ServiceSelection != "current" {
+		return fmt.Errorf("service selection must be sealed or current")
+	}
+	if policy.ServiceSelection == "current" && policy.Provider != "github" {
+		return fmt.Errorf("current service selection requires official public distribution")
 	}
 	if policy.Freshness != "require-current" && policy.Freshness != "prefer-current" {
 		return fmt.Errorf("release policy freshness must be require-current or prefer-current")

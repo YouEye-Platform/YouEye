@@ -52,26 +52,27 @@ type CLIOptions struct {
 	ApplianceTargetDiskGB  int
 	AppliancePlanOnly      bool
 
-	ProxmoxOperation         string
-	ProxmoxTargetStorage     string
-	ProxmoxISOStorage        string
-	ProxmoxTargetDiskGB      int
-	ProxmoxNetworkMode       string
-	ProxmoxAddress           string
-	ProxmoxGateway           string
-	ProxmoxDNS               string
-	ProxmoxImportHostSSHKeys bool
-	ProxmoxSSHKeysPath       string
-	ProxmoxEraseConfirmed    bool
-	ApplianceChannel         string
-	ApplianceReleaseBranch   string
-	ApplianceFreshness       string
-	ApplianceReleaseTag      string
-	ApplianceISOSHA256       string
-	InstallerBootstrapSHA256 string
-	ApplianceReleaseProvider string
-	ApplianceReleasesAPI     string
-	ConsoleKind              string
+	ProxmoxOperation          string
+	ProxmoxTargetStorage      string
+	ProxmoxISOStorage         string
+	ProxmoxTargetDiskGB       int
+	ProxmoxNetworkMode        string
+	ProxmoxAddress            string
+	ProxmoxGateway            string
+	ProxmoxDNS                string
+	ProxmoxImportHostSSHKeys  bool
+	ProxmoxSSHKeysPath        string
+	ProxmoxEraseConfirmed     bool
+	ApplianceChannel          string
+	ApplianceReleaseBranch    string
+	ApplianceFreshness        string
+	ApplianceServiceSelection string
+	ApplianceReleaseTag       string
+	ApplianceISOSHA256        string
+	InstallerBootstrapSHA256  string
+	ApplianceReleaseProvider  string
+	ApplianceReleasesAPI      string
+	ConsoleKind               string
 }
 
 func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, error) {
@@ -130,6 +131,7 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 	fs.BoolVar(&opts.ProxmoxEraseConfirmed, "erase-confirmed", false, "confirm destructive reinstall disk erasure")
 	fs.StringVar(&opts.ApplianceChannel, "channel", opts.ApplianceChannel, "signed image track: stable, development, branch, or exact")
 	fs.StringVar(&opts.ApplianceReleaseBranch, "release-branch", "", "signed branch-associated release track (never a raw branch checkout)")
+	fs.StringVar(&opts.ApplianceServiceSelection, "service-selection", opts.ApplianceServiceSelection, "first-boot services: current signed selection or sealed image pins")
 	fs.StringVar(&opts.ApplianceFreshness, "freshness", opts.ApplianceFreshness, "first-boot policy: require-current or prefer-current")
 	fs.StringVar(&opts.ApplianceReleaseTag, "release-tag", "", "exact image release tag")
 	fs.StringVar(&opts.ApplianceISOSHA256, "iso-sha256", "", "required ISO SHA-256 for exact selection")
