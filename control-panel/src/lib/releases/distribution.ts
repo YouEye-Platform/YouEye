@@ -83,15 +83,18 @@ async function load(policy: DistributionPolicy, channel: string, fetchImpl: type
 
 export async function distributionBytes(source: string, policy: DistributionPolicy = sourcePolicy, fetchImpl: typeof fetch = fetch): Promise<Buffer | null> {
   const url = new URL(source), parts = url.pathname.split('/').filter(Boolean);
-  if (!policy.origin || url.protocol !== 'https:' || url.host !== 'api.github.com' || url.username || url.password || url.hash || parts[0] !== 'repos' || parts[1] !== 'YouEye-Platform' || !repositories.has(parts[2])) return null;
-  const repo = parts[2], kind = parts[3];
+  if (!policy.origin || url.protocol !== 'https:' || url.host !== 'api.github.com' || url.username || url.password || url.hash || parts[0] !== 'repos' || parts[1]?.toLowerCase() !== 'youeye-platform' || ![...repositories].some(name => name.toLowerCase() === parts[2]?.toLowerCase())) return null;
+  const repo = [...repositories].find(name => name.toLowerCase() === parts[2]?.toLowerCase())!, kind = parts[3];
   const tag = kind === 'releases' && parts.length === 6 && parts[4] === 'tags' ? parts[5] : null;
   const commit = kind === 'commits' && repo === 'Market' && parts.length === 5 ? parts[4] : null;
   if (!(kind === 'releases' && parts.length === 4) && !tag && !commit) return null;
   if ([...url.searchParams.keys()].some(key => !['page', 'per_page'].includes(key))) return null;
   const origin = new URL(policy.origin);
   if (policy.schema !== 'youeye.distribution-policy.v1' || origin.protocol !== 'https:' || origin.origin !== policy.origin || !Object.keys(policy.keys).length) throw new Error('Invalid distribution policy');
-  const catalogs = await Promise.all(['stable', 'beta'].map(channel => load(policy, channel, fetchImpl)));
+  // Official Market channel metadata lives alongside its immutable snapshots.
+  const channelPolicy = commit && policy.origin === 'https://releases.youeye.me'
+    ? { ...policy, origin: 'https://catalog.youeye.me' } : policy;
+  const catalogs = await Promise.all(['stable', 'beta'].map(channel => load(channelPolicy, channel, fetchImpl)));
   if (commit) {
     const sha = catalogs.map(c => c?.repositories[repo]?.commits?.[commit]).find(Boolean);
     if (!sha) throw new Error('Market commit is not published in release distribution');

@@ -1,3 +1,4 @@
+import distributionPolicy from '../../../../releasecache/distribution-policy.json';
 import { releaseCacheFetch } from '../releases/cache';
 import { mkdir, readFile, rename, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
@@ -297,7 +298,18 @@ export function isGitHubMarketSource(source: MarketSource): boolean {
   return source.provider === 'github';
 }
 
+export function hostedMarketRawURL(source: MarketSource, owner: string, repo: string, filePath: string, commit: string, policy = distributionPolicy): string | null {
+  if (policy.origin !== 'https://releases.youeye.me' || !Object.keys(policy.keys).length || source.trust !== 'official'
+    || source.provider !== 'github' || source.base_url !== 'https://github.com'
+    || source.organization.toLowerCase() !== 'youeye-platform' || source.repository.toLowerCase() !== 'market'
+    || owner.toLowerCase() !== 'youeye-platform' || repo.toLowerCase() !== 'market' || !COMMIT_PATTERN.test(commit)) return null;
+  if (!/^[A-Za-z0-9_./-]+$/.test(filePath) || filePath.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.'))) throw new Error('Unsafe hosted Market asset path');
+  return `https://catalog.youeye.me/v1/snapshots/${commit}/${filePath}`;
+}
+
 export function buildMarketRawURL(source: MarketSource, owner: string, repo: string, filePath: string, branch: string): string {
+  const hosted = hostedMarketRawURL(source, owner, repo, filePath, branch);
+  if (hosted) return hosted;
   if (isGitHubMarketSource(source)) {
     return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${filePath}`;
   }
@@ -319,4 +331,11 @@ export interface MarketReleaseAsset {
 
 export function getMarketReleaseAssetDownloadURL(source: MarketSource, asset: MarketReleaseAsset): string | null {
   return getReleaseAssetDownloadURL(source, asset);
+}
+
+/** A Market commit belongs only to that repository, never to a referenced app repo. */
+export function catalogEntryRef(entry: { repo?: string; branch?: string }, catalogRef: string, source: Pick<MarketSource, 'branch'>): string {
+  if (!entry.repo) return catalogRef;
+  if (entry.branch) return entry.branch;
+  return COMMIT_PATTERN.test(source.branch) ? DEFAULT_MARKET_BRANCH : source.branch;
 }

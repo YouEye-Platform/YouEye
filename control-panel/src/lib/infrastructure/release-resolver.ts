@@ -4,6 +4,7 @@ import {
   type ReleaseAsset,
   type ReleaseSource,
 } from '../apps/release-source';
+import { releaseCacheFetch } from '../releases/cache';
 
 const RELEASE_PAGE_SIZE = 50;
 const MAX_RELEASE_PAGES = 100;
@@ -46,7 +47,7 @@ function compareVersions(left: number[], right: number[]): number {
 export async function listInfrastructureReleases(
   source: ReleaseSource,
   repo: string,
-  fetchImpl: FetchLike = fetch,
+  fetchImpl: FetchLike = releaseCacheFetch,
 ): Promise<InfrastructureRelease[]> {
   const releases: InfrastructureRelease[] = [];
 
@@ -116,7 +117,7 @@ export async function resolveInfrastructureStandaloneRelease(
   repo: string,
   tagPrefix: string,
   branch: string,
-  fetchImpl: FetchLike = fetch,
+  fetchImpl: FetchLike = releaseCacheFetch,
 ): Promise<ResolvedInfrastructureRelease> {
   const releases = await listInfrastructureReleases(source, repo, fetchImpl);
   const resolved = selectInfrastructureStandaloneRelease(source, releases, tagPrefix, branch);
@@ -144,7 +145,7 @@ export function selectExactInfrastructureStandaloneRelease(
   const url = getReleaseAssetDownloadURL(source, asset, exactTag);
   if (!url) return null;
   const marker = exactTag.lastIndexOf('-v');
-  const version = marker >= 0 ? exactTag.slice(marker + 2) : '';
+  const version = marker >= 0 ? exactTag.slice(marker + 2) : exactTag.startsWith('v') ? exactTag.slice(1) : '';
   if (!parseVersion(version)) return null;
   return { tag: exactTag, version, url, artifactSHA256 };
 }

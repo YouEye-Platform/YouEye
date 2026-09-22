@@ -56,6 +56,36 @@ Artifact hosting still depends on GitHub download availability. Moving large
 artifacts to another object store is a separate migration; this change removes
 anonymous API quota from normal first-party release discovery.
 
+## Hosted official Market and app updates
+
+Public builds resolve official Market channel commits through the signed
+Stable/Beta envelopes at `https://catalog.youeye.me`. Files in that Market
+repository are read at `/v1/snapshots/<exact-commit>/<source-path>` on the same
+host. Relative manifest and image paths stay intact. Native app entries that
+reference separate repositories keep those references and use their own declared
+branch or commit. They never inherit the Market repository commit; entries without
+a declared ref use the source channel (or main for a commit-pinned Market source).
+Manifest assets and recorded provenance use that same app repository ref. Explicit custom Git
+sources retain their configured providers, and development builds without a
+public distribution policy keep their existing transport.
+
+The channel signature authenticates the selected Git commit. Snapshot files
+use HTTPS and the publisher's verified Git extraction; the mirror's SHA-256
+inventory is not itself a signed trust root. Failure to fetch an exact snapshot
+file never substitutes that file from a floating main branch. Protected candidate
+install caches retain precedence and can serve their original Git-URL-indexed
+bytes through the hosted URL for the same exact commit and path.
+
+Settings, queued LXD updates and exact-tag updates share channel resolution and
+protected release transport. They do not execute a separate release-discovery
+curl inside the app container. Official repository names are recognized with
+GitHub's case-insensitive semantics. A selected custom source remains attached
+to exact artifact resolution. Downloads still come from the selected release
+host and retain signature/checksum verification before extraction. Initial UI/AI release discovery uses the same protected transport. Exact AI deployment also recognizes unprefixed `v` tags and continues to require the signed artifact digest.
+
+Existing installations need a Control Panel update to adopt these paths. The
+change does not require a new host image or a GitHub token in a VM/template.
+
 ## Independent service installation
 
 A public channel may carry an `installation` selection with schema

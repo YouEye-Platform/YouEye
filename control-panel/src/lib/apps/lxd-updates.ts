@@ -138,8 +138,7 @@ export async function getLxdAppVersion(
  * Get the latest release version for an LXD app from the configured release source.
  * Branch-aware: checks for branch-prefixed tags first, then falls back to main.
  *
- * Fetches releases from inside an available container (CP's youeye-control) since
- * the CP process may not have direct internet access. Falls back to Node.js fetch.
+ * Uses the protected cache and signed release distribution in the CP process.
  */
 export async function getLxdAppLatestVersion(
   giteaRepo: string,
@@ -149,33 +148,11 @@ export async function getLxdAppLatestVersion(
   const releaseSource = await getReleaseSource();
   const releasesURL = buildReleasesAPIURL(releaseSource, giteaRepo);
 
-  let releasesJson: string | undefined;
-
-  // Try fetching from CP container first (has internet via host proxy)
-  try {
-    const result = await execShell('youeye-control', `curl -sSL -H 'User-Agent: youeye-spine' -H 'Accept: application/vnd.github+json' '${releasesURL}'`, {
-      timeout: 15_000,
-    });
-    if (result.exitCode === 0 && result.stdout) {
-      releasesJson = result.stdout;
-    }
-  } catch {
-    // CP container might not be available
-  }
-
-  // Fallback: try Node.js fetch directly
-  if (!releasesJson) {
-    try {
-      const resp = await releaseCacheFetch(releasesURL, { signal: AbortSignal.timeout(10_000) });
-      if (resp.ok) {
-        releasesJson = await resp.text();
-      }
-    } catch {
-      // No network access from CP
-    }
-  }
-
-  if (!releasesJson) return undefined;
+  // The process owns protected local-cache and signed-distribution transport.
+  // A container curl would bypass both and consume public GitHub API quota.
+  const response = await releaseCacheFetch(releasesURL, { signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) throw new Error(`Release discovery returned HTTP ${response.status}`);
+  const releasesJson = await response.text();
 
   try {
     const allReleases = JSON.parse(releasesJson);

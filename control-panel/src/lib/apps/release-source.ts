@@ -109,7 +109,7 @@ export function getReleaseAssetDownloadURL(source: ReleaseSource, asset: Release
     const segments = selected.pathname.split('/').filter(Boolean);
     if (
       segments.length < 6 ||
-      segments[0] !== source.organization ||
+      (source.provider === 'github' ? segments[0].toLowerCase() !== source.organization.toLowerCase() : segments[0] !== source.organization) ||
       !SAFE_RELEASE_SEGMENT.test(segments[1]) ||
       segments[2] !== 'releases' ||
       segments[3] !== 'download' ||

@@ -4,6 +4,7 @@
  * Only allows URLs from trusted domains.
  */
 
+import { releaseCacheFetch } from '@/lib/releases/cache';
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -24,7 +25,7 @@ function isTrustedImageURL(raw: string): boolean {
   try {
     const parsed = new URL(raw);
     return parsed.protocol === 'https:' && !parsed.username && !parsed.password && !parsed.hash
-      && ALLOWED_DOMAINS.some((domain) => parsed.hostname === domain || parsed.hostname.endsWith('.' + domain));
+      && (parsed.hostname === 'catalog.youeye.me' || ALLOWED_DOMAINS.some((domain) => parsed.hostname === domain || parsed.hostname.endsWith('.' + domain)));
   } catch {
     return false;
   }
@@ -34,7 +35,7 @@ async function fetchTrustedImage(raw: string): Promise<Response> {
   let current = raw;
   for (let redirects = 0; redirects <= 5; redirects += 1) {
     if (!isTrustedImageURL(current)) throw new Error('Image URL or redirect is not trusted');
-    const response = await fetch(current, { redirect: 'manual', signal: AbortSignal.timeout(10_000) });
+    const response = await releaseCacheFetch(current, { redirect: 'manual', signal: AbortSignal.timeout(10_000) });
     if (!REDIRECT_STATUSES.has(response.status)) return response;
     if (redirects === 5) throw new Error('Image download exceeded five redirects');
     const location = response.headers.get('location');

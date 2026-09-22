@@ -31,3 +31,20 @@ test('official discovery makes no GitHub request; outage never falls back',async
  await assert.rejects(distributionBytes(source,{...policy,origin:'https://offline.example.test'},(async()=>{throw new Error('offline')}) as typeof fetch),/offline/);
  } finally {delete process.env.YOUEYE_DISTRIBUTION_STATE;await rm(root,{recursive:true,force:true});}
 });
+
+test('official GitHub names are case-insensitive and Market uses its catalog host',async()=>{
+ const root=await mkdtemp(path.join(tmpdir(),'distribution-case-'));process.env.YOUEYE_DISTRIBUTION_STATE=root;
+ try {
+ const commit='a'.repeat(40);
+ const policy={schema:'youeye.distribution-policy.v1',origin:'https://releases.youeye.me',keys:{stable:pem}};
+ const transport=(async(url:string)=>{
+  assert.equal(url,'https://catalog.youeye.me/v1/stable.json');
+  return new Response(fixture({repositories:{Market:{releases:[],commits:{main:commit,[commit]:commit}}}}));
+ }) as typeof fetch;
+ const result=await distributionBytes('https://api.github.com/repos/youeye-platform/market/commits/main',policy,transport);
+ assert.equal(JSON.parse(result!.toString()).sha,commit);
+ const releaseTransport=(async(url:string)=>{assert.equal(url,'https://releases.youeye.me/v1/stable.json');return new Response(fixture());}) as typeof fetch;
+ assert.ok(await distributionBytes('https://api.github.com/repos/youeye-platform/youeye/releases',policy,releaseTransport));
+ await assert.rejects(distributionBytes('https://api.github.com/repos/youeye-platform/Market/commits/beta',policy,transport),/not published/);
+ } finally {delete process.env.YOUEYE_DISTRIBUTION_STATE;await rm(root,{recursive:true,force:true});}
+});

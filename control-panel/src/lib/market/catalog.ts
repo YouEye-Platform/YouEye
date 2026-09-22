@@ -14,7 +14,7 @@ import { createHash } from 'crypto';
 import { parseBundle, parseCatalog, parseIntegrationManifest, parseManifest, parseStore, parseSystemManifest, parseUpdatePlan } from './parser';
 import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp, MarketBundle, MarketCategory, MarketCuration, MigrationSpec, StoreDescriptor, SystemAppManifest, SystemCatalogEntry, UpdatePlanCatalogEntry } from './types';
 import { settingsService } from '@/lib/settings';
-import { buildMarketRawURL, getMarketSource, getMarketSources, isGitHubMarketSource, recordMarketSourceResolution, resolveMarketSourceCommit, type MarketSource } from './source';
+import { catalogEntryRef, buildMarketRawURL, getMarketSource, getMarketSources, isGitHubMarketSource, recordMarketSourceResolution, resolveMarketSourceCommit, type MarketSource } from './source';
 
 const CATALOG_CACHE_DIR = '/var/lib/youeye';
 const CATALOG_CACHE_PATH = path.join(CATALOG_CACHE_DIR, 'catalog-cache.json');
@@ -97,7 +97,7 @@ export async function fetchFile(filePath: string, branch?: string, marketSource?
   const url = buildMarketRawURL(source, owner, repo, filePath, effectiveBranch);
   const res = await releaseCacheFetch(url, { signal: AbortSignal.timeout(15_000) });
 
-  if (!res.ok && allowMainFallback && effectiveBranch !== DEFAULT_BRANCH) {
+  if (!res.ok && allowMainFallback && !/^[0-9a-f]{40}$/.test(effectiveBranch) && effectiveBranch !== DEFAULT_BRANCH) {
     const fallbackUrl = buildMarketRawURL(source, owner, repo, filePath, DEFAULT_BRANCH);
     const fallbackRes = await releaseCacheFetch(fallbackUrl, { signal: AbortSignal.timeout(15_000) });
     if (!fallbackRes.ok) throw new Error(`Failed to fetch ${filePath}: ${fallbackRes.status}`);
@@ -113,7 +113,7 @@ export async function fetchRepoFile(owner: string, repo: string, filePath: strin
   const url = buildMarketRawURL(source, owner, repo, filePath, branch);
   const res = await releaseCacheFetch(url, { signal: AbortSignal.timeout(15_000) });
 
-  if (!res.ok && branch !== DEFAULT_BRANCH) {
+  if (!res.ok && !/^[0-9a-f]{40}$/.test(branch) && branch !== DEFAULT_BRANCH) {
     const fallbackUrl = buildMarketRawURL(source, owner, repo, filePath, DEFAULT_BRANCH);
     const fallbackRes = await releaseCacheFetch(fallbackUrl, { signal: AbortSignal.timeout(15_000) });
     if (!fallbackRes.ok) throw new Error(`Failed to fetch ${owner}/${repo}/${filePath}: ${fallbackRes.status}`);
@@ -378,6 +378,7 @@ async function fetchManifestFromCatalogEntry(
   branch: string,
   source: MarketSource
 ): Promise<ManifestFetchResult> {
+  branch = catalogEntryRef(entry, branch, source);
   let manifest: AppManifest;
   let resolveOwner = source.organization;
   let resolveRepo = source.repository;
@@ -427,6 +428,7 @@ async function fetchIntegrationManifestFromCatalogEntry(
   branch: string,
   source: MarketSource
 ): Promise<IntegrationManifestFetchResult> {
+  branch = catalogEntryRef(entry, branch, source);
   let manifest: IntegrationManifest;
   let resolveOwner = source.organization;
   let resolveRepo = source.repository;
@@ -553,16 +555,12 @@ async function resolveManifestPaths(
   basePath?: string
 ): Promise<void> {
   const source = marketSource || await getMarketSource();
-  const repoBase = isGitHubMarketSource(source)
-    ? `https://raw.githubusercontent.com/${owner}/${repo}/${branch}`
-    : `${source.base_url}${source.api_path}/repos/${owner}/${repo}/raw`;
-  // Relative assets (icon.svg, screenshots/) resolve under the app folder for the new
-  // per-app layout, and under the repo root for the legacy layout.
-  const assetBase = basePath ? `${repoBase}/${basePath.replace(/\/+$/, '')}` : repoBase;
-  const suffix = isGitHubMarketSource(source) ? '' : `?ref=${encodeURIComponent(branch)}`;
+  // Use the same immutable source for manifests, icons and screenshots.
+  const assetURL = (asset: string) => buildMarketRawURL(source, owner, repo,
+    basePath ? `${basePath.replace(/\/+$/, '')}/${asset}` : asset, branch);
 
   if (manifest.metadata.iconUrl && !manifest.metadata.iconUrl.startsWith('http')) {
-    manifest.metadata.iconUrl = `${assetBase}/${manifest.metadata.iconUrl}${suffix}`;
+    manifest.metadata.iconUrl = assetURL(manifest.metadata.iconUrl);
   }
   if (manifest.metadata.iconUrl) {
     manifest.metadata.iconUrl = proxyImageUrl(manifest.metadata.iconUrl);
@@ -571,7 +569,7 @@ async function resolveManifestPaths(
   if (manifest.detail?.screenshots) {
     for (const screenshot of manifest.detail.screenshots) {
       if (screenshot.path && !screenshot.path.startsWith('http')) {
-        screenshot.path = `${assetBase}/${screenshot.path}${suffix}`;
+        screenshot.path = assetURL(screenshot.path);
       }
       if (screenshot.path) {
         screenshot.path = proxyImageUrl(screenshot.path);

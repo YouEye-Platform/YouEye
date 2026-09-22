@@ -12,6 +12,10 @@
  * Includes apt upgrade to keep base OS current inside LXD containers.
  */
 
+import { releaseCacheFetch } from '@/lib/releases/cache';
+import { resolveExactLxdRelease } from './lxd-release';
+import { resolveLxdAppChannel } from './lxd-updates';
+import { parseMarketRepoURL } from '@/lib/market/source';
 import { readFile } from 'node:fs/promises';
 import { execShell, incusUploadFile } from '@/lib/incus/server';
 import {
@@ -84,20 +88,16 @@ function isMainTag(tag: string): boolean {
   return /^v\d/.test(tag);
 }
 
-async function getLatestRelease(containerName: string, giteaRepo: string, branch?: string, tagPrefix?: string): Promise<ReleaseInfo | null> {
+async function getLatestRelease(giteaRepo: string, branch?: string, tagPrefix?: string): Promise<ReleaseInfo | null> {
   const releaseSource = await getReleaseSource();
   const releasesURL = buildReleasesAPIURL(releaseSource, giteaRepo);
 
-  const result = await execShell(
-    containerName,
-    `curl -sSL -H 'User-Agent: youeye-control' '${releasesURL}'`,
-    { timeout: 30_000 }
-  );
-
-  if (result.exitCode !== 0 || !result.stdout) return null;
+  const response = await releaseCacheFetch(releasesURL, { signal: AbortSignal.timeout(30_000) });
+  if (!response.ok) throw new Error(`Release discovery returned HTTP ${response.status}`);
+  const body = await response.text();
 
   try {
-    const allReleases = JSON.parse(result.stdout);
+    const allReleases = JSON.parse(body);
     if (!Array.isArray(allReleases) || allReleases.length === 0) return null;
 
     const pfx = tagPrefix ? `${tagPrefix}-` : '';
@@ -169,32 +169,6 @@ async function getLatestRelease(containerName: string, giteaRepo: string, branch
   }
 }
 
-// getReleaseByTag resolves the download URL for an EXACT release tag. Used when
-// the caller (channel-aware update route) has already resolved the candidate —
-// the updater must install precisely that tag, not re-resolve on its own.
-async function getReleaseByTag(containerName: string, giteaRepo: string, tag: string): Promise<string | null> {
-  const releaseSource = await getReleaseSource();
-  const releasesURL = buildReleasesAPIURL(releaseSource, giteaRepo);
-  const result = await execShell(
-    containerName,
-    `curl -sSL -H 'User-Agent: youeye-control' '${releasesURL}'`,
-    { timeout: 30_000 }
-  );
-  if (result.exitCode !== 0 || !result.stdout) return null;
-  try {
-    const allReleases = JSON.parse(result.stdout);
-    if (!Array.isArray(allReleases)) return null;
-    const match = allReleases.find((r: { tag_name?: string }) => r.tag_name === tag);
-    if (!match) return null;
-    const assets = match.assets as ReleaseAsset[];
-    const tarAsset = assets?.find((a) => a.name === 'standalone.tar');
-    if (!tarAsset) return null;
-    return getReleaseAssetDownloadURL(releaseSource, tarAsset, tag);
-  } catch {
-    return null;
-  }
-}
-
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -229,6 +203,14 @@ export async function updateLXDApp(
     throw new Error('Exact update artifact SHA-256 must be 64 lowercase hexadecimal characters');
   }
 
+  // Settings, queued and explicit routes share the same channel selection.
+  // Resolve before any container mutation; never silently switch to main.
+  if (!override && appDef.releaseChannelKey) {
+    const resolved = await resolveLxdAppChannel(appDef);
+    if (!resolved?.candidate) throw new Error('No verified release candidate is available for the configured channel');
+    override = { ...resolved.candidate, source: resolved.channel.source };
+  }
+
   // 1. Resolve real app directory
   const appDir = await getServiceWorkingDir(containerName, serviceName, configuredAppDir);
   if (appDir !== configuredAppDir) {
@@ -249,12 +231,14 @@ export async function updateLXDApp(
   // when provided, else legacy latest-release resolution.
   let release: ReleaseInfo;
   if (override) {
-    const url = await getReleaseByTag(containerName, giteaRepo, override.tag);
+    const selectedSource = override.source ? parseMarketRepoURL(override.source) : await getReleaseSource();
+    const selectedRepo = override.source ? selectedSource.repository! : giteaRepo;
+    const url = await resolveExactLxdRelease(selectedSource, selectedRepo, override.tag);
     if (!url) throw new Error(`Release tag ${override.tag} not found (or has no standalone.tar) on the configured release source`);
     release = { version: override.version, downloadURL: url, artifactSHA256: override.artifactSHA256 };
     emit({ stage: 'starting', message: `Installing ${override.tag}`, progress: 10 });
   } else {
-    const latest = await getLatestRelease(containerName, giteaRepo, branch, tagPrefix);
+    const latest = await getLatestRelease(giteaRepo, branch, tagPrefix);
     if (!latest) throw new Error('Could not fetch latest release from the configured release source');
     release = latest;
     emit({ stage: 'starting', message: `Latest version: ${release.version}`, progress: 10 });

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -217,4 +219,34 @@ test('digest-pinned UI resolution does not consult an exhausted API', async () =
   assert.equal(result.url, 'https://forge.example.test/youeye/YouEye/releases/download/ui-v0.5.5/standalone.tar');
   await assert.rejects(resolveExactInfrastructureStandaloneRelease(forgejo, 'YouEye', '../bad', 'a'.repeat(64), failFetch as typeof fetch));
   await assert.rejects(resolveExactInfrastructureStandaloneRelease(forgejo, 'YouEye', 'ui-v0.5.5', 'BAD', failFetch as typeof fetch));
+});
+
+test('exact Pointer deployment accepts its signed unprefixed tag without API discovery', async () => {
+  const source: ReleaseSource = { provider: 'github', base_url: 'https://github.com', api_path: '', organization: 'YouEye-Platform' };
+  const failFetch = async () => { throw new Error('API must not be requested'); };
+  const result = await resolveExactInfrastructureStandaloneRelease(source, 'Pointer', 'v0.5.1', 'a'.repeat(64), failFetch as typeof fetch);
+  assert.equal(result.version, '0.5.1');
+  assert.equal(result.url, 'https://github.com/YouEye-Platform/Pointer/releases/download/v0.5.1/standalone.tar');
+  await assert.rejects(resolveExactInfrastructureStandaloneRelease(source, 'Pointer', 'vnot-a-version', 'a'.repeat(64), failFetch as typeof fetch));
+});
+
+test('default infrastructure discovery uses protected release transport with the provider API unavailable', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'infrastructure-release-cache-'));
+  const previousRoot = process.env.YOUEYE_RELEASE_CACHE;
+  const previousFetch = globalThis.fetch;
+  const source: ReleaseSource = { provider: 'github', base_url: 'https://github.com', api_path: '', organization: 'YouEye-Platform' };
+  const payload = Buffer.from(JSON.stringify([{ tag_name: 'v0.5.2', assets: [{ name: 'standalone.tar', browser_download_url: 'https://github.com/YouEye-Platform/Pointer/releases/download/v0.5.2/standalone.tar' }] }]));
+  const digest = createHash('sha256').update(payload).digest('hex');
+  try {
+    await mkdir(join(root, 'objects'));
+    await writeFile(join(root, 'objects', digest), payload, { mode: 0o600 });
+    await writeFile(join(root, 'index.json'), JSON.stringify({ schema: 'youeye.release-cache.v1', objects: { 'https://api.github.com/repos/YouEye-Platform/Pointer/releases?per_page=50&page=1': { sha256: digest, bytes: payload.length } } }), { mode: 0o600 });
+    process.env.YOUEYE_RELEASE_CACHE = root;
+    globalThis.fetch = async () => { throw new Error('Direct provider API is unavailable'); };
+    assert.equal((await resolveInfrastructureStandaloneRelease(source, 'Pointer', '', 'main')).tag, 'v0.5.2');
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousRoot === undefined) delete process.env.YOUEYE_RELEASE_CACHE; else process.env.YOUEYE_RELEASE_CACHE = previousRoot;
+    await rm(root, { recursive: true, force: true });
+  }
 });

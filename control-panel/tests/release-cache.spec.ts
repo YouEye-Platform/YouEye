@@ -30,3 +30,16 @@ test('candidate cache preserves exact URL identity and rejects equal-sized corru
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('hosted Market preserves protected candidate cache by exact commit and path', async () => {
+ const root=await mkdtemp(path.join(tmpdir(),'catalog-cache-'));const before=process.env.YOUEYE_RELEASE_CACHE;process.env.YOUEYE_RELEASE_CACHE=root;
+ try {
+  const commit='a'.repeat(40),bytes=Buffer.from('apps: []');const sha256=createHash('sha256').update(bytes).digest('hex');
+  await mkdir(path.join(root,'objects'));await writeFile(path.join(root,'objects',sha256),bytes,{mode:0o600});
+  await writeFile(path.join(root,'index.json'),JSON.stringify({schema:'youeye.release-cache.v1',objects:{[`https://raw.githubusercontent.com/YouEye-Platform/Market/${commit}/catalog.yaml`]:{sha256,bytes:bytes.length}}}),{mode:0o600});
+  assert.deepEqual(await cachedReleaseBytes(`https://catalog.youeye.me/v1/snapshots/${commit}/catalog.yaml`),bytes);
+  assert.equal(await cachedReleaseBytes(`https://catalog.youeye.me/v1/snapshots/${'b'.repeat(40)}/catalog.yaml`),null);
+  assert.equal(await cachedReleaseBytes(`https://other.example.test/v1/snapshots/${commit}/catalog.yaml`),null);
+ } finally {if(before===undefined)delete process.env.YOUEYE_RELEASE_CACHE;else process.env.YOUEYE_RELEASE_CACHE=before;await rm(root,{recursive:true,force:true});}
+});

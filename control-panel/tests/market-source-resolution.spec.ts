@@ -101,3 +101,35 @@ test('signed Market app releases require a same-origin release-scoped browser UR
     uuid: 'opaque-forgejo-id',
   }), null);
 });
+
+test('hosted Market URLs preserve immutable identity and leave custom Git sources alone', async () => {
+  const { hostedMarketRawURL } = await import('../src/lib/market/source');
+  const source = parseMarketRepoURL(DEFAULT_MARKET_REPO_URL);
+  const commit = 'a'.repeat(40);
+  const policy = { schema: 'youeye.distribution-policy.v1', origin: 'https://releases.youeye.me', keys: {stable:'test-key'} };
+  assert.equal(hostedMarketRawURL(source,'YouEye-Platform','Market','apps/example/icon.svg',commit,policy),`https://catalog.youeye.me/v1/snapshots/${commit}/apps/example/icon.svg`);
+  for (const other of [{...source,trust:'custom' as const},{...source,base_url:'https://forge.example.test'},{...source,organization:'someone-else'}]) assert.equal(hostedMarketRawURL(other,'YouEye-Platform','Market','catalog.yaml',commit,policy),null);
+  assert.equal(hostedMarketRawURL(source,'YouEye-Platform','Pointer','youeye-app.yaml',commit,policy),null);
+  assert.equal(hostedMarketRawURL(source,'YouEye-Platform','Market','catalog.yaml','main',policy),null);
+  assert.equal(hostedMarketRawURL(source,'YouEye-Platform','Market','catalog.yaml',commit,{...policy,origin:''}),null);
+  assert.throws(()=>hostedMarketRawURL(source,'YouEye-Platform','Market','apps/../secret',commit,policy));
+});
+
+
+test('catalog refs stay scoped to their repository, including explicit native app pins', async () => {
+  const { catalogEntryRef } = await import('../src/lib/market/source');
+  const { CatalogEntrySchema, IntegrationCatalogEntrySchema } = await import('../src/lib/market/schema');
+  const catalogCommit = 'a'.repeat(40), appCommit = 'b'.repeat(40);
+  for (const schema of [CatalogEntrySchema, IntegrationCatalogEntrySchema]) {
+    const entry = schema.parse({ id: 'example', repo: 'example/App', branch: 'stable' });
+    assert.equal(entry.branch, 'stable');
+    assert.equal(catalogEntryRef(entry, catalogCommit, {branch:'beta'}), 'stable');
+    assert.equal(catalogEntryRef({...entry,branch:appCommit}, catalogCommit, {branch:'main'}), appCommit);
+    assert.equal(catalogEntryRef({...entry,branch:undefined}, catalogCommit, {branch:'beta'}), 'beta');
+    assert.equal(catalogEntryRef({...entry,branch:undefined}, catalogCommit, {branch:catalogCommit}), 'main');
+    for (const branch of ['../main', 'main//next', 'main/', 'main?token=x']) {
+      assert.equal(schema.safeParse({id:'example',repo:'example/App',branch}).success, false);
+    }
+  }
+  assert.equal(catalogEntryRef({branch:'main'},catalogCommit,{branch:'main'}),catalogCommit);
+});

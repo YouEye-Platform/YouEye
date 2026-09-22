@@ -633,10 +633,14 @@ export const AppManifestSchema = z
 
 // ─── Catalog Schema ───────────────────────────────────────
 
+const CatalogRepositoryRefSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/)
+  .refine((ref) => !ref.includes('..') && !ref.includes('//') && !ref.endsWith('/'), 'Unsafe repository ref');
+
 export const CatalogEntrySchema = z.object({
   id: z.string().min(1),
   file: z.string().optional(),
   repo: z.string().optional(),
+  branch: CatalogRepositoryRefSchema.optional(),
   /**
    * New per-app folder layout: the app's folder in this store (e.g. `apps/redlib`). The
    * manifest is read from `<path>/<manifest>` and assets (icon.svg, screenshots/) are
@@ -671,6 +675,7 @@ export const IntegrationCatalogEntrySchema = z.object({
   id: z.string().min(1),
   file: z.string().optional(),
   repo: z.string().optional(),
+  branch: CatalogRepositoryRefSchema.optional(),
   manifest: z.string().default('youeye-integration.yaml'),
   latestVersion: z.string().optional(),
   targetAppId: z.string().optional(),
