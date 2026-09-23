@@ -133,3 +133,17 @@ test('catalog refs stay scoped to their repository, including explicit native ap
   }
   assert.equal(catalogEntryRef({branch:'main'},catalogCommit,{branch:'main'}),catalogCommit);
 });
+
+
+test('only matching official legacy native manifests map to their published repository', async () => {
+  const { publicNativeManifestRepo } = await import('../src/lib/market/source');
+  const official = parseMarketRepoURL(DEFAULT_MARKET_REPO_URL);
+  assert.equal(publicNativeManifestRepo(official,'YouEye-Platform/Search','potemsla/YE-App-Search'),'YouEye-Platform/Search');
+  for (const source of [{...official,trust:'custom' as const},parseMarketRepoURL('https://forge.example.test/potemsla/YE-AppMarket'),{...official,organization:'someone-else'}]) {
+    assert.equal(publicNativeManifestRepo(source,'YouEye-Platform/Search','potemsla/YE-App-Search'),'potemsla/YE-App-Search');
+  }
+  for (const repo of ['other/YE-App-Search','potemsla/YE-App-Search-Fork','https://forge.example.test/potemsla/YE-App-Search','YouEye-Platform/Search']) {
+    assert.equal(publicNativeManifestRepo(official,'YouEye-Platform/Search',repo),repo);
+  }
+  assert.equal(publicNativeManifestRepo(official,'YouEye-Platform/Wiki','potemsla/YE-App-Search'),'potemsla/YE-App-Search');
+});

@@ -701,8 +701,8 @@ function describeNativeArtifacts(staged: StagedMarketNativeArtifacts): InstallMe
     artifactName: artifact.artifactName,
     sha256: artifact.artifactSHA256,
     bytes: artifact.artifactBytes,
-    signature: artifact.signature.status === 'unsigned' ? 'unsigned' as const : 'verified-development' as const,
-    signatureKeyId: artifact.signature.status === 'verified-development' ? artifact.signature.keyId : undefined,
+    signature: artifact.signature.status,
+    signatureKeyId: artifact.signature.status !== 'unsigned' ? artifact.signature.keyId : undefined,
   }));
   return artifacts.length > 0 ? artifacts : undefined;
 }

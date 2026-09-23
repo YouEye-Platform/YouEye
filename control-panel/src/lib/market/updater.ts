@@ -738,8 +738,8 @@ export async function updateMarketApp(
       artifactName: artifact.artifactName,
       sha256: artifact.artifactSHA256,
       bytes: artifact.artifactBytes,
-      signature: artifact.signature.status === 'unsigned' ? 'unsigned' : 'verified-development',
-      signatureKeyId: artifact.signature.status === 'verified-development' ? artifact.signature.keyId : undefined,
+      signature: artifact.signature.status,
+      signatureKeyId: artifact.signature.status !== 'unsigned' ? artifact.signature.keyId : undefined,
     }));
     installMeta.containers = installMeta.containers.map((container) => {
       const spec = containerSpecs.find((candidate) => candidate.name === container.name);

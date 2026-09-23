@@ -16,14 +16,17 @@ export function releaseArtifactTrust(artifactURL: string, policy: PublicTrustPol
   if (url.protocol !== 'https:' || url.host !== 'github.com' || url.username || url.password || url.search || url.hash || parts.length !== 6 || parts[2] !== 'releases' || parts[3] !== 'download') {
     throw new Error('Public component release URL is invalid');
   }
-  // Pointer publishes unprefixed tags under the same public signing authority.
-  // Keep that exception scoped to the official Pointer repository.
-  const tagPattern = parts[0] === 'YouEye-Platform' && parts[1] === 'Pointer'
+  const nativeRepos = new Set(['pointer', 'wiki', 'search', 'notes', 'cinema', 'weather', 'translate', 'canvas']);
+  const owner = parts[0].toLowerCase(), repo = parts[1].toLowerCase();
+  if (owner !== 'youeye-platform' || (repo !== 'youeye' && !nativeRepos.has(repo))) {
+    throw new Error('Public release repository has no supported signing authority');
+  }
+  const tagPattern = nativeRepos.has(repo)
     ? /^(beta-)?v[0-9]+(?:\.[0-9]+)*$/
     : /^(?:spine|cp|ui)-(beta-)?v[0-9]+(?:\.[0-9]+)*$/;
   const match = tagPattern.exec(parts[4]);
   if (!match) throw new Error('Public component tag has no supported signing channel');
-  const trustClass = match[1] ? 'beta' : 'stable';
+  const trustClass: 'beta' | 'stable' = match[1] ? 'beta' : 'stable';
   const pem = policy.keys[trustClass];
   if (policy.schema !== 'youeye.public-trust.v1' || !pem || createPublicKey(pem).asymmetricKeyType !== 'ed25519') {
     throw new Error(`Public ${trustClass} trust is not provisioned`);

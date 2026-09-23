@@ -273,7 +273,7 @@ export async function POST(request: NextRequest) {
 
         const errorEvent: InstallEvent = {
           step: 0, totalSteps: 0, status: 'error',
-          message: 'Installation failed', detail: errorMsg,
+          message: errorMsg, detail: errorMsg,
         };
         trackEvent(config.appId, errorEvent);
         try {

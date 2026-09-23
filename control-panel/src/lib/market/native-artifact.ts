@@ -10,7 +10,7 @@ import {
   selectInfrastructureStandaloneRelease,
 } from '@/lib/infrastructure/release-resolver';
 import type { ReleaseSource } from '@/lib/apps/release-source';
-import { verifySignedReleaseArtifactBuffer } from '@/lib/releases/verify';
+import { releaseArtifactTrust, verifySignedReleaseArtifactBuffer } from '@/lib/releases/verify';
 import { getReleaseAssetDownloadURL } from '@/lib/apps/release-source';
 import { getMarketSource, getMarketSources, type MarketSource } from './source';
 import type { AppManifest, ContainerSpec, InstallConfig } from './types';
@@ -21,17 +21,16 @@ const MAX_ARCHIVE_ENTRIES = 100_000;
 const MAX_ARCHIVE_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 2 * 1024 * 1024 * 1024;
 const SIGNATURE_ASSETS = new Set([
-  'release-development.pub',
   'SHA256SUMS',
   'SHA256SUMS.sig',
   'provenance.json',
   'sbom.spdx.json',
 ]);
-const SIGNATURE_INDICATORS = new Set(['release-development.pub', 'SHA256SUMS.sig']);
+const SIGNATURE_INDICATORS = new Set(['release-development.pub', 'release-public.pub', 'SHA256SUMS.sig']);
 
 export type MarketNativeSignature =
   | { status: 'unsigned' }
-  | { status: 'verified-development'; keyId: 'youeye-development-v1' };
+  | { status: 'verified-development' | 'verified-stable' | 'verified-beta'; keyId: string };
 
 export interface StagedMarketNativeArtifact {
   containerName: string;
@@ -63,9 +62,11 @@ export function classifyMarketNativeSignatureAssets(assetNames: Iterable<string>
   const advertised = new Set(assetNames);
   const claimsSignature = [...SIGNATURE_INDICATORS].some((name) => advertised.has(name));
   if (!claimsSignature) return 'unsigned';
+  const keys = ['release-development.pub', 'release-public.pub'].filter(name => advertised.has(name));
+  if (keys.length > 1) throw new MarketNativeArtifactPolicyError('Native app release advertises conflicting signing keys');
   const present = [...SIGNATURE_ASSETS].filter((name) => advertised.has(name));
-  if (present.length !== SIGNATURE_ASSETS.size) {
-    throw new Error('Native app release advertises an incomplete signature bundle');
+  if (keys.length !== 1 || present.length !== SIGNATURE_ASSETS.size) {
+    throw new MarketNativeArtifactPolicyError('Native app release advertises an incomplete signature bundle');
   }
   return 'complete';
 }
@@ -153,32 +154,36 @@ async function selectedMarketSource(config: InstallConfig): Promise<MarketSource
   return getMarketSource();
 }
 
-async function downloadBounded(url: string): Promise<Buffer> {
+export async function downloadMarketNativeArtifact(url: string, fetchImpl: typeof fetch = fetch): Promise<Buffer> {
   const initial = new URL(url);
   let current = initial;
   let response: Response | null = null;
   for (let redirects = 0; redirects <= 3; redirects += 1) {
-    response = await fetch(current, {
+    response = await fetchImpl(current, {
       headers: { Accept: 'application/x-tar, application/octet-stream', 'User-Agent': 'youeye-control' },
       redirect: 'manual',
       signal: AbortSignal.timeout(120_000),
     });
     if (response.status < 300 || response.status >= 400) break;
     const location = response.headers.get('location');
-    if (!location || redirects === 3) throw new Error('Native app artifact redirect chain is invalid');
+    if (!location || redirects === 3) throw new MarketNativeArtifactPolicyError('Native app artifact redirect chain is invalid');
     const next = new URL(location, current);
-    if (next.origin !== initial.origin || next.username || next.password) {
-      throw new Error('Native app artifact redirected outside its release source');
+    const githubAssetRedirect = initial.origin === 'https://github.com'
+      && /^\/[^/]+\/[^/]+\/releases\/download\/[^/]+\/[^/]+$/.test(initial.pathname)
+      && !initial.username && !initial.password && !initial.search && !initial.hash
+      && next.origin === 'https://release-assets.githubusercontent.com';
+    if ((!githubAssetRedirect && next.origin !== initial.origin) || next.username || next.password || next.hash) {
+      throw new MarketNativeArtifactPolicyError('Native app artifact redirected outside its release source');
     }
     current = next;
   }
-  if (!response) throw new Error('Native app artifact request did not complete');
-  if (!response.ok) throw new Error(`Native app artifact returned HTTP ${response.status}`);
+  if (!response) throw new MarketNativeArtifactPolicyError('Native app artifact request did not complete');
+  if (!response.ok) throw new MarketNativeArtifactPolicyError(`Native app artifact returned HTTP ${response.status}`);
   const contentType = response.headers.get('content-type')?.toLowerCase() || '';
-  if (contentType.includes('text/html')) throw new Error('Native app artifact returned an HTML document');
+  if (contentType.includes('text/html')) throw new MarketNativeArtifactPolicyError('Native app artifact returned an HTML document');
   const declared = Number(response.headers.get('content-length') || '0');
-  if (declared > MAX_ARTIFACT_BYTES) throw new Error('Native app artifact exceeds the 256 MiB limit');
-  if (!response.body) throw new Error('Native app artifact response has no body');
+  if (declared > MAX_ARTIFACT_BYTES) throw new MarketNativeArtifactPolicyError('Native app artifact exceeds the 256 MiB limit');
+  if (!response.body) throw new MarketNativeArtifactPolicyError('Native app artifact response has no body');
 
   const chunks: Buffer[] = [];
   let total = 0;
@@ -189,11 +194,11 @@ async function downloadBounded(url: string): Promise<Buffer> {
     total += value.byteLength;
     if (total > MAX_ARTIFACT_BYTES) {
       await reader.cancel();
-      throw new Error('Native app artifact exceeds the 256 MiB limit');
+      throw new MarketNativeArtifactPolicyError('Native app artifact exceeds the 256 MiB limit');
     }
     chunks.push(Buffer.from(value));
   }
-  if (total === 0) throw new Error('Native app artifact is empty');
+  if (total === 0) throw new MarketNativeArtifactPolicyError('Native app artifact is empty');
   return Buffer.concat(chunks, total);
 }
 
@@ -259,7 +264,7 @@ export async function inspectMarketNativeArchive(path: string, requiredEntrypoin
   }
 }
 
-async function stageOne(
+export async function stageMarketNativeArtifact(
   directory: string,
   container: ContainerSpec,
   marketSource: MarketSource,
@@ -289,17 +294,34 @@ async function stageOne(
     ? new URL(`/attachments/${tarAsset.uuid}`, resolvedRepo.source.base_url).toString()
     : selected.url;
 
-  const bytes = await downloadBounded(artifactURL);
+  let trust: ReturnType<typeof releaseArtifactTrust> | undefined;
+  if (signatureClassification === 'complete') {
+    try {
+      trust = releaseArtifactTrust(selected.url);
+      if (!release.assets.some(asset => asset.name === trust!.name)) {
+        throw new Error('Signature bundle does not match selected source authority');
+      }
+    } catch (cause) {
+      throw new MarketNativeArtifactPolicyError('Native app signing authority is not supported for this source and channel', { cause });
+    }
+  }
+  let bytes: Buffer;
+  try { bytes = await downloadMarketNativeArtifact(artifactURL); }
+  catch (cause) {
+    if (cause instanceof MarketNativeArtifactPolicyError) throw cause;
+    throw new MarketNativeArtifactPolicyError('Native app package download failed; retry when the release host is available', { cause });
+  }
   const artifactSHA256 = createHash('sha256').update(bytes).digest('hex');
   const expectedDigest = container.source.artifactSHA256?.toLowerCase();
   if (expectedDigest && expectedDigest !== artifactSHA256) {
-    throw new Error('Native app artifact does not match the manifest SHA-256');
+    throw new MarketNativeArtifactPolicyError('Native app artifact does not match the manifest SHA-256');
   }
 
   let signature: MarketNativeSignature = { status: 'unsigned' };
   if (signatureClassification === 'complete') {
-    await verifySignedReleaseArtifactBuffer(selected.url, bytes, 'standalone.tar', expectedDigest);
-    signature = { status: 'verified-development', keyId: 'youeye-development-v1' };
+    try { await verifySignedReleaseArtifactBuffer(selected.url, bytes, 'standalone.tar', expectedDigest); }
+    catch (cause) { throw new MarketNativeArtifactPolicyError('Native app signature or checksum verification failed', { cause }); }
+    signature = { status: `verified-${trust!.class}`, keyId: `youeye-${trust!.class}-v1` };
   }
 
   const artifactPath = join(directory, `${container.name}.standalone.tar`);
@@ -334,7 +356,7 @@ export async function stageMarketNativeArtifacts(
   const marketSource = await selectedMarketSource(config);
   try {
     for (const container of nativeContainers) {
-      const staged = await stageOne(directory, container, marketSource, options.releases?.[container.name]);
+      const staged = await stageMarketNativeArtifact(directory, container, marketSource, options.releases?.[container.name]);
       byContainerName.set(container.name, staged);
     }
     return {

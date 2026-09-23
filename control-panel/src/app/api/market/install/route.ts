@@ -304,7 +304,7 @@ export async function POST(request: NextRequest) {
           step: 0,
           totalSteps: 0,
           status: 'error',
-          message: 'Installation failed',
+          message: errorMsg,
           detail: errorMsg,
         };
         trackEvent(config.appId, errorEvent);

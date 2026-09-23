@@ -64,3 +64,16 @@ test('official Pointer tags use public stable or beta trust without widening oth
     base+'v0.5.1/standalone.tar?channel=stable',
   ]) assert.throws(() => releaseArtifactTrust(url,policy));
 });
+
+
+test('official native repositories select Stable/Beta authority and reject lookalikes', () => {
+  const policy = {schema:'youeye.public-trust.v1',keys:{stable:key(),beta:key()}};
+  for (const repo of ['Wiki','Search','Notes','Cinema','Weather','Translate','Canvas']) {
+    const base = `https://github.com/YouEye-Platform/${repo}/releases/download/`;
+    assert.equal(releaseArtifactTrust(base+'v0.5.1/standalone.tar',policy).pem,policy.keys.stable);
+    assert.equal(releaseArtifactTrust(base+'beta-v0.5.1/standalone.tar',policy).pem,policy.keys.beta);
+    for (const bad of [base+'dev-v0.5.1/standalone.tar',base+'cp-v0.5.1/standalone.tar',base.replace('YouEye-Platform','other')+'v0.5.1/standalone.tar']) assert.throws(()=>releaseArtifactTrust(bad,policy));
+  }
+  assert.throws(()=>releaseArtifactTrust('https://github.com/other/YouEye/releases/download/cp-v0.5.1/standalone.tar',policy));
+  assert.throws(()=>releaseArtifactTrust('https://github.com/YouEye-Platform/Search-evil/releases/download/v0.5.1/standalone.tar',policy));
+});

@@ -118,3 +118,26 @@ Older appliances predate this reader and still use sealed pins. Moving first
 boot to this contract therefore requires an appliance containing the updated
 Spine; later service releases can reuse that image. Original image releases,
 pins and exact-install recovery remain available.
+
+
+## Native Market package trust
+
+Native Market installations and updates accept unsigned packages when the release
+advertises no signing key or signature. A release that advertises signing evidence
+must provide a complete, unambiguous bundle and pass verification; incomplete,
+mixed-authority or invalid evidence never falls back to unsigned installation.
+Official public native apps use the embedded Stable/Beta authority for their
+`v...` / `beta-v...` tags. Private development signatures retain their own authority.
+Installed artifact provenance records the actual verified signing class.
+
+GitHub package downloads may follow HTTPS redirects to its release-assets CDN,
+with bounded redirects and download size. Other sources retain same-origin
+redirects. Signature and checksum checks still run before archive inspection or
+installation. Safe package-policy errors are retained in the install operation's
+message; arbitrary dependency details remain redacted.
+
+Original official native manifests that still name their pre-publication repository
+are mapped to the matching public app repository when read from the official
+GitHub Market. This compatibility mapping requires the exact known legacy name
+and matching native manifest repository; custom markets, forks, explicit URL
+sources and unrelated repositories are unchanged.

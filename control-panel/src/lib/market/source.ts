@@ -339,3 +339,15 @@ export function catalogEntryRef(entry: { repo?: string; branch?: string }, catal
   if (entry.branch) return entry.branch;
   return COMMIT_PATTERN.test(source.branch) ? DEFAULT_MARKET_BRANCH : source.branch;
 }
+
+/** Compatibility for the original public native manifests, before source-name projection. */
+export function publicNativeManifestRepo(source: MarketSource, manifestRepo: string, packageRepo: string): string {
+  if (source.trust !== 'official' || source.provider !== 'github' || source.base_url !== 'https://github.com'
+    || source.organization.toLowerCase() !== 'youeye-platform' || source.repository.toLowerCase() !== 'market') return packageRepo;
+  for (const name of ['Wiki', 'Search', 'Notes', 'Cinema', 'Weather', 'Translate']) {
+    if (manifestRepo.toLowerCase() === `youeye-platform/${name.toLowerCase()}` && packageRepo === `potemsla/YE-App-${name}`) {
+      return `YouEye-Platform/${name}`;
+    }
+  }
+  return packageRepo;
+}

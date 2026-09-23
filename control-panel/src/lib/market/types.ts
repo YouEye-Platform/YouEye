@@ -264,7 +264,7 @@ export interface InstallMetadata {
     artifactName: 'standalone.tar';
     sha256: string;
     bytes: number;
-    signature: 'unsigned' | 'verified-development';
+    signature: 'unsigned' | 'verified-development' | 'verified-stable' | 'verified-beta';
     signatureKeyId?: string;
   }>;
   integration: 'native' | 'basic';

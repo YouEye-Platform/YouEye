@@ -9,6 +9,7 @@ import test from 'node:test';
 import {
   classifyMarketNativeSignatureAssets,
   inspectMarketNativeArchive,
+  downloadMarketNativeArtifact,
 } from '../src/lib/market/native-artifact';
 
 const execFileAsync = promisify(execFile);
@@ -95,4 +96,38 @@ test('Market-native archive inspection rejects escaping links, hard links and mi
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+
+test('public signature evidence is complete only with one authority and all required metadata', () => {
+  const publicSet = completeSignatureSet.map(name => name === 'release-development.pub' ? 'release-public.pub' : name);
+  assert.equal(classifyMarketNativeSignatureAssets(publicSet), 'complete');
+  for (const missing of publicSet) {
+    assert.throws(() => classifyMarketNativeSignatureAssets(publicSet.filter(name => name !== missing)), /incomplete signature bundle/);
+  }
+  assert.throws(() => classifyMarketNativeSignatureAssets([...publicSet, 'release-development.pub']), /conflicting signing keys/);
+});
+
+test('native downloads allow GitHub release CDN and private same-origin redirects only', async () => {
+  const source = 'https://github.com/YouEye-Platform/Search/releases/download/v0.5.1/standalone.tar';
+  const cdn = 'https://release-assets.githubusercontent.com/asset?signature=example';
+  const calls: string[] = [];
+  const fetcher = async (input: string | URL | Request) => {
+    calls.push(String(input));
+    return String(input) === source ? new Response(null, {status:302,headers:{location:cdn}}) : new Response('archive');
+  };
+  assert.equal((await downloadMarketNativeArtifact(source, fetcher as typeof fetch)).toString(), 'archive');
+  assert.deepEqual(calls, [source, cdn]);
+  for (const location of ['https://evil.test/file', 'http://release-assets.githubusercontent.com/file',
+    'https://release-assets.githubusercontent.com.evil.test/file', 'https://release-assets.githubusercontent.com:444/file',
+    'https://user:password@release-assets.githubusercontent.com/file', cdn+'#fragment']) {
+    let count = 0;
+    await assert.rejects(downloadMarketNativeArtifact(source, (async () => {count++;return new Response(null,{status:302,headers:{location}});}) as typeof fetch), /outside its release source/);
+    assert.equal(count, 1);
+  }
+  await assert.rejects(downloadMarketNativeArtifact('https://forge.example.test/a/b/releases/download/v1/standalone.tar', (async()=>new Response(null,{status:302,headers:{location:cdn}})) as typeof fetch), /outside its release source/);
+  assert.equal((await downloadMarketNativeArtifact('https://forge.example.test/a/b/releases/download/v1/standalone.tar', (async input=>String(input).endsWith('/attachments/file') ? new Response('private') : new Response(null,{status:302,headers:{location:'/attachments/file'}})) as typeof fetch)).toString(), 'private');
+  await assert.rejects(downloadMarketNativeArtifact(source, (async()=>new Response(null,{status:302,headers:{location:source}})) as typeof fetch), /redirect chain/);
+  await assert.rejects(downloadMarketNativeArtifact(source, (async()=>new Response('bad',{headers:{'content-length':String(257*1024*1024)}})) as typeof fetch), /256 MiB/);
+  await assert.rejects(downloadMarketNativeArtifact(source, (async()=>new Response('<html>',{headers:{'content-type':'text/html'}})) as typeof fetch), /HTML/);
 });

@@ -14,7 +14,7 @@ import { createHash } from 'crypto';
 import { parseBundle, parseCatalog, parseIntegrationManifest, parseManifest, parseStore, parseSystemManifest, parseUpdatePlan } from './parser';
 import type { AppManifest, Catalog, CatalogEntry, IntegrationCatalogEntry, IntegrationManifest, MarketApp, MarketBundle, MarketCategory, MarketCuration, MigrationSpec, StoreDescriptor, SystemAppManifest, SystemCatalogEntry, UpdatePlanCatalogEntry } from './types';
 import { settingsService } from '@/lib/settings';
-import { catalogEntryRef, buildMarketRawURL, getMarketSource, getMarketSources, isGitHubMarketSource, recordMarketSourceResolution, resolveMarketSourceCommit, type MarketSource } from './source';
+import { publicNativeManifestRepo, catalogEntryRef, buildMarketRawURL, getMarketSource, getMarketSources, isGitHubMarketSource, recordMarketSourceResolution, resolveMarketSourceCommit, type MarketSource } from './source';
 
 const CATALOG_CACHE_DIR = '/var/lib/youeye';
 const CATALOG_CACHE_PATH = path.join(CATALOG_CACHE_DIR, 'catalog-cache.json');
@@ -411,6 +411,13 @@ async function fetchManifestFromCatalogEntry(
     throw new Error(`Catalog entry for "${entry.id}" has none of: path, file, repo`);
   }
 
+  if (entry.repo && manifest.integration === 'native') {
+    for (const container of manifest.containers) {
+      if (container.type === 'lxd' && container.source) {
+        container.source.repo = publicNativeManifestRepo(source, entry.repo, container.source.repo);
+      }
+    }
+  }
   await resolveManifestPaths(manifest, resolveOwner, resolveRepo, branch, source, basePath);
   return {
     manifest,
