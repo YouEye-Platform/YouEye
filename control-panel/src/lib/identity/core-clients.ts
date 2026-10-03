@@ -47,6 +47,7 @@ export async function configureControlPanelIdentitySSO(params: {
     clientId: 'youeye-control',
     name: 'YouEye Control Panel',
     redirectUris: controlRedirectUris(params.controlExternalUrl, params.settingsExternalUrl),
+    postLogoutRedirectUris: [params.controlExternalUrl + '/'],
   });
 
   await spineClient.setControlSSO({
@@ -71,6 +72,7 @@ export async function configureUIIdentitySSO(params: {
     clientId: 'youeye-ui',
     name: 'YouEye UI',
     redirectUris: uiRedirectUris(params.uiExternalUrl),
+    postLogoutRedirectUris: [params.uiExternalUrl + '/'],
   });
   const jwtSecret = params.jwtSecret || secret(48);
 

@@ -82,8 +82,10 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
   }
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/login");
+    const response = await fetch("/api/auth/logout", { method: "POST" });
+    const result = response.ok ? await response.json() : null;
+    if (result?.logoutUrl) window.location.assign(result.logoutUrl);
+    else router.push("/login");
   }
 
   const THEMES: { mode: ThemeMode; Icon: typeof Sun; label: string }[] = [

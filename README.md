@@ -37,7 +37,7 @@ The canonical public bootstrap verifies the separately provisioned Stable key,
 signed checksums, release identity, and provenance-bound `release-lock.json`.
 Unprovisioned source builds fail closed; Development keys never authorize Stable.
 The bootstrap defaults to the official GitHub Stable lane and supports
-explicit Forgejo or custom HTTPS sources without prefilled private endpoints.
+a pasted HTTPS repository URL without prefilled private endpoints.
 Public discovery uses a signed [release catalog](docs/release-distribution.md)
 without a GitHub token. It verifies the signed checksum set and exact
 installer digest, then opens the YouEye Installer TUI. Quick mode creates a
@@ -212,8 +212,7 @@ release source. For example:
 
 ```bash
 curl -fsSL https://releases.youeye.me/install.sh | \
-  sudo sh -s -- --provider forgejo \
-    --releases-api https://forge.example.test/api/v1/repos/example/YouEye/releases \
+  sudo sh -s -- --repository https://code.example.test/example/YouEye \
     --channel development
 ```
 
@@ -223,6 +222,8 @@ vCPU, 8 GiB RAM, one 128 GiB installation drive and wired DHCP. Advanced mode
 uses eight pages and adds independent storage, network, signed software source,
 SSH, and Development-access controls. It supports Stable, Development, a safe
 branch-associated signed release track, or an immutable exact tag/digest.
+See [repository releases](docs/repository-installation-and-releases.md) for trust and tracked-installation details.
+
 Branches select published signed releases only; raw source and mutable branch
 archives are never installed, and no missing or invalid selection falls back.
 

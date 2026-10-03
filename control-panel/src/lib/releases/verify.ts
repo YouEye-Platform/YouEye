@@ -1,3 +1,4 @@
+import { ownerReleaseGrant, type TrustScope } from './owner-trust';
 import { cachedReleaseBytes } from './cache';
 import publicTrustPolicy from '../../../../spine/internal/systemupdate/public-release-trust.json';
 import { createHash, createPublicKey, verify } from 'crypto';
@@ -9,8 +10,11 @@ MCowBQYDK2VwAyEAha3Qt2DxI8tDarUb24mmRRekCa1acvk/ttqyJ14y1OE=
 
 type PublicTrustPolicy = { schema: string; keys: Record<string, string> };
 
-export function releaseArtifactTrust(artifactURL: string, policy: PublicTrustPolicy = publicTrustPolicy) {
+export function releaseArtifactTrust(artifactURL: string, policy: PublicTrustPolicy = publicTrustPolicy, scope?: TrustScope) {
   const url = new URL(artifactURL);
+  const grant = ownerReleaseGrant(artifactURL, scope);
+  if (grant && !scope) throw new Error('Custom publisher verification requires an explicit target scope');
+  if (grant) return { name: 'release-development.pub', pem: grant.public_key, class: 'custom' as const, publisher: grant.publisher };
   if (url.hostname !== 'github.com') return { name: 'release-development.pub', pem: RELEASE_DEVELOPMENT_TRUST, class: 'development' as const };
   const parts = url.pathname.split('/').filter(Boolean);
   if (url.protocol !== 'https:' || url.host !== 'github.com' || url.username || url.password || url.search || url.hash || parts.length !== 6 || parts[2] !== 'releases' || parts[3] !== 'download') {
@@ -57,13 +61,24 @@ export async function verifySignedReleaseArtifactBuffer(
   artifact: Buffer,
   artifactName = 'standalone.tar',
   expectedDigest?: string,
+  scope?: TrustScope,
+  loadMetadata?: (name: string) => Promise<Buffer>,
 ): Promise<string> {
   const base = new URL('./', artifactURL);
-  const trust = releaseArtifactTrust(artifactURL);
+  const trust = releaseArtifactTrust(artifactURL, publicTrustPolicy, scope);
+  // Transport may use release API attachment identities. Signing authority
+  // always comes from the canonical repository/tag URL above.
+  const metadata = async (name: string, expectedSize?: number): Promise<Buffer> => {
+    const raw = loadMetadata ? await loadMetadata(name) : await fetchBounded(new URL(name, base), expectedSize);
+    if (raw.length === 0 || raw.length > MAX_METADATA_BYTES || (expectedSize !== undefined && raw.length !== expectedSize)) {
+      throw new Error('Signed release metadata is empty, oversized, or has the wrong size');
+    }
+    return raw;
+  };
   const [publishedTrust, checksums, signature] = await Promise.all([
-    fetchBounded(new URL(trust.name, base)),
-    fetchBounded(new URL('SHA256SUMS', base)),
-    fetchBounded(new URL('SHA256SUMS.sig', base), 64),
+    metadata(trust.name),
+    metadata('SHA256SUMS'),
+    metadata('SHA256SUMS.sig', 64),
   ]);
   if (!publishedTrust.equals(Buffer.from(trust.pem))) {
     throw new Error('Published release trust anchor does not match the embedded identity');
@@ -93,9 +108,9 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
-export function signedReleaseVerificationShell(artifactURL: string, artifactPath: string, expectedDigest?: string): string {
+export function signedReleaseVerificationShell(artifactURL: string, artifactPath: string, expectedDigest?: string, scope?: TrustScope): string {
   const base = new URL('./', artifactURL).toString();
-  const trust = releaseArtifactTrust(artifactURL);
+  const trust = releaseArtifactTrust(artifactURL, publicTrustPolicy, scope);
   const encodedTrust = Buffer.from(trust.pem).toString('base64');
   const expected = expectedDigest?.toLowerCase() ?? '';
   return `

@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAuthCode, getAppConsent, getClient, upsertAppConsent, type IdentityClient, type IdentityUser } from '@/lib/identity/store';
 import { getIdentityConfig } from '@/lib/identity/config';
 import { getIdentityProviderConfig } from '@/lib/identity/provider';
-import { getIdentitySession } from '@/lib/identity/http';
+import { getIdentitySession, getIdentitySessionId } from '@/lib/identity/http';
 import { readFileSync } from 'fs';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import { settingsService } from '@/lib/settings';
 import { renderIdentityErrorPage } from '@/lib/identity/error-page';
 import { identityFaviconLinks } from '@/lib/identity/favicon';
+import { identitySearchParams } from '@/lib/identity/authorize-query';
 
 const FIRST_PARTY_CLIENTS = new Set(['youeye-control', 'youeye-ui']);
 const DEFAULT_SCOPE = 'openid profile email';
@@ -141,6 +142,8 @@ async function issueAuthRedirect(input: {
   scope: string;
   state: string;
   nonce: string;
+  codeChallenge: string | null;
+  sessionId: string | null;
 }) {
   const code = await createAuthCode({
     clientId: input.clientId,
@@ -148,6 +151,8 @@ async function issueAuthRedirect(input: {
     redirectUri: input.redirectUri,
     scope: input.scope,
     nonce: input.nonce || null,
+    codeChallenge: input.codeChallenge,
+    sessionId: input.sessionId,
   });
   const redirect = new URL(input.redirectUri);
   redirect.searchParams.set('code', code);
@@ -469,13 +474,15 @@ function consentHtml(params: {
 }
 
 async function validateAuthorizeRequest(request: NextRequest) {
-  const params = request.nextUrl.searchParams;
+  const params = identitySearchParams(request);
   const responseType = params.get('response_type');
   const clientId = params.get('client_id') || '';
   const redirectUri = params.get('redirect_uri') || '';
   const state = params.get('state') || '';
   const scope = params.get('scope') || DEFAULT_SCOPE;
   const nonce = params.get('nonce') || '';
+  const codeChallenge = params.get('code_challenge');
+  const codeChallengeMethod = params.get('code_challenge_method');
 
   const homeUrl = (await uiExternalUrl()) || '/';
   if (responseType !== 'code') {
@@ -488,8 +495,22 @@ async function validateAuthorizeRequest(request: NextRequest) {
   if (!client.redirect_uris.includes(redirectUri)) {
     return { error: await renderIdentityErrorPage({ code: 'invalid_redirect_uri', status: 400, technical: `client ${clientId} requested ${redirectUri}`, homeUrl }) };
   }
+  const requestedScopes = scopeList(scope);
+  if (!requestedScopes.includes('openid') || requestedScopes.some((requested) => !client.scopes.includes(requested))) {
+    return { error: await renderIdentityErrorPage({ code: 'invalid_scope', status: 400, technical: `client ${clientId} requested an unsupported scope`, homeUrl }) };
+  }
 
-  return { client, clientId, redirectUri, state, scope, nonce };
+  if (codeChallenge && (!/^[A-Za-z0-9_-]{43,128}$/.test(codeChallenge) || codeChallengeMethod !== 'S256')) {
+    return { error: await renderIdentityErrorPage({ code: 'invalid_request', status: 400, technical: 'Invalid PKCE challenge or method', homeUrl }) };
+  }
+  if (!codeChallenge && codeChallengeMethod) {
+    return { error: await renderIdentityErrorPage({ code: 'invalid_request', status: 400, technical: 'PKCE method without challenge', homeUrl }) };
+  }
+  if (!client.client_secret && !codeChallenge) {
+    return { error: await renderIdentityErrorPage({ code: 'invalid_request', status: 400, technical: 'Public clients require PKCE S256', homeUrl }) };
+  }
+
+  return { client, clientId, redirectUri, state, scope, nonce, codeChallenge };
 }
 
 export async function GET(request: NextRequest) {
@@ -497,14 +518,15 @@ export async function GET(request: NextRequest) {
   const provider = await getIdentityProviderConfig();
   const user = await getIdentitySession(request);
   if (!user) {
-    const returnUrl = new URL(request.nextUrl.pathname + request.nextUrl.search, config.externalUrl);
+    const returnUrl = new URL(request.nextUrl.pathname + '?' + identitySearchParams(request).toString(), config.externalUrl);
     const returnTo = encodeURIComponent(returnUrl.toString());
     return NextResponse.redirect(`${config.externalUrl}/identity/login?return_to=${returnTo}`);
   }
 
   const validated = await validateAuthorizeRequest(request);
   if ('error' in validated) return validated.error;
-  const { client, clientId, redirectUri, state, scope, nonce } = validated;
+  const { client, clientId, redirectUri, state, scope, nonce, codeChallenge } = validated;
+  const sessionId = await getIdentitySessionId(request);
 
   if (!isFirstPartyClient(clientId)) {
     const requestedScopes = scopeList(scope);
@@ -516,7 +538,7 @@ export async function GET(request: NextRequest) {
         client,
         user,
         scope,
-        query: request.nextUrl.searchParams.toString(),
+        query: identitySearchParams(request).toString(),
         providerName: provider.name,
         runtimePermissions: runtime?.permissions,
         display: runtime?.display,
@@ -525,7 +547,7 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return issueAuthRedirect({ clientId, user, redirectUri, scope, state, nonce });
+  return issueAuthRedirect({ clientId, user, redirectUri, scope, state, nonce, codeChallenge, sessionId });
 }
 
 export async function POST(request: NextRequest) {
@@ -536,7 +558,8 @@ export async function POST(request: NextRequest) {
 
   const validated = await validateAuthorizeRequest(request);
   if ('error' in validated) return validated.error;
-  const { clientId, redirectUri, state, scope, nonce } = validated;
+  const { clientId, redirectUri, state, scope, nonce, codeChallenge } = validated;
+  const sessionId = await getIdentitySessionId(request);
 
   const form = await request.formData();
   const decision = String(form.get('decision') || '');
@@ -552,10 +575,11 @@ export async function POST(request: NextRequest) {
     user,
     grantPermissions: selectedRuntimePermissions,
   });
-  if (!runtime) {
+  // Standalone native clients have no Market app permissions to update.
+  if (!runtime && !clientId.startsWith('youeye-public-')) {
     return NextResponse.json({ error: 'failed_to_update_app_permissions' }, { status: 502 });
   }
 
   await upsertAppConsent({ userId: user.id, clientId, scopes: scopeList(scope) });
-  return issueAuthRedirect({ clientId, user, redirectUri, scope, state, nonce });
+  return issueAuthRedirect({ clientId, user, redirectUri, scope, state, nonce, codeChallenge, sessionId });
 }

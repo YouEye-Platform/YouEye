@@ -117,6 +117,9 @@ async function ensureIntegrationOAuthClient(
     clientId: slug,
     name: `${contextManifest.metadata.name} ${integration.metadata.name}`,
     redirectUris,
+    postLogoutRedirectUris: [`https://${config.domain}/`, appUrl + '/'],
+    backchannelLogoutUri: sso.backchannel_logout_path
+      ? `${appUrl}${sso.backchannel_logout_path}` : undefined,
     scopes: oauthScopesForSSO(sso),
   });
 

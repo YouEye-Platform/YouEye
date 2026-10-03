@@ -26,6 +26,10 @@ export async function register() {
 
   const isIdentityService = process.env.IDENTITY_SERVICE === "true";
   if (isIdentityService) {
+    const { deliverDueLogouts } = await import('@/lib/identity/backchannel-logout');
+    const run = () => void deliverDueLogouts().catch(() => undefined);
+    setTimeout(run, 5_000);
+    setInterval(run, 30_000);
     console.log("[instrumentation] identity service mode — platform background jobs skipped");
     return;
   }

@@ -52,23 +52,19 @@ func TestParseOptionsSelectsSupportedInstallerCommands(t *testing.T) {
 	}
 }
 
-func TestParseOptionsDoesNotPrefillAlternativeReleaseSources(t *testing.T) {
-	t.Setenv("YOUEYE_INSTALLER_PROVIDER", "forgejo")
-	t.Setenv("YOUEYE_INSTALLER_RELEASES_API", "")
-	opts, err := ParseOptions([]string{"proxmox"}, strings.NewReader(""), io.Discard)
+func TestParseOptionsRepositoryURL(t *testing.T) {
+	t.Setenv("YOUEYE_INSTALLER_REPOSITORY", "")
+	opts, err := ParseOptions([]string{"proxmox", "--repository", "https://code.example.test/owner/YouEye.git"}, strings.NewReader(""), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.ApplianceReleaseProvider != "forgejo" || opts.ApplianceReleasesAPI != "" {
-		t.Fatalf("Forgejo was unexpectedly prefilled: %+v", opts)
+	if opts.ApplianceRepository != "https://code.example.test/owner/YouEye" || opts.ApplianceReleaseProvider != "custom" || opts.ApplianceReleasesAPI != "https://code.example.test/api/v1/repos/owner/YouEye/releases" {
+		t.Fatalf("repository was not normalized: %+v", opts)
 	}
-
-	opts, err = ParseOptions([]string{"proxmox", "--provider", "custom", "--releases-api", "https://releases.example.test/api/releases"}, strings.NewReader(""), io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if opts.ApplianceReleaseProvider != "custom" || opts.ApplianceReleasesAPI != "https://releases.example.test/api/releases" {
-		t.Fatalf("explicit custom source was not preserved: %+v", opts)
+	for _, args := range [][]string{{"proxmox", "--provider", "custom"}, {"proxmox", "--releases-api", "https://code.example.test/releases"}, {"proxmox", "--repository", "https://user:password@code.example.test/owner/YouEye"}} {
+		if _, err := ParseOptions(args, strings.NewReader(""), io.Discard); err == nil {
+			t.Fatal("retired flags or unsafe repository accepted")
+		}
 	}
 }
 
@@ -135,7 +131,7 @@ func TestResolveApplianceReleaseFindsNewestCandidateAfterFirstPage(t *testing.T)
 			t.Errorf("limit = %q, want 50", request.URL.Query().Get("limit"))
 		}
 		if request.URL.Query().Get("page") == "1" {
-			releases := make([]applianceRelease, applianceForgejoPageSize)
+			releases := make([]applianceRelease, applianceCompatiblePageSize)
 			for index := range releases {
 				releases[index] = applianceRelease{TagName: fmt.Sprintf("cp-dev-v0.0.%d", index), PublishedAt: time.Unix(int64(index+1), 0).UTC()}
 			}
@@ -152,7 +148,7 @@ func TestResolveApplianceReleaseFindsNewestCandidateAfterFirstPage(t *testing.T)
 	serverURL = server.URL
 	defer server.Close()
 
-	release, err := resolveApplianceRelease(context.Background(), server.Client(), "forgejo", server.URL+"?limit=1", "development", "")
+	release, err := resolveApplianceRelease(context.Background(), server.Client(), "custom", server.URL+"?limit=1", "development", "")
 	if err != nil || release.TagName != "appliance-dev-v0.5.6.0.3" {
 		t.Fatalf("paginated development resolution: release=%+v err=%v", release, err)
 	}
@@ -308,8 +304,8 @@ func TestProxmoxAdvancedReleaseSourceDefaults(t *testing.T) {
 		t.Fatalf("official source defaults are not safely hidden: config=%+v input=%q", model.config, model.inputs["releases-api"].Value())
 	}
 	model.cycleAdvancedSelection("release-provider", true)
-	if model.config.ReleaseProvider != "forgejo" || model.config.ReleasesAPI != "" || model.inputs["releases-api"].Value() != "" {
-		t.Fatalf("Forgejo source was unexpectedly prefilled: config=%+v input=%q", model.config, model.inputs["releases-api"].Value())
+	if model.config.ReleaseProvider != "custom" || model.config.ReleasesAPI != "" || model.inputs["releases-api"].Value() != "" {
+		t.Fatalf("repository source was unexpectedly prefilled: config=%+v input=%q", model.config, model.inputs["releases-api"].Value())
 	}
 	if got := estimatedProxmoxDataGiB(32); got != 7 {
 		t.Fatalf("estimated 32 GiB data capacity = %d, want 7", got)
@@ -772,26 +768,26 @@ func (runner fakeProxmoxRunner) Run(name string, args ...string) (string, error)
 	return runner.outputs[key], runner.errors[key]
 }
 
-func TestPrivateForgejoMainTrustIsProviderAndDepthBound(t *testing.T) {
-	good := applianceRelease{TagName: "appliance-v0.5.6.0.3", sourceProvider: "forgejo", sourceRepository: "https://forgejo.example.test/owner/YouEye"}
-	if !privateForgejoMainRelease(good) {
+func TestRepositoryMainTrustIsSourceAndVersionBound(t *testing.T) {
+	good := applianceRelease{TagName: "appliance-v0.5.6.0.3", sourceProvider: "custom", sourceRepository: "https://code.example.test/owner/YouEye"}
+	if !repositoryMainRelease(good) {
 		t.Fatal("private main profile rejected")
 	}
 	for _, change := range []func(*applianceRelease){
 		func(r *applianceRelease) { r.sourceProvider = "github" },
-		func(r *applianceRelease) { r.sourceProvider = "custom" },
+		func(r *applianceRelease) { r.sourceProvider = "unsupported" },
 		func(r *applianceRelease) { r.sourceRepository = "https://github.com/owner/YouEye" },
-		func(r *applianceRelease) { r.sourceRepository = "http://forgejo.example.test/owner/YouEye" },
+		func(r *applianceRelease) { r.sourceRepository = "http://code.example.test/owner/YouEye" },
 		func(r *applianceRelease) {
-			r.sourceRepository = "https://user:password@forgejo.example.test/owner/YouEye"
+			r.sourceRepository = "https://user:password@code.example.test/owner/YouEye"
 		},
-		func(r *applianceRelease) { r.TagName = "appliance-v1.0.0" },
+		func(r *applianceRelease) { r.TagName = "appliance-v1.0" },
 		func(r *applianceRelease) { r.TagName = "appliance-dev-v0.5.6.0.3" },
-		func(r *applianceRelease) { r.TagName = "appliance-v0.5.6.0.3.1" },
+		func(r *applianceRelease) { r.TagName = "appliance-v0.5.6.0.3-rc1" },
 	} {
 		bad := good
 		change(&bad)
-		if privateForgejoMainRelease(bad) {
+		if repositoryMainRelease(bad) {
 			t.Fatal("unapproved main profile accepted", bad.TagName, bad.sourceProvider)
 		}
 	}
@@ -880,5 +876,22 @@ func TestAnswerISOTransportsFullCacheDigestsAndPreflightsObjects(t *testing.T) {
 			t.Fatal("missing cache object passed destructive-install preflight")
 		}
 		break
+	}
+}
+
+func TestProxmoxQuickPreservesExplicitRepository(t *testing.T) {
+	opts, err := ParseOptions([]string{"proxmox", "--repository", "https://code.example.test/owner/YouEye", "--channel", "development"}, strings.NewReader(""), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := newProxmoxApplianceModel(opts)
+	model.inventory = proxmoxApplianceInventory{}
+	model.config = proxmoxApplianceConfigFromOptions(opts, model.inventory)
+	model.initAdvancedInputs()
+	model.phase = proxmoxPhaseChoice
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	result := updated.(proxmoxApplianceModel)
+	if result.config.ReleaseProvider != "custom" || result.config.ReleasesAPI != "https://code.example.test/api/v1/repos/owner/YouEye/releases" || result.config.Channel != "development" {
+		t.Fatalf("explicit source reset by quick install: %+v", result.config)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
 	"github.com/youeye-platform/YouEye/releasecache"
 	"io"
 	"net"
@@ -73,6 +74,7 @@ type proxmoxApplianceConfig struct {
 	ServiceSelection  string
 	ReleaseTag        string
 	ISOSHA256         string
+	RepositoryURL     string
 	ReleaseProvider   string
 	ReleasesAPI       string
 	CacheRoot         string
@@ -212,9 +214,12 @@ func proxmoxApplianceConfigFromOptions(opts CLIOptions, inventory proxmoxApplian
 		Channel:        opts.ApplianceChannel, ReleaseTag: opts.ApplianceReleaseTag,
 		ReleaseBranch: opts.ApplianceReleaseBranch, Freshness: opts.ApplianceFreshness, ServiceSelection: opts.ApplianceServiceSelection,
 		ISOSHA256: opts.ApplianceISOSHA256, ReleaseProvider: opts.ApplianceReleaseProvider,
-		ReleasesAPI: opts.ApplianceReleasesAPI,
+		RepositoryURL: opts.ApplianceRepository, ReleasesAPI: opts.ApplianceReleasesAPI,
 		CacheRoot:   "/var/cache/youeye-installer/releases",
 		Development: defaultDevelopmentAccessPolicy(),
+	}
+	if opts.ApplianceRepository != "" && opts.ApplianceRepository != releasecache.OfficialRepository {
+		config.ReleaseProvider = "custom"
 	}
 	config.TargetStorage = firstSelected(opts.ProxmoxTargetStorage, inventory.ImageStorages)
 	config.ISOStorage = firstSelected(opts.ProxmoxISOStorage, inventory.ISOStorages)
@@ -223,9 +228,13 @@ func proxmoxApplianceConfigFromOptions(opts CLIOptions, inventory proxmoxApplian
 }
 
 func (config proxmoxApplianceConfig) releasePolicy(manifestSHA256 string) applianceReleasePolicy {
+	provider, _, err := normalizeApplianceReleaseSource(config.ReleaseProvider, config.ReleasesAPI)
+	if err != nil {
+		provider = config.ReleaseProvider
+	}
 	policy := applianceReleasePolicy{
-		Schema: releasePolicySchema, Provider: config.ReleaseProvider,
-		ReleasesAPI: nonDefaultReleaseAPI(config.ReleaseProvider, config.ReleasesAPI),
+		Schema: releasePolicySchema, Provider: provider,
+		ReleasesAPI: nonDefaultReleaseAPI(provider, config.ReleasesAPI),
 		Mode:        "track", Track: config.Channel, Branch: config.ReleaseBranch,
 		Freshness: config.Freshness, ServiceSelection: config.ServiceSelection,
 	}
@@ -258,23 +267,25 @@ func firstSelected(selected string, values []string) string {
 }
 
 func nonDefaultReleaseAPI(provider, apiURL string) string {
-	if strings.EqualFold(strings.TrimSpace(provider), defaultApplianceProvider) {
+	if strings.EqualFold(strings.TrimSpace(provider), defaultApplianceProvider) && (apiURL == "" || apiURL == defaultApplianceReleasesAPI) {
 		return ""
 	}
 	return strings.TrimSpace(apiURL)
 }
 
 func releaseProviderLabel(provider string) string {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case defaultApplianceProvider:
-		return "Official GitHub"
-	case "forgejo":
-		return "Forgejo"
-	case "custom":
-		return "Custom HTTPS"
-	default:
-		return "Unknown"
+	if provider == defaultApplianceProvider {
+		return "Official releases"
 	}
+	return "Repository URL"
+}
+
+func repositoryInputValue(provider, api string) string {
+	if provider == defaultApplianceProvider && (api == "" || api == defaultApplianceReleasesAPI) {
+		return ""
+	}
+	value, _ := releasecache.RepositoryURLFromAPI(provider, api)
+	return value
 }
 
 func estimatedProxmoxDataGiB(targetGiB int) int {
@@ -1205,4 +1216,16 @@ func RunProxmoxApplianceSilent(opts CLIOptions) error {
 		}
 	}
 	return nil
+}
+
+func (config proxmoxApplianceConfig) releaseRepositoryURL() string {
+	provider, api, err := normalizeApplianceReleaseSource(config.ReleaseProvider, config.ReleasesAPI)
+	if err != nil {
+		return "Invalid repository"
+	}
+	source, err := releasecache.RepositoryURLFromAPI(provider, api.String())
+	if err != nil {
+		return "Invalid repository"
+	}
+	return source
 }

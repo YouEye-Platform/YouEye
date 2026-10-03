@@ -232,8 +232,7 @@ export interface ApplianceSystemUpdateStatus {
 }
 
 export interface ApplianceSystemUpdateSelection {
-  provider: 'github' | 'forgejo' | 'custom';
-  releases_api?: string;
+  repository_url: string;
   channel: 'stable' | 'development' | 'branch' | 'exact';
   branch?: string;
   exact_tag?: string;

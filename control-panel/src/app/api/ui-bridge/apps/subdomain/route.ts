@@ -120,6 +120,8 @@ export async function PUT(request: NextRequest) {
           clientSecret: client.client_secret,
           name: client.name,
           redirectUris: client.redirect_uris.map((uri) => uri.replace(oldHostname, newHostname)),
+          postLogoutRedirectUris: client.post_logout_redirect_uris.map((uri) => uri.replace(oldHostname, newHostname)),
+          backchannelLogoutUri: client.backchannel_logout_uri?.replace(oldHostname, newHostname),
           scopes: client.scopes,
         });
         results.identity = { success: true };

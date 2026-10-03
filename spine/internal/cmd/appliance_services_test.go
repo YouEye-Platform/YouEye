@@ -70,6 +70,9 @@ func TestPinnedServicesProtection(t *testing.T) {
 
 func TestFirstDeploymentFreezesSignedServicesAndResumesWithoutNetwork(t *testing.T) {
 	root := t.TempDir()
+	oldInstalled, oldSnapshot := deploymentInstalledBundlePath, deploymentBundleSnapshotPath
+	t.Cleanup(func() { deploymentInstalledBundlePath, deploymentBundleSnapshotPath = oldInstalled, oldSnapshot })
+	deploymentInstalledBundlePath, deploymentBundleSnapshotPath = filepath.Join(root, "installed-bundle.json"), filepath.Join(root, "bundle-snapshot.json")
 	oldPolicy, oldSelection, oldTrust, oldChannels := deploymentPolicyPath, deploymentSelectionPath, deploymentDistributionPolicy, channels.ConfigPath
 	t.Cleanup(func() {
 		deploymentPolicyPath, deploymentSelectionPath, deploymentDistributionPolicy, channels.ConfigPath = oldPolicy, oldSelection, oldTrust, oldChannels
@@ -92,7 +95,11 @@ func TestFirstDeploymentFreezesSignedServicesAndResumesWithoutNetwork(t *testing
 	cp, ui := component, component
 	cp.Tag = "cp-v1.0.1"
 	ui.Tag = "ui-v1.0.1"
-	selection := releasecache.InstallationSet{Schema: "youeye.installation.v1", Source: manifest.ReleaseSet.Source, Appliance: releasecache.InstallationImage{Version: manifest.ImageVersion, Tag: "appliance-v1.0.0", SourceCommit: manifest.SourceCommit, ManifestSHA256: strings.Repeat("e", 64), SpineSHA256: manifest.ReleaseSet.Spine.ArtifactSHA256}, ControlPanel: cp, UI: ui}
+	bundle := installationBundleFixture(t, manifest)
+	if err = os.WriteFile(deploymentInstalledBundlePath, bundle, 0600); err != nil {
+		t.Fatal(err)
+	}
+	selection := releasecache.InstallationSet{Schema: "youeye.installation.v1", Source: manifest.ReleaseSet.Source, Appliance: releasecache.InstallationImage{Version: manifest.ImageVersion, Tag: "appliance-v1.0.0", SourceCommit: manifest.SourceCommit, ManifestSHA256: fmt.Sprintf("%x", sha256.Sum256(bundle)), SpineSHA256: manifest.ReleaseSet.Spine.ArtifactSHA256}, ControlPanel: cp, UI: ui}
 	now := time.Now().UTC()
 	catalog := releasecache.DistributionCatalog{Schema: "youeye.distribution.v1", Channel: "stable", Sequence: 1, IssuedAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour), Repositories: map[string]releasecache.DistributionRepository{}, Installation: &selection}
 	payload, _ := json.Marshal(catalog)
@@ -118,6 +125,9 @@ func TestFirstDeploymentFreezesSignedServicesAndResumesWithoutNetwork(t *testing
 	}
 	// Prove the retry does not fetch a different catalog or need the cache.
 	if err = os.RemoveAll(cache); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Remove(deploymentInstalledBundlePath); err != nil {
 		t.Fatal(err)
 	}
 	selected, err = selectApplianceServices(manifest)

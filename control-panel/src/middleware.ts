@@ -43,6 +43,7 @@ const PUBLIC_ROUTES = [
   '/api/branding/favicon', // Public favicon (proxied from UI)
   '/identity/login',
   '/identity/handoff',
+  '/identity/session/check',
   '/application/o',
   '/oauth',
   '/forward-auth/caddy',
@@ -68,6 +69,7 @@ const PUBLIC_ROUTES_EXACT = [
 const IDENTITY_SERVICE_ROUTES = [
   '/identity/login',
   '/identity/handoff',
+  '/identity/session/check',
   '/application/o',
   '/oauth',
   '/forward-auth/caddy',
@@ -302,6 +304,14 @@ function applySecurityHeaders(response: NextResponse, pathname: string, request?
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  if (pathname === '/application/o/authorize' || pathname === '/identity/login'
+    || /^\/application\/o\/[^/]+\/end-session$/.test(pathname)) {
+    const { ORIGINAL_IDENTITY_QUERY_HEADER, originalIdentityQuery } = await import('./lib/identity/authorize-query');
+    const headers = new Headers(request.headers);
+    headers.set(ORIGINAL_IDENTITY_QUERY_HEADER, originalIdentityQuery(request));
+    return applySecurityHeaders(NextResponse.next({ request: { headers } }), pathname, request);
+  }
+
   // Skip static resources before identity-service route narrowing so the
   // white-label login can load its local WordArt font CSS/assets.
   if (STATIC_PATTERNS.some(pattern => pathname.startsWith(pattern))) {
@@ -313,6 +323,10 @@ export async function middleware(request: NextRequest) {
     if (!allowed) {
       return new NextResponse('Not Found', { status: 404 });
     }
+    return applySecurityHeaders(NextResponse.next(), pathname, request);
+  }
+
+  if (pathname === '/identity/session/check') {
     return applySecurityHeaders(NextResponse.next(), pathname, request);
   }
 

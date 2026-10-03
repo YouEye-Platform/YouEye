@@ -1,1 +1,1 @@
-{"schema":"youeye.installation.v1","selection":"signed-distribution","exact_default":"sealed"}
+{"schema":"youeye.installation.v1","selection":"signed-distribution","exact_default":"sealed","private_selection":"signed-repository-installation-release"}

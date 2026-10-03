@@ -78,6 +78,7 @@ export async function PATCH(request: NextRequest) {
     const newToken = await createSession({
       userId: session.userId,
       identityId: session.identityId,
+      identitySessionId: session.identitySessionId,
       username: session.username,
       name: patch.name,
       email: session.email,

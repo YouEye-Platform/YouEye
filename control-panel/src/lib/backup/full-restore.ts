@@ -35,7 +35,7 @@ import { BACKUP_STAGING_ROOT, runningContainers } from './workspace';
 import { isPlatformDatabase, PLATFORM_DATABASES, replacePlatformDatabase } from './postgres';
 import { assessBackupCompatibility, readCurrentBackupSourceIdentity } from './compatibility';
 import * as caddy from '@/lib/caddy/client';
-import { setDomainDNS } from '@/lib/apps/pihole-api';
+import { getDNSRecords, setDomainDNS, setIdentityHostDNS } from '@/lib/apps/pihole-api';
 import { getIdentityConfig } from '@/lib/identity/config';
 import {
   configureControlPanelIdentitySSO,
@@ -47,6 +47,8 @@ import { configurePointerForPlatform } from '@/lib/infrastructure/deployer';
 const STAGING_BASE = path.join(BACKUP_STAGING_ROOT, 'restore');
 const RESTORE_CONTAINER_START_ATTEMPTS = 5;
 const RESTORE_CONTAINER_START_DELAY_MS = 1500;
+const RESTORED_PIHOLE_READY_ATTEMPTS = 20;
+const RESTORED_PIHOLE_READY_DELAY_MS = 1000;
 const CORE_VOLUME_MAP_SCHEMA = 'youeye.backup.volume-map.v1';
 const SETUP_RESTORABLE_CORE_VOLUMES = new Set([
   '/var/lib/youeye/config',
@@ -186,8 +188,6 @@ async function reconcileSetupRuntime(spineConfig: Record<string, unknown>): Prom
 
   await caddy.setDomain(domain);
   await replaceSetupContainerRoute(domain, 'youeye-control', 3000, controlSubdomain);
-  const identity = await getIdentityConfig();
-  await caddy.ensureIdentityRoute(`${identitySubdomain}.${domain}`, identity.containerName, identity.port);
   await replaceSetupContainerRoute(domain, 'youeye-ui', 3000, uiSubdomain);
   await caddy.ensureControlSettingsRoute(domain, 'youeye-control', 3000);
   await caddy.setDefaultRoute('youeye-control', 3000);
@@ -315,6 +315,26 @@ async function startContainerAfterRestore(container: string): Promise<void> {
     }
   }
   throw new Error(`Core service did not restart after volume restore: ${container}`);
+}
+
+async function waitForRestoredPiholeAPI(): Promise<void> {
+  // Applying Pi-hole's restored DNS settings can restart FTL after the config
+  // call returns. App cleanup uses its authenticated API immediately afterward.
+  // Require two spaced reads so a short-lived listener is not treated as ready.
+  let consecutive = 0;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < RESTORED_PIHOLE_READY_ATTEMPTS; attempt += 1) {
+    try {
+      await getDNSRecords();
+      consecutive += 1;
+      if (consecutive === 2) return;
+    } catch (error) {
+      consecutive = 0;
+      lastError = error;
+    }
+    await new Promise(resolve => setTimeout(resolve, RESTORED_PIHOLE_READY_DELAY_MS));
+  }
+  throw new Error(`Pi-hole API did not become ready after restoring DNS: ${lastError ?? 'readiness did not stabilize'}`);
 }
 
 /**
@@ -527,13 +547,19 @@ export async function fullRestore(
     }
 	const databasesNotRestored = PLATFORM_DATABASES.filter(database => !restoredDatabases.has(database));
 	if (databasesNotRestored.length > 0) throw new Error(`Core backup is missing required database dumps: ${databasesNotRestored.join(', ')}`);
+	// The issuer pin lives in the portable youeye database. Never derive a route
+	// from the fresh target's pre-restore database or mutable setup hostname.
+	const restoredIdentity = config.setupMode ? await getIdentityConfig() : null;
 
     // ── Step 5: Restore Caddy config ───────────────────────
     emit('restore-caddy', config.setupMode
       ? 'Rebuilding service connections for this server...'
       : 'Restoring Caddy configuration...');
     try {
-      if (config.setupMode) await reconcileSetupRuntime(spineConfig);
+      if (config.setupMode) {
+        await reconcileSetupRuntime(spineConfig);
+        if (restoredIdentity) await caddy.ensureIdentityRoute(new URL(restoredIdentity.issuer).hostname, restoredIdentity.containerName, restoredIdentity.port);
+      }
       else await setCaddyConfig(caddyConfig);
     } catch (err) {
       throw new Error(`Could not restore the server routing configuration: ${err}`);
@@ -553,7 +579,13 @@ export async function fullRestore(
       if (config.setupMode && typeof spineConfig.domain === 'string') {
         const hostIP = (await spineClient.getMetrics()).primary_ip.trim();
         await setDomainDNS(spineConfig.domain, hostIP);
+        await waitForRestoredPiholeAPI();
+        const identity = await getIdentityConfig();
+        const canonicalHost = new URL(identity.issuer).hostname;
+        const configuredHost = `${String((spineConfig.subdomains as Record<string, string> | undefined)?.identity || 'id')}.${spineConfig.domain}`;
+        if (canonicalHost !== configuredHost) await setIdentityHostDNS(canonicalHost, hostIP);
       }
+      await waitForRestoredPiholeAPI();
     } catch (err) {
       throw new Error(`Could not restore the network shield configuration: ${err}`);
     }

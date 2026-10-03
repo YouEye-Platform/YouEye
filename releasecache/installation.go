@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -42,14 +44,29 @@ type InstallationComponent struct {
 var installationCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var installationHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var installationStableVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+var installationPrivateVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){2,}$`)
+
+// Private selections carry repository identity; callers additionally bind it to
+// the explicitly selected source. Public channel identities remain fixed.
+func validPrivateInstallationSource(source string) bool {
+	u, e := url.Parse(source)
+	if e != nil || u.Scheme != "https" || u.Host == "" || u.Hostname() == "github.com" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	return len(parts) == 2 && parts[0] != "" && parts[0] != "." && parts[0] != ".." && parts[1] != "" && parts[1] != "." && parts[1] != ".." && !strings.ContainsAny(u.Path, "\\")
+}
+
 var installationBetaVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
 func (s InstallationSet) Validate(channel string) error {
-	if s.Schema != "youeye.installation.v1" || s.Source != "https://github.com/YouEye-Platform/YouEye" {
+	if s.Schema != "youeye.installation.v1" || (channel == "repository-main" && !validPrivateInstallationSource(s.Source)) || (channel != "repository-main" && s.Source != "https://github.com/YouEye-Platform/YouEye") {
 		return fmt.Errorf("invalid installation identity")
 	}
 	version, prefix := installationStableVersion, ""
 	switch channel {
+	case "repository-main":
+		version = installationPrivateVersion
 	case "stable":
 	case "beta":
 		version, prefix = installationBetaVersion, "beta-"

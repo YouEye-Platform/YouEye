@@ -33,7 +33,9 @@ func readPlatformYaml() platformYamlState {
 // Returns true when the user (or --yes) approves.
 func confirmURLChange(newDomain, currentDomain string, selfsigned bool, yes bool) bool {
 	fmt.Println()
-	if currentDomain != "" {
+	if currentDomain == newDomain {
+		output.Info("Reapplying server configuration at " + newDomain + " to reconcile interrupted or stale settings")
+	} else if currentDomain != "" {
 		output.Info(fmt.Sprintf("This changes the server URL: %s → %s", currentDomain, newDomain))
 	} else {
 		output.Info("This changes the server URL to " + newDomain)
@@ -110,8 +112,8 @@ func streamURLChange(path string, payload interface{}) error {
 		}
 	})
 	if err != nil {
-		// The Control Panel restarts itself ~2s after the final event; a
-		// connection cut AFTER `complete` arrived is success, not failure.
+		// Durable configuration and restart scheduling precede completion; a
+		// connection cut after it arrived does not imply apply failure.
 		if newURL == "" && failure == nil {
 			return err
 		}
@@ -123,7 +125,7 @@ func streamURLChange(path string, payload interface{}) error {
 		return fmt.Errorf("the change did not complete — check 'youeye logs control' and retry")
 	}
 	fmt.Println()
-	output.Success("Server URL changed — the platform is now at " + newURL)
-	output.Info("Everyone must sign in again. The Control Panel restarts within a few seconds.")
+	output.Success("Configuration applied for " + newURL)
+	output.Info("Reconnect at this address to verify service recovery and sign in if requested.")
 	return nil
 }

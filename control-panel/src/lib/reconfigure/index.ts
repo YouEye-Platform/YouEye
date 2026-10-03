@@ -8,7 +8,7 @@
  *
  * Key design decisions:
  * - The CP orchestrates everything except its own restart. After all changes are
- *   applied, it schedules a delayed restart via Spine (setControlSSO), so the SSE
+ *   applied, it schedules a delayed restart via Spine (restartControl), so the SSE
  *   stream completes before the process dies.
  * - App propagation uses exact string replacement of the old domain in existing
  *   env files / container env config / rendered config files. A URL change keeps
@@ -22,6 +22,8 @@
  *   names/BYO bundle applied by the post-setup import endpoints.
  */
 
+import { replacePlatformUrls } from './urls';
+import { processStartTime, readReconfigureJournal, saveReconfigureJournal, finishReconfigure } from './journal';
 import { settingsService } from '@/lib/settings';
 import { spineClient } from '@/lib/spine/client';
 import * as caddy from '@/lib/caddy/client';
@@ -43,7 +45,7 @@ import {
   configureControlPanelIdentitySSO,
   configureUIIdentitySSO,
 } from '@/lib/identity/core-clients';
-import { getClient } from '@/lib/identity/store';
+import { invalidatePublicOidcState, getClient } from '@/lib/identity/store';
 import { createOAuthClient } from '@/lib/identity/provider';
 import { issueCertificateWithDnsProvider } from '@/lib/acme/client';
 import { CloudflareDnsProvider } from '@/lib/dns-providers/cloudflare';
@@ -78,8 +80,6 @@ import {
 } from '@/lib/youeye-names/certificate';
 import { configurePointerForPlatform } from '@/lib/infrastructure/deployer';
 import { identityConfigFromSettings } from '@/lib/identity/config';
-import { transitionPointerIdentity } from '@/lib/pointer/identity-transition';
-import { changePointerIdentity } from '@/lib/pointer/identity-rename';
 
 /**
  * TLS target for the new domain.
@@ -109,6 +109,8 @@ export interface ReconfigureRequest {
   namesIdentity?: InstallIdentity;
   /** Programmatic only — provided by the domain apply endpoint, never over the wire. */
   byoBundle?: ByoDomainBundle;
+  /** Programmatic caller bookkeeping must commit before CP restart scheduling. */
+  beforeRestart?: () => Promise<void>;
 }
 
 export interface ReconfigureEvent {
@@ -133,7 +135,7 @@ async function updateCaddyDomain(
   oldDomain: string,
   newDomain: string,
   oldSubdomains: Record<string, string>,
-  newSubdomains: Record<string, string>
+  newSubdomains: Record<string, string>,
 ): Promise<void> {
   const config = await caddy.getConfig();
   const servers = config.apps?.http?.servers || {};
@@ -238,8 +240,11 @@ async function resyncClientRedirectUris(
     clientId: existing.client_id,
     name: existing.name,
     redirectUris: newRedirectUris,
+    postLogoutRedirectUris: existing.post_logout_redirect_uris.map((uri) => replaceAll(uri, oldDomain, newDomain)),
     scopes: existing.scopes,
     clientSecret: existing.client_secret, // preserve — no secret rotation on a domain change
+    backchannelLogoutUri: existing.backchannel_logout_uri
+      ? replaceAll(existing.backchannel_logout_uri, oldDomain, newDomain) : null,
   });
 }
 
@@ -285,6 +290,7 @@ async function updateContainerEnvFile(
   containerName: string,
   oldDomain: string,
   newDomain: string,
+  identityOrigins?: [string, string],
 ): Promise<boolean> {
   const envPath = `/etc/${containerName}.env`;
   let content = '';
@@ -295,8 +301,8 @@ async function updateContainerEnvFile(
   } catch {
     return false; // no env file — nothing to do
   }
-  if (!content.includes(oldDomain)) return false;
-  const next = replaceAll(content, oldDomain, newDomain);
+  if (!content.includes(oldDomain) && !content.includes(identityOrigins?.[0] || '\0')) return false;
+  const next = replacePlatformUrls(content, oldDomain, newDomain, identityOrigins);
   const b64 = Buffer.from(next).toString('base64');
   const write = await execShell(containerName, `echo '${b64}' | base64 -d > ${envPath}`, { timeout: 10_000 });
   if (write.exitCode !== 0) {
@@ -313,6 +319,7 @@ async function updateContainerEnvConfig(
   containerName: string,
   oldDomain: string,
   newDomain: string,
+  identityOrigins?: [string, string],
 ): Promise<boolean> {
   const resp = await incusRequest<Record<string, unknown>>('GET', `/1.0/instances/${containerName}`);
   const instMeta = resp.metadata as { config?: Record<string, string> } | undefined;
@@ -320,8 +327,8 @@ async function updateContainerEnvConfig(
   const updates: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(config)) {
-    if (key.startsWith('environment.') && typeof value === 'string' && value.includes(oldDomain)) {
-      updates[key] = replaceAll(value, oldDomain, newDomain);
+    if (key.startsWith('environment.') && typeof value === 'string' && (value.includes(oldDomain) || value.includes(identityOrigins?.[0] || '\0'))) {
+      updates[key] = replacePlatformUrls(value, oldDomain, newDomain, identityOrigins);
     }
   }
 
@@ -432,6 +439,7 @@ async function refreshConfigFiles(
   oldDomain: string,
   newDomain: string,
   warn: (message: string) => void,
+  identityOrigins?: [string, string],
 ): Promise<Array<{ containerName: string; spec: ConfigFileSpec; context: Record<string, unknown> }>> {
   const configFiles: ConfigFileSpec[] = manifest.configFiles || [];
   if (configFiles.length === 0) return [];
@@ -465,14 +473,14 @@ async function refreshConfigFiles(
     }
 
     if (existing !== null) {
-      if (existing.includes(oldDomain)) {
+      if (existing.includes(oldDomain) || existing.includes(identityOrigins?.[0] || '\0')) {
         try {
           await writeConfigFileToStorage(
             target.containerName,
             cf,
             ctx,
             volumes,
-            Buffer.from(replaceAll(existing, oldDomain, newDomain), 'utf8'),
+            Buffer.from(replacePlatformUrls(existing, oldDomain, newDomain, identityOrigins), 'utf8'),
           );
         } catch (err) {
           throw new Error(`${meta.appId}: failed to update config file ${resolvedPath}: ${err}`);
@@ -500,6 +508,7 @@ async function updateInstalledApp(
   oldDomain: string,
   newDomain: string,
   warn: (message: string) => void,
+  identityOrigins?: [string, string],
 ): Promise<void> {
   const appId = meta.appId;
   const containers = containerEntries(meta);
@@ -512,12 +521,12 @@ async function updateInstalledApp(
   //    use Incus environment.* config; the other path is a cheap no-op.
   for (const { containerName } of containers) {
     try {
-      await updateContainerEnvFile(containerName, oldDomain, newDomain);
+      await updateContainerEnvFile(containerName, oldDomain, newDomain, identityOrigins);
     } catch (err) {
       warn(`${appId}: env file update failed for ${containerName}: ${err}`);
     }
     try {
-      await updateContainerEnvConfig(containerName, oldDomain, newDomain);
+      await updateContainerEnvConfig(containerName, oldDomain, newDomain, identityOrigins);
     } catch (err) {
       warn(`${appId}: env config update failed for ${containerName}: ${err}`);
     }
@@ -528,7 +537,7 @@ async function updateInstalledApp(
   const manifest = await fetchAppManifest(appId, meta.sourceId);
   let refreshedConfigFiles: Array<{ containerName: string; spec: ConfigFileSpec; context: Record<string, unknown> }> = [];
   if (manifest) {
-    refreshedConfigFiles = await refreshConfigFiles(manifest, meta, oldDomain, newDomain, warn);
+    refreshedConfigFiles = await refreshConfigFiles(manifest, meta, oldDomain, newDomain, warn, identityOrigins);
   } else {
     warn(`${appId}: manifest unavailable — config file refresh skipped (env updated)`);
   }
@@ -927,7 +936,11 @@ const renameState = globalThis as typeof globalThis & { youeyeReconfigureRunning
 export async function reconfigure(req: ReconfigureRequest, onEvent: ReconfigureEventCallback): Promise<{ newUrl: string }> {
   if (renameState.youeyeReconfigureRunning) throw new Error('A server reconfiguration is already running');
   renameState.youeyeReconfigureRunning = true;
-  try { return await reconfigureLocked(req, onEvent); }
+  // Losing the progress connection must not interrupt already-authorized work.
+  const report: ReconfigureEventCallback = event => {
+    try { onEvent(event); } catch { /* reconnect using the durable journal */ }
+  };
+  try { return await reconfigureLocked(req, report); }
   finally { renameState.youeyeReconfigureRunning = false; }
 }
 
@@ -938,23 +951,35 @@ async function reconfigureLocked(
   // 1. Read current config
   onEvent({ step: 'config', status: 'running', message: 'Reading current configuration...' });
   const currentConfig = await settingsService.getRaw();
-  const oldDomain = currentConfig.domain;
-  const oldSubdomains = currentConfig.subdomains || {} as Record<string, string>;
-  const newDomain = req.domain || oldDomain;
-  const newSubdomains = req.subdomains || oldSubdomains || {} as Record<string, string>;
+  const pending = await readReconfigureJournal();
+  if (pending?.phase === 'restart-scheduled') throw new Error('Control Panel restart is scheduled; wait for recovery at the new URL before retrying');
+  const newDomain = req.domain || currentConfig.domain;
+  const newSubdomains = req.subdomains || currentConfig.subdomains || {} as Record<string, string>;
+  if (pending && (pending.newDomain !== newDomain || JSON.stringify(pending.newSubdomains) !== JSON.stringify(newSubdomains))) {
+    throw new Error('An interrupted server URL change must be retried with the same domain and subdomains before starting another change');
+  }
+  const oldDomain = pending?.oldDomain || currentConfig.domain;
+  const oldSubdomains = pending?.oldSubdomains || currentConfig.subdomains || {} as Record<string, string>;
+  const journal = {
+    ...(pending || {
+      oldDomain, oldSubdomains, newDomain, newSubdomains,
+      oldIdentityOrigin: process.env.IDENTITY_URL || identityConfigFromSettings({ domain: oldDomain, subdomains: oldSubdomains }).externalUrl,
+    }),
+    phase: 'applying' as const,
+    processStartedAt: processStartTime,
+  };
   const newSiteName = req.site_name || currentConfig.site_name;
+  const configuredIdentityUrl = identityConfigFromSettings({ domain: newDomain, subdomains: newSubdomains }).externalUrl;
+  const staleProcess = process.env.IDENTITY_URL !== configuredIdentityUrl
+    || process.env.CONTROL_EXTERNAL_URL !== `https://${newSubdomains.control || 'control'}.${newDomain}`;
   const domainChanged = newDomain !== oldDomain;
   const subdomainsChanged = JSON.stringify(newSubdomains) !== JSON.stringify(oldSubdomains);
+  const reconcileRequired = domainChanged || subdomainsChanged || Boolean(pending) || staleProcess;
   onEvent({ step: 'config', status: 'done', message: 'Configuration loaded' });
 
   const hostIP = process.env.HOST_IP;
 
-  const oldIssuer = identityConfigFromSettings({ domain: oldDomain, subdomains: oldSubdomains }).issuer;
-  const newIssuer = identityConfigFromSettings({ domain: newDomain, subdomains: newSubdomains }).issuer;
-  const identityChange = oldIssuer !== newIssuer ? { oldIssuer, newIssuer } : null;
-  // Capability, database ownership and exact old identity are checked before any site mutation.
-  if (identityChange) await transitionPointerIdentity(identityChange, true);
-  const previousCaddy = identityChange ? await caddy.getConfig() : null;
+  const identityHost = new URL(identityConfigFromSettings({ domain: newDomain, subdomains: newSubdomains }).externalUrl).hostname;
 
   // Resolve the effective TLS target up front.
   let tlsTarget: Exclude<ReconfigureTlsTarget, 'auto'>;
@@ -1013,42 +1038,31 @@ async function reconfigureLocked(
   const applySiteConfiguration = async () => {
     await settingsService.setRaw(patchData);
     onEvent({ step: 'yaml', status: 'done', message: 'Site configuration updated' });
-    if (domainChanged || subdomainsChanged) {
+    if (reconcileRequired) {
       onEvent({ step: 'caddy', status: 'running', message: 'Updating reverse proxy routes...' });
       await updateCaddyDomain(oldDomain, newDomain, oldSubdomains, newSubdomains);
       await caddy.setDomain(newDomain);
+      await caddy.ensureIdentityRoute(identityHost, 'youeye-control', 3001);
       await caddy.ensureControlSettingsRoute(newDomain);
       await caddy.ensurePointerInferenceRoutes(newDomain);
       onEvent({ step: 'caddy', status: 'done', message: 'Reverse proxy updated' });
     }
   };
   const startPointer = async () => {
-    if (domainChanged || subdomainsChanged) {
+    if (reconcileRequired) {
       onEvent({ step: 'ai', status: 'running', message: 'Refreshing YouEye AI identity configuration...' });
-      await configurePointerForPlatform();
+      await configurePointerForPlatform(journal.oldIdentityOrigin);
       onEvent({ step: 'ai', status: 'done', message: 'YouEye AI identity configuration refreshed' });
     }
   };
-  if (identityChange && previousCaddy) {
-    await changePointerIdentity(identityChange, {
-      transition: transitionPointerIdentity,
-      apply: applySiteConfiguration,
-      restore: async () => {
-        await settingsService.setRaw({
-          site_name: currentConfig.site_name, domain: oldDomain, subdomains: oldSubdomains,
-          setup_completed: currentConfig.setup_completed,
-          ...(req.identity_name ? { identity: currentConfig.identity || { provider: 'youeye-id' } } : {}),
-        });
-        await caddy.setConfig(previousCaddy);
-      },
-      start: startPointer,
-    });
-  } else {
-    await applySiteConfiguration();
-    await startPointer();
+  if (reconcileRequired) {
+    await saveReconfigureJournal({ ...journal, phase: 'applying' });
+    await invalidatePublicOidcState();
   }
+  await applySiteConfiguration();
+  await startPointer();
 
-  if (domainChanged || subdomainsChanged) {
+  if (reconcileRequired) {
     // 5. Update Pi-Hole DNS
     onEvent({ step: 'dns', status: 'running', message: 'Updating DNS configuration...' });
     if (hostIP) {
@@ -1102,13 +1116,13 @@ async function reconfigureLocked(
   }
 
   // 7. Defer Control Panel OAuth update until the final env/restart step.
-  if (domainChanged || subdomainsChanged) {
+  if (reconcileRequired) {
     onEvent({ step: 'sso_cp', status: 'running', message: 'Updating Control Panel SSO...' });
     onEvent({ step: 'sso_cp', status: 'done', message: 'Control Panel SSO update deferred until restart step' });
   }
 
   // 8. Update YouEye ID UI OAuth2 + UI env vars
-  if (domainChanged || subdomainsChanged) {
+  if (reconcileRequired) {
     onEvent({ step: 'sso_ui', status: 'running', message: 'Updating UI SSO...' });
     try {
       const uiSub = newSubdomains.ui || '';
@@ -1133,6 +1147,7 @@ async function reconfigureLocked(
     } catch (err) {
       console.error('[Reconfigure] UI SSO update failed:', err);
       onEvent({ step: 'sso_ui', status: 'error', message: `UI SSO update failed: ${err}` });
+      throw err;
     }
   }
 
@@ -1172,7 +1187,7 @@ async function reconfigureLocked(
   }
 
   // 10. Refresh infrastructure containers (ensures DNS/DHCP leases are valid before restarting apps)
-  if (domainChanged && installedApps.length > 0) {
+  if (reconcileRequired && installedApps.length > 0) {
     try {
       await incusRequest('PUT', '/1.0/instances/youeye-postgres/state', {
         action: 'restart', force: false, timeout: 30,
@@ -1185,25 +1200,29 @@ async function reconfigureLocked(
   }
 
   // 11. Update installed apps (native and market)
-  if (domainChanged && installedApps.length > 0) {
+  if (reconcileRequired && installedApps.length > 0) {
+    const failures: string[] = [];
     for (const app of installedApps) {
       onEvent({ step: `app_${app.appId}`, status: 'running', message: `Updating ${app.appId}...` });
       const warnings: string[] = [];
       try {
         await updateInstalledApp(app, oldDomain, newDomain, (m) => {
           warnings.push(m);
+          if (/failed|unknown container/.test(m)) throw new Error(m);
           console.warn(`[Reconfigure] ${m}`);
-        });
+        }, [journal.oldIdentityOrigin, configuredIdentityUrl]);
         onEvent({
           step: `app_${app.appId}`,
           status: 'done',
           message: warnings.length ? `${app.appId} updated with warnings: ${warnings.join('; ')}` : `${app.appId} updated`,
         });
       } catch (err) {
+        failures.push(app.appId);
         console.error(`[Reconfigure] Failed to update app ${app.appId}:`, err);
         onEvent({ step: `app_${app.appId}`, status: 'error', message: `${app.appId} failed: ${err}` });
       }
     }
+    if (failures.length) throw new Error(`App URL updates failed: ${failures.join(', ')}. Retry the same URL change.`);
   }
 
   // 11b. Propagate system language to installed Market-installed apps
@@ -1243,7 +1262,7 @@ async function reconfigureLocked(
   // 12. Restart the identity service so it picks up the new domain immediately
   // (cookie domain and issuer are derived from settings per-request, but the
   // settings cache and any warm OIDC state should not straddle a rename).
-  if (domainChanged || subdomainsChanged) {
+  if (reconcileRequired) {
     onEvent({ step: 'identity', status: 'running', message: 'Restarting YouEye ID...' });
     try {
       const { execFile } = await import('node:child_process');
@@ -1257,23 +1276,37 @@ async function reconfigureLocked(
     }
   }
 
-  // 13. Update CP SSO env vars — LAST STEP because setControlSSO triggers a 2s delayed restart.
+  // 13. Write CP configuration after every durable client/app update.
   // Everything else must be done before this point.
-  if (domainChanged || subdomainsChanged) {
+  if (reconcileRequired) {
+    // Reconcile any old route restored by a background repair that was already
+    // in flight when the migration began. App metadata now names the new domain.
+    await updateCaddyDomain(oldDomain, newDomain, oldSubdomains, newSubdomains);
     onEvent({ step: 'cp_env', status: 'running', message: 'Updating Control Panel environment (will restart)...' });
     const controlSub = newSubdomains.control || 'control';
     await configureControlPanelIdentitySSO({
       controlExternalUrl: `https://${controlSub}.${newDomain}`,
       settingsExternalUrl: `https://${newDomain}/settings`,
     });
-    onEvent({ step: 'cp_env', status: 'done', message: 'Control Panel environment updated — restarting in 2s' });
+    onEvent({ step: 'cp_env', status: 'done', message: 'Control Panel environment updated' });
   }
 
   // 14. Build result URL — the user-facing dashboard on the new domain.
   const uiSub = newSubdomains.ui || '';
   const newUrl = uiSub ? `https://${uiSub}.${newDomain}` : `https://${newDomain}`;
 
-  onEvent({ step: 'complete', status: 'done', message: 'Reconfiguration complete' });
+  await finishReconfigure({
+    beforeRestart: req.beforeRestart,
+    restart: reconcileRequired,
+    persist: () => saveReconfigureJournal({ ...journal, phase: 'restart-pending' }),
+    schedule: async () => {
+      const result = await spineClient.restartControl(5);
+      if (result.status !== 'scheduled') throw new Error('Control Panel restart was not acknowledged; retry the URL change');
+    },
+    scheduled: () => saveReconfigureJournal({ ...journal, phase: 'restart-scheduled', scheduledAt: Date.now() }),
+    failed: () => saveReconfigureJournal({ ...journal, phase: 'applying' }),
+    complete: () => onEvent({ step: 'complete', status: 'done', message: 'Configuration applied; reconnect at the new URL to verify service recovery' }),
+  });
 
   return { newUrl };
 }

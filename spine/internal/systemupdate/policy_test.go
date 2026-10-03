@@ -127,3 +127,30 @@ func TestVerifyExactInstalledBindsTagDigestSignatureAndRunningReleaseSet(t *test
 		t.Fatal("wrong Exact appliance-manifest digest was accepted")
 	}
 }
+
+func TestCurrentPrivateServicesRequireMainPolicy(t *testing.T) {
+	base := ReleasePolicy{Schema: ReleasePolicySchema, Provider: "custom", ReleasesAPI: "https://forge.example.test/owner/YouEye/releases", Mode: "track", Track: "stable", Freshness: "require-current", ServiceSelection: "current"}
+	if err := base.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, track := range []string{"development", "branch"} {
+		p := base
+		p.Track = track
+		p.Branch = "dev"
+		if err := p.Validate(); err == nil {
+			t.Fatal("private current services accepted for dev")
+		}
+	}
+	exact := base
+	exact.Mode = "exact"
+	exact.Track = ""
+	exact.ExactTag = "appliance-v0.5.23.0.4"
+	exact.ManifestSHA256 = strings.Repeat("a", 64)
+	if err := exact.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	exact.ExactTag = "appliance-dev-v0.5.23.0.4"
+	if err := exact.Validate(); err == nil {
+		t.Fatal("private feature selection accepted")
+	}
+}

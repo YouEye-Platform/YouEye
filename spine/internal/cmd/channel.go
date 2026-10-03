@@ -133,6 +133,7 @@ func channelSet(cmd *cobra.Command, component string) error {
 		current.Source = strings.TrimSpace(channelSetSource)
 	}
 	if cmd.Flags().Changed("tag") {
+		current.PinOrigin = "" // Explicit owner choice survives first-deploy completion.
 		current.Tag = strings.TrimSpace(channelSetTag)
 		if current.Tag == "" {
 			current.ArtifactSHA256 = ""

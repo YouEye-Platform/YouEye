@@ -3,6 +3,7 @@ package installer
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"os"
 	"path/filepath"
 	"strings"
@@ -373,7 +374,7 @@ func (w applianceWizardModel) handleReleaseKey(msg tea.KeyMsg) (applianceWizardM
 		w.blurReleaseInputs()
 		w.inputErr = ""
 	case "left", "right":
-		providers := []string{"github", "forgejo", "custom"}
+		providers := []string{"github", "custom"}
 		index := 0
 		for candidate, provider := range providers {
 			if provider == w.releaseProvider {
@@ -643,7 +644,12 @@ func (w applianceWizardModel) releasePolicyAnswer() applianceReleasePolicy {
 		Mode: "track", Freshness: w.releaseFreshness,
 	}
 	if w.releaseProvider != defaultApplianceProvider {
-		policy.ReleasesAPI = strings.TrimSpace(w.releaseInputs["api"].Value())
+		source, err := releasecache.ParseRepositorySource(w.releaseInputs["api"].Value())
+		if err == nil {
+			policy.Provider, policy.ReleasesAPI = source.Adapter, source.ReleasesAPI
+		} else {
+			policy.ReleasesAPI = "invalid-repository-url"
+		}
 	}
 	switch w.releaseCur {
 	case 0:
@@ -928,7 +934,7 @@ func (w applianceWizardModel) releaseView() string {
 		rows = append(rows, w.radioLine(index, w.releaseCur, option.title, option.detail))
 	}
 	for _, key := range w.releaseInputKeys() {
-		label := map[string]string{"api": "Releases API", "branch": "Branch", "tag": "Exact tag", "digest": "Manifest SHA-256"}[key]
+		label := map[string]string{"api": "Repository URL", "branch": "Branch", "tag": "Exact tag", "digest": "Manifest SHA-256"}[key]
 		rows = append(rows, fmt.Sprintf("  %-17s %s", label+":", w.releaseInputs[key].View()))
 	}
 	rows = append(rows, "", theme.Dim.Render("The installed System comes from this media; first boot may update A/B before installing the Server interface."))

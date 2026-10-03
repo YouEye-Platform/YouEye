@@ -765,6 +765,39 @@ export async function getAppBridgeGatewayIP(appId: string): Promise<string | nul
   return address.split('/')[0] || null;
 }
 
+/** Add the logical ID host to a proved, owned bridge without replacing its DNS policy. */
+export function appIdentityDnsConfig(current: string | undefined, gateway: string): string | null {
+  if (!current || !current.split('\n').some((line) => line.startsWith('server='))) {
+    throw new AppNetworkStateError('App bridge has no DNS forwarding policy');
+  }
+  const mappings = current.split('\n').filter((line) => line.startsWith('address=/id.youeye/'));
+  const expected = `address=/id.youeye/${gateway}`;
+  if (mappings.length === 1 && mappings[0] === expected) return null;
+  if (mappings.length > 1) {
+    throw new AppNetworkStateError('App bridge has multiple id.youeye DNS mappings');
+  }
+  if (mappings.length === 1) return current.replace(mappings[0], expected);
+  return `${current.trimEnd()}\n${expected}`;
+}
+
+async function reconcileAppIdentityDns(network: IncusNetwork, lease: AppNetworkLease): Promise<void> {
+  assertOwnedNetworkMatchesLease(network, lease);
+  const next = appIdentityDnsConfig(network.config?.['raw.dnsmasq'], lease.gateway);
+  if (next === null) return;
+  const patched = await incusRequest('PATCH', `/1.0/networks/${lease.bridgeName}`, {
+    config: { 'raw.dnsmasq': next },
+  }, { timeout: NETWORK_OBJECT_TIMEOUT_MS });
+  await waitForIncusOperation(patched, `Add ID DNS on ${lease.bridgeName}`);
+  const readBack = assertIncusSuccess(
+    await incusRequest<IncusNetwork>('GET', `/1.0/networks/${lease.bridgeName}`),
+    `Read ID DNS on ${lease.bridgeName}`,
+  );
+  assertOwnedNetworkMatchesLease(readBack, lease);
+  if (readBack.config?.['raw.dnsmasq'] !== next) {
+    throw new AppNetworkStateError(`App bridge ${lease.bridgeName} ID DNS read-back mismatch`);
+  }
+}
+
 /** Check if a bridge exists. */
 async function bridgeExists(name: string): Promise<boolean> {
   const res = await incusRequest('GET', `/1.0/networks/${name}`, undefined, { timeout: NETWORK_OBJECT_TIMEOUT_MS });
@@ -831,7 +864,10 @@ export async function createAppNetwork(
 
   // Forward unresolved DNS queries to Pi-Hole. This is a hard invariant for
   // app networks so per-app DNS policy and local rewrites are always applied.
+  // Keep the app's OIDC issuer stable when IPAM reallocates its bridge. The
+  // local dnsmasq answers this name before forwarding other names to Pi-hole.
   config['raw.dnsmasq'] = `server=${piholeIP}`;
+  config['raw.dnsmasq'] += `\naddress=/id.youeye/${lease.gateway}`;
 
   try {
     if (!(await bridgeExists(lease.bridgeName))) {
@@ -1994,6 +2030,7 @@ export async function reconcileAppNetworks(): Promise<AppNetworkReconcileResult>
       const needsSharedDb = metadata.databaseMode === 'shared';
       const needsSSO = metadata.hasSSO ?? metadata.enableSSO;
       const needsAI = metadata.aiConnection?.state !== undefined;
+      await reconcileAppIdentityDns(network, originalLease);
       await addCaddyToAppNetwork(originalLease.appId);
       await addSystemProxyDevices(
         originalLease.appId,

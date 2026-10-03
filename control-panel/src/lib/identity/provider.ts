@@ -126,15 +126,50 @@ export async function createOAuthClient(params: {
   clientId: string;
   name: string;
   redirectUris: string[];
+  postLogoutRedirectUris?: string[];
+  backchannelLogoutUri?: string | null;
+  publicClient?: boolean;
   scopes?: string[];
   clientSecret?: string;
 }): Promise<{ clientId: string; clientSecret: string }> {
-  const clientSecret = params.clientSecret || randomBytes(32).toString('hex');
+  if (params.publicClient && params.clientSecret) throw new Error('Public clients cannot have a client secret');
+  if (params.publicClient && params.backchannelLogoutUri) throw new Error('Public clients cannot register a back-channel endpoint');
+  if (params.publicClient && params.redirectUris.some((redirect) => {
+    try {
+      const uri = new URL(redirect);
+      return !['https:', 'http:'].includes(uri.protocol) || Boolean(uri.username || uri.password || uri.hash)
+        || (uri.protocol === 'http:' && !['127.0.0.1', '[::1]', 'localhost'].includes(uri.hostname));
+    } catch { return true; }
+  })) throw new Error('Public client redirects must use HTTPS or loopback HTTP');
+  if (params.backchannelLogoutUri) {
+    const uri = new URL(params.backchannelLogoutUri);
+    if (!['https:', 'http:'].includes(uri.protocol) || uri.username || uri.password || uri.hash || uri.search) {
+      throw new Error('Invalid back-channel logout URI');
+    }
+    const identity = await getIdentityConfig();
+    const managedHost = uri.hostname === identity.domain || uri.hostname.endsWith(`.${identity.domain}`);
+    const trustedApp = params.clientId.startsWith('youeye-app-')
+      && uri.protocol === 'http:'
+      && uri.hostname === `app-${params.clientId.slice('youeye-app-'.length)}.youeye` && uri.port === '3000';
+    const trustedCore = params.clientId === 'youeye-ui' && uri.protocol === 'http:'
+      && uri.hostname === 'youeye-ui.youeye' && uri.port === '3000';
+    if (uri.protocol !== 'https:' && !trustedApp && !trustedCore) {
+      throw new Error('Back-channel logout URI must use HTTPS or a managed private host');
+    }
+    if (uri.protocol === 'https:' && (!managedHost || uri.port || !params.redirectUris.some((redirect) => {
+      try { return new URL(redirect).origin === uri.origin; } catch { return false; }
+    }))) {
+      throw new Error('Back-channel logout URI must use a managed host and registered redirect origin');
+    }
+  }
+  const clientSecret = params.publicClient ? '' : params.clientSecret || randomBytes(32).toString('hex');
   const client = await ensureClient({
     clientId: params.clientId,
     clientSecret,
     name: params.name,
     redirectUris: params.redirectUris,
+    postLogoutRedirectUris: params.postLogoutRedirectUris,
+    backchannelLogoutUri: params.backchannelLogoutUri,
     scopes: params.scopes || ['openid', 'profile', 'email', 'groups'],
   });
 

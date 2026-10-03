@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
+	"github.com/youeye-platform/YouEye/spine/internal/updatetrust"
 	"io"
 	"net/http"
 	"net/url"
@@ -27,7 +28,7 @@ const releaseMetadataLimit = 1 << 20
 // VerifySignedReleaseArtifact verifies the embedded source/channel trust anchor,
 // detached Ed25519 checksum signature, exact artifact digest and optional
 // channel-bound digest before any release artifact may mutate a runtime.
-func VerifySignedReleaseArtifact(client *http.Client, artifactURL, artifactPath, expectedDigest string) error {
+func VerifySignedReleaseArtifact(client *http.Client, artifactURL, artifactPath, expectedDigest string, scopes ...string) error {
 	parsed, err := url.Parse(artifactURL)
 	if err != nil || parsed.Scheme != "https" && parsed.Scheme != "http" || parsed.Host == "" {
 		return fmt.Errorf("release artifact URL is invalid")
@@ -36,7 +37,7 @@ func VerifySignedReleaseArtifact(client *http.Client, artifactURL, artifactPath,
 	if err != nil {
 		return err
 	}
-	trustName, embeddedTrust, err := componentReleaseTrust(parsed)
+	trustName, embeddedTrust, err := componentReleaseTrust(parsed, scopes...)
 	if err != nil {
 		return err
 	}
@@ -158,7 +159,22 @@ func signedReleaseSiblingURL(artifact *url.URL, name string) (string, error) {
 var componentPublicTrustAnchor = systemupdate.PublicReleaseTrustAnchor
 var publicComponentTag = regexp.MustCompile(`^(?:spine|cp|ui)-(beta-)?v[0-9]+(?:\.[0-9]+)*$`)
 
-func componentReleaseTrust(artifact *url.URL) (string, []byte, error) {
+func componentReleaseTrust(artifact *url.URL, scopes ...string) (string, []byte, error) {
+	scope := ""
+	if len(scopes) == 1 {
+		scope = scopes[0]
+	}
+	grant, err := updatetrust.LookupRelease(artifact.String(), scope)
+	if err != nil {
+		return "", nil, err
+	}
+	if grant != nil {
+		if scope != "spine" && scope != "cp" {
+			return "", nil, fmt.Errorf("publisher scope cannot replace a host component")
+		}
+		return "release-development.pub", []byte(grant.PublicKey), nil
+	}
+
 	if artifact.Hostname() != "github.com" {
 		return "release-development.pub", releaseDevelopmentTrust, nil
 	}

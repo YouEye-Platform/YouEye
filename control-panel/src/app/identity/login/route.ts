@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFileSync } from 'fs';
 import { getIdentityConfig } from '@/lib/identity/config';
-import { getClient, verifyUser } from '@/lib/identity/store';
+import { createIdentitySession, getClient, verifyUser } from '@/lib/identity/store';
+import { checkRateLimit, resetRateLimit } from '@/lib/auth/session';
 import { createIdentityToken } from '@/lib/identity/tokens';
 import { setIdentityCookie } from '@/lib/identity/http';
 import { getIdentityProviderConfig } from '@/lib/identity/provider';
+import { safeLoginReturnTo } from '@/lib/identity/login-return';
+import { identitySearchParams } from '@/lib/identity/authorize-query';
+import { listInstalledApps } from '@/lib/market/metadata';
 import { identityFaviconLinks } from '@/lib/identity/favicon';
 import { settingsService } from '@/lib/settings';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
@@ -408,35 +412,53 @@ async function html(returnTo: string, error = ''): Promise<Response> {
   });
 }
 
-function safeReturnTo(value: string | null, fallback: string): string {
-  if (!value) return fallback;
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : fallback;
-  } catch {
-    return fallback;
+async function safeReturnTo(value: string | null, fallback: string, domain: string): Promise<string> {
+  const allowedOrigins = new Set([new URL(fallback).origin, `https://${domain}`]);
+  const raw = await settingsService.getRaw();
+  for (const key of ['ui', 'control']) {
+    const label = raw.subdomains?.[key];
+    if (typeof label === 'string' && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) {
+      allowedOrigins.add(`https://${label}.${domain}`);
+    }
   }
+  // Caddy forward-auth can return to an installed app, but a caller cannot
+  // introduce an arbitrary host by changing the login form or forwarded headers.
+  const apps = await listInstalledApps().catch(() => []);
+  for (const app of apps) {
+    if (app.forwardAuthEnabled && app.domain === domain
+      && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(app.subdomain)) {
+      allowedOrigins.add(`https://${app.subdomain}.${domain}`);
+    }
+  }
+  return safeLoginReturnTo(value, fallback, allowedOrigins);
 }
 
 export async function GET(request: NextRequest) {
   const config = await getIdentityConfig();
-  const returnTo = safeReturnTo(request.nextUrl.searchParams.get('return_to'), `${config.externalUrl}/`);
+  const returnTo = await safeReturnTo(identitySearchParams(request).get('return_to'), `${config.externalUrl}/`, config.domain);
   return html(returnTo);
 }
 
 export async function POST(request: NextRequest) {
   const config = await getIdentityConfig();
   const form = await request.formData();
-  const returnTo = safeReturnTo(String(form.get('return_to') || ''), `${config.externalUrl}/`);
+  const returnTo = await safeReturnTo(String(form.get('return_to') || ''), `${config.externalUrl}/`, config.domain);
   const username = String(form.get('username') || '');
   const password = String(form.get('password') || '');
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'unknown';
+  const limitKey = `id-login:${ip}:${username.toLowerCase()}`;
+  if (!checkRateLimit(limitKey, 10, 15 * 60).allowed) {
+    return html(returnTo, 'Too many sign-in attempts. Try again later.');
+  }
   const user = await verifyUser(username, password);
 
   if (!user) {
     return html(returnTo, 'Invalid username or password.');
   }
+  resetRateLimit(limitKey);
 
-  const token = await createIdentityToken(user);
+  const session = await createIdentitySession(user.id);
+  const token = await createIdentityToken(user, session.id);
   const response = NextResponse.redirect(returnTo, { status: 303 });
   setIdentityCookie(response, token, config.cookieDomain);
   return response;

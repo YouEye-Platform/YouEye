@@ -8,8 +8,8 @@ trap 'rm -rf "$test_root"' EXIT HUP INT TERM
 
 sh -n "$install_script"
 grep -Fq 'INSTALLER_CHANNEL:-stable' "$install_script"
-grep -Fq 'INSTALLER_PROVIDER:-github' "$install_script"
-grep -Fq 'https://api.github.com/repos/YouEye-Platform/YouEye/releases' "$install_script"
+grep -Fq 'INSTALLER_REPOSITORY:-https://github.com/YouEye-Platform/YouEye' "$install_script"
+grep -Fq 'https://api.github.com/repos' "$install_script"
 grep -Fq 'page_size_key=per_page' "$install_script"
 grep -Fq 'page_size_key=limit' "$install_script"
 grep -Fq 'INSTALLER_TAG:-' "$install_script"
@@ -95,7 +95,7 @@ manifest() {
 import json, os
 x = os.environ.get("FIXTURE_RELEASE_TAG", "appliance-dev-v0.5.6.0.3")
 branch, version = x[len("appliance-"):].rsplit("-v", 1)
-print(json.dumps({"schema":"youeye.appliance.manifest.v1", "image_version":version, "source_commit":"a"*40, "trust":{"class":"development"}, "release_set":{"source":"https://forgejo.example.test/owner/YouEye", "branch":branch}}))
+print(json.dumps({"schema":"youeye.appliance.manifest.v1", "image_version":version, "source_commit":"a"*40, "trust":{"class":"development"}, "release_set":{"source":"https://code.example.test/owner/YouEye", "branch":branch}}))
 PYMANIFEST
 }
 case "$url" in
@@ -123,7 +123,7 @@ names = [
     "youeye-system-updater-linux-amd64",
 ]
 assets = [
-    {"name": name, "browser_download_url": f"https://forgejo.example.test/releases/download/{tag}/{name}"}
+    {"name": name, "browser_download_url": f"https://code.example.test/releases/download/{tag}/{name}"}
     for name in names
 ]
 print(json.dumps([{"tag_name": tag, "draft": False, "prerelease": True, "published_at": "2026-08-15T01:00:00Z", "assets": assets}]))
@@ -165,12 +165,11 @@ output="$(
     CURL_LOG="$curl_log" OPENSSL_LOG="$openssl_log" \
     FIXTURE_BINARY="$fixture_binary" FIXTURE_DIGEST="$fixture_digest" \
     YOUEYE_INSTALLER_CACHE="$test_root/cache" \
-    sh "$install_script" --provider forgejo \
-        --releases-api https://forgejo.example.test/api/v1/repos/owner/YouEye/releases \
+    sh "$install_script" --repository https://code.example.test/owner/YouEye \
         --channel development --silent --yes
 )"
 case "$output" in
-	*'Launching signed YouEye Installer appliance-dev-v0.5.6.0.3'*'launched:proxmox'*'--provider forgejo'*'--channel development'*) ;;
+	*'Launching signed YouEye Installer appliance-dev-v0.5.6.0.3'*'launched:proxmox'*'--repository https://code.example.test/owner/YouEye'*'--channel development'*) ;;
     *) printf 'unexpected bootstrap output: %s\n' "$output" >&2; exit 1 ;;
 esac
 grep -q 'limit=50&page=2' "$curl_log"
@@ -183,8 +182,7 @@ branch_output="$(
     FIXTURE_BINARY="$fixture_binary" FIXTURE_DIGEST="$fixture_digest" \
     FIXTURE_RELEASE_TAG=appliance-f-bootstrap-check-v0.5.6.0.4 \
     YOUEYE_INSTALLER_CACHE="$test_root/branch-cache" \
-    sh "$install_script" --provider forgejo \
-        --releases-api https://forgejo.example.test/api/v1/repos/owner/YouEye/releases \
+    sh "$install_script" --repository https://code.example.test/owner/YouEye \
         --channel branch --release-branch f-bootstrap-check --silent --yes
 )"
 case "$branch_output" in
@@ -196,8 +194,7 @@ if PATH="$bin_dir:$PATH" \
     CURL_LOG="$curl_log" OPENSSL_LOG="$openssl_log" \
     FIXTURE_BINARY="$fixture_binary" FIXTURE_DIGEST="$fixture_digest" \
     YOUEYE_INSTALLER_CACHE="$test_root/no-fallback-cache" \
-	sh "$install_script" --provider forgejo \
-	    --releases-api https://forgejo.example.test/api/v1/repos/owner/YouEye/releases \
+	sh "$install_script" --repository https://code.example.test/owner/YouEye \
 	    --channel stable > "$test_root/no-fallback.out" 2>&1; then
     printf '%s\n' 'stable selection unexpectedly fell back to development' >&2
     exit 1
@@ -208,8 +205,7 @@ if PATH="$bin_dir:$PATH" \
     CURL_LOG="$curl_log" OPENSSL_LOG="$openssl_log" CURL_CROSS_ORIGIN=1 \
     FIXTURE_BINARY="$fixture_binary" FIXTURE_DIGEST="$fixture_digest" \
     YOUEYE_INSTALLER_CACHE="$test_root/cross-origin-cache" \
-	sh "$install_script" --provider forgejo \
-	    --releases-api https://forgejo.example.test/api/v1/repos/owner/YouEye/releases \
+	sh "$install_script" --repository https://code.example.test/owner/YouEye \
 	    --channel development > "$test_root/cross-origin.out" 2>&1; then
     printf '%s\n' 'cross-origin redirect unexpectedly passed' >&2
     exit 1

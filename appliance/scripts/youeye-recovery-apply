@@ -9,6 +9,7 @@ youeye=${YOUEYE_RECOVERY_YOUEYE:-/usr/local/bin/youeye}
 development_access_apply=${YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_APPLY:-/usr/local/libexec/youeye-apply-development-access}
 development_access_policy=${YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_POLICY:-/var/lib/youeye-state/bootstrap/development-access.json}
 development_access_status=${YOUEYE_RECOVERY_DEVELOPMENT_ACCESS_STATUS:-/var/lib/youeye-state/bootstrap/development-access-status.json}
+sealed_release=${YOUEYE_RECOVERY_SEALED_RELEASE:-/usr/lib/youeye/appliance-release}
 
 [ -s "$request" ] || exit 0
 install -d -m 0700 "$request_dir"
@@ -49,6 +50,29 @@ write_stage applying
 case "$operation" in
     reset-platform)
         "$youeye" cleanup --yes --keep-data
+        # Restored owner configuration can track newer components. A platform
+        # reset must converge on the exact signed bundle packaged in System.
+        source=$(jq -er '.release_set.source' "$sealed_release")
+        default_branch=$(jq -er '.release_set.branch' "$sealed_release")
+        "$youeye" repo set "$source"
+        "$youeye" channel set default --source "$source" --branch "$default_branch" \
+            --tag '' --fallback none
+        for component in spine control ui; do
+            case "$component" in
+                spine) key=spine ;;
+                control) key=control_panel ;;
+                ui) key=ui ;;
+            esac
+            branch=$(jq -er --arg key "$key" 'if .release_set.schema == "youeye.release-set.v2" then .release_set[$key].branch else .release_set.branch end' "$sealed_release")
+            if [ "$component" = spine ] && ! jq -e '.release_set.spine.tag // "" | length > 0' "$sealed_release" >/dev/null; then
+                "$youeye" channel set spine --source "$source" --branch "$branch" --tag '' --fallback none
+            else
+                tag=$(jq -er --arg key "$key" '.release_set[$key].tag' "$sealed_release")
+                digest=$(jq -er --arg key "$key" '.release_set[$key].artifact_sha256 | select(test("^[0-9a-f]{64}$"))' "$sealed_release")
+                "$youeye" channel set "$component" --source "$source" --branch "$branch" \
+                    --tag "$tag" --artifact-sha256 "$digest" --fallback none
+            fi
+        done
         ;;
     factory-reset)
         "$youeye" cleanup --yes

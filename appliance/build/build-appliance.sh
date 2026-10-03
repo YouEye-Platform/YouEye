@@ -25,6 +25,20 @@ lock_value() { jq -er "$1" "$release_lock"; }
 snapshot="$(lock_value '.image.debian_snapshot')"
 release_source="$(lock_value '.image.release_source')"
 release_branch="$(lock_value '.image.release_branch')"
+composition=false
+[[ $(lock_value '.schema') != youeye.appliance.release-lock.v2 ]] || composition=true
+spine_branch="$(jq -r '.components.spine.branch // .image.release_branch' "$release_lock")"
+cp_branch="$(jq -r '.components.control_panel.branch // .image.release_branch' "$release_lock")"
+ui_branch="$(jq -r '.components.ui.branch // .image.release_branch' "$release_lock")"
+apply_composition_manifest() {
+    $composition || return 0
+    local file=$1
+    jq -S --arg spine "$spine_branch" --arg cp "$cp_branch" --arg ui "$ui_branch" '
+      .release_set.schema="youeye.release-set.v2" |
+      .release_set.spine.branch=$spine | .release_set.control_panel.branch=$cp | .release_set.ui.branch=$ui
+    ' "$file" > "$file.composition"
+    mv -- "$file.composition" "$file"
+}
 image_version="$(lock_value '.image.version')"
 minimum_current_image_version="$(lock_value '.image.minimum_current_version')"
 market_source="$(lock_value '.market.source')"
@@ -50,6 +64,7 @@ live_build_attempts="${LIVE_BUILD_ATTEMPTS:-3}"
 live_build_apt_proxy="${LIVE_BUILD_APT_PROXY:-}"
 trust_class="${APPLIANCE_TRUST_CLASS:-development}"
 if [[ $trust_class != development && $trust_class != beta && $trust_class != stable ]]; then echo "Invalid appliance trust class" >&2; exit 1; fi
+if $composition && [[ $trust_class != development ]]; then echo "Composition requires development trust" >&2; exit 1; fi
 if [[ $trust_class != development ]]; then
     signing_public_key="$source_dir/installer/internal/installer/appliance-public.pub"
     python3 "$source_dir/installer/scripts/embed-public-trust.py" --source "$source_dir" --check --require "$trust_class"
@@ -179,8 +194,12 @@ if [[ ! $source_date_epoch =~ ^[1-9][0-9]*$ ]]; then
 fi
 export SOURCE_DATE_EPOCH="$source_date_epoch"
 build_id="appliance-${source_commit:0:12}-${source_date_epoch}"
+if $composition; then
+    composition_digest="$(sha256sum "$release_lock" | awk '{print $1}')"
+    build_id="${build_id}-composition-${composition_digest:0:12}"
+fi
 source_spine_version="$(sed -n 's/^var Version = "\([^"]*\)"/\1/p' "$source_dir/spine/internal/cmd/root.go")"
-if [[ -z $source_spine_version || $source_spine_version != "$spine_version" ]]; then
+if ! $composition && [[ -z $source_spine_version || $source_spine_version != "$spine_version" ]]; then
     printf 'Source Spine version must match the exact signed Spine release identity.\n' >&2
     exit 1
 fi
@@ -228,10 +247,16 @@ install -d -m 0755 "$output_dir" "$rootfs" "$artifacts" "$live_dir" "$bin_dir"
 
 printf '[1/8] Building exact source binaries\n'
 export GOCACHE="$work_dir/go-cache"
+if $composition; then
+    spine_input="${YOUEYE_COMPOSITION_SPINE_FILE:?Composition requires a verified released Spine binary}"
+    [[ -f $spine_input && ! -L $spine_input ]] || { echo "Invalid composition Spine input" >&2; exit 1; }
+    install -m 0755 -- "$spine_input" "$bin_dir/youeye"
+else
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$source_dir/spine" build \
     -trimpath -buildvcs=false \
     -ldflags="-s -w -buildid= -X github.com/youeye-platform/YouEye/spine/internal/cmd.Version=$spine_version -X github.com/youeye-platform/YouEye/spine/internal/cmd.BuildDate=$(date -u -d "@$spine_source_date_epoch" +%F)" \
     -o "$bin_dir/youeye" ./cmd/youeye
+fi
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$source_dir/installer" build \
     -trimpath -buildvcs=false -ldflags='-buildid=' \
     -o "$bin_dir/youeye-installer" .
@@ -404,6 +429,7 @@ jq -S -n \
         control_panel:{version:$cp_version,tag:$cp_tag,source_commit:$cp_commit,artifact_sha256:$cp_sha256},
         ui:{version:$ui_version,tag:$ui_tag,source_commit:$ui_commit,artifact_sha256:$ui_sha256}}
     }' > "$rootfs/usr/lib/youeye/appliance-release"
+apply_composition_manifest "$rootfs/usr/lib/youeye/appliance-release"
 chmod 0444 "$rootfs/usr/lib/youeye/appliance-release"
 
 if [[ $test_fault == system-health ]]; then
@@ -425,17 +451,19 @@ release_channels:
     fallback: []
   spine:
     source: $release_source
-    branch: $release_branch
+    branch: $spine_branch
     fallback: []
   control:
     source: $release_source
-    branch: $release_branch
+    branch: $cp_branch
+    pin_origin: installation
     tag: $cp_tag
     artifact_sha256: $cp_sha256
     fallback: []
   ui:
     source: $release_source
-    branch: $release_branch
+    branch: $ui_branch
+    pin_origin: installation
     tag: $ui_tag
     artifact_sha256: $ui_sha256
     fallback: []
@@ -614,6 +642,7 @@ if [[ $build_mode == signed ]]; then
         control_panel:{version:$cp_version,tag:$cp_tag,source_commit:$cp_commit,artifact_sha256:$cp_sha256},
         ui:{version:$ui_version,tag:$ui_tag,source_commit:$ui_commit,artifact_sha256:$ui_sha256}},
       artifacts:$artifacts[0],source_date_epoch:$source_date_epoch}' > "$artifacts/appliance-manifest.json"
+apply_composition_manifest "$artifacts/appliance-manifest.json"
     openssl pkeyutl -sign -rawin -inkey "$signing_key" -in "$artifacts/appliance-manifest.json" -out "$artifacts/appliance-manifest.json.sig" 2>/dev/null
 
     jq -S -n \
@@ -642,6 +671,7 @@ if [[ $build_mode == signed ]]; then
 	    control_panel:{version:$cp_version,tag:$cp_tag,source_commit:$cp_commit,artifact_sha256:$cp_sha256},
 	    ui:{version:$ui_version,tag:$ui_tag,source_commit:$ui_commit,artifact_sha256:$ui_sha256}},
 	  artifacts:$artifacts[0],source_date_epoch:$source_date_epoch}' > "$artifacts/system-update-manifest.json"
+apply_composition_manifest "$artifacts/system-update-manifest.json"
     openssl pkeyutl -sign -rawin -inkey "$signing_key" -in "$artifacts/system-update-manifest.json" -out "$artifacts/system-update-manifest.json.sig" 2>/dev/null
 
     dpkg-query --root="$rootfs" -W -f='${Package}\t${Version}\t${Architecture}\n' | jq -R -s \

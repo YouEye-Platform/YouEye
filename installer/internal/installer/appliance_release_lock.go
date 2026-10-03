@@ -77,9 +77,8 @@ func validateDetachedApplianceLock(provenanceRaw, lockRaw []byte, manifest appli
 		return fmt.Errorf("detached release lock Market differs from signed provenance")
 	}
 	if manifest.Trust.Class != "development" {
-		if lock.Market.Source != "https://github.com/YouEye-Platform/Market" || set.Source != "https://github.com/YouEye-Platform/YouEye" ||
-			set.Spine.SourceCommit != manifest.SourceCommit || set.ControlPanel.SourceCommit != manifest.SourceCommit || set.UI.SourceCommit != manifest.SourceCommit {
-			return fmt.Errorf("public detached release lock must bind official sources and the exact snapshot commit")
+		if lock.Market.Source != "https://github.com/YouEye-Platform/Market" || set.Source != "https://github.com/YouEye-Platform/YouEye" {
+			return fmt.Errorf("public detached release lock must bind official sources and exact signed component pins")
 		}
 	}
 	return nil

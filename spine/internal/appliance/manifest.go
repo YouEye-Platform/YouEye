@@ -119,6 +119,7 @@ type Manifest struct {
 // Spine is baked into the image; Control Panel and UI are immutable release
 // assets selected by tag and verified by digest during first deployment.
 type ReleaseSet struct {
+	Schema       string           `json:"schema,omitempty"`
 	Source       string           `json:"source"`
 	Branch       string           `json:"branch"`
 	Fallback     []string         `json:"fallback"`
@@ -128,6 +129,7 @@ type ReleaseSet struct {
 }
 
 type ComponentRelease struct {
+	Branch         string `json:"branch,omitempty"`
 	Version        string `json:"version"`
 	Tag            string `json:"tag,omitempty"`
 	SourceCommit   string `json:"source_commit"`
@@ -330,7 +332,27 @@ func (m Manifest) Validate() error {
 	return nil
 }
 
+// ComponentBranch preserves legacy single-branch manifests while allowing a
+// separately identified composition to pin each component's original branch.
+func (r ReleaseSet) ComponentBranch(c ComponentRelease) string {
+	if r.Schema == "youeye.release-set.v2" {
+		return c.Branch
+	}
+	return r.Branch
+}
 func (r ReleaseSet) Validate() error {
+	if r.Schema != "" && r.Schema != "youeye.release-set.v2" {
+		return fmt.Errorf("unsupported release-set schema")
+	}
+	for _, c := range []ComponentRelease{r.Spine, r.ControlPanel, r.UI} {
+		if r.Schema == "" && c.Branch != "" {
+			return fmt.Errorf("component branches require release-set v2")
+		}
+		if err := validateReleaseBranch(r.ComponentBranch(c)); err != nil {
+			return err
+		}
+	}
+
 	u, err := url.Parse(r.Source)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("source must be an absolute HTTP(S) repository URL")
@@ -341,13 +363,13 @@ func (r ReleaseSet) Validate() error {
 	if r.Fallback == nil || len(r.Fallback) != 0 {
 		return fmt.Errorf("fallback must be an explicit empty array")
 	}
-	if err := validateComponentRelease("spine", r.Branch, r.Spine, false); err != nil {
+	if err := validateComponentRelease("spine", r.ComponentBranch(r.Spine), r.Spine, r.Schema != ""); err != nil {
 		return err
 	}
-	if err := validateComponentRelease("cp", r.Branch, r.ControlPanel, true); err != nil {
+	if err := validateComponentRelease("cp", r.ComponentBranch(r.ControlPanel), r.ControlPanel, true); err != nil {
 		return err
 	}
-	if err := validateComponentRelease("ui", r.Branch, r.UI, true); err != nil {
+	if err := validateComponentRelease("ui", r.ComponentBranch(r.UI), r.UI, true); err != nil {
 		return err
 	}
 	return nil

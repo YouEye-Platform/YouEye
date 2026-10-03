@@ -124,3 +124,25 @@ func TestCandidateCacheAnswerRequiresVersionedHash(t *testing.T) {
 		t.Fatal("invalid cache digest accepted")
 	}
 }
+
+func TestCurrentPrivateServicesPolicy(t *testing.T) {
+	p := applianceReleasePolicy{Schema: releasePolicySchema, Provider: "custom", ReleasesAPI: "https://forge.example.test/api/v1/repos/owner/YouEye/releases", Mode: "track", Track: "stable", Freshness: "require-current", ServiceSelection: "current"}
+	if err := validateApplianceReleasePolicy(p); err != nil {
+		t.Fatal(err)
+	}
+	p.Track = "development"
+	if err := validateApplianceReleasePolicy(p); err == nil {
+		t.Fatal("current private development service selection accepted")
+	}
+	p.Mode = "exact"
+	p.Track = ""
+	p.ExactTag = "appliance-v0.5.23.0.4"
+	p.ManifestSHA256 = strings.Repeat("a", 64)
+	if err := validateApplianceReleasePolicy(p); err != nil {
+		t.Fatal(err)
+	}
+	p.Provider = "unsupported"
+	if err := validateApplianceReleasePolicy(p); err == nil {
+		t.Fatal("unsupported custom selection accepted")
+	}
+}

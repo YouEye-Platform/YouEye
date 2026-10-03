@@ -138,11 +138,14 @@ func verifyDistribution(raw []byte, channel, publicKey string, now time.Time, re
 	if err != nil || !ok || !ed25519.Verify(edkey, payload, sig) {
 		return catalog, "", fmt.Errorf("distribution signature rejected")
 	}
-	if json.Unmarshal(payload, &catalog) != nil || catalog.Schema != "youeye.distribution.v1" || catalog.Channel != channel || (channel != "stable" && channel != "beta") || catalog.Sequence < 1 || catalog.Repositories == nil {
+	if json.Unmarshal(payload, &catalog) != nil || catalog.Schema != "youeye.distribution.v1" || catalog.Channel != channel || (channel != "stable" && channel != "beta" && channel != "repository-main") || catalog.Sequence < 1 || catalog.Repositories == nil {
 		return catalog, "", fmt.Errorf("invalid distribution catalog")
 	}
 	if catalog.IssuedAt.After(now.Add(5*time.Minute)) || (!retained && !catalog.ExpiresAt.After(now)) || !catalog.ExpiresAt.After(catalog.IssuedAt) || catalog.ExpiresAt.Sub(catalog.IssuedAt) > 31*24*time.Hour {
 		return catalog, "", fmt.Errorf("distribution metadata expired or clock is incorrect")
+	}
+	if channel == "repository-main" && (catalog.Installation == nil || len(catalog.Repositories) != 0) {
+		return catalog, "", fmt.Errorf("invalid private installation envelope")
 	}
 	for name, repo := range catalog.Repositories {
 		for _, raw := range repo.Releases {

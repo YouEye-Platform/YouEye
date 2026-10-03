@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"io"
 	"net/http"
 	"strings"
@@ -22,8 +23,7 @@ type systemUpdateService interface {
 type systemUpdateSourceRequest struct {
 	Manifest       string `json:"manifest"`
 	Signature      string `json:"signature,omitempty"`
-	Provider       string `json:"provider,omitempty"`
-	ReleasesAPI    string `json:"releases_api,omitempty"`
+	RepositoryURL  string `json:"repository_url,omitempty"`
 	Channel        string `json:"channel,omitempty"`
 	Branch         string `json:"branch,omitempty"`
 	ExactTag       string `json:"exact_tag,omitempty"`
@@ -92,8 +92,8 @@ func (s *Server) systemUpdateSourceOptions(r *http.Request, request systemUpdate
 	manifest := strings.TrimSpace(request.Manifest)
 	channel := strings.TrimSpace(request.Channel)
 	if manifest != "" {
-		if channel != "" || strings.TrimSpace(request.Branch) != "" || strings.TrimSpace(request.ExactTag) != "" || strings.TrimSpace(request.Provider) != "" || strings.TrimSpace(request.ReleasesAPI) != "" {
-			return systemupdate.SourceOptions{}, errors.New("an exact manifest cannot be combined with a release provider, API, channel, or tag")
+		if channel != "" || strings.TrimSpace(request.Branch) != "" || strings.TrimSpace(request.ExactTag) != "" || strings.TrimSpace(request.RepositoryURL) != "" {
+			return systemupdate.SourceOptions{}, errors.New("an exact manifest cannot be combined with a repository, channel, or tag")
 		}
 		return systemupdate.SourceOptions{
 			ManifestSource: manifest, SignatureSource: strings.TrimSpace(request.Signature),
@@ -104,8 +104,16 @@ func (s *Server) systemUpdateSourceOptions(r *http.Request, request systemUpdate
 	if strings.TrimSpace(request.Signature) != "" {
 		return systemupdate.SourceOptions{}, errors.New("a detached signature URL requires an exact manifest URL")
 	}
+	repositoryURL := strings.TrimSpace(request.RepositoryURL)
+	if repositoryURL == "" {
+		repositoryURL = releasecache.OfficialRepository
+	}
+	source, err := releasecache.ParseRepositorySource(repositoryURL)
+	if err != nil {
+		return systemupdate.SourceOptions{}, err
+	}
 	options, _, err := systemupdate.ResolveRelease(r.Context(), s.releaseHTTP, systemupdate.ReleaseSelection{
-		Provider: strings.TrimSpace(request.Provider), ReleasesAPI: strings.TrimSpace(request.ReleasesAPI),
+		Provider: source.Adapter, ReleasesAPI: source.ReleasesAPI,
 		Channel: channel, Branch: strings.TrimSpace(request.Branch), ExactTag: strings.TrimSpace(request.ExactTag), ManifestSHA256: strings.TrimSpace(request.ManifestSHA256),
 	})
 	if err != nil {

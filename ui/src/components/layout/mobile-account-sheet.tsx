@@ -146,8 +146,10 @@ export function MobileAccountSheet({ username, email, isAdmin }: MobileAccountSh
   }
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
-    router.push("/login");
+    const response = await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+    const result = response?.ok ? await response.json() : null;
+    if (result?.logoutUrl) window.location.assign(result.logoutUrl);
+    else router.push("/login");
   }
 
   const THEMES: { mode: ThemeMode; Icon: typeof Sun; label: string }[] = [

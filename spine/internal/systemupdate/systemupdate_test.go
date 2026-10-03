@@ -176,6 +176,9 @@ func newManagerFixture(t *testing.T) *managerFixture {
 	if err := os.WriteFile(cmdlinePath, []byte("root=PARTLABEL=YE-SYSTEM-A ro"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "boot-id"), []byte("initial-boot"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	f := &managerFixture{dir: dir, manifestPath: manifestPath, signaturePath: signaturePath, files: files, update: update}
 	journalPath := filepath.Join(dir, "state", "system-update", "journal.json")
 	cacheDir := filepath.Join(dir, "data", "system-update")
@@ -193,7 +196,8 @@ func newManagerFixture(t *testing.T) *managerFixture {
 		CurrentManifestPath: currentPath, StatePath: statePath,
 		JournalPath: journalPath, HealthyManifestPath: filepath.Join(dir, "state", "system-update", "healthy-manifest.json"), ConvergencePath: filepath.Join(dir, "state", "first-deploy", "convergence-intent.json"), CacheDir: cacheDir,
 		TrustKeyPath: filepath.Join(bundleDir, "trust.pub"), KernelCmdlinePath: cmdlinePath, ESPMountpoint: filepath.Join(dir, "efi"),
-		Now: func() time.Time { return time.Unix(100, 0) },
+		BootIDPath: filepath.Join(dir, "boot-id"),
+		Now:        func() time.Time { return time.Unix(100, 0) },
 		DiscoverLayout: func(active string) (Layout, error) {
 			copy := layout
 			if active == "B" {
@@ -899,6 +903,9 @@ func TestCandidateBlessingAndAutomaticFallbackState(t *testing.T) {
 		if _, err := f.manager.Activate(context.Background(), false); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.WriteFile(f.manager.config.BootIDPath, []byte("fallback-boot"), 0600); err != nil {
+			t.Fatal(err)
+		}
 		f.bootTarget(t)
 		if _, err := f.manager.Reconcile(context.Background(), ReconcileOptions{}); err != nil {
 			t.Fatal(err)
@@ -927,12 +934,19 @@ func TestCandidateBlessingAndAutomaticFallbackState(t *testing.T) {
 		}
 	})
 
-	t.Run("rollback before candidate userspace reconciles", func(t *testing.T) {
+	t.Run("pending update stays armed until the next boot", func(t *testing.T) {
 		f := newManagerFixture(t)
 		if _, err := f.manager.Stage(context.Background(), f.sourceOptions()); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := f.manager.Activate(context.Background(), false); err != nil {
+			t.Fatal(err)
+		}
+		pending, err := f.manager.Reconcile(context.Background(), ReconcileOptions{})
+		if err != nil || pending.Status.State != PhasePending || f.bootRemoves != 0 {
+			t.Fatalf("same-boot reconcile dropped pending trial: %+v removes=%d err=%v", pending, f.bootRemoves, err)
+		}
+		if err := os.WriteFile(f.manager.config.BootIDPath, []byte("fallback-boot"), 0600); err != nil {
 			t.Fatal(err)
 		}
 		rolledBack, err := f.manager.Reconcile(context.Background(), ReconcileOptions{})

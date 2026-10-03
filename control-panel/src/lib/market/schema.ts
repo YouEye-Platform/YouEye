@@ -225,6 +225,7 @@ export const SSOSetupSchema = z.object({
 export const SSOSchema = z.object({
   type: z.enum(['oauth2', 'ldap']).default('oauth2'),
   callback_path: z.string().min(1),
+  backchannel_logout_path: z.string().regex(/^\/(?!\/)[^?#]*$/).optional(),
   entry_url: z.string().optional(),
   additional_callbacks: z.array(z.string()).default([]),
   adminMapping: AdminMappingSchema.optional(),

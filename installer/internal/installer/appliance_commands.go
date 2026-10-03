@@ -272,6 +272,7 @@ sync -f "$state_root/installer"; sync -f "$state_root"`
 		{Stage: stageVerifyInstall, Name: "e2fsck", Args: []string{"-f", "-n", systemA}},
 		{Stage: stageVerifyInstall, Name: "e2fsck", Args: []string{"-f", "-n", systemB}},
 		{Stage: stageVerifyInstall, Name: "e2fsck", Args: []string{"-f", "-n", recovery}},
+		{Stage: stageVerifyInstall, Name: "sh", Args: []string{"-c", preserveSystemUpdateReconcileScript(), "youeye-preserve-update-history", stateMount, assets.TransactionID, assets.ManifestSHA256, assets.ImageVersion}},
 		installJournalCommand(stageVerifyInstall, plan, assets),
 		{Stage: stageVerifyInstall, Name: "sync"},
 		{Stage: stageVerifyInstall, Name: "umount", Args: []string{stateMount}},
@@ -454,8 +455,41 @@ fi`
 	return append(args, assets.AuthorizedKeys...)
 }
 
+func preserveSystemUpdateReconcileScript() string {
+	return `set -eu
+state_root="$1"; transaction="$2"; manifest_sha="$3"; image="$4"
+install_journal="$state_root/installer/install-journal.json"
+manifest="$state_root/installer/appliance-manifest.json"
+state="$state_root/appliance-state.json"
+jq -e --arg transaction "$transaction" --arg manifest_sha "$manifest_sha" --arg image "$image" '
+  .schema == "youeye.appliance.install-journal.v3" and
+  .operation == "preserve-reinstall" and .transaction_id == $transaction and
+  .manifest_sha256 == $manifest_sha and .image_version == $image and
+  (.stage == "activate-system-boot" or .stage == "verify-install")
+' "$install_journal" >/dev/null
+printf '%s  %s\n' "$manifest_sha" "$manifest" | sha256sum -c - >/dev/null
+jq -e --arg image "$image" '.slots.current == "A" and .slots.current_image_version == $image and .transaction == {}' "$state" >/dev/null
+updates="$state_root/system-update"
+history="$updates/history/preserve-reinstall-$transaction"
+if [ -e "$updates/journal.json" ] || [ -e "$updates/healthy-manifest.json" ] || [ -e "$updates/healthy-manifest.json.sig" ]; then
+  mkdir -m 0700 -p "$history"
+  for file in journal.json healthy-manifest.json healthy-manifest.json.sig; do
+    if [ -e "$updates/$file" ]; then
+      test ! -e "$history/$file"
+    fi
+  done
+  for file in healthy-manifest.json healthy-manifest.json.sig journal.json; do
+    if [ -e "$updates/$file" ]; then
+      mv "$updates/$file" "$history/$file"
+    fi
+  done
+  sync -f "$history"; sync -f "$updates"
+fi`
+}
+
 func applianceLoaderConfigScript() string {
 	return `set -eu
+rm -f /mnt/youeye-esp/loader/entries/youeye-system-a*.conf /mnt/youeye-esp/loader/entries/youeye-system-b*.conf
 cat > /mnt/youeye-esp/loader/loader.conf <<'EOF'
 timeout 3
 editor no
@@ -480,6 +514,7 @@ sort-key zz-youeye-recovery
 version 1
 efi /EFI/YouEye/youeye-recovery.efi
 EOF
+sync -f /mnt/youeye-esp/loader/entries
 printf 'type1\n' > /mnt/youeye-esp/loader/entries.srel`
 }
 

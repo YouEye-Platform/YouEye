@@ -34,7 +34,7 @@ func applianceReleaseAnchor(release applianceRelease) ([]byte, error) {
 }
 
 func applianceReleaseTrustClass(release applianceRelease) string {
-	if !privateForgejoMainRelease(release) {
+	if !repositoryMainRelease(release) {
 		if strings.HasPrefix(release.TagName, "appliance-v") {
 			return "stable"
 		}

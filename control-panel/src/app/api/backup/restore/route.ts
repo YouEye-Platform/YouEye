@@ -134,10 +134,10 @@ export async function POST(request: NextRequest) {
           updatedAt: completedAt,
           completedAt,
         });
+        if (restoreCore) await spineClient.restartControl(5);
 		if (rollbackPath) await rm(rollbackPath, { recursive: true, force: true }).catch(() => undefined);
         send({ status: 'completed', stage: 'completed', message: restoreCore ? 'Restore completed. Server interface restart scheduled.' : 'Selected apps restored.', progress: 100 });
         sendChunk('data: [DONE]\n\n');
-        if (restoreCore) await spineClient.restartControl(5).catch(() => undefined);
       } catch (error) {
 		let message = error instanceof Error ? error.message : 'Restore failed';
 		if (restoreCore && rollbackPath) {

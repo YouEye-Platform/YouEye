@@ -85,6 +85,10 @@ Privacy-friendly translation with history and bookmarks.
 
 Market lets you install third-party apps with one click. Available apps include productivity tools, media players, utilities, and more.
 
+If a source or an individual app manifest cannot be loaded, Market shows a warning
+and keeps the other available apps visible. Check the affected source's repository
+and branch in Market settings, then reload after correcting the source.
+
 ### Installing Apps
 
 1. Open **Settings** -> **Market**

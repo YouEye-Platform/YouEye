@@ -21,6 +21,8 @@ import {
   generateCSRFToken,
 } from '@/lib/auth/session';
 import { isSettingsPath, getSettingsPublicUrl } from '@/lib/settings-public-path';
+import { verifyClientIdToken } from '@/lib/identity/tokens';
+import { getOAuthConfig } from '@/lib/auth/oauth';
 
 function hasAdminClaim(groups: string[], isAdminClaim?: boolean): boolean {
   return isAdminClaim === true || groups.includes('admin');
@@ -87,7 +89,10 @@ export async function GET(request: NextRequest) {
     const isAdmin = hasAdminClaim(groups, userInfo.is_admin);
 
     // Create session
-    const sessionToken = await createSession(username, isAdmin, groups, 'sso');
+    const identityClaims = tokenData.id_token ? await verifyClientIdToken(tokenData.id_token, getOAuthConfig().clientId) : null;
+    if (!identityClaims?.sid || identityClaims.sub !== userInfo.sub) throw new Error('Identity session is missing or mismatched');
+    const sessionToken = await createSession(username, isAdmin, groups, 'sso',
+      { userId: identityClaims.sub, sessionId: identityClaims.sid });
     const csrfToken = generateCSRFToken();
     await setSessionCookies(sessionToken, csrfToken, { request });
 

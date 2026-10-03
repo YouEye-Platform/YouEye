@@ -9,11 +9,14 @@ import { cookies, headers } from 'next/headers';
 import { SignJWT, jwtVerify, type JWTPayload } from 'jose';
 import { readFileSync } from 'fs';
 import { randomBytes } from 'crypto';
+import { getUserByUsername, isIdentitySessionActiveForUser, isUserTokenInvalidated } from '@/lib/identity/store';
+import { identitySessionFromCookie, SESSION_COOKIE as ID_SESSION_COOKIE } from '@/lib/identity/tokens';
 
 // Configuration
 const SESSION_COOKIE = 'ye-session';
 const CSRF_COOKIE = 'ye-csrf';
-const SESSION_DURATION = 60 * 60 * 24; // 24 hours in seconds
+const SESSION_DURATION = 60 * 60 * 24; // Local/PAM recovery session: 24 hours
+const SSO_SESSION_DURATION = 60 * 60 * 24 * 30;
 const SETUP_SESSION_DURATION = 60 * 60 * 2; // 2 hours in seconds
 
 /**
@@ -52,6 +55,8 @@ export interface SessionPayload extends JWTPayload {
   isAdmin: boolean;
   groups: string[];
   authMethod?: 'pam' | 'sso' | 'cli' | 'setup';
+  identityId?: string;
+  identitySessionId?: string;
   setupOwnerId?: string;
   setupSessionId?: string;
   iat: number;
@@ -65,7 +70,8 @@ export async function createSession(
   username: string,
   isAdmin: boolean,
   groups: string[],
-  authMethod: 'pam' | 'sso' = 'pam'
+  authMethod: 'pam' | 'sso' = 'pam',
+  identity?: { userId: string; sessionId: string | null },
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   
@@ -74,10 +80,11 @@ export async function createSession(
     isAdmin,
     groups,
     authMethod,
+    ...(identity ? { identityId: identity.userId, identitySessionId: identity.sessionId } : {}),
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt(now)
-    .setExpirationTime(now + SESSION_DURATION)
+    .setExpirationTime(now + (authMethod === 'sso' ? SSO_SESSION_DURATION : SESSION_DURATION))
     .sign(getJWTSecret());
 
   return token;
@@ -109,7 +116,16 @@ export async function createSetupSession(input: {
 export async function verifySession(token: string): Promise<SessionPayload | null> {
   try {
     const { payload } = await jwtVerify(token, getJWTSecret());
-    return payload as SessionPayload;
+    const session = payload as SessionPayload;
+    if (session.authMethod === 'setup') return session;
+    if (session.identitySessionId && session.identityId) {
+      return await isIdentitySessionActiveForUser(session.identitySessionId, session.identityId) ? session : null;
+    }
+    if (session.iat) {
+      const user = await getUserByUsername(session.username);
+      if (user && await isUserTokenInvalidated(user.id, session.iat)) return null;
+    }
+    return session;
   } catch {
     return null;
   }
@@ -169,7 +185,15 @@ export async function getSession(): Promise<SessionPayload | null> {
     return null;
   }
 
-  return verifySession(sessionCookie.value);
+  const session = await verifySession(sessionCookie.value);
+  if (!session || session.authMethod !== 'sso') return session;
+  const idCookie = cookieStore.get(ID_SESSION_COOKIE)?.value;
+  if (!idCookie) return null;
+  const identity = await identitySessionFromCookie(idCookie);
+  if (!identity) return null;
+  if (session.identityId && session.identityId !== identity.sub) return null;
+  if (session.identitySessionId && session.identitySessionId !== identity.sid) return null;
+  return session;
 }
 
 /**
@@ -193,17 +217,18 @@ function shouldUseSecureCookies(request?: Request): boolean {
 export async function setSessionCookies(
   token: string,
   csrfToken: string,
-  options: { request?: Request } = {}
+  options: { request?: Request; maxAge?: number } = {}
 ): Promise<void> {
   const cookieStore = await cookies();
   const secure = shouldUseSecureCookies(options.request);
   const sameSite = secure ? 'none' : 'lax';
+  const sessionAge = options.maxAge ?? SSO_SESSION_DURATION;
   
   cookieStore.set(SESSION_COOKIE, token, {
     httpOnly: true,
     secure,
     sameSite,
-    maxAge: SESSION_DURATION,
+    maxAge: sessionAge,
     path: '/',
   });
 
@@ -212,7 +237,7 @@ export async function setSessionCookies(
     httpOnly: false,
     secure,
     sameSite,
-    maxAge: SESSION_DURATION,
+    maxAge: sessionAge,
     path: '/',
   });
 }

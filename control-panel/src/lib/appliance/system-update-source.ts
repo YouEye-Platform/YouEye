@@ -11,7 +11,6 @@ import {
 const SOURCE_PATH = process.env.YOUEYE_SYSTEM_UPDATE_SOURCE_PATH
   || '/var/lib/youeye/system-update-source.json';
 const OFFICIAL_REPOSITORY = 'https://github.com/YouEye-Platform/YouEye';
-const PAGINATION_PARAMETERS = new Set(['limit', 'per_page', 'page']);
 
 function safeReleaseBranch(value: string): boolean {
   return value.length > 0 && value.length <= 96 && value.split('/').every((part) =>
@@ -27,78 +26,42 @@ function safeApplianceReleaseTag(value: string): boolean {
   return safeReleaseBranch(value.slice('appliance-'.length, marker));
 }
 
-function validateReleasesAPI(raw: string, provider: ApplianceSystemUpdateSelection['provider']): string {
+export function normalizeRepositoryURL(raw: string): string {
   const parsed = new URL(raw);
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash) {
-    throw new Error('System update releases API must use HTTPS without credentials or a fragment.');
+  const parts = parsed.pathname.replace(/\/$/, '').replace(/\.git$/, '').split('/');
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash || /[%\\]/.test(parsed.pathname) ||
+      parts.length !== 3 || parts[0] !== '' || parts.slice(1).some((part) => !/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(part) || part.endsWith('.'))) {
+    throw new Error('Enter an HTTPS repository URL with an owner and repository, without credentials, query or fragment.');
   }
-  for (const key of parsed.searchParams.keys()) {
-    if (!PAGINATION_PARAMETERS.has(key)) throw new Error(`System update releases API contains unsupported query parameter ${key}.`);
-  }
-  if (provider === 'github') {
-    const parts = parsed.pathname.replace(/^\/+|\/+$/g, '').split('/');
-    if (parsed.hostname.toLowerCase() !== 'api.github.com' || parts.length !== 4 || parts[0] !== 'repos' || parts[3] !== 'releases') {
-      throw new Error('GitHub releases API must identify one api.github.com repository.');
-    }
-  }
+  parsed.pathname = `/${parts[1]}/${parts[2]}`;
   return parsed.toString();
 }
 
 function officialSelection(channel: ApplianceSystemUpdateSelection['channel'] = 'stable'): ApplianceSystemUpdateSelection {
-  return { provider: 'github', channel };
-}
-
-function releaseAPIFromRepository(raw: string): Pick<ApplianceSystemUpdateSelection, 'provider' | 'releases_api'> | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) return null;
-  const parts = parsed.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '').split('/');
-  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
-  if (parsed.hostname.toLowerCase() === 'github.com') {
-    const official = parsed.toString().replace(/\/$/, '') === OFFICIAL_REPOSITORY;
-    return {
-      provider: 'github',
-      ...(official ? {} : { releases_api: `https://api.github.com/repos/${parts[0]}/${parts[1]}/releases` }),
-    };
-  }
-  return {
-    provider: 'forgejo',
-    releases_api: `${parsed.protocol}//${parsed.host}/api/v1/repos/${parts[0]}/${parts[1]}/releases`,
-  };
+  return { repository_url: OFFICIAL_REPOSITORY, channel };
 }
 
 export function deriveSystemUpdateSelection(runtime: SpineRuntimeStatus): ApplianceSystemUpdateSelection {
-  if (runtime.artifact_kind === 'production' || runtime.artifact_kind === 'stable') return officialSelection('stable');
-  const derived = runtime.release_source ? releaseAPIFromRepository(runtime.release_source) : null;
-  if (derived) return { ...derived, channel: 'development' };
-  return officialSelection('development');
+  if (runtime.release_source) {
+    try {
+      return { repository_url: normalizeRepositoryURL(runtime.release_source), channel: runtime.release_branch === 'main' ? 'stable' : 'development' };
+    } catch { /* No usable sealed repository identity. */ }
+  }
+  return officialSelection(runtime.artifact_kind === 'production' || runtime.artifact_kind === 'stable' ? 'stable' : 'development');
 }
 
 export function normalizeSystemUpdateSelection(value: unknown): ApplianceSystemUpdateSelection {
   if (!value || typeof value !== 'object') throw new Error('System update source is invalid.');
   const raw = value as Record<string, unknown>;
-  const provider = typeof raw.provider === 'string' ? raw.provider.trim().toLowerCase() : '';
+  const repository = typeof raw.repository_url === 'string' ? raw.repository_url.trim() : '';
   const channel = typeof raw.channel === 'string' ? raw.channel.trim().toLowerCase() : '';
-  if (!['github', 'forgejo', 'custom'].includes(provider)) throw new Error('System update provider is invalid.');
+  if (!repository) throw new Error('A repository URL is required.');
   if (!['stable', 'development', 'branch', 'exact'].includes(channel)) throw new Error('System update channel is invalid.');
 
   const selection: ApplianceSystemUpdateSelection = {
-    provider: provider as ApplianceSystemUpdateSelection['provider'],
+    repository_url: normalizeRepositoryURL(repository),
     channel: channel as ApplianceSystemUpdateSelection['channel'],
   };
-  const releasesAPI = typeof raw.releases_api === 'string' ? raw.releases_api.trim() : '';
-  if (provider === 'github') {
-    if (releasesAPI) {
-      selection.releases_api = validateReleasesAPI(releasesAPI, 'github');
-    }
-  } else {
-    if (!releasesAPI) throw new Error('Forgejo and Custom HTTPS require a releases API URL.');
-    selection.releases_api = validateReleasesAPI(releasesAPI, provider as 'forgejo' | 'custom');
-  }
 
   const exactTag = typeof raw.exact_tag === 'string' ? raw.exact_tag.trim() : '';
   const manifestSHA256 = typeof raw.manifest_sha256 === 'string' ? raw.manifest_sha256.trim().toLowerCase() : '';

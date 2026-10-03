@@ -284,7 +284,7 @@ export async function updateLXDApp(
       { timeout: 300_000 }
     );
     if (downloadResult.exitCode !== 0) throw new Error(`Download failed: ${downloadResult.stderr}`);
-    const signatureResult = await execShell(containerName, signedReleaseVerificationShell(release.downloadURL, '/tmp/update.tar', release.artifactSHA256), { timeout: 300_000 });
+    const signatureResult = await execShell(containerName, signedReleaseVerificationShell(release.downloadURL, '/tmp/update.tar', release.artifactSHA256, appDef.id === 'ui' ? 'ui' : 'app'), { timeout: 300_000 });
     if (signatureResult.exitCode !== 0) throw new Error(`Signed release verification failed: ${signatureResult.stderr}`);
     emit({ stage: 'rebuilding', message: 'Release signature and artifact digest verified', container: containerName, progress: 30 });
 

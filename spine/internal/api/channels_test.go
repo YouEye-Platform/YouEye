@@ -135,7 +135,7 @@ func TestConfigPATCHRejectsBadBranch(t *testing.T) {
 	s := testServer()
 	patch := map[string]interface{}{
 		"release_channels": map[string]interface{}{
-			"spine": map[string]interface{}{"branch": "bad/slash"},
+			"spine": map[string]interface{}{"branch": "bad branch"},
 		},
 	}
 	body, _ := json.Marshal(patch)

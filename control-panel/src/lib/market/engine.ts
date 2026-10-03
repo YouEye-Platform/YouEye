@@ -1534,6 +1534,9 @@ async function installAppLocked(
         clientId: ssoSlug,
         name: manifest.metadata.name,
         redirectUris,
+        postLogoutRedirectUris: [`https://${config.domain}/`, appUrl + '/'],
+        backchannelLogoutUri: manifest.sso.backchannel_logout_path
+          ? `${appUrl}${manifest.sso.backchannel_logout_path}` : undefined,
         scopes: oauthScopesForManifest(manifest),
       });
 

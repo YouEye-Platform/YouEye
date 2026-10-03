@@ -383,6 +383,7 @@ async function installNodeAndApp(
   marketArtifact?: StagedMarketNativeArtifact,
 ): Promise<string> {
   const cn = spec.containerName;
+  const trustScope = spec.name === 'ui' ? 'ui' : 'app';
 
   // Install prerequisites
   await execShell(cn, 'apt-get update && apt-get install -y curl ca-certificates pamtester', {
@@ -414,7 +415,7 @@ async function installNodeAndApp(
 
   const cachedRelease = marketArtifact ? null : await cachedReleaseBytes(releaseURL);
   if (cachedRelease) {
-    await verifySignedReleaseArtifactBuffer(releaseURL, cachedRelease, 'standalone.tar', artifactSHA256);
+    await verifySignedReleaseArtifactBuffer(releaseURL, cachedRelease, 'standalone.tar', artifactSHA256, trustScope);
     await incusUploadFile(cn, '/tmp/app.tar', cachedRelease, { timeout: 300_000, mode: '0600' });
   }
   const downloadURL = marketArtifact ? '' : shellQuote(releaseURL);
@@ -428,7 +429,7 @@ async function installNodeAndApp(
     : `
     echo "Downloading selected standalone release..."
     retry 3 5 curl -fsSL ${downloadURL} -o /tmp/app.tar
-    ${signedReleaseVerificationShell(releaseURL, '/tmp/app.tar', artifactSHA256)}
+    ${signedReleaseVerificationShell(releaseURL, '/tmp/app.tar', artifactSHA256, trustScope)}
     `;
 
   const downloadScript = `

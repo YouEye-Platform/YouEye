@@ -26,15 +26,6 @@ export async function POST(
       return NextResponse.json(await spineClient.activateApplianceSystemUpdate(body.reboot === true));
     }
     const selection = body as ApplianceSystemUpdateSelection;
-    if (!['github', 'forgejo', 'custom'].includes(selection.provider)) {
-      return NextResponse.json({ error: 'Choose Official GitHub, Forgejo, or Custom HTTPS.' }, { status: 400 });
-    }
-    if (selection.provider !== 'github' && !selection.releases_api?.trim()) {
-      return NextResponse.json({ error: 'Forgejo and Custom HTTPS require a releases API URL.' }, { status: 400 });
-    }
-    if (!['stable', 'development', 'exact'].includes(selection.channel)) {
-      return NextResponse.json({ error: 'Choose Stable, Development, or an exact release.' }, { status: 400 });
-    }
     const persisted = await saveSystemUpdateSelection(selection);
     const effective = selection.replace_failed === true
       ? { ...persisted, replace_failed: true }

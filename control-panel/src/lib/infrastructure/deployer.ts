@@ -191,7 +191,7 @@ export function hasPointerIdentitySettings(settings: PointerIdentitySettings): b
  * platform issuer. This is shared by first setup and later domain changes so
  * the managed environment can never retain an obsolete issuer.
  */
-export async function configurePointerForPlatform(): Promise<'deployed' | 'configured'> {
+export async function configurePointerForPlatform(oldIssuer?: string): Promise<'deployed' | 'configured'> {
   const settings = await settingsService.getRaw();
   if (!hasPointerIdentitySettings(settings)) {
     throw new Error('YouEye AI service requires the platform domain and identity subdomain');
@@ -206,7 +206,7 @@ export async function configurePointerForPlatform(): Promise<'deployed' | 'confi
     // remain in persistent platform storage.
     await deployPointerContainerFromConfiguredSource(true);
   } else if (exists) {
-    await configurePointerService();
+    await configurePointerService(oldIssuer);
   } else {
     await deployPointerContainerFromConfiguredSource();
   }

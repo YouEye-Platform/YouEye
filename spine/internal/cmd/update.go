@@ -283,7 +283,7 @@ func updateSelf() error {
 		os.Remove(tmpFile)
 		return fmt.Errorf("failed to download: %w", err)
 	}
-	if err := releases.VerifySignedReleaseArtifact(dlClient, downloadURL, tmpFile, cand.ArtifactSHA256); err != nil {
+	if err := releases.VerifySignedReleaseArtifact(dlClient, downloadURL, tmpFile, cand.ArtifactSHA256, "spine"); err != nil {
 		os.Remove(tmpFile)
 		update.Fail("spine", Version, "release signature verification failed")
 		return fmt.Errorf("verify signed Spine release: %w", err)
@@ -640,7 +640,7 @@ func updateControl() error {
 	if err != nil {
 		return fmt.Errorf("failed to download: %w", err)
 	}
-	if err := releases.VerifySignedReleaseArtifact(cpDlClient, downloadURL, tmpFile, controlChannel.ArtifactSHA256); err != nil {
+	if err := releases.VerifySignedReleaseArtifact(cpDlClient, downloadURL, tmpFile, controlChannel.ArtifactSHA256, "cp"); err != nil {
 		return fmt.Errorf("verify signed Control Panel release artifact: %w", err)
 	}
 

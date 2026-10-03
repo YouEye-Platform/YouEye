@@ -272,6 +272,9 @@ func runDeploy() error {
 	if err := finalizeDeployment(ip); err != nil {
 		return fmt.Errorf("deployment finalisation incomplete: %w", err)
 	}
+	if err := finishApplianceServiceChannels(); err != nil {
+		return fmt.Errorf("complete tracked service channels: %w", err)
+	}
 
 	fmt.Println("")
 	fmt.Println("========================================")
@@ -301,6 +304,9 @@ func resumeExistingDeployment() error {
 	}
 	if err := finalizeDeployment(hostIP); err != nil {
 		return fmt.Errorf("deployment finalisation incomplete: %w", err)
+	}
+	if err := finishApplianceServiceChannels(); err != nil {
+		return fmt.Errorf("complete tracked service channels: %w", err)
 	}
 
 	fmt.Println("")

@@ -71,5 +71,5 @@ test('Pointer waits for a real setup issuer and is refreshed on every domain cha
   assert.match(setup, /ai\?: StepState/);
   assert.match(setup, /shouldRunStep\('ai'\)[\s\S]*configurePointerForPlatform\(\)[\s\S]*saveStepState\('ai', 'done'\)/);
   assert.match(setupPage, /id: 'ai', label: t\('configuringAi'\)/);
-  assert.match(reconfigure, /step: 'ai', status: 'running'[\s\S]*configurePointerForPlatform\(\)/);
+  assert.match(reconfigure, /step: 'ai', status: 'running'[\s\S]*configurePointerForPlatform\(journal\.oldIdentityOrigin\)/);
 });

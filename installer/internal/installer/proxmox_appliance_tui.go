@@ -2,6 +2,7 @@ package installer
 
 import (
 	"fmt"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"os"
 	"strconv"
 	"strings"
@@ -68,7 +69,7 @@ var proxmoxAdvancedFields = []proxmoxFormField{
 	{Label: "DNS", Kind: "input", InputKey: "dns", Page: 2},
 	{Label: "Continue", Kind: "continue", Page: 2},
 	{Label: "Release source", Kind: "release-provider", Page: 3},
-	{Label: "Releases API", Kind: "input", InputKey: "releases-api", Page: 3},
+	{Label: "Repository URL", Kind: "input", InputKey: "releases-api", Page: 3},
 	{Label: "Release track", Kind: "channel", Page: 3},
 	{Label: "Branch", Kind: "input", InputKey: "branch", Page: 3},
 	{Label: "Freshness", Kind: "freshness", Page: 3},
@@ -183,6 +184,11 @@ func (m proxmoxApplianceModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						input := m.inputs[key]
 						input.SetValue("")
 						m.inputs[key] = input
+					}
+					if m.opts.ApplianceRepository != "" {
+						selected := proxmoxApplianceConfigFromOptions(m.opts, m.inventory)
+						m.config.RepositoryURL, m.config.ReleaseProvider, m.config.ReleasesAPI = selected.RepositoryURL, selected.ReleaseProvider, selected.ReleasesAPI
+						m.config.Channel, m.config.ReleaseBranch, m.config.ReleaseTag, m.config.ISOSHA256 = selected.Channel, selected.ReleaseBranch, selected.ReleaseTag, selected.ISOSHA256
 					}
 					m.config.Freshness = "require-current"
 					m.config.EraseConfirmed = false
@@ -310,7 +316,7 @@ func (m *proxmoxApplianceModel) initAdvancedInputs() {
 		"cpu": strconv.Itoa(m.config.CPUCores), "ram": strconv.Itoa(m.config.RAMMiB),
 		"target-size": strconv.Itoa(m.config.TargetDiskGiB),
 		"address":     m.config.Network.Address, "gateway": m.config.Network.Gateway, "dns": m.config.Network.DNS,
-		"releases-api": nonDefaultReleaseAPI(m.config.ReleaseProvider, m.config.ReleasesAPI),
+		"releases-api": repositoryInputValue(m.config.ReleaseProvider, m.config.ReleasesAPI),
 		"branch":       m.config.ReleaseBranch, "tag": m.config.ReleaseTag, "digest": m.config.ISOSHA256, "keys": m.config.SSHKeysPath,
 		"root-password": "", "root-password-confirm": "",
 	}
@@ -617,8 +623,12 @@ func (m *proxmoxApplianceModel) applyAdvancedInputs() error {
 	if m.config.ReleaseProvider == defaultApplianceProvider {
 		m.config.ReleasesAPI = defaultApplianceReleasesAPI
 	} else {
-		m.config.ReleasesAPI = strings.TrimSpace(m.inputs["releases-api"].Value())
-		m.releaseAPIs[m.config.ReleaseProvider] = m.config.ReleasesAPI
+		source, sourceErr := releasecache.ParseRepositorySource(m.inputs["releases-api"].Value())
+		if sourceErr != nil {
+			return sourceErr
+		}
+		m.config.RepositoryURL, m.config.ReleasesAPI = source.URL, source.ReleasesAPI
+		m.releaseAPIs[m.config.ReleaseProvider] = source.URL
 	}
 	m.config.ReleaseTag = strings.TrimSpace(m.inputs["tag"].Value())
 	m.config.ReleaseBranch = strings.TrimSpace(m.inputs["branch"].Value())
@@ -756,7 +766,7 @@ func (m *proxmoxApplianceModel) cycleAdvancedSelection(kind string, forward bool
 		if current != defaultApplianceProvider {
 			m.releaseAPIs[current] = strings.TrimSpace(m.inputs["releases-api"].Value())
 		}
-		m.config.ReleaseProvider = cycle(current, []string{"github", "forgejo", "custom"})
+		m.config.ReleaseProvider = cycle(current, []string{"github", "custom"})
 		if m.config.ReleaseProvider == defaultApplianceProvider {
 			m.config.ReleasesAPI = defaultApplianceReleasesAPI
 			input := m.inputs["releases-api"]
@@ -952,6 +962,7 @@ func (m proxmoxApplianceModel) reviewView() string {
 		fmt.Sprintf("Drive              %s · %d GiB", m.config.TargetStorage, m.config.TargetDiskGiB),
 		fmt.Sprintf("Network            %s · %s", m.config.Bridge, strings.ToUpper(m.config.Network.Mode)),
 		fmt.Sprintf("Release source     %s", releaseProviderLabel(m.config.ReleaseProvider)),
+		fmt.Sprintf("Repository         %s", m.config.releaseRepositoryURL()),
 		fmt.Sprintf("Release track      %s", strings.Title(m.config.Channel)),
 	}
 	if m.config.Channel == "branch" {

@@ -32,7 +32,8 @@ func TestParseFallback(t *testing.T) {
 		{"main", false, 1, false, "main"},
 		{"main,dev", false, 2, false, "main"},
 		{" main , dev ", false, 2, false, "main"},
-		{"bad/slash", false, 0, true, ""},
+		{"bad//slash", false, 0, true, ""},
+		{"agent/sebastian", false, 1, false, "agent/sebastian"},
 	}
 	for _, tt := range tests {
 		got, err := parseFallback(tt.in)

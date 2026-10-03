@@ -1,5 +1,14 @@
 import { settingsService } from '@/lib/settings';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
+/** Public/browser authority follows portable server configuration, never a template pin.
+ * User subjects and signing secrets belong to the identity store and are retained.
+ * Strict public clients must explicitly migrate their issuer after a URL change.
+ */
+export async function getIdentityIssuerOrigin(): Promise<string | null> {
+  const raw = await settingsService.getRaw();
+  if (!raw.domain || !raw.subdomains?.identity) return null;
+  return identityConfigFromSettings(raw).issuer;
+}
 
 export interface IdentityConfig {
   domain: string;

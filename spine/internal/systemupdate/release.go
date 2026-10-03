@@ -18,11 +18,11 @@ import (
 )
 
 const (
-	DefaultReleaseProvider = "github"
-	DefaultReleasesAPI     = "https://api.github.com/repos/YouEye-Platform/YouEye/releases"
-	releaseGitHubPageSize  = 100
-	releaseForgejoPageSize = 50
-	releaseMaxPages        = 200
+	DefaultReleaseProvider    = "github"
+	DefaultReleasesAPI        = "https://api.github.com/repos/YouEye-Platform/YouEye/releases"
+	releaseGitHubPageSize     = 100
+	releaseCompatiblePageSize = 50
+	releaseMaxPages           = 200
 )
 
 type ReleaseSelection struct {
@@ -177,8 +177,8 @@ func normalizeReleaseSource(provider, raw string) (string, *url.URL, error) {
 	if provider == "" {
 		provider = DefaultReleaseProvider
 	}
-	if provider != "github" && provider != "forgejo" && provider != "custom" {
-		return "", nil, errors.New("release provider must be github, forgejo, or custom")
+	if provider != "github" && provider != "custom" {
+		return "", nil, errors.New("release provider must be a supported repository URL")
 	}
 	raw = strings.TrimSpace(raw)
 	if raw == "" && provider == DefaultReleaseProvider {
@@ -206,7 +206,7 @@ func normalizeReleaseSource(provider, raw string) (string, *url.URL, error) {
 }
 
 func fetchReleases(ctx context.Context, client *http.Client, provider string, apiURL *url.URL) ([]release, error) {
-	pageSize, pageSizeKey := releaseForgejoPageSize, "limit"
+	pageSize, pageSizeKey := releaseCompatiblePageSize, "limit"
 	if provider == DefaultReleaseProvider {
 		pageSize, pageSizeKey = releaseGitHubPageSize, "per_page"
 	}

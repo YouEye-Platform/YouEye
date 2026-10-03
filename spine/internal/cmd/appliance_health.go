@@ -390,7 +390,7 @@ func addFirstDeployReleaseSetChecks(manifest appliance.Manifest, add func(string
 		}
 		if !ok {
 			add(component.name+" provenance", "fail", "installed release provenance is missing")
-		} else if err := validateInstalledReleaseIdentity(component.name, component.expected, releaseSet.Branch, installed); err != nil {
+		} else if err := validateInstalledReleaseIdentity(component.name, component.expected, releaseSet.ComponentBranch(component.expected), installed); err != nil {
 			add(component.name+" provenance", "fail", err.Error())
 		} else {
 			add(component.name+" provenance", "pass", "the installed version, tag, branch, and digest match the selected signed bundle")

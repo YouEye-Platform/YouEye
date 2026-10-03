@@ -49,8 +49,8 @@ func verifyApplianceReleaseSet(manifest appliance.Manifest, cfg *config.Config) 
 		if !sameReleaseSource(effective.Source, releaseSet.Source) {
 			return fmt.Errorf("%s channel source does not match sealed appliance release set", component)
 		}
-		if effective.Branch != releaseSet.Branch {
-			return fmt.Errorf("%s channel branch %q does not match sealed branch %q", component, effective.Branch, releaseSet.Branch)
+		if effective.Branch != releaseSet.ComponentBranch(componentRelease) {
+			return fmt.Errorf("%s channel branch %q does not match sealed branch %q", component, effective.Branch, releaseSet.ComponentBranch(componentRelease))
 		}
 		if effective.Fallback == nil || len(effective.Fallback) != 0 {
 			return fmt.Errorf("%s channel fallback must be explicitly disabled", component)

@@ -18,7 +18,7 @@ import { settingsService } from '@/lib/settings';
 import { spineClient } from '@/lib/spine/client';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import * as caddy from '@/lib/caddy/client';
-import { setDomainDNS } from '@/lib/apps/pihole-api';
+import { setDomainDNS, setIdentityHostDNS } from '@/lib/apps/pihole-api';
 import { getIdentityConfig } from '@/lib/identity/config';
 import {
   configureControlPanelIdentitySSO,
@@ -747,7 +747,7 @@ export async function POST(request: NextRequest) {
 
             try {
               const identity = await getIdentityConfig();
-              await caddy.ensureIdentityRoute(`${subs.identity}.${domain}`, identity.containerName, identity.port);
+              await caddy.ensureIdentityRoute(new URL(identity.issuer).hostname, identity.containerName, identity.port);
             } catch (err) {
               console.error('Failed to create identity provider route:', err);
               routeErrors.push(`youeye-id: ${err instanceof Error ? err.message : String(err)}`);
@@ -826,7 +826,13 @@ export async function POST(request: NextRequest) {
           if (hostIP && domain) {
             try {
               await withRetry(
-                () => setDomainDNS(domain, hostIP),
+                async () => {
+                  await setDomainDNS(domain, hostIP);
+                  const identityHost = new URL((await getIdentityConfig()).issuer).hostname;
+                  if (identityHost !== domain && !identityHost.endsWith(`.${domain}`)) {
+                    await setIdentityHostDNS(identityHost, hostIP);
+                  }
+                },
                 3, [0, 2000, 5000],
                 'Pi-Hole DNS'
               );

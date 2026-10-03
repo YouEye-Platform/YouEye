@@ -9,7 +9,7 @@ const caddy = fs.readFileSync(path.join(root, 'src/lib/caddy/client.ts'), 'utf8'
 const uninstaller = fs.readFileSync(path.join(root, 'src/lib/market/uninstaller.ts'), 'utf8');
 
 test('reconcile recreates and verifies missing single and multi-entrance Caddy routes', () => {
-  assert.match(reconciler, /await recreateRoutes\(meta\)/);
+  assert.match(reconciler, /repair: \(\) => recreateRoutes\(meta\)/);
   assert.match(reconciler, /Caddy route did not persist after reconcile/);
   assert.match(reconciler, /await addRoute\(/);
   assert.match(reconciler, /await addAppRoutes\(/);

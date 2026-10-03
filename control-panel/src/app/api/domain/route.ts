@@ -111,6 +111,10 @@ export async function POST(request: NextRequest) {
     }
 
     const providerConfig = await getByoDnsProviderConfig();
+    const raw = await settingsService.getRaw();
+    if (raw.setup_completed && raw.domain !== domain) {
+      return NextResponse.json({ error: 'Use the full reconfigure flow to change a configured server domain.' }, { status: 409 });
+    }
     if (providerConfig?.mode === 'byo-provider' && providerConfig.domain !== domain) {
       return NextResponse.json(
         { error: 'Use the full reconfigure flow to change a provider-managed domain.' },

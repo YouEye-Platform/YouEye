@@ -168,6 +168,26 @@ func TestResumeCommandPlanVerifiesRecoveryBootBackupsBeforeSkippingBootStage(t *
 	}
 }
 
+func TestPreserveResumeAtVerifyInstallReconcilesOldUpdaterJournal(t *testing.T) {
+	plan := applianceInstallPlan{TargetDiskPath: "/dev/vda", TargetSerial: "TARGET", RootSlotBytes: applianceRootSlotBytes}
+	assets := validCommandAssets()
+	assets.Operation = "preserve-reinstall"
+	commands, err := appliancePreserveCommandPlan(plan, assets, applianceBundleManifest{
+		StateSchemaMin: applianceStateSchema, DataSchemaMin: applianceDataSchema,
+		DiskLayout: applianceManifestLayout{Version: 3}, RecoveryVersion: applianceRecoveryVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resume, err := applianceResumeCommandPlan(commands, stageVerifyInstall, plan, assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(commandStrings(resume), "youeye-preserve-update-history") {
+		t.Fatal("completed preserve reinstall can skip updater-journal reconciliation")
+	}
+}
+
 func TestProviderResumesMatchingJournalWithoutRenewedErasePhrase(t *testing.T) {
 	bundle := writeTestApplianceBundle(t)
 	runner := &resumeExecutionRunner{journal: applianceInstallJournal{

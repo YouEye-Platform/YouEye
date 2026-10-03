@@ -15,6 +15,7 @@ import { settingsService } from '@/lib/settings';
 import { readSmtpPassword } from '@/lib/smtp/secrets';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import { getIdentityProviderConfig } from '@/lib/identity/provider';
+import { getAppInternalIdentityBase } from '@/lib/identity/issuer';
 import { spineClient } from '@/lib/spine/client';
 import { getAppBridgeGatewayIP } from '@/lib/incus/app-network';
 import { CONTAINER_DOMAIN } from './constants';
@@ -224,7 +225,9 @@ export async function buildCanonicalContext(
       throw new Error(`Cannot build app network context for ${config.appId}: app bridge gateway not found`);
     }
   }
-  const identityInternalUrl = useProxyDevices ? `http://${systemProxyHost}:3002` : identity.internalUrl;
+  const identityInternalUrl = useProxyDevices && ssoResult
+    ? getAppInternalIdentityBase(ssoResult.slug) || `http://${systemProxyHost}:3002`
+    : useProxyDevices ? `http://${systemProxyHost}:3002` : identity.internalUrl;
   const aiEnabled = config.aiSettings?.enabled === true;
   const pointerInferenceBase = aiEnabled && systemProxyHost
     ? `http://${systemProxyHost}:3003`

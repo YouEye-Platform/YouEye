@@ -1,6 +1,7 @@
 import { createHash, createPrivateKey, createPublicKey, randomUUID } from 'crypto';
 import {
   calculateJwkThumbprint,
+  decodeProtectedHeader,
   exportPKCS8,
   generateKeyPair,
   importJWK,
@@ -9,7 +10,7 @@ import {
   jwtVerify,
   type JWK,
 } from 'jose';
-import { getIdentitySecret, getSigningSecret, getUserById, setIdentitySecret, type IdentityUser } from './store';
+import { getIdentitySecret, getSigningSecret, getUserById, getIdentitySessionById, isAccessTokenRevoked, isUserTokenInvalidated, setIdentitySecretIfAbsent, getOAuthSigningKeySnapshot, rotateOAuthSigningKey, type IdentityUser } from './store';
 import { getIdentityConfig } from './config';
 import { getClientIssuer } from './issuer';
 
@@ -20,7 +21,9 @@ function key(secret: string): Uint8Array {
   return new TextEncoder().encode(secret);
 }
 
-export async function createIdentityToken(user: IdentityUser, maxAgeSeconds = 86400): Promise<string> {
+export const IDENTITY_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+
+export async function createIdentityToken(user: IdentityUser, sessionId?: string, maxAgeSeconds = IDENTITY_SESSION_MAX_AGE_SECONDS): Promise<string> {
   const secret = await getSigningSecret();
   const config = await getIdentityConfig();
   return new SignJWT({
@@ -31,6 +34,7 @@ export async function createIdentityToken(user: IdentityUser, maxAgeSeconds = 86
     email: user.email,
     groups: user.groups,
     is_admin: user.is_admin,
+    ...(sessionId ? { sid: sessionId } : {}),
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(user.id)
@@ -51,11 +55,35 @@ export async function verifyIdentityToken(token: string): Promise<IdentityUser |
     });
     const sub = result.payload.sub;
     if (!sub) return null;
+    if (!result.payload.iat || (!result.payload.sid && await isUserTokenInvalidated(sub, result.payload.iat))) return null;
+    if (result.payload.sid) {
+      const session = await getIdentitySessionById(String(result.payload.sid), true);
+      if (!session || session.user_id !== sub) return null;
+    } else if (result.payload.iat && result.payload.iat < Math.floor(Date.now() / 1000) - 86400) {
+      return null;
+    }
     const user = await getUserById(sub);
     return user?.is_active ? user : null;
   } catch {
     return null;
   }
+}
+
+export async function identityTokenClaims(token: string): Promise<{ sub: string; sid: string | null } | null> {
+  try {
+    const [secret, config] = await Promise.all([getSigningSecret(), getIdentityConfig()]);
+    const result = await jwtVerify(token, key(secret), { issuer: config.issuer, audience: 'youeye-id' });
+    return result.payload.sub ? { sub: result.payload.sub, sid: typeof result.payload.sid === 'string' ? result.payload.sid : null } : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function identitySessionFromCookie(token: string): Promise<{ sub: string; sid: string } | null> {
+  const claims = await identityTokenClaims(token);
+  if (!claims?.sid) return null;
+  const session = await getIdentitySessionById(claims.sid);
+  return session?.user_id === claims.sub ? { sub: claims.sub, sid: claims.sid } : null;
 }
 
 async function getOAuthPrivateKeyPem(): Promise<string> {
@@ -64,16 +92,11 @@ async function getOAuthPrivateKeyPem(): Promise<string> {
 
   const { privateKey } = await generateKeyPair('RS256', { extractable: true });
   const pem = await exportPKCS8(privateKey);
-  await setIdentitySecret(OAUTH_RS256_PRIVATE_KEY, pem);
-  return pem;
+  return setIdentitySecretIfAbsent(OAUTH_RS256_PRIVATE_KEY, pem);
 }
 
-async function getOAuthPrivateKey() {
-  return importPKCS8(await getOAuthPrivateKeyPem(), 'RS256');
-}
-
-async function getOAuthPublicJwk(): Promise<JWK> {
-  const privateKey = createPrivateKey(await getOAuthPrivateKeyPem());
+async function publicJwkFromPem(pem: string): Promise<JWK> {
+  const privateKey = createPrivateKey(pem);
   const jwk = createPublicKey(privateKey).export({ format: 'jwk' }) as JWK;
   const publicJwk: JWK = {
     kty: jwk.kty,
@@ -84,6 +107,34 @@ async function getOAuthPublicJwk(): Promise<JWK> {
   };
   const thumbprint = await calculateJwkThumbprint(publicJwk);
   return { ...publicJwk, kid: thumbprint };
+}
+
+async function getOAuthPublicJwk(): Promise<JWK> {
+  return publicJwkFromPem(await getOAuthPrivateKeyPem());
+}
+
+async function verificationKey(token: string) {
+  const header = decodeProtectedHeader(token);
+  if (header.alg !== 'RS256' || typeof header.kid !== 'string') throw new Error('Invalid signing key header');
+  await getOAuthPrivateKeyPem();
+  const snapshot = await getOAuthSigningKeySnapshot();
+  const candidates = [snapshot.active, ...snapshot.retired];
+  for (const pem of candidates) {
+    const jwk = await publicJwkFromPem(pem);
+    if (jwk.kid === header.kid) return importJWK(jwk, 'RS256');
+  }
+  throw new Error('Unknown signing key');
+}
+
+export async function rotateOAuthKey(): Promise<string> {
+  const previous = await getOAuthPrivateKeyPem();
+  const previousKid = String((await publicJwkFromPem(previous)).kid);
+  const { privateKey } = await generateKeyPair('RS256', { extractable: true });
+  const replacement = await exportPKCS8(privateKey);
+  if (!await rotateOAuthSigningKey(previous, replacement, previousKid)) {
+    throw new Error('The signing key changed during rotation; retry after inspecting the active key');
+  }
+  return String((await publicJwkFromPem(replacement)).kid);
 }
 
 function oauthClaims(user: IdentityUser, scope = ''): Record<string, unknown> {
@@ -112,14 +163,10 @@ function oauthClaims(user: IdentityUser, scope = ''): Record<string, unknown> {
   return claims;
 }
 
-export async function createAccessToken(user: IdentityUser, clientId: string, scope = '', nonce?: string | null): Promise<string> {
-  const privateKey = await getOAuthPrivateKey();
-  const jwk = await getOAuthPublicJwk();
-  const claims = oauthClaims(user, scope);
-  // OIDC: when the client sent a nonce in the auth request, the ID token MUST
-  // echo it (and MUST NOT include one otherwise). Required by Authlib, Spring
-  // Security, mod_auth_openidc, the Rust openidconnect crate, etc.
-  if (nonce) claims.nonce = nonce;
+export async function createAccessToken(user: IdentityUser, clientId: string, scope = '', sessionId?: string | null): Promise<string> {
+  const pem = await getOAuthPrivateKeyPem();
+  const [privateKey, jwk] = await Promise.all([importPKCS8(pem, 'RS256'), publicJwkFromPem(pem)]);
+  const claims = { scope, client_id: clientId, token_use: 'access', ...(sessionId ? { sid: sessionId } : {}) };
   // Per-client issuer: must equal what the per-client discovery doc advertises and
   // the authority the app is configured with, or strict clients (the Rust openidconnect
   // crate, Spring Security, go-oidc) reject the token. For app clients this is the
@@ -127,7 +174,22 @@ export async function createAccessToken(user: IdentityUser, clientId: string, sc
   // so the token validates even under full network isolation; first-party clients
   // (and resolution failures) get the external authority.
   return new SignJWT(claims)
-    .setProtectedHeader({ alg: 'RS256', kid: String(jwk.kid) })
+    .setProtectedHeader({ alg: 'RS256', kid: String(jwk.kid), typ: 'at+jwt' })
+    .setSubject(user.id)
+    .setIssuer(await getClientIssuer(clientId))
+    .setAudience('youeye-userinfo')
+    .setJti(randomUUID())
+    .setIssuedAt()
+    .setExpirationTime('1h')
+    .sign(privateKey);
+}
+
+export async function createIdToken(user: IdentityUser, clientId: string, scope = '', nonce?: string | null, sessionId?: string | null): Promise<string> {
+  const pem = await getOAuthPrivateKeyPem();
+  const [privateKey, jwk] = await Promise.all([importPKCS8(pem, 'RS256'), publicJwkFromPem(pem)]);
+  const claims = { ...oauthClaims(user, scope), token_use: 'id', ...(nonce ? { nonce } : {}), ...(sessionId ? { sid: sessionId } : {}) };
+  return new SignJWT(claims)
+    .setProtectedHeader({ alg: 'RS256', kid: String(jwk.kid), typ: 'JWT' })
     .setSubject(user.id)
     .setIssuer(await getClientIssuer(clientId))
     .setAudience(clientId)
@@ -136,41 +198,78 @@ export async function createAccessToken(user: IdentityUser, clientId: string, sc
     .sign(privateKey);
 }
 
-export async function verifyBearerToken(token: string): Promise<IdentityUser | null> {
-  const config = await getIdentityConfig();
+export async function createLogoutToken(clientId: string, userId: string, sessionId: string): Promise<string> {
+  const pem = await getOAuthPrivateKeyPem();
+  const [privateKey, jwk] = await Promise.all([importPKCS8(pem, 'RS256'), publicJwkFromPem(pem)]);
+  return new SignJWT({
+    sid: sessionId,
+    events: { 'http://schemas.openid.net/event/backchannel-logout': {} },
+  })
+    .setProtectedHeader({ alg: 'RS256', kid: String(jwk.kid), typ: 'logout+jwt' })
+    .setIssuer(await getClientIssuer(clientId))
+    .setAudience(clientId)
+    .setSubject(userId)
+    .setJti(randomUUID())
+    .setIssuedAt()
+    .setExpirationTime('24h')
+    .sign(privateKey);
+}
+
+export async function verifyClientIdToken(token: string, clientId: string): Promise<{ sub: string; sid: string | null } | null> {
   try {
-    const jwk = await getOAuthPublicJwk();
-    const publicKey = await importJWK(jwk, 'RS256');
-    // OAuth access tokens carry a PER-CLIENT issuer that may be EXTERNAL (first-party,
-    // non-isolated apps) or INTERNAL (http://<app-gw>:3002/application/o/<clientId>/),
-    // so we can't pin a single value; the RS256 signature (our key alone) is the trust
-    // boundary. We additionally require iss to be one of our `/application/o/<aud>/`
-    // authorities — tying iss to the token's audience so it can't claim a foreign issuer.
-    const result = await jwtVerify(token, publicKey);
-    const iss = String(result.payload.iss || '');
-    const audClaim = result.payload.aud;
-    const aud = Array.isArray(audClaim) ? String(audClaim[0] || '') : String(audClaim || '');
-    if (!aud || !/^https?:\/\//.test(iss) || !iss.endsWith(`/application/o/${aud}/`)) return null;
+    const key = await verificationKey(token);
+    const { payload, protectedHeader } = await jwtVerify(token, key, {
+      audience: clientId,
+      issuer: await getClientIssuer(clientId),
+    });
+    if (protectedHeader.typ !== 'JWT' || payload.token_use !== 'id' || !payload.sub) return null;
+    return { sub: payload.sub, sid: typeof payload.sid === 'string' ? payload.sid : null };
+  } catch {
+    return null;
+  }
+}
+
+export async function inspectAccessToken(token: string, clientId: string): Promise<{ jti: string; exp: number } | null> {
+  try {
+    const key = await verificationKey(token);
+    const { payload, protectedHeader } = await jwtVerify(token, key, {
+      audience: 'youeye-userinfo', issuer: await getClientIssuer(clientId),
+    });
+    if (protectedHeader.typ !== 'at+jwt' || payload.token_use !== 'access' || payload.client_id !== clientId || !payload.jti || !payload.exp) return null;
+    return { jti: payload.jti, exp: payload.exp };
+  } catch {
+    return null;
+  }
+}
+
+export async function verifyBearerToken(token: string): Promise<IdentityUser | null> {
+  try {
+    const publicKey = await verificationKey(token);
+    const result = await jwtVerify(token, publicKey, { audience: 'youeye-userinfo' });
+    if (result.protectedHeader.typ !== 'at+jwt' || result.payload.token_use !== 'access') return null;
+    const clientId = String(result.payload.client_id || '');
+    const issuer = String(result.payload.iss || '');
+    if (!clientId || issuer !== await getClientIssuer(clientId)) return null;
+    if (!result.payload.jti || await isAccessTokenRevoked(String(result.payload.jti))) return null;
     const sub = result.payload.sub;
     if (!sub) return null;
-    return getUserById(sub);
-  } catch {
-    try {
-      const secret = await getSigningSecret();
-      const result = await jwtVerify(token, key(secret), {
-        issuer: config.issuer,
-      });
-      const sub = result.payload.sub;
-      if (!sub) return null;
-      return getUserById(sub);
-    } catch {
-      return null;
+    if (!result.payload.iat || (!result.payload.sid && await isUserTokenInvalidated(sub, result.payload.iat))) return null;
+    if (result.payload.sid) {
+      const session = await getIdentitySessionById(String(result.payload.sid));
+      if (!session || session.user_id !== sub) return null;
     }
+    const user = await getUserById(sub);
+    return user?.is_active ? user : null;
+  } catch {
+    return null;
   }
 }
 
 export async function getOAuthJWKS(): Promise<{ keys: JWK[] }> {
-  return { keys: [await getOAuthPublicJwk()] };
+  await getOAuthPrivateKeyPem();
+  const snapshot = await getOAuthSigningKeySnapshot();
+  const keys = await Promise.all([snapshot.active, ...snapshot.retired].map(publicJwkFromPem));
+  return { keys };
 }
 
 export async function getOAuthKeyId(): Promise<string> {
@@ -199,11 +298,8 @@ export const POINTER_SYSTEM_LIFECYCLE_ACTOR: PointerLifecycleActor = {
  * subject; username is presentation only and can change safely.
  */
 export async function createPointerManagementAssertion(user: IdentityUser): Promise<string> {
-  const [privateKey, jwk, identity] = await Promise.all([
-    getOAuthPrivateKey(),
-    getOAuthPublicJwk(),
-    getIdentityConfig(),
-  ]);
+  const [pem, identity] = await Promise.all([getOAuthPrivateKeyPem(), getIdentityConfig()]);
+  const [privateKey, jwk] = await Promise.all([importPKCS8(pem, 'RS256'), publicJwkFromPem(pem)]);
   const permissions = [
     'management.read',
     'providers.manage',
@@ -245,11 +341,8 @@ export async function createPointerLifecycleAssertion(
   if (!actor.isAdmin || !actor.id.trim() || !actor.name.trim()) {
     throw new Error('Pointer application lifecycle requires an exact administrator actor');
   }
-  const [privateKey, jwk, identity] = await Promise.all([
-    getOAuthPrivateKey(),
-    getOAuthPublicJwk(),
-    getIdentityConfig(),
-  ]);
+  const [pem, identity] = await Promise.all([getOAuthPrivateKeyPem(), getIdentityConfig()]);
+  const [privateKey, jwk] = await Promise.all([importPKCS8(pem, 'RS256'), publicJwkFromPem(pem)]);
   return new SignJWT({
     pointer_admin: true,
     pointer_permissions: ['management.read', 'applications.provision'],

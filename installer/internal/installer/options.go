@@ -3,6 +3,7 @@ package installer
 import (
 	"flag"
 	"fmt"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"io"
 	"os"
 	"strings"
@@ -70,6 +71,7 @@ type CLIOptions struct {
 	ApplianceReleaseTag       string
 	ApplianceISOSHA256        string
 	InstallerBootstrapSHA256  string
+	ApplianceRepository       string
 	ApplianceReleaseProvider  string
 	ApplianceReleasesAPI      string
 	ConsoleKind               string
@@ -80,11 +82,7 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		commandArg, args = args[0], args[1:]
 	}
-	provider := envOrDefault("YOUEYE_INSTALLER_PROVIDER", defaultApplianceProvider)
-	releasesAPI := strings.TrimSpace(os.Getenv("YOUEYE_INSTALLER_RELEASES_API"))
-	if releasesAPI == "" && strings.EqualFold(provider, defaultApplianceProvider) {
-		releasesAPI = defaultApplianceReleasesAPI
-	}
+	repository := envOrDefault("YOUEYE_INSTALLER_REPOSITORY", releasecache.OfficialRepository)
 	opts := CLIOptions{
 		Mode:                     "auto",
 		ProxmoxOperation:         "create",
@@ -93,8 +91,7 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 		ProxmoxImportHostSSHKeys: true,
 		ApplianceChannel:         "stable",
 		ApplianceFreshness:       "require-current",
-		ApplianceReleaseProvider: provider,
-		ApplianceReleasesAPI:     releasesAPI,
+		ApplianceRepository:      repository,
 	}
 
 	fs := flag.NewFlagSet("youeye-installer", flag.ContinueOnError)
@@ -136,8 +133,7 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 	fs.StringVar(&opts.ApplianceReleaseTag, "release-tag", "", "exact image release tag")
 	fs.StringVar(&opts.ApplianceISOSHA256, "iso-sha256", "", "required ISO SHA-256 for exact selection")
 	fs.StringVar(&opts.InstallerBootstrapSHA256, "installer-sha256", "", "signed Installer binary SHA-256 used by the bootstrap")
-	fs.StringVar(&opts.ApplianceReleaseProvider, "provider", opts.ApplianceReleaseProvider, "release provider: github, forgejo, or custom")
-	fs.StringVar(&opts.ApplianceReleasesAPI, "releases-api", opts.ApplianceReleasesAPI, "HTTPS image releases API (required for Forgejo or custom)")
+	fs.StringVar(&opts.ApplianceRepository, "repository", opts.ApplianceRepository, "HTTPS repository URL for signed releases (defaults to official releases)")
 	fs.StringVar(&opts.ConsoleKind, "console-kind", "physical", "local status console kind: physical or serial")
 
 	if err := fs.Parse(args); err != nil {
@@ -174,15 +170,12 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 	opts.ApplianceReleaseTag = strings.TrimSpace(opts.ApplianceReleaseTag)
 	opts.ApplianceISOSHA256 = strings.ToLower(strings.TrimSpace(opts.ApplianceISOSHA256))
 	opts.InstallerBootstrapSHA256 = strings.ToLower(strings.TrimSpace(opts.InstallerBootstrapSHA256))
-	opts.ApplianceReleaseProvider = strings.ToLower(strings.TrimSpace(opts.ApplianceReleaseProvider))
-	opts.ApplianceReleasesAPI = strings.TrimSpace(opts.ApplianceReleasesAPI)
 	opts.ConsoleKind = strings.ToLower(strings.TrimSpace(opts.ConsoleKind))
-	if opts.ApplianceReleaseProvider == "" {
-		opts.ApplianceReleaseProvider = defaultApplianceProvider
+	source, err := releasecache.ParseRepositorySource(opts.ApplianceRepository)
+	if err != nil {
+		return opts, err
 	}
-	if opts.ApplianceReleasesAPI == "" && opts.ApplianceReleaseProvider == defaultApplianceProvider {
-		opts.ApplianceReleasesAPI = defaultApplianceReleasesAPI
-	}
+	opts.ApplianceRepository, opts.ApplianceReleaseProvider, opts.ApplianceReleasesAPI = source.URL, source.Adapter, source.ReleasesAPI
 	return opts, nil
 }
 

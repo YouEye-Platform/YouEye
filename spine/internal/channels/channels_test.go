@@ -183,11 +183,15 @@ func TestResetAndResetAll(t *testing.T) {
 
 func TestValidateChannel(t *testing.T) {
 	bad := []Channel{
-		{Branch: "Feature/Slash"},
+		{Branch: "Feature//Slash"},
 		{Branch: "up CASE space"},
 		{Source: "ftp://x/y"},
 		{Source: "not a url with spaces"},
-		{Fallback: []string{"ok", "bad/one"}},
+		{Fallback: []string{"ok", "bad//one"}},
+		{Tag: "spine-bad//tag-v1.0.0"},
+		{Tag: "spine/../tag-v1.0.0"},
+		{Tag: "/spine-v1.0.0"},
+		{Tag: "spine/tag.lock"},
 	}
 	for _, ch := range bad {
 		if err := ValidateChannel(ch); err == nil {
@@ -197,6 +201,7 @@ func TestValidateChannel(t *testing.T) {
 	good := []Channel{
 		{Branch: "f-x"},
 		{Branch: "MAIN"}, // normalized to lowercase — valid charset
+		{Branch: "agent/sebastian/sess_123", Tag: "spine-agent/sebastian/sess_123-v1.0.0"},
 		{Source: "https://github.com/YouEye-Platform/YouEye", Branch: "dev"},
 		{Fallback: []string{"main", "dev"}},
 		{}, // empty is fine
@@ -215,8 +220,13 @@ func TestNormalizeBranch(t *testing.T) {
 	if _, err := NormalizeBranch("has space"); err == nil {
 		t.Error("space should be rejected")
 	}
-	if _, err := NormalizeBranch("p-proj/f-sub"); err == nil {
-		t.Error("slash should be rejected")
+	if got, err := NormalizeBranch("Agent/Sebastian/sess_123"); err != nil || got != "agent/sebastian/sess_123" {
+		t.Errorf("scoped branch = %q, %v", got, err)
+	}
+	for _, bad := range []string{"/leading", "trailing/", "double//slash", "dot/../segment", "hidden/.branch", "bad.lock", "has space", "has~tilde"} {
+		if _, err := NormalizeBranch(bad); err == nil {
+			t.Errorf("invalid branch %q was accepted", bad)
+		}
 	}
 }
 

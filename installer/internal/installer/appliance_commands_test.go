@@ -1,7 +1,12 @@
 package installer
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -254,6 +259,77 @@ func TestPreserveReinstallVerifiesBeforeWritesAndNeverFormatsPersistentPartition
 	}
 	if firstWrite < 7 {
 		t.Fatalf("preserve plan did not complete layout/state preflight before first write: %d", firstWrite)
+	}
+}
+
+func TestPreserveReinstallReconcilesUpdateHistoryOnlyAfterVerifiedInstall(t *testing.T) {
+	root := t.TempDir()
+	installer := filepath.Join(root, "installer")
+	updates := filepath.Join(root, "system-update")
+	for _, path := range []string{installer, updates} {
+		if err := os.MkdirAll(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manifest := []byte(`{"schema":"youeye.appliance.manifest.v1"}`)
+	manifestPath := filepath.Join(installer, "appliance-manifest.json")
+	if err := os.WriteFile(manifestPath, manifest, 0600); err != nil {
+		t.Fatal(err)
+	}
+	sha := validSHA256()
+	// The script must reject an install journal whose signed manifest digest
+	// cannot be read back from State, even if the old updater journal exists.
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	transaction := "0123456789abcdef0123456789abcdef"
+	image := "0.6.0-dev.2"
+	write(filepath.Join(installer, "install-journal.json"), `{"schema":"youeye.appliance.install-journal.v3","operation":"preserve-reinstall","transaction_id":"`+transaction+`","manifest_sha256":"`+sha+`","image_version":"`+image+`","stage":"activate-system-boot"}`)
+	write(filepath.Join(root, "appliance-state.json"), `{"slots":{"current":"A","current_image_version":"`+image+`"},"transaction":{}}`)
+	old := `{"schema":"youeye.system-update.journal.v1","phase":"rolled-back"}`
+	write(filepath.Join(updates, "journal.json"), old)
+	run := func() error {
+		return exec.Command("sh", "-c", preserveSystemUpdateReconcileScript(), "youeye-preserve-update-history", root, transaction, sha, image).Run()
+	}
+	if err := run(); err == nil {
+		t.Fatal("accepted mismatched signed manifest digest")
+	}
+	if _, err := os.Stat(filepath.Join(updates, "journal.json")); err != nil {
+		t.Fatal("old journal moved before verification:", err)
+	}
+	// Use the actual digest only after proving the mismatch was rejected.
+	manifestSHA := fmt.Sprintf("%x", sha256.Sum256(manifest))
+	write(filepath.Join(installer, "install-journal.json"), `{"schema":"youeye.appliance.install-journal.v3","operation":"preserve-reinstall","transaction_id":"`+transaction+`","manifest_sha256":"`+manifestSHA+`","image_version":"`+image+`","stage":"activate-system-boot"}`)
+	cmd := exec.Command("sh", "-c", preserveSystemUpdateReconcileScript(), "youeye-preserve-update-history", root, transaction, manifestSHA, image)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("reconcile: %v: %s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(updates, "journal.json")); !os.IsNotExist(err) {
+		t.Fatalf("stale active journal remains: %v", err)
+	}
+	history := filepath.Join(updates, "history", "preserve-reinstall-"+transaction, "journal.json")
+	got, err := os.ReadFile(history)
+	if err != nil || string(got) != old {
+		t.Fatalf("history was not retained: %v, %q", err, got)
+	}
+	if err := run(); err == nil {
+		t.Fatal("accepted original mismatched manifest after reconciliation")
+	}
+	cmd = exec.Command("sh", "-c", preserveSystemUpdateReconcileScript(), "youeye-preserve-update-history", root, transaction, manifestSHA, image)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("repeated reconciliation was not idempotent: %v: %s", err, out)
+	}
+}
+
+func TestApplianceLoaderReplacesPriorSlotEntries(t *testing.T) {
+	script := applianceLoaderConfigScript()
+	remove := strings.Index(script, "rm -f /mnt/youeye-esp/loader/entries/youeye-system-a*.conf /mnt/youeye-esp/loader/entries/youeye-system-b*.conf")
+	newEntry := strings.Index(script, "cat > /mnt/youeye-esp/loader/entries/youeye-system-a+3-0.conf")
+	if remove < 0 || newEntry <= remove {
+		t.Fatal("installer does not replace stale counted and uncounted System slot entries")
 	}
 }
 

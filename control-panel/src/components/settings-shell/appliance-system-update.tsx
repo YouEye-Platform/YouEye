@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, Loader2, RefreshCw, RotateCcw, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -10,14 +10,9 @@ import { Label } from "@/components/ui/label";
 import type { ApplianceSystemUpdateSelection, ApplianceSystemUpdateStatus } from "@/lib/spine/client";
 
 type Channel = ApplianceSystemUpdateSelection["channel"];
-type Provider = ApplianceSystemUpdateSelection["provider"];
+const OFFICIAL_REPOSITORY = "https://github.com/YouEye-Platform/YouEye";
 
 const ACTIVE_STATES = new Set(["downloading", "writing", "pending-reboot", "trial"]);
-const PROVIDERS: Array<{ value: Provider; label: string }> = [
-  { value: "github", label: "Official GitHub" },
-  { value: "forgejo", label: "Forgejo" },
-  { value: "custom", label: "Custom HTTPS" },
-];
 
 function safeReleaseBranch(value: string) {
   return value.length > 0 && value.length <= 96 && value.split('/').every((part) =>
@@ -70,13 +65,11 @@ async function protectedHeaders() {
 
 export function ApplianceSystemUpdate() {
   const [status, setStatus] = useState<ApplianceSystemUpdateStatus | null>(null);
-  const [provider, setProvider] = useState<Provider>("github");
-  const [releasesAPI, setReleasesAPI] = useState("");
+  const [repository, setRepository] = useState(OFFICIAL_REPOSITORY);
   const [channel, setChannel] = useState<Channel>("stable");
   const [branch, setBranch] = useState("");
   const [exactTag, setExactTag] = useState("");
   const [manifestSHA256, setManifestSHA256] = useState("");
-  const rememberedAPIs = useRef<Partial<Record<Provider, string>>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<"check" | "stage" | "activate" | null>(null);
   const [error, setError] = useState("");
@@ -102,9 +95,7 @@ export function ApplianceSystemUpdate() {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || "System update source is unavailable.");
     const source = body as ApplianceSystemUpdateSelection;
-    setProvider(source.provider);
-    setReleasesAPI(source.releases_api || "");
-    rememberedAPIs.current[source.provider] = source.releases_api || "";
+    setRepository(source.repository_url);
     setChannel(source.channel);
     setBranch(source.branch || "");
     setExactTag(source.exact_tag || "");
@@ -127,18 +118,17 @@ export function ApplianceSystemUpdate() {
   }, [busy, loadStatus, status?.state]);
 
   const selection = useMemo<ApplianceSystemUpdateSelection>(() => ({
-    provider,
-    ...(provider === "github" ? {} : { releases_api: releasesAPI.trim() }),
+    repository_url: repository.trim(),
     channel,
     ...(channel === "branch" ? { branch: branch.trim() } : {}),
     ...(channel === "exact" ? { exact_tag: exactTag.trim(), manifest_sha256: manifestSHA256.trim().toLowerCase() } : {}),
     ...(confirmReplace ? { replace_failed: true } : {}),
-  }), [branch, channel, confirmReplace, exactTag, manifestSHA256, provider, releasesAPI]);
+  }), [branch, channel, confirmReplace, exactTag, manifestSHA256, repository]);
 
   const exactValid = channel !== "exact"
     || (safeApplianceReleaseTag(exactTag.trim()) && /^[0-9a-f]{64}$/.test(manifestSHA256.trim()));
   const branchValid = channel !== "branch" || safeReleaseBranch(branch.trim());
-  const sourceValid = provider === "github" || /^https:\/\/[^\s]+$/.test(releasesAPI.trim());
+  const sourceValid = /^https:\/\/[^\s]+$/.test(repository.trim());
 
   async function action(next: "check" | "stage" | "activate") {
     setBusy(next);
@@ -164,11 +154,6 @@ export function ApplianceSystemUpdate() {
     }
   }
 
-  function chooseProvider(next: Provider) {
-    if (provider !== "github") rememberedAPIs.current[provider] = releasesAPI;
-    setProvider(next);
-    setReleasesAPI(next === "github" ? "" : rememberedAPIs.current[next] || "");
-  }
 
   const downloaded = Object.values(status?.downloaded_bytes ?? {}).reduce((sum, bytes) => sum + bytes, 0);
   const mutableSelection = !status || ["healthy", "failed", "rolled-back"].includes(status.state);
@@ -250,35 +235,13 @@ export function ApplianceSystemUpdate() {
       <details className="mt-4 border-t pt-4">
         <summary className="cursor-pointer text-sm font-medium">Advanced release settings</summary>
         <div className="mt-4 space-y-4">
-          <div>
-            <Label>Release source</Label>
-            <div className="mt-2 inline-flex max-w-full flex-wrap rounded-md border p-1">
-              {PROVIDERS.map((item) => (
-                <Button
-                  key={item.value}
-                  type="button"
-                  size="sm"
-                  variant={provider === item.value ? "secondary" : "ghost"}
-                  onClick={() => chooseProvider(item.value)}
-                  disabled={!mutableSelection || busy !== null}
-                >
-                  {item.label}
-                </Button>
-              ))}
-            </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="appliance-repository">Release repository</Label>
+            <Input id="appliance-repository" value={repository}
+              onChange={(event) => setRepository(event.target.value)} disabled={!mutableSelection || busy !== null} />
+            <Button size="sm" variant="ghost" onClick={() => setRepository(OFFICIAL_REPOSITORY)} disabled={!mutableSelection || busy !== null}>Use official releases</Button>
+            <p className="text-xs text-muted-foreground">Paste an HTTPS repository URL. Releases must be signed by a trusted authority.</p>
           </div>
-          {provider !== "github" && (
-            <div className="space-y-1.5">
-              <Label htmlFor="appliance-releases-api">Releases API</Label>
-              <Input
-                id="appliance-releases-api"
-                value={releasesAPI}
-                onChange={(event) => setReleasesAPI(event.target.value)}
-                disabled={!mutableSelection || busy !== null}
-              />
-              <p className="text-xs text-muted-foreground">Enter the complete HTTPS API URL. Alternative sources are intentionally blank by default.</p>
-            </div>
-          )}
           <div>
             <Label>Release channel</Label>
             <div className="mt-2 inline-flex max-w-full flex-wrap rounded-md border p-1">

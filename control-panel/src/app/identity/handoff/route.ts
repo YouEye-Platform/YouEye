@@ -4,6 +4,7 @@ import { setIdentityCookie } from '@/lib/identity/http';
 import { isTrustedHandoffBrowserOrigin } from '@/lib/identity/handoff-origin';
 import { consumeSetupHandoff } from '@/lib/identity/store';
 import { createIdentityToken } from '@/lib/identity/tokens';
+import { createIdentitySession } from '@/lib/identity/store';
 
 function requestPublicOrigin(request: NextRequest, expected: string): string | null {
   const expectedOrigin = new URL(expected).origin;
@@ -39,7 +40,8 @@ export async function POST(request: NextRequest) {
   const user = await consumeSetupHandoff(code, requestOrigin);
   if (!user) return new NextResponse('This handoff has expired or was already used. Return to the appliance IP and try again.', { status: 400 });
 
-  const token = await createIdentityToken(user);
+  const session = await createIdentitySession(user.id);
+  const token = await createIdentityToken(user, session.id);
   const response = NextResponse.redirect(`https://${config.domain}/`, { status: 303 });
   setIdentityCookie(response, token, config.cookieDomain);
   return response;

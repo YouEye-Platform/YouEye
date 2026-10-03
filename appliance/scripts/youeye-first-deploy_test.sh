@@ -10,12 +10,18 @@ make_fixture() {
     fixture=$1
     mkdir -p "$fixture/bin" "$fixture/state" "$fixture/control"
     : > "$fixture/commands"
+    printf '%s\n' '{"release_set":{"control_panel":{"version":"0.5.29"}}}' > "$fixture/sealed-release.json"
     cat > "$fixture/bin/incus" <<'EOF'
 #!/bin/sh
 case "$1 $2" in
   "list youeye-control")
     if [ -e "$FAKE_INCUS_STATE_FILE" ]; then printf 'RUNNING\n'; else printf '%s\n' "${FAKE_CONTROL_STATE:-RUNNING}"; fi ;;
-  "exec youeye-control") [ "${FAKE_CONTROL_COMPLETE:-0}" = 1 ] ;;
+  "exec youeye-control")
+    if [ "$3" = -- ] && [ "$4" = cat ]; then
+      printf '{"version":"%s"}\n' "${FAKE_CONTROL_VERSION:-0.5.29}"
+    else
+      [ "${FAKE_CONTROL_COMPLETE:-0}" = 1 ]
+    fi ;;
   "start youeye-control")
     if [ "${FAKE_START_RACE:-0}" = 1 ]; then touch "$FAKE_INCUS_STATE_FILE"; exit 1; fi
     exit 0 ;;
@@ -70,6 +76,7 @@ run_fixture() {
         YOUEYE_BOOTSTRAP_NETWORK="$fixture/bin/network" \
         CURL_BIN="$fixture/bin/curl" \
         YOUEYE_RELEASE_POLICY="$fixture/release-policy.json" \
+        YOUEYE_FIRST_DEPLOY_SEALED_RELEASE="$fixture/sealed-release.json" \
         "$@" \
         "$script"
 }
@@ -86,6 +93,13 @@ make_fixture "$complete"
 printf 'test-secret\n' > "$complete/control/.deploy_secret"
 run_fixture "$complete" FAKE_CONTROL_COMPLETE=1
 grep -Fxq 'deploy --resume' "$complete/commands"
+
+outdated="$tmp/outdated"
+make_fixture "$outdated"
+printf 'test-secret\n' > "$outdated/control/.deploy_secret"
+run_fixture "$outdated" FAKE_CONTROL_COMPLETE=1 FAKE_CONTROL_VERSION=0.5.23
+grep -Fxq 'update control --yes' "$outdated/commands"
+grep -Fxq 'deploy --resume' "$outdated/commands"
 
 start_race="$tmp/start-race"
 make_fixture "$start_race"

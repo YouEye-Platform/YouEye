@@ -66,7 +66,7 @@ test('reconfigure engine restarts YouEye ID and defers the CP restart to last', 
 
 test('reconfigure refreshes Pointer issuer and routing after persisting the new domain', () => {
   const yamlIdx = engine.indexOf("step: 'yaml', status: 'done'");
-  const pointerIdx = engine.indexOf('await configurePointerForPlatform()');
+  const pointerIdx = engine.indexOf('await configurePointerForPlatform(journal.oldIdentityOrigin)');
   assert.ok(yamlIdx > 0 && pointerIdx > yamlIdx, 'Pointer must read the newly persisted platform identity');
   assert.match(engine, /ensurePointerInferenceRoutes\(newDomain\)/);
 });

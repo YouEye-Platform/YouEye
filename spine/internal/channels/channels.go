@@ -61,6 +61,7 @@ const AppPrefix = "app:"
 // Channel carries custom marshalers that emit `fallback` whenever it is
 // non-nil and omit it only when nil.
 type Channel struct {
+	PinOrigin      string   `yaml:"pin_origin,omitempty" json:"pin_origin,omitempty"`
 	Source         string   `yaml:"source,omitempty" json:"source,omitempty"`
 	Branch         string   `yaml:"branch,omitempty" json:"branch,omitempty"`
 	Tag            string   `yaml:"tag,omitempty" json:"tag,omitempty"`
@@ -71,6 +72,7 @@ type Channel struct {
 // channelWire is the on-the-wire representation. Fallback is a pointer so that
 // nil (inherit) is omitted while a non-nil (including empty) chain is emitted.
 type channelWire struct {
+	PinOrigin      string    `yaml:"pin_origin,omitempty" json:"pin_origin,omitempty"`
 	Source         string    `yaml:"source,omitempty" json:"source,omitempty"`
 	Branch         string    `yaml:"branch,omitempty" json:"branch,omitempty"`
 	Tag            string    `yaml:"tag,omitempty" json:"tag,omitempty"`
@@ -80,7 +82,8 @@ type channelWire struct {
 
 func (ch Channel) wire() channelWire {
 	w := channelWire{
-		Source: ch.Source, Branch: ch.Branch, Tag: ch.Tag,
+		PinOrigin: ch.PinOrigin,
+		Source:    ch.Source, Branch: ch.Branch, Tag: ch.Tag,
 		ArtifactSHA256: ch.ArtifactSHA256,
 	}
 	if ch.Fallback != nil {
@@ -91,6 +94,7 @@ func (ch Channel) wire() channelWire {
 }
 
 func (ch *Channel) fromWire(w channelWire) {
+	ch.PinOrigin = w.PinOrigin
 	ch.Source = w.Source
 	ch.Branch = w.Branch
 	ch.Tag = w.Tag
@@ -480,8 +484,13 @@ func ValidateChannel(ch Channel) error {
 		}
 		for _, c := range ch.Tag {
 			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-				(c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
-				return fmt.Errorf("invalid release tag %q: only [A-Za-z0-9._-] are allowed", ch.Tag)
+				(c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '/') {
+				return fmt.Errorf("invalid release tag %q: only [A-Za-z0-9._/-] are allowed", ch.Tag)
+			}
+		}
+		for _, part := range strings.Split(ch.Tag, "/") {
+			if part == "" || part == "." || part == ".." || strings.HasSuffix(part, ".lock") {
+				return fmt.Errorf("invalid release tag %q: unsafe path component", ch.Tag)
 			}
 		}
 	}
@@ -501,16 +510,24 @@ func ValidateChannel(ch Channel) error {
 	return nil
 }
 
-// NormalizeBranch validates a branch name against [a-z0-9_-] and lowercases it.
+// NormalizeBranch validates a Git-style branch name and lowercases it.
 // Empty is rejected — callers wanting "unset" pass an empty Channel field.
 func NormalizeBranch(branch string) (string, error) {
 	if branch == "" {
 		return "", fmt.Errorf("branch name is empty")
 	}
+	if len(branch) > 128 {
+		return "", fmt.Errorf("branch name is too long")
+	}
 	lower := strings.ToLower(branch)
-	for _, c := range lower {
-		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
-			return "", fmt.Errorf("invalid branch name %q: only [a-z0-9_-] are allowed", branch)
+	for _, part := range strings.Split(lower, "/") {
+		if part == "" || part == "." || part == ".." || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return "", fmt.Errorf("invalid branch name %q", branch)
+		}
+		for _, c := range part {
+			if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
+				return "", fmt.Errorf("invalid branch name %q", branch)
+			}
 		}
 	}
 	return lower, nil

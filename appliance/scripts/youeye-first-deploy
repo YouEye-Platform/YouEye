@@ -9,6 +9,7 @@ setup_gate=${YOUEYE_SETUP_GATE:-/usr/local/libexec/youeye-setup-gate}
 seed_market=${YOUEYE_SEED_MARKET:-/usr/local/libexec/youeye-seed-market}
 bootstrap_network=${YOUEYE_BOOTSTRAP_NETWORK:-/usr/local/libexec/youeye-bootstrap-network}
 release_policy=${YOUEYE_RELEASE_POLICY:-/var/lib/youeye-state/bootstrap/release-policy.json}
+sealed_release=${YOUEYE_FIRST_DEPLOY_SEALED_RELEASE:-/usr/lib/youeye/appliance-release}
 youeye=${YOUEYE_BIN:-/usr/local/bin/youeye}
 incus=${INCUS_BIN:-incus}
 curl_bin=${CURL_BIN:-curl}
@@ -104,6 +105,13 @@ if [ -n "$control_state" ]; then
             control_state="$($incus list youeye-control -c s --format csv 2>/dev/null || true)"
             [ "$control_state" = RUNNING ] || exit 1
         fi
+    fi
+    sealed_control_version=$(jq -er '.release_set.control_panel.version' "$sealed_release")
+    installed_control_version=$($incus exec youeye-control -- cat /opt/app/package.json 2>/dev/null | jq -r '.version // empty' || true)
+    if [ -n "$installed_control_version" ] && [ "$installed_control_version" != "$sealed_control_version" ]; then
+        current_stage=updating_control
+        write_progress server_interface "Converging preserved Server interface on the signed sealed release" 48
+        "$youeye" update control --yes
     fi
     if "$incus" exec youeye-control -- sh -c \
         'test -e /opt/app/server.js && test -e /etc/systemd/system/youeye-control.service && test -e /etc/systemd/system/youeye-id.service' \

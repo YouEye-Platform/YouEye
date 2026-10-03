@@ -20,8 +20,9 @@ import {
   generateCSRFToken,
 } from "@/lib/auth";
 import { upsertUser } from "@/lib/db/queries/users";
+import { verifyIdentityToken } from "@/lib/auth/id-token";
 
-const SESSION_DURATION = 60 * 60 * 24 * 7; // 7 days
+const SESSION_DURATION = 60 * 60 * 24 * 30; // ID session sets the earlier idle limit
 
 function hasAdminClaim(groups: string[], isAdminClaim?: boolean): boolean {
   return isAdminClaim === true || groups.includes("admin");
@@ -101,6 +102,22 @@ export async function GET(request: NextRequest) {
 
     // Fetch user profile from identity provider
     const userInfo = await fetchUserInfo(tokenData.access_token);
+    const identityUrl = process.env.IDENTITY_URL || '';
+    const clientId = process.env.IDENTITY_CLIENT_ID || '';
+    if (!tokenData.id_token || !identityUrl || !clientId) throw new Error('Missing ID token or provider configuration');
+    // The registered issuer can be pinned through a domain rename. Read the
+    // provider's current discovery contract instead of rebuilding it from the
+    // browser URL, which may now point at a different host.
+    const discoveryBase = process.env.IDENTITY_INTERNAL_URL || identityUrl;
+    const discoveryResponse = await fetch(`${discoveryBase}/application/o/${encodeURIComponent(clientId)}/.well-known/openid-configuration`, {
+      cache: "no-store", signal: AbortSignal.timeout(5000),
+    });
+    if (!discoveryResponse.ok) throw new Error("Identity discovery unavailable");
+    const discovery = await discoveryResponse.json() as { issuer?: string; jwks_uri?: string };
+    const { payload: idClaims } = await verifyIdentityToken(tokenData.id_token, discovery, clientId, discoveryBase);
+    if (idClaims.token_use !== 'id' || typeof idClaims.sid !== 'string' || idClaims.sub !== userInfo.sub) {
+      throw new Error('Identity session is missing or mismatched');
+    }
 
     const username = userInfo.preferred_username || userInfo.sub;
     const groups = userInfo.groups || [];
@@ -123,6 +140,7 @@ export async function GET(request: NextRequest) {
     const sessionToken = await createSession({
       userId: user.id,
       identityId: userInfo.sub,
+      identitySessionId: idClaims.sid,
       username,
       name: userInfo.name || username,
       email: userInfo.email || "",

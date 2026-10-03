@@ -90,11 +90,11 @@ func TestPrivateMainDiscoveryAndSignedDownload(t *testing.T) {
 	for name, content := range files {
 		release.Assets = append(release.Assets, applianceReleaseAsset{Name: name, Size: int64(len(content)), BrowserDownloadURL: source + "/releases/download/" + tag + "/" + name})
 	}
-	selected, err := resolveApplianceRelease(context.Background(), server.Client(), "forgejo", server.URL+"/api/v1/repos/owner/YouEye/releases", "stable", "")
+	selected, err := resolveApplianceRelease(context.Background(), server.Client(), "custom", server.URL+"/api/v1/repos/owner/YouEye/releases", "stable", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !privateForgejoMainRelease(selected) {
+	if !repositoryMainRelease(selected) {
 		t.Fatal("discovery lost authenticated provider context")
 	}
 	verified, err := downloadVerifiedApplianceRelease(context.Background(), server.Client(), selected, t.TempDir(), "")

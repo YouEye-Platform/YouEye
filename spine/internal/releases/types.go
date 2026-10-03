@@ -1,10 +1,15 @@
 package releases
 
+import "time"
+
 // Release represents a software release.
 type Release struct {
-	TagName string  `json:"tag_name"`
-	Version string  // Parsed version without 'v' prefix
-	Assets  []Asset `json:"assets"`
+	PublishedAt time.Time `json:"published_at"`
+	Draft       bool      `json:"draft"`
+	Prerelease  bool      `json:"prerelease"`
+	TagName     string    `json:"tag_name"`
+	Version     string    // Parsed version without 'v' prefix
+	Assets      []Asset   `json:"assets"`
 }
 
 // Asset represents a release asset (downloadable file).

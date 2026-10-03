@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'crypto';
 import { execShell } from '@/lib/incus/server';
 import { POSTGRES_MANIFEST } from '@/lib/apps/manifest';
 import { requireIdentityPassword } from './password-policy';
@@ -22,6 +22,8 @@ export interface IdentityClient {
   client_secret: string;
   name: string;
   redirect_uris: string[];
+  post_logout_redirect_uris: string[];
+  backchannel_logout_uri: string | null;
   scopes: string[];
 }
 
@@ -40,6 +42,25 @@ export interface AuthCode {
   redirect_uri: string;
   scope: string;
   nonce: string | null;
+  code_challenge: string | null;
+  session_id: string | null;
+}
+
+export interface IdentitySession {
+  id: string;
+  user_id: string;
+  expires_at: string;
+  idle_expires_at: string;
+  revoked_at: string | null;
+}
+
+export interface LogoutDelivery {
+  id: string;
+  client_id: string;
+  uri: string;
+  logout_token: string;
+  attempts: number;
+  session_id: string;
 }
 
 export interface ApplianceClaimStatus {
@@ -68,7 +89,7 @@ async function psql(command: string): Promise<string> {
     .replace(/'/g, "'\\''");
   const { exitCode, stdout, stderr } = await execShell(
     CONTAINER,
-    `su - postgres -c "psql -U youeye -d youeye -tA -c '${escaped}'"`,
+    `su - postgres -c "psql -v ON_ERROR_STOP=1 -U youeye -d youeye -tA -c '${escaped}'"`,
     { timeout: 15000 }
   );
   if (exitCode !== 0) {
@@ -89,8 +110,25 @@ async function queryCommandRows<T>(command: string): Promise<T[]> {
   return JSON.parse(line) as T[];
 }
 
+let schemaReady = false;
+let schemaSetup: Promise<void> | null = null;
+
 export async function ensureIdentitySchema(): Promise<void> {
+  if (schemaReady) return;
+  if (schemaSetup) return schemaSetup;
+  schemaSetup = initializeIdentitySchema();
+  try {
+    await schemaSetup;
+    schemaReady = true;
+  } finally {
+    schemaSetup = null;
+  }
+}
+
+async function initializeIdentitySchema(): Promise<void> {
   await psql(`
+    BEGIN;
+    SELECT pg_advisory_xact_lock(hashtext('youeye-identity-schema'));
     CREATE TABLE IF NOT EXISTS identity_users (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       username text UNIQUE NOT NULL,
@@ -124,10 +162,14 @@ export async function ensureIdentitySchema(): Promise<void> {
       client_secret text NOT NULL,
       name text NOT NULL DEFAULT '',
       redirect_uris jsonb NOT NULL DEFAULT '[]'::jsonb,
+      post_logout_redirect_uris jsonb NOT NULL DEFAULT '[]'::jsonb,
+      backchannel_logout_uri text,
       scopes jsonb NOT NULL DEFAULT '[]'::jsonb,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
+    ALTER TABLE identity_clients ADD COLUMN IF NOT EXISTS post_logout_redirect_uris jsonb NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE identity_clients ADD COLUMN IF NOT EXISTS backchannel_logout_uri text;
     CREATE TABLE IF NOT EXISTS identity_auth_codes (
       code text PRIMARY KEY,
       client_id text NOT NULL REFERENCES identity_clients(client_id) ON DELETE CASCADE,
@@ -135,9 +177,106 @@ export async function ensureIdentitySchema(): Promise<void> {
       redirect_uri text NOT NULL,
       scope text NOT NULL,
       nonce text,
+      code_challenge text,
+      session_id uuid,
       expires_at timestamptz NOT NULL,
       used_at timestamptz
     );
+    ALTER TABLE identity_auth_codes ADD COLUMN IF NOT EXISTS code_challenge text;
+    ALTER TABLE identity_auth_codes ADD COLUMN IF NOT EXISTS session_id uuid;
+    CREATE TABLE IF NOT EXISTS identity_sessions (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id uuid NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      last_seen_at timestamptz NOT NULL DEFAULT now(),
+      idle_expires_at timestamptz NOT NULL,
+      expires_at timestamptz NOT NULL,
+      revoked_at timestamptz
+    );
+    CREATE TABLE IF NOT EXISTS identity_session_clients (
+      session_id uuid NOT NULL REFERENCES identity_sessions(id) ON DELETE CASCADE,
+      client_id text NOT NULL REFERENCES identity_clients(client_id) ON DELETE CASCADE,
+      user_id uuid NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
+      PRIMARY KEY (session_id, client_id)
+    );
+    CREATE INDEX IF NOT EXISTS identity_sessions_user_active_idx ON identity_sessions(user_id, revoked_at);
+    CREATE TABLE IF NOT EXISTS identity_logout_deliveries (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      session_id uuid,
+      client_id text NOT NULL,
+      uri text NOT NULL,
+      logout_token text NOT NULL,
+      attempts integer NOT NULL DEFAULT 0,
+      next_attempt_at timestamptz NOT NULL DEFAULT now(),
+      delivered_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+    ALTER TABLE identity_logout_deliveries ADD COLUMN IF NOT EXISTS session_id uuid;
+    CREATE UNIQUE INDEX IF NOT EXISTS identity_logout_session_client_idx
+      ON identity_logout_deliveries(session_id, client_id) WHERE session_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS identity_logout_due_idx ON identity_logout_deliveries(next_attempt_at)
+      WHERE delivered_at IS NULL;
+    CREATE TABLE IF NOT EXISTS identity_refresh_tokens (
+      token_hash text PRIMARY KEY,
+      family_id uuid NOT NULL,
+      session_id uuid NOT NULL REFERENCES identity_sessions(id) ON DELETE CASCADE,
+      client_id text NOT NULL REFERENCES identity_clients(client_id) ON DELETE CASCADE,
+      user_id uuid NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
+      scope text NOT NULL,
+      expires_at timestamptz NOT NULL,
+      used_at timestamptz,
+      revoked_at timestamptz
+    );
+    CREATE INDEX IF NOT EXISTS identity_refresh_family_idx ON identity_refresh_tokens(family_id);
+    CREATE TABLE IF NOT EXISTS identity_refresh_families (
+      id uuid PRIMARY KEY,
+      revoked_at timestamptz
+    );
+    CREATE TABLE IF NOT EXISTS identity_revoked_access_tokens (
+      token_id uuid PRIMARY KEY,
+      expires_at timestamptz NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS identity_revoked_before (
+      user_id uuid PRIMARY KEY REFERENCES identity_users(id) ON DELETE CASCADE,
+      revoked_before timestamptz NOT NULL
+    );
+    CREATE OR REPLACE FUNCTION identity_rotate_refresh(
+      presented_hash text, requested_client text, replacement_hash text
+    ) RETURNS TABLE (user_id text, session_id text, scope text)
+    LANGUAGE plpgsql AS $rotation$
+    DECLARE
+      old_token identity_refresh_tokens%ROWTYPE;
+      old_family identity_refresh_families%ROWTYPE;
+      active_session identity_sessions%ROWTYPE;
+    BEGIN
+      SELECT * INTO old_token FROM identity_refresh_tokens
+      WHERE token_hash = presented_hash AND client_id = requested_client FOR UPDATE;
+      IF NOT FOUND THEN RETURN; END IF;
+      SELECT * INTO old_family FROM identity_refresh_families
+      WHERE id = old_token.family_id FOR UPDATE;
+      IF NOT FOUND OR old_family.revoked_at IS NOT NULL THEN RETURN; END IF;
+      IF old_token.used_at IS NOT NULL THEN
+        UPDATE identity_refresh_families SET revoked_at = now() WHERE id = old_token.family_id;
+        UPDATE identity_sessions SET revoked_at = COALESCE(revoked_at, now()) WHERE id = old_token.session_id;
+        RETURN;
+      END IF;
+      SELECT * INTO active_session FROM identity_sessions
+      WHERE id = old_token.session_id FOR UPDATE;
+      IF NOT FOUND OR active_session.revoked_at IS NOT NULL
+        OR active_session.idle_expires_at <= now() OR active_session.expires_at <= now()
+        OR old_token.revoked_at IS NOT NULL OR old_token.expires_at <= now()
+      THEN RETURN; END IF;
+      UPDATE identity_refresh_tokens SET used_at = now() WHERE token_hash = old_token.token_hash;
+      INSERT INTO identity_refresh_tokens
+        (token_hash, family_id, session_id, client_id, user_id, scope, expires_at)
+      VALUES (replacement_hash, old_token.family_id, old_token.session_id,
+        old_token.client_id, old_token.user_id, old_token.scope, old_token.expires_at);
+      user_id := old_token.user_id::text;
+      session_id := old_token.session_id::text;
+      scope := old_token.scope;
+      RETURN NEXT;
+    END;
+    $rotation$;
     CREATE TABLE IF NOT EXISTS identity_secrets (
       purpose text PRIMARY KEY,
       secret text NOT NULL,
@@ -169,6 +308,7 @@ export async function ensureIdentitySchema(): Promise<void> {
     );
     INSERT INTO identity_appliance_claim (singleton) VALUES (true)
     ON CONFLICT (singleton) DO NOTHING;
+    COMMIT;
   `);
 }
 
@@ -533,19 +673,23 @@ export async function ensureClient(input: {
   clientSecret: string;
   name: string;
   redirectUris: string[];
+  postLogoutRedirectUris?: string[];
+  backchannelLogoutUri?: string | null;
   scopes: string[];
 }): Promise<IdentityClient> {
   await ensureIdentitySchema();
   const rows = await queryRows<IdentityClient>(`
-    INSERT INTO identity_clients (client_id, client_secret, name, redirect_uris, scopes)
-    VALUES (${sql(input.clientId)}, ${sql(input.clientSecret)}, ${sql(input.name)}, ${sqlJson(input.redirectUris)}, ${sqlJson(input.scopes)})
+    INSERT INTO identity_clients (client_id, client_secret, name, redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, scopes)
+    VALUES (${sql(input.clientId)}, ${sql(input.clientSecret)}, ${sql(input.name)}, ${sqlJson(input.redirectUris)}, ${sqlJson(input.postLogoutRedirectUris || [])}, ${sql(input.backchannelLogoutUri ?? null)}, ${sqlJson(input.scopes)})
     ON CONFLICT (client_id) DO UPDATE SET
       client_secret = EXCLUDED.client_secret,
       name = EXCLUDED.name,
       redirect_uris = EXCLUDED.redirect_uris,
+      post_logout_redirect_uris = EXCLUDED.post_logout_redirect_uris,
+      backchannel_logout_uri = ${sql(input.backchannelLogoutUri ?? null)},
       scopes = EXCLUDED.scopes,
       updated_at = now()
-    RETURNING client_id, client_secret, name, redirect_uris, scopes
+    RETURNING client_id, client_secret, name, redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, scopes
   `);
   return rows[0];
 }
@@ -553,7 +697,7 @@ export async function ensureClient(input: {
 export async function getClient(clientId: string): Promise<IdentityClient | null> {
   await ensureIdentitySchema();
   const rows = await queryRows<IdentityClient>(`
-    SELECT client_id, client_secret, name, redirect_uris, scopes
+    SELECT client_id, client_secret, name, redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, scopes
     FROM identity_clients
     WHERE client_id = ${sql(clientId)}
     LIMIT 1
@@ -572,12 +716,19 @@ export async function createAuthCode(input: {
   redirectUri: string;
   scope: string;
   nonce?: string | null;
+  codeChallenge?: string | null;
+  sessionId?: string | null;
 }): Promise<string> {
   await ensureIdentitySchema();
   const code = randomBytes(32).toString('hex');
   await psql(`
-    INSERT INTO identity_auth_codes (code, client_id, user_id, redirect_uri, scope, nonce, expires_at)
-    VALUES (${sql(code)}, ${sql(input.clientId)}, ${sql(input.userId)}, ${sql(input.redirectUri)}, ${sql(input.scope)}, ${sql(input.nonce ?? null)}, now() + interval '10 minutes')
+    BEGIN;
+    INSERT INTO identity_auth_codes (code, client_id, user_id, redirect_uri, scope, nonce, code_challenge, session_id, expires_at)
+    VALUES (${sql(code)}, ${sql(input.clientId)}, ${sql(input.userId)}, ${sql(input.redirectUri)}, ${sql(input.scope)}, ${sql(input.nonce ?? null)}, ${sql(input.codeChallenge ?? null)}, ${sql(input.sessionId ?? null)}::uuid, now() + interval '10 minutes');
+    ${input.sessionId ? `INSERT INTO identity_session_clients(session_id, client_id, user_id)
+      VALUES (${sql(input.sessionId)}::uuid, ${sql(input.clientId)}, ${sql(input.userId)}::uuid)
+      ON CONFLICT (session_id, client_id) DO NOTHING;` : ''}
+    COMMIT;
   `);
   return code;
 }
@@ -592,9 +743,192 @@ export async function consumeAuthCode(code: string, clientId: string, redirectUr
       AND redirect_uri = ${sql(redirectUri)}
       AND used_at IS NULL
       AND expires_at > now()
-    RETURNING code, client_id, user_id::text, redirect_uri, scope, nonce
+    RETURNING code, client_id, user_id::text, redirect_uri, scope, nonce, code_challenge, session_id::text
   `);
   return rows[0] || null;
+}
+
+const SESSION_IDLE_DAYS = 7;
+const SESSION_MAX_DAYS = 30;
+
+export async function createIdentitySession(userId: string): Promise<IdentitySession> {
+  await ensureIdentitySchema();
+  const rows = await queryRows<IdentitySession>(`
+    INSERT INTO identity_sessions (user_id, idle_expires_at, expires_at)
+    VALUES (${sql(userId)}, now() + interval '${SESSION_IDLE_DAYS} days', now() + interval '${SESSION_MAX_DAYS} days')
+    RETURNING id::text, user_id::text, expires_at::text, idle_expires_at::text, revoked_at::text
+  `);
+  return rows[0];
+}
+
+export async function getIdentitySessionById(sessionId: string, touch = false): Promise<IdentitySession | null> {
+  await ensureIdentitySchema();
+  if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return null;
+  const rows = await queryRows<IdentitySession>(`
+    ${touch ? `UPDATE identity_sessions
+    SET last_seen_at = now(), idle_expires_at = LEAST(expires_at, now() + interval '${SESSION_IDLE_DAYS} days')
+    WHERE id = ${sql(sessionId)}::uuid AND revoked_at IS NULL AND idle_expires_at > now() AND expires_at > now()
+    RETURNING id::text, user_id::text, expires_at::text, idle_expires_at::text, revoked_at::text` :
+    `SELECT id::text, user_id::text, expires_at::text, idle_expires_at::text, revoked_at::text
+    FROM identity_sessions WHERE id = ${sql(sessionId)}::uuid AND revoked_at IS NULL AND idle_expires_at > now() AND expires_at > now()`}
+  `);
+  return rows[0] || null;
+}
+
+export async function revokeIdentitySession(sessionId: string): Promise<void> {
+  await ensureIdentitySchema();
+  if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return;
+  await psql(`UPDATE identity_sessions SET revoked_at = COALESCE(revoked_at, now()) WHERE id = ${sql(sessionId)}::uuid`);
+}
+
+export async function listSessionLogoutClients(sessionId: string): Promise<Array<{ client_id: string; uri: string; user_id: string }>> {
+  await ensureIdentitySchema();
+  if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return [];
+  return queryRows<{ client_id: string; uri: string; user_id: string }>(`
+    SELECT DISTINCT participants.client_id, c.backchannel_logout_uri AS uri, participants.user_id::text
+    FROM (
+      SELECT client_id, user_id FROM identity_session_clients WHERE session_id = ${sql(sessionId)}::uuid
+      UNION
+      SELECT client_id, user_id FROM identity_refresh_tokens WHERE session_id = ${sql(sessionId)}::uuid
+    ) participants JOIN identity_clients c ON c.client_id = participants.client_id
+    WHERE c.backchannel_logout_uri IS NOT NULL
+  `);
+}
+
+export async function listUserLogoutSessions(userId: string): Promise<Array<{ id: string }>> {
+  await ensureIdentitySchema();
+  return queryRows<{ id: string }>(`
+    SELECT id::text FROM identity_sessions
+    WHERE user_id = ${sql(userId)}::uuid AND revoked_at IS NULL
+  `);
+}
+
+export async function enqueueLogoutDelivery(input: { sessionId: string; clientId: string; uri: string; token: string }): Promise<void> {
+  await ensureIdentitySchema();
+  await psql(`INSERT INTO identity_logout_deliveries(session_id, client_id, uri, logout_token)
+    VALUES (${sql(input.sessionId)}::uuid, ${sql(input.clientId)}, ${sql(input.uri)}, ${sql(input.token)})
+    ON CONFLICT (session_id, client_id) WHERE session_id IS NOT NULL DO NOTHING`);
+}
+
+export async function getDueLogoutDeliveries(): Promise<LogoutDelivery[]> {
+  await ensureIdentitySchema();
+  return queryRows<LogoutDelivery>(`
+    SELECT id::text, client_id, uri, logout_token, attempts, session_id::text FROM identity_logout_deliveries
+    WHERE delivered_at IS NULL AND next_attempt_at <= now() AND attempts < 10
+      AND session_id IS NOT NULL
+      AND created_at > now() - interval '23 hours'
+    ORDER BY next_attempt_at, created_at LIMIT 20
+  `);
+}
+
+export async function finishLogoutDelivery(id: string, delivered: boolean): Promise<void> {
+  await ensureIdentitySchema();
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return;
+  await psql(`UPDATE identity_logout_deliveries
+    SET attempts = attempts + 1,
+      delivered_at = CASE WHEN ${sql(delivered)} THEN now() ELSE delivered_at END,
+      next_attempt_at = CASE WHEN ${sql(delivered)} THEN next_attempt_at
+        ELSE now() + (LEAST(3600, power(2, LEAST(attempts + 1, 10))::int * 10) * interval '1 second') END
+    WHERE id = ${sql(id)}::uuid AND delivered_at IS NULL`);
+}
+
+export async function revokeAllIdentitySessions(userId: string): Promise<number> {
+  await ensureIdentitySchema();
+  const rows = await queryCommandRows<{ count: number }>(`
+    WITH cutoff AS (
+      INSERT INTO identity_revoked_before (user_id, revoked_before)
+      VALUES (${sql(userId)}::uuid, now())
+      ON CONFLICT (user_id) DO UPDATE SET revoked_before = EXCLUDED.revoked_before
+      RETURNING user_id
+    ), revoked AS (
+      UPDATE identity_sessions SET revoked_at = now()
+      WHERE user_id IN (SELECT user_id FROM cutoff) AND revoked_at IS NULL
+      RETURNING id
+    ) SELECT json_build_array(json_build_object('count', count(*)::int))::text FROM revoked
+  `);
+  return rows[0]?.count || 0;
+}
+
+export async function isUserTokenInvalidated(userId: string, issuedAt: number): Promise<boolean> {
+  await ensureIdentitySchema();
+  const rows = await queryRows<{ revoked_before: string }>(`
+    SELECT revoked_before::text FROM identity_revoked_before WHERE user_id = ${sql(userId)}::uuid
+  `);
+  return rows.length > 0 && issuedAt * 1000 <= Date.parse(rows[0].revoked_before);
+}
+
+export async function isIdentitySessionActiveForUser(sessionId: string, userId: string): Promise<boolean> {
+  const session = await getIdentitySessionById(sessionId);
+  return session?.user_id === userId;
+}
+
+function tokenHash(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+export async function issueRefreshToken(input: {
+  clientId: string;
+  userId: string;
+  sessionId: string;
+  scope: string;
+  familyId?: string;
+}): Promise<string> {
+  await ensureIdentitySchema();
+  const token = randomBytes(32).toString('base64url');
+  const familyId = input.familyId || randomUUID();
+  await psql(`
+    INSERT INTO identity_refresh_families (id) VALUES (${sql(familyId)}::uuid)
+      ON CONFLICT (id) DO NOTHING
+  `);
+  const inserted = await queryRows<{ token_hash: string }>(`
+    INSERT INTO identity_refresh_tokens (token_hash, family_id, session_id, client_id, user_id, scope, expires_at)
+    SELECT ${sql(tokenHash(token))}, ${sql(familyId)}::uuid, s.id, ${sql(input.clientId)}, s.user_id, ${sql(input.scope)}, s.expires_at
+    FROM identity_sessions s JOIN identity_refresh_families f ON f.id = ${sql(familyId)}::uuid
+    WHERE s.id = ${sql(input.sessionId)}::uuid AND s.user_id = ${sql(input.userId)}::uuid
+      AND s.revoked_at IS NULL AND s.idle_expires_at > now() AND s.expires_at > now()
+      AND f.revoked_at IS NULL
+    RETURNING token_hash
+  `);
+  if (!inserted.length) throw new Error('Cannot issue a refresh token for an inactive session');
+  return token;
+}
+
+export async function rotateRefreshToken(token: string, clientId: string): Promise<{
+  userId: string; sessionId: string; scope: string; token: string;
+} | null> {
+  await ensureIdentitySchema();
+  if (!token) return null;
+  const replacement = randomBytes(32).toString('base64url');
+  const rows = await queryRows<{ user_id: string; session_id: string; scope: string }>(`
+    SELECT * FROM identity_rotate_refresh(${sql(tokenHash(token))}, ${sql(clientId)}, ${sql(tokenHash(replacement))})
+  `);
+  const row = rows[0];
+  if (!row || !(await getIdentitySessionById(row.session_id))) return null;
+  return { userId: row.user_id, sessionId: row.session_id, scope: row.scope, token: replacement };
+}
+
+export async function revokeRefreshToken(token: string, clientId: string): Promise<void> {
+  await ensureIdentitySchema();
+  if (!token) return;
+  await psql(`UPDATE identity_refresh_families SET revoked_at = COALESCE(revoked_at, now())
+    WHERE id IN (SELECT family_id FROM identity_refresh_tokens
+    WHERE token_hash = ${sql(tokenHash(token))} AND client_id = ${sql(clientId)})`);
+}
+
+export async function revokeAccessToken(tokenId: string, expiresAt: number): Promise<void> {
+  await ensureIdentitySchema();
+  if (!/^[0-9a-f-]{36}$/i.test(tokenId)) return;
+  await psql(`INSERT INTO identity_revoked_access_tokens (token_id, expires_at)
+    VALUES (${sql(tokenId)}::uuid, to_timestamp(${sql(expiresAt)})) ON CONFLICT (token_id) DO NOTHING`);
+}
+
+export async function isAccessTokenRevoked(tokenId: string): Promise<boolean> {
+  await ensureIdentitySchema();
+  if (!/^[0-9a-f-]{36}$/i.test(tokenId)) return true;
+  const rows = await queryRows<{ token_id: string }>(`
+    SELECT token_id::text FROM identity_revoked_access_tokens WHERE token_id = ${sql(tokenId)}::uuid AND expires_at > now()
+  `);
+  return rows.length > 0;
 }
 
 export async function getAppConsent(userId: string, clientId: string): Promise<IdentityAppConsent | null> {
@@ -659,11 +993,60 @@ export async function getIdentitySecret(purpose: string): Promise<string | null>
   return existing[0]?.secret || null;
 }
 
-export async function setIdentitySecret(purpose: string, secret: string): Promise<void> {
+/** A public authority migration cannot reuse authorization state from the old issuer.
+ * Managed clients keep their logical issuer and refresh/session behavior.
+ * Users, subjects, consent, signing keys and client registrations are retained.
+ */
+export async function invalidatePublicOidcState(): Promise<void> {
   await ensureIdentitySchema();
-  await psql(`
-    INSERT INTO identity_secrets (purpose, secret)
-    VALUES (${sql(purpose)}, ${sql(secret)})
-    ON CONFLICT (purpose) DO UPDATE SET secret = EXCLUDED.secret
+  await psql(`BEGIN;
+    UPDATE identity_auth_codes SET used_at = COALESCE(used_at, now())
+      WHERE NOT starts_with(client_id, 'youeye-app-');
+    UPDATE identity_refresh_tokens SET revoked_at = COALESCE(revoked_at, now())
+      WHERE NOT starts_with(client_id, 'youeye-app-');
+    COMMIT;`);
+}
+
+export async function setIdentitySecretIfAbsent(purpose: string, secret: string): Promise<string> {
+  await ensureIdentitySchema();
+  await psql(`INSERT INTO identity_secrets (purpose, secret) VALUES (${sql(purpose)}, ${sql(secret)}) ON CONFLICT (purpose) DO NOTHING`);
+  const persisted = await getIdentitySecret(purpose);
+  if (!persisted) throw new Error('Could not persist the YouEye ID signing key');
+  return persisted;
+}
+
+export async function getOAuthSigningKeySnapshot(): Promise<{ active: string; retired: string[] }> {
+  await ensureIdentitySchema();
+  const rows = await queryRows<{ purpose: string; secret: string }>(`
+    SELECT purpose, secret FROM identity_secrets
+    WHERE purpose = 'oauth-rs256-private-key'
+       OR (purpose LIKE 'oauth-rs256-retired:%' AND created_at > now() - interval '48 hours')
   `);
+  const active = rows.find(row => row.purpose === 'oauth-rs256-private-key')?.secret;
+  if (!active) throw new Error('YouEye ID signing key is not initialized');
+  return { active, retired: rows.filter(row => row.purpose !== 'oauth-rs256-private-key').map(row => row.secret) };
+}
+
+export async function rotateOAuthSigningKey(oldPem: string, newPem: string, oldKid: string): Promise<boolean> {
+  await ensureIdentitySchema();
+  if (!/^[A-Za-z0-9_-]{20,128}$/.test(oldKid)) throw new Error('Invalid signing key identifier');
+  // A single statement archives the old key before switching the active row.
+  // The row lock and old-key comparison make concurrent stale rotations fail.
+  const result = await queryCommandRows<{ changed: boolean }>(`
+    WITH previous AS MATERIALIZED (
+      SELECT secret FROM identity_secrets
+      WHERE purpose = 'oauth-rs256-private-key' AND secret = ${sql(oldPem)} FOR UPDATE
+    ), archived AS (
+      INSERT INTO identity_secrets (purpose, secret)
+      SELECT ${sql(`oauth-rs256-retired:${oldKid}`)}, secret FROM previous
+      ON CONFLICT (purpose) DO NOTHING RETURNING purpose
+    ), changed AS (
+      UPDATE identity_secrets SET secret = ${sql(newPem)}, created_at = now()
+      WHERE purpose = 'oauth-rs256-private-key' AND secret = ${sql(oldPem)}
+        AND EXISTS (SELECT 1 FROM archived)
+      RETURNING purpose
+    )
+    SELECT json_build_array(json_build_object('changed', EXISTS (SELECT 1 FROM changed)))::text
+  `);
+  return result[0]?.changed === true;
 }

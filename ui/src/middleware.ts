@@ -110,7 +110,19 @@ export async function middleware(request: NextRequest) {
   }
 
   try {
-    await jwtVerify(sessionCookie.value, secret);
+    const { payload } = await jwtVerify(sessionCookie.value, secret);
+    // The ID cookie is shared by the platform's parent domain. Check it on
+    // protected browser requests so revocation takes effect across devices.
+    const identityUrl = process.env.IDENTITY_INTERNAL_URL || process.env.IDENTITY_URL;
+    if (identityUrl) {
+      if (typeof payload.identityId !== 'string') throw new Error('Missing identity subject');
+      if (typeof payload.identitySessionId !== 'string') throw new Error('Missing identity session');
+      const cookie = request.headers.get('cookie') || '';
+      const check = await fetch(`${identityUrl}/identity/session/check`, {
+        headers: { cookie, 'x-youeye-expected-sub': payload.identityId, 'x-youeye-expected-sid': payload.identitySessionId }, cache: 'no-store', signal: AbortSignal.timeout(5000),
+      });
+      if (check.status !== 204) throw new Error('Identity session ended');
+    }
     return NextResponse.next();
   } catch {
     // Invalid or expired token — redirect to login

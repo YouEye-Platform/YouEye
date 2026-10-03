@@ -1,4 +1,5 @@
 import { releaseCacheFetch } from '../releases/cache';
+import { loadCatalogEntries, type CatalogWarning } from './partial-catalog';
 /**
  * Catalog fetcher — pulls app manifests from Market, app repos, or URLs.
  *
@@ -817,27 +818,35 @@ function attachStandaloneIntegrations(items: MarketApp[]): MarketApp[] {
 
 // ─── Public API ───────────────────────────────────────────
 
-export async function fetchAvailableApps(): Promise<MarketApp[]> {
+export async function fetchAvailableApps(onWarning?: (warning: CatalogWarning) => void): Promise<MarketApp[]> {
   const sources = await getMarketSources();
   const apps: MarketApp[] = [];
 
   const results = await Promise.allSettled(sources.flatMap(async (source) => {
     const catalog = await fetchCatalog(source);
     const branch = await getEffectiveBranch(source);
-    const appItems = await Promise.all(catalog.apps.map(async (entry) => {
+    const reportFailure = (entry: { id: string }, error: unknown) => {
+      console.warn(`[market] ${source.id}/${entry.id}: manifest unavailable`, error);
+      onWarning?.({ sourceId: source.id, itemId: entry.id, message: `${source.name}: could not load ${entry.id}.` });
+    };
+    const appItems = await loadCatalogEntries(catalog.apps, async (entry) => {
       const result = await fetchManifestFromCatalogEntry(entry, branch, source);
       return manifestToMarketApp(result.manifest, source, result.reference);
-    }));
-    const integrationItems = await Promise.all((catalog.integrations ?? []).map(async (entry) => {
+    }, reportFailure);
+    const integrationItems = await loadCatalogEntries(catalog.integrations ?? [], async (entry) => {
       const result = await fetchIntegrationManifestFromCatalogEntry(entry, branch, source);
       return integrationManifestToMarketApp(result.manifest, source, result.reference);
-    }));
+    }, reportFailure);
     return [...appItems, ...integrationItems];
   }));
 
-  for (const result of results) {
+  for (const [index, result] of results.entries()) {
     if (result.status === 'fulfilled') {
       apps.push(...result.value);
+    } else {
+      const source = sources[index];
+      console.warn(`[market] ${source.id}: catalog unavailable`, result.reason);
+      onWarning?.({ sourceId: source.id, message: `${source.name}: could not load its catalog.` });
     }
   }
 

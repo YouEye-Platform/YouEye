@@ -22,7 +22,7 @@ async function ensurePointerDatabase(postgresPassword: string) {
   }
 }
 
-export async function configurePointerService() {
+export async function configurePointerService(oldIssuer?: string) {
   const postgresPassword = await readSecret('postgres', '.pg_password');
   if (!postgresPassword) throw new Error('PostgreSQL credential is unavailable');
   const [jwtSecret, encryptionSecret, identity] = await Promise.all([
@@ -34,6 +34,22 @@ export async function configurePointerService() {
   await injectCaddyRootCA(POINTER_CONTAINER);
 
   const databaseUrl = `postgresql://youeye:${encodeURIComponent(postgresPassword)}@youeye-postgres.${CONTAINER_DOMAIN}:5432/${POINTER_DATABASE}`;
+  if (oldIssuer && oldIssuer !== identity.issuer) {
+    // Exact local database-owner migration provided by the signed Pointer payload.
+    // Its guards retain audience/subject, reject stale old issuers, and write an
+    // audit receipt for idempotent retries; no runtime verifier bypass is used.
+    const transition = await execCommand(POINTER_CONTAINER, [
+      '/opt/pointer/bun', '/opt/pointer/transition-managed-identity.js',
+      '--expect-database', POINTER_DATABASE,
+    ], { environment: {
+      DATABASE_URL: databaseUrl,
+      POINTER_IDENTITY_TRANSITION: JSON.stringify({
+        integrationId: 'youeye-native', oldIssuer, newIssuer: identity.issuer,
+        audience: POINTER_PLATFORM_AUDIENCE, subject: POINTER_PLATFORM_SUBJECT,
+      }),
+    }, timeout: 30_000 });
+    if (transition.exitCode !== 0) throw new Error('Pointer identity transition rejected; retry with the exact original identity');
+  }
   // This file is inside the signed release artifact. Forward its public
   // identity so readiness reports the deployed build instead of a dev default.
   const release = await execCommand(POINTER_CONTAINER, [

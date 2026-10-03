@@ -116,5 +116,19 @@ release_lock_validate_public_recipe "$public_dir/lock.json" "$public_dir/recipe.
 jq '.image.version = "99.0.0"' "$public_dir/recipe.json" > "$public_dir/wrong.json"
 if release_lock_validate_public_recipe "$public_dir/lock.json" "$public_dir/wrong.json"; then fail "public recipe allowed version drift"; fi
 jq '.components.ui.source_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "$public_dir/lock.json" > "$public_dir/wrong-lock.json"
-if release_lock_validate_public_recipe "$public_dir/wrong-lock.json" "$public_dir/recipe.json"; then fail "public lock allowed mixed source commits"; fi
-printf 'PASS: public detached lock binds the committed recipe and one source commit\n'
+release_lock_validate_public_recipe "$public_dir/wrong-lock.json" "$public_dir/recipe.json" || fail "public lock rejected original reused component commits"
+printf 'PASS: public detached lock binds the committed recipe and original component source commits\n'
+
+jq '.schema="youeye.appliance.release-lock.v2" |
+ .components.spine.branch=.image.release_branch |
+ .components.control_panel.branch="patch-test" |
+ .components.control_panel.tag=("cp-patch-test-v"+.components.control_panel.version) |
+ .components.ui.branch="main" | .components.ui.tag=("ui-v"+.components.ui.version)' \
+ "$fixtures/valid-custom.json" > "$public_dir/composition.json"
+release_lock_validate "$public_dir/composition.json" custom || fail "composition rejected: $release_lock_error"
+if release_lock_validate "$public_dir/composition.json" public; then fail "composition accepted as public release"; fi
+for mutation in '.schema="unknown"' '.components.ui.branch="dev"' 'del(.components.spine.branch)' '.schema="youeye.appliance.release-lock.v1"' '.unexpected=true'; do
+ jq "$mutation" "$public_dir/composition.json" > "$public_dir/bad-composition.json"
+ if release_lock_validate "$public_dir/bad-composition.json" custom; then fail "invalid composition accepted: $mutation"; fi
+done
+printf 'PASS: compositions preserve original branches and reject implicit or inconsistent overrides\n'

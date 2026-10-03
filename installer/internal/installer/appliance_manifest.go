@@ -70,6 +70,7 @@ type applianceManifestTrust struct {
 }
 
 type applianceManifestReleases struct {
+	Schema       string                     `json:"schema,omitempty"`
 	Source       string                     `json:"source"`
 	Branch       string                     `json:"branch"`
 	Fallback     []string                   `json:"fallback"`
@@ -79,6 +80,7 @@ type applianceManifestReleases struct {
 }
 
 type applianceManifestComponent struct {
+	Branch         string `json:"branch,omitempty"`
 	Version        string `json:"version"`
 	Tag            string `json:"tag,omitempty"`
 	SourceCommit   string `json:"source_commit"`
@@ -245,11 +247,36 @@ func validateApplianceBundleManifest(manifest applianceBundleManifest) error {
 	if !validApplianceReleaseBranch(manifest.ReleaseSet.Branch) {
 		return fmt.Errorf("appliance release_set branch is invalid")
 	}
+	if manifest.ReleaseSet.Schema != "" && manifest.ReleaseSet.Schema != "youeye.release-set.v2" {
+		return fmt.Errorf("unsupported release-set schema")
+	}
+	if manifest.ReleaseSet.Schema != "" && manifest.Trust.Class != applianceTrustDev {
+		return fmt.Errorf("component composition requires development trust")
+	}
 	for name, component := range map[string]applianceManifestComponent{
 		"spine":         manifest.ReleaseSet.Spine,
 		"control_panel": manifest.ReleaseSet.ControlPanel,
 		"ui":            manifest.ReleaseSet.UI,
 	} {
+		if manifest.ReleaseSet.Schema == "" && component.Branch != "" {
+			return fmt.Errorf("component branches require release-set v2")
+		}
+		if manifest.ReleaseSet.Schema != "" {
+			if !validApplianceReleaseBranch(component.Branch) {
+				return fmt.Errorf("invalid component branch")
+			}
+			prefix := name
+			if name == "control_panel" {
+				prefix = "cp"
+			}
+			want := prefix + "-v" + component.Version
+			if component.Branch != "main" {
+				want = prefix + "-" + component.Branch + "-v" + component.Version
+			}
+			if component.Tag != want {
+				return fmt.Errorf("composition component tag does not match its original branch and version")
+			}
+		}
 		if err := validateManifestComponent(name, component); err != nil {
 			return err
 		}

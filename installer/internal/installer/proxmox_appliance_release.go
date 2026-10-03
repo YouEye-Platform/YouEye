@@ -24,15 +24,15 @@ import (
 )
 
 const (
-	applianceISOFilename       = "youeye-appliance-amd64.iso"
-	applianceManifestFilename  = "appliance-manifest.json"
-	applianceManifestSigName   = "appliance-manifest.json.sig"
-	applianceChecksumsFilename = "SHA256SUMS"
-	applianceChecksumsSigName  = "SHA256SUMS.sig"
-	applianceReleaseLockName   = "release-lock.json"
-	applianceGitHubPageSize    = 100
-	applianceForgejoPageSize   = 50
-	applianceReleaseMaxPages   = 200
+	applianceISOFilename        = "youeye-appliance-amd64.iso"
+	applianceManifestFilename   = "appliance-manifest.json"
+	applianceManifestSigName    = "appliance-manifest.json.sig"
+	applianceChecksumsFilename  = "SHA256SUMS"
+	applianceChecksumsSigName   = "SHA256SUMS.sig"
+	applianceReleaseLockName    = "release-lock.json"
+	applianceGitHubPageSize     = 100
+	applianceCompatiblePageSize = 50
+	applianceReleaseMaxPages    = 200
 )
 
 var applianceSignedAssetNames = []string{
@@ -90,7 +90,7 @@ func resolveApplianceRelease(ctx context.Context, client *http.Client, provider,
 	if err != nil {
 		return applianceRelease{}, err
 	}
-	pageSize := applianceForgejoPageSize
+	pageSize := applianceCompatiblePageSize
 	pageSizeKey := "limit"
 	if provider == defaultApplianceProvider {
 		pageSize = applianceGitHubPageSize
@@ -144,7 +144,7 @@ func resolveApplianceRelease(ctx context.Context, client *http.Client, provider,
 			}
 			seenTags[release.TagName] = struct{}{}
 			release.sourceProvider = provider
-			if provider == "forgejo" {
+			if provider == "custom" {
 				parts := strings.Split(strings.Trim(baseURL.Path, "/"), "/")
 				if len(parts) == 6 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "repos" && parts[5] == "releases" {
 					release.sourceRepository = baseURL.Scheme + "://" + baseURL.Host + "/" + parts[3] + "/" + parts[4]
@@ -225,8 +225,8 @@ func normalizeApplianceReleaseSource(provider, raw string) (string, *url.URL, er
 	if provider == "" {
 		provider = defaultApplianceProvider
 	}
-	if provider != "github" && provider != "forgejo" && provider != "custom" {
-		return "", nil, fmt.Errorf("release provider must be github, forgejo, or custom")
+	if provider != "github" && provider != "custom" {
+		return "", nil, fmt.Errorf("release provider must be a supported repository URL")
 	}
 	raw = strings.TrimSpace(raw)
 	if raw == "" && provider == defaultApplianceProvider {
@@ -246,6 +246,9 @@ func normalizeApplianceReleaseSource(provider, raw string) (string, *url.URL, er
 				return "", nil, fmt.Errorf("appliance releases API contains unsupported query parameter %q", key)
 			}
 		}
+	}
+	if parsed.Host == "api.github.com" {
+		provider = defaultApplianceProvider
 	}
 	if provider == defaultApplianceProvider {
 		parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
@@ -453,8 +456,8 @@ func downloadVerifiedApplianceRelease(ctx context.Context, client *http.Client, 
 			return verifiedApplianceRelease{}, fmt.Errorf("signed appliance trust/source differs from selected GitHub release")
 		}
 	}
-	if privateForgejoMainRelease(release) && (manifest.ReleaseSet.Source != release.sourceRepository || manifest.ReleaseSet.Branch != "main") {
-		return verifiedApplianceRelease{}, fmt.Errorf("signed appliance source does not match the selected Forgejo main repository")
+	if repositoryMainRelease(release) && (manifest.ReleaseSet.Source != release.sourceRepository || manifest.ReleaseSet.Branch != "main") {
+		return verifiedApplianceRelease{}, fmt.Errorf("signed appliance source does not match the selected repository main repository")
 	}
 	expectedTag := "appliance-" + manifest.ReleaseSet.Branch + "-v" + manifest.ImageVersion
 	if manifest.ReleaseSet.Branch == "main" {
@@ -667,10 +670,10 @@ func applianceHTTPClient() *http.Client {
 }
 
 // Source context is assigned by discovery, never decoded from provider JSON.
-// Private trust accepts only five-position Forgejo main releases. Public Stable
+// Repository main releases use their existing Development authority. Official Stable
 // still requires its own authority.
-func privateForgejoMainRelease(release applianceRelease) bool {
-	if release.sourceProvider != "forgejo" || release.sourceRepository == "" {
+func repositoryMainRelease(release applianceRelease) bool {
+	if release.sourceProvider != "custom" || release.sourceRepository == "" {
 		return false
 	}
 	source, err := url.Parse(release.sourceRepository)
@@ -682,9 +685,9 @@ func privateForgejoMainRelease(release applianceRelease) bool {
 		return false
 	}
 	version := strings.TrimPrefix(release.TagName, "appliance-v")
-	if version == release.TagName || len(strings.Split(version, ".")) != 5 {
+	if version == release.TagName || len(strings.Split(version, ".")) < 3 {
 		return false
 	}
-	_, err = ordering.ParseVersion(version)
-	return err == nil
+	parsed, err := ordering.ParseVersion(version)
+	return err == nil && len(parsed.Pre) == 0
 }

@@ -12,6 +12,9 @@ import { execCommand, incusRequest } from '@/lib/incus/server';
 import { observeIssue, resolveIssue, recordTimelineEvent } from '@/lib/health/issues';
 import type { ContainerMeta, InstallMetadata } from './types';
 import { CONTAINER_DOMAIN } from './constants';
+import { readReconfigureJournal } from '@/lib/reconfigure/journal';
+import { settingsService } from '@/lib/settings';
+import { repairRouteForCurrentDomain } from '@/lib/reconfigure/route-repair';
 import { deleteAppStorage } from './storage';
 import { pushConnectionsToUI } from '../bridges/manager';
 import { getIdentityProviderConfig, removeForwardAuth, removeOAuthClient } from '@/lib/identity/provider';
@@ -36,6 +39,10 @@ const SAFE_FAILURE = 'operation-or-verification-failed';
 export async function reconcileApps(): Promise<ReconcileResult> {
   const repaired: string[] = [];
   const unresolved: string[] = [];
+
+  // URL migration owns app metadata and routes until its restart recovers.
+  // A background repair must not recreate an old hostname from a stale snapshot.
+  if (await readReconfigureJournal()) return { repaired, unresolved };
 
   try {
     const recovered = recoverInterruptedInstalls();
@@ -509,7 +516,12 @@ async function reconcileRoutes(
   for (const meta of metadataById.values()) {
     if (routesPresent(meta, routes)) continue;
     try {
-      await recreateRoutes(meta);
+      // Recheck at the write boundary: migration may start after enumeration.
+      if (!await repairRouteForCurrentDomain(meta.domain, {
+        pending: readReconfigureJournal,
+        domain: async () => (await settingsService.getRaw()).domain,
+        repair: () => recreateRoutes(meta),
+      })) continue;
       const verifiedRoutes = await getRoutes();
       if (!routesPresent(meta, verifiedRoutes)) {
         throw new Error('Caddy route did not persist after reconcile');

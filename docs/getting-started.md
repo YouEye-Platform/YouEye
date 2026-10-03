@@ -45,17 +45,16 @@ Run this canonical public command from the Proxmox root shell. It does not
 depend on `sudo` being installed. Public Stable uses its embedded Stable anchor;
 unprovisioned source builds fail closed and never reuse the Development key.
 
-Development channel from an explicitly selected Forgejo-compatible provider:
+Development channel from an explicitly selected repository:
 
 ```bash
 curl -fsSL https://releases.youeye.me/install.sh | \
-  sh -s -- --provider forgejo \
-    --releases-api https://forge.example.test/api/v1/repos/example/YouEye/releases \
+  sh -s -- --repository https://code.example.test/example/YouEye \
     --channel development
 ```
 
 The bootstrap defaults to the official GitHub Stable release API, paginates the
-selected GitHub, Forgejo, or custom HTTPS API, refuses cross-channel
+release API derived from the selected repository URL, refuses cross-channel
 fallback, requires API-provided release download URLs, verifies the detached
 Ed25519 signature over the complete checksum set, and verifies the exact
 installer binary digest before executing it. Public releases additionally

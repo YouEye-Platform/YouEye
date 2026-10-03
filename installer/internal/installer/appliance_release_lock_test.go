@@ -33,8 +33,8 @@ func TestPublicSignedDownloadVerifiesLockBeforeISO(t *testing.T) {
 	manifest.ReleaseSet.Source = "https://github.com/YouEye-Platform/YouEye"
 	manifest.ReleaseSet.Branch = "main"
 	manifest.ReleaseSet.Spine.SourceCommit = manifest.SourceCommit
-	manifest.ReleaseSet.ControlPanel.SourceCommit = manifest.SourceCommit
-	manifest.ReleaseSet.UI.SourceCommit = manifest.SourceCommit
+	manifest.ReleaseSet.ControlPanel.SourceCommit = strings.Repeat("e", 40)
+	manifest.ReleaseSet.UI.SourceCommit = strings.Repeat("f", 40)
 	public, private, _ := ed25519.GenerateKey(rand.Reader)
 	der, _ := x509.MarshalPKIXPublicKey(public)
 	anchor := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
@@ -113,8 +113,8 @@ func TestDetachedLockMatchesAuthenticatedManifestAndProvenance(t *testing.T) {
 	manifest.ReleaseSet.Source = "https://github.com/YouEye-Platform/YouEye"
 	manifest.ReleaseSet.Branch = "main"
 	manifest.ReleaseSet.Spine.SourceCommit = manifest.SourceCommit
-	manifest.ReleaseSet.ControlPanel.SourceCommit = manifest.SourceCommit
-	manifest.ReleaseSet.UI.SourceCommit = manifest.SourceCommit
+	manifest.ReleaseSet.ControlPanel.SourceCommit = strings.Repeat("e", 40)
+	manifest.ReleaseSet.UI.SourceCommit = strings.Repeat("f", 40)
 	marshal := func(v any) []byte {
 		b, err := json.Marshal(v)
 		if err != nil {

@@ -193,3 +193,37 @@ func TestPublicImageKindsRecognizedWithoutRelaxingValidation(t *testing.T) {
 		t.Fatal("unknown kind accepted")
 	}
 }
+
+func TestCompositionKeepsOriginalBranchesAndRejectsImplicitOverrides(t *testing.T) {
+	m, err := ParseManifest([]byte(exactReleaseSetManifest()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := *m.ReleaseSet
+	r.Schema = "youeye.release-set.v2"
+	r.Spine.Branch = "dev"
+	r.Spine.Tag = "spine-dev-v" + r.Spine.Version
+	r.ControlPanel.Branch = "patch-fix"
+	r.ControlPanel.Tag = "cp-patch-fix-v" + r.ControlPanel.Version
+	r.UI.Branch = "main"
+	r.UI.Tag = "ui-v" + r.UI.Version
+	if err = r.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if r.ComponentBranch(r.UI) != "main" {
+		t.Fatal("component silently followed image branch")
+	}
+	for _, change := range []func(*ReleaseSet){
+		func(v *ReleaseSet) { v.Schema = "" },
+		func(v *ReleaseSet) { v.Schema = "unknown" },
+		func(v *ReleaseSet) { v.ControlPanel.Branch = "" },
+		func(v *ReleaseSet) { v.ControlPanel.Branch = "dev" },
+		func(v *ReleaseSet) { v.UI.Branch = "../main" },
+	} {
+		bad := r
+		change(&bad)
+		if bad.Validate() == nil {
+			t.Fatal("invalid composition accepted")
+		}
+	}
+}

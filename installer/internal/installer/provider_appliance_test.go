@@ -191,7 +191,7 @@ func writeTestApplianceBundle(t *testing.T) testApplianceBundle {
 		RecoveryVersion: applianceRecoveryVersion,
 		Trust:           applianceManifestTrust{Class: applianceTrustDev, KeyID: "test-development-key"},
 		ReleaseSet: applianceManifestReleases{
-			Source: "forgejo", Branch: "dev", Fallback: []string{},
+			Source: "custom", Branch: "dev", Fallback: []string{},
 			Spine:        applianceManifestComponent{Version: "0.5.17.0.0.9", SourceCommit: strings.Repeat("b", 40), ArtifactSHA256: validSHA256()},
 			ControlPanel: applianceManifestComponent{Version: "0.5.0", Tag: "cp-dev-v0.5.0", SourceCommit: strings.Repeat("d", 40), ArtifactSHA256: validSHA256()},
 			UI:           applianceManifestComponent{Version: "0.5.0", Tag: "ui-dev-v0.5.0", SourceCommit: strings.Repeat("e", 40), ArtifactSHA256: validSHA256()},

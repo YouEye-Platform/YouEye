@@ -21,6 +21,7 @@ import (
 
 	"github.com/youeye-platform/YouEye/appliance/ordering"
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
+	"github.com/youeye-platform/YouEye/spine/internal/updatetrust"
 )
 
 const (
@@ -83,12 +84,24 @@ type Artifact struct {
 }
 
 type VerifiedManifest struct {
-	Manifest Manifest
-	Raw      []byte
-	SHA256   string
+	Manifest  Manifest
+	Publisher string `json:"publisher,omitempty"`
+	Raw       []byte
+	SHA256    string
 }
 
 func VerifyManifest(manifestPath, signaturePath, trustKeyPath string) (VerifiedManifest, error) {
+	policy, err := updatetrust.Load(updatetrust.Path)
+	if err != nil {
+		return VerifiedManifest{}, err
+	}
+	return verifyManifestWithOwnerPolicy(manifestPath, signaturePath, trustKeyPath, policy)
+}
+
+func verifyManifestWithOwnerPolicy(manifestPath, signaturePath, trustKeyPath string, policy updatetrust.Policy) (VerifiedManifest, error) {
+	if err := policy.Validate(); err != nil {
+		return VerifiedManifest{}, err
+	}
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return VerifiedManifest{}, fmt.Errorf("read system update manifest: %w", err)
@@ -97,9 +110,22 @@ func VerifyManifest(manifestPath, signaturePath, trustKeyPath string) (VerifiedM
 	if err != nil {
 		return VerifiedManifest{}, err
 	}
-	key, err := readPublicKey(trustKeyPath)
-	if manifest.Trust.Class != TrustClassDev {
+	grant, err := policy.Lookup(manifest.ReleaseSet.Source, manifest.ReleaseSet.Branch, "appliance")
+	if err != nil {
+		return VerifiedManifest{}, err
+	}
+	var key ed25519.PublicKey
+	publisher := ""
+	if grant != nil {
+		if manifest.Trust.Class != TrustClassDev {
+			return VerifiedManifest{}, errors.New("owner-built system images must use the development channel")
+		}
+		key, err = updatetrust.Key(grant.PublicKey)
+		publisher = grant.Publisher
+	} else if manifest.Trust.Class != TrustClassDev {
 		key, err = publicReleaseKey(manifest.Trust.Class)
+	} else {
+		key, err = readPublicKey(trustKeyPath)
 	}
 	if err != nil {
 		return VerifiedManifest{}, err
@@ -119,7 +145,7 @@ func VerifyManifest(manifestPath, signaturePath, trustKeyPath string) (VerifiedM
 		return VerifiedManifest{}, errors.New("system update manifest signature is not valid")
 	}
 	digest := sha256.Sum256(raw)
-	return VerifiedManifest{Manifest: manifest, Raw: raw, SHA256: hex.EncodeToString(digest[:])}, nil
+	return VerifiedManifest{Manifest: manifest, Publisher: publisher, Raw: raw, SHA256: hex.EncodeToString(digest[:])}, nil
 }
 
 func ParseManifest(raw []byte) (Manifest, error) {
@@ -184,6 +210,9 @@ func (m Manifest) Validate() error {
 	if !m.Rollback.Supported || !m.Rollback.PreserveState || !m.Rollback.PreserveData || !m.Rollback.PreserveRecovery ||
 		!validRange(m.Rollback.StateSchemaMin, m.Rollback.StateSchemaMax) || !validRange(m.Rollback.DataSchemaMin, m.Rollback.DataSchemaMax) {
 		return errors.New("system update rollback contract is incomplete")
+	}
+	if m.ReleaseSet.Schema != "" && m.Trust.Class != TrustClassDev {
+		return errors.New("component composition requires development trust")
 	}
 	if m.Trust.Class != TrustClassDev {
 		branch := "main"

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
@@ -147,8 +148,8 @@ func (policy ReleasePolicy) Validate() error {
 	if policy.ServiceSelection != "" && policy.ServiceSelection != "sealed" && policy.ServiceSelection != "current" {
 		return fmt.Errorf("service selection must be sealed or current")
 	}
-	if policy.ServiceSelection == "current" && policy.Provider != "github" {
-		return fmt.Errorf("current service selection requires official public distribution")
+	if policy.ServiceSelection == "current" && policy.Provider != "github" && !(policy.Provider == "custom" && ((policy.Mode == "track" && (policy.Track == "stable" || policy.Track == "branch" && policy.Branch == "main")) || (policy.Mode == "exact" && regexp.MustCompile(`^appliance-v[0-9]+(\.[0-9]+){2,}$`).MatchString(policy.ExactTag)))) {
+		return fmt.Errorf("current service selection requires GitHub or explicitly selected repository main")
 	}
 	if policy.Freshness != "require-current" && policy.Freshness != "prefer-current" {
 		return errors.New("first-boot freshness must be require-current or prefer-current")

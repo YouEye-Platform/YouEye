@@ -74,6 +74,10 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [repeatPassword, setRepeatPassword] = useState("");
+  const [everywhereOpen, setEverywhereOpen] = useState(false);
+  const [everywherePassword, setEverywherePassword] = useState("");
+  const [everywhereBusy, setEverywhereBusy] = useState(false);
+  const [everywhereError, setEverywhereError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -269,6 +273,26 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
     }
   }
 
+  async function signOutEverywhere() {
+    setEverywhereBusy(true);
+    setEverywhereError("");
+    try {
+      const csrfRes = await fetch("/settings/api/auth/csrf", { cache: "no-store" });
+      const csrf = await csrfRes.json().catch(() => ({}));
+      if (!csrfRes.ok || !csrf.csrfToken) throw new Error("Could not prepare a protected request");
+      const res = await fetch("/settings/api/identity/sign-out-everywhere", {
+        method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf.csrfToken },
+        body: JSON.stringify({ password: everywherePassword }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Sign out failed");
+      window.location.assign("/settings/login");
+    } catch (error) {
+      setEverywhereError(error instanceof Error ? error.message : "Sign out failed");
+      setEverywhereBusy(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -448,8 +472,27 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
           </div>
           <Button type="button" variant="outline" onClick={() => { resetPasswordForm(); setPasswordOpen(true); }}>Change password</Button>
         </div>
+        <div className="flex flex-col gap-3 border-t p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Sign out everywhere</h3>
+            <p className="mt-1 text-[13px] text-muted-foreground">End your YouEye ID sign-ins on every device. Connected apps may keep their own sessions and need a separate sign-out.</p>
+          </div>
+          <Button type="button" variant="outline" onClick={() => { setEverywherePassword(""); setEverywhereError(""); setEverywhereOpen(true); }}>Sign out everywhere</Button>
+        </div>
         {passwordMessage && <p className="border-t px-5 py-3 text-sm text-primary">{passwordMessage}</p>}
       </Card>
+
+      {everywhereOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md space-y-4 rounded-xl border bg-card p-5 shadow-lg" role="dialog" aria-modal="true" aria-labelledby="sign-out-everywhere-title">
+            <h3 id="sign-out-everywhere-title" className="text-lg font-semibold">Sign out everywhere?</h3>
+            <p className="text-sm text-muted-foreground">This ends YouEye sessions on all your devices. Some external apps keep their own session and may need a separate sign-out.</p>
+            <label className="block space-y-1.5"><span className={FIELD_LABEL}>Current password</span><Input type="password" autoComplete="current-password" value={everywherePassword} onChange={event => setEverywherePassword(event.target.value)} disabled={everywhereBusy} /></label>
+            {everywhereError && <p className="text-sm text-destructive">{everywhereError}</p>}
+            <div className="flex justify-end gap-2"><Button variant="outline" disabled={everywhereBusy} onClick={() => setEverywhereOpen(false)}>Cancel</Button><Button disabled={everywhereBusy || !everywherePassword} onClick={() => void signOutEverywhere()}>{everywhereBusy && <Loader2 className="size-4 animate-spin" />} Sign out everywhere</Button></div>
+          </div>
+        </div>
+      )}
 
       {passwordOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">

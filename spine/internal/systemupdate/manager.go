@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
+	"github.com/youeye-platform/YouEye/spine/internal/updatetrust"
 )
 
 const (
@@ -52,11 +53,13 @@ type Journal struct {
 	Error               string           `json:"error,omitempty"`
 	Channel             string           `json:"channel,omitempty"`
 	ReleaseTag          string           `json:"release_tag,omitempty"`
+	Publisher           string           `json:"publisher,omitempty"`
 	ReleaseNotes        string           `json:"release_notes,omitempty"`
 	RequiredCacheBytes  uint64           `json:"required_cache_bytes,omitempty"`
 	AvailableCacheBytes uint64           `json:"available_cache_bytes,omitempty"`
 	StartedAt           string           `json:"started_at"`
 	UpdatedAt           string           `json:"updated_at"`
+	ActivationBootID    string           `json:"activation_boot_id,omitempty"`
 }
 
 type Status struct {
@@ -79,6 +82,7 @@ type Status struct {
 	Error               string           `json:"error,omitempty"`
 	Channel             string           `json:"channel,omitempty"`
 	ReleaseTag          string           `json:"release_tag,omitempty"`
+	Publisher           string           `json:"publisher,omitempty"`
 	ReleaseNotes        string           `json:"release_notes,omitempty"`
 	RequiredCacheBytes  uint64           `json:"required_cache_bytes,omitempty"`
 	AvailableCacheBytes uint64           `json:"available_cache_bytes,omitempty"`
@@ -88,6 +92,7 @@ type Status struct {
 type SourceOptions struct {
 	ManifestSource         string
 	SignatureSource        string
+	AllowSourceChange      bool
 	AllowTest              bool
 	ReplaceFailed          bool
 	Bootstrap              bool
@@ -118,6 +123,7 @@ type Config struct {
 	CacheDir            string
 	TrustKeyPath        string
 	KernelCmdlinePath   string
+	BootIDPath          string
 	ESPMountpoint       string
 	HTTPClient          *http.Client
 	Now                 func() time.Time
@@ -146,6 +152,7 @@ func DefaultConfig() Config {
 		CacheDir:            appliance.DataMountpoint + "/system-update",
 		TrustKeyPath:        "/usr/share/youeye/appliance-development.pub",
 		KernelCmdlinePath:   "/proc/cmdline",
+		BootIDPath:          "/proc/sys/kernel/random/boot_id",
 		ESPMountpoint:       "/efi",
 		HTTPClient: &http.Client{
 			Transport: releasecache.Wrap(nil),
@@ -216,6 +223,9 @@ func New(config Config) *Manager {
 	if config.KernelCmdlinePath == "" {
 		config.KernelCmdlinePath = defaults.KernelCmdlinePath
 	}
+	if config.BootIDPath == "" {
+		config.BootIDPath = defaults.BootIDPath
+	}
 	if config.ESPMountpoint == "" {
 		config.ESPMountpoint = defaults.ESPMountpoint
 	}
@@ -275,6 +285,7 @@ func (m *Manager) Status() (Status, error) {
 	status.Channel = journal.Channel
 	status.ReleaseTag = journal.ReleaseTag
 	status.ReleaseNotes = journal.ReleaseNotes
+	status.Publisher = journal.Publisher
 	status.RequiredCacheBytes = journal.RequiredCacheBytes
 	status.AvailableCacheBytes = journal.AvailableCacheBytes
 	status.UpdatedAt = journal.UpdatedAt
@@ -496,11 +507,19 @@ func (m *Manager) activate(ctx context.Context, reboot, bootstrap bool) (Status,
 	if err := m.callVerifyBootAssets(ctx, layout, transactionManifest); err != nil {
 		return Status{}, err
 	}
+	bootID, err := os.ReadFile(m.config.BootIDPath)
+	if err != nil {
+		return Status{}, fmt.Errorf("read activation boot identity: %w", err)
+	}
+	if strings.TrimSpace(string(bootID)) == "" {
+		return Status{}, errors.New("activation boot identity is empty")
+	}
 	state.Transaction.Stage = PhasePending
 	if err := appliance.WriteStateAtomic(m.config.StatePath, state); err != nil {
 		return Status{}, err
 	}
 	journal.Phase = PhasePending
+	journal.ActivationBootID = strings.TrimSpace(string(bootID))
 	journal.ErrorCode = ""
 	journal.Error = ""
 	journal.UpdatedAt = m.now()
@@ -610,6 +629,16 @@ func (m *Manager) Reconcile(ctx context.Context, options ReconcileOptions) (Reco
 
 	if slot == journal.ActiveSlot && current.ImageVersion == journal.CurrentImage &&
 		(journal.Phase == PhasePending || journal.Phase == PhaseTrial || journal.Phase == PhaseFailed) {
+		if journal.Phase == PhasePending && journal.ActivationBootID != "" {
+			bootID, readErr := os.ReadFile(m.config.BootIDPath)
+			if readErr != nil {
+				return ReconcileResult{}, fmt.Errorf("read current boot identity: %w", readErr)
+			}
+			if strings.TrimSpace(string(bootID)) == journal.ActivationBootID {
+				status, statusErr := m.Status()
+				return ReconcileResult{Status: status}, statusErr
+			}
+		}
 		journal.Phase = PhaseRollback
 		journal.ErrorCode = "candidate_rolled_back"
 		journal.Error = "candidate exhausted bounded boot attempts and the previous known-good slot resumed"
@@ -747,6 +776,19 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 	if err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
+	if verified.Publisher != "" {
+		repository, branch, scope, err := updatetrust.ReleaseIdentity(options.ManifestSource)
+		if err != nil || scope != "appliance" || repository != verified.Manifest.ReleaseSet.Source || branch != verified.Manifest.ReleaseSet.Branch {
+			return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("custom system manifest must come from its enrolled repository and channel")
+		}
+	}
+	policy, err := updatetrust.Load(updatetrust.Path)
+	if err != nil {
+		return VerifiedManifest{}, Layout{}, state, Journal{}, err
+	}
+	if err := validateOwnerSourceChange(policy, current.ReleaseSet, &verified.Manifest.ReleaseSet, options.AllowSourceChange); err != nil {
+		return VerifiedManifest{}, Layout{}, state, Journal{}, err
+	}
 	expectedDigest := strings.ToLower(strings.TrimSpace(options.ExpectedManifestSHA256))
 	if expectedDigest != "" {
 		if len(expectedDigest) != 64 || !isLowerHex(expectedDigest) {
@@ -809,7 +851,7 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 		ActiveSlot:   activeSlot, CandidateSlot: layout.InactiveSlot, Phase: PhaseAvailable,
 		DownloadedBytes: map[string]int64{}, StartedAt: m.now(), UpdatedAt: m.now(),
 		Channel: strings.TrimSpace(options.Channel), ReleaseTag: strings.TrimSpace(options.ReleaseTag),
-		ReleaseNotes: strings.TrimSpace(options.ReleaseNotes),
+		ReleaseNotes: strings.TrimSpace(options.ReleaseNotes), Publisher: verified.Publisher,
 	}
 	transactionDir := m.transactionDir(transactionID)
 	if err := os.MkdirAll(transactionDir, 0700); err != nil {
@@ -962,4 +1004,17 @@ func validateSystemUpdateDownloadURL(target, origin *url.URL) error {
 		candidate.RawQuery = ""
 	}
 	return validateRemoteURL(&candidate)
+}
+
+// Enrollment does not authorize silently replacing the owner's selected fork.
+func validateOwnerSourceChange(policy updatetrust.Policy, current, next *appliance.ReleaseSet, allowed bool) error {
+	if current == nil || next == nil || allowed || current.Source == next.Source && current.Branch == next.Branch {
+		return nil
+	}
+	for _, grant := range policy.Grants {
+		if grant.Scope == "appliance" && grant.Repository == current.Source && grant.Branch == current.Branch {
+			return errors.New("current custom system source cannot change implicitly; select the exact target with --switch-source")
+		}
+	}
+	return nil
 }

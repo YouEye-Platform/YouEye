@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"os"
 	"strings"
 
@@ -20,9 +21,9 @@ var (
 	systemUpdateBranch        string
 	systemUpdateExactTag      string
 	systemUpdateManifestSHA   string
-	systemUpdateProvider      string
-	systemUpdateReleasesAPI   string
+	systemUpdateRepository    string
 	systemUpdateAllowTest     bool
+	systemUpdateSwitchSource  bool
 	systemUpdateReplaceFailed bool
 	systemUpdateBootstrap     bool
 	systemUpdateJSON          bool
@@ -169,8 +170,8 @@ func init() {
 		command.Flags().StringVar(&systemUpdateBranch, "branch", "", "signed branch-associated release track")
 		command.Flags().StringVar(&systemUpdateExactTag, "exact-tag", "", "exact appliance release tag")
 		command.Flags().StringVar(&systemUpdateManifestSHA, "manifest-sha256", "", "exact expected system update manifest SHA-256")
-		command.Flags().StringVar(&systemUpdateProvider, "provider", systemupdate.DefaultReleaseProvider, "release provider: github, forgejo, or custom")
-		command.Flags().StringVar(&systemUpdateReleasesAPI, "releases-api", "", "HTTPS appliance releases API (required for Forgejo or custom)")
+		command.Flags().StringVar(&systemUpdateRepository, "repository", releasecache.OfficialRepository, "HTTPS repository URL for signed releases")
+		command.Flags().BoolVar(&systemUpdateSwitchSource, "switch-source", false, "explicitly authorize changing a custom system source; all verification and compatibility checks remain required")
 		command.Flags().BoolVar(&systemUpdateAllowTest, "allow-test-artifact", false, "allow a signed test-only image")
 		command.Flags().BoolVar(&systemUpdateReplaceFailed, "replace-failed", false, "replace a different failed transaction after renewed confirmation")
 		command.Flags().BoolVar(&systemUpdateBootstrap, "bootstrap-plan1", false, "authorize the signed first transition from the pre-updater Plan 1 image")
@@ -181,28 +182,36 @@ func init() {
 }
 
 func systemUpdateSourceOptions(ctx context.Context) (systemupdate.SourceOptions, error) {
+	if systemUpdateSwitchSource && strings.TrimSpace(systemUpdateManifest) == "" && strings.TrimSpace(systemUpdateExactTag) == "" {
+		return systemupdate.SourceOptions{}, errors.New("--switch-source requires --manifest or --exact-tag")
+	}
 	if strings.TrimSpace(systemUpdateManifest) == "" {
+		source, err := releasecache.ParseRepositorySource(systemUpdateRepository)
+		if err != nil {
+			return systemupdate.SourceOptions{}, err
+		}
 		options, _, err := systemupdate.ResolveRelease(ctx, systemupdate.ReleaseHTTPClient(), systemupdate.ReleaseSelection{
-			Provider: systemUpdateProvider,
+			Provider: source.Adapter,
 			Channel:  systemUpdateChannel, Branch: systemUpdateBranch, ExactTag: systemUpdateExactTag,
-			ManifestSHA256: systemUpdateManifestSHA, ReleasesAPI: systemUpdateReleasesAPI,
+			ManifestSHA256: systemUpdateManifestSHA, ReleasesAPI: source.ReleasesAPI,
 		})
 		if err != nil {
 			return systemupdate.SourceOptions{}, err
 		}
+		options.AllowSourceChange = systemUpdateSwitchSource
 		options.AllowTest = systemUpdateAllowTest
 		options.ReplaceFailed = systemUpdateReplaceFailed
 		options.Bootstrap = systemUpdateBootstrap
 		return options, nil
 	}
-	if strings.TrimSpace(systemUpdateChannel) != "" || strings.TrimSpace(systemUpdateBranch) != "" || strings.TrimSpace(systemUpdateExactTag) != "" || strings.TrimSpace(systemUpdateProvider) != systemupdate.DefaultReleaseProvider || strings.TrimSpace(systemUpdateReleasesAPI) != "" {
-		return systemupdate.SourceOptions{}, errors.New("--manifest cannot be combined with --provider, --releases-api, --channel, --branch, or --exact-tag")
+	if strings.TrimSpace(systemUpdateChannel) != "" || strings.TrimSpace(systemUpdateBranch) != "" || strings.TrimSpace(systemUpdateExactTag) != "" || strings.TrimSpace(systemUpdateRepository) != releasecache.OfficialRepository {
+		return systemupdate.SourceOptions{}, errors.New("--manifest cannot be combined with --repository, --channel, --branch, or --exact-tag")
 	}
 	return systemupdate.SourceOptions{
 		ManifestSource: systemUpdateManifest, SignatureSource: systemUpdateSignature,
 		ExpectedManifestSHA256: systemUpdateManifestSHA, Channel: "exact-artifact",
 		AllowTest: systemUpdateAllowTest, ReplaceFailed: systemUpdateReplaceFailed,
-		Bootstrap: systemUpdateBootstrap,
+		Bootstrap: systemUpdateBootstrap, AllowSourceChange: systemUpdateSwitchSource,
 	}, nil
 }
 

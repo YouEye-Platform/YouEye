@@ -3,15 +3,14 @@
 #
 # Stable:
 #   curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh | sh
-# Development from an explicit Forgejo-compatible source:
-#   curl -fsSL https://raw.githubusercontent.com/YouEye-Platform/YouEye/main/installer/scripts/install.sh |
-#     sh -s -- --provider forgejo --releases-api https://forge.example.test/api/v1/repos/example/YouEye/releases --channel development
+# From a repository's signed releases:
+#   curl -fsSL https://releases.youeye.me/install.sh |
+#     sh -s -- --repository https://code.example.test/example/YouEye
 #
 # The booted YouEye ISO runs the same binary as `youeye-installer install`.
 set -eu
 
-provider="${INSTALLER_PROVIDER:-github}"
-releases_api="${INSTALLER_RELEASES_API:-}"
+repository="${INSTALLER_REPOSITORY:-https://github.com/YouEye-Platform/YouEye}"
 channel="${INSTALLER_CHANNEL:-stable}"
 release_branch="${INSTALLER_RELEASE_BRANCH:-}"
 exact_tag="${INSTALLER_TAG:-}"
@@ -167,14 +166,10 @@ YOUEYE_DISTRIBUTION_PY
 parse_bootstrap_options() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
-            --provider)
+            --repository)
                 [ "$#" -ge 2 ] || { printf '%s requires a value.\n' "$1" >&2; exit 1; }
-                provider=$2; shift 2 ;;
-            --provider=*) provider=${1#*=}; shift ;;
-            --releases-api)
-                [ "$#" -ge 2 ] || { printf '%s requires a value.\n' "$1" >&2; exit 1; }
-                releases_api=$2; shift 2 ;;
-            --releases-api=*) releases_api=${1#*=}; shift ;;
+                repository=$2; shift 2 ;;
+            --repository=*) repository=${1#*=}; shift ;;
             --channel)
                 [ "$#" -ge 2 ] || { printf '%s requires a value.\n' "$1" >&2; exit 1; }
                 channel=$2; shift 2 ;;
@@ -201,11 +196,27 @@ parse_bootstrap_options() {
 }
 parse_bootstrap_options "$@"
 
-provider="$(printf '%s' "$provider" | tr '[:upper:]' '[:lower:]')"
 channel="$(printf '%s' "$channel" | tr '[:upper:]' '[:lower:]')"
-if [ -z "$releases_api" ] && [ "$provider" = github ]; then
-    releases_api=https://api.github.com/repos/YouEye-Platform/YouEye/releases
-fi
+source_config="$(python3 - "$repository" <<'REPOSITORY_PY'
+import re, sys
+from urllib.parse import urlparse, urlunparse
+u = urlparse(sys.argv[1].strip())
+path = u.path.rstrip('/')
+if path.endswith('.git'): path = path[:-4]
+parts = path.split('/')
+if u.scheme != 'https' or not u.netloc or u.username or u.password or u.query or u.fragment or len(parts) != 3 or parts[0] != '' or any(not re.fullmatch(r'[A-Za-z0-9_-][A-Za-z0-9._-]*', p) or p.endswith('.') for p in parts[1:]):
+    raise SystemExit('Enter an HTTPS repository URL with owner and repository, without credentials, query or fragment')
+repository = urlunparse(('https', u.netloc.lower(), path, '', '', ''))
+provider = 'github' if u.netloc.lower() == 'github.com' else 'custom'
+api = 'https://api.github.com/repos' if provider == 'github' else 'https://' + u.netloc.lower() + '/api/v1/repos'
+print(repository)
+print(provider)
+print(api + path + '/releases')
+REPOSITORY_PY
+)"
+repository="$(printf '%s\n' "$source_config" | sed -n '1p')"
+provider="$(printf '%s\n' "$source_config" | sed -n '2p')"
+releases_api="$(printf '%s\n' "$source_config" | sed -n '3p')"
 
 if [ "$(id -u)" -ne 0 ]; then
     printf '%s\n' 'Run the YouEye Installer as root on a Proxmox VE host.' >&2
@@ -227,11 +238,11 @@ case "$channel" in
 esac
 case "$provider" in
     github) page_size=100; page_size_key=per_page ;;
-    forgejo|custom) page_size=50; page_size_key=limit ;;
-    *) printf 'Installer provider must be github, forgejo, or custom, got %s\n' "$provider" >&2; exit 1 ;;
+    custom) page_size=50; page_size_key=limit ;;
+    *) printf 'Installer provider must be a supported repository, got %s\n' "$provider" >&2; exit 1 ;;
 esac
 if [ -z "$releases_api" ]; then
-    printf '%s\n' 'Forgejo and custom providers require an explicit --releases-api HTTPS URL.' >&2
+    printf '%s\n' 'A repository URL is required.' >&2
     exit 1
 fi
 python3 - "$provider" "$releases_api" <<'PY'
@@ -473,11 +484,11 @@ candidates.sort(key=lambda item: item[0], reverse=True)
 release = candidates[0][1]
 tag = release["tag_name"]
 parts = source_url.path.strip("/").split("/")
-private_main = (provider == "forgejo" and len(parts) == 6 and
+private_main = (provider == "custom" and len(parts) == 6 and
                 parts[:3] == ["api", "v1", "repos"] and parts[5] == "releases" and
                 source_url.hostname not in ("github.com", "api.github.com") and
                 not source_url.hostname.endswith(".github.com") and
-                re.fullmatch(r"appliance-v\d+(?:\.\d+){4}", tag) is not None)
+                re.fullmatch(r"appliance-v\d+(?:\.\d+){2,}", tag) is not None)
 trust_class = "development"
 if not private_main:
     if stable_pattern.fullmatch(tag):
@@ -690,7 +701,7 @@ if trust_class != "development" and (release.get("source") != "https://github.co
     branch != {"stable": "main", "beta": "beta"}[trust_class]):
     reject("Signed public appliance source/channel mismatch")
 if private_source != "-" and (release.get("source") != private_source or branch != "main"):
-    reject("Signed appliance source differs from selected Forgejo main repository")
+    reject("Signed appliance source differs from selected repository main source")
 if lock_url != "-":
     provenance = verified_json(provenance_path, sums["provenance.json"])
     lock = verified_json(lock_path, provenance.get("resolved_lock_sha256"))
@@ -709,7 +720,7 @@ if lock_url != "-":
         reject("Detached lock component set mismatch")
     for name, component in components.items():
         pin = {key: component.get(key) for key in ("version", "tag", "source_commit", "artifact_sha256")}
-        if pin != release.get(name) or (trust_class != "development" and pin["source_commit"] != commit):
+        if pin != release.get(name) or not re.fullmatch(r"[0-9a-f]{40}", pin.get("source_commit", "")):
             reject("Detached lock component source/pin mismatch")
     market = lock.get("market", {})
     bound_market = provenance.get("market", {})
@@ -735,13 +746,13 @@ rm -rf "$pages_dir"
 trap - EXIT HUP INT TERM
 if [ "$channel" = exact ]; then
     exec "$release_cache/$asset" proxmox \
-        --provider "$provider" --releases-api "$releases_api" --channel exact \
+        --repository "$repository" --channel exact \
         --release-tag "$exact_tag" --installer-sha256 "$installer_sha256" --iso-sha256 "$iso_sha256" "$@"
 fi
 if [ "$channel" = branch ]; then
     exec "$release_cache/$asset" proxmox \
-        --provider "$provider" --releases-api "$releases_api" --channel branch \
+        --repository "$repository" --channel branch \
         --release-branch "$release_branch" "$@"
 fi
 exec "$release_cache/$asset" proxmox \
-    --provider "$provider" --releases-api "$releases_api" --channel "$channel" "$@"
+    --repository "$repository" --channel "$channel" "$@"

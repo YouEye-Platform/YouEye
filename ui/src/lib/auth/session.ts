@@ -13,7 +13,7 @@ import { SignJWT, jwtVerify, type JWTPayload } from "jose";
 
 const SESSION_COOKIE = "ye-ui-session";
 const CSRF_COOKIE = "ye-ui-csrf";
-const SESSION_DURATION = 60 * 60 * 24 * 7; // 7 days
+const SESSION_DURATION = 60 * 60 * 24 * 30; // ID session sets the earlier 7-day idle limit
 
 /** Lazy-initialized JWT secret from environment */
 let jwtSecretCached: Uint8Array | null = null;
@@ -39,6 +39,7 @@ export interface SessionPayload extends JWTPayload {
   userId: string;
   /** identity provider user ID (sub claim) — used for app-level user identity */
   identityId: string;
+  identitySessionId: string;
   /** Display username */
   username: string;
   /** Display name */
@@ -55,6 +56,7 @@ export interface SessionPayload extends JWTPayload {
 export async function createSession(payload: {
   userId: string;
   identityId: string;
+  identitySessionId: string;
   username: string;
   name: string;
   email: string;

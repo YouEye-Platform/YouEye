@@ -5,13 +5,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/youeye-platform/YouEye/releasecache"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/youeye-platform/YouEye/releasecache"
+	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 	"github.com/youeye-platform/YouEye/spine/internal/channels"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 	"github.com/youeye-platform/YouEye/spine/internal/incus"
@@ -70,6 +71,14 @@ func DeployControlPanel(cfg *config.Config) error {
 		return fmt.Errorf("existing Control Panel container is an unjournaled ambiguous partial deployment; refusing to overwrite it")
 	}
 	if observation.ready() {
+		// A preserved Incus state can hold an older complete application after
+		// reset. Never give that bundle the newly selected release provenance.
+		if status, manifest, detectErr := appliance.Detect(); detectErr == nil && status.Kind == appliance.RuntimeApplianceImage && manifest != nil && manifest.ReleaseSet != nil {
+			installedVersion := GetInstalledVersion(containerName, appDir)
+			if installedVersion != manifest.ReleaseSet.ControlPanel.Version {
+				return fmt.Errorf("existing Control Panel version %q does not match sealed release %q; update the Control Panel through its signed channel before resuming deployment", installedVersion, manifest.ReleaseSet.ControlPanel.Version)
+			}
+		}
 		util.LogSuccess(fmt.Sprintf("Control Panel container '%s' is complete; reconciling it", containerName))
 		if err := RepairControlPanelPortProxy(containerName, port); err != nil {
 			return fmt.Errorf("failed to repair Control Panel localhost proxy: %w", err)
@@ -590,7 +599,7 @@ func DeployControlPanelApp(cfg *config.Config) error {
 	}
 	util.LogSuccess(fmt.Sprintf("Downloaded %.2f MB", float64(written)/1024/1024))
 	defer os.Remove(tmpFile)
-	if err := releases.VerifySignedReleaseArtifact(client, downloadURL, tmpFile, effectiveChannel.ArtifactSHA256); err != nil {
+	if err := releases.VerifySignedReleaseArtifact(client, downloadURL, tmpFile, effectiveChannel.ArtifactSHA256, "cp"); err != nil {
 		return fmt.Errorf("verify signed Control Panel release artifact: %w", err)
 	}
 

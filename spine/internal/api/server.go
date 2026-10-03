@@ -925,7 +925,7 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cpErr == nil {
-		if err := releases.VerifySignedReleaseArtifact(dlClient, downloadURL, tmpFile.Name(), cpCand.ArtifactSHA256); err != nil {
+		if err := releases.VerifySignedReleaseArtifact(dlClient, downloadURL, tmpFile.Name(), cpCand.ArtifactSHA256, "cp"); err != nil {
 			update.Fail("control", currentVersion, err.Error())
 			errorResponse(w, err.Error(), http.StatusConflict)
 			return

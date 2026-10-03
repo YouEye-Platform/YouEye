@@ -90,6 +90,7 @@ export default function MarketPage() {
   const [sourceCount, setSourceCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [catalogWarnings, setCatalogWarnings] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [section, setSection] = useState<Section>('apps');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
@@ -103,6 +104,7 @@ export default function MarketPage() {
       if (!res.ok) throw new Error('Failed to load the Market catalog');
       const data = await res.json();
       setApps(data.apps || []);
+      setCatalogWarnings(Array.isArray(data.warnings) ? data.warnings.map((warning: { message: string }) => warning.message) : []);
       setCategoryDefs(Array.isArray(data.categories) ? data.categories : []);
       setCuration(data.curation ?? null);
       setBundles(Array.isArray(data.bundles) ? data.bundles : []);
@@ -340,6 +342,15 @@ export default function MarketPage() {
       {error && (
         <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
           <AlertCircle className="h-4 w-4 shrink-0" /> {error}
+        </div>
+      )}
+
+      {catalogWarnings.length > 0 && (
+        <div role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm">
+          <p>Some Market items could not be loaded. Available apps are shown below.</p>
+          <ul className="mt-2 list-disc pl-5">
+            {catalogWarnings.map((warning, index) => <li key={index}>{warning}</li>)}
+          </ul>
         </div>
       )}
 

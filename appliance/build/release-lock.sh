@@ -44,6 +44,10 @@ release_lock_valid_sha256() {
 
 release_lock_component_validate() {
     local lock=$1 name=$2 branch=$3 version tag commit checksum epoch branch_prefix
+    if [[ $(jq -r .schema "$lock") == youeye.appliance.release-lock.v2 ]]; then
+        branch="$(jq -er ".components.$name.branch" "$lock")" || return 1
+        release_lock_valid_branch "$branch" || release_lock_fail "component branch is invalid" || return 1
+    fi
     branch_prefix="${branch}-"
     [[ $branch != main ]] || branch_prefix=""
     version="$(jq -er ".components.$name.version" "$lock")" || return 1
@@ -73,18 +77,20 @@ release_lock_validate() {
     command -v jq >/dev/null 2>&1 || release_lock_fail "jq is required to validate the appliance release lock" || return 1
 
     jq -e '
+      (.schema == "youeye.appliance.release-lock.v2") as $composition |
       type == "object" and
       keys == ["components", "image", "market", "schema"] and
-      .schema == "youeye.appliance.release-lock.v1" and
+      (.schema == "youeye.appliance.release-lock.v1" or .schema == "youeye.appliance.release-lock.v2") and
+      (if $composition then ([.components[] | .branch] | all(type == "string")) else true end) and
       (.image | type == "object" and keys == ["debian_snapshot", "minimum_current_version", "release_branch", "release_source", "version"]) and
       (.market | type == "object" and keys == ["branch", "commit", "source"]) and
       (.components | type == "object" and keys == ["control_panel", "spine", "ui"]) and
       ([.image.version, .image.minimum_current_version, .image.release_source, .image.release_branch, .image.debian_snapshot, .market.source, .market.branch, .market.commit] | all(type == "string")) and
-      (.components.spine | type == "object" and keys == ["artifact_sha256", "source_commit", "source_date_epoch", "tag", "version"]) and
-      ([.components.control_panel, .components.ui] | all(type == "object" and keys == ["artifact_sha256", "source_commit", "tag", "version"])) and
+      (.components.spine | type == "object" and keys == (["artifact_sha256", "source_commit", "source_date_epoch", "tag", "version"] + (if $composition then ["branch"] else [] end) | sort)) and
+      ([.components.control_panel, .components.ui] | all(type == "object" and keys == (["artifact_sha256", "source_commit", "tag", "version"] + (if $composition then ["branch"] else [] end) | sort))) and
       ([.components.spine.version, .components.spine.tag, .components.spine.source_commit, .components.spine.artifact_sha256, .components.control_panel.version, .components.control_panel.tag, .components.control_panel.source_commit, .components.control_panel.artifact_sha256, .components.ui.version, .components.ui.tag, .components.ui.source_commit, .components.ui.artifact_sha256] | all(type == "string")) and
       (.components.spine.source_date_epoch | type == "number" and floor == . and . > 0)
-    ' "$lock" >/dev/null || release_lock_fail "release lock is incomplete or does not match youeye.appliance.release-lock.v1" || return 1
+    ' "$lock" >/dev/null || release_lock_fail "release lock is incomplete or does not match the supported release-lock schema" || return 1
 
     image_version="$(jq -er '.image.version' "$lock")"
     minimum_version="$(jq -er '.image.minimum_current_version' "$lock")"
@@ -99,11 +105,12 @@ release_lock_validate() {
     release_lock_valid_version "$minimum_version" || release_lock_fail "image.minimum_current_version must be an exact dotted version" || return 1
     release_lock_valid_branch "$release_branch" || release_lock_fail "image.release_branch is not a safe release branch" || return 1
     [[ $snapshot =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || release_lock_fail "image.debian_snapshot must be an exact UTC snapshot timestamp" || return 1
-    [[ $market_branch == main || ( $release_branch == beta && $market_branch == beta ) ]] || release_lock_fail "market.branch must match the official channel identity (main or the selected beta channel)" || return 1
+    [[ $(jq -r .schema "$lock") == youeye.appliance.release-lock.v2 ]] && release_lock_valid_branch "$market_branch" || [[ $market_branch == main || ( $release_branch == beta && $market_branch == beta ) ]] || release_lock_fail "market.branch must match the official channel identity (main or the selected beta channel)" || return 1
     release_lock_valid_commit "$market_commit" || release_lock_fail "market.commit must be an exact 40-character lowercase commit" || return 1
 
     case "$source_mode" in
         public)
+            [[ $(jq -r .schema "$lock") == youeye.appliance.release-lock.v1 ]] || release_lock_fail "compositions require an explicit private test source" || return 1
             [[ $release_source == https://github.com/YouEye-Platform/YouEye && $market_source == https://github.com/YouEye-Platform/Market ]] ||
                 release_lock_fail "public release locks must use the official GitHub YouEye and Market sources" || return 1
             ;;
@@ -186,8 +193,6 @@ release_lock_validate_public_recipe() {
     jq -e --slurpfile recipe "$recipe" '
       ($recipe | length == 1) and
       ($recipe[0] | keys == ["image", "market_branch", "schema"] and .schema == "youeye.appliance.recipe.v1") and
-      .image == $recipe[0].image and .market.branch == $recipe[0].market_branch and
-      .components.spine.source_commit == .components.control_panel.source_commit and
-      .components.spine.source_commit == .components.ui.source_commit
+      .image == $recipe[0].image and .market.branch == $recipe[0].market_branch
     ' "$lock" >/dev/null || release_lock_fail "public resolved lock differs from its committed recipe or component source" || return 1
 }

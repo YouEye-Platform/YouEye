@@ -142,3 +142,38 @@ func TestValidateApplianceManifestRequiresThirtyTwoGiBTargetContract(t *testing.
 		t.Fatalf("obsolete 96 GiB signed contract was accepted: %v", err)
 	}
 }
+
+func TestCompositionManifestRequiresExplicitOriginalComponentBranches(t *testing.T) {
+	bundle := writeTestApplianceBundle(t)
+	raw, err := os.ReadFile(bundle.manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := parseApplianceBundleManifest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.ReleaseSet.Schema = "youeye.release-set.v2"
+	m.ReleaseSet.Spine.Branch = "dev"
+	m.ReleaseSet.Spine.Tag = "spine-dev-v" + m.ReleaseSet.Spine.Version
+	m.ReleaseSet.ControlPanel.Branch = "patch-fix"
+	m.ReleaseSet.ControlPanel.Tag = "cp-patch-fix-v" + m.ReleaseSet.ControlPanel.Version
+	m.ReleaseSet.UI.Branch = "main"
+	m.ReleaseSet.UI.Tag = "ui-v" + m.ReleaseSet.UI.Version
+	if err = validateApplianceBundleManifest(m); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*applianceBundleManifest){
+		func(v *applianceBundleManifest) { v.ReleaseSet.Schema = "" },
+		func(v *applianceBundleManifest) { v.ReleaseSet.Schema = "unknown" },
+		func(v *applianceBundleManifest) { v.ReleaseSet.ControlPanel.Branch = "dev" },
+		func(v *applianceBundleManifest) { v.ReleaseSet.UI.Branch = "" },
+		func(v *applianceBundleManifest) { v.Trust.Class = "stable" },
+	} {
+		bad := m
+		change(&bad)
+		if validateApplianceBundleManifest(bad) == nil {
+			t.Fatal("invalid or cross-trust composition accepted")
+		}
+	}
+}

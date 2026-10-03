@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/url"
+	"regexp"
 	"strings"
 
 	"golang.org/x/crypto/ssh"
@@ -170,25 +170,18 @@ func validateApplianceReleasePolicy(policy applianceReleasePolicy) error {
 		return fmt.Errorf("release policy schema must be %s", releasePolicySchema)
 	}
 	provider := strings.ToLower(strings.TrimSpace(policy.Provider))
-	if provider != "github" && provider != "forgejo" && provider != "custom" {
-		return fmt.Errorf("release policy provider must be github, forgejo, or custom")
+	if provider != "github" && provider != "custom" {
+		return fmt.Errorf("release policy provider must be a supported repository URL")
 	}
 	api := strings.TrimSpace(policy.ReleasesAPI)
-	if provider == defaultApplianceProvider {
-		if api != "" && api != defaultApplianceReleasesAPI {
-			return fmt.Errorf("Official GitHub release policy uses the fixed public releases API")
-		}
-	} else {
-		parsed, err := url.Parse(api)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-			return fmt.Errorf("non-default release policy requires an HTTPS releases API without credentials, query, or fragment")
-		}
+	if _, _, err := normalizeApplianceReleaseSource(provider, api); err != nil {
+		return err
 	}
 	if policy.ServiceSelection != "" && policy.ServiceSelection != "sealed" && policy.ServiceSelection != "current" {
 		return fmt.Errorf("service selection must be sealed or current")
 	}
-	if policy.ServiceSelection == "current" && policy.Provider != "github" {
-		return fmt.Errorf("current service selection requires official public distribution")
+	if policy.ServiceSelection == "current" && policy.Provider != "github" && !(policy.Provider == "custom" && ((policy.Mode == "track" && (policy.Track == "stable" || policy.Track == "branch" && policy.Branch == "main")) || (policy.Mode == "exact" && regexp.MustCompile(`^appliance-v[0-9]+(\.[0-9]+){2,}$`).MatchString(policy.ExactTag)))) {
+		return fmt.Errorf("current service selection requires GitHub or explicitly selected repository main")
 	}
 	if policy.Freshness != "require-current" && policy.Freshness != "prefer-current" {
 		return fmt.Errorf("release policy freshness must be require-current or prefer-current")
