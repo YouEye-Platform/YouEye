@@ -46,10 +46,16 @@ async function withCaddyFixture(
   const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/config/') {
       res.setHeader('content-type', 'application/json');
+      res.setHeader('etag', JSON.stringify(JSON.stringify(config)));
       res.end(JSON.stringify(config));
       return;
     }
-    if (req.method === 'POST' && req.url === '/load') {
+    if (req.method === 'POST' && req.url === '/config/') {
+      if (req.headers['if-match'] !== JSON.stringify(JSON.stringify(config))) {
+        res.statusCode = 412;
+        res.end();
+        return;
+      }
       let body = '';
       req.setEncoding('utf8');
       req.on('data', (chunk) => { body += chunk; });

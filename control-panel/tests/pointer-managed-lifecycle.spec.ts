@@ -69,7 +69,11 @@ test('Pointer waits for a real setup issuer and is refreshed on every domain cha
   assert.match(lifecycle, /systemctl', 'enable', 'youeye-pointer\.service'/);
   assert.match(lifecycle, /systemctl', 'restart', 'youeye-pointer\.service'/);
   assert.match(setup, /ai\?: StepState/);
-  assert.match(setup, /shouldRunStep\('ai'\)[\s\S]*configurePointerForPlatform\(\)[\s\S]*saveStepState\('ai', 'done'\)/);
+  assert.match(setup, /configurePointerForPlatform\(undefined, \{ deferRoutes: true \}\)[\s\S]*saveStepState\('ai', 'done'\)/);
+  assert.ok(setup.indexOf("await settingsService.setRaw({") < setup.indexOf('await configurePointerForPlatform('),
+    'Pointer must use the persisted setup-selected identity');
+  assert.ok(setup.indexOf('await prepareSetupPointer();') < setup.indexOf('await caddy.reconcileManagedRoutes(domain)'),
+    'required proxy verification must follow Pointer provisioning');
   assert.match(setupPage, /id: 'ai', label: t\('configuringAi'\)/);
-  assert.match(reconfigure, /step: 'ai', status: 'running'[\s\S]*configurePointerForPlatform\(journal\.oldIdentityOrigin\)/);
+  assert.match(reconfigure, /step: 'ai', status: 'running'[\s\S]*configurePointerForPlatform\(journal\.oldIdentityOrigin, \{ deferRoutes: true \}\)[\s\S]*reconcileManagedRoutes\(newDomain\)/);
 });

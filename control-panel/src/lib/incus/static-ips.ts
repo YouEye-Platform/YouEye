@@ -10,6 +10,7 @@
  */
 
 import { incusRequest } from './server';
+import { isUsableIPv4 } from './ipv4';
 
 /** Static IP offsets within the incusbr0 /24 subnet. */
 export const SYSTEM_IP_OFFSETS: Record<string, number> = {
@@ -41,7 +42,9 @@ export async function getSubnetBase(): Promise<string> {
   // Parse "10.75.26.1/24" → "10.75.26"
   const ip = addr.split('/')[0];
   const parts = ip.split('.');
-  if (parts.length !== 4) throw new Error(`Unexpected incusbr0 address format: ${addr}`);
+  if (!isUsableIPv4(ip) || addr.split('/')[1] !== '24') {
+    throw new Error('Invalid incusbr0 IPv4 subnet for static address discovery');
+  }
 
   cachedSubnetBase = parts.slice(0, 3).join('.');
   return cachedSubnetBase;

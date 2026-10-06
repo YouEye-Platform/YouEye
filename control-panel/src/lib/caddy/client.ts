@@ -18,8 +18,13 @@ import type {
 } from './types';
 
 import http from 'http';
+import https from 'node:https';
+import { rootCertificates } from 'node:tls';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import { getContainerIP } from '@/lib/incus/container-ip';
+import { incusDownloadFile } from '@/lib/incus/server';
+import { waitForIncusReady } from '@/lib/incus/readiness';
+import { isUsableIPv4 } from '@/lib/incus/ipv4';
 
 /**
  * Default Caddy admin API URL
@@ -31,6 +36,7 @@ const DEFAULT_CADDY_URL = `http://youeye-caddy.${CONTAINER_DOMAIN}:2019`;
  * Connection timeout for Caddy API requests (ms)
  */
 const REQUEST_TIMEOUT = 10000;
+const configRevisions = new WeakMap<object, string>();
 
 /**
  * Resolve Caddy admin URL from environment, deterministic system IP, or
@@ -54,12 +60,14 @@ function httpRequest(
   method: string,
   urlStr: string,
   body?: string,
-  timeoutMs: number = REQUEST_TIMEOUT
-): Promise<{ status: number; body: string }> {
+  timeoutMs: number = REQUEST_TIMEOUT,
+  extraHeaders: Record<string, string> = {},
+): Promise<{ status: number; body: string; etag?: string }> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(urlStr);
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      ...extraHeaders,
     };
     if (body) {
       headers['Content-Length'] = Buffer.byteLength(body).toString();
@@ -77,7 +85,7 @@ function httpRequest(
       (res) => {
         let data = '';
         res.on('data', (chunk) => (data += chunk));
-        res.on('end', () => resolve({ status: res.statusCode || 0, body: data }));
+        res.on('end', () => resolve({ status: res.statusCode || 0, body: data, etag: res.headers.etag }));
       }
     );
 
@@ -99,7 +107,8 @@ async function caddyRequest<T>(
   method: string,
   path: string,
   body?: unknown,
-  retries: number = 2
+  retries: number = 2,
+  headers: Record<string, string> = {},
 ): Promise<T> {
   let lastError: Error | null = null;
   
@@ -107,7 +116,7 @@ async function caddyRequest<T>(
     try {
       const url = `${await getCaddyUrl()}${path}`;
       const bodyStr = body ? JSON.stringify(body) : undefined;
-      const response = await httpRequest(method, url, bodyStr, REQUEST_TIMEOUT);
+      const response = await httpRequest(method, url, bodyStr, REQUEST_TIMEOUT, headers);
 
       if (response.status >= 400) {
         throw new Error(`Caddy API error: ${response.status} - ${response.body}`);
@@ -116,7 +125,11 @@ async function caddyRequest<T>(
       // Some endpoints return empty response
       if (!response.body) return {} as T;
 
-      return JSON.parse(response.body);
+      const result = JSON.parse(response.body);
+      if (method === 'GET' && path === '/config/' && response.etag && result && typeof result === 'object') {
+        configRevisions.set(result, response.etag);
+      }
+      return result;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       
@@ -153,13 +166,22 @@ export async function setConfig(config: CaddyConfig): Promise<void> {
   // Caddy's default origins check rejects requests when the Origin header
   // doesn't match. Setting enforce_origin: false and clearing origins
   // prevents 403 errors from control panel API calls.
-  if (!config.admin) {
-    config.admin = { listen: '0.0.0.0:2019' };
+  const prepared = structuredClone(config);
+  if (!prepared.admin) {
+    prepared.admin = { listen: '0.0.0.0:2019' };
   }
-  config.admin.enforce_origin = false;
-  delete config.admin.origins;
+  prepared.admin.enforce_origin = false;
+  delete prepared.admin.origins;
 
-  await caddyRequest('POST', '/load', config);
+  await setConfigExact(prepared, configRevisions.has(config) ? config : await getConfig());
+}
+
+async function setConfigExact(config: CaddyConfig, expected: CaddyConfig): Promise<void> {
+  const revision = configRevisions.get(expected);
+  if (!revision) throw new Error('Caddy configuration revision unavailable; refusing an unprotected write');
+  // Root /config is an object replacement. If-Match covers every field and
+  // protects both application writers and reconciliation/rollback.
+  await caddyRequest('POST', '/config/', config, 0, { 'If-Match': revision });
 }
 
 /**
@@ -197,35 +219,6 @@ function isIPAddress(str: string): boolean {
   return ipv4Regex.test(str) || ipv6Regex.test(str);
 }
 
-/**
- * Normalize upstream address for Incus DNS resolution
- * Container names need the bridge DNS suffix for inter-container communication
- */
-function normalizeUpstream(upstream: string): string {
-  // If it's already a FQDN with the container domain, return as-is
-  if (upstream.endsWith(`.${CONTAINER_DOMAIN}`)) {
-    return upstream;
-  }
-
-  // Also accept legacy .incus suffix
-  if (upstream.endsWith('.incus')) {
-    return upstream.replace(/\.incus$/, `.${CONTAINER_DOMAIN}`);
-  }
-
-  // If it's an IP address, return as-is
-  if (isIPAddress(upstream)) {
-    return upstream;
-  }
-
-  // If it contains a dot (other domain), return as-is
-  if (upstream.includes('.')) {
-    return upstream;
-  }
-
-  // Container name without suffix — add container domain for DNS
-  return `${upstream}.${CONTAINER_DOMAIN}`;
-}
-
 function stripContainerDomain(upstream: string): string {
   if (upstream.endsWith(`.${CONTAINER_DOMAIN}`)) {
     return upstream.slice(0, -(`.${CONTAINER_DOMAIN}`).length);
@@ -245,26 +238,19 @@ function stripContainerDomain(upstream: string): string {
  */
 export async function resolveCaddyUpstream(upstream: string): Promise<string> {
   if (isIPAddress(upstream)) {
+    if (!isUsableIPv4(upstream)) throw new Error('Caddy managed upstream requires a usable IPv4 address');
     return upstream;
   }
 
-  if (upstream.includes('.') && !upstream.endsWith(`.${CONTAINER_DOMAIN}`) && !upstream.endsWith('.incus')) {
+  const normalized = upstream.toLowerCase().replace(/\.$/, '');
+  if (normalized.includes('.') && !normalized.endsWith(`.${CONTAINER_DOMAIN}`) && !normalized.endsWith('.incus')) {
     return upstream;
   }
 
-  const containerName = stripContainerDomain(upstream);
-  try {
-    const { getContainerIP } = await import('../incus/container-ip');
-    const ip = await getContainerIP(containerName);
-    if (ip) {
-      return ip;
-    }
-  } catch (error) {
-    console.warn(`[Caddy] Failed to resolve ${containerName} to IPv4:`, error);
-  }
-
-  console.warn(`[Caddy] Falling back to DNS upstream for ${containerName}`);
-  return normalizeUpstream(containerName);
+  const containerName = stripContainerDomain(normalized);
+  const ip = await getContainerIP(containerName, { required: true });
+  if (!ip || !isUsableIPv4(ip)) throw new Error('Managed upstream has no usable IPv4 address');
+  return ip;
 }
 
 export async function resolveCaddyUpstreamDial(upstream: string, port: number): Promise<string> {
@@ -305,6 +291,7 @@ export async function migrateSystemUpstreamsToIPv4(): Promise<number> {
     ['youeye-control', 3001],
     ['youeye-ui', 3000],
     ['youeye-pihole', 80],
+    ['youeye-pointer', 4002],
   ];
 
   const replacements = new Map<string, string>();
@@ -1496,8 +1483,16 @@ export async function ensureControlSettingsRoute(
   containerName: string = 'youeye-control',
   port: number = 3000
 ): Promise<void> {
+  if (containerName === 'youeye-control' && port === 3000) {
+    return reconcileManagedRoutes(domain);
+  }
   const config = await getConfig();
+  const upstreamDial = await resolveCaddyUpstreamDial(containerName, port);
+  configureControlSettingsRoutes(config, domain, upstreamDial);
+  await setConfig(config);
+}
 
+function configureControlSettingsRoutes(config: CaddyConfig, domain: string, upstreamDial: string): void {
   if (!config.apps) config.apps = {};
   if (!config.apps.http) config.apps.http = {};
   if (!config.apps.http.servers) config.apps.http.servers = {};
@@ -1514,13 +1509,7 @@ export async function ensureControlSettingsRoute(
   ensureHTTPSConfig(config.apps.http.servers[serverName]);
   ensureTLSSubject(config, domain);
 
-  const upstreamDial = await resolveCaddyUpstreamDial(containerName, port);
-  const routes = (config.apps.http.servers[serverName].routes || [])
-    .filter(r =>
-      r['@id'] !== 'control-settings-route' &&
-      r['@id'] !== 'control-market-route' &&
-      r['@id'] !== 'control-settings-support-route'
-    );
+  const routes = config.apps.http.servers[serverName].routes || [];
 
   const settingsRoute: CaddyRoute = {
     '@id': 'control-settings-route',
@@ -1580,8 +1569,20 @@ export async function ensureControlSettingsRoute(
     }],
   };
 
-  config.apps.http.servers[serverName].routes = [settingsRoute, marketRoute, supportRoute, ...routes];
-  await setConfig(config);
+  config.apps.http.servers[serverName].routes = replaceManagedRoutes(routes, [settingsRoute, marketRoute, supportRoute]);
+}
+
+function replaceManagedRoutes(routes: CaddyRoute[], replacements: CaddyRoute[]): CaddyRoute[] {
+  const ids = new Set(replacements.map((route) => route['@id']));
+  const globals = routes.filter((route) => route['@id'] === 'security-header-strip' || route['@id'] === 'api-ping-route')
+    .sort((a, b) => Number(a['@id'] === 'api-ping-route') - Number(b['@id'] === 'api-ping-route'));
+  const ordinary = routes.filter((route) => !globals.includes(route));
+  const first = ordinary.findIndex((route) => ids.has(route['@id']));
+  const retained = ordinary.filter((route) => !ids.has(route['@id']));
+  // Keep the existing managed block's position and unrelated route precedence.
+  // A missing managed block belongs before host catch-alls, after global guards.
+  retained.splice(first < 0 ? 0 : first, 0, ...replacements);
+  return [...globals, ...retained];
 }
 
 /** Route only Pointer's public inference contracts at the YouEye apex. */
@@ -1590,7 +1591,16 @@ export async function ensurePointerInferenceRoutes(
   containerName: string = 'youeye-pointer',
   port: number = 4002,
 ): Promise<void> {
+  if (containerName === 'youeye-pointer' && port === 4002) {
+    return reconcileManagedRoutes(domain);
+  }
   const config = await getConfig();
+  const upstreamDial = await resolveCaddyUpstreamDial(containerName, port);
+  configurePointerInferenceRoutes(config, domain, upstreamDial);
+  await setConfig(config);
+}
+
+function configurePointerInferenceRoutes(config: CaddyConfig, domain: string, upstreamDial: string): void {
   if (!config.apps) config.apps = {};
   if (!config.apps.http) config.apps.http = {};
   if (!config.apps.http.servers) config.apps.http.servers = {};
@@ -1600,16 +1610,140 @@ export async function ensurePointerInferenceRoutes(
   }
   ensureHTTPSConfig(config.apps.http.servers[serverName]);
   ensureTLSSubject(config, domain);
-  const upstreamDial = await resolveCaddyUpstreamDial(containerName, port);
-  const routes = (config.apps.http.servers[serverName].routes || [])
-    .filter((route) => route['@id'] !== 'pointer-inference-route');
+  const routes = config.apps.http.servers[serverName].routes || [];
   const inferenceRoute: CaddyRoute = {
     '@id': 'pointer-inference-route',
     match: [{ host: [domain], path: ['/v1', '/v1/*', '/v1beta', '/v1beta/*'] }],
     handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: upstreamDial }] }],
   };
-  config.apps.http.servers[serverName].routes = sortRoutes([inferenceRoute, ...routes]);
-  await setConfig(config);
+  config.apps.http.servers[serverName].routes = replaceManagedRoutes(routes, [inferenceRoute]);
+}
+
+function canonicalConfig(value: unknown): string {
+  return JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
+    ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)))
+    : item);
+}
+
+export async function verifyManagedProxy(domain: string, config: CaddyConfig, port = 443): Promise<void> {
+  const ca = [...rootCertificates];
+  try {
+    ca.push((await incusDownloadFile('youeye-caddy', '/data/caddy/pki/authorities/local/root.crt')).toString('utf8'));
+  } catch {
+    // Public certificates use the platform trust store; internal TLS needs its installed CA.
+  }
+  for (const cert of config.apps?.tls?.certificates?.load_pem ?? []) {
+    if (typeof cert.certificate === 'string') ca.push(cert.certificate);
+  }
+  const address = new URL(await getCaddyUrl()).hostname;
+  for (const [path, expected] of [
+    ['/settings/api/auth/mode', [200]],
+    ['/settings', [200, 302, 303, 307, 308]],
+    ['/market', [200, 302, 303, 307, 308]],
+    ['/v1/models', [401]],
+  ] as const) {
+    const status = await new Promise<number>((resolve, reject) => {
+      const request = https.get({
+        hostname: address, port, servername: domain, path,
+        headers: { Host: domain }, ca, timeout: 5_000,
+      }, (response) => {
+        response.resume();
+        resolve(response.statusCode ?? 0);
+      });
+      request.on('error', () => reject(new Error(`Managed proxy probe failed for ${path}`)));
+      request.on('timeout', () => request.destroy(new Error('Managed proxy probe timeout')));
+    });
+    if (!(expected as readonly number[]).includes(status)) {
+      throw new Error(`Managed proxy probe failed for ${path} (HTTP ${status})`);
+    }
+  }
+}
+
+export interface ManagedRouteDependencies {
+  ready: () => Promise<void>;
+  resolve: (name: string, port: number) => Promise<string>;
+  read: () => Promise<CaddyConfig>;
+  write: (config: CaddyConfig, expected: CaddyConfig) => Promise<void>;
+  verify: (domain: string, config: CaddyConfig) => Promise<void>;
+}
+
+let managedRouteTail: Promise<void> = Promise.resolve();
+
+/**
+ * Resolve every required managed address before one atomic Caddy load. All
+ * control-surface callers use this operation so Pointer failure cannot leave
+ * newly written Settings routes behind. Read-back and proxy checks are required.
+ */
+export async function reconcileManagedRoutes(
+  domain: string,
+  overrides: Partial<ManagedRouteDependencies> = {},
+): Promise<void> {
+  const dependencies: ManagedRouteDependencies = {
+    ready: () => waitForIncusReady(),
+    resolve: resolveCaddyUpstreamDial, read: getConfig, write: setConfigExact,
+    verify: verifyManagedProxy, ...overrides,
+  };
+  const operation = managedRouteTail.then(async () => {
+    await dependencies.ready();
+    const replacements = new Map<string, string>();
+    const dials = new Map<string, string>();
+    for (const [name, port] of [
+      ['youeye-control', 3000], ['youeye-control', 3001], ['youeye-pointer', 4002],
+      ['youeye-ui', 3000], ['youeye-pihole', 80],
+    ] as const) {
+      const dial = await dependencies.resolve(name, port);
+      if (!isUsableIPv4(dial.split(':')[0]) || dial.split(':')[1] !== String(port)) {
+        throw new Error('Managed route discovery returned an invalid IPv4 dial');
+      }
+      dials.set(`${name}:${port}`, dial);
+      for (const suffix of ['', `.${CONTAINER_DOMAIN}`, '.incus']) {
+        replacements.set(`${name}${suffix}:${port}`, dial);
+      }
+    }
+    const before = await dependencies.read();
+    const candidate = structuredClone(before);
+    configureControlSettingsRoutes(candidate, domain, dials.get('youeye-control:3000')!);
+    configurePointerInferenceRoutes(candidate, domain, dials.get('youeye-pointer:4002')!);
+    rewriteDial(candidate, replacements);
+    if (canonicalConfig(await dependencies.read()) !== canonicalConfig(before)) {
+      throw new Error('Caddy configuration changed during reconciliation; retry without overwriting it');
+    }
+    const changed = canonicalConfig(candidate) !== canonicalConfig(before);
+    let attemptedWrite = false;
+    try {
+      if (changed) {
+        attemptedWrite = true;
+        await dependencies.write(candidate, before);
+      }
+      if (canonicalConfig(await dependencies.read()) !== canonicalConfig(candidate)) {
+        throw new Error('Managed route read-back verification failed');
+      }
+      await dependencies.verify(domain, candidate);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('Caddy API error: 412')) {
+        throw new Error('Caddy configuration changed concurrently; retry without overwriting owner routes');
+      }
+      if (attemptedWrite) {
+        try {
+          const current = await dependencies.read();
+          if (canonicalConfig(current) !== canonicalConfig(before)) {
+            if (canonicalConfig(current) !== canonicalConfig(candidate)) {
+              throw new Error('Concurrent Caddy change detected; automatic rollback refused to preserve owner configuration');
+            }
+            await dependencies.write(before, current);
+            if (canonicalConfig(await dependencies.read()) !== canonicalConfig(before)) {
+              throw new Error('Rollback read-back failed');
+            }
+          }
+        } catch {
+          throw new Error('Managed route reconciliation failed; rollback could not be verified. Inspect Caddy configuration before retrying');
+        }
+      }
+      throw error;
+    }
+  });
+  managedRouteTail = operation.catch(() => undefined);
+  return operation;
 }
 
 /**

@@ -18,6 +18,7 @@ import { settingsService } from '@/lib/settings';
 import { spineClient } from '@/lib/spine/client';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import * as caddy from '@/lib/caddy/client';
+import { recordSetupRouteResult } from '@/lib/caddy/setup-result';
 import { setDomainDNS, setIdentityHostDNS } from '@/lib/apps/pihole-api';
 import { getIdentityConfig } from '@/lib/identity/config';
 import {
@@ -263,6 +264,27 @@ export async function POST(request: NextRequest) {
         } else {
           stepUpdate('config', 'done', 'Already completed');
         }
+
+        let pointerAttempted = false;
+        const prepareSetupPointer = async () => {
+          if (pointerAttempted) return;
+          pointerAttempted = true;
+          await heartbeatSetupOperation(leaseOwnerId, leaseSessionId);
+          stepUpdate('ai', 'running');
+          try {
+            // Stable issuer settings were saved above. Final Caddy acceptance
+            // follows TLS preparation and provisioning, never a missing backend.
+            const result = await configurePointerForPlatform(undefined, { deferRoutes: true });
+            await saveStepState('ai', 'done');
+            stepUpdate('ai', 'done', result === 'deployed'
+              ? 'YouEye AI service deployed and connected to YouEye ID'
+              : 'YouEye AI service identity configuration refreshed');
+          } catch {
+            await saveStepState('ai', 'error');
+            stepUpdate('ai', 'error', 'YouEye AI service setup failed; check service health and retry');
+            hasError = true;
+          }
+        };
 
         // ── Step 2: Caddy reverse proxy ──────────────────────────────
         if (shouldRunStep('caddy')) {
@@ -718,6 +740,9 @@ export async function POST(request: NextRequest) {
           }
 
           if (!hasError || retryStep === 'caddy') {
+            if (completedSteps.ai !== 'done' || shouldRunStep('ai')) {
+              await prepareSetupPointer();
+            }
             if (!subs.identity) {
               throw new Error('Identity provider subdomain is missing. Set subdomains.identity before provisioning.');
             }
@@ -769,8 +794,7 @@ export async function POST(request: NextRequest) {
             // Root domain /settings route to Control Panel. This must be separate from
             // generic path routing because UI and CP both serve Next.js /_next assets.
             try {
-              await caddy.ensureControlSettingsRoute(domain, 'youeye-control', 3000);
-              await caddy.ensurePointerInferenceRoutes(domain);
+              await caddy.reconcileManagedRoutes(domain);
             } catch (err) {
               console.error('Failed to create root domain /settings CP route:', err);
               routeErrors.push(`youeye-control (/settings): ${err instanceof Error ? err.message : String(err)}`);
@@ -805,13 +829,12 @@ export async function POST(request: NextRequest) {
               routeErrors.push(`caddy-upstream-migration: ${err instanceof Error ? err.message : String(err)}`);
             }
 
-            if (routeErrors.length > 0) {
-              stepUpdate('caddy', 'done', `Routes created with ${routeErrors.length} error(s): ${routeErrors.join('; ')}`);
-            } else {
-              stepUpdate('caddy', 'done', `Routes created for ${routeMap.length + (!uiSub ? 1 : 0)} services`);
-            }
-            await saveStepState('caddy', 'done');
-            hasError = false;
+            hasError = await recordSetupRouteResult(
+              routeErrors,
+              `Routes created for ${routeMap.length + (!uiSub ? 1 : 0)} services`,
+              (state, message) => stepUpdate('caddy', state, message),
+              (state) => saveStepState('caddy', state),
+            );
           }
         } else {
           stepUpdate('caddy', 'done', 'Already completed');
@@ -857,18 +880,13 @@ export async function POST(request: NextRequest) {
         // started during pre-Web bootstrap with a placeholder issuer because
         // that would either crash-loop or retain an invalid trust boundary.
         if (shouldRunStep('ai')) {
-          await heartbeatSetupOperation(leaseOwnerId, leaseSessionId);
-          stepUpdate('ai', 'running');
+          await prepareSetupPointer();
           try {
-            const result = await configurePointerForPlatform();
-            await saveStepState('ai', 'done');
-            stepUpdate('ai', 'done', result === 'deployed'
-              ? 'YouEye AI service deployed and connected to YouEye ID'
-              : 'YouEye AI service identity configuration refreshed');
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            await saveStepState('ai', 'error');
-            stepUpdate('ai', 'error', `YouEye AI service setup failed: ${msg}`);
+            // Also verify the existing Caddy configuration when retrying only AI.
+            await caddy.reconcileManagedRoutes(body.domain);
+          } catch {
+            await saveStepState('caddy', 'error');
+            stepUpdate('caddy', 'error', 'Managed proxy routes are not verified; retry Caddy setup');
             hasError = true;
           }
         } else {

@@ -1043,15 +1043,14 @@ async function reconfigureLocked(
       await updateCaddyDomain(oldDomain, newDomain, oldSubdomains, newSubdomains);
       await caddy.setDomain(newDomain);
       await caddy.ensureIdentityRoute(identityHost, 'youeye-control', 3001);
-      await caddy.ensureControlSettingsRoute(newDomain);
-      await caddy.ensurePointerInferenceRoutes(newDomain);
-      onEvent({ step: 'caddy', status: 'done', message: 'Reverse proxy updated' });
     }
   };
   const startPointer = async () => {
     if (reconcileRequired) {
       onEvent({ step: 'ai', status: 'running', message: 'Refreshing YouEye AI identity configuration...' });
-      await configurePointerForPlatform(journal.oldIdentityOrigin);
+      await configurePointerForPlatform(journal.oldIdentityOrigin, { deferRoutes: true });
+      await caddy.reconcileManagedRoutes(newDomain);
+      onEvent({ step: 'caddy', status: 'done', message: 'Reverse proxy verified' });
       onEvent({ step: 'ai', status: 'done', message: 'YouEye AI identity configuration refreshed' });
     }
   };

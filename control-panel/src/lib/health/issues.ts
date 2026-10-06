@@ -122,6 +122,13 @@ export async function runIssueRepair(id: string): Promise<{ ok: boolean; message
   if (!issue.fixable || !issue.repairFn) return { ok: false, message: 'Issue is not marked fixable' };
 
   switch (issue.repairFn) {
+    case 'reconcile-startup': {
+      const { runStartupReconciliation, syncStartupReconciliationIssue } = await import('@/lib/incus/startup-reconciliation');
+      await runStartupReconciliation();
+      await syncStartupReconciliationIssue();
+      await resolveIssue(id);
+      return { ok: true, message: 'Authenticated Incus startup and managed proxy routes verified' };
+    }
     case issue.repairFn?.startsWith('restart-service:') ? issue.repairFn : '': {
       const slug = issue.repairFn.slice('restart-service:'.length);
       const container = RESTARTABLE_SERVICE_CONTAINERS[slug];

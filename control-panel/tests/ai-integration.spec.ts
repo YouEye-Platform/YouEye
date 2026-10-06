@@ -160,8 +160,8 @@ test('the apex exposes inference only while management remains private and aggre
   const admin = read('src/app/api/ai-system/route.ts');
   const adminPage = read('src/app/settings/(shell)/system/ai/page.tsx');
   assert.match(caddy, /path: \['\/v1', '\/v1\/\*', '\/v1beta', '\/v1beta\/\*'\]/);
-  const routeSection = caddy.slice(caddy.indexOf('export async function ensurePointerInferenceRoutes'));
-  assert.doesNotMatch(routeSection.slice(0, routeSection.indexOf('/**', 20)), /\/api\/|4001/);
+  const routeSection = caddy.slice(caddy.indexOf('function configurePointerInferenceRoutes'), caddy.indexOf('function canonicalConfig'));
+  assert.doesNotMatch(routeSection, /\/api\/|4001/);
   assert.match(admin, /requireAdmin/);
   assert.match(admin, /body\.status === 'ready'/);
   assert.match(admin, /database:/);

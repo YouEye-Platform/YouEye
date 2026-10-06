@@ -10,8 +10,7 @@ import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { settingsService } from '@/lib/settings';
 import {
   checkHealth,
-  ensureControlSettingsRoute,
-  ensurePointerInferenceRoutes,
+  reconcileManagedRoutes,
   ensureScopedAppGrantDenyRoute,
   getConfiguredDomain,
 } from '@/lib/caddy/client';
@@ -51,8 +50,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await ensureControlSettingsRoute(domain, 'youeye-control', 3000);
-    await ensurePointerInferenceRoutes(domain);
+    await reconcileManagedRoutes(domain);
     await ensureScopedAppGrantDenyRoute();
 
     return NextResponse.json({

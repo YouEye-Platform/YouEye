@@ -245,7 +245,7 @@ export async function incusRequest<T = unknown>(
   method: string,
   path: string,
   body?: unknown,
-  options?: { timeout?: number }
+  options?: { timeout?: number; deadlineMs?: number }
 ): Promise<IncusResponse<T>> {
   const socketPath = process.env.INCUS_SOCKET || '/var/lib/incus/unix.socket';
   
@@ -274,6 +274,12 @@ export async function incusRequest<T = unknown>(
         socket.write(bodyStr);
       }
     }, socketPath);
+
+    const deadlineTimer = options?.deadlineMs === undefined ? undefined : setTimeout(() => {
+      socket.destroy();
+      reject(new Error('Socket absolute timeout'));
+    }, options.deadlineMs);
+    socket.on('close', () => { if (deadlineTimer !== undefined) clearTimeout(deadlineTimer); });
 
     socket.on('data', (data) => {
       responseData += data.toString();

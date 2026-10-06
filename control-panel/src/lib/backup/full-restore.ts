@@ -189,7 +189,6 @@ async function reconcileSetupRuntime(spineConfig: Record<string, unknown>): Prom
   await caddy.setDomain(domain);
   await replaceSetupContainerRoute(domain, 'youeye-control', 3000, controlSubdomain);
   await replaceSetupContainerRoute(domain, 'youeye-ui', 3000, uiSubdomain);
-  await caddy.ensureControlSettingsRoute(domain, 'youeye-control', 3000);
   await caddy.setDefaultRoute('youeye-control', 3000);
   await caddy.ensurePingRoute('youeye-control', 3000);
   await caddy.ensureHeaderStrippingRoute();
@@ -212,7 +211,7 @@ async function reconcileSetupRuntime(spineConfig: Record<string, unknown>): Prom
   }
 
   await configurePointerForPlatform();
-  await caddy.ensurePointerInferenceRoutes(domain);
+  await caddy.reconcileManagedRoutes(domain);
 }
 
 function parseRestoredAppInventory(value: unknown): RestoredAppInventory[] {

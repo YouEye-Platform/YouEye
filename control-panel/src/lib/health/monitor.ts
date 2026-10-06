@@ -25,6 +25,7 @@ import { observeIssue, resolveIssue, recordTimelineEvent } from './issues';
 import { isContainerMaintenanceActive } from '@/lib/maintenance/container-maintenance';
 import { listInstalledApps } from '@/lib/market/metadata';
 import { inspectAppStorage } from '@/lib/market/storage';
+import { syncStartupReconciliationIssue } from '@/lib/incus/startup-reconciliation';
 
 // ─── State Tracking ───────────────────────────────────────────
 
@@ -796,6 +797,7 @@ async function runHealthChecks(): Promise<void> {
 
   try {
     tickCount++;
+    await syncStartupReconciliationIssue();
 
     // Every tick: service health + container watchdog
     await checkServiceHealth();

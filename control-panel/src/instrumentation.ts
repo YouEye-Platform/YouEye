@@ -38,6 +38,8 @@ export async function register() {
   // system bridge independently. Persist the bounded, collision-free plan
   // before any health loop or app reconciliation can initialize IPAM state.
   try {
+    const { waitForIncusReady } = await import("@/lib/incus/readiness");
+    await waitForIncusReady();
     const { ensureAppNetworkBootstrapConfig } = await import("@/lib/incus/app-network");
     const result = await ensureAppNetworkBootstrapConfig();
     if (result.changed) {
@@ -68,33 +70,8 @@ export async function register() {
   // startup. The periodic Health pass remains the long-running owner, while
   // this first pass closes interrupted operations and raises blocking critical
   // issues before ordinary app-management traffic can proceed.
-  const { reconcileApps } = await import("@/lib/market/reconciler");
-  void reconcileApps().catch(() => {
-    console.error("[instrumentation] startup app reconciliation failed; see System Health for safe diagnostics");
+  const { runStartupReconciliation } = await import("@/lib/incus/startup-reconciliation");
+  void runStartupReconciliation().catch(() => {
+    console.error("[instrumentation] startup reconciliation exhausted; see System Health for repair");
   });
-
-  // Self-heal the root-domain CP-surface routes (/settings, /market + the
-  // Referer-gated support route) so path-allowlist additions in the generator
-  // reach existing installs on the next CP restart — without this, new
-  // CP endpoints called from the root-domain Settings surface 404 against the
-  // UI container forever (found via /api/setup/reconfigure, 0407-urlchange).
-  void (async () => {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      try {
-        await new Promise((r) => setTimeout(r, 15_000));
-        const { settingsService } = await import("@/lib/settings");
-        const raw = await settingsService.getRaw();
-        if (!raw.setup_completed || !raw.domain) return;
-        const caddy = await import("@/lib/caddy/client");
-        if (!(await caddy.checkHealth())) continue;
-        await caddy.ensureControlSettingsRoute(raw.domain);
-        await caddy.ensurePointerInferenceRoutes(raw.domain);
-        console.log("[instrumentation] control and AI inference routes reconciled for", raw.domain);
-        return;
-      } catch (err) {
-        console.warn(`[instrumentation] control-route reconcile attempt ${attempt + 1} failed:`, err);
-      }
-    }
-    console.error("[instrumentation] control-route reconcile gave up after 5 attempts");
-  })();
 }
