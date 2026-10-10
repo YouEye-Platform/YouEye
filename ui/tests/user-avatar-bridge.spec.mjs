@@ -21,11 +21,11 @@ const profileSource = readFileSync(
 
 test("UI bridge creates a minimal profile mirror before first UI sign-in", () => {
   assert.match(usersSource, /export async function ensureBridgeUser/);
-  assert.match(usersSource, /\.onConflictDoNothing\(\{ target: users\.username \}\)/);
-  assert.match(source, /await ensureBridgeUser\(username\)/);
-  assert.match(settingsSource, /const user = await ensureBridgeUser\(username\)/);
+  assert.match(usersSource, /\.onConflictDoNothing\(\{ target: users\.identityId \}\)/);
+  assert.match(source, /await ensureBridgeUser\(username, identityId\)/);
+  assert.match(settingsSource, /const user = await ensureBridgeUser\(username, identityId\)/);
   assert.doesNotMatch(settingsSource, /User not found/);
-  assert.match(profileSource, /await ensureBridgeUser\(username\)/);
+  assert.match(profileSource, /await ensureBridgeUser\(username, identityId\)/);
 });
 
 test("avatar removal is idempotent for a user without a UI mirror", () => {

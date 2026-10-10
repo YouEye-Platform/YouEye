@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { resolveServiceAuth } from "@/lib/auth/service";
 import { getAppSurfaceDeclarations } from "@/lib/db/queries/app-management";
+import { evaluateUiUserAdmission } from '@/lib/admission/store';
 
 function publicBaseDomain(request: NextRequest, isServiceCall: boolean): string {
   const uiExternalUrl = process.env.UI_EXTERNAL_URL || process.env.BASE_URL || process.env.NEXTAUTH_URL || "";
@@ -37,10 +38,13 @@ export async function GET(request: NextRequest) {
   }
 
   const declarations = await getAppSurfaceDeclarations();
+  const decisions = await Promise.all(declarations.map(d =>
+    evaluateUiUserAdmission(d.appId, (session?.userId ?? service?.id)!)));
+  const admitted = declarations.filter((_, i) => decisions[i].allowed);
   const baseDomain = publicBaseDomain(request, !!service);
 
   return NextResponse.json({
-    surfaces: declarations.flatMap((d) =>
+    surfaces: admitted.flatMap((d) =>
       d.surfaces.map((surface) => ({
         id: `${d.appId}:${surface.id}`,
         app_id: d.appId,

@@ -27,7 +27,9 @@ async function getBridgeUser(request: NextRequest) {
   if (!validateToken(request)) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   const username = request.headers.get("X-YouEye-Username");
   if (!username) return { error: NextResponse.json({ error: "Missing user" }, { status: 400 }) };
-  const user = await ensureBridgeUser(username);
+  const identityId = request.headers.get('X-YouEye-Identity');
+  if (!identityId) return { error: NextResponse.json({ error: 'Verified identity UUID is required' }, { status: 400 }) };
+  const user = await ensureBridgeUser(username, identityId);
   const isAdmin = request.headers.get("X-YouEye-Is-Admin") === "true" || user.isAdmin;
   return { user, isAdmin };
 }

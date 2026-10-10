@@ -27,7 +27,9 @@ test('Pointer candidate resolution and updates use the exact app channel', () =>
   assert.match(route, /artifactSHA256: resolved\.candidate\.artifactSHA256/);
   assert.match(route, /await updateLXDApp\(appDef, emit, \{/);
   assert.match(infrastructureDeployer, /giteaRepo: 'Pointer',[\s\S]*releaseChannelKey: 'app:pointer'/);
-  assert.match(lxdDeployer, /effectiveChannel\(cfg\.releaseChannelKey \|\| 'ui'\)/);
+  assert.match(lxdDeployer, /const key = cfg\.releaseChannelKey \|\| 'ui'/);
+  assert.match(lxdDeployer, /effectiveChannel\(key, key\.startsWith\('app:'\)/);
+  assert.match(lxdDeployer, /infrastructureChannelSource\(releaseSource, repository, channelSource\)/);
   assert.match(infrastructureDeployer, /await configurePointerService\(\);[\s\S]*recordCoreProvenance\('app:pointer'/);
   assert.match(infrastructureDeployer, /tag: resolved\.tag/);
   assert.match(infrastructureDeployer, /artifactSHA256: resolved\.artifactSHA256/);
@@ -75,5 +77,16 @@ test('Pointer waits for a real setup issuer and is refreshed on every domain cha
   assert.ok(setup.indexOf('await prepareSetupPointer();') < setup.indexOf('await caddy.reconcileManagedRoutes(domain)'),
     'required proxy verification must follow Pointer provisioning');
   assert.match(setupPage, /id: 'ai', label: t\('configuringAi'\)/);
-  assert.match(reconfigure, /step: 'ai', status: 'running'[\s\S]*configurePointerForPlatform\(journal\.oldIdentityOrigin, \{ deferRoutes: true \}\)[\s\S]*reconcileManagedRoutes\(newDomain\)/);
+  assert.match(reconfigure, /step: 'ai', status: 'running'[\s\S]*configurePointerForPlatform\(undefined, \{ deferRoutes: true \}\)[\s\S]*reconcileManagedRoutes\(activeConfig\.domain\)/);
+  assert.match(deployer, /Verifying YouEye AI service health[\s\S]*await configurePointerService\(\)/);
+});
+
+test('static updates require admin and CSRF before streaming and share lifecycle exclusion', () => {
+  const route = read('src/app/api/apps/[name]/update/route.ts');
+  const updater = read('src/lib/apps/lxd-updater.ts');
+  const stream = route.indexOf('new ReadableStream');
+  assert.ok(route.indexOf('if (!session.isAdmin)') < stream);
+  assert.ok(route.indexOf('await verifyCSRFToken') < stream);
+  assert.match(updater, /withAppLifecycle\(appDef\.id, \(\) => updateLXDAppUnderLifecycle/);
+  assert.ok(updater.indexOf("if (appDef.id === 'pointer') await configurePointerService();", updater.indexOf('// 11. Start service')) > 0);
 });

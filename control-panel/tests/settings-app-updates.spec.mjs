@@ -32,7 +32,8 @@ test('Settings app update route is admin-scoped and reuses existing update engin
   assert.match(route, /verifyCSRFToken/);
   assert.match(route, /session\?\.isAdmin/);
   assert.match(route, /updateLXDApp/);
-  assert.match(route, /updateMarketApp/);
+  assert.match(route, /handleMarketUpdate\(request, appId, 'json'\)/);
+  assert.match(read('src/lib/market/update-http.ts'), /updateMarketApp/);
   assert.match(route, /updateOCIApp/);
   assert.match(route, /spineClient\.updateControl/);
   assert.match(route, /statusComponentFor\(appId\)/);

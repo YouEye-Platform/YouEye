@@ -9,7 +9,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { validateBridgeToken } from '@/lib/ui-bridge/auth';
-import { updateInstanceState } from '@/lib/incus/server';
+import { incusRequest, updateInstanceState } from '@/lib/incus/server';
+import { AppLifecycleAdmissionError, withContainerLifecycle } from '@/lib/market/update-admission';
 
 const VALID_ACTIONS = ['start', 'stop', 'restart'] as const;
 type ContainerAction = (typeof VALID_ACTIONS)[number];
@@ -44,11 +45,17 @@ export async function POST(
       );
     }
 
-    const response = await updateInstanceState(
-      name,
-      action as ContainerAction,
-      false
-    );
+    const response = await withContainerLifecycle(name, async () => {
+      const result = await updateInstanceState(name, action as ContainerAction, false);
+      if (result.type === 'async' && result.operation) {
+        const waited = await incusRequest('GET', `${result.operation}/wait?timeout=90`, undefined, { timeout: 100_000 });
+        if (waited.type === 'error'
+          || (waited.metadata as { status?: string } | undefined)?.status === 'Failure') {
+          throw new Error('Container state change failed');
+        }
+      }
+      return result;
+    });
 
     if (response.type === 'error') {
       return NextResponse.json(
@@ -64,6 +71,9 @@ export async function POST(
 
     return NextResponse.json({ success: true });
   } catch (err) {
+    if (err instanceof AppLifecycleAdmissionError) {
+      return NextResponse.json({ success: false, error: err.message, code: err.code }, { status: 409 });
+    }
     console.error('[UI Bridge] Container action error:', err);
     return NextResponse.json(
       {

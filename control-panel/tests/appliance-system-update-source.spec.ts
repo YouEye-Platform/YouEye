@@ -25,53 +25,58 @@ function runtime(overrides: Partial<SpineRuntimeStatus>): SpineRuntimeStatus {
 
 test('sealed production and development images derive safe automatic release sources', () => {
   assert.deepEqual(deriveSystemUpdateSelection(runtime({ artifact_kind: 'production' })), {
-    provider: 'github', channel: 'stable',
+    repository_url: 'https://github.com/YouEye-Platform/YouEye', channel: 'stable',
   });
   assert.deepEqual(deriveSystemUpdateSelection(runtime({
     artifact_kind: 'stable',
     release_source: 'https://github.com/YouEye-Platform/YouEye',
     release_branch: 'main',
-  })), { provider: 'github', channel: 'stable' });
+  })), { repository_url: 'https://github.com/YouEye-Platform/YouEye', channel: 'stable' });
   assert.deepEqual(deriveSystemUpdateSelection(runtime({
     artifact_kind: 'development',
     release_source: 'https://forgejo.example.test/youeye/YouEye',
   })), {
-    provider: 'forgejo',
-    releases_api: 'https://forgejo.example.test/api/v1/repos/youeye/YouEye/releases',
+    repository_url: 'https://forgejo.example.test/youeye/YouEye',
     channel: 'development',
   });
 });
 
-test('alternative release sources require explicit safe API URLs and exact mode is immutable', () => {
+test('alternative release sources require a safe explicit repository and exact identity is retained', () => {
   assert.throws(() => normalizeSystemUpdateSelection({ provider: 'forgejo', channel: 'development' }));
   assert.throws(() => normalizeSystemUpdateSelection({
-    provider: 'custom', channel: 'development', releases_api: 'http://updates.example.test/releases',
+    channel: 'development', repository_url: 'http://updates.example.test/owner/YouEye',
   }));
+  for (const repository_url of [
+    'https://user:example@updates.example.test/owner/YouEye',
+    'https://updates.example.test/owner/YouEye?source=other',
+    'https://updates.example.test/owner/YouEye#source',
+    'https://updates.example.test/api/v1/repos/owner/YouEye/releases',
+  ]) assert.throws(() => normalizeSystemUpdateSelection({ channel: 'development', repository_url }));
   const digest = 'a'.repeat(64);
   assert.deepEqual(normalizeSystemUpdateSelection({
-    provider: 'custom', channel: 'exact', releases_api: 'https://updates.example.test/releases',
+    channel: 'exact', repository_url: 'https://updates.example.test/owner/YouEye',
     exact_tag: 'appliance-dev-v1.2.3', manifest_sha256: digest, replace_failed: true,
   }), {
-    provider: 'custom', channel: 'exact', releases_api: 'https://updates.example.test/releases',
+    channel: 'exact', repository_url: 'https://updates.example.test/owner/YouEye',
     exact_tag: 'appliance-dev-v1.2.3', manifest_sha256: digest,
   });
 });
 
 test('branch mode tracks only a safe signed release branch and exact accepts branch release tags', () => {
   assert.deepEqual(normalizeSystemUpdateSelection({
-    provider: 'github', channel: 'branch', branch: 'codex/phase1-bootstrap-network',
+    repository_url: 'https://github.com/YouEye-Platform/YouEye', channel: 'branch', branch: 'codex/phase1-bootstrap-network',
   }), {
-    provider: 'github', channel: 'branch', branch: 'codex/phase1-bootstrap-network',
+    repository_url: 'https://github.com/YouEye-Platform/YouEye', channel: 'branch', branch: 'codex/phase1-bootstrap-network',
   });
   assert.throws(() => normalizeSystemUpdateSelection({
-    provider: 'github', channel: 'branch', branch: 'nested//branch',
+    repository_url: 'https://github.com/YouEye-Platform/YouEye', channel: 'branch', branch: 'nested//branch',
   }));
   const digest = 'b'.repeat(64);
   assert.deepEqual(normalizeSystemUpdateSelection({
-    provider: 'github', channel: 'exact',
+    repository_url: 'https://github.com/YouEye-Platform/YouEye', channel: 'exact',
     exact_tag: 'appliance-codex/phase1-bootstrap-network-v1.2.3', manifest_sha256: digest,
   }), {
-    provider: 'github', channel: 'exact',
+    repository_url: 'https://github.com/YouEye-Platform/YouEye', channel: 'exact',
     exact_tag: 'appliance-codex/phase1-bootstrap-network-v1.2.3', manifest_sha256: digest,
   });
 });

@@ -4,6 +4,7 @@ import type { ContainerMeta, InstallMetadata } from '@/lib/market/types';
 import { setPointerManagedAppEnabled } from '@/lib/pointer/managed-apps';
 import { pushAppRuntimeStatusToUI } from '@/lib/ui/app-status';
 import { randomUUID } from 'crypto';
+import { withAppLifecycle } from '@/lib/market/update-admission';
 
 export type AppPowerAction = 'start' | 'stop' | 'restart' | 'status';
 export type AppRuntimeStatus = 'running' | 'stopped' | 'partial' | 'not-installed' | 'unknown';
@@ -311,6 +312,16 @@ export async function controlInstalledApp(
   actor: string,
   options: { force?: boolean } = {},
 ): Promise<AppLifecycleResult> {
+  if (action === 'status') return controlInstalledAppLocked(appId, action, actor, options);
+  return withAppLifecycle(appId.toLowerCase(), () => controlInstalledAppLocked(appId, action, actor, options));
+}
+
+async function controlInstalledAppLocked(
+  appId: string,
+  action: AppPowerAction,
+  actor: string,
+  options: { force?: boolean },
+): Promise<AppLifecycleResult> {
   const meta = await resolveInstalledApp(appId);
   if (!meta) {
     throw new Error(`Unknown installed app: ${appId}`);
@@ -324,9 +335,19 @@ export async function controlInstalledApp(
   if (action === 'status') {
     return buildResult(meta, action, containers);
   }
+  if ((action === 'start' || action === 'restart')
+    && (meta.serviceCredentialState === 'pending' || meta.serviceCredentialState === 'revoked')) {
+    throw new Error('App service access requires credential reconciliation before start');
+  }
 
   let uiStatusSynced: boolean | undefined;
   if (action === 'stop') {
+    if (meta.installationId) {
+      const { setAdmissionAppEnabled } = await import('@/lib/admission/store');
+      await setAdmissionAppEnabled(meta.appId, meta.installationId, false);
+      const { reconcileAdmissionProjections } = await import('@/lib/admission/projection');
+      await reconcileAdmissionProjections().catch(() => undefined);
+    }
     const ordered = orderContainers(containers, 'stop');
     if (meta.aiConnection) {
       await setPointerManagedAppEnabled(meta.aiConnection.externalInstallationId, false);
@@ -382,6 +403,12 @@ export async function controlInstalledApp(
     }
 
     const result = await buildResult(meta, action, containers);
+    if (meta.installationId && meta.lifecycleOperation?.state === 'completed') {
+      const { setAdmissionAppEnabled } = await import('@/lib/admission/store');
+      await setAdmissionAppEnabled(meta.appId, meta.installationId, true);
+      const { reconcileAdmissionProjections } = await import('@/lib/admission/projection');
+      await reconcileAdmissionProjections().catch(() => undefined);
+    }
     uiStatusSynced = await pushAppRuntimeStatusToUI(meta.appId, result.status === 'running' ? 'healthy' : 'unhealthy');
     return { ...result, uiStatusSynced };
   }

@@ -15,7 +15,7 @@
  */
 
 import { NextRequest } from 'next/server';
-import { fetchAvailableApps, fetchManifestFromRepo, fetchManifestFromSource, fetchManifestReferenceFromSource } from '@/lib/market/catalog';
+import { fetchAvailableApps, fetchManifestFromRepo, resolveCatalogApp } from '@/lib/market/catalog';
 import { getMarketSource } from '@/lib/market/source';
 import { installApp } from '@/lib/market/engine';
 import { applyIntegration } from '@/lib/market/integration-runner';
@@ -26,6 +26,8 @@ import { emitEvent } from '@/lib/events/emitter';
 import { settingsService } from '@/lib/settings';
 import { assertNoCriticalIssues } from '@/lib/health/issues';
 import { requireAdmin } from '@/lib/auth/rbac';
+import { verifyCSRFToken } from '@/lib/auth/session';
+import { admissionAdministrator } from '@/lib/admission/management';
 import { getUserByUsername } from '@/lib/identity/store';
 import type { InstallConfig, InstallEvent } from '@/lib/market/types';
 import { getDirectMarketApp } from '@/lib/market/direct-apps';
@@ -49,6 +51,9 @@ async function canonicalPlatformDomain(): Promise<string> {
 export async function POST(request: NextRequest) {
   const auth = await requireAdmin();
   if (auth.error) return auth.error;
+  if (!await verifyCSRFToken(request.headers.get('X-CSRF-Token') || '')) {
+    return Response.json({ error: 'Invalid CSRF token' }, { status: 403 });
+  }
 
   try {
     await assertNoCriticalIssues('App install');
@@ -67,6 +72,18 @@ export async function POST(request: NextRequest) {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+  // Browser JSON cannot nominate an owner. Authenticated CLI/PAM installs
+  // resolve the authoritative appliance claim, including after delete-data.
+  delete config.admissionActorId;
+  delete config.admissionInstallationId;
+  delete config.admissionDataOwnerId;
+  delete config.admissionResourceOwners;
+  const actorId = await admissionAdministrator(auth.session);
+  if (!actorId) return Response.json({ error: 'Active administrator required' }, { status: 403 });
+  config.admissionActorId = actorId;
+  if (config.adoptRetainedData !== undefined && typeof config.adoptRetainedData !== 'boolean') {
+    return Response.json({ error: 'Invalid adoption request' }, { status: 400 });
   }
 
   if (!config.appId && !config.repoUrl) {
@@ -118,20 +135,22 @@ export async function POST(request: NextRequest) {
       config.manifestPath = direct.manifestUrl;
       config.manifestDigest = direct.manifestDigest;
     } else if (config.repoUrl) {
+      if (config.adoptRetainedData) {
+        return Response.json({ error: 'Adopt retained data through its recorded Market or Added source' }, { status: 400 });
+      }
+      delete config.manifestDigest;
       manifest = await fetchManifestFromRepo(config.repoUrl, 'youeye-app.yaml', config.repoBranch);
       // Override appId from manifest if not explicitly set
       if (!config.appId || config.appId === 'custom') {
         config.appId = manifest.metadata.id;
       }
     } else {
-      manifest = await fetchManifestFromSource(config.appId, config.sourceId);
-      if (!config.manifestDigest) {
-        const reference = await fetchManifestReferenceFromSource(config.appId, config.sourceId);
-        config.manifestPath = reference.path;
-        config.manifestRepo = reference.repo;
-        config.manifestBranch = reference.branch;
-        config.manifestDigest = reference.digest;
-      }
+      const resolved = await resolveCatalogApp(config.appId, [config.sourceId]);
+      manifest = resolved.manifest;
+      config.manifestPath = resolved.reference.path;
+      config.manifestRepo = resolved.reference.repo;
+      config.manifestBranch = resolved.reference.branch;
+      config.manifestDigest = resolved.reference.digest;
     }
   } catch (error) {
     const directError = config.sourceId?.startsWith('direct:') && error instanceof Error

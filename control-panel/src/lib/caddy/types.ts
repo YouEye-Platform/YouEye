@@ -65,7 +65,7 @@ export interface ForwardAuthHandler {
   handler: 'reverse_proxy';
   upstreams: Upstream[];
   rewrite: { method: string; uri: string };
-  headers: { request: { set: Record<string, string[]> } };
+  headers: { request: { set: Record<string, string[]>; delete?: string[] } };
   handle_response: Array<{
     match: { status_code: number[] };
     routes: Array<{ handle: Array<Record<string, unknown>>; match?: Array<Record<string, unknown>> }>;

@@ -566,6 +566,10 @@ export const AppManifestSchema = z
 
     metadata: MetadataSchema,
     database: DatabaseSchema.optional(),
+    // Declaration of app-enforced UUID namespaces, never an admission grant.
+    data_ownership: z.object({
+      per_user: z.literal('identity_uuid'),
+    }).strict().optional(),
     env_mapping: z.record(z.string(), z.string()).optional().default({}),
     containers: z.array(ContainerSchema).min(1),
 

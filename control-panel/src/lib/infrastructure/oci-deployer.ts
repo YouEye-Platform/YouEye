@@ -160,12 +160,18 @@ export async function deployOCIContainer(
   manifest: OCIManifest,
   hostIP: string,
   nicDevices?: Record<string, Record<string, string>>,
-  options?: { start?: boolean },
+  options?: { start?: boolean; retainedRuntime?: {
+    appId: string; installationId: string; ownerId: string;
+    sourceName: string; retainedName: string; pool: string;
+  } },
 ): Promise<void> {
   let runtimeExtensionDevices: Record<string, Record<string, string>> = {};
 
   // Clean up any leftover container from a failed previous install
-  if (await containerExists(manifest.containerName)) {
+  if (options?.retainedRuntime && await containerExists(manifest.containerName)) {
+    throw new Error('Retained adoption cannot replace an existing runtime');
+  }
+  if (!options?.retainedRuntime && await containerExists(manifest.containerName)) {
     // Capture only known Control Panel-managed extension devices before the
     // instance is deleted. Base eth0/root/volume/proxy devices are rebuilt from
     // the current manifest and are intentionally not carried forward.
@@ -241,6 +247,25 @@ export async function deployOCIContainer(
   // Merge per-app bridge NIC devices if provided (overrides default profile NIC)
   if (nicDevices) {
     Object.assign(devices, nicDevices);
+  }
+
+  if (options?.retainedRuntime) {
+    const { copyRetainedRuntime } = await import('@/lib/admission/retained-runtime');
+    if (options.retainedRuntime.sourceName !== manifest.containerName) throw new Error('Retained runtime target mismatch');
+    await copyRetainedRuntime(options.retainedRuntime, { config, devices });
+    if (config['boot.autostart'] !== 'false') {
+      const boot = await incusRequest('PATCH', `/1.0/instances/${manifest.containerName}`,
+        { config: { 'boot.autostart': config['boot.autostart'] } });
+      if (boot.type === 'error') throw new Error('Adopted runtime boot policy failed');
+      if (boot.type === 'async' && boot.operation) await waitForIncusOperation(boot.operation);
+      const applied = await incusRequest<{ config: Record<string, string> }>('GET', `/1.0/instances/${manifest.containerName}`);
+      if (applied.type === 'error' || applied.metadata?.config?.['boot.autostart'] !== config['boot.autostart']) {
+        throw new Error('Adopted runtime boot policy did not read back');
+      }
+    }
+    await applyStaticIP(manifest.containerName);
+    if (options.start !== false) await startOCIContainer(manifest.containerName);
+    return;
   }
 
   // Create container via Incus REST API

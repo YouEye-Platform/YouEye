@@ -17,6 +17,7 @@ import type { ReleaseSource } from '../apps/release-source';
 import {
   resolveExactInfrastructureStandaloneRelease,
   resolveInfrastructureStandaloneRelease,
+  infrastructureChannelSource,
   type ResolvedInfrastructureRelease,
 } from './release-resolver';
 import { signedReleaseVerificationShell, verifySignedReleaseArtifactBuffer } from '@/lib/releases/verify';
@@ -217,9 +218,19 @@ export async function adoptRestoredLXDContainer(
     profiles?: string[];
     description?: string;
     status?: string;
+    devices?: Record<string, Record<string, string>>;
+    expanded_devices?: Record<string, Record<string, string>>;
   }>('GET', `/1.0/instances/${encodeURIComponent(spec.containerName)}`);
   if (current.type === 'error') throw new Error('Imported application runtime is unavailable');
   if (current.metadata.status !== 'Stopped') throw new Error('Imported application runtime must be stopped before adoption');
+  // Retained roots have no inherited profile or network. Keep their verified
+  // root explicitly when replacing devices with the target mounts and NICs.
+  const roots = Object.values(current.metadata.expanded_devices ?? current.metadata.devices ?? {})
+    .filter(device => device.type === 'disk' && device.path === '/');
+  if (roots.length !== 1 || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(roots[0].pool ?? '')) {
+    throw new Error('Imported application runtime root pool is unresolved');
+  }
+
   const update = await incusRequest(
     'PUT',
     `/1.0/instances/${encodeURIComponent(spec.containerName)}`,
@@ -230,7 +241,7 @@ export async function adoptRestoredLXDContainer(
         'boot.autostart': 'true',
         'security.privileged': 'false',
       },
-      devices: { ...storageDevices(spec), ...(nicDevices ?? {}) },
+      devices: { ...storageDevices(spec), ...(nicDevices ?? {}), root: roots[0] },
       profiles: current.metadata.profiles ?? ['default'],
       ephemeral: false,
       description: current.metadata.description ?? '',
@@ -332,7 +343,7 @@ async function addPortProxy(containerName: string, port: number): Promise<void> 
 }
 
 async function resolveLXDRelease(cfg: LXDDeploymentConfig) {
-  const releaseSource: ReleaseSource = {
+  let releaseSource: ReleaseSource = {
     provider: cfg.giteaBaseURL.includes('github.com') ? 'github' : 'gitea',
     base_url: cfg.giteaBaseURL.replace(/\/$/, ''),
     api_path: cfg.giteaBaseURL.includes('github.com') ? '' : '/api/v1',
@@ -342,14 +353,21 @@ async function resolveLXDRelease(cfg: LXDDeploymentConfig) {
   let releaseBranch = 'main';
   let exactTag = '';
   let artifactSHA256 = '';
+  let channelSource = '';
+  let repository = cfg.giteaRepo;
   try {
-    const channel = await effectiveChannel(cfg.releaseChannelKey || 'ui');
+    const key = cfg.releaseChannelKey || 'ui';
+    const channel = await effectiveChannel(key, key.startsWith('app:') ? {
+      appDefaultSource: `${releaseSource.base_url}/${releaseSource.organization}/${repository}`,
+    } : undefined);
     if (/^[a-zA-Z0-9._/-]+$/.test(channel.branch)) releaseBranch = channel.branch;
     exactTag = channel.tag || '';
     artifactSHA256 = channel.artifact_sha256 || '';
+    channelSource = channel.source;
   } catch {
     // Stable main remains the explicit fallback when Spine config is unavailable.
   }
+  ({ source: releaseSource, repository } = infrastructureChannelSource(releaseSource, repository, channelSource));
 
   if (exactTag || artifactSHA256) {
     if (!exactTag || !artifactSHA256) {
@@ -357,7 +375,7 @@ async function resolveLXDRelease(cfg: LXDDeploymentConfig) {
     }
     return resolveExactInfrastructureStandaloneRelease(
       releaseSource,
-      cfg.giteaRepo,
+      repository,
       exactTag,
       artifactSHA256,
     );
@@ -365,7 +383,7 @@ async function resolveLXDRelease(cfg: LXDDeploymentConfig) {
 
   return resolveInfrastructureStandaloneRelease(
     releaseSource,
-    cfg.giteaRepo,
+    repository,
     cfg.tagPrefix || '',
     releaseBranch,
   );

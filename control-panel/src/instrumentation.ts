@@ -49,6 +49,15 @@ export async function register() {
     console.error("[instrumentation] app-network bootstrap could not be proved; reconciliation will fail closed");
   }
 
+  // Durable update recovery must precede watchdog, queue and install reconciliation.
+  try {
+    const { reconcileAppUpdateOperations } = await import("@/lib/market/update-operations");
+    await reconcileAppUpdateOperations();
+  } catch {
+    console.error("[instrumentation] app-update journals could not be inspected; platform reconciliation remains stopped");
+    return;
+  }
+
   const { startDnsProviderMaintenanceLoop } = await import("@/lib/dns-providers/maintenance");
   startDnsProviderMaintenanceLoop();
   const { startNamesMaintenanceLoop } = await import("@/lib/youeye-names/maintenance");
@@ -65,6 +74,17 @@ export async function register() {
   startSystemUpdateChecker();
   const { startBackupScheduler } = await import("@/lib/backup/scheduler");
   startBackupScheduler();
+  const { reconcileInstalledAdmission } = await import('@/lib/admission/lifecycle');
+  const { startAdmissionProjectionLoop } = await import('@/lib/admission/projection');
+  const reconcileAdmission = () => {
+    void reconcileInstalledAdmission().then(() => startAdmissionProjectionLoop()).catch(() => {
+      console.error('[admission] Installation ownership or ingress reconciliation failed; admission remains pending');
+      // A transient startup failure must not permanently disable lease refresh.
+      // Only the complete ownership and gateway proof starts the projection loop.
+      setTimeout(reconcileAdmission, 20_000);
+    });
+  };
+  reconcileAdmission();
 
   // Reconcile durable install/network ownership immediately at Control Panel
   // startup. The periodic Health pass remains the long-running owner, while

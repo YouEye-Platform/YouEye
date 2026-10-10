@@ -22,11 +22,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { resolveServiceAuth } from "@/lib/auth/service";
+import { permissionAppMatches } from "@/lib/permissions/approval";
 import { getUserSettings } from "@/lib/db/queries/settings";
 import { db, ensureSchema } from "@/db";
 import { userSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { permissionAppMatches, normalizePermissionAppId } from "@/lib/permissions/approval";
 
 interface RouteContext {
   params: Promise<{ appId: string }>;
@@ -41,21 +41,17 @@ async function resolveUser(
   appId: string
 ): Promise<{ userId: string } | null> {
   // Try session auth first
-  const session = await getSession();
+  const session = await getSession({ allowAppOrigin: true });
   if (session) {
+    if (session.actingAppId && !permissionAppMatches(session.actingAppId, appId)) return null;
+    const { evaluateLocalAdmission } = await import('@/lib/admission/store');
+    if (!evaluateLocalAdmission(appId, session.identityId).allowed) return null;
     return { userId: session.userId };
   }
 
   // Try service-to-service auth
-  const callingApp = request.headers.get("x-youeye-app");
-  // Apps can only access their own namespace. Accept either ye-* OAuth ids
-  // or bare installed ids because native apps use both across boundaries.
-  if (callingApp && !permissionAppMatches(callingApp, appId)) {
-    return null;
-  }
-
   const serviceUser = await resolveServiceAuth(request);
-  if (serviceUser) {
+  if (serviceUser && serviceUser.appId === appId) {
     return { userId: serviceUser.id };
   }
 
@@ -65,7 +61,7 @@ async function resolveUser(
 /** GET — Read app-specific settings */
 export async function GET(request: NextRequest, context: RouteContext) {
   const { appId } = await context.params;
-  const settingsAppId = normalizePermissionAppId(appId);
+  const settingsAppId = appId;
 
   const user = await resolveUser(request, settingsAppId);
   if (!user) {
@@ -82,7 +78,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 /** PUT — Write app-specific settings */
 export async function PUT(request: NextRequest, context: RouteContext) {
   const { appId } = await context.params;
-  const settingsAppId = normalizePermissionAppId(appId);
+  const settingsAppId = appId;
 
   const user = await resolveUser(request, settingsAppId);
   if (!user) {

@@ -123,5 +123,6 @@ export function pointerContainerSpec(): LXDContainerSpec {
     entryFile: 'server.js',
     runtime: 'bun',
     deferStart: true,
+    volumes: [{ kind: 'bind', host: '/var/lib/youeye/pointer/runtime', container: '/var/lib/pointer' }],
   };
 }

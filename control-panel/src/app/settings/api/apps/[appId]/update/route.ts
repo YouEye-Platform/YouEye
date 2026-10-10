@@ -6,7 +6,7 @@ import { updateLXDApp } from '@/lib/apps/lxd-updater';
 import { updateOCIApp } from '@/lib/apps/updater';
 import { updateSystemFromMarket } from '@/lib/infrastructure/system-updater';
 import { getInstalledApp } from '@/lib/market/installed-apps';
-import { updateMarketApp } from '@/lib/market/updater';
+import { handleMarketUpdate } from '@/lib/market/update-http';
 import { startUpdate, writeStatus, completeUpdate, completeNoOp, failUpdate } from '@/lib/updates/state';
 
 function statusComponentFor(appId: string): string {
@@ -71,6 +71,10 @@ export async function POST(
     return NextResponse.json({ error: 'appId is required' }, { status: 400 });
   }
 
+  if (!getAppDefinition(appId)?.lxdConfig && await getInstalledApp(appId)) {
+    return handleMarketUpdate(request, appId, 'json');
+  }
+
   const component = statusComponentFor(appId);
 
   try {
@@ -100,34 +104,6 @@ export async function POST(
       });
       await markCompleted(component);
       return NextResponse.json({ status: 'success', message: lastMessage || `${appDef.displayName} updated` });
-    }
-
-    const installedApp = await getInstalledApp(appId);
-    if (installedApp) {
-      let lastMessage = '';
-      const result = await updateMarketApp({ appId, force: true }, (event) => {
-        lastMessage = event.message;
-        const progress = event.totalSteps > 0
-          ? Math.round((event.step / event.totalSteps) * 100)
-          : 0;
-        recordStatus(
-          component,
-          event.status === 'error' ? 'failed' : 'installing',
-          progress,
-          event.message,
-        );
-      });
-      if (result.success) {
-        await markCompleted(component, result.newVersion || '');
-      } else {
-        await markFailed(component, result.error || 'Update failed');
-      }
-      return NextResponse.json({
-        status: result.success ? 'success' : 'error',
-        message: lastMessage || (result.success ? `${appId} updated` : result.error || 'Update failed'),
-        previous_version: result.previousVersion,
-        new_version: result.newVersion,
-      }, { status: result.success ? 200 : 500 });
     }
 
     // Market system apps (Caddy/Pi-Hole/Postgres) update through the pinned

@@ -29,5 +29,7 @@ test('app connection proxy validates app token and enforces approved route scope
   assert.match(bridge, /available: available \?\? \[\]/);
   assert.match(discovery, /resolveServiceAuth\(request\)/);
   assert.match(discovery, /checkPermission\(serviceUser\.id, appId, permission\)/);
-  assert.match(discovery, /available,/);
+  assert.match(discovery, /available: grantedCandidates,/);
+  assert.match(discovery, /evaluateUiUserAdmission/);
+  assert.match(discovery, /active_app_user_required/);
 });

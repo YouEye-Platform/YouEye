@@ -11,7 +11,50 @@ import { pushSsoEntryUrlToUI } from './engine';
 import { injectCaddyRootCA } from './caddy-ca';
 import { resolveVariables } from './variables';
 import type { AppManifest, InstallConfig, InstallEvent, IntegrationManifest, VariableContext } from './types';
-import { addSystemProxyDevices, getSystemServices } from '@/lib/incus/app-network';
+import { withAppLifecycle } from './update-admission';
+import { addSystemProxyDevices, getSystemServices, withAppNetworkOperationLock } from '@/lib/incus/app-network';
+import { appServiceCredentials } from '../apps/service-credential-store';
+import { markCredentialReady, activateProvisionedCredential } from '../apps/service-credential-bridge';
+import { probeNativeAppCredential, quiesceAppCredentialRuntime } from '../apps/service-credential-probe';
+import { beginContainerMaintenance } from '../maintenance/container-maintenance';
+import { startContainer, waitForRunning } from '../incus/snapshot';
+
+async function withCredentialIntegration<T>(appId: string, action: () => Promise<T>): Promise<T> {
+  const metadata = await readInstallMetadata(appId);
+  if (!metadata || metadata.lifecycleState !== 'active'
+    || metadata.serviceCredentialState !== 'ready'
+    || (await appServiceCredentials.projection(appId))?.status !== 'active') {
+    throw new Error('App service integration requires reconciliation');
+  }
+  const names = metadata.containers.map(container => container.containerName);
+  const manifest = await fetchManifestFromSource(appId, metadata.sourceId);
+  const desired = metadata.desiredState ?? 'running';
+  const lease = beginContainerMaintenance(names, { operation: `credential-integration:${appId}` });
+  try {
+    metadata.serviceCredentialState = 'pending';
+    metadata.serviceCredentialDesiredState = desired;
+    metadata.enabled = false;
+    metadata.desiredState = 'stopped';
+    await saveInstallMetadata(metadata);
+    await markCredentialReady(appId, false);
+    for (const name of names) { await startContainer(name); await waitForRunning(name); }
+    const result = await action();
+    await activateProvisionedCredential(appId, () => probeNativeAppCredential(appId, manifest));
+    if (desired === 'stopped') await quiesceAppCredentialRuntime(names);
+    const current = await readInstallMetadata(appId);
+    if (!current) throw new Error('App integration metadata is unavailable');
+    current.serviceCredentialState = 'ready';
+    current.desiredState = desired;
+    current.enabled = desired === 'running';
+    await saveInstallMetadata(current);
+    return result;
+  } catch {
+    lease.markFailed('App service integration requires reconciliation');
+    await markCredentialReady(appId, false).catch(() => undefined);
+    await quiesceAppCredentialRuntime(names);
+    throw new Error('App service integration requires reconciliation');
+  } finally { lease.release(); }
+}
 
 export interface ApplyIntegrationInput {
   integrationId: string;
@@ -212,6 +255,16 @@ export async function applyIntegration(
   onEvent: (event: InstallEvent) => void
 ): Promise<ApplyIntegrationResult> {
   const integration = await fetchIntegrationManifestFromSource(input.integrationId, input.sourceId);
+  return withAppLifecycle(integration.target.appId, () =>
+    withAppNetworkOperationLock(integration.target.appId, 'integration-apply',
+    () => withCredentialIntegration(integration.target.appId, () => applyIntegrationLocked(input, onEvent, integration))));
+}
+
+async function applyIntegrationLocked(
+  input: ApplyIntegrationInput,
+  onEvent: (event: InstallEvent) => void,
+  integration: IntegrationManifest,
+): Promise<ApplyIntegrationResult> {
   const reference = await fetchIntegrationManifestReferenceFromSource(input.integrationId, input.sourceId);
   const targetAppId = integration.target.appId;
   const targetMeta = await readInstallMetadata(targetAppId);
@@ -253,8 +306,8 @@ export async function applyIntegration(
       totalSteps,
       status: 'error',
       message: 'Integration configuration failed',
-      detail: String(err),
-      errorContext,
+      detail: 'Use the supported Health and repair views for sanitized diagnostics.',
+      errorContext: errorContext ? { suggestion: 'Reconcile the app integration in Market.' } : undefined,
     });
     throw err;
   }
@@ -313,6 +366,16 @@ export async function removeIntegration(
   onEvent: (event: InstallEvent) => void
 ): Promise<RemoveIntegrationResult> {
   const integration = await fetchIntegrationManifestFromSource(input.integrationId, input.sourceId);
+  return withAppLifecycle(integration.target.appId, () =>
+    withAppNetworkOperationLock(integration.target.appId, 'integration-remove',
+    () => withCredentialIntegration(integration.target.appId, () => removeIntegrationLocked(input, onEvent, integration))));
+}
+
+async function removeIntegrationLocked(
+  input: RemoveIntegrationInput,
+  onEvent: (event: InstallEvent) => void,
+  integration: IntegrationManifest,
+): Promise<RemoveIntegrationResult> {
   const targetAppId = integration.target.appId;
   const targetMeta = await readInstallMetadata(targetAppId);
   if (!targetMeta) throw new Error(`Target app "${targetAppId}" is not installed`);

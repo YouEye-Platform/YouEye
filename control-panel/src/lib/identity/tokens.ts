@@ -163,7 +163,8 @@ function oauthClaims(user: IdentityUser, scope = ''): Record<string, unknown> {
   return claims;
 }
 
-export async function createAccessToken(user: IdentityUser, clientId: string, scope = '', sessionId?: string | null): Promise<string> {
+export async function createAccessToken(user: IdentityUser, clientId: string, scope = '', sessionId?: string | null,
+  authorizedAt = Math.floor(Date.now() / 1000)): Promise<string> {
   const pem = await getOAuthPrivateKeyPem();
   const [privateKey, jwk] = await Promise.all([importPKCS8(pem, 'RS256'), publicJwkFromPem(pem)]);
   const claims = { scope, client_id: clientId, token_use: 'access', ...(sessionId ? { sid: sessionId } : {}) };
@@ -179,12 +180,13 @@ export async function createAccessToken(user: IdentityUser, clientId: string, sc
     .setIssuer(await getClientIssuer(clientId))
     .setAudience('youeye-userinfo')
     .setJti(randomUUID())
-    .setIssuedAt()
+    .setIssuedAt(authorizedAt)
     .setExpirationTime('1h')
     .sign(privateKey);
 }
 
-export async function createIdToken(user: IdentityUser, clientId: string, scope = '', nonce?: string | null, sessionId?: string | null): Promise<string> {
+export async function createIdToken(user: IdentityUser, clientId: string, scope = '', nonce?: string | null, sessionId?: string | null,
+  authorizedAt = Math.floor(Date.now() / 1000)): Promise<string> {
   const pem = await getOAuthPrivateKeyPem();
   const [privateKey, jwk] = await Promise.all([importPKCS8(pem, 'RS256'), publicJwkFromPem(pem)]);
   const claims = { ...oauthClaims(user, scope), token_use: 'id', ...(nonce ? { nonce } : {}), ...(sessionId ? { sid: sessionId } : {}) };
@@ -193,12 +195,15 @@ export async function createIdToken(user: IdentityUser, clientId: string, scope 
     .setSubject(user.id)
     .setIssuer(await getClientIssuer(clientId))
     .setAudience(clientId)
-    .setIssuedAt()
+    .setIssuedAt(authorizedAt)
     .setExpirationTime('1h')
     .sign(privateKey);
 }
 
-export async function createLogoutToken(clientId: string, userId: string, sessionId: string): Promise<string> {
+export async function createLogoutToken(clientId: string, userId: string, sessionId: string, issuedAt = Math.floor(Date.now() / 1000)): Promise<string> {
+  if (!Number.isSafeInteger(issuedAt) || issuedAt <= 0 || issuedAt > Math.floor(Date.now() / 1000)) {
+    throw new Error('Invalid logout issue time');
+  }
   const pem = await getOAuthPrivateKeyPem();
   const [privateKey, jwk] = await Promise.all([importPKCS8(pem, 'RS256'), publicJwkFromPem(pem)]);
   return new SignJWT({
@@ -210,8 +215,8 @@ export async function createLogoutToken(clientId: string, userId: string, sessio
     .setAudience(clientId)
     .setSubject(userId)
     .setJti(randomUUID())
-    .setIssuedAt()
-    .setExpirationTime('24h')
+    .setIssuedAt(issuedAt)
+    .setExpirationTime(issuedAt + 24 * 60 * 60)
     .sign(privateKey);
 }
 
@@ -253,6 +258,9 @@ export async function verifyBearerToken(token: string): Promise<IdentityUser | n
     if (!result.payload.jti || await isAccessTokenRevoked(String(result.payload.jti))) return null;
     const sub = result.payload.sub;
     if (!sub) return null;
+    const { evaluateClientAdmission, clientTokenRevoked } = await import('@/lib/admission/store');
+    if (!(await evaluateClientAdmission(clientId, sub)).allowed || !result.payload.iat
+      || await clientTokenRevoked(clientId, sub, result.payload.iat)) return null;
     if (!result.payload.iat || (!result.payload.sid && await isUserTokenInvalidated(sub, result.payload.iat))) return null;
     if (result.payload.sid) {
       const session = await getIdentitySessionById(String(result.payload.sid));

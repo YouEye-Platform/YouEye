@@ -78,7 +78,6 @@ export async function registerApp(data: {
   subdomain?: string;
   icon?: string;
   manifest?: Record<string, unknown>;
-  tokenHash?: string;
   ssoEntryUrl?: string;
 }): Promise<void> {
   await ensureSchema();
@@ -99,7 +98,8 @@ export async function registerApp(data: {
         subdomain: data.subdomain,
         icon: data.icon,
         manifest: data.manifest ?? existing[0].manifest,
-        tokenHash: data.tokenHash ?? existing[0].tokenHash,
+        // Display/manifest refresh cannot change credential authority.
+        // Current installation verifiers are published through the lifecycle bridge.
         ssoEntryUrl: data.ssoEntryUrl ?? existing[0].ssoEntryUrl,
         updatedAt: new Date(),
       })
@@ -113,7 +113,6 @@ export async function registerApp(data: {
       subdomain: data.subdomain,
       icon: data.icon,
       manifest: data.manifest ?? {},
-      tokenHash: data.tokenHash,
       ssoEntryUrl: data.ssoEntryUrl,
     });
   }
@@ -138,17 +137,17 @@ export async function setAppSsoEntryUrl(appId: string, ssoEntryUrl: string | nul
 }
 
 /** Unregister an app and clean up all related data */
-export async function unregisterApp(appId: string): Promise<void> {
+export async function unregisterApp(appId: string, keepData = false): Promise<void> {
   await ensureSchema();
 
   // Remove app-provided widgets from all users
-  await db.delete(widgets).where(eq(widgets.appId, appId));
+  if (!keepData) await db.delete(widgets).where(eq(widgets.appId, appId));
 
   // Remove all permissions for this app
-  await db.delete(appPermissions).where(eq(appPermissions.appId, appId));
+  if (!keepData) await db.delete(appPermissions).where(eq(appPermissions.appId, appId));
 
   // Remove audit log entries
-  await db.delete(permissionAudit).where(eq(permissionAudit.appId, appId));
+  // Durable permission history survives removal. It is not an admission grant.
 
   // Remove webhook subscriptions
   await db
@@ -163,7 +162,7 @@ export async function unregisterApp(appId: string): Promise<void> {
     );
 
   // Remove user app configs
-  await db.delete(userAppConfig).where(eq(userAppConfig.appId, appId));
+  if (!keepData) await db.delete(userAppConfig).where(eq(userAppConfig.appId, appId));
 
   // Remove the app itself
   await db.delete(apps).where(eq(apps.id, appId));
@@ -206,6 +205,8 @@ export async function updateAppManifest(
 ): Promise<void> {
   await ensureSchema();
 
+  const [existing] = await db.select({ manifest: apps.manifest }).from(apps).where(eq(apps.id, appId)).limit(1);
+  if (existing?.manifest?.integration === 'native') manifest = { ...manifest, integration: 'native' };
   const version = typeof manifest.version === "string" ? manifest.version : undefined;
 
   await db

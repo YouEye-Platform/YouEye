@@ -55,6 +55,7 @@ export interface UnifiedApp {
   /** False when an installed user app was intentionally turned off */
   enabled?: boolean;
   desiredState?: 'running' | 'stopped';
+  serviceCredentialState?: 'pending' | 'ready' | 'revoked';
   databaseMode?: 'shared' | 'own' | 'none';
   /** OCI update available */
   updateAvailable: boolean;
@@ -66,7 +67,7 @@ export interface UnifiedApp {
   managementLinks?: Array<{ label: string; href: string }>;
   /** Health check status for Market-installed/native apps */
   healthStatus?: 'healthy' | 'unhealthy' | 'unknown';
-  appHealthState?: 'starting' | 'running' | 'unhealthy' | 'crash-looping' | 'unknown';
+  appHealthState?: 'starting' | 'running' | 'unhealthy' | 'crash-looping' | 'unknown' | 'maintenance';
   failingLevel?: 'L1' | 'L2' | 'L3';
   healthDetail?: string | null;
   autoRestart?: boolean;
@@ -409,6 +410,7 @@ export async function GET() {
         status,
         enabled,
         desiredState: enabled ? 'running' as const : 'stopped' as const,
+        serviceCredentialState: meta.serviceCredentialState,
         databaseMode: meta.databaseMode ?? 'none',
         updateAvailable: marketUpdate,
         updateInfo: marketUpdate && catV ? `${insV} → ${catV}` : undefined,

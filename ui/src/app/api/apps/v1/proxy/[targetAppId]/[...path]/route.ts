@@ -5,6 +5,7 @@ import { validateAppToken } from "@/lib/auth/app-token";
 import { eq } from "drizzle-orm";
 import { resolveServiceAuth } from "@/lib/auth/service";
 import { checkPermission } from "@/lib/db/queries/permissions";
+import { evaluateUiUserAdmission } from '@/lib/admission/store';
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +33,7 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 
 function normalizeAppId(appId: string): string {
-  return appId.replace(/^ye-/, "").replace(/^app-/, "");
+  return appId;
 }
 
 function appMatches(left: string | undefined, right: string): boolean {
@@ -151,6 +152,9 @@ async function proxy(request: NextRequest, context: { params: Promise<{ targetAp
   }
 
   const normalizedTarget = normalizeAppId(targetAppId);
+  if (!(await evaluateUiUserAdmission(normalizedTarget, serviceUser.id)).allowed) {
+    return NextResponse.json({ error: 'target_app_access_denied' }, { status: 403 });
+  }
   const permission = `connection:${normalizedTarget}`;
   const granted = await checkPermission(serviceUser.id, sourceAppId, permission);
   if (!granted) {

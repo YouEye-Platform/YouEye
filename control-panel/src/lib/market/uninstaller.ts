@@ -10,7 +10,7 @@
 import { execCommand, incusRequest } from '../incus/server';
 import { containerExists } from '../infrastructure/oci-deployer';
 import { getRoutes, removeRoute, removeAppRoutes } from '../caddy/client';
-import { readInstallMetadata, removeInstallMetadata, removeInstallMetadataRecord } from './metadata';
+import { readInstallMetadata, saveInstallMetadata, removeInstallMetadata, removeInstallMetadataRecord } from './metadata';
 import { getInstalledApp, removeInstalledApp } from './installed-apps';
 import { removeForwardAuth, removeOAuthClient } from '@/lib/identity/provider';
 import { cleanupAppByScan, isAppRegisteredWithUI } from './reconciler';
@@ -23,8 +23,13 @@ import {
   removeSystemProxyDevices,
   withAppNetworkOperationLock,
 } from '../incus/app-network';
-import { archivePointerManagedAppIfPresent } from '@/lib/pointer/managed-apps';
+import { archivePointerManagedAppIfPresent, readPointerManagedApp } from '@/lib/pointer/managed-apps';
+import { readSecret } from '@/lib/infrastructure/secrets';
+import { assertRestoredManagedAI, type RestoredManagedAI } from './restored-managed-ai';
 import { deleteAppStorage, verifyAppStorageRemoval } from './storage';
+import { withAppInventory, withAppLifecycle } from './update-admission';
+import { revokeAppCredential } from '../apps/service-credential-bridge';
+import { quiesceAppCredentialRuntime } from '../apps/service-credential-probe';
 
 const POSTGRES_CONTAINER = 'youeye-postgres';
 
@@ -73,9 +78,13 @@ export async function uninstallApp(
   options: {
     dropSharedDatabase?: boolean;
     keepData?: boolean;
+    preserveAdmission?: boolean;
+    /** Internal paired restore only; validated before any runtime deletion. */
+    preserveManagedAI?: RestoredManagedAI;
   } = {}
 ): Promise<{ success: boolean; errors: string[]; verification: UninstallVerification }> {
-  return withAppNetworkOperationLock(appId, 'remove', () => uninstallAppLocked(appId, options));
+  return withAppInventory(() => withAppLifecycle(appId, () =>
+    withAppNetworkOperationLock(appId, 'remove', () => uninstallAppLocked(appId, options))));
 }
 
 async function uninstallAppLocked(
@@ -83,9 +92,33 @@ async function uninstallAppLocked(
   options: {
     dropSharedDatabase?: boolean;
     keepData?: boolean;
+    preserveAdmission?: boolean;
+    preserveManagedAI?: RestoredManagedAI;
   },
 ): Promise<{ success: boolean; errors: string[]; verification: UninstallVerification }> {
+  // Revocation must be acknowledged before deleting runtime/registration.
+  // Failure keeps the operation recoverable under the app lifecycle lock.
   const metadata = await readInstallMetadata(appId);
+  const aiExternalInstallationId = metadata?.aiConnection?.externalInstallationId
+    || metadata?.aiConnectionPending?.externalInstallationId;
+  if (options.preserveManagedAI && aiExternalInstallationId) {
+    if (!options.preserveAdmission || options.keepData !== false
+      || aiExternalInstallationId !== options.preserveManagedAI.externalInstallationId) {
+      throw new Error('Cannot replace a different managed AI installation during restore');
+    }
+    assertRestoredManagedAI(appId, options.preserveManagedAI,
+      await readPointerManagedApp(aiExternalInstallationId), await readSecret(`app-${appId}`, 'pointer_api_key'));
+  }
+  if (metadata) {
+    metadata.serviceCredentialState = 'pending';
+    metadata.enabled = false;
+    metadata.desiredState = 'stopped';
+    await saveInstallMetadata(metadata);
+    for (const container of normalizeContainerMeta(metadata.containers)) {
+      if (await containerExists(container.containerName)) await quiesceAppCredentialRuntime([container.containerName]);
+    }
+  }
+  await revokeAppCredential(appId);
   if (!metadata) {
     const scanned = await cleanupAppByScan(appId, {
       keepData: options.keepData ?? true,
@@ -114,12 +147,21 @@ async function uninstallAppLocked(
 
   const errors: string[] = [];
   const keepData = options.keepData ?? true;
-  const dropDb = options.dropSharedDatabase ?? false;
+  const dropDb = options.dropSharedDatabase === true
+    && metadata.databaseMode !== 'none' && metadata.databaseMode !== 'own';
+  const { verifyAdmissionCleanup } = await import('@/lib/admission/lifecycle');
+  await verifyAdmissionCleanup(metadata, keepData, options.preserveAdmission === true);
+  if (keepData) {
+    if (dropDb) throw new Error('Keep-data uninstall cannot drop the app database');
+    const { retainAdmissionOnUninstall } = await import('@/lib/admission/lifecycle');
+    const { retainAppRoots } = await import('@/lib/admission/retained-data');
+    // Close authoritative admission before stopping/copying. The durable map
+    // and isolated copy readback must succeed before any original is deleted.
+    await retainAdmissionOnUninstall(appId, true);
+    await retainAppRoots(metadata);
+  }
 
-  const aiExternalInstallationId =
-    metadata.aiConnection?.externalInstallationId
-    || metadata.aiConnectionPending?.externalInstallationId;
-  if (aiExternalInstallationId) {
+  if (aiExternalInstallationId && !options.preserveManagedAI) {
     try {
       const archived = await archivePointerManagedAppIfPresent(aiExternalInstallationId);
       if (!archived.archived || !archived.credentialsRevoked) {
@@ -265,7 +307,7 @@ async function uninstallAppLocked(
 
   // 7b. Deregister from YE-UI dashboard (remove from app drawer)
   try {
-    await deregisterAppFromUI(appId);
+    await deregisterAppFromUI(appId, keepData || options.preserveAdmission === true);
     if (await isAppRegisteredWithUI(appId)) throw new Error('UI registration remains');
   } catch {
     errors.push('Dashboard registration cleanup or verification failed');
@@ -288,6 +330,10 @@ async function uninstallAppLocked(
   // 9. Metadata is removed only after the network lease has been released.
   if (errors.length === 0) {
     try {
+      if (!options.preserveAdmission) {
+        const { retainAdmissionOnUninstall } = await import('@/lib/admission/lifecycle');
+        await retainAdmissionOnUninstall(appId, keepData);
+      }
       if (keepData) await removeInstallMetadataRecord(appId);
       else await removeInstallMetadata(appId);
     } catch (error) {
@@ -330,7 +376,7 @@ async function uninstallAppLocked(
 
 // ─── Dashboard Deregistration ────────────────────────────
 
-async function deregisterAppFromUI(appId: string): Promise<void> {
+export async function deregisterAppFromUI(appId: string, keepData = false): Promise<void> {
   const { getContainerIP } = await import('../incus/container-ip');
   const uiIP = await getContainerIP('youeye-ui');
   if (!uiIP) throw new Error('YE-UI container IP is unavailable');
@@ -347,7 +393,7 @@ async function deregisterAppFromUI(appId: string): Promise<void> {
 
   const response = await fetch(`http://${uiIP}:3000/api/v1/apps/${appId}/unregister`, {
     method: 'DELETE',
-    headers: { 'X-UI-Bridge-Token': bridgeToken },
+    headers: { 'X-UI-Bridge-Token': bridgeToken, 'X-YouEye-Keep-Data': keepData ? 'true' : 'false' },
   });
   if (!response.ok && response.status !== 404) {
     throw new Error(`YE-UI unregister failed with HTTP ${response.status}`);

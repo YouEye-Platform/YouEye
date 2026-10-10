@@ -35,7 +35,7 @@ import { Badge } from '@/components/ui/badge';
 import { InstallDialog } from '@/components/market/install-dialog';
 import { UninstallDialog } from '@/components/market/uninstall-dialog';
 import { HealthDot } from '@/components/market/health-dot';
-import { ForwardAuthToggle } from '@/components/market/forward-auth-toggle';
+import { AppAccessSettings } from '@/components/market/app-access-settings';
 import { EntrancesDisplay } from '@/components/market/entrances-display';
 import { authenticatedFetch } from '@/lib/api-client';
 import type { MarketApp, AppStatusInfo, InstallConfig, InstallEvent } from '@/lib/market/types';
@@ -689,12 +689,7 @@ export default function AppDetailPage() {
               </div>
             </div>
           ) : isInstalled ? (
-            <ForwardAuthToggle
-              appId={app.id}
-              hasNativeSSO={app.supportsSSO}
-              forwardAuthEnabled={status?.forwardAuthEnabled ?? false}
-              onToggled={() => fetchStatus()}
-            />
+            <AppAccessSettings appId={app.id} />
           ) : (
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-lg bg-muted">

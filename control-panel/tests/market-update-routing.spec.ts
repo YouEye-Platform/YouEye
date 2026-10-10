@@ -253,10 +253,10 @@ test('all supported update routes converge on the shared Market updater', () => 
   const marketUpdates = read('src/app/api/market/updates/route.ts');
   const uiBridgeApps = read('src/app/api/ui-bridge/apps/route.ts');
 
-  assert.match(settings, /updateMarketApp\(\{ appId, force: true \}/);
-  assert.match(appRoute, /updateMarketApp\(/);
-  assert.match(compatibility, /POST as updateApp/);
-  assert.match(uiBridgeUpdate, /updateMarketApp\(/);
+  assert.match(settings, /handleMarketUpdate\(request, appId, 'json'\)/);
+  assert.match(appRoute, /handleMarketUpdate\(req, name\)/);
+  assert.match(compatibility, /handleMarketUpdate\(req\)/);
+  assert.match(uiBridgeUpdate, /handleMarketUpdate\(request, component, 'json'\)/);
   assert.match(marketUpdates, /getAppsWithUpdatesAvailable/);
   assert.match(uiBridgeApps, /getAllInstalledApps/);
   assert.match(uiBridgeApps, /dbEntry\?\.catalogVersion/);
@@ -270,11 +270,13 @@ test('unified app availability consumes the shared recorded-source projection', 
 
 test('late update failure restores both durable metadata views', () => {
   const updater = read('src/lib/market/updater.ts');
+  const provider = read('src/lib/market/update-provider.ts');
   const installedApps = read('src/lib/market/installed-apps.ts');
 
   assert.match(updater, /const originalInstallMeta = structuredClone\(installMeta\)/);
-  assert.match(updater, /saveInstallMetadata\(originalInstallMeta\)/);
-  assert.match(updater, /restoreInstalledAppUpdateState\(appId, originalInstalledAppState\)/);
+  assert.match(updater, /runAppUpdateTransaction/);
+  assert.match(provider, /saveInstallMetadata\(restored\)/);
+  assert.match(provider, /restoreInstalledAppUpdateState\(record\.appId, plan\.installed\)/);
   assert.match(installedApps, /export async function restoreInstalledAppUpdateState/);
-  assert.match(installedApps, /Object\.assign\(app, previous\)/);
+  assert.match(provider, /const restored = \{ \.\.\.current \}/);
 });

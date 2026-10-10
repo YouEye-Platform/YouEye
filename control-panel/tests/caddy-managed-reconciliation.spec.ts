@@ -165,9 +165,13 @@ test('legacy repair is atomic, preserves unrelated routes and security ordering,
   const settings = routes.find((route) => route['@id'] === 'control-settings-route')!;
   assert.deepEqual(settings.match, [{ host: ['example.test'], path: ['/settings', '/settings/*', '/onboarding'] }]);
   const support = routes.find((route) => route['@id'] === 'control-settings-support-route')!;
+  assert.ok(support.match![0].path!.includes('/api/ai-proxy-test'));
   assert.deepEqual((support.match![0] as unknown as { header: unknown }).header, {
     Referer: ['*://example.test/settings*', '*://example.test/market*', '*://example.test/onboarding*'],
   });
+  const assets = routes.find((route) => route['@id'] === 'control-pointer-assets-route')!;
+  assert.deepEqual(assets.match, [{ host: ['example.test'], path: ['/api/pointer-ui/*'] }]);
+  assert.deepEqual(assets.handle, [{ handler: 'reverse_proxy', upstreams: [{ dial: '10.45.18.16:3000' }] }]);
   const pointer = routes.find((route) => route['@id'] === 'pointer-inference-route')!;
   assert.deepEqual(pointer.match![0].path, ['/v1', '/v1/*', '/v1beta', '/v1beta/*']);
   assert.match(JSON.stringify(routes.find((route) => route['@id'] === 'legacy-pointer')), /10\.45\.18\.17:4002/);

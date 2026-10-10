@@ -28,6 +28,7 @@ import { CHARACTER_SHAPE_PRESETS } from "@/lib/wordart-presets";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { checkPermission } from '@/lib/db/queries/permissions';
 
 export async function GET(request: NextRequest) {
   // Try session auth first, fall back to service-to-service headers
@@ -37,8 +38,11 @@ export async function GET(request: NextRequest) {
   let email = "";
   let isAdmin = false;
 
-  const session = await getSession();
+  const session = await getSession({ allowAppOrigin: true });
   if (session) {
+    if (session.actingAppId && !await checkPermission(session.userId, session.actingAppId, 'profile:read')) {
+      return NextResponse.json({ error: 'profile:read permission required' }, { status: 403 });
+    }
     userId = session.userId;
     username = session.username;
     name = session.name ?? session.username;
@@ -48,6 +52,10 @@ export async function GET(request: NextRequest) {
     // Try service-to-service auth
     const serviceUser = await resolveServiceAuth(request);
     if (serviceUser) {
+      const appId = (request.headers.get('x-youeye-app') || '').replace(/^ye-/, '');
+      if (!await checkPermission(serviceUser.id, appId, 'profile:read')) {
+        return NextResponse.json({ error: 'profile:read permission required' }, { status: 403 });
+      }
       userId = serviceUser.id;
       username = serviceUser.username;
       name = serviceUser.name;
@@ -58,6 +66,9 @@ export async function GET(request: NextRequest) {
 
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (session?.actingAppId && !await checkPermission(session.userId, session.actingAppId, 'profile:read')) {
+    return NextResponse.json({ error: 'profile:read permission required' }, { status: 403 });
   }
 
   const [branding, unreadCount, appsData, activeThemeData, userSettingsData, userProfileRow, drawerPrefs] =

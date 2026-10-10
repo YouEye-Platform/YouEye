@@ -9,7 +9,7 @@
  *   - Migration steps (exec commands, SQL) before container rebuild/replace
  *   - Pre/post update hooks (exec commands in specified containers)
  *   - Version constraint checking (e.g. major-sequential)
- *   - Snapshot-based rollback on failure
+ *   - Durable scoped runtime, volume, database and metadata recovery
  *   - SSE event emission for real-time progress
  *   - Version tracking in installed_apps DB
  *
@@ -17,24 +17,20 @@
  *   - Secrets are ALWAYS preserved across updates (never regenerated)
  *   - Data volumes are preserved by default (configurable via manifest)
  *   - SSO configuration is preserved (identity app not recreated)
- *   - Rollback via Incus snapshots on failure
+ *   - Restart recovery before watchdogs and operation admission
  */
 
+import { appUpdateJournalStore, withAppLifecycle } from './update-admission';
+import { prepareIncusAppUpdate } from './update-provider';
+import { runAppUpdateTransaction, type AppUpdateTransaction } from './update-transaction';
+import { updateDigest } from './update-workspace';
+import { freezeUpdateOCIImage } from './update-oci';
 import { execShell, incusUploadFile } from '@/lib/incus/server';
 import { readFile } from 'fs/promises';
 import {
-  createSnapshot,
-  restoreSnapshot,
-  deleteSnapshot,
   stopContainer,
   startContainer,
   rebuildContainer,
-  containerState,
-  createRollbackInstanceBackup,
-  deleteInstance,
-  restoreRollbackInstanceBackup,
-  getServiceWorkingDir,
-  healthCheckViaExec,
   waitForContainerExec,
   waitForRunning,
 } from '@/lib/incus/snapshot';
@@ -44,13 +40,12 @@ import {
   getInstalledApp,
   recordAppProvenance,
   recordCatalogAppUpdate,
-  restoreInstalledAppUpdateState,
-  type InstalledAppUpdateState,
 } from './installed-apps';
 import { getContainerName } from './engine-helpers';
 import { resolveVariables } from './variables';
-import { buildCanonicalContext } from './platform-env';
-import { getOrCreateSecret } from '../infrastructure/secrets';
+import { buildCanonicalContext, generateAppToken } from './platform-env';
+import { withAppNetworkOperationLock } from '../incus/app-network';
+import { readSecret } from '../infrastructure/secrets';
 import { waitForAppHealth, waitForPostgresHealth } from './health';
 import { isNewer } from '@/lib/version';
 import { parseMarketRepoURL } from './source';
@@ -69,9 +64,6 @@ import {
   mergeMigrationSources,
   type MigrationWithSource,
 } from './migration-planner';
-import { beginContainerMaintenance } from '@/lib/maintenance/container-maintenance';
-import { observeIssue, resolveIssue } from '@/lib/health/issues';
-import { recoverOriginallyRunningContainers } from './update-recovery';
 import { refreshDirectMarketApp } from './direct-apps';
 import { stageMarketNativeArtifacts, type StagedMarketNativeArtifact } from './native-artifact';
 import type {
@@ -99,6 +91,7 @@ export interface UpdateResult {
   newVersion: string;
   migrationsRun: number;
   error?: string;
+  errorCode?: string;
 }
 
 // ─── Emit Helper ──────────────────────────────────────────
@@ -152,19 +145,19 @@ async function runUpdateHooks(
   onEvent: InstallEventCallback,
   step: number,
   totalSteps: number,
-  label: string
+  label: string,
+  transaction: AppUpdateTransaction,
+  runner: <T>(name: string, run: () => Promise<T>) => Promise<T>,
 ): Promise<number> {
   if (!hooks || hooks.length === 0) return step;
   for (const hook of hooks) {
     step++;
     const containerName = getContainerName(appId, hook.exec_in, containerSpecs.length);
-    emit(onEvent, step, totalSteps, 'running', `${label}: ${hook.run.slice(0, 80)}...`);
-    const result = await execShell(containerName, hook.run, {
-      timeout: hook.timeout || 60_000,
-    });
-    if (result.exitCode !== 0) {
-      throw new Error(`${label} hook failed in ${containerName}: ${result.stderr || result.stdout}`);
-    }
+    emit(onEvent, step, totalSteps, 'running', `${label}: running hook in ${containerName}`);
+    await transaction.mutate(`hook-${label.toLowerCase()}-${step}`, () => runner(containerName, async () => {
+      const result = await execShell(containerName, hook.run, { timeout: hook.timeout || 60_000 });
+      if (result.exitCode !== 0) throw new Error(`${label} hook failed in ${containerName}`);
+    }));
     emit(onEvent, step, totalSteps, 'success', `${label} step complete`);
   }
   return step;
@@ -211,6 +204,8 @@ async function executeMigrationStep(
   appId: string,
   totalContainers: number,
   ctx: Partial<VariableContext>,
+  databases: Array<{ engine: string; name: string; ownerRole: string }>,
+  sqlRunner: (sql: string) => Promise<void>,
 ): Promise<void> {
   if (step.type === 'exec') {
     const containerName = getContainerName(appId, step.container, totalContainers);
@@ -219,20 +214,15 @@ async function executeMigrationStep(
       timeout: step.timeout || 60_000,
     });
     if (result.exitCode !== 0) {
-      throw new Error(`Migration exec failed in ${containerName}: ${result.stderr || result.stdout}`);
+      throw new Error(`Migration command failed in ${containerName}`);
     }
   } else if (step.type === 'sql') {
     const dbName = resolveVariables(step.database, ctx);
-    const sql = resolveVariables(step.command, ctx);
-    const escaped = sql.replace(/'/g, "'\\''");
-    const result = await execShell(
-      'youeye-postgres',
-      `psql -U youeye -d '${dbName}' -c '${escaped}'`,
-      { timeout: 30_000 }
-    );
-    if (result.exitCode !== 0) {
-      throw new Error(`Migration SQL failed on ${dbName}: ${result.stderr || result.stdout}`);
+    const database = databases.find(db => db.name === dbName);
+    if (!database || !/^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(database.ownerRole)) {
+      throw new Error('Migration targets a database outside this app recovery set');
     }
+    await sqlRunner(resolveVariables(step.command, ctx));
   }
 }
 
@@ -265,20 +255,19 @@ async function updateLXDContainer(
   step: number,
   totalSteps: number,
 ): Promise<{ step: number; version: string }> {
-  // Resolve real app dir from systemd service
-  const resolvedDir = await getServiceWorkingDir(containerName, serviceName, appDir);
-  if (resolvedDir !== appDir) {
-    emit(onEvent, step, totalSteps, 'running', `Service runs from ${resolvedDir} (configured: ${appDir})`);
+  // This runs under an idle init, so systemd and ordinary workers are stopped.
+  // Verify the on-disk unit rather than querying a running service manager.
+  if (!/^\/(?:opt|srv)\/[A-Za-z0-9_./-]+$/.test(appDir)
+    || appDir.split('/').some(p => p === '..' || p === '.')) throw new Error('Native app directory is unsupported');
+  const unit = await execShell(containerName, `cat '/etc/systemd/system/${serviceName}.service'`, { timeout: 10_000 });
+  const workingDirs = unit.stdout.split('\n').filter(line => line.startsWith('WorkingDirectory='));
+  if (unit.exitCode !== 0 || workingDirs.length !== 1 || workingDirs[0].slice(17) !== appDir) {
+    throw new Error('Native service directory does not match the frozen application declaration');
   }
+  const resolvedDir = appDir;
 
   step++;
   emit(onEvent, step, totalSteps, 'success', `Preflight accepted v${artifact.version} (${artifact.signature.status === 'unsigned' ? 'manifest-authorized' : 'verified release'})`);
-
-  // Stop systemd service (NOT the container)
-  step++;
-  emit(onEvent, step, totalSteps, 'running', `Stopping ${serviceName} service...`);
-  await execShell(containerName, `systemctl stop ${serviceName}`, { timeout: 30_000 });
-  emit(onEvent, step, totalSteps, 'success', `${serviceName} stopped`);
 
   step++;
   emit(onEvent, step, totalSteps, 'running', `Staging preflighted v${artifact.version} bytes...`);
@@ -294,55 +283,42 @@ async function updateLXDContainer(
   // Extract tarball
   step++;
   emit(onEvent, step, totalSteps, 'running', 'Extracting files...');
-  await execShell(containerName, `rm -rf ${resolvedDir}`, { timeout: 30_000 });
-  await execShell(containerName, `mkdir -p ${resolvedDir}`, { timeout: 10_000 });
+  const prepare = await execShell(containerName, `rm -rf -- '${resolvedDir}' && mkdir -p -- '${resolvedDir}'`, { timeout: 30_000 });
+  if (prepare.exitCode !== 0) throw new Error('Native extraction directory could not be prepared');
   const extractResult = await execShell(
     containerName,
-    `tar -xf /tmp/update.tar -C ${resolvedDir} --no-same-owner`,
+    `tar -xf /tmp/update.tar -C '${resolvedDir}' --no-same-owner`,
     { timeout: 60_000 }
   );
   if (extractResult.exitCode !== 0) {
-    throw new Error(`Extraction failed: ${extractResult.stderr}`);
+    throw new Error('Native artifact extraction failed');
   }
-  await execShell(containerName, 'rm -f /tmp/update.tar', { timeout: 10_000 });
+  if ((await execShell(containerName, 'rm -f /tmp/update.tar', { timeout: 10_000 })).exitCode !== 0) {
+    throw new Error('Native artifact staging cleanup failed');
+  }
   emit(onEvent, step, totalSteps, 'success', 'Files extracted');
-
-  // Start service
-  step++;
-  emit(onEvent, step, totalSteps, 'running', `Starting ${serviceName} service...`);
-  await execShell(containerName, `systemctl start ${serviceName}`, { timeout: 30_000 });
-  emit(onEvent, step, totalSteps, 'success', `${serviceName} started`);
-
-  // Health check
-  step++;
-  emit(onEvent, step, totalSteps, 'running', 'Verifying app is running...');
-  await healthCheckViaExec(containerName, port, healthEndpoint, 15);
-  emit(onEvent, step, totalSteps, 'success', 'Health check passed');
 
   return { step, version: artifact.version };
 }
 
 // ─── Main Update Function ─────────────────────────────────
 
-const SNAPSHOT_PREFIX = 'pre-update';
-
 /**
  * Update an installed app to the latest version from the catalog.
  * Handles both OCI (Market-installed) and LXD (native) apps through a unified flow.
  *
- * Flow:
- *   1. Fetch latest manifest from catalog, compare versions
- *   2. Rebuild variable context (preserving existing secrets)
- *   3. Snapshot container(s) — rollback point
- *   4. If strategy=migrate: run migration steps while containers are still running
- *   5a. OCI path: stop → rebuild with new image → start → health check
- *   5b. LXD path: CP downloads tarball → stop service → push/extract artifact → start → health check
- *   6. Update installed version in DB
- *   7. Cleanup snapshots
- *
- * On failure: rollback all containers to pre-update snapshots.
+ * Resolve immutable target artifacts under lifecycle exclusion, prepare a
+ * verified quiesced recovery set, apply and verify, then publish metadata and
+ * durably commit. The transaction owns coherent rollback and restart recovery.
  */
-export async function updateMarketApp(
+async function updateMarketAppUnderLifecycle(
+  config: UpdateConfig,
+  onEvent: InstallEventCallback
+): Promise<UpdateResult> {
+  return withAppNetworkOperationLock(config.appId, 'update', () => updateMarketAppLocked(config, onEvent));
+}
+
+async function updateMarketAppLocked(
   config: UpdateConfig,
   onEvent: InstallEventCallback
 ): Promise<UpdateResult> {
@@ -355,19 +331,8 @@ export async function updateMarketApp(
 
   const installMeta = await readInstallMetadata(appId);
   if (!installMeta) throw new Error(`No install metadata found for "${appId}"`);
+  if (installMeta.serviceCredentialState !== 'ready') throw new Error('App credentials require reconciliation before update');
   const originalInstallMeta = structuredClone(installMeta);
-  const originalInstalledAppState: InstalledAppUpdateState = {
-    installedVersion: installedApp.installedVersion,
-    catalogVersion: installedApp.catalogVersion,
-    updateAvailable: installedApp.updateAvailable,
-    switchPending: installedApp.switchPending,
-    installedTag: installedApp.installedTag,
-    installedBranch: installedApp.installedBranch,
-    channelSource: installedApp.channelSource,
-    candidateVersion: installedApp.candidateVersion,
-    candidateBranch: installedApp.candidateBranch,
-    candidateTag: installedApp.candidateTag,
-  };
 
   clearCatalogCache();
 
@@ -420,6 +385,7 @@ export async function updateMarketApp(
   }
 
   let manifest: AppManifest;
+  let channelManifestReference: { path: string; repo: string; branch: string; digest: string } | null = null;
   if (channelCandidate && channelSourceUrl) {
     try {
       const srcLike = parseMarketRepoURL(channelSourceUrl);
@@ -427,6 +393,9 @@ export async function updateMarketApp(
         srcLike.organization, srcLike.repository, 'youeye-app.yaml', channelCandidate.tag, srcLike,
       );
       manifest = parseManifest(yamlText);
+      channelManifestReference = { path: 'youeye-app.yaml',
+        repo: `${srcLike.organization}/${srcLike.repository}`, branch: channelCandidate.tag,
+        digest: `sha256:${updateDigest(yamlText)}` };
     } catch (err) {
       throw new Error(`Failed to fetch manifest for "${appId}" at ${channelCandidate.tag}: ${err}`);
     }
@@ -534,16 +503,18 @@ export async function updateMarketApp(
     `Updating ${appId} from v${installedVersion} to v${targetVersion} (path: ${updatePath}; containers: ${containerTypes}; strategy: ${strategy})`);
 
   // Build variable context — preserves existing secrets
-  const ctx = await buildCanonicalContext(
+  let ctx = await buildCanonicalContext(
     manifest,
     { appId, subdomain: installMeta.subdomain, domain: installMeta.domain },
+    undefined, undefined, await generateAppToken(appId),
+    installMeta.usePerAppBridge === true,
   );
   if (!ctx.secrets) ctx.secrets = {};
 
   // Reload existing secrets
   for (const secret of manifest.secrets) {
     try {
-      const value = await getOrCreateSecret(`app-${appId}`, secret.file, () => '');
+      const value = await readSecret(`app-${appId}`, secret.file);
       if (value) ctx.secrets[secret.name] = value;
     } catch { /* secret may not exist */ }
   }
@@ -569,55 +540,42 @@ export async function updateMarketApp(
     } : {},
   );
 
-  // OCI rebuild deletes the root dataset and cannot retain snapshots. Each OCI
-  // container therefore gets an independent stopped Incus copy before any
-  // destructive mutation; that dataset remains until the whole app commits.
-  const ociRollbackBackups = new Map<string, string>();
-  const originalContainerStates = new Map<string, string>();
-  const ociRebuildStarted = new Set<string>();
-  let maintenance: ReturnType<typeof beginContainerMaintenance>;
+  let attemptedOperation: string | undefined;
   try {
-    maintenance = beginContainerMaintenance(containerNames, {
-      operation: `market-update:${appId}:${installedVersion}->${targetVersion}`,
-    });
-  } catch (error) {
-    await stagedNativeArtifacts.cleanup();
-    throw error;
-  }
-  let retainMaintenance = false;
-
-  try {
-    for (const name of containerNames) {
-      originalContainerStates.set(name, await containerState(name));
+    const preflight = await prepareIncusAppUpdate(originalInstallMeta, manifest);
+    ctx = await preflight.provider.configurationContext(ctx);
+    const frozenOCI = new Map<string, Awaited<ReturnType<typeof freezeUpdateOCIImage>>>();
+    for (const spec of ociContainers) {
+      if (installMeta.databaseMode === 'own' && installMeta.containers.find(c => c.name === spec.name)?.role === 'database') continue;
+      frozenOCI.set(spec.name, await freezeUpdateOCIImage(spec.image));
     }
-
-    // ── Step 2: Snapshot container(s) + capture OCI rollback image ──
-
-    for (let i = 0; i < containerNames.length; i++) {
-      const name = containerNames[i];
-      const spec = containerSpecs[i];
-      step++;
-      emit(onEvent, step, totalSteps, 'running', `Creating rollback point for ${name}...`);
-      if (spec?.type === 'oci') {
-        if (originalContainerStates.get(name) === 'Running') {
-          await stopContainer(name);
-        }
-        const backupName = `ye-rollback-${maintenance.id.replaceAll('-', '').slice(0, 12)}-${i}`;
-        await createRollbackInstanceBackup(name, backupName);
-        ociRollbackBackups.set(name, backupName);
-        if (originalContainerStates.get(name) === 'Running') {
-          await startContainer(name);
-          await waitForRunning(name);
-        }
-      } else {
-        await createSnapshot(name, SNAPSHOT_PREFIX);
-      }
-      emit(onEvent, step, totalSteps, 'success', `Rollback point verified for ${name}`);
+    const hookNames = [...(preUpdateHooks ?? []), ...(postUpdateHooks ?? [])].map(h => h.exec_in);
+    const migrationNames = migrations.flatMap(m => m.steps.filter(s => s.type === 'exec').map(s => s.container));
+    if ([...hookNames, ...migrationNames].some(name => !containerSpecs.some(c => c.name === name))) {
+      throw new Error('Update hook or migration targets a container outside the app recovery set');
     }
-
+    if (migrations.flatMap(m => m.steps).some(s => s.type === 'sql'
+      && !preflight.inventory.databases.some(db => db.name === resolveVariables(s.database, ctx)))) {
+      throw new Error('Update migration targets a database outside the app recovery set');
+    }
+    const result = await runAppUpdateTransaction(appUpdateJournalStore(), {
+      appId, resources: preflight.inventory.resources,
+      originalRunning: preflight.inventory.originalRunning,
+      metadataBeforeSHA256: preflight.metadataBeforeSHA256,
+      source: { manifestSHA256: updateDigest(JSON.stringify(preflight.old)),
+        artifactSHA256: preflight.sourceArtifacts },
+      target: { manifestSHA256: updateDigest(JSON.stringify(manifest)),
+        artifactSHA256: [...stagedNativeArtifacts.byContainerName.values()].map(a => a.artifactSHA256)
+          .concat([...frozenOCI.values()].map(a => a.sha256)) },
+    }, preflight.provider, async transaction => {
+    // All checkpoints are verified with every writer stopped before any hook,
+    // SQL or automatic first-start migration. Ordinary ingress remains fenced.
+    const runner = <T>(name: string, run: () => Promise<T>) =>
+      preflight.provider.withMigrationRunner(transaction.record(), name, run);
+    const sqlRunner = (sql: string) => preflight.provider.executeSQL(transaction.record(), sql);
     // ── Step 3: Pre-update hooks ─────────────────────────
 
-    step = await runUpdateHooks(preUpdateHooks, appId, containerSpecs, onEvent, step, totalSteps, 'Pre-update');
+    step = await runUpdateHooks(preUpdateHooks, appId, containerSpecs, onEvent, step, totalSteps, 'Pre-update', transaction, runner);
 
     // ── Step 4: Run migrations (if strategy=migrate) ─────
 
@@ -631,7 +589,10 @@ export async function updateMarketApp(
             ? `Running migration in ${migrationStep.container}`
             : `Running SQL migration on ${migrationStep.database}`;
           emit(onEvent, step, totalSteps, 'running', stepDesc);
-          await executeMigrationStep(migrationStep, appId, containerSpecs.length, ctx);
+          await transaction.mutate(`migration-${step}`, () => migrationStep.type === 'exec'
+            ? runner(getContainerName(appId, migrationStep.container, containerSpecs.length),
+              () => executeMigrationStep(migrationStep, appId, containerSpecs.length, ctx, preflight.inventory.databases, sqlRunner))
+            : executeMigrationStep(migrationStep, appId, containerSpecs.length, ctx, preflight.inventory.databases, sqlRunner));
           emit(onEvent, step, totalSteps, 'success', stepDesc);
         }
         stageAppliedMigration(installMeta, migration);
@@ -643,6 +604,10 @@ export async function updateMarketApp(
     for (let i = 0; i < containerSpecs.length; i++) {
       const spec = containerSpecs[i];
       const name = containerNames[i];
+      if (installMeta.databaseMode === 'own' && installMeta.containers.find(c => c.containerName === name)?.role === 'database') {
+        emit(onEvent, step, totalSteps, 'success', `${name} retains its exact PostgreSQL runtime`);
+        continue;
+      }
 
       if (spec.type === 'lxd' && spec.source) {
         // ── LXD path: fetch tarball from the configured release source, extract, restart service ──
@@ -653,35 +618,46 @@ export async function updateMarketApp(
         const port = spec.port || 3000;
         const stagedArtifact = stagedNativeArtifacts.byContainerName.get(spec.name);
         if (!stagedArtifact) throw new Error(`Native artifact preflight is missing for ${spec.name}`);
-        const result = await updateLXDContainer(
+        const result = await transaction.mutate(`native-replace-${i}`, () => runner(name, () => updateLXDContainer(
           name, appDir, name,
           port, healthEndpoint, stagedArtifact, onEvent, step, totalSteps,
-        );
+        )));
         step = result.step;
       } else {
         // ── OCI path: stop → rebuild with new image → start ──
         step++;
         emit(onEvent, step, totalSteps, 'running', `Stopping ${name}...`);
-        await stopContainer(name);
+        await transaction.mutate(`stop-runtime-${i}`, () => stopContainer(name));
         emit(onEvent, step, totalSteps, 'success', `${name} stopped`);
 
         step++;
         emit(onEvent, step, totalSteps, 'running', `Rebuilding ${name} with ${spec.image}...`);
-        ociRebuildStarted.add(name);
-        await rebuildContainer(name, spec.image);
+        const artifact = frozenOCI.get(spec.name);
+        if (!artifact) throw new Error('OCI update artifact is not frozen');
+        await transaction.mutate(`oci-replace-${i}`, () => rebuildContainer(name, artifact.image));
         emit(onEvent, step, totalSteps, 'success', `${name} rebuilt`);
 
-        step++;
-        if (originalContainerStates.get(name) === 'Running') {
-          emit(onEvent, step, totalSteps, 'running', `Starting ${name}...`);
-          await startContainer(name);
-          emit(onEvent, step, totalSteps, 'success', `${name} started`);
-        } else {
-          emit(onEvent, step, totalSteps, 'success', `${name} remains intentionally stopped`);
-        }
-
-        // Health check for OCI container
-        if (spec.healthCheck && originalContainerStates.get(name) === 'Running') {
+      }
+    }
+    // All code replacements finish before any ordinary process can observe the
+    // new schema. Post hooks execute offline against the complete new code set.
+    step = await runUpdateHooks(postUpdateHooks, appId, containerSpecs, onEvent, step, totalSteps, 'Post-update', transaction, runner);
+    await transaction.mutate('apply-generated-configuration', () => preflight.provider.applyConfiguration(transaction.record(), manifest, ctx));
+    for (let i = 0; i < containerSpecs.length; i++) {
+      const spec = containerSpecs[i];
+      const name = containerNames[i];
+      if (installMeta.databaseMode === 'own' && installMeta.containers.find(c => c.containerName === name)?.role === 'database') continue;
+      await transaction.mutate(`first-start-${i}`, async () => {
+        await startContainer(name);
+        await waitForRunning(name);
+        await waitForContainerExec(name);
+      });
+    }
+    for (let i = 0; i < containerSpecs.length; i++) {
+      const spec = containerSpecs[i];
+      const name = containerNames[i];
+      // Check health only after every runtime has the target code/configuration.
+      if (spec.healthCheck) {
           step++;
           emit(onEvent, step, totalSteps, 'running', `Waiting for ${name} to be healthy...`);
 
@@ -695,19 +671,17 @@ export async function updateMarketApp(
           emit(onEvent, step, totalSteps, healthy ? 'success' : 'error',
             healthy ? `${name} is healthy` : `${name} health check timed out`);
           if (!healthy) throw new Error(`Health check failed for ${name}`);
-        }
       }
     }
 
-    // ── Step 6: Post-update hooks ────────────────────────
-
-    step = await runUpdateHooks(postUpdateHooks, appId, containerSpecs, onEvent, step, totalSteps, 'Post-update');
-
+    transaction.verifying();
     // ── Step N-2: Sync manifest cache to UI ──────────────
 
     step++;
     emit(onEvent, step, totalSteps, 'running', 'Syncing app manifest to YouEye UI...');
-    await syncAppManifestObjectToUI(appId, manifest as unknown as Record<string, unknown>);
+    await transaction.mutate('publish-ui-manifest', () => syncAppManifestObjectToUI(appId, manifest as unknown as Record<string, unknown>));
+    const { probeNativeAppCredential } = await import('@/lib/apps/service-credential-probe');
+    await transaction.mutate('verify-native-service-credential', () => probeNativeAppCredential(appId, manifest));
     emit(onEvent, step, totalSteps, 'success', 'App manifest synced to YouEye UI');
 
     // ── Step N-1: Update version in DB ───────────────────
@@ -724,6 +698,11 @@ export async function updateMarketApp(
     if (directEntry) {
       installMeta.manifestPath = directEntry.manifestUrl;
       installMeta.manifestDigest = directEntry.manifestDigest;
+    } else if (channelManifestReference) {
+      installMeta.manifestPath = channelManifestReference.path;
+      installMeta.manifestRepo = channelManifestReference.repo;
+      installMeta.manifestBranch = channelManifestReference.branch;
+      installMeta.manifestDigest = channelManifestReference.digest;
     } else if (routing?.kind === 'catalog') {
       installMeta.manifestPath = resolvedCatalog!.reference.path;
       installMeta.manifestRepo = resolvedCatalog!.reference.repo;
@@ -757,173 +736,58 @@ export async function updateMarketApp(
       };
     });
     installMeta.entrances = manifest.entrances?.map((entrance) => ({ ...entrance }));
-    await saveInstallMetadata(installMeta);
+    await transaction.mutate('publish-install-metadata', () => saveInstallMetadata(installMeta));
     // Provenance: what tag/branch/source is actually installed now.
     if (channelCandidate) {
-      await recordAppProvenance(appId, {
+      await transaction.mutate('publish-provenance', () => recordAppProvenance(appId, {
         version: channelCandidate.version,
         tag: channelCandidate.tag,
         branch: channelCandidate.branch,
         source: channelSourceUrl,
-      });
+      }));
     } else {
-      await recordCatalogAppUpdate(appId, targetVersion);
+      await transaction.mutate('publish-provenance', () => recordCatalogAppUpdate(appId, targetVersion));
     }
     emit(onEvent, step, totalSteps, 'success', 'Version updated');
 
-    // ── Step N: Cleanup snapshots ────────────────────────
-
-    step++;
-    emit(onEvent, step, totalSteps, 'running', 'Cleaning up rollback points...');
-    for (let i = 0; i < containerNames.length; i++) {
-      if (containerSpecs[i]?.type === 'oci') continue;
-      await deleteSnapshot(containerNames[i], SNAPSHOT_PREFIX);
+    const saved = await readInstallMetadata(appId);
+    const installed = await getInstalledApp(appId);
+    if (saved?.installedVersion !== targetVersion || installed?.installedVersion !== targetVersion) {
+      throw new Error('Installed metadata did not converge with verified runtime');
     }
-    const cleanupFailures: string[] = [];
-    for (const [name, backup] of ociRollbackBackups) {
-      try {
-        await deleteInstance(backup);
-      } catch (error) {
-        cleanupFailures.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    if (cleanupFailures.length > 0) {
-      await observeIssue({
-        id: `app.${appId}.update-rollback-cleanup`,
-        severity: 'warning',
-        source: 'market-updater',
-        title: `${appId} retained a rollback copy after a successful update`,
-        body: 'The application update committed, but one or more stopped rollback copies require cleanup.',
-        fixable: false,
-        debounce: 1,
-      });
-    } else {
-      await resolveIssue(`app.${appId}.update-rollback-cleanup`);
-    }
-    emit(onEvent, step, totalSteps, 'success', cleanupFailures.length > 0
-      ? 'Update committed; rollback copy cleanup requires attention'
-      : 'Rollback points cleaned up');
-
-    emit(onEvent, step, totalSteps, 'success',
-      `${appId} updated successfully from v${installedVersion} to v${targetVersion}`);
-
-    return {
-      success: true,
-      previousVersion: installedVersion,
-      newVersion: targetVersion,
+    return { value: {
+      success: true, previousVersion: installedVersion, newVersion: targetVersion,
       migrationsRun: migrations.length,
-    };
+    }, metadataDigest: updateDigest(JSON.stringify(saved)) };
+    }, id => { attemptedOperation = id; });
+    // Current ownership is reconciled only after durable commit and cleanup.
+    // Namespace declarations are additive and do not restore old grants.
+    const { bindInstalledAdmission } = await import('@/lib/admission/lifecycle');
+    await bindInstalledAdmission(installMeta);
+    const { reconcileAdmissionProjections } = await import('@/lib/admission/projection');
+    await reconcileAdmissionProjections();
+    return result;
   } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    emit(onEvent, step, totalSteps, 'error', `Update failed, rolling back: ${errMsg}`);
-    maintenance.markRollback(errMsg);
-    const rollbackFailures: string[] = [];
-    const rollbackCleanupFailures: string[] = [];
-
-    // ── Rollback ─────────────────────────────────────────
-    for (let i = 0; i < containerNames.length; i++) {
-      const name = containerNames[i];
-      const spec = containerSpecs[i];
-      try {
-        if (spec?.type === 'oci') {
-          const backup = ociRollbackBackups.get(name);
-          if (ociRebuildStarted.has(name)) {
-            if (!backup) throw new Error('verified OCI rollback instance is missing');
-            await restoreRollbackInstanceBackup(name, backup);
-            if (originalContainerStates.get(name) === 'Running') {
-              await startContainer(name);
-              await waitForRunning(name);
-            }
-          } else if (backup) {
-            try {
-              await deleteInstance(backup);
-            } catch (cleanupError) {
-              rollbackCleanupFailures.push(`${name}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
-            }
-          }
-        } else {
-          // LXD rollback: the snapshot is intact (LXD updates in place) — restore it.
-          // The container stays running after a non-stateful restore; wait for exec.
-          await restoreSnapshot(name, SNAPSHOT_PREFIX);
-          await waitForContainerExec(name, 30);
-        }
-      } catch (rollbackErr) {
-        console.error(`[updater] Rollback failed for ${name}:`, rollbackErr);
-        const rollbackMessage = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
-        rollbackFailures.push(`${name}: ${rollbackMessage}`);
-      }
-      if (spec?.type !== 'oci') {
-        // Clean up LXD snapshot after rollback (idempotent).
-        await deleteSnapshot(name, SNAPSHOT_PREFIX);
-      }
-    }
-
-    const recoveryFailures = await recoverOriginallyRunningContainers(
-      originalContainerStates,
-      {
-        state: containerState,
-        start: startContainer,
-        waitForRunning: (name) => waitForRunning(name),
-      },
-    );
-
-    // Version/audit metadata is part of the same update outcome as the runtime
-    // image. If a late write failed after either store advanced, restore both
-    // records to the exact pre-update state and surface any restoration error.
-    try {
-      await saveInstallMetadata(originalInstallMeta);
-    } catch (metadataRestoreError) {
-      console.error(`[updater] Failed to restore install metadata for ${appId}:`, metadataRestoreError);
-      rollbackFailures.push(`install metadata: ${metadataRestoreError instanceof Error ? metadataRestoreError.message : String(metadataRestoreError)}`);
-    }
-    try {
-      await restoreInstalledAppUpdateState(appId, originalInstalledAppState);
-    } catch (stateRestoreError) {
-      console.error(`[updater] Failed to restore installed-app update state for ${appId}:`, stateRestoreError);
-      rollbackFailures.push(`installed app state: ${stateRestoreError instanceof Error ? stateRestoreError.message : String(stateRestoreError)}`);
-    }
-
-    if (rollbackCleanupFailures.length > 0) {
-      await observeIssue({
-        id: `app.${appId}.update-rollback-cleanup`,
-        severity: 'warning',
-        source: 'market-updater',
-        title: `${appId} retained an unused rollback copy`,
-        body: 'The original application remained intact, but a stopped rollback copy requires cleanup.',
-        fixable: false,
-        debounce: 1,
-      });
-    } else {
-      await resolveIssue(`app.${appId}.update-rollback-cleanup`);
-    }
-
-    if (rollbackFailures.length > 0 || recoveryFailures.length > 0) {
-      retainMaintenance = true;
-      maintenance.markFailed([...rollbackFailures, ...recoveryFailures].join('; '));
-      await observeIssue({
-        id: `app.${appId}.update-rollback-failed`,
-        severity: 'critical',
-        source: 'market-updater',
-        title: `${appId} update rollback requires attention`,
-        body: 'Automatic rollback or desired-state recovery was incomplete. Watchdog recovery remains suppressed by the durable maintenance record.',
-        fixable: false,
-        debounce: 1,
-      });
-    } else {
-      await resolveIssue(`app.${appId}.update-rollback-failed`);
-    }
-
+    const record = attemptedOperation ? appUpdateJournalStore().read(attemptedOperation) : undefined;
+    const committed = !!record?.commit;
+    const message = committed
+      ? 'Update committed; maintenance or checkpoint cleanup requires attention.'
+      : record?.phase === 'recovery_required'
+        ? 'Update recovery requires attention. Maintenance reservations and checkpoints are retained.'
+        : error instanceof Error ? error.message : 'Application update failed.';
+    emit(onEvent, step, totalSteps, committed ? 'success' : 'error', message);
     return {
-      success: false,
-      previousVersion: installedVersion,
-      newVersion: installedVersion,
-      error: rollbackFailures.length > 0 || recoveryFailures.length > 0
-        ? `${errMsg}; rollback/recovery incomplete: ${[...rollbackFailures, ...recoveryFailures].join('; ')}`
-        : errMsg,
-      migrationsRun: 0,
+      success: committed, previousVersion: installedVersion,
+      newVersion: committed ? targetVersion : installedVersion,
+      migrationsRun: committed ? migrations.length : 0, error: message,
+      errorCode: !committed && error && typeof error === 'object' && 'code' in error
+        && typeof error.code === 'string' ? error.code : undefined,
     };
   } finally {
     await stagedNativeArtifacts.cleanup();
-    if (!retainMaintenance) maintenance.release();
   }
+}
+
+export async function updateMarketApp(config: UpdateConfig, onEvent: InstallEventCallback): Promise<UpdateResult> {
+  return withAppLifecycle(config.appId, () => updateMarketAppUnderLifecycle(config, onEvent));
 }

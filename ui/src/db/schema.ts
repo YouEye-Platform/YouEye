@@ -19,6 +19,7 @@ import {
   boolean,
   jsonb,
 } from "drizzle-orm/pg-core";
+import type { AppCredentialProjection } from "../../../shared/app-service-credential";
 
 // ============================================
 // Users
@@ -56,6 +57,17 @@ export const users = pgTable("users", {
   onboardingCompleted: boolean("onboarding_completed").default(false),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
+});
+
+/** Durable receipt only: validity is process-local and expires within 60s. */
+export const admissionProjections = pgTable("admission_projections", {
+  appId: text("app_id").primaryKey(),
+  installationId: uuid("installation_id").notNull(),
+  revision: text("revision").notNull(),
+  snapshot: jsonb("snapshot").notNull(),
+});
+export const identityDeletions = pgTable('identity_deletions', {
+  identityId: uuid('identity_id').primaryKey(),
 });
 
 // ============================================
@@ -132,6 +144,18 @@ export const apps = pgTable("apps", {
   connections: jsonb("connections").$type<Record<string, unknown>>(),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
+});
+
+/**
+ * Monotonic credential authority projected by CP. Deliberately has no foreign
+ * key to apps: uninstall must retain its revocation/revision tombstone.
+ */
+export const appServiceCredentials = pgTable("app_service_credentials", {
+  appId: text("app_id").primaryKey(),
+  projection: jsonb("projection").$type<AppCredentialProjection>().notNull(),
+  verifierHash: text("verifier_hash").notNull().unique(),
+  ready: boolean("ready").notNull().default(false),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
 });
 
 // ============================================

@@ -118,6 +118,9 @@ func runAppliancePrepare() error {
 		if err := prepareAppliancePartitionStorage(decision); err != nil {
 			return err
 		}
+		if err := incus.PrepareNetworkProcessState(); err != nil {
+			return err
+		}
 		fmt.Println("Appliance persistent storage is mounted and compatible")
 		return nil
 	default:

@@ -108,6 +108,14 @@ export type AppSettingsSpec = z.infer<typeof AppSettingsSchema>;
 
 export interface InstallConfig {
   appId: string;
+  /** Server-resolved authenticated installation actor; never accepted from JSON. */
+  admissionActorId?: string;
+  /** Explicit authenticated owner request to reuse retained data. */
+  adoptRetainedData?: boolean;
+  /** Set by the engine after authoritative ownership resolution. */
+  admissionInstallationId?: string;
+  admissionDataOwnerId?: string;
+  admissionResourceOwners?: Record<string, string>;
   /** Stable catalog identity, currently sourceId:itemKind:itemId */
   catalogKey?: string;
   /** Market source selected by the user for catalog installs */
@@ -226,6 +234,9 @@ export interface CredentialMeta {
 
 export interface StorageVolumeMeta {
   appId: string;
+  installationId?: string;
+  dataOwnerId?: string;
+  shareId?: string;
   name: string;
   logicalName: string;
   pool: string;
@@ -241,8 +252,20 @@ export interface StorageVolumeMeta {
 
 export interface InstallMetadata {
   appId: string;
+  /** Stable admission installation binding; app administration, not row ownership. */
+  installationId?: string;
+  admissionOwnerId?: string;
+  /** Offline root copies; original data owners remain independent of administration. */
+  retainedRoots?: {
+    schemaVersion: 1;
+    state: 'preparing' | 'ready' | 'adopted';
+    roots: Array<{ sourceName: string; retainedName: string; ownerId: string; pool: string }>;
+  };
   /** Durable lifecycle marker. `installing` is the restart-recovery map; `active` is user-visible state. */
   lifecycleState?: 'installing' | 'active';
+  /** Runtime/verifier convergence is required before app services are ready. */
+  serviceCredentialState?: 'pending' | 'ready' | 'revoked';
+  serviceCredentialDesiredState?: 'running' | 'stopped';
   /** Restores retain pre-existing datasets when an interrupted install is reconciled. */
   recoveryPreserveData?: boolean;
   /** Exact Incus custom-volume ownership and attachment map. */
@@ -268,6 +291,8 @@ export interface InstallMetadata {
     signatureKeyId?: string;
   }>;
   integration: 'native' | 'basic';
+  /** Private namespaces use the immutable OIDC subject; app enforces row privacy. */
+  perUserData?: 'identity_uuid';
   subdomain: string;
   domain: string;
   enableSSO: boolean;
@@ -340,6 +365,8 @@ export interface InstallMetadata {
   /** Exact shared-database resources recorded before creation for restart-safe cleanup. */
   databaseName?: string;
   databaseUser?: string;
+  /** Exact file under the private app directory; preserved by retained-data recovery. */
+  databasePasswordFile?: string;
   /** Whether this app has SSO configured — used by ACL migration to determine identity access */
   hasSSO?: boolean;
   /** Capability types this app provides (from manifest `provides` field) */
@@ -516,6 +543,7 @@ export interface VariableContext {
     googleBaseUrl: string;
     apiKey: string;
     defaultModel: string;
+    utilityModel: string;
     groupId: string;
   };
   secrets: Record<string, string>;
@@ -639,8 +667,17 @@ export interface RestoreOptions {
   skipSecrets: boolean;
   skipDatabase: boolean;
   skipConfigFiles: boolean;
+  /** Restore must reinject/probe credentials after all archived runtime data. */
+  deferServiceCredentialReadiness?: boolean;
+  /** Validated archived identity and runtime intent; not accepted from HTTP input. */
+  restoredIdentity?: { installationId: string; ownerId: string };
+  /** Authenticated paired backup binding; reuse only after live Pointer validation. */
+  restoredManagedAI?: NonNullable<InstallMetadata['aiConnection']>;
+  desiredState?: 'running' | 'stopped';
   runtimeImages?: Record<string, string>;
   runtimeInstances?: Record<string, { archivePath: string; pool: string }>;
+  /** Verified offline root copies; never accepted from an HTTP request body. */
+  retainedRuntimes?: Record<string, { name: string; ownerId: string; pool: string }>;
   /** Imported recovery volumes owned by this transaction and removed on rollback. */
   recoveryCreatedStorage?: string[];
 }

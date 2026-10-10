@@ -80,6 +80,9 @@ import {
 } from '@/lib/youeye-names/certificate';
 import { configurePointerForPlatform } from '@/lib/infrastructure/deployer';
 import { identityConfigFromSettings } from '@/lib/identity/config';
+import { withAppLifecycle } from '@/lib/market/update-admission';
+import { changePointerIdentity } from '@/lib/pointer/identity-rename';
+import { transitionPointerIdentity } from '@/lib/pointer/identity-transition';
 
 /**
  * TLS target for the new domain.
@@ -940,7 +943,7 @@ export async function reconfigure(req: ReconfigureRequest, onEvent: ReconfigureE
   const report: ReconfigureEventCallback = event => {
     try { onEvent(event); } catch { /* reconnect using the durable journal */ }
   };
-  try { return await reconfigureLocked(req, report); }
+  try { return await withAppLifecycle('pointer', () => reconfigureLocked(req, report)); }
   finally { renameState.youeyeReconfigureRunning = false; }
 }
 
@@ -1048,18 +1051,38 @@ async function reconfigureLocked(
   const startPointer = async () => {
     if (reconcileRequired) {
       onEvent({ step: 'ai', status: 'running', message: 'Refreshing YouEye AI identity configuration...' });
-      await configurePointerForPlatform(journal.oldIdentityOrigin, { deferRoutes: true });
-      await caddy.reconcileManagedRoutes(newDomain);
+      await configurePointerForPlatform(undefined, { deferRoutes: true });
+      const activeConfig = await settingsService.getRaw();
+      await caddy.reconcileManagedRoutes(activeConfig.domain);
       onEvent({ step: 'caddy', status: 'done', message: 'Reverse proxy verified' });
       onEvent({ step: 'ai', status: 'done', message: 'YouEye AI identity configuration refreshed' });
     }
   };
-  if (reconcileRequired) {
-    await saveReconfigureJournal({ ...journal, phase: 'applying' });
-    await invalidatePublicOidcState();
+  const apply = async () => {
+    if (reconcileRequired) {
+      await saveReconfigureJournal({ ...journal, phase: 'applying' });
+      await invalidatePublicOidcState();
+    }
+    await applySiteConfiguration();
+  };
+  if (journal.oldIdentityOrigin !== configuredIdentityUrl) {
+    await changePointerIdentity({ oldIssuer: journal.oldIdentityOrigin, newIssuer: configuredIdentityUrl }, {
+      transition: transitionPointerIdentity,
+      apply,
+      restore: async () => {
+        // Retain the journal for an explicit same-target retry. Restoring routes
+        // and configuration never resurrects the sessions invalidated above.
+        await settingsService.setRaw({ ...currentConfig, domain: oldDomain, subdomains: oldSubdomains });
+        await updateCaddyDomain(newDomain, oldDomain, newSubdomains, oldSubdomains);
+        await caddy.setDomain(oldDomain);
+        await caddy.ensureIdentityRoute(new URL(journal.oldIdentityOrigin).hostname, 'youeye-control', 3001);
+      },
+      start: startPointer,
+    });
+  } else {
+    await apply();
+    await startPointer();
   }
-  await applySiteConfiguration();
-  await startPointer();
 
   if (reconcileRequired) {
     // 5. Update Pi-Hole DNS

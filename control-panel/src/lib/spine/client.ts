@@ -795,13 +795,15 @@ export class SpineClient {
     archivePath: string;
     name: string;
     pool: string;
-    network: string;
+    network?: string;
+    offline?: boolean;
   }): Promise<{ status: string; name: string }> {
     return this.request('/api/backup/incus/import-instance', 'POST', {
       archive_path: params.archivePath,
       name: params.name,
       pool: params.pool,
       network: params.network,
+      ...(params.offline ? { offline: true } : {}),
     });
   }
 

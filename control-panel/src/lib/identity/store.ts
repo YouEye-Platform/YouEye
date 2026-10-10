@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from
 import { execShell } from '@/lib/incus/server';
 import { POSTGRES_MANIFEST } from '@/lib/apps/manifest';
 import { requireIdentityPassword } from './password-policy';
+import { ADMISSION_SCHEMA_SQL } from '@/lib/admission/schema';
 
 const CONTAINER = POSTGRES_MANIFEST.containerName;
 
@@ -81,6 +82,16 @@ function sqlJson(value: unknown): string {
   return `${sql(JSON.stringify(value))}::jsonb`;
 }
 
+// Shared platform database transport; callers must initialize the identity
+// schema and use these quoting helpers for every supplied value.
+export { sql as identitySql, sqlJson as identitySqlJson, psql as identityCommand, queryRows as identityRows };
+/** Keep data-modifying CTEs at PostgreSQL's required top level. */
+export async function identityStatementRows<T>(ctes: string, outputSelect: string): Promise<T[]> {
+  return queryCommandRows<T>(`WITH ${ctes},
+    identity_result AS (${outputSelect})
+    SELECT COALESCE(json_agg(row_to_json(identity_result)), '[]'::json)::text FROM identity_result`);
+}
+
 async function psql(command: string): Promise<string> {
   const escaped = command
     .replace(/\\/g, '\\\\')
@@ -123,6 +134,13 @@ export async function ensureIdentitySchema(): Promise<void> {
   } finally {
     schemaSetup = null;
   }
+}
+
+/** A full restore replaces the database while this CP process may survive. */
+export async function refreshIdentitySchemaAfterRestore(): Promise<void> {
+  if (schemaSetup) await schemaSetup;
+  schemaReady = false;
+  await ensureIdentitySchema();
 }
 
 async function initializeIdentitySchema(): Promise<void> {
@@ -212,8 +230,13 @@ async function initializeIdentitySchema(): Promise<void> {
       created_at timestamptz NOT NULL DEFAULT now()
     );
     ALTER TABLE identity_logout_deliveries ADD COLUMN IF NOT EXISTS session_id uuid;
-    CREATE UNIQUE INDEX IF NOT EXISTS identity_logout_session_client_idx
-      ON identity_logout_deliveries(session_id, client_id) WHERE session_id IS NOT NULL;
+    ALTER TABLE identity_logout_deliveries ADD COLUMN IF NOT EXISTS event_key text;
+    UPDATE identity_logout_deliveries SET event_key =
+      CASE WHEN session_id IS NOT NULL THEN 'session:' || session_id::text || ':' || client_id
+        ELSE 'legacy:' || id::text END WHERE event_key IS NULL;
+    ALTER TABLE identity_logout_deliveries ALTER COLUMN event_key SET NOT NULL;
+    DROP INDEX IF EXISTS identity_logout_session_client_idx;
+    CREATE UNIQUE INDEX IF NOT EXISTS identity_logout_event_idx ON identity_logout_deliveries(event_key);
     CREATE INDEX IF NOT EXISTS identity_logout_due_idx ON identity_logout_deliveries(next_attempt_at)
       WHERE delivered_at IS NULL;
     CREATE TABLE IF NOT EXISTS identity_refresh_tokens (
@@ -249,6 +272,9 @@ async function initializeIdentitySchema(): Promise<void> {
       old_family identity_refresh_families%ROWTYPE;
       active_session identity_sessions%ROWTYPE;
     BEGIN
+      IF NOT EXISTS (SELECT 1 FROM identity_refresh_tokens t
+        WHERE t.token_hash = presented_hash AND t.client_id = requested_client
+          AND admission_client_granted(requested_client, t.user_id)) THEN RETURN; END IF;
       SELECT * INTO old_token FROM identity_refresh_tokens
       WHERE token_hash = presented_hash AND client_id = requested_client FOR UPDATE;
       IF NOT FOUND THEN RETURN; END IF;
@@ -308,6 +334,7 @@ async function initializeIdentitySchema(): Promise<void> {
     );
     INSERT INTO identity_appliance_claim (singleton) VALUES (true)
     ON CONFLICT (singleton) DO NOTHING;
+    ${ADMISSION_SCHEMA_SQL}
     COMMIT;
   `);
 }
@@ -511,6 +538,17 @@ export async function ensureUser(input: {
   groups: string[];
   isAdmin: boolean;
 }): Promise<IdentityUser> {
+  return withIdentityAppLifecycle(() => ensureUserUnderLifecycle(input));
+}
+
+async function ensureUserUnderLifecycle(input: {
+  username: string;
+  password: string;
+  name: string;
+  email: string;
+  groups: string[];
+  isAdmin: boolean;
+}): Promise<IdentityUser> {
   await ensureIdentitySchema();
   requireIdentityPassword(input.password);
   const passwordHash = hashPassword(input.password);
@@ -602,6 +640,19 @@ export async function createIdentityUser(input: {
   isAdmin?: boolean;
   isActive?: boolean;
 }): Promise<IdentityUser> {
+  return withIdentityAppLifecycle(() => createIdentityUserUnderLifecycle(input));
+}
+
+async function createIdentityUserUnderLifecycle(input: {
+  username: string;
+  password: string;
+  firstName: string;
+  lastName?: string;
+  email?: string;
+  groups?: string[];
+  isAdmin?: boolean;
+  isActive?: boolean;
+}): Promise<IdentityUser> {
   await ensureIdentitySchema();
   requireIdentityPassword(input.password);
   const passwordHash = hashPassword(input.password);
@@ -617,7 +668,39 @@ export async function createIdentityUser(input: {
   return rows[0];
 }
 
-export async function updateIdentityUser(id: string, patch: {
+export type IdentityUserPatch = {
+  name?: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  groups?: string[];
+  isAdmin?: boolean;
+  isActive?: boolean;
+  password?: string;
+};
+
+/** External credential effects and the authoritative identity write share one
+ * store-owned admission. A callback cannot accidentally reacquire the same OS
+ * gates through a second provider/store transaction. Direct callers stay guarded. */
+export async function updateIdentityUser(
+  id: string,
+  patch: IdentityUserPatch | ((current: IdentityUser) => Promise<IdentityUserPatch>),
+  afterCommit?: (updated: IdentityUser) => Promise<void>,
+): Promise<IdentityUser> {
+  return withIdentityAppLifecycle(async () => {
+    let resolved: IdentityUserPatch;
+    if (typeof patch === 'function') {
+      const current = await getUserById(id);
+      if (!current) throw new Error(`Identity user not found: ${id}`);
+      resolved = await patch(current);
+    } else resolved = patch;
+    const updated = await updateIdentityUserUnderLifecycle(id, resolved);
+    await afterCommit?.(updated);
+    return updated;
+  });
+}
+
+async function updateIdentityUserUnderLifecycle(id: string, patch: {
   name?: string;
   firstName?: string;
   lastName?: string;
@@ -628,6 +711,7 @@ export async function updateIdentityUser(id: string, patch: {
   password?: string;
 }): Promise<IdentityUser> {
   await ensureIdentitySchema();
+  if (patch.isActive === false || patch.isAdmin === false) await assertIdentityDisposition(id, 'disable');
   const assignments: string[] = ['updated_at = now()'];
   if (typeof patch.firstName === 'string' || typeof patch.lastName === 'string') {
     const current = await getUserById(id);
@@ -663,9 +747,36 @@ export async function updateIdentityUser(id: string, patch: {
   return rows[0];
 }
 
-export async function deleteIdentityUser(id: string): Promise<void> {
+export async function deleteIdentityUser(id: string, beforeDelete?: (current: IdentityUser) => Promise<void>): Promise<void> {
+  return withIdentityAppLifecycle(async () => {
+    await assertIdentityDisposition(id, 'delete');
+    if (beforeDelete) {
+      const current = await getUserById(id);
+      if (!current) throw new Error(`Identity user not found: ${id}`);
+      await beforeDelete(current);
+    }
+    await deleteIdentityUserUnderLifecycle(id);
+  });
+}
+
+async function deleteIdentityUserUnderLifecycle(id: string): Promise<void> {
   await ensureIdentitySchema();
+  await assertIdentityDisposition(id, 'delete');
   await psql(`DELETE FROM identity_users WHERE id = ${sql(id)}`);
+}
+
+/** Preflight before external credential mutations; database triggers also guard commit. */
+export async function assertIdentityDisposition(id: string, action: 'disable' | 'delete'): Promise<void> {
+  await ensureIdentitySchema();
+  const owner = await queryRows(`SELECT owner_user_id FROM identity_appliance_claim WHERE owner_user_id = ${sql(id)}::uuid`);
+  if (owner.length) throw new Error('Appliance owner and management recovery access must remain active');
+  if (action === 'delete') {
+    const owned = await queryRows(`SELECT installation_id FROM admission_policies
+      WHERE owner_id = ${sql(id)}::uuid AND state <> 'deleted'
+      UNION SELECT installation_id FROM admission_resources
+      WHERE (owner_id = ${sql(id)}::uuid OR private_user_id = ${sql(id)}::uuid) AND state IN ('active','retained')`);
+    if (owned.length) throw new Error('Transfer application administration and explicitly retain/quarantine or dispose of private data before deleting this user');
+  }
 }
 
 export async function ensureClient(input: {
@@ -691,6 +802,10 @@ export async function ensureClient(input: {
       updated_at = now()
     RETURNING client_id, client_secret, name, redirect_uris, post_logout_redirect_uris, backchannel_logout_uri, scopes
   `);
+  if (input.clientId === 'youeye-ui' || input.clientId === 'youeye-control') {
+    await psql(`INSERT INTO admission_clients (client_id, platform_access)
+      VALUES (${sql(input.clientId)}, true) ON CONFLICT (client_id) DO NOTHING`);
+  }
   return rows[0];
 }
 
@@ -721,30 +836,46 @@ export async function createAuthCode(input: {
 }): Promise<string> {
   await ensureIdentitySchema();
   const code = randomBytes(32).toString('hex');
-  await psql(`
-    BEGIN;
-    INSERT INTO identity_auth_codes (code, client_id, user_id, redirect_uri, scope, nonce, code_challenge, session_id, expires_at)
-    VALUES (${sql(code)}, ${sql(input.clientId)}, ${sql(input.userId)}, ${sql(input.redirectUri)}, ${sql(input.scope)}, ${sql(input.nonce ?? null)}, ${sql(input.codeChallenge ?? null)}, ${sql(input.sessionId ?? null)}::uuid, now() + interval '10 minutes');
-    ${input.sessionId ? `INSERT INTO identity_session_clients(session_id, client_id, user_id)
-      VALUES (${sql(input.sessionId)}::uuid, ${sql(input.clientId)}, ${sql(input.userId)}::uuid)
-      ON CONFLICT (session_id, client_id) DO NOTHING;` : ''}
-    COMMIT;
+  const issued = await queryCommandRows<{ code: string }>(`
+    WITH issued AS (
+      INSERT INTO identity_auth_codes (code, client_id, user_id, redirect_uri, scope, nonce, code_challenge, session_id, expires_at)
+      SELECT ${sql(code)}, ${sql(input.clientId)}, ${sql(input.userId)}::uuid, ${sql(input.redirectUri)}, ${sql(input.scope)},
+        ${sql(input.nonce ?? null)}, ${sql(input.codeChallenge ?? null)}, ${sql(input.sessionId ?? null)}::uuid, now() + interval '10 minutes'
+      WHERE admission_client_granted(${sql(input.clientId)}, ${sql(input.userId)}::uuid)
+        ${input.sessionId ? `AND EXISTS (SELECT 1 FROM identity_sessions
+          WHERE id = ${sql(input.sessionId)}::uuid AND user_id = ${sql(input.userId)}::uuid
+            AND revoked_at IS NULL AND idle_expires_at > now() AND expires_at > now() FOR SHARE)` : ''}
+      RETURNING code, session_id, client_id, user_id
+    ), participants AS (
+      INSERT INTO identity_session_clients(session_id, client_id, user_id)
+      SELECT session_id, client_id, user_id FROM issued WHERE session_id IS NOT NULL
+      ON CONFLICT (session_id, client_id) DO NOTHING
+    )
+    SELECT COALESCE(json_agg(json_build_object('code',code)), '[]'::json)::text FROM issued
   `);
+  if (!issued.length) throw new IdentityGrantInvalidated('Session or application admission changed during code issuance');
   return code;
 }
 
 export async function consumeAuthCode(code: string, clientId: string, redirectUri: string): Promise<AuthCode | null> {
   await ensureIdentitySchema();
-  const rows = await queryRows<AuthCode>(`
+  const rows = await identityStatementRows<AuthCode>(`
+    eligible AS MATERIALIZED (
+      SELECT code FROM identity_auth_codes
+      WHERE code = ${sql(code)} AND client_id = ${sql(clientId)} AND redirect_uri = ${sql(redirectUri)}
+        AND used_at IS NULL AND expires_at > now()
+        AND admission_client_granted(${sql(clientId)}, user_id)
+    ), consumed AS (
     UPDATE identity_auth_codes
     SET used_at = now()
     WHERE code = ${sql(code)}
       AND client_id = ${sql(clientId)}
       AND redirect_uri = ${sql(redirectUri)}
+      AND code IN (SELECT code FROM eligible)
       AND used_at IS NULL
       AND expires_at > now()
     RETURNING code, client_id, user_id::text, redirect_uri, scope, nonce, code_challenge, session_id::text
-  `);
+    )`, 'SELECT * FROM consumed');
   return rows[0] || null;
 }
 
@@ -803,11 +934,12 @@ export async function listUserLogoutSessions(userId: string): Promise<Array<{ id
   `);
 }
 
-export async function enqueueLogoutDelivery(input: { sessionId: string; clientId: string; uri: string; token: string }): Promise<void> {
+export async function enqueueLogoutDelivery(input: { sessionId: string; clientId: string; uri: string; token: string; eventKey?: string }): Promise<void> {
   await ensureIdentitySchema();
-  await psql(`INSERT INTO identity_logout_deliveries(session_id, client_id, uri, logout_token)
-    VALUES (${sql(input.sessionId)}::uuid, ${sql(input.clientId)}, ${sql(input.uri)}, ${sql(input.token)})
-    ON CONFLICT (session_id, client_id) WHERE session_id IS NOT NULL DO NOTHING`);
+  const eventKey = input.eventKey ?? `session:${input.sessionId}:${input.clientId}`;
+  await psql(`INSERT INTO identity_logout_deliveries(session_id, client_id, uri, logout_token, event_key)
+    VALUES (${sql(input.sessionId)}::uuid, ${sql(input.clientId)}, ${sql(input.uri)}, ${sql(input.token)}, ${sql(eventKey)})
+    ON CONFLICT (event_key) DO NOTHING`);
 }
 
 export async function getDueLogoutDeliveries(): Promise<LogoutDelivery[]> {
@@ -866,12 +998,14 @@ function tokenHash(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
+export class IdentityGrantInvalidated extends Error {}
 export async function issueRefreshToken(input: {
   clientId: string;
   userId: string;
   sessionId: string;
   scope: string;
   familyId?: string;
+  authorizedAt?: number;
 }): Promise<string> {
   await ensureIdentitySchema();
   const token = randomBytes(32).toString('base64url');
@@ -887,9 +1021,13 @@ export async function issueRefreshToken(input: {
     WHERE s.id = ${sql(input.sessionId)}::uuid AND s.user_id = ${sql(input.userId)}::uuid
       AND s.revoked_at IS NULL AND s.idle_expires_at > now() AND s.expires_at > now()
       AND f.revoked_at IS NULL
+      AND admission_client_granted(${sql(input.clientId)}, s.user_id)
+      AND NOT EXISTS (SELECT 1 FROM admission_client_cutoffs c
+        WHERE c.client_id = ${sql(input.clientId)} AND c.user_id = s.user_id
+          AND c.revoked_before >= to_timestamp(${sql(input.authorizedAt ?? Math.floor(Date.now() / 1000))}))
     RETURNING token_hash
   `);
-  if (!inserted.length) throw new Error('Cannot issue a refresh token for an inactive session');
+  if (!inserted.length) throw new IdentityGrantInvalidated('Session or application admission changed during grant issuance');
   return token;
 }
 
@@ -1049,4 +1187,14 @@ export async function rotateOAuthSigningKey(oldPem: string, newPem: string, oldK
     SELECT json_build_array(json_build_object('changed', EXISTS (SELECT 1 FROM changed)))::text
   `);
   return result[0]?.changed === true;
+}
+
+
+// Membership and active identity change the authority of every app whose
+// current policy evaluates the principal. Retain all app gates through SQL.
+export async function withIdentityAppLifecycle<T>(work: () => Promise<T>): Promise<T> {
+  await ensureIdentitySchema();
+  const apps = await queryRows<{app_id: string}>(`SELECT app_id FROM admission_policies WHERE state <> 'deleted' ORDER BY app_id`);
+  const { withAppLifecycles } = await import('../market/update-admission');
+  return withAppLifecycles(['identity', ...apps.map(app => app.app_id)], work);
 }

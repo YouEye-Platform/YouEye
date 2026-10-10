@@ -54,15 +54,20 @@ test('app AI controls require an administrator, CSRF, explicit takeover, and ide
   assert.match(settings, /fetchCSRFToken/);
   assert.match(settings, /setAISupported\(Boolean\(aiPayload\?\.supported\)\)/);
   assert.match(provider, /setPointerManagedActorState\(current\.id, 'disabled'\)/);
-  assert.match(provider, /setPointerManagedActorState[\s\S]*deleteIdentityUser/);
-  assert.match(provider, /input\.is_active !== current\.is_active[\s\S]*setPointerManagedActorState/);
+  assert.match(provider, /return deleteIdentityUser\(id, async current =>[\s\S]*setPointerManagedActorState\(current\.id, 'disabled'\)/);
+  const deletion = identityStore.slice(identityStore.indexOf('export async function deleteIdentityUser('),
+    identityStore.indexOf('async function deleteIdentityUserUnderLifecycle('));
+  assert.match(deletion, /return withIdentityAppLifecycle/);
+  assert.match(deletion, /await assertIdentityDisposition\(id, 'delete'\)/);
+  assert.match(deletion, /await beforeDelete\(current\)/);
+  assert.match(provider, /input\.is_active === true[\s\S]*setPointerManagedActorState\(id, 'active'\)/);
   assert.match(identityStore, /is_active boolean NOT NULL DEFAULT true/);
   assert.match(identityStore, /!user\.is_active \|\| !verifyPassword/);
   assert.match(identityTokens, /return user\?\.is_active \? user : null/);
 });
 
 test('OpenWebUI declares the exact Pointer, OIDC, persistence, and pinned-image contract', () => {
-  const manifestPath = path.resolve(root, '../../YE-AppMarket/apps/open-webui/youeye-app.yaml');
+  const manifestPath = path.join(process.env.MARKET_ROOT || path.resolve(root, '../../YE-AppMarket'), 'apps/open-webui/youeye-app.yaml');
   const manifest = AppManifestSchema.parse(parseYaml(readFileSync(manifestPath, 'utf8')));
   assert.equal(manifest.metadata.id, 'open-webui');
   assert.equal(manifest.capabilities?.ai_api, true);
@@ -71,6 +76,7 @@ test('OpenWebUI declares the exact Pointer, OIDC, persistence, and pinned-image 
   assert.equal(manifest.env_mapping.OPENAI_API_BASE_URL, '${ai.openaiBaseUrl}');
   assert.equal(manifest.env_mapping.OPENAI_API_KEY, '${ai.apiKey}');
   assert.equal(manifest.env_mapping.DEFAULT_MODELS, '${ai.defaultModel}');
+  assert.equal(manifest.env_mapping.TASK_MODEL_EXTERNAL, '${ai.utilityModel}');
   assert.equal(manifest.env_mapping.OPENID_PROVIDER_URL, '${sso.discovery_url}');
   assert.equal(manifest.env_mapping.ENABLE_OLLAMA_API, 'false');
 });

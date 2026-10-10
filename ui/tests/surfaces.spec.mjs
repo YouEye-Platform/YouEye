@@ -35,7 +35,8 @@ test("UI normalizes only explicit versioned app surface declarations", () => {
   assert.match(appManagement, /getNotificationSurfaceMap/);
   assert.match(appManagement, /item\.kind === "notification"/);
 
-  assert.match(surfacesRoute, /surfaces: declarations\.flatMap/);
+  assert.match(surfacesRoute, /surfaces: admitted\.flatMap/);
+  assert.match(surfacesRoute, /evaluateUiUserAdmission/);
   assert.match(surfacesRoute, /resolveServiceAuth/);
   assert.match(surfacesRoute, /app_url: publicAppUrl/);
   assert.match(surfacesRoute, /icon: d\.icon/);
@@ -47,7 +48,7 @@ test("UI normalizes only explicit versioned app surface declarations", () => {
   assert.equal(exists("src/app/api/apps/v1/widgets/sync/route.ts"), false);
 
   assert.match(manifestRoute, /validateBridgeAuth/);
-  assert.match(manifestRoute, /X-UI-Bridge-Token/);
+  assert.match(manifestRoute, /authorizeCredentialBridge\(request, getBridgeToken\(\)\)/);
   assert.match(manifestRoute, /export async function POST/);
   assert.match(manifestRoute, /updateAppManifest\(appId, manifest/);
 

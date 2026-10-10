@@ -7,6 +7,8 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getBridgeToken } from "@/lib/admin/bridge-client";
+import { evaluateLocalAdmission } from '@/lib/admission/store';
+import { authorizeCredentialBridge } from "@/lib/auth/app-credential-readiness";
 import {
   getApp,
   fetchAppManifest,
@@ -14,10 +16,7 @@ import {
 } from "@/lib/db/queries/app-management";
 
 function validateBridgeAuth(request: Request): boolean {
-  const provided = request.headers.get("X-UI-Bridge-Token") ?? request.headers.get("x-ui-bridge-token");
-  if (!provided) return false;
-  const expected = getBridgeToken();
-  return expected !== null && provided === expected;
+  return authorizeCredentialBridge(request, getBridgeToken());
 }
 
 export async function GET(
@@ -30,6 +29,9 @@ export async function GET(
   }
 
   const { appId } = await params;
+  if (!evaluateLocalAdmission(appId, session.identityId).allowed) {
+    return NextResponse.json({ error: 'app_access_denied' }, { status: 403 });
+  }
   const app = await getApp(appId);
 
   if (!app) {

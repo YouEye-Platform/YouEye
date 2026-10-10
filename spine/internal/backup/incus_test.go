@@ -42,6 +42,26 @@ func TestIncusInstanceImportArgsRejectsUnsafeNetwork(t *testing.T) {
 	}
 }
 
+func TestIncusInstanceImportArgsKeepsRetainedRootOffline(t *testing.T) {
+	request := IncusInstanceImportRequest{
+		ArchivePath: "/var/lib/youeye/backups/.staging/restore/retained.tar.gz",
+		Name:        "ye-retained-fixture", Pool: "default", Offline: true,
+	}
+	got, err := incusInstanceImportArgs(request)
+	if err != nil || !reflect.DeepEqual(got, []string{"import", request.ArchivePath, request.Name, "--storage", "default"}) {
+		t.Fatalf("offline import attached a network: %#v, %v", got, err)
+	}
+	request.Network = "yeapp1"
+	if _, err := incusInstanceImportArgs(request); err == nil {
+		t.Fatal("offline import accepted a network")
+	}
+	request.Network = ""
+	request.Name = "app-active"
+	if _, err := incusInstanceImportArgs(request); err == nil {
+		t.Fatal("offline import accepted an active runtime target")
+	}
+}
+
 func TestValidateIncusPlan(t *testing.T) {
 	valid := []IncusRuntimeRef{{Name: "app-immich-server", Type: "oci"}, {Name: "app-notes", Type: "lxd"}}
 	volumes := []IncusVolumeRef{{Pool: "default", Name: "ye-immich-server-upload"}, {Pool: "media", Name: "ye-shared-media"}}

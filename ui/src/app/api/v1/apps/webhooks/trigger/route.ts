@@ -7,6 +7,8 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getEventSubscribers, logInterAppRequest } from "@/lib/db/queries/inter-app";
+import { evaluateUiUserAdmission } from '@/lib/admission/store';
+import { checkPermission } from '@/lib/db/queries/permissions';
 
 export async function POST(request: Request) {
   const session = await getSession();
@@ -23,8 +25,15 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  if (!(await evaluateUiUserAdmission(app_id, session.userId)).allowed) {
+    return NextResponse.json({ error: 'app_access_denied' }, { status: 403 });
+  }
 
-  const subscribers = await getEventSubscribers(event);
+  const candidates = await getEventSubscribers(event);
+  const permitted = await Promise.all(candidates.map(async sub =>
+    (await evaluateUiUserAdmission(sub.subscriberAppId, session.userId)).allowed
+      && await checkPermission(session.userId, app_id, `connection:${sub.subscriberAppId}`)));
+  const subscribers = candidates.filter((_, i) => permitted[i]);
 
   if (subscribers.length === 0) {
     return NextResponse.json({ delivered: 0, results: [] });

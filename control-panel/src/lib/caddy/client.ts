@@ -406,9 +406,14 @@ export function buildForwardAuthHandler(
     rewrite: { method: 'GET', uri },
     headers: {
       request: {
+        // This is an HTTP authorization subrequest, not a connection upgrade.
+        // Change only its proxy copy; the backend receives the original upgrade.
+        delete: ['Connection', 'Upgrade'],
         set: {
           'X-Forwarded-Method': ['{http.request.method}'],
           'X-Forwarded-Uri': ['{http.request.uri}'],
+          'X-Forwarded-Host': ['{http.request.host}'],
+          'X-Forwarded-Proto': ['{http.request.scheme}'],
         },
       },
     },
@@ -431,6 +436,10 @@ export async function formDataToRoute(data: RouteFormData): Promise<{ route: Cad
 
   // Forward-auth handler (prepended before all other handlers)
   if (data.forwardAuth) {
+    handlers.push({ handler: 'headers', request: { delete: [
+      'X-YouEye-App', 'X-YouEye-User', 'X-YouEye-Uid', 'X-YouEye-Username',
+      'X-YouEye-Groups', 'X-YouEye-Email', 'X-YouEye-Name',
+    ] } } as any);
     handlers.push(buildForwardAuthHandler(
       data.forwardAuth.upstreamDial,
       data.forwardAuth.uri,
@@ -1537,6 +1546,7 @@ function configureControlSettingsRoutes(config: CaddyConfig, domain: string, ups
         '/_next/*',
         '/api/admin/*',
         '/api/ai/*',
+        '/api/ai-proxy-test',
         '/api/ai-system',
         '/api/apps/*',
         '/api/auth/session',
@@ -1569,7 +1579,14 @@ function configureControlSettingsRoutes(config: CaddyConfig, domain: string, ups
     }],
   };
 
-  config.apps.http.servers[serverName].routes = replaceManagedRoutes(routes, [settingsRoute, marketRoute, supportRoute]);
+  // CSS font requests refer to their stylesheet, not to /settings. These
+  // public assets have their own bounded server-side allowlist.
+  const pointerAssetsRoute: CaddyRoute = {
+    '@id': 'control-pointer-assets-route',
+    match: [{ host: [domain], path: ['/api/pointer-ui/*'] }],
+    handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: upstreamDial }] }],
+  };
+  config.apps.http.servers[serverName].routes = replaceManagedRoutes(routes, [settingsRoute, marketRoute, supportRoute, pointerAssetsRoute]);
 }
 
 function replaceManagedRoutes(routes: CaddyRoute[], replacements: CaddyRoute[]): CaddyRoute[] {
@@ -2069,8 +2086,13 @@ export async function addAppRoutes(
 
     const handlers: any[] = [];
 
-    // Add forward-auth for private entrances
-    if (entrance.authLevel === 'private' && forwardAuthConfig) {
+    // Public end-user exposure is an administrator-owned policy. A manifest's
+    // entrance label cannot bypass the authoritative gate.
+    if (forwardAuthConfig) {
+      handlers.push({ handler: 'headers', request: { delete: [
+        'X-YouEye-App', 'X-YouEye-User', 'X-YouEye-Uid', 'X-YouEye-Username',
+        'X-YouEye-Groups', 'X-YouEye-Email', 'X-YouEye-Name',
+      ] } });
       handlers.push(buildForwardAuthHandler(
         forwardAuthConfig.upstreamDial,
         forwardAuthConfig.uri,

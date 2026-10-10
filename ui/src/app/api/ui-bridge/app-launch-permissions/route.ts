@@ -10,7 +10,8 @@ import { getBridgeToken } from "@/lib/admin/bridge-client";
 import { getApp } from "@/lib/db/queries/app-management";
 import { getUserAppsWithConfig } from "@/lib/db/queries/apps";
 import { denyPermission, getPermissionDecision, grantPermission } from "@/lib/db/queries/permissions";
-import { findUserByIdentityId, findUserByEmail, findUserById, findUserByUsername } from "@/lib/db/queries/users";
+import { findUserByIdentityId, ensureBridgeUser } from "@/lib/db/queries/users";
+import { evaluateLocalAdmission } from '@/lib/admission/store';
 import { describePermission } from "@/lib/permissions/descriptors";
 import { normalizeAppSurfaces } from "@/lib/surfaces/normalize";
 import { collectInternetPermissions } from "@/lib/internet/scopes";
@@ -32,6 +33,9 @@ function stringArray(value: unknown): string[] {
 
 function collectManifestPermissions(manifest: Record<string, unknown> | null): string[] {
   const permissions = new Set<string>();
+  // Native header integration exposes the acting user's profile. It requires
+  // the existing independent runtime consent, including on older installations.
+  if (manifest?.integration === 'native') permissions.add('profile:read');
   for (const permission of stringArray(manifest?.permissions)) {
     permissions.add(permission);
   }
@@ -97,16 +101,7 @@ async function resolveUiUser(input: {
   if (input.identityUserId) {
     const user = await findUserByIdentityId(input.identityUserId);
     if (user) return user;
-    const legacyUser = await findUserById(input.identityUserId);
-    if (legacyUser) return legacyUser;
-  }
-  if (input.username) {
-    const user = await findUserByUsername(input.username);
-    if (user) return user;
-  }
-  if (input.email) {
-    const user = await findUserByEmail(input.email);
-    if (user) return user;
+    if (input.username) return ensureBridgeUser(input.username, input.identityUserId);
   }
   return null;
 }
@@ -195,6 +190,9 @@ export async function POST(request: NextRequest) {
   }
 
   const user = await resolveUiUser({ identityUserId, username, email });
+  if (!identityUserId || !evaluateLocalAdmission(appId, identityUserId).allowed) {
+    return NextResponse.json({ error: 'app_access_denied' }, { status: 403 });
+  }
   if (!user) {
     return NextResponse.json({ error: "User not found in UI database" }, { status: 404 });
   }

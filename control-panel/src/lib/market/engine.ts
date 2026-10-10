@@ -17,6 +17,7 @@
  * 12. Register with UI dashboard
  */
 
+import { withAppInventory, withAppLifecycle } from './update-admission';
 import type { OCIManifest } from '../infrastructure/types';
 import type {
   AppManifest,
@@ -45,7 +46,7 @@ import {
 import { getInstalledApp, upsertInstalledApp, removeInstalledApp } from './installed-apps';
 import { deployOCIContainer, startOCIContainer, getContainerIP, containerExists } from '../infrastructure/oci-deployer';
 import { adoptRestoredLXDContainer, deployMarketLXDContainer } from '../infrastructure/lxd-deployer';
-import { execCommand, incusRequest, incusUploadFile } from '../incus/server';
+import { execCommand, incusRequest, incusUploadFile, incusDownloadFile } from '../incus/server';
 import { applyResourcePolicy } from '../infrastructure/resource-policy';
 import { execShell } from '../incus/server';
 import {
@@ -79,6 +80,7 @@ import {
   getPlatformContext,
 } from './platform-env';
 import { getContainerName } from './engine-helpers';
+import { resolveSharedDatabasePasswordFile } from '@/lib/backup/manifest-values';
 import { CONTAINER_DOMAIN } from './constants';
 import {
   createAppNetwork,
@@ -102,6 +104,7 @@ import { activatePendingBridges, detectBridgeDependencies, createBridge, resolve
 import { generateSuggestionsForApp } from '../bridges/suggestions';
 import { getMarketSource } from './source';
 import { getUserById } from '@/lib/identity/store';
+import { assertRestoredManagedAI, type RestoredManagedAI } from './restored-managed-ai';
 import {
   stageMarketNativeArtifacts,
   type StagedMarketNativeArtifacts,
@@ -116,6 +119,11 @@ import {
 } from '@/lib/pointer/managed-apps';
 import { deleteAppStorage, ensureAppStorage, volumesForContainer } from './storage';
 import { spineClient } from '../spine/client';
+import { appServiceCredentials } from '../apps/service-credential-store';
+import { prepareCredentialForAppInstall } from '../apps/service-credential-lifecycle';
+import { activateProvisionedCredential, revokeAppCredential, AppServiceIntegrationPending } from '../apps/service-credential-bridge';
+import { probeNativeAppCredential, quiesceAppCredentialRuntime } from '../apps/service-credential-probe';
+import { assertPrivateCredentialMapping, assertPrivateCredentialConfig } from '../apps/service-credential-runtime';
 
 // ─── Install Rollback ─────────────────────────────────────
 
@@ -137,6 +145,7 @@ interface RollbackContext {
   aiExternalInstallationId?: string;
   aiProvisioned?: boolean;
   rollbackResult?: RollbackResult;
+  credentialProvisioned?: boolean;
 }
 
 interface RollbackResult {
@@ -162,6 +171,12 @@ async function rollbackInstall(
     errors.push(message);
     console.error(`[engine] Rollback failed for ${message}`);
   };
+
+  // Deny the installation generation before removing its runtime/registration.
+  // A failed bridge delivery retains a tombstone/outbox for later repair.
+  if (ctx.credentialProvisioned) {
+    try { await revokeAppCredential(ctx.appId); } catch (error) { recordFailure('service credential', error); }
+  }
 
   // 1. Remove containers
   for (const name of ctx.containerNames) {
@@ -551,7 +566,8 @@ async function provisionManagedAI(
   manifest: AppManifest,
   config: InstallConfig,
   secretsPath: string,
-  rollbackCtx: RollbackContext
+  rollbackCtx: RollbackContext,
+  restored?: RestoredManagedAI,
 ): Promise<NonNullable<InstallMetadata['aiConnection']> | null> {
   if (!usesManagedAI(manifest, config)) return null;
   const actor = await managedAIActor(config);
@@ -559,6 +575,17 @@ async function provisionManagedAI(
   const groupId = config.aiSettings?.modelGroupId;
   if (!externalInstallationId || !groupId) {
     throw new Error('AI Settings preflight did not produce an exact installation and group');
+  }
+  if (restored) {
+    // Paired restore already recovered the installation and acknowledged key.
+    // Do not ensure/rotate/archive that binding or mark it provisioned for rollback.
+    if (externalInstallationId !== restored.externalInstallationId || groupId !== restored.modelGroupId
+      || actor.id !== restored.ownerUserId) throw new Error('Restore AI Settings identity changed');
+    const current = await readPointerManagedApp(externalInstallationId, actor);
+    const credential = await readSecret(secretsPath, 'pointer_api_key');
+    assertRestoredManagedAI(manifest.metadata.id, restored, current, credential);
+    config.aiSettings = { ...config.aiSettings!, runtimeCredential: credential! };
+    return { ...managedAIConnection(config, current), state: restored.state };
   }
   const ensured = await ensurePointerManagedApp({
     actor,
@@ -678,6 +705,8 @@ function describeContainers(manifest: AppManifest): ContainerMeta[] {
     name: containerSpec.name,
     containerName: getContainerName(manifest.metadata.id, containerSpec.name, manifest.containers.length),
     type: containerSpec.type,
+    role: manifest.database?.mode === 'own' && manifest.database.container === containerSpec.name
+      ? 'database' as const : undefined,
     primary: containerSpec.primary || manifest.containers.length === 1,
     network: containerSpec.network || 'isolated',
     port: containerSpec.port,
@@ -734,6 +763,7 @@ function buildInstallRecoveryMetadata(
     manifestBranch: config.manifestBranch,
     manifestDigest: config.manifestDigest,
     integration: manifest.integration,
+    perUserData: manifest.data_ownership?.per_user,
     subdomain: config.subdomain,
     domain: config.domain,
     enableSSO: ssoEnabled,
@@ -762,6 +792,7 @@ function buildInstallRecoveryMetadata(
     databaseMode: manifest.database?.mode ?? 'none',
     databaseName: manifest.database?.mode === 'shared' ? manifest.database.name : undefined,
     databaseUser: manifest.database?.mode === 'shared' ? manifest.database.user : undefined,
+    databasePasswordFile: manifest.database?.mode === 'shared' ? resolveSharedDatabasePasswordFile(manifest) : undefined,
     hasSSO: ssoEnabled,
     provides: manifest.provides?.length ? manifest.provides : undefined,
     wants: manifest.wants?.length ? manifest.wants : undefined,
@@ -1018,7 +1049,6 @@ async function registerAppWithUI(
   containerName: string,
   port: number,
   icon: string | null,
-  appToken?: string,
   ssoEntryUrl?: string,
   linkHandlers?: Array<{ type: string; description: string; endpoint?: string; triggers: string[] }>,
   manifest?: Record<string, unknown>,
@@ -1030,16 +1060,9 @@ async function registerAppWithUI(
   if (!bridgeToken) throw new Error('UI bridge token is unavailable');
   const containerUrl = port ? `http://${containerName}.${CONTAINER_DOMAIN}:${port}` : `http://${containerName}.${CONTAINER_DOMAIN}`;
 
-  // Hash the app token so YE-UI can validate future app requests by hash lookup
-  let tokenHash: string | undefined;
-  if (appToken) {
-    const crypto = await import('crypto');
-    tokenHash = crypto.createHash('sha256').update(appToken).digest('hex');
-  }
-
   const payload: Record<string, unknown> = {
     id: appId, name, container_url: containerUrl, subdomain, icon,
-    token_hash: tokenHash, sso_entry_url: ssoEntryUrl,
+    sso_entry_url: ssoEntryUrl,
   };
   if (linkHandlers && linkHandlers.length > 0) {
     payload.link_handlers = linkHandlers;
@@ -1122,6 +1145,9 @@ async function writeEnvToContainer(
     Buffer.from(content, 'utf8'),
     { timeout: 10_000, mode: '0600' },
   );
+  if (!Buffer.from(content, 'utf8').equals(await incusDownloadFile(containerName, `/etc/${containerName}.env`))) {
+    throw new Error('Protected runtime environment did not read back');
+  }
 }
 
 // ─── Shared Postgres Setup ────────────────────────────────
@@ -1299,7 +1325,15 @@ export async function installApp(
     preserveData: !!restoreOptions,
   };
 
-  return withAppNetworkOperationLock(appId, 'install', async () => {
+  return withAppInventory(() => withAppLifecycle(appId, () => withAppNetworkOperationLock(appId, 'install', async () => {
+    if (!restoreOptions) {
+      const { prepareRetainedAdoption } = await import('@/lib/admission/retained-data');
+      restoreOptions = await prepareRetainedAdoption(manifest, config);
+      rollbackCtx.preserveData = Boolean(restoreOptions);
+    } else if (config.adoptRetainedData) {
+      throw new Error('Retained adoption cannot be combined with backup restore');
+    }
+    assertPrivateCredentialConfig(manifest.configFiles);
     await preflightManagedAISelection(manifest, config);
     rollbackCtx.aiExternalInstallationId = config.aiSettings?.externalInstallationId;
     const selectedIntegrations = getSelectedIntegrations(manifest, config);
@@ -1322,10 +1356,19 @@ export async function installApp(
     await preflightInstallResources(manifest, config, ssoEnabled, restoreOptions);
     preflightManifestStorage(manifest);
     await preflightAppNetwork(appId, { requiredAddresses });
+    const { ensureAppAdmission, getAdmissionResourceOwners } = await import('@/lib/admission/store');
+    const admission = await ensureAppAdmission({ appId, actorId: config.admissionActorId,
+      restoredIdentity: restoreOptions?.restoredIdentity,
+      adoptRetainedData: Boolean(restoreOptions?.retainedRuntimes), routes: [
+      { host: `${config.subdomain}.${config.domain}` },
+    ] });
+    config.admissionInstallationId = admission.installationId;
+    config.admissionDataOwnerId = admission.ownerId;
+    config.admissionResourceOwners = await getAdmissionResourceOwners(appId);
     const recoveredNativeContainers = manifest.containers
       .filter((container) => restoreOptions?.runtimeInstances?.[
         getContainerName(appId, container.name, manifest.containers.length)
-      ])
+      ] || restoreOptions?.retainedRuntimes?.[getContainerName(appId, container.name, manifest.containers.length)])
       .map((container) => container.name);
     const stagedNativeArtifacts = await stageMarketNativeArtifacts(manifest, config, {
       skipContainerNames: recoveredNativeContainers,
@@ -1383,7 +1426,12 @@ export async function installApp(
           stagedNativeArtifacts,
         );
       } catch (error) {
+        if (error instanceof AppServiceIntegrationPending) throw error;
         const rollback = await rollbackInstall(rollbackCtx, onEvent, totalSteps);
+        if (restoreOptions?.retainedRuntimes) {
+          const { retainAdmissionOnUninstall } = await import('@/lib/admission/lifecycle');
+          await retainAdmissionOnUninstall(appId, true);
+        }
         const rollbackSummary = rollback.clean
           ? 'rollback verified clean'
           : rollback.cleanupPending
@@ -1397,7 +1445,7 @@ export async function installApp(
     } finally {
       await stagedNativeArtifacts.cleanup();
     }
-  });
+  })));
 }
 
 async function installAppLocked(
@@ -1468,7 +1516,8 @@ async function installAppLocked(
       manifest,
       config,
       secretsPath,
-      rollbackCtx
+      rollbackCtx,
+      restoreOptions?.restoredManagedAI,
     ) ?? undefined;
     const recovery = await readInstallMetadata(appId);
     if (!recovery || recovery.lifecycleState !== 'installing' || !aiConnection) {
@@ -1589,6 +1638,8 @@ async function installAppLocked(
   const wantsInternet = manifest.containers.some(c => c.network === 'internet')
     || (manifest.internet?.hosts?.length ?? 0) > 0;
 
+  await prepareCredentialForAppInstall(appId, appServiceCredentials);
+  rollbackCtx.credentialProvisioned = true;
   const appToken = await generateAppToken(appId);
   const ctx = await buildCanonicalContext(manifest, config, ssoResult, dbPassword, appToken, !!appBridgeName);
   ctx.secrets = secrets;
@@ -1673,7 +1724,14 @@ async function installAppLocked(
             })),
           };
           const recoveredRuntime = restoreOptions?.runtimeInstances?.[containerName];
-          if (recoveredRuntime) {
+          const retainedRuntime = restoreOptions?.retainedRuntimes?.[containerName];
+          if (retainedRuntime) {
+            const { copyRetainedRuntime } = await import('@/lib/admission/retained-runtime');
+            await copyRetainedRuntime({ appId, installationId: config.admissionInstallationId!,
+              ownerId: retainedRuntime.ownerId, sourceName: containerName,
+              retainedName: retainedRuntime.name, pool: retainedRuntime.pool });
+            await adoptRestoredLXDContainer(lxdSpec, appNIC);
+          } else if (recoveredRuntime) {
             const recoveryNetwork = appNIC?.eth0?.network;
             if (!recoveryNetwork) throw new Error('Recovered native runtime has no target app network');
             await spineClient.importIncusInstance({
@@ -1704,13 +1762,14 @@ async function installAppLocked(
           // Write env file to LXD container
           const staticEnv = resolveEnvironment(containerSpec.environment || {}, ctx);
           const fullEnv = { ...envFromMapping, ...staticEnv };
+          assertPrivateCredentialMapping(fullEnv, appToken);
           await writeEnvToContainer(containerName, fullEnv);
 
           // Restart service to pick up env
           await execShell(containerName, `systemctl restart ${containerName}`, { timeout: 15_000 });
 
           // Post-deploy commands
-          if (containerSpec.postDeploy && containerSpec.postDeploy.length > 0) {
+          if (!retainedRuntime && containerSpec.postDeploy && containerSpec.postDeploy.length > 0) {
             for (const cmd of containerSpec.postDeploy) {
               await execShell(containerName, cmd.exec, { timeout: cmd.timeout });
             }
@@ -1719,6 +1778,7 @@ async function installAppLocked(
           // ── OCI container deployment ─────────────────
           const staticEnv = resolveEnvironment(containerSpec.environment || {}, ctx);
           const fullEnv = { ...envFromMapping, ...staticEnv };
+          assertPrivateCredentialMapping(fullEnv, appToken);
           // Trust the YouEye root CA for SERVER-SIDE HTTPS to YouEye-managed services — chiefly the
           // identity provider's OIDC discovery (https://id.<domain>/.../.well-known/openid-configuration),
           // which env-OIDC apps fetch from inside the container. injectCaddyRootCA() (step 7) adds the cert
@@ -1743,7 +1803,11 @@ async function installAppLocked(
             restoreOptions?.runtimeImages?.[containerName],
             identityTrustBundle,
           );
-          await deployOCIContainer(ociManifest, '', appNIC, { start: !appBridgeName });
+          const retainedRuntime = restoreOptions?.retainedRuntimes?.[containerName];
+          await deployOCIContainer(ociManifest, '', appNIC, { start: !appBridgeName,
+            ...(retainedRuntime ? { retainedRuntime: { appId,
+              installationId: config.admissionInstallationId!, ownerId: retainedRuntime.ownerId,
+              sourceName: containerName, retainedName: retainedRuntime.name, pool: retainedRuntime.pool } } : {}) });
         }
 
         const containerConfigFiles = manifest.configFiles.filter((item) => item.container === containerSpec.name);
@@ -1975,7 +2039,7 @@ async function installAppLocked(
   try {
     // Build forward-auth config for Caddy if enabled
     let forwardAuthConfig: { upstreamDial: string; uri: string; copyHeaders: string[] } | undefined;
-    if (forwardAuthEnabled) {
+    {
       forwardAuthConfig = {
         upstreamDial: await resolveCaddyUpstreamDial(identityConfig.containerName, identityConfig.port),
         uri: '/forward-auth/caddy',
@@ -2051,6 +2115,7 @@ async function installAppLocked(
     manifestDigest: config.manifestDigest,
     nativeArtifacts: describeNativeArtifacts(stagedNativeArtifacts),
     integration: manifest.integration,
+    perUserData: manifest.data_ownership?.per_user,
     subdomain: config.subdomain,
     domain: config.domain,
     enableSSO: ssoEnabled,
@@ -2078,6 +2143,7 @@ async function installAppLocked(
     databaseMode: manifest.database?.mode ?? 'none',
     databaseName: manifest.database?.mode === 'shared' ? manifest.database.name : undefined,
     databaseUser: manifest.database?.mode === 'shared' ? manifest.database.user : undefined,
+    databasePasswordFile: manifest.database?.mode === 'shared' ? resolveSharedDatabasePasswordFile(manifest) : undefined,
     hasSSO: ssoEnabled,
     provides: manifest.provides?.length ? manifest.provides : undefined,
     wants: manifest.wants?.length ? manifest.wants : undefined,
@@ -2237,8 +2303,11 @@ async function installAppLocked(
     if (!finalMetadata) throw new Error('Final install metadata was not prepared');
     if (!dashboardRegistration) throw new Error('Final dashboard registration was not prepared');
     finalMetadata.lifecycleState = 'active';
-    finalMetadata.enabled = true;
-    finalMetadata.desiredState = 'running';
+    finalMetadata.enabled = false;
+    finalMetadata.serviceCredentialState = 'pending';
+    finalMetadata.desiredState = restoreOptions?.desiredState ?? 'running';
+    const { bindInstalledAdmission } = await import('@/lib/admission/lifecycle');
+    await bindInstalledAdmission(finalMetadata, config.admissionActorId);
     await saveInstallMetadata(finalMetadata);
     await upsertInstalledApp({
       appId,
@@ -2261,16 +2330,48 @@ async function installAppLocked(
       primaryContainerName,
       primaryPort,
       dashboardRegistration.displayIcon,
-      appToken,
       dashboardRegistration.ssoEntryUrl,
       dashboardRegistration.linkHandlers ?? [],
       manifest as unknown as Record<string, unknown>,
     );
     const { isAppRegisteredWithUI } = await import('./reconciler');
     if (!await isAppRegisteredWithUI(appId)) throw new Error('Dashboard registration did not read back after commit');
+    if (restoreOptions?.deferServiceCredentialReadiness) {
+      finalMetadata.serviceCredentialDesiredState = finalMetadata.desiredState;
+      await saveInstallMetadata(finalMetadata);
+      emit(onEvent, step, totalSteps, 'success', 'App runtime restored; service credentials await reconciliation');
+      return;
+    }
+    await activateProvisionedCredential(appId, () => probeNativeAppCredential(appId, manifest));
+    finalMetadata.serviceCredentialState = 'ready';
+    finalMetadata.enabled = true;
+    await saveInstallMetadata(finalMetadata);
+    await bindInstalledAdmission(finalMetadata, config.admissionActorId);
     await pushConnectionsToUI(appId);
-    emit(onEvent, step, totalSteps, 'success', `${manifest.metadata.name} installed successfully!`);
+    const { reconcileAdmissionProjections, admissionReconciliationState } = await import('@/lib/admission/projection');
+    await reconcileAdmissionProjections();
+    const pendingAdmission = await admissionReconciliationState(appId) !== 'applied';
+    if (restoreOptions?.retainedRuntimes) {
+      const { finishRetainedAdoption } = await import('@/lib/admission/retained-data');
+      // Consumption must be durable before success. Only cleanup of already
+      // consumed recovery roots may remain pending.
+      if (!await finishRetainedAdoption(appId)) {
+        emit(onEvent, step, totalSteps, 'warning',
+          'App installed; cleanup of retained recovery copies is pending.');
+      }
+    }
+    emit(onEvent, step, totalSteps, 'success', pendingAdmission
+      ? `${manifest.metadata.name} installed; household admission synchronization is pending.`
+      : `${manifest.metadata.name} installed successfully!`);
   } catch (error) {
+    if (finalMetadata?.serviceCredentialState === 'pending') {
+      finalMetadata.desiredState = 'stopped';
+      finalMetadata.serviceCredentialDesiredState = 'running';
+      await saveInstallMetadata(finalMetadata);
+      await quiesceAppCredentialRuntime(rollbackCtx.containerNames);
+      emit(onEvent, step, totalSteps, 'error', 'App service integration is pending; reconcile credentials');
+      throw new AppServiceIntegrationPending();
+    }
     const reason = error instanceof Error ? error.message : 'unknown final installation failure';
     console.error(`[market] Final installation commit failed for ${appId}: ${reason}`);
     await rollbackInstall(rollbackCtx, onEvent, totalSteps);

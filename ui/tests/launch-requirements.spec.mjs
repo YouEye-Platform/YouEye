@@ -36,6 +36,6 @@ test('launch requirements derive manifest permissions and require user approval'
   assert.match(route, /normalizePermissionAppId/);
   assert.match(route, /required_permissions: required\.map/);
 
-  assert.match(settingsRoute, /permissionAppMatches\(callingApp, appId\)/);
-  assert.match(settingsRoute, /normalizePermissionAppId\(appId\)/);
+  assert.match(settingsRoute, /serviceUser\.appId === appId/);
+  assert.match(settingsRoute, /const settingsAppId = appId/);
 });

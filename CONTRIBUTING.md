@@ -30,6 +30,21 @@ Commit durable product behavior and user/operator guidance here. Keep work-sessi
 
 Do not open a public issue containing a vulnerability, credential, private key, token, or personal information. Use the project's private security contact and follow the disclosure instructions published with the public beta.
 
+## Application lifecycle changes
+
+Changes to application lifecycle operations must follow
+[the recoverable app-update contract](docs/app-update-transactions.md).
+Use `withAppLifecycle` for app mutations and preserve durable reservations
+through unfinished recovery; watchdogs and reconciliation must honor them.
+Recovery takes the exact recorded operation ID and a journal executor lock.
+Never expire an operation because its process died, replay non-idempotent
+migrations, or infer data recovery from a running container. Validate the
+authenticated Market status/recovery workflow on the assigned development
+target. Unit tests and quick overlays do not prove full-release acceptance.
+Credential and admission writers must use the
+[security and policy integration contract](docs/app-update-transactions.md#integration-contract-for-security-and-policy-writers),
+including admitted generation checks and the limits of security reconciliation.
+
 ## Development version baseline
 
 Before the next release, align each component's development version with its

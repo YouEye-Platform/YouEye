@@ -21,6 +21,8 @@ import { finishTracking, sanitiseInstallEvent, sensitivitySafeInstallError, star
 import { sendNotificationToUI } from '@/lib/health/notification-bridge';
 import { settingsService } from '@/lib/settings';
 import { requireAdmin } from '@/lib/auth/rbac';
+import { verifyCSRFToken } from '@/lib/auth/session';
+import { admissionAdministrator } from '@/lib/admission/management';
 import type { InstallConfig, InstallEvent } from '@/lib/market/types';
 import { saveDirectMarketApp } from '@/lib/market/direct-apps';
 
@@ -73,14 +75,24 @@ async function canonicalPlatformDomain(): Promise<string> {
 export async function POST(request: NextRequest) {
   const auth = await requireAdmin();
   if (auth.error) return auth.error;
+  if (!await verifyCSRFToken(request.headers.get('X-CSRF-Token') || '')) {
+    return Response.json({ error: 'Invalid CSRF token' }, { status: 403 });
+  }
 
-  let body: { manifestUrl?: string; url?: string; subdomain?: string; domain?: string; acceptUnverifiedPublisher?: boolean };
+  let body: { manifestUrl?: string; url?: string; subdomain?: string; domain?: string; acceptUnverifiedPublisher?: boolean; adoptRetainedData?: boolean };
   try {
     body = await request.json();
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
       status: 400, headers: { 'Content-Type': 'application/json' },
     });
+  }
+  if (body.adoptRetainedData !== undefined && typeof body.adoptRetainedData !== 'boolean') {
+    return Response.json({ error: 'Invalid adoption request' }, { status: 400 });
+  }
+  const actorId = await admissionAdministrator(auth.session);
+  if (!actorId) {
+    return Response.json({ error: 'Active administrator required' }, { status: 403 });
   }
 
   const manifestUrl = (body.manifestUrl ?? body.url)?.trim();
@@ -201,6 +213,8 @@ export async function POST(request: NextRequest) {
   const directEntry = await saveDirectMarketApp({ manifestUrl, manifestText: yamlText, manifest });
   const config: InstallConfig = {
     appId: manifest.metadata.id,
+    admissionActorId: actorId || undefined,
+    adoptRetainedData: body.adoptRetainedData,
     catalogKey: `${directEntry.sourceId}:app:${manifest.metadata.id}`,
     sourceId: directEntry.sourceId,
     sourceName: 'Added',

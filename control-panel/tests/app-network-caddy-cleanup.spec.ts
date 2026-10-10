@@ -116,7 +116,7 @@ test('network reconciliation does not turn a supported concurrent app mutation i
   assert.notEqual(end, -1);
   const reconcile = source.slice(start, end);
 
-  const conflictGuard = reconcile.indexOf('if (error instanceof AppNetworkOperationConflictError) continue;');
+  const conflictGuard = reconcile.indexOf('if (error instanceof AppNetworkOperationConflictError) return;');
   const staleLeaseGuard = reconcile.indexOf('if (!currentLease || leaseAdvanced)');
   const criticalObservation = reconcile.lastIndexOf('await observeIssue({');
   assert.notEqual(conflictGuard, -1);
@@ -125,6 +125,11 @@ test('network reconciliation does not turn a supported concurrent app mutation i
   assert.ok(staleLeaseGuard < criticalObservation);
   assert.match(reconcile, /currentLease\.operationId !== originalLease\.operationId/);
   assert.match(reconcile, /await resolveIssue\(`\$\{NETWORK_ISSUE_PREFIX\}\.\$\{originalLease\.appId\}`\)/);
+  const lifecycle = reconcile.indexOf('await withAppLifecycle(originalLease.appId');
+  const networkLock = reconcile.indexOf("withAppNetworkOperationLock(originalLease.appId, 'reconcile'");
+  const attachmentRepair = reconcile.indexOf('await addCaddyToAppNetwork');
+  assert.ok(lifecycle >= 0 && lifecycle < networkLock && networkLock < attachmentRepair);
+  assert.match(reconcile, /error instanceof AppLifecycleAdmissionError/);
 });
 
 test('install preflight refusal cannot enter destructive rollback ownership', async () => {

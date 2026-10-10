@@ -8,7 +8,9 @@
 
 import { eq } from "drizzle-orm";
 import { db, ensureSchema } from "@/db";
-import { users } from "@/db/schema";
+import { users, identityDeletions } from "@/db/schema";
+import { isUuid } from '../../../../../shared/admission';
+import { decideProfileBinding } from '../../../../../shared/profile-binding';
 
 /** Find a user by their identity provider subject ID */
 export async function findUserByIdentityId(identityId: string) {
@@ -49,19 +51,22 @@ export async function findUserByUsername(username: string) {
  * upsert later attaches the identity subject and fills the profile fields while
  * preserving settings and assets already written through the bridge.
  */
-export async function ensureBridgeUser(username: string) {
-  const existing = await findUserByUsername(username);
+export async function ensureBridgeUser(username: string, identityId: string) {
+  if (!isUuid(identityId)) throw new Error('Verified identity UUID is required');
+  await ensureSchema();
+  if ((await db.select().from(identityDeletions)).some(t => t.identityId === identityId)) throw new Error('Deleted identity');
+  const existing = await findUserByIdentityId(identityId);
   if (existing) return existing;
 
   await ensureSchema();
   const inserted = await db
     .insert(users)
-    .values({ username, name: username })
-    .onConflictDoNothing({ target: users.username })
+    .values({ username, name: username, identityId })
+    .onConflictDoNothing({ target: users.identityId })
     .returning();
   if (inserted[0]) return inserted[0];
 
-  const raced = await findUserByUsername(username);
+  const raced = await findUserByIdentityId(identityId);
   if (!raced) throw new Error("Unable to create UI profile mirror");
   return raced;
 }
@@ -83,7 +88,8 @@ async function updateUserFromSSO(
     lastName?: string | null;
   }
 ) {
-  const preservedAdmin = data.isAdmin || existing.isAdmin;
+  if (existing.identityId !== data.identityId) throw new Error('Identity UUID mapping is immutable');
+  const preservedAdmin = data.isAdmin;
   const updateFields: Record<string, unknown> = {
     identityId: data.identityId,
     username: data.username,
@@ -110,7 +116,7 @@ async function updateUserFromSSO(
 /**
  * Upsert a user on SSO login.
  * Creates the user if they don't exist, updates their profile if they do.
- * First user to sign in automatically becomes admin.
+ * UUID subjects are immutable. Recreated display labels never adopt old data.
  */
 export async function upsertUser(data: {
   identityId: string;
@@ -122,35 +128,22 @@ export async function upsertUser(data: {
   firstName?: string | null;
   lastName?: string | null;
 }) {
+  await ensureSchema();
+  const deletedIds = (await db.select().from(identityDeletions)).map(t => t.identityId);
   const existing = await findUserByIdentityId(data.identityId);
 
   if (existing) {
+    decideProfileBinding(data.identityId, existing, [], deletedIds);
     return updateUserFromSSO(existing, data);
   }
 
-  const existingByUsername = data.username
-    ? await findUserByUsername(data.username)
-    : null;
-  const existingByEmail = data.email ? await findUserByEmail(data.email) : null;
-
-  if (
-    existingByUsername &&
-    existingByEmail &&
-    existingByUsername.id !== existingByEmail.id
-  ) {
-    throw new Error(
-      `Cannot migrate identity: username "${data.username}" and email "${data.email}" belong to different users`
-    );
+  const conflicts = [data.username ? await findUserByUsername(data.username) : null,
+    data.email ? await findUserByEmail(data.email) : null].filter((user): user is ExistingUser => Boolean(user));
+  const binding = decideProfileBinding(data.identityId, null, conflicts, deletedIds);
+  for (const profileId of binding.releaseLabelIds) {
+    // Keep the historical UUID and all private content; release labels only.
+    await db.update(users).set({ username: null, email: null, isAdmin: false }).where(eq(users.id, profileId));
   }
-
-  const migrated = existingByUsername ?? existingByEmail;
-  if (migrated) {
-    return updateUserFromSSO(migrated, data);
-  }
-
-  // Check if this is the first user (auto-admin)
-  const userCount = await db.select().from(users).limit(1);
-  const isFirstUser = userCount.length === 0;
 
   const [newUser] = await db
     .insert(users)
@@ -162,7 +155,7 @@ export async function upsertUser(data: {
       lastName: data.lastName ?? null,
       email: data.email,
       image: data.image,
-      isAdmin: isFirstUser || data.isAdmin,
+      isAdmin: data.isAdmin,
     })
     .returning();
 

@@ -1,5 +1,6 @@
 import { incusRequest } from '../incus/server';
 import type { AppManifest, InstallConfig, StorageVolumeMeta } from './types';
+import { withAppLifecycle } from './update-admission';
 
 const SAFE_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const DEFAULT_POOL = 'default';
@@ -137,13 +138,71 @@ async function findCustomVolume(name: string, pools: StorageLocation[]): Promise
 
 function assertOwnedVolume(volume: IncusCustomVolume, expected: Omit<StorageVolumeMeta, 'pool'>): void {
   const config = volume.config ?? {};
-  if (volume.content_type !== 'filesystem'
+  if (volume.name !== expected.name || volume.type !== 'custom' || volume.content_type !== 'filesystem'
     || config['user.youeye.kind'] !== (expected.sharedGroup ? 'shared' : 'app')
+    || (!expected.attachmentOnly && !expected.sharedGroup
+      && (config['user.youeye.logical_name'] !== expected.logicalName
+        || config['user.youeye.volume_type'] !== expected.type))
     || (expected.sharedGroup
       ? config['user.youeye.storage_group'] !== expected.sharedGroup
       : config['user.youeye.app_id'] !== expected.appId)) {
     throw new Error('Existing storage volume is not owned by this YouEye app');
   }
+  if ((expected.installationId && config['user.youeye.installation_id'] !== expected.installationId)
+    || (expected.dataOwnerId && config['user.youeye.data_owner_id'] !== expected.dataOwnerId)
+    || (expected.shareId && config['user.youeye.share_id'] !== expected.shareId)) {
+    throw new Error('Existing storage volume has foreign or unresolved household ownership');
+  }
+}
+
+export async function bindSharedVolumeOwnership(volume: StorageVolumeMeta, shareId: string, ownerId: string) {
+  if (!volume.sharedGroup) throw new Error('Shared ownership requires an explicit storage group');
+  const current = await customVolume(volume.pool, volume.name);
+  if (!current) throw new Error('Shared persistent volume is unavailable');
+  assertOwnedVolume(current, { ...volume, installationId: undefined, shareId: undefined, dataOwnerId: undefined });
+  const config = current.config || {};
+  if ((config['user.youeye.share_id'] && config['user.youeye.share_id'] !== shareId)
+    || (config['user.youeye.data_owner_id'] && config['user.youeye.data_owner_id'] !== ownerId)) {
+    throw new Error('Shared volume has foreign stable ownership');
+  }
+  if (!config['user.youeye.share_id'] || !config['user.youeye.data_owner_id']) {
+    await complete(await incusRequest('PUT',
+      `/1.0/storage-pools/${encode(volume.pool)}/volumes/custom/${encode(volume.name)}`, {
+        description: current.description || '', config: { ...config,
+          'user.youeye.share_id': shareId, 'user.youeye.data_owner_id': ownerId },
+      }));
+  }
+  const updated = await customVolume(volume.pool, volume.name);
+  if (!updated) throw new Error('Shared owned volume did not read back');
+  assertOwnedVolume(updated, { ...volume, shareId, dataOwnerId: ownerId });
+  volume.shareId = shareId;
+  volume.dataOwnerId = ownerId;
+}
+
+/** Additive v1 baseline only after exact old app/logical-volume checks. */
+export async function bindAppVolumeOwnership(volume: StorageVolumeMeta, installationId: string, ownerId: string) {
+  if (volume.sharedGroup) throw new Error('Shared storage needs an explicit stable share declaration');
+  const current = await customVolume(volume.pool, volume.name);
+  if (!current) throw new Error('Persistent volume is unavailable');
+  assertOwnedVolume(current, { ...volume, installationId: undefined, dataOwnerId: undefined });
+  const config = current.config || {};
+  const oldInstallation = config['user.youeye.installation_id'];
+  const oldOwner = config['user.youeye.data_owner_id'];
+  if ((oldInstallation && oldInstallation !== installationId) || (oldOwner && oldOwner !== ownerId)) {
+    throw new Error('Persistent volume belongs to a different installation or data owner');
+  }
+  if (!oldInstallation || !oldOwner) {
+    await complete(await incusRequest('PUT',
+      `/1.0/storage-pools/${encode(volume.pool)}/volumes/custom/${encode(volume.name)}`, {
+        description: current.description || '', config: { ...config,
+          'user.youeye.installation_id': installationId, 'user.youeye.data_owner_id': ownerId },
+      }));
+  }
+  const updated = await customVolume(volume.pool, volume.name);
+  if (!updated) throw new Error('Owned volume did not read back');
+  assertOwnedVolume(updated, { ...volume, installationId, dataOwnerId: ownerId });
+  volume.installationId = installationId;
+  volume.dataOwnerId = ownerId;
 }
 
 function selectedPool(config: InstallConfig, type: StorageVolumeMeta['type']): string {
@@ -151,6 +210,13 @@ function selectedPool(config: InstallConfig, type: StorageVolumeMeta['type']): s
 }
 
 export async function ensureAppStorage(
+  manifest: AppManifest,
+  config: InstallConfig,
+): Promise<PlannedStorageVolume[]> {
+  return withAppLifecycle(manifest.metadata.id, () => ensureAppStorageLocked(manifest, config));
+}
+
+async function ensureAppStorageLocked(
   manifest: AppManifest,
   config: InstallConfig,
 ): Promise<PlannedStorageVolume[]> {
@@ -171,6 +237,8 @@ export async function ensureAppStorage(
         : appVolumeName(manifest.metadata.id, container.name, volume.name);
       const expected: Omit<StorageVolumeMeta, 'pool'> = {
         appId: manifest.metadata.id,
+        installationId: volume.storageGroup ? undefined : config.admissionInstallationId,
+        dataOwnerId: volume.storageGroup ? undefined : config.admissionResourceOwners?.[name] || config.admissionDataOwnerId,
         name,
         logicalName: volume.name,
         containerName: runtimeName,
@@ -207,6 +275,8 @@ export async function ensureAppStorage(
             'user.youeye.volume_type': volume.type,
             'user.youeye.storage_group': volume.storageGroup ?? '',
             'user.youeye.backup': 'true',
+            ...(expected.installationId ? { 'user.youeye.installation_id': expected.installationId } : {}),
+            ...(expected.dataOwnerId ? { 'user.youeye.data_owner_id': expected.dataOwnerId } : {}),
           },
         },
       );
@@ -236,16 +306,49 @@ export async function ensureAppStorage(
   return planned;
 }
 
+/** Offline retained consumers still own shared data even with no mounted instance. */
+export async function hasOtherShareConsumers(volume: Pick<StorageVolumeMeta, 'appId' | 'shareId' | 'sharedGroup'>) {
+  if (!volume.sharedGroup) return false;
+  if (!volume.shareId) throw new Error('Shared data has unresolved ownership');
+  const { identityRows, identitySql } = await import('@/lib/identity/store');
+  const consumers = await identityRows(`SELECT 1 FROM admission_resources r
+    JOIN admission_policies p USING (installation_id)
+    WHERE r.declaration->>'shareId' = ${identitySql(volume.shareId)}
+      AND r.state <> 'deleted' AND p.app_id <> ${identitySql(volume.appId)} LIMIT 1`);
+  return consumers.length > 0;
+}
+
 export async function deleteAppStorage(
   volumes: StorageVolumeMeta[],
   options: { onlyCreated?: Set<string> } = {},
 ): Promise<void> {
-  const unique = new Map(volumes.map((volume) => [`${volume.pool}/${volume.name}`, volume]));
+  const appIds = [...new Set(volumes.map(volume => volume.appId))].sort();
+  const admit = (index: number): Promise<void> => {
+    if (index === appIds.length) return deleteAppStorageLocked(volumes, options);
+    const appId = appIds[index];
+    return withAppLifecycle(appId, () => admit(index + 1), {
+      resources: volumes.filter(volume => volume.appId === appId).map(volume => ({
+        kind: 'volume', scope: volume.pool, name: volume.name, ownerAppId: appId, mutable: true,
+      })),
+    });
+  };
+  return admit(0);
+}
+
+async function deleteAppStorageLocked(
+  volumes: StorageVolumeMeta[],
+  options: { onlyCreated?: Set<string> },
+): Promise<void> {
+  const unique = new Map(volumes.filter(v => !v.attachmentOnly).map((volume) => [`${volume.pool}/${volume.name}`, volume]));
   for (const [key, volume] of unique) {
     if (options.onlyCreated && !options.onlyCreated.has(key)) continue;
     const current = await customVolume(volume.pool, volume.name);
     if (!current) continue;
+    if (!volume.dataOwnerId || (volume.sharedGroup ? !volume.shareId : !volume.installationId)) {
+      throw new Error('Storage cleanup requires resolved installation and data ownership');
+    }
     assertOwnedVolume(current, volume);
+    if (volume.sharedGroup && await hasOtherShareConsumers(volume)) continue;
     if ((current.used_by?.length ?? 0) > 0) {
       if (volume.sharedGroup) continue;
       throw new Error('App storage is still attached to a container');
@@ -255,6 +358,17 @@ export async function deleteAppStorage(
       `/1.0/storage-pools/${encode(volume.pool)}/volumes/custom/${encode(volume.name)}`,
     ));
     if (await customVolume(volume.pool, volume.name)) throw new Error('App storage remained after deletion');
+  }
+}
+
+/** Check all ownership before uninstall starts changing containers or databases. */
+export async function verifyAppStorageOwnership(volumes: StorageVolumeMeta[]): Promise<void> {
+  for (const volume of volumes.filter(v => !v.attachmentOnly)) {
+    if (!volume.dataOwnerId || (volume.sharedGroup ? !volume.shareId : !volume.installationId)) {
+      throw new Error('Storage cleanup requires resolved installation and data ownership');
+    }
+    const current = await customVolume(volume.pool, volume.name);
+    if (current) assertOwnedVolume(current, volume);
   }
 }
 
@@ -268,13 +382,24 @@ export async function verifyAppStorageRemoval(volumes: StorageVolumeMeta[]): Pro
     const current = await customVolume(volume.pool, volume.name);
     if (!current) continue;
     assertOwnedVolume(current, volume);
-    if (volume.sharedGroup && (current.used_by?.length ?? 0) > 0) continue;
+    if (volume.sharedGroup && ((current.used_by?.length ?? 0) > 0 || await hasOtherShareConsumers(volume))) continue;
     return false;
   }
   return true;
 }
 
 export async function deleteCreatedRecoveryStorage(
+  appId: string,
+  refs: Array<{ pool: string; name: string }>,
+): Promise<void> {
+  return withAppLifecycle(appId, () => deleteCreatedRecoveryStorageLocked(appId, refs), {
+    resources: refs.map(ref => ({
+      kind: 'volume', scope: ref.pool, name: ref.name, ownerAppId: appId, mutable: true,
+    })),
+  });
+}
+
+async function deleteCreatedRecoveryStorageLocked(
   appId: string,
   refs: Array<{ pool: string; name: string }>,
 ): Promise<void> {

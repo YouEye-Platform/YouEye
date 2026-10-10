@@ -181,7 +181,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const effectiveAppId = app_id ?? appId ?? "system";
+  if (serviceUser && app_id !== undefined && app_id !== serviceUser.appId) {
+    return NextResponse.json({ error: "App identity mismatch" }, { status: 400 });
+  }
+  const effectiveAppId = serviceUser?.appId ?? app_id ?? "system";
   const timestamp = body.timestamp ?? new Date().toISOString();
 
   const entryData: TimelineEntryData = {

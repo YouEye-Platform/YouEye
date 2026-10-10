@@ -76,7 +76,9 @@ export async function getUserAppsWithConfig(userId: string): Promise<{
 
   const configMap = new Map(userConfigs.map((c) => [c.appId, c]));
 
-  const mergedApps: AppWithConfig[] = allApps.map((app) => {
+  const { evaluateUiUserAdmission } = await import('@/lib/admission/store');
+  const admission = await Promise.all(allApps.map(app => evaluateUiUserAdmission(app.id, userId)));
+  const mergedApps: AppWithConfig[] = allApps.filter((_, i) => admission[i].allowed).map((app) => {
     const config = configMap.get(app.id);
     const adminWordart = (app.brandingWordart as unknown as SiteNameStyle) ?? null;
     const adminMode = app.headerDisplayMode ?? "logo-text";

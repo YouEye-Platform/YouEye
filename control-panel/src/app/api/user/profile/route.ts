@@ -84,7 +84,7 @@ export async function PATCH(request: NextRequest) {
     await updateUser(String(user.pk), { firstName: newFirst, lastName: newLast });
 
     // Push name change to UI via bridge (server-to-server, non-fatal)
-    pushNameToUI(session.username, newFirst, newLast).catch((err) =>
+    pushNameToUI(session.username, String(user.pk), newFirst, newLast).catch((err) =>
       console.warn("[Profile] Bridge name push failed (non-fatal):", err instanceof Error ? err.message : err)
     );
 
@@ -108,6 +108,7 @@ export async function PATCH(request: NextRequest) {
  */
 async function pushNameToUI(
   username: string,
+  identityId: string,
   firstName: string,
   lastName: string
 ): Promise<void> {
@@ -121,7 +122,7 @@ async function pushNameToUI(
       "Content-Type": "application/json",
       "X-UI-Bridge-Token": token,
     },
-    body: JSON.stringify({ username, firstName, lastName }),
+    body: JSON.stringify({ username, identityId, firstName, lastName }),
     signal: AbortSignal.timeout(10_000),
   });
 

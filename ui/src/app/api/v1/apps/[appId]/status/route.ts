@@ -4,14 +4,13 @@
 
 import { NextResponse } from "next/server";
 import { getBridgeToken } from "@/lib/admin/bridge-client";
+import { authorizeCredentialBridge } from "@/lib/auth/app-credential-readiness";
 import { getApp, updateAppStatus } from "@/lib/db/queries/app-management";
 
 const ALLOWED = new Set(["healthy", "unhealthy", "unknown", "stopped"]);
 
 function validateBridgeAuth(request: Request): boolean {
-  const provided = request.headers.get("X-UI-Bridge-Token") ?? request.headers.get("x-ui-bridge-token");
-  const expected = getBridgeToken();
-  return !!provided && expected !== null && provided === expected;
+  return authorizeCredentialBridge(request, getBridgeToken());
 }
 
 export async function POST(

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth/session';
 import { allowedPointerManagementPath, pointerManagementFetch } from '@/lib/pointer/client';
+import { PointerRequestTooLarge, readPointerRequestBody } from '@/lib/pointer/request-body';
 
 async function proxy(request: NextRequest, segments: string[]) {
   const session = await getSession();
@@ -18,20 +19,25 @@ async function proxy(request: NextRequest, segments: string[]) {
   const url = new URL(request.url);
   const suffix = url.searchParams.size ? `?${url.searchParams.toString()}` : '';
   const contentType = request.headers.get('content-type');
-  const body = request.method === 'GET' || request.method === 'HEAD'
-    ? undefined
-    : await request.arrayBuffer();
+  let body: ArrayBuffer | undefined;
+  try {
+    if (request.method !== 'GET' && request.method !== 'HEAD') body = await readPointerRequestBody(request, 8 * 1024 * 1024);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof PointerRequestTooLarge ? 'AI management request is too large' : 'Invalid AI management request' }, { status: error instanceof PointerRequestTooLarge ? 413 : 400 });
+  }
   try {
     const upstream = await pointerManagementFetch(session, `${path}${suffix}`, {
       method: request.method,
       headers: contentType ? { 'content-type': contentType } : undefined,
       body,
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(path.startsWith('/api/test-model') ? 300_000 : 45_000)]),
     });
     return new NextResponse(request.method === 'HEAD' ? null : upstream.body, {
       status: upstream.status,
       headers: {
         'content-type': upstream.headers.get('content-type') || 'application/json',
         'cache-control': 'no-store',
+        'x-accel-buffering': 'no',
       },
     });
   } catch {

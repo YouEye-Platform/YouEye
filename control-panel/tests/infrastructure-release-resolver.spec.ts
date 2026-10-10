@@ -8,6 +8,7 @@ import test from 'node:test';
 import type { ReleaseSource } from '../src/lib/apps/release-source';
 import {
   listInfrastructureReleases,
+  infrastructureChannelSource,
   resolveInfrastructureStandaloneRelease,
   resolveExactInfrastructureStandaloneRelease,
   selectExactInfrastructureStandaloneRelease,
@@ -21,6 +22,27 @@ const forgejo: ReleaseSource = {
   api_path: '/api/v1',
   organization: 'youeye',
 };
+
+test('exact UI and Pointer channels preserve their publisher, repository, tag and digest', async () => {
+  const github: ReleaseSource = { provider: 'github', base_url: 'https://github.com', api_path: '', organization: 'YouEye-Platform' };
+  for (const [repository, tag] of [['YouEye', 'ui-dev-v0.5.13.0.0.2'], ['Pointer', 'dev-v0.5.3.0.0.1']]) {
+    const selected = infrastructureChannelSource(github, repository, `https://forge.example.test/team/${repository}`);
+    const digest = 'a'.repeat(64);
+    const release = await resolveExactInfrastructureStandaloneRelease(selected.source, selected.repository, repository === 'YouEye' ? tag : `custom-${tag}`, digest);
+    assert.equal(release.url, `https://forge.example.test/team/${repository}/releases/download/${repository === 'YouEye' ? tag : `custom-${tag}`}/standalone.tar`);
+    assert.equal(release.artifactSHA256, digest);
+  }
+  const custom = infrastructureChannelSource(github, 'Pointer', 'https://forge.example.test/owner/custom-pointer');
+  assert.equal(custom.repository, 'custom-pointer');
+  assert.equal(custom.source.organization, 'owner');
+  assert.equal(custom.source.provider, 'gitea');
+  const normal = infrastructureChannelSource(github, 'YouEye');
+  assert.equal(normal.source, github);
+  assert.equal(normal.repository, 'YouEye');
+  for (const source of ['https://user:secret@forge.example.test/team/YouEye', 'https://forge.example.test/team/YouEye?tag=dev', 'https://forge.example.test/team/YouEye#fragment', 'https://forge.example.test/team', 'https://forge.example.test/team/YouEye/extra', 'file:///team/YouEye']) {
+    assert.throws(() => infrastructureChannelSource(github, 'YouEye', source));
+  }
+});
 
 test('infrastructure release discovery paginates beyond the first 50 Forgejo releases', async () => {
   const calls: string[] = [];

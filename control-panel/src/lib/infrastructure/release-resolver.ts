@@ -5,6 +5,18 @@ import {
   type ReleaseSource,
 } from '../apps/release-source';
 import { releaseCacheFetch } from '../releases/cache';
+import { parseMarketRepoURL } from '../market/source';
+
+/** Per-component publisher overrides travel with their branch/tag/digest. */
+export function infrastructureChannelSource(source: ReleaseSource, repository: string, channelSource?: string): { source: ReleaseSource; repository: string } {
+  if (!channelSource) return { source, repository };
+  const selected = new URL(channelSource);
+  if (!['https:', 'http:'].includes(selected.protocol) || selected.username || selected.password || selected.search || selected.hash || !/^\/[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*\/?$/.test(selected.pathname)) {
+    throw new Error('Infrastructure channel must identify one repository without credentials or query parameters');
+  }
+  const parsed = parseMarketRepoURL(channelSource);
+  return { source: parsed, repository: parsed.repository };
+}
 
 const RELEASE_PAGE_SIZE = 50;
 const MAX_RELEASE_PAGES = 100;

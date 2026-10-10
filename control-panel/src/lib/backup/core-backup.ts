@@ -17,7 +17,10 @@ import path from 'path';
 import os from 'os';
 import { spineClient } from '@/lib/spine/client';
 import { execShell } from '@/lib/incus/server';
+import { withPairedPointerBackup } from '@/lib/pointer/paired-backup';
+import { withAppInventory, withAppLifecycles } from '@/lib/market/update-admission';
 import { listInstalledApps } from '@/lib/market/metadata';
+import { appServiceCredentials } from '@/lib/apps/service-credential-store';
 import { getRoutes, getConfig as getCaddyConfig } from '@/lib/caddy/client';
 import type {
   CoreBackupConfig,
@@ -33,6 +36,8 @@ import {
   PLATFORM_POSTGRES_CONTAINER,
 } from './postgres';
 import { readCurrentBackupSourceIdentity } from './compatibility';
+import { stageRetainedApps } from './retained-apps';
+import { runWithBackupAdmission } from './admission';
 
 const STAGING_BASE = path.join(BACKUP_STAGING_ROOT, 'create');
 const YOUEYE_DATA_DIR = '/var/lib/youeye';
@@ -99,6 +104,14 @@ export async function backupCore(
   config: CoreBackupConfig,
   onEvent: BackupEventCallback
 ): Promise<void> {
+  return runWithBackupAdmission(
+    () => withPairedPointerBackup(() => backupCoreUnderLifecycle(config, onEvent)),
+    work => withAppInventory(async () => withAppLifecycles(
+      ['identity', 'pointer', ...(await listInstalledApps()).map(app => app.appId)], work)),
+  );
+}
+
+async function backupCoreUnderLifecycle(config: CoreBackupConfig, onEvent: BackupEventCallback): Promise<void> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const stagingDir = path.join(STAGING_BASE, `core-${timestamp}`);
 
@@ -176,6 +189,7 @@ export async function backupCore(
     // archive. Transient allocator/per-app lock directories are intentionally
     // excluded so a restored PID can never inherit a stale lock owner.
     await stageAppNetworkRecoveryState(stagingDir);
+    const retained = await stageRetainedApps(stagingDir);
 
     // ── Step 4: Stage Caddy config ─────────────────────────
     emit('stage-caddy', 'Staging Caddy configuration...');
@@ -224,12 +238,17 @@ export async function backupCore(
       path.join(stagingDir, 'backup-meta.json'),
       JSON.stringify({
         schema: 'youeye.backup.core-meta.v1',
+        admissionSchemaVersion: 1,
+        retainedDataSchemaVersion: 1,
         type: 'core',
         source: sourceIdentity,
         databases: backedUpDatabases,
         timestamp: new Date().toISOString(),
         hostname: config.hostname || os.hostname(),
         infraContainers: INFRA_CONTAINERS,
+        // Runtime authority is regenerated on restore; keep only provenance.
+        serviceCredentials: await Promise.all((await listInstalledApps())
+          .map(app => appServiceCredentials.projection(app.appId))),
       }, null, 2)
     );
 
@@ -237,7 +256,7 @@ export async function backupCore(
     emit('spine-backup', 'Starting live infrastructure volume backup...');
 
     // Filter to only existing paths
-    const existingVolumePaths = INFRA_VOLUME_PATHS.filter(p => existsSync(p));
+    const existingVolumePaths = [...INFRA_VOLUME_PATHS, ...retained.paths].filter(p => existsSync(p));
 
     const hostname = config.hostname || os.hostname();
     const spineResult = await spineClient.startBackup({
@@ -246,6 +265,8 @@ export async function backupCore(
       use_stored_passphrase: config.useStoredPassphrase,
       containers: await runningContainers([...INFRA_CONTAINERS, 'youeye-control', 'youeye-ui']),
       volume_mappings: volumeMappings(existingVolumePaths),
+      incus_runtimes: retained.runtimes,
+      incus_volumes: retained.volumes,
       staging_dir: stagingDir,
       hostname,
       backup_type: 'core',

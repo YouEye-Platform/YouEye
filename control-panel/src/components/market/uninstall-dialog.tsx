@@ -17,7 +17,7 @@ export function UninstallDialog({ app, onUninstall, onClose }: UninstallDialogPr
   const t = useTranslations('market');
 
   const items = [
-    { icon: Package, label: 'Container and services', removed: true },
+    { icon: Package, label: mode === 'keep' ? 'Active services (offline root copies retained)' : 'Container and services', removed: true },
     { icon: Globe, label: 'Caddy reverse proxy route', removed: true },
     { icon: Shield, label: 'identity provider SSO application', removed: app.supportsSSO },
     { icon: Globe, label: 'Pi-Hole DNS entry', removed: true },

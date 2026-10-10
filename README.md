@@ -317,3 +317,11 @@ YouEye is in public beta. Contributions are welcome, but expect breaking changes
 YouEye source code is licensed under the [Business Source License 1.1](LICENSE). After four years, each version converts to [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html).
 
 The "YouEye" name and logo are trademarks. See [TRADEMARK.md](TRADEMARK.md) for usage guidelines.
+
+## App service authentication
+
+Developers changing app installation, service APIs, integration or restore should
+read [the app service credential contract](docs/app-service-credentials.md).
+Protected runtime credentials, versioned publication and readiness are one
+lifecycle. Configuration refresh does not issue a new secret. App-origin machine
+requests cannot acquire browser administrator authority.

@@ -50,6 +50,12 @@ Spine is a Go binary that runs on the host system. Its responsibilities are stri
 - Update itself and the Control Panel
 - Report platform status
 
+On sealed appliances, the storage boot phase validates persisted Incus DNS
+process records before the Incus sockets or daemon start. Records for missing
+processes or reused PIDs are discarded without signalling processes; genuine
+live helpers are retained for same-boot daemon restarts. Network configuration
+and DHCP leases remain persistent.
+
 **Spine does NOT manage** the UI, native apps, Market-installed apps, or any infrastructure inside the container. That's the Control Panel's job.
 
 ### Control Panel (Container)
@@ -61,6 +67,10 @@ The Control Panel is the orchestration engine. It manages everything inside the 
 - Caddy (reverse proxy, TLS)
 - Pi-Hole (DNS)
 - YouEye UI deployment
+- Reapply the protected persistent UI database and SSO configuration after UI
+  container recreation, preserving the existing OAuth client and session secret.
+  A configured UI is ready only after its database schema is available; an
+  unconfigured UI can boot for the initial setup wizard.
 - Native app deployment
 - Market app lifecycle
 
@@ -223,3 +233,5 @@ an explicit Forgejo or custom HTTPS source without changing distributed build
 defaults. Each mutation requires signed checksum metadata, the exact artifact
 digest, and any configured channel digest. Missing releases do not fall back
 across channels.
+
+UI infrastructure reconciliation also restores the existing protected bridge authority after container recreation, and verifies its bytes and file mode before readiness. This applies when an interrupted update did not reach Spine finalization. Reconciliation never issues a replacement bridge identity; missing authority on a configured appliance remains a failed repair.

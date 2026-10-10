@@ -10,17 +10,18 @@ import { getSession } from "@/lib/auth";
 import { getBridgeToken } from "@/lib/admin/bridge-client";
 import {
   registerApp,
+  getApp,
   fetchAppManifest,
   updateAppManifest,
   unregisterApp,
 } from "@/lib/db/queries/app-management";
 import { getAllApps } from "@/lib/db/queries/apps";
+import { evaluateLocalAdmission } from '@/lib/admission/store';
+import { authorizeCredentialBridge } from "@/lib/auth/app-credential-readiness";
+import { isCanonicalAppId } from "../../../../../../../shared/app-service-credential";
 
 function validateBridgeAuth(request: Request): boolean {
-  const provided = request.headers.get("X-UI-Bridge-Token") ?? request.headers.get("x-ui-bridge-token");
-  if (!provided) return false;
-  const expected = getBridgeToken();
-  return expected !== null && provided === expected;
+  return authorizeCredentialBridge(request, getBridgeToken());
 }
 
 export async function POST(request: Request) {
@@ -38,9 +39,9 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { id, name, container_url, subdomain, icon, token_hash, sso_entry_url, link_handlers, manifest: cpManifest } = body;
+  const { id, name, container_url, subdomain, icon, sso_entry_url, link_handlers, manifest: cpManifest } = body;
 
-  if (!id || !name || !container_url) {
+  if (!isCanonicalAppId(id) || !name || !container_url) {
     return NextResponse.json(
       { error: "id, name, and container_url are required" },
       { status: 400 }
@@ -49,7 +50,12 @@ export async function POST(request: Request) {
 
   // Try to fetch manifest from the app; fall back to the one CP sent
   const liveManifest = await fetchAppManifest(container_url);
-  const manifest = liveManifest ?? cpManifest ?? null;
+  const existing = await getApp(id);
+  const completeCpManifest = cpManifest && Object.keys(cpManifest).some(key => key !== 'integration') ? cpManifest : null;
+  const manifest = liveManifest ?? completeCpManifest ?? existing?.manifest ?? cpManifest ?? null;
+  if (manifest && isBridgeAuth && cpManifest?.integration === 'native') {
+    Object.assign(manifest, { integration: 'native' });
+  }
 
   await registerApp({
     id,
@@ -59,7 +65,6 @@ export async function POST(request: Request) {
     subdomain,
     icon: manifest?.icon ?? icon,
     manifest: manifest ? (manifest as unknown as Record<string, unknown>) : undefined,
-    tokenHash: token_hash,
     ssoEntryUrl: sso_entry_url,
   });
 
@@ -90,7 +95,7 @@ export async function GET() {
   const allApps = await getAllApps();
 
   return NextResponse.json({
-    apps: allApps.map((a) => ({
+    apps: allApps.filter(a => evaluateLocalAdmission(a.id, session.identityId).allowed).map((a) => ({
       id: a.id,
       name: a.name,
       version: a.version,

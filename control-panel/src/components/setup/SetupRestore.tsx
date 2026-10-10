@@ -5,6 +5,7 @@ import { Loader2, CheckCircle2, XCircle, HardDrive, Lock, RotateCw } from 'lucid
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { waitForSetupRestoreStatus } from './restore-status';
 
 type StepStatus = 'pending' | 'running' | 'done' | 'error';
 
@@ -36,9 +37,30 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
   const [steps, setSteps] = useState<RestoreStep[]>([]);
   const [isComplete, setIsComplete] = useState(false);
   const [error, setError] = useState('');
+  const [canRetry, setCanRetry] = useState(false);
   const hasCompleted = useRef(false);
+  const operationId = useRef<string | null>(null);
+
+  const checkRestoreStatus = async (id: string) => {
+    setError('');
+    try {
+      const status = await waitForSetupRestoreStatus(id);
+      sessionStorage.removeItem('youeye-setup-restore-operation');
+      if (status.status === 'completed') setIsComplete(true);
+      else { setError(status.message); setCanRetry(true); }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Restore status is unavailable.');
+      setCanRetry(false);
+    }
+  };
 
   useEffect(() => {
+    const pending = sessionStorage.getItem('youeye-setup-restore-operation');
+    if (pending && /^[0-9a-f-]{36}$/.test(pending)) {
+      operationId.current = pending;
+      setRestoring(true);
+      void checkRestoreStatus(pending);
+    }
     fetch('/api/setup/restore', { cache: 'no-store' })
       .then(response => response.ok ? response.json() : { recoveryPoints: [] })
       .then(body => {
@@ -69,15 +91,22 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
     setError('');
     setSteps([]);
     setIsComplete(false);
+    setCanRetry(false);
+    let submitted = false;
 
     try {
       const csrfResponse = await fetch('/api/auth/csrf', { cache: 'no-store' });
       const csrfBody = await csrfResponse.json().catch(() => ({}));
       if (!csrfResponse.ok || typeof csrfBody.csrfToken !== 'string') throw new Error('Could not start a protected restore action.');
+      const id = crypto.randomUUID();
+      operationId.current = id;
+      sessionStorage.setItem('youeye-setup-restore-operation', id);
+      submitted = true;
       const res = await fetch('/api/setup/restore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfBody.csrfToken },
         body: JSON.stringify({
+          operationId: id,
           mediaId: selectedPoint?.mediaId,
           backupId: selectedPoint?.backupId,
           appIds: selectedApps,
@@ -86,6 +115,8 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
       });
 
       if (!res.ok) {
+        submitted = false;
+        sessionStorage.removeItem('youeye-setup-restore-operation');
         const text = await res.text().catch(() => '');
         throw new Error(`Restore request failed (${res.status}): ${text || 'Unknown error'}`);
       }
@@ -108,7 +139,6 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6);
           if (data === '[DONE]') {
-            setIsComplete(true);
             continue;
           }
           try {
@@ -131,7 +161,7 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
               });
             }
             if (event.complete) {
-              setIsComplete(true);
+              // Durable terminal status below is authoritative.
             }
             if (event.error) {
               setError(event.error);
@@ -141,8 +171,13 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
           }
         }
       }
+      await checkRestoreStatus(id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Restore failed');
+      if (submitted && operationId.current) await checkRestoreStatus(operationId.current);
+      else {
+        setError(err instanceof Error ? err.message : 'Restore failed');
+        setCanRetry(true);
+      }
     }
   };
 
@@ -244,7 +279,7 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
           </div>
         )}
 
-        <div className="h-8 flex items-center justify-center">
+        <div className="min-h-8 flex items-center justify-center" role="status" aria-live="polite">
           {isComplete ? (
 			<p className="text-green-600 font-medium animate-in fade-in duration-300">Restore complete. Sign in with a restored account…</p>
           ) : error ? (
@@ -295,6 +330,10 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
           <Button
             onClick={() => {
+              if (!canRetry && operationId.current) {
+                void checkRestoreStatus(operationId.current);
+                return;
+              }
               setRestoring(false);
               setError('');
               setSteps([]);
@@ -305,7 +344,7 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
             className="gap-2"
           >
             <RotateCw className="h-4 w-4" />
-            Try Again
+            {canRetry ? 'Try Again' : 'Check restore status'}
           </Button>
         </div>
       )}

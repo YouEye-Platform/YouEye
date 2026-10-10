@@ -10,7 +10,11 @@
  * invisible to callers.
  */
 
-import { readJSON, writeJSON, statePath } from '@/lib/storage/json-store';
+import { writeJSON, statePath } from '@/lib/storage/json-store';
+import { constants, closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { AppUpdateExecutorLock } from './update-executor-lock';
+import { isAppUpdateReserved } from './update-admission';
 import { listInstalledApps, readInstallMetadata } from './metadata';
 import { fetchCatalog, fetchUpdatePlanMigrationsFromSource, resolveCatalogApp } from './catalog';
 import { parse as parseYAML } from 'yaml';
@@ -26,7 +30,7 @@ import {
 } from './update-routing';
 import type { AppManifest } from './types';
 
-const STORE_PATH = statePath('installed-apps.json');
+const STORE_PATH = process.env.YOUEYE_INSTALLED_APPS_PATH ?? statePath('installed-apps.json');
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -50,7 +54,7 @@ export interface InstalledApp {
   forwardAuthEnabled: boolean;
   healthStatus: 'healthy' | 'unhealthy' | 'unknown';
   healthCheckedAt: string | null;
-  appHealthState?: 'starting' | 'running' | 'unhealthy' | 'crash-looping' | 'unknown';
+  appHealthState?: 'starting' | 'running' | 'unhealthy' | 'crash-looping' | 'unknown' | 'maintenance';
   failingLevel?: 'L1' | 'L2' | 'L3';
   healthDetail?: string | null;
   healthProbeState?: {
@@ -110,16 +114,68 @@ export type InstalledAppUpdateState = Pick<InstalledApp,
 
 // ─── Store Management ─────────────────────────────────────────
 
-let store: InstalledAppsStore | null = null;
-
 async function loadStore(): Promise<InstalledAppsStore> {
-  store = await readJSON<InstalledAppsStore>(STORE_PATH) ?? { apps: {}, nextId: 1 };
-  return store;
+  let fd: number;
+  try { fd = openSync(STORE_PATH, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { apps: {}, nextId: 1 };
+    throw error;
+  }
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.geteuid?.()
+      || (stat.mode & 0o777) !== 0o600 || stat.size > 16 * 1024 * 1024) {
+      throw new Error('Installed-app store is corrupt or insecure');
+    }
+    const value = JSON.parse(readFileSync(fd, 'utf8')) as InstalledAppsStore;
+    if (!value || !value.apps || typeof value.apps !== 'object' || Array.isArray(value.apps)
+      || !Number.isSafeInteger(value.nextId) || value.nextId < 1
+      || Object.entries(value.apps).some(([id, app]) => !app || app.appId !== id
+        || !Number.isSafeInteger(app.id) || app.id < 1 || app.id >= value.nextId)) {
+      throw new Error('Installed-app store is corrupt or insecure');
+    }
+    return value;
+  } finally { closeSync(fd); }
 }
 
-async function saveStore(): Promise<void> {
-  if (!store) return;
-  await writeJSON(STORE_PATH, store);
+/** Short OS lock around read/modify/write; no catalog or runtime awaits belong here. */
+async function mutateStore<T>(mutation: (store: InstalledAppsStore) => T): Promise<T> {
+  const directory = path.dirname(STORE_PATH);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const parent = lstatSync(directory);
+  if (!parent.isDirectory() || parent.uid !== process.geteuid?.() || (parent.mode & 0o022) !== 0) {
+    throw new Error('Installed-app store directory is corrupt or insecure');
+  }
+  // Persistent State is also used by non-sensitive component stores and may
+  // legitimately be 0755. Keep this lock's stable inode in its own private
+  // directory instead of requiring a permission change to shared State.
+  const lockDirectory = path.join(directory, '.installed-apps-lock');
+  mkdirSync(lockDirectory, { recursive: true, mode: 0o700 });
+  const started = Date.now();
+  let lock: AppUpdateExecutorLock;
+  while (true) {
+    try {
+      lock = AppUpdateExecutorLock.acquire(path.join(lockDirectory, 'store.flock'));
+      break;
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('executor lock is busy')
+        || Date.now() - started >= 10_000) throw error;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  try {
+    const current = await loadStore();
+    const result = mutation(current);
+    if (result && typeof (result as { then?: unknown }).then === 'function') {
+      throw new Error('Installed-app mutation must not await external work');
+    }
+    await writeJSON(STORE_PATH, current);
+    const fd = openSync(STORE_PATH, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try { fsyncSync(fd); } finally { closeSync(fd); }
+    const parent = openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    try { fsyncSync(parent); } finally { closeSync(parent); }
+    return result;
+  } finally { lock.release(); }
 }
 
 // ─── CRUD Operations ──────────────────────────────────────────
@@ -155,55 +211,54 @@ export async function upsertInstalledApp(data: {
   installedBranch?: string | null;
   channelSource?: string | null;
 }): Promise<void> {
-  const s = await loadStore();
-  const existing = s.apps[data.appId];
+  return mutateStore(s => {
+    const existing = s.apps[data.appId];
 
-  if (existing) {
-    existing.type = data.type as InstalledApp['type'];
-    existing.installedVersion = data.installedVersion;
-    existing.catalogVersion = data.catalogVersion ?? existing.catalogVersion ?? null;
-    existing.subdomain = data.subdomain;
-    existing.ssoSlug = data.ssoSlug ?? existing.ssoSlug;
-    existing.forwardAuthEnabled = data.forwardAuthEnabled ?? existing.forwardAuthEnabled;
-    existing.catalogKey = data.catalogKey ?? existing.catalogKey ?? null;
-    existing.sourceId = data.sourceId ?? existing.sourceId ?? null;
-    existing.sourceName = data.sourceName ?? existing.sourceName ?? null;
-    existing.sourceRepoUrl = data.sourceRepoUrl ?? existing.sourceRepoUrl ?? null;
-    if (data.installedTag !== undefined) existing.installedTag = data.installedTag;
-    if (data.installedBranch !== undefined) existing.installedBranch = data.installedBranch;
-    if (data.channelSource !== undefined) existing.channelSource = data.channelSource;
-  } else {
-    s.apps[data.appId] = {
-      id: s.nextId++,
-      appId: data.appId,
-      type: data.type as InstalledApp['type'],
-      installedVersion: data.installedVersion,
-      catalogVersion: data.catalogVersion ?? null,
-      updateAvailable: false,
-      installedAt: new Date().toISOString(),
-      subdomain: data.subdomain,
-      ssoSlug: data.ssoSlug ?? null,
-      forwardAuthEnabled: data.forwardAuthEnabled ?? false,
-      healthStatus: 'unknown',
-      healthCheckedAt: null,
-      appHealthState: 'unknown',
-      healthDetail: null,
-      source: 'catalog',
-      sourceUrl: null,
-      catalogKey: data.catalogKey ?? null,
-      sourceId: data.sourceId ?? null,
-      sourceName: data.sourceName ?? null,
-      sourceRepoUrl: data.sourceRepoUrl ?? null,
-      installedTag: data.installedTag ?? null,
-      installedBranch: data.installedBranch ?? null,
-      channelSource: data.channelSource ?? null,
-      updatePath: null,
-      migrationsRequired: 0,
-      migrationGates: [],
-    };
-  }
-
-  await saveStore();
+    if (existing) {
+      existing.type = data.type as InstalledApp['type'];
+      existing.installedVersion = data.installedVersion;
+      existing.catalogVersion = data.catalogVersion ?? existing.catalogVersion ?? null;
+      existing.subdomain = data.subdomain;
+      existing.ssoSlug = data.ssoSlug ?? existing.ssoSlug;
+      existing.forwardAuthEnabled = data.forwardAuthEnabled ?? existing.forwardAuthEnabled;
+      existing.catalogKey = data.catalogKey ?? existing.catalogKey ?? null;
+      existing.sourceId = data.sourceId ?? existing.sourceId ?? null;
+      existing.sourceName = data.sourceName ?? existing.sourceName ?? null;
+      existing.sourceRepoUrl = data.sourceRepoUrl ?? existing.sourceRepoUrl ?? null;
+      if (data.installedTag !== undefined) existing.installedTag = data.installedTag;
+      if (data.installedBranch !== undefined) existing.installedBranch = data.installedBranch;
+      if (data.channelSource !== undefined) existing.channelSource = data.channelSource;
+    } else {
+      s.apps[data.appId] = {
+        id: s.nextId++,
+        appId: data.appId,
+        type: data.type as InstalledApp['type'],
+        installedVersion: data.installedVersion,
+        catalogVersion: data.catalogVersion ?? null,
+        updateAvailable: false,
+        installedAt: new Date().toISOString(),
+        subdomain: data.subdomain,
+        ssoSlug: data.ssoSlug ?? null,
+        forwardAuthEnabled: data.forwardAuthEnabled ?? false,
+        healthStatus: 'unknown',
+        healthCheckedAt: null,
+        appHealthState: 'unknown',
+        healthDetail: null,
+        source: 'catalog',
+        sourceUrl: null,
+        catalogKey: data.catalogKey ?? null,
+        sourceId: data.sourceId ?? null,
+        sourceName: data.sourceName ?? null,
+        sourceRepoUrl: data.sourceRepoUrl ?? null,
+        installedTag: data.installedTag ?? null,
+        installedBranch: data.installedBranch ?? null,
+        channelSource: data.channelSource ?? null,
+        updatePath: null,
+        migrationsRequired: 0,
+        migrationGates: [],
+      };
+    }
+  });
 }
 
 /**
@@ -216,16 +271,16 @@ export async function recordAppProvenance(
   appId: string,
   provenance: { version?: string; tag?: string | null; branch?: string | null; source?: string | null },
 ): Promise<void> {
-  const s = await loadStore();
-  const app = s.apps[appId];
-  if (!app) return;
-  if (provenance.version !== undefined) app.installedVersion = provenance.version;
-  if (provenance.tag !== undefined) app.installedTag = provenance.tag;
-  if (provenance.branch !== undefined) app.installedBranch = provenance.branch;
-  if (provenance.source !== undefined) app.channelSource = provenance.source;
-  app.updateAvailable = false;
-  app.switchPending = false;
-  await saveStore();
+  return mutateStore(s => {
+    const app = s.apps[appId];
+    if (!app) return;
+    if (provenance.version !== undefined) app.installedVersion = provenance.version;
+    if (provenance.tag !== undefined) app.installedTag = provenance.tag;
+    if (provenance.branch !== undefined) app.installedBranch = provenance.branch;
+    if (provenance.source !== undefined) app.channelSource = provenance.source;
+    app.updateAvailable = false;
+    app.switchPending = false;
+  });
 }
 
 /**
@@ -234,45 +289,51 @@ export async function recordAppProvenance(
  * after the app was positively classified and updated through its Market source.
  */
 export async function recordCatalogAppUpdate(appId: string, version: string): Promise<void> {
-  const s = await loadStore();
-  const app = s.apps[appId];
-  if (!app) return;
-  Object.assign(app, catalogUpdateState(version));
-  await saveStore();
+  return mutateStore(s => {
+    const app = s.apps[appId];
+    if (!app) return;
+    Object.assign(app, catalogUpdateState(version));
+  });
 }
 
 export async function restoreInstalledAppUpdateState(
   appId: string,
   previous: InstalledAppUpdateState,
 ): Promise<void> {
-  const s = await loadStore();
-  const app = s.apps[appId];
-  if (!app) throw new Error(`Cannot restore update state for missing app "${appId}"`);
-  Object.assign(app, previous);
-  await saveStore();
+  return mutateStore(s => {
+    const app = s.apps[appId];
+    if (!app) throw new Error(`Cannot restore update state for missing app "${appId}"`);
+    for (const field of [
+      'installedVersion', 'catalogVersion', 'updateAvailable', 'switchPending',
+      'installedTag', 'installedBranch', 'channelSource',
+      'candidateVersion', 'candidateBranch', 'candidateTag',
+    ] as const) {
+      if (Object.hasOwn(previous, field)) Object.assign(app, { [field]: previous[field] });
+    }
+  });
 }
 
 export async function removeInstalledApp(appId: string): Promise<void> {
-  const s = await loadStore();
-  delete s.apps[appId];
-  await saveStore();
+  return mutateStore(s => {
+    delete s.apps[appId];
+  });
 }
 
 export async function updateInstalledAppSubdomain(appId: string, subdomain: string): Promise<void> {
-  const s = await loadStore();
-  if (s.apps[appId]) {
-    s.apps[appId].subdomain = subdomain;
-    await saveStore();
-  }
+  return mutateStore(s => {
+    if (s.apps[appId]) {
+      s.apps[appId].subdomain = subdomain;
+    }
+  });
 }
 
 export async function updateInstalledVersion(appId: string, version: string): Promise<void> {
-  const s = await loadStore();
-  if (s.apps[appId]) {
-    s.apps[appId].installedVersion = version;
-    s.apps[appId].updateAvailable = false;
-    await saveStore();
-  }
+  return mutateStore(s => {
+    if (s.apps[appId]) {
+      s.apps[appId].installedVersion = version;
+      s.apps[appId].updateAvailable = false;
+    }
+  });
 }
 
 export async function updateInstalledAppSource(
@@ -280,12 +341,12 @@ export async function updateInstalledAppSource(
   source: 'catalog' | 'url',
   sourceUrl?: string
 ): Promise<void> {
-  const s = await loadStore();
-  if (s.apps[appId]) {
-    s.apps[appId].source = source;
-    s.apps[appId].sourceUrl = sourceUrl ?? null;
-    await saveStore();
-  }
+  return mutateStore(s => {
+    if (s.apps[appId]) {
+      s.apps[appId].source = source;
+      s.apps[appId].sourceUrl = sourceUrl ?? null;
+    }
+  });
 }
 
 // ─── Migration from install.json ──────────────────────────────
@@ -351,7 +412,7 @@ async function fetchUrlAppVersion(sourceUrl: string): Promise<string | null> {
 /**
  * Compare each installed app's version against the latest available version.
  * Updates catalogVersion and updateAvailable in the JSON store.
- * Single load + single save instead of N psql roundtrips.
+ * Remote reads use detached snapshots; only preview fields merge into current state.
  */
 export async function checkForUpdates(): Promise<InstalledApp[]> {
   let catalog = null;
@@ -364,6 +425,7 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
   const channelsConfig = await getReleaseChannelsConfig();
   const s = await loadStore();
   const installed = Object.values(s.apps);
+  const baselines = new Map(installed.map(app => [app.appId, structuredClone(app)]));
 
   const entryMap = new Map<string, { path?: string; file?: string; repo?: string; manifest?: string; latestVersion?: string; integration?: string }>();
   for (const e of catalog?.apps ?? []) {
@@ -494,7 +556,7 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
       }
     }
 
-    return hasUpdate ? { ...app } : null;
+    return app;
   }
 
   const results = await Promise.all(
@@ -505,10 +567,39 @@ export async function checkForUpdates(): Promise<InstalledApp[]> {
       }),
     ),
   );
-  const appsWithUpdates = results.filter((a): a is InstalledApp => a !== null);
+  return mergeInstalledAppPreviews(results.filter((app): app is InstalledApp => app !== null)
+    .map(preview => ({ baseline: baselines.get(preview.appId)!, preview })));
+}
 
-  await saveStore();
-  return appsWithUpdates;
+/**
+ * A delayed preview cannot publish installed state, security, health or other
+ * apps from its old snapshot. Changed installation/source identity invalidates
+ * its projection instead of rewinding a concurrent update or resurrecting an app.
+ */
+export async function mergeInstalledAppPreviews(
+  previews: Array<{ baseline: InstalledApp; preview: InstalledApp }>,
+): Promise<InstalledApp[]> {
+  return mutateStore(current => {
+    for (const { baseline, preview } of previews) {
+      const latest = current.apps[baseline.appId];
+      if (!latest || preview.appId !== baseline.appId || isAppUpdateReserved(baseline.appId)) continue;
+      const identity = [
+        'id', 'installedAt', 'installedVersion', 'installedTag', 'installedBranch', 'channelSource',
+        'source', 'sourceUrl', 'sourceId', 'sourceRepoUrl', 'catalogKey',
+      ] as const;
+      if (identity.some(field => latest[field] !== baseline[field])
+        || preview.installedVersion !== latest.installedVersion) continue;
+      for (const field of [
+        'catalogVersion', 'updateAvailable', 'switchPending',
+        'candidateVersion', 'candidateBranch', 'candidateTag',
+        'updatePath', 'migrationsRequired', 'migrationGates',
+        'sourceId', 'sourceName', 'sourceRepoUrl', 'catalogKey',
+      ] as const) {
+        if (Object.hasOwn(preview, field)) Object.assign(latest, { [field]: structuredClone(preview[field]) });
+      }
+    }
+    return Object.values(current.apps).filter(app => app.updateAvailable);
+  });
 }
 
 export async function getAppsWithUpdatesAvailable(): Promise<InstalledApp[]> {
@@ -529,11 +620,11 @@ export async function getAppsWithSwitchPending(): Promise<InstalledApp[]> {
 // ─── Forward-Auth Toggle ─────────────────────────────────────
 
 export async function updateForwardAuthEnabled(appId: string, enabled: boolean): Promise<void> {
-  const s = await loadStore();
-  if (s.apps[appId]) {
-    s.apps[appId].forwardAuthEnabled = enabled;
-    await saveStore();
-  }
+  return mutateStore(s => {
+    if (s.apps[appId]) {
+      s.apps[appId].forwardAuthEnabled = enabled;
+    }
+  });
 }
 
 // ─── Health Status ───────────────────────────────────────────
@@ -542,29 +633,29 @@ export async function updateHealthStatus(
   appId: string,
   status: 'healthy' | 'unhealthy' | 'unknown',
   probe?: {
-    appHealthState?: 'starting' | 'running' | 'unhealthy' | 'crash-looping' | 'unknown';
+    appHealthState?: 'starting' | 'running' | 'unhealthy' | 'crash-looping' | 'unknown' | 'maintenance';
     failingLevel?: 'L1' | 'L2' | 'L3';
     healthDetail?: string | null;
   },
 ): Promise<void> {
-  const s = await loadStore();
-  if (s.apps[appId]) {
-    s.apps[appId].healthStatus = status;
-    s.apps[appId].healthCheckedAt = new Date().toISOString();
-    s.apps[appId].appHealthState = probe?.appHealthState ?? 'unknown';
-    s.apps[appId].failingLevel = probe?.failingLevel;
-    s.apps[appId].healthDetail = probe?.healthDetail ?? null;
-    await saveStore();
-  }
+  return mutateStore(s => {
+    if (s.apps[appId]) {
+      s.apps[appId].healthStatus = status;
+      s.apps[appId].healthCheckedAt = new Date().toISOString();
+      s.apps[appId].appHealthState = probe?.appHealthState ?? 'unknown';
+      s.apps[appId].failingLevel = probe?.failingLevel;
+      s.apps[appId].healthDetail = probe?.healthDetail ?? null;
+    }
+  });
 }
 
 export async function updateHealthProbeState(
   appId: string,
   probeState: NonNullable<InstalledApp['healthProbeState']>,
 ): Promise<void> {
-  const s = await loadStore();
-  if (s.apps[appId]) {
-    s.apps[appId].healthProbeState = { ...probeState };
-    await saveStore();
-  }
+  return mutateStore(s => {
+    if (s.apps[appId]) {
+      s.apps[appId].healthProbeState = { ...probeState };
+    }
+  });
 }

@@ -8,8 +8,9 @@
  * Cookie: ye-ui-csrf (readable by JS for CSRF protection)
  */
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
+import { hasMachineAuthHeaders } from "./service-request";
 
 const SESSION_COOKIE = "ye-ui-session";
 const CSRF_COOKIE = "ye-ui-csrf";
@@ -40,6 +41,8 @@ export interface SessionPayload extends JWTPayload {
   /** identity provider user ID (sub claim) — used for app-level user identity */
   identityId: string;
   identitySessionId: string;
+  /** Set only by exact installed browser-origin resolution, never cookie claims. */
+  actingAppId?: string;
   /** Display username */
   username: string;
   /** Display name */
@@ -85,11 +88,48 @@ export async function verifySession(
 }
 
 /** Get the current session from cookies */
-export async function getSession(): Promise<SessionPayload | null> {
+export async function getSession(options: { allowAppOrigin?: boolean } = {}): Promise<SessionPayload | null> {
+  const requestHeaders = await headers();
+  if (hasMachineAuthHeaders(requestHeaders)) return null;
   const cookieStore = await cookies();
   const sessionCookie = cookieStore.get(SESSION_COOKIE);
   if (!sessionCookie?.value) return null;
-  return verifySession(sessionCookie.value);
+  const session = await verifySession(sessionCookie.value);
+  if (!session) return null;
+  const identityUrl = process.env.IDENTITY_INTERNAL_URL || process.env.IDENTITY_URL;
+  if (identityUrl) {
+    if (!session.identityId || !session.identitySessionId) return null;
+    try {
+      // Provider session validation, preserving the existing auth boundary;
+      // app admission is always evaluated locally from CP's push.
+      const check = await fetch(`${identityUrl}/identity/session/check`, {
+        headers: { cookie: requestHeaders.get('cookie') || '',
+          'x-youeye-expected-sub': session.identityId, 'x-youeye-expected-sid': session.identitySessionId },
+        cache: 'no-store', signal: AbortSignal.timeout(5_000),
+      });
+      if (check.status !== 204) return null;
+    } catch { return null; }
+  }
+  const origin = requestHeaders.get('origin');
+  const configured = process.env.UI_EXTERNAL_URL || process.env.BASE_URL || process.env.NEXTAUTH_URL;
+  if (!origin) return session;
+  if (!configured) return null;
+  let base: URL, caller: URL;
+  try { base = new URL(configured); caller = new URL(origin); } catch { return null; }
+  if (caller.origin === base.origin) return session;
+  // Browser/admin APIs are platform-origin only unless a handler explicitly
+  // opts into app-origin service behavior and checks its runtime permission.
+  if (!options.allowAppOrigin) return null;
+  if (caller.protocol !== 'https:' || caller.port || caller.username || caller.password) return null;
+  const { db, ensureSchema } = await import('@/db');
+  const { apps } = await import('@/db/schema');
+  const { evaluateLocalAdmission } = await import('@/lib/admission/store');
+  await ensureSchema();
+  const registered = await db.select({ id: apps.id, subdomain: apps.subdomain }).from(apps);
+  const candidates = registered.filter(app => app.subdomain && `${app.subdomain}.${base.hostname}` === caller.hostname);
+  if (candidates.length !== 1 || !evaluateLocalAdmission(candidates[0].id, session.identityId).allowed) return null;
+  // An app's browser origin does not inherit browser-admin authority.
+  return { ...session, isAdmin: false, actingAppId: candidates[0].id };
 }
 
 /** Set session cookies after successful authentication */

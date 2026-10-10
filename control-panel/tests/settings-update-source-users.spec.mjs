@@ -40,10 +40,11 @@ test('appliance update channels retain advanced signed branch and exact source i
   assert.match(appliance, /appliance-dev-v<version>/);
   assert.doesNotMatch(appliance, /placeholder="appliance-dev-v\d/);
   assert.match(appliance, /Manifest SHA-256/);
-  assert.match(appliance, /Official GitHub/);
-  assert.match(appliance, /Forgejo/);
-  assert.match(appliance, /Custom HTTPS/);
-  assert.match(appliance, /Alternative sources are intentionally blank by default/);
+  assert.match(appliance, /Release repository/);
+  assert.match(appliance, /Use official releases/);
+  assert.match(appliance, /Paste an HTTPS repository URL/);
+  assert.match(appliance, /Releases must be signed by a trusted authority/);
+  assert.match(appliance, /repository_url: repository\.trim\(\)/);
   assert.doesNotMatch(appliance, /placeholder="https:\/\//);
   assert.match(appliance, /Stable and Development metadata checks run automatically every six hours/);
   assert.match(appliance, /downloads and restarts always wait for you/);

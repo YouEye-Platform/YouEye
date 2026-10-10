@@ -6,17 +6,19 @@ import { getAppInternalIdentityBase } from '../src/lib/identity/issuer';
 test('existing app bridges acquire logical ID DNS without disturbing forwarding', () => {
   assert.equal(
     appIdentityDnsConfig('server=10.66.35.14', '10.76.0.1'),
-    'server=10.66.35.14\naddress=/id.youeye/10.76.0.1',
+    'server=10.66.35.14\naddress=/id.youeye/10.76.0.1\nlocal=/id.youeye/',
   );
   assert.equal(
-    appIdentityDnsConfig('server=10.66.35.14\naddress=/id.youeye/10.76.0.1', '10.76.0.1'),
+    appIdentityDnsConfig('server=10.66.35.14\naddress=/id.youeye/10.76.0.1\nlocal=/id.youeye/', '10.76.0.1'),
     null,
   );
   assert.equal(
     appIdentityDnsConfig('server=10.66.35.14\naddress=/id.youeye/10.76.0.1', '10.76.0.33'),
-    'server=10.66.35.14\naddress=/id.youeye/10.76.0.33',
+    'server=10.66.35.14\naddress=/id.youeye/10.76.0.33\nlocal=/id.youeye/',
   );
   assert.throws(() => appIdentityDnsConfig('server=10.66.35.14\naddress=/id.youeye/10.76.0.1\naddress=/id.youeye/10.76.0.2', '10.76.0.33'), /multiple/);
+  assert.equal(appIdentityDnsConfig('server=10.66.35.14\naddress=/id.youeye/10.76.0.1', '10.76.0.1'), 'server=10.66.35.14\naddress=/id.youeye/10.76.0.1\nlocal=/id.youeye/');
+  assert.throws(() => appIdentityDnsConfig('server=10.66.35.14\nlocal=/id.youeye/\nlocal=/id.youeye/', '10.76.0.1'), /multiple/);
   assert.throws(() => appIdentityDnsConfig(undefined, '10.76.0.1'), /forwarding/);
 });
 

@@ -26,6 +26,7 @@ import {
   type PointerManagedInstallation,
 } from '@/lib/pointer/managed-apps';
 import type { PointerLifecycleActor } from '@/lib/identity/tokens';
+import { withAppLifecycle } from './update-admission';
 
 function secretScope(appId: string) {
   return `app-${appId}`;
@@ -235,10 +236,20 @@ export async function enableManagedAI(
   actor: PointerLifecycleActor,
   groupId: string
 ) {
+  return withAppLifecycle(appId, () => enableManagedAILocked(appId, actor, groupId));
+}
+
+async function enableManagedAILocked(
+  appId: string,
+  actor: PointerLifecycleActor,
+  groupId: string
+) {
   const meta = await readInstallMetadata(appId);
   if (!meta) throw new Error(`Unknown installed app: ${appId}`);
   const manifest = await fetchInstalledAIManifest(meta);
   if (meta.aiConnection) {
+    const credential = await readSecret(secretScope(appId), 'pointer_api_key');
+    if (!credential) throw new Error('The protected application AI credential needs recovery');
     let installation = await readPointerManagedApp(meta.aiConnection.externalInstallationId, actor);
     if (installation.routingOwner?.externalSubject !== actor.id) {
       throw new Error('Take over this app’s AI connection before enabling it');
@@ -250,6 +261,10 @@ export async function enableManagedAI(
         groupId,
       });
     }
+    // Re-enabling an existing connection must also converge its current AI
+    // mapping, including distinct utility aliases, without replacing its key.
+    await applyAIEnvironment(meta, manifest, actor, credential,
+      connectionFromInstallation(actor.id, installation));
     installation = await setPointerManagedAppEnabled(
       meta.aiConnection.externalInstallationId,
       true,
@@ -303,6 +318,10 @@ export async function enableManagedAI(
 }
 
 export async function disableManagedAI(appId: string, actor: PointerLifecycleActor) {
+  return withAppLifecycle(appId, () => disableManagedAILocked(appId, actor));
+}
+
+async function disableManagedAILocked(appId: string, actor: PointerLifecycleActor) {
   const meta = await readInstallMetadata(appId);
   if (!meta?.aiConnection) throw new Error('This app has no AI Settings connection');
   const installation = await setPointerManagedAppEnabled(
@@ -320,6 +339,14 @@ export async function changeManagedAIGroup(
   actor: PointerLifecycleActor,
   groupId: string
 ) {
+  return withAppLifecycle(appId, () => changeManagedAIGroupLocked(appId, actor, groupId));
+}
+
+async function changeManagedAIGroupLocked(
+  appId: string,
+  actor: PointerLifecycleActor,
+  groupId: string
+) {
   const meta = await readInstallMetadata(appId);
   if (!meta?.aiConnection) throw new Error('This app has no AI Settings connection');
   const installation = await changePointerManagedAppGroup({
@@ -333,6 +360,14 @@ export async function changeManagedAIGroup(
 }
 
 export async function takeOverManagedAI(
+  appId: string,
+  actor: PointerLifecycleActor,
+  groupId: string
+) {
+  return withAppLifecycle(appId, () => takeOverManagedAILocked(appId, actor, groupId));
+}
+
+async function takeOverManagedAILocked(
   appId: string,
   actor: PointerLifecycleActor,
   groupId: string

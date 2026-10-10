@@ -11,7 +11,9 @@ test('explicit integration lifecycle is locked, sensitivity-safe, and read-back 
     readFile(path.join(process.cwd(), 'src/lib/incus/app-network.ts'), 'utf8'),
   ]);
 
-  assert.match(manager, /withBridgeLifecycleLock\('bridge-activate'/);
+  assert.match(manager, /withBridgeAdmission<Bridge \| null>\(bridgeId, 'bridge-activate'/);
+  assert.match(manager, /withBridgeAppLocks\(bridge\.from, bridge\.to, \(\) => withBridgeLifecycleLock/);
+  assert.match(manager, /withAppLifecycle\(appIds\[index\]/);
   assert.match(manager, /incusDownloadFile\(fromContainer/);
   assert.match(manager, /writeContainerFileExact/);
   assert.match(manager, /rollbackErrors\.push\('environment'\)/);

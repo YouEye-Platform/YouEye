@@ -15,7 +15,7 @@ import { existsSync } from 'fs';
 import path from 'path';
 import { spineClient } from '@/lib/spine/client';
 import { readInstallMetadata } from '@/lib/market/metadata';
-import { fetchManifest } from '@/lib/market/catalog';
+import { readFrozenUpdateManifest } from '@/lib/market/frozen-manifest';
 import { getRoutes } from '@/lib/caddy/client';
 import type {
   AppBackupConfig,
@@ -25,8 +25,11 @@ import type {
 } from './types';
 import { BACKUP_STAGING_ROOT, runningContainers, volumeMappings } from './workspace';
 import { readCurrentBackupSourceIdentity } from './compatibility';
-import { dumpPostgresDatabase, PLATFORM_POSTGRES_ADMIN, PLATFORM_POSTGRES_CONTAINER } from './postgres';
+import { dumpAppOwnedPostgresDatabase, dumpPostgresDatabase, PLATFORM_POSTGRES_ADMIN, PLATFORM_POSTGRES_CONTAINER } from './postgres';
 import { resolveOwnPostgres } from './manifest-values';
+import { withAppLifecycle } from '@/lib/market/update-admission';
+import { appServiceCredentials } from '@/lib/apps/service-credential-store';
+import { runWithBackupAdmission } from './admission';
 
 const STAGING_BASE = path.join(BACKUP_STAGING_ROOT, 'create');
 const YOUEYE_DATA_DIR = '/var/lib/youeye';
@@ -40,6 +43,14 @@ const YOUEYE_DATA_DIR = '/var/lib/youeye';
 export async function backupApp(
   config: AppBackupConfig,
   onEvent: BackupEventCallback
+): Promise<void> {
+  return runWithBackupAdmission(() => backupAppUnderLifecycle(config, onEvent),
+    work => withAppLifecycle(config.appId, work));
+}
+
+async function backupAppUnderLifecycle(
+  config: AppBackupConfig,
+  onEvent: BackupEventCallback,
 ): Promise<void> {
   const { appId } = config;
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -73,6 +84,8 @@ export async function backupApp(
     if (!installMeta) {
       throw new Error(`No install metadata found for app: ${appId}`);
     }
+    const { exportAppAdmission } = await import('@/lib/admission/backup');
+    await writeFile(path.join(stagingDir, 'admission.json'), JSON.stringify(await exportAppAdmission(appId), null, 2));
     await writeFile(
       path.join(stagingDir, 'install.json'),
       JSON.stringify(installMeta, null, 2)
@@ -82,9 +95,9 @@ export async function backupApp(
     emit('fetch-manifest', `Fetching manifest for ${appId}...`);
     let backupSection: ManifestBackupSection | undefined;
     let manifestVersion = installMeta.installedVersion || 'unknown';
-    let frozenManifest: Awaited<ReturnType<typeof fetchManifest>> | null = null;
+    let frozenManifest: Awaited<ReturnType<typeof readFrozenUpdateManifest>> | null = null;
     try {
-      const manifest = await fetchManifest(appId);
+      const manifest = await readFrozenUpdateManifest(appId, installMeta.installedVersion);
       frozenManifest = manifest;
       // Save a frozen copy of the manifest
       await writeFile(
@@ -169,7 +182,9 @@ export async function backupApp(
     if (backupSection?.ownPostgres) {
       const { container, database, user } = resolveOwnPostgres(backupSection.ownPostgres, appId);
       try {
-        const dump = await dumpPostgresDatabase({ container, database, user });
+        const dump = await dumpAppOwnedPostgresDatabase({ container, database, user,
+          ownedContainers: installMeta.containers.map((c: any) => typeof c === 'string' ? c : c.containerName),
+        });
         await writeFile(path.join(stagingDir, 'databases', `${appId}-own.sql`), dump);
       } catch (err) {
 		throw new Error(`Required application database dump failed for ${appId}: ${err}`);
@@ -185,6 +200,7 @@ export async function backupApp(
         schema: 'youeye.backup.app-meta.v1',
         appId,
         appVersion: manifestVersion,
+        serviceCredential: await appServiceCredentials.projection(appId),
         source: sourceIdentity,
         timestamp: new Date().toISOString(),
         containers: installMeta.containers.map((c: any) => typeof c === 'string' ? c : c.containerName),

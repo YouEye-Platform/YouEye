@@ -28,11 +28,11 @@ function validateToken(request: NextRequest): boolean {
 }
 
 /** Resolve a username to UI's internal user ID. */
-async function resolveUserId(username: string): Promise<string | null> {
+async function resolveUserId(identityId: string): Promise<string | null> {
   const result = await db
     .select({ id: users.id })
     .from(users)
-    .where(eq(users.username, username))
+    .where(eq(users.identityId, identityId))
     .limit(1);
   return result[0]?.id ?? null;
 }
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { username, dataUrl } = body;
+    const { username, identityId, dataUrl } = body;
 
     if (!username || !dataUrl) {
       return NextResponse.json(
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const userId = (await ensureBridgeUser(username)).id;
+    const userId = (await ensureBridgeUser(username, identityId)).id;
 
     // Convert data URL to buffer
     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
@@ -110,7 +110,7 @@ export async function DELETE(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { username } = body;
+    const { username, identityId } = body;
 
     if (!username) {
       return NextResponse.json(
@@ -119,7 +119,8 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const userId = await resolveUserId(username);
+    if (!identityId) return NextResponse.json({ error: 'Verified identity UUID is required' }, { status: 400 });
+    const userId = await resolveUserId(identityId);
     if (!userId) {
       // Removal is idempotent. A user who has not opened UI has no avatar
       // mirror to remove, so the requested end state is already satisfied.

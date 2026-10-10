@@ -11,6 +11,7 @@ import { readFileSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { getUserByUsername, isIdentitySessionActiveForUser, isUserTokenInvalidated } from '@/lib/identity/store';
 import { identitySessionFromCookie, SESSION_COOKIE as ID_SESSION_COOKIE } from '@/lib/identity/tokens';
+import { hasAppServiceAuthHeaders } from '../../../../shared/app-service-credential';
 
 // Configuration
 const SESSION_COOKIE = 'ye-session';
@@ -164,6 +165,7 @@ function isValidCLIToken(token: string): boolean {
 export async function getSession(): Promise<SessionPayload | null> {
   // Check CLI token first
   const headerStore = await headers();
+  if (hasAppServiceAuthHeaders(headerStore)) return null;
   const cliToken = headerStore.get('x-cli-token');
   if (cliToken && isValidCLIToken(cliToken)) {
     // Return a synthetic admin session for CLI access

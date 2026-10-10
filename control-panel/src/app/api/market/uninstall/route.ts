@@ -14,10 +14,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { uninstallApp } from '@/lib/market/uninstaller';
 import { emitEvent } from '@/lib/events/emitter';
 import { requireAdmin } from '@/lib/auth/rbac';
+import { verifyCSRFToken } from '@/lib/auth/session';
 
 export async function POST(request: NextRequest) {
   const auth = await requireAdmin();
   if (auth.error) return auth.error;
+  if (!await verifyCSRFToken(request.headers.get('X-CSRF-Token') || '')) {
+    return NextResponse.json({ error: 'Invalid CSRF token' }, { status: 403 });
+  }
 
   let body: { appId?: string; keepData?: boolean };
   try {

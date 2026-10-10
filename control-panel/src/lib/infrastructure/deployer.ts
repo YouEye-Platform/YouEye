@@ -14,6 +14,8 @@ import {
   uiContainerSpec,
 } from './manifests';
 import { getOrCreateSecret, generatePassword, readSecret } from './secrets';
+import { reapplySavedUIConfiguration, reapplySavedUIBridgeToken, reconcileUIBridgeFile } from './ui-configuration';
+import { spineClient } from '../spine/client';
 import { deployOCIContainer, containerExists } from './oci-deployer';
 import { getSystemStaticIP } from '../incus/static-ips';
 import { deployLXDContainer, redeployLXDContainer } from './lxd-deployer';
@@ -31,7 +33,7 @@ import {
   ensurePointerInferenceRoutes,
   setDefaultRoute,
 } from '../caddy/client';
-import { execShell } from '../incus/server';
+import { execShell, incusUploadFile, incusDownloadFile } from '../incus/server';
 import { applyResourcePolicy } from './resource-policy';
 import { applySystemImage, recordSystemContainerManifest, resolveSystemImageOverrides } from './system-market-manifests';
 import { getReleaseSource } from '../apps/release-source';
@@ -45,6 +47,7 @@ import {
   waitForPointer,
 } from '../pointer/lifecycle';
 import { settingsService } from '../settings';
+import { preparePointerStorage } from '../pointer/storage';
 
 const TOTAL_STEPS = 5;
 const PIHOLE_CONTAINER = 'youeye-pihole';
@@ -117,10 +120,37 @@ async function deployUIContainerFromConfiguredSource(replaceExisting = false): P
       version: resolved.version,
       tag: resolved.tag,
       branch: channel.branch,
-      source: releaseSource.repo_url ?? null,
+      source: channel.source,
       artifactSHA256: resolved.artifactSHA256 ?? null,
     });
   }
+  // Replacing the root filesystem also removes its SSO environment/drop-in.
+  // Spine retains the authoritative configuration outside that filesystem.
+  const settings = await settingsService.getRaw();
+  await restoreUIBridgeAuthority(settings.setup_completed === true);
+  await reapplySavedUIConfiguration(
+    settings.setup_completed === true,
+    configuration => spineClient.setUISSO(configuration),
+  );
+}
+
+async function restoreUIBridgeAuthority(required: boolean): Promise<void> {
+  await reapplySavedUIBridgeToken(required, async token => {
+    const path = '/etc/youeye/ui-bridge-token';
+    return reconcileUIBridgeFile(token, async () => {
+      const mode = await execShell('youeye-ui', `test -f ${path} && stat -c %a ${path}`, { timeout: 10_000 });
+      if (mode.exitCode === 1) return undefined;
+      if (mode.exitCode !== 0) throw new Error('UI bridge authority inspection failed');
+      return { mode: mode.stdout.trim(), token: (await incusDownloadFile('youeye-ui', path)).toString('utf8') };
+    }, () => incusUploadFile('youeye-ui', path, Buffer.from(token), { mode: '0600' }), async () => {
+      const result = await execShell('youeye-ui', 'systemctl try-restart youeye-ui', { timeout: 30_000 });
+      if (result.exitCode !== 0) throw new Error('UI bridge authority activation failed');
+    }, async () => {
+      // The file REST API does not create missing parent directories.
+      const result = await execShell('youeye-ui', 'install -d -m 0755 /etc/youeye', { timeout: 10_000 });
+      if (result.exitCode !== 0) throw new Error('UI bridge authority directory preparation failed');
+    });
+  });
 }
 
 /**
@@ -144,6 +174,7 @@ async function exactUIProvenanceMatchesConfiguredSource(): Promise<boolean | nul
 }
 
 async function deployPointerContainerFromConfiguredSource(replaceExisting = false): Promise<void> {
+  await preparePointerStorage();
   const releaseSource = await getReleaseSource();
   const pointerRepoURL = `${releaseSource.base_url.replace(/\/$/, '')}/${releaseSource.organization}/Pointer`;
   const deploy = replaceExisting ? redeployLXDContainer : deployLXDContainer;
@@ -639,6 +670,13 @@ export async function reconcileInfrastructure(
         await deployUIContainerFromConfiguredSource(true);
         provenanceRepaired = true;
       }
+      if (!provenanceRepaired && (await settingsService.getRaw()).setup_completed === true
+        && !(await spineClient.getUISSO()).configured) {
+        await reapplySavedUIConfiguration(true, configuration => spineClient.setUISSO(configuration));
+      }
+      if (!provenanceRepaired) {
+        await restoreUIBridgeAuthority((await settingsService.getRaw()).setup_completed === true);
+      }
       const result = await repairThenVerify(
         'YouEye UI',
         (stage) => waitForYouEyeUI('youeye-ui', stage === 'initial' ? 10_000 : 120_000),
@@ -687,6 +725,9 @@ export async function reconcileInfrastructure(
   } else {
     remit(6, 'running', 'Verifying YouEye AI service health...');
     try {
+      // Readiness alone cannot detect stale issuer, trust or managed runtime
+      // metadata after a Control Panel update. Apply current configuration.
+      await configurePointerService();
       const result = await repairThenVerify(
         'YouEye AI service',
         (stage) => waitForPointer(stage === 'initial' ? 10_000 : 120_000),

@@ -2,88 +2,20 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import { allowedPointerManagementPath } from '../src/lib/pointer/management-path';
+import { allowedPointerAssetPath } from '../src/lib/pointer/ui-assets';
 
 const root = process.env.CONTROL_PANEL_ROOT || path.join(import.meta.dirname, '..');
 const read = (filename: string) => readFileSync(path.join(root, filename), 'utf8');
 
-test('AI is a personal Settings surface with exact-account controls for every identity user', () => {
-  const shell = read('src/components/settings-shell/settings-shell.tsx');
-  const page = read('src/app/settings/(shell)/ai/page.tsx');
-  const client = read('src/components/settings-shell/ai-client.tsx');
-  const native = read('src/components/settings-shell/ai-native-sections.tsx');
-  const icon = read('src/components/settings-shell/ai-icon.tsx');
-  const picker = read('src/components/settings-shell/ai-model-picker.tsx');
-  const shared = read('src/components/settings-shell/ai-shared.tsx');
-  const detail = read('src/components/settings-shell/ai-detail-client.tsx');
-  assert.match(shell, /href: ['"]\/settings\/ai['"]/);
-  assert.match(shell, /label: ['"]AI['"]/);
-  assert.doesNotMatch(page, /isAdmin/);
-  assert.match(page, /authMethod === 'pam'/);
-  for (const label of ['Models', 'Groups', 'Instances', 'Providers', 'Usage', 'Playground']) {
-    assert.match(shared, new RegExp(`label: '${label}'`));
-  }
-  for (const removed of ['Overview', 'Accounts', 'API keys']) {
-    assert.doesNotMatch(shared, new RegExp(`label: '${removed}'`));
-  }
-  assert.match(page, /section="models"/);
-  assert.equal(existsSync(path.join(root, 'src/app/settings/(shell)/ai/accounts/[id]/page.tsx')), false);
-  assert.equal(existsSync(path.join(root, 'src/app/settings/(shell)/ai/keys/[id]/page.tsx')), false);
-  assert.match(client, /providerAccountId: selected\.route\.providerAccountId/);
-  assert.match(client, /function useAvailableId/);
-  assert.match(client, /items\.some\(\(item\) => item\.id === selected\)/);
-  assert.match(detail, /entries\/reorder/);
-  assert.match(detail, /duplicateCanonical/);
-  assert.match(detail, /Public alias .*required for another route/);
-  assert.match(detail, /hiddenAliases\.map/);
-  assert.match(detail, /Create as many client credentials as you need/);
-  assert.match(detail, /Copy this key now/);
-  assert.match(native, /You can add the same provider more than once|Add the same provider more than once/);
-  assert.match(native, /oauth\/device\/start/);
-  assert.match(native, /userCode/);
-  assert.match(native, /Nickname \(optional\)/);
-  assert.match(native, /endpoint\?\.mode === 'required'/);
-  assert.doesNotMatch(native, /Custom endpoint \(optional\)/);
-  assert.match(native, /Official providers keep their official endpoint/);
-  assert.match(native, /sort, setSort.*recommended/);
-  assert.match(native, /value: 'newest'/);
-  assert.match(native, /benchmarkDescriptors.*value: `benchmark:/s);
-  assert.match(native, /Recommended consensus/);
-  assert.match(native, /coverage.*eligibleSources/);
-  assert.match(native, /awaiting benchmark results/i);
-  assert.match(native, /modelIconKey \|\| model\.creatorIconKey/);
-  assert.match(icon, /@\/assets\/ai-brands\/claude-color\.svg/);
-  assert.match(icon, /<Image src=\{file\}/);
-  assert.match(icon, /monochromeKeys\.has\(normalized\).*dark:invert/);
-  assert.match(icon, /data-icon-kind=\{file && !failed \? 'brand' : 'generic'\}/);
-  assert.match(icon, /bg-transparent/);
-  assert.doesNotMatch(icon, /rounded-lg border bg-background/);
-  assert.match(icon, /kimi\.svg/);
-  assert.match(icon, /'xai-grok': grokIcon/);
-  assert.doesNotMatch(icon, /src=\{`\/icons\/ai-brands/);
-  assert.match(native, /defaultGroup/);
-  assert.match(native, /role="listbox" aria-label="Provider"/);
-  assert.match(native, /Provider choices open automatically/);
-  assert.match(native, /previewEntries\.map/);
-  assert.match(native, /data-view="models-list"/);
-  assert.match(native, /data-list-row="model"/);
-  assert.match(native, /data-view="groups-list"/);
-  assert.match(native, /data-list-row="group"/);
-  assert.match(native, /data-view="providers-list"/);
-  assert.match(native, /data-list-row="provider"/);
-  assert.match(client, /instances\.length.*className="grid gap-3 md:grid-cols-2"/s);
-  assert.match(client, /Grouped by.*<table/s);
-  assert.match(native, /account\.credentialConfigured \? account\.status : 'needs connection'/);
-  assert.match(detail, /Provider routes/);
-  assert.match(detail, /Observed performance/);
-  assert.match(detail, /Benchmarks/);
-  assert.match(detail, /Identity and provenance/);
-  assert.match(detail, /data-view="group-routes-list"/);
-  assert.match(detail, /data-list-row="group-route"/);
-  assert.match(detail, /<AIModelPicker label="Model"/);
-  assert.match(client, /write me 2 sentences about cool cats\./);
-  assert.match(client, /<AIModelPicker label=\{compare \? 'Target A' : 'Target'\}/);
-  assert.match(picker, /Search model, creator, provider, alias, or route/);
-  assert.match(picker, /ordered like Models/);
+test('personal Pointer management paths reject traversal, private lifecycle and inference', () => {
+  for (const path of ['/api/providers', '/api/connections/codex/accounts', '/api/groups/fixture', '/api/sources/settings', '/api/admin/settings']) assert.equal(allowedPointerManagementPath(path), true);
+  for (const path of ['/v1/models', '/api/platform/v1/installations', '/api/auth/login', '//evil.test/api/providers', '/api/providers/../platform', '/api/providers/%2e%2e/keys', '/api/providersx']) assert.equal(allowedPointerManagementPath(path), false);
+});
+
+test('public assets cannot read engine or account files', () => {
+  for (const path of ['manifest.json', 'entry-0123456789abcdef.js', 'fonts/0123456789abcdef-plex-sans.woff2']) assert.equal(allowedPointerAssetPath(path), true);
+  for (const path of ['../server.env', '/api/connections', 'manifest.json?token=secret', 'fonts/%2e%2e/account.json']) assert.equal(allowedPointerAssetPath(path), false);
 });
 
 test('bundled AI SVG brands have a clean-checkout TypeScript module contract', () => {
@@ -106,7 +38,7 @@ test('same-origin AI adapter authenticates users server-side and rejects route o
   assert.doesNotMatch(route, /upstream\.arrayBuffer/);
   assert.doesNotMatch(route, /request\.headers\.get\(['"]authorization/);
   assert.match(pointer, /authorization: `Bearer \$\{assertion\}`/);
-  assert.match(pointer, /new URL\(path, 'http:\/\/pointer\.internal'\)\.pathname/);
+  assert.match(read('src/lib/pointer/management-path.ts'), /new URL\(path, 'http:\/\/pointer\.internal'\)\.pathname/);
   assert.match(pointer, /AI settings require a YouEye user account/);
   assert.match(tokens, /pointer_owner_scope: 'actor'/);
   assert.match(tokens, /sub: user\.id/);

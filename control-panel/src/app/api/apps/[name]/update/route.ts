@@ -11,13 +11,12 @@
  */
 
 import { type NextRequest } from 'next/server';
-import { getSession } from '@/lib/auth';
+import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { getAppDefinition } from '@/lib/apps/definitions';
 import { updateOCIApp, type UpdateEvent } from '@/lib/apps/updater';
 import { updateLXDApp } from '@/lib/apps/lxd-updater';
 import { resolveLxdAppChannel } from '@/lib/apps/lxd-updates';
-import { updateMarketApp } from '@/lib/market/updater';
-import { getInstalledApp } from '@/lib/market/installed-apps';
+import { handleMarketUpdate } from '@/lib/market/update-http';
 import { spineClient } from '@/lib/spine/client';
 
 function sseMessage(event: string, data: unknown): string {
@@ -35,22 +34,21 @@ export async function POST(
 
   const { name } = await params;
   const appDef = getAppDefinition(name);
+  if (!appDef) return handleMarketUpdate(req, name);
+
+  if (!session.isAdmin) {
+    return Response.json({ error: 'Admin access required' }, { status: 403 });
+  }
+  if (!await verifyCSRFToken(req.headers.get('X-CSRF-Token') || '')) {
+    return Response.json({ error: 'Invalid CSRF token' }, { status: 403 });
+  }
+
   let confirmSwitch = false;
   try {
     const body = await req.json();
     confirmSwitch = body?.confirm_switch === true;
   } catch {
     confirmSwitch = false;
-  }
-
-  // If not in static definitions, check if it's a Market-installed app
-  if (!appDef) {
-    const installedApp = await getInstalledApp(name);
-    if (installedApp) {
-      // Route to unified market updater (handles both OCI and LXD native apps)
-      return handleMarketUpdate(name, confirmSwitch);
-    }
-    return new Response(JSON.stringify({ error: 'App not found' }), { status: 404 });
   }
 
   // SSE stream
@@ -103,61 +101,6 @@ export async function POST(
         } catch {
           // already closed
         }
-      }
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    },
-  });
-}
-
-/**
- * Handle update for Market-installed apps via the unified updater.
- * Supports both OCI and LXD native apps with migrations and DB tracking.
- */
-function handleMarketUpdate(appId: string, confirmSwitch: boolean): Response {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(controller) {
-      try {
-        const result = await updateMarketApp(
-          { appId, confirmSwitch },
-          (event) => {
-            try {
-              // Adapt InstallEvent to UpdateEvent format for SSE
-              controller.enqueue(encoder.encode(sseMessage('update', {
-                stage: event.status === 'running' ? 'rebuilding'
-                  : event.status === 'success' ? 'completed'
-                  : event.status === 'error' ? 'failed'
-                  : 'starting',
-                message: event.message,
-                progress: Math.round((event.step / event.totalSteps) * 100),
-              })));
-            } catch {
-              // stream closed
-            }
-          }
-        );
-
-        if (!result.success) {
-          controller.enqueue(encoder.encode(sseMessage('update', {
-            stage: 'failed',
-            message: result.error || 'Update failed',
-            error: result.error,
-          })));
-        }
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        controller.enqueue(encoder.encode(sseMessage('update', {
-          stage: 'failed', message: msg, error: msg,
-        })));
-      } finally {
-        try { controller.close(); } catch { /* already closed */ }
       }
     },
   });

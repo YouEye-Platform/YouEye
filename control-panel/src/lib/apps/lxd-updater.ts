@@ -37,6 +37,8 @@ import { buildReleasesAPIURL, getReleaseAssetDownloadURL, getReleaseSource, type
 import { injectCaddyRootCA } from '@/lib/market/caddy-ca';
 import { signedReleaseVerificationShell } from '@/lib/releases/verify';
 import { recordCoreProvenance } from '@/lib/updates/provenance';
+import { withAppLifecycle } from '@/lib/market/update-admission';
+import { configurePointerService } from '@/lib/pointer/lifecycle';
 
 type EventEmitter = (event: UpdateEvent) => void;
 
@@ -182,6 +184,14 @@ export async function updateLXDApp(
   // re-resolution, no is-newer no-op guard — the caller already decided).
   override?: { version: string; tag: string; branch?: string; source?: string; artifactSHA256?: string }
 ): Promise<void> {
+  return withAppLifecycle(appDef.id, () => updateLXDAppUnderLifecycle(appDef, emit, override));
+}
+
+async function updateLXDAppUnderLifecycle(
+  appDef: AppDefinition,
+  emit: EventEmitter,
+  override?: { version: string; tag: string; branch?: string; source?: string; artifactSHA256?: string }
+): Promise<void> {
   if (!appDef.lxdConfig) {
     throw new Error(`App ${appDef.id} has no lxdConfig`);
   }
@@ -268,6 +278,7 @@ export async function updateLXDApp(
     await restorePersistentUIEnvironment(appDef.id, containerName);
 
     if (releaseIsCurrent) {
+      if (appDef.id === 'pointer') await configurePointerService();
       emit({ stage: 'starting-container', message: `Restarting ${serviceName} to apply trust repairs`, container: containerName, progress: 75 });
       await execShell(containerName, `systemctl restart ${serviceName}`, { timeout: 30_000 });
       await healthCheckViaExec(containerName, appDef.webPort ?? 3000, healthEndpoint || '/api/health', 15);
@@ -333,6 +344,7 @@ export async function updateLXDApp(
     }
 
     // 11. Start service
+    if (appDef.id === 'pointer') await configurePointerService();
     emit({ stage: 'starting-container', message: `Starting ${serviceName} service`, container: containerName, progress: 70 });
     await execShell(containerName, `systemctl start ${serviceName}`, { timeout: 30_000 });
 

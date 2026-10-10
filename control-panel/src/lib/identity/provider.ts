@@ -308,33 +308,42 @@ export async function updateUser(id: string, input: {
   isAdmin?: boolean;
   is_active?: boolean;
 }): Promise<IdentityAdminUser> {
-  const current = await getUserById(id);
-  if (!current) throw new Error(`Identity user not found: ${id}`);
-  const isAdmin = typeof input.isAdmin === 'boolean' ? input.isAdmin : current.is_admin;
-  if (typeof input.is_active === 'boolean' && input.is_active !== current.is_active) {
-    const { setPointerManagedActorState } = await import('@/lib/pointer/managed-apps');
-    await setPointerManagedActorState(id, input.is_active ? 'active' : 'disabled');
-  }
-  return toAdminUser(await updateIdentityUser(id, {
-    name: input.name,
-    firstName: input.firstName,
-    lastName: input.lastName,
-    email: input.email,
-    groups: input.groups ? normalizeGroups(input.groups, isAdmin) : undefined,
-    isAdmin,
-    isActive: input.is_active,
+  return toAdminUser(await updateIdentityUser(id, async current => {
+    if (input.is_active === false || input.isAdmin === false) {
+      const { assertIdentityDisposition } = await import('./store');
+      await assertIdentityDisposition(id, 'disable');
+    }
+    const isAdmin = typeof input.isAdmin === 'boolean' ? input.isAdmin : current.is_admin;
+    if (input.is_active === false) {
+      const { setPointerManagedActorState } = await import('@/lib/pointer/managed-apps');
+      await setPointerManagedActorState(id, 'disabled');
+    }
+    return {
+      name: input.name,
+      firstName: input.firstName,
+      lastName: input.lastName,
+      email: input.email,
+      groups: input.groups ? normalizeGroups(input.groups, isAdmin) : undefined,
+      isAdmin: input.isAdmin,
+      isActive: input.is_active,
+    };
+  }, async () => {
+    // Enabling follows the authoritative identity commit. An explicit active
+    // request also repairs a prior fail-closed external/SQL interruption.
+    if (input.is_active === true) {
+      const { setPointerManagedActorState } = await import('@/lib/pointer/managed-apps');
+      await setPointerManagedActorState(id, 'active');
+    }
   }));
 }
 
 export async function deleteUser(id: string): Promise<void> {
-  const current = await getUserById(id);
-  if (!current) throw new Error(`Identity user not found: ${id}`);
-  // Pause every app credential routed through this identity before the account
-  // disappears. Pointer treats an unknown actor as an idempotent no-op, while
-  // a known actor and all of their managed applications become unavailable.
-  const { setPointerManagedActorState } = await import('@/lib/pointer/managed-apps');
-  await setPointerManagedActorState(current.id, 'disabled');
-  await deleteIdentityUser(id);
+  return deleteIdentityUser(id, async current => {
+    // The store checks disposition before this callback and retains admission
+    // through Pointer suspension and the authoritative deletion.
+    const { setPointerManagedActorState } = await import('@/lib/pointer/managed-apps');
+    await setPointerManagedActorState(current.id, 'disabled');
+  });
 }
 
 export async function setPassword(id: string, password: string): Promise<void> {

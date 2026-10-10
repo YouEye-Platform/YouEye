@@ -6,8 +6,9 @@ import { observeIssue, resolveIssue, recordTimelineEvent } from '@/lib/health/is
 import type { InstallMetadata } from './types';
 import { isContainerMaintenanceActive } from '@/lib/maintenance/container-maintenance';
 import { inspectAppStorage } from './storage';
+import { AppLifecycleAdmissionError, isAppUpdateReserved, withAppLifecycle } from './update-admission';
 
-export type AppHealthState = 'starting' | 'running' | 'unhealthy' | 'crash-looping' | 'unknown';
+export type AppHealthState = 'starting' | 'running' | 'unhealthy' | 'crash-looping' | 'unknown' | 'maintenance';
 
 export interface AppProbeResult {
   appId: string;
@@ -46,7 +47,7 @@ export async function probeInstalledApps(): Promise<AppProbeResult[]> {
   const apps = await getAllInstalledApps();
   const output: AppProbeResult[] = [];
   for (const app of apps) {
-    const result = await probeOne(app.appId, app.healthProbeState).catch(async (err) => {
+    const result = await probeInstalledApp(app.appId, app.healthProbeState).catch(async (err) => {
       const detail = err instanceof Error ? err.message : String(err);
       console.error(`[app-prober] ${app.appId} probe failed:`, err);
       await updateHealthStatus(app.appId, 'unknown', { appHealthState: 'unknown', healthDetail: detail });
@@ -67,7 +68,28 @@ export async function probeInstalledApps(): Promise<AppProbeResult[]> {
   return output;
 }
 
-async function probeOne(appId: string, persistedState?: ProbeState): Promise<AppProbeResult> {
+export async function probeInstalledApp(appId: string, persistedState?: ProbeState): Promise<AppProbeResult> {
+  try {
+    // The check also applies to reentrant verification calls inside an updater.
+    if (isAppUpdateReserved(appId)) return await publishAppMaintenance(appId);
+    return await withAppLifecycle(appId, () => probeOneUnderLifecycle(appId, persistedState));
+  } catch (error) {
+    if (error instanceof AppLifecycleAdmissionError
+      || (error instanceof Error && error.message.includes('executor lock is busy'))) {
+      return await publishAppMaintenance(appId);
+    }
+    throw error;
+  }
+}
+
+async function publishAppMaintenance(appId: string): Promise<AppProbeResult> {
+  const detail = 'Update maintenance or explicit recovery is pending';
+  states.delete(appId);
+  await updateHealthStatus(appId, 'unknown', { appHealthState: 'maintenance', healthDetail: detail });
+  return { appId, state: 'maintenance', detail };
+}
+
+async function probeOneUnderLifecycle(appId: string, persistedState?: ProbeState): Promise<AppProbeResult> {
   const meta = await readInstallMetadata(appId);
   if (!meta) {
     await updateHealthStatus(appId, 'unknown', {
@@ -114,12 +136,7 @@ async function probeOne(appId: string, persistedState?: ProbeState): Promise<App
     .filter((name): name is string => Boolean(name));
   if (maintenanceContainers.some((name) => isContainerMaintenanceActive(name))) {
     states.delete(appId);
-    await updateHealthStatus(appId, 'unknown', {
-      appHealthState: 'starting',
-      healthDetail: 'Update or rollback maintenance is in progress',
-    });
-    await resolveIssue(`app.${appId}.health`);
-    return { appId, state: 'starting', detail: 'Update or rollback maintenance is in progress' };
+    return publishAppMaintenance(appId);
   }
 
   const primary = primaryContainer(meta.containers, appId);

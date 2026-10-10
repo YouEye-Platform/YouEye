@@ -16,6 +16,7 @@ import { readReconfigureJournal } from '@/lib/reconfigure/journal';
 import { settingsService } from '@/lib/settings';
 import { repairRouteForCurrentDomain } from '@/lib/reconfigure/route-repair';
 import { deleteAppStorage } from './storage';
+import { AppLifecycleAdmissionError, withAppLifecycle } from './update-admission';
 import { pushConnectionsToUI } from '../bridges/manager';
 import { getIdentityProviderConfig, removeForwardAuth, removeOAuthClient } from '@/lib/identity/provider';
 import { listAppNetworks, reconcileAppNetworks } from '@/lib/incus/app-network';
@@ -35,6 +36,11 @@ const ISSUE_ID = 'market.reconcile.divergence';
 const UI_CONTAINER = 'youeye-ui';
 const POSTGRES_CONTAINER = 'youeye-postgres';
 const SAFE_FAILURE = 'operation-or-verification-failed';
+
+function admissionExcluded(error: unknown): boolean {
+  return error instanceof AppLifecycleAdmissionError
+    || (error instanceof Error && error.message.includes('executor lock is busy'));
+}
 
 export async function reconcileApps(): Promise<ReconcileResult> {
   const repaired: string[] = [];
@@ -80,7 +86,6 @@ export async function reconcileApps(): Promise<ReconcileResult> {
   const activeNetworkIds = new Set(
     appNetworks.filter((network) => network.state === 'active').map((network) => network.appId),
   );
-  const activeInstallIds = new Set(getAllActiveInstalls().map((operation) => operation.appId));
   const networkProblemIds = new Set<string>();
   for (const problem of networkResult.unresolved) {
     const match = problem.match(/^app-network(?:-stop)?:([^:]+):/);
@@ -102,75 +107,87 @@ export async function reconcileApps(): Promise<ReconcileResult> {
   const installedById = new Map(installedApps.map((app) => [app.appId, app]));
   const appInstanceNames = new Set(instances.filter((name) => name.startsWith('app-') || name.startsWith('ye-app-')));
 
-  for (const meta of metadata) {
-    const containers = normalizeContainers(meta.containers, meta.appId);
+  for (let meta of metadata) {
+    let containers = normalizeContainers(meta.containers, meta.appId);
     for (const name of containers) appInstanceNames.delete(name);
 
-    if (meta.lifecycleState === 'installing' && activeInstallIds.has(meta.appId)) {
-      // The durable operation record and provisional metadata agree that this
-      // installer is still live in this process. Network reconciliation applies
-      // the same ownership test before touching its reserved lease.
-      continue;
-    }
-
-    if (!activeNetworkIds.has(meta.appId)) {
-      unresolved.push(`metadata-without-active-network:${meta.appId}`);
-      for (const name of containers) {
-        if (!instances.includes(name)) continue;
-        try {
-          await stopInstance(name);
-          repaired.push(`stopped-unowned-app:${name}`);
-        } catch {
-          unresolved.push(`stop-unowned-app:${name}:${SAFE_FAILURE}`);
-        }
-      }
-      if (installedById.has(meta.appId)) {
-        try {
-          await removeInstalledApp(meta.appId);
-          repaired.push(`hidden-incomplete-app:${meta.appId}`);
-        } catch {
-          unresolved.push(`hidden-incomplete-app:${meta.appId}:${SAFE_FAILURE}`);
-        }
-      }
-      continue;
-    }
-
-    if (networkProblemIds.has(meta.appId)) {
-      unresolved.push(`app-reconcile-blocked-by-network:${meta.appId}`);
-      continue;
-    }
-
-    if (meta.lifecycleState === 'active' && reconcileCompletedInstallOperation(meta.appId)) {
-      repaired.push(`completed-operation:${meta.appId}`);
-    }
-
-    const existing = installedById.get(meta.appId);
-    if (!existing) {
-      try {
-        await upsertInstalledApp({
-          appId: meta.appId,
-          type: meta.integration || 'market',
-          installedVersion: meta.installedVersion ?? '',
-          catalogVersion: meta.catalogVersion ?? null,
-          subdomain: meta.subdomain,
-          ssoSlug: meta.ssoSlug,
-          forwardAuthEnabled: meta.forwardAuthEnabled,
-          catalogKey: meta.catalogKey,
-          sourceId: meta.sourceId,
-          sourceName: meta.sourceName,
-          sourceRepoUrl: meta.sourceRepoUrl,
-        });
-        repaired.push(`installed-apps:${meta.appId}`);
-      } catch {
-        unresolved.push(`installed-apps:${meta.appId}:${SAFE_FAILURE}`);
-      }
-    }
-
     try {
-      const repairedUi = await reconcileUIRegistration(meta);
-      if (repairedUi) repaired.push(`ui-drawer:${meta.appId}`);
-    } catch {
-      unresolved.push(`ui-drawer:${meta.appId}:${SAFE_FAILURE}`);
+      await withAppLifecycle(meta.appId, async () => {
+        const current = await readInstallMetadata(meta.appId);
+        if (!current) return;
+        meta = current;
+        containers = normalizeContainers(meta.containers, meta.appId);
+        const networkActive = (await listAppNetworks()).some(network => network.appId === meta.appId && network.state === 'active');
+        if (meta.lifecycleState === 'installing' && getAllActiveInstalls().some(operation => operation.appId === meta.appId)) {
+          // The durable operation record and provisional metadata agree that this
+          // installer is still live in this process. Network reconciliation applies
+          // the same ownership test before touching its reserved lease.
+          return;
+        }
+
+        if (!networkActive) {
+          unresolved.push(`metadata-without-active-network:${meta.appId}`);
+          for (const name of containers) {
+            if (!instances.includes(name)) continue;
+            try {
+              await stopInstance(name);
+              repaired.push(`stopped-unowned-app:${name}`);
+            } catch {
+              unresolved.push(`stop-unowned-app:${name}:${SAFE_FAILURE}`);
+            }
+          }
+          if (installedById.has(meta.appId)) {
+            try {
+              await removeInstalledApp(meta.appId);
+              repaired.push(`hidden-incomplete-app:${meta.appId}`);
+            } catch {
+              unresolved.push(`hidden-incomplete-app:${meta.appId}:${SAFE_FAILURE}`);
+            }
+          }
+          return;
+        }
+
+        if (networkProblemIds.has(meta.appId)) {
+          unresolved.push(`app-reconcile-blocked-by-network:${meta.appId}`);
+          return;
+        }
+
+        if (meta.lifecycleState === 'active' && reconcileCompletedInstallOperation(meta.appId)) {
+          repaired.push(`completed-operation:${meta.appId}`);
+        }
+
+        const existing = installedById.get(meta.appId);
+        if (!existing) {
+          try {
+            await upsertInstalledApp({
+              appId: meta.appId,
+              type: meta.integration || 'market',
+              installedVersion: meta.installedVersion ?? '',
+              catalogVersion: meta.catalogVersion ?? null,
+              subdomain: meta.subdomain,
+              ssoSlug: meta.ssoSlug,
+              forwardAuthEnabled: meta.forwardAuthEnabled,
+              catalogKey: meta.catalogKey,
+              sourceId: meta.sourceId,
+              sourceName: meta.sourceName,
+              sourceRepoUrl: meta.sourceRepoUrl,
+            });
+            repaired.push(`installed-apps:${meta.appId}`);
+          } catch {
+            unresolved.push(`installed-apps:${meta.appId}:${SAFE_FAILURE}`);
+          }
+        }
+
+        try {
+          const repairedUi = await reconcileUIRegistration(meta);
+          if (repairedUi) repaired.push(`ui-drawer:${meta.appId}`);
+        } catch {
+          unresolved.push(`ui-drawer:${meta.appId}:${SAFE_FAILURE}`);
+        }
+      });
+    } catch (error) {
+      if (admissionExcluded(error)) continue;
+      unresolved.push(`app-admission:${meta.appId}:${SAFE_FAILURE}`);
     }
   }
 
@@ -179,9 +196,15 @@ export async function reconcileApps(): Promise<ReconcileResult> {
       const hasLive = appInstanceNames.has(`app-${app.appId}`) || appInstanceNames.has(`ye-app-${app.appId}`);
       if (!hasLive) {
         try {
-          await removeInstalledApp(app.appId);
-          repaired.push(`stale-installed-app:${app.appId}`);
-        } catch {
+          await withAppLifecycle(app.appId, async () => {
+            if (await readInstallMetadata(app.appId)) return;
+            const live = await listInstances();
+            if (live.some(name => name === `app-${app.appId}` || name === `ye-app-${app.appId}`)) return;
+            await removeInstalledApp(app.appId);
+            repaired.push(`stale-installed-app:${app.appId}`);
+          });
+        } catch (error) {
+          if (admissionExcluded(error)) continue;
           unresolved.push(`stale-installed-app:${app.appId}:${SAFE_FAILURE}`);
         }
       }
@@ -249,12 +272,24 @@ export async function cleanupAppByScan(
   appId: string,
   options: { keepData?: boolean; dropDatabase?: boolean } = {},
 ): Promise<ReconcileResult> {
+  return withAppLifecycle(appId, () => cleanupAppByScanUnderLifecycle(appId, options));
+}
+
+async function cleanupAppByScanUnderLifecycle(
+  appId: string,
+  options: { keepData?: boolean; dropDatabase?: boolean },
+): Promise<ReconcileResult> {
   if (!/^[a-z0-9-]+$/.test(appId)) {
     throw new Error(`Invalid app ID for cleanup: ${appId}`);
   }
   const repaired: string[] = [];
   const unresolved: string[] = [];
   const recoveryMetadata = await readInstallMetadata(appId);
+  if (!recoveryMetadata) {
+    return { repaired: [], unresolved: [`ownership:${appId}:install metadata is required before cleanup`] };
+  }
+  const { verifyAdmissionCleanup } = await import('@/lib/admission/lifecycle');
+  await verifyAdmissionCleanup(recoveryMetadata, options.keepData !== false);
   const interruptedInstall = recoveryMetadata?.lifecycleState === 'installing';
   const prefixes = new Set([`app-${appId}`, `ye-app-${appId}`, appId]);
   const instances = await listInstances();
@@ -506,28 +541,40 @@ async function reconcileRoutes(
     const appId = match[2];
     if (metadataById.has(appId)) continue;
     try {
-      await removeAppRoutes(appId);
-      repaired.push(`stale-route:${appId}`);
-    } catch {
+      await withAppLifecycle(appId, async () => {
+        if (await readInstallMetadata(appId)) return;
+        await removeAppRoutes(appId);
+        repaired.push(`stale-route:${appId}`);
+      }, {
+        resources: [{ kind: 'container', scope: 'incus', name: upstream.split('.')[0], ownerAppId: appId, mutable: true }],
+      });
+    } catch (error) {
+      if (admissionExcluded(error)) continue;
       unresolved.push(`stale-route:${appId}:${SAFE_FAILURE}`);
     }
   }
 
-  for (const meta of metadataById.values()) {
+  for (let meta of metadataById.values()) {
     if (routesPresent(meta, routes)) continue;
     try {
-      // Recheck at the write boundary: migration may start after enumeration.
-      if (!await repairRouteForCurrentDomain(meta.domain, {
-        pending: readReconfigureJournal,
-        domain: async () => (await settingsService.getRaw()).domain,
-        repair: () => recreateRoutes(meta),
-      })) continue;
-      const verifiedRoutes = await getRoutes();
-      if (!routesPresent(meta, verifiedRoutes)) {
-        throw new Error('Caddy route did not persist after reconcile');
-      }
-      repaired.push(`caddy-route:${meta.appId}`);
-    } catch {
+      await withAppLifecycle(meta.appId, async () => {
+        const current = await readInstallMetadata(meta.appId);
+        if (!current) return;
+        meta = current;
+        // Recheck at the write boundary: migration may start after enumeration.
+        if (!await repairRouteForCurrentDomain(meta.domain, {
+          pending: readReconfigureJournal,
+          domain: async () => (await settingsService.getRaw()).domain,
+          repair: () => recreateRoutes(meta),
+        })) return;
+        const verifiedRoutes = await getRoutes();
+        if (!routesPresent(meta, verifiedRoutes)) {
+          throw new Error('Caddy route did not persist after reconcile');
+        }
+        repaired.push(`caddy-route:${meta.appId}`);
+      });
+    } catch (error) {
+      if (admissionExcluded(error)) continue;
       unresolved.push(`caddy-route:${meta.appId}:${SAFE_FAILURE}`);
     }
   }
@@ -544,7 +591,9 @@ async function recreateRoutes(meta: InstallMetadata): Promise<void> {
   if (!meta.subdomain || !meta.domain) throw new Error('install metadata lacks subdomain or domain');
   const primary = pickPrimaryContainer(meta.containers, meta.appId);
   const hostname = `${meta.subdomain}.${meta.domain}`;
-  const forwardAuth = meta.forwardAuthEnabled ? await forwardAuthConfig() : undefined;
+  const { bindInstalledAdmission, admissionForwardAuth } = await import('@/lib/admission/lifecycle');
+  await bindInstalledAdmission(meta);
+  const forwardAuth = await admissionForwardAuth();
   const entrances = (meta.entrances ?? []) as EntranceConfig[];
   if (entrances.length > 0) {
     await addAppRoutes(meta.appId, hostname, entrances, primary.containerName, forwardAuth, meta.usePerAppBridge ? 'reconcile' : undefined);
@@ -647,6 +696,7 @@ async function registerAppWithUI(meta: InstallMetadata): Promise<void> {
       container_url: containerUrl,
       subdomain: meta.subdomain,
       sso_entry_url: meta.ssoEntryUrl,
+      manifest: { integration: meta.integration },
     }),
   });
 

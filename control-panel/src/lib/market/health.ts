@@ -27,7 +27,7 @@ export async function waitForAppHealth(
         const resp = await fetch(`http://${ip}:${port}${path}`, {
           signal: AbortSignal.timeout(3000),
         });
-        if (resp.status < 500) return true;
+        if ((resp.status >= 200 && resp.status < 400) || resp.status === 401 || resp.status === 403) return true;
       } catch {
         // Not ready yet
       }

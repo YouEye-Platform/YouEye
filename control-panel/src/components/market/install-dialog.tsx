@@ -77,6 +77,18 @@ function defaultAccountLogin(app: MarketApp): boolean {
 export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onClose }: InstallDialogProps) {
   const t = useTranslations('market');
   const tc = useTranslations('common');
+  const [retainedData, setRetainedData] = useState<{ retained: boolean; canAdopt?: boolean; version?: string }>();
+  const [adoptRetainedData, setAdoptRetainedData] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/market/app/${encodeURIComponent(app.id)}/retained`)
+      .then(async response => {
+        if (!response.ok) throw new Error('Retained ownership status unavailable');
+        return response.json();
+      }).then(data => { if (!cancelled) setRetainedData(data); })
+      .catch(() => { if (!cancelled) setRetainedData({ retained: true, canAdopt: false }); });
+    return () => { cancelled = true; };
+  }, [app.id]);
 
   const [displayName, setDisplayName] = useState(app.name);
   const [subdomain, setSubdomain] = useState(app.defaultSubdomain);
@@ -261,6 +273,7 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (installDisabled) return;
+    if (!retainedData || (retainedData.retained && (!retainedData.canAdopt || !adoptRetainedData))) return;
     if (!validateAll()) return;
 
     const resolvedParams: Record<string, string> = {};
@@ -275,6 +288,7 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
 
     onInstall({
       appId: app.id,
+      adoptRetainedData: retainedData.retained ? adoptRetainedData : undefined,
       catalogKey: app.catalogKey,
       sourceId: app.sourceId,
       sourceName: app.sourceName,
@@ -344,6 +358,20 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
 
         {/* Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6 overflow-y-auto">
+          {retainedData?.retained && (
+            <Alert>
+              <AlertTitle>Retained app data</AlertTitle>
+              <AlertDescription>
+                <p>The original data owners and household grants will be preserved. Adopt version {retainedData.version || 'original'} before updating.</p>
+                {retainedData.canAdopt ? (
+                  <label className="mt-3 flex items-center gap-2">
+                    <input type="checkbox" checked={adoptRetainedData} onChange={event => setAdoptRetainedData(event.target.checked)} />
+                    Reinstall this app using its retained data
+                  </label>
+                ) : <p className="mt-2">The active app owner must adopt this data. Unresolved ownership needs recovery.</p>}
+              </AlertDescription>
+            </Alert>
+          )}
           {isDirectEntry && (
             <Alert>
               <ShieldOff className="h-4 w-4" />
@@ -747,7 +775,8 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
             <Button type="button" variant="outline" onClick={onClose} className="flex-1">
               {tc('cancel')}
             </Button>
-            <Button type="submit" className="flex-1" disabled={installDisabled}>
+            <Button type="submit" className="flex-1" disabled={installDisabled || !retainedData
+              || (retainedData.retained && (!retainedData.canAdopt || !adoptRetainedData))}>
               {t('install')} {displayName || app.name}
             </Button>
           </div>

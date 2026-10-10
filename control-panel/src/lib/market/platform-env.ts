@@ -4,7 +4,7 @@
  * Replaces the old buildPlatformEnv() with a declarative system:
  * 1. buildCanonicalContext() — assembles the full VariableContext
  * 2. resolveEnvMapping() — maps canonical vars to app-specific env var names
- * 3. generateAppToken() — creates identity-only JWT for gateway access
+ * 3. generateAppToken() — reads the protected installation credential for gateway access
  *
  * The platform no longer decides env var names — the manifest's env_mapping
  * section maps canonical variables like ${database.url} to whatever env var
@@ -21,6 +21,7 @@ import { getAppBridgeGatewayIP } from '@/lib/incus/app-network';
 import { CONTAINER_DOMAIN } from './constants';
 import { getContainerName } from './engine-helpers';
 import type { AppManifest, InstallConfig, VariableContext } from './types';
+import { withAppLifecycle } from './update-admission';
 
 // ─── Language Mapping ────────────────────────────────────
 
@@ -93,49 +94,23 @@ export function clearPlatformContextCache(): void {
   _platformCtxTimestamp = 0;
 }
 
-// ─── App Token (identity-only JWT) ────────────────────────
-
-let _gatewaySecret: string | null = null;
-
-async function getGatewaySecret(): Promise<string> {
-  if (_gatewaySecret) return _gatewaySecret;
-  try {
-    const fs = await import('fs');
-    _gatewaySecret = fs.readFileSync('/var/lib/youeye/config/gateway-secret', 'utf-8').trim();
-  } catch {
-    // Generate and persist if not found
-    const crypto = await import('crypto');
-    const fs = await import('fs');
-    _gatewaySecret = crypto.randomBytes(32).toString('hex');
-    try {
-      fs.mkdirSync('/var/lib/youeye/config', { recursive: true });
-      fs.writeFileSync('/var/lib/youeye/config/gateway-secret', _gatewaySecret, { mode: 0o600 });
-    } catch (persistErr) {
-      console.error('[platform-env] Failed to persist gateway secret — apps may lose auth on restart:', persistErr);
-    }
-  }
-  return _gatewaySecret!;
-}
-
+// Runtime rendering reads a protected installation credential; it never mints.
 export async function generateAppToken(appId: string): Promise<string> {
-  // Simple HMAC-based token (no jsonwebtoken dependency needed)
-  const crypto = await import('crypto');
-  const secret = await getGatewaySecret();
-  const payload = JSON.stringify({ appId, iat: Math.floor(Date.now() / 1000) });
-  const payloadB64 = Buffer.from(payload).toString('base64url');
-  const sig = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
-  return `${payloadB64}.${sig}`;
+  return withAppLifecycle(appId, async () => {
+  const { appServiceCredentials } = await import('../apps/service-credential-store');
+  return appServiceCredentials.runtimeSecret(appId);
+  });
 }
 
-export async function validateAppToken(token: string): Promise<{ appId: string } | null> {
+export async function validateAppToken(token: string, appId: string): Promise<{ appId: string } | null> {
   try {
-    const crypto = await import('crypto');
-    const secret = await getGatewaySecret();
-    const [payloadB64, sig] = token.split('.');
-    if (!payloadB64 || !sig) return null;
-    const expectedSig = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
-    if (sig !== expectedSig) return null;
-    return JSON.parse(Buffer.from(payloadB64, 'base64url').toString());
+    const { appServiceCredentials } = await import('../apps/service-credential-store');
+    const { readInstallMetadata } = await import('./metadata');
+    const metadata = await readInstallMetadata(appId);
+    if (!metadata || metadata.enabled !== true || metadata.lifecycleState !== 'active'
+      || metadata.serviceCredentialState !== 'ready') return null;
+    const credential = await appServiceCredentials.authenticate(appId, token);
+    return credential ? { appId: credential.appId } : null;
   } catch {
     return null;
   }
@@ -318,6 +293,7 @@ export async function buildCanonicalContext(
       googleBaseUrl: pointerInferenceBase,
       apiKey: aiEnabled ? config.aiSettings?.runtimeCredential || '' : '',
       defaultModel: 'default',
+      utilityModel: 'utility',
       groupId: aiEnabled ? config.aiSettings?.modelGroupId || '' : '',
     },
     secrets: {},

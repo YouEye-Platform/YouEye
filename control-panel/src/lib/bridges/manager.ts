@@ -16,6 +16,7 @@ import {
   SYSTEM_APP_IDS,
   withAppNetworkOperationLock,
 } from '../incus/app-network';
+import { withAppLifecycle } from '../market/update-admission';
 import { getContainerIP as getIncusContainerIP } from '../incus/container-ip';
 import { incusDownloadFile, incusRequest, incusUploadFile } from '../incus/server';
 import { CONTAINER_DOMAIN } from '../market/constants';
@@ -38,6 +39,32 @@ let _uiIP: string | null = null;
 
 function withBridgeLifecycleLock<T>(operation: string, work: () => Promise<T>): Promise<T> {
   return withAppNetworkOperationLock('bridge-lifecycle', operation, work, { waitMs: 30_000 });
+}
+
+function withBridgeAppLocks<T>(from: string, to: string, work: () => Promise<T>): Promise<T> {
+  const appIds = [...new Set([from, to])].sort();
+  const admit = (index: number): Promise<T> => index === appIds.length
+    ? work()
+    : withAppLifecycle(appIds[index], () => admit(index + 1));
+  return admit(0);
+}
+
+async function withBridgeAdmission<T>(
+  bridgeId: string,
+  operation: string,
+  absent: T,
+  work: () => Promise<T>,
+): Promise<T> {
+  const bridge = await getBridge(bridgeId);
+  if (!bridge) return absent;
+  return withBridgeAppLocks(bridge.from, bridge.to, () => withBridgeLifecycleLock(operation, async () => {
+    const current = await getBridge(bridgeId);
+    if (!current) return absent;
+    if (current.from !== bridge.from || current.to !== bridge.to) {
+      throw new Error('Bridge ownership changed during lifecycle admission');
+    }
+    return work();
+  }));
 }
 
 async function restartInstanceExact(containerName: string): Promise<void> {
@@ -350,10 +377,10 @@ export async function createBridge(params: {
     approvedAt: new Date().toISOString(),
   };
 
-  return withBridgeLifecycleLock('bridge-create', async () => {
+  return withBridgeAppLocks(params.from, params.to, () => withBridgeLifecycleLock('bridge-create', async () => {
     await addBridge(bridge);
     return bridge;
-  });
+  }));
 }
 
 /**
@@ -479,7 +506,7 @@ async function createScopedProxyGrant(bridge: Bridge): Promise<{ url: string; pa
  * Legacy apps (incusbr0): ACL rules
  */
 export async function activateBridge(bridgeId: string): Promise<Bridge | null> {
-  return withBridgeLifecycleLock('bridge-activate', () => activateBridgeLocked(bridgeId));
+  return withBridgeAdmission<Bridge | null>(bridgeId, 'bridge-activate', null, () => activateBridgeLocked(bridgeId));
 }
 
 async function activateBridgeLocked(bridgeId: string): Promise<Bridge | null> {
@@ -578,7 +605,7 @@ async function activateBridgeLocked(bridgeId: string): Promise<Bridge | null> {
  * Deactivate a bridge: revoke network access.
  */
 export async function deactivateBridge(bridgeId: string): Promise<Bridge | null> {
-  return withBridgeLifecycleLock('bridge-deactivate', () => deactivateBridgeLocked(bridgeId));
+  return withBridgeAdmission<Bridge | null>(bridgeId, 'bridge-deactivate', null, () => deactivateBridgeLocked(bridgeId));
 }
 
 async function deactivateBridgeLocked(bridgeId: string): Promise<Bridge | null> {
@@ -624,7 +651,7 @@ async function deactivateBridgeLocked(bridgeId: string): Promise<Bridge | null> 
  * Delete a bridge entirely.
  */
 export async function deleteBridge(bridgeId: string): Promise<boolean> {
-  return withBridgeLifecycleLock('bridge-delete', () => deleteBridgeLocked(bridgeId));
+  return withBridgeAdmission(bridgeId, 'bridge-delete', false, () => deleteBridgeLocked(bridgeId));
 }
 
 async function deleteBridgeLocked(bridgeId: string): Promise<boolean> {

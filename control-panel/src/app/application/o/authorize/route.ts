@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createAuthCode, getAppConsent, getClient, upsertAppConsent, type IdentityClient, type IdentityUser } from '@/lib/identity/store';
+import { createAuthCode, getAppConsent, getClient, upsertAppConsent, IdentityGrantInvalidated, type IdentityClient, type IdentityUser } from '@/lib/identity/store';
 import { getIdentityConfig } from '@/lib/identity/config';
 import { getIdentityProviderConfig } from '@/lib/identity/provider';
 import { getIdentitySession, getIdentitySessionId } from '@/lib/identity/http';
@@ -9,6 +9,7 @@ import { settingsService } from '@/lib/settings';
 import { renderIdentityErrorPage } from '@/lib/identity/error-page';
 import { identityFaviconLinks } from '@/lib/identity/favicon';
 import { identitySearchParams } from '@/lib/identity/authorize-query';
+import { evaluateClientAdmission } from '@/lib/admission/store';
 
 const FIRST_PARTY_CLIENTS = new Set(['youeye-control', 'youeye-ui']);
 const DEFAULT_SCOPE = 'openid profile email';
@@ -145,15 +146,21 @@ async function issueAuthRedirect(input: {
   codeChallenge: string | null;
   sessionId: string | null;
 }) {
-  const code = await createAuthCode({
-    clientId: input.clientId,
-    userId: input.user.id,
-    redirectUri: input.redirectUri,
-    scope: input.scope,
-    nonce: input.nonce || null,
-    codeChallenge: input.codeChallenge,
-    sessionId: input.sessionId,
-  });
+  let code: string;
+  try {
+    code = await createAuthCode({
+      clientId: input.clientId,
+      userId: input.user.id,
+      redirectUri: input.redirectUri,
+      scope: input.scope,
+      nonce: input.nonce || null,
+      codeChallenge: input.codeChallenge,
+      sessionId: input.sessionId,
+    });
+  } catch (error) {
+    if (error instanceof IdentityGrantInvalidated) return denyRedirect(input.redirectUri, input.state);
+    throw error;
+  }
   const redirect = new URL(input.redirectUri);
   redirect.searchParams.set('code', code);
   if (input.state) redirect.searchParams.set('state', input.state);
@@ -526,6 +533,7 @@ export async function GET(request: NextRequest) {
   const validated = await validateAuthorizeRequest(request);
   if ('error' in validated) return validated.error;
   const { client, clientId, redirectUri, state, scope, nonce, codeChallenge } = validated;
+  if (!(await evaluateClientAdmission(clientId, user.id)).allowed) return denyRedirect(redirectUri, state);
   const sessionId = await getIdentitySessionId(request);
 
   if (!isFirstPartyClient(clientId)) {
@@ -559,6 +567,7 @@ export async function POST(request: NextRequest) {
   const validated = await validateAuthorizeRequest(request);
   if ('error' in validated) return validated.error;
   const { clientId, redirectUri, state, scope, nonce, codeChallenge } = validated;
+  if (!(await evaluateClientAdmission(clientId, user.id)).allowed) return denyRedirect(redirectUri, state);
   const sessionId = await getIdentitySessionId(request);
 
   const form = await request.formData();

@@ -53,6 +53,11 @@ export async function ensureSchema() {
 
 async function initSchema() {
   try {
+    await queryClient`CREATE TABLE IF NOT EXISTS admission_projections (
+      app_id text PRIMARY KEY, installation_id uuid NOT NULL,
+      revision text NOT NULL, snapshot jsonb NOT NULL
+    )`;
+    await queryClient`CREATE TABLE IF NOT EXISTS identity_deletions (identity_id uuid PRIMARY KEY)`;
     await queryClient`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -121,6 +126,17 @@ async function initSchema() {
 
     // C1: App gateway migration — token hash for app-to-UI auth
     await queryClient`ALTER TABLE apps ADD COLUMN IF NOT EXISTS token_hash TEXT`;
+
+    // Independent of app data so unregister cannot erase revocation watermarks.
+    await queryClient`
+      CREATE TABLE IF NOT EXISTS app_service_credentials (
+        app_id TEXT PRIMARY KEY,
+        projection JSONB NOT NULL,
+        verifier_hash TEXT NOT NULL UNIQUE,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )`;
+
+    await queryClient`ALTER TABLE app_service_credentials ADD COLUMN IF NOT EXISTS ready BOOLEAN NOT NULL DEFAULT FALSE`;
 
     // C6: SSO entry URL — apps with SSO can specify a direct login path
     await queryClient`ALTER TABLE apps ADD COLUMN IF NOT EXISTS sso_entry_url TEXT`;

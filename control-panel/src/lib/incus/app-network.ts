@@ -18,11 +18,13 @@
 import { incusRequest, execShell } from './server';
 import { getContainerIP } from './container-ip';
 import { getSystemStaticIP } from './static-ips';
+import { planCaddyAppNIC } from './app-network-caddy-nic';
 import { readFile } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { parse as parseYaml } from 'yaml';
 import { assertNoCriticalIssues, observeIssue, resolveIssue } from '@/lib/health/issues';
 import { spineClient } from '@/lib/spine/client';
+import { AppLifecycleAdmissionError, withAppLifecycle } from '@/lib/market/update-admission';
 import {
   applyIncusDeviceMergePatch,
   type IncusDeviceMap,
@@ -770,14 +772,21 @@ export function appIdentityDnsConfig(current: string | undefined, gateway: strin
   if (!current || !current.split('\n').some((line) => line.startsWith('server='))) {
     throw new AppNetworkStateError('App bridge has no DNS forwarding policy');
   }
-  const mappings = current.split('\n').filter((line) => line.startsWith('address=/id.youeye/'));
+  const lines = current.trimEnd().split('\n');
+  const mappings = lines.filter((line) => line.startsWith('address=/id.youeye/'));
+  const local = 'local=/id.youeye/';
+  const locals = lines.filter((line) => line === local);
   const expected = `address=/id.youeye/${gateway}`;
-  if (mappings.length === 1 && mappings[0] === expected) return null;
-  if (mappings.length > 1) {
+  if (mappings.length > 1 || locals.length > 1) {
     throw new AppNetworkStateError('App bridge has multiple id.youeye DNS mappings');
   }
-  if (mappings.length === 1) return current.replace(mappings[0], expected);
-  return `${current.trimEnd()}\n${expected}`;
+  if (mappings.length === 1 && mappings[0] === expected && locals.length === 1) return null;
+  const next = lines.map((line) => line === mappings[0] ? expected : line);
+  if (mappings.length === 0) next.push(expected);
+  // dnsmasq2.86+ forwards unmatched RR types unless this domain is local.
+  // An upstream AAAA NXDOMAIN makes musl reject even our valid A answer.
+  if (locals.length === 0) next.push(local);
+  return next.join('\n');
 }
 
 async function reconcileAppIdentityDns(network: IncusNetwork, lease: AppNetworkLease): Promise<void> {
@@ -867,7 +876,7 @@ export async function createAppNetwork(
   // Keep the app's OIDC issuer stable when IPAM reallocates its bridge. The
   // local dnsmasq answers this name before forwarding other names to Pi-hole.
   config['raw.dnsmasq'] = `server=${piholeIP}`;
-  config['raw.dnsmasq'] += `\naddress=/id.youeye/${lease.gateway}`;
+  config['raw.dnsmasq'] += `\naddress=/id.youeye/${lease.gateway}\nlocal=/id.youeye/`;
 
   try {
     if (!(await bridgeExists(lease.bridgeName))) {
@@ -1096,15 +1105,13 @@ export async function addCaddyToAppNetwork(appId: string): Promise<void> {
     throw new AppNetworkStateError(`No bridge found for ${appId}`);
   }
 
-  const deviceName = `net-${appId}`;
-
   const res = await incusRequest<{
     devices: Record<string, Record<string, string>>;
   }>('GET', '/1.0/instances/youeye-caddy');
   const metadata = assertIncusSuccess(res, 'Read Caddy NICs');
   const devices = { ...metadata.devices };
-  const ifName = `eth-${appId.substring(0, 11)}`;
-  const expected = { type: 'nic', network: bridgeName, name: ifName };
+  const { deviceName, device: expected } = planCaddyAppNIC(appId, bridgeName, devices);
+  const ifName = expected.name;
   if (!devices[deviceName]) {
     devices[deviceName] = expected;
     const patched = await incusRequest('PATCH', '/1.0/instances/youeye-caddy', { devices });
@@ -1112,7 +1119,7 @@ export async function addCaddyToAppNetwork(appId: string): Promise<void> {
   }
   const readBack = await incusRequest<{ devices: Record<string, Record<string, string>> }>('GET', '/1.0/instances/youeye-caddy');
   const attached = assertIncusSuccess(readBack, 'Read back Caddy NICs').devices?.[deviceName];
-  if (!attached || attached.network !== bridgeName || attached.name !== ifName) {
+  if (!attached || attached.type !== 'nic' || attached.network !== bridgeName || attached.name !== ifName) {
     throw new AppNetworkStateError(`Caddy NIC ${deviceName} did not read back on ${bridgeName}`);
   }
   console.log(`[app-network] Added Caddy NIC for ${bridgeName} (${appId})`);
@@ -1900,7 +1907,17 @@ async function stopWorkloadsAfterObservationFailure(error: unknown): Promise<str
     if (!affected) continue;
     const appId = network.config?.[OWNERSHIP_APP_KEY];
     const safeAppId = appId && /^[a-z0-9][a-z0-9-]{0,62}$/.test(appId) ? appId : null;
-    for (const name of await stopAffectedAppContainers(safeAppId, network)) stopped.add(name);
+    if (!safeAppId) continue; // No proved app identity means no safe mutation admission.
+    try {
+      await withAppLifecycle(safeAppId, () => withAppNetworkOperationLock(safeAppId, 'reconcile-stop', async () => {
+        for (const name of await stopAffectedAppContainers(safeAppId, network)) stopped.add(name);
+      }));
+    } catch (lockError) {
+      if (lockError instanceof AppLifecycleAdmissionError
+        || lockError instanceof AppNetworkOperationConflictError
+        || (lockError instanceof Error && lockError.message.includes('executor lock is busy'))) continue;
+      throw lockError;
+    }
   }
   return [...stopped];
 }
@@ -1954,143 +1971,158 @@ export async function reconcileAppNetworks(): Promise<AppNetworkReconcileResult>
   }
 
   for (const originalLease of [...observation.state.leases]) {
-    const network = observation.networks.find((candidate) => candidate.name === originalLease.bridgeName);
     try {
-      if (network) assertOwnedNetworkMatchesLease(network, originalLease);
+      await withAppLifecycle(originalLease.appId, () =>
+        withAppNetworkOperationLock(originalLease.appId, 'reconcile', async () => {
+          // The initial observation may predate admission. Refresh under both locks
+          // before repairing attachments or ACLs so an update's fencing is never undone.
+          observation = await observeAppNetworkState();
+          const currentLease = observation.state.leases.find(lease => lease.appId === originalLease.appId);
+          if (!currentLease || currentLease.operationId !== originalLease.operationId
+            || currentLease.state !== originalLease.state || currentLease.bridgeName !== originalLease.bridgeName
+            || currentLease.cidr !== originalLease.cidr) return;
+          const network = observation.networks.find((candidate) => candidate.name === originalLease.bridgeName);
+          try {
+            if (network) assertOwnedNetworkMatchesLease(network, originalLease);
 
-      if (originalLease.state === 'reserved' && activeInstalls.has(originalLease.appId)) {
-        // A live installer owns this transitional lease.
-        continue;
-      }
+            if (originalLease.state === 'reserved' && activeInstalls.has(originalLease.appId)) {
+              // A live installer owns this transitional lease.
+              return;
+            }
 
-      if (originalLease.state === 'reserved' || originalLease.state === 'cleanup_pending') {
-        if (originalLease.state === 'reserved') {
-          await mutateIpamState({ config: observation.config, allowInitialize: false }, (state) =>
-            transitionLease(state, originalLease.appId, 'cleanup_pending', {
-              operationId: originalLease.operationId,
-              failure: {
-                stage: 'reconcile-interrupted-reservation',
-                message: 'No live durable install operation owns this reservation',
-                observedAt: new Date().toISOString(),
-              },
-            }),
-          );
-        }
-        const { cleanupAppByScan } = await import('../market/reconciler');
-        const cleanup = await withAppNetworkOperationLock(originalLease.appId, 'reconcile-cleanup', () =>
-          cleanupAppByScan(originalLease.appId, { keepData: true, dropDatabase: false }),
-        );
-        repaired.push(...cleanup.repaired.map((item) => `app-network:${item}`));
-        if (cleanup.unresolved.length > 0) {
-          throw new Error(cleanup.unresolved.join('; '));
-        }
-        await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
-        continue;
-      }
+            if (originalLease.state === 'reserved' || originalLease.state === 'cleanup_pending') {
+              if (originalLease.state === 'reserved') {
+                await mutateIpamState({ config: observation.config, allowInitialize: false }, (state) =>
+                  transitionLease(state, originalLease.appId, 'cleanup_pending', {
+                    operationId: originalLease.operationId,
+                    failure: {
+                      stage: 'reconcile-interrupted-reservation',
+                      message: 'No live durable install operation owns this reservation',
+                      observedAt: new Date().toISOString(),
+                    },
+                  }),
+                );
+              }
+              const { cleanupAppByScan } = await import('../market/reconciler');
+              const cleanup = await cleanupAppByScan(originalLease.appId, { keepData: true, dropDatabase: false });
+              repaired.push(...cleanup.repaired.map((item) => `app-network:${item}`));
+              if (cleanup.unresolved.length > 0) {
+                throw new Error(cleanup.unresolved.join('; '));
+              }
+              await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
+              return;
+            }
 
-      if (!network) {
-        throw new AppNetworkStateError(
-          `Active lease ${originalLease.appId} owns ${originalLease.bridgeName}, but the bridge is absent`,
-        );
-      }
+            if (!network) {
+              throw new AppNetworkStateError(
+                `Active lease ${originalLease.appId} owns ${originalLease.bridgeName}, but the bridge is absent`,
+              );
+            }
 
-      const { readInstallMetadata } = await import('../market/metadata');
-      const metadata = await readInstallMetadata(originalLease.appId);
-      if (!metadata) {
-        throw new AppNetworkStateError(
-          `Active lease ${originalLease.appId} has no install metadata; refusing automatic adoption or deletion`,
-        );
-      }
-      if (metadata.lifecycleState === 'installing' && !activeInstalls.has(originalLease.appId)) {
-        await mutateIpamState({ config: observation.config, allowInitialize: false }, (state) =>
-          transitionLease(state, originalLease.appId, 'cleanup_pending', {
-            operationId: originalLease.operationId,
-            failure: {
-              stage: 'reconcile-interrupted-finalization',
-              message: 'No live durable install operation owns installing metadata',
-              observedAt: new Date().toISOString(),
-            },
-          }),
-        );
-        const { cleanupAppByScan } = await import('../market/reconciler');
-        const cleanup = await withAppNetworkOperationLock(originalLease.appId, 'reconcile-finalization', () =>
-          cleanupAppByScan(originalLease.appId),
-        );
-        repaired.push(...cleanup.repaired.map((item) => `app-network:${item}`));
-        if (cleanup.unresolved.length > 0) throw new Error(cleanup.unresolved.join('; '));
-        await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
-        continue;
-      }
-      const containerNames = (metadata.containers ?? [])
-        .map((container) => typeof container === 'string' ? container : container.containerName)
-        .filter((name): name is string => Boolean(name));
-      if (containerNames.length === 0) {
-        throw new AppNetworkStateError(`Active lease ${originalLease.appId} has no recorded containers`);
-      }
-      const needsSharedDb = metadata.databaseMode === 'shared';
-      const needsSSO = metadata.hasSSO ?? metadata.enableSSO;
-      const needsAI = metadata.aiConnection?.state !== undefined;
-      await reconcileAppIdentityDns(network, originalLease);
-      await addCaddyToAppNetwork(originalLease.appId);
-      await addSystemProxyDevices(
-        originalLease.appId,
-        await getSystemServices({ needsSharedDb, needsSSO, needsAI }),
-      );
-      await applyAppEgressAcl(originalLease.appId, containerNames, { needsSharedDb, needsSSO, needsAI });
-      await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
+            const { readInstallMetadata } = await import('../market/metadata');
+            const metadata = await readInstallMetadata(originalLease.appId);
+            if (!metadata) {
+              throw new AppNetworkStateError(
+                `Active lease ${originalLease.appId} has no install metadata; refusing automatic adoption or deletion`,
+              );
+            }
+            if (metadata.lifecycleState === 'installing' && !activeInstalls.has(originalLease.appId)) {
+              await mutateIpamState({ config: observation.config, allowInitialize: false }, (state) =>
+                transitionLease(state, originalLease.appId, 'cleanup_pending', {
+                  operationId: originalLease.operationId,
+                  failure: {
+                    stage: 'reconcile-interrupted-finalization',
+                    message: 'No live durable install operation owns installing metadata',
+                    observedAt: new Date().toISOString(),
+                  },
+                }),
+              );
+              const { cleanupAppByScan } = await import('../market/reconciler');
+              const cleanup = await cleanupAppByScan(originalLease.appId);
+              repaired.push(...cleanup.repaired.map((item) => `app-network:${item}`));
+              if (cleanup.unresolved.length > 0) throw new Error(cleanup.unresolved.join('; '));
+              await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
+              return;
+            }
+            const containerNames = (metadata.containers ?? [])
+              .map((container) => typeof container === 'string' ? container : container.containerName)
+              .filter((name): name is string => Boolean(name));
+            if (containerNames.length === 0) {
+              throw new AppNetworkStateError(`Active lease ${originalLease.appId} has no recorded containers`);
+            }
+            const needsSharedDb = metadata.databaseMode === 'shared';
+            const needsSSO = metadata.hasSSO ?? metadata.enableSSO;
+            const needsAI = metadata.aiConnection?.state !== undefined;
+            await reconcileAppIdentityDns(network, originalLease);
+            await addCaddyToAppNetwork(originalLease.appId);
+            await addSystemProxyDevices(
+              originalLease.appId,
+              await getSystemServices({ needsSharedDb, needsSSO, needsAI }),
+            );
+            await applyAppEgressAcl(originalLease.appId, containerNames, { needsSharedDb, needsSSO, needsAI });
+            await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
+          } catch (error) {
+            // A supported install/remove/repair owns the same per-app lock. The
+            // observation above is necessarily stale while that mutation is in
+            // flight, so let its postconditions (and the next reconciliation pass)
+            // decide health instead of raising a false critical issue.
+            if (error instanceof AppNetworkOperationConflictError) return;
+
+            // Reconciliation observes the allocator and Incus before it starts
+            // checking each lease. A supported uninstall can finish between that
+            // snapshot and this catch block. If the exact lease no longer exists,
+            // or has since advanced to a different operation/state, the failure was
+            // derived from stale ownership state and must not become a persistent
+            // critical issue that blocks the next install.
+            try {
+              const latest = await observeAppNetworkState();
+              const currentLease = latest.state.leases.find(
+                (candidate) => candidate.appId === originalLease.appId,
+              );
+              const leaseAdvanced = currentLease
+                && (currentLease.operationId !== originalLease.operationId
+                  || currentLease.state !== originalLease.state
+                  || currentLease.bridgeName !== originalLease.bridgeName
+                  || currentLease.cidr !== originalLease.cidr);
+              if (!currentLease || leaseAdvanced) {
+                await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
+                return;
+              }
+            } catch {
+              // If fresh ownership cannot be observed, retain the conservative
+              // critical path below. Ambiguous state must never be auto-adopted.
+            }
+
+            let stopped: string[] = [];
+            if (originalLease.state === 'active') {
+              try {
+                stopped = await stopAffectedAppContainers(originalLease.appId, network);
+              } catch {
+                unresolved.push(`app-network-stop:${originalLease.appId}:stop-or-verification-failed`);
+              }
+            }
+            const message = safeNetworkFailure(error);
+            unresolved.push(`app-network:${originalLease.appId}:${message}`);
+            await observeIssue({
+              id: `${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`,
+              severity: 'critical',
+              source: 'app-network',
+              title: `App network isolation could not be verified for ${originalLease.appId}`,
+              body: `Lease ${originalLease.bridgeName} (${originalLease.cidr}) remains owned and non-reusable. ${stopped.length > 0 ? `Only the affected app containers were stopped: ${stopped.join(', ')}. ` : ''}${message}`,
+              fixable: true,
+              repairFn: 'reconcile-apps',
+              learnMore: '/settings/system/health',
+              debounce: 1,
+            });
+          }
+        }));
     } catch (error) {
-      // A supported install/remove/repair owns the same per-app lock. The
-      // observation above is necessarily stale while that mutation is in
-      // flight, so let its postconditions (and the next reconciliation pass)
-      // decide health instead of raising a false critical issue.
-      if (error instanceof AppNetworkOperationConflictError) continue;
-
-      // Reconciliation observes the allocator and Incus before it starts
-      // checking each lease. A supported uninstall can finish between that
-      // snapshot and this catch block. If the exact lease no longer exists,
-      // or has since advanced to a different operation/state, the failure was
-      // derived from stale ownership state and must not become a persistent
-      // critical issue that blocks the next install.
-      try {
-        const latest = await observeAppNetworkState();
-        const currentLease = latest.state.leases.find(
-          (candidate) => candidate.appId === originalLease.appId,
-        );
-        const leaseAdvanced = currentLease
-          && (currentLease.operationId !== originalLease.operationId
-            || currentLease.state !== originalLease.state
-            || currentLease.bridgeName !== originalLease.bridgeName
-            || currentLease.cidr !== originalLease.cidr);
-        if (!currentLease || leaseAdvanced) {
-          await resolveIssue(`${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`);
-          continue;
-        }
-      } catch {
-        // If fresh ownership cannot be observed, retain the conservative
-        // critical path below. Ambiguous state must never be auto-adopted.
-      }
-
-      let stopped: string[] = [];
-      if (originalLease.state === 'active') {
-        try {
-          stopped = await stopAffectedAppContainers(originalLease.appId, network);
-        } catch {
-          unresolved.push(`app-network-stop:${originalLease.appId}:stop-or-verification-failed`);
-        }
-      }
-      const message = safeNetworkFailure(error);
-      unresolved.push(`app-network:${originalLease.appId}:${message}`);
-      await observeIssue({
-        id: `${NETWORK_ISSUE_PREFIX}.${originalLease.appId}`,
-        severity: 'critical',
-        source: 'app-network',
-        title: `App network isolation could not be verified for ${originalLease.appId}`,
-        body: `Lease ${originalLease.bridgeName} (${originalLease.cidr}) remains owned and non-reusable. ${stopped.length > 0 ? `Only the affected app containers were stopped: ${stopped.join(', ')}. ` : ''}${message}`,
-        fixable: true,
-        repairFn: 'reconcile-apps',
-        learnMore: '/settings/system/health',
-        debounce: 1,
-      });
+      // Lifecycle admission is the authority even when the old writer has died.
+      // An unfinished receipt is never grounds for automatic network repair.
+      if (error instanceof AppLifecycleAdmissionError
+        || error instanceof AppNetworkOperationConflictError
+        || (error instanceof Error && error.message.includes('executor lock is busy'))) continue;
+      unresolved.push(`app-network:${originalLease.appId}:${safeNetworkFailure(error)}`);
     }
   }
 

@@ -5,6 +5,7 @@ import {
   issueRefreshToken, rotateRefreshToken,
 } from '@/lib/identity/store';
 import { createAccessToken, createIdToken } from '@/lib/identity/tokens';
+import { evaluateClientAdmission } from '@/lib/admission/store';
 
 function secretsMatch(expected: string, provided: string): boolean {
   const a = Buffer.from(expected, 'utf8');
@@ -35,6 +36,15 @@ function pkceMatches(challenge: string | null, verifier: string): boolean {
 }
 
 export async function POST(request: NextRequest) {
+  try { return await exchange(request); }
+  catch (error) {
+    const { IdentityGrantInvalidated } = await import('@/lib/identity/store');
+    if (error instanceof IdentityGrantInvalidated) return NextResponse.json({ error: 'invalid_grant' }, { status: 400 });
+    throw error;
+  }
+}
+async function exchange(request: NextRequest) {
+  const authorizedAt = Math.floor(Date.now() / 1000);
   const form = await request.formData();
   const grantType = String(form.get('grant_type') || '');
   const { clientId, clientSecret } = credentials(request, form);
@@ -47,10 +57,12 @@ export async function POST(request: NextRequest) {
     const rotated = await rotateRefreshToken(String(form.get('refresh_token') || ''), clientId);
     if (!rotated) return NextResponse.json({ error: 'invalid_grant' }, { status: 400 });
     const user = await getUserById(rotated.userId);
-    if (!user?.is_active) return NextResponse.json({ error: 'invalid_grant' }, { status: 400 });
+    if (!user?.is_active || !(await evaluateClientAdmission(clientId, user.id)).allowed) {
+      return NextResponse.json({ error: 'invalid_grant' }, { status: 400 });
+    }
     const [accessToken, idToken] = await Promise.all([
-      createAccessToken(user, clientId, rotated.scope, rotated.sessionId),
-      createIdToken(user, clientId, rotated.scope, null, rotated.sessionId),
+      createAccessToken(user, clientId, rotated.scope, rotated.sessionId, authorizedAt),
+      createIdToken(user, clientId, rotated.scope, null, rotated.sessionId, authorizedAt),
     ]);
     return NextResponse.json({ access_token: accessToken, id_token: idToken, refresh_token: rotated.token, token_type: 'Bearer', expires_in: 3600, scope: rotated.scope });
   }
@@ -66,11 +78,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'invalid_grant' }, { status: 400 });
   }
   const user = await getUserById(authCode.user_id);
-  if (!user?.is_active) return NextResponse.json({ error: 'invalid_grant' }, { status: 400 });
+  if (!user?.is_active || !(await evaluateClientAdmission(clientId, user.id)).allowed) {
+    return NextResponse.json({ error: 'invalid_grant' }, { status: 400 });
+  }
   const [accessToken, idToken, refreshToken] = await Promise.all([
-    createAccessToken(user, clientId, authCode.scope, authCode.session_id),
-    createIdToken(user, clientId, authCode.scope, authCode.nonce, authCode.session_id),
-    authCode.session_id ? issueRefreshToken({ clientId, userId: user.id, sessionId: authCode.session_id, scope: authCode.scope }) : Promise.resolve(null),
+    createAccessToken(user, clientId, authCode.scope, authCode.session_id, authorizedAt),
+    createIdToken(user, clientId, authCode.scope, authCode.nonce, authCode.session_id, authorizedAt),
+    authCode.session_id ? issueRefreshToken({ clientId, userId: user.id, sessionId: authCode.session_id, scope: authCode.scope, authorizedAt }) : Promise.resolve(null),
   ]);
   return NextResponse.json({ access_token: accessToken, id_token: idToken, ...(refreshToken ? { refresh_token: refreshToken } : {}), token_type: 'Bearer', expires_in: 3600, scope: authCode.scope });
 }

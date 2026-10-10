@@ -20,6 +20,7 @@ import { describePermission } from "@/lib/permissions/descriptors";
 import { normalizeAppSurfaces } from "@/lib/surfaces/normalize";
 import { getUserSettings } from "@/lib/db/queries/settings";
 import { collectInternetPermissions } from "@/lib/internet/scopes";
+import { evaluateUiUserAdmission } from '@/lib/admission/store';
 
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -28,6 +29,7 @@ function stringArray(value: unknown): string[] {
 
 function collectLaunchPermissions(manifest: Record<string, unknown> | null): string[] {
   const permissions = new Set<string>();
+  if (manifest?.integration === 'native') permissions.add('profile:read');
   for (const permission of stringArray(manifest?.permissions)) {
     permissions.add(permission);
   }
@@ -138,7 +140,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ appId: string }> }
 ) {
-  const session = await getSession();
+  const session = await getSession({ allowAppOrigin: true });
   const serviceUser = session ? null : await resolveServiceAuth(request);
   if (!session && !serviceUser) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -154,6 +156,10 @@ export async function GET(
   }
 
   const manifestAppId = normalizePermissionAppId(serviceUser && serviceAppId ? serviceAppId : appId);
+  if ((session?.actingAppId && !permissionAppMatches(session.actingAppId, manifestAppId))
+    || !(await evaluateUiUserAdmission(manifestAppId, (session?.userId ?? serviceUser?.id)!)).allowed) {
+    return NextResponse.json({ error: 'app_access_denied' }, { status: 403 });
+  }
   const grantAppId = serviceUser && serviceAppId ? serviceAppId : appId;
   const app = await getApp(manifestAppId);
   if (!app) {

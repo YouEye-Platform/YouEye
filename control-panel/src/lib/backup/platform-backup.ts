@@ -49,6 +49,8 @@ export interface RestoreStatusRecord {
   updatedAt: string;
   completedAt?: string;
   error?: string;
+  /** Setup status is readable only by the exact session that submitted it. */
+  setupSessionId?: string;
 }
 
 export function validateBackupPassphrase(passphrase: unknown): string {

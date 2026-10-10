@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, CSSProperties } from "react";
 import Link from "next/link";
 import * as LucideIcons from "lucide-react";
@@ -45,12 +45,13 @@ interface UnifiedApp {
   status: string;
   enabled?: boolean;
   desiredState?: "running" | "stopped";
+  serviceCredentialState?: "pending" | "ready" | "revoked";
   databaseMode?: "shared" | "own" | "none";
   updateAvailable: boolean;
   updateInfo?: string;
   systemManaged?: boolean;
   healthStatus?: "healthy" | "unhealthy" | "unknown";
-  appHealthState?: "starting" | "running" | "unhealthy" | "crash-looping" | "unknown";
+  appHealthState?: "starting" | "running" | "unhealthy" | "crash-looping" | "unknown" | "maintenance";
   failingLevel?: "L1" | "L2" | "L3";
   healthDetail?: string | null;
   healthCheckedAt?: string | null;
@@ -65,6 +66,17 @@ interface UpdateStatus {
   progress: number;
   version_after?: string | null;
   error?: string | null;
+}
+
+interface AppUpdateOperation {
+  id: string;
+  phase: string;
+  committed: boolean;
+  rolledBack: boolean;
+  cleanupComplete: boolean;
+  recoveryRequired: boolean;
+  pending: boolean;
+  errorCode: string | null;
 }
 
 interface Permission {
@@ -281,10 +293,14 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [statuses, setStatuses] = useState<Map<string, UpdateStatus>>(new Map());
+  const [operations, setOperations] = useState<Map<string, AppUpdateOperation | null>>(new Map());
+  const [operationErrors, setOperationErrors] = useState<Set<string>>(new Set());
+  const [recovering, setRecovering] = useState<Set<string>>(new Set());
+  const activeRequests = useRef(new Set<string>());
   const [confirmApp, setConfirmApp] = useState<UnifiedApp | null>(null);
   const [maintAck, setMaintAck] = useState(false);
   const [dbAck, setDbAck] = useState(false);
-  const updates = apps.filter((app) => app.updateAvailable);
+  const updates = apps.filter((app) => app.updateAvailable || operations.get(app.id)?.pending);
   const systemApps = apps.filter((app) => app.category !== "user");
 
   const load = useCallback(async (initial = false) => {
@@ -303,10 +319,42 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
     for (const status of data.statuses || []) {
       next.set(status.component, status);
     }
-    setStatuses(next);
+    setStatuses((prev) => {
+      // Market SSE owns its progress while the request is active. The legacy
+      // status endpoint must not erase it or replay an older completed update.
+      for (const [component, status] of prev) {
+        if (activeRequests.current.has(component)) next.set(component, status);
+      }
+      return next;
+    });
   }, []);
 
+  const loadOperations = useCallback(async () => {
+    await Promise.all(apps.filter((app) => app.category === "user").map(async (app) => {
+      try {
+        const res = await fetch(`/api/market/update/status?appId=${encodeURIComponent(app.id)}`, { cache: "no-store" });
+        if (!res.ok) throw new Error("Update status is unavailable");
+        const data = await res.json();
+        setOperations((prev) => new Map(prev).set(app.id, data.operation));
+        setOperationErrors((prev) => {
+          const next = new Set(prev);
+          next.delete(app.id);
+          return next;
+        });
+      } catch {
+        setOperationErrors((prev) => new Set(prev).add(app.id));
+      }
+    }));
+  }, [apps]);
+
   useEffect(() => { load(true); loadStatuses(); }, [load, loadStatuses]);
+
+  // Always check durable status, including after a reload or a lost SSE connection.
+  useEffect(() => {
+    void loadOperations();
+    const timer = window.setInterval(() => { void loadOperations(); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [loadOperations]);
 
   const hasActiveUpdate = Array.from(statuses.values()).some(
     (status) => !["idle", "completed", "failed"].includes(status.status),
@@ -341,6 +389,10 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
     appId: string,
     confirm?: { confirmMaintenanceWindow: boolean; confirmContainerName: string; allowDatabaseUpdate?: boolean },
   ) {
+    if (activeRequests.current.has(appId) || operations.get(appId)?.pending) return;
+    const marketApp = apps.find((app) => app.id === appId)?.category === "user";
+    if (marketApp && (!operations.has(appId) || operationErrors.has(appId))) return;
+    activeRequests.current.add(appId);
     const component = updateStatusComponent(appId);
     setStatuses((prev) => {
       const next = new Map(prev);
@@ -359,6 +411,7 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
         .then((res) => res.ok ? res.json() : Promise.reject(new Error("Could not start update")))
         .then((body) => body.csrfToken as string);
     } catch (err) {
+      activeRequests.current.delete(appId);
       setStatuses((prev) => {
         const next = new Map(prev);
         const message = err instanceof Error ? err.message : "Could not start update";
@@ -371,6 +424,62 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
         });
         return next;
       });
+      return;
+    }
+
+    if (marketApp) {
+      let finalStatus: UpdateStatus = {
+        component, status: "failed", progress: 0,
+        message: "Update connection ended. Refresh the operation status before retrying.",
+      };
+      try {
+        const res = await fetch("/api/market/update", {
+          method: "POST",
+          headers: { "X-CSRF-Token": csrfToken, "Content-Type": "application/json" },
+          body: JSON.stringify({ appId }),
+        });
+        if (!res.ok || !res.body) throw new Error("Update could not start. Check its status before retrying.");
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let terminal = false;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const frames = buffer.split("\n\n");
+          buffer = frames.pop() || "";
+          for (const frame of frames) {
+            const line = frame.split("\n").find((line) => line.startsWith("data: "));
+            if (!line) continue;
+            const event = JSON.parse(line.slice(6));
+            const nextStatus = {
+              component,
+              status: event.stage === "pending" ? "idle" : event.stage,
+              message: event.message,
+              progress: event.progress || 0,
+            };
+            if (["pending", "completed", "failed"].includes(event.stage)) {
+              terminal = true;
+              finalStatus = nextStatus;
+            }
+            setStatuses((prev) => new Map(prev).set(component, nextStatus));
+          }
+        }
+        if (!terminal) {
+          finalStatus.message = "Update connection ended. Refresh the operation status before retrying.";
+        }
+      } catch {
+        finalStatus = {
+          component, status: "failed", progress: 0,
+          message: "Update could not complete. Check its status before retrying.",
+        };
+      } finally {
+        activeRequests.current.delete(appId);
+        setStatuses((prev) => new Map(prev).set(component, finalStatus));
+        await loadOperations();
+        await load();
+      }
       return;
     }
 
@@ -411,7 +520,42 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
           });
           return next;
         });
+      })
+      .finally(() => { activeRequests.current.delete(appId); });
+  }
+
+  async function retryRecovery(appId: string) {
+    const operation = operations.get(appId);
+    if (!operation?.pending || activeRequests.current.has(appId)) return;
+    activeRequests.current.add(appId);
+    setRecovering((prev) => new Set(prev).add(appId));
+    try {
+      const csrfToken = await fetchCSRFToken();
+      const res = await fetch("/api/market/update/recovery", {
+        method: "POST",
+        headers: { "X-CSRF-Token": csrfToken, "Content-Type": "application/json" },
+        body: JSON.stringify({ appId, id: operation.id }),
       });
+      if (!res.ok) throw new Error("Recovery pending");
+      setStatuses((prev) => new Map(prev).set(updateStatusComponent(appId), {
+        component: updateStatusComponent(appId), status: "idle", progress: 0,
+        message: "Recovery checked. Refreshing operation status...",
+      }));
+    } catch {
+      setStatuses((prev) => new Map(prev).set(updateStatusComponent(appId), {
+        component: updateStatusComponent(appId), status: "failed", progress: 0,
+        message: "Recovery could not complete. The operation may still be running. Check its status before retrying.",
+      }));
+    } finally {
+      activeRequests.current.delete(appId);
+      setRecovering((prev) => {
+        const next = new Set(prev);
+        next.delete(appId);
+        return next;
+      });
+      await loadOperations();
+      await load();
+    }
   }
 
   if (loading) return <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
@@ -453,6 +597,9 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
           <div>
             <h3 className="text-base font-semibold">{updates.length > 0 ? "Updates Available" : "Updates"}</h3>
             <p className="text-[13px] text-muted-foreground">{updates.length} {updates.length === 1 ? "update" : "updates"} found.</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              App updates support resources owned by the app. Writable shared storage or databases with other writers require a coordinated recovery contract and are blocked during preflight.
+            </p>
           </div>
           <Button variant="outline" size="sm" onClick={checkUpdates} disabled={checking}>
             {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
@@ -466,7 +613,11 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
             {updates.map((app) => {
               const component = updateStatusComponent(app.id);
               const status = statuses.get(component);
-              const isUpdating = !!status && !["idle", "completed", "failed"].includes(status.status);
+              const operation = operations.get(app.id);
+              const isUpdating = !operation?.recoveryRequired
+                && !!status && !["idle", "completed", "failed"].includes(status.status);
+              const statusUnavailable = app.category === "user"
+                && (!operations.has(app.id) || operationErrors.has(app.id));
               return (
                 <div key={app.id} className="border-t px-[18px] py-3">
                   <div className="flex w-full items-center gap-3">
@@ -477,11 +628,35 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
                         <p className="text-xs text-muted-foreground">{app.updateInfo || "Update available"}</p>
                       </div>
                     </button>
-                    <Button size="sm" onClick={() => (app.systemManaged ? openConfirm(app) : updateApp(app.id))} disabled={isUpdating}>
+                    <Button size="sm" onClick={() => (app.systemManaged ? openConfirm(app) : updateApp(app.id))} disabled={isUpdating || !!operation?.pending || statusUnavailable}>
                       {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                      {isUpdating ? "Updating" : "Update"}
+                      {operation?.pending ? "Pending" : isUpdating ? "Updating" : "Update"}
                     </Button>
                   </div>
+                  {operation?.pending && (
+                    <div className="mt-2 space-y-2" role="status" aria-live="polite">
+                      <p className="text-xs text-muted-foreground">
+                        {operation.committed
+                          ? "Update committed; cleanup is pending. Retry recovery to finish cleanup."
+                          : operation.recoveryRequired
+                            ? "Recovery required. Maintenance remains active and recovery points are retained."
+                            : "Update pending. If it was interrupted, retry recovery. A running operation will remain protected."}
+                      </p>
+                      <Button variant="outline" size="sm" onClick={() => retryRecovery(app.id)} disabled={recovering.has(app.id) || activeRequests.current.has(app.id) || statusUnavailable}>
+                        {recovering.has(app.id) && <Loader2 className="h-4 w-4 animate-spin" />}
+                        {recovering.has(app.id) ? "Recovering" : "Retry recovery"}
+                      </Button>
+                    </div>
+                  )}
+                  {statusUnavailable && (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground" role="status">
+                      <span>Checking update status. Updates wait until status is available.</span>
+                      <Button variant="outline" size="sm" onClick={() => { void loadOperations(); }}>Refresh status</Button>
+                    </div>
+                  )}
+                  {operation?.rolledBack && operation.cleanupComplete && (
+                    <p className="mt-2 text-xs text-muted-foreground">Previous version restored and recovery verified.</p>
+                  )}
                   {status && status.status !== "idle" && (
                     <div className="mt-2 space-y-1">
                       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -494,7 +669,7 @@ function AdminAppSections({ onOpen }: { onOpen: (id: string) => void }) {
                         </div>
                       )}
                       {status.status === "failed" && status.error && <p className="text-xs text-destructive">{status.error}</p>}
-                      {status.status === "completed" && <p className="text-xs text-green-600">Update complete{status.version_after ? `: v${status.version_after}` : ""}</p>}
+                      {status.status === "completed" && !operation?.pending && <p className="text-xs text-green-600">Update complete{status.version_after ? `: v${status.version_after}` : ""}</p>}
                     </div>
                   )}
                 </div>
@@ -777,6 +952,7 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
   const [loading, setLoading] = useState(true);
   const [powerPending, setPowerPending] = useState<"start" | "stop" | "restart" | null>(null);
   const [powerError, setPowerError] = useState<string | null>(null);
+  const [credentialPending, setCredentialPending] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
   const [healthPolicyPending, setHealthPolicyPending] = useState(false);
   const [healthPolicyError, setHealthPolicyError] = useState<string | null>(null);
@@ -872,6 +1048,24 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
     }
   }
 
+  async function reconcileCredentials() {
+    setCredentialPending(true);
+    setPowerError(null);
+    try {
+      const csrf = await fetchCSRFToken();
+      const response = await fetch(`/api/market/credentials/${encodeURIComponent(appId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+        body: JSON.stringify({ action: "reconcile" }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "Service access still requires repair");
+      await load();
+    } catch (error) {
+      setPowerError(error instanceof Error ? error.message : "Service access still requires repair");
+    } finally { setCredentialPending(false); }
+  }
+
   const hasAppSettings = hasUserContext && !!drawerApp?.hasSettingsPanel && (!!drawerApp.url || !!drawerApp.subdomain);
   const off = isAppOff(unifiedApp);
   const controllable = isAdmin && unifiedApp?.category === "user" && (unifiedApp.containers?.length ?? 0) > 0;
@@ -943,7 +1137,11 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
                 {appHealthLabel(unifiedApp) && <Badge variant={appHealthVariant(unifiedApp)}>{appHealthLabel(unifiedApp)}</Badge>}
               </div>
               <p className="mt-1 text-[13px] text-muted-foreground">
-                {off
+                {unifiedApp?.serviceCredentialState === "revoked"
+                  ? "Service access is revoked. Deliberate reinstall is required before this app can start."
+                  : unifiedApp?.serviceCredentialState === "pending"
+                    ? "Service access is pending. Reconcile the app credentials before starting."
+                  : off
                   ? `${title} is off. Start it to make app pages, widgets, and notifications available again.`
                   : powerPending
                     ? `${title} is ${powerPending === "stop" ? "turning off" : powerPending === "start" ? "starting" : "restarting"}...`
@@ -955,6 +1153,12 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
               {powerError && <p className="mt-1 text-[13px] text-destructive">{powerError}</p>}
             </div>
             <div className="flex flex-wrap gap-2">
+              {isAdmin && unifiedApp?.serviceCredentialState === "pending" && (
+                <Button variant="outline" size="sm" onClick={() => void reconcileCredentials()} disabled={credentialPending}>
+                  {credentialPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {credentialPending ? "Reconciling..." : "Reconcile service access"}
+                </Button>
+              )}
               {drawerApp?.url && !off && (
                 <Button variant="outline" size="sm" asChild>
                   <a href={drawerApp.url}>
@@ -963,7 +1167,7 @@ function AppDetail({ appId, isAdmin, hasUserContext, onBack }: { appId: string; 
                   </a>
                 </Button>
               )}
-              {controllable && off && (
+              {controllable && off && unifiedApp?.serviceCredentialState !== "pending" && unifiedApp?.serviceCredentialState !== "revoked" && (
                 <Button size="sm" onClick={() => controlPower("start")} disabled={powerPending !== null}>
                   {powerPending === "start" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Power className="h-3.5 w-3.5" />}
                   Start app

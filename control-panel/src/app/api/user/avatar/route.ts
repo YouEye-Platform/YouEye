@@ -28,6 +28,9 @@ async function pushAvatarToUI(
   dataUrl: string | null
 ): Promise<string | null> {
   try {
+    const { getUserByUsername } = await import('@/lib/identity/store');
+    const identityId = (await getUserByUsername(username))?.id;
+    if (!identityId) throw new Error('Verified identity mapping is unavailable');
     const token = (await readFile(BRIDGE_TOKEN_PATH, "utf-8")).trim();
     const uiIP = await getContainerIP("youeye-ui");
     if (!uiIP || !token) {
@@ -37,8 +40,8 @@ async function pushAvatarToUI(
     const baseUrl = `http://${uiIP}:3000`;
     const method = dataUrl ? "POST" : "DELETE";
     const body = dataUrl
-      ? JSON.stringify({ username, dataUrl })
-      : JSON.stringify({ username });
+      ? JSON.stringify({ username, identityId, dataUrl })
+      : JSON.stringify({ username, identityId });
 
     const res = await fetch(`${baseUrl}/api/ui-bridge/user-avatar`, {
       method,
