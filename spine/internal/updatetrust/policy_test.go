@@ -59,3 +59,18 @@ func TestReleaseIdentityRejectsAmbiguity(t *testing.T) {
 		t.Fatal(repo, branch, scope, err)
 	}
 }
+
+func TestCanonicalReleaseGrantUsesRawBranchInsteadOfVersionToken(t *testing.T) {
+	base := "https://forge.example/alice/YouEye/releases/download/"
+	for tag, branch := range map[string]string{"cp-Team%2FFix-v0.5.37-worker-abc.12": "Team/Fix", "cp-v0.5.37-alpha.1": "main", "ui-beta-v0.5.37-beta.12": "beta"} {
+		_, got, _, err := ReleaseIdentity(base + tag + "/standalone.tar")
+		if err != nil || got != branch {
+			t.Fatal(tag, got, err)
+		}
+	}
+	for _, tag := range []string{"cp-dev-v0.5.37-dev.01", "cp-dev-v0.5.37-dev.0", "cp-x..y-v0.5.37-dev.1"} {
+		if _, _, _, err := ReleaseIdentity(base + tag + "/standalone.tar"); err == nil {
+			t.Fatal("invalid canonical grant identity", tag)
+		}
+	}
+}

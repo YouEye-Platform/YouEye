@@ -27,7 +27,7 @@ func (s *Server) buildChannelsView(c *channels.Config) channelsView {
 		Override:  map[string]*channels.Channel{},
 	}
 
-	components := []string{channels.ComponentDefault, channels.ComponentSpine, channels.ComponentControl, channels.ComponentUI}
+	components := []string{channels.ComponentDefault, channels.ComponentSystem, channels.ComponentSpine, channels.ComponentControl, channels.ComponentUI}
 	for _, comp := range components {
 		view.Effective[comp] = c.Effective(comp, s.cfg)
 	}
@@ -41,6 +41,10 @@ func (s *Server) buildChannelsView(c *channels.Config) channelsView {
 	// Raw override map: default always present; core overrides only when set.
 	def := c.Default
 	view.Override[channels.ComponentDefault] = &def
+	if !c.System.IsZero() {
+		v := c.System
+		view.Override[channels.ComponentSystem] = &v
+	}
 	if !c.Spine.IsZero() {
 		v := c.Spine
 		view.Override[channels.ComponentSpine] = &v
@@ -157,7 +161,7 @@ func channelFromMap(obj map[string]interface{}) (channels.Channel, error) {
 
 func normalizeAPIComponent(component string) (string, error) {
 	switch component {
-	case channels.ComponentDefault, channels.ComponentSpine, channels.ComponentControl, channels.ComponentUI:
+	case channels.ComponentSystem, channels.ComponentDefault, channels.ComponentSpine, channels.ComponentControl, channels.ComponentUI:
 		return component, nil
 	}
 	if len(component) > len(channels.AppPrefix) && component[:len(channels.AppPrefix)] == channels.AppPrefix {

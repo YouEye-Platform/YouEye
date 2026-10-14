@@ -17,6 +17,7 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 	"github.com/youeye-platform/YouEye/spine/internal/incus"
 	"github.com/youeye-platform/YouEye/spine/internal/releases"
+	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"github.com/youeye-platform/YouEye/spine/internal/update"
 	"github.com/youeye-platform/YouEye/spine/internal/util"
 )
@@ -75,8 +76,8 @@ func DeployControlPanel(cfg *config.Config) error {
 		// reset. Never give that bundle the newly selected release provenance.
 		if status, manifest, detectErr := appliance.Detect(); detectErr == nil && status.Kind == appliance.RuntimeApplianceImage && manifest != nil && manifest.ReleaseSet != nil {
 			installedVersion := GetInstalledVersion(containerName, appDir)
-			if installedVersion != manifest.ReleaseSet.ControlPanel.Version {
-				return fmt.Errorf("existing Control Panel version %q does not match sealed release %q; update the Control Panel through its signed channel before resuming deployment", installedVersion, manifest.ReleaseSet.ControlPanel.Version)
+			if err := verifyExistingControlVersion(installedVersion, *manifest, systemupdate.CoreBootstrapPath, systemupdate.CoreDevelopmentTrustPath); err != nil {
+				return err
 			}
 		}
 		util.LogSuccess(fmt.Sprintf("Control Panel container '%s' is complete; reconciling it", containerName))
@@ -638,6 +639,9 @@ func DeployControlPanelApp(cfg *config.Config) error {
 		}
 	} else if !os.IsNotExist(cacheErr) {
 		return cacheErr
+	}
+	if err := stageCoreSelection(containerName); err != nil {
+		return err
 	}
 	// Create systemd service
 	util.LogSubStep("Creating systemd service...")

@@ -6,6 +6,7 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
+import { closeSync, constants, fstatSync, openSync, readFileSync } from 'node:fs';
 import { AppUpdateExecutorLock } from './update-executor-lock';
 import {
   AppUpdateJournalStore, updateNeedsRecovery, updateResourceKey, type UpdateResource,
@@ -33,10 +34,38 @@ const context = globalContext[contextKey] ??= new AsyncLocalStorage<Map<string, 
 
 export class AppLifecycleAdmissionError extends Error {
   readonly code = 'recovery_required';
-  constructor() {
-    super('App resources are reserved by an unfinished update; explicit recovery is required');
+  constructor(message = 'App resources are reserved by an unfinished update; explicit recovery is required') {
+    super(message);
     this.name = 'AppLifecycleAdmissionError';
   }
+}
+
+/** Shared with the host coordinator. Process death never removes a reservation. */
+async function withCoreLifecycle<T>(directory: string, work: () => T | Promise<T>): Promise<T> {
+  const lock = AppUpdateExecutorLock.acquire(path.join(directory, 'core-lifecycle.flock'), 'shared');
+  try {
+    let fd: number;
+    try { fd = openSync(path.join(directory, 'core-reservation.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return await work();
+      throw new AppLifecycleAdmissionError('System lifecycle reservation is unreadable; recovery must remain blocked');
+    }
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile() || stat.uid !== process.geteuid?.() || (stat.mode & 0o777) !== 0o600 || stat.size > 4096) {
+        throw new AppLifecycleAdmissionError('System lifecycle reservation is insecure; recovery must remain blocked');
+      }
+      let record: Record<string, unknown>;
+      try { record = JSON.parse(readFileSync(fd, 'utf8')) as Record<string, unknown>; }
+      catch { throw new AppLifecycleAdmissionError('System lifecycle reservation is invalid; recovery must remain blocked'); }
+      if (record.schema !== 'youeye.core-lifecycle.v1' || typeof record.request_id !== 'string'
+        || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(record.request_id)
+        || typeof record.manifest_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(record.manifest_sha256)) {
+        throw new AppLifecycleAdmissionError('System lifecycle reservation is invalid; recovery must remain blocked');
+      }
+      throw new AppLifecycleAdmissionError('A System update owns the platform lifecycle; complete its update or recovery first');
+    } finally { closeSync(fd); }
+  } finally { lock.release(); }
 }
 
 export function appUpdateJournalStore(directory?: string): AppUpdateJournalStore {
@@ -74,7 +103,12 @@ export function assertRecoveryCopyAdmission(
  * All update/recovery entry points must use this wrapper as well as journal leases.
  * Neither process death nor lock release removes durable receipts/reservations.
  */
-export async function withAppLifecycle<T>(
+export async function withAppLifecycle<T>(appId: string, work: () => T | Promise<T>, options: AppLifecycleOptions = {}): Promise<T> {
+  const store = options.store ?? appUpdateJournalStore();
+  return withCoreLifecycle(store.directory, () => withAppLifecycleUnderCore(appId, work, { ...options, store }));
+}
+
+async function withAppLifecycleUnderCore<T>(
   appId: string,
   work: () => T | Promise<T>,
   options: AppLifecycleOptions = {},
@@ -145,6 +179,15 @@ export async function withContainerLifecycle<T>(
   work: () => T | Promise<T>,
   options: AppLifecycleOptions = {},
 ): Promise<T> {
+  const store = options.store ?? appUpdateJournalStore();
+  return withCoreLifecycle(store.directory, () => withContainerLifecycleUnderCore(name, work, { ...options, store }));
+}
+
+async function withContainerLifecycleUnderCore<T>(
+  name: string,
+  work: () => T | Promise<T>,
+  options: AppLifecycleOptions = {},
+): Promise<T> {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(name)) throw new Error('Invalid container lifecycle name');
   const store = options.store ?? appUpdateJournalStore();
   const resource: UpdateResource = {
@@ -191,7 +234,12 @@ export async function withAppLifecycles<T>(appIds: string[], work: () => T | Pro
 /** Hold the app inventory stable before enumerating or changing installations.
  * The separate gate cannot collide with an app ID. Nested full/app restore reuses
  * its descriptor; other processes fail before creating or deleting metadata. */
-export async function withAppInventory<T>(
+export async function withAppInventory<T>(work: () => T | Promise<T>, options: Pick<AppLifecycleOptions, 'store'> = {}): Promise<T> {
+  const store = options.store ?? appUpdateJournalStore();
+  return withCoreLifecycle(store.directory, () => withAppInventoryUnderCore(work, { ...options, store }));
+}
+
+async function withAppInventoryUnderCore<T>(
   work: () => T | Promise<T>,
   options: Pick<AppLifecycleOptions, 'store'> = {},
 ): Promise<T> {

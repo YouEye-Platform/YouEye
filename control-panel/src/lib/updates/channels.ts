@@ -51,7 +51,7 @@ export interface EffectiveChannel {
   artifact_sha256?: string;
 }
 
-export const CORE_COMPONENTS = ['default', 'spine', 'control', 'ui'] as const;
+export const CORE_COMPONENTS = ['system', 'default', 'spine', 'control', 'ui'] as const;
 export type CoreComponent = (typeof CORE_COMPONENTS)[number];
 
 /** Component id prefix for native apps: "app:<id>". */
@@ -103,7 +103,8 @@ export function normalizeReleaseChannels(rc: unknown): ReleaseChannelsConfig | n
     for (const [key, val] of Object.entries(override)) {
       if (!val || typeof val !== 'object') continue;
       const ch = val as Channel;
-      if (key === 'default') out.default = ch;
+      if (key === 'system') out.system = ch;
+      else if (key === 'default') out.default = ch;
       else if (key === 'spine') out.spine = ch;
       else if (key === 'control') out.control = ch;
       else if (key === 'ui') out.ui = ch;
@@ -148,6 +149,8 @@ function pickOverride(cfg: ReleaseChannelsConfig, component: string): Channel | 
   switch (component) {
     case 'default':
       return cfg.default;
+    case 'system':
+      return cfg.system;
     case 'spine':
       return cfg.spine;
     case 'control':

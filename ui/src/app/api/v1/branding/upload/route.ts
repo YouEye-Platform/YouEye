@@ -15,7 +15,7 @@ import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
 
-const ASSET_DIR = join(process.cwd(), "public", "branding");
+import { BRANDING_DIR as ASSET_DIR, imageExtension } from '@/lib/persistent-assets';
 const MAX_LOGO_SIZE = 2 * 1024 * 1024; // 2MB
 const MAX_FAVICON_SIZE = 100 * 1024; // 100KB
 const ALLOWED_TYPES = ["image/png", "image/svg+xml", "image/x-icon", "image/jpeg", "image/webp"];
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
 
     await mkdir(ASSET_DIR, { recursive: true });
 
-    const ext = file.name.split(".").pop() ?? "png";
+    const ext = imageExtension(file.type);
     const filename = `${type}-${randomUUID()}.${ext}`;
     const filepath = join(ASSET_DIR, filename);
     const bytes = await file.arrayBuffer();

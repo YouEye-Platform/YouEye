@@ -4,6 +4,7 @@ package releasecache
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -122,6 +123,15 @@ func openObject(root, source string, media bool) (*os.File, int64, error) {
 
 type transport struct{ next http.RoundTripper }
 
+type liveDiscoveryKey struct{}
+
+// LiveDiscovery bypasses the frozen installation cache for mutable discovery.
+// Signed distribution verification and ordinary network errors remain effective.
+// Apply this only to discovery requests; exact artifact reads still use the cache.
+func LiveDiscovery(ctx context.Context) context.Context {
+	return context.WithValue(ctx, liveDiscoveryKey{}, true)
+}
+
 func Wrap(next http.RoundTripper) http.RoundTripper {
 	if next == nil {
 		next = http.DefaultTransport
@@ -132,7 +142,12 @@ func (t transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Method != http.MethodGet {
 		return t.next.RoundTrip(req)
 	}
-	f, n, e := Open(Root(), req.URL.String())
+	var f *os.File
+	var n int64
+	e := error(os.ErrNotExist)
+	if live, _ := req.Context().Value(liveDiscoveryKey{}).(bool); !live {
+		f, n, e = Open(Root(), req.URL.String())
+	}
 	if os.IsNotExist(e) {
 		data, handled, err := DistributionBytes(req.Context(), t.next, DistributionPolicyFromSource(), req.URL.String())
 		if err != nil {

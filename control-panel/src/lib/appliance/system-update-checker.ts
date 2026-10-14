@@ -1,3 +1,5 @@
+import { readCoreUpdateStatus } from '@/lib/updates/core-guard';
+import { coreSchemaComponent } from '@/lib/updates/core-schema';
 import { spineClient } from '@/lib/spine/client';
 import { getSystemUpdateSelection } from './system-update-source';
 
@@ -10,6 +12,12 @@ let initialTimer: ReturnType<typeof setTimeout> | null = null;
 export async function checkForSystemUpdate(): Promise<void> {
   const runtime = await spineClient.status();
   if (runtime.runtime.kind !== 'appliance-image' || !runtime.runtime.capabilities.image_update) return;
+  const core = await readCoreUpdateStatus();
+  if (core.managed) {
+    if (!core.transaction || core.transaction.complete) await spineClient.checkCoreUpdate();
+    return;
+  }
+  if (await coreSchemaComponent('cp')) return; // first boot has not accepted its baseline yet
   const status = await spineClient.getApplianceSystemUpdateStatus();
   if (!MUTABLE_STATES.has(status.state)) return;
   const selection = await getSystemUpdateSelection();

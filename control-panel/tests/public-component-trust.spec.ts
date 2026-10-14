@@ -21,6 +21,16 @@ test('private release shell retains development signatures and digest checking',
   assert.match(shell,/sha256sum/);
 });
 
+test('independent public products accept canonical suffixes under their own channel authority', () => {
+  const policy = {schema:'youeye.public-trust.v1',keys:{stable:key(),beta:key()}};
+  for (const repo of ['Pointer','Wiki','Search','Notes','Cinema','Weather','Translate','Canvas']) {
+    const base = `https://github.com/YouEye-Platform/${repo}/releases/download/`;
+    assert.equal(releaseArtifactTrust(base+'v0.5.37/standalone.tar',policy).class,'stable');
+    assert.equal(releaseArtifactTrust(base+'beta-v0.5.37-beta.12/standalone.tar',policy).class,'beta');
+    for (const tag of ['v0.5.37-beta.1','beta-v0.5.37-dev.1','beta-v0.5.37-beta.01','beta-v0.5.37-beta.0']) assert.throws(() => releaseArtifactTrust(base+tag+'/standalone.tar',policy));
+  }
+});
+
 test('public artifact verification checks the pinned key, signature and artifact digest', async () => {
   const pair=generateKeyPairSync('ed25519');
   const pem=pair.publicKey.export({type:'spki',format:'pem'}).toString();

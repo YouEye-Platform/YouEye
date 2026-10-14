@@ -132,3 +132,19 @@ for mutation in '.schema="unknown"' '.components.ui.branch="dev"' 'del(.componen
  if release_lock_validate "$public_dir/bad-composition.json" custom; then fail "invalid composition accepted: $mutation"; fi
 done
 printf 'PASS: compositions preserve original branches and reject implicit or inconsistent overrides\n'
+
+# Exercise the actual entry gate with canonical shared product identities.
+for version in 0.5.37-dev.1 0.5.37 0.5.37-feature-one.2; do
+ jq --arg v "$version" '.image.version=$v | .image.release_branch="Feature/One" | .components |= with_entries(.value.version=$v | .value.tag=("youeye-v"+$v))' "$fixtures/valid-custom.json" > "$public_dir/core.json"
+ release_lock_validate "$public_dir/core.json" custom || fail "canonical lock rejected: $release_lock_error"
+ expect_build_gate 'dedicated paths' RELEASE_LOCK_PATH="$public_dir/core.json"
+ core_input="$(RELEASE_LOCK_SOURCE_MODE=custom APPLIANCE_RELEASE_PROVIDER=forgejo APPLIANCE_RELEASES_API=https://forge.example.test/api/v1/repos/example/YouEye/releases release_lock_generate_train_input "$public_dir/core.json" core-candidate)" || fail "$release_lock_error"
+ jq -e --arg v "$version" '.image.tag==("youeye-v"+$v) and .image.release_branch=="Feature/One"' <<<"$core_input" >/dev/null || fail 'canonical input changed original identity'
+done
+for version in 01.5.37 0.5.37-dev.0 0.5.37-Dev.1 0.5.37-dev.01 0.5.37-dev.9007199254740992 9007199254740992.0.0; do
+ jq --arg v "$version" '.image.version=$v | .components |= with_entries(.value.version=$v | .value.tag=("youeye-v"+$v))' "$fixtures/valid-custom.json" > "$public_dir/bad-core.json"
+ if release_lock_validate "$public_dir/bad-core.json" custom; then fail "invalid canonical version accepted: $version"; fi
+done
+jq '.components.ui.tag="youeye-v9.9.9"' "$public_dir/core.json" > "$public_dir/bad-core.json"
+if release_lock_validate "$public_dir/bad-core.json" custom; then fail 'mismatched shared tag accepted'; fi
+printf 'PASS: canonical release-lock build entry and adapter preserve exact shared tags and case-sensitive branches\n'

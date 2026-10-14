@@ -21,6 +21,9 @@ export async function register() {
     return;
   }
 
+  const { deferCoreStartup } = await import('@/lib/updates/core-startup');
+  if (deferCoreStartup(register)) return;
+
   // Import tracker to initialize it (starts flush interval)
   await import("@/lib/telemetry/tracker");
 

@@ -7,6 +7,7 @@ export interface Channel {
 }
 
 export interface ReleaseChannelsConfig {
+  system?: Channel;
   default?: Channel;
   spine?: Channel;
   control?: Channel;

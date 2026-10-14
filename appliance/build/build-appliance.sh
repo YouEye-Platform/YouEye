@@ -346,7 +346,7 @@ for unit in \
     youeye.service youeye-appliance-state.service youeye-appliance-storage.service \
     youeye-appliance-ssh-keys.service \
     youeye-appliance-incus-sockets.service \
-    youeye-setup-gate.service youeye-first-deploy.service youeye-appliance-bless.service \
+    youeye-setup-gate.service youeye-first-deploy.service youeye-core-update.service youeye-appliance-bless.service \
     youeye-console-status.service youeye-console-serial.service youeye-development-access.service youeye-development-overlay.service youeye-recovery-apply.service youeye-recovery.service youeye-recovery.target; do
     install -D -m 0644 "$source_dir/appliance/systemd/$unit" "$rootfs/usr/lib/systemd/system/$unit"
 done
@@ -486,7 +486,7 @@ chmod 0444 "$rootfs/usr/lib/youeye/market/market-source.json" "$rootfs/usr/lib/y
 
 chroot "$rootfs" passwd -l root >/dev/null
 systemctl --root="$rootfs" enable systemd-networkd.service systemd-networkd-wait-online.service ssh.service qemu-guest-agent.service >/dev/null
-systemctl --root="$rootfs" enable youeye-appliance-state.service youeye-appliance-storage.service youeye-appliance-ssh-keys.service youeye-development-overlay.service youeye-development-access.service youeye-recovery-apply.service youeye-appliance-incus-sockets.service youeye-setup-gate.service youeye.service youeye-first-deploy.service youeye-appliance-bless.service youeye-console-status.service youeye-console-serial.service >/dev/null
+systemctl --root="$rootfs" enable youeye-appliance-state.service youeye-appliance-storage.service youeye-appliance-ssh-keys.service youeye-development-overlay.service youeye-development-access.service youeye-recovery-apply.service youeye-appliance-incus-sockets.service youeye-setup-gate.service youeye.service youeye-first-deploy.service youeye-core-update.service youeye-appliance-bless.service youeye-console-status.service youeye-console-serial.service >/dev/null
 systemctl --root="$rootfs" disable incus.socket incus-user.socket >/dev/null 2>&1 || true
 systemctl --root="$rootfs" mask \
     systemd-bless-boot.service \

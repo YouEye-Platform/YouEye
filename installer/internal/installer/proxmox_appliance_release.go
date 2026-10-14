@@ -64,6 +64,10 @@ type applianceReleaseAsset struct {
 }
 
 type applianceRelease struct {
+	core             *releasecache.CoreRelease
+	coreRaw          []byte
+	coreSignature    []byte
+	coreSHA256       string
 	sourceProvider   string
 	sourceRepository string
 	TagName          string                  `json:"tag_name"`
@@ -156,7 +160,10 @@ func resolveApplianceRelease(ctx context.Context, client *http.Client, provider,
 			return applianceRelease{}, fmt.Errorf("appliance release discovery exceeded %d pages; select an exact tag", applianceReleaseMaxPages)
 		}
 	}
-	channel = strings.ToLower(strings.TrimSpace(channel))
+	if selected, found, err := resolveCoreApplianceRelease(ctx, client, provider, baseURL, releases, channel, exactTag); err != nil || found {
+		return selected, err
+	}
+	channel = strings.TrimSpace(channel)
 	branchTrack := ""
 	if strings.HasPrefix(channel, "branch:") {
 		branchTrack = strings.TrimPrefix(channel, "branch:")
@@ -164,6 +171,8 @@ func resolveApplianceRelease(ctx context.Context, client *http.Client, provider,
 			return applianceRelease{}, fmt.Errorf("branch-associated appliance track is invalid")
 		}
 		channel = "branch"
+	} else {
+		channel = strings.ToLower(channel)
 	}
 	type candidate struct {
 		release applianceRelease
@@ -396,6 +405,51 @@ func downloadVerifiedApplianceRelease(ctx context.Context, client *http.Client, 
 	if err != nil {
 		return verifiedApplianceRelease{}, fmt.Errorf("parse embedded appliance trust: %w", err)
 	}
+	if release.core != nil {
+		assemblyTrust := embeddedApplianceDevelopmentTrust
+		if release.sourceProvider == "github" {
+			assemblyTrust, err = publicReleaseAnchor(release.core.Channel)
+			if err != nil {
+				return verifiedApplianceRelease{}, err
+			}
+		}
+		assemblyKey, err := parseEd25519PublicKey(assemblyTrust)
+		if err != nil {
+			return verifiedApplianceRelease{}, err
+		}
+		_, digest, err := releasecache.VerifyCoreRelease(release.coreRaw, release.coreSignature, assemblyKey)
+		if err != nil || digest != release.coreSHA256 {
+			return verifiedApplianceRelease{}, fmt.Errorf("core selection signature changed before download")
+		}
+		for _, member := range release.core.Members {
+			if member.Role != "appliance" && member.Role != "media" {
+				continue
+			}
+			if member.Role == "media" {
+				if exactISOSHA != "" && exactISOSHA != member.Artifact.SHA256 {
+					return verifiedApplianceRelease{}, fmt.Errorf("requested ISO differs from core selection")
+				}
+				exactISOSHA = member.Artifact.SHA256
+				continue
+			}
+			for _, blob := range []releasecache.CoreBlob{member.Artifact, member.Checksums, member.Signature, *member.DocumentSignature, member.Provenance, member.SBOM, *member.ReleaseLock} {
+				path := paths[blob.Name]
+				if path == "" {
+					path = filepath.Join(cacheDir, blob.Name)
+					if err := downloadApplianceAsset(ctx, client, applianceReleaseAsset{Name: blob.Name, BrowserDownloadURL: blob.URL, Size: blob.SizeBytes}, path, 16<<20, false); err != nil {
+						return verifiedApplianceRelease{}, err
+					}
+					paths[blob.Name] = path
+				}
+				if err := verifyPathSHA256(path, blob.SHA256); err != nil {
+					return verifiedApplianceRelease{}, err
+				}
+			}
+			if err := releasecache.VerifyCoreMember(member, publicKey, func(blob releasecache.CoreBlob) (io.ReadCloser, error) { return os.Open(paths[blob.Name]) }); err != nil {
+				return verifiedApplianceRelease{}, fmt.Errorf("selected appliance scoped membership rejected: %w", err)
+			}
+		}
+	}
 	checksumsRaw, err := os.ReadFile(paths[applianceChecksumsFilename])
 	if err != nil {
 		return verifiedApplianceRelease{}, fmt.Errorf("read appliance checksums: %w", err)
@@ -444,7 +498,7 @@ func downloadVerifiedApplianceRelease(ctx context.Context, client *http.Client, 
 	if manifest.Trust.Class != applianceReleaseTrustClass(release) {
 		return verifiedApplianceRelease{}, fmt.Errorf("signed appliance trust class differs from selected release")
 	}
-	if release.sourceProvider == "github" {
+	if release.sourceProvider == "github" && release.core == nil {
 		class := "development"
 		if strings.HasPrefix(release.TagName, "appliance-v") {
 			class = "stable"
@@ -456,14 +510,24 @@ func downloadVerifiedApplianceRelease(ctx context.Context, client *http.Client, 
 			return verifiedApplianceRelease{}, fmt.Errorf("signed appliance trust/source differs from selected GitHub release")
 		}
 	}
-	if repositoryMainRelease(release) && (manifest.ReleaseSet.Source != release.sourceRepository || manifest.ReleaseSet.Branch != "main") {
+	if release.core == nil && repositoryMainRelease(release) && (manifest.ReleaseSet.Source != release.sourceRepository || manifest.ReleaseSet.Branch != "main") {
 		return verifiedApplianceRelease{}, fmt.Errorf("signed appliance source does not match the selected repository main repository")
 	}
 	expectedTag := "appliance-" + manifest.ReleaseSet.Branch + "-v" + manifest.ImageVersion
 	if manifest.ReleaseSet.Branch == "main" {
 		expectedTag = "appliance-v" + manifest.ImageVersion
 	}
-	if release.TagName != expectedTag {
+	if release.core != nil {
+		matched := false
+		for _, member := range release.core.Members {
+			if member.Role == "appliance" {
+				matched = member.BuildVersion == manifest.ImageVersion && member.Artifact.SHA256 == coreManifestDigest(manifestRaw) && member.SourceCommit == manifest.SourceCommit && member.Source == manifest.ReleaseSet.Source && member.Branch == manifest.ReleaseSet.Branch
+			}
+		}
+		if !matched {
+			return verifiedApplianceRelease{}, fmt.Errorf("image differs from complete core selection")
+		}
+	} else if release.TagName != expectedTag {
 		return verifiedApplianceRelease{}, fmt.Errorf("appliance release tag %q does not match signed image version %q", release.TagName, manifest.ImageVersion)
 	}
 	if releaseNeedsDetachedLock(release) {

@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { ApplianceSystemUpdateSelection, ApplianceSystemUpdateStatus } from "@/lib/spine/client";
+import { CoreSystemUpdate } from "./core-system-update";
+import type { CoreUpdateStatus, ApplianceSystemUpdateSelection, ApplianceSystemUpdateStatus } from "@/lib/spine/client";
 
 type Channel = ApplianceSystemUpdateSelection["channel"];
 const OFFICIAL_REPOSITORY = "https://github.com/YouEye-Platform/YouEye";
@@ -64,6 +65,23 @@ async function protectedHeaders() {
 }
 
 export function ApplianceSystemUpdate() {
+  const [core, setCore] = useState<CoreUpdateStatus | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/settings/api/appliance/core-update/status", { cache: "no-store", signal: controller.signal }).then(async response => {
+      const body = await response.json();
+      if (!response.ok || typeof body.managed !== "boolean") throw new Error("System update status is unavailable.");
+      setCore(body);
+    }).catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "System update status is unavailable."); });
+    return () => controller.abort();
+  }, []);
+  if (error) return <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>;
+  if (!core) return <p className="text-sm text-muted-foreground" role="status">Checking System update status…</p>;
+  return core.managed ? <CoreSystemUpdate initial={core} /> : <LegacyApplianceSystemUpdate />;
+}
+
+function LegacyApplianceSystemUpdate() {
   const [status, setStatus] = useState<ApplianceSystemUpdateStatus | null>(null);
   const [repository, setRepository] = useState(OFFICIAL_REPOSITORY);
   const [channel, setChannel] = useState<Channel>("stable");

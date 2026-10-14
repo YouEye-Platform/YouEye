@@ -19,6 +19,7 @@ type Candidate struct {
 	Branch         string // the branch whose tag was selected (own branch or a fallback)
 	Source         string // the source repo URL the release was fetched from
 	ArtifactSHA256 string // optional exact digest required before mutation
+	ArtifactURL    string // exact member URL from the authenticated core selection
 }
 
 // resolveSource turns a channel source URL into a normalized ReleaseRepo.
@@ -67,6 +68,10 @@ func ResolveComponent(cfg *config.Config, component, repo, tagPrefix string) (Ca
 // already-resolved channel (and tests) can drive it directly.
 func resolveWithChannel(cfg *config.Config, eff channels.Channel, repo, tagPrefix string) (Candidate, error) {
 	src := resolveSource(cfg, eff.Source)
+	if canonicalCoreTag(eff.Tag) {
+		candidate, _, err := coreCandidate(cfg, eff, tagPrefix)
+		return candidate, err
+	}
 
 	if eff.Tag != "" && eff.ArtifactSHA256 != "" {
 		return pinnedCandidate(src, eff, tagPrefix)
@@ -164,6 +169,9 @@ func resolveWithChannel(cfg *config.Config, eff channels.Channel, repo, tagPrefi
 // BuildCandidateDownloadURL constructs the download URL for an asset of a
 // resolved candidate, honoring the candidate's source repo (channel-aware).
 func BuildCandidateDownloadURL(cfg *config.Config, cand Candidate, repo, assetName string) string {
+	if cand.ArtifactURL != "" {
+		return cand.ArtifactURL
+	}
 	src := resolveSource(cfg, cand.Source)
 	return buildDownloadURLFromSource(src, repo, cand.Tag, assetName)
 }
@@ -172,7 +180,7 @@ func normalizeBranchKey(branch string) string {
 	if branch == "" {
 		return "main"
 	}
-	return strings.ToLower(branch)
+	return branch
 }
 
 // A tag and digest fully identify a pinned artifact. Its download still has to

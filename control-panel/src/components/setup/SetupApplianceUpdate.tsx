@@ -5,7 +5,7 @@ import { Download, HardDrive, Loader2, RefreshCw } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import type { ApplianceSystemUpdateSelection, ApplianceSystemUpdateStatus } from '@/lib/spine/client';
+import type { CoreUpdateStatus, ApplianceSystemUpdateSelection, ApplianceSystemUpdateStatus } from '@/lib/spine/client';
 
 interface Props {
   onContinue: () => void;
@@ -19,6 +19,38 @@ async function protectedHeaders() {
 }
 
 export default function SetupApplianceUpdate({ onContinue }: Props) {
+  const [core, setCore] = useState<CoreUpdateStatus | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const refresh = useCallback(async () => {
+    // Setup sessions use onboarding APIs; Settings requires completed setup.
+    const response = await fetch('/api/appliance/core-update/status', { cache: 'no-store' });
+    const body = await response.json();
+    if (!response.ok || typeof body.managed !== 'boolean') throw new Error('Installed System acceptance is unavailable.');
+    setCore(body as CoreUpdateStatus);
+    return body as CoreUpdateStatus;
+  }, []);
+  useEffect(() => { void refresh().catch(() => setError('Installed System acceptance is unavailable.')); }, [refresh]);
+  async function proceed() {
+    setBusy(true); setError('');
+    try {
+      const current = await refresh();
+      if (!current.managed || !current.installed || (current.transaction && !current.transaction.complete)) throw new Error('The System update must finish before setup can continue.');
+      onContinue();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'System acceptance is unavailable.'); }
+    finally { setBusy(false); }
+  }
+  if (core?.managed === false) return <LegacySetupApplianceUpdate onContinue={onContinue} />;
+  return <div className="mx-auto w-full max-w-lg space-y-6">
+    <div className="text-center"><h1 className="text-2xl font-semibold">YouEye System</h1>
+      <p className="mt-2 text-sm text-muted-foreground">{core?.installed ? `Installed release ${core.installed.release.version}. You can manage updates in Settings after setup.` : 'Checking the installed release…'}</p></div>
+    {error && <Alert><AlertDescription>{error}</AlertDescription></Alert>}
+    {core?.transaction && !core.transaction.complete && <p className="text-sm" role="status">The retained System update is still being verified.</p>}
+    <div className="flex justify-end"><Button disabled={busy || !core?.installed} onClick={() => void proceed()}>{busy && <Loader2 className="size-4 animate-spin" />}Continue setup</Button></div>
+  </div>;
+}
+
+function LegacySetupApplianceUpdate({ onContinue }: Props) {
   const [status, setStatus] = useState<ApplianceSystemUpdateStatus | null>(null);
   const [selection, setSelection] = useState<ApplianceSystemUpdateSelection | null>(null);
   const [busy, setBusy] = useState<'checking' | 'staging' | 'restarting' | null>('checking');

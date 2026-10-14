@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/youeye-platform/YouEye/appliance/ordering"
+	"github.com/youeye-platform/YouEye/releasecache"
 )
 
 const (
@@ -385,7 +386,7 @@ func validateReleaseBranch(branch string) error {
 			return fmt.Errorf("invalid branch %q", branch)
 		}
 		for _, c := range component {
-			if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
 				return fmt.Errorf("invalid branch %q", branch)
 			}
 		}
@@ -409,7 +410,8 @@ func validateComponentRelease(prefix, branch string, release ComponentRelease, r
 		if branch != "main" {
 			want = prefix + "-" + branch + "-v" + release.Version
 		}
-		if release.Tag != want {
+		coreTag := releasecache.ValidCoreVersion(release.Version) && release.Tag == "youeye-v"+release.Version
+		if release.Tag != want && !coreTag {
 			return fmt.Errorf("%s.tag %q does not match exact branch/version tag %q", name, release.Tag, want)
 		}
 	}

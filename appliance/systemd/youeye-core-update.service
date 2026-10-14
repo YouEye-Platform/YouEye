@@ -1,0 +1,19 @@
+[Unit]
+Description=Continue the retained YouEye System update after boot
+Requires=youeye-appliance-storage.service youeye-appliance-incus-sockets.service
+Wants=network-online.target youeye.service
+After=network-online.target youeye-appliance-storage.service youeye-appliance-incus-sockets.service youeye.service youeye-first-deploy.service
+Before=youeye-appliance-bless.service
+ConditionPathExists=/var/lib/youeye-state/core-update/journal.json
+ConditionPathExists=/var/lib/youeye-state/first-deploy/complete
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/youeye update core resume --boot
+TimeoutStartSec=4h
+UMask=0077
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -69,6 +69,7 @@ type CLIOptions struct {
 	ApplianceFreshness        string
 	ApplianceServiceSelection string
 	ApplianceReleaseTag       string
+	CoreManifestSHA256        string
 	ApplianceISOSHA256        string
 	InstallerBootstrapSHA256  string
 	ApplianceRepository       string
@@ -131,6 +132,7 @@ func ParseOptions(args []string, _ io.Reader, stderr io.Writer) (CLIOptions, err
 	fs.StringVar(&opts.ApplianceServiceSelection, "service-selection", opts.ApplianceServiceSelection, "first-boot services: current signed selection or sealed image pins")
 	fs.StringVar(&opts.ApplianceFreshness, "freshness", opts.ApplianceFreshness, "first-boot policy: require-current or prefer-current")
 	fs.StringVar(&opts.ApplianceReleaseTag, "release-tag", "", "exact image release tag")
+	fs.StringVar(&opts.CoreManifestSHA256, "core-manifest-sha256", "", "exact signed core selection SHA-256")
 	fs.StringVar(&opts.ApplianceISOSHA256, "iso-sha256", "", "required ISO SHA-256 for exact selection")
 	fs.StringVar(&opts.InstallerBootstrapSHA256, "installer-sha256", "", "signed Installer binary SHA-256 used by the bootstrap")
 	fs.StringVar(&opts.ApplianceRepository, "repository", opts.ApplianceRepository, "HTTPS repository URL for signed releases (defaults to official releases)")

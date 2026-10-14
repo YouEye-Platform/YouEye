@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth/session';
+import { assertIndependentCoreUpdate, readCoreUpdateStatus } from '@/lib/updates/core-guard';
 import { spineClient } from '@/lib/spine/client';
 import { settingsService } from '@/lib/settings';
 import {
@@ -64,15 +65,6 @@ export async function GET() {
     const raw = await settingsService.getRaw();
     const components: Record<string, ComponentEntry> = {};
 
-    // Spine + control: provenance + candidate come from Spine's channel-aware
-    // /api/updates/check (CP does not resolve core releases itself).
-    let spineCheck: Awaited<ReturnType<typeof spineClient.checkUpdates>> | null = null;
-    try {
-      spineCheck = await spineClient.checkUpdates();
-    } catch (err) {
-      console.warn('[channels] spine updates/check unavailable:', err);
-    }
-
     // default
     components.default = {
       channel: await effectiveChannel('default', { config }),
@@ -83,49 +75,76 @@ export async function GET() {
       switch_pending: false,
     };
 
-    for (const core of ['spine', 'control'] as const) {
-      const chk = spineCheck?.[core];
-      components[core] = {
-        channel: await effectiveChannel(core, { config }),
-        override: pickOverrideRaw(raw, core),
-        installed: {
-          version: chk?.installed?.version ?? chk?.current ?? null,
-          branch: chk?.installed?.branch ?? null,
-          tag: chk?.installed?.tag ?? null,
-        },
-        candidate: {
-          version: chk?.candidate?.version ?? chk?.latest ?? null,
-          branch: chk?.candidate?.branch ?? null,
-          tag: chk?.candidate?.tag ?? null,
-        },
-        update_available: chk?.update_available ?? chk?.available ?? false,
-        switch_pending: chk?.switch_pending ?? false,
-      };
-    }
-
-    // ui: CP owns provenance + resolves the candidate via the ui channel.
-    {
-      const uiChannel = await effectiveChannel('ui', { config });
-      const prov = await getCoreProvenance('ui');
-      let candidate = null;
-      try {
-        candidate = await resolveCandidate(uiChannel, 'ui', uiChannel.source);
-      } catch (err) {
-        console.warn('[channels] ui candidate resolution failed:', err);
-      }
-      const installedBranch = prov?.branch || 'main';
-      const switchPending = !!candidate && candidate.branch !== installedBranch;
-      components.ui = {
-        channel: uiChannel,
-        override: pickOverrideRaw(raw, 'ui'),
-        installed: { version: prov?.version ?? null, branch: prov?.branch ?? null, tag: prov?.tag ?? null },
-        candidate: candidate
-          ? { version: candidate.version, branch: candidate.branch, tag: candidate.tag }
-          : { version: null, branch: null, tag: null },
-        update_available: !!candidate && !switchPending
-          && (!prov?.version || candidate.version !== prov.version),
+    const coreStatus = await readCoreUpdateStatus();
+    if (coreStatus.managed) {
+      const installed = coreStatus.installed?.release;
+      let candidate: Awaited<ReturnType<typeof spineClient.checkCoreUpdate>> | null = null;
+      try { candidate = await spineClient.checkCoreUpdate(); }
+      catch { /* A discovery outage must not manufacture a candidate. */ }
+      const switchPending = !!candidate && !!installed && candidate.release.branch !== installed.branch;
+      components.system = {
+        channel: await effectiveChannel('system', { config }),
+        override: pickOverrideRaw(raw, 'system'),
+        installed: { version: installed?.version ?? null, branch: installed?.branch ?? null, tag: installed?.tag ?? null },
+        candidate: { version: candidate?.release.version ?? null, branch: candidate?.release.branch ?? null, tag: candidate?.release.tag ?? null },
+        update_available: !!candidate && candidate.manifest_sha256 !== coreStatus.installed?.manifest_sha256 && !switchPending,
         switch_pending: switchPending,
       };
+    } else {
+      // Spine + control: provenance + candidate come from Spine's channel-aware
+      // /api/updates/check (CP does not resolve core releases itself).
+      let spineCheck: Awaited<ReturnType<typeof spineClient.checkUpdates>> | null = null;
+      try {
+        spineCheck = await spineClient.checkUpdates();
+      } catch (err) {
+        console.warn('[channels] spine updates/check unavailable:', err);
+      }
+
+      for (const core of ['spine', 'control'] as const) {
+        const chk = spineCheck?.[core];
+        components[core] = {
+          channel: await effectiveChannel(core, { config }),
+          override: pickOverrideRaw(raw, core),
+          installed: {
+            version: chk?.installed?.version ?? chk?.current ?? null,
+            branch: chk?.installed?.branch ?? null,
+            tag: chk?.installed?.tag ?? null,
+          },
+          candidate: {
+            version: chk?.candidate?.version ?? chk?.latest ?? null,
+            branch: chk?.candidate?.branch ?? null,
+            tag: chk?.candidate?.tag ?? null,
+          },
+          update_available: chk?.update_available ?? chk?.available ?? false,
+          switch_pending: chk?.switch_pending ?? false,
+        };
+      }
+
+      // ui: CP owns provenance + resolves the candidate via the ui channel.
+      {
+        const uiChannel = await effectiveChannel('ui', { config });
+        const prov = await getCoreProvenance('ui');
+        let candidate = null;
+        try {
+          candidate = await resolveCandidate(uiChannel, 'ui', uiChannel.source);
+        } catch (err) {
+          console.warn('[channels] ui candidate resolution failed:', err);
+        }
+        const installedBranch = prov?.branch || 'main';
+        const switchPending = !!candidate && candidate.branch !== installedBranch;
+        components.ui = {
+          channel: uiChannel,
+          override: pickOverrideRaw(raw, 'ui'),
+          installed: { version: prov?.version ?? null, branch: prov?.branch ?? null, tag: prov?.tag ?? null },
+          candidate: candidate
+            ? { version: candidate.version, branch: candidate.branch, tag: candidate.tag }
+            : { version: null, branch: null, tag: null },
+          update_available: !!candidate && !switchPending
+            && (!prov?.version || candidate.version !== prov.version),
+          switch_pending: switchPending,
+        };
+      }
+
     }
 
     // Statically defined native apps (Pointer today) participate in the same
@@ -235,7 +254,7 @@ export async function PUT(request: NextRequest) {
 
   // Validate component ids + channel shapes before proxying to Spine.
   const validComponent = (id: string) =>
-    id === 'default' || id === 'spine' || id === 'control' || id === 'ui' || id.startsWith(APP_PREFIX);
+    id === 'default' || id === 'system' || id === 'spine' || id === 'control' || id === 'ui' || id.startsWith(APP_PREFIX);
   for (const [id, ch] of Object.entries(body)) {
     if (!validComponent(id)) {
       return NextResponse.json({ error: `Unknown component "${id}"` }, { status: 400 });
@@ -263,6 +282,9 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
+    for (const component of ['spine', 'control', 'ui']) {
+      if (Object.hasOwn(body, component)) await assertIndependentCoreUpdate(component);
+    }
     // Spine is the single writer — proxy through patchConfig. null clears the
     // component's override (spine merges per-component).
     await settingsService.setReleaseChannels(body);

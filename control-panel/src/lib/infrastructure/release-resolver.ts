@@ -6,6 +6,8 @@ import {
 } from '../apps/release-source';
 import { releaseCacheFetch } from '../releases/cache';
 import { parseMarketRepoURL } from '../market/source';
+import { canonicalCoreTag, loadSelectedCore } from '../releases/core-release';
+import { compareVersions, parseReleaseVersion, parseVersionStrict } from '../version';
 
 /** Per-component publisher overrides travel with their branch/tag/digest. */
 export function infrastructureChannelSource(source: ReleaseSource, repository: string, channelSource?: string): { source: ReleaseSource; repository: string } {
@@ -40,20 +42,6 @@ function safeExactReleaseTag(value: string): boolean {
     /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(segment) &&
     segment !== '.' && segment !== '..' && !segment.startsWith('.') &&
     !segment.endsWith('.') && !segment.endsWith('.lock'));
-}
-
-function parseVersion(version: string): number[] | null {
-  if (!/^\d+(?:\.\d+)*$/.test(version)) return null;
-  return version.split('.').map(Number);
-}
-
-function compareVersions(left: number[], right: number[]): number {
-  const length = Math.max(left.length, right.length);
-  for (let index = 0; index < length; index += 1) {
-    const difference = (left[index] || 0) - (right[index] || 0);
-    if (difference !== 0) return difference;
-  }
-  return 0;
 }
 
 export async function listInfrastructureReleases(
@@ -96,7 +84,7 @@ export function selectInfrastructureStandaloneRelease(
     ? (tagPrefix ? `${tagPrefix}-${branch}-v` : `${branch}-v`)
     : '';
   const stablePrefix = tagPrefix ? `${tagPrefix}-v` : 'v';
-  let best: (ResolvedInfrastructureRelease & { parsed: number[] }) | null = null;
+  let best: ResolvedInfrastructureRelease | null = null;
 
   for (const release of releases) {
     let version = '';
@@ -104,19 +92,23 @@ export function selectInfrastructureStandaloneRelease(
       version = release.tag_name.slice(branchPrefix.length);
     } else if (release.tag_name.startsWith(stablePrefix)) {
       version = release.tag_name.slice(stablePrefix.length);
+      // An unqualified tag may advertise a reserved branch suffix. Never
+      // compare a Beta/dev payload into Stable or guess a feature branch from
+      // its display token; exact feature pins retain their raw source identity.
+      const canonical = parseReleaseVersion(version);
+      if (canonical?.token && (!['dev', 'alpha', 'beta'].includes(branch) || canonical.token !== branch)) continue;
     } else {
       continue;
     }
 
-    const parsed = parseVersion(version);
-    if (!parsed) continue;
+    if (!parseVersionStrict(version)) continue;
     const asset = release.assets?.find((candidate) => candidate.name === 'standalone.tar');
     if (!asset) continue;
     const url = getReleaseAssetDownloadURL(source, asset, release.tag_name);
     if (!url) continue;
 
-    if (!best || compareVersions(parsed, best.parsed) > 0) {
-      best = { tag: release.tag_name, version, url, parsed };
+    if (!best || compareVersions(version, best.version) > 0) {
+      best = { tag: release.tag_name, version, url };
     }
   }
 
@@ -158,7 +150,7 @@ export function selectExactInfrastructureStandaloneRelease(
   if (!url) return null;
   const marker = exactTag.lastIndexOf('-v');
   const version = marker >= 0 ? exactTag.slice(marker + 2) : exactTag.startsWith('v') ? exactTag.slice(1) : '';
-  if (!parseVersion(version)) return null;
+  if (!parseVersionStrict(version)) return null;
   return { tag: exactTag, version, url, artifactSHA256 };
 }
 
@@ -169,6 +161,13 @@ export async function resolveExactInfrastructureStandaloneRelease(
   artifactSHA256: string,
   fetchImpl: FetchLike = fetch,
 ): Promise<ResolvedInfrastructureRelease> {
+  if (canonicalCoreTag(exactTag)) {
+    const selection = loadSelectedCore();
+    const repository = `${source.base_url.replace(/\/$/, '')}/${source.organization}/${repo}`;
+    const member = selection.members.find(m => m.role === 'ui' && m.source === repository && m.tag === exactTag && m.artifact.sha256 === artifactSHA256);
+    if (!member || member.artifact.name !== 'standalone.tar') throw new Error('UI channel differs from frozen core selection');
+    return {tag: member.tag, version: member.build_version, url: member.artifact.url, artifactSHA256};
+  }
   // Exact tag plus digest already identifies the artifact. Signature and digest
   // verification remain mandatory at download; API discovery adds no trust.
   const direct = `${source.base_url.replace(/\/$/, '')}/${encodeURIComponent(source.organization)}/${encodeURIComponent(repo)}/releases/download/${encodeURIComponent(exactTag)}/standalone.tar`;

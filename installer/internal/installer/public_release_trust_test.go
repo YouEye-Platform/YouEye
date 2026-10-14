@@ -1,14 +1,45 @@
 package installer
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"os"
 	"testing"
 )
+
+func TestCoreInstallerKeepsReusedHostAuthoritySeparateFromAssembly(t *testing.T) {
+	old := publicReleaseTrustJSON
+	t.Cleanup(func() { publicReleaseTrustJSON = old })
+	keys := map[string]string{}
+	for _, channel := range []string{"stable", "beta"} {
+		public, _, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		der, _ := x509.MarshalPKIXPublicKey(public)
+		keys[channel] = string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+	}
+	publicReleaseTrustJSON, _ = json.Marshal(map[string]any{"schema": "youeye.public-trust.v1", "keys": keys})
+	stable, err := publicReleaseAnchor("stable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	core := releasecache.CoreRelease{Channel: "beta", Members: []releasecache.CoreMember{{Role: "appliance", Source: releasecache.OfficialRepository, Branch: "main", BuildVersion: "0.5.37"}}}
+	release := applianceRelease{core: &core, sourceProvider: "github"}
+	got, err := applianceReleaseAnchor(release)
+	if err != nil || !bytes.Equal(got, stable) || applianceReleaseTrustClass(release) != "stable" {
+		t.Fatal("reused host received the assembly key", err)
+	}
+	core.Members[0].Branch = "dev"
+	if _, err = applianceReleaseAnchor(release); err == nil {
+		t.Fatal("private host accepted in public group")
+	}
+}
 
 func TestPublicApplianceUsesEmbeddedChannelAnchor(t *testing.T) {
 	original := publicReleaseTrustJSON

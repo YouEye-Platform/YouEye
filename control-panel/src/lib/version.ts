@@ -1,13 +1,23 @@
 /**
- * Semantic version comparison for YouEye.
- *
- * Supports deep versions of 1–10 dot-separated numeric segments. Depth encodes
- * a stability tier (see platform/versioning docs), but comparison and formatting
- * care only about the numbers: missing/trailing segments are treated as 0, so
- * "0.5.6" == "0.5.6.0.0". This mirrors spine/internal/version (Go) and ui/src/lib/version.ts
- * byte-for-byte — the three implementations are kept in sync via the shared
- * vector file spine/internal/version/testdata/vectors.json.
+ * Canonical X.Y.Z[-token.N] release identities plus retained numeric versions.
+ * Source/channel authority is selected before comparison. The shared vectors
+ * in spine/internal/version/testdata/vectors.json verify Go/TypeScript parity.
  */
+
+/** Canonical release identity. Source/channel policy is checked before ordering. */
+export type ReleaseVersion = { core: [number, number, number]; token: string; counter: number };
+export function parseReleaseVersion(value: string): ReleaseVersion | null {
+  const match = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.([1-9][0-9]*))?$/.exec(value);
+  if (!match || (match[4]?.length ?? 0) > 63) return null;
+  const numbers = [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[5] ?? 0)];
+  if (!numbers.every(Number.isSafeInteger)) return null;
+  return { core: [numbers[0], numbers[1], numbers[2]], token: match[4] ?? '', counter: numbers[3] };
+}
+
+function comparisonParts(value: string): { core: number[]; token: string; counter: number } {
+  const raw = value.startsWith('v') ? value.slice(1) : value;
+  return parseReleaseVersion(raw) ?? { core: splitVersion(raw), token: '', counter: 0 };
+}
 
 /** Maximum number of dot-separated segments a valid version may have. */
 export const MAX_VERSION_SEGMENTS = 10;
@@ -15,7 +25,7 @@ export const MAX_VERSION_SEGMENTS = 10;
 /**
  * Split a version string into numeric segments.
  * Strips a leading "v" if present.
- * Non-numeric segments are treated as 0.
+ * Legacy-only helper; canonical release identities are parsed first.
  */
 function splitVersion(v: string): number[] {
   const stripped = v.startsWith('v') ? v.slice(1) : v;
@@ -34,8 +44,10 @@ function splitVersion(v: string): number[] {
  * (e.g., "1.2.3" == "1.2.3.0", "0.5.6" == "0.5.6.0.0").
  */
 export function compareVersions(a: string, b: string): number {
-  const aParts = splitVersion(a);
-  const bParts = splitVersion(b);
+  const left = comparisonParts(a);
+  const right = comparisonParts(b);
+  const aParts = left.core;
+  const bParts = right.core;
   const maxLen = Math.max(aParts.length, bParts.length);
 
   for (let i = 0; i < maxLen; i++) {
@@ -46,7 +58,12 @@ export function compareVersions(a: string, b: string): number {
     if (aVal > bVal) return 1;
   }
 
-  return 0;
+  if (left.token !== right.token) {
+    if (!left.token) return 1;
+    if (!right.token) return -1;
+    return left.token < right.token ? -1 : 1;
+  }
+  return Math.sign(left.counter - right.counter);
 }
 
 /**
@@ -65,7 +82,8 @@ export function sortVersionsDesc(versions: string[]): string[] {
 }
 
 /**
- * Parse a version string strictly into its numeric segments.
+ * Parse numeric core segments for validation. Canonical prerelease suffixes
+ * are validated but callers must retain the original string for ordering.
  *
  * Accepts an optional leading "v", then 1–10 dot-separated segments where every
  * segment is a non-empty run of ASCII digits. Returns the parsed numbers, or
@@ -78,6 +96,8 @@ export function parseVersionStrict(v: string): number[] | null {
   if (typeof v !== 'string') return null;
   const stripped = v.startsWith('v') ? v.slice(1) : v;
   if (stripped === '') return null;
+  const release = parseReleaseVersion(stripped);
+  if (release) return [...release.core];
 
   const parts = stripped.split('.');
   if (parts.length < 1 || parts.length > MAX_VERSION_SEGMENTS) return null;
@@ -112,9 +132,12 @@ function trimSegments(parts: number[], minSegments: number): number[] {
  *   "0"                 -> "0"
  *   "v0.5.10"           -> "0.5.10"
  *
- * Non-numeric or empty input falls back to "0".
+ * Canonical three-part release identities retain all positions and suffixes.
+ * Historical numeric input retains its previous formatting rules.
  */
 export function formatVersion(v: string): string {
+  const raw = v.startsWith('v') ? v.slice(1) : v;
+  if (parseReleaseVersion(raw)) return raw;
   const parts = splitVersion(v);
   return trimSegments(parts, 1).join('.');
 }
@@ -131,6 +154,8 @@ export function formatVersion(v: string): string {
  *   "0"        -> "0.0.0"
  */
 export function formatVersionTag(v: string): string {
+  const raw = v.startsWith('v') ? v.slice(1) : v;
+  if (parseReleaseVersion(raw)) return raw;
   const parts = splitVersion(v);
   const trimmed = trimSegments(parts, 3);
   while (trimmed.length < 3) trimmed.push(0);

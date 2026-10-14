@@ -272,3 +272,16 @@ test('default infrastructure discovery uses protected release transport with the
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('canonical suffix ordering retains branch authority and exact Pointer feature pins', async () => {
+  const releases: InfrastructureRelease[] = ['v0.5.37', 'v0.5.38-beta.9', 'v0.5.38-beta.10', 'v9.0.0-dev.1'].map(tag => ({
+    tag_name: tag,
+    assets: [{name: 'standalone.tar', browser_download_url: `https://forge.example.test/youeye/Pointer/releases/download/${tag}/standalone.tar`}],
+  }));
+  assert.equal(selectInfrastructureStandaloneRelease(forgejo, releases, '', 'main')?.version, '0.5.37');
+  assert.equal(selectInfrastructureStandaloneRelease(forgejo, releases, '', 'beta')?.version, '0.5.38-beta.10');
+  const exact = await resolveExactInfrastructureStandaloneRelease(forgejo, 'Pointer', 'v0.5.38-team-abcd.12', 'a'.repeat(64));
+  assert.equal(exact.version, '0.5.38-team-abcd.12');
+  assert.match(exact.url, /v0\.5\.38-team-abcd\.12/);
+});

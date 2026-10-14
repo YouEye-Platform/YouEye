@@ -59,6 +59,10 @@ def main():
     generated, n = re.subn(r"(?ms)(^# BEGIN GENERATED DISTRIBUTION READER\n).*?(^# END GENERATED DISTRIBUTION READER$)", lambda m: m[1] + reader + m[2], generated)
     if n != 1:
         parser.error("bootstrap must contain one distribution reader")
+    core_reader = (args.source / "releasecache/core_bootstrap.py").read_text()
+    generated, n = re.subn(r"(?ms)(^# BEGIN GENERATED CORE BOOTSTRAP\n).*?(^# END GENERATED CORE BOOTSTRAP$)", lambda m: m[1] + core_reader + m[2], generated)
+    if n != 1:
+        parser.error("bootstrap must contain one complete release reader")
     network_path = args.source / "appliance/scripts/youeye-bootstrap-network"
     network = network_path.read_text()
     network_generated = re.sub(r"(?m)^distribution_policy=.* # GENERATED DISTRIBUTION POLICY$", lambda _: "distribution_policy=" + shlex.quote(distribution_raw.strip()) + " # GENERATED DISTRIBUTION POLICY", network)

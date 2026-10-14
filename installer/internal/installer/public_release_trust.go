@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"strings"
 )
 
@@ -34,6 +35,21 @@ func applianceReleaseAnchor(release applianceRelease) ([]byte, error) {
 }
 
 func applianceReleaseTrustClass(release applianceRelease) string {
+	if release.core != nil {
+		if release.sourceProvider == "github" {
+			for _, member := range release.core.Members {
+				if member.Role == "appliance" {
+					channel, err := releasecache.CoreMemberChannel(member, release.core.Channel)
+					if err != nil {
+						return "invalid"
+					}
+					return channel
+				}
+			}
+			return "invalid"
+		}
+		return "development"
+	}
 	if !repositoryMainRelease(release) {
 		if strings.HasPrefix(release.TagName, "appliance-v") {
 			return "stable"

@@ -3,6 +3,7 @@ package releases
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/x509"
@@ -10,8 +11,10 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"github.com/youeye-platform/YouEye/appliance/ordering"
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"github.com/youeye-platform/YouEye/spine/internal/updatetrust"
+	"github.com/youeye-platform/YouEye/spine/internal/version"
 	"io"
 	"net/http"
 	"net/url"
@@ -32,6 +35,13 @@ func VerifySignedReleaseArtifact(client *http.Client, artifactURL, artifactPath,
 	parsed, err := url.Parse(artifactURL)
 	if err != nil || parsed.Scheme != "https" && parsed.Scheme != "http" || parsed.Host == "" {
 		return fmt.Errorf("release artifact URL is invalid")
+	}
+	parts := strings.Split(strings.TrimPrefix(parsed.Path, "/"), "/")
+	if len(parts) == 6 && canonicalCoreTag(parts[4]) {
+		if len(scopes) != 1 {
+			return fmt.Errorf("core artifact requires exact role scope")
+		}
+		return VerifySelectedCoreArtifact(context.Background(), client, artifactURL, artifactPath, expectedDigest, scopes[0])
 	}
 	artifactName, err := signedReleaseArtifactName(parsed)
 	if err != nil {
@@ -157,7 +167,7 @@ func signedReleaseSiblingURL(artifact *url.URL, name string) (string, error) {
 }
 
 var componentPublicTrustAnchor = systemupdate.PublicReleaseTrustAnchor
-var publicComponentTag = regexp.MustCompile(`^(?:spine|cp|ui)-(beta-)?v[0-9]+(?:\.[0-9]+)*$`)
+var publicComponentTag = regexp.MustCompile(`^(?:spine|cp|ui)-(beta-)?v(.+)$`)
 
 func componentReleaseTrust(artifact *url.URL, scopes ...string) (string, []byte, error) {
 	scope := ""
@@ -189,9 +199,15 @@ func componentReleaseTrust(artifact *url.URL, scopes ...string) (string, []byte,
 	if match == nil {
 		return "", nil, fmt.Errorf("public component tag has no supported signing channel")
 	}
+	if _, err := version.ParseVersionStrict(match[2]); err != nil {
+		return "", nil, fmt.Errorf("invalid public component version")
+	}
 	class := "stable"
 	if match[1] != "" {
 		class = "beta"
+	}
+	if parsed, err := ordering.ParseReleaseVersion(match[2]); err == nil && parsed.Token != "" && (class == "stable" || parsed.Token != "beta") {
+		return "", nil, fmt.Errorf("public version suffix differs from signing channel")
 	}
 	anchor, err := componentPublicTrustAnchor(class)
 	if err != nil {

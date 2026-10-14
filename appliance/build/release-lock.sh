@@ -23,15 +23,29 @@ release_lock_valid_https_releases_api() {
 
 release_lock_valid_branch() {
     local branch=$1 component
-    [[ -n $branch && ${#branch} -le 96 && $branch != *'\\'* && $branch != *'%'* ]] || return 1
+    [[ -n $branch && ${#branch} -le 128 && $branch != *'\\'* && $branch != *'%'* && $branch != *'..'* && $branch != */ && $branch != /* ]] || return 1
     IFS=/ read -r -a components <<<"$branch"
     for component in "${components[@]}"; do
-        [[ -n $component && $component != . && $component != .. && $component != .* && $component != *. && $component != *.lock && $component =~ ^[a-z0-9._-]+$ ]] || return 1
+        [[ -n $component && $component != . && $component != .. && $component != .* && $component != *. && $component != *.lock && $component =~ ^[A-Za-z0-9._-]+$ ]] || return 1
     done
 }
 
+release_lock_valid_core_version() {
+    local value=$1 numeric token number
+    [[ $value =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([a-z][a-z0-9]*(-[a-z0-9]+)*)\.([1-9][0-9]*))?$ ]] || return 1
+    token=${BASH_REMATCH[5]}
+    [[ ${#token} -le 63 ]] || return 1
+    numeric=${value%%-*}
+    [[ -z $token ]] || numeric+=.${value##*.}
+    local -a numbers
+    IFS=. read -r -a numbers <<<"$numeric"
+    for number in "${numbers[@]}"; do
+        [[ ${#number} -lt 16 || ( ${#number} -eq 16 && ( $number < 9007199254740991 || $number == 9007199254740991 ) ) ]] || return 1
+    done
+}
 release_lock_valid_version() {
-    [[ $1 =~ ^[0-9]+(\.[0-9]+)+$ ]]
+    # Retained legacy locks remain readable; canonical releases are strict.
+    [[ $1 =~ ^[0-9]+(\.[0-9]+)+$ ]] || release_lock_valid_core_version "$1"
 }
 
 release_lock_valid_commit() {
@@ -56,12 +70,16 @@ release_lock_component_validate() {
     checksum="$(jq -er ".components.$name.artifact_sha256" "$lock")" || return 1
     epoch="$(jq -er ".components.$name.source_date_epoch // empty" "$lock")" || true
 
-    release_lock_valid_version "$version" || release_lock_fail "components.$name.version must be an exact dotted version" || return 1
+    release_lock_valid_version "$version" || release_lock_fail "components.$name.version must be an exact release version" || return 1
+    if [[ $tag == youeye-v* ]]; then
+        release_lock_valid_core_version "$version" && [[ $tag == "youeye-v${version}" ]] || release_lock_fail "components.$name.tag must exactly identify its release branch and version" || return 1
+    else
     case "$name" in
         spine) [[ $tag == "spine-${branch_prefix}v${version}" ]] ;;
         control_panel) [[ $tag == "cp-${branch_prefix}v${version}" ]] ;;
         ui) [[ $tag == "ui-${branch_prefix}v${version}" ]] ;;
     esac || release_lock_fail "components.$name.tag must exactly identify its release branch and version" || return 1
+    fi
     release_lock_valid_commit "$commit" || release_lock_fail "components.$name.source_commit must be an exact 40-character lowercase commit" || return 1
     release_lock_valid_sha256 "$checksum" || release_lock_fail "components.$name.artifact_sha256 must be an exact 64-character lowercase checksum" || return 1
     if [[ $name == spine ]]; then
@@ -101,8 +119,8 @@ release_lock_validate() {
     market_branch="$(jq -er '.market.branch' "$lock")"
     market_commit="$(jq -er '.market.commit' "$lock")"
 
-    release_lock_valid_version "$image_version" || release_lock_fail "image.version must be an exact dotted version" || return 1
-    release_lock_valid_version "$minimum_version" || release_lock_fail "image.minimum_current_version must be an exact dotted version" || return 1
+    release_lock_valid_version "$image_version" || release_lock_fail "image.version must be an exact release version" || return 1
+    release_lock_valid_version "$minimum_version" || release_lock_fail "image.minimum_current_version must be an exact release version" || return 1
     release_lock_valid_branch "$release_branch" || release_lock_fail "image.release_branch is not a safe release branch" || return 1
     [[ $snapshot =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || release_lock_fail "image.debian_snapshot must be an exact UTC snapshot timestamp" || return 1
     [[ $(jq -r .schema "$lock") == youeye.appliance.release-lock.v2 ]] && release_lock_valid_branch "$market_branch" || [[ $market_branch == main || ( $release_branch == beta && $market_branch == beta ) ]] || release_lock_fail "market.branch must match the official channel identity (main or the selected beta channel)" || return 1
@@ -154,6 +172,10 @@ release_lock_generate_train_input() {
     release_branch="$(jq -er '.image.release_branch' "$lock")"
     image_version="$(jq -er '.image.version' "$lock")"
     image_tag="$(release_lock_image_tag "$release_branch" "$image_version")"
+    if jq -e '[.components[] | .tag | startswith("youeye-v")] | all' "$lock" >/dev/null; then
+        release_lock_valid_core_version "$image_version" || release_lock_fail "canonical image version is invalid" || return 1
+        image_tag="youeye-v$image_version"
+    fi
     market_source="$(jq -er '.market.source' "$lock")"
     market_branch="$(jq -er '.market.branch' "$lock")"
     market_commit="$(jq -er '.market.commit' "$lock")"

@@ -116,17 +116,19 @@ func (l *authRateLimiter) cleanup() {
 }
 
 type Server struct {
-	version           string
-	socketPath        string
-	mux               *http.ServeMux
-	cfg               *config.Config
-	authLimiter       *authRateLimiter
-	runtimeDetect     func() (appliance.RuntimeStatus, *appliance.Manifest, error)
-	systemUpdate      systemUpdateService
-	remoteAccess      remoteAccessService
-	developmentAccess developmentAccessService
-	networkStatus     networkStatusService
-	releaseHTTP       *http.Client
+	coreUpdateOperations CoreUpdateOperations
+	coreStatePath        string
+	version              string
+	socketPath           string
+	mux                  *http.ServeMux
+	cfg                  *config.Config
+	authLimiter          *authRateLimiter
+	runtimeDetect        func() (appliance.RuntimeStatus, *appliance.Manifest, error)
+	systemUpdate         systemUpdateService
+	remoteAccess         remoteAccessService
+	developmentAccess    developmentAccessService
+	networkStatus        networkStatusService
+	releaseHTTP          *http.Client
 
 	// Status cache — avoids shelling out on every request
 	statusMu    sync.Mutex
@@ -242,6 +244,11 @@ func (s *Server) setupRoutes() {
 	// UI updates are handled by the Control Panel directly (lxd-updater), not Spine
 	s.mux.HandleFunc("/api/config", s.handleYouEyeConfig)
 	s.mux.HandleFunc("/api/update/status", s.handleUpdateStatus)
+	s.mux.HandleFunc("/api/appliance/core-update/status", s.handleCoreUpdateStatus)
+	s.mux.HandleFunc("/api/appliance/core-update/check", s.handleCoreUpdateCheck)
+	for _, action := range []string{"stage", "activate", "resume", "recover", "cancel"} {
+		s.mux.HandleFunc("/api/appliance/core-update/"+action, s.handleCoreUpdateAction(action))
+	}
 	s.mux.HandleFunc("/api/appliance/system-update/status", s.handleSystemUpdateStatus)
 	s.mux.HandleFunc("/api/appliance/system-update/check", s.handleSystemUpdateCheck)
 	s.mux.HandleFunc("/api/appliance/system-update/stage", s.handleSystemUpdateStage)
@@ -818,6 +825,10 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := systemupdate.RequireLegacyUpdateAllowed(s.coreRoot()); err != nil {
+		errorResponse(w, err.Error(), http.StatusConflict)
+		return
+	}
 	confirmSwitch := readConfirmSwitch(r)
 
 	containerName := s.cfg.Deployment.Container.Name

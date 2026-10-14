@@ -16,11 +16,7 @@ import { existsSync, readFileSync, readdirSync } from "fs";
 import type { IconConfig, IconSize } from "./icon-config";
 import { ICON_SIZES } from "./icon-config";
 import type { SiteNameStyle } from "@/lib/db/queries/branding";
-
-// Persistent data dir outside the app code so icons survive deploys.
-// Falls back to public/branding only if DATA_DIR env is not set.
-const BRANDING_DIR = process.env.BRANDING_DATA_DIR
-  || join(process.env.DATA_DIR || "/opt/youeye-ui-data", "branding");
+import { BRANDING_DIR } from './persistent-assets';
 
 /** Build an SVG for letter-mode icon */
 function buildLetterSVG(

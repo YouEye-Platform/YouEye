@@ -6,6 +6,8 @@ package version
 import (
 	"strconv"
 	"strings"
+
+	"github.com/youeye-platform/YouEye/appliance/ordering"
 )
 
 // CompareVersions compares two version strings semantically.
@@ -13,6 +15,13 @@ import (
 // Supports both 3-digit (x.y.z) and 4-digit (x.y.z.w) versions.
 // Missing segments are treated as 0 (e.g., "1.2.3" == "1.2.3.0").
 func CompareVersions(a, b string) int {
+	// Keep historical numeric releases comparable while preserving prerelease
+	// identifiers in new releases. Authority is selected by the resolver first.
+	av, ae := ordering.ParseVersion(strings.TrimPrefix(a, "v"))
+	bv, be := ordering.ParseVersion(strings.TrimPrefix(b, "v"))
+	if ae == nil && be == nil {
+		return ordering.CompareVersion(av, bv)
+	}
 	aParts := splitVersion(a)
 	bParts := splitVersion(b)
 

@@ -15,6 +15,7 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/channels"
 	"github.com/youeye-platform/YouEye/spine/internal/container"
 	"github.com/youeye-platform/YouEye/spine/internal/releases"
+	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"github.com/youeye-platform/YouEye/spine/internal/update"
 	"github.com/youeye-platform/YouEye/spine/internal/util"
 	"github.com/youeye-platform/YouEye/spine/internal/version"
@@ -552,6 +553,9 @@ func updateSystem() error {
 }
 
 func updateControl() error {
+	if err := systemupdate.RequireLegacyUpdateAllowed(systemupdate.CoreStatePath); err != nil {
+		return err
+	}
 	fmt.Println("=== Updating Control Panel ===")
 
 	cfg := GetConfig()

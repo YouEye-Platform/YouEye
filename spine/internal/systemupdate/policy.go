@@ -16,22 +16,24 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/youeye-platform/YouEye/releasecache"
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 )
 
 const ReleasePolicySchema = "youeye.release-policy.v1"
 
 type ReleasePolicy struct {
-	ServiceSelection string `json:"service_selection,omitempty"`
-	Schema           string `json:"schema"`
-	Provider         string `json:"provider"`
-	ReleasesAPI      string `json:"releases_api,omitempty"`
-	Mode             string `json:"mode"`
-	Track            string `json:"track,omitempty"`
-	Branch           string `json:"branch,omitempty"`
-	ExactTag         string `json:"exact_tag,omitempty"`
-	ManifestSHA256   string `json:"manifest_sha256,omitempty"`
-	Freshness        string `json:"freshness"`
+	ServiceSelection   string `json:"service_selection,omitempty"`
+	Schema             string `json:"schema"`
+	Provider           string `json:"provider"`
+	ReleasesAPI        string `json:"releases_api,omitempty"`
+	Mode               string `json:"mode"`
+	Track              string `json:"track,omitempty"`
+	Branch             string `json:"branch,omitempty"`
+	ExactTag           string `json:"exact_tag,omitempty"`
+	ManifestSHA256     string `json:"manifest_sha256,omitempty"`
+	CoreManifestSHA256 string `json:"core_manifest_sha256,omitempty"`
+	Freshness          string `json:"freshness"`
 }
 
 type exactBundleManifest struct {
@@ -148,7 +150,10 @@ func (policy ReleasePolicy) Validate() error {
 	if policy.ServiceSelection != "" && policy.ServiceSelection != "sealed" && policy.ServiceSelection != "current" {
 		return fmt.Errorf("service selection must be sealed or current")
 	}
-	if policy.ServiceSelection == "current" && policy.Provider != "github" && !(policy.Provider == "custom" && ((policy.Mode == "track" && (policy.Track == "stable" || policy.Track == "branch" && policy.Branch == "main")) || (policy.Mode == "exact" && regexp.MustCompile(`^appliance-v[0-9]+(\.[0-9]+){2,}$`).MatchString(policy.ExactTag)))) {
+	if policy.CoreManifestSHA256 != "" && !validSHA256(policy.CoreManifestSHA256) {
+		return errors.New("core selection requires an exact lowercase manifest SHA-256")
+	}
+	if policy.CoreManifestSHA256 == "" && policy.ServiceSelection == "current" && policy.Provider != "github" && !(policy.Provider == "custom" && ((policy.Mode == "track" && (policy.Track == "stable" || policy.Track == "branch" && policy.Branch == "main")) || (policy.Mode == "exact" && regexp.MustCompile(`^appliance-v[0-9]+(\.[0-9]+){2,}$`).MatchString(policy.ExactTag)))) {
 		return fmt.Errorf("current service selection requires GitHub or explicitly selected repository main")
 	}
 	if policy.Freshness != "require-current" && policy.Freshness != "prefer-current" {
@@ -176,7 +181,8 @@ func (policy ReleasePolicy) Validate() error {
 			return errors.New("first-boot track must be stable, development, or branch")
 		}
 	case "exact":
-		if policy.Track != "" || policy.Branch != "" || !validExactReleaseTag(policy.ExactTag) || len(policy.ManifestSHA256) != 64 || !isLowerHex(policy.ManifestSHA256) {
+		core := strings.HasPrefix(policy.ExactTag, "youeye-v") && releasecache.ValidCoreVersion(strings.TrimPrefix(policy.ExactTag, "youeye-v"))
+		if core != (policy.CoreManifestSHA256 != "") || policy.Track != "" || policy.Branch != "" || (!core && !validExactReleaseTag(policy.ExactTag)) || len(policy.ManifestSHA256) != 64 || !isLowerHex(policy.ManifestSHA256) {
 			return errors.New("Exact first-boot policy requires an appliance tag and lowercase appliance-manifest SHA-256")
 		}
 	default:

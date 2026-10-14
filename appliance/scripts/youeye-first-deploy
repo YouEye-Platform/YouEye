@@ -80,6 +80,27 @@ write_progress network "Checking the saved wired network profile" 5
 current_stage=network
 "$bootstrap_network"
 
+core_policy=false
+core_initialized=false
+if jq -e '.core_manifest_sha256 | type == "string" and length > 0' "$release_policy" >/dev/null 2>&1; then
+    core_policy=true
+    current_stage=core_convergence
+    core_convergence="$state_dir/core-convergence.json"
+    "$youeye" update core first-boot --policy "$release_policy" --resume-only > "${core_convergence}.tmp"
+    chmod 0600 "${core_convergence}.tmp"
+    mv -f "${core_convergence}.tmp" "$core_convergence"
+    if jq -e '.reboot_requested == true' "$core_convergence" >/dev/null; then
+        write_progress system_restart "Continuing the frozen System release after restart" 96
+        trap - EXIT
+        exit 0
+    fi
+    if jq -e '.initialized == true' "$core_convergence" >/dev/null; then
+        jq -e '.converged == true' "$core_convergence" >/dev/null
+        core_initialized=true
+    fi
+fi
+
+if [ "$core_initialized" != true ]; then
 current_stage=release_convergence
 write_progress release_convergence "Resolving and verifying one signed platform bundle" 18
 convergence="$state_dir/convergence.json"
@@ -108,7 +129,7 @@ if [ -n "$control_state" ]; then
     fi
     sealed_control_version=$(jq -er '.release_set.control_panel.version' "$sealed_release")
     installed_control_version=$($incus exec youeye-control -- cat /opt/app/package.json 2>/dev/null | jq -r '.version // empty' || true)
-    if [ -n "$installed_control_version" ] && [ "$installed_control_version" != "$sealed_control_version" ]; then
+    if [ "$core_policy" != true ] && [ -n "$installed_control_version" ] && [ "$installed_control_version" != "$sealed_control_version" ]; then
         current_stage=updating_control
         write_progress server_interface "Converging preserved Server interface on the signed sealed release" 48
         "$youeye" update control --yes
@@ -130,11 +151,31 @@ else
     YOUEYE_FIRST_DEPLOY_PROGRESS_PATH="$journal" YOUEYE_FIRST_DEPLOY_ATTEMPT="$attempt" "$youeye" deploy
 fi
 
+fi # the verified initialized core resumes without redeploying its media baseline
+
 current_stage=verifying
 write_progress verifying "Running durable appliance health checks" 94
 "$youeye" appliance health --profile=operational --json > "$state_dir/health.json.tmp"
 chmod 0600 "$state_dir/health.json.tmp"
 mv -f "$state_dir/health.json.tmp" "$state_dir/health.json"
+
+if [ "$core_policy" = true ] && [ "$core_initialized" != true ]; then
+    "$youeye" update core initialize --policy "$release_policy"
+    current_stage=core_convergence
+    write_progress core_convergence "Accepting the frozen complete System release before opening setup" 96
+    "$youeye" update core first-boot --policy "$release_policy" > "${core_convergence}.tmp"
+    chmod 0600 "${core_convergence}.tmp"
+    mv -f "${core_convergence}.tmp" "$core_convergence"
+    if jq -e '.reboot_requested == true' "$core_convergence" >/dev/null; then
+        write_progress system_restart "Restarting to accept the frozen System release" 96
+        trap - EXIT
+        exit 0
+    fi
+    jq -e '.initialized == true and .converged == true' "$core_convergence" >/dev/null
+    "$youeye" appliance health --profile=operational --json > "$state_dir/health.json.tmp"
+    chmod 0600 "$state_dir/health.json.tmp"
+    mv -f "$state_dir/health.json.tmp" "$state_dir/health.json"
+fi
 
 write_progress setup "Opening first setup after all health gates passed" 98
 if ! "$setup_gate" open; then

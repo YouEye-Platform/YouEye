@@ -57,6 +57,7 @@ type ChannelsResponse = { components: Record<string, ComponentEntry> };
 // Human names per copy rules — core services get product names, never component names.
 const COMPONENT_LABELS: Record<string, string> = {
   default: "Default (all components)",
+  system: "YouEye System",
   spine: "System core",
   control: "Server interface",
   ui: "Dashboard",
@@ -69,7 +70,7 @@ function labelFor(id: string): string {
 }
 
 // Fixed display order for core components; apps follow, alphabetically.
-const CORE_ORDER = ["default", "spine", "control", "ui"];
+const CORE_ORDER = ["default", "system", "spine", "control", "ui"];
 
 function orderComponents(ids: string[]): string[] {
   const core = CORE_ORDER.filter((c) => ids.includes(c));
@@ -249,7 +250,7 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
   }
 
   async function confirmSwitch() {
-    if (!switchTarget) return;
+    if (!switchTarget || switchTarget.id === "system") return;
     setSwitching(true);
     // Map component id -> update endpoint. ui + apps go through the CP update
     // route; spine/control also accept confirm_switch via the same route.
@@ -283,7 +284,7 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
             {componentId ? "Update channel" : "Update channels"}
           </h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            {componentId ? "Choose the repository and release branch used when this app checks for updates." : "Choose which branch the Server interface, Dashboard, and native apps install from, and how they fall back."}
+            {componentId ? "Choose the repository and release branch used when this product checks for updates." : "Choose which branch the Server interface, Dashboard, and native apps install from, and how they fall back."}
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
@@ -345,7 +346,7 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
                   <div className="flex items-center gap-6">
                     {id !== "default" && <VersionCell label="Installed" value={entry.installed} />}
                     {id !== "default" && <VersionCell label="Candidate" value={entry.candidate} />}
-                    {entry.switch_pending && entry.candidate.version && (
+                    {id !== "system" && entry.switch_pending && entry.candidate.version && (
                       <Button
                         size="sm"
                         variant="outline"

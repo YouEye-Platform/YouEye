@@ -57,6 +57,7 @@ const INFRA_VOLUME_PATHS = [
   `${YOUEYE_DATA_DIR}/config/`,
   `${YOUEYE_DATA_DIR}/networks/`,
   `${YOUEYE_DATA_DIR}/ui/`,
+  `${YOUEYE_DATA_DIR}/ui-data/`,
   `${YOUEYE_DATA_DIR}/pointer/`,
 ];
 

@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { cachedReleaseBytes } from '../releases/cache';
+import { selectedCoreArtifact } from '../releases/core-release';
 /**
  * LXD container deployment via Incus REST API (v2).
  * Used for full-OS containers (Debian) that run Node.js apps.
@@ -402,6 +403,12 @@ async function installNodeAndApp(
 ): Promise<string> {
   const cn = spec.containerName;
   const trustScope = spec.name === 'ui' ? 'ui' : 'app';
+  const selectedCore = spec.name === 'ui' ? selectedCoreArtifact(releaseURL, artifactSHA256, 'ui') : null;
+  const digestPath = selectedCore ? '/etc/youeye/core-artifact-sha256' : `${spec.appDir}/.youeye-artifact-sha256`;
+  if (selectedCore) {
+    const directory = await execShell(cn, 'mkdir -p /etc/youeye && chmod 0700 /etc/youeye', { timeout: 10_000 });
+    if (directory.exitCode !== 0) throw new Error('Cannot prepare protected core component identity');
+  }
 
   // Install prerequisites
   await execShell(cn, 'apt-get update && apt-get install -y curl ca-certificates pamtester', {
@@ -468,7 +475,7 @@ async function installNodeAndApp(
     }
 
     ${artifactPreparation}
-    sha256sum /tmp/app.tar | awk '{print \$1}' > ${spec.appDir}/.youeye-artifact-sha256
+    sha256sum /tmp/app.tar | awk '{print \$1}' > ${shellQuote(digestPath)}
     tar -xf /tmp/app.tar -C ${spec.appDir} --no-same-owner
     rm /tmp/app.tar
 
@@ -492,6 +499,15 @@ async function installNodeAndApp(
     for (const cmd of spec.postInstallCommands) {
       await execShell(cn, `cd ${spec.appDir} && ${cmd}`, { timeout: 120_000 });
     }
+  }
+
+  if (selectedCore) {
+    const marker = Buffer.from(JSON.stringify({ schema: 'youeye.core-component.v1', role: 'ui',
+      requestId: `install-${selectedCore.manifestSHA256}`, manifestSHA256: selectedCore.manifestSHA256,
+      artifactSHA256: selectedCore.member.artifact.sha256 }));
+    await incusUploadFile(cn, '/etc/youeye/.core-component.install.json', marker, { mode: '0600' });
+    const staged = await execShell(cn, 'set -e; target=/etc/youeye/core-component.json; staged=/etc/youeye/.core-component.install.json; if test -e "$target" || test -L "$target"; then test -f "$target" && test ! -L "$target" && cmp -s "$target" "$staged"; fi; mv "$staged" "$target"; sync -f /etc/youeye', { timeout: 10_000 });
+    if (staged.exitCode !== 0) throw new Error('Fresh core component identity differs from retained state');
   }
 
   // Create systemd service file using base64 (more reliable than heredoc over exec API)
@@ -525,7 +541,7 @@ WantedBy=multi-user.target
     await execShell(cn, `systemctl enable --now ${serviceName}`, { timeout: 15_000 });
   }
 
-  const digestResult = await execShell(cn, `cat ${spec.appDir}/.youeye-artifact-sha256`, { timeout: 10_000 });
+  const digestResult = await execShell(cn, `cat ${shellQuote(digestPath)}`, { timeout: 10_000 });
   const verifiedDigest = digestResult.stdout.trim().toLowerCase();
   if (digestResult.exitCode !== 0 || !/^[0-9a-f]{64}$/.test(verifiedDigest)) {
     throw new Error(`Signed artifact digest was not retained for ${cn}`);

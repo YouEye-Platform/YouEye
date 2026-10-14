@@ -12,6 +12,7 @@
  * Includes apt upgrade to keep base OS current inside LXD containers.
  */
 
+import { assertIndependentCoreUpdate } from '@/lib/updates/core-guard';
 import { releaseCacheFetch } from '@/lib/releases/cache';
 import { resolveExactLxdRelease } from './lxd-release';
 import { resolveLxdAppChannel } from './lxd-updates';
@@ -184,7 +185,10 @@ export async function updateLXDApp(
   // re-resolution, no is-newer no-op guard — the caller already decided).
   override?: { version: string; tag: string; branch?: string; source?: string; artifactSHA256?: string }
 ): Promise<void> {
-  return withAppLifecycle(appDef.id, () => updateLXDAppUnderLifecycle(appDef, emit, override));
+  return withAppLifecycle(appDef.id, async () => {
+    await assertIndependentCoreUpdate(appDef.id);
+    return updateLXDAppUnderLifecycle(appDef, emit, override);
+  });
 }
 
 async function updateLXDAppUnderLifecycle(

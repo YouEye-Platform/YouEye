@@ -205,6 +205,31 @@ interface SpineUpdateStatus {
   updated_at: string;
 }
 
+export interface CoreUpdateStatus {
+  schema: 'youeye.core-status.v1';
+  managed: boolean;
+  installed?: {
+    manifest_sha256: string;
+    release: { version: string; tag: string; source: string; branch: string; sequence: number };
+    accepted_at: string;
+    machine_bound: boolean;
+    payload_observation: 'not-observed';
+  };
+  transaction?: { request_id: string; manifest_sha256: string; phase: string; restart_required: boolean; activation_requested: boolean; target_version: string; complete: boolean; steps: { name: string; state: string }[]; error?: string };
+}
+
+export interface CoreUpdateCandidate {
+  release: { version: string; tag: string; source: string; branch: string; sequence: number };
+  manifest_sha256: string;
+  restart_required: boolean;
+}
+export interface CoreUpdateRequest { request_id: string; command_id: string; manifest_sha256: string }
+export type CoreUpdateAction = 'stage' | 'activate' | 'resume' | 'recover' | 'cancel';
+export interface CoreUpdateActionResult {
+  request_id: string; manifest_sha256: string; phase: string;
+  control: { request_id: string; command_id: string; state: string };
+}
+
 export interface ApplianceSystemUpdateStatus {
   schema: 'youeye.system-update.v1';
   state: 'healthy' | 'available' | 'downloading' | 'writing' | 'staged' | 'pending-reboot' | 'trial' | 'failed' | 'rolled-back';
@@ -503,6 +528,18 @@ export class SpineClient {
 
   async getHostNetworkStatus(): Promise<SpineHostNetworkStatus> {
     return this.request('/api/appliance/network');
+  }
+
+  async getCoreUpdateStatus(): Promise<CoreUpdateStatus> {
+    return this.request('/api/appliance/core-update/status');
+  }
+
+  async checkCoreUpdate(): Promise<CoreUpdateCandidate> {
+    return this.request('/api/appliance/core-update/check');
+  }
+
+  async submitCoreUpdate(action: CoreUpdateAction, request: CoreUpdateRequest): Promise<CoreUpdateActionResult> {
+    return this.request(`/api/appliance/core-update/${action}`, 'POST', { ...request });
   }
 
   async getApplianceSystemUpdateStatus(): Promise<ApplianceSystemUpdateStatus> {

@@ -20,7 +20,7 @@ function insecure(): never {
 export class AppUpdateExecutorLock {
   private constructor(private readonly file: string, private fd: number | undefined) {}
 
-  static acquire(file: string): AppUpdateExecutorLock {
+  static acquire(file: string, mode: 'shared' | 'exclusive' = 'exclusive'): AppUpdateExecutorLock {
     const directory = lstatSync(path.dirname(file));
     if (!directory.isDirectory() || directory.uid !== process.geteuid?.()
       || (directory.mode & 0o777) !== 0o700) insecure();
@@ -29,7 +29,7 @@ export class AppUpdateExecutorLock {
     const lock = new AppUpdateExecutorLock(file, fd);
     try {
       lock.assertHeld();
-      const result = spawnSync('/usr/bin/flock', ['--exclusive', '--nonblock', '--conflict-exit-code', '75', '3'], {
+      const result = spawnSync('/usr/bin/flock', [mode === 'shared' ? '--shared' : '--exclusive', '--nonblock', '--conflict-exit-code', '75', '3'], {
         stdio: ['ignore', 'ignore', 'pipe', fd], timeout: 5000, maxBuffer: 4096,
       });
       if (result.error || result.signal || (result.status !== 0 && result.status !== 75)) {

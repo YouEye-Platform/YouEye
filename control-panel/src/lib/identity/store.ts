@@ -3,6 +3,7 @@ import { execShell } from '@/lib/incus/server';
 import { POSTGRES_MANIFEST } from '@/lib/apps/manifest';
 import { requireIdentityPassword } from './password-policy';
 import { ADMISSION_SCHEMA_SQL } from '@/lib/admission/schema';
+import { runCoreSchemaOnce } from '@/lib/updates/core-schema';
 
 const CONTAINER = POSTGRES_MANIFEST.containerName;
 
@@ -127,7 +128,7 @@ let schemaSetup: Promise<void> | null = null;
 export async function ensureIdentitySchema(): Promise<void> {
   if (schemaReady) return;
   if (schemaSetup) return schemaSetup;
-  schemaSetup = initializeIdentitySchema();
+  schemaSetup = psql('SELECT 1').then(() => runCoreSchemaOnce('cp', initializeIdentitySchema));
   try {
     await schemaSetup;
     schemaReady = true;
@@ -137,10 +138,13 @@ export async function ensureIdentitySchema(): Promise<void> {
 }
 
 /** A full restore replaces the database while this CP process may survive. */
-export async function refreshIdentitySchemaAfterRestore(): Promise<void> {
+export async function refreshIdentitySchemaAfterRestore(restoreRequest: string): Promise<void> {
   if (schemaSetup) await schemaSetup;
   schemaReady = false;
-  await ensureIdentitySchema();
+  // Historical full restore is a distinct explicit lifecycle attempt. Its
+  // database may predate this installed payload even if this process survived.
+  schemaSetup = psql('SELECT 1').then(() => runCoreSchemaOnce('cp', initializeIdentitySchema, undefined, restoreRequest));
+  try { await schemaSetup; schemaReady = true; } finally { schemaSetup = null; }
 }
 
 async function initializeIdentitySchema(): Promise<void> {

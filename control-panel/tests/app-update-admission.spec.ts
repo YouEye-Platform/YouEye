@@ -10,6 +10,7 @@ import {
 import {
   AppLifecycleAdmissionError, assertRecoveryCopyAdmission, withAppInventory, withAppLifecycle, withContainerLifecycle,
 } from '../src/lib/market/update-admission';
+import { AppUpdateExecutorLock } from '../src/lib/market/update-executor-lock';
 import { isContainerMaintenanceActive } from '../src/lib/maintenance/container-maintenance';
 
 const hash = 'a'.repeat(64);
@@ -270,5 +271,34 @@ test('global inventory capture excludes a different new app across processes and
       let entered = false;
       withAppInventory(() => withAppLifecycle('new-app', () => { entered = true; }, options), options)
         .then(() => { if (!entered) process.exit(1); }, error => { console.error(error); process.exit(2); });
+    `, directory);
+  }));
+
+
+test('core activation drains shared lifecycle work and a durable reservation survives lock release', () =>
+  temporary(async (directory, store) => {
+    const file = path.join(directory, 'core-lifecycle.flock');
+    await withAppLifecycle('fixture', async () => {
+      assert.throws(() => AppUpdateExecutorLock.acquire(file), /busy/);
+      await withAppLifecycle('another-app', () => undefined, { store });
+    }, { store });
+    const coordinator = AppUpdateExecutorLock.acquire(file);
+    try {
+      await assert.rejects(withAppLifecycle('fixture', () => assert.fail('entered during checkpoint'), { store }), /busy/);
+      writeFileSync(path.join(directory, 'core-reservation.json'), JSON.stringify({
+        schema: 'youeye.core-lifecycle.v1', request_id: 'fixture-core', manifest_sha256: hash,
+      }), { mode: 0o600 });
+    } finally { coordinator.release(); }
+    await assert.rejects(withAppLifecycle('fixture', () => assert.fail('entered reserved lifecycle'), { store }), /System update owns/);
+    await assert.rejects(withAppInventory(() => assert.fail('captured reserved inventory'), { store }), /System update owns/);
+    await assert.rejects(withContainerLifecycle('youeye-control', () => assert.fail('changed reserved system container'), { store }), /System update owns/);
+    child(`
+      const { withAppLifecycle } = require(${JSON.stringify(admissionModule)});
+      const { AppUpdateJournalStore } = require(${JSON.stringify(journalModule)});
+      withAppLifecycle('fixture', () => { throw new Error('must not enter'); },
+        { store: new AppUpdateJournalStore(process.argv[1]) })
+        .then(() => process.exit(1), error => {
+          if (!error.message.includes('System update owns')) { console.error(error); process.exit(2); }
+        });
     `, directory);
   }));

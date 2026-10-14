@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/youeye-platform/YouEye/releasecache"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -108,6 +109,11 @@ var systemUpdateReconcileCmd = &cobra.Command{
 	},
 }
 
+var systemUpdateCommitGateCmd = &cobra.Command{
+	Use: "check-commit", Short: "Check whether the complete release permits host commitment", Hidden: true,
+	RunE: func(cmd *cobra.Command, args []string) error { return systemupdate.NewDefault().CheckCoreHostCommit() },
+}
+
 var systemUpdateMarkHealthyCmd = &cobra.Command{
 	Use: "mark-healthy", Short: "Record a blessed appliance trial as healthy", Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -130,7 +136,11 @@ var systemUpdateConvergeCmd = &cobra.Command{
 			return err
 		}
 		var result systemupdate.ConvergenceResult
-		if policy.Mode == "exact" {
+		if policy.CoreManifestSHA256 != "" {
+			// First install the verified media baseline behind the setup gate.
+			// Core first-boot then freezes current discovery and uses paired updates.
+			result, err = systemupdate.VerifyCoreInstalledMedia(policy, filepath.Dir(systemUpdatePolicyPath), appliance.ManifestPath, systemUpdateBundlePath, systemUpdateBundleSigPath, systemupdate.CoreDevelopmentTrustPath)
+		} else if policy.Mode == "exact" {
 			result, err = systemupdate.VerifyExactInstalled(
 				policy, appliance.ManifestPath, systemUpdateBundlePath, systemUpdateBundleSigPath,
 				"/usr/share/youeye/appliance-development.pub",
@@ -155,7 +165,7 @@ var systemUpdateConvergeCmd = &cobra.Command{
 }
 
 func init() {
-	for _, command := range []*cobra.Command{systemUpdateStatusCmd, systemUpdateCheckCmd, systemUpdateStageCmd, systemUpdateActivateCmd, systemUpdateReconcileCmd, systemUpdateMarkHealthyCmd, systemUpdateConvergeCmd} {
+	for _, command := range []*cobra.Command{systemUpdateCommitGateCmd, systemUpdateStatusCmd, systemUpdateCheckCmd, systemUpdateStageCmd, systemUpdateActivateCmd, systemUpdateReconcileCmd, systemUpdateMarkHealthyCmd, systemUpdateConvergeCmd} {
 		command.Flags().BoolVar(&systemUpdateJSON, "json", false, "emit machine-readable JSON")
 		updateSystemCmd.AddCommand(command)
 	}

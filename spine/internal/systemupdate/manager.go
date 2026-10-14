@@ -39,6 +39,7 @@ const (
 )
 
 type Journal struct {
+	CoreManifestSHA256  string           `json:"core_manifest_sha256,omitempty"`
 	Schema              string           `json:"schema"`
 	TransactionID       string           `json:"transaction_id"`
 	ManifestSHA256      string           `json:"manifest_sha256"`
@@ -90,6 +91,7 @@ type Status struct {
 }
 
 type SourceOptions struct {
+	Core                   *CoreHostSelection
 	ManifestSource         string
 	SignatureSource        string
 	AllowSourceChange      bool
@@ -115,6 +117,7 @@ type ReconcileResult struct {
 }
 
 type Config struct {
+	CoreStatePath       string
 	CurrentManifestPath string
 	StatePath           string
 	JournalPath         string
@@ -144,6 +147,7 @@ type Manager struct{ config Config }
 
 func DefaultConfig() Config {
 	return Config{
+		CoreStatePath:       CoreStatePath,
 		CurrentManifestPath: appliance.ManifestPath,
 		StatePath:           appliance.StatePath,
 		JournalPath:         appliance.StateMountpoint + "/system-update/journal.json",
@@ -199,6 +203,9 @@ func validateSystemUpdateRedirect(request *http.Request, via []*http.Request) er
 
 func New(config Config) *Manager {
 	defaults := DefaultConfig()
+	if config.CoreStatePath == "" {
+		config.CoreStatePath = defaults.CoreStatePath
+	}
 	if config.CurrentManifestPath == "" {
 		config.CurrentManifestPath = defaults.CurrentManifestPath
 	}
@@ -377,7 +384,7 @@ func (m *Manager) Stage(ctx context.Context, options SourceOptions) (status Stat
 	artifactPaths := map[string]string{}
 	for _, artifact := range verified.Manifest.Artifacts {
 		destination := filepath.Join(transactionDir, filepath.Base(artifact.Path))
-		source, err := resolveArtifactSource(options.ManifestSource, artifact.Path)
+		source, err := m.hostArtifactSource(options, artifact)
 		if err != nil {
 			return Status{}, err
 		}
@@ -478,6 +485,9 @@ func (m *Manager) activate(ctx context.Context, reboot, bootstrap bool) (Status,
 	}
 	transactionManifest, err := m.loadTransactionManifest(journal)
 	if err != nil {
+		return Status{}, err
+	}
+	if err := m.requireCoreHostStep(journal, "activate-host"); err != nil {
 		return Status{}, err
 	}
 	if bootstrap {
@@ -667,6 +677,10 @@ func (m *Manager) MarkHealthy(ctx context.Context) (Status, error) {
 		return Status{}, err
 	}
 	defer unlock()
+	return m.markHealthy(ctx)
+}
+
+func (m *Manager) markHealthy(ctx context.Context) (Status, error) {
 	current, state, slot, err := m.current()
 	if err != nil {
 		return Status{}, err
@@ -736,6 +750,11 @@ func validateUpdateMode(current appliance.Manifest, bootstrap bool) error {
 }
 
 func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedManifest, Layout, appliance.StateRecord, Journal, error) {
+	if options.Core == nil {
+		if err := RequireLegacyUpdateAllowed(m.config.CoreStatePath); err != nil {
+			return VerifiedManifest{}, Layout{}, appliance.StateRecord{}, Journal{}, err
+		}
+	}
 	if strings.TrimSpace(options.ManifestSource) == "" {
 		return VerifiedManifest{}, Layout{}, appliance.StateRecord{}, Journal{}, errors.New("manifest source is required")
 	}
@@ -776,7 +795,23 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 	if err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
-	if verified.Publisher != "" {
+	coreDigest := ""
+	if options.Core != nil {
+		signature, err := os.ReadFile(signaturePath)
+		if err != nil {
+			return VerifiedManifest{}, Layout{}, state, Journal{}, err
+		}
+		r, digest, err := m.verifyCoreHost(*options.Core, verified, signature)
+		if err != nil {
+			return VerifiedManifest{}, Layout{}, state, Journal{}, err
+		}
+		coreDigest = digest
+		bound, err := m.CoreHostOptions(*options.Core)
+		if err != nil || options.ManifestSource != bound.ManifestSource || options.SignatureSource != bound.SignatureSource || options.ReleaseTag != r.Tag {
+			return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("host source differs from frozen core selection")
+		}
+	}
+	if verified.Publisher != "" && options.Core == nil {
 		repository, branch, scope, err := updatetrust.ReleaseIdentity(options.ManifestSource)
 		if err != nil || scope != "appliance" || repository != verified.Manifest.ReleaseSet.Source || branch != verified.Manifest.ReleaseSet.Branch {
 			return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("custom system manifest must come from its enrolled repository and channel")
@@ -828,6 +863,9 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 
 	existing, existingErr := loadJournal(m.config.JournalPath)
 	if existingErr == nil && existing.ManifestSHA256 == verified.SHA256 {
+		if existing.CoreManifestSHA256 != coreDigest {
+			return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("host transaction is bound to a different core selection")
+		}
 		return verified, layout, state, existing, nil
 	}
 	if existingErr == nil {
@@ -845,7 +883,7 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 
 	transactionID := "update-" + verified.SHA256[:24]
 	journal := Journal{
-		Schema: JournalSchema, TransactionID: transactionID, ManifestSHA256: verified.SHA256,
+		Schema: JournalSchema, TransactionID: transactionID, ManifestSHA256: verified.SHA256, CoreManifestSHA256: coreDigest,
 		CurrentImage: current.ImageVersion,
 		TargetImage:  verified.Manifest.TargetImageVersion,
 		ActiveSlot:   activeSlot, CandidateSlot: layout.InactiveSlot, Phase: PhaseAvailable,
@@ -855,6 +893,9 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 	}
 	transactionDir := m.transactionDir(transactionID)
 	if err := os.MkdirAll(transactionDir, 0700); err != nil {
+		return VerifiedManifest{}, Layout{}, state, Journal{}, err
+	}
+	if err := m.persistHostCore(transactionDir, options.Core); err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
 	if err := atomicCopy(manifestPath, filepath.Join(transactionDir, "system-update-manifest.json"), 0600); err != nil {
@@ -900,6 +941,9 @@ func (m *Manager) loadTransactionManifest(journal Journal) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
+	if err := m.checkHostCore(journal, verified, manifestPath+".sig"); err != nil {
+		return Manifest{}, err
+	}
 	manifest := verified.Manifest
 	if verified.SHA256 != journal.ManifestSHA256 {
 		return Manifest{}, errors.New("staged signed manifest digest no longer matches the durable journal")
@@ -911,6 +955,9 @@ func (m *Manager) loadTransactionManifest(journal Journal) (Manifest, error) {
 }
 
 func (m *Manager) persistHealthyUpdateProof(journal Journal) error {
+	if err := m.requireCoreHostStep(journal, "commit-host"); err != nil {
+		return err
+	}
 	manifestPath := filepath.Join(m.transactionDir(journal.TransactionID), "system-update-manifest.json")
 	verified, err := VerifyManifest(manifestPath, manifestPath+".sig", m.config.TrustKeyPath)
 	if err != nil {

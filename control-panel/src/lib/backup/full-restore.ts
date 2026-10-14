@@ -13,6 +13,7 @@
 import { chmod, readFile, mkdir, rm, writeFile } from 'fs/promises';
 import { existsSync, readdirSync } from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 import { spineClient } from '@/lib/spine/client';
 import { execCommand, incusRequest, incusUploadFile } from '@/lib/incus/server';
 import {
@@ -66,6 +67,7 @@ const SETUP_RESTORABLE_CORE_VOLUMES = new Set([
   '/var/lib/youeye/config',
   '/var/lib/youeye/pihole',
   '/var/lib/youeye/pointer',
+  '/var/lib/youeye/ui-data',
 ]);
 const SETUP_PRESERVED_MACHINE_CONFIG = [
   '/var/lib/youeye/config/cli-token',
@@ -78,6 +80,7 @@ const KNOWN_CORE_VOLUMES = new Set([
   '/var/lib/youeye/networks',
   '/var/lib/youeye/ui',
   '/var/lib/youeye/pointer',
+  '/var/lib/youeye/ui-data',
 ]);
 
 interface RestoredAppInventory {
@@ -416,7 +419,7 @@ export async function fullRestore(
 async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: BackupEventCallback): Promise<void> {
   const { backupPath, passphrase } = config;
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const stagingDir = path.join(STAGING_BASE, `full-${timestamp}`);
+  const stagingDir = path.join(STAGING_BASE, `full-${timestamp}-${randomUUID()}`);
   const retainedLeases: ReturnType<typeof beginContainerMaintenance>[] = [];
   let retainedApps: InstallMetadata[] = [];
   const preparedRetainedApps: InstallMetadata[] = [];
@@ -651,7 +654,7 @@ async function fullRestoreUnderLifecycle(config: FullRestoreConfig, onEvent: Bac
     const { identityCommand, refreshIdentitySchemaAfterRestore } = await import('@/lib/identity/store');
     // The restored snapshot can predate additive ownership/queue migrations.
     // Do not trust this surviving process's pre-restore schema-ready cache.
-    await refreshIdentitySchemaAfterRestore();
+    await refreshIdentitySchemaAfterRestore(path.basename(stagingDir));
     // No restored projection is active until a fresh authenticated push.
     await identityCommand(`UPDATE admission_outbox SET acknowledged_revision = 0`);
     await restoreRetainedApps(coreStagingDir, archivedRetainedApps);

@@ -1,0 +1,14 @@
+{
+  "schema": "youeye.release-versioning.v1",
+  "product": "YouEye",
+  "grammar": "X.Y.Z[-token.N]",
+  "base": "next-stable",
+  "group": [
+    "installer",
+    "appliance",
+    "spine",
+    "cp",
+    "ui"
+  ],
+  "version": "0.5.39"
+}

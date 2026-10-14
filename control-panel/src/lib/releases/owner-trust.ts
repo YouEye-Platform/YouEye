@@ -3,15 +3,20 @@ import { readFileSync } from 'node:fs';
 import { mkdir, open, rename, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { parseVersionStrict } from '../version';
 
 export const OWNER_TRUST_PATH = '/var/lib/youeye/update-trust.json';
 export const OWNER_TRUST_SCHEMA = 'youeye.owner-update-trust.v1';
 export type TrustScope = 'appliance' | 'spine' | 'cp' | 'ui' | 'app';
 export interface OwnerGrant {
-  publisher: string; repository: string; branch: 'dev' | 'main' | 'beta';
+  publisher: string; repository: string; branch: string;
   scope: TrustScope; public_key: string; revoked: boolean;
 }
 export interface OwnerTrustPolicy { schema: typeof OWNER_TRUST_SCHEMA; grants: OwnerGrant[] }
+
+export function validTrustBranch(s: unknown): s is string {
+  return typeof s === 'string' && s.length > 0 && s.length <= 128 && !/[ ~^:?*[\\%\x00-\x1f\x7f]/.test(s) && !s.includes('..') && !s.includes('@{') && s.split('/').every(p => p && !p.startsWith('.') && !p.endsWith('.') && !p.endsWith('.lock'));
+}
 
 export function canonicalTrustRepository(raw: string): string {
   const u = new URL(raw);
@@ -25,7 +30,7 @@ export function validateOwnerTrust(value: unknown): OwnerTrustPolicy {
   if (!p || p.schema !== OWNER_TRUST_SCHEMA || !Array.isArray(p.grants) || p.grants.length > 128 || Object.keys(p).some(k => !['schema', 'grants'].includes(k))) throw new Error('Invalid owner trust policy');
   const seen = new Set<string>();
   for (const g of p.grants) {
-    if (!g || Object.keys(g).some(k => !['publisher', 'repository', 'branch', 'scope', 'public_key', 'revoked'].includes(k)) || typeof g.publisher !== 'string' || !g.publisher.trim() || g.publisher.length > 100 || typeof g.repository !== 'string' || canonicalTrustRepository(g.repository) !== g.repository || !['main', 'dev', 'beta'].includes(g.branch) || !['appliance', 'spine', 'cp', 'ui', 'app'].includes(g.scope) || typeof g.revoked !== 'boolean' || typeof g.public_key !== 'string') throw new Error('Invalid publisher grant');
+    if (!g || Object.keys(g).some(k => !['publisher', 'repository', 'branch', 'scope', 'public_key', 'revoked'].includes(k)) || typeof g.publisher !== 'string' || !g.publisher.trim() || g.publisher.length > 100 || typeof g.repository !== 'string' || canonicalTrustRepository(g.repository) !== g.repository || !validTrustBranch(g.branch) || !['appliance', 'spine', 'cp', 'ui', 'app'].includes(g.scope) || typeof g.revoked !== 'boolean' || typeof g.public_key !== 'string') throw new Error('Invalid publisher grant');
     if (!/^-----BEGIN PUBLIC KEY-----\s+[A-Za-z0-9+/=\r\n]+\s+-----END PUBLIC KEY-----\s*$/.test(g.public_key) || createPublicKey(g.public_key).asymmetricKeyType !== 'ed25519') throw new Error('Expected one Ed25519 public key');
     const id = `${g.repository}\n${g.branch}\n${g.scope}`;
     if (seen.has(id)) throw new Error('Duplicate source/channel/scope grant');
@@ -44,11 +49,16 @@ export function loadOwnerTrust(path = OWNER_TRUST_PATH): OwnerTrustPolicy {
 }
 export function releaseTrustIdentity(raw: string) {
   const u = new URL(raw), parts = u.pathname.split('/').filter(Boolean);
-  if (parts.length !== 6 || parts[2] !== 'releases' || parts[3] !== 'download' || u.username || u.password || u.search || u.hash || /[%\\]/.test(raw)) throw new Error('Not an exact release asset URL');
+  if (parts.length !== 6 || parts[2] !== 'releases' || parts[3] !== 'download' || u.username || u.password || u.search || u.hash || /[\\]/.test(raw)) throw new Error('Not an exact release asset URL');
   const repository = canonicalTrustRepository(`${u.origin}/${parts[0]}/${parts[1]}`);
-  const match = /^(?:(appliance|spine|cp|ui)-)?(?:(dev|beta)-)?v[0-9]+(?:\.[0-9]+)*$/.exec(parts[4]);
-  if (!match) throw new Error('Unsupported release tag');
-  return { repository, branch: match[2] || 'main', scope: (match[1] || 'app') as TrustScope };
+  let tag = decodeURIComponent(parts[4]), scope: TrustScope = 'app';
+  const component = /^(appliance|spine|cp|ui)-/.exec(tag);
+  if (component) { scope = component[1] as TrustScope; tag = tag.slice(component[0].length); }
+  const marker = tag.lastIndexOf('-v');
+  const branch = marker < 0 ? 'main' : tag.slice(0,marker);
+  const version = marker < 0 ? tag.startsWith('v') ? tag.slice(1) : '' : tag.slice(marker+2);
+  if (!validTrustBranch(branch) || !parseVersionStrict(version)) throw new Error('Unsupported release tag');
+  return { repository, branch, scope };
 }
 export function ownerReleaseGrant(raw: string, scope?: TrustScope, policy = loadOwnerTrust()): OwnerGrant | undefined {
   if (policy.grants.length === 0) return undefined;

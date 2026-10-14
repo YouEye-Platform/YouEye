@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 )
 
 // BackupConfig is the request body for POST /api/backup/run.
@@ -47,6 +49,16 @@ func Run(cfg BackupConfig) (string, error) {
 	if err := validateIncusPlan(cfg.IncusRuntimes, cfg.IncusVolumes); err != nil {
 		return "", err
 	}
+	release, err := (systemupdate.CoreLifecycleBarrier{Root: filepath.Join(backupDataRoot, "state", "app-updates")}).AdmitOrdinary()
+	if err != nil {
+		return "", err
+	}
+	admitted := false
+	defer func() {
+		if !admitted {
+			release()
+		}
+	}()
 	backupID := generateBackupID()
 
 	// Resolve structured output directory based on backup type
@@ -76,7 +88,8 @@ func Run(cfg BackupConfig) (string, error) {
 
 	Start(backupID, stages)
 
-	go runPipeline(backupID, cfg, stages)
+	admitted = true
+	go func() { defer release(); runPipeline(backupID, cfg, stages) }()
 
 	return backupID, nil
 }

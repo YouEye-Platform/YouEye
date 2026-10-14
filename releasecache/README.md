@@ -12,6 +12,13 @@ an invalid present object fails closed. The default root is
 `/var/lib/youeye-state/release-cache`; `YOUEYE_RELEASE_CACHE` selects an explicit
 host staging directory. No provider credentials belong in the cache.
 
+The cache is a frozen candidate snapshot, not a current channel inventory.
+Complete System tracking requests use `LiveDiscovery` to bypass local metadata
+while retaining signed distribution verification. Exact pinned candidates can
+use their protected snapshot; an absent pin triggers live discovery and never
+substitutes a different cached release. Artifact requests retain exact URL,
+digest and signature checks in either case.
+
 The Proxmox helper can include `guest-index.json` and its corresponding objects
 in answer media. Schema v4 binds that index digest. The installed state holds
 the cache separately from sealed system/package content. The Server receives a

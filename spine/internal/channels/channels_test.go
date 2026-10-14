@@ -200,7 +200,7 @@ func TestValidateChannel(t *testing.T) {
 	}
 	good := []Channel{
 		{Branch: "f-x"},
-		{Branch: "MAIN"}, // normalized to lowercase — valid charset
+		{Branch: "MAIN"}, // case-sensitive ref — valid charset
 		{Branch: "agent/sebastian/sess_123", Tag: "spine-agent/sebastian/sess_123-v1.0.0"},
 		{Source: "https://github.com/YouEye-Platform/YouEye", Branch: "dev"},
 		{Fallback: []string{"main", "dev"}},
@@ -214,13 +214,13 @@ func TestValidateChannel(t *testing.T) {
 }
 
 func TestNormalizeBranch(t *testing.T) {
-	if got, _ := NormalizeBranch("F-Slug"); got != "f-slug" {
-		t.Errorf("NormalizeBranch lowercase = %q", got)
+	if got, _ := NormalizeBranch("F-Slug"); got != "F-Slug" {
+		t.Errorf("NormalizeBranch preserves case = %q", got)
 	}
 	if _, err := NormalizeBranch("has space"); err == nil {
 		t.Error("space should be rejected")
 	}
-	if got, err := NormalizeBranch("Agent/Sebastian/sess_123"); err != nil || got != "agent/sebastian/sess_123" {
+	if got, err := NormalizeBranch("Agent/Sebastian/sess_123"); err != nil || got != "Agent/Sebastian/sess_123" {
 		t.Errorf("scoped branch = %q, %v", got, err)
 	}
 	for _, bad := range []string{"/leading", "trailing/", "double//slash", "dot/../segment", "hidden/.branch", "bad.lock", "has space", "has~tilde"} {
@@ -273,5 +273,49 @@ func TestExactTagAndDigestRoundTrip(t *testing.T) {
 func TestValidateChannelRequiresTagForDigest(t *testing.T) {
 	if err := ValidateChannel(Channel{ArtifactSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}); err == nil {
 		t.Fatal("digest without exact tag was accepted")
+	}
+}
+
+func TestSystemChannelPreservesRawRefFallbackAndIndependentApps(t *testing.T) {
+	withConfigFile(t, "")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := Channel{Source: "https://forge.example/apps/Notes", Branch: "Agent/Notes", Fallback: []string{}}
+	if err := c.SetChannel("app:notes", app); err != nil {
+		t.Fatal(err)
+	}
+	system := Channel{Source: "https://forge.example/owner/YouEye", Branch: "Team/Fix", Fallback: []string{}, Tag: "youeye-v0.5.38-worker-abcd.10", ArtifactSHA256: strings.Repeat("a", 64)}
+	if err := c.SetChannel(ComponentSystem, system); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	c, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Effective(ComponentSystem, testCfg()); !reflect.DeepEqual(got, system) {
+		t.Fatal(got, system)
+	}
+	if got := c.Effective("app:notes", testCfg()); !reflect.DeepEqual(got, app) {
+		t.Fatal(got, app)
+	}
+	for _, bad := range []Channel{
+		{Tag: "cp-v0.5.38", ArtifactSHA256: strings.Repeat("a", 64)},
+		{Tag: "youeye-v0.5.38"},
+		{Source: "http://forge.example/owner/YouEye"},
+	} {
+		if err := c.SetChannel(ComponentSystem, bad); err == nil {
+			t.Fatal("invalid System selection", bad)
+		}
+	}
+	if err := c.ResetChannel(ComponentSystem); err != nil {
+		t.Fatal(err)
+	}
+	if !c.System.IsZero() || !reflect.DeepEqual(c.Apps["notes"], app) {
+		t.Fatal(c)
 	}
 }

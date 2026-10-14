@@ -29,6 +29,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/youeye-platform/YouEye/releasecache"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 	"gopkg.in/yaml.v3"
 )
@@ -41,6 +42,7 @@ var mu sync.Mutex
 // Component identifiers.
 const (
 	ComponentDefault = "default"
+	ComponentSystem  = "system"
 	ComponentSpine   = "spine"
 	ComponentControl = "control"
 	ComponentUI      = "ui"
@@ -139,6 +141,7 @@ func (ch *Channel) UnmarshalJSON(data []byte) error {
 
 // Config is the parsed release_channels block.
 type Config struct {
+	System  Channel            `yaml:"system,omitempty" json:"system,omitempty"`
 	Default Channel            `yaml:"default,omitempty" json:"default,omitempty"`
 	Spine   Channel            `yaml:"spine,omitempty" json:"spine,omitempty"`
 	Control Channel            `yaml:"control,omitempty" json:"control,omitempty"`
@@ -202,6 +205,8 @@ func (c *Config) override(component string) (Channel, bool) {
 	switch component {
 	case ComponentDefault:
 		return c.Default, true
+	case ComponentSystem:
+		return c.System, true
 	case ComponentSpine:
 		return c.Spine, true
 	case ComponentControl:
@@ -290,6 +295,11 @@ func (c *Config) SetChannel(component string, ch Channel) error {
 	switch component {
 	case ComponentDefault:
 		c.Default = ch
+	case ComponentSystem:
+		if err := ValidateSystemChannel(ch); err != nil {
+			return err
+		}
+		c.System = ch
 	case ComponentSpine:
 		c.Spine = ch
 	case ComponentControl:
@@ -316,6 +326,8 @@ func (c *Config) ResetChannel(component string) error {
 	switch component {
 	case ComponentDefault:
 		c.Default = Channel{Branch: "main", Fallback: []string{"main"}}
+	case ComponentSystem:
+		c.System = Channel{}
 	case ComponentSpine:
 		c.Spine = Channel{}
 	case ComponentControl:
@@ -335,6 +347,7 @@ func (c *Config) ResetChannel(component string) error {
 
 // ResetAll clears every override and returns the default channel to main.
 func (c *Config) ResetAll() {
+	c.System = Channel{}
 	c.Default = Channel{Branch: "main", Fallback: []string{"main"}}
 	c.Spine = Channel{}
 	c.Control = Channel{}
@@ -347,6 +360,9 @@ func (c *Config) ResetAll() {
 // override (excludes "default"), sorted app ids appended as "app:<id>".
 func (c *Config) ConfiguredComponents() []string {
 	var out []string
+	if !c.System.IsZero() {
+		out = append(out, ComponentSystem)
+	}
 	if !c.Spine.IsZero() {
 		out = append(out, ComponentSpine)
 	}
@@ -510,27 +526,29 @@ func ValidateChannel(ch Channel) error {
 	return nil
 }
 
-// NormalizeBranch validates a Git-style branch name and lowercases it.
-// Empty is rejected — callers wanting "unset" pass an empty Channel field.
+// NormalizeBranch validates an exact case-sensitive Git branch. Version suffix
+// tokens are normalized by the producer; they must never rewrite a source ref.
 func NormalizeBranch(branch string) (string, error) {
-	if branch == "" {
-		return "", fmt.Errorf("branch name is empty")
+	if !releasecache.ValidCoreBranch(branch) {
+		return "", fmt.Errorf("invalid branch name %q", branch)
 	}
-	if len(branch) > 128 {
-		return "", fmt.Errorf("branch name is too long")
+	return branch, nil
+}
+
+// The System channel selects a complete assembly, never a component tag.
+func ValidateSystemChannel(ch Channel) error {
+	if err := ValidateChannel(ch); err != nil {
+		return err
 	}
-	lower := strings.ToLower(branch)
-	for _, part := range strings.Split(lower, "/") {
-		if part == "" || part == "." || part == ".." || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".") || strings.HasSuffix(part, ".lock") {
-			return "", fmt.Errorf("invalid branch name %q", branch)
+	if ch.Source != "" {
+		if _, err := releasecache.ParseRepositorySource(ch.Source); err != nil {
+			return err
 		}
-		for _, c := range part {
-			if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
-				return "", fmt.Errorf("invalid branch name %q", branch)
-			}
-		}
 	}
-	return lower, nil
+	if ch.Tag != "" && (!strings.HasPrefix(ch.Tag, "youeye-v") || !releasecache.ValidCoreVersion(strings.TrimPrefix(ch.Tag, "youeye-v")) || len(ch.ArtifactSHA256) != 64) {
+		return fmt.Errorf("System pin requires a canonical core tag and its manifest digest")
+	}
+	return nil
 }
 
 func validateSource(source string) error {

@@ -4,6 +4,7 @@
  * emitting progress events for each step.
  */
 
+import { mkdir, lstat } from 'node:fs/promises';
 import type { DeploymentEvent } from './types';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import {
@@ -48,6 +49,9 @@ import {
 } from '../pointer/lifecycle';
 import { settingsService } from '../settings';
 import { preparePointerStorage } from '../pointer/storage';
+import { coreSchemaComponent } from '@/lib/updates/core-schema';
+import { selectedCoreRole } from '@/lib/releases/core-release';
+import { configureFreshUIDatabase, requiresFreshUIDatabase, type FreshUIIdentity } from './fresh-ui-database';
 
 const TOTAL_STEPS = 5;
 const PIHOLE_CONTAINER = 'youeye-pihole';
@@ -101,7 +105,21 @@ function failDeployment(
 }
 
 async function deployUIContainerFromConfiguredSource(replaceExisting = false): Promise<void> {
+  // CP's existing Data mount is the host source of the shifted UI data bind.
+  await mkdir('/var/lib/youeye/ui-data', { recursive: true, mode: 0o700 });
+  if (!(await lstat('/var/lib/youeye/ui-data')).isDirectory()) throw new Error('UI persistent data is not a plain directory');
   const spec = uiContainerSpec();
+  const settings = await settingsService.getRaw();
+  const component = await coreSchemaComponent('cp');
+  const freshDatabase = requiresFreshUIDatabase(component, settings.setup_completed === true);
+  let freshIdentity: FreshUIIdentity | undefined;
+  if (freshDatabase) {
+    const selected = selectedCoreRole('ui');
+    if (selected.manifestSHA256 !== component!.manifestSHA256) throw new Error('Fresh UI selection differs from Control Panel');
+    freshIdentity = { schema: 'youeye.core-component.v1', role: 'ui', requestId: component!.requestId,
+      manifestSHA256: selected.manifestSHA256, artifactSHA256: selected.member.artifact.sha256 };
+    spec.deferStart = true;
+  }
   const releaseSource = await getReleaseSource();
 
   const deploy = replaceExisting ? redeployLXDContainer : deployLXDContainer;
@@ -126,12 +144,46 @@ async function deployUIContainerFromConfiguredSource(replaceExisting = false): P
   }
   // Replacing the root filesystem also removes its SSO environment/drop-in.
   // Spine retains the authoritative configuration outside that filesystem.
-  const settings = await settingsService.getRaw();
   await restoreUIBridgeAuthority(settings.setup_completed === true);
-  await reapplySavedUIConfiguration(
+  const restored = await reapplySavedUIConfiguration(
     settings.setup_completed === true,
     configuration => spineClient.setUISSO(configuration),
   );
+  if (freshIdentity && !restored) await bootstrapFreshUIEnvironment(freshIdentity);
+}
+
+async function bootstrapFreshUIEnvironment(identity: FreshUIIdentity): Promise<void> {
+  const checked = async (container: string, command: string) => {
+    const result = await execShell(container, command, { timeout: 30_000 });
+    if (result.exitCode !== 0) throw new Error('Fresh UI database bootstrap operation failed');
+    return result.stdout.trim();
+  };
+  await configureFreshUIDatabase(identity, {
+    assertIdentity: async () => {
+      await checked('youeye-ui', 'test -f /etc/youeye/core-component.json && test ! -L /etc/youeye/core-component.json && test "$(stat -c %a:%u /etc/youeye/core-component.json)" = 600:0');
+      const marker = JSON.parse((await incusDownloadFile('youeye-ui', '/etc/youeye/core-component.json')).toString('utf8'));
+      if (Object.entries(identity).some(([key, value]) => marker[key] !== value)) throw new Error('Fresh UI component changed before database binding');
+    },
+    credentials: () => spineClient.getPostgresCredentials(),
+    databaseOwner: async () => {
+      const owner = await checked('youeye-postgres', 'psql -X -v ON_ERROR_STOP=1 -U youeye -d postgres -Atc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = \'youeye_ui\'"');
+      return owner || undefined;
+    },
+    createDatabase: async () => { await checked('youeye-postgres', 'psql -X -v ON_ERROR_STOP=1 -U youeye -d postgres -c "CREATE DATABASE youeye_ui OWNER youeye"'); },
+    readEnvironment: async () => {
+      const result = await execShell('youeye-ui', 'p=/etc/youeye-ui.env; if test ! -e "$p" && test ! -L "$p"; then exit 44; fi; test -f "$p" && test ! -L "$p" && test "$(stat -c %a:%u "$p")" = 600:0 && test "$(stat -c %s "$p")" -le 16384', { timeout: 10_000 });
+      if (result.exitCode === 44) return undefined;
+      if (result.exitCode !== 0) throw new Error('Fresh UI environment is not protected');
+      return (await incusDownloadFile('youeye-ui', '/etc/youeye-ui.env')).toString('utf8');
+    },
+    writeEnvironment: async value => {
+      await incusUploadFile('youeye-ui', '/etc/.youeye-ui.bootstrap.env', Buffer.from(value), { mode: '0600' });
+      await checked('youeye-ui', 'set -e; p=/etc/youeye-ui.env; staged=/etc/.youeye-ui.bootstrap.env; if test -e "$p" || test -L "$p"; then test -f "$p" && test ! -L "$p" && test "$(stat -c %a:%u "$p")" = 600:0 && cmp -s "$p" "$staged"; fi; mv "$staged" "$p"; sync -f /etc');
+    },
+    start: async () => {
+      await checked('youeye-ui', 'systemctl enable youeye-ui && systemctl restart youeye-ui');
+    },
+  });
 }
 
 async function restoreUIBridgeAuthority(required: boolean): Promise<void> {

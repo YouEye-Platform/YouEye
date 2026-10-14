@@ -338,6 +338,16 @@ func GetAssetURLForBranch(cfg *config.Config, repo, assetName, tagPrefix string)
 // the URL is constructed from the resolved source + tag, so downloads work even
 // when the API omits per-asset URLs.
 func AssetURLForChannel(cfg *config.Config, eff channels.Channel, repo, assetName, tagPrefix string) (string, error) {
+	if canonicalCoreTag(eff.Tag) {
+		_, member, err := coreCandidate(cfg, eff, tagPrefix)
+		if err != nil {
+			return "", err
+		}
+		if member.Artifact.Name != assetName {
+			return "", fmt.Errorf("core member asset name differs")
+		}
+		return member.Artifact.URL, nil
+	}
 	src := resolveSource(cfg, eff.Source)
 	if eff.Tag != "" && eff.ArtifactSHA256 != "" {
 		cand, err := pinnedCandidate(src, eff, tagPrefix)

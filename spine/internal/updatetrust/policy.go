@@ -12,11 +12,11 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"io"
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
 
@@ -88,7 +88,7 @@ func (p Policy) Validate() error {
 		if err != nil || repo != g.Repository {
 			return errors.New("trust repository must be canonical")
 		}
-		if g.Branch != "dev" && g.Branch != "main" && g.Branch != "beta" {
+		if !releasecache.ValidCoreBranch(g.Branch) {
 			return errors.New("invalid trust branch")
 		}
 		if g.Scope != "appliance" && g.Scope != "spine" && g.Scope != "cp" && g.Scope != "ui" && g.Scope != "app" {
@@ -195,17 +195,22 @@ func ReleaseIdentity(raw string) (repository, branch, scope string, err error) {
 	if e != nil {
 		return "", "", "", e
 	}
-	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	parts := strings.Split(strings.TrimPrefix(u.EscapedPath(), "/"), "/")
 	if len(parts) != 6 || parts[2] != "releases" || parts[3] != "download" {
 		return "", "", "", fmt.Errorf("not an exact release asset URL")
 	}
 	base := *u
 	base.Path = "/" + parts[0] + "/" + parts[1]
+	base.RawPath = ""
 	repository, err = Repository(base.String())
 	if err != nil {
 		return
 	}
-	tag := parts[4]
+	tag, decodeErr := url.PathUnescape(parts[4])
+	if decodeErr != nil {
+		err = decodeErr
+		return
+	}
 	branch = "main"
 	scope = "app"
 	for _, s := range []string{"appliance", "spine", "cp", "ui"} {
@@ -215,16 +220,27 @@ func ReleaseIdentity(raw string) (repository, branch, scope string, err error) {
 			break
 		}
 	}
-	if strings.HasPrefix(tag, "dev-") {
-		branch = "dev"
-		tag = strings.TrimPrefix(tag, "dev-")
-	} else if strings.HasPrefix(tag, "beta-") {
-		branch = "beta"
-		tag = strings.TrimPrefix(tag, "beta-")
+	if marker := strings.LastIndex(tag, "-v"); marker >= 0 {
+		branch, tag = tag[:marker], tag[marker+1:]
 	}
-	if !regexp.MustCompile(`^v[0-9]+(?:\.[0-9]+)*$`).MatchString(tag) {
-		err = errors.New("unsupported release version")
+	versionValue := strings.TrimPrefix(tag, "v")
+	if !strings.HasPrefix(tag, "v") || !releasecache.ValidCoreBranch(branch) {
+		err = errors.New("unsupported release branch or tag")
 		return
+	}
+	if !releasecache.ValidCoreVersion(versionValue) {
+		for _, part := range strings.Split(versionValue, ".") {
+			if part == "" {
+				err = errors.New("unsupported release version")
+				return
+			}
+			for _, ch := range part {
+				if ch < '0' || ch > '9' {
+					err = errors.New("unsupported release version")
+					return
+				}
+			}
+		}
 	}
 
 	return

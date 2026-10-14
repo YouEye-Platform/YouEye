@@ -39,6 +39,9 @@ func (journal Journal) Validate() error {
 		journal.ActiveSlot == journal.CandidateSlot || journal.StartedAt == "" || journal.UpdatedAt == "" {
 		return errors.New("system update journal is incomplete")
 	}
+	if journal.CoreManifestSHA256 != "" && !validSHA256(journal.CoreManifestSHA256) {
+		return errors.New("invalid host core selection digest")
+	}
 	switch journal.Phase {
 	case PhaseHealthy, PhaseAvailable, PhaseDownload, PhaseWriting, PhaseStaged, PhasePending, PhaseTrial, PhaseFailed, PhaseRollback:
 	default:

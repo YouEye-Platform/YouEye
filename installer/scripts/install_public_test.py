@@ -37,7 +37,7 @@ class BootstrapPublicTests(unittest.TestCase):
         self.policy = self.source / "installer/internal/installer"
         self.scripts.mkdir(parents=True)
         self.policy.mkdir(parents=True)
-        for name in ["releasecache/distribution-policy.json", "releasecache/distribution.py", "appliance/scripts/youeye-bootstrap-network"]:
+        for name in ["releasecache/distribution-policy.json", "releasecache/distribution.py", "releasecache/core_bootstrap.py", "appliance/scripts/youeye-bootstrap-network"]:
             target = self.source / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, target)
@@ -134,6 +134,79 @@ print('200',end='')
                         self.assertNotEqual(result.returncode, 0, result.stdout.decode())
                         self.assertNotIn(b"VERIFIED-LAUNCH", result.stdout)
 
+    def core_fixture(self, fault="valid", sequence=2, channel="stable"):
+        self.fixture("stable", "valid")
+        source = "https://github.com/YouEye-Platform/YouEye"
+        original = json.loads((self.root / "index.json").read_bytes())[0]
+        host_tag = original["tag_name"]
+        def blob(name):
+            data = (self.root / name).read_bytes()
+            return {"name":name,"url":source+"/releases/download/"+host_tag+"/"+name,"sha256":digest(data),"size_bytes":len(data)}
+        key_id = digest(subprocess.check_output(["openssl","pkey","-in",str(self.root/"stable.key"),"-pubout","-outform","DER"]))
+        manifest = json.loads((ROOT / "releasecache/testdata/core-release-v1.json").read_bytes())
+        manifest.update(version="0.5.9",tag="youeye-v0.5.9",source=source,branch="main",channel="stable",sequence=sequence,signer_sha256=key_id)
+        roles = {"installer":"youeye-installer-linux-amd64","media":"youeye-appliance-amd64.iso","appliance":"appliance-manifest.json","system-update":"system-update-manifest.json"}
+        for member in manifest["members"]:
+            member.update(source=source,branch="main",tag=host_tag,build_version="0.5.8",source_commit="a"*40,key_id=key_id,
+                checksums=blob("SHA256SUMS"),signature=blob("SHA256SUMS.sig"),provenance=blob("provenance.json"),sbom=blob("sbom.spdx.json"),artifact=blob(roles.get(member["role"],"system-root.img.zst")))
+            if "document_signature" in member: member["document_signature"] = blob("appliance-manifest.json.sig" if member["role"] == "appliance" else "system-update-manifest.json.sig")
+            if "release_lock" in member: member["release_lock"] = blob("release-lock.json")
+        if fault == "missing-member": manifest["members"].pop()
+        if fault == "reader": manifest["minimum_reader"] = 2
+        if fault == "source": manifest["source"] = "https://wrong.example/YouEye"
+        if fault == "host-authority": manifest["members"][0]["key_id"] = "f"*64
+        if fault == "aliases":
+            for member in manifest["members"]:
+                for field in ["artifact","checksums","signature","provenance","sbom","document_signature","release_lock"]:
+                    if field not in member: continue
+                    blob = member[field]
+                    alias = "appliance-" + blob["name"]
+                    (self.root/alias).write_bytes((self.root/blob["name"]).read_bytes())
+                    blob["url"] = source+"/releases/download/"+host_tag+"/"+alias
+        if channel == "beta":
+            manifest.update(version="0.5.10-beta.1",tag="youeye-v0.5.10-beta.1",branch="beta",channel="beta",signer_sha256=digest(subprocess.check_output(["openssl","pkey","-in",str(self.root/"beta.key"),"-pubout","-outform","DER"])))
+        raw = encoded(manifest)
+        (self.root/"core-release.json").write_bytes(raw)
+        (self.root/"core-release.json.sig").write_bytes(self.sign(raw,"wrong" if fault == "signature" else channel))
+        if fault == "installer": (self.root/"youeye-installer-linux-amd64").write_bytes(b"changed")
+        assets = [{"name":name,"browser_download_url":source+"/releases/download/"+manifest["tag"]+"/"+name} for name in ["core-release.json","core-release.json.sig"]]
+        (self.root/"index.json").write_bytes(encoded([{"tag_name":manifest["tag"],"draft":False,"prerelease":channel == "beta","assets":assets}]))
+
+    def test_complete_release_bootstrap_authenticates_original_installer(self):
+        for fault in ["valid", "missing-member", "reader", "source", "host-authority", "signature", "installer", "aliases"]:
+            with self.subTest(fault=fault):
+                self.core_fixture(fault)
+                env = dict(os.environ, PATH=str(self.bin)+":"+os.environ["PATH"], FIXTURE_ROOT=str(self.root), YOUEYE_INSTALLER_CACHE=str(self.root/("core-cache-"+fault)))
+                result = subprocess.run(["sh","-s","--"],input=(self.scripts/"install.sh").read_bytes(),env=env,capture_output=True)
+                if fault in {"valid", "aliases"}:
+                    self.assertEqual(result.returncode,0,result.stderr.decode())
+                    self.assertIn(b"VERIFIED-LAUNCH",result.stdout)
+                    self.core_fixture(sequence=1)
+                    retry = subprocess.run(["sh","-s","--"],input=(self.scripts/"install.sh").read_bytes(),env=env,capture_output=True)
+                    self.assertNotEqual(retry.returncode,0)
+                    self.assertIn(b"backwards",retry.stderr)
+                else:
+                    self.assertNotEqual(result.returncode,0,result.stderr.decode())
+                    self.assertNotIn(b"VERIFIED-LAUNCH",result.stdout)
+
+    def test_beta_bootstrap_reuses_original_stable_host_authority(self):
+        self.core_fixture(channel="beta")
+        env = dict(os.environ, PATH=str(self.bin)+":"+os.environ["PATH"], FIXTURE_ROOT=str(self.root), YOUEYE_INSTALLER_CACHE=str(self.root/"beta-core-cache"))
+        result = subprocess.run(["sh","-s","--","--channel","branch","--release-branch","beta"],input=(self.scripts/"install.sh").read_bytes(),env=env,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stderr.decode())
+        self.assertIn(b"VERIFIED-LAUNCH",result.stdout)
+
+    def test_exact_core_bootstrap_binds_manifest_digest(self):
+        self.core_fixture()
+        env = dict(os.environ, PATH=str(self.bin)+":"+os.environ["PATH"], FIXTURE_ROOT=str(self.root), YOUEYE_INSTALLER_CACHE=str(self.root/"exact-core-cache"))
+        args = ["sh","-s","--","--channel","exact","--release-tag","youeye-v0.5.9","--installer-sha256",digest((self.root/"youeye-installer-linux-amd64").read_bytes()),"--iso-sha256",digest((self.root/"youeye-appliance-amd64.iso").read_bytes())]
+        result = subprocess.run(args,input=(self.scripts/"install.sh").read_bytes(),env=env,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stderr.decode())
+        args += ["--core-manifest-sha256","a"*64]
+        result = subprocess.run(args,input=(self.scripts/"install.sh").read_bytes(),env=env,capture_output=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertNotIn(b"VERIFIED-LAUNCH",result.stdout)
+
     def test_distribution_bootstrap_without_github_api(self):
         self.fixture("stable", "valid")
         policy = self.source / "releasecache/distribution-policy.json"
@@ -162,7 +235,7 @@ urllib.request.OpenerDirector.open = distribution_open
                 env = dict(os.environ, PATH=str(self.bin)+":"+os.environ["PATH"], PYTHONPATH=str(self.root), FIXTURE_ROOT=str(self.root), YOUEYE_INSTALLER_CACHE=str(self.root/("cache-"+fault)))
                 result = subprocess.run(["sh","-s","--"],input=(self.scripts/"install.sh").read_bytes(),env=env,capture_output=True)
                 self.assertNotIn("api.github.com",(self.root/"requests").read_text())
-                if fault == "valid":
+                if fault in {"valid", "aliases"}:
                     self.assertEqual(result.returncode,0,result.stderr.decode())
                     self.assertIn(b"VERIFIED-LAUNCH",result.stdout)
                 else:

@@ -38,6 +38,13 @@ case "$*" in
     else
       printf '{"schema":"youeye.first-boot-convergence.v1","reboot_requested":false}\n'
     fi ;;
+  "update core first-boot "*)
+    [ "${FAKE_CORE_CONVERGE_FAIL:-0}" != 1 ] || exit 1
+    case "$*" in
+      *--resume-only) printf '{"initialized":%s,"converged":%s,"reboot_requested":false}\n' "${FAKE_CORE_INITIALIZED:-false}" "${FAKE_CORE_INITIALIZED:-false}" ;;
+      *) printf '{"initialized":true,"converged":%s,"reboot_requested":%s}\n' "${FAKE_CORE_CONVERGED:-true}" "${FAKE_CORE_REBOOT:-false}" ;;
+    esac ;;
+  "update core initialize "*) [ "${FAKE_CORE_INIT_FAIL:-0}" != 1 ] ;;
   "appliance health --profile=operational --json") printf '{"healthy":true}\n' ;;
   *) [ "${FAKE_DEPLOY_FAIL:-0}" != 1 ] ;;
 esac
@@ -133,5 +140,47 @@ if run_fixture "$https_failure" FAKE_HTTPS_FAIL=1; then
 fi
 test ! -e "$https_failure/state/complete"
 jq -e '.state == "retrying" and .percent == 98' "$https_failure/state/progress.json" >/dev/null
+
+core="$tmp/core"
+make_fixture "$core"
+printf '%s\n' '{"core_manifest_sha256":"fixture-core"}' > "$core/release-policy.json"
+run_fixture "$core"
+grep -Fq 'update core initialize --policy' "$core/commands"
+test -e "$core/state/complete"
+
+core_failure="$tmp/core-failure"
+make_fixture "$core_failure"
+printf '%s\n' '{"core_manifest_sha256":"fixture-core"}' > "$core_failure/release-policy.json"
+if run_fixture "$core_failure" FAKE_CORE_INIT_FAIL=1; then
+    echo 'missing installed core receipt unexpectedly completed first deployment' >&2
+    exit 1
+fi
+test ! -e "$core_failure/state/complete"
+
+core_reboot="$tmp/core-reboot"
+make_fixture "$core_reboot"
+printf '%s\n' '{"core_manifest_sha256":"fixture-core"}' > "$core_reboot/release-policy.json"
+run_fixture "$core_reboot" FAKE_CORE_REBOOT=true FAKE_CORE_CONVERGED=false
+[ ! -e "$core_reboot/state/complete" ]
+jq -e '.stage == "system_restart" and .percent == 96' "$core_reboot/state/progress.json" >/dev/null
+
+core_resumed="$tmp/core-resumed"
+make_fixture "$core_resumed"
+printf '%s\n' '{"core_manifest_sha256":"fixture-core"}' > "$core_resumed/release-policy.json"
+run_fixture "$core_resumed" FAKE_CORE_INITIALIZED=true FAKE_CONTROL_VERSION=0.5.23
+[ -e "$core_resumed/state/complete" ]
+! grep -Fq 'update system converge' "$core_resumed/commands"
+! grep -Fq 'update control' "$core_resumed/commands"
+! grep -Fq 'update core initialize' "$core_resumed/commands"
+! grep -Fxq 'deploy' "$core_resumed/commands"
+
+core_unaccepted="$tmp/core-unaccepted"
+make_fixture "$core_unaccepted"
+printf '%s\n' '{"core_manifest_sha256":"fixture-core"}' > "$core_unaccepted/release-policy.json"
+if run_fixture "$core_unaccepted" FAKE_CORE_CONVERGED=false; then
+    echo 'unaccepted tracked core opened setup' >&2
+    exit 1
+fi
+[ ! -e "$core_unaccepted/state/complete" ]
 
 echo "youeye-first-deploy tests passed"

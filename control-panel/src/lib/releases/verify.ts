@@ -2,11 +2,11 @@ import { ownerReleaseGrant, type TrustScope } from './owner-trust';
 import { cachedReleaseBytes } from './cache';
 import publicTrustPolicy from '../../../../spine/internal/systemupdate/public-release-trust.json';
 import { createHash, createPublicKey, verify } from 'crypto';
+import { parseReleaseVersion, parseVersionStrict } from '../version';
 
-export const RELEASE_DEVELOPMENT_TRUST = `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAha3Qt2DxI8tDarUb24mmRRekCa1acvk/ttqyJ14y1OE=
------END PUBLIC KEY-----
-`;
+import { RELEASE_DEVELOPMENT_TRUST } from './development-trust';
+export { RELEASE_DEVELOPMENT_TRUST } from './development-trust';
+import { selectedCoreArtifact, verifyCoreArtifactBuffer, coreArtifactVerificationShell } from './core-release';
 
 type PublicTrustPolicy = { schema: string; keys: Record<string, string> };
 
@@ -26,11 +26,13 @@ export function releaseArtifactTrust(artifactURL: string, policy: PublicTrustPol
     throw new Error('Public release repository has no supported signing authority');
   }
   const tagPattern = nativeRepos.has(repo)
-    ? /^(beta-)?v[0-9]+(?:\.[0-9]+)*$/
-    : /^(?:spine|cp|ui)-(beta-)?v[0-9]+(?:\.[0-9]+)*$/;
+    ? /^(beta-)?v(.+)$/
+    : /^(?:spine|cp|ui)-(beta-)?v(.+)$/;
   const match = tagPattern.exec(parts[4]);
-  if (!match) throw new Error('Public component tag has no supported signing channel');
+  if (!match || !parseVersionStrict(match[2])) throw new Error('Public component tag has no supported signing channel');
   const trustClass: 'beta' | 'stable' = match[1] ? 'beta' : 'stable';
+  const canonical = parseReleaseVersion(match[2]);
+  if (canonical?.token && (trustClass === 'stable' || canonical.token !== 'beta')) throw new Error('Public component suffix differs from signing channel');
   const pem = policy.keys[trustClass];
   if (policy.schema !== 'youeye.public-trust.v1' || !pem || createPublicKey(pem).asymmetricKeyType !== 'ed25519') {
     throw new Error(`Public ${trustClass} trust is not provisioned`);
@@ -64,6 +66,8 @@ export async function verifySignedReleaseArtifactBuffer(
   scope?: TrustScope,
   loadMetadata?: (name: string) => Promise<Buffer>,
 ): Promise<string> {
+	const core = selectedCoreArtifact(artifactURL, expectedDigest, scope);
+	if (core) return verifyCoreArtifactBuffer(core, artifact);
   const base = new URL('./', artifactURL);
   const trust = releaseArtifactTrust(artifactURL, publicTrustPolicy, scope);
   // Transport may use release API attachment identities. Signing authority
@@ -109,6 +113,8 @@ function shellQuote(value: string): string {
 }
 
 export function signedReleaseVerificationShell(artifactURL: string, artifactPath: string, expectedDigest?: string, scope?: TrustScope): string {
+	const core = selectedCoreArtifact(artifactURL, expectedDigest, scope);
+	if (core) return coreArtifactVerificationShell(core, artifactPath);
   const base = new URL('./', artifactURL).toString();
   const trust = releaseArtifactTrust(artifactURL, publicTrustPolicy, scope);
   const encodedTrust = Buffer.from(trust.pem).toString('base64');

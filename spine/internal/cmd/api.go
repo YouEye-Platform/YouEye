@@ -89,6 +89,7 @@ func startAPIServer() error {
 
 	// Start server with config
 	server := api.NewServer(Version, cfg)
+	server.SetCoreUpdateOperations(coreAPIOperations{})
 	return server.ListenAndServe()
 }
 

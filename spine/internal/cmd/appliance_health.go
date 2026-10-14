@@ -16,6 +16,7 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 	"github.com/youeye-platform/YouEye/spine/internal/incus"
 	hoststorage "github.com/youeye-platform/YouEye/spine/internal/storage"
+	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"github.com/youeye-platform/YouEye/spine/internal/update"
 )
 
@@ -82,6 +83,9 @@ func runApplianceCommitHealthySlot() error {
 	cmdline, err := os.ReadFile("/proc/cmdline")
 	if err != nil {
 		return fmt.Errorf("read kernel command line: %w", err)
+	}
+	if err := systemupdate.NewDefault().CheckCoreHostCommit(); err != nil {
+		return err
 	}
 	state, err := appliance.CommitHealthySlot(appliance.StatePath, *manifest, string(cmdline))
 	if err != nil {
@@ -363,6 +367,9 @@ func validateInstalledReleaseIdentity(name string, expected appliance.ComponentR
 }
 
 func addFirstDeployReleaseSetChecks(manifest appliance.Manifest, add func(string, string, string)) {
+	if addCoreInstalledHealthChecks(manifest, add) {
+		return
+	}
 	selected, err := pinnedDeploymentManifest(manifest)
 	if err != nil {
 		add("first-deploy service selection", "fail", err.Error())

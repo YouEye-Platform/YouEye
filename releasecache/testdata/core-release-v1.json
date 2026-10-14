@@ -1,0 +1,621 @@
+{
+  "schema": "youeye.core-release.v1",
+  "version": "0.5.38",
+  "tag": "youeye-v0.5.38",
+  "source": "https://github.com/YouEye-Platform/YouEye",
+  "branch": "main",
+  "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "channel": "stable",
+  "sequence": 2,
+  "previous_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "minimum_reader": 1,
+  "signer_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "compatibility": {
+    "state_min": 1,
+    "state_max": 1,
+    "data_min": 1,
+    "data_max": 1,
+    "minimum_release": "0.5.37",
+    "capabilities": [
+      "core-release-v1"
+    ]
+  },
+  "members": [
+    {
+      "role": "installer",
+      "build_version": "0.5.37",
+      "source": "https://github.com/YouEye-Platform/YouEye",
+      "branch": "main",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": "youeye-v0.5.37",
+      "input_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "key_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "depends_on": [],
+      "artifact": {
+        "name": "installer.tar",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/installer.tar",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "checksums": {
+        "name": "SHA256SUMS",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "signature": {
+        "name": "SHA256SUMS.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "provenance": {
+        "name": "provenance.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/provenance.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "sbom": {
+        "name": "sbom.spdx.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/sbom.spdx.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      }
+    },
+    {
+      "role": "media",
+      "build_version": "0.5.37",
+      "source": "https://github.com/YouEye-Platform/YouEye",
+      "branch": "main",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": "youeye-v0.5.37",
+      "input_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "key_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "depends_on": [],
+      "artifact": {
+        "name": "media.tar",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/media.tar",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "checksums": {
+        "name": "SHA256SUMS",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "signature": {
+        "name": "SHA256SUMS.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "provenance": {
+        "name": "provenance.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/provenance.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "sbom": {
+        "name": "sbom.spdx.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/sbom.spdx.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      }
+    },
+    {
+      "role": "appliance",
+      "build_version": "0.5.37",
+      "source": "https://github.com/YouEye-Platform/YouEye",
+      "branch": "main",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": "youeye-v0.5.37",
+      "input_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "key_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "depends_on": [],
+      "artifact": {
+        "name": "appliance.tar",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/appliance.tar",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "checksums": {
+        "name": "SHA256SUMS",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "signature": {
+        "name": "SHA256SUMS.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "provenance": {
+        "name": "provenance.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/provenance.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "sbom": {
+        "name": "sbom.spdx.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/sbom.spdx.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "document_signature": {
+        "name": "appliance.json.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/appliance.json.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "release_lock": {
+        "name": "release-lock.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/release-lock.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      }
+    },
+    {
+      "role": "system-update",
+      "build_version": "0.5.37",
+      "source": "https://github.com/YouEye-Platform/YouEye",
+      "branch": "main",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": "youeye-v0.5.37",
+      "input_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "key_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "depends_on": [],
+      "artifact": {
+        "name": "system-update.tar",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/system-update.tar",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "checksums": {
+        "name": "SHA256SUMS",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "signature": {
+        "name": "SHA256SUMS.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "provenance": {
+        "name": "provenance.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/provenance.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "sbom": {
+        "name": "sbom.spdx.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/sbom.spdx.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "document_signature": {
+        "name": "system-update.json.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/system-update.json.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      }
+    },
+    {
+      "role": "system-root",
+      "build_version": "0.5.37",
+      "source": "https://github.com/YouEye-Platform/YouEye",
+      "branch": "main",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": "youeye-v0.5.37",
+      "input_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "key_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "depends_on": [],
+      "artifact": {
+        "name": "system-root.tar",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/system-root.tar",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "checksums": {
+        "name": "SHA256SUMS",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "signature": {
+        "name": "SHA256SUMS.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "provenance": {
+        "name": "provenance.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/provenance.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "sbom": {
+        "name": "sbom.spdx.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/sbom.spdx.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      }
+    },
+    {
+      "role": "system-a-uki",
+      "build_version": "0.5.37",
+      "source": "https://github.com/YouEye-Platform/YouEye",
+      "branch": "main",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": "youeye-v0.5.37",
+      "input_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "key_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "depends_on": [],
+      "artifact": {
+        "name": "system-a-uki.tar",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/system-a-uki.tar",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "checksums": {
+        "name": "SHA256SUMS",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "signature": {
+        "name": "SHA256SUMS.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "provenance": {
+        "name": "provenance.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/provenance.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "sbom": {
+        "name": "sbom.spdx.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/sbom.spdx.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      }
+    },
+    {
+      "role": "system-b-uki",
+      "build_version": "0.5.37",
+      "source": "https://github.com/YouEye-Platform/YouEye",
+      "branch": "main",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": "youeye-v0.5.37",
+      "input_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "key_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "depends_on": [],
+      "artifact": {
+        "name": "system-b-uki.tar",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/system-b-uki.tar",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "checksums": {
+        "name": "SHA256SUMS",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "signature": {
+        "name": "SHA256SUMS.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "provenance": {
+        "name": "provenance.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/provenance.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "sbom": {
+        "name": "sbom.spdx.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/sbom.spdx.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      }
+    },
+    {
+      "role": "system-updater",
+      "build_version": "0.5.37",
+      "source": "https://github.com/YouEye-Platform/YouEye",
+      "branch": "main",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": "youeye-v0.5.37",
+      "input_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "key_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "depends_on": [],
+      "artifact": {
+        "name": "system-updater.tar",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/system-updater.tar",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "checksums": {
+        "name": "SHA256SUMS",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "signature": {
+        "name": "SHA256SUMS.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "provenance": {
+        "name": "provenance.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/provenance.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "sbom": {
+        "name": "sbom.spdx.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/sbom.spdx.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      }
+    },
+    {
+      "role": "internal-recovery",
+      "build_version": "0.5.37",
+      "source": "https://github.com/YouEye-Platform/YouEye",
+      "branch": "main",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": "youeye-v0.5.37",
+      "input_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "key_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "depends_on": [],
+      "artifact": {
+        "name": "internal-recovery.tar",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/internal-recovery.tar",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "checksums": {
+        "name": "SHA256SUMS",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "signature": {
+        "name": "SHA256SUMS.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "provenance": {
+        "name": "provenance.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/provenance.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "sbom": {
+        "name": "sbom.spdx.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/sbom.spdx.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      }
+    },
+    {
+      "role": "recovery-uki",
+      "build_version": "0.5.37",
+      "source": "https://github.com/YouEye-Platform/YouEye",
+      "branch": "main",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": "youeye-v0.5.37",
+      "input_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "key_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "depends_on": [],
+      "artifact": {
+        "name": "recovery-uki.tar",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/recovery-uki.tar",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "checksums": {
+        "name": "SHA256SUMS",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "signature": {
+        "name": "SHA256SUMS.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "provenance": {
+        "name": "provenance.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/provenance.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "sbom": {
+        "name": "sbom.spdx.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/sbom.spdx.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      }
+    },
+    {
+      "role": "update-bootstrap",
+      "build_version": "0.5.37",
+      "source": "https://github.com/YouEye-Platform/YouEye",
+      "branch": "main",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": "youeye-v0.5.37",
+      "input_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "key_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "depends_on": [],
+      "artifact": {
+        "name": "update-bootstrap.tar",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/update-bootstrap.tar",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "checksums": {
+        "name": "SHA256SUMS",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "signature": {
+        "name": "SHA256SUMS.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "provenance": {
+        "name": "provenance.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/provenance.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "sbom": {
+        "name": "sbom.spdx.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/sbom.spdx.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      }
+    },
+    {
+      "role": "spine",
+      "build_version": "0.5.37",
+      "source": "https://github.com/YouEye-Platform/YouEye",
+      "branch": "main",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": "youeye-v0.5.37",
+      "input_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "key_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "depends_on": [],
+      "artifact": {
+        "name": "spine.tar",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/spine.tar",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "checksums": {
+        "name": "SHA256SUMS",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "signature": {
+        "name": "SHA256SUMS.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "provenance": {
+        "name": "provenance.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/provenance.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "sbom": {
+        "name": "sbom.spdx.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/sbom.spdx.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      }
+    },
+    {
+      "role": "cp",
+      "build_version": "0.5.37",
+      "source": "https://github.com/YouEye-Platform/YouEye",
+      "branch": "main",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": "youeye-v0.5.37",
+      "input_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "key_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "depends_on": [
+        "spine"
+      ],
+      "artifact": {
+        "name": "cp.tar",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/cp.tar",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "checksums": {
+        "name": "SHA256SUMS",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "signature": {
+        "name": "SHA256SUMS.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "provenance": {
+        "name": "provenance.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/provenance.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "sbom": {
+        "name": "sbom.spdx.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/sbom.spdx.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      }
+    },
+    {
+      "role": "ui",
+      "build_version": "0.5.37",
+      "source": "https://github.com/YouEye-Platform/YouEye",
+      "branch": "main",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tag": "youeye-v0.5.37",
+      "input_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "key_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "depends_on": [
+        "cp"
+      ],
+      "artifact": {
+        "name": "ui.tar",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/ui.tar",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "checksums": {
+        "name": "SHA256SUMS",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "signature": {
+        "name": "SHA256SUMS.sig",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/SHA256SUMS.sig",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "provenance": {
+        "name": "provenance.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/provenance.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      },
+      "sbom": {
+        "name": "sbom.spdx.json",
+        "url": "https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v0.5.37/sbom.spdx.json",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 42
+      }
+    }
+  ]
+}

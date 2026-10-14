@@ -55,30 +55,31 @@ jq -e '.schema == "youeye.appliance.boot-bless.v1" and .status == "healthy"' /va
 jq -e '.status == "healthy" and .exit_code == 0' /var/lib/youeye-state/boot/last-bless-health.json >/dev/null`
 
 type proxmoxApplianceConfig struct {
-	Operation         string
-	VMID              int
-	Name              string
-	CPUCores          int
-	RAMMiB            int
-	TargetStorage     string
-	ISOStorage        string
-	TargetDiskGiB     int
-	Bridge            string
-	Network           applianceAnswerNetwork
-	ImportHostSSHKeys bool
-	SSHKeysPath       string
-	EraseConfirmed    bool
-	Channel           string
-	ReleaseBranch     string
-	Freshness         string
-	ServiceSelection  string
-	ReleaseTag        string
-	ISOSHA256         string
-	RepositoryURL     string
-	ReleaseProvider   string
-	ReleasesAPI       string
-	CacheRoot         string
-	Development       developmentAccessPolicy
+	Operation          string
+	VMID               int
+	Name               string
+	CPUCores           int
+	RAMMiB             int
+	TargetStorage      string
+	ISOStorage         string
+	TargetDiskGiB      int
+	Bridge             string
+	Network            applianceAnswerNetwork
+	ImportHostSSHKeys  bool
+	SSHKeysPath        string
+	EraseConfirmed     bool
+	Channel            string
+	ReleaseBranch      string
+	Freshness          string
+	ServiceSelection   string
+	ReleaseTag         string
+	CoreManifestSHA256 string
+	ISOSHA256          string
+	RepositoryURL      string
+	ReleaseProvider    string
+	ReleasesAPI        string
+	CacheRoot          string
+	Development        developmentAccessPolicy
 }
 
 type proxmoxApplianceInventory struct {
@@ -212,7 +213,8 @@ func proxmoxApplianceConfigFromOptions(opts CLIOptions, inventory proxmoxApplian
 		ImportHostSSHKeys: opts.ProxmoxImportHostSSHKeys, SSHKeysPath: opts.ProxmoxSSHKeysPath,
 		EraseConfirmed: opts.ProxmoxEraseConfirmed,
 		Channel:        opts.ApplianceChannel, ReleaseTag: opts.ApplianceReleaseTag,
-		ReleaseBranch: opts.ApplianceReleaseBranch, Freshness: opts.ApplianceFreshness, ServiceSelection: opts.ApplianceServiceSelection,
+		CoreManifestSHA256: opts.CoreManifestSHA256,
+		ReleaseBranch:      opts.ApplianceReleaseBranch, Freshness: opts.ApplianceFreshness, ServiceSelection: opts.ApplianceServiceSelection,
 		ISOSHA256: opts.ApplianceISOSHA256, ReleaseProvider: opts.ApplianceReleaseProvider,
 		RepositoryURL: opts.ApplianceRepository, ReleasesAPI: opts.ApplianceReleasesAPI,
 		CacheRoot:   "/var/cache/youeye-installer/releases",
@@ -233,7 +235,8 @@ func (config proxmoxApplianceConfig) releasePolicy(manifestSHA256 string) applia
 		provider = config.ReleaseProvider
 	}
 	policy := applianceReleasePolicy{
-		Schema: releasePolicySchema, Provider: provider,
+		CoreManifestSHA256: config.CoreManifestSHA256,
+		Schema:             releasePolicySchema, Provider: provider,
 		ReleasesAPI: nonDefaultReleaseAPI(provider, config.ReleasesAPI),
 		Mode:        "track", Track: config.Channel, Branch: config.ReleaseBranch,
 		Freshness: config.Freshness, ServiceSelection: config.ServiceSelection,
@@ -328,6 +331,21 @@ func validateProxmoxApplianceConfig(config proxmoxApplianceConfig, inventory pro
 		Schema: applianceAnswerSchema, Operation: "erase-install", EraseConfirmed: true, TransactionID: "00000000000000000000000000000000", TargetSerial: "TARGET", Network: config.Network,
 		ReleasePolicy: config.releasePolicy(strings.Repeat("0", 64)), Development: config.developmentPolicy(),
 	}
+	if config.CoreManifestSHA256 != "" {
+		if config.Channel != "exact" || !validCoreTag(config.ReleaseTag) || !validSHA256Hex(config.CoreManifestSHA256) {
+			return fmt.Errorf("core digest requires an exact canonical tag and lowercase SHA-256")
+		}
+		if err := validateApplianceReleasePolicy(answer.ReleasePolicy); err != nil {
+			return err
+		}
+		// Signed selection is checked after discovery; this preflight answer
+		// checks the remaining network and development-access fields.
+		answer.ReleasePolicy.CoreManifestSHA256 = ""
+		answer.ReleasePolicy.ServiceSelection = "sealed"
+	}
+	if validCoreTag(config.ReleaseTag) && config.CoreManifestSHA256 == "" {
+		return fmt.Errorf("exact core installation requires its manifest SHA-256")
+	}
 	if err := validateApplianceAnswer(answer); err != nil {
 		return err
 	}
@@ -397,6 +415,9 @@ func provisionProxmoxAppliance(ctx context.Context, config proxmoxApplianceConfi
 	if err != nil {
 		return err
 	}
+	if config.CoreManifestSHA256 != "" && (release.core == nil || release.coreSHA256 != config.CoreManifestSHA256) {
+		return fmt.Errorf("selected core manifest differs from the exact requested digest")
+	}
 	emitProxmoxProgress(progress, "Verify signed appliance", "Downloading signed metadata for "+release.TagName, 0.08)
 	verified, err := downloadVerifiedApplianceRelease(ctx, client, release, config.CacheRoot, config.ISOSHA256)
 	if err != nil {
@@ -448,6 +469,14 @@ func provisionProxmoxAppliance(ctx context.Context, config proxmoxApplianceConfi
 		TransactionID: transactionID, TargetSerial: targetSerial,
 		Network: config.Network, ReleasePolicy: config.releasePolicy(verified.ManifestSHA), Development: config.developmentPolicy(),
 		AuthorizedKeys: keyFinal.Accepted,
+	}
+	if release.core != nil {
+		if config.Operation != "create" {
+			return fmt.Errorf("new core releases require a fresh installation")
+		}
+		answer.Schema = applianceAnswerCoreSchema
+		answer.CoreRelease = coreAnswerFromRelease(release)
+		answer.ReleasePolicy.CoreManifestSHA256 = release.coreSHA256
 	}
 	if err := validateApplianceAnswer(answer); err != nil {
 		return err
@@ -554,7 +583,9 @@ func writeApplianceAnswerISO(destination string, answer applianceAnswer) error {
 		}
 		digest := sha256.Sum256(guestIndex)
 		answer.ReleaseCacheSHA256 = hex.EncodeToString(digest[:])
-		answer.Schema = applianceAnswerCacheSchema
+		if answer.CoreRelease == nil {
+			answer.Schema = applianceAnswerCacheSchema
+		}
 	} else if !os.IsNotExist(e) {
 		return e
 	}

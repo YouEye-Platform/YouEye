@@ -17,6 +17,7 @@ import (
 )
 
 const (
+	applianceAnswerCoreSchema   = "youeye.appliance.answer.v5"
 	applianceAnswerCacheSchema  = "youeye.appliance.answer.v4"
 	applianceAnswerSchema       = "youeye.appliance.answer.v3"
 	applianceAnswerLegacySchema = "youeye.appliance.answer.v2"
@@ -25,6 +26,7 @@ const (
 )
 
 type applianceAnswer struct {
+	CoreRelease        *coreAnswerSelection    `json:"core_release,omitempty"`
 	ReleaseCacheSHA256 string                  `json:"release_cache_sha256,omitempty"`
 	Schema             string                  `json:"schema"`
 	Operation          string                  `json:"operation"`
@@ -49,16 +51,17 @@ type applianceAnswerNetwork struct {
 // first-boot bootstrap. A branch identifies a signed release track; it never
 // authorizes a mutable branch archive or raw source checkout.
 type applianceReleasePolicy struct {
-	ServiceSelection string `json:"service_selection,omitempty"`
-	Schema           string `json:"schema"`
-	Provider         string `json:"provider"`
-	ReleasesAPI      string `json:"releases_api,omitempty"`
-	Mode             string `json:"mode"`
-	Track            string `json:"track,omitempty"`
-	Branch           string `json:"branch,omitempty"`
-	ExactTag         string `json:"exact_tag,omitempty"`
-	ManifestSHA256   string `json:"manifest_sha256,omitempty"`
-	Freshness        string `json:"freshness"`
+	CoreManifestSHA256 string `json:"core_manifest_sha256,omitempty"`
+	ServiceSelection   string `json:"service_selection,omitempty"`
+	Schema             string `json:"schema"`
+	Provider           string `json:"provider"`
+	ReleasesAPI        string `json:"releases_api,omitempty"`
+	Mode               string `json:"mode"`
+	Track              string `json:"track,omitempty"`
+	Branch             string `json:"branch,omitempty"`
+	ExactTag           string `json:"exact_tag,omitempty"`
+	ManifestSHA256     string `json:"manifest_sha256,omitempty"`
+	Freshness          string `json:"freshness"`
 }
 
 type developmentAccessPolicy struct {
@@ -98,13 +101,13 @@ func parseApplianceAnswer(raw []byte) (applianceAnswer, error) {
 }
 
 func validateApplianceAnswer(answer applianceAnswer) error {
-	if answer.Schema != applianceAnswerCacheSchema && answer.Schema != applianceAnswerSchema && answer.Schema != applianceAnswerLegacySchema {
+	if answer.Schema != applianceAnswerCoreSchema && answer.Schema != applianceAnswerCacheSchema && answer.Schema != applianceAnswerSchema && answer.Schema != applianceAnswerLegacySchema {
 		return fmt.Errorf("unsupported appliance answer schema %q", answer.Schema)
 	}
 	if answer.Operation != "erase-install" && answer.Operation != "preserve-reinstall" && answer.Operation != "resume" && answer.Operation != "cancel" {
 		return fmt.Errorf("unsupported appliance answer operation %q", answer.Operation)
 	}
-	if answer.ReleaseCacheSHA256 != "" && (answer.Schema != applianceAnswerCacheSchema || !validSHA256Hex(answer.ReleaseCacheSHA256)) {
+	if answer.ReleaseCacheSHA256 != "" && ((answer.Schema != applianceAnswerCacheSchema && answer.Schema != applianceAnswerCoreSchema) || !validSHA256Hex(answer.ReleaseCacheSHA256)) {
 		return fmt.Errorf("release cache requires schema v4 and an exact digest")
 	}
 	if answer.Operation != "cancel" && !validApplianceTransactionID(answer.TransactionID) {
@@ -125,13 +128,20 @@ func validateApplianceAnswer(answer applianceAnswer) error {
 	if answer.Network.AdapterMAC != "" && !validEthernetMAC(answer.Network.AdapterMAC) {
 		return fmt.Errorf("appliance answer adapter_mac must be a unicast Ethernet MAC address")
 	}
-	if answer.Schema == applianceAnswerSchema || answer.Schema == applianceAnswerCacheSchema {
+	if answer.Schema == applianceAnswerSchema || answer.Schema == applianceAnswerCacheSchema || answer.Schema == applianceAnswerCoreSchema {
 		if err := validateApplianceReleasePolicy(answer.ReleasePolicy); err != nil {
 			return err
 		}
 		if err := validateDevelopmentAccessPolicy(answer.Development); err != nil {
 			return err
 		}
+	}
+	if answer.Schema == applianceAnswerCoreSchema {
+		if err := validateCoreAnswer(answer); err != nil {
+			return err
+		}
+	} else if answer.CoreRelease != nil || answer.ReleasePolicy.CoreManifestSHA256 != "" {
+		return fmt.Errorf("core selection requires answer schema v5")
 	}
 	switch strings.ToLower(strings.TrimSpace(answer.Network.Mode)) {
 	case "dhcp":
@@ -180,7 +190,10 @@ func validateApplianceReleasePolicy(policy applianceReleasePolicy) error {
 	if policy.ServiceSelection != "" && policy.ServiceSelection != "sealed" && policy.ServiceSelection != "current" {
 		return fmt.Errorf("service selection must be sealed or current")
 	}
-	if policy.ServiceSelection == "current" && policy.Provider != "github" && !(policy.Provider == "custom" && ((policy.Mode == "track" && (policy.Track == "stable" || policy.Track == "branch" && policy.Branch == "main")) || (policy.Mode == "exact" && regexp.MustCompile(`^appliance-v[0-9]+(\.[0-9]+){2,}$`).MatchString(policy.ExactTag)))) {
+	if policy.CoreManifestSHA256 != "" && !validSHA256Hex(policy.CoreManifestSHA256) {
+		return fmt.Errorf("core manifest digest must be exact lowercase SHA-256")
+	}
+	if policy.ServiceSelection == "current" && policy.CoreManifestSHA256 == "" && policy.Provider != "github" && !(policy.Provider == "custom" && ((policy.Mode == "track" && (policy.Track == "stable" || policy.Track == "branch" && policy.Branch == "main")) || (policy.Mode == "exact" && regexp.MustCompile(`^appliance-v[0-9]+(\.[0-9]+){2,}$`).MatchString(policy.ExactTag)))) {
 		return fmt.Errorf("current service selection requires GitHub or explicitly selected repository main")
 	}
 	if policy.Freshness != "require-current" && policy.Freshness != "prefer-current" {
@@ -245,6 +258,9 @@ func validYescryptHash(value string) bool {
 }
 
 func validExactApplianceReleaseTag(value string) bool {
+	if validCoreTag(value) {
+		return true
+	}
 	if !strings.HasPrefix(value, "appliance-") || len(value) > 180 || strings.ContainsAny(value, "\\%\x00") {
 		return false
 	}

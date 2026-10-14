@@ -41,6 +41,9 @@ func selectApplianceServices(manifest appliance.Manifest) (appliance.Manifest, e
 	if err != nil {
 		return manifest, err
 	}
+	if policy.CoreManifestSHA256 != "" {
+		return selectCoreServices(manifest, policy)
+	}
 	if policy.ServiceSelection == "sealed" || (policy.Mode == "exact" && policy.ServiceSelection != "current") {
 		return manifest, nil
 	}
@@ -188,6 +191,13 @@ func writePinnedServices(path string, raw []byte) error {
 
 // Health checks consume the frozen selection without fetching or changing it.
 func pinnedDeploymentManifest(manifest appliance.Manifest) (appliance.Manifest, error) {
+	policy, policyErr := systemupdate.LoadReleasePolicy(deploymentPolicyPath)
+	if policyErr == nil && policy.CoreManifestSHA256 != "" {
+		return coreDeploymentManifest(manifest, policy)
+	}
+	if policyErr != nil && !errors.Is(policyErr, os.ErrNotExist) {
+		return manifest, policyErr
+	}
 	raw, err := readPinnedServices(deploymentSelectionPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return manifest, nil
@@ -214,8 +224,8 @@ func pinnedDeploymentManifest(manifest appliance.Manifest) (appliance.Manifest, 
 		}
 		return bindInstallationServices(manifest, *selection)
 	}
-	policy := deploymentDistributionPolicy()
-	selection, err := releasecache.VerifyPinnedInstallation(raw, channel, policy.Keys[channel])
+	trustPolicy := deploymentDistributionPolicy()
+	selection, err := releasecache.VerifyPinnedInstallation(raw, channel, trustPolicy.Keys[channel])
 	if err != nil {
 		return manifest, err
 	}
@@ -233,7 +243,9 @@ func finishApplianceServiceChannels() error {
 	if err != nil {
 		return err
 	}
-	if policy.Mode == "exact" || policy.ServiceSelection == "sealed" {
+	// New-format services remain pinned as one assembly; only System follows
+	// its selected track. Releasing individual pins would split membership.
+	if policy.CoreManifestSHA256 != "" || policy.Mode == "exact" || policy.ServiceSelection == "sealed" {
 		return nil
 	}
 	config, err := channels.Load()

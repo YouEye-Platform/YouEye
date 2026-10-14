@@ -394,7 +394,7 @@ chmod 0644 "$state_root/etc/systemd/network/20-youeye.network"
 
 # Persist desired bootstrap policy outside the sealed System slots. The answer
 # file is protected and the password hash is never copied through argv or logs.
-if jq -e '.schema == "youeye.appliance.answer.v3" or .schema == "youeye.appliance.answer.v4"' "$answer" >/dev/null 2>&1; then
+if jq -e '.schema == "youeye.appliance.answer.v3" or .schema == "youeye.appliance.answer.v4" or .schema == "youeye.appliance.answer.v5"' "$answer" >/dev/null 2>&1; then
   jq -e '.release_policy' "$answer" > "$state_root/bootstrap/release-policy.json.tmp"
   jq -e '.development_access' "$answer" > "$state_root/bootstrap/development-access.json.tmp"
 else
@@ -410,6 +410,14 @@ for file in release-policy development-access network-profile; do
   chmod 0600 "$state_root/bootstrap/$file.json.tmp"
   mv -f "$state_root/bootstrap/$file.json.tmp" "$state_root/bootstrap/$file.json"
 done
+if jq -e '.schema == "youeye.appliance.answer.v5"' "$answer" >/dev/null 2>&1; then
+  jq -er '.core_release.manifest_base64' "$answer" | base64 -d > "$state_root/bootstrap/core-release.json.tmp"
+  jq -er '.core_release.signature_base64' "$answer" | base64 -d > "$state_root/bootstrap/core-release.json.sig.tmp"
+  for file in core-release.json core-release.json.sig; do
+    chmod 0600 "$state_root/bootstrap/$file.tmp"
+    mv -f "$state_root/bootstrap/$file.tmp" "$state_root/bootstrap/$file"
+  done
+fi
 sync -f "$state_root/bootstrap"
 # Optional transport cache from the same answer medium. Artifact signatures and
 # sealed component pins remain mandatory when these bytes are consumed.
