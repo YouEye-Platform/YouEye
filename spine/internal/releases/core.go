@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -85,4 +86,28 @@ func VerifySelectedCoreArtifact(ctx context.Context, client *http.Client, artifa
 
 func canonicalCoreTag(tag string) bool {
 	return strings.HasPrefix(tag, "youeye-v") && releasecache.ValidCoreVersion(strings.TrimPrefix(tag, "youeye-v"))
+}
+
+// Ordinary component downloads still use canonical original member URLs. The
+// verified selected assembly supplies the private mirror when needed.
+type selectedCoreTransport struct{ base http.RoundTripper }
+
+func (t selectedCoreTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	u, err := url.Parse(request.URL.String())
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 6 || parts[2] != "releases" || parts[3] != "download" || !canonicalCoreTag(parts[4]) {
+		return t.base.RoundTrip(request)
+	}
+	r, _, err := systemupdate.ReadCoreSelection(coreSelectionRoot, coreDevelopmentKeyPath)
+	if err != nil {
+		return nil, err
+	}
+	transport, err := releasecache.CoreTransport(t.base, r)
+	if err != nil {
+		return nil, err
+	}
+	return transport.RoundTrip(request)
 }

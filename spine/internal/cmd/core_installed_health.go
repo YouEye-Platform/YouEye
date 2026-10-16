@@ -43,13 +43,13 @@ func addCoreInstalledHealthChecks(image appliance.Manifest, add func(string, str
 		fail()
 		return true
 	}
-	executable, err := os.Executable()
+	executable, bootstrap, err := coreInstalledExecutable()
 	if err != nil || image.ReleaseSet == nil {
 		fail()
 		return true
 	}
 	hash, err := fileSHA256(executable)
-	if err != nil || hash != image.ReleaseSet.Spine.ArtifactSHA256 || Version != image.ReleaseSet.Spine.Version {
+	if err != nil || hash != image.ReleaseSet.Spine.ArtifactSHA256 || !bootstrap && Version != image.ReleaseSet.Spine.Version {
 		fail()
 		return true
 	}

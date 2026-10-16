@@ -42,7 +42,7 @@ function fields(value: unknown, allowed: string[]) {
 }
 // Signed JSON must have one interpretation in both the Go host and this reader.
 // Parse tokens before JSON.parse to reject duplicates at every nesting level.
-function uniqueJSON(raw: string) {
+export function uniqueJSON(raw: string) {
   let pos = 0;
   const ws = () => { while (/\s/.test(raw[pos] ?? '') && pos < raw.length) pos++; };
   const string = () => {
@@ -156,6 +156,23 @@ export function selectedCoreArtifact(url: string, digest: string | undefined, ro
   if (keyHash(key) !== m.key_id) throw new Error('Core role authority differs');
   return { release:r, member:m, key, manifestSHA256 };
 }
+export function coreBlobTransportURL(release: CoreRelease, blob: CoreBlob, mirror = false): string {
+  const members = release.members.flatMap(m => [m.artifact,m.checksums,m.signature,m.provenance,m.sbom,...(m.document_signature ? [m.document_signature] : []),...(m.release_lock ? [m.release_lock] : [])]);
+  if (!members.some(b => b.url === blob.url && b.name === blob.name && b.sha256 === blob.sha256 && b.size_bytes === blob.size_bytes)) throw new Error('Transport blob is outside authenticated core membership');
+  if (mirror || new URL(release.source).hostname !== 'github.com' && new URL(blob.url).hostname === 'github.com') return `${release.source}/releases/download/${release.tag}/blob-${blob.sha256}`;
+  return blob.url;
+}
+export function selectedCoreTransportURL(url: string, mirror = false): string {
+  const parts = new URL(url).pathname.split('/').filter(Boolean);
+  if (parts.length !== 6 || parts[2] !== 'releases' || parts[3] !== 'download' || !canonicalCoreTag(parts[4])) return url;
+  const release = loadSelectedCore();
+  for (const member of release.members) {
+    for (const blob of [member.artifact,member.checksums,member.signature,member.provenance,member.sbom,member.document_signature,member.release_lock]) {
+      if (blob?.url === url) return coreBlobTransportURL(release,blob,mirror);
+    }
+  }
+  return url;
+}
 async function metadata(b: CoreBlob): Promise<Buffer> {
   if (b.size_bytes > 1024*1024) throw new Error('Core metadata exceeds limit');
   const response = await releaseCacheFetch(b.url, {signal:AbortSignal.timeout(30_000)});
@@ -178,6 +195,20 @@ export async function verifyCoreArtifactBuffer(selected: NonNullable<ReturnType<
   return m.artifact.sha256;
 }
 const quote = (s: string) => `'${s.replace(/'/g, `'"'"'`)}'`;
+function coreDownloadShell(primary: string, mirror: string, destination: string): string {
+  const options = `--max-time 120 --max-redirs 5 --proto '=https' --proto-redir '=https' -fsSL`;
+  if (primary === mirror) return `curl ${options} ${quote(primary)} -o ${destination}`;
+  return `if ! core_http_status=$(curl ${options} -w '%{http_code}' ${quote(primary)} -o ${destination}); then
+  if [ "$core_http_status" = 404 ]; then
+    curl ${options} ${quote(mirror)} -o ${destination}
+  else
+    false
+  fi
+fi`;
+}
+export function selectedCoreDownloadShell(url: string, destination: string): string {
+  return coreDownloadShell(selectedCoreTransportURL(url),selectedCoreTransportURL(url,true),quote(destination));
+}
 export function coreArtifactVerificationShell(selected: NonNullable<ReturnType<typeof selectedCoreArtifact>>, path: string): string {
   const {member:m,key} = selected;
   const pem = key.export({type:'spki',format:'pem'}).toString();
@@ -186,7 +217,7 @@ set -eu
 core_verify_dir=$(mktemp -d /tmp/youeye-core-verify.XXXXXX)
 trap 'rm -rf -- "$core_verify_dir"' EXIT
 printf %s ${quote(Buffer.from(pem).toString('base64'))} | base64 -d > "$core_verify_dir/key.pub"
-${[m.checksums,m.signature,m.provenance,m.sbom].map((b,i) => `curl --max-time 120 -fsSL ${quote(b.url)} -o "$core_verify_dir/${i}"
+${[m.checksums,m.signature,m.provenance,m.sbom].map((b,i) => `${coreDownloadShell(coreBlobTransportURL(selected.release,b),coreBlobTransportURL(selected.release,b,true),`"$core_verify_dir/${i}"`)}
 test "$(stat -c %s "$core_verify_dir/${i}")" = ${quote(String(b.size_bytes))}
 test "$(sha256sum "$core_verify_dir/${i}" | awk '{print $1}')" = ${quote(b.sha256)}`).join('\n')}
 openssl pkeyutl -verify -pubin -inkey "$core_verify_dir/key.pub" -rawin -in "$core_verify_dir/0" -sigfile "$core_verify_dir/1" >/dev/null

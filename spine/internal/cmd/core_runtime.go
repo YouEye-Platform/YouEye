@@ -39,6 +39,13 @@ func installedCoreRuntime() (systemupdate.NativeCoreRuntime, error) {
 	if cfg.Deployment.ControlPanel.Port < 1 || cfg.Deployment.ControlPanel.Port > 65535 {
 		return r, fmt.Errorf("invalid installed CP port")
 	}
+	coordinator, err := (systemupdate.CoreManager{Root: systemupdate.CoreStatePath}).BootstrapExecutable(systemupdate.CoreDevelopmentTrustPath)
+	if err != nil {
+		return r, err
+	}
+	if coordinator == "" {
+		coordinator = "/usr/local/bin/youeye"
+	}
 	checkpoint := systemupdate.NativeCoreCheckpoint{Root: systemupdate.CoreStatePath, DataRoot: "/var/lib/youeye", StatePath: appliance.StatePath, Bridge: cfg.Deployment.Incus.Network,
 		IngressPorts: []uint16{80, 443, uint16(cfg.Deployment.ControlPanel.Port), 3001}}
 	cache := systemupdate.CoreArtifactCache{Root: filepath.Join(checkpoint.DataRoot, "cache", "core-update"), TrustKeyPath: systemupdate.CoreDevelopmentTrustPath, Client: systemupdate.ReleaseHTTPClient()}
@@ -46,7 +53,7 @@ func installedCoreRuntime() (systemupdate.NativeCoreRuntime, error) {
 	authority := systemupdate.NativeCoreAuthority{FirstBootPolicyPath: filepath.Join(systemupdate.CoreBootstrapPath, "release-policy.json"), FirstBootCompletePath: "/var/lib/youeye-state/first-deploy/complete", Checkpoint: checkpoint, TrustKeyPath: cache.TrustKeyPath, Client: cache.Client, CurrentSelection: currentCoreSelection}
 	host := systemupdate.NewDefault()
 	r = systemupdate.NativeCoreRuntime{Root: checkpoint.Root, Host: host, Cache: cache, Services: services, Checkpoint: checkpoint,
-		Runner: systemupdate.CoreSystemdRunner{Root: checkpoint.Root, Executable: "/usr/local/bin/youeye"}, AuthorizeTarget: authority.AuthorizeTarget, AuthorizePrevious: authority.AuthorizePrevious,
+		Runner: systemupdate.CoreSystemdRunner{Root: checkpoint.Root, Executable: coordinator}, AuthorizeTarget: authority.AuthorizeTarget, AuthorizePrevious: authority.AuthorizePrevious,
 		HostHealth: func(ctx context.Context, j systemupdate.CoreJournal) (string, error) {
 			if err := ctx.Err(); err != nil {
 				return "", err

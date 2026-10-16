@@ -36,19 +36,23 @@ func applianceReleaseAnchor(release applianceRelease) ([]byte, error) {
 
 func applianceReleaseTrustClass(release applianceRelease) string {
 	if release.core != nil {
-		if release.sourceProvider == "github" {
-			for _, member := range release.core.Members {
-				if member.Role == "appliance" {
-					channel, err := releasecache.CoreMemberChannel(member, release.core.Channel)
-					if err != nil {
-						return "invalid"
-					}
-					return channel
-				}
+		for _, member := range release.core.Members {
+			if member.Role != "appliance" {
+				continue
 			}
-			return "invalid"
+			channel, err := releasecache.CoreMemberChannel(member, release.core.Channel)
+			if err != nil {
+				return "invalid"
+			}
+			if member.Source == releasecache.OfficialRepository {
+				return channel
+			}
+			if release.sourceProvider == "github" {
+				return "invalid"
+			}
+			return "development"
 		}
-		return "development"
+		return "invalid"
 	}
 	if !repositoryMainRelease(release) {
 		if strings.HasPrefix(release.TagName, "appliance-v") {

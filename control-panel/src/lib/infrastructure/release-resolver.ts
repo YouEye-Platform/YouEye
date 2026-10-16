@@ -25,6 +25,7 @@ const MAX_RELEASE_PAGES = 100;
 
 export type InfrastructureRelease = {
   tag_name: string;
+  draft?: boolean;
   assets: ReleaseAsset[];
 };
 
@@ -87,6 +88,7 @@ export function selectInfrastructureStandaloneRelease(
   let best: ResolvedInfrastructureRelease | null = null;
 
   for (const release of releases) {
+    if (release.draft) continue;
     let version = '';
     if (branchPrefix && release.tag_name.startsWith(branchPrefix)) {
       version = release.tag_name.slice(branchPrefix.length);
@@ -96,13 +98,16 @@ export function selectInfrastructureStandaloneRelease(
       // compare a Beta/dev payload into Stable or guess a feature branch from
       // its display token; exact feature pins retain their raw source identity.
       const canonical = parseReleaseVersion(version);
-      if (canonical?.token && (!['dev', 'alpha', 'beta'].includes(branch) || canonical.token !== branch)) continue;
+      const token = branch === 'main' && source.provider === 'gitea' ? 'alpha' : branch;
+      if (canonical?.token && (!['dev', 'alpha', 'beta'].includes(token) || canonical.token !== token)) continue;
     } else {
       continue;
     }
 
     if (!parseVersionStrict(version)) continue;
-    const asset = release.assets?.find((candidate) => candidate.name === 'standalone.tar');
+    const asset = release.assets?.find((candidate) => candidate.name === 'product-release.json')
+      || release.assets?.find((candidate) => candidate.name === 'product-release.json.sig')
+      || release.assets?.find((candidate) => candidate.name === 'standalone.tar');
     if (!asset) continue;
     const url = getReleaseAssetDownloadURL(source, asset, release.tag_name);
     if (!url) continue;

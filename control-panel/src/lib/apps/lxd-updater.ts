@@ -17,7 +17,14 @@ import { releaseCacheFetch } from '@/lib/releases/cache';
 import { resolveExactLxdRelease } from './lxd-release';
 import { resolveLxdAppChannel } from './lxd-updates';
 import { parseMarketRepoURL } from '@/lib/market/source';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { appUpdateJournalStore } from '@/lib/market/update-admission';
+import { resolveMarketProductRelease, stageVerifiedProductArtifact } from '@/lib/market/native-artifact';
+import { acceptProductSequence, productReceipt, type VerifiedProductRelease } from '@/lib/releases/product-release';
+import { publishProductProjection, verifyProductProjection } from '@/lib/releases/product-projection';
+import { pointerRelease, readPointerReleaseState, savePointerReleaseState, updateIdenticalPointerRelease } from '@/lib/pointer/release-metadata';
 import { execShell, incusUploadFile } from '@/lib/incus/server';
 import {
   createSnapshot,
@@ -225,6 +232,24 @@ async function updateLXDAppUnderLifecycle(
     override = { ...resolved.candidate, source: resolved.channel.source };
   }
 
+  let pointerSelection: VerifiedProductRelease | null = null;
+  const pointerBefore = appDef.id === 'pointer' ? await readPointerReleaseState() : null;
+  if (appDef.id === 'pointer' && override) {
+    const source = override.source ? parseMarketRepoURL(override.source) : await getReleaseSource();
+    const repository = override.source || `${source.base_url}/${source.organization}/${giteaRepo}`;
+    pointerSelection = await resolveMarketProductRelease('pointer',repository,override.tag);
+    if (pointerSelection) {
+      if (pointerSelection.release.version !== override.version || override.branch && pointerSelection.release.branch !== override.branch) throw new Error('Pointer release differs from selected channel');
+      if (override.artifactSHA256 && pointerSelection.build.assets.find(a=>a.name === 'standalone.tar')?.sha256 !== override.artifactSHA256) throw new Error('Pointer artifact differs from exact pin');
+      acceptProductSequence(pointerBefore!.floors,pointerSelection);
+      if (await updateIdenticalPointerRelease(appUpdateJournalStore(),pointerSelection)) {
+        markAppUpdated(appDef.id);
+        emit({stage:'completed',message:`${appDef.displayName} release label updated to v${override.version}`,progress:100});
+        return;
+      }
+    } else if (pointerBefore?.installed) throw new Error('Installed Pointer requires signed product metadata');
+  }
+
   // 1. Resolve real app directory
   const appDir = await getServiceWorkingDir(containerName, serviceName, configuredAppDir);
   if (appDir !== configuredAppDir) {
@@ -238,7 +263,7 @@ async function updateLXDAppUnderLifecycle(
   }
 
   // 3. Get current version
-  const currentVersion = await getCurrentVersion(containerName, appDir);
+  const currentVersion = (pointerBefore && pointerRelease(pointerBefore)?.release.version) || await getCurrentVersion(containerName, appDir);
   emit({ stage: 'starting', message: `Current version: ${currentVersion}`, progress: 5 });
 
   // 4. Resolve the release to install: the caller's channel-resolved candidate
@@ -247,7 +272,8 @@ async function updateLXDAppUnderLifecycle(
   if (override) {
     const selectedSource = override.source ? parseMarketRepoURL(override.source) : await getReleaseSource();
     const selectedRepo = override.source ? selectedSource.repository! : giteaRepo;
-    const url = await resolveExactLxdRelease(selectedSource, selectedRepo, override.tag);
+    const url = pointerSelection?.build.assets.find(a=>a.name === 'standalone.tar')?.url
+      || await resolveExactLxdRelease(selectedSource, selectedRepo, override.tag);
     if (!url) throw new Error(`Release tag ${override.tag} not found (or has no standalone.tar) on the configured release source`);
     release = { version: override.version, downloadURL: url, artifactSHA256: override.artifactSHA256 };
     emit({ stage: 'starting', message: `Installing ${override.tag}`, progress: 10 });
@@ -264,6 +290,7 @@ async function updateLXDAppUnderLifecycle(
   // 5. Create snapshot before any trust, package, service, or file mutation.
   emit({ stage: 'snapshot', message: `Creating snapshot of ${containerName}`, container: containerName, progress: 15 });
   await createSnapshot(containerName, SNAPSHOT_NAME);
+  let stagedDirectory: string | undefined;
 
   try {
     // 6. Ensure managed HTTPS URLs are trusted after the rollback point exists.
@@ -293,14 +320,22 @@ async function updateLXDAppUnderLifecycle(
 
     // 7. Download and verify the complete archive before stopping services or replacing files.
     emit({ stage: 'rebuilding', message: `Downloading v${release.version}`, container: containerName, progress: 20 });
-    const downloadResult = await execShell(
-      containerName,
-      `curl -sSL "${release.downloadURL}" -o /tmp/update.tar`,
-      { timeout: 300_000 }
-    );
-    if (downloadResult.exitCode !== 0) throw new Error(`Download failed: ${downloadResult.stderr}`);
-    const signatureResult = await execShell(containerName, signedReleaseVerificationShell(release.downloadURL, '/tmp/update.tar', release.artifactSHA256, appDef.id === 'ui' ? 'ui' : 'app'), { timeout: 300_000 });
-    if (signatureResult.exitCode !== 0) throw new Error(`Signed release verification failed: ${signatureResult.stderr}`);
+    if (pointerSelection) {
+      stagedDirectory = await mkdtemp(join(tmpdir(),'youeye-pointer-release-'));
+      const staged = await stageVerifiedProductArtifact(stagedDirectory,containerName,pointerSelection,override?.artifactSHA256);
+      await incusUploadFile(containerName,'/tmp/update.tar',await readFile(staged.path),{mode:'0600'});
+      const digest = await execShell(containerName,'sha256sum /tmp/update.tar',{timeout:30_000});
+      if (digest.exitCode !== 0 || digest.stdout.split(/\s+/)[0] !== staged.artifactSHA256) throw new Error('Pointer upload differs from verified artifact');
+    } else {
+      const downloadResult = await execShell(
+        containerName,
+        `curl -sSL "${release.downloadURL}" -o /tmp/update.tar`,
+        { timeout: 300_000 }
+      );
+      if (downloadResult.exitCode !== 0) throw new Error(`Download failed: ${downloadResult.stderr}`);
+      const signatureResult = await execShell(containerName, signedReleaseVerificationShell(release.downloadURL, '/tmp/update.tar', release.artifactSHA256, appDef.id === 'ui' ? 'ui' : 'app'), { timeout: 300_000 });
+      if (signatureResult.exitCode !== 0) throw new Error(`Signed release verification failed: ${signatureResult.stderr}`);
+    }
     emit({ stage: 'rebuilding', message: 'Release signature and artifact digest verified', container: containerName, progress: 30 });
 
     // 8. Upgrade base OS packages
@@ -358,7 +393,14 @@ async function updateLXDAppUnderLifecycle(
     const port = appDef.webPort ?? 3000;
     await healthCheckViaExec(containerName, port, endpoint, 15);
 
-    if (appDef.releaseChannelKey && override) {
+    if (pointerSelection && pointerBefore) {
+      const receipt = productReceipt(pointerSelection);
+      const runtimeUUID = await publishProductProjection(containerName,receipt);
+      await verifyProductProjection(containerName,receipt,runtimeUUID);
+      await savePointerReleaseState({schema:'youeye.installed-pointer.v1',installed:{receipt,runtimeUUID,acceptedAt:new Date().toISOString()},floors:acceptProductSequence(pointerBefore.floors,pointerSelection)});
+    }
+
+    if (appDef.releaseChannelKey && override && !pointerSelection) {
       await recordCoreProvenance(appDef.releaseChannelKey, {
         version: override.version,
         tag: override.tag,
@@ -381,6 +423,11 @@ async function updateLXDAppUnderLifecycle(
     try {
       await restoreSnapshot(containerName, SNAPSHOT_NAME);
       await waitForContainerExec(containerName, 30);
+      if (pointerSelection && pointerBefore) {
+        const current = await readPointerReleaseState();
+        await savePointerReleaseState({...pointerBefore,floors:current.floors});
+        if (pointerBefore.installed) await verifyProductProjection(containerName,pointerBefore.installed.receipt,pointerBefore.installed.runtimeUUID);
+      }
       await deleteSnapshot(containerName, SNAPSHOT_NAME);
     } catch (rollbackErr) {
       console.error(`[lxd-updater] Rollback failed for ${containerName}:`, rollbackErr);
@@ -388,5 +435,7 @@ async function updateLXDAppUnderLifecycle(
 
     emit({ stage: 'failed', message: errMsg, error: errMsg, progress: 0 });
     throw error;
+  } finally {
+    if (stagedDirectory) await rm(stagedDirectory,{recursive:true,force:true});
   }
 }

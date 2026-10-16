@@ -5,6 +5,7 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 "$root/scripts/check-public-release-hygiene.sh" "$root" >/dev/null
 node "$root/scripts/generate-third-party-notices.mjs" "$root/THIRD_PARTY_NOTICES.txt"
 node "$root/legal/third-party-assets.test.mjs" >/dev/null
+python3 "$root/appliance/scripts/youeye-system-update-bootstrap_test.py"
 build="$root/appliance/build/build-appliance.sh"
 entrypoint="$root/.youeye/build/appliance"
 
@@ -300,6 +301,8 @@ require_text "$root/appliance/systemd/youeye-appliance-incus-sockets.service" 'B
 require_text "$root/appliance/systemd/incus.service.d/youeye-appliance.conf" 'ExecStartPost=/usr/libexec/incus/incusd waitready --timeout=60'
 require_text "$root/appliance/systemd/incus.service.d/youeye-appliance.conf" 'TimeoutStartSec=90s'
 require_text "$root/appliance/systemd/incus.service.d/youeye-appliance.conf" 'RestartSec=2s'
+require_text "$root/appliance/systemd/youeye-core-update.service" 'Requires=youeye-appliance-storage.service youeye-appliance-incus-sockets.service incus.service'
+require_text "$root/appliance/systemd/youeye-core-update.service" 'After=network-online.target youeye-appliance-storage.service youeye-appliance-incus-sockets.service incus.service youeye.service youeye-first-deploy.service'
 require_text "$root/appliance/systemd/youeye.service" 'Requires=youeye-appliance-storage.service youeye-appliance-incus-sockets.service'
 require_text "$root/appliance/systemd/youeye-first-deploy.service" 'Requires=youeye-appliance-storage.service youeye-appliance-incus-sockets.service'
 require_text "$root/appliance/systemd/youeye-first-deploy.service" 'Wants=network-online.target youeye.service'

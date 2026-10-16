@@ -280,6 +280,8 @@ export interface InstallMetadata {
   manifestBranch?: string;
   manifestDigest?: string;
   nativeArtifacts?: Array<{
+    productRelease?: import('../releases/product-release').InstalledProductReceipt;
+    runtimeUUID?: string;
     containerName: string;
     sourceRepo: string;
     releaseTag: string;
@@ -290,6 +292,7 @@ export interface InstallMetadata {
     signature: 'unsigned' | 'verified-development' | 'verified-stable' | 'verified-beta' | 'verified-custom';
     signatureKeyId?: string;
   }>;
+  productReleaseFloors?: import('../releases/product-release').ProductSequenceFloors;
   integration: 'native' | 'basic';
   /** Private namespaces use the immutable OIDC subject; app enforces row privacy. */
   perUserData?: 'identity_uuid';

@@ -82,6 +82,7 @@ run_fixture() {
         YOUEYE_SEED_MARKET="$fixture/bin/seed" \
         YOUEYE_BOOTSTRAP_NETWORK="$fixture/bin/network" \
         CURL_BIN="$fixture/bin/curl" \
+        YOUEYE_CORE_SELECTION_REQUIRED="$fixture/core-required" \
         YOUEYE_RELEASE_POLICY="$fixture/release-policy.json" \
         YOUEYE_FIRST_DEPLOY_SEALED_RELEASE="$fixture/sealed-release.json" \
         "$@" \
@@ -184,3 +185,14 @@ fi
 [ ! -e "$core_unaccepted/state/complete" ]
 
 echo "youeye-first-deploy tests passed"
+
+required="$tmp/core-required"
+make_fixture "$required"
+touch "$required/core-required"
+if run_fixture "$required" 2>"$required/error"; then
+    echo 'new media accepted missing signed System selection' >&2
+    exit 1
+fi
+grep -Fq 'original v5 installer answer' "$required/error"
+test ! -s "$required/commands"
+test ! -e "$required/state/complete"

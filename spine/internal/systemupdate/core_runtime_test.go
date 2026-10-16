@@ -2,11 +2,72 @@ package systemupdate
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 )
+
+func TestCoreRecoveryObservesMissingApplyEvidenceWithoutForwardPolicy(t *testing.T) {
+	for _, phase := range []string{"needs-recovery", "recovering"} {
+		for _, action := range []string{"apply-cp", "apply-ui", "authenticated-health"} {
+			t.Run(phase+"/"+action, func(t *testing.T) {
+				m, _, target := coreJournalFixture(t)
+				j := prepareCoreFixture(t, m, target)
+				j.Phase = phase
+				var step CoreStep
+				for _, candidate := range j.Steps {
+					if candidate.Name == action {
+						step = candidate
+						step.State = "started"
+					}
+				}
+				if step.Name == "" {
+					t.Fatal("fixture lacks apply action")
+				}
+				data := t.TempDir()
+				host := newManagerFixture(t).manager
+				host.config.CoreStatePath = m.Root
+				checkpoint := NativeCoreCheckpoint{Root: m.Root, DataRoot: data, StatePath: host.config.StatePath}
+				cache := CoreArtifactCache{Root: filepath.Join(data, "cache")}
+				previousChecks := 0
+				denyPrevious := false
+				r := NativeCoreRuntime{
+					Root: m.Root, Host: host, Checkpoint: checkpoint, Cache: cache,
+					Services: NativeCoreServices{Checkpoint: checkpoint, Cache: cache},
+					Runner:   CoreSystemdRunner{Root: m.Root, Executable: "/usr/local/bin/youeye"},
+					AuthorizeTarget: func(context.Context, CoreJournal, bool) error {
+						t.Fatal("recovery depended on the current forward selection")
+						return nil
+					},
+					AuthorizePrevious: func(context.Context, CoreJournal) error {
+						previousChecks++
+						if denyPrevious {
+							return fmt.Errorf("previous authority revoked")
+						}
+						return nil
+					},
+					HostHealth:          func(context.Context, CoreJournal) (string, error) { return "unused", nil },
+					AuthenticatedHealth: func(context.Context, CoreJournal, bool) (string, error) { return "unused", nil },
+					RecoverHost: func(context.Context, CoreJournal, bool) (CoreActionObservation, error) {
+						t.Fatal("observation executed recovery")
+						return CoreActionObservation{}, nil
+					},
+				}
+				got, err := r.Observe(context.Background(), j, step)
+				if err != nil || got.State != "unknown" || previousChecks != 1 {
+					t.Fatalf("missing evidence blocked fencing or implied success: %+v %v checks=%d", got, err, previousChecks)
+				}
+				denyPrevious = true
+				if _, err := r.Observe(context.Background(), j, step); err == nil || !strings.Contains(err.Error(), "revoked") {
+					t.Fatalf("previous authority was bypassed: %v", err)
+				}
+			})
+		}
+	}
+}
 
 func TestCoreRuntimeCannotAdmitWorkWithoutPolicyHealthAndRecovery(t *testing.T) {
 	m, _, target := coreJournalFixture(t)

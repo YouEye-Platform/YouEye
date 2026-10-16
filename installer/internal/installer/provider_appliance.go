@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/youeye-platform/YouEye/appliance/ordering"
 )
@@ -47,6 +49,11 @@ func installApplianceWithRunner(cfg installConfig, ch chan<- engineMsg, runner a
 		sendDone(ch, "appliance-cancelled")
 		return
 	}
+	_, markerErr := os.Stat(coreSelectionRequiredPath)
+	if markerErr != nil && !os.IsNotExist(markerErr) {
+		sendErr(ch, markerErr)
+		return
+	}
 	send(ch, "Discover target disks", input.Description, 0.20)
 	targetDisk, err := applianceTargetDisk(cfg, input, runner)
 	if err != nil {
@@ -66,6 +73,20 @@ func installApplianceWithRunner(cfg installConfig, ch chan<- engineMsg, runner a
 			return
 		}
 		preserving = journal.Operation == "preserve-reinstall"
+	}
+	if resuming && markerErr == nil {
+		input, err = restoreCoreInstallSelection(runner, targetDisk, input, bundle.ManifestSHA256)
+		if err != nil {
+			sendErr(ch, err)
+			return
+		}
+	}
+	ctx, cancelSelection := context.WithTimeout(context.Background(), 2*time.Minute)
+	input, err = prepareCoreInstallInput(ctx, input, bundle, applianceHTTPClient(), markerErr == nil)
+	cancelSelection()
+	if err != nil {
+		sendErr(ch, fmt.Errorf("verify complete System selection before disk changes: %w", err))
+		return
 	}
 	allowNonBlank := input.EraseConfirmed || resuming || preserving
 	plan, err := planApplianceInstall(targetDisk, applianceArtifactSet{
@@ -181,17 +202,19 @@ func installApplianceWithRunner(cfg installConfig, ch chan<- engineMsg, runner a
 }
 
 type applianceInstallInput struct {
-	Operation      string
-	TransactionID  string
-	TargetSerial   string
-	EraseConfirmed bool
-	Network        applianceAnswerNetwork
-	AuthorizedKeys []string
-	ReleasePolicy  applianceReleasePolicy
-	Development    developmentAccessPolicy
-	AnswerPath     string
-	ManifestSHA256 string
-	Description    string
+	ReleaseCacheSHA256 string
+	CoreRelease        *coreAnswerSelection
+	Operation          string
+	TransactionID      string
+	TargetSerial       string
+	EraseConfirmed     bool
+	Network            applianceAnswerNetwork
+	AuthorizedKeys     []string
+	ReleasePolicy      applianceReleasePolicy
+	Development        developmentAccessPolicy
+	AnswerPath         string
+	ManifestSHA256     string
+	Description        string
 }
 
 func loadApplianceInstallInput(cfg installConfig) (applianceInstallInput, error) {
@@ -231,6 +254,7 @@ func loadApplianceInstallInput(cfg installConfig) (applianceInstallInput, error)
 			policy, development = defaultApplianceReleasePolicy(), defaultDevelopmentAccessPolicy()
 		}
 		return applianceInstallInput{
+			CoreRelease: answer.CoreRelease, ReleaseCacheSHA256: answer.ReleaseCacheSHA256,
 			Operation: answer.Operation, TransactionID: answer.TransactionID,
 			TargetSerial: answer.TargetSerial, EraseConfirmed: answer.EraseConfirmed,
 			Network: answer.Network, ReleasePolicy: policy, Development: development,
@@ -295,6 +319,10 @@ func writeRuntimeApplianceAnswer(input applianceInstallInput, target applianceDi
 		TargetSerial: target.Serial, EraseConfirmed: eraseConfirmed,
 		Network: input.Network, ReleasePolicy: input.ReleasePolicy, Development: input.Development,
 		AuthorizedKeys: input.AuthorizedKeys,
+	}
+	if input.CoreRelease != nil {
+		answer.Schema = applianceAnswerCoreSchema
+		answer.CoreRelease = input.CoreRelease
 	}
 	if err := writeApplianceAnswerFile(path, answer); err != nil {
 		os.Remove(path)

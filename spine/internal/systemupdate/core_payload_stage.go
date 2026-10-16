@@ -55,7 +55,7 @@ func extractCorePayload(ctx context.Context, archive *os.File, destination *os.F
 		if err != nil {
 			return err
 		}
-		err = unix.Mkdirat(int(parent.Fd()), name, 0700)
+		err = mkdirCoreMapped(parent, name, 0700)
 		if err == nil {
 			var sub *os.File
 			sub, err = openCorePayloadDirectory(int(parent.Fd()), name)
@@ -108,7 +108,7 @@ func extractCorePayload(ctx context.Context, archive *os.File, destination *os.F
 			if err != nil {
 				return err
 			}
-			fd, err := unix.Openat(int(parent.Fd()), base, unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+			fd, err := openCoreMappedExclusive(parent, base, 0600)
 			parent.Close()
 			if err != nil {
 				return fmt.Errorf("core staging file creation failed")
@@ -140,7 +140,7 @@ func extractCorePayload(ctx context.Context, archive *os.File, destination *os.F
 			if err != nil {
 				return err
 			}
-			err = unix.Symlinkat(e.Link, int(parent.Fd()), base)
+			err = symlinkCoreMapped(parent, e.Link, base)
 			if err == nil {
 				err = unix.Fchownat(int(parent.Fd()), base, uid, gid, unix.AT_SYMLINK_NOFOLLOW)
 			}
@@ -175,7 +175,9 @@ func extractCorePayload(ctx context.Context, archive *os.File, destination *os.F
 			parent.Close()
 			return err
 		}
-		err = unix.Linkat(int(source.Fd()), sourceBase, int(parent.Fd()), base, 0)
+		err = mutateCoreMapped(parent, func() error {
+			return unix.Linkat(int(source.Fd()), sourceBase, int(parent.Fd()), base, 0)
+		})
 		source.Close()
 		parent.Close()
 		if err != nil {

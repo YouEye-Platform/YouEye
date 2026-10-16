@@ -432,8 +432,12 @@ func provisionProxmoxAppliance(ctx context.Context, config proxmoxApplianceConfi
 	case "branch":
 		expectedBranch = config.ReleaseBranch
 	}
-	if expectedBranch != "" && verified.Manifest.ReleaseSet.Branch != expectedBranch {
-		return fmt.Errorf("signed appliance provenance branch %q does not match requested track %q", verified.Manifest.ReleaseSet.Branch, expectedBranch)
+	selectedBranch := verified.Manifest.ReleaseSet.Branch
+	if release.core != nil {
+		selectedBranch = release.core.Branch
+	}
+	if expectedBranch != "" && selectedBranch != expectedBranch {
+		return fmt.Errorf("signed appliance provenance branch %q does not match requested track %q", selectedBranch, expectedBranch)
 	}
 	emitProxmoxProgress(progress, "Verify signed appliance", "Manifest, checksums, and ISO verified for "+verified.Manifest.ImageVersion, 0.35)
 

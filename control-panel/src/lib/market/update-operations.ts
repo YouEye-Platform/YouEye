@@ -1,7 +1,9 @@
+import { PointerReleaseMetadataProvider } from '../pointer/release-metadata';
 import { appUpdateJournalStore, withAppLifecycle } from './update-admission';
 import { AppUpdateTransaction } from './update-transaction';
 import type { AppUpdateRecord } from './update-journal';
 import { IncusAppUpdateProvider } from './update-provider';
+import { ReleaseMetadataUpdateProvider } from './update-release-metadata';
 import { observeIssue, resolveIssue } from '@/lib/health/issues';
 
 /** Authenticated routes expose this bounded payload-free status, never checkpoint handles. */
@@ -35,7 +37,10 @@ export async function recoverAppUpdateOperation(appId: string, operationId: stri
   }
   await withAppLifecycle(appId, async () => {
     await store.withExecutor(operationId, async lease => {
-      await new AppUpdateTransaction(lease, new IncusAppUpdateProvider()).recover();
+      const provider = record.operationKind === 'release-metadata'
+        ? new ReleaseMetadataUpdateProvider(store.directory) : record.operationKind === 'pointer-release-metadata'
+          ? new PointerReleaseMetadataProvider(store.directory) : new IncusAppUpdateProvider();
+      await new AppUpdateTransaction(lease, provider).recover();
     });
     await resolveIssue(`app.${appId}.update-recovery`);
   }, { store, recoveryOperationId: operationId });

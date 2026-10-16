@@ -94,6 +94,10 @@ export async function getLxdAppVersion(
   appDir: string,
   serviceName?: string
 ): Promise<string | undefined> {
+  if (containerName === 'youeye-pointer') {
+    const accepted = await getCoreProvenance('app:pointer');
+    if (accepted) return accepted.version;
+  }
   // Try configured appDir first
   try {
     const result = await execShell(containerName, `cat ${appDir}/package.json`, {

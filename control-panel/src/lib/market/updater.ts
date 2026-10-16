@@ -65,7 +65,9 @@ import {
   type MigrationWithSource,
 } from './migration-planner';
 import { refreshDirectMarketApp } from './direct-apps';
-import { stageMarketNativeArtifacts, type StagedMarketNativeArtifact } from './native-artifact';
+import { stageMarketNativeArtifacts, resolveMarketProductRelease, downloadMarketProductBlob, type StagedMarketNativeArtifact } from './native-artifact';
+import { acceptProductSequence, type VerifiedProductRelease } from '../releases/product-release';
+import { updateIdenticalProductRelease } from './update-release-metadata';
 import type {
   AppManifest,
   InstallEventCallback,
@@ -298,6 +300,11 @@ async function updateLXDContainer(
   }
   emit(onEvent, step, totalSteps, 'success', 'Files extracted');
 
+  if (artifact.productRelease) {
+    const { publishProductProjection } = await import('../releases/product-projection');
+    artifact.runtimeUUID = await publishProductProjection(containerName,artifact.productRelease);
+  }
+
   return { step, version: artifact.version };
 }
 
@@ -385,14 +392,24 @@ async function updateMarketAppLocked(
   }
 
   let manifest: AppManifest;
+  let productRelease: VerifiedProductRelease | null = null;
   let channelManifestReference: { path: string; repo: string; branch: string; digest: string } | null = null;
   if (channelCandidate && channelSourceUrl) {
     try {
       const srcLike = parseMarketRepoURL(channelSourceUrl);
-      const yamlText = await fetchRepoFile(
-        srcLike.organization, srcLike.repository, 'youeye-app.yaml', channelCandidate.tag, srcLike,
-      );
+      productRelease = await resolveMarketProductRelease(appId,channelSourceUrl,channelCandidate.tag);
+      const yamlText = productRelease
+        ? (await downloadMarketProductBlob(productRelease,'youeye-app.yaml')).toString('utf8')
+        : await fetchRepoFile(srcLike.organization, srcLike.repository, 'youeye-app.yaml', channelCandidate.tag, srcLike);
+      if (productRelease && updateDigest(yamlText) !== productRelease.build.contract_sha256) throw new Error('Product installer contract differs from original build');
       manifest = parseManifest(yamlText);
+      if (productRelease) {
+        acceptProductSequence(installMeta.productReleaseFloors,productRelease);
+        if (manifest.metadata.id !== appId || manifest.version !== productRelease.build.build_version || productRelease.release.version !== channelCandidate.version) throw new Error('Product manifest differs from selected build/release identity');
+        // Installed registration is release metadata. Original YAML/archive
+        // bytes and their original build-version field remain untouched.
+        manifest = {...manifest,version:productRelease.release.version};
+      }
       channelManifestReference = { path: 'youeye-app.yaml',
         repo: `${srcLike.organization}/${srcLike.repository}`, branch: channelCandidate.tag,
         digest: `sha256:${updateDigest(yamlText)}` };
@@ -408,14 +425,6 @@ async function updateMarketAppLocked(
   const containerSpecs = manifest.containers || [];
   const sourceId = directEntry?.sourceId ?? resolvedCatalog!.source.id;
   let durableMigrationPlan: Awaited<ReturnType<typeof fetchUpdatePlanMigrationsFromSource>> = { migrations: [], references: [] };
-  if (!directEntry) {
-    try {
-      durableMigrationPlan = await fetchUpdatePlanMigrationsFromSource(appId, sourceId);
-    } catch (err) {
-      throw new Error(`Failed to fetch durable update plan for "${appId}": ${err}`);
-    }
-  }
-
   if (channelCandidate) {
     // Exact-tag semantics: the channel resolver + check already decided; only
     // no-op when the exact candidate tag is what's installed.
@@ -441,6 +450,19 @@ async function updateMarketAppLocked(
   } else if (!config.force && !isNewer(targetVersion, installedVersion)) {
     emit(onEvent, 1, 1, 'success', `${appId} is already up to date (v${installedVersion})`);
     return { success: true, previousVersion: installedVersion, newVersion: installedVersion, migrationsRun: 0 };
+  }
+
+  if (productRelease && channelManifestReference) {
+    const adopted = await updateIdenticalProductRelease(appUpdateJournalStore(), originalInstallMeta,
+      installedApp, manifest, productRelease, channelManifestReference);
+    if (adopted) {
+      emit(onEvent, 1, 1, 'success', `Release ${targetVersion} adopted; existing payload remains running`);
+      return adopted;
+    }
+  }
+  if (!directEntry) {
+    try { durableMigrationPlan = await fetchUpdatePlanMigrationsFromSource(appId, sourceId); }
+    catch (err) { throw new Error(`Failed to fetch durable update plan for "${appId}": ${err}`); }
   }
 
   // ── Version constraint check ───────────────────────────
@@ -689,6 +711,7 @@ async function updateMarketAppLocked(
     step++;
     emit(onEvent, step, totalSteps, 'running', 'Updating version records...');
     installMeta.installedVersion = targetVersion;
+    if (productRelease) installMeta.productReleaseFloors = acceptProductSequence(installMeta.productReleaseFloors,productRelease);
     installMeta.catalogKey = `${sourceId}:app:${appId}`;
     installMeta.itemKind = 'app';
     installMeta.sourceId = sourceId;
@@ -710,6 +733,8 @@ async function updateMarketAppLocked(
       installMeta.manifestDigest = resolvedCatalog!.reference.digest;
     }
     installMeta.nativeArtifacts = [...stagedNativeArtifacts.byContainerName.values()].map((artifact) => ({
+      productRelease: artifact.productRelease,
+      runtimeUUID: artifact.runtimeUUID,
       containerName: artifact.containerName,
       sourceRepo: artifact.sourceRepo,
       releaseTag: artifact.tag,

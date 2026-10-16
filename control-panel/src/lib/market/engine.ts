@@ -723,6 +723,8 @@ function describeContainers(manifest: AppManifest): ContainerMeta[] {
 
 function describeNativeArtifacts(staged: StagedMarketNativeArtifacts): InstallMetadata['nativeArtifacts'] {
   const artifacts = [...staged.byContainerName.values()].map((artifact) => ({
+    productRelease: artifact.productRelease,
+    runtimeUUID: artifact.runtimeUUID,
     containerName: artifact.containerName,
     sourceRepo: artifact.sourceRepo,
     releaseTag: artifact.tag,
@@ -1375,6 +1377,20 @@ export async function installApp(
     });
 
     try {
+      const products = [...stagedNativeArtifacts.byContainerName.values()].filter(a => a.productRelease);
+      if (products.length) {
+        const { downloadMarketProductBlob, verifyMarketProductInstallContract } = await import('./native-artifact');
+        const { verifyInstalledProductReceipt } = await import('../releases/product-release');
+        const versions = new Set<string>();
+        for (const artifact of products) {
+          const selected = verifyInstalledProductReceipt(artifact.productRelease!,{product:appId,source:artifact.sourceRepo,tag:artifact.tag});
+          const contract = await downloadMarketProductBlob(selected,'youeye-app.yaml');
+          await verifyMarketProductInstallContract(contract, selected, manifest, config);
+          versions.add(selected.release.version);
+        }
+        if (versions.size !== 1 || products.length !== stagedNativeArtifacts.byContainerName.size) throw new Error('Application has conflicting product release identities');
+        manifest = {...manifest,version:[...versions][0]};
+      }
       try {
         onEvent({ step: 0, totalSteps, status: 'running', message: 'Reserving isolated /27 app network...' });
         const network = await createAppNetwork(appId, {
@@ -2150,6 +2166,12 @@ async function installAppLocked(
     aiConnection,
     usePerAppBridge: !!appBridgeName,
   };
+  for (const artifact of meta.nativeArtifacts ?? []) {
+    if (!artifact.productRelease) continue;
+    const { acceptProductSequence, verifyInstalledProductReceipt } = await import('../releases/product-release');
+    meta.productReleaseFloors = acceptProductSequence(meta.productReleaseFloors,
+      verifyInstalledProductReceipt(artifact.productRelease, {product:appId,source:artifact.sourceRepo,tag:artifact.releaseTag}));
+  }
   await saveInstallMetadata(meta);
   finalMetadata = meta;
 

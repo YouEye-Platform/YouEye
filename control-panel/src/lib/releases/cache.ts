@@ -47,5 +47,36 @@ export async function releaseCacheFetch(input: string | URL | Request, init?: Re
     const distributed = await distributionBytes(url);
     if (distributed) return new Response(new Uint8Array(distributed), { status: 200, headers: { 'Content-Type': 'application/json', 'X-YouEye-Release-Transport': 'signed-distribution' } });
   }
+  if (method.toUpperCase() === 'GET') {
+    const { selectedCoreTransportURL } = await import('./core-release');
+    let mirror = selectedCoreTransportURL(url);
+    if (mirror === url) {
+      const alternate = selectedCoreTransportURL(url,true);
+      if (alternate !== url) {
+        const original = await fetch(input,init);
+        if (original.status !== 404) return original;
+        await original.body?.cancel();
+        mirror = alternate;
+      }
+    }
+    if (mirror !== url) {
+      const origin = new URL(mirror).origin;
+      let current = mirror;
+      const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
+      for (const name of ['Authorization','Proxy-Authorization','Cookie']) headers.delete(name);
+      for (let redirects=0; redirects<5; redirects++) {
+        const response=await fetch(current,{...init,signal:init?.signal ?? (input instanceof Request ? input.signal : undefined),method:'GET',headers,redirect:'manual'});
+        if (response.status<300 || response.status>=400) return response;
+        const location=response.headers.get('location');
+        await response.body?.cancel();
+        if (!location) throw new Error('Private core mirror redirect is missing');
+        const next=new URL(location,current);
+        const githubAsset = origin === 'https://github.com' && next.origin === 'https://release-assets.githubusercontent.com';
+        if (next.protocol!=='https:' || (next.origin!==origin && !githubAsset) || next.username || next.password || next.hash) throw new Error('Core mirror redirected outside its source');
+        current=next.toString();
+      }
+      throw new Error('Private core mirror exceeded redirect limit');
+    }
+  }
   return fetch(input, init);
 }

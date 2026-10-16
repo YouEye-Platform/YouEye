@@ -80,7 +80,7 @@ func stageCoreServiceTree(ctx context.Context, parent, archive *os.File, r *Core
 		if err = save(*r); err != nil {
 			return err
 		}
-		if err = unix.Mkdirat(int(parent.Fd()), r.StageName, 0700); err != nil {
+		if err = mkdirCoreMapped(parent, r.StageName, 0700); err != nil {
 			return err
 		}
 		if err = parent.Sync(); err != nil {
@@ -144,7 +144,9 @@ func stageCoreServiceTree(ctx context.Context, parent, archive *os.File, r *Core
 	if err := save(*r); err != nil {
 		return err
 	}
-	if err := unix.Renameat2(int(parent.Fd()), base, int(parent.Fd()), r.StageName, unix.RENAME_EXCHANGE); err != nil {
+	if err := mutateCoreMapped(parent, func() error {
+		return unix.Renameat2(int(parent.Fd()), base, int(parent.Fd()), r.StageName, unix.RENAME_EXCHANGE)
+	}); err != nil {
 		return fmt.Errorf("core tree exchange requires reconciliation")
 	}
 	if err := parent.Sync(); err != nil {
@@ -179,7 +181,7 @@ func copyCoreEnvironment(parent *os.File, base string, stage *os.File) error {
 	if unix.Fstat(fd, &stat) != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&07022 != 0 || stat.Size > 1<<20 {
 		return fmt.Errorf("unsafe live core configuration")
 	}
-	dest, err := unix.Openat(int(stage.Fd()), ".env", unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+	dest, err := openCoreMappedExclusive(stage, ".env", 0600)
 	if err != nil {
 		return err
 	}

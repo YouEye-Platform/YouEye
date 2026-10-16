@@ -14,6 +14,7 @@ youeye=${YOUEYE_BIN:-/usr/local/bin/youeye}
 incus=${INCUS_BIN:-incus}
 curl_bin=${CURL_BIN:-curl}
 control_secret=${YOUEYE_CONTROL_SECRET:-/var/lib/youeye/control/.deploy_secret}
+core_required=${YOUEYE_CORE_SELECTION_REQUIRED:-/usr/share/youeye/core-selection-required}
 max_attempts=${YOUEYE_FIRST_DEPLOY_MAX_ATTEMPTS:-8}
 
 install -d -m 0700 "$state_dir"
@@ -82,6 +83,11 @@ current_stage=network
 
 core_policy=false
 core_initialized=false
+if [ -e "$core_required" ] && ! jq -e '.core_manifest_sha256 | type == "string" and length == 64' "$release_policy" >/dev/null 2>&1; then
+    current_stage=core_selection
+    printf '%s\n' 'This appliance requires its signed complete System selection; recover the original v5 installer answer before retrying.' >&2
+    exit 1
+fi
 if jq -e '.core_manifest_sha256 | type == "string" and length > 0' "$release_policy" >/dev/null 2>&1; then
     core_policy=true
     current_stage=core_convergence

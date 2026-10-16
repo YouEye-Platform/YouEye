@@ -93,6 +93,30 @@ func TestCoreCacheRequiresCapacityAndCompleteScopedBytes(t *testing.T) {
 		t.Fatal("no-op downloaded", digest, err, requests)
 	}
 	c.AvailableBytes = func(string) (uint64, error) { return 1 << 30, nil }
+	fresh := c
+	fresh.Root = filepath.Join(root, "fresh-public")
+	freshRequests := 0
+	fresh.Client = &http.Client{Transport: signedRedirectTransport(func(req *http.Request) (*http.Response, error) {
+		if !strings.Contains(req.URL.Path, "/cp-") && !strings.Contains(req.URL.Path, "/ui-") {
+			t.Fatal("fresh service evidence downloaded host/media payload", req.URL.Path)
+		}
+		freshRequests++
+		data, ok := files[req.URL.String()]
+		if !ok {
+			return nil, fmt.Errorf("undeclared fresh service object")
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(data)), ContentLength: int64(len(data)), Header: http.Header{}, Request: req}, nil
+	})}
+	if _, _, err := fresh.StageFreshServices(context.Background(), selection); err != nil {
+		t.Fatal(err)
+	}
+	beforeFresh := freshRequests
+	if beforeFresh == 0 {
+		t.Fatal("fresh public path did not retrieve evidence")
+	}
+	if _, _, err := fresh.StageFreshServices(context.Background(), selection); err != nil || freshRequests != beforeFresh {
+		t.Fatal("fresh evidence not reused", err)
+	}
 	serviceOnly := c
 	serviceOnly.Root = filepath.Join(root, "service-only")
 	serviceOnly.Client = &http.Client{Transport: signedRedirectTransport(func(req *http.Request) (*http.Response, error) {

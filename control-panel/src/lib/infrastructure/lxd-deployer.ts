@@ -1,3 +1,4 @@
+import { selectedCoreDownloadShell } from '@/lib/releases/core-release';
 import { createHash } from 'crypto';
 import { cachedReleaseBytes } from '../releases/cache';
 import { selectedCoreArtifact } from '../releases/core-release';
@@ -443,7 +444,6 @@ async function installNodeAndApp(
     await verifySignedReleaseArtifactBuffer(releaseURL, cachedRelease, 'standalone.tar', artifactSHA256, trustScope);
     await incusUploadFile(cn, '/tmp/app.tar', cachedRelease, { timeout: 300_000, mode: '0600' });
   }
-  const downloadURL = marketArtifact ? '' : shellQuote(releaseURL);
   const artifactPreparation = cachedRelease
     ? `test "$(sha256sum /tmp/app.tar | awk '{print $1}')" = ${shellQuote(artifactSHA256 || createHash('sha256').update(cachedRelease).digest('hex'))}`
     : marketArtifact
@@ -453,7 +453,10 @@ async function installNodeAndApp(
     `
     : `
     echo "Downloading selected standalone release..."
-    retry 3 5 curl -fsSL ${downloadURL} -o /tmp/app.tar
+    download_selected_release() {
+      ${selectedCoreDownloadShell(releaseURL, '/tmp/app.tar')}
+    }
+    retry 3 5 download_selected_release
     ${signedReleaseVerificationShell(releaseURL, '/tmp/app.tar', artifactSHA256, trustScope)}
     `;
 
@@ -499,6 +502,11 @@ async function installNodeAndApp(
     for (const cmd of spec.postInstallCommands) {
       await execShell(cn, `cd ${spec.appDir} && ${cmd}`, { timeout: 120_000 });
     }
+  }
+
+  if (marketArtifact?.productRelease) {
+    const { publishProductProjection } = await import('../releases/product-projection');
+    marketArtifact.runtimeUUID = await publishProductProjection(cn,marketArtifact.productRelease);
   }
 
   if (selectedCore) {

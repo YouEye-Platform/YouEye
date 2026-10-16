@@ -116,6 +116,40 @@ func TestCoreRootCaptureReconcilesLostAcknowledgementWithoutDuplicate(t *testing
 	}
 }
 
+func TestCoreCheckpointCaptureUsesVerifiedPayloadBudget(t *testing.T) {
+	for _, mode := range []string{"enough", "insufficient", "missing-index"} {
+		t.Run(mode, func(t *testing.T) {
+			p, j, _, creates := rootCheckpointFixture(t)
+			archive, digest := corePayloadFixture(t)
+			index, err := IndexCorePayload(archive, digest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			indexes := []CorePayloadIndex{index, index}
+			if mode == "missing-index" {
+				indexes = indexes[:1]
+			}
+			capture := p.Capture
+			if mode == "insufficient" {
+				p.Capture = func(ctx context.Context, program string, args ...string) ([]byte, error) {
+					if args[0] == "query" && strings.HasSuffix(args[1], "/resources") {
+						return []byte(`{"space":{"total":1024,"used":0}}`), nil
+					}
+					return capture(ctx, program, args...)
+				}
+			}
+			record, err := p.capturePayloadRoots(context.Background(), j, indexes)
+			if mode == "enough" {
+				if err != nil || record.Phase != "roots-captured" || *creates != 2 {
+					t.Fatalf("verified payload capture did not reach both roots: phase=%s creates=%d err=%v", record.Phase, *creates, err)
+				}
+			} else if err == nil || *creates != 0 {
+				t.Fatalf("invalid capture admitted: creates=%d err=%v", *creates, err)
+			}
+		})
+	}
+}
+
 func TestCoreRootCaptureAbsentAfterIntentIsUnknown(t *testing.T) {
 	p, j, _, creates := rootCheckpointFixture(t)
 	capture := p.Capture

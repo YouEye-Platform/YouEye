@@ -19,7 +19,7 @@ type CoreInstalledObservation struct {
 }
 
 func (m CoreManager) TransactionComplete(j CoreJournal) bool {
-	if j.Phase == "cancelled" || j.NoOp && j.Phase == "committed" {
+	if j.Phase == "cancelled" || (j.NoOp || j.MetadataOnly) && j.Phase == "committed" {
 		return true
 	}
 	if j.Phase != "committed" && j.Phase != "rolled-back" {

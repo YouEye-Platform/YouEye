@@ -46,6 +46,8 @@ export interface AppUpdateRecord {
   schema: typeof APP_UPDATE_SCHEMA;
   id: string;
   appId: string;
+  /** Absent in legacy receipts, whose recovery provider replaces payloads. */
+  operationKind?: 'payload' | 'release-metadata' | 'pointer-release-metadata';
   revision: number;
   phase: AppUpdatePhase;
   createdAt: string;
@@ -66,7 +68,7 @@ export interface AppUpdateRecord {
 }
 
 export type NewAppUpdate = Pick<AppUpdateRecord,
-  'appId' | 'source' | 'target' | 'resources' | 'originalRunning' | 'metadataBeforeSHA256'>;
+  'appId' | 'operationKind' | 'source' | 'target' | 'resources' | 'originalRunning' | 'metadataBeforeSHA256'>;
 
 const transitions: Record<AppUpdatePhase, readonly AppUpdatePhase[]> = {
   preflight: ['quiescing', 'recovering', 'recovery_required'],
@@ -113,11 +115,12 @@ function validate(value: unknown): AppUpdateRecord {
   const allowed = new Set([
     'schema', 'id', 'appId', 'revision', 'phase', 'createdAt', 'updatedAt', 'source', 'target',
     'resources', 'originalRunning', 'metadataBeforeSHA256', 'checkpoints', 'steps',
-    'recoveryPolicy', 'errorCode', 'commit', 'rollbackVerifiedAt', 'cleanupComplete',
+    'recoveryPolicy', 'errorCode', 'commit', 'rollbackVerifiedAt', 'cleanupComplete', 'operationKind',
   ]);
   if (Object.keys(r).some(key => !allowed.has(key))
     || r.schema !== APP_UPDATE_SCHEMA || !operationId.test(r.id)
     || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(r.appId)
+    || (r.operationKind !== undefined && !['payload', 'release-metadata', 'pointer-release-metadata'].includes(r.operationKind))
     || !Number.isSafeInteger(r.revision) || r.revision < 0
     || !Object.hasOwn(transitions, r.phase)
     || !validTime(r.createdAt) || !validTime(r.updatedAt)
@@ -140,6 +143,8 @@ function validate(value: unknown): AppUpdateRecord {
       || (resource.kind === 'capacity' && resource.mutable)) fail();
   }
   const keys = r.resources.map(updateResourceKey);
+  if ((r.operationKind === 'release-metadata' || r.operationKind === 'pointer-release-metadata') && r.resources.some(x =>
+    !['app', 'container', 'metadata'].includes(x.kind) || (x.mutable && x.kind !== 'metadata'))) fail();
   if (new Set(keys).size !== keys.length
     || !r.resources.some(x => x.kind === 'app' && x.name === r.appId)) fail();
   if (!r.originalRunning || Array.isArray(r.originalRunning)

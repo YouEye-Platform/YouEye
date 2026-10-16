@@ -11,7 +11,7 @@ import (
 // started state before acquiring native authority. A started/failed action can
 // have changed data even when its acknowledgement was lost.
 func coreCheckpointUnapplied(j CoreJournal) bool {
-	if j.NoOp || validateCoreSteps(j) != nil {
+	if j.NoOp || j.MetadataOnly || validateCoreSteps(j) != nil {
 		return false
 	}
 	checkpoint := false

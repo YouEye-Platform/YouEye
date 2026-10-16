@@ -85,7 +85,7 @@ function stateOf(app: NonNullable<Awaited<ReturnType<typeof getInstalledApp>>>):
 }
 const updateOwnedFields = new Set(['installedVersion', 'catalogKey', 'itemKind', 'sourceId', 'sourceName',
   'sourceRepoUrl', 'manifestSource', 'manifestPath', 'manifestRepo', 'manifestBranch', 'manifestDigest',
-  'nativeArtifacts', 'containers', 'entrances', 'appliedMigrations']);
+  'nativeArtifacts', 'containers', 'entrances', 'appliedMigrations', 'productReleaseFloors']);
 function stable(value: unknown): string {
   if (!value || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
@@ -93,6 +93,8 @@ function stable(value: unknown): string {
     .map(([key, item]) => `${JSON.stringify(key)}:${stable(item)}`).join(',')}}`;
 }
 async function securityRevision(metadata: InstallMetadata): Promise<string> {
+  // Accepted release floors advance during this transaction. They remain
+  // monotonic through rollback; they are not credential/ownership revisions.
   const policy = Object.fromEntries(Object.entries(metadata).filter(([key]) => !updateOwnedFields.has(key)));
   const files: Array<[string, string]> = [];
   const dir = `/var/lib/youeye/app-${metadata.appId}`;

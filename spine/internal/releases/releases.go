@@ -66,7 +66,7 @@ func NewIPv4Client(timeout time.Duration) *http.Client {
 			IdleConnTimeout:     30 * time.Second,
 		},
 	}
-	client.Transport = releasecache.Wrap(client.Transport)
+	client.Transport = releasecache.Wrap(selectedCoreTransport{base: client.Transport})
 	return client
 }
 

@@ -85,7 +85,7 @@ func writeCoreContainerFileAt(dir *os.File, name, temp string, data []byte, limi
 		if unix.Fstat(int(dir.Fd()), &owner) != nil || owner.Mode&0022 != 0 {
 			return fmt.Errorf("unsafe core state directory")
 		}
-		fd, err := unix.Openat(int(dir.Fd()), temp, unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+		fd, err := openCoreMappedExclusive(dir, temp, 0600)
 		if err != nil {
 			return err
 		}
@@ -104,7 +104,9 @@ func writeCoreContainerFileAt(dir *os.File, name, temp string, data []byte, limi
 	} else {
 		return err
 	}
-	if err = unix.Renameat(int(dir.Fd()), temp, int(dir.Fd()), name); err != nil {
+	if err = mutateCoreMapped(dir, func() error {
+		return unix.Renameat(int(dir.Fd()), temp, int(dir.Fd()), name)
+	}); err != nil {
 		return err
 	}
 	return dir.Sync()

@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -89,6 +90,60 @@ func TestCoreInstallerDiscoveryPreservesBranchAndExactAnswerBytes(t *testing.T) 
 	if decoded.CoreRelease.ManifestBase64 != answer.CoreRelease.ManifestBase64 {
 		t.Fatal("answer rewrote core manifest")
 	}
+	// Both an interactive/legacy-shaped input and a supplied v5 answer reach
+	// the same signed selection before the provider discovers or writes disks.
+	bundle := verifiedApplianceBundle{ManifestSHA256: strings.Repeat("b", 64), Manifest: applianceBundleManifest{
+		ImageVersion: core.Version, SourceCommit: core.SourceCommit,
+		ReleaseSet: applianceManifestReleases{Source: source, Branch: core.Branch,
+			Spine: applianceManifestComponent{Version: core.Version, SourceCommit: core.SourceCommit, ArtifactSHA256: strings.Repeat("b", 64)}},
+	}}
+	input := applianceInstallInput{Operation: "erase-install", TransactionID: answer.TransactionID, TargetSerial: "TARGET", EraseConfirmed: true, Network: answer.Network, Development: answer.Development, ReleasePolicy: answer.ReleasePolicy, AnswerPath: "/original/answer.json"}
+	input.ReleasePolicy.CoreManifestSHA256 = ""
+	prepared, err := prepareCoreInstallInput(t.Context(), input, bundle, server.Client(), true)
+	if err != nil || prepared.CoreRelease == nil || prepared.AnswerPath != "" || prepared.CoreRelease.ManifestBase64 != answer.CoreRelease.ManifestBase64 {
+		t.Fatal("complete selection was not frozen", err)
+	}
+	path, err := writeRuntimeApplianceAnswer(prepared, applianceDisk{Serial: "TARGET"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Remove(path) })
+	saved, err := loadApplianceInstallInput(installConfig{ApplianceAnswerPath: path})
+	if err != nil || saved.CoreRelease == nil || saved.ReleasePolicy.CoreManifestSHA256 != selected.coreSHA256 {
+		t.Fatal("lost runtime v5 selection", err)
+	}
+	if _, err := prepareCoreInstallInput(t.Context(), saved, bundle, nil, true); err != nil {
+		t.Fatal("frozen answer unexpectedly needed discovery", err)
+	}
+	retained, _ := json.Marshal(map[string]any{"transaction_id": answer.TransactionID, "target_serial": "TARGET", "manifest_sha256": bundle.ManifestSHA256, "release_policy": saved.ReleasePolicy, "core_release": saved.CoreRelease})
+	resumeInput := input
+	resumeInput.Operation = "resume"
+	restored, err := restoreCoreInstallSelection(coreSelectionRunner{raw: string(retained)}, applianceDisk{Path: "/dev/test", Serial: "TARGET"}, resumeInput, bundle.ManifestSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = prepareCoreInstallInput(t.Context(), restored, bundle, nil, true); err != nil {
+		t.Fatal("resume did not retain signed selection", err)
+	}
+	resumeInput.TransactionID = strings.Repeat("c", 32)
+	if _, err = restoreCoreInstallSelection(coreSelectionRunner{raw: string(retained)}, applianceDisk{Path: "/dev/test", Serial: "TARGET"}, resumeInput, bundle.ManifestSHA256); err == nil {
+		t.Fatal("resume accepted another transaction's selection")
+	}
+	cachedInput := input
+	cachedInput.ReleaseCacheSHA256 = strings.Repeat("f", 64)
+	if _, err = prepareCoreInstallInput(t.Context(), cachedInput, bundle, nil, true); err == nil {
+		t.Fatal("v4 cache silently lost its frozen transport")
+	}
+	wrong := bundle
+	wrong.ManifestSHA256 = strings.Repeat("e", 64)
+	if _, err := prepareCoreInstallInput(t.Context(), saved, wrong, nil, true); err == nil {
+		t.Fatal("foreign media accepted")
+	}
+	resuming := input
+	resuming.Operation = "resume"
+	if _, err := prepareCoreInstallInput(t.Context(), resuming, bundle, nil, true); err == nil {
+		t.Fatal("resume selected a moving release")
+	}
 	answer.CoreRelease.ManifestSHA256 = strings.Repeat("f", 64)
 	if err := validateApplianceAnswer(answer); err == nil {
 		t.Fatal("changed exact selection accepted")
@@ -98,3 +153,7 @@ func TestCoreInstallerDiscoveryPreservesBranchAndExactAnswerBytes(t *testing.T) 
 		t.Fatal("tampered core signature accepted")
 	}
 }
+
+type coreSelectionRunner struct{ raw string }
+
+func (r coreSelectionRunner) Run(_ string, _ ...string) (string, error) { return r.raw, nil }

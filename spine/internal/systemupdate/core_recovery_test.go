@@ -20,6 +20,71 @@ type ownedLiveRecoveryTestExecutor struct {
 	owned bool
 }
 
+type recoveryIntentTestExecutor struct {
+	*recoveryTestExecutor
+	root         string
+	observations int
+}
+
+func (e *recoveryIntentTestExecutor) Observe(ctx context.Context, j CoreJournal, s CoreStep) (CoreActionObservation, error) {
+	e.observations++
+	if j.Phase == "applying" {
+		return CoreActionObservation{}, fmt.Errorf("forward schema probe cannot reconcile an interrupted service stage")
+	}
+	stored, err := (CoreManager{Root: e.root}).Read()
+	if err != nil || stored.Phase != j.Phase {
+		return CoreActionObservation{}, fmt.Errorf("recovery intent was not durable before observation")
+	}
+	return e.recoveryTestExecutor.Observe(ctx, j, s)
+}
+
+func TestCoreRecoveryRecordsIntentBeforeObservingInterruptedApply(t *testing.T) {
+	m, e, j := failedCoreFixture(t)
+	before, err := m.Read()
+	if err != nil || before.Phase != "applying" {
+		t.Fatal("fixture must retain the interrupted apply phase", before.Phase, err)
+	}
+	observer := &recoveryIntentTestExecutor{recoveryTestExecutor: e, root: m.Root}
+	m.Executor = observer
+	got, err := m.Recover(context.Background(), j.RequestID)
+	if err != nil || got.Phase != "rolled-back" || observer.observations == 0 {
+		t.Fatal(got.Phase, err, observer.observations)
+	}
+	if e.starts["apply-cp"] != 1 || e.starts["recovery-fence"] != 1 || e.starts["recovery-paired-restore"] != 1 {
+		t.Fatal("replayed apply or recovery", e.starts)
+	}
+}
+
+func TestCoreRecoveryIntentPreservesAdmissionGuards(t *testing.T) {
+	for _, blocked := range []string{"previous-authority", "no-checkpoint"} {
+		t.Run(blocked, func(t *testing.T) {
+			m, e, j := failedCoreFixture(t)
+			if blocked == "previous-authority" {
+				e.denyRecovery = true
+			} else {
+				j.Phase = "prepared"
+				for i := range j.Steps {
+					j.Steps[i].State, j.Steps[i].Evidence = "pending", ""
+				}
+				if err := m.saveCore(&j); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := m.Read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Recover(context.Background(), j.RequestID); err == nil {
+				t.Fatal("admitted blocked recovery")
+			}
+			after, err := m.Read()
+			if err != nil || !reflect.DeepEqual(before, after) || e.starts["recovery-fence"] != 0 {
+				t.Fatal("blocked recovery changed durable state or started effects", err)
+			}
+		})
+	}
+}
+
 func (e *ownedLiveRecoveryTestExecutor) AuthorizeLiveFence(context.Context, CoreJournal, CoreStep) error {
 	if !e.owned {
 		return fmt.Errorf("live action ownership unverified")

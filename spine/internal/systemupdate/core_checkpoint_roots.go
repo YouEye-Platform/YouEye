@@ -119,6 +119,14 @@ func (p NativeCoreCheckpoint) readRootSnapshot(ctx context.Context, inventory Co
 	return digest, digest != "", nil
 }
 
+func (p NativeCoreCheckpoint) capturePayloadRoots(ctx context.Context, j CoreJournal, indexes []CorePayloadIndex) (NativeCoreCheckpointRecord, error) {
+	expanded, err := corePayloadStagingBudget(indexes)
+	if err != nil {
+		return NativeCoreCheckpointRecord{}, err
+	}
+	return p.CaptureRoots(ctx, j, expanded)
+}
+
 // CaptureRoots runs only while the coordinator owns its checkpoint step and all
 // writers are stopped. Each create is preceded by durable intent. An uncertain
 // create is reconciled from the provider; absence after intent is unknown and

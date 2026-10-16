@@ -2,9 +2,34 @@ package cmd
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 )
+
+func TestHostIPMigrationRespectsRetainedSystemMaintenance(t *testing.T) {
+	for _, corrupt := range []bool{false, true} {
+		t.Run(map[bool]string{false: "owned", true: "unreadable"}[corrupt], func(t *testing.T) {
+			barrier := systemupdate.CoreLifecycleBarrier{Root: filepath.Join(t.TempDir(), "app-updates")}
+			if err := barrier.Begin(systemupdate.CoreJournal{RequestID: "held-system-update", ManifestSHA256: strings.Repeat("a", 64)}); err != nil {
+				t.Fatal(err)
+			}
+			if corrupt {
+				if err := os.WriteFile(filepath.Join(barrier.Root, "core-reservation.json"), []byte("interrupted"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, opts := range []hostIPMigrationOptions{{Startup: true}, {Force: true}} {
+				result, err := runHostIPMigrationWithLifecycle(opts, barrier)
+				if err == nil || !strings.Contains(err.Error(), "owns the platform lifecycle") || result != (hostIPMigrationResult{}) {
+					t.Fatalf("maintenance did not prevent host/container work: result=%+v err=%v", result, err)
+				}
+			}
+		})
+	}
+}
 
 func TestValidatePiholeAuthResponse(t *testing.T) {
 	tests := []struct {

@@ -179,7 +179,7 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 		if _, err = r.Checkpoint.CheckCompleteCapacity(ctx, record.Inventory, indexes); err != nil {
 			return CoreActionObservation{}, err
 		}
-		if _, err = r.Checkpoint.CaptureRoots(ctx, j, 0); err != nil {
+		if _, err = r.Checkpoint.capturePayloadRoots(ctx, j, indexes); err != nil {
 			return CoreActionObservation{}, err
 		}
 		if _, err = r.Checkpoint.CaptureFiles(ctx, j); err != nil {
@@ -288,6 +288,14 @@ func (r NativeCoreRuntime) Observe(ctx context.Context, j CoreJournal, s CoreSte
 	observation, err := r.Runner.Observe(ctx, j, s)
 	if err != nil || observation.State != "unknown" {
 		return observation, err
+	}
+	if (j.Phase == "needs-recovery" || j.Phase == "recovering") && !strings.HasPrefix(s.Name, "recovery-") {
+		// An interrupted apply may have no service-stage receipt at all. Its
+		// forward probes require applying and cannot authorize recovery. Keep
+		// the outcome unknown until the native fence settles the owned action;
+		// previous-release authority and the durable host-commit guard still
+		// apply, even if the owner's current target selection has changed.
+		return observation, r.authorizeRecovery(ctx, j)
 	}
 	if strings.HasPrefix(s.Name, "recovery-") {
 		err = r.authorizeRecovery(ctx, j)

@@ -431,6 +431,9 @@ jq -S -n \
     }' > "$rootfs/usr/lib/youeye/appliance-release"
 apply_composition_manifest "$rootfs/usr/lib/youeye/appliance-release"
 chmod 0444 "$rootfs/usr/lib/youeye/appliance-release"
+install -d -m 0755 "$rootfs/usr/share/youeye"
+printf '%s\n' 'youeye.core-release.v1' > "$rootfs/usr/share/youeye/core-selection-required"
+chmod 0444 "$rootfs/usr/share/youeye/core-selection-required"
 
 if [[ $test_fault == system-health ]]; then
 	install -d -m 0755 "$rootfs/usr/lib/systemd/system/youeye.service.d"
@@ -776,6 +779,7 @@ EOF
 chmod 0755 config/hooks/live/9999-youeye-reproducible-cache.hook.chroot
 install -m 0755 "$bin_dir/youeye-installer" config/includes.chroot/usr/local/bin/youeye-installer
 install -m 0644 "$artifacts/appliance-development.pub" config/includes.chroot/usr/share/youeye/appliance-development.pub
+install -m 0444 "$rootfs/usr/share/youeye/core-selection-required" config/includes.chroot/usr/share/youeye/core-selection-required
 cat > config/includes.chroot/usr/local/libexec/youeye-live-installer <<'EOF'
 #!/bin/bash
 set -eu

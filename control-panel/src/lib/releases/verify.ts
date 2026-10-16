@@ -22,10 +22,10 @@ export function releaseArtifactTrust(artifactURL: string, policy: PublicTrustPol
   }
   const nativeRepos = new Set(['pointer', 'wiki', 'search', 'notes', 'cinema', 'weather', 'translate', 'canvas']);
   const owner = parts[0].toLowerCase(), repo = parts[1].toLowerCase();
-  if (owner !== 'youeye-platform' || (repo !== 'youeye' && !nativeRepos.has(repo))) {
+  if (owner !== 'youeye-platform' || (repo !== 'youeye' && repo !== 'market' && !nativeRepos.has(repo))) {
     throw new Error('Public release repository has no supported signing authority');
   }
-  const tagPattern = nativeRepos.has(repo)
+  const tagPattern = repo === 'market' ? /^catalog-(beta-)?v(.+)$/ : nativeRepos.has(repo)
     ? /^(beta-)?v(.+)$/
     : /^(?:spine|cp|ui)-(beta-)?v(.+)$/;
   const match = tagPattern.exec(parts[4]);

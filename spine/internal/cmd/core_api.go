@@ -82,7 +82,7 @@ func (coreAPIOperations) Submit(ctx context.Context, action string, request api.
 	}
 	out = api.CoreUpdateActionResult{RequestID: j.RequestID, ManifestSHA256: j.ManifestSHA256, Phase: j.Phase, Control: systemupdate.CoreControlObservation{RequestID: j.RequestID, CommandID: request.CommandID, State: "settled"}}
 	if j.Phase == "cancelled" {
-		return out, nil
+		return out, finishCoreBootstrap(ctx, request.RequestID)
 	}
 	current, err := m.Read()
 	if err != nil {
@@ -92,7 +92,7 @@ func (coreAPIOperations) Submit(ctx context.Context, action string, request api.
 		out.Control.State = "retained"
 		return out, nil
 	}
-	runner := systemupdate.CoreControlRunner{Root: runtime.Root, Executable: "/usr/local/bin/youeye"}
+	runner := systemupdate.CoreControlRunner{Root: runtime.Root, Executable: runtime.Runner.Executable}
 	out.Control, err = runner.Start(ctx, request.RequestID, request.CommandID)
 	return out, err
 }

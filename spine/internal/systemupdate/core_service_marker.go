@@ -107,7 +107,7 @@ func installCoreComponentMarker(root *os.File, j CoreJournal, r *CoreServiceStag
 		if unix.Fstat(int(dir.Fd()), &owner) != nil {
 			return fmt.Errorf("core state ownership unavailable")
 		}
-		fd, err := unix.Openat(int(dir.Fd()), temp, unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+		fd, err := openCoreMappedExclusive(dir, temp, 0600)
 		if err != nil {
 			return err
 		}
@@ -126,7 +126,9 @@ func installCoreComponentMarker(root *os.File, j CoreJournal, r *CoreServiceStag
 	} else {
 		return err
 	}
-	if err = unix.Renameat(int(dir.Fd()), temp, int(dir.Fd()), "core-component.json"); err != nil {
+	if err = mutateCoreMapped(dir, func() error {
+		return unix.Renameat(int(dir.Fd()), temp, int(dir.Fd()), "core-component.json")
+	}); err != nil {
 		return err
 	}
 	if err = dir.Sync(); err != nil {

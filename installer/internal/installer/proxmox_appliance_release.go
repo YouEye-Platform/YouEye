@@ -380,6 +380,32 @@ func findApplianceReleaseAsset(release applianceRelease, name string) (appliance
 }
 
 func downloadVerifiedApplianceRelease(ctx context.Context, client *http.Client, release applianceRelease, cacheRoot, exactISOSHA string) (verifiedApplianceRelease, error) {
+	if release.core != nil {
+		trust := embeddedApplianceDevelopmentTrust
+		var err error
+		if release.sourceProvider == "github" {
+			trust, err = publicReleaseAnchor(release.core.Channel)
+			if err != nil {
+				return verifiedApplianceRelease{}, err
+			}
+		}
+		key, err := parseEd25519PublicKey(trust)
+		if err != nil {
+			return verifiedApplianceRelease{}, err
+		}
+		r, digest, err := releasecache.VerifyCoreRelease(release.coreRaw, release.coreSignature, key)
+		if err != nil || digest != release.coreSHA256 {
+			return verifiedApplianceRelease{}, fmt.Errorf("core transport requires the original authenticated selection")
+		}
+		copy := *client
+		transport, err := releasecache.CoreTransport(client.Transport, r)
+		if err != nil {
+			return verifiedApplianceRelease{}, err
+		}
+		copy.Transport = releasecache.Wrap(transport)
+		client = &copy
+	}
+
 	embeddedTrust, trustErr := applianceReleaseAnchor(release)
 	if trustErr != nil {
 		return verifiedApplianceRelease{}, trustErr

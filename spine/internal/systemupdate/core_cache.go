@@ -67,6 +67,12 @@ func (c CoreArtifactCache) Stage(ctx context.Context, selection CoreHostSelectio
 	return c.stage(ctx, selection, nil)
 }
 
+// StageFreshServices retains the signed service envelopes needed to verify a
+// fresh public deployment. Installer and host payloads are already on the media.
+func (c CoreArtifactCache) StageFreshServices(ctx context.Context, selection CoreHostSelection) (releasecache.CoreRelease, string, error) {
+	return c.stage(ctx, selection, map[string]bool{"cp": true, "ui": true})
+}
+
 // StageUpdate downloads only changed standalone services and required host
 // documents. Native A/B staging owns host payload downloads; Installer/media
 // artifacts are not needed for updating an already installed appliance.
@@ -162,7 +168,13 @@ func (c CoreArtifactCache) stage(ctx context.Context, selection CoreHostSelectio
 	if free < required {
 		return r, "", fmt.Errorf("complete core staging requires %d available bytes; found %d", required, free)
 	}
-	download := New(Config{HTTPClient: c.Client})
+	client := CoreArtifactHTTPClient(c.Client)
+	transport, err := releasecache.CoreTransport(client.Transport, r)
+	if err != nil {
+		return r, "", err
+	}
+	client.Transport = releasecache.Wrap(transport)
+	download := New(Config{HTTPClient: client})
 	for _, b := range missing {
 		path, _ := c.Path(b)
 		if err := download.downloadSource(ctx, b.URL, path+".part", path, b.SizeBytes, b.SHA256); err != nil {

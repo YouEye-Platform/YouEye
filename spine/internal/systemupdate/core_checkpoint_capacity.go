@@ -16,24 +16,9 @@ import (
 // free bytes may share backing storage and cannot be added together. Capture
 // methods still recheck after writer closure; this is not a space reservation.
 func (p NativeCoreCheckpoint) CheckCompleteCapacity(ctx context.Context, inventory CoreCheckpointInventory, indexes []CorePayloadIndex) (int64, error) {
-	if len(indexes) != 2 {
-		return 0, fmt.Errorf("both complete core service indexes required")
-	}
-	var extra int64 = 1
-	for _, index := range indexes {
-		if err := index.Validate(); err != nil {
-			return 0, err
-		}
-		for _, entry := range index.Entries {
-			size := int64(4096)
-			if entry.Size > size {
-				size = entry.Size
-			}
-			if size > (math.MaxInt64-extra)/2 {
-				return 0, fmt.Errorf("expanded core budget overflow")
-			}
-			extra += size * 2
-		}
+	extra, err := corePayloadStagingBudget(indexes)
+	if err != nil {
+		return 0, err
 	}
 	databases, err := p.inspectDatabaseSizes(ctx)
 	if err != nil {
@@ -72,6 +57,31 @@ func (p NativeCoreCheckpoint) CheckCompleteCapacity(ctx context.Context, invento
 		return 0, fmt.Errorf("insufficient combined Data checkpoint/staging/recovery capacity")
 	}
 	return required, nil
+}
+
+// Both admission and root capture use the same expanded signed-payload budget.
+// A successful combined admission does not permit an unspecified capture budget.
+func corePayloadStagingBudget(indexes []CorePayloadIndex) (int64, error) {
+	if len(indexes) != 2 {
+		return 0, fmt.Errorf("both complete core service indexes required")
+	}
+	var extra int64 = 1
+	for _, index := range indexes {
+		if err := index.Validate(); err != nil {
+			return 0, err
+		}
+		for _, entry := range index.Entries {
+			size := int64(4096)
+			if entry.Size > size {
+				size = entry.Size
+			}
+			if size > (math.MaxInt64-extra)/2 {
+				return 0, fmt.Errorf("expanded core budget overflow")
+			}
+			extra += size * 2
+		}
+	}
+	return extra, nil
 }
 
 func coreDataTreeBytes(root string) (int64, error) {

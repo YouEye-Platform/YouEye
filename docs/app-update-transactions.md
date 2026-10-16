@@ -13,6 +13,20 @@ completed update; pending recovery or cleanup is returned as pending. Provider
 output and exceptions are excluded from these responses.
 Appliance acceptance remains a separate requirement from unit-test coverage.
 
+An identical signed product build can use `operationKind: release-metadata` in
+the same journal. It reserves the app and exact containers, checkpoints only
+release registration metadata, and keeps payload writers running. Recovery
+selects the metadata provider from the durable operation kind; an absent kind
+retains legacy payload recovery. This path cannot declare mutable runtime,
+volume or database resources. See [product release identity](product-release-contract.md)
+for eligibility and installed-evidence limits.
+
+Accepted product release sequence floors may advance during a payload update.
+They are excluded from the credential/ownership revision checked before reopening
+the app, and remain preserved during rollback. Release admission still rejects
+sequence rollback or substitution; changes to credentials, admission policy,
+ownership or secret files still prevent recovery from reopening stale authority.
+
 ## Recovery boundary
 
 An update needs one compatible recovery set covering runtime code, durable

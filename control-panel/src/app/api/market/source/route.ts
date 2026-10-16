@@ -1,9 +1,12 @@
+import { catalogReleaseDisplay } from '@/lib/market/catalog-release';
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { clearCatalogCache } from '@/lib/market/catalog';
 import { getConfiguredMarketSources, getMarketSource, getMarketSources, setMarketSource, setMarketSources } from '@/lib/market/source';
 
 export const dynamic = 'force-dynamic';
+
+const display = async (item: Awaited<ReturnType<typeof getMarketSource>>) => ({...item, release:await catalogReleaseDisplay(item)});
 
 export async function GET() {
   const session = await getSession();
@@ -15,7 +18,7 @@ export async function GET() {
     const source = await getMarketSource();
     const sources = await getConfiguredMarketSources();
     const enabledSources = await getMarketSources();
-    return NextResponse.json({ source, sources, enabledSources });
+    return NextResponse.json({ source:await display(source), sources:await Promise.all(sources.map(display)), enabledSources:await Promise.all(enabledSources.map(display)) });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to read Market source' },
@@ -36,7 +39,7 @@ export async function PATCH(request: NextRequest) {
       const sources = await setMarketSources(body.active_sources);
       const enabledSources = sources.filter((source) => source.enabled);
       clearCatalogCache();
-      return NextResponse.json({ status: 'ok', source: enabledSources[0] || sources[0], sources, enabledSources });
+      return NextResponse.json({ status: 'ok', source: sources.length ? await display(enabledSources[0] || sources[0]) : undefined, sources:await Promise.all(sources.map(display)), enabledSources:await Promise.all(enabledSources.map(display)) });
     }
 
     if (!body?.repo_url || typeof body.repo_url !== 'string') {
@@ -45,7 +48,7 @@ export async function PATCH(request: NextRequest) {
 
     const source = await setMarketSource(body.repo_url, typeof body.branch === 'string' ? body.branch : undefined);
     clearCatalogCache();
-    return NextResponse.json({ status: 'ok', source });
+    return NextResponse.json({ status: 'ok', source:await display(source) });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to update Market source' },

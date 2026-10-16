@@ -15,6 +15,7 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 	"github.com/youeye-platform/YouEye/spine/internal/container"
 	incusutil "github.com/youeye-platform/YouEye/spine/internal/incus"
+	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"github.com/youeye-platform/YouEye/spine/internal/util"
 )
 
@@ -262,6 +263,19 @@ func checkSteadyState() []string {
 }
 
 func runHostIPMigration(opts hostIPMigrationOptions) (hostIPMigrationResult, error) {
+	return runHostIPMigrationWithLifecycle(opts, systemupdate.CoreLifecycleBarrier{Root: systemupdate.CoreAppLifecycleRoot})
+}
+
+func runHostIPMigrationWithLifecycle(opts hostIPMigrationOptions, lifecycle systemupdate.CoreLifecycleBarrier) (hostIPMigrationResult, error) {
+	// Keep boot and steady-state repair out of the coordinator's held writer
+	// set. Hold shared admission through every container/network mutation so a
+	// checkpoint cannot begin halfway through an already-admitted refresh.
+	release, err := lifecycle.AdmitOrdinary()
+	if err != nil {
+		return hostIPMigrationResult{}, err
+	}
+	defer release()
+
 	if opts.Reason == "" {
 		opts.Reason = "manual refresh"
 	}

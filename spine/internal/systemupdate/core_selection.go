@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/x509"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,6 +22,13 @@ import (
 const CoreBootstrapPath = "/var/lib/youeye-state/bootstrap"
 const CoreStatePath = "/var/lib/youeye-state/core-update"
 const CoreDevelopmentTrustPath = "/usr/share/youeye/appliance-development.pub"
+
+// The legacy filesystem anchor belongs to the immutable image and recovery.
+// On a public-built image it is the public signer, not the Alpha publisher.
+// Core selection uses the provisioned development publisher independently.
+//
+//go:embed release-development.pub
+var coreDevelopmentTrustPEM []byte
 
 var coreTrustLookup = updatetrust.Lookup
 
@@ -48,6 +56,9 @@ func CoreRoleKey(source, branch, channel, role, developmentKeyPath string) (ed25
 			return nil, fmt.Errorf("core source has no provisioned public authority")
 		}
 		return publicReleaseKey(channel)
+	}
+	if developmentKeyPath == CoreDevelopmentTrustPath {
+		return updatetrust.Key(string(coreDevelopmentTrustPEM))
 	}
 	return readPublicKey(developmentKeyPath)
 }

@@ -35,6 +35,12 @@ func TestCoreInstallerKeepsReusedHostAuthoritySeparateFromAssembly(t *testing.T)
 	if err != nil || !bytes.Equal(got, stable) || applianceReleaseTrustClass(release) != "stable" {
 		t.Fatal("reused host received the assembly key", err)
 	}
+	core.Channel = "alpha"
+	release.sourceProvider = "custom"
+	got, err = applianceReleaseAnchor(release)
+	if err != nil || !bytes.Equal(got, stable) {
+		t.Fatal("private wrapper replaced original public member authority", err)
+	}
 	core.Members[0].Branch = "dev"
 	if _, err = applianceReleaseAnchor(release); err == nil {
 		t.Fatal("private host accepted in public group")

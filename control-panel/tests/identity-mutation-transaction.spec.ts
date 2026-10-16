@@ -41,6 +41,7 @@ function fixture(busy = false, commitFails = false) {
     if(id==='@/lib/apps/manifest') return {POSTGRES_MANIFEST:{containerName:'postgres'}};
     if(id==='./password-policy') return {requireIdentityPassword(){}};
     if(id==='@/lib/admission/schema') return {ADMISSION_SCHEMA_SQL:''};
+    if(id==='@/lib/updates/core-schema') return {runCoreSchemaOnce:async (_role:string, initialize:()=>Promise<void>) => initialize()};
     if(id==='../market/update-admission') return gate;
     throw Error('Unexpected store dependency '+id);
   }});

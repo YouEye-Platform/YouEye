@@ -44,7 +44,7 @@ func (s NativeCoreServices) Health(ctx context.Context, request string, recovery
 	if _, _, err = m.Selection(digest, s.Cache.TrustKeyPath); err != nil {
 		return "", err
 	}
-	if !j.NoOp {
+	if !j.NoOp && !j.MetadataOnly {
 		if err = s.Checkpoint.verifyReservation(j); err != nil {
 			return "", err
 		}
@@ -57,7 +57,7 @@ func (s NativeCoreServices) Health(ctx context.Context, request string, recovery
 	}
 	var record NativeCoreCheckpointRecord
 	bridge := s.Checkpoint.Bridge
-	if !j.NoOp {
+	if !j.NoOp && !j.MetadataOnly {
 		record, err = s.Checkpoint.Read(j)
 		if err != nil {
 			return "", err
@@ -140,7 +140,7 @@ func (s NativeCoreServices) Health(ctx context.Context, request string, recovery
 			return "", fmt.Errorf("health marker changed")
 		}
 	}
-	if !j.NoOp {
+	if !j.NoOp && !j.MetadataOnly {
 		if err = s.Checkpoint.verifyContainerIdentities(ctx, record.Inventory, false); err != nil {
 			return "", err
 		}

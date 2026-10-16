@@ -45,6 +45,61 @@ func TestCoreReusedPublicMemberResolvesItsOriginalScopedKey(t *testing.T) {
 	}
 }
 
+func TestCoreAlphaAuthorityIsIndependentOfPublicImageAndRevocationWins(t *testing.T) {
+	alpha, alphaPrivate, _ := ed25519.GenerateKey(rand.Reader)
+	stable, stablePrivate, _ := ed25519.GenerateKey(rand.Reader)
+	pemKey := func(key ed25519.PublicKey) []byte {
+		der, _ := x509.MarshalPKIXPublicKey(key)
+		return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	}
+	previous, previousLookup, previousPublic := coreDevelopmentTrustPEM, coreTrustLookup, publicReleaseTrustJSON
+	t.Cleanup(func() {
+		coreDevelopmentTrustPEM, coreTrustLookup, publicReleaseTrustJSON = previous, previousLookup, previousPublic
+	})
+	coreDevelopmentTrustPEM = pemKey(alpha)
+	publicReleaseTrustJSON, _ = json.Marshal(map[string]any{"schema": "youeye.public-trust.v1", "keys": map[string]string{"stable": string(pemKey(stable))}})
+	policy := updatetrust.Policy{Schema: updatetrust.Schema}
+	coreTrustLookup = func(source, branch, scope string) (*updatetrust.Grant, error) {
+		return policy.Lookup(source, branch, scope)
+	}
+	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, _, err := releasecache.ParseCoreRelease(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Source, r.Branch, r.Channel, r.Version, r.Tag = "https://forge.example/team/YouEye", "main", "alpha", "0.5.41-alpha.1", "youeye-v0.5.41-alpha.1"
+	der, _ := x509.MarshalPKIXPublicKey(alpha)
+	r.SignerSHA256 = fmt.Sprintf("%x", sha256.Sum256(der))
+	raw, _ = json.Marshal(r)
+	if _, _, err = VerifyCoreSelection(raw, ed25519.Sign(alphaPrivate, raw), CoreDevelopmentTrustPath); err != nil {
+		t.Fatal("public-built image cannot accept provisioned Alpha authority", err)
+	}
+	if _, _, err = VerifyCoreSelection(raw, ed25519.Sign(stablePrivate, raw), CoreDevelopmentTrustPath); err == nil {
+		t.Fatal("factory image signer replaced Alpha authority")
+	}
+	member := releasecache.CoreMember{Source: releasecache.OfficialRepository, Branch: "main", BuildVersion: "0.5.40", Role: "appliance"}
+	key, err := CoreMemberKey(member, "alpha", CoreDevelopmentTrustPath)
+	if err != nil || !bytes.Equal(key, stable) {
+		t.Fatal("Alpha label changed original public member authority", err)
+	}
+	policy.Grants = []updatetrust.Grant{{Publisher: "Owner", Repository: r.Source, Branch: "main", Scope: "appliance", PublicKey: string(pemKey(alpha)), Revoked: true}}
+	if _, _, err = VerifyCoreSelection(raw, ed25519.Sign(alphaPrivate, raw), CoreDevelopmentTrustPath); err == nil {
+		t.Fatal("revocation fell back to compiled Alpha authority")
+	}
+}
+
+func TestCoreDevelopmentAuthorityMatchesInstallerAndComponentProvisioning(t *testing.T) {
+	for _, path := range []string{"../../../installer/internal/installer/appliance-development.pub", "../releases/release-development.pub"} {
+		raw, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(bytes.TrimSpace(raw), bytes.TrimSpace(coreDevelopmentTrustPEM)) {
+			t.Fatalf("development authorities drifted at %s: %v", path, err)
+		}
+	}
+}
+
 func TestCoreSelectionRechecksRoleRevocationAndExactPolicy(t *testing.T) {
 	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
 	if err != nil {

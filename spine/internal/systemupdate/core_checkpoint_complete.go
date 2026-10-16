@@ -37,8 +37,8 @@ func (p NativeCoreCheckpoint) ReleaseCompleted(ctx context.Context, request stri
 	if !complete {
 		return "", fmt.Errorf("native platform cannot reopen before durable complete acceptance")
 	}
-	if j.NoOp {
-		return "verified no-op has no checkpoint or maintenance to release", nil
+	if j.NoOp || j.MetadataOnly {
+		return "verified unchanged payloads have no checkpoint or maintenance to release", nil
 	}
 	record, err := p.Read(j)
 	if err != nil {

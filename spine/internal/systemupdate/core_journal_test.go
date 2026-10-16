@@ -86,6 +86,13 @@ func coreJournalFixture(t *testing.T) (CoreManager, *coreTestExecutor, releaseca
 	r.Tag = "youeye-v0.5.38"
 	r.Sequence = 2
 	r.PreviousManifestSHA256 = digest
+	// The default fixture changes CP. Promotion-only tests explicitly retain all
+	// original members; a version label alone no longer installs services.
+	for i := range r.Members {
+		if r.Members[i].Role == "cp" {
+			r.Members[i].Artifact.SHA256 = strings.Repeat("e", 64)
+		}
+	}
 	return m, e, r
 }
 

@@ -1,3 +1,4 @@
+import { acceptCatalogRelease, discoverCatalogRelease, readAcceptedCatalog, resolveCatalogDependencySource, verifyCatalogFile, verifyCatalogSnapshot } from './catalog-release';
 import { releaseCacheFetch } from '../releases/cache';
 import { loadCatalogEntries, type CatalogWarning } from './partial-catalog';
 /**
@@ -72,10 +73,16 @@ export interface SystemManifestFetchResult {
  * per-source branch.
  */
 export async function getEffectiveBranch(source?: MarketSource): Promise<string> {
+  if (source) {
+    const accepted = await readAcceptedCatalog(source);
+    if (accepted) return accepted.selected.build.source_commit;
+  }
   if (source?.resolved_commit) return source.resolved_commit;
   if (source?.branch) return source.branch;
   try {
     const primary = await getMarketSource();
+    const accepted = await readAcceptedCatalog(primary);
+    if (accepted) return accepted.selected.build.source_commit;
     if (primary.branch) return primary.branch;
   } catch {
     // fall through to legacy/global
@@ -106,11 +113,16 @@ export async function fetchFile(filePath: string, branch?: string, marketSource?
   }
 
   if (!res.ok) throw new Error(`Failed to fetch ${filePath}: ${res.status}`);
-  return res.text();
+  const text = await res.text();
+  const accepted = await readAcceptedCatalog(source);
+  if (accepted && effectiveBranch === accepted.selected.build.source_commit) verifyCatalogFile(accepted.snapshot, filePath, text);
+  return text;
 }
 
 export async function fetchRepoFile(owner: string, repo: string, filePath: string, branch: string, marketSource?: MarketSource): Promise<string> {
-  const source = marketSource || await getMarketSource();
+  const selectedSource = marketSource || await getMarketSource();
+  const source = owner === selectedSource.organization && repo === selectedSource.repository
+    ? selectedSource : await resolveCatalogDependencySource(selectedSource);
   const url = buildMarketRawURL(source, owner, repo, filePath, branch);
   const res = await releaseCacheFetch(url, { signal: AbortSignal.timeout(15_000) });
 
@@ -164,8 +176,26 @@ export async function fetchCatalog(marketSource?: MarketSource): Promise<Catalog
 }
 
 async function fetchValidatedSourceCatalog(source: MarketSource): Promise<Catalog> {
+  const accepted = await readAcceptedCatalog(source);
   const previousCommit = source.resolved_commit;
   try {
+    const selected = await discoverCatalogRelease(source);
+    if (selected) {
+      const { downloadMarketProductBlob } = await import('./native-artifact');
+      const snapshotBytes = await downloadMarketProductBlob(selected,'catalog-snapshot.json');
+      const snapshot = verifyCatalogSnapshot(selected,snapshotBytes);
+      const commit = selected.build.source_commit;
+      const yamlText = accepted?.selected.build.source_commit === commit
+        ? accepted.catalog : await fetchFile('catalog.yaml',commit,source,false);
+      verifyCatalogFile(snapshot,'catalog.yaml',yamlText);
+      const catalog = parseCatalog(yamlText);
+      await acceptCatalogRelease(source,selected,snapshotBytes,yamlText);
+      source.resolved_commit = commit;
+      source.resolved_at = new Date().toISOString();
+      source.refresh_error = undefined;
+      await recordMarketSourceResolution(source.id,{commit});
+      return catalog;
+    }
     const commit = await resolveMarketSourceCommit(source);
     const yamlText = await fetchFile('catalog.yaml', commit, source, false);
     const catalog = parseCatalog(yamlText);
@@ -178,6 +208,10 @@ async function fetchValidatedSourceCatalog(source: MarketSource): Promise<Catalo
     const message = error instanceof Error ? error.message : 'Market refresh failed';
     source.refresh_error = message;
     await recordMarketSourceResolution(source.id, { error: message }).catch(() => {});
+    if (accepted) {
+      source.resolved_commit = accepted.selected.build.source_commit;
+      return parseCatalog(accepted.catalog);
+    }
     if (previousCommit) {
       const yamlText = await fetchFile('catalog.yaml', previousCommit, source, false);
       source.resolved_commit = previousCommit;
@@ -297,9 +331,11 @@ export async function resolveCatalogApp(
       reference: result.reference,
       fetchedAt: Date.now(),
     });
+    const dependencySource = entry.repo ? await resolveCatalogDependencySource(source) : source;
     return {
       source,
-      entry,
+      entry: entry.repo && dependencySource.base_url !== source.base_url
+        ? {...entry, repo: `${dependencySource.base_url}/${entry.repo}`} : entry,
       configuredSourceRepoUrls: sources.map((candidate) => candidate.repo_url),
       ...result,
     };
@@ -413,9 +449,10 @@ async function fetchManifestFromCatalogEntry(
   }
 
   if (entry.repo && manifest.integration === 'native') {
+    const dependencySource = await resolveCatalogDependencySource(source);
     for (const container of manifest.containers) {
       if (container.type === 'lxd' && container.source) {
-        container.source.repo = publicNativeManifestRepo(source, entry.repo, container.source.repo);
+        container.source.repo = publicNativeManifestRepo(dependencySource, entry.repo, container.source.repo);
       }
     }
   }
@@ -553,7 +590,7 @@ function proxyImageUrl(url: string): string {
   return `/api/market/image?url=${encodeURIComponent(url)}`;
 }
 
-async function resolveManifestPaths(
+export async function resolveManifestPaths(
   manifest: AppManifest,
   owner: string,
   repo: string,
@@ -562,7 +599,9 @@ async function resolveManifestPaths(
   /** App folder for the new layout (e.g. `apps/redlib`); relative assets resolve under it. */
   basePath?: string
 ): Promise<void> {
-  const source = marketSource || await getMarketSource();
+  const selectedSource = marketSource || await getMarketSource();
+  const source = owner === selectedSource.organization && repo === selectedSource.repository
+    ? selectedSource : await resolveCatalogDependencySource(selectedSource);
   // Use the same immutable source for manifests, icons and screenshots.
   const assetURL = (asset: string) => buildMarketRawURL(source, owner, repo,
     basePath ? `${basePath.replace(/\/+$/, '')}/${asset}` : asset, branch);

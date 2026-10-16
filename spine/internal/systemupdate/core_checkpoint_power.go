@@ -34,7 +34,7 @@ func (p NativeCoreCheckpoint) PrepareHealth(ctx context.Context, request string,
 	if j.Phase != phase || !active {
 		return fmt.Errorf("active core health step required before restoring power")
 	}
-	if j.NoOp && !recovery {
+	if (j.NoOp || j.MetadataOnly) && !recovery {
 		return nil
 	}
 	if err = p.verifyReservation(j); err != nil {
@@ -86,7 +86,8 @@ func (p NativeCoreCheckpoint) PrepareHealth(ctx context.Context, request string,
 				found = true
 			}
 		}
-		if !found || seen[start.Name] || (start.State != "requested" && start.State != "running") {
+		observedDNS := start.State == "observed-running" && recoveredHostDNS(j, record, recovery, start.Name)
+		if !found || seen[start.Name] || (start.State != "requested" && start.State != "running" && !observedDNS) {
 			return fmt.Errorf("power restoration receipt differs from frozen inventory")
 		}
 		seen[start.Name] = true
@@ -121,15 +122,26 @@ func (p NativeCoreCheckpoint) PrepareHealth(ctx context.Context, request string,
 			}
 		}
 		if index < 0 {
-			if observeOnly || actual.Status != "Stopped" {
+			// Older hosts start their DNS container outside the lifecycle lease
+			// when booting the previous image. Accept only this exact, held,
+			// originally running DNS instance after verified host recovery. This
+			// records an observation, not a start we did not perform.
+			observedDNS := actual.Status == "Running" && recoveredHostDNS(j, record, recovery, c.Name)
+			if observeOnly || (actual.Status != "Stopped" && !observedDNS) {
 				return fmt.Errorf("platform start has no owned intent")
 			}
-			*starts = append(*starts, CorePowerRestore{Name: c.Name, UUID: c.UUID, State: "requested"})
+			state := "requested"
+			if observedDNS {
+				state = "observed-running"
+			}
+			*starts = append(*starts, CorePowerRestore{Name: c.Name, UUID: c.UUID, State: state})
 			index = len(*starts) - 1
 			if err = p.saveRecord(record); err != nil {
 				return err
 			}
-			_, _ = p.capture(ctx, "incus", "start", c.Name)
+			if !observedDNS {
+				_, _ = p.capture(ctx, "incus", "start", c.Name)
+			}
 			actual, err = p.completionContainer(ctx, c)
 			if err != nil {
 				return err
@@ -138,10 +150,24 @@ func (p NativeCoreCheckpoint) PrepareHealth(ctx context.Context, request string,
 		if actual.Status != "Running" || actual.Config["user.youeye.core-request"] != j.RequestID || actual.Config["boot.autostart"] != "false" {
 			return fmt.Errorf("platform start remains uncertain; native replay refused")
 		}
-		(*starts)[index].State = "running"
+		if (*starts)[index].State == "requested" {
+			(*starts)[index].State = "running"
+		}
 		if err = p.saveRecord(record); err != nil {
 			return err
 		}
 	}
 	return p.requireProviderSettled(ctx)
+}
+
+func recoveredHostDNS(j CoreJournal, record NativeCoreCheckpointRecord, recovery bool, name string) bool {
+	if !recovery || !j.RestartRequired || name != "youeye-pihole" || record.Phase != "paired-restored" {
+		return false
+	}
+	for _, step := range j.RecoverySteps {
+		if step.Name == "recovery-host" && step.State == "succeeded" && step.Evidence != "" {
+			return true
+		}
+	}
+	return false
 }

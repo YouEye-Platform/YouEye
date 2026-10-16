@@ -74,7 +74,7 @@ func initializeInstalledCore(ctx context.Context, policyPath string) error {
 			if err := verifyDeploymentCompletion(hostIP); err != nil {
 				return systemupdate.CoreMachineIdentity{}, "", err
 			}
-			if err := verifyFreshCorePayloads(ctx, m, release); err != nil {
+			if err := verifyFreshCorePayloads(ctx, m, systemupdate.CoreHostSelection{Raw: raw, Signature: sig}); err != nil {
 				return systemupdate.CoreMachineIdentity{}, "", err
 			}
 			machine, err := installedCoreMachine()
@@ -87,13 +87,18 @@ func initializeInstalledCore(ctx context.Context, policyPath string) error {
 	return nil
 }
 
-func verifyFreshCorePayloads(ctx context.Context, m systemupdate.CoreManager, release releasecache.CoreRelease) error {
+func verifyFreshCorePayloads(ctx context.Context, m systemupdate.CoreManager, selection systemupdate.CoreHostSelection) error {
 	configuration := GetConfig()
+	cache := systemupdate.CoreArtifactCache{Root: "/var/lib/youeye/cache/core-update", TrustKeyPath: systemupdate.CoreDevelopmentTrustPath}
+	release, _, err := cache.StageFreshServices(ctx, selection)
+	if err != nil {
+		return fmt.Errorf("retain fresh service verification inputs: %w", err)
+	}
 	for _, member := range release.Members {
 		if member.Role != "cp" && member.Role != "ui" {
 			continue
 		}
-		index, err := systemupdate.IndexCachedCoreMember(member, release.Channel, systemupdate.CoreDevelopmentTrustPath, releasecache.Root())
+		index, err := cache.IndexMember(member, release.Channel)
 		if err != nil {
 			return fmt.Errorf("derive %s installed payload identity: %w", member.Role, err)
 		}

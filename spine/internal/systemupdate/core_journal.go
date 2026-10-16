@@ -36,6 +36,7 @@ type CoreStep struct {
 }
 
 type CoreJournal struct {
+	MetadataOnly        bool                     `json:"metadata_only,omitempty"`
 	RecoverySteps       []CoreStep               `json:"recovery_steps,omitempty"`
 	NoOp                bool                     `json:"no_op,omitempty"`
 	Schema              string                   `json:"schema"`
@@ -190,16 +191,27 @@ func coreStepNames(restart bool) []string {
 }
 
 func coreJournalStepNames(j CoreJournal) []string {
-	if j.NoOp {
+	if j.NoOp || j.MetadataOnly {
 		return []string{"verify-members", "authenticated-health"}
 	}
 	return coreStepNames(j.RestartRequired)
+}
+
+// A promoted assembly may change its release/source/channel identity, but not
+// any signed payload, dependency or reader/schema requirement. Original member
+// identities remain intact. Authority is independently rechecked at each step.
+func sameCorePayloads(previous, target releasecache.CoreRelease) bool {
+	return previous.Schema == target.Schema && previous.MinimumReader == target.MinimumReader &&
+		reflect.DeepEqual(previous.Compatibility, target.Compatibility) && reflect.DeepEqual(previous.Members, target.Members)
 }
 
 func validateCoreSteps(j CoreJournal) error {
 	names := coreJournalStepNames(j)
 	if j.NoOp && (j.ManifestSHA256 != j.Previous.ManifestSHA256 || !reflect.DeepEqual(j.Target, j.Previous.Release) || j.RestartRequired) {
 		return fmt.Errorf("invalid no-op core selection")
+	}
+	if j.MetadataOnly && (j.NoOp || j.ManifestSHA256 == j.Previous.ManifestSHA256 || j.RestartRequired || !sameCorePayloads(j.Previous.Release, j.Target)) {
+		return fmt.Errorf("invalid metadata-only core selection")
 	}
 	if len(names) != len(j.Steps) {
 		return fmt.Errorf("core journal step graph changed")
@@ -318,6 +330,7 @@ func (m CoreManager) Prepare(ctx context.Context, requestID string, raw []byte, 
 		return CoreJournal{}, fmt.Errorf("release sequence does not advance the installed source track")
 	}
 	j := CoreJournal{Schema: CoreJournalSchema, RequestID: requestID, ManifestSHA256: digest, Target: target, Previous: previous, Phase: "prepared", NoOp: previous.ManifestSHA256 == digest}
+	j.MetadataOnly = !j.NoOp && sameCorePayloads(previous.Release, target)
 	for _, role := range []string{"appliance", "spine", "system-root", "system-a-uki", "system-b-uki", "system-updater", "internal-recovery", "recovery-uki"} {
 		var before, after releasecache.CoreMember
 		for _, v := range previous.Release.Members {

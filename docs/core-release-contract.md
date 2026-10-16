@@ -63,6 +63,37 @@ checks the running immutable image separately from CP/UI member selection, and
 hands the signed selection to CP for its own role verification. Original signed
 checksum filenames remain authoritative even when remote assets are namespaced.
 
+New media carries a `core-selection-required` capability marker. Interactive,
+seeded and answer-file installs freeze and authenticate the complete selection
+before disk writes. The selected assembly must contain the exact verified image
+and baked Spine; image version alone is not sufficient. New media cannot fall
+back to legacy appliance discovery. Existing v4 transport-cache answers require
+a matching v5 selection on new media; they are never silently rewritten with a
+new cache identity.
+
+The first resumable checkpoint retains signed selection bytes and their policy
+under protected State storage, bound to the original transaction, disk serial
+and image digest. Resume authenticates that retained selection instead of
+following a moving channel. A supplied resume answer cannot change it. Missing
+retained evidence requires the original installation inputs and recovery; it
+does not authorize choosing another release.
+
+Public first deployment stages only the exact CP/UI verification envelopes in
+the protected content-addressed cache. It verifies the original role signatures
+before deriving installed file indexes. No private transport cache is required.
+Existing corrupt blobs fail closed; missing blobs use constrained HTTPS artifact
+retrieval. Official GitHub asset redirects are bounded and cross-origin requests
+strip authorization and cookies. API discovery retains its separate policy.
+
+A new signed assembly with identical complete members, dependency graph and
+compatibility contract uses a metadata-only transaction. It verifies current
+policy, signing authority, sequence, installed files and authenticated service
+health, then commits the accepted release receipt. It does not download payloads,
+replace services, run migrations, capture a checkpoint or restart the host.
+The exact-digest no-op remains distinct. Changed members or compatibility take
+the normal update path, and interrupted receipt commits reconcile under the
+original request identity.
+
 Host staging uses the assembly's exact aliased URLs and checks original signed
 payload names against the independently verified host manifest. Its durable host
 journal binds the assembly digest; activation rereads its protected signed bytes.
@@ -144,6 +175,16 @@ user images and avatars in mounted `/var/lib/youeye/ui-data`, included in core
 backup. Image URLs are preserved by data-serving routes. This changes fresh
 installation inputs; it does not move files on existing owner machines.
 
+Native payload and protected metadata writes remain anchored to the exact
+container filesystem descriptors. On an idmapped mount, a host identity may
+be unmappable even though reads succeed. Only an `EOVERFLOW` namespace-write
+rejection may retry the same syscall using the verified parent directory's
+mapped owner, on an isolated locked thread. Restore and check the original
+filesystem credentials before returning the thread; retire it if restoration
+cannot be proved. This does not enter a container namespace, run container
+executables, relax exclusive creation/no-follow rules, or replay an uncertain
+extraction. Journal writes and all later verification retain host authority.
+
 Native checkpoint inventory binds the current machine, exact container UUIDs,
 original power/autostart intent, installed app ownership and explicit ZFS file
 coverage. Foreign workloads, unsettled lifecycle records and uncovered nested
@@ -173,8 +214,11 @@ the presence of this contract does not establish a released or installed update.
 
 Native root capture freezes each expanded root pool and verifies it again before
 snapshots. Admission includes complete checkpoint and restore copies plus the
-expanded target payload; shared pool free space is not counted twice. Creates
-record intent first and use non-expiring exact names. A lost acknowledgement can
+expanded target payload; shared pool free space is not counted twice. Both paths
+use the same validated CP/UI payload indexes to derive a positive expanded
+budget for root capture as for complete admission; a passed admission never
+permits an unspecified capture budget. Creates record intent first and use
+non-expiring exact names. A lost acknowledgement can
 reconcile an owned, unchanged snapshot; absence after intent remains unknown and
 never automatically replays creation. Root snapshots alone are not the complete
 paired checkpoint: logical database archives, persistent files, restore and
@@ -298,6 +342,69 @@ per-track signed sequence floors survive retries; public catalog expiry and
 anti-replay checks remain in the existing distribution reader. Historical v1
 installation/component records remain available to old readers; a canonical core
 record does not become an independent component upgrade for them.
+
+### Stable reader bootstrap
+
+The signed `youeye-system-update-bootstrap --core <exact-core-manifest-url>`
+bridge supports an installed complete Core whose old reader cannot retrieve
+the new public release. The separate legacy Plan 1 development mode remains
+unchanged. The Core bridge requires the official Stable assembly and an original
+Stable Spine envelope; it reads the installed owner's current scoped trust,
+honors revocation/overrides, and verifies both assembly and original role
+signatures before executing downloaded code. `--inputs` accepts a protected
+offline directory containing `core-release.json`, `core-release.json.sig`,
+`artifact`, `checksums`, `signature`, `provenance` and `sbom`; it preserves the
+original public source identities and all checks. It does not import or patch
+an installation candidate cache.
+
+Spine transport accepts the signed original filename or its published `spine-`
+prefix under the exact signed Stable build tag. For promoted releases whose
+original build tag is unpublished, only HTTP 404 permits the selected assembly's
+`blob-<sha256>` mirror. Permission errors, transport failures and wrong bytes do
+not trigger that fallback; both original signatures and exact sizes/hashes remain
+mandatory.
+
+The exact binary and original envelope remain in a protected content-addressed
+State directory. A retained bootstrap record binds them to one normal paired
+update request. The current boot receives one owned drop-in under `/run/systemd/system`,
+pointing to this coordinator without writing the immutable `/etc` tree. The
+protected coordinator and journal survive reboot; the runtime drop-in does not.
+A compatible target host uses its baked reader to continue the retained signed
+coordinator. Boot continuation waits for Incus's completed readiness check,
+including its autostart containers. Host-IP startup and steady-state maintenance
+take the ordinary shared lifecycle lease, so they cannot restart held containers
+or change their network while a System update or recovery owns the reservation.
+Recovery observation of an unfinished apply keeps missing service-stage evidence
+unknown. It checks previous-release authority and durable host commitment before
+fencing; it neither requires forward-only schema probes nor replays the apply.
+An explicit recovery request records its recovery intent before observing an
+interrupted apply, including when the journal still says applying. Previous-release
+authority, the uncommitted receipt and an existing checkpoint are checked first;
+owned-child fencing and paired restoration remain separate mandatory steps.
+If interrupted or rolled back onto an older host, rerun the same
+verified bootstrap command with the same exact manifest and inputs. It restores
+the runtime override and resumes the retained apply or recovery graph; it does
+not create a second update. Automatic continuation on the incompatible older
+host is not promised, and retained recovery/data holds must not be removed.
+An older host can also start its own DNS container before that continuation.
+After verified previous-host recovery, the coordinator may record the already
+running Pi-hole as an observation, without issuing or inventing a start. This
+requires its originally running power state, unchanged UUID, exact recovery
+ownership and disabled autostart. Other unexpected starts, originally stopped
+containers and forward-update startup still fail closed; final authenticated
+health and all paired recovery checks remain required.
+Every invocation rechecks the signed target and original role envelope. Host
+health observes the canonical baked executable against the running image,
+separately from the temporary coordinator. Staging alone does not activate;
+`--activate` requests the ordinary counted host transition.
+
+After verified commit, rollback or cancellation, cleanup removes only that
+exact boot override and retires the bootstrap record. The binary/envelope stay
+until no process needs them and ordinary retention can remove that exact set.
+No host executable, owner trust, channel choice, app data or recovery guarantee
+is replaced by the bootstrap path. Runtime acceptance must include the actual
+old-reader transition and interrupted continuation; source tests alone do not
+establish compatibility.
 
 Private repository main uses Alpha; public main uses Stable. Raw branch identity
 is preserved independently of the suffix. First boot with require-current stays

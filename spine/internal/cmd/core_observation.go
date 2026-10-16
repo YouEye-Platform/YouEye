@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
@@ -29,12 +28,12 @@ func (coreAPIOperations) ObserveInstalled(ctx context.Context, receipt systemupd
 			if err = systemupdate.BindCoreImage(receipt.Release, *image); err != nil {
 				return err
 			}
-			executable, err := os.Executable()
+			executable, bootstrap, err := coreInstalledExecutable()
 			if err != nil {
 				return err
 			}
 			digest, err := fileSHA256(executable)
-			if err != nil || image.ReleaseSet == nil || digest != image.ReleaseSet.Spine.ArtifactSHA256 || Version != image.ReleaseSet.Spine.Version {
+			if err != nil || image.ReleaseSet == nil || digest != image.ReleaseSet.Spine.ArtifactSHA256 || !bootstrap && Version != image.ReleaseSet.Spine.Version {
 				return fmt.Errorf("running Spine differs from signed member")
 			}
 			return nil

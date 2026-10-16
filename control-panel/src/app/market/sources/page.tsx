@@ -16,6 +16,7 @@ interface MarketSourceConfig {
   repo_url: string;
   branch: string;
   resolved_commit?: string;
+  release?: { version: string; channel: string; build_version: string } | null;
   resolved_at?: string;
   refresh_error?: string;
   enabled: boolean;
@@ -38,11 +39,12 @@ export default function MarketSourcesPage() {
   const load = useCallback(async () => {
     setError('');
     try {
-      const [srcRes, catRes, domRes] = await Promise.all([
-        fetch('/api/market/source'),
+      const [catRes, domRes] = await Promise.all([
         fetch('/api/market/catalog'),
         fetch('/api/domain'),
       ]);
+      // Catalog refresh accepts its signed release before rendering that label.
+      const srcRes = await fetch('/api/market/source');
       if (srcRes.ok) {
         const d = await srcRes.json();
         setSources(d.sources?.length ? d.sources : d.source ? [d.source] : []);
@@ -206,7 +208,8 @@ export default function MarketSourcesPage() {
                     {s.enabled ? '' : ' · disabled'}
                   </div>
                   <div className="truncate font-mono text-[11px] text-muted-foreground">
-                    Channel {s.branch || 'main'}
+                    {s.release ? `Version ${s.release.version} · ${s.release.channel}` : `Channel ${s.branch || 'main'}`}
+                    {s.release && s.release.build_version !== s.release.version ? ` · build ${s.release.build_version}` : ''}
                     {s.resolved_commit ? ` · resolved ${s.resolved_commit.slice(0, 12)}` : ' · not resolved yet'}
                   </div>
                   {s.refresh_error && <div className="truncate text-[11px] text-destructive">Last refresh failed: {s.refresh_error}</div>}

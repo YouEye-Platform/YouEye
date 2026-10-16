@@ -16,6 +16,18 @@ import { readJSON, writeJSON, statePath } from '@/lib/storage/json-store';
 
 const STORE_PATH = statePath('core-versions.json');
 
+async function pointerProvenance(): Promise<CoreProvenance | null> {
+  const {readPointerReleaseState,pointerRelease} = await import('../pointer/release-metadata');
+  const state = await readPointerReleaseState(), selected = pointerRelease(state);
+  if (!selected) return null;
+  const {productRuntimeIdentity} = await import('../releases/product-projection');
+  if (await productRuntimeIdentity('youeye-pointer') !== state.installed!.runtimeUUID) throw new Error('Pointer runtime differs from accepted release');
+  const r = selected.release;
+  return {version:r.version,tag:r.tag,branch:r.branch,source:r.source,
+    artifact_sha256:selected.build.assets.find(a=>a.name === 'standalone.tar')!.sha256,updated_at:state.installed!.acceptedAt || ''};
+}
+
+
 export interface CoreProvenance {
   version: string;
   tag: string | null;
@@ -29,13 +41,20 @@ type CoreVersionsStore = Record<string, CoreProvenance>;
 
 /** Read the provenance record for a core component CP manages (e.g. "ui"). */
 export async function getCoreProvenance(component: string): Promise<CoreProvenance | null> {
+  if (component === 'app:pointer') {
+    const installed = await pointerProvenance();
+    if (installed) return installed;
+  }
   const store = (await readJSON<CoreVersionsStore>(STORE_PATH)) ?? {};
   return store[component] ?? null;
 }
 
 /** Read the whole core-versions store. */
 export async function getAllCoreProvenance(): Promise<CoreVersionsStore> {
-  return (await readJSON<CoreVersionsStore>(STORE_PATH)) ?? {};
+  const store = (await readJSON<CoreVersionsStore>(STORE_PATH)) ?? {};
+  const installed = await pointerProvenance();
+  if (installed) store['app:pointer'] = installed;
+  return store;
 }
 
 /**

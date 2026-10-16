@@ -131,7 +131,7 @@ func resolveCoreApplianceRelease(ctx context.Context, client *http.Client, provi
 			members[member.Role] = member
 		}
 		host, media := members["appliance"], members["media"]
-		if host.Source != source || media.Source != host.Source || media.Branch != host.Branch || media.BuildVersion != host.BuildVersion || media.Tag != host.Tag || media.KeyID != host.KeyID || media.Checksums != host.Checksums {
+		if media.Source != host.Source || media.Branch != host.Branch || media.BuildVersion != host.BuildVersion || media.Tag != host.Tag || media.KeyID != host.KeyID || media.Checksums != host.Checksums {
 			return selected, true, fmt.Errorf("core media differs from selected host source")
 		}
 		candidate.core = &manifest

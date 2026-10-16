@@ -119,6 +119,21 @@ func (m CoreManager) Recover(ctx context.Context, requestID string) (CoreJournal
 			if s.Name == "checkpoint" && s.State != "pending" {
 				checkpointStarted = true
 			}
+		}
+		if !checkpointStarted {
+			return j, fmt.Errorf("no activation checkpoint exists; use staged cancellation")
+		}
+		// Persist the authorized recovery intent before reconciling interrupted
+		// apply work. Otherwise an applying journal still invokes forward schema
+		// probes, which cannot complete a partially staged service. This admits
+		// no restore: exact live-child ownership and the native fence remain below.
+		if j.Phase != "needs-recovery" {
+			j.Phase = "needs-recovery"
+			if err := m.saveCore(&j); err != nil {
+				return j, err
+			}
+		}
+		for _, s := range j.Steps {
 			if s.State == "started" {
 				observation, err := m.Executor.Observe(ctx, j, s)
 				if err != nil {
@@ -134,9 +149,6 @@ func (m CoreManager) Recover(ctx context.Context, requestID string) (CoreJournal
 					}
 				}
 			}
-		}
-		if !checkpointStarted {
-			return j, fmt.Errorf("no activation checkpoint exists; use staged cancellation")
 		}
 		for _, name := range coreRecoveryNames(j) {
 			j.RecoverySteps = append(j.RecoverySteps, CoreStep{Name: name, RequestID: j.RequestID + "/" + name, State: "pending"})

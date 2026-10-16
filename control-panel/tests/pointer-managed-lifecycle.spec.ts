@@ -87,6 +87,6 @@ test('static updates require admin and CSRF before streaming and share lifecycle
   const stream = route.indexOf('new ReadableStream');
   assert.ok(route.indexOf('if (!session.isAdmin)') < stream);
   assert.ok(route.indexOf('await verifyCSRFToken') < stream);
-  assert.match(updater, /withAppLifecycle\(appDef\.id, \(\) => updateLXDAppUnderLifecycle/);
+  assert.match(updater, /withAppLifecycle\(appDef\.id, async \(\) => \{\s*await assertIndependentCoreUpdate\(appDef\.id\);\s*return updateLXDAppUnderLifecycle/);
   assert.ok(updater.indexOf("if (appDef.id === 'pointer') await configurePointerService();", updater.indexOf('// 11. Start service')) > 0);
 });

@@ -4,7 +4,7 @@ import { createHash, createPublicKey } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
-import { promisify } from 'node:util';
+import { isDeepStrictEqual, promisify } from 'node:util';
 
 import {
   listInfrastructureReleases,
@@ -13,7 +13,9 @@ import {
 import type { ReleaseAsset, ReleaseSource } from '@/lib/apps/release-source';
 import { releaseArtifactTrust, verifySignedReleaseArtifactBuffer } from '@/lib/releases/verify';
 import { getReleaseAssetDownloadURL } from '@/lib/apps/release-source';
-import { getMarketSource, getMarketSources, type MarketSource } from './source';
+import { ProductAssetNotFound, loadProductRelease, loadProductBlob, productReceipt, type InstalledProductReceipt, type VerifiedProductRelease } from '@/lib/releases/product-release';
+import { releaseCacheFetch } from '@/lib/releases/cache';
+import { getMarketSource, getMarketSources, publicNativeManifestRepo, type MarketSource } from './source';
 import type { AppManifest, ContainerSpec, InstallConfig } from './types';
 
 const execFileAsync = promisify(execFile);
@@ -43,6 +45,8 @@ export interface StagedMarketNativeArtifact {
   artifactSHA256: string;
   artifactBytes: number;
   signature: MarketNativeSignature;
+  productRelease?: InstalledProductReceipt;
+  runtimeUUID?: string;
 }
 
 export interface StagedMarketNativeArtifacts {
@@ -121,7 +125,7 @@ function releaseSourceForRepo(repo: string, marketSource: MarketSource): { sourc
   };
 }
 
-async function selectedMarketSource(config: InstallConfig): Promise<MarketSource> {
+async function selectedMarketSource(config: Pick<InstallConfig, 'sourceId' | 'sourceRepoUrl' | 'manifestBranch'>): Promise<MarketSource> {
   if (config.sourceId?.startsWith('direct:') && config.sourceRepoUrl) {
     const parsed = new URL(config.sourceRepoUrl);
     const parts = parsed.pathname.split('/').filter(Boolean);
@@ -148,14 +152,15 @@ async function selectedMarketSource(config: InstallConfig): Promise<MarketSource
       repository: apiRepo.repository,
     };
   }
+  const { resolveCatalogDependencySource } = await import('./catalog-release');
   if (config.sourceId && !config.sourceId.startsWith('direct:')) {
     const configured = (await getMarketSources()).find((source) => source.id === config.sourceId);
-    if (configured) return configured;
+    if (configured) return resolveCatalogDependencySource(configured);
   }
-  return getMarketSource();
+  return resolveCatalogDependencySource(await getMarketSource());
 }
 
-export async function downloadMarketNativeArtifact(url: string, fetchImpl: typeof fetch = fetch, maxBytes = MAX_ARTIFACT_BYTES): Promise<Buffer> {
+export async function downloadMarketNativeArtifact(url: string, fetchImpl: typeof fetch = releaseCacheFetch, maxBytes = MAX_ARTIFACT_BYTES): Promise<Buffer> {
   const initial = new URL(url);
   let current = initial;
   let response: Response | null = null;
@@ -179,7 +184,11 @@ export async function downloadMarketNativeArtifact(url: string, fetchImpl: typeo
     current = next;
   }
   if (!response) throw new MarketNativeArtifactPolicyError('Native app artifact request did not complete');
-  if (!response.ok) throw new MarketNativeArtifactPolicyError(`Native app artifact returned HTTP ${response.status}`);
+  if (!response.ok) {
+    await response.body?.cancel();
+    if (response.status === 404) throw new ProductAssetNotFound('Original product artifact is not published');
+    throw new MarketNativeArtifactPolicyError(`Native app artifact returned HTTP ${response.status}`);
+  }
   const contentType = response.headers.get('content-type')?.toLowerCase() || '';
   if (contentType.includes('text/html')) throw new MarketNativeArtifactPolicyError('Native app artifact returned an HTML document');
   const declared = Number(response.headers.get('content-length') || '0');
@@ -201,6 +210,86 @@ export async function downloadMarketNativeArtifact(url: string, fetchImpl: typeo
   }
   if (total === 0) throw new MarketNativeArtifactPolicyError('Native app artifact is empty');
   return Buffer.concat(chunks, total);
+}
+
+export async function resolveMarketProductRelease(product: string, repository: string, tag: string): Promise<VerifiedProductRelease | null> {
+  const { parseMarketRepoURL } = await import('./source');
+  const source = parseMarketRepoURL(repository);
+  const release = (await listInfrastructureReleases(source,source.repository)).find(r => r.tag_name === tag);
+  if (!release) throw new MarketNativeArtifactPolicyError('Selected product release is unavailable');
+  const url = `${repository}/releases/download/${tag}/product-release.json`;
+  return loadProductRelease(release.assets.map(a => a.name),{product,source:repository,tag},
+    (name,max) => downloadMarketNativeArtifact(selectedReleaseAssetTransport(source,release.assets,tag,url,name),releaseCacheFetch,max));
+}
+
+export async function downloadMarketProductBlob(selected: VerifiedProductRelease, name: string, maximum = 1024*1024): Promise<Buffer> {
+  return loadProductBlob(selected,name,async (url,max) => {
+    // Resolve a private mirror's attachment from its exact release listing;
+    // Forgejo canonical links may otherwise resolve to repository HTML.
+    if (url.startsWith(`${selected.release.source}/releases/download/${selected.release.tag}/blob-`)) {
+      const { parseMarketRepoURL } = await import('./source');
+      const source = parseMarketRepoURL(selected.release.source);
+      const release = (await listInfrastructureReleases(source,source.repository)).find(r => r.tag_name === selected.release.tag);
+      if (!release) throw new MarketNativeArtifactPolicyError('Selected product mirror is unavailable');
+      const asset = new URL(url).pathname.split('/').at(-1)!;
+      const transport = selectedReleaseAssetTransport(source,release.assets,selected.release.tag,url,asset);
+      return downloadMarketNativeArtifact(transport,releaseCacheFetch,max);
+    }
+    return downloadMarketNativeArtifact(url,releaseCacheFetch,max);
+  },maximum);
+}
+
+/** Compare installer semantics after the same bounded catalog presentation mapping.
+ * The original signed bytes and build version remain the authority; a catalog
+ * may resolve image paths and the known public repository projection only.
+ */
+export async function verifyMarketProductInstallContract(
+  contract: Buffer, selected: VerifiedProductRelease, manifest: AppManifest,
+  config: InstallConfig, source?: MarketSource,
+): Promise<void> {
+  if (createHash('sha256').update(contract).digest('hex') !== selected.build.contract_sha256) {
+    throw new MarketNativeArtifactPolicyError('Product installer contract digest differs');
+  }
+  const { parseManifest } = await import('./parser');
+  const original = parseManifest(contract.toString('utf8'));
+  if (original.version !== selected.build.build_version || original.metadata.id !== selected.release.product) {
+    throw new MarketNativeArtifactPolicyError('Product installer contract build identity differs');
+  }
+  if (!await sameMarketInstallContract(original, manifest, config, source)) {
+    throw new MarketNativeArtifactPolicyError('Selected application manifest differs from signed product contract');
+  }
+}
+
+export async function sameMarketInstallContract(
+  original: AppManifest, manifest: AppManifest,
+  config: Pick<InstallConfig, 'sourceId' | 'sourceRepoUrl' | 'manifestRepo' | 'manifestBranch' | 'manifestPath'>,
+  source?: MarketSource,
+): Promise<boolean> {
+  original = structuredClone(original);
+  const same = (expected: AppManifest) => isDeepStrictEqual({...expected, version: ''}, {...manifest, version: ''});
+  if (same(original)) return true;
+  if (config.manifestRepo && config.manifestBranch && !config.sourceId?.startsWith('direct:')) {
+    const parts = config.manifestRepo.split('/');
+    if (parts.length !== 2 || parts.some(part => !/^[A-Za-z0-9_.-]+$/.test(part))) {
+      throw new MarketNativeArtifactPolicyError('Catalog manifest repository is invalid');
+    }
+    const marketSource = source || await selectedMarketSource(config);
+    for (const container of original.containers) {
+      if (container.type === 'lxd' && container.source) {
+        container.source.repo = publicNativeManifestRepo(marketSource, config.manifestRepo, container.source.repo);
+      }
+    }
+    // Per-app folders in the catalog use co-located images. Repository entries
+    // retain their existing root-relative asset convention.
+    const basePath = config.manifestRepo === `${marketSource.organization}/${marketSource.repository}`
+      && /^apps\/[^/]+\/youeye-app\.yaml$/.test(config.manifestPath || '')
+      ? posix.dirname(config.manifestPath!) : undefined;
+    if (basePath && !original.metadata.iconUrl) original.metadata.iconUrl = 'icon.svg';
+    const { resolveManifestPaths } = await import('./catalog');
+    await resolveManifestPaths(original, parts[0], parts[1], config.manifestBranch, marketSource, basePath);
+    if (same(original)) return true;
+  }
+  return false;
 }
 
 function selectedReleaseAssetTransport(
@@ -290,17 +379,39 @@ export async function inspectMarketNativeArchive(path: string, requiredEntrypoin
   }
 }
 
+/** Shared signed native archive staging for Market apps and managed Pointer. */
+export async function stageVerifiedProductArtifact(directory: string, containerName: string, assembly: VerifiedProductRelease, expectedDigest?: string): Promise<StagedMarketNativeArtifact> {
+  if (assembly.build.kind !== 'native' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(containerName)) throw new MarketNativeArtifactPolicyError('Invalid native product staging identity');
+  const load = (name: string, maximum = 1024*1024) => downloadMarketProductBlob(assembly,name,maximum);
+  if (assembly.release.product === 'pointer') {
+    const contract = await load('pointer-build-contract.json');
+    if (createHash('sha256').update(contract).digest('hex') !== assembly.build.contract_sha256) throw new MarketNativeArtifactPolicyError('Pointer build contract differs');
+  }
+  const bytes = await load('standalone.tar',MAX_ARTIFACT_BYTES);
+  const originalURL = assembly.build.assets.find(a => a.name === 'standalone.tar')!.url;
+  await verifySignedReleaseArtifactBuffer(originalURL,bytes,'standalone.tar',expectedDigest,'app',name => load(name));
+  const trust = releaseArtifactTrust(originalURL,undefined,'app');
+  const artifactPath = join(directory,`${containerName}.standalone.tar`);
+  await writeFile(artifactPath,bytes,{mode:0o600});
+  await inspectMarketNativeArchive(artifactPath,'server.js');
+  return {containerName,path:artifactPath,tag:assembly.release.tag,version:assembly.release.version,
+    sourceRepo:assembly.release.source,artifactName:'standalone.tar',artifactSHA256:createHash('sha256').update(bytes).digest('hex'),
+    artifactBytes:bytes.length,signature:{status:`verified-${trust.class}`,keyId:assembly.build.signer_sha256},productRelease:productReceipt(assembly)};
+}
+
 export async function stageMarketNativeArtifact(
   directory: string,
   container: ContainerSpec,
   marketSource: MarketSource,
   override?: { tag: string; version: string; sourceRepo?: string },
+  product?: string,
 ): Promise<StagedMarketNativeArtifact> {
   if (container.type !== 'lxd' || !container.source) throw new Error('Native app container source is missing');
   const resolvedRepo = releaseSourceForRepo(override?.sourceRepo || container.source.repo, marketSource);
   const releases = await listInfrastructureReleases(resolvedRepo.source, resolvedRepo.repo);
   const exactRelease = override ? releases.find((candidate) => candidate.tag_name === override.tag) : undefined;
-  const exactAsset = exactRelease?.assets.find((asset) => asset.name === 'standalone.tar');
+  const exactAsset = exactRelease?.assets.find((asset) => asset.name === 'product-release.json')
+    || exactRelease?.assets.find((asset) => asset.name === 'standalone.tar');
   const exactUrl = exactAsset ? getReleaseAssetDownloadURL(resolvedRepo.source, exactAsset, override?.tag) : null;
   const selected = override
     ? (exactRelease && exactUrl ? { tag: override.tag, version: override.version, url: exactUrl } : null)
@@ -319,6 +430,14 @@ export async function stageMarketNativeArtifact(
   }
   const release = releases.find((candidate) => candidate.tag_name === selected.tag);
   if (!release) throw new Error('Selected native app release disappeared during preflight');
+  const transport = (name: string) => selectedReleaseAssetTransport(resolvedRepo.source, release.assets, selected.tag, selected.url, name);
+  const assembly = await loadProductRelease(release.assets.map(a => a.name),
+    {product:product || '',source:resolvedRepo.identity,tag:selected.tag},
+    (name,max) => downloadMarketNativeArtifact(transport(name),releaseCacheFetch,max));
+  if (assembly) {
+    if (assembly.release.version !== selected.version || assembly.build.kind !== 'native') throw new MarketNativeArtifactPolicyError('Product selection differs from requested native app');
+    return stageVerifiedProductArtifact(directory,container.name,assembly,container.source.artifactSHA256?.toLowerCase());
+  }
   const signatureClassification = classifyMarketNativeSignatureAssets(release.assets.map((asset) => asset.name));
   const publisherGrant = ownerReleaseGrant(selected.url, 'app');
   if (publisherGrant && signatureClassification !== 'complete') throw new MarketNativeArtifactPolicyError('This app source requires its enrolled publisher signature');
@@ -394,7 +513,7 @@ export async function stageMarketNativeArtifacts(
   const marketSource = await selectedMarketSource(config);
   try {
     for (const container of nativeContainers) {
-      const staged = await stageMarketNativeArtifact(directory, container, marketSource, options.releases?.[container.name]);
+      const staged = await stageMarketNativeArtifact(directory, container, marketSource, options.releases?.[container.name],config.appId);
       byContainerName.set(container.name, staged);
     }
     return {

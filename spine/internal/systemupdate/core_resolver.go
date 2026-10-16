@@ -163,12 +163,19 @@ func ResolveCoreRelease(ctx context.Context, client *http.Client, selection Core
 }
 
 func readCoreMetadata(ctx context.Context, client *http.Client, source string, limit int64) ([]byte, error) {
+	// Metadata is a release asset, not an API response. Preserve the caller's
+	// transport (including protected candidate inputs), but use artifact redirects.
+	client = CoreArtifactHTTPClient(client)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
 	if err != nil {
 		return nil, err
 	}
 	response, err := client.Do(request)
 	if err != nil {
+		var remote *url.Error
+		if errors.As(err, &remote) {
+			return nil, fmt.Errorf("core metadata request failed: %w", remote.Err)
+		}
 		return nil, err
 	}
 	defer response.Body.Close()

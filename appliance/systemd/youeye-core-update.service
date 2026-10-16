@@ -1,8 +1,8 @@
 [Unit]
 Description=Continue the retained YouEye System update after boot
-Requires=youeye-appliance-storage.service youeye-appliance-incus-sockets.service
+Requires=youeye-appliance-storage.service youeye-appliance-incus-sockets.service incus.service
 Wants=network-online.target youeye.service
-After=network-online.target youeye-appliance-storage.service youeye-appliance-incus-sockets.service youeye.service youeye-first-deploy.service
+After=network-online.target youeye-appliance-storage.service youeye-appliance-incus-sockets.service incus.service youeye.service youeye-first-deploy.service
 Before=youeye-appliance-bless.service
 ConditionPathExists=/var/lib/youeye-state/core-update/journal.json
 ConditionPathExists=/var/lib/youeye-state/first-deploy/complete

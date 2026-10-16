@@ -207,6 +207,8 @@ test('completed recovery clears only verified current health evidence without pr
     './update-admission': { appUpdateJournalStore: () => ({ read: () => record, list: () => records }),
       withAppLifecycle: () => { throw new Error('Completed recovery must not acquire a provider executor'); } },
     './update-transaction': {}, './update-provider': {},
+    '../pointer/release-metadata': { PointerReleaseMetadataProvider: class { constructor() { throw new Error('Completed recovery must not create a Pointer provider'); } } },
+    './update-release-metadata': { ReleaseMetadataUpdateProvider: class { constructor() { throw new Error('Completed recovery must not create a release provider'); } } },
     '@/lib/health/issues': { resolveIssue: async (issue: string) => { resolved.push(issue); }, observeIssue: async () => {} },
   });
   await operations.recoverAppUpdateOperation('wiki', id);
