@@ -103,7 +103,8 @@ func coreNativeIncusArgs(args []string) ([]string, error) {
 	if args[0] != "query" {
 		return append([]string{"--force-local", "--project", "default"}, args...), nil
 	}
-	if len(args) != 2 {
+	raw := len(args) == 3 && args[2] == "--raw"
+	if len(args) != 2 && !raw {
 		return nil, fmt.Errorf("exact native Incus query required")
 	}
 	u, err := url.ParseRequestURI(args[1])
@@ -119,7 +120,11 @@ func coreNativeIncusArgs(args []string) ([]string, error) {
 	}
 	query.Set("project", "default")
 	u.RawQuery = query.Encode()
-	return []string{"--force-local", "query", u.String()}, nil
+	result := []string{"--force-local", "query", u.String()}
+	if raw {
+		result = append(result, "--raw")
+	}
+	return result, nil
 }
 
 func (p NativeCoreCheckpoint) capture(ctx context.Context, program string, args ...string) ([]byte, error) {

@@ -15,6 +15,7 @@ func TestCoreNativeIncusProjectBoundary(t *testing.T) {
 	}{
 		{"query", []string{"query", "/1.0/instances/youeye-control/state"}, []string{"--force-local", "query", "/1.0/instances/youeye-control/state?project=default"}},
 		{"recursive", []string{"query", "/1.0/operations?recursion=1"}, []string{"--force-local", "query", "/1.0/operations?project=default&recursion=1"}},
+		{"raw operations", []string{"query", "/1.0/operations?recursion=1", "--raw"}, []string{"--force-local", "query", "/1.0/operations?project=default&recursion=1", "--raw"}},
 		{"explicit", []string{"query", "/1.0/instances/youeye-ui?project=default"}, []string{"--force-local", "query", "/1.0/instances/youeye-ui?project=default"}},
 		{"ordinary", []string{"network", "get", "incusbr0", "ipv4.address"}, []string{"--force-local", "--project", "default", "network", "get", "incusbr0", "ipv4.address"}},
 	} {
@@ -27,6 +28,8 @@ func TestCoreNativeIncusProjectBoundary(t *testing.T) {
 	}
 	for _, args := range [][]string{
 		nil, {"query"}, {"query", "/1.0/instances", "--request=DELETE"},
+		{"query", "/1.0/operations?project=other", "--raw"},
+		{"query", "/1.0/operations", "--raw", "--request=DELETE"},
 		{"query", "https://peer.example/1.0/instances"}, {"query", "peer:/1.0/instances"},
 		{"query", "/1.0/instances?project=other"}, {"query", "/1.0/instances?project="},
 		{"query", "/1.0/instances?project=default&project=other"},
@@ -51,5 +54,19 @@ func TestCoreNativeCaptureUsesIncusRawQueryContract(t *testing.T) {
 	raw, err := captureCoreNative(context.Background(), "incus", "query", "/1.0/instances/youeye-control/state")
 	if err != nil || string(raw) != "{\"status\":\"Running\"}\n" {
 		t.Fatalf("raw query failed: %q, %v", raw, err)
+	}
+}
+
+func TestCoreProviderFenceReadsEmptyIncusMetadataWithoutAcceptingBlankOutput(t *testing.T) {
+	bin := t.TempDir()
+	// Incus 7.0.1 suppresses empty query metadata in its default renderer.
+	// Exercise the actual command normalization and capture, not only JSON parsing.
+	script := "#!/bin/sh\n[ \"$1\" = --force-local ] || exit 10\nshift\n[ \"$1\" = query ] || exit 11\n[ \"$2\" = '/1.0/operations?project=default&recursion=1' ] || exit 12\n[ \"${3:-}\" = --raw ] || exit 0\nprintf '%s\\n' '" + coreProviderResponse(`{}`) + "'\n"
+	if err := os.WriteFile(filepath.Join(bin, "incus"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	if err := (NativeCoreCheckpoint{}).requireProviderSettled(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }

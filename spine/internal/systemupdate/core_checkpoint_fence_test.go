@@ -23,16 +23,26 @@ func TestCoreProviderFenceRejectsLiveUnknownAndMalformedOperations(t *testing.T)
 		{`{"success":[{"id":"writer","class":"unknown","status_code":200}]}`, false},
 		{`{"success":[{"id":"writer","class":"task","status_code":999}]}`, false},
 		{`null`, false},
+		{`{"success":[{"id":"same","class":"task","status_code":200},{"id":"same","class":"task","status_code":200}]}`, false},
 		{`{"running":[{"class":"task","status_code":200}]}`, false},
 	} {
 		p := NativeCoreCheckpoint{Capture: func(_ context.Context, program string, args ...string) ([]byte, error) {
-			if program != "incus" || strings.Join(args, " ") != "query /1.0/operations?recursion=1" {
+			if program != "incus" || strings.Join(args, " ") != "query /1.0/operations?recursion=1 --raw" {
 				t.Fatal("unexpected provider effect")
 			}
-			return []byte(test.raw), nil
+			return []byte(coreProviderResponse(test.raw)), nil
 		}}
 		if err := p.requireProviderSettled(context.Background()); (err == nil) != test.ok {
 			t.Fatal(test.raw, err)
+		}
+	}
+}
+
+func TestCoreProviderFenceRequiresSuccessfulRawEnvelope(t *testing.T) {
+	for _, raw := range []string{"", `null`, `{}`, `{"type":"sync","status_code":200,"metadata":{}}`, `{"type":"error","status_code":200,"error_code":0,"metadata":{}}`, `{"type":"sync","status_code":500,"error_code":0,"metadata":{}}`, `{"type":"sync","status_code":200,"error_code":403,"metadata":{}}`, `{"type":"sync","status_code":200,"error_code":0,"error":"failed","metadata":{}}`, coreProviderResponse(`null`), coreProviderResponse(`[]`), coreProviderResponse(`{`)} {
+		p := NativeCoreCheckpoint{Capture: func(context.Context, string, ...string) ([]byte, error) { return []byte(raw), nil }}
+		if p.requireProviderSettled(context.Background()) == nil {
+			t.Fatalf("accepted malformed/unsuccessful raw response %q", raw)
 		}
 	}
 }
@@ -62,9 +72,9 @@ func TestCoreRecoveryFenceRequiresNativeProviderAndDatabaseSettlement(t *testing
 			if args[0] == "query" {
 				if args[1] == "/1.0/operations?recursion=1" {
 					if providerRunning {
-						return []byte(`{"running":[{"id":"remote-writer","class":"websocket","status_code":103}]}`), nil
+						return []byte(coreProviderResponse(`{"running":[{"id":"remote-writer","class":"websocket","status_code":103}]}`)), nil
 					}
-					return []byte(`{}`), nil
+					return []byte(coreProviderResponse(`{}`)), nil
 				}
 				for _, name := range []string{"youeye-control", "youeye-ui"} {
 					if args[1] == "/1.0/instances/"+name {
@@ -93,4 +103,8 @@ func TestCoreRecoveryFenceRequiresNativeProviderAndDatabaseSettlement(t *testing
 	if err != nil || record.Phase != "files-captured" {
 		t.Fatal("fence pretended to capture or restore", record.Phase, err)
 	}
+}
+
+func coreProviderResponse(metadata string) string {
+	return `{"type":"sync","status_code":200,"error_code":0,"error":"","metadata":` + metadata + `}`
 }

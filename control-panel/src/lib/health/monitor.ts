@@ -23,6 +23,7 @@ import { spineClient } from '@/lib/spine/client';
 import { readFileSync } from 'fs';
 import { observeIssue, resolveIssue, recordTimelineEvent } from './issues';
 import { isContainerMaintenanceActive } from '@/lib/maintenance/container-maintenance';
+import { startWatchdogContainer } from './watchdog-start';
 import { listInstalledApps } from '@/lib/market/metadata';
 import { inspectAppStorage } from '@/lib/market/storage';
 import { syncStartupReconciliationIssue } from '@/lib/incus/startup-reconciliation';
@@ -301,7 +302,7 @@ async function checkContainerWatchdog(): Promise<void> {
           if (recent.length < CRASH_LOOP_THRESHOLD) {
             console.log(`[watchdog] ${name} should be running but is Stopped — starting`);
             try {
-              await incusRequest('PUT', `/1.0/instances/${name}/state`, { action: 'start', timeout: 30 });
+              if (!await startWatchdogContainer(name)) continue;
               await applyResourcePolicy(name, isInfra ? 'critical' as const : 'normal' as const);
               const s = watchStates.get(name) ?? { previousStatus: 'Stopped', restarts: [], crashLoopDetected: false };
               s.restarts = [...recent, now];
@@ -378,10 +379,7 @@ async function checkContainerWatchdog(): Promise<void> {
         // Restart the container
         console.log(`[watchdog] ${name} stopped unexpectedly — restarting`);
         try {
-          await incusRequest('PUT', `/1.0/instances/${name}/state`, {
-            action: 'start',
-            timeout: 30,
-          });
+          if (!await startWatchdogContainer(name)) continue;
 
           // Re-apply resource policy
           const priority = isInfra ? 'critical' as const : 'normal' as const;

@@ -331,3 +331,14 @@ Core backup and full restore hold a shared installation-inventory OS gate before
 Fresh/setup restore rebuilds an existing pending installation only after archive/current core ownership validation and exact installation/owner UUID checks. Missing, foreign, retained, deleted or quarantined policy authority is refused. This recovery path never changes grants or makes a policy ready. Archived disabled/stopped runtime intent survives reinstall and fresh credential reconciliation; completion requires all of that installation’s containers to read back Stopped. Running apps still require post-restore health. Setup restore has a session-bound durable operation status and the shared restore lock. After every restore gate passes and completion is durably recorded, setup restore schedules the normal delayed Control Panel restart to load the reconciled SSO environment. Routing-related stream loss polls the same operation instead of submitting it again; unknown status offers status checking, not a new restore.
 
 Paired core/app restore also preserves the managed Pointer installation, instance, routing owner, selected group and acknowledged protected app credential. Before using the restored secret, reinstall reads the existing Pointer record and checks that every identity and credential preview matches the authenticated archive, with an active owner, no revocation/drift and an acknowledged delivery. A mismatch fails recovery; it does not provision a duplicate, take over routing ownership, rotate the key or archive the existing binding on rollback. Ordinary new installs still require a new credential delivery.
+
+### URL changes and watchdog starts
+
+URL reconfiguration holds each app's lifecycle admission across its environment,
+configuration, container restart, metadata and SSO work. It re-reads installation
+metadata after admission, including owner stop intent. The durable URL journal
+continues to require the same requested URL when resuming an interrupted change.
+Watchdog starts use the same container/app admission, recheck current Incus state,
+autostart, app intent, maintenance and storage, and retain admission until the
+Incus operation terminates. UI manifest synchronization and managed-AI status
+refreshes also serialize their metadata writes with those lifecycle operations.

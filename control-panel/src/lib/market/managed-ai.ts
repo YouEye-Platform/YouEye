@@ -212,24 +212,27 @@ export async function getManagedAIStatus(
   appId: string,
   actor: PointerLifecycleActor
 ) {
-  const meta = await readInstallMetadata(appId);
-  if (!meta) throw new Error(`Unknown installed app: ${appId}`);
-  const manifest = await fetchInstalledAIManifest(meta);
-  const groups = await listPointerActorGroups(actor);
-  if (!meta.aiConnection) {
-    return { supported: true, enabled: false, connection: null, installation: null, groups };
-  }
-  const installation = await readPointerManagedApp(meta.aiConnection.externalInstallationId, actor);
-  meta.aiConnection = connectionFromInstallation(meta.aiConnection.ownerUserId, installation);
-  await saveInstallMetadata(meta);
-  return {
-    supported: manifest.capabilities?.ai_api === true,
-    enabled: installation.state === 'active',
-    connection: meta.aiConnection,
-    installation,
-    groups,
-  };
+  return withAppLifecycle(appId, async () => {
+    const meta = await readInstallMetadata(appId);
+    if (!meta) throw new Error(`Unknown installed app: ${appId}`);
+    const manifest = await fetchInstalledAIManifest(meta);
+    const groups = await listPointerActorGroups(actor);
+    if (!meta.aiConnection) {
+      return { supported: true, enabled: false, connection: null, installation: null, groups };
+    }
+    const installation = await readPointerManagedApp(meta.aiConnection.externalInstallationId, actor);
+    meta.aiConnection = connectionFromInstallation(meta.aiConnection.ownerUserId, installation);
+    await saveInstallMetadata(meta);
+    return {
+      supported: manifest.capabilities?.ai_api === true,
+      enabled: installation.state === 'active',
+      connection: meta.aiConnection,
+      installation,
+      groups,
+    };
+  });
 }
+
 
 export async function enableManagedAI(
   appId: string,

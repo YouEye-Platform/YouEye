@@ -81,7 +81,7 @@ func TestCoreCompletionRestoresExactSettingsAndReconcilesLostAcknowledgements(t 
 			}
 			if args[0] == "query" {
 				if args[1] == "/1.0/operations?recursion=1" {
-					return []byte(`{}`), nil
+					return []byte(coreProviderResponse(`{}`)), nil
 				}
 				return json.Marshal(rows[strings.TrimPrefix(args[1], "/1.0/instances/")])
 			}

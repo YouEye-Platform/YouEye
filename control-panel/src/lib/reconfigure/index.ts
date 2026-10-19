@@ -80,7 +80,7 @@ import {
 } from '@/lib/youeye-names/certificate';
 import { configurePointerForPlatform } from '@/lib/infrastructure/deployer';
 import { identityConfigFromSettings } from '@/lib/identity/config';
-import { withAppLifecycle } from '@/lib/market/update-admission';
+import { withAppLifecycle, withContainerLifecycle } from '@/lib/market/update-admission';
 import { changePointerIdentity } from '@/lib/pointer/identity-rename';
 import { transitionPointerIdentity } from '@/lib/pointer/identity-transition';
 
@@ -513,6 +513,20 @@ async function updateInstalledApp(
   warn: (message: string) => void,
   identityOrigins?: [string, string],
 ): Promise<void> {
+  return withAppLifecycle(meta.appId, async () => {
+    // Enumeration can precede a concurrent lifecycle mutation. Re-read inside
+    // admission so desired intent and metadata are current before any effects.
+    const { readInstallMetadata } = await import('@/lib/market/metadata');
+    const current = await readInstallMetadata(meta.appId);
+    if (!current) throw new Error(`App ${meta.appId} disappeared during URL change`);
+    return updateInstalledAppLocked(current, oldDomain, newDomain, warn, identityOrigins);
+  });
+}
+
+async function updateInstalledAppLocked(
+  meta: InstallMetadata, oldDomain: string, newDomain: string,
+  warn: (message: string) => void, identityOrigins?: [string, string],
+): Promise<void> {
   const appId = meta.appId;
   const containers = containerEntries(meta);
   const containerNames = containers.map((c) => c.containerName);
@@ -646,8 +660,8 @@ async function updateInstalledApp(
       // Restart so any cached OIDC client rebuilds from the re-applied config.
       for (const containerName of containerNames) {
         try {
-          await incusRequest('PUT', `/1.0/instances/${containerName}/state`, { action: 'restart', force: true, timeout: 30 });
-        } catch { /* container may not be running */ }
+          await restartContainerAndWait(containerName);
+        } catch (err) { warn(`${appId}: SSO restart failed for ${containerName}: ${err}`); }
       }
     }
   }
@@ -1211,9 +1225,7 @@ async function reconfigureLocked(
   // 10. Refresh infrastructure containers (ensures DNS/DHCP leases are valid before restarting apps)
   if (reconcileRequired && installedApps.length > 0) {
     try {
-      await incusRequest('PUT', '/1.0/instances/youeye-postgres/state', {
-        action: 'restart', force: false, timeout: 30,
-      });
+      await withContainerLifecycle('youeye-postgres', () => restartContainerAndWait('youeye-postgres'));
       // Wait for postgres to be ready
       await new Promise((resolve) => setTimeout(resolve, 5000));
     } catch {

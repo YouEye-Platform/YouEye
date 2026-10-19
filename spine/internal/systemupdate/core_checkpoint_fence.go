@@ -92,16 +92,28 @@ func (p NativeCoreCheckpoint) Fence(ctx context.Context, request string, runner 
 }
 
 func (p NativeCoreCheckpoint) requireProviderSettled(ctx context.Context) error {
-	raw, err := p.capture(ctx, "incus", "query", "/1.0/operations?recursion=1")
+	// Incus query suppresses an empty metadata object unless --raw is used.
+	// Require the successful API envelope rather than accepting blank output.
+	raw, err := p.capture(ctx, "incus", "query", "/1.0/operations?recursion=1", "--raw")
 	if err != nil {
 		return err
+	}
+	var response struct {
+		Type       string          `json:"type"`
+		StatusCode int             `json:"status_code"`
+		ErrorCode  *int            `json:"error_code"`
+		Error      string          `json:"error"`
+		Metadata   json.RawMessage `json:"metadata"`
+	}
+	if json.Unmarshal(raw, &response) != nil || response.Type != "sync" || response.StatusCode != 200 || response.ErrorCode == nil || *response.ErrorCode != 0 || response.Error != "" {
+		return fmt.Errorf("native provider settlement response is unreadable")
 	}
 	var groups map[string][]struct {
 		ID         string `json:"id"`
 		Class      string `json:"class"`
 		StatusCode int    `json:"status_code"`
 	}
-	if json.Unmarshal(raw, &groups) != nil || groups == nil {
+	if json.Unmarshal(response.Metadata, &groups) != nil || groups == nil {
 		return fmt.Errorf("native provider settlement is unreadable")
 	}
 	seen := map[string]bool{}

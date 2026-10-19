@@ -345,6 +345,12 @@ record does not become an independent component upgrade for them.
 
 ### Stable reader bootstrap
 
+Provider settlement reads the raw local Incus API response with an explicit
+default-project boundary. Incus may print no bytes for empty query metadata in
+its ordinary renderer. A successful synchronous response containing an empty
+object proves an empty operation collection; blank output, null metadata,
+malformed/error responses and running or unknown operations remain blocked.
+
 The signed `youeye-system-update-bootstrap --core <exact-core-manifest-url>`
 bridge supports an installed complete Core whose old reader cannot retrieve
 the new public release. The separate legacy Plan 1 development mode remains
