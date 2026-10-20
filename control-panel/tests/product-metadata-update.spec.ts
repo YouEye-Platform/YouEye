@@ -36,7 +36,8 @@ test('release-only adoption and ambiguous publication recovery use the durable j
         containers:[{name:'server',containerName:'app-notes',type:'lxd'}],
         nativeArtifacts:[{containerName:'server',sourceRepo:source,releaseTag:'v1.0.0',version:'1.0.0',artifactName:'standalone.tar',sha256:hash('standalone.tar'),bytes:14,signature:'verified',productRelease:productReceipt(old),runtimeUUID:'12345678-1234-1234-1234-123456789012'}],
         productReleaseFloors:acceptProductSequence(undefined,old)} as InstallMetadata;
-      let metadata = structuredClone(before), installed = {installedVersion:'1.0.0',installedTag:'v1.0.0',installedBranch:'main',channelSource:source,updateAvailable:true, catalogVersion:'1.0.1', switchPending:false, candidateVersion:'1.0.1', candidateBranch:'main',candidateTag:'v1.0.1'} as InstalledApp;
+      let metadata = structuredClone(before);
+      const installed = {installedVersion:'1.0.0',installedTag:'v1.0.0',installedBranch:'main',channelSource:source,updateAvailable:true, catalogVersion:'1.0.1', switchPending:false, candidateVersion:'1.0.1', candidateBranch:'main',candidateTag:'v1.0.1'} as InstalledApp;
       const originalInstalled = structuredClone(installed);
       let registration = structuredClone(oldManifest), projection = productReceipt(old), faulted = false;
       const effects: string[] = [];

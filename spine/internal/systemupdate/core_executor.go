@@ -18,13 +18,33 @@ import (
 // Reconcile may return terminal evidence only from the operation's own durable
 // journal or an exact target observation; absence of a process proves neither.
 type NativeCoreExecutor struct {
-	Root                     string
-	AuthorizeAction          func(context.Context, CoreJournal, bool) error
-	AuthorizeRecoveryAction  func(context.Context, CoreJournal) error
-	AuthorizeLiveFenceAction func(context.Context, CoreJournal, CoreStep) error
-	CancelPreparationAction  func(context.Context, CoreJournal) error
-	ExecuteAction            func(context.Context, CoreJournal, CoreStep) (CoreActionObservation, error)
-	ReconcileAction          func(context.Context, CoreJournal, CoreStep) (CoreActionObservation, error)
+	Root                         string
+	AuthorizeAction              func(context.Context, CoreJournal, bool) error
+	AuthorizeRecoveryAction      func(context.Context, CoreJournal) error
+	AuthorizeLiveFenceAction     func(context.Context, CoreJournal, CoreStep) error
+	ContinueRecoveryHealthAction func(context.Context, CoreJournal, CoreStep) (CoreActionObservation, error)
+	CancelPreparationAction      func(context.Context, CoreJournal) error
+	AdmitAction                  func(context.Context, CoreJournal, CoreStep) error
+	ExecuteAction                func(context.Context, CoreJournal, CoreStep) (CoreActionObservation, error)
+	ReconcileAction              func(context.Context, CoreJournal, CoreStep) (CoreActionObservation, error)
+}
+
+// ActionStatus reads sanitized retained diagnostics without launching work or
+// requiring the action lock (which may be held by a bounded admission wait).
+func (e NativeCoreExecutor) ActionStatus(j CoreJournal, s CoreStep) (CoreActionObservation, error) {
+	a, err := e.read(j, s)
+	if err != nil {
+		return CoreActionObservation{}, err
+	}
+	out := a.Result
+	if a.Active && out.State == "running" {
+		identity, err := nativeProcessIdentity(a.PID)
+		if err != nil || identity != a.ProcessIdentity {
+			out.State, out.EffectState = "unknown", ""
+		}
+	}
+	out.Evidence = "" // arbitrary subordinate evidence is not a status message
+	return out, nil
 }
 
 func (e NativeCoreExecutor) CancelPreparation(ctx context.Context, j CoreJournal) error {
@@ -114,8 +134,23 @@ func (e NativeCoreExecutor) read(j CoreJournal, s CoreStep) (nativeCoreAction, e
 }
 
 func validateNativeResult(result CoreActionObservation) error {
+	if result.Stage != "" && result.Stage != "admission" && result.Stage != "launch" && result.Stage != "execute" {
+		return fmt.Errorf("invalid native action stage")
+	}
+	if result.EffectState != "" && result.EffectState != "not-started" && result.EffectState != "started" {
+		return fmt.Errorf("invalid native effect state")
+	}
+	switch result.Code {
+	case "", "admission_timeout", "admission_cancelled", "admission_rejected", "native_action_failed", "schema_response_unavailable", "schema_request_rejected", "schema_identity_mismatch", "recovery_services_unavailable", "recovery_power_unavailable", "recovery_health_unavailable":
+	default:
+		return fmt.Errorf("invalid native action error code")
+	}
 	switch result.State {
 	case "running", "unknown":
+	case "retryable":
+		if result.Stage != "admission" || result.EffectState != "not-started" || (result.Code != "admission_timeout" && result.Code != "admission_cancelled" && result.Code != "admission_rejected") || result.Evidence == "" {
+			return fmt.Errorf("retry requires positive pre-effect admission evidence")
+		}
 	case "succeeded", "failed":
 		if result.Evidence == "" {
 			return fmt.Errorf("native action has no terminal evidence")
@@ -185,8 +220,12 @@ func (e NativeCoreExecutor) Start(ctx context.Context, j CoreJournal, s CoreStep
 		return CoreActionObservation{}, err
 	}
 	defer unlock()
-	if _, err := e.read(j, s); err == nil {
-		return e.observe(ctx, j, s)
+	if previous, err := e.read(j, s); err == nil {
+		if previous.Result.State != "retryable" || e.AdmitAction == nil || (s.Name != "checkpoint" && s.Name != "recovery-fence") {
+			return e.observe(ctx, j, s)
+		}
+		// Only this executor's positive pre-launch receipt permits admission
+		// again. Unknown/missing child evidence never enters this branch.
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return CoreActionObservation{}, err
 	}
@@ -204,6 +243,29 @@ func (e NativeCoreExecutor) Start(ctx context.Context, j CoreJournal, s CoreStep
 		return CoreActionObservation{}, err
 	}
 	a := nativeCoreAction{Schema: "youeye.core-action.v1", RequestID: s.RequestID, Name: s.Name, ManifestSHA256: j.ManifestSHA256, PID: os.Getpid(), ProcessIdentity: identity, Active: true, Result: CoreActionObservation{State: "running"}}
+	if e.AdmitAction != nil && (s.Name == "checkpoint" || s.Name == "recovery-fence") {
+		a.Result = CoreActionObservation{State: "running", Stage: "admission", EffectState: "not-started", Evidence: "waiting for ordinary lifecycle work to settle"}
+		if err := e.save(s, a); err != nil {
+			return a.Result, err
+		}
+		if err := e.AdmitAction(ctx, j, s); err != nil {
+			a.Active = false
+			a.Result.State, a.Result.Code = "retryable", "admission_rejected"
+			a.Result.Evidence = "lifecycle admission rejected before native action launch; reconcile ordinary work and current policy"
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				a.Result.State, a.Result.Code = "retryable", "admission_timeout"
+				if errors.Is(err, context.Canceled) {
+					a.Result.Code = "admission_cancelled"
+				}
+				a.Result.Evidence = "lifecycle admission ended before native action launch; resume the same request after ordinary work settles"
+			}
+			if saveErr := e.save(s, a); saveErr != nil {
+				return CoreActionObservation{State: "unknown"}, saveErr
+			}
+			return a.Result, nil
+		}
+	}
+	a.Result = CoreActionObservation{State: "running", Stage: "launch"}
 	if err := e.save(s, a); err != nil {
 		return CoreActionObservation{}, err
 	}
@@ -251,7 +313,7 @@ func (e NativeCoreExecutor) observe(ctx context.Context, j CoreJournal, s CoreSt
 	if err != nil {
 		return CoreActionObservation{}, err
 	}
-	if a.Result.State == "succeeded" || a.Result.State == "failed" {
+	if a.Result.State == "succeeded" || a.Result.State == "failed" || a.Result.State == "retryable" {
 		return a.Result, nil
 	}
 	if a.Active && a.Result.State == "running" {

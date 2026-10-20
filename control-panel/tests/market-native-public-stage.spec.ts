@@ -13,6 +13,75 @@ import { ContainerSchema } from '../src/lib/market/schema';
 import { sensitivitySafeInstallError, sanitiseInstallEvent } from '../src/lib/market/install-tracker';
 
 const exec = promisify(execFile);
+test('held native releases verify cached signature assets without publication and reject tampering', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'native-cached-stage-'));
+  const originalFetch = globalThis.fetch;
+  const originalCache = process.env.YOUEYE_RELEASE_CACHE;
+  const policy = publicPolicy as {schema:string;keys:Record<string,string>};
+  const originalKeys = policy.keys;
+  try {
+    await mkdir(join(root, 'payload'));
+    await mkdir(join(root, 'objects'));
+    await writeFile(join(root, 'payload/server.js'), 'console.log("app")');
+    await exec('tar', ['-cf', join(root, 'fixture.tar'), '-C', join(root, 'payload'), '.']);
+    const bytes = await readFile(join(root, 'fixture.tar'));
+    const key = generateKeyPairSync('ed25519');
+    const pem = key.publicKey.export({type:'spki', format:'pem'}).toString();
+    policy.keys = {...originalKeys, stable:pem};
+    const sha = (data: Buffer|string) => createHash('sha256').update(data).digest('hex');
+    const base = 'https://github.com/YouEye-Platform/Search/releases/download/v0.5.1/';
+    const sums = Buffer.from(`${sha(bytes)}  standalone.tar\n${sha(pem)}  release-public.pub\n${sha('{}')}  provenance.json\n${sha('{}')}  sbom.spdx.json\n`);
+    const assets = new Map<string, Buffer>([
+      ['standalone.tar', bytes], ['release-public.pub', Buffer.from(pem)],
+      ['SHA256SUMS', sums], ['SHA256SUMS.sig', sign(null, sums, key.privateKey)],
+      ['provenance.json', Buffer.from('{}')], ['sbom.spdx.json', Buffer.from('{}')],
+    ]);
+    const saveCache = async () => {
+      const objects: Record<string, {sha256:string;bytes:number}> = {};
+      for (const [name, data] of assets) {
+        const digest = sha(data);
+        await writeFile(join(root, 'objects', digest), data, {mode:0o600});
+        objects[base + name] = {sha256:digest, bytes:data.length};
+      }
+      await writeFile(join(root, 'index.json'), JSON.stringify({schema:'youeye.release-cache.v1', objects}), {mode:0o600});
+    };
+    await saveCache();
+    process.env.YOUEYE_RELEASE_CACHE = root;
+    const assetRequests: string[] = [];
+    globalThis.fetch = async input => {
+      const url = String(input);
+      if (url.startsWith('https://api.github.com/repos/YouEye-Platform/Search/releases')) {
+        return Response.json([{tag_name:'v0.5.1', assets:[...assets.keys()].map(name => ({name,browser_download_url:base+name}))}]);
+      }
+      assetRequests.push(url);
+      return new Response(null, {status:404});
+    };
+    const container = ContainerSchema.parse({name:'main',type:'lxd',image:'debian/12',source:{repo:'YouEye-Platform/Search'},port:3000});
+    const source = parseMarketRepoURL('https://github.com/YouEye-Platform/Market', {branch:'main'});
+    const stage = () => stageMarketNativeArtifact(root, container, source);
+    assert.equal((await stage()).signature.status, 'verified-stable');
+    assert.deepEqual(assetRequests, []);
+
+    // A valid cache digest is transport integrity, not signing authority.
+    assets.set('SHA256SUMS.sig', sign(null, sums, generateKeyPairSync('ed25519').privateKey));
+    await saveCache();
+    await assert.rejects(stage(), /signature or checksum verification failed/);
+    assert.deepEqual(assetRequests, []);
+
+    // Corrupt cached evidence must fail closed without fetching a replacement.
+    const signature = assets.get('SHA256SUMS.sig')!;
+    await writeFile(join(root, 'objects', sha(signature)), Buffer.alloc(signature.length));
+    await assert.rejects(stage(), /signature or checksum verification failed/);
+    assert.deepEqual(assetRequests, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+    policy.keys = originalKeys;
+    if (originalCache === undefined) delete process.env.YOUEYE_RELEASE_CACHE;
+    else process.env.YOUEYE_RELEASE_CACHE = originalCache;
+    await rm(root, {recursive:true, force:true});
+  }
+});
+
 test('real native staging verifies public Stable/Beta packages and never downgrades failed signatures', async () => {
   const root = await mkdtemp(join(tmpdir(), 'native-public-stage-'));
   const originalFetch = globalThis.fetch;

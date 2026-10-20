@@ -18,6 +18,7 @@ import type {
 } from './types';
 
 import http from 'http';
+import { scopedGrantHandlers } from './scoped-grant-admission';
 import https from 'node:https';
 import { rootCertificates } from 'node:tls';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
@@ -406,9 +407,11 @@ export function buildForwardAuthHandler(
     rewrite: { method: 'GET', uri },
     headers: {
       request: {
-        // This is an HTTP authorization subrequest, not a connection upgrade.
-        // Change only its proxy copy; the backend receives the original upgrade.
-        delete: ['Connection', 'Upgrade'],
+        // Authorization is an ordinary HTTP request. App RSC metadata describes
+        // a different URL and makes Next validate/redirect this rewritten URI.
+        // Change only the proxy copy; the app retains its routing and upgrade.
+        delete: ['Connection', 'Upgrade', 'RSC', 'Next-Router-State-Tree',
+          'Next-Router-Prefetch', 'Next-Router-Segment-Prefetch', 'Next-Url', 'Next-Action'],
         set: {
           'X-Forwarded-Method': ['{http.request.method}'],
           'X-Forwarded-Uri': ['{http.request.uri}'],
@@ -1997,6 +2000,7 @@ export async function addForwardAuthToRoute(
   let modified = false;
   for (const server of Object.values(config.apps.http.servers)) {
     for (const route of server.routes || []) {
+      if (scopedGrantHandlers(route)) continue;
       const hosts = (route as any).match?.[0]?.host || [];
       if (hosts.includes(hostname)) {
         // Remove any existing forward-auth handler (identified by handle_response on reverse_proxy)
@@ -2027,6 +2031,7 @@ export async function removeForwardAuthFromRoute(hostname: string): Promise<void
   let modified = false;
   for (const server of Object.values(config.apps.http.servers)) {
     for (const route of server.routes || []) {
+      if (scopedGrantHandlers(route)) continue;
       const hosts = (route as any).match?.[0]?.host || [];
       if (hosts.includes(hostname)) {
         const before = route.handle.length;

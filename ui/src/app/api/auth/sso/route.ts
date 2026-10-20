@@ -13,6 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { excessOAuthTransactions, oauthTransactionName, oauthTransactionValue, safeOAuthReturn } from "../../../../../../shared/oauth-transaction";
 import { buildAuthorizeUrl, generateOAuthState, isSSOConfigured } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
@@ -44,9 +45,10 @@ export async function GET(request: NextRequest) {
   const authorizeUrl = buildAuthorizeUrl(redirectUri, state);
   const response = NextResponse.redirect(authorizeUrl);
 
-  // Set oauth-state cookie directly on the redirect response.
+  // Set this attempt cookie directly on the redirect response.
   // This guarantees the Set-Cookie header is included in the 302 response.
-  response.cookies.set("oauth-state", state, {
+  for (const name of excessOAuthTransactions("ui", request.cookies.getAll().map(cookie => cookie.name))) response.cookies.delete(name);
+  response.cookies.set(oauthTransactionName("ui", state)!, oauthTransactionValue(state, safeOAuthReturn(request.nextUrl.searchParams.get("redirect"))), {
     httpOnly: true,
     secure: useSecure,
     sameSite: "lax",

@@ -118,10 +118,6 @@ export default function SetupPage() {
     setLanguageChecked(true);
   }, []);
 
-  useEffect(() => {
-    if (languageChecked) checkSetupStatus();
-  }, [languageChecked]);
-
   async function checkSetupStatus() {
     try {
       const res = await fetch('/api/setup/config');
@@ -157,6 +153,10 @@ export default function SetupPage() {
     }
     setLoading(false);
   }
+
+  useEffect(() => {
+    if (languageChecked) checkSetupStatus();
+  }, [languageChecked]);
 
   // Step navigation with animation
   const goToStep = useCallback((nextStep: WizardStep, dir: 'forward' | 'back' = 'forward') => {

@@ -222,6 +222,11 @@ func (r CoreSystemdRunner) Observe(ctx context.Context, j CoreJournal, s CoreSte
 	if resultErr == nil && (result.Result.State == "succeeded" || result.Result.State == "failed") {
 		return result.Result, nil
 	}
+	if resultErr == nil && result.Result.State == "unknown" {
+		// Sanitized terminal error/stage evidence remains useful across boots;
+		// it authorizes reconciliation only, never another execution.
+		return result.Result, nil
+	}
 	boot, err := r.boot()
 	if err != nil || boot != launch.BootID {
 		return unknown, err
@@ -239,6 +244,9 @@ func (r CoreSystemdRunner) Observe(ctx context.Context, j CoreJournal, s CoreSte
 		return unknown, fmt.Errorf("native unit invocation changed")
 	}
 	if unit["LoadState"] == "loaded" && (unit["ActiveState"] == "active" || unit["ActiveState"] == "activating") && pidErr == nil && pid > 1 && len(invocation) == 32 && isLowerHex(invocation) {
+		if resultErr == nil {
+			return result.Result, nil
+		}
 		return CoreActionObservation{State: "running", Evidence: "owned native service invocation is active"}, nil
 	}
 	return unknown, nil
@@ -316,7 +324,7 @@ func (r CoreSystemdRunner) RunAction(ctx context.Context, request, name, digest 
 	if err != nil {
 		return unknown, err
 	}
-	result := coreRunnerResult{Launch: launch, InvocationID: unit["InvocationID"], PID: os.Getpid(), ProcessIdentity: identity, Result: CoreActionObservation{State: "running"}}
+	result := coreRunnerResult{Launch: launch, InvocationID: unit["InvocationID"], PID: os.Getpid(), ProcessIdentity: identity, Result: CoreActionObservation{State: "running", Stage: "execute", EffectState: "started"}}
 	save := func() error {
 		raw, err := json.Marshal(result)
 		if err != nil {
@@ -329,11 +337,30 @@ func (r CoreSystemdRunner) RunAction(ctx context.Context, request, name, digest 
 	}
 	outcome, effectErr := execute(ctx, j, s)
 	if effectErr != nil || validateNativeResult(outcome) != nil {
-		outcome = unknown
+		outcome = CoreActionObservation{State: "unknown", Stage: "execute", Code: coreNativeFailureCode(effectErr), EffectState: "started", Evidence: "native action entered effect execution; reconcile retained effect evidence before recovery"}
 	}
 	result.Result = outcome
 	if err = save(); err != nil {
 		return unknown, err
 	}
 	return outcome, effectErr
+}
+
+func coreNativeFailureCode(err error) string {
+	switch {
+	case errors.Is(err, errCoreRecoveryServices):
+		return "recovery_services_unavailable"
+	case errors.Is(err, errCoreRecoveryPower):
+		return "recovery_power_unavailable"
+	case errors.Is(err, errCoreRecoveryHealth):
+		return "recovery_health_unavailable"
+	case errors.Is(err, errCoreSchemaNotReady), errors.Is(err, errCoreSchemaResponseUnavailable):
+		return "schema_response_unavailable"
+	case errors.Is(err, errCoreSchemaRequestRejected):
+		return "schema_request_rejected"
+	case errors.Is(err, errCoreSchemaIdentityMismatch):
+		return "schema_identity_mismatch"
+	default:
+		return "native_action_failed"
+	}
 }

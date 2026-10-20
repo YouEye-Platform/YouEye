@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { resolveServiceAuth } from "@/lib/auth/service";
 import { checkPermission } from "@/lib/db/queries/permissions";
 import { evaluateUiUserAdmission } from '@/lib/admission/store';
+import { requestManagedProxy } from '../../../../../../../../../shared/managed-proxy';
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,7 @@ type Connection = {
   allowedPaths?: string[];
   allowedMethods?: string[];
   active?: boolean;
+  transport?: unknown;
 };
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -87,12 +89,12 @@ function copyRequestHeaders(request: NextRequest, token: string | null): Headers
 // compliant clients inflate plain bytes (Z_DATA_ERROR).
 const DECODED_BODY_HEADERS = new Set(["content-encoding", "content-length"]);
 
-function copyResponseHeaders(upstream: Response): Headers {
+function copyResponseHeaders(upstream: Response, decoded = true): Headers {
   const headers = new Headers();
   upstream.headers.forEach((value, key) => {
     const name = key.toLowerCase();
     if (HOP_BY_HOP_HEADERS.has(name)) return;
-    if (DECODED_BODY_HEADERS.has(name)) return;
+    if (decoded && DECODED_BODY_HEADERS.has(name)) return;
     headers.set(key, value);
   });
   return headers;
@@ -179,16 +181,27 @@ async function proxy(request: NextRequest, context: { params: Promise<{ targetAp
     method: request.method,
     headers: copyRequestHeaders(request, bearer),
     redirect: "manual",
+    signal: request.signal,
   };
   if (request.method !== "GET" && request.method !== "HEAD") {
     init.body = await request.arrayBuffer();
   }
 
-  const upstream = await fetch(upstreamUrl, init);
+  let upstream: Response;
+  try {
+    upstream = connection.transport
+      ? await requestManagedProxy(upstreamUrl, connection.transport, {
+        method: request.method, headers: init.headers as Headers,
+        body: init.body as ArrayBuffer | undefined, signal: request.signal,
+      })
+      : await fetch(upstreamUrl, init);
+  } catch {
+    return NextResponse.json({ error: 'Managed connection transport unavailable' }, { status: 502 });
+  }
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,
-    headers: copyResponseHeaders(upstream),
+    headers: copyResponseHeaders(upstream, !connection.transport),
   });
 }
 

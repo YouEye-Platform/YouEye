@@ -62,7 +62,7 @@ youeye_find_standalone_root() {
         return
     fi
     local -a matches=()
-    mapfile -d '' matches < <(find "$root" -mindepth 2 -maxdepth 5 -type f -name server.js -print0)
+    mapfile -d '' matches < <(find "$root" -mindepth 1 -maxdepth 5 \( -type d \( -name node_modules -o -name .next -o -name public \) -prune \) -o \( -type f -name server.js -print0 \))
     [[ ${#matches[@]} -eq 1 ]] || \
         youeye_build_fail "expected exactly one standalone server.js under $root; found ${#matches[@]}"
     dirname -- "${matches[0]}"

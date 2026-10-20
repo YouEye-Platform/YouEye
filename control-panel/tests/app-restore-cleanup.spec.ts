@@ -26,11 +26,11 @@ const binding = { appId: 'canvas-test', name: 'app-canvas-test',
   ownerId: '10000000-0000-4000-8000-000000000001' };
 function runtime(response: unknown) {
   let reads = 0;
-  const module = loadModule('admission/runtime-ownership.ts', {
+  const loadedModule = loadModule('admission/runtime-ownership.ts', {
     '@/lib/incus/server': { incusRequest: async () => { reads++; return response; } },
     '../../../../shared/admission': { isUuid: (s: string) => /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(s) },
   });
-  return { verify: module.verifyRuntimeOwnership, reads: () => reads };
+  return { verify: loadedModule.verifyRuntimeOwnership, reads: () => reads };
 }
 test('restore replacement accepts positive absence, while ordinary cleanup refuses it', async () => {
   const f = runtime({ type: 'error', error_code: 404 });
@@ -65,7 +65,7 @@ for (const databaseMode of ['none', 'own', 'shared']) test(`restore teardown res
   let lease: unknown = {};
   const sql: string[][] = [];
   const pass = async (_id: unknown, action: () => unknown) => action();
-  const module = loadModule('market/uninstaller.ts', {
+  const loadedModule = loadModule('market/uninstaller.ts', {
     '../incus/server': { execCommand: async (_container: string, args: string[]) => {
       sql.push(args); return { exitCode: 0, stdout: '' }; } },
     '../infrastructure/oci-deployer': { containerExists: async () => false },
@@ -86,7 +86,7 @@ for (const databaseMode of ['none', 'own', 'shared']) test(`restore teardown res
     '../incus/container-ip': { getContainerIP: async () => '192.0.2.1' },
     fs: { readFileSync: () => { throw Error('No fixture token file'); } },
   }, { process: { env: { UI_BRIDGE_TOKEN: 'fixture-only' } }, fetch: async () => ({ ok: true, status: 200 }) });
-  const result = await module.uninstallApp(binding.appId, { keepData: false,
+  const result = await loadedModule.uninstallApp(binding.appId, { keepData: false,
     dropSharedDatabase: true, preserveAdmission: true });
   assert.equal(result.success, true);
   assert.equal(result.verification.databaseDropped, databaseMode === 'shared' ? true : null);
@@ -96,7 +96,7 @@ for (const databaseMode of ['none', 'own', 'shared']) test(`restore teardown res
 
 for (const currentMode of ['none', 'own', 'shared']) test(`historical restore removes only current ${currentMode} database resources`, async () => {
   const seen: boolean[] = [];
-  const module = loadModule('backup/app-restore.ts', {
+  const loadedModule = loadModule('backup/app-restore.ts', {
     'fs/promises': { mkdir: async () => {}, rm: async () => {}, readFile: async (file: string) => {
       if (file.endsWith('backup-meta.json')) return JSON.stringify({ schema: 'youeye.backup.app-meta.v1', appId: binding.appId });
       if (file.endsWith('install.json')) return JSON.stringify({ appId: binding.appId });
@@ -119,6 +119,6 @@ for (const currentMode of ['none', 'own', 'shared']) test(`historical restore re
     '@/lib/market/restored-managed-ai': { readRestoredManagedAI: () => undefined },
     '@/lib/admission/backup': { validateAppAdmissionRestore: async () => ({ policy: {} }) },
   });
-  await assert.rejects(module.restoreApp({ appId: binding.appId, archivePath: '/fixture-only.tar.enc', passphrase: 'fixture-only' }, () => {}, false), /Fixture stops/);
+  await assert.rejects(loadedModule.restoreApp({ appId: binding.appId, archivePath: '/fixture-only.tar.enc', passphrase: 'fixture-only' }, () => {}, false), /Fixture stops/);
   assert.deepEqual(seen, [currentMode === 'shared']);
 });

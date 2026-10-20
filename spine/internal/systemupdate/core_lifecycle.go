@@ -1,6 +1,7 @@
 package systemupdate
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"syscall"
+	"time"
 )
 
 const CoreAppLifecycleRoot = "/var/lib/youeye/state/app-updates"
@@ -29,6 +31,13 @@ func (b CoreLifecycleBarrier) lock() (func(), error) {
 }
 
 func (b CoreLifecycleBarrier) lockMode(mode int) (func(), error) {
+	return b.lockFile(context.Background(), "core-lifecycle.flock", mode, false)
+}
+
+// The admission gate is held only while acquiring the lifecycle lease. An
+// exclusive waiter closes it before draining existing readers, so background
+// reconciliation cannot continually overtake a System checkpoint.
+func (b CoreLifecycleBarrier) lockFile(ctx context.Context, name string, mode int, wait bool) (func(), error) {
 	if !filepath.IsAbs(b.Root) {
 		return nil, fmt.Errorf("absolute app lifecycle root required")
 	}
@@ -43,7 +52,7 @@ func (b CoreLifecycleBarrier) lockMode(mode int) (func(), error) {
 	if !ok || !info.IsDir() || info.Mode().Perm() != 0700 || int(stat.Uid) != os.Geteuid() {
 		return nil, fmt.Errorf("unsafe app lifecycle directory")
 	}
-	fd, err := syscall.Open(filepath.Join(b.Root, "core-lifecycle.flock"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
+	fd, err := syscall.Open(filepath.Join(b.Root, name), syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -58,9 +67,32 @@ func (b CoreLifecycleBarrier) lockMode(mode int) (func(), error) {
 		f.Close()
 		return nil, fmt.Errorf("unsafe app lifecycle lock")
 	}
-	if err := syscall.Flock(fd, mode|syscall.LOCK_NB); err != nil {
+	for {
+		if err := ctx.Err(); err != nil {
+			f.Close()
+			return nil, err
+		}
+		err = syscall.Flock(fd, mode|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !wait || (!errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN)) {
+			f.Close()
+			return nil, fmt.Errorf("active app lifecycle work must settle before System activation: %w", err)
+		}
+		timer := time.NewTimer(25 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			f.Close()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	current, err := os.Lstat(filepath.Join(b.Root, name))
+	if err != nil || !os.SameFile(info, current) {
 		f.Close()
-		return nil, fmt.Errorf("active app lifecycle work must settle before System activation: %w", err)
+		return nil, fmt.Errorf("app lifecycle lock changed during admission")
 	}
 	return func() { _ = syscall.Flock(fd, syscall.LOCK_UN); _ = f.Close() }, nil
 }
@@ -68,6 +100,11 @@ func (b CoreLifecycleBarrier) lockMode(mode int) (func(), error) {
 // AdmitOrdinary is the native counterpart of CP's shared admission. Hold the
 // returned lease through the entire asynchronous operation, including cleanup.
 func (b CoreLifecycleBarrier) AdmitOrdinary() (func(), error) {
+	gate, err := b.lockFile(context.Background(), "core-admission.flock", syscall.LOCK_SH, false)
+	if err != nil {
+		return nil, err
+	}
+	defer gate()
 	release, err := b.lockMode(syscall.LOCK_SH)
 	if err != nil {
 		return nil, err
@@ -96,14 +133,43 @@ func (b CoreLifecycleBarrier) Read() (CoreLifecycleReservation, error) {
 }
 
 func (b CoreLifecycleBarrier) Begin(j CoreJournal) error {
+	return b.begin(context.Background(), j, false, nil)
+}
+
+// BeginContext bounds native admission even if its caller has no deadline.
+// Authorization is repeated under exclusive admission, immediately before the
+// durable reservation. Cancellation never clears another owner's reservation.
+func (b CoreLifecycleBarrier) BeginContext(ctx context.Context, j CoreJournal, authorize func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	return b.begin(ctx, j, true, authorize)
+}
+
+func (b CoreLifecycleBarrier) begin(ctx context.Context, j CoreJournal, wait bool, authorize func(context.Context) error) error {
 	if !coreRequestPattern.MatchString(j.RequestID) || !validSHA256(j.ManifestSHA256) {
 		return fmt.Errorf("exact core lifecycle identity required")
 	}
-	unlock, err := b.lock()
+	gate, err := b.lockFile(ctx, "core-admission.flock", syscall.LOCK_EX, wait)
+	if err != nil {
+		return err
+	}
+	defer gate()
+	unlock, err := b.lockFile(ctx, "core-lifecycle.flock", syscall.LOCK_EX, wait)
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if authorize != nil {
+		if err := authorize(ctx); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	want := CoreLifecycleReservation{Schema: "youeye.core-lifecycle.v1", RequestID: j.RequestID, ManifestSHA256: j.ManifestSHA256}
 	old, err := b.Read()
 	if err == nil {
@@ -147,6 +213,9 @@ func (b CoreLifecycleBarrier) Begin(j CoreJournal) error {
 		if record.Schema != "youeye.app-update.v1" || !record.CleanupComplete || record.Phase != "cleanup" || ((record.Commit == nil || record.Commit.VerifiedAt == "") && record.RollbackVerifiedAt == "") {
 			return fmt.Errorf("unfinished app update must complete recovery before System activation")
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	raw, err := json.Marshal(want)
 	if err != nil {

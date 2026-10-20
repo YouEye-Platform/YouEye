@@ -13,6 +13,7 @@ import { jwtVerify } from "jose";
 const PUBLIC_ROUTES = [
   "/login",
   "/offline",
+  "/offline.html",
   "/api/auth/sso",
   "/api/auth/callback",
   "/api/auth/logout",
@@ -56,7 +57,9 @@ function isSSOConfiguredForMiddleware(): boolean {
 }
 
 function loginRedirectFor(request: NextRequest): URL {
-  return new URL(isSSOConfiguredForMiddleware() ? "/api/auth/sso" : "/login", request.url);
+  const target = new URL(isSSOConfiguredForMiddleware() ? "/api/auth/sso" : "/login", request.url);
+  target.searchParams.set("redirect", request.nextUrl.pathname + request.nextUrl.search);
+  return target;
 }
 
 export async function middleware(request: NextRequest) {

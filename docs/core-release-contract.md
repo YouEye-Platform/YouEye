@@ -158,6 +158,40 @@ core journal and installed machine receipt permit normal release of that hold.
 Native backup and all system-container entry points retain the same shared lock.
 Interrupted backup and container-maintenance records block activation as well.
 
+Checkpoint and recovery-fence admission take place before native action launch.
+They wait at most 60 seconds, respect caller cancellation, and revalidate current
+transaction identity and policy under exclusive admission. A separate admission
+gate prevents new ordinary operations from overtaking the waiting System writer;
+already admitted nested operations retain their original lease until cleanup.
+This fairness gate requires compatible CP/native writers. Older CP readers still
+share the lifecycle lock and are safely bounded by the timeout, but do not honor
+the new gate until upgraded.
+
+The executor records admission intent before waiting. A positively recorded
+pre-launch rejection, timeout or cancellation may retry admission on an explicit
+Resume of the same request. Every retry repeats policy and unfinished-work checks;
+it cannot bypass an app, container or backup recovery obligation. The continuation
+returns after an admission timeout instead of automatically retrying indefinitely.
+A lost process, absent child or incomplete receipt is unknown, not retry proof.
+Once launch begins, the existing no-replay rule applies. Native execution-entry
+intent and allowlisted stage/error codes survive acknowledgement loss without
+retaining subprocess output; execution entry does not establish completed effects.
+System displays waiting/retry status using these sanitized diagnostics. Durable
+reservations remain until independently verified commit or recovery.
+
+Component process startup does not prove HTTP readiness. Before the first schema
+request, the native coordinator bounds read-only connection/502/503/504 probes
+to two minutes and rechecks current authority and component identity each time.
+For a pending CP schema, that probe also executes a read-only database query
+through CP's configured Incus transport. Incus's Unix socket and container
+autostart can be ready before its bridge-bound HTTPS listener; an HTTP response
+from CP alone cannot authorize the schema write. This probe creates no migration
+receipt and leaves started or uncertain attempts untouched.
+Authorization failures and mismatched receipts fail closed. A failed schema POST
+is never retried: its outcome can be uncertain even without a response. Retained
+diagnostics distinguish response availability, request rejection and identity
+mismatch without storing credentials or subprocess output.
+
 Paired recovery has a separate frozen action graph: fence writers/native effects,
 restore the paired state and service payloads, recover the host where required,
 then verify prior-release health. It authorizes current recovery policy separately
@@ -166,6 +200,17 @@ outcomes retain the hold. A durable target commit cannot become rollback merely
 because its journal acknowledgement was lost. Only exact verified rollback and
 the unchanged prior machine receipt can release the recovery hold. Concrete
 checkpoint/provider actions and installed fault acceptance remain separate gates.
+
+Explicit recovery can continue unfinished final-health substeps after the original
+native child has settled. It holds the action, launch and child leases, verifies
+the exact retained invocation and empty cgroup, and rechecks current recovery
+authority, machine identity, reservation, provider settlement and container holds.
+The original child result is retained unchanged. Only service/container starts
+without a previous start intent may begin; attempted starts require positive
+readback and are never repeated. This path cannot replay schema, paired restore,
+host recovery or commitment. Read-only observation cannot begin pending substeps.
+Sanitized diagnostics distinguish restored-service, platform-power and
+authenticated-health failures; missing evidence remains unfinished recovery.
 
 CP/UI static file indexes derive from exact role-authenticated archive bytes.
 Native observation checks all files, links, modes and added paths rather than

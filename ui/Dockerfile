@@ -1,40 +1,22 @@
-# Dockerfile for YouEye-UI (Next.js standalone)
-# Multi-stage build: install deps → build → minimal production image
-
-FROM node:22-alpine AS base
-
-# ---- Dependencies ----
-FROM base AS deps
-RUN corepack enable && corepack prepare pnpm@latest --activate
-WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
+# Run from the repository root: docker build -f ui/Dockerfile .
+FROM node:24.22.0-bookworm-slim AS build
+WORKDIR /source
+RUN npm install --global pnpm@10.6.2
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY control-panel/package.json ./control-panel/package.json
+COPY ui/package.json ./ui/package.json
 RUN pnpm install --frozen-lockfile
-
-# ---- Build ----
-FROM base AS build
-RUN corepack enable && corepack prepare pnpm@latest --activate
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN pnpm run build
+ARG YOUEYE_SOURCE_COMMIT
+ENV YOUEYE_SOURCE_COMMIT=$YOUEYE_SOURCE_COMMIT
+RUN pnpm --dir ui run build
+# Flatten the selected application without selecting an unrelated server entrypoint.
+RUN set -eu; root=ui/.next/standalone; if [ -f "$root/ui/server.js" ]; then root="$root/ui"; fi; test -f "$root/server.js"; cp -a "$root" /standalone
 
-# ---- Production ----
-FROM base AS runner
+FROM node:24.22.0-bookworm-slim AS runner
 WORKDIR /app
-ENV NODE_ENV=production
-ENV HOSTNAME=0.0.0.0
-ENV PORT=3000
-
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
-
-# Copy standalone output
-COPY --from=build /app/.next/standalone ./
-COPY --from=build /app/.next/static ./.next/static
-COPY --from=build /app/public ./public
-
-USER nextjs
-
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000
+COPY --from=build --chown=node:node /standalone/ ./
+USER node
 EXPOSE 3000
-
 CMD ["node", "server.js"]

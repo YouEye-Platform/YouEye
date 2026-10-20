@@ -102,6 +102,7 @@ const STATIC_PATTERNS = [
   '/manifest.json',
   '/manifest.webmanifest',
   '/sw.js',
+  '/offline.html',
   '/swe-worker-',
   '/fonts/',
 ];

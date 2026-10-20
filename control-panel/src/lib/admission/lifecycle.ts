@@ -13,6 +13,7 @@ import { withAppLifecycle } from '@/lib/market/update-admission';
 import { readFrozenUpdateManifest } from '@/lib/market/frozen-manifest';
 import { appServiceCredentials } from '@/lib/apps/service-credential-store';
 import { isActiveAppCredential } from '../../../../shared/app-service-credential';
+import { scopedGrantHandlers } from '@/lib/caddy/scoped-grant-admission';
 
 export const ADMISSION_HEADERS = ['X-YouEye-Username', 'X-YouEye-Groups', 'X-YouEye-Email', 'X-YouEye-Name', 'X-YouEye-Uid'];
 export async function admissionForwardAuth() {
@@ -164,6 +165,14 @@ export async function reconcileInstalledAdmission() {
     }
     for (const server of Object.values(config.apps?.http?.servers || {})) {
       for (const route of server.routes || []) {
+        const grantHandlers = scopedGrantHandlers(route);
+        if (grantHandlers) {
+          if (!isDeepStrictEqual(route.handle, grantHandlers)) {
+            route.handle = grantHandlers;
+            changed = true;
+          }
+          continue;
+        }
         const hosts = route.match?.flatMap(match => match.host || []) || [];
         const belongs = hosts.includes(`${metadata.subdomain}.${metadata.domain}`)
           || (String(route['@id'] || '').startsWith(`app-${metadata.appId}-`))

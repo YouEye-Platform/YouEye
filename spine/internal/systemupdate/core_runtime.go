@@ -54,7 +54,30 @@ func (r NativeCoreRuntime) Executor() NativeCoreExecutor {
 			}
 			return r.authorizeRecovery(ctx, j)
 		},
-		AuthorizeLiveFenceAction: r.Runner.AuthorizeLiveFence,
+		AuthorizeLiveFenceAction:     r.Runner.AuthorizeLiveFence,
+		ContinueRecoveryHealthAction: r.continueRecoveryHealth,
+		AdmitAction: func(ctx context.Context, j CoreJournal, s CoreStep) error {
+			barrier := CoreLifecycleBarrier{Root: filepath.Join(r.Checkpoint.DataRoot, "state", "app-updates")}
+			return barrier.BeginContext(ctx, j, func(ctx context.Context) error {
+				current, err := (CoreManager{Root: r.Root}).Read()
+				if err != nil || current.RequestID != j.RequestID || current.ManifestSHA256 != j.ManifestSHA256 || current.Phase != j.Phase {
+					return fmt.Errorf("native admission coordinator changed")
+				}
+				if s.Name == "recovery-fence" {
+					return r.authorizeRecovery(ctx, current)
+				}
+				// Start intent is already durable, but no child has launched.
+				// Recheck selection freshness using the pre-checkpoint policy
+				// view; never rewrite the actual graph or bypass current trust.
+				current.Steps = append([]CoreStep(nil), current.Steps...)
+				for i := range current.Steps {
+					if current.Steps[i].Name == "checkpoint" {
+						current.Steps[i].State, current.Steps[i].Evidence = "pending", ""
+					}
+				}
+				return r.AuthorizeTarget(ctx, current, current.ActivationRequested)
+			})
+		},
 		CancelPreparationAction: func(ctx context.Context, j CoreJournal) error {
 			if err := r.Validate(); err != nil {
 				return err
@@ -242,12 +265,16 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 		return r.RecoverHost(ctx, j, false)
 	case "recovery-health":
 		if _, err := r.Services.RecoverServices(ctx, j.RequestID, false); err != nil {
-			return CoreActionObservation{}, err
+			return CoreActionObservation{}, errors.Join(errCoreRecoveryServices, err)
 		}
 		if err := r.Checkpoint.PrepareHealth(ctx, j.RequestID, true, false); err != nil {
-			return CoreActionObservation{}, err
+			return CoreActionObservation{}, errors.Join(errCoreRecoveryPower, err)
 		}
-		return coreActionPassed(r.AuthenticatedHealth(ctx, j, true))
+		evidence, err := r.AuthenticatedHealth(ctx, j, true)
+		if err != nil {
+			return CoreActionObservation{}, errors.Join(errCoreRecoveryHealth, err)
+		}
+		return coreActionPassed(evidence, nil)
 	}
 	return CoreActionObservation{}, fmt.Errorf("unsupported exact native action")
 }
@@ -255,7 +282,15 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 func (r NativeCoreRuntime) waitSchema(ctx context.Context, j CoreJournal, role string) (CoreActionObservation, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
-	observation, err := r.Services.Schema(ctx, j.RequestID, role, true)
+	// systemctl start proves process launch, not that HTTP is listening. Wait
+	// only on positively classified GET readiness failures before the first
+	// schema POST. Reauthorize and revalidate the full identity on every probe.
+	observation, err := waitCoreSchemaReadiness(ctx, func(probe context.Context) (CoreActionObservation, error) {
+		if err := r.AuthorizeTarget(probe, j, j.ActivationRequested); err != nil {
+			return CoreActionObservation{State: "unknown"}, err
+		}
+		return r.Services.Schema(probe, j.RequestID, role, true)
+	}, time.Second)
 	if err != nil {
 		return observation, err
 	}
@@ -277,6 +312,24 @@ func (r NativeCoreRuntime) waitSchema(ctx context.Context, j CoreJournal, role s
 		}
 	}
 	return observation, nil
+}
+
+func waitCoreSchemaReadiness(ctx context.Context, probe func(context.Context) (CoreActionObservation, error), interval time.Duration) (CoreActionObservation, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	for {
+		observation, err := probe(ctx)
+		if !errors.Is(err, errCoreSchemaNotReady) {
+			return observation, err
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return CoreActionObservation{State: "unknown"}, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // Observe first reconciles the owned child. A lost child may be accepted only

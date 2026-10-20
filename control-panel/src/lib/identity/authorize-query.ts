@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 
-// NextURL replaces loopback IPs anywhere in the URL string, including an
+// Older NextURL versions replaced loopback IPs anywhere in the URL string, including an
 // encoded redirect_uri query value. Preserve the original query at the
 // middleware boundary so OIDC redirect matching remains byte-for-byte exact.
 export const ORIGINAL_IDENTITY_QUERY_HEADER = 'x-youeye-original-identity-query';

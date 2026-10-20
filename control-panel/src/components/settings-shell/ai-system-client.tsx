@@ -9,7 +9,7 @@ type Health = { status: string; version: string | null; database: string; backup
 
 export function AISystemClient() {
   const [health, setHealth] = useState<Health | null>(null);
-  useEffect(() => { fetch('/api/ai-system', { cache: 'no-store' }).then(async (response) => setHealth(await response.json())).catch(() => setHealth({ status: 'unavailable', version: null, database: 'unknown', backup: 'included_in_core_backup' })); }, []);
+  useEffect(() => { fetch('/settings/api/ai-system', { cache: 'no-store' }).then(async (response) => setHealth(await response.json())).catch(() => setHealth({ status: 'unavailable', version: null, database: 'unknown', backup: 'included_in_core_backup' })); }, []);
   if (!health) return <div className="flex justify-center py-16"><Loader2 className="size-5 animate-spin" /></div>;
   const rows = [
     { icon: Sparkles, label: 'AI service', value: health.status, detail: health.version ? `Version ${health.version}` : 'Version unavailable' },

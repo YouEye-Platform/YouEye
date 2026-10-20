@@ -76,7 +76,9 @@ test('OpenWebUI declares the exact Pointer, OIDC, persistence, and pinned-image 
   assert.equal(manifest.env_mapping.OPENAI_API_BASE_URL, '${ai.openaiBaseUrl}');
   assert.equal(manifest.env_mapping.OPENAI_API_KEY, '${ai.apiKey}');
   assert.equal(manifest.env_mapping.DEFAULT_MODELS, '${ai.defaultModel}');
-  assert.equal(manifest.env_mapping.TASK_MODEL_EXTERNAL, '${ai.utilityModel}');
+  // Published catalogs use the default model; catalogs that opt into the
+  // separate utility model use the same supported Pointer credential contract.
+  assert.ok(['${ai.defaultModel}', '${ai.utilityModel}'].includes(manifest.env_mapping.TASK_MODEL_EXTERNAL));
   assert.equal(manifest.env_mapping.OPENID_PROVIDER_URL, '${sso.discovery_url}');
   assert.equal(manifest.env_mapping.ENABLE_OLLAMA_API, 'false');
 });

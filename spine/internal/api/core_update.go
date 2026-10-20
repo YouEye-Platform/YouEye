@@ -69,7 +69,11 @@ func (s *Server) handleCoreUpdateStatus(w http.ResponseWriter, r *http.Request) 
 			graph = j.RecoverySteps
 		}
 		for _, step := range graph {
-			steps = append(steps, map[string]string{"name": step.Name, "state": step.State})
+			item := map[string]string{"name": step.Name, "state": step.State}
+			if observed, err := (systemupdate.NativeCoreExecutor{Root: s.coreRoot()}).ActionStatus(j, step); err == nil {
+				item["action_state"], item["stage"], item["code"], item["effect_state"] = observed.State, observed.Stage, observed.Code, observed.EffectState
+			}
+			steps = append(steps, item)
 		}
 		complete := m.TransactionComplete(j)
 		out["transaction"] = map[string]any{"request_id": j.RequestID, "manifest_sha256": j.ManifestSHA256,

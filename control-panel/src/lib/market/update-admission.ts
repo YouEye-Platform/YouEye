@@ -32,6 +32,12 @@ const globalContext = globalThis as typeof globalThis & {
 };
 const context = globalContext[contextKey] ??= new AsyncLocalStorage<Map<string, HeldApp>>();
 
+const coreContextKey = Symbol.for('youeye.core-lifecycle-admission');
+const coreGlobal = globalThis as typeof globalThis & {
+  [coreContextKey]?: AsyncLocalStorage<Map<string, HeldApp>>;
+};
+const coreContext = coreGlobal[coreContextKey] ??= new AsyncLocalStorage<Map<string, HeldApp>>();
+
 export class AppLifecycleAdmissionError extends Error {
   readonly code = 'recovery_required';
   constructor(message = 'App resources are reserved by an unfinished update; explicit recovery is required') {
@@ -42,12 +48,28 @@ export class AppLifecycleAdmissionError extends Error {
 
 /** Shared with the host coordinator. Process death never removes a reservation. */
 async function withCoreLifecycle<T>(directory: string, work: () => T | Promise<T>): Promise<T> {
-  const lock = AppUpdateExecutorLock.acquire(path.join(directory, 'core-lifecycle.flock'), 'shared');
+  const key = path.resolve(directory);
+  const inherited = coreContext.getStore();
+  const held = inherited?.get(key);
+  if (held?.active) {
+    held.lock.assertHeld();
+    return await work();
+  }
+  // A waiting System writer holds this gate while existing operations drain.
+  // Nested operations retain their original admission and may finish normally.
+  const gate = AppUpdateExecutorLock.acquire(path.join(directory, 'core-admission.flock'), 'shared');
+  let lock: AppUpdateExecutorLock;
+  try { lock = AppUpdateExecutorLock.acquire(path.join(directory, 'core-lifecycle.flock'), 'shared'); }
+  finally { gate.release(); }
+  const entry: HeldApp = { lock, active: true };
+  const scope = new Map(inherited);
+  scope.set(key, entry);
+  const admittedWork = () => coreContext.run(scope, work);
   try {
     let fd: number;
     try { fd = openSync(path.join(directory, 'core-reservation.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return await work();
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return await admittedWork();
       throw new AppLifecycleAdmissionError('System lifecycle reservation is unreadable; recovery must remain blocked');
     }
     try {
@@ -65,7 +87,7 @@ async function withCoreLifecycle<T>(directory: string, work: () => T | Promise<T
       }
       throw new AppLifecycleAdmissionError('A System update owns the platform lifecycle; complete its update or recovery first');
     } finally { closeSync(fd); }
-  } finally { lock.release(); }
+  } finally { entry.active = false; lock.release(); }
 }
 
 export function appUpdateJournalStore(directory?: string): AppUpdateJournalStore {

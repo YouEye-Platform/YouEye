@@ -9,7 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
+import { oauthTransactionName, readOAuthTransaction } from '../../../../../../shared/oauth-transaction';
 import {
   exchangeCodeForToken,
   fetchUserInfo,
@@ -49,30 +49,28 @@ export async function GET(request: NextRequest) {
   const state = request.nextUrl.searchParams.get('state');
   const errorParam = request.nextUrl.searchParams.get('error');
   const loginPath = settingsFlow ? '/settings/login' : '/login';
+  const transactionName = oauthTransactionName('cp', state);
+  const postLoginRedirect = readOAuthTransaction(transactionName ? request.cookies.get(transactionName)?.value : undefined, state);
+  const redirectResponse = (url: URL) => {
+    const response = NextResponse.redirect(url);
+    if (transactionName) response.cookies.delete(transactionName);
+    return response;
+  };
 
   // Handle identity provider errors
   if (errorParam) {
     const desc = request.nextUrl.searchParams.get('error_description') || errorParam;
     console.error(`OAuth2 error: ${desc}`);
-    return NextResponse.redirect(new URL(`${loginPath}?error=${encodeURIComponent(desc)}`, baseUrl));
+    return redirectResponse(new URL(`${loginPath}?error=${encodeURIComponent(desc)}`, baseUrl));
   }
 
   if (!code || !state) {
-    return NextResponse.redirect(new URL(`${loginPath}?error=Missing+code+or+state`, baseUrl));
+    return redirectResponse(new URL(`${loginPath}?error=Missing+code+or+state`, baseUrl));
   }
 
-  // Verify state matches cookie
-  const cookieStore = await cookies();
-  const savedState = cookieStore.get('oauth-state')?.value;
-  cookieStore.delete('oauth-state');
-
-  // Read and clear the post-login redirect destination
-  const postLoginRedirect = cookieStore.get('oauth-redirect')?.value || (settingsFlow ? '/settings' : '/');
-  cookieStore.delete('oauth-redirect');
-
-  if (!savedState || savedState !== state) {
+  if (postLoginRedirect === null) {
     console.error('OAuth2 state mismatch');
-    return NextResponse.redirect(new URL(`${loginPath}?error=Invalid+state`, baseUrl));
+    return redirectResponse(new URL(`${loginPath}?error=Invalid+state`, baseUrl));
   }
 
   try {
@@ -99,10 +97,10 @@ export async function GET(request: NextRequest) {
     console.log(`SSO login successful for "${username}" (admin: ${isAdmin})`);
 
     // Redirect to the post-login destination (embed page or dashboard)
-    return NextResponse.redirect(new URL(postLoginRedirect, baseUrl));
+    return redirectResponse(new URL(postLoginRedirect, baseUrl));
   } catch (error) {
     console.error('OAuth2 callback error:', error);
     const msg = error instanceof Error ? error.message : 'Authentication failed';
-    return NextResponse.redirect(new URL(`${loginPath}?error=${encodeURIComponent(msg)}`, baseUrl));
+    return redirectResponse(new URL(`${loginPath}?error=${encodeURIComponent(msg)}`, baseUrl));
   }
 }

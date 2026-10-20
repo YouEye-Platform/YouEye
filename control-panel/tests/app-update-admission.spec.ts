@@ -302,3 +302,30 @@ test('core activation drains shared lifecycle work and a durable reservation sur
         });
     `, directory);
   }));
+
+test('waiting System writer excludes new work while admitted nested operations finish', () =>
+  temporary(async (directory, store) => {
+    await withAppLifecycle('fixture', async () => {
+      const writer = AppUpdateExecutorLock.acquire(path.join(directory, 'core-admission.flock'));
+      try {
+        // Existing work can finish its nested cleanup without re-entering the
+        // closed admission gate. A separate process cannot borrow that scope.
+        await withAppLifecycle('nested-cleanup', () => undefined, { store });
+        child(`
+          const { withAppLifecycle } = require(${JSON.stringify(admissionModule)});
+          const { AppUpdateJournalStore } = require(${JSON.stringify(journalModule)});
+          withAppLifecycle('late-background', () => { throw new Error('must not enter'); },
+            { store: new AppUpdateJournalStore(process.argv[1]) })
+            .then(() => process.exit(1), error => {
+              if (!error.message.includes('busy')) process.exit(2);
+            });
+        `, directory);
+        assert.throws(() => AppUpdateExecutorLock.acquire(path.join(directory, 'core-lifecycle.flock')), /busy/);
+      } finally { writer.release(); }
+    }, { store });
+    const writer = AppUpdateExecutorLock.acquire(path.join(directory, 'core-admission.flock'));
+    try {
+      await assert.rejects(withAppLifecycle('late-background', () => assert.fail('entered closed gate'), { store }), /busy/);
+    } finally { writer.release(); }
+    await withAppLifecycle('next-operation', () => undefined, { store });
+  }));

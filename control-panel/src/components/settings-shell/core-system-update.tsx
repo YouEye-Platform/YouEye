@@ -22,6 +22,11 @@ const stepLabels: Record<string, string> = {
   "recovery-fence": "Securing recovery", "recovery-paired-restore": "Restoring the recovery point",
   "recovery-host": "Starting the previous system", "recovery-health": "Checking the restored release",
 };
+const recoveryMessages: Record<string, string> = {
+  recovery_services_unavailable: "The restored interface services have not been verified. Resume recovery to check their existing start records and continue unfinished steps.",
+  recovery_power_unavailable: "Some restored services are not yet running. Resume recovery to check recorded starts and start only services that have not been attempted.",
+  recovery_health_unavailable: "The restored services have not passed access checks. Resume recovery to check them again.",
+};
 
 async function headers() {
   const response = await fetch("/settings/api/auth/csrf", { cache: "no-store" });
@@ -90,6 +95,11 @@ export function CoreSystemUpdate({ initial }: { initial: CoreUpdateStatus }) {
   const unfinished = transaction && !transaction.complete;
   const canCancel = unfinished && !transaction.activation_requested && transaction.steps.every(step => step.state === "pending" || ["verify-members", "stage-host"].includes(step.name));
   const currentStep = transaction?.steps.find(step => step.state !== "succeeded");
+  const waitingForApps = currentStep?.stage === "admission" && currentStep.action_state === "running";
+  const canRetryAdmission = currentStep?.action_state === "retryable" && currentStep.stage === "admission" && currentStep.effect_state === "not-started";
+  const admissionBlocked = canRetryAdmission && currentStep?.code === "admission_rejected";
+  const recovering = currentStep?.name.startsWith("recovery-");
+  const recoveryMessage = recovering && currentStep?.code ? recoveryMessages[currentStep.code] : undefined;
   const state = transaction?.complete
     ? transaction.phase === "rolled-back" ? "Previous release restored" : transaction.phase === "cancelled" ? "Preparation cancelled" : "Update complete"
     : transaction ? phaseLabels[transaction.phase] ?? "Checking retained update" : "Installed release";
@@ -99,7 +109,7 @@ export function CoreSystemUpdate({ initial }: { initial: CoreUpdateStatus }) {
       <div className="min-w-0">
         <h3 className="text-sm font-medium">YouEye System</h3>
         <p className="mt-1 text-sm">{status.installed?.release.version ?? "Version unavailable"}</p>
-        <p className="mt-1 text-sm text-muted-foreground" role="status">{state}{unfinished && currentStep ? ` · ${stepLabels[currentStep.name] ?? "Verifying update"}` : ""}</p>
+        <p className="mt-1 text-sm text-muted-foreground" role="status">{waitingForApps ? "Waiting for app operations to finish" : canRetryAdmission ? "Waiting to retry" : state}{unfinished && currentStep && !waitingForApps && !canRetryAdmission ? ` · ${stepLabels[currentStep.name] ?? "Verifying update"}` : ""}</p>
       </div>
       <Button variant="outline" disabled={!!busy || !!unfinished} onClick={() => void check()}>
         {busy === "check" ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} Check for updates
@@ -119,11 +129,14 @@ export function CoreSystemUpdate({ initial }: { initial: CoreUpdateStatus }) {
     {candidate && !available && !unfinished && <p className="text-sm text-muted-foreground">The installed release matches the current selection.</p>}
     {unfinished && <div className="space-y-3">
       <p className="text-sm text-muted-foreground">Target: YouEye {transaction.target_version}. You can close this page while the system works.</p>
+      {waitingForApps && <p className="text-sm text-muted-foreground">Existing app operations are finishing. New app changes are paused while the update waits.</p>}
+      {canRetryAdmission && <p className="text-sm text-muted-foreground">{admissionBlocked ? "Resolve unfinished app updates, container operations or backups and check current access policy before retrying." : "The wait ended before the next update step started. Finish any active app operations, then retry."}</p>}
       {transaction.error && <p className="text-sm text-destructive">{transaction.error}</p>}
+      {recoveryMessage && <p className="text-sm text-muted-foreground">{recoveryMessage}</p>}
       <div className="flex flex-wrap gap-2">
         {transaction.phase === "awaiting-restart" && <Button disabled={!!busy || !!pending} onClick={() => void submit("activate")}>Restart and install {transaction.target_version}</Button>}
         {canCancel && <Button variant="outline" disabled={!!busy || !!pending} onClick={() => void submit("cancel")}>Cancel preparation</Button>}
-        {transaction.phase !== "cancelling" && <Button variant="outline" disabled={!!busy || !!pending} onClick={() => void submit("resume")}>Resume checks</Button>}
+        {transaction.phase !== "cancelling" && <Button variant="outline" disabled={!!busy || !!pending || waitingForApps} onClick={() => void submit("resume")}>{canRetryAdmission ? recovering ? "Retry recovery" : "Retry update" : "Resume checks"}</Button>}
         {transaction.phase === "needs-recovery" && !canCancel && <Button variant="outline" disabled={!!busy || !!pending} onClick={() => void submit("recover")}>Restore previous release</Button>}
       </div>
       {transaction.phase === "awaiting-restart" && <p className="text-sm text-muted-foreground">Restarting pauses services and saves a recovery point first.</p>}

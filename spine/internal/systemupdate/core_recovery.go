@@ -20,6 +20,13 @@ type CoreLiveRecoveryExecutor interface {
 	AuthorizeLiveFence(context.Context, CoreJournal, CoreStep) error
 }
 
+// Explicit recovery may continue never-attempted health substeps after proving
+// the original child has settled. This is not a retry of the native action and
+// is deliberately unavailable to read-only observation.
+type CoreRecoveryHealthContinuation interface {
+	ContinueRecoveryHealth(context.Context, CoreJournal, CoreStep) (CoreActionObservation, error)
+}
+
 func coreRecoveryNames(j CoreJournal) []string {
 	names := []string{"recovery-fence", "recovery-paired-restore"}
 	if j.RestartRequired {
@@ -177,13 +184,17 @@ func (m CoreManager) Recover(ctx context.Context, requestID string) (CoreJournal
 		}
 		observation := CoreActionObservation{State: "absent"}
 		if s.State != "pending" {
-			observation, err = m.Executor.Observe(ctx, j, *s)
+			if continuation, ok := m.Executor.(CoreRecoveryHealthContinuation); ok && s.Name == "recovery-health" && s.State == "started" {
+				observation, err = continuation.ContinueRecoveryHealth(ctx, j, *s)
+			} else {
+				observation, err = m.Executor.Observe(ctx, j, *s)
+			}
 			if err != nil {
 				return j, err
 			}
 		}
-		if observation.State == "absent" {
-			if s.State != "pending" {
+		if observation.State == "absent" || observation.State == "retryable" {
+			if observation.State == "absent" && s.State != "pending" {
 				return j, fmt.Errorf("uncertain recovery effect cannot be replayed")
 			}
 			s.State, j.Phase, j.Error = "started", "recovering", ""
@@ -210,7 +221,11 @@ func (m CoreManager) Recover(ctx context.Context, requestID string) (CoreJournal
 			s.State, s.Evidence, j.Phase = "failed", observation.Evidence, "needs-recovery"
 			j.Error = "Paired recovery requires repair; retain checkpoints and lifecycle hold"
 			return j, m.saveCore(&j)
-		case "running", "unknown":
+		case "running", "unknown", "retryable":
+			s.Evidence = observation.Evidence
+			if observation.State == "retryable" {
+				j.Error = "Recovery admission ended before native launch; settle ordinary work and resume this request"
+			}
 			j.Phase = "recovering"
 			return j, m.saveCore(&j)
 		default:

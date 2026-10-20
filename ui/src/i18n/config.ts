@@ -28,3 +28,11 @@ export function resolveLocale(lang: string | undefined | null): Locale {
   }
   return defaultLocale;
 }
+
+/** A malformed personal value must not hide a valid instance preference. */
+export function resolvePreferredLocale(user: unknown, system: unknown): Locale {
+  for (const value of [user, system]) {
+    if (typeof value === "string" && locales.includes(value as Locale)) return value as Locale;
+  }
+  return defaultLocale;
+}

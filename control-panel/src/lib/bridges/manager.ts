@@ -27,6 +27,7 @@ import { readFile } from 'fs/promises';
 import { listInternetGrants } from './internet-store';
 import { addScopedAppGrantRoute, removeScopedAppGrantRoute } from '../caddy/client';
 import type { ContainerMeta, InstallMetadata } from '../market/types';
+import { managedProxyTransport } from '../../../../shared/managed-proxy';
 
 // ─── UI Connection Push ──────────────────────────────────────
 // Push bridge/connection state to YE-UI whenever bridges change.
@@ -227,7 +228,7 @@ async function computeInternetProxyScopes(appId: string): Promise<Array<Record<s
   }
 }
 
-export async function pushConnectionsToUI(appId: string): Promise<void> {
+export async function pushConnectionsToUI(appId: string, options: { required?: boolean } = {}): Promise<void> {
   try {
     if (!_bridgeToken) {
       _bridgeToken = (await readFile(TOKEN_FILE, 'utf-8')).trim();
@@ -235,7 +236,7 @@ export async function pushConnectionsToUI(appId: string): Promise<void> {
     if (!_uiIP) {
       _uiIP = await getIncusContainerIP(UI_CONTAINER);
     }
-    if (!_uiIP || !_bridgeToken) return;
+    if (!_uiIP || !_bridgeToken) throw new Error('UI connection projection authority unavailable');
 
     const bridges = await getBridgesForApp(appId);
     const activeBridges = bridges.filter(b => b.active);
@@ -251,12 +252,24 @@ export async function pushConnectionsToUI(appId: string): Promise<void> {
         const containerName = primary?.containerName || `app-${targetId}`;
         const ip = await getIncusContainerIP(containerName);
         const port = primary?.port || 8080;
+        let transport;
+        if (b.url && (b.accessMode === 'proxy' || b.accessMode === 'caddy')) {
+          const hostname = meta?.subdomain && meta.domain ? `${meta.subdomain}.${meta.domain}` : '';
+          if (!hostname || b.url !== `https://${hostname}`) throw new Error('Scoped proxy hostname differs from installed target');
+          const [address, ca] = await Promise.all([
+            getIncusContainerIP('youeye-caddy'),
+            incusDownloadFile('youeye-caddy', '/data/caddy/pki/authorities/local/root.crt'),
+          ]);
+          transport = managedProxyTransport({ schema: 'youeye.managed-proxy.v1',
+            address, hostname, ca: ca.toString('utf8') }, b.url);
+        }
         return {
           appId: targetId,
           name: targetId,
           host: ip || containerName,
           port,
           url: b.url,
+          transport,
           accessMode: b.accessMode || 'network',
           allowedPaths: b.allowedPaths,
           allowedMethods: b.allowedMethods,
@@ -285,7 +298,7 @@ export async function pushConnectionsToUI(appId: string): Promise<void> {
       available,
     };
 
-    await fetch(`http://${_uiIP}:3000/api/ui-bridge/app-connections`, {
+    const response = await fetch(`http://${_uiIP}:3000/api/ui-bridge/app-connections`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -293,7 +306,9 @@ export async function pushConnectionsToUI(appId: string): Promise<void> {
       },
       body: JSON.stringify(payload),
     });
+    if (!response.ok) throw new Error('UI connection projection was not accepted');
   } catch {
+    if (options.required) throw new Error('Current UI connection projection could not be verified');
     // Non-fatal — UI might not have the endpoint yet during upgrades
     console.warn(`[bridges] Failed to push connections to UI for ${appId}`);
   }

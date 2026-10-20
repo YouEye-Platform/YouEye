@@ -13,6 +13,11 @@ completed update; pending recovery or cleanup is returned as pending. Provider
 output and exceptions are excluded from these responses.
 Appliance acceptance remains a separate requirement from unit-test coverage.
 
+Native package staging uses the same exact-URL release transport for the archive
+and its signature evidence. A protected candidate cache can supply both before
+publication; original source authority, checksum and signature verification still
+apply. Corrupt cached evidence fails closed rather than falling back to a download.
+
 An identical signed product build can use `operationKind: release-metadata` in
 the same journal. It reserves the app and exact containers, checkpoints only
 release registration metadata, and keeps payload writers running. Recovery

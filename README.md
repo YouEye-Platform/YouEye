@@ -128,8 +128,8 @@ graph TD
 |-----------|-------|
 | **Spine** | Go 1.21+, Cobra CLI, Bubble Tea TUI, Unix socket API |
 | **Control Panel** | Next.js 16, TypeScript, Incus API, YouEye ID |
-| **UI** | Next.js 15, Drizzle ORM, Radix UI, DND-Kit, Framer Motion |
-| **Native Apps** | Next.js 15 |
+| **UI** | Next.js 16, Drizzle ORM, Radix UI, DND-Kit, Framer Motion |
+| **Native Apps** | Next.js 16 |
 | **Infrastructure** | Incus (LXD), PostgreSQL 17, YouEye ID, Caddy, Pi-Hole v6 |
 
 ## Native Apps
@@ -297,11 +297,11 @@ cd spine && go build ./cmd/youeye
 # Control Panel (Next.js 16)
 cd control-panel && pnpm install && pnpm dev
 
-# UI (Next.js 15)
+# UI (Next.js 16)
 cd ui && pnpm install && pnpm dev
 ```
 
-Use `pnpm` for the Node.js projects in this repository.
+Use Node 24.22.0 and pnpm 10.6.2 for these projects. Install from the repository root with `pnpm install --frozen-lockfile`; the root `pnpm-lock.yaml` is authoritative for both workspaces. See [Web runtime and dependency policy](docs/web-runtime.md).
 
 ## Contributing
 

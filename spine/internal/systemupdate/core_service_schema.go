@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -23,6 +24,13 @@ type coreSchemaObservation struct {
 	Managed bool   `json:"managed"`
 	State   string `json:"state"`
 }
+
+// Only a read-only readiness probe may be retried. A POST failure can have
+// started schema changes even when its response was lost.
+var errCoreSchemaNotReady = errors.New("native component is not ready for schema observation")
+var errCoreSchemaResponseUnavailable = errors.New("native component response unavailable")
+var errCoreSchemaRequestRejected = errors.New("native component did not accept exact schema request")
+var errCoreSchemaIdentityMismatch = errors.New("native component receipt differs from installed identity")
 
 // Schema observes/requests one exact durable component schema identity. It
 // never treats an HTTP success or a version string as completed migration, and
@@ -202,15 +210,21 @@ func coreSchemaRequest(ctx context.Context, client *http.Client, endpoint, heade
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return result, fmt.Errorf("native component response unavailable")
+		if !begin && ctx.Err() == nil {
+			return result, errCoreSchemaNotReady
+		}
+		return result, errCoreSchemaResponseUnavailable
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return result, fmt.Errorf("native component did not accept exact schema request")
+		if !begin && (resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusGatewayTimeout) {
+			return result, errCoreSchemaNotReady
+		}
+		return result, errCoreSchemaRequestRejected
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16385))
 	if err != nil || len(raw) > 16384 || json.Unmarshal(raw, &result) != nil || !result.Managed || result.coreComponentMarker != expected {
-		return result, fmt.Errorf("native component receipt differs from installed identity")
+		return result, errCoreSchemaIdentityMismatch
 	}
 	switch result.State {
 	case "pending", "started", "completed", "unknown":

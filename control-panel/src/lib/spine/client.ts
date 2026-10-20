@@ -215,7 +215,7 @@ export interface CoreUpdateStatus {
     machine_bound: boolean;
     payload_observation: 'not-observed';
   };
-  transaction?: { request_id: string; manifest_sha256: string; phase: string; restart_required: boolean; activation_requested: boolean; target_version: string; complete: boolean; steps: { name: string; state: string }[]; error?: string };
+  transaction?: { request_id: string; manifest_sha256: string; phase: string; restart_required: boolean; activation_requested: boolean; target_version: string; complete: boolean; steps: { name: string; state: string; action_state?: string; stage?: string; code?: string; effect_state?: string }[]; error?: string };
 }
 
 export interface CoreUpdateCandidate {

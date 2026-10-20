@@ -55,8 +55,11 @@ type CoreJournal struct {
 // CoreActionObservation must come from the action's durable owner journal.
 // Unknown is not absent and can never justify repeating a migration or effect.
 type CoreActionObservation struct {
-	State    string // absent, running, succeeded, failed, unknown
-	Evidence string
+	State       string // absent, running, succeeded, failed, unknown
+	Evidence    string
+	Stage       string `json:",omitempty"`
+	Code        string `json:",omitempty"`
+	EffectState string `json:",omitempty"` // not-started, started; absent means unknown
 }
 
 // CoreExecutor connects the host journal to existing host/CP/UI lifecycles.
@@ -438,7 +441,7 @@ func (m CoreManager) Advance(ctx context.Context, requestID string, activate boo
 		if observation.State == "absent" && step.State != "pending" {
 			observation = CoreActionObservation{State: "unknown", Evidence: "started action has no retained receipt"}
 		}
-		if observation.State == "absent" {
+		if observation.State == "absent" || observation.State == "retryable" {
 			if step.State == "failed" {
 				return j, fmt.Errorf("failed action requires explicit recovery, not a new attempt")
 			}
@@ -474,7 +477,14 @@ func (m CoreManager) Advance(ctx context.Context, requestID string, activate boo
 			j.Phase = "needs-recovery"
 			j.Error = "Recorded lifecycle action failed; retain paired checkpoint and prior release"
 			return j, m.saveCore(&j)
-		case "running", "unknown":
+		case "running", "unknown", "retryable":
+			step.Evidence = observation.Evidence
+			if observation.State == "retryable" {
+				j.Error = "Lifecycle admission ended before checkpoint effects; settle ordinary work and resume this request"
+				if observation.Code == "admission_rejected" {
+					j.Error = "Lifecycle admission is blocked before checkpoint effects; reconcile unfinished app, container or backup work and current policy, then resume this request"
+				}
+			}
 			j.Phase = "applying"
 			return j, m.saveCore(&j)
 		default:

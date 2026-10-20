@@ -12,7 +12,7 @@
  */
 
 import { getRequestConfig } from "next-intl/server";
-import { resolveLocale, defaultLocale } from "./config";
+import { resolvePreferredLocale, defaultLocale } from "./config";
 
 /** Cached system language with TTL */
 let cachedSystemLang: { value: string; expiresAt: number } | null = null;
@@ -68,7 +68,7 @@ export default getRequestConfig(async () => {
   const userLang = await getUserLanguage();
   const systemLang = await fetchSystemLanguage();
 
-  const locale = resolveLocale(userLang || systemLang);
+  const locale = resolvePreferredLocale(userLang, systemLang);
 
   let messages;
   try {

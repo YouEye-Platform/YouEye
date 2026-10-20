@@ -475,7 +475,7 @@ export async function stageMarketNativeArtifact(
   if (signatureClassification === 'complete') {
     try {
       await verifySignedReleaseArtifactBuffer(selected.url, bytes, 'standalone.tar', expectedDigest, 'app',
-        name => downloadMarketNativeArtifact(assetTransport(name), fetch, 1024 * 1024));
+        name => downloadMarketNativeArtifact(assetTransport(name), releaseCacheFetch, 1024 * 1024));
     }
     catch (cause) { throw new MarketNativeArtifactPolicyError('Native app signature or checksum verification failed', { cause }); }
     signature = { status: `verified-${trust!.class}`, keyId: publisherGrant ? createHash('sha256').update(createPublicKey(publisherGrant.public_key).export({type:'spki',format:'der'})).digest('hex') : `youeye-${trust!.class}-v1` };

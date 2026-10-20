@@ -89,7 +89,7 @@ test('runtime ownership refuses mismatched instances and suppresses no-op writes
   const binding = { appId: 'app-a', name: 'app-app-a',
     installationId: '10000000-0000-4000-8000-000000000001',
     ownerId: '10000000-0000-4000-8000-000000000002' };
-  let current = { name: binding.name, config: {} as Record<string, string> };
+  const current = { name: binding.name, config: {} as Record<string, string> };
   let writes = 0;
   let acceptWrite = true;
   const server = http.createServer(async (request, response) => {

@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
+import { excessOAuthTransactions, oauthTransactionName, oauthTransactionValue, safeOAuthReturn } from '../../../../../../shared/oauth-transaction';
 import { buildAuthorizeUrl, generateOAuthState, isSSOConfigured } from '@/lib/auth/oauth';
 import { isSettingsPath, getSettingsPublicUrl } from '@/lib/settings-public-path';
 
@@ -34,31 +34,15 @@ export async function GET(request: NextRequest) {
   // Generate state for CSRF protection
   const state = generateOAuthState();
 
-  // Store state and optional post-login redirect in cookies
-  const cookieStore = await cookies();
-  const isSecure = redirectUri.startsWith('https://');
-  cookieStore.set('oauth-state', state, {
+  const returnTo = safeOAuthReturn(request.nextUrl.searchParams.get('redirect'), settingsFlow ? '/settings' : '/');
+  const response = NextResponse.redirect(buildAuthorizeUrl(redirectUri, state));
+  for (const name of excessOAuthTransactions('cp', request.cookies.getAll().map(cookie => cookie.name))) response.cookies.delete(name);
+  response.cookies.set(oauthTransactionName('cp', state)!, oauthTransactionValue(state, returnTo), {
     httpOnly: true,
-    secure: isSecure,
+    secure: redirectUri.startsWith('https://'),
     sameSite: 'lax',
-    maxAge: 300, // 5 minutes
+    maxAge: 300,
     path: '/',
   });
-
-  // Store the post-login redirect destination (e.g. /embed/profile)
-  const postLoginRedirect = request.nextUrl.searchParams.get('redirect') || (settingsFlow ? '/settings' : null);
-  if (postLoginRedirect) {
-    // Only allow relative paths to prevent open redirect
-    const sanitized = postLoginRedirect.startsWith('/') ? postLoginRedirect : '/';
-    cookieStore.set('oauth-redirect', sanitized, {
-      httpOnly: true,
-      secure: isSecure,
-      sameSite: 'lax',
-      maxAge: 300,
-      path: '/',
-    });
-  }
-
-  const authorizeUrl = buildAuthorizeUrl(redirectUri, state);
-  return NextResponse.redirect(authorizeUrl);
+  return response;
 }

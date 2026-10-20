@@ -27,6 +27,8 @@ for (const admitted of [true, false]) {
       assert.equal(req.method, 'GET');
       assert.equal(req.url, '/forward-auth/caddy');
       assert.equal(req.headers.upgrade, undefined);
+      for (const name of ['rsc', 'next-router-state-tree', 'next-router-prefetch',
+        'next-router-segment-prefetch', 'next-url', 'next-action']) assert.equal(req.headers[name], undefined);
       assert.equal(req.headers.cookie, admitted ? 'fixture=allowed' : 'fixture=denied');
       res.writeHead(req.headers.cookie === 'fixture=allowed' ? 204 : 403,
         admitted ? { 'X-YouEye-Uid': 'validated-fixture-user' } : {});
@@ -37,6 +39,8 @@ for (const admitted of [true, false]) {
     try {
       const original = { connection: 'Upgrade', upgrade: 'websocket',
         cookie: admitted ? 'fixture=allowed' : 'fixture=denied',
+        rsc: '1', 'next-router-state-tree': 'encoded-app-router-tree', 'next-router-prefetch': '1',
+        'next-router-segment-prefetch': '/_tree', 'next-url': '/locations', 'next-action': 'app-action',
         'sec-websocket-version': '13', 'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==' };
       const handler = build();
       const copied: Record<string, string> = { ...original };
@@ -56,6 +60,9 @@ for (const admitted of [true, false]) {
       assert.equal(original.connection, 'Upgrade');
       assert.equal(original.upgrade, 'websocket');
       assert.equal(original['sec-websocket-key'], 'dGhlIHNhbXBsZSBub25jZQ==');
+      assert.equal(original.rsc, '1');
+      assert.equal(original['next-url'], '/locations');
+      assert.equal(original['next-router-state-tree'], 'encoded-app-router-tree');
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }

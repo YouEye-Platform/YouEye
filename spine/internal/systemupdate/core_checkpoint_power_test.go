@@ -11,7 +11,7 @@ import (
 
 func TestCoreHealthPowerPreservesStoppedGuestsAndNeverRepeatsUncertainStarts(t *testing.T) {
 	for _, recovery := range []bool{false, true} {
-		for _, mode := range []string{"normal", "lost-after", "lost-before"} {
+		for _, mode := range []string{"normal", "lost-after", "lost-before", "lost-between"} {
 			t.Run(fmt.Sprint(recovery)+mode, func(t *testing.T) {
 				ctx := context.Background()
 				m, _, target := coreJournalFixture(t)
@@ -53,6 +53,7 @@ func TestCoreHealthPowerPreservesStoppedGuestsAndNeverRepeatsUncertainStarts(t *
 				}
 				rows := map[string]*row{}
 				starts := map[string]int{}
+				interrupted := false
 				inventory := CoreCheckpointInventory{RequestID: j.RequestID, ManifestSHA256: j.ManifestSHA256, Machine: j.Previous.Machine, Bridge: "incusbr0", IngressPorts: []uint16{80, 443}}
 				_, inventory.AppInventorySHA256, _ = p.installedOwners()
 				for _, name := range []string{"youeye-control", "youeye-ui", "youeye-postgres", "youeye-caddy", "youeye-pihole", "youeye-pointer"} {
@@ -86,7 +87,12 @@ func TestCoreHealthPowerPreservesStoppedGuestsAndNeverRepeatsUncertainStarts(t *
 						if args[1] == "/1.0/operations?recursion=1" {
 							return []byte(coreProviderResponse(`{}`)), nil
 						}
-						return json.Marshal(rows[strings.TrimPrefix(args[1], "/1.0/instances/")])
+						name := strings.TrimPrefix(args[1], "/1.0/instances/")
+						if mode == "lost-between" && name == "youeye-pihole" && starts["youeye-caddy"] == 1 && !interrupted {
+							interrupted = true
+							return nil, fmt.Errorf("fixture lost observation between durable starts")
+						}
+						return json.Marshal(rows[name])
 					case "start":
 						name := args[1]
 						starts[name]++
@@ -105,8 +111,16 @@ func TestCoreHealthPowerPreservesStoppedGuestsAndNeverRepeatsUncertainStarts(t *
 					return nil, nil
 				}
 				err := p.PrepareHealth(ctx, j.RequestID, recovery, false)
-				if (err != nil) != (mode == "lost-before") {
+				if (err != nil) != (mode == "lost-before" || mode == "lost-between") {
 					t.Fatal(mode, err)
+				}
+				if mode == "lost-between" {
+					if err = p.PrepareHealth(ctx, j.RequestID, recovery, true); err == nil || starts["youeye-pihole"] != 0 {
+						t.Fatal("readback started a never-attempted container", err, starts)
+					}
+					if err = p.PrepareHealth(ctx, j.RequestID, recovery, false); err != nil || starts["youeye-pihole"] != 1 || starts["youeye-caddy"] != 1 {
+						t.Fatal("explicit continuation failed or repeated a start", err, starts)
+					}
 				}
 				err = p.PrepareHealth(ctx, j.RequestID, recovery, true)
 				if (err != nil) != (mode == "lost-before") || starts["youeye-caddy"] != 1 || starts["youeye-pointer"] != 0 {

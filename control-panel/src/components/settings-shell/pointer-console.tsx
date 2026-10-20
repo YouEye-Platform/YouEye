@@ -19,11 +19,13 @@ async function request(path: string, init: RequestInit = {}) {
     const key = headers.get('authorization')?.replace(/^Bearer /, '');
     init = { ...init, method: 'POST', body: JSON.stringify({ key, operation: path === '/v1/models' ? 'models' : 'chat',
       request: init.body ? JSON.parse(String(init.body)) : undefined, sessionId: headers.get('x-opencode-session') ?? undefined }) };
-    destination = '/api/ai-proxy-test';
+    destination = '/settings/api/ai-proxy-test';
     headers.delete('authorization'); headers.set('content-type', 'application/json');
   } else {
     if (!path.startsWith('/api/') || /[\\#]/.test(path)) throw new Error('Invalid Pointer request');
-    destination = '/api/ai' + path.slice(4);
+    // The root service worker can change the fetch referrer. Use the explicit
+    // control namespace rather than the legacy Referer-selected root API.
+    destination = '/settings/api/ai' + path.slice(4);
     headers.delete('authorization');
   }
   if (!['GET', 'HEAD'].includes((init.method ?? 'GET').toUpperCase())) {
@@ -52,9 +54,9 @@ export function PointerConsole({ user }: { user: User }) {
       const manifest = await response.json();
       if (manifest.contract !== 1 || manifest.react !== '19' || !/^entry-[a-f0-9]{16}\.js$/.test(manifest.entry)
         || !/^styles-[a-f0-9]{16}\.css$/.test(manifest.stylesheet) || !/^fonts-[a-f0-9]{16}\.css$/.test(manifest.fonts)) throw new Error('Unsupported Pointer interface');
-      const module = await import(/* webpackIgnore: true */ new URL(assets + manifest.entry, location.origin).href);
+      const loadedModule = await import(/* webpackIgnore: true */ new URL(assets + manifest.entry, location.origin).href);
       if (abort.signal.aborted) return;
-      screen.current = module.createPointerUI({ React, createRoot }).mount(element.current!, {
+      screen.current = loadedModule.createPointerUI({ React, createRoot }).mount(element.current!, {
         assetBase: new URL(assets, location.origin).href, stylesheet: manifest.stylesheet, fonts: manifest.fonts,
         user, request, theme: theme(), path: currentPath.current,
         onNavigate: (path: string) => router.push('/settings/ai' + path),

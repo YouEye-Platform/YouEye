@@ -20,16 +20,45 @@ type coreRunnerFixture struct {
 	launch     func() error
 }
 
-func newCoreRunnerFixture(t *testing.T) *coreRunnerFixture {
+func newCoreRunnerFixture(t *testing.T, action ...string) *coreRunnerFixture {
 	t.Helper()
 	m, _, target := coreJournalFixture(t)
 	j := prepareCoreFixture(t, m, target)
 	j.Phase = "applying"
-	j.Steps[0].State = "started"
+	index := 0
+	if len(action) > 0 {
+		selected := action[0]
+		if strings.HasPrefix(selected, "recovery-") {
+			selected = "checkpoint"
+		}
+		for i := range j.Steps {
+			if j.Steps[i].Name == selected {
+				index = i
+				break
+			}
+			j.Steps[i].State, j.Steps[i].Evidence = "succeeded", "fixture previous action"
+		}
+	}
+	j.Steps[index].State = "started"
+	step := j.Steps[index]
+	if len(action) > 0 && strings.HasPrefix(action[0], "recovery-") {
+		j.Phase = "recovering"
+		found := false
+		for _, name := range coreRecoveryNames(j) {
+			next := CoreStep{Name: name, RequestID: j.RequestID + "/" + name, State: "pending"}
+			if name == action[0] {
+				next.State, found = "started", true
+				step = next
+			} else if !found {
+				next.State, next.Evidence = "succeeded", "fixture previous recovery action"
+			}
+			j.RecoverySteps = append(j.RecoverySteps, next)
+		}
+	}
 	if err := m.saveCore(&j); err != nil {
 		t.Fatal(err)
 	}
-	f := &coreRunnerFixture{journal: j, step: j.Steps[0], boot: "11111111-1111-1111-1111-111111111111"}
+	f := &coreRunnerFixture{journal: j, step: step, boot: "11111111-1111-1111-1111-111111111111"}
 	f.runner = CoreSystemdRunner{Root: m.Root, Executable: "/usr/local/bin/youeye", BootID: func() (string, error) { return f.boot, nil }}
 	unit := f.runner.unit(j, f.step)
 	f.properties = map[string]string{"Id": unit, "LoadState": "not-found"}

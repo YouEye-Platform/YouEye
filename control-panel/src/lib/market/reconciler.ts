@@ -644,10 +644,15 @@ function normalizeContainers(containers: Array<ContainerMeta | string> | undefin
 
 async function reconcileUIRegistration(meta: InstallMetadata): Promise<boolean> {
   const alreadyRegistered = await isAppRegisteredWithUI(meta.appId);
-  if (alreadyRegistered) return false;
+  if (alreadyRegistered) {
+    // Refresh current gateway addressing/trust after CP/UI updates or recovery.
+    // Existing registration does not prove that its connection projection is current.
+    await pushConnectionsToUI(meta.appId, { required: true });
+    return false;
+  }
 
   await registerAppWithUI(meta);
-  await pushConnectionsToUI(meta.appId);
+  await pushConnectionsToUI(meta.appId, { required: true });
 
   const verified = await isAppRegisteredWithUI(meta.appId);
   if (!verified) {

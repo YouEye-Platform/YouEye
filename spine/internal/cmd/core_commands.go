@@ -208,12 +208,17 @@ func continueCoreRequest(ctx context.Context, r systemupdate.NativeCoreRuntime, 
 		}
 		for _, step := range steps {
 			if step.State == "started" {
-				observed, err := r.Observe(ctx, j, step)
+				observed, err := m.Executor.Observe(ctx, j, step)
 				if err != nil {
 					if marked, markErr := m.RecordAttention(j.RequestID, j.ManifestSHA256, step.Name); markErr == nil {
 						j = marked
 					}
 					return j, err
+				}
+				if observed.State == "retryable" {
+					// Admission is bounded per explicit continuation. A timeout
+					// does not launch a child or spin another automatic attempt.
+					return j, nil
 				}
 				if observed.State == "unknown" {
 					if step.Name == "activate-host" || step.Name == "recovery-host" {

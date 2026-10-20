@@ -21,7 +21,8 @@ import { getUnreadCount } from "@/lib/db/queries/notifications";
 import { getUserAppsWithConfig } from "@/lib/db/queries/apps";
 import { getUserActiveTheme, getDefaultTheme } from "@/lib/db/queries/themes";
 import { generateCompactCSS } from "@/lib/themes/css-generator";
-import { getUserSettings, getDrawerPrefs } from "@/lib/db/queries/settings";
+import { getUserSettings, getDrawerPrefs, getSystemLanguage } from "@/lib/db/queries/settings";
+import { resolvePreferredLocale } from "@/i18n/config";
 import { resolveServiceAuth } from "@/lib/auth/service";
 import { siteNameStyleToCSS } from "@/lib/site-name-utils";
 import { CHARACTER_SHAPE_PRESETS } from "@/lib/wordart-presets";
@@ -205,6 +206,8 @@ export async function GET(request: NextRequest) {
   const uiBaseUrl = process.env.UI_EXTERNAL_URL || process.env.BASE_URL || process.env.NEXTAUTH_URL || "";
 
   return NextResponse.json({
+    // Uses the already authorized acting user's settings, never a query user ID.
+    locale: resolvePreferredLocale(userSettingsData.language, await getSystemLanguage()),
     branding: {
       site_name: branding.site_name,
       site_name_style: branding.site_name_style,
