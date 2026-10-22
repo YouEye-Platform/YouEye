@@ -1,25 +1,11 @@
-import { POSTGRES_MANIFEST } from '@/lib/apps/manifest';
-import { execCommand } from '@/lib/incus/server';
+import { platformCommand as psql } from '@/lib/postgres/platform';
 
-const CONTAINER = POSTGRES_MANIFEST.containerName;
 const STORE_KEY = 'issue-registry-v1';
 
 let schemaReady: Promise<void> | null = null;
 
 function sql(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
-}
-
-async function psql(command: string): Promise<string> {
-  const { exitCode, stdout, stderr } = await execCommand(
-    CONTAINER,
-    ['/usr/local/bin/psql', '-v', 'ON_ERROR_STOP=1', '-U', 'youeye', '-d', 'youeye', '-tA', '-c', command],
-    { timeout: 15_000 },
-  );
-  if (exitCode !== 0) {
-    throw new Error(`Health registry database error: ${stderr || stdout}`);
-  }
-  return stdout.trim();
 }
 
 async function ensureSchema(): Promise<void> {

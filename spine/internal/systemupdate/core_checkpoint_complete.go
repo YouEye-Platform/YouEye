@@ -9,12 +9,37 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"time"
 )
 
 // ReleaseCompleted restores only the frozen autostart settings and the owned
 // ingress/lifecycle holds, after the shared commit or full recovery is durable.
 // It never starts a guest, restores data, deletes checkpoints or accepts health.
 func (p NativeCoreCheckpoint) ReleaseCompleted(ctx context.Context, request string) (string, error) {
+	// A health check or another short-lived exec can overlap either observation.
+	// Retry the whole reconciliation so identity, ownership and power intent are
+	// revalidated after waiting. Unknown state and all other errors fail closed.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		evidence, err := p.releaseCompletedOnce(ctx, request)
+		if !errors.Is(err, errCoreProviderUnsettled) {
+			return evidence, err
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", fmt.Errorf("platform release still waiting for provider settlement: %w", ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+func (p NativeCoreCheckpoint) releaseCompletedOnce(ctx context.Context, request string) (string, error) {
 	m := CoreManager{Root: p.Root}
 	unlock, err := m.lockCore()
 	if err != nil {

@@ -1,62 +1,48 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
-import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ensureIdentitySchema, identityCommand, ensureClient, createIdentitySession,
+import { join } from 'node:path';
+import type { InstallMetadata } from '../src/lib/market/types';
+import { createPlatformDatabase } from '../src/lib/postgres/platform-transport';
+
+const databaseURL = process.env.YOUEYE_ADMISSION_TEST_DB_URL;
+test('actual store SQL preserves grants, enforces administration and restores immutable ownership', { skip: !databaseURL }, async () => {
+  const target = new URL(databaseURL!);
+  const databaseName = target.pathname.slice(1);
+  assert.match(databaseName, /^youeye_admission_test_[a-z0-9_]+$/);
+  const database = createPlatformDatabase(async () => ({ host: target.hostname, port: target.port || '5432',
+    user: decodeURIComponent(target.username), password: decodeURIComponent(target.password), database: databaseName }));
+  // Exercise the production pool and actual stores on a dedicated test database.
+  // Install it before loading the stores, without emulating shell/Incus results.
+  const key = Symbol.for('youeye.platform-postgres');
+  const state = globalThis as typeof globalThis & { [key]?: typeof database };
+  assert.equal(state[key], undefined);
+  state[key] = database;
+  const directory = await mkdtemp(join(tmpdir(), 'admission-store-'));
+  const previousJournal = process.env.YOUEYE_APP_UPDATE_JOURNAL_DIR;
+  process.env.YOUEYE_APP_UPDATE_JOURNAL_DIR = directory;
+  const schema = `admission_test_${randomUUID().replaceAll('-', '')}`;
+  await database.command(`CREATE SCHEMA ${schema}; SET search_path = ${schema}, pg_catalog;`);
+  const { ensureIdentitySchema, identityCommand, ensureClient, createIdentitySession,
   issueRefreshToken, rotateRefreshToken, enqueueLogoutDelivery, identityRows,
   deleteIdentityUser, createIdentityUser, refreshIdentitySchemaAfterRestore,
-  createAuthCode, consumeAuthCode } from '../src/lib/identity/store';
-import { ensureAppAdmission, evaluateAppAdmission, getAdmissionSnapshot,
+  createAuthCode, consumeAuthCode } = await import('../src/lib/identity/store');
+  const { ensureAppAdmission, evaluateAppAdmission, getAdmissionSnapshot,
   updateAdmissionPolicy, saveResourceOwnership, evaluateClientAdmission, getAdmissionResourceOwners,
-  reserveAppUserData, setAdmissionAppEnabled } from '../src/lib/admission/store';
-import { verifyRetainedAuthority } from '../src/lib/admission/retained-data';
-import type { InstallMetadata } from '../src/lib/market/types';
-import { quarantineAdmissionData } from '../src/lib/admission/management';
-import { exportAppAdmission, validateAppAdmissionRestore } from '../src/lib/admission/backup';
-import { hasOtherShareConsumers } from '../src/lib/market/storage';
+  reserveAppUserData, setAdmissionAppEnabled } = await import('../src/lib/admission/store');
+  const { verifyRetainedAuthority } = await import('../src/lib/admission/retained-data');
+  const { quarantineAdmissionData } = await import('../src/lib/admission/management');
+  const { exportAppAdmission, validateAppAdmissionRestore } = await import('../src/lib/admission/backup');
+  const { hasOtherShareConsumers } = await import('../src/lib/market/storage');
 
-const sshTarget = process.env.YOUEYE_ADMISSION_TEST_SSH_TARGET;
-test('actual store SQL preserves grants, enforces administration and restores immutable ownership', { skip: !sshTarget }, async () => {
-  // The real store runs through its Incus transport against an isolated schema.
-  // The fake transport parses authored shell quoting; it never executes that
-  // shell or touches the appliance's live identity schema.
-  const schema = `admission_test_${randomUUID().replaceAll('-', '')}`;
-  const remoteSql = (sql: string) => spawnSync('ssh', [sshTarget!, 'incus', 'exec', 'youeye-postgres', '--',
-    'psql', '-U', 'youeye', '-d', 'youeye', '-v', 'ON_ERROR_STOP=1', '-q', '-tA'], {
-    input: sql, encoding: 'utf8', timeout: 30_000,
-  });
-  const created = remoteSql(`CREATE SCHEMA ${schema};`);
-  assert.equal(created.status, 0, created.stderr);
-  const directory = await mkdtemp(join(tmpdir(), 'admission-store-'));
-  const socket = join(directory, 'incus.sock');
-  const server = http.createServer(async (request, response) => {
-    const chunks: Buffer[] = [];
-    for await (const chunk of request) chunks.push(Buffer.from(chunk));
-    const command = JSON.parse(Buffer.concat(chunks).toString()).command;
-    const parsed = spawnSync('python3', ['-c',
-      'import shlex,sys; outer=shlex.split(sys.argv[1]); inner=shlex.split(outer[-1].replace(chr(92)+"$", "$")); assert outer[:4]==["su","-","postgres","-c"]; assert inner[0]=="psql"; print(inner[-1])',
-      command[2]], { encoding: 'utf8' });
-    const result = parsed.status === 0 ? remoteSql(`SET search_path = ${schema}, pg_catalog;\n${parsed.stdout}`) : parsed;
-    response.setHeader('content-type', 'application/json');
-    response.end(JSON.stringify({ type: 'sync', metadata: { metadata: {
-      return: result.status ?? 1, output: { '1': result.stdout, '2': result.stderr },
-    } } }));
-  });
-  await new Promise<void>(resolve => server.listen(socket, resolve));
-  const previousSocket = process.env.INCUS_SOCKET;
-  const previousHttps = process.env.INCUS_HTTPS_URL;
-  process.env.INCUS_SOCKET = socket;
-  delete process.env.INCUS_HTTPS_URL;
   const owner = '10000000-0000-4000-8000-000000000001';
   const household = '10000000-0000-4000-8000-000000000002';
   const denied = '10000000-0000-4000-8000-000000000003';
   const uiId = '20000000-0000-4000-8000-000000000001';
   try {
-    const legacy = remoteSql(`SET search_path = ${schema}, pg_catalog;
+    await database.command(`SET search_path = ${schema}, pg_catalog;
       CREATE TABLE identity_logout_deliveries (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(), session_id uuid, client_id text NOT NULL,
         uri text NOT NULL, logout_token text NOT NULL, attempts integer NOT NULL DEFAULT 0,
@@ -66,7 +52,6 @@ test('actual store SQL preserves grants, enforces administration and restores im
         WHERE session_id IS NOT NULL;
       INSERT INTO identity_logout_deliveries(session_id,client_id,uri,logout_token,delivered_at)
         VALUES ('40000000-0000-4000-8000-000000000001','client-a','https://a.example.test/logout','legacy',now());`);
-    assert.equal(legacy.status, 0, legacy.stderr);
     await ensureIdentitySchema();
     const logout = { sessionId: '40000000-0000-4000-8000-000000000001', clientId: 'client-a',
       uri: 'https://a.example.test/logout', token: 'fixture' };
@@ -152,6 +137,9 @@ test('actual store SQL preserves grants, enforces administration and restores im
     await identityCommand(`INSERT INTO admission_user_data_contracts VALUES ('${native.installationId}')`);
     await acknowledge();
     assert.equal((await evaluateAppAdmission('private-native', denied)).allowed, true);
+    // Grant cutoffs conservatively invalidate the entire JWT issue second.
+    // The pooled transport is fast enough to reach issuance in that same second.
+    await new Promise(resolve => setTimeout(resolve, 1100));
     const nativeSession = await createIdentitySession(denied);
     const nativeCode = await createAuthCode({ clientId: 'native-client', userId: denied,
       sessionId: nativeSession.id, redirectUri: 'https://native.example.test/callback', scope: 'openid' });
@@ -304,13 +292,11 @@ test('actual store SQL preserves grants, enforces administration and restores im
     assert.equal(fresh.installationId, second.installationId);
     assert.equal(fresh.ownerId, owner);
   } finally {
-    if (previousSocket === undefined) delete process.env.INCUS_SOCKET;
-    else process.env.INCUS_SOCKET = previousSocket;
-    if (previousHttps === undefined) delete process.env.INCUS_HTTPS_URL;
-    else process.env.INCUS_HTTPS_URL = previousHttps;
-    await new Promise<void>(resolve => server.close(() => resolve()));
+    await database.command(`DROP SCHEMA ${schema} CASCADE;`);
+    await database.close();
+    delete state[key];
+    if (previousJournal === undefined) delete process.env.YOUEYE_APP_UPDATE_JOURNAL_DIR;
+    else process.env.YOUEYE_APP_UPDATE_JOURNAL_DIR = previousJournal;
     await rm(directory, { recursive: true, force: true });
-    const cleaned = remoteSql(`DROP SCHEMA ${schema} CASCADE;`);
-    assert.equal(cleaned.status, 0, 'Isolated test schema cleanup failed');
   }
 });

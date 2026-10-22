@@ -395,6 +395,13 @@ default-project boundary. Incus may print no bytes for empty query metadata in
 its ordinary renderer. A successful synchronous response containing an empty
 object proves an empty operation collection; blank output, null metadata,
 malformed/error responses and running or unknown operations remain blocked.
+After a durable commit or rollback, final maintenance release retries known
+active provider operations for up to two minutes, respecting caller cancellation.
+Each retry revalidates the complete machine, reservation, inventory, power and
+ingress ownership contract. It does not cancel operations or whitelist commands.
+Unknown/malformed observations fail immediately. Timeout retains maintenance and
+the checkpoint; `youeye update core resume --request <original-request-id>`
+reconciles the same completed request without reapplying its committed payload.
 
 The signed `youeye-system-update-bootstrap --core <exact-core-manifest-url>`
 bridge supports an installed complete Core whose old reader cannot retrieve

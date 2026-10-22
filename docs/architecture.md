@@ -235,3 +235,40 @@ digest, and any configured channel digest. Missing releases do not fall back
 across channels.
 
 UI infrastructure reconciliation also restores the existing protected bridge authority after container recreation, and verifies its bytes and file mode before readiness. This applies when an interrupted update did not reach Spine finalization. Reconciliation never issues a replacement bridge identity; missing authority on a configured appliance remains a failed repair.
+
+### Bounded background observations
+
+Control Panel and YouEye ID each reuse one PostgreSQL connection per server
+process for platform identity/admission and durable health-registry SQL. Health
+observations keep their existing persistence and polling semantics while reusing
+this transport instead of starting a container command for each read/write.
+The pool is shared across route
+bundles, admits at most 64 waiting commands with a 15-second deadline, and retains
+the existing SQL quoting, text results and transaction boundaries. Credentials
+come from the protected Spine socket and remain in server memory. SQL failures
+roll back; disconnected connections are discarded and credentials refreshed on
+the next request. A failed write is never automatically replayed because its
+commit outcome may be unknown. These two connections must be included alongside
+UI and native-app allocations in the PostgreSQL connection budget.
+
+Dashboard health requests and the background monitor share a 15-second snapshot
+and one in-flight collection per process. Incus file reads obtain uptime and
+version metadata without creating guest exec operations. Spine's existing
+30-second status cache also coalesces concurrent misses. These display caches do
+not change admission, revocation, update ownership or watchdog deadlines.
+
+Host metrics also share a 15-second observation in Spine. CPU uses aggregate
+kernel-counter deltas between observations, excluding duplicate guest counters
+and counting I/O wait as idle. A cold reader uses a bounded 200ms initial sample;
+subsequent dashboard observations cover the sampling interval. The System cards
+refresh 15 seconds after each completed request without a full-page loading
+transition, so the initial page-load CPU spike does not remain frozen on screen.
+No host-metrics timer runs when there are no readers.
+
+System service restarts obtain the current session CSRF token and require an
+explicit success receipt. Rejected restart requests remain visible in the service
+panel; a still-running service does not establish that a restart occurred.
+
+The appliance's physical and serial consoles retain their two-second snapshot
+cadence but cap Bubble Tea rendering at five frames per second. Returning from a
+console command reuses the existing tick instead of starting an additional loop.

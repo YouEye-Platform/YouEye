@@ -91,6 +91,8 @@ func (p NativeCoreCheckpoint) Fence(ctx context.Context, request string, runner 
 	return fmt.Sprintf("owned native children, ingress hold, exact stopped writers, settled Incus operations and closed SQL writers; observation %x; children %x", sha256.Sum256(observed), sha256.Sum256([]byte(children))), nil
 }
 
+var errCoreProviderUnsettled = errors.New("native provider operation remains unsettled")
+
 func (p NativeCoreCheckpoint) requireProviderSettled(ctx context.Context) error {
 	// Incus query suppresses an empty metadata object unless --raw is used.
 	// Require the successful API envelope rather than accepting blank output.
@@ -132,8 +134,10 @@ func (p NativeCoreCheckpoint) requireProviderSettled(ctx context.Context) error 
 			}
 			switch operation.StatusCode {
 			case 200, 400, 401: // Incus Success, Failure, Cancelled.
+			case 100, 103, 104, 105: // Created, Running, Cancelling, Pending.
+				return fmt.Errorf("%w (class %s, status %d)", errCoreProviderUnsettled, operation.Class, operation.StatusCode)
 			default:
-				return fmt.Errorf("native provider operation remains unsettled")
+				return fmt.Errorf("unknown native provider operation status")
 			}
 		}
 	}

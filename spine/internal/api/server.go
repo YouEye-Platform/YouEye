@@ -131,9 +131,13 @@ type Server struct {
 	releaseHTTP          *http.Client
 
 	// Status cache — avoids shelling out on every request
-	statusMu    sync.Mutex
-	statusCache map[string]interface{}
-	statusTime  time.Time
+	statusMu     sync.Mutex
+	statusCache  map[string]interface{}
+	statusTime   time.Time
+	metricsMu    sync.Mutex
+	metricsCache map[string]interface{}
+	metricsTime  time.Time
+	metricsCPU   hostCPUCounters
 
 	// Updates cache
 	updatesMu    sync.Mutex
@@ -378,7 +382,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, cached)
 		return
 	}
-	s.statusMu.Unlock()
+	// Keep the collector serialized until the cache is populated. Waiting
+	// readers reuse this result instead of launching duplicate Incus execs.
 
 	// Parallel data collection
 	var wg sync.WaitGroup
@@ -412,7 +417,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		status["runtime_warning"] = "appliance_recovery_required"
 	}
 
-	s.statusMu.Lock()
 	s.statusCache = status
 	s.statusTime = time.Now()
 	s.statusMu.Unlock()
@@ -1397,6 +1401,13 @@ func getUserGroups(username string) []string {
 	return strings.Fields(strings.TrimSpace(string(out)))
 }
 
+// Read status metadata without starting an operation/process inside the guest.
+func readStatusContainerFile(container, path string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "incus", "file", "pull", container+path, "-").Output()
+}
+
 func getIncusVersion() string {
 	out, err := exec.Command("incus", "version").Output()
 	if err != nil {
@@ -1431,8 +1442,7 @@ func getControlStatus() map[string]interface{} {
 
 	// Try to get version
 	if strings.ToUpper(status) == "RUNNING" {
-		verOut, err := exec.Command("incus", "exec", "youeye-control", "--",
-			"cat", "/opt/app/package.json").Output()
+		verOut, err := readStatusContainerFile("youeye-control", "/opt/app/package.json")
 		if err == nil {
 			var pkg struct {
 				Version string `json:"version"`
@@ -1513,8 +1523,7 @@ func readPackageVersionFromContainer(containerName string, appDirs ...string) st
 			continue
 		}
 		seen[appDir] = true
-		out, err := exec.Command("incus", "exec", containerName, "--",
-			"cat", appDir+"/package.json").Output()
+		out, err := readStatusContainerFile(containerName, appDir+"/package.json")
 		if err != nil {
 			continue
 		}
@@ -1883,8 +1892,7 @@ func getUIStatus(cfg *config.Config) map[string]interface{} {
 		}()
 		go func() {
 			defer wg.Done()
-			envOut, err := exec.Command("incus", "exec", containerName, "--",
-				"cat", "/etc/youeye-ui.env").CombinedOutput()
+			envOut, err := readStatusContainerFile(containerName, "/etc/youeye-ui.env")
 			ssoConfigured = err == nil && strings.Contains(string(envOut), "IDENTITY_CLIENT_ID")
 		}()
 		wg.Wait()
@@ -3180,6 +3188,13 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	s.metricsMu.Lock()
+	if s.metricsCache != nil && time.Since(s.metricsTime) < 15*time.Second {
+		cached := s.metricsCache
+		s.metricsMu.Unlock()
+		jsonResponse(w, cached)
+		return
+	}
 
 	result := map[string]interface{}{}
 
@@ -3251,39 +3266,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		cpuCores = 1
 	}
 
-	// CPU usage from /proc/stat (two samples, 200ms apart)
-	cpuUsage := 0.0
-	readCPUStat := func() (idle, total uint64) {
-		data, err := os.ReadFile("/proc/stat")
-		if err != nil {
-			return 0, 0
-		}
-		lines := strings.Split(string(data), "\n")
-		if len(lines) == 0 {
-			return 0, 0
-		}
-		fields := strings.Fields(lines[0]) // "cpu" aggregate line
-		if len(fields) < 5 {
-			return 0, 0
-		}
-		var vals [10]uint64
-		for i := 1; i < len(fields) && i <= 10; i++ {
-			fmt.Sscanf(fields[i], "%d", &vals[i-1])
-		}
-		for _, v := range vals {
-			total += v
-		}
-		idle = vals[3] // idle is 4th field
-		return idle, total
-	}
-	idle1, total1 := readCPUStat()
-	time.Sleep(200 * time.Millisecond)
-	idle2, total2 := readCPUStat()
-	if total2 > total1 {
-		totalDelta := float64(total2 - total1)
-		idleDelta := float64(idle2 - idle1)
-		cpuUsage = ((totalDelta - idleDelta) / totalDelta) * 100
-	}
+	// Steady observations cover the interval between shared snapshots rather
+	// than repeatedly measuring only the request's own short startup burst.
+	cpuUsage := s.sampleHostCPU()
 
 	result["cpu"] = map[string]interface{}{
 		"cores":         cpuCores,
@@ -3336,5 +3321,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		"free_gb":  freeGB,
 	}
 
+	s.metricsCache = result
+	s.metricsTime = time.Now()
+	s.metricsMu.Unlock()
 	jsonResponse(w, result)
 }

@@ -37,7 +37,11 @@ function fixture(busy = false, commitFails = false) {
   const store: any = {};
   runInNewContext(compile('src/lib/identity/store.ts'), {exports:store,require:(id:string) => {
     if(id==='crypto') return require(id);
-    if(id==='@/lib/incus/server') return transport;
+    if(id==='@/lib/postgres/platform') return {async platformCommand(command:string) {
+      const result = await transport.execShell('postgres',command);
+      if(result.exitCode) throw new Error(result.stderr);
+      return result.stdout;
+    }};
     if(id==='@/lib/apps/manifest') return {POSTGRES_MANIFEST:{containerName:'postgres'}};
     if(id==='./password-policy') return {requireIdentityPassword(){}};
     if(id==='@/lib/admission/schema') return {ADMISSION_SCHEMA_SQL:''};

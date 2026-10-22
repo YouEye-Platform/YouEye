@@ -68,7 +68,9 @@ func (model applianceConsoleModel) Update(message tea.Msg) (tea.Model, tea.Cmd) 
 			model.err = ""
 		}
 		model.snapshot = readApplianceConsoleSnapshot()
-		return model, applianceConsoleTick()
+		// The existing snapshot tick survives ExecProcess; scheduling another
+		// here would multiply the polling loops after each console command.
+		return model, nil
 	case tea.KeyMsg:
 		switch value.String() {
 		case "n":
@@ -398,7 +400,7 @@ func valueOr(value, fallback string) string {
 
 // RunApplianceConsole runs the always-available local bootstrap/status TUI.
 func RunApplianceConsole(opts CLIOptions) error {
-	program := tea.NewProgram(newApplianceConsoleModel(opts.ConsoleKind), tea.WithAltScreen())
+	program := tea.NewProgram(newApplianceConsoleModel(opts.ConsoleKind), tea.WithAltScreen(), tea.WithFPS(5))
 	_, err := program.Run()
 	return err
 }

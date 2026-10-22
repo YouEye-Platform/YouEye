@@ -97,3 +97,19 @@ func TestApplianceConsoleRechecksEffectiveStateBeforeLogin(t *testing.T) {
 		t.Fatalf("stale effective state exposed login: command=%v snapshot=%+v", command, got.snapshot)
 	}
 }
+
+func TestApplianceConsoleCommandCompletionDoesNotMultiplyTicks(t *testing.T) {
+	t.Setenv("YOUEYE_CONSOLE_STATE_ROOT", t.TempDir())
+	model := applianceConsoleModel{}
+	for i := 0; i < 3; i++ {
+		updated, command := model.Update(consoleCommandFinished{})
+		model = updated.(applianceConsoleModel)
+		if command != nil {
+			t.Fatal("command completion started a second polling loop")
+		}
+	}
+	_, command := model.Update(consoleTick{})
+	if command == nil {
+		t.Fatal("regular snapshot tick must continue")
+	}
+}

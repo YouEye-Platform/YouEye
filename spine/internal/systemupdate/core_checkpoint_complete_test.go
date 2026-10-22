@@ -4,14 +4,24 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCoreCompletionRestoresExactSettingsAndReconcilesLostAcknowledgements(t *testing.T) {
+	for _, busyAt := range []int{0, 1, 2, 3, 4} {
+		t.Run(fmt.Sprintf("transient-operation-at-check-%d", busyAt), func(t *testing.T) {
+			testCoreCompletion(t, busyAt)
+		})
+	}
+}
+
+func testCoreCompletion(t *testing.T, busyAt int) {
 	ctx := context.Background()
 	m, _, target := coreJournalFixture(t)
 	j := prepareCoreFixture(t, m, target)
@@ -131,6 +141,35 @@ func TestCoreCompletionRestoresExactSettingsAndReconcilesLostAcknowledgements(t 
 		t.Fatal("foreign nft table changed")
 	}
 	gate = "youeye-core:" + fmt.Sprintf("%x", sha256.Sum256([]byte(j.RequestID)))
+	native := p.Capture
+	checks := 0
+	p.Capture = func(ctx context.Context, program string, args ...string) ([]byte, error) {
+		if program == "incus" && args[0] == "query" && args[1] == "/1.0/operations?recursion=1" {
+			checks++
+			if busyAt == 4 {
+				return []byte(`{}`), nil
+			}
+			if checks == busyAt || busyAt == 3 {
+				if _, err := barrier.Read(); err != nil || gate == "" {
+					t.Fatal("maintenance released before operation settled", err)
+				}
+				return []byte(coreProviderResponse(`{"running":[{"id":"transient-exec","class":"websocket","status_code":103}]}`)), nil
+			}
+		}
+		return native(ctx, program, args...)
+	}
+	if busyAt >= 3 {
+		bounded, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
+		_, err := p.ReleaseCompleted(bounded, j.RequestID)
+		cancel()
+		if err == nil || (busyAt == 3 && !errors.Is(err, context.DeadlineExceeded)) {
+			t.Fatal("unsafe or unbounded release", err)
+		}
+		if _, err := barrier.Read(); err != nil || gate == "" {
+			t.Fatal("failed wait released maintenance", err)
+		}
+		busyAt = 0 // Explicit continuation of the same committed request.
+	}
 	if evidence, err := p.ReleaseCompleted(ctx, j.RequestID); err != nil || evidence == "" {
 		t.Fatal(evidence, err)
 	}

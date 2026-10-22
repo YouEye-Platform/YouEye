@@ -1,11 +1,9 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'crypto';
-import { execShell } from '@/lib/incus/server';
-import { POSTGRES_MANIFEST } from '@/lib/apps/manifest';
+import { platformCommand } from '@/lib/postgres/platform';
 import { requireIdentityPassword } from './password-policy';
 import { ADMISSION_SCHEMA_SQL } from '@/lib/admission/schema';
 import { runCoreSchemaOnce } from '@/lib/updates/core-schema';
 
-const CONTAINER = POSTGRES_MANIFEST.containerName;
 
 export interface IdentityUser {
   id: string;
@@ -93,22 +91,7 @@ export async function identityStatementRows<T>(ctes: string, outputSelect: strin
     SELECT COALESCE(json_agg(row_to_json(identity_result)), '[]'::json)::text FROM identity_result`);
 }
 
-async function psql(command: string): Promise<string> {
-  const escaped = command
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\$/g, '\\$')
-    .replace(/'/g, "'\\''");
-  const { exitCode, stdout, stderr } = await execShell(
-    CONTAINER,
-    `su - postgres -c "psql -v ON_ERROR_STOP=1 -U youeye -d youeye -tA -c '${escaped}'"`,
-    { timeout: 15000 }
-  );
-  if (exitCode !== 0) {
-    throw new Error(`YouEye ID database error: ${stderr || stdout}`);
-  }
-  return stdout.trim();
-}
+const psql = platformCommand;
 
 async function queryRows<T>(selectSql: string): Promise<T[]> {
   const out = await psql(`WITH t AS (${selectSql}) SELECT COALESCE(json_agg(row_to_json(t)), '[]'::json)::text FROM t`);

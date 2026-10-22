@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -29,6 +29,7 @@ import { Input } from "@/components/ui/input";
 import { ApplianceSystemUpdate } from "@/components/settings-shell/appliance-system-update";
 import { DevelopmentAccessCard } from "@/components/settings-shell/development-access-card";
 import { HostNetworkCard } from "@/components/settings-shell/host-network-card";
+import { restartServiceRequest } from "@/lib/health/client";
 import type { SpinePersistentStatus, SpineRuntimeStatus } from "@/lib/spine/client";
 
 interface SystemInfo {
@@ -149,6 +150,7 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
   const [data, setData] = useState<SystemInfo | null>(null);
   const [health, setHealth] = useState<ServiceHealth[]>([]);
   const [restarting, setRestarting] = useState<string | null>(null);
+  const [restartError, setRestartError] = useState("");
   const [systemPlans, setSystemPlans] = useState<SystemUpdatePlan[]>([]);
   const [loading, setLoading] = useState(true);
   const [plansLoading, setPlansLoading] = useState(true);
@@ -160,13 +162,22 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
   const [confirmName, setConfirmName] = useState("");
   const [maintenanceConfirmed, setMaintenanceConfirmed] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    const res = await fetch("/settings/api/settings/system");
-    if (res.ok) setData(await res.json());
-    else setError((await res.json().catch(() => ({}))).error || "Failed to load system information");
-    setLoading(false);
+  const metricsPending = useRef(false);
+  const load = useCallback(async (background = false) => {
+    if (metricsPending.current) return;
+    metricsPending.current = true;
+    if (!background) setLoading(true);
+    try {
+      const res = await fetch("/settings/api/settings/system");
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to load system information");
+      setData(await res.json());
+      setError("");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Failed to load system information");
+    } finally {
+      metricsPending.current = false;
+      if (!background) setLoading(false);
+    }
   }, []);
 
   const loadHealth = useCallback(async () => {
@@ -199,6 +210,19 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
     loadSystemPlans();
   }, [load, loadSystemPlans]);
 
+  // Refresh the main cards as well as the service rows. Schedule after each
+  // response so slow requests cannot overlap or flash the full-page loader.
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      await load(true);
+      if (!stopped) timer = setTimeout(refresh, 15_000);
+    };
+    timer = setTimeout(refresh, 15_000);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [load]);
+
   // Live usage refreshes every 5s.
   useEffect(() => {
     loadHealth();
@@ -208,12 +232,12 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
 
   async function restartService(slug: string) {
     setRestarting(slug);
+    setRestartError("");
     try {
-      const res = await fetch(`/api/health/services/${slug}/restart`, { method: "POST" });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Restart failed");
+      await restartServiceRequest(slug);
       await loadHealth();
-    } catch {
-      // surfaced via the next health poll; keep the button responsive.
+    } catch (error) {
+      setRestartError(error instanceof Error ? error.message : "Restart failed");
     } finally {
       setRestarting(null);
     }
@@ -449,6 +473,7 @@ export function SystemClient({ cpVersion }: { cpVersion?: string }) {
           <h2 className="text-[15px] font-semibold">Live usage</h2>
           <span className="text-[12.5px] text-muted-foreground">refreshes every 5s</span>
         </div>
+        {restartError && <p role="alert" className="border-b p-4 text-sm text-destructive">{restartError}</p>}
         {usageRows.length === 0 ? (
           <div className="p-6 text-center text-sm text-muted-foreground">Collecting usage…</div>
         ) : (
