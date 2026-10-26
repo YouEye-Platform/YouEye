@@ -510,3 +510,45 @@ locks remain readable. The build entry uses this same validator before any
 image work, and the Train input adapter emits the shared product tag.
 
 Fresh Control Panel reconciliation compares the installed bundle with the verified selected CP member, while binding the running image and baked Spine independently. Reused media may describe an older CP payload; that media label is not the service target. Missing or invalid selected state fails closed, and legacy media without a core selection retains its sealed-version check.
+
+### Manifest response cache and installed verification
+
+Next 16.4.2 stores the static web manifest response under
+`.next/server/route-cache/APP_ROUTE/<owner-sha256>/$/manifest.webmanifest.body`
+and `.meta`, separately from compiled route files. The owner digest is SHA-256
+of `/manifest.webmanifest/route`. CP and UI use the same layout. A normal browser
+or PWA manifest request can populate it on an otherwise unchanged installation.
+
+Installed verification permits only these two non-executable regular data files
+and their four directory ancestors, and only when the signed payload index
+contains `.next/server/app/manifest.webmanifest/route.js` as a regular file.
+It rejects links, multiply linked files, special mode bits, other owners/routes,
+other suffixes and added executable files. Signed entries always retain their
+original byte, type, mode and link checks. Signed archives must not contain this
+runtime cache. Other Next response-cache layouts require an explicit review;
+there is no general `.next/server` exemption.
+
+The authoritative host scanner opens directories through anchored descriptors
+without following links. It tolerates disappearance of these exact runtime data
+paths during concurrent requests; missing signed paths still fail. The Go fixture
+verifier uses the same scanner, and the Node reference enforces the same narrow
+layout and file rules. Runtime cache bytes are mutable data, not signed payload
+identity. No cache clearing, runtime relocation or guest-wide dependency change
+is required by this repair.
+
+A confirmed installed-payload rejection during `verify-members` records a failed
+native result with the phase, CP/UI role, path class and a fixed diagnostic reason.
+It does not persist arbitrary paths, file contents or provider errors. The result
+records that verification execution started but failed before activation; it does
+not claim the action was never invoked. Reconnect reads this terminal result and
+same-request calls do not execute it again. Cancellation, unavailable observation
+and unknown effects retain their existing uncertainty and reconciliation rules.
+
+An affected installed reader still rejects this cache before target activation.
+Use the existing verified Stable reader bootstrap described above when that old
+reader is selected. Merely installing a target verifier cannot repair the old
+preparation step. The exact signed target and original Spine envelope, retained
+request, scoped owner trust and paired recovery rules remain mandatory. A held
+Stable target needs the administrator-provided baseline-plus-target test transport;
+changing its hostname is not a compatibility fixture. Source tests do not establish
+an installed old-reader transition, owner acceptance, or public release.

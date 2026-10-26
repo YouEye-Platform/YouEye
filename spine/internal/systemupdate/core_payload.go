@@ -2,6 +2,7 @@ package systemupdate
 
 import (
 	"archive/tar"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -89,7 +90,7 @@ func IndexCorePayload(archive string, expectedSHA256 string) (CorePayloadIndex, 
 		if name == "." && header.Typeflag == tar.TypeDir {
 			continue
 		}
-		if name == "." || mutableCorePayloadPath(name) || len(entries) >= 500000 || header.Mode&07000 != 0 {
+		if name == "." || mutableCorePayloadPath(name) || coreResponseCachePath(name) || len(entries) >= 500000 || header.Mode&07000 != 0 {
 			return index, fmt.Errorf("unsupported core payload member")
 		}
 		if _, exists := entries[name]; exists {
@@ -224,68 +225,12 @@ func VerifyCorePayload(root string, index CorePayloadIndex) error {
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf("installed core payload root is not a directory")
 	}
-	entries := map[string]CorePayloadEntry{}
-	for _, e := range index.Entries {
-		entries[e.Path] = e
-	}
-	seen := map[string]bool{}
-	err = filepath.WalkDir(root, func(file string, dir os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if file == root {
-			return nil
-		}
-		rel, err := filepath.Rel(root, file)
-		if err != nil {
-			return err
-		}
-		name := filepath.ToSlash(rel)
-		if mutableCorePayloadPath(name) {
-			if dir.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		e, ok := entries[name]
-		if !ok {
-			return fmt.Errorf("installed core contains an unrecorded path")
-		}
-		seen[name] = true
-		info, err := dir.Info()
-		if err != nil {
-			return err
-		}
-		if int64(info.Mode().Perm()) != e.Mode || info.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
-			return fmt.Errorf("installed core mode changed")
-		}
-		switch e.Kind {
-		case "directory":
-			if !info.IsDir() {
-				return fmt.Errorf("installed core directory changed")
-			}
-		case "symlink":
-			link, err := os.Readlink(file)
-			if err != nil || link != e.Link {
-				return fmt.Errorf("installed core link changed")
-			}
-		case "file":
-			if !info.Mode().IsRegular() {
-				return fmt.Errorf("installed core file changed type")
-			}
-			if err := verifyFile(file, e.Size, e.SHA256); err != nil {
-				return fmt.Errorf("installed core bytes changed")
-			}
-		}
-		return nil
-	})
+	dir, err := openCorePayloadDirectoryFromRoot(root)
 	if err != nil {
 		return err
 	}
-	if len(seen) != len(entries) {
-		return fmt.Errorf("installed core is missing recorded paths")
-	}
-	return nil
+	defer dir.Close()
+	return verifyCorePayloadDescriptor(context.Background(), dir, index)
 }
 
 func (m CoreManager) SavePayloadIndex(index CorePayloadIndex) error {

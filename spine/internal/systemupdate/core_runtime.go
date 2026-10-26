@@ -161,6 +161,9 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 				name, appDir = "youeye-ui", r.Services.UIAppDir
 			}
 			if err = VerifyCoreContainerPayload(ctx, name, appDir, index); err != nil {
+				if failed, known := corePayloadVerificationFailure(role, err); known {
+					return failed, nil
+				}
 				return CoreActionObservation{}, err
 			}
 		}
