@@ -34,6 +34,27 @@ func (m *Manager) CoreHostOptions(selection CoreHostSelection) (SourceOptions, e
 	return SourceOptions{}, fmt.Errorf("core assembly has no host update")
 }
 
+// Keep delivery scoped to this invocation's authenticated selection. Never
+// mutate a shared client's transport or teach a legacy request these aliases.
+func (m *Manager) withCoreTransport(selection *CoreHostSelection) (*Manager, error) {
+	if selection == nil {
+		return m, nil
+	}
+	r, _, err := VerifyCoreSelection(selection.Raw, selection.Signature, m.config.TrustKeyPath)
+	if err != nil {
+		return nil, err
+	}
+	client := *m.config.HTTPClient
+	transport, err := releasecache.CoreTransport(client.Transport, r)
+	if err != nil {
+		return nil, err
+	}
+	client.Transport = releasecache.Wrap(transport)
+	bound := *m
+	bound.config.HTTPClient = &client
+	return &bound, nil
+}
+
 func (m *Manager) verifyCoreHost(selection CoreHostSelection, verified VerifiedManifest, signature []byte) (releasecache.CoreRelease, string, error) {
 	r, digest, err := VerifyCoreSelection(selection.Raw, selection.Signature, m.config.TrustKeyPath)
 	if err != nil {

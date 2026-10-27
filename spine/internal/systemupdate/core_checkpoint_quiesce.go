@@ -13,6 +13,7 @@ import (
 )
 
 type NativeCoreCheckpointRecord struct {
+	DNSBindings           []CoreDNSBinding         `json:"dns_bindings,omitempty"`
 	PowerRestores         []CorePowerRestore       `json:"power_restores,omitempty"`
 	RecoveryPowerRestores []CorePowerRestore       `json:"recovery_power_restores,omitempty"`
 	CompletionState       string                   `json:"completion_state,omitempty"`

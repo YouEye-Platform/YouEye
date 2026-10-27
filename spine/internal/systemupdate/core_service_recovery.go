@@ -132,6 +132,14 @@ func (s NativeCoreServices) recoverService(ctx context.Context, j CoreJournal, r
 		}
 	}
 	actual, err := s.Checkpoint.completionContainer(ctx, c)
+	if err == nil && stage.StartState == "started" && s.Checkpoint.recoveryCurrentBoot != "" {
+		if actual.Status == "Stopped" {
+			if err = verifyStoppedRecoveredSchema(ctx, name, stage.Component, s.Checkpoint.recoveredSchemaReader(actual)); err != nil {
+				return err
+			}
+		}
+		actual, err = s.Checkpoint.resumeRecoveredPower(ctx, j, c, actual, observeOnly)
+	}
 	if err != nil || actual.Status != "Running" || actual.Config["user.youeye.core-request"] != j.RequestID || actual.Config["boot.autostart"] != "false" {
 		return fmt.Errorf("recovered service lacks its running owned container")
 	}

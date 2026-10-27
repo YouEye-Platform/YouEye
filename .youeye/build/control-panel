@@ -10,6 +10,14 @@ cd "$YOUEYE_SOURCE_DIR"
 pnpm install --frozen-lockfile --offline --package-import-method=copy --store-dir "$YOUEYE_PNPM_STORE_DIR"
 rm -rf -- control-panel/.next control-panel/node_modules/.cache
 export YOUEYE_SOURCE_COMMIT
+# Keep the reconciler/transport hotpatch acceptance in the exact-source build.
+CONTROL_PANEL_ROOT="$YOUEYE_SOURCE_DIR/control-panel" pnpm --dir control-panel exec node --import tsx --test \
+    tests/app-network-noop.spec.ts tests/incus-http-transport.spec.ts \
+    tests/reconciler-registration-batch.spec.ts tests/reconciliation-noop-storage.spec.ts \
+    tests/reconciler-noop-admission.spec.ts tests/health-coalescing.spec.ts \
+    tests/pointer-initial-install.spec.ts tests/pointer-release-metadata.spec.ts \
+    tests/infrastructure-release-resolver.spec.ts tests/pointer-managed-lifecycle.spec.ts \
+    tests/lxd-initial-network.spec.ts tests/watchdog-start.spec.ts tests/lxd-restored-root.spec.ts
 pnpm --dir control-panel run build
 standalone_root="$(youeye_find_standalone_root "$YOUEYE_SOURCE_DIR/control-panel/.next/standalone")"
 youeye_package_standalone "$standalone_root"

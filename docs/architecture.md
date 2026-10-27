@@ -40,6 +40,32 @@ graph TD
 
 ## Component Boundaries
 
+Control Panel network reconciliation performs one global inventory audit per
+pass, then checks unchanged apps using a pass-local read-only observation. The
+audit transport rejects every attempted mutation before it reaches Incus, so
+unchanged comparisons need no mutation locks. Only wholly unchanged passes lend
+their inventory summary to the outer scan; repair or ownership/admission races
+require a new outer observation. Any
+drift or unknown result falls back to fresh full ownership observation inside
+the existing app lifecycle and network locks; repairs never use cached objects.
+Durable lease identity is reread after admission, shared observations are discarded
+before a repair, and no observation survives a pass. UI registration reads are
+batched per pass together with persisted connection projections; unchanged
+projections and health records produce no writes. With a wholly unchanged network
+audit, existing registrations and completed install receipts use a mutation-blocked
+projection comparison before taking lifecycle locks or rereading individual bridges.
+Any divergence, missing registration, or unfinished operation still enters fresh
+under-lock visibility and repair checks. Absent registrations are
+rechecked before creation and verified afterward. UI visibility checks read the exact current active lease and owned
+bridge rather than enumerating unrelated networks.
+Owned ACL, proxy and NIC configuration is compared before writing, so unchanged
+state needs no provider mutation. Incus JSON requests share bounded keep-alive
+connections per process, preserve inactivity/explicit deadline handling, and
+never automatically replay a failed mutation with an uncertain outcome. A bodyless
+GET reset on a reused socket before any response retries at most once through
+the same bounded pool and admission slot; its original absolute deadline stays
+in force. Fresh-connection failures and partial responses remain errors.
+
 ### Spine (Host)
 
 Spine is a Go binary that runs on the host system. Its responsibilities are strictly limited:

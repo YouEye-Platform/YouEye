@@ -86,6 +86,26 @@ credentials or service process. Settings reads the accepted receipt and checks
 its runtime UUID instead of treating the package build version as the label.
 Legacy Pointer installations gain this receipt on their next signed payload update.
 
+First setup uses the same signed Product resolution and archive staging. A
+`product-release.json` discovery result identifies a release; it is never the
+runtime archive. Verify its selected source, branch, tag, version, sequence and
+optional artifact pin, then authenticate and stage the original `standalone.tar`
+before creating or replacing a partial Pointer container. Invalid or incomplete
+Product evidence cannot fall back to the legacy archive path. Existing signed
+legacy releases remain supported when no Product metadata is advertised and no
+accepted Product receipt exists. Commit the installed receipt and runtime UUID
+only after managed configuration, readiness and projection verification pass.
+Failed setup retains its persistent data and does not claim installed acceptance.
+
+Initial native container creation includes the deterministic system NIC in the
+create request and disables automatic start until runtime installation succeeds.
+This prevents the watchdog from starting a partially configured instance with a
+dynamic lease while managed proxies use its static address. Static network
+configuration must acknowledge success, including terminal asynchronous results,
+before DNS publication and the explicit installer start. Failed configuration or
+installation retains the automatic-start suppression for explicit retry/recovery.
+Ordinary application NICs and persistent-volume bindings remain unchanged.
+
 Market discovers signed catalog releases on the selected repository and branch.
 The original build's `catalog-snapshot.json` authenticates the catalog and its
 included manifests. Refresh freezes the original source commit and commits the

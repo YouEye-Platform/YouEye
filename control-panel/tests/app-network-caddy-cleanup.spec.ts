@@ -127,7 +127,7 @@ test('network reconciliation does not turn a supported concurrent app mutation i
   assert.match(reconcile, /await resolveIssue\(`\$\{NETWORK_ISSUE_PREFIX\}\.\$\{originalLease\.appId\}`\)/);
   const lifecycle = reconcile.indexOf('await withAppLifecycle(originalLease.appId');
   const networkLock = reconcile.indexOf("withAppNetworkOperationLock(originalLease.appId, 'reconcile'");
-  const attachmentRepair = reconcile.indexOf('await addCaddyToAppNetwork');
+  const attachmentRepair = reconcile.indexOf('await addCaddyToProvedAppNetwork');
   assert.ok(lifecycle >= 0 && lifecycle < networkLock && networkLock < attachmentRepair);
   assert.match(reconcile, /error instanceof AppLifecycleAdmissionError/);
 });

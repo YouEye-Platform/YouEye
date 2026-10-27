@@ -12,7 +12,7 @@ import { selectedCoreArtifact } from '../releases/core-release';
  */
 
 import { incusRequest, execShell, incusUploadFile } from '../incus/server';
-import { applyStaticIP } from '../incus/static-ips';
+import { applyStaticIP, getSystemStaticIP } from '../incus/static-ips';
 import type { LXDContainerSpec } from './types';
 import { containerExists } from './oci-deployer';
 import type { ReleaseSource } from '../apps/release-source';
@@ -24,6 +24,7 @@ import {
 } from './release-resolver';
 import { signedReleaseVerificationShell, verifySignedReleaseArtifactBuffer } from '@/lib/releases/verify';
 import { effectiveChannel } from '@/lib/updates/channels';
+import { verifyInstalledProductReceipt } from '@/lib/releases/product-release';
 import {
   readStagedMarketNativeArtifact,
   type StagedMarketNativeArtifact,
@@ -94,22 +95,29 @@ async function deployLXDContainerInternal(
   cfg: LXDDeploymentConfig,
   nicDevices?: Record<string, Record<string, string>>,
   marketArtifact?: StagedMarketNativeArtifact,
+  preparedRelease?: ResolvedInfrastructureRelease,
 ): Promise<ResolvedInfrastructureRelease | null> {
   if (await containerExists(spec.containerName)) return null;
 
   // Resolve the exact asset before mutating Incus. This avoids leaving a
   // half-created container merely because the desired release was beyond the
   // first API page or did not carry standalone.tar.
-  const release = marketArtifact
+  const release = preparedRelease ?? (marketArtifact
     ? {
         tag: marketArtifact.tag,
         version: marketArtifact.version,
         url: '',
         artifactSHA256: marketArtifact.artifactSHA256,
       }
-    : await resolveLXDRelease(cfg);
+    : await resolveLXDRelease(cfg));
 
-  // Create the LXD container
+  // The watchdog can observe the instance as soon as creation completes.
+  // Pin system networking atomically and retain installation ownership through
+  // boot.autostart=false until the runtime has been installed successfully.
+  const staticIP = await getSystemStaticIP(spec.containerName);
+  const systemNIC = staticIP ? { eth0: {
+    type: 'nic', network: 'incusbr0', name: 'eth0', 'ipv4.address': staticIP,
+  } } : {};
   const createPayload: Record<string, unknown> = {
     name: spec.containerName,
     source: {
@@ -119,13 +127,13 @@ async function deployLXDContainerInternal(
       alias: spec.image,
     },
     config: {
-      'boot.autostart': 'true',
+      'boot.autostart': 'false',
       'security.privileged': 'false',
     },
   };
 
   // If per-app bridge NIC provided, attach to container at creation time
-  createPayload.devices = { ...storageDevices(spec), ...(nicDevices ?? {}) };
+  createPayload.devices = { ...storageDevices(spec), ...(nicDevices ?? {}), ...systemNIC };
 
   const result = await incusRequest<Record<string, unknown>>(
     'POST',
@@ -134,7 +142,7 @@ async function deployLXDContainerInternal(
     { timeout: 300_000 } // 5 min for image download
   );
 
-  if (result.error && result.error !== '') {
+  if (result.type === 'error' || result.error) {
     throw new Error(`Failed to create LXD container: ${result.error}`);
   }
 
@@ -142,12 +150,9 @@ async function deployLXDContainerInternal(
     await waitForLXDOperation(result.operation, 300);
   }
 
-  // Set static IP for system containers before starting
-  try {
-    await applyStaticIP(spec.containerName);
-  } catch (err) {
-    console.warn(`[lxd-deployer] Could not apply static IP to ${spec.containerName}:`, err);
-  }
+  // Reconcile the system DNS records and prove configuration settled before
+  // starting. An unverified address must never be advertised as installed.
+  await applyStaticIP(spec.containerName);
 
   // Start the container
   const startResult = await incusRequest<Record<string, unknown>>(
@@ -155,6 +160,9 @@ async function deployLXDContainerInternal(
     `/1.0/instances/${spec.containerName}/state`,
     { action: 'start' }
   );
+  if (startResult.type === 'error' || startResult.error) {
+    throw new Error(`Failed to start ${spec.containerName}: ${startResult.error}`);
+  }
   if (startResult.type === 'async' && startResult.operation) {
     await waitForLXDOperation(startResult.operation, 60);
   }
@@ -206,6 +214,13 @@ async function deployLXDContainerInternal(
     release.artifactSHA256,
     marketArtifact,
   );
+  const enabled = await incusRequest('PATCH', `/1.0/instances/${spec.containerName}`, {
+    config: { 'boot.autostart': 'true' },
+  });
+  if (enabled.type === 'error' || enabled.error) {
+    throw new Error(`Failed to enable ${spec.containerName}: ${enabled.error}`);
+  }
+  if (enabled.type === 'async' && enabled.operation) await waitForLXDOperation(enabled.operation, 60);
   return { ...release, artifactSHA256 };
 }
 
@@ -272,6 +287,39 @@ export async function redeployLXDContainer(
   cfg: LXDDeploymentConfig,
   nicDevices?: Record<string, Record<string, string>>,
 ): Promise<ResolvedInfrastructureRelease | null> {
+  await removeLXDContainer(spec);
+  return deployLXDContainer(spec, cfg, nicDevices);
+}
+
+/** Managed Pointer may consume only its authenticated Product archive or the
+ * existing signature-required legacy archive. Market's unsigned policy is not
+ * an alternative here. Validate before deleting any partial prior runtime. */
+export async function deployPointerLXDContainer(
+  spec: LXDContainerSpec,
+  cfg: LXDDeploymentConfig,
+  release: ResolvedInfrastructureRelease,
+  artifact: StagedMarketNativeArtifact | undefined,
+  replaceExisting: boolean,
+): Promise<ResolvedInfrastructureRelease | null> {
+  if (spec.name !== 'pointer' || spec.containerName !== 'youeye-pointer' || spec.runtime !== 'bun'
+    || cfg.releaseChannelKey !== 'app:pointer') throw new Error('Invalid managed Pointer installation');
+  if (artifact) {
+    if (!artifact.productRelease || artifact.signature.status === 'unsigned'
+      || artifact.containerName !== spec.containerName) throw new Error('Pointer requires a verified Product archive');
+    const selected = verifyInstalledProductReceipt(artifact.productRelease, {product:'pointer',source:artifact.sourceRepo,tag:release.tag});
+    if (selected.release.version !== release.version || selected.build.kind !== 'native'
+      || selected.build.assets.find(a => a.name === 'standalone.tar')?.sha256 !== artifact.artifactSHA256) {
+      throw new Error('Pointer archive differs from its signed selection');
+    }
+    await readStagedMarketNativeArtifact(artifact);
+  } else if (new URL(release.url).pathname.split('/').at(-1) !== 'standalone.tar') {
+    throw new Error('Pointer release descriptor cannot be installed as a runtime archive');
+  }
+  if (replaceExisting) await removeLXDContainer(spec);
+  return deployLXDContainerInternal(spec, cfg, undefined, artifact, release);
+}
+
+async function removeLXDContainer(spec: LXDContainerSpec): Promise<void> {
   if (await containerExists(spec.containerName)) {
     const stopped = await incusRequest<Record<string, unknown>>(
       'PUT',
@@ -297,7 +345,6 @@ export async function redeployLXDContainer(
     }
   }
 
-  return deployLXDContainer(spec, cfg, nicDevices);
 }
 
 /** Wait for an async Incus operation. */
@@ -308,8 +355,8 @@ async function waitForLXDOperation(operationPath: string, timeoutSeconds = 300):
   });
 
   const meta = resp.metadata as Record<string, unknown> | undefined;
-  if (meta && (meta.status as string) === 'Failure') {
-    throw new Error(`Operation failed: ${(meta.err as string) || 'unknown'}`);
+  if (resp.type === 'error' || !meta || meta.status !== 'Success') {
+    throw new Error(`Operation failed: ${resp.error || (meta?.err as string) || 'terminal success not observed'}`);
   }
 }
 
@@ -344,7 +391,7 @@ async function addPortProxy(containerName: string, port: number): Promise<void> 
   await incusRequest('PATCH', `/1.0/instances/${containerName}`, { devices: newDevices });
 }
 
-async function resolveLXDRelease(cfg: LXDDeploymentConfig) {
+export async function resolveLXDRelease(cfg: LXDDeploymentConfig) {
   let releaseSource: ReleaseSource = {
     provider: cfg.giteaBaseURL.includes('github.com') ? 'github' : 'gitea',
     base_url: cfg.giteaBaseURL.replace(/\/$/, ''),

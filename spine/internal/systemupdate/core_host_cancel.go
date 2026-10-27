@@ -19,7 +19,7 @@ func (m *Manager) CancelCoreHost(ctx context.Context, request string) error {
 	}
 	defer unlock()
 	j, err := (CoreManager{Root: m.config.CoreStatePath}).Read()
-	if err != nil || j.RequestID != request || j.ActivationRequested || j.Phase != "cancelling" || !j.RestartRequired || len(j.RecoverySteps) > 0 {
+	if err != nil || j.RequestID != request || j.Phase != "cancelling" || !j.RestartRequired || len(j.RecoverySteps) > 0 {
 		return fmt.Errorf("exact unactivated core request required")
 	}
 	staged := false

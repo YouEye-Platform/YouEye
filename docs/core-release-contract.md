@@ -374,7 +374,10 @@ cgroup descendants. Cleanup holds the host lock and checks running slot, current
 image and exact candidate/transaction ownership. It removes only inactive boot
 entries and its candidate metadata; it does not restore databases, mutate the
 running payload or erase a preceding recovery chain. Lost cleanup responses retry
-the same cancellation. Activated/checkpointed requests still require paired
+the same cancellation. An activation request made before staging is intent, not proof that a checkpoint
+started. Cancellation remains available while every checkpoint-or-later step is
+pending and exact native preparation children have settled. The retained activation
+intent is preserved. Checkpointed requests still require paired
 recovery; unknown or foreign native ownership keeps cancellation unfinished.
 
 The piped Installer bootstrap first looks for a complete canonical release. It
@@ -510,3 +513,92 @@ locks remain readable. The build entry uses this same validator before any
 image work, and the Train input adapter emits the shared product tag.
 
 Fresh Control Panel reconciliation compares the installed bundle with the verified selected CP member, while binding the running image and baked Spine independently. Reused media may describe an older CP payload; that media label is not the service target. Missing or invalid selected state fails closed, and legacy media without a core selection retains its sealed-version check.
+
+### Manifest response cache and installed verification
+
+Next 16.4.2 stores the static web manifest response under
+`.next/server/route-cache/APP_ROUTE/<owner-sha256>/$/manifest.webmanifest.body`
+and `.meta`, separately from compiled route files. The owner digest is SHA-256
+of `/manifest.webmanifest/route`. CP and UI use the same layout. A normal browser
+or PWA manifest request can populate it on an otherwise unchanged installation.
+
+Installed verification permits only these two non-executable regular data files
+and their four directory ancestors, and only when the signed payload index
+contains `.next/server/app/manifest.webmanifest/route.js` as a regular file.
+It rejects links, multiply linked files, special mode bits, other owners/routes,
+other suffixes and added executable files. Signed entries always retain their
+original byte, type, mode and link checks. Signed archives must not contain this
+runtime cache. Other Next response-cache layouts require an explicit review;
+there is no general `.next/server` exemption.
+
+The authoritative host scanner opens directories through anchored descriptors
+without following links. It tolerates disappearance of these exact runtime data
+paths during concurrent requests; missing signed paths still fail. The Go fixture
+verifier uses the same scanner, and the Node reference enforces the same narrow
+layout and file rules. Runtime cache bytes are mutable data, not signed payload
+identity. No cache clearing, runtime relocation or guest-wide dependency change
+is required by this repair.
+
+A confirmed installed-payload rejection during `verify-members` records a failed
+native result with the phase, CP/UI role, path class and a fixed diagnostic reason.
+It does not persist arbitrary paths, file contents or provider errors. The result
+records that verification execution started but failed before activation; it does
+not claim the action was never invoked. Reconnect reads this terminal result and
+same-request calls do not execute it again. Cancellation, unavailable observation
+and unknown effects retain their existing uncertainty and reconciliation rules.
+
+An affected installed reader still rejects this cache before target activation.
+Use the existing verified Stable reader bootstrap described above when that old
+reader is selected. Merely installing a target verifier cannot repair the old
+preparation step. The exact signed target and original Spine envelope, retained
+request, scoped owner trust and paired recovery rules remain mandatory. A held
+Stable target needs the administrator-provided baseline-plus-target test transport;
+changing its hostname is not a compatibility fixture. Source tests do not establish
+an installed old-reader transition, owner acceptance, or public release.
+
+
+### DNS address restoration during a held update
+
+The native health coordinator refreshes the two installed Pi-hole TCP/UDP port
+53 listen addresses to the currently assigned host address before restoring its
+original running state. This narrow operation requires the frozen container UUID,
+exact lifecycle hold, stopped instance, installed proxy contract and settled
+provider operations. It preserves all other device fields and the ordinary
+host-migration fence. Originally stopped instances remain stopped.
+
+Host address detection uses the kernel's route-selected IPv4 source, checked
+against the assigned addresses of its up interface. Managed app/container bridges
+and tunnels cannot supply the LAN address; an ordinary host bridge can when the
+route explicitly selects it. Without routing evidence, only one unambiguous
+address on an eligible LAN interface is accepted. Slow DHCP retries remain
+bounded. Interface enumeration order and a hard-coded private subnet exclusion
+are not address authority.
+
+Checkpoint receipts retain the old addresses and distinguish forward and recovery
+bindings. Lost device acknowledgements reconcile observed addresses. An already
+requested, uncertain container start is never generally retried. Explicit recovery
+may perform one separately recorded DNS repair start only after the original
+recovery child is positively settled under both leases and a changed DNS binding
+has been recorded and repaired. Its own durable start intent also forbids replay
+when the resulting power state is unknown. The original power receipt remains;
+this does not rerun migrations, restore data again or release maintenance early.
+
+Host staging binds its downloader to the verified complete core selection. Exact
+signed original member URLs may resolve to the publisher's hash-named asset after
+an original-URL 404, using the same bounded transport as member verification.
+Source identity, checksum, signature, redirect and non-404 failure checks remain.
+
+If a host reboots during incomplete recovery, explicit continuation first proves
+that the original recovery child has settled and that the host boot identity has
+changed. Frozen originally running containers receive separate, boot-bound
+startup receipts; unknown starts on the same boot remain non-replayable. CP/UI
+also require their protected previous component marker and completed schema
+receipt before cold startup, followed by the normal full payload and running
+service checks. This restores held power without repeating paired data restore or
+schema migration. Originally stopped applications stay stopped.
+
+A changed DHCP address on another proven recovery boot appends a boot-bound DNS
+binding receipt while preserving previous bindings and start intents. The separate
+per-boot power receipt owns that boot's start. Address changes or stopped
+observations on the same boot cannot reset its start authority; uncertain provider
+effects, foreign device edits and observation-only calls remain fenced.

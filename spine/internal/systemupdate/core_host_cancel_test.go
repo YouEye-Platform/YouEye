@@ -169,6 +169,11 @@ func TestNativeCoreHostCancellationReconcilesLostJournalWrite(t *testing.T) {
 		t.Fatal("running image changed")
 	}
 	j.ActivationRequested = true
+	for i := range j.Steps {
+		if j.Steps[i].Name == "checkpoint" {
+			j.Steps[i].State = "started"
+		}
+	}
 	if err = m.saveCore(&j); err != nil {
 		t.Fatal(err)
 	}
@@ -245,10 +250,54 @@ func TestNativeCorePartialHostCancellationReconcilesLostJournalWrite(t *testing.
 		t.Fatal("running image changed")
 	}
 	j.ActivationRequested = true
+	for i := range j.Steps {
+		if j.Steps[i].Name == "checkpoint" {
+			j.Steps[i].State = "started"
+		}
+	}
 	if err = m.saveCore(&j); err != nil {
 		t.Fatal(err)
 	}
 	if err = f.manager.CancelCoreHost(ctx, j.RequestID); err == nil {
 		t.Fatal("activated transaction cancelled")
+	}
+}
+
+func TestCoreCancelActivationIntentBeforeCheckpoint(t *testing.T) {
+	for _, checkpoint := range []bool{false, true} {
+		t.Run(fmt.Sprint(checkpoint), func(t *testing.T) {
+			m, e, target := coreJournalFixture(t)
+			target.Members[2].Artifact.SHA256 = strings.Repeat("e", 64)
+			j := prepareCoreFixture(t, m, target)
+			j.ActivationRequested = true
+			j.Phase = "needs-recovery"
+			j.Steps[0].State = "succeeded"
+			j.Steps[0].Evidence = "verified"
+			j.Steps[1].State = "started"
+			if checkpoint {
+				j.Steps[1].State = "succeeded"
+				j.Steps[1].Evidence = "staged"
+				j.Steps[2].State = "started"
+			}
+			if err := m.saveCore(&j); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			m.Executor = coreCancelFixtureExecutor{coreTestExecutor: e, cancel: func(_ context.Context, current CoreJournal) error {
+				calls++
+				if !current.ActivationRequested || current.Phase != "cancelling" {
+					t.Fatal("original intent lost")
+				}
+				return nil
+			}}
+			got, err := m.Cancel(context.Background(), j.RequestID)
+			if checkpoint {
+				if err == nil || calls != 0 {
+					t.Fatal("checkpoint effects cancelled")
+				}
+			} else if err != nil || got.Phase != "cancelled" || calls != 1 {
+				t.Fatal(got.Phase, err, calls)
+			}
+		})
 	}
 }

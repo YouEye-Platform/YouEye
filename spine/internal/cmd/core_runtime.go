@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 
@@ -47,7 +48,24 @@ func installedCoreRuntime() (systemupdate.NativeCoreRuntime, error) {
 		coordinator = "/usr/local/bin/youeye"
 	}
 	checkpoint := systemupdate.NativeCoreCheckpoint{Root: systemupdate.CoreStatePath, DataRoot: "/var/lib/youeye", StatePath: appliance.StatePath, Bridge: cfg.Deployment.Incus.Network,
-		IngressPorts: []uint16{80, 443, uint16(cfg.Deployment.ControlPanel.Port), 3001}}
+		IngressPorts: []uint16{80, 443, uint16(cfg.Deployment.ControlPanel.Port), 3001},
+		DNSHostAddress: func(ctx context.Context) (string, error) {
+			ip := util.GetPrimaryIP()
+			parsed := net.ParseIP(ip)
+			if ctx.Err() != nil || parsed == nil || parsed.To4() == nil || !parsed.IsGlobalUnicast() {
+				return "", fmt.Errorf("current host address unavailable")
+			}
+			addresses, err := net.InterfaceAddrs()
+			if err != nil {
+				return "", err
+			}
+			for _, a := range addresses {
+				if n, ok := a.(*net.IPNet); ok && n.IP.Equal(parsed) {
+					return ip, nil
+				}
+			}
+			return "", fmt.Errorf("host address is not assigned")
+		}}
 	cache := systemupdate.CoreArtifactCache{Root: filepath.Join(checkpoint.DataRoot, "cache", "core-update"), TrustKeyPath: systemupdate.CoreDevelopmentTrustPath, Client: systemupdate.ReleaseHTTPClient()}
 	services := systemupdate.NativeCoreServices{Checkpoint: checkpoint, Cache: cache, CPAppDir: cfg.Deployment.ControlPanel.AppDir, UIAppDir: cfg.Deployment.UI.AppDir, CPPort: cfg.Deployment.ControlPanel.Port}
 	authority := systemupdate.NativeCoreAuthority{FirstBootPolicyPath: filepath.Join(systemupdate.CoreBootstrapPath, "release-policy.json"), FirstBootCompletePath: "/var/lib/youeye-state/first-deploy/complete", Checkpoint: checkpoint, TrustKeyPath: cache.TrustKeyPath, Client: cache.Client, CurrentSelection: currentCoreSelection}

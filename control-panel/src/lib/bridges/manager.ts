@@ -28,6 +28,7 @@ import { listInternetGrants } from './internet-store';
 import { addScopedAppGrantRoute, removeScopedAppGrantRoute } from '../caddy/client';
 import type { ContainerMeta, InstallMetadata } from '../market/types';
 import { managedProxyTransport } from '../../../../shared/managed-proxy';
+import { sameConnectionProjection } from './connection-projection';
 
 // ─── UI Connection Push ──────────────────────────────────────
 // Push bridge/connection state to YE-UI whenever bridges change.
@@ -228,7 +229,7 @@ async function computeInternetProxyScopes(appId: string): Promise<Array<Record<s
   }
 }
 
-export async function pushConnectionsToUI(appId: string, options: { required?: boolean } = {}): Promise<void> {
+export async function pushConnectionsToUI(appId: string, options: { required?: boolean; observed?: unknown; auditOnly?: boolean } = {}): Promise<void> {
   try {
     if (!_bridgeToken) {
       _bridgeToken = (await readFile(TOKEN_FILE, 'utf-8')).trim();
@@ -298,6 +299,13 @@ export async function pushConnectionsToUI(appId: string, options: { required?: b
       available,
     };
 
+    // Only reconciliation supplies a freshly read pass-local database snapshot.
+    // Missing/changed projections still use the authenticated write below; no
+    // cross-pass remembered success can hide a UI restart or external change.
+    if (sameConnectionProjection(options.observed, { bridges: resolved, internet: payload.internet, available })) return;
+
+    if (options.auditOnly) throw new Error('UI projection requires an admitted repair');
+
     const response = await fetch(`http://${_uiIP}:3000/api/ui-bridge/app-connections`, {
       method: 'POST',
       headers: {
@@ -308,7 +316,7 @@ export async function pushConnectionsToUI(appId: string, options: { required?: b
     });
     if (!response.ok) throw new Error('UI connection projection was not accepted');
   } catch {
-    if (options.required) throw new Error('Current UI connection projection could not be verified');
+    if (options.required || options.auditOnly) throw new Error('Current UI connection projection could not be verified');
     // Non-fatal — UI might not have the endpoint yet during upgrades
     console.warn(`[bridges] Failed to push connections to UI for ${appId}`);
   }

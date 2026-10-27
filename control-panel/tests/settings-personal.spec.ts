@@ -117,7 +117,8 @@ test('C2: System page — stat row + human-named Platform + live usage + preserv
   assert.match(sys, /Network shield/);
   // Live usage from real health data, with restart + 5s polling.
   assert.match(sys, /\/api\/health\/services/);
-  assert.match(sys, /\/restart/);
+  assert.match(sys, /await restartServiceRequest\(slug\)/);
+  assert.match(read('src/lib/health/client.ts'), /\/restart/);
   assert.match(sys, /setInterval\(loadHealth, 5000\)/);
   // The maintenance-window image-update flow is preserved (not broken by the redesign).
   assert.match(sys, /confirmMaintenanceWindow/);

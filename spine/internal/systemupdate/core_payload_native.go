@@ -134,14 +134,30 @@ func openCorePayloadDirectory(root int, rel string) (*os.File, error) {
 	return os.NewFile(uintptr(fd), rel), nil
 }
 
+func openCorePayloadDirectoryFromRoot(root string) (*os.File, error) {
+	base, err := os.Open("/")
+	if err != nil {
+		return nil, err
+	}
+	defer base.Close()
+	absolute, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	return openCorePayloadDirectory(int(base.Fd()), strings.TrimPrefix(absolute, "/"))
+}
+
 func verifyCorePayloadDescriptor(ctx context.Context, root *os.File, index CorePayloadIndex) error {
 	expected := make(map[string]CorePayloadEntry, len(index.Entries))
 	for _, e := range index.Entries {
 		expected[e.Path] = e
 	}
 	seen := 0
+	cacheEnabled := coreHasManifestRoute(index)
 	var walk func(*os.File, string) error
-	walk = func(dir *os.File, prefix string) error {
+	walk = func(dir *os.File, prefix string) (scanErr error) {
+		observedPath := prefix
+		defer func() { scanErr = corePayloadDiagnostic(scanErr, observedPath) }()
 		for {
 			children, err := dir.ReadDir(128)
 			if err != nil && err != io.EOF {
@@ -156,12 +172,54 @@ func verifyCorePayloadDescriptor(ctx context.Context, root *os.File, index CoreP
 				if prefix != "" {
 					rel = prefix + "/" + name
 				}
+				observedPath = rel
 				if mutableCorePayloadPath(rel) {
 					continue
 				}
 				e, ok := expected[rel]
 				if !ok {
-					return fmt.Errorf("installed core contains an unrecorded path")
+					kind := coreResponseCacheKind(rel, cacheEnabled)
+					if kind == "" {
+						return fmt.Errorf("installed core contains an unrecorded path")
+					}
+					var stat unix.Stat_t
+					err := unix.Fstatat(int(dir.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW)
+					// Runtime cache may disappear during an ordinary request. Signed
+					// entries never receive this exception, nor do unsupported names.
+					if err == unix.ENOENT {
+						continue
+					}
+					if err != nil || stat.Mode&07000 != 0 {
+						return fmt.Errorf("invalid manifest response cache mode")
+					}
+					if kind == "file" {
+						if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0111 != 0 || stat.Nlink > 1 {
+							return fmt.Errorf("invalid manifest response cache file")
+						}
+					} else {
+						if stat.Mode&unix.S_IFMT != unix.S_IFDIR {
+							return fmt.Errorf("invalid manifest response cache directory")
+						}
+						fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+						if err == unix.ENOENT {
+							continue
+						}
+						if err != nil {
+							return fmt.Errorf("manifest response cache directory unavailable or linked")
+						}
+						sub := os.NewFile(uintptr(fd), name)
+						var opened unix.Stat_t
+						if unix.Fstat(fd, &opened) != nil || opened.Ino != stat.Ino || opened.Dev != stat.Dev || opened.Mode != stat.Mode {
+							sub.Close()
+							return fmt.Errorf("manifest response cache directory changed during observation")
+						}
+						err = walk(sub, rel)
+						sub.Close()
+						if err != nil {
+							return err
+						}
+					}
+					continue
 				}
 				var stat unix.Stat_t
 				if unix.Fstatat(int(dir.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW) != nil || int64(stat.Mode&07777) != e.Mode {
@@ -228,7 +286,7 @@ func verifyCorePayloadDescriptor(ctx context.Context, root *os.File, index CoreP
 		return err
 	}
 	if seen != len(index.Entries) || len(expected) != 0 {
-		return fmt.Errorf("installed core is missing recorded paths")
+		return corePayloadDiagnostic(fmt.Errorf("installed core is missing recorded paths"), "")
 	}
 	return nil
 }

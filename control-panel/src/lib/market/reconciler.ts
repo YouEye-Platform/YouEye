@@ -19,9 +19,10 @@ import { deleteAppStorage } from './storage';
 import { AppLifecycleAdmissionError, withAppLifecycle } from './update-admission';
 import { pushConnectionsToUI } from '../bridges/manager';
 import { getIdentityProviderConfig, removeForwardAuth, removeOAuthClient } from '@/lib/identity/provider';
-import { listAppNetworks, reconcileAppNetworks } from '@/lib/incus/app-network';
+import { hasActiveAppNetwork, listAppNetworks, reconcileAppNetworks } from '@/lib/incus/app-network';
 import {
   getAllActiveInstalls,
+  getTrackedInstall,
   pruneCompletedInstallOperations,
   reconcileCompletedInstallOperation,
   recoverInterruptedInstalls,
@@ -78,7 +79,7 @@ export async function reconcileApps(): Promise<ReconcileResult> {
 
   let appNetworks: Awaited<ReturnType<typeof listAppNetworks>>;
   try {
-    appNetworks = await listAppNetworks();
+    appNetworks = networkResult.observedNetworks ?? await listAppNetworks();
   } catch {
     unresolved.push(`app-network-list:${SAFE_FAILURE}`);
     return { repaired, unresolved };
@@ -106,10 +107,34 @@ export async function reconcileApps(): Promise<ReconcileResult> {
   );
   const installedById = new Map(installedApps.map((app) => [app.appId, app]));
   const appInstanceNames = new Set(instances.filter((name) => name.startsWith('app-') || name.startsWith('ye-app-')));
+  // A pass-local read hint only. Missing registrations are checked again under
+  // admission before creating anything; failed batch reads retain the existing
+  // per-app verification path. Never carry this snapshot across passes.
+  const uiRegistrations = metadata.length > 0 ? await listUIRegistrations().catch(() => null) : new Map<string, unknown>();
 
   for (let meta of metadata) {
     let containers = normalizeContainers(meta.containers, meta.appId);
     for (const name of containers) appInstanceNames.delete(name);
+
+    // Existing visibility needs no mutation admission when the full network
+    // audit and fresh persisted UI projection both match. This path cannot
+    // register, publish or complete an operation. Any uncertainty falls back to
+    // the existing fresh under-lock visibility and repair checks below.
+    if (networkResult.observedNetworks && activeNetworkIds.has(meta.appId)
+      && !networkProblemIds.has(meta.appId) && installedById.has(meta.appId)
+      && meta.lifecycleState === 'active' && uiRegistrations?.has(meta.appId)) {
+      try {
+        const operation = getTrackedInstall(meta.appId);
+        if (operation && (!operation.done || operation.error)) throw new Error('Install operation needs admission');
+        await pushConnectionsToUI(meta.appId, {
+          required: true, observed: uiRegistrations.get(meta.appId), auditOnly: true,
+        });
+        continue;
+      } catch {
+        // No write is possible in the projection audit. Repair reads current
+        // metadata/network state after acquiring lifecycle admission.
+      }
+    }
 
     try {
       await withAppLifecycle(meta.appId, async () => {
@@ -117,7 +142,7 @@ export async function reconcileApps(): Promise<ReconcileResult> {
         if (!current) return;
         meta = current;
         containers = normalizeContainers(meta.containers, meta.appId);
-        const networkActive = (await listAppNetworks()).some(network => network.appId === meta.appId && network.state === 'active');
+        const networkActive = await hasActiveAppNetwork(meta.appId);
         if (meta.lifecycleState === 'installing' && getAllActiveInstalls().some(operation => operation.appId === meta.appId)) {
           // The durable operation record and provisional metadata agree that this
           // installer is still live in this process. Network reconciliation applies
@@ -179,7 +204,7 @@ export async function reconcileApps(): Promise<ReconcileResult> {
         }
 
         try {
-          const repairedUi = await reconcileUIRegistration(meta);
+          const repairedUi = await reconcileUIRegistration(meta, uiRegistrations);
           if (repairedUi) repaired.push(`ui-drawer:${meta.appId}`);
         } catch {
           unresolved.push(`ui-drawer:${meta.appId}:${SAFE_FAILURE}`);
@@ -642,12 +667,12 @@ function normalizeContainers(containers: Array<ContainerMeta | string> | undefin
     .filter((name): name is string => typeof name === 'string' && name.length > 0);
 }
 
-async function reconcileUIRegistration(meta: InstallMetadata): Promise<boolean> {
-  const alreadyRegistered = await isAppRegisteredWithUI(meta.appId);
+async function reconcileUIRegistration(meta: InstallMetadata, observed: ReadonlyMap<string, unknown> | null): Promise<boolean> {
+  const alreadyRegistered = observed?.has(meta.appId) || await isAppRegisteredWithUI(meta.appId);
   if (alreadyRegistered) {
     // Refresh current gateway addressing/trust after CP/UI updates or recovery.
     // Existing registration does not prove that its connection projection is current.
-    await pushConnectionsToUI(meta.appId, { required: true });
+    await pushConnectionsToUI(meta.appId, { required: true, observed: observed?.get(meta.appId) });
     return false;
   }
 
@@ -659,6 +684,19 @@ async function reconcileUIRegistration(meta: InstallMetadata): Promise<boolean> 
     throw new Error('UI registration did not persist after reconcile');
   }
   return true;
+}
+
+async function listUIRegistrations(): Promise<Map<string, unknown>> {
+  const result = await execCommand(
+    POSTGRES_CONTAINER,
+    ['/usr/local/bin/psql', '-v', 'ON_ERROR_STOP=1', '-U', 'youeye', '-d', 'youeye_ui', '-tAc',
+      "SELECT COALESCE(json_agg(json_build_object('id', id, 'connections', connections)), '[]'::json)::text FROM apps"],
+    { timeout: 10_000 },
+  );
+  if (result.exitCode !== 0) throw new Error('Failed to list YE-UI registrations');
+  const rows: unknown = JSON.parse(result.stdout.trim());
+  if (!Array.isArray(rows) || rows.some(row => !row || typeof row.id !== 'string')) throw new Error('Invalid YE-UI registration inventory');
+  return new Map(rows.map(row => [row.id, row.connections]));
 }
 
 export async function isAppRegisteredWithUI(appId: string): Promise<boolean> {

@@ -30,7 +30,7 @@ test('Pointer candidate resolution and updates use the exact app channel', () =>
   assert.match(lxdDeployer, /const key = cfg\.releaseChannelKey \|\| 'ui'/);
   assert.match(lxdDeployer, /effectiveChannel\(key, key\.startsWith\('app:'\)/);
   assert.match(lxdDeployer, /infrastructureChannelSource\(releaseSource, repository, channelSource\)/);
-  assert.match(infrastructureDeployer, /await configurePointerService\(\);[\s\S]*recordCoreProvenance\('app:pointer'/);
+  assert.match(infrastructureDeployer, /configure: \(\) => configurePointerService\(\),[\s\S]*recordCoreProvenance\('app:pointer'/);
   assert.match(infrastructureDeployer, /tag: resolved\.tag/);
   assert.match(infrastructureDeployer, /artifactSHA256: resolved\.artifactSHA256/);
   assert.match(lxdDeployer, /\.youeye-artifact-sha256/);

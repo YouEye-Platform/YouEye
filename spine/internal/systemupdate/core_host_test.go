@@ -19,6 +19,15 @@ import (
 )
 
 func TestCoreHostStagesAliasedPayloadsAndRetainsSignedSelection(t *testing.T) {
+	testCoreHostStages(t, false)
+}
+
+func TestCoreHostStagesHashNamedReleaseWithoutTransportCache(t *testing.T) {
+	t.Setenv("YOUEYE_RELEASE_CACHE", t.TempDir())
+	testCoreHostStages(t, true)
+}
+
+func testCoreHostStages(t *testing.T, blobOnly bool) {
 	f := newManagerFixture(t)
 	f.manager.config.CoreStatePath = filepath.Join(f.dir, "core")
 	keyRaw, err := os.ReadFile(filepath.Join(filepath.Dir(f.manifestPath), "trust.key"))
@@ -84,6 +93,21 @@ func TestCoreHostStagesAliasedPayloadsAndRetainsSignedSelection(t *testing.T) {
 			responses[m.Artifact.URL] = data
 		}
 	}
+	if blobOnly {
+		mirrored := map[string][]byte{}
+		for _, member := range r.Members {
+			blobs := []releasecache.CoreBlob{member.Artifact}
+			if member.DocumentSignature != nil {
+				blobs = append(blobs, *member.DocumentSignature)
+			}
+			for _, blob := range blobs {
+				if data, ok := responses[blob.URL]; ok {
+					mirrored[r.Source+"/releases/download/"+r.Tag+"/blob-"+blob.SHA256] = data
+				}
+			}
+		}
+		responses = mirrored
+	}
 	raw, _ = json.Marshal(r)
 	selection := CoreHostSelection{Raw: raw, Signature: ed25519.Sign(key, raw)}
 	options, err := f.manager.CoreHostOptions(selection)
@@ -92,6 +116,9 @@ func TestCoreHostStagesAliasedPayloadsAndRetainsSignedSelection(t *testing.T) {
 	}
 	f.manager.config.HTTPClient = &http.Client{Transport: signedRedirectTransport(func(req *http.Request) (*http.Response, error) {
 		data, ok := responses[req.URL.String()]
+		if !ok && blobOnly {
+			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("missing")), Header: http.Header{}, Request: req}, nil
+		}
 		if !ok {
 			return nil, fmt.Errorf("undeclared host URL %s", req.URL)
 		}

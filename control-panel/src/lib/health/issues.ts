@@ -46,8 +46,9 @@ async function loadStore(): Promise<IssueStore> {
 async function mutateStore<T>(mutation: (store: IssueStore) => T | Promise<T>): Promise<T> {
   const operation = mutationTail.then(async () => {
     const store = await loadStore();
+    const before = JSON.stringify(store);
     const result = await mutation(store);
-    await writeHealthRegistry(store);
+    if (JSON.stringify(store) !== before) await writeHealthRegistry(store);
     return result;
   });
   mutationTail = operation.then(() => undefined, () => undefined);

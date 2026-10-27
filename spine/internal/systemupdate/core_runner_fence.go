@@ -79,7 +79,7 @@ func (r CoreSystemdRunner) SettleApplyChildren(ctx context.Context, request stri
 // intent prevents new launches. Preparation has no Incus/SQL mutation authority.
 func (r CoreSystemdRunner) SettlePreparationChildren(ctx context.Context, request string) error {
 	j, err := (CoreManager{Root: r.Root}).Read()
-	if err != nil || j.RequestID != request || j.Phase != "cancelling" || j.ActivationRequested || len(j.RecoverySteps) > 0 {
+	if err != nil || j.RequestID != request || j.Phase != "cancelling" || len(j.RecoverySteps) > 0 {
 		return fmt.Errorf("exact unactivated cancellation required")
 	}
 	for _, step := range j.Steps {

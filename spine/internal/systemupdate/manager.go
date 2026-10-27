@@ -300,6 +300,11 @@ func (m *Manager) Status() (Status, error) {
 }
 
 func (m *Manager) Discover(ctx context.Context, options SourceOptions) (Status, error) {
+	bound, err := m.withCoreTransport(options.Core)
+	if err != nil {
+		return Status{}, err
+	}
+	m = bound
 	unlock, err := m.lock()
 	if err != nil {
 		return Status{}, err
@@ -317,6 +322,11 @@ func (m *Manager) Discover(ctx context.Context, options SourceOptions) (Status, 
 }
 
 func (m *Manager) Stage(ctx context.Context, options SourceOptions) (status Status, returnedErr error) {
+	bound, err := m.withCoreTransport(options.Core)
+	if err != nil {
+		return Status{}, err
+	}
+	m = bound
 	unlock, err := m.lock()
 	if err != nil {
 		return Status{}, err

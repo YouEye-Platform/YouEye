@@ -8,6 +8,7 @@
 import { Socket } from 'net';
 import { connect as tlsConnect, type TLSSocket } from 'tls';
 import { readFileSync } from 'fs';
+import { createIncusTransport } from './http-transport';
 
 // ─── Incus transport ────────────────────────────────────────
 // Default: Unix socket (forwarded into this container by the incus-socket proxy
@@ -241,110 +242,22 @@ export async function incusCreateVolumeDirectory(
 /**
  * Make a request to Incus API via Unix socket
  */
+// Next may load this module in several route bundles. Share the bounded pool
+// within the process, just as the platform database transport does.
+const transportKey = Symbol.for('youeye.incus-http');
+const transportState = globalThis as typeof globalThis & { [transportKey]?: ReturnType<typeof createIncusTransport> };
+const transport = transportState[transportKey] ??= createIncusTransport(() => {
+  const endpoint = incusEndpoint();
+  return endpoint.tls ? { ...endpoint, ...clientCreds() } : endpoint;
+});
+
 export async function incusRequest<T = unknown>(
   method: string,
   path: string,
   body?: unknown,
   options?: { timeout?: number; deadlineMs?: number }
 ): Promise<IncusResponse<T>> {
-  const socketPath = process.env.INCUS_SOCKET || '/var/lib/incus/unix.socket';
-  
-  return new Promise((resolve, reject) => {
-    let responseData = '';
-    let headersReceived = false;
-    let contentLength = -1;  // -1 means not specified (chunked)
-    let isChunked = false;
-    let bodyStartIndex = 0;
-
-    const socket = openIncus(() => {
-      // Build HTTP request
-      const bodyStr = body ? JSON.stringify(body) : '';
-      const headers = [
-        `${method} ${path} HTTP/1.1`,
-        'Host: localhost',
-        'Content-Type: application/json',
-        `Content-Length: ${Buffer.byteLength(bodyStr)}`,
-        'Connection: close',
-        '',
-        '',
-      ].join('\r\n');
-
-      socket.write(headers);
-      if (bodyStr) {
-        socket.write(bodyStr);
-      }
-    }, socketPath);
-
-    const deadlineTimer = options?.deadlineMs === undefined ? undefined : setTimeout(() => {
-      socket.destroy();
-      reject(new Error('Socket absolute timeout'));
-    }, options.deadlineMs);
-    socket.on('close', () => { if (deadlineTimer !== undefined) clearTimeout(deadlineTimer); });
-
-    socket.on('data', (data) => {
-      responseData += data.toString();
-
-      // Parse headers if not done yet
-      if (!headersReceived) {
-        const headerEndIndex = responseData.indexOf('\r\n\r\n');
-        if (headerEndIndex !== -1) {
-          headersReceived = true;
-          bodyStartIndex = headerEndIndex + 4;
-          
-          // Extract headers
-          const headerSection = responseData.substring(0, headerEndIndex).toLowerCase();
-          
-          // Check for Content-Length
-          const contentLengthMatch = headerSection.match(/content-length: (\d+)/);
-          if (contentLengthMatch) {
-            contentLength = parseInt(contentLengthMatch[1], 10);
-          }
-          
-          // Check for chunked transfer encoding
-          if (headerSection.includes('transfer-encoding: chunked')) {
-            isChunked = true;
-          }
-        }
-      }
-
-      // Check if we have the full body (only for Content-Length responses)
-      if (headersReceived && contentLength > 0) {
-        const currentBodyLength = Buffer.byteLength(responseData.substring(bodyStartIndex));
-        if (currentBodyLength >= contentLength) {
-          socket.end();
-        }
-      }
-    });
-
-    socket.on('end', () => {
-      try {
-        // Get the body
-        let bodyStr = responseData.substring(bodyStartIndex);
-        
-        // Handle chunked transfer encoding
-        if (isChunked) {
-          bodyStr = parseChunkedBody(bodyStr);
-        }
-        
-        const jsonResponse = JSON.parse(bodyStr) as IncusResponse<T>;
-        resolve(jsonResponse);
-      } catch (error) {
-        reject(new Error(`Failed to parse Incus response: ${error}`));
-      }
-    });
-
-    socket.on('error', (error) => {
-      reject(new Error(`Socket error: ${error.message}`));
-    });
-
-    socket.on('timeout', () => {
-      socket.destroy();
-      reject(new Error('Socket timeout'));
-    });
-
-    // Set timeout (configurable for long operations like OCI image downloads)
-    socket.setTimeout(options?.timeout ?? 30000);
-  });
+  return transport.request<IncusResponse<T>>(method, path, body, options);
 }
 
 /**

@@ -4,7 +4,9 @@
  * emitting progress events for each step.
  */
 
-import { mkdir, lstat } from 'node:fs/promises';
+import { mkdir, lstat, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { DeploymentEvent } from './types';
 import { CONTAINER_DOMAIN } from '@/lib/market/constants';
 import {
@@ -19,7 +21,11 @@ import { reapplySavedUIConfiguration, reapplySavedUIBridgeToken, reconcileUIBrid
 import { spineClient } from '../spine/client';
 import { deployOCIContainer, containerExists } from './oci-deployer';
 import { getSystemStaticIP } from '../incus/static-ips';
-import { deployLXDContainer, redeployLXDContainer } from './lxd-deployer';
+import { deployLXDContainer, redeployLXDContainer, deployPointerLXDContainer, resolveLXDRelease } from './lxd-deployer';
+import { installPointerRelease } from '../pointer/initial-install';
+import { readPointerReleaseState, savePointerReleaseState } from '../pointer/release-metadata';
+import { resolveMarketProductRelease, stageVerifiedProductArtifact } from '../market/native-artifact';
+import { publishProductProjection, verifyProductProjection } from '../releases/product-projection';
 import {
   repairThenVerify,
   waitForPostgres,
@@ -226,29 +232,48 @@ async function exactUIProvenanceMatchesConfiguredSource(): Promise<boolean | nul
 }
 
 async function deployPointerContainerFromConfiguredSource(replaceExisting = false): Promise<void> {
-  await preparePointerStorage();
   const releaseSource = await getReleaseSource();
   const pointerRepoURL = `${releaseSource.base_url.replace(/\/$/, '')}/${releaseSource.organization}/Pointer`;
-  const deploy = replaceExisting ? redeployLXDContainer : deployLXDContainer;
-  const resolved = await deploy(pointerContainerSpec(), {
+  const channel = await effectiveChannel('app:pointer', { appDefaultSource: pointerRepoURL });
+  const cfg = {
     spineSocketPath: '/var/run/youeye/youeye.sock',
     giteaBaseURL: releaseSource.base_url,
     giteaOrg: releaseSource.organization,
     giteaRepo: 'Pointer',
     releaseChannelKey: 'app:pointer',
     exposeHostPort: false,
+  };
+  let resolved = await resolveLXDRelease(cfg);
+  let stagingDirectory: string | undefined;
+  await installPointerRelease(resolved, channel, {
+    read: readPointerReleaseState,
+    resolve: () => resolveMarketProductRelease('pointer', channel.source, resolved.tag),
+    stage: async selected => {
+      stagingDirectory = await mkdtemp(join(tmpdir(), 'youeye-pointer-install-'));
+      return stageVerifiedProductArtifact(stagingDirectory, 'youeye-pointer', selected, channel.artifact_sha256);
+    },
+    deploy: async artifact => {
+      await preparePointerStorage();
+      const installed = await deployPointerLXDContainer(pointerContainerSpec(), cfg, resolved, artifact, replaceExisting);
+      if (!installed) throw new Error('Pointer runtime appeared during installation');
+      resolved = installed;
+    },
+    configure: () => configurePointerService(),
+    healthy: () => waitForPointer(),
+    publish: receipt => publishProductProjection('youeye-pointer', receipt),
+    verify: (receipt, runtimeUUID) => verifyProductProjection('youeye-pointer', receipt, runtimeUUID),
+    save: savePointerReleaseState,
+    recordLegacy: async () => {
+      await recordCoreProvenance('app:pointer', {
+        version: resolved.version,
+        tag: resolved.tag,
+        branch: channel.branch,
+        source: channel.source,
+        artifactSHA256: resolved.artifactSHA256 ?? null,
+      });
+    },
+    cleanup: async () => { if (stagingDirectory) await rm(stagingDirectory, {recursive:true,force:true}); },
   });
-  await configurePointerService();
-  if (resolved) {
-    const channel = await effectiveChannel('app:pointer', { appDefaultSource: pointerRepoURL });
-    await recordCoreProvenance('app:pointer', {
-      version: resolved.version,
-      tag: resolved.tag,
-      branch: channel.branch,
-      source: channel.source,
-      artifactSHA256: resolved.artifactSHA256 ?? null,
-    });
-  }
 }
 
 async function ensurePointerApexRoute(): Promise<void> {

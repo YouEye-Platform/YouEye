@@ -68,11 +68,27 @@ export async function getSystemStaticIP(containerName: string): Promise<string |
  * The container inherits eth0 from the default profile; this override
  * adds ipv4.address to pin it to a deterministic IP.
  */
+async function applyVerifiedPatch(route: string, body: unknown): Promise<void> {
+  const response = await incusRequest('PATCH', route, body);
+  if (response.type === 'error' || response.error) {
+    throw new Error(`Static network configuration rejected: ${response.error || 'Incus error'}`);
+  }
+  if (response.type === 'async') {
+    if (!response.operation) throw new Error('Static network configuration has no operation receipt');
+    const settled = await incusRequest<{ status?: string; err?: string }>(
+      'GET', `${response.operation}/wait?timeout=60`, undefined, { timeout: 90_000 },
+    );
+    if (settled.type === 'error' || settled.metadata?.status !== 'Success') {
+      throw new Error(`Static network configuration rejected: ${settled.error || settled.metadata?.err || 'terminal success not observed'}`);
+    }
+  }
+}
+
 export async function applyStaticIP(containerName: string): Promise<void> {
   const ip = await getSystemStaticIP(containerName);
   if (!ip) return; // Not a system container — no static IP needed
 
-  await incusRequest('PATCH', `/1.0/instances/${containerName}`, {
+  await applyVerifiedPatch(`/1.0/instances/${containerName}`, {
     devices: {
       eth0: {
         type: 'nic',
@@ -91,7 +107,7 @@ export async function applyStaticIP(containerName: string): Promise<void> {
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([name, offset]) => `host-record=${name}.youeye,${base}.${offset}`)
     .join('\n');
-  await incusRequest('PATCH', '/1.0/networks/incusbr0', {
+  await applyVerifiedPatch('/1.0/networks/incusbr0', {
     config: { 'raw.dnsmasq': rawDnsmasq },
   });
 

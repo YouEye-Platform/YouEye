@@ -113,6 +113,19 @@ func (r NativeCoreRuntime) continueRecoveryHealth(ctx context.Context, j CoreJou
 	// RecoverServices and PrepareHealth each recheck exact machine, checkpoint,
 	// reservation and held container identities. Their durable per-start records
 	// allow only never-attempted starts; no migration or restore is invoked here.
+	launch, err := r.Runner.read(current, s)
+	if err != nil {
+		return CoreActionObservation{}, err
+	}
+	boot, err := r.Runner.boot()
+	if err != nil {
+		return CoreActionObservation{}, err
+	}
+	if launch.BootID != boot {
+		r.Checkpoint.recoveryPreviousBoot, r.Checkpoint.recoveryCurrentBoot = launch.BootID, boot
+	}
+	r.Checkpoint.allowDNSRepairStart = true
+	r.Services.Checkpoint = r.Checkpoint
 	return r.execute(ctx, current, s)
 }
 

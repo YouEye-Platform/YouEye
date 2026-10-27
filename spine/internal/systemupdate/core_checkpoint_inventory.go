@@ -51,16 +51,21 @@ type CoreCheckpointInventory struct {
 // Commands capture bounded data privately; errors never include provider output,
 // SQL, container environments or owner values.
 type NativeCoreCheckpoint struct {
-	AvailableDataBytes func(string) (uint64, error)
-	RestoreStream      func(context.Context, io.Reader, string, ...string) error
-	Stream             func(context.Context, io.Writer, string, ...string) error
-	MachineObservation func() (CoreMachineIdentity, error)
-	Bridge             string
-	IngressPorts       []uint16
-	Root               string
-	DataRoot           string
-	StatePath          string
-	Capture            func(context.Context, string, ...string) ([]byte, error)
+	DNSHostAddress func(context.Context) (string, error)
+	// Set only while the exact original recovery child is locked and settled.
+	allowDNSRepairStart  bool
+	recoveryPreviousBoot string
+	recoveryCurrentBoot  string
+	AvailableDataBytes   func(string) (uint64, error)
+	RestoreStream        func(context.Context, io.Reader, string, ...string) error
+	Stream               func(context.Context, io.Writer, string, ...string) error
+	MachineObservation   func() (CoreMachineIdentity, error)
+	Bridge               string
+	IngressPorts         []uint16
+	Root                 string
+	DataRoot             string
+	StatePath            string
+	Capture              func(context.Context, string, ...string) ([]byte, error)
 }
 
 type coreBoundedOutput struct {

@@ -121,6 +121,16 @@ func (p NativeCoreCheckpoint) PrepareHealth(ctx context.Context, request string,
 				index = i
 			}
 		}
+		actual, err = p.prepareDNSBinding(ctx, j, &record, c, actual, recovery, observeOnly, index >= 0)
+		if err != nil {
+			return err
+		}
+		if recovery && index >= 0 && ((*starts)[index].State == "requested" || (*starts)[index].State == "running" || (*starts)[index].State == "observed-running") {
+			actual, err = p.resumeRecoveredPower(ctx, j, c, actual, observeOnly)
+			if err != nil {
+				return err
+			}
+		}
 		if index < 0 {
 			// Older hosts start their DNS container outside the lifecycle lease
 			// when booting the previous image. Accept only this exact, held,

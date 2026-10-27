@@ -316,6 +316,7 @@ func TestCorePreparationCancellationSettlesOnlyOwnedChildren(t *testing.T) {
 		t.Fatal("settled outside recovery fence")
 	}
 	f.journal.Phase = "cancelling"
+	f.journal.ActivationRequested = true
 	if err := (CoreManager{Root: f.runner.Root}).saveCore(&f.journal); err != nil {
 		t.Fatal(err)
 	}

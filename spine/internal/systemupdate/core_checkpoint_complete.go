@@ -192,8 +192,9 @@ func (p NativeCoreCheckpoint) releaseCompletedOnce(ctx context.Context, request 
 }
 
 type coreCompletionContainer struct {
-	Status string            `json:"status"`
-	Config map[string]string `json:"config"`
+	Devices map[string]map[string]string `json:"devices"`
+	Status  string                       `json:"status"`
+	Config  map[string]string            `json:"config"`
 }
 
 func (p NativeCoreCheckpoint) completionContainer(ctx context.Context, c CoreCheckpointContainer) (coreCompletionContainer, error) {

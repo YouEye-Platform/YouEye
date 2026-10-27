@@ -541,9 +541,9 @@ func (m CoreManager) Cancel(ctx context.Context, requestID string) (CoreJournal,
 	if j.Phase == "committed" || j.Phase == "rolled-back" || len(j.RecoverySteps) > 0 {
 		return j, fmt.Errorf("completed or recovering core request cannot be cancelled")
 	}
-	if j.ActivationRequested {
-		return j, fmt.Errorf("activation was requested; reconcile its lifecycle")
-	}
+	// Activation intent may precede host staging. Only actual checkpoint or
+	// later action intent requires paired recovery; retain the owner's original
+	// intent in the journal rather than clearing it to make cancellation pass.
 	hasEffects := false
 	for _, step := range j.Steps {
 		if step.State == "pending" {
