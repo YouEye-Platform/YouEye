@@ -1,3 +1,9 @@
+import { createTranslator } from "next-intl";
+import english from "../../../messages/en.json";
+
+export type PermissionTranslator = (key: string, values?: Record<string, string | number>) => string;
+const englishTranslator: PermissionTranslator = createTranslator({ locale: "en", messages: { interface: english.interface as Record<string, string> }, namespace: "interface" });
+
 export interface PermissionDescriptor {
   permission: string;
   title: string;
@@ -6,34 +12,34 @@ export interface PermissionDescriptor {
   risk: "low" | "medium" | "high";
 }
 
-const KNOWN_PERMISSIONS: Record<string, Omit<PermissionDescriptor, "permission">> = {
+const KNOWN_PERMISSIONS: Record<string, Omit<PermissionDescriptor, "permission" | "title" | "description"> & { titleKey: string; descriptionKey: string }> = {
   "identity:youeye-id:sign-in": {
-    title: "Sign in with your identity provider",
-    description: "Lets this app use your account profile to sign you in.",
+    titleKey: "ma4879d190e15",
+    descriptionKey: "macbfcf2a13fd",
     category: "identity",
     risk: "low",
   },
   "timeline:write": {
-    title: "Write to your timeline",
-    description: "Lets this app add activity entries to your YouEye timeline.",
+    titleKey: "mf0b331de1cbc",
+    descriptionKey: "me01e81e2fb96",
     category: "timeline",
     risk: "medium",
   },
   "notifications:send": {
-    title: "Send notifications",
-    description: "Lets this app send notifications to your YouEye notification center.",
+    titleKey: "m883fd0f44fb4",
+    descriptionKey: "mb3a67c2868cd",
     category: "notifications",
     risk: "medium",
   },
   "widgets:register": {
-    title: "Add homepage widgets",
-    description: "Lets this app provide widgets that can appear on your YouEye homepage.",
+    titleKey: "mc1b9e24a7285",
+    descriptionKey: "m4393f6db6112",
     category: "widgets",
     risk: "low",
   },
   "profile:read": {
-    title: "Read your profile",
-    description: "Lets this app read your basic YouEye profile information.",
+    titleKey: "m0c348b760928",
+    descriptionKey: "m844b04beffd0",
     category: "profile",
     risk: "low",
   },
@@ -48,16 +54,16 @@ function titleFromPermission(permission: string): string {
     .join(" ");
 }
 
-export function describePermission(permission: string): PermissionDescriptor {
+export function describePermission(permission: string, t: PermissionTranslator = englishTranslator): PermissionDescriptor {
   const known = KNOWN_PERMISSIONS[permission];
-  if (known) return { permission, ...known };
+  if (known) return { permission, title: t(known.titleKey), description: t(known.descriptionKey), category: known.category, risk: known.risk };
 
   if (permission.startsWith("connection:")) {
     const appName = titleFromPermission(permission.replace(/^connection:/, ""));
     return {
       permission,
-      title: `Connect to ${appName}`,
-      description: `Lets this app use ${appName} through the YouEye proxy for your account.`,
+      title: t("mfd72fe665ce4", { app: appName }),
+      description: t("madcc74de8dde", { app: appName }),
       category: "connection",
       risk: "medium",
     };
@@ -66,11 +72,11 @@ export function describePermission(permission: string): PermissionDescriptor {
   if (permission.startsWith("internet:")) {
     const host = permission.replace(/^internet:/, "");
     const title = host.startsWith("*.")
-      ? `Use ${titleFromPermission(host.slice(2))} sites`
-      : `Use ${host}`;
+      ? t("m094a871f90b9", { host: titleFromPermission(host.slice(2)) })
+      : t("mb9ea77634eb4", { host });
     const description = host.startsWith("*.")
-      ? `Lets this app connect to matching ${host} sites through the YouEye proxy for your account.`
-      : `Lets this app connect to ${host} through the YouEye proxy for your account.`;
+      ? t("m82acc75cde01", { host })
+      : t("m9532956379b1", { host });
     return {
       permission,
       title,
@@ -84,7 +90,7 @@ export function describePermission(permission: string): PermissionDescriptor {
   return {
     permission,
     title: titleFromPermission(permission),
-    description: "This app requested this YouEye permission.",
+    description: t("mf7ea9482ed9b"),
     category: category === "system" ? "system" : "app",
     risk: "medium",
   };

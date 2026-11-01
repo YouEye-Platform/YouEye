@@ -5,6 +5,26 @@ versioned JavaScript, styles, fonts and asset notices; the host supplies React 1
 navigation, theme and the authenticated stable identity UUID. It loads the UI
 from the installed Pointer release rather than copying screens into Control Panel.
 
+Settings uses a fluid workspace capped at 120rem, with a 13rem desktop navigation
+column and a mobile section picker. AI routes are nested in that navigation;
+Pointer mounts with `navigation: "host"` so it supplies page content and
+attribution while Settings owns navigation, account and theme controls. Direct
+links and retained `/playground` and `/connections` aliases remain supported.
+The host maps semantic colors, border, radius and focus tokens across the shadow
+boundary using `--pointer-host-*` properties. Settings uses bundled IBM Plex
+Sans/Mono fonts; their OFL notices are retained beside the assets.
+Resolve the host properties on the enclosing section, before inheritance into
+the Pointer shadow host. Defining references such as
+`--pointer-host-primary: var(--primary)` on the shadow host itself creates a
+cycle when Pointer defines its own `--primary`. Verify real computed colors,
+card borders and action contrast in the installed host, not only literal-token
+fixtures.
+
+The embedded navigation option requires a compatible Pointer UI. Hosts that omit
+it retain Pointer's independent navigation. Deploy both interface changes before
+evaluating the integrated layout; compatible API transport alone does not prove
+that the two UI revisions match.
+
 Management uses the private management listener with a platform acting-user
 token. Public inference uses the separate inference listener and a Pointer key.
 Managed app templates expose separate `ai.defaultModel` and `ai.utilityModel`
@@ -78,3 +98,31 @@ verification keeps the embedded publisher identity and configured digest; public
 GitHub defaults and signing-channel checks remain effective.
 
 Re-enabling an existing managed AI connection reapplies the current manifest AI environment with its existing protected credential before activation. This converges utility-model mappings without replacing the app instance or key; a missing protected credential requires recovery. Retained-data adoption still requires the exact original manifest digest.
+
+### Settings navigation
+
+Settings uses its available width for detailed pages and embeds the shared
+Pointer workspace with host-owned navigation and semantic light/dark colors.
+AI navigation groups keys under **Instances/API**; old key detail links still
+resolve and select that section. Providers displays existing connections, with
+**Add Provider** opening the logo/search chooser and supported setup flow.
+Model discovery reconciles owner-scoped engine inventory when Models opens;
+a saved provider definition alone does not imply a connected account.
+
+Management traversal validation applies to the route pathname. Encoded query
+values may carry canonical model IDs containing `/`; they do not select an
+upstream route. Model detail uses the summary endpoint's `model` filter rather
+than placing such IDs into a route segment. Forbidden management prefixes,
+encoded route separators, dot segments, fragments and raw backslashes remain
+rejected.
+
+### Consolidated AI pages
+
+AI navigation now has one **Overview** for both overview and usage, and one
+**Test model** page for direct testing and recorded comparison. Request diagnostics
+and Proxy test have been removed as destinations. Old Usage/Request diagnostics
+links resolve to Overview; old Compare/Proxy test links resolve to Test model.
+The adapter's module-loading placeholder follows the requested page layout,
+while Pointer supplies the matching data-loading rows, cards and forms. Model
+loading follows the selected table/grid view without introducing placeholder tabs.
+These UI changes preserve the existing authenticated request and telemetry APIs.

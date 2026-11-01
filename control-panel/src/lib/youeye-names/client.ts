@@ -10,6 +10,7 @@ import crypto from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Worker } from 'node:worker_threads';
 import { z } from 'zod';
+import { withIndependentCopyExclusion } from '@/lib/market/update-admission';
 import {
   getInstallIdentity,
   signPayload,
@@ -317,7 +318,7 @@ async function requestJson<T>(input: {
   let lastError: unknown;
   for (let attempt = 1; attempt <= (input.retryable ? MAX_ATTEMPTS : 1); attempt += 1) {
     try {
-      return await parseResponse(await input.makeRequest(), input.schema);
+      return await withIndependentCopyExclusion(async () => parseResponse(await input.makeRequest(), input.schema));
     } catch (error) {
       lastError = error;
       const retryable =

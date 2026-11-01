@@ -3,6 +3,7 @@
 import base64
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -206,6 +207,52 @@ print('200',end='')
         result = subprocess.run(args,input=(self.scripts/"install.sh").read_bytes(),env=env,capture_output=True)
         self.assertNotEqual(result.returncode,0)
         self.assertNotIn(b"VERIFIED-LAUNCH",result.stdout)
+
+    def test_promoted_bootstrap_keeps_original_source_and_uses_selected_mirrors(self):
+        self.core_fixture()
+        manifest = json.loads((self.root/"core-release.json").read_bytes())
+        original = "https://build.example.test/owner/YouEye"
+        for member in manifest["members"]:
+            member.update(source=original, branch="dev", build_version="0.5.8-dev.1", tag="youeye-v0.5.8-dev.1")
+            for field in ["artifact", "checksums", "signature", "provenance", "sbom", "document_signature", "release_lock"]:
+                if field in member:
+                    blob = member[field]
+                    blob["url"] = original + "/releases/download/" + member["tag"] + "/" + blob["name"]
+        raw = encoded(manifest)
+        (self.root/"core-release.json").write_bytes(raw)
+        (self.root/"core-release.json.sig").write_bytes(self.sign(raw, "stable"))
+        releases = json.loads((self.root/"index.json").read_bytes())
+        mirrors = {"blob-" + blob["sha256"] for member in manifest["members"] for field in ["artifact", "checksums", "signature", "provenance", "sbom", "document_signature", "release_lock"] if (blob := member.get(field))}
+        releases[0]["assets"] += [{"name":name,"browser_download_url":manifest["source"]+"/releases/download/"+manifest["tag"]+"/"+name} for name in mirrors]
+        (self.root/"index.json").write_bytes(encoded(releases))
+        spec = importlib.util.spec_from_file_location("core_bootstrap", ROOT/"releasecache/core_bootstrap.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.fetch = lambda url, limit: (self.root/url.rsplit('/', 1)[-1]).read_bytes()
+        cache = self.root/"promoted-cache"
+        cache.mkdir()
+        destination = self.root/"promoted-selection"
+        self.assertTrue(module.select_core("github", "https://api.github.com/repos/YouEye-Platform/YouEye/releases", "stable", "main", "", [self.root/"index.json"], str(destination), str(cache), {"keys":self.keys}, self.keys["stable"]))
+        selected = destination.read_text().splitlines()
+        self.assertEqual(selected[0], "youeye-v0.5.8-dev.1")
+        self.assertEqual(selected[4], "development")
+        self.assertTrue(all("/youeye-v0.5.9/blob-" in selected[i] for i in [1,2,3,5,6,7]))
+        self.assertNotIn(original, destination.read_text())
+        retained = json.loads(Path(str(destination)+".core").read_text())
+        self.assertEqual(retained["members"]["installer"]["source"], original)
+        # The original build tag may also be unpublished on the same provider.
+        for member in manifest["members"]:
+            member.update(source=manifest["source"], branch="main", build_version="0.5.8")
+            for field in ["artifact", "checksums", "signature", "provenance", "sbom", "document_signature", "release_lock"]:
+                if field in member:
+                    member[field]["url"] = member["url"] if "url" in member else manifest["source"]+"/releases/download/"+member["tag"]+"/"+member[field]["name"]
+        raw = encoded(manifest)
+        (self.root/"core-release.json").write_bytes(raw)
+        (self.root/"core-release.json.sig").write_bytes(self.sign(raw, "stable"))
+        same_cache = self.root/"same-source-cache"
+        same_cache.mkdir()
+        self.assertTrue(module.select_core("github", "https://api.github.com/repos/YouEye-Platform/YouEye/releases", "stable", "main", "", [self.root/"index.json"], str(destination), str(same_cache), {"keys":self.keys}, self.keys["stable"]))
+        self.assertTrue(all("/youeye-v0.5.9/blob-" in destination.read_text().splitlines()[i] for i in [1,2,3,5,6,7]))
 
     def test_distribution_bootstrap_without_github_api(self):
         self.fixture("stable", "valid")

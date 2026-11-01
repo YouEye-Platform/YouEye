@@ -1,3 +1,4 @@
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 /**
  * Offline Fallback Page
  *
@@ -7,6 +8,8 @@
  */
 
 export default function OfflinePage() {
+  const translateInterface = useInterfaceTranslations("interface");
+
   return (
     <div
       style={{
@@ -40,12 +43,9 @@ export default function OfflinePage() {
         Y
       </div>
       <h1 style={{ fontSize: "1.5rem", fontWeight: 600, margin: "0 0 0.5rem" }}>
-        You&apos;re offline
-      </h1>
+        {translateInterface("m050be7950a63")}</h1>
       <p style={{ color: "#a1a1aa", maxWidth: 320, lineHeight: 1.5 }}>
-        Check your internet connection and try again. This page will reload
-        automatically when you&apos;re back online.
-      </p>
+        {translateInterface("m73d83566ec0c")}</p>
       <script
         dangerouslySetInnerHTML={{
           __html: `window.addEventListener('online', () => location.reload())`,

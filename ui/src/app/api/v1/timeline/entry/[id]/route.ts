@@ -5,6 +5,7 @@
  * DELETE — Delete a timeline entry
  */
 
+import { TimelineCollectionError } from "@/lib/db/queries/timeline-collection";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getActiveDerivedKey, getPrivateKey } from "@/lib/crypto/pin-session";
@@ -17,6 +18,7 @@ export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  try {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -32,7 +34,7 @@ export async function PUT(
     );
   }
 
-  const body = await request.json();
+  const { collection_revision, ...body } = await request.json();
 
   // Get RSA private key for hybrid entries
   let privateKey: CryptoKey | undefined;
@@ -46,7 +48,8 @@ export async function PUT(
     session.userId,
     body,
     encryptionKey,
-    privateKey
+    privateKey,
+    collection_revision
   );
 
   if (!success) {
@@ -57,6 +60,10 @@ export async function PUT(
   }
 
   return NextResponse.json({ success: true });
+  } catch (error) {
+    if (error instanceof TimelineCollectionError) return NextResponse.json({ error: error.code }, { status: 409 });
+    return NextResponse.json({ error: "Timeline entry was not changed" }, { status: 503 });
+  }
 }
 
 export async function DELETE(

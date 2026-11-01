@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { namesErrorMessage, previewName, previewNames } from '@/lib/youeye-names/client';
+import { withSetupRequestWork } from '@/lib/setup/readiness';
 
 export async function POST(request: NextRequest) {
   try {
@@ -30,6 +31,7 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json().catch(() => ({}));
 
+    return await withSetupRequestWork(session.authMethod, async () => {
     if (typeof body.name === 'string' && body.name.trim()) {
       const preview = await previewName(body.name.trim().toLowerCase());
       return NextResponse.json({ previews: preview ? [preview] : [] });
@@ -38,6 +40,7 @@ export async function POST(request: NextRequest) {
     const count = Math.min(Math.max(Number(body.count) || 1, 1), 5);
     const previews = await previewNames(count);
     return NextResponse.json({ previews });
+    });
   } catch (error) {
     console.error('[TLS/YouEyeNames] preview failed');
     return NextResponse.json(

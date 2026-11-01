@@ -25,6 +25,8 @@ type ProductBuild struct {
 	Branch         string     `json:"branch"`
 	SourceCommit   string     `json:"source_commit"`
 	Tag            string     `json:"tag"`
+	AssetSource    string     `json:"asset_source,omitempty"`
+	AssetTag       string     `json:"asset_tag,omitempty"`
 	InputSHA256    string     `json:"input_sha256"`
 	ContractSHA256 string     `json:"contract_sha256"`
 	SignerSHA256   string     `json:"signer_sha256"`
@@ -87,6 +89,15 @@ func ProductBuildChannel(b ProductBuild) (string, error) {
 	}
 	return "feature", nil
 }
+
+// AssetLocation records a later attestation's transport without changing the
+// original build's source identity. Historical builds use their original tag.
+func (b ProductBuild) AssetLocation() (string, string) {
+	if b.AssetSource != "" {
+		return b.AssetSource, b.AssetTag
+	}
+	return b.Source, b.Tag
+}
 func (b ProductBuild) Validate() error {
 	if b.Schema != "youeye.product-build.v1" || !validIndependentProduct(b.Product) || !ValidCoreVersion(b.BuildVersion) || !ValidCoreBranch(b.Branch) || !installationCommit.MatchString(b.SourceCommit) || !installationHash.MatchString(b.InputSHA256) || !installationHash.MatchString(b.ContractSHA256) || !installationHash.MatchString(b.SignerSHA256) || b.Tag != ProductTag(b.Product, b.Branch, b.BuildVersion) {
 		return fmt.Errorf("invalid immutable product build identity")
@@ -97,6 +108,17 @@ func (b ProductBuild) Validate() error {
 	if _, err := ProductBuildChannel(b); err != nil {
 		return err
 	}
+	if (b.AssetSource == "") != (b.AssetTag == "") {
+		return fmt.Errorf("product asset source and tag must be paired")
+	}
+	if b.AssetSource != "" {
+		if _, err := coreSource(b.AssetSource); err != nil {
+			return err
+		}
+		if !ValidCoreBranch(b.AssetTag) {
+			return fmt.Errorf("invalid product asset tag")
+		}
+	}
 	if b.Kind != "native" && b.Kind != "source" && b.Kind != "catalog" {
 		return fmt.Errorf("unsupported product artifact kind")
 	}
@@ -104,12 +126,13 @@ func (b ProductBuild) Validate() error {
 		return fmt.Errorf("invalid product asset set")
 	}
 	names := map[string]bool{}
+	assetSource, assetTag := b.AssetLocation()
 	for _, a := range b.Assets {
 		if names[a.Name] {
 			return fmt.Errorf("duplicate product asset")
 		}
 		names[a.Name] = true
-		if err := a.validate(b.Source, b.Tag); err != nil {
+		if err := a.validate(assetSource, assetTag); err != nil {
 			return err
 		}
 	}
@@ -158,11 +181,8 @@ func (r ProductRelease) Validate() error {
 	if b.Product != r.Product {
 		return fmt.Errorf("release references another product")
 	}
-	if r.Channel == "stable" || r.Channel == "beta" {
-		if b.Source != r.Source {
-			return fmt.Errorf("public product references private or foreign build")
-		}
-	}
+	// The selected release signs the exact original build envelope. Promotion
+	// changes selection and transport, never the build's source or signature.
 	return nil
 }
 func parseProductDocument(raw []byte, value any) error {

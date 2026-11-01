@@ -1,3 +1,5 @@
+import { mergeMessages } from "../../../shared/message-catalog";
+import english from "../../messages/en.json";
 /**
  * next-intl request configuration
  *
@@ -6,34 +8,20 @@
  *   2. System language (from youeye.yaml via Spine)
  *   3. Fallback: "en"
  *
- * CP sessions use PAM auth (username-based JWT, no identity provider sub).
- * Per-user resolution only works for SSO-authenticated sessions.
- * PAM sessions fall back to system default.
+ * Both local and SSO sessions resolve through the verified identity mapping.
  */
 
 import { getRequestConfig } from "next-intl/server";
 import { cookies } from "next/headers";
-import { resolveLocale, defaultLocale } from "./config";
+import { resolvePreferredLocale } from "./config";
+import { getSession } from "@/lib/auth/session";
+import { getUserByUsername } from "@/lib/identity/store";
 import { CONTAINER_DOMAIN } from "@/lib/market/constants";
-
-/** Cached system language with TTL */
-let cachedSystemLang: { locale: string; expiresAt: number } | null = null;
-const CACHE_TTL_MS = 60_000;
-
-/** Per-user language cache (keyed by identity provider sub) */
-const userLangCache = new Map<
-  string,
-  { locale: string | null; expiresAt: number }
->();
 
 /**
  * Fetch system language from Spine API (via local socket).
  */
 async function getSystemLanguage(): Promise<string> {
-  const now = Date.now();
-  if (cachedSystemLang && now < cachedSystemLang.expiresAt) {
-    return cachedSystemLang.locale;
-  }
 
   try {
     const http = await import("http");
@@ -66,7 +54,6 @@ async function getSystemLanguage(): Promise<string> {
       req.end();
     });
 
-    cachedSystemLang = { locale, expiresAt: now + CACHE_TTL_MS };
     return locale;
   } catch {
     return "en";
@@ -78,11 +65,6 @@ async function getSystemLanguage(): Promise<string> {
  * Returns null if no override is set or bridge is unreachable.
  */
 async function getUserLanguage(userId: string): Promise<string | null> {
-  const now = Date.now();
-  const cached = userLangCache.get(userId);
-  if (cached && now < cached.expiresAt) {
-    return cached.locale;
-  }
 
   try {
     const fs = await import("fs");
@@ -99,6 +81,7 @@ async function getUserLanguage(userId: string): Promise<string | null> {
       `${uiUrl}/api/ui-bridge/user-language?userId=${encodeURIComponent(userId)}`,
       {
         headers: { "X-UI-Bridge-Token": token },
+        cache: "no-store",
         signal: AbortSignal.timeout(5000),
       }
     );
@@ -106,7 +89,6 @@ async function getUserLanguage(userId: string): Promise<string | null> {
     if (res.ok) {
       const data = await res.json();
       const lang = data.language || null;
-      userLangCache.set(userId, { locale: lang, expiresAt: now + CACHE_TTL_MS });
       return lang;
     }
   } catch {
@@ -117,62 +99,27 @@ async function getUserLanguage(userId: string): Promise<string | null> {
 }
 
 /**
- * Try to extract user identity from the CP session JWT.
- * CP PAM sessions have `username` but no identity provider sub.
- * Returns null for PAM sessions (no per-user language available).
+ * Resolve the identity from the authenticated session, including local accounts.
  */
 async function getSessionUserId(): Promise<string | null> {
-  try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get("ye-session");
-    if (!sessionCookie?.value) return null;
-
-    // Decode the JWT payload without verification (middleware already verified it)
-    const parts = sessionCookie.value.split(".");
-    if (parts.length !== 3) return null;
-
-    const payload = JSON.parse(
-      Buffer.from(parts[1], "base64url").toString("utf-8")
-    );
-
-    // CP PAM sessions don't have an identity provider sub — they have username only.
-    return payload.sub || payload.identityId || null;
-  } catch {
-    return null;
-  }
+  const session = await getSession();
+  if (!session) return null;
+  return session.identityId || (await getUserByUsername(session.username))?.id || null;
 }
 
 export default getRequestConfig(async () => {
-  // Check setup-language cookie and embed locale cookie
-  let setupLang: string | null = null;
-  let embedLocale: string | null = null;
-  try {
-    const cookieStore = await cookies();
-    const setupCookie = cookieStore.get("ye-setup-language");
-    if (setupCookie?.value) {
-      setupLang = setupCookie.value;
-    }
-    // Embed locale cookie (set by embed layout inline script from ?locale= param)
-    const embedLocaleCookie = cookieStore.get("ye-embed-locale");
-    if (embedLocaleCookie?.value) {
-      embedLocale = embedLocaleCookie.value;
-    }
-  } catch {
-    // cookies() may fail outside request context
-  }
-
-  // Try per-user resolution
+  // Signed-in users always use their authenticated preference. Legacy embed/setup
+  // cookies must never override it or leak a previous user's locale after sign-out.
   const userId = await getSessionUserId();
-  let userLang: string | null = null;
-  if (userId) {
-    userLang = await getUserLanguage(userId);
-  }
-
-  // System language fallback
+  const userLang = userId ? await getUserLanguage(userId) : null;
   const systemLang = await getSystemLanguage();
-
-  // Resolution: embed locale > setup cookie > user override > system default > "en"
-  const locale = resolveLocale(embedLocale || setupLang || userLang || systemLang);
+  let setupLang: string | null = null;
+  if (!userId) {
+    const cookieStore = await cookies();
+    setupLang = cookieStore.get("ye-setup-language")?.value || null;
+  }
+  const locale = userId ? resolvePreferredLocale(userLang, systemLang)
+    : resolvePreferredLocale(setupLang, systemLang);
 
   let messages;
   try {
@@ -183,6 +130,6 @@ export default getRequestConfig(async () => {
 
   return {
     locale,
-    messages,
+    messages: mergeMessages(english, messages),
   };
 });

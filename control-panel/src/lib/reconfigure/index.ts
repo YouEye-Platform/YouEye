@@ -114,6 +114,8 @@ export interface ReconfigureRequest {
   byoBundle?: ByoDomainBundle;
   /** Programmatic caller bookkeeping must commit before CP restart scheduling. */
   beforeRestart?: () => Promise<void>;
+  /** Native copy only: exact already-installed manifests, without catalog fetch. */
+  installedManifests?: ReadonlyMap<string, AppManifest>;
 }
 
 export interface ReconfigureEvent {
@@ -512,6 +514,7 @@ async function updateInstalledApp(
   newDomain: string,
   warn: (message: string) => void,
   identityOrigins?: [string, string],
+  installedManifest?: AppManifest,
 ): Promise<void> {
   return withAppLifecycle(meta.appId, async () => {
     // Enumeration can precede a concurrent lifecycle mutation. Re-read inside
@@ -519,13 +522,14 @@ async function updateInstalledApp(
     const { readInstallMetadata } = await import('@/lib/market/metadata');
     const current = await readInstallMetadata(meta.appId);
     if (!current) throw new Error(`App ${meta.appId} disappeared during URL change`);
-    return updateInstalledAppLocked(current, oldDomain, newDomain, warn, identityOrigins);
+    return updateInstalledAppLocked(current, oldDomain, newDomain, warn, identityOrigins, installedManifest);
   });
 }
 
 async function updateInstalledAppLocked(
   meta: InstallMetadata, oldDomain: string, newDomain: string,
   warn: (message: string) => void, identityOrigins?: [string, string],
+  installedManifest?: AppManifest,
 ): Promise<void> {
   const appId = meta.appId;
   const containers = containerEntries(meta);
@@ -551,7 +555,7 @@ async function updateInstalledAppLocked(
 
   // 2. Refresh manifest-declared config files (SearXNG settings.yml,
   //    Nextcloud trusted-domains file, ...).
-  const manifest = await fetchAppManifest(appId, meta.sourceId);
+  const manifest = installedManifest ?? await fetchAppManifest(appId, meta.sourceId);
   let refreshedConfigFiles: Array<{ containerName: string; spec: ConfigFileSpec; context: Record<string, unknown> }> = [];
   if (manifest) {
     refreshedConfigFiles = await refreshConfigFiles(manifest, meta, oldDomain, newDomain, warn, identityOrigins);
@@ -1032,6 +1036,7 @@ async function reconfigureLocked(
   // 2. Enumerate installed apps
   onEvent({ step: 'apps', status: 'running', message: 'Enumerating installed apps...' });
   const installedApps = await listInstalledApps();
+  if(req.installedManifests&&(req.installedManifests.size!==installedApps.length||installedApps.some(app=>!req.installedManifests?.has(app.appId))))throw new Error('Native copy installed manifest inventory changed');
   onEvent({ step: 'apps', status: 'done', message: `Found ${installedApps.length} installed app(s)` });
 
   // 3. Update youeye.yaml
@@ -1244,7 +1249,7 @@ async function reconfigureLocked(
           warnings.push(m);
           if (/failed|unknown container/.test(m)) throw new Error(m);
           console.warn(`[Reconfigure] ${m}`);
-        }, [journal.oldIdentityOrigin, configuredIdentityUrl]);
+        }, [journal.oldIdentityOrigin, configuredIdentityUrl], req.installedManifests?.get(app.appId));
         onEvent({
           step: `app_${app.appId}`,
           status: 'done',

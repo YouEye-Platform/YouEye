@@ -13,6 +13,9 @@
 
 "use client";
 
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
+
 import { ExternalLink, Package } from "lucide-react";
 import { UnifiedEmbed } from "@/components/embeds/unified-embed";
 import { resolveLucideIcon } from "@/lib/timeline/icon-map";
@@ -63,6 +66,8 @@ function StandardCard({
   meta?: AppMetaEntry;
   uninstalled?: boolean;
 }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const Icon = meta?.icon ? resolveLucideIcon(meta.icon) : Package;
   const color = meta?.accent_color ?? null;
   const description = entry.data.description as string | undefined;
@@ -103,8 +108,7 @@ function StandardCard({
 
         {uninstalled ? (
           <p className="mt-0.5 text-xs text-muted-foreground">
-            This app was uninstalled — the entry is kept from your timeline history.
-          </p>
+            {translateInterface("mdcb13702448e")}</p>
         ) : (
           description && <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{description}</p>
         )}
@@ -157,6 +161,8 @@ interface TimelineEmbedProps {
 }
 
 export function TimelineEmbed({ entry, domain, appMeta, mode, className }: TimelineEmbedProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   // No embed_path → always show the standard card.
   if (!entry.embed_path) {
     return (
@@ -177,7 +183,7 @@ export function TimelineEmbed({ entry, domain, appMeta, mode, className }: Timel
       timeout={EMBED_TIMEOUT_MS}
       mode={mode}
       className={className}
-      title={`${appSlug} timeline card`}
+      title={translateInterface("md589eb2965da", { value0: String(appSlug) })}
       fallback={<StandardCard entry={entry} meta={appMeta} uninstalled />}
     />
   );

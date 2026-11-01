@@ -47,9 +47,6 @@ func applianceReleaseTrustClass(release applianceRelease) string {
 			if member.Source == releasecache.OfficialRepository {
 				return channel
 			}
-			if release.sourceProvider == "github" {
-				return "invalid"
-			}
 			return "development"
 		}
 		return "invalid"

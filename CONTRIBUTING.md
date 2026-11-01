@@ -20,6 +20,12 @@ Run focused tests while developing, then the affected component's full checks. P
 ./scripts/check-public-release-hygiene_test.sh
 ```
 
+For interface work, follow [the localization contract](docs/localization.md).
+New visible text needs message keys and translations in every registered
+language, including accessible labels and error states. Run `pnpm i18n:check`
+in the affected Web workspace; do not expand the existing-literal baseline to
+admit untranslated features.
+
 If a change adds third-party code, fonts, icons, images, or other bundled material, update `legal/third-party-assets.json` and regenerate `THIRD_PARTY_NOTICES.txt`.
 
 ## Documentation and operational evidence

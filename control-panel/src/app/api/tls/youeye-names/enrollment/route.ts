@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { spineClient } from '@/lib/spine/client';
+import { withSetupRequestWork } from '@/lib/setup/readiness';
 import {
   createHumanVerificationChallenge,
   getNamesReadiness,
@@ -27,6 +28,7 @@ export async function POST(request: NextRequest) {
   }
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   try {
+    return await withSetupRequestWork(session.authMethod, async () => {
     if (body.action === 'register') {
       if (typeof body.humanVerificationProof !== 'string') {
         return NextResponse.json({ error: 'Verification proof missing' }, { status: 400 });
@@ -62,6 +64,7 @@ export async function POST(request: NextRequest) {
       currentIp,
     });
     return NextResponse.json({ ok: true, challenge }, { headers: { 'cache-control': 'no-store' } });
+    });
   } catch (error) {
     return NextResponse.json(
       { error: namesErrorMessage(error) },

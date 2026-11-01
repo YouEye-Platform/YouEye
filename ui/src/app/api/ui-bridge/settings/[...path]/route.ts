@@ -1,7 +1,9 @@
+import { getUserTranslator } from "@/i18n/user-translator";
 import { NextRequest, NextResponse } from "next/server";
 import { getBridgeToken } from "@/lib/admin/bridge-client";
-import { completeOnboarding, ensureBridgeUser, hasCompletedOnboarding, updateUserProfile } from "@/lib/db/queries/users";
-import { getUserSettings } from "@/lib/db/queries/settings";
+import { ensureBridgeUser, hasCompletedOnboarding, updateUserProfile } from "@/lib/db/queries/users";
+import { getTimelineCollection, setTimelineCollection, TimelineCollectionError } from "@/lib/db/queries/timeline-collection";
+import { getUserSettings, getSystemLanguage } from "@/lib/db/queries/settings";
 import { listThemes, createTheme, getUserActiveTheme, setUserActiveTheme, getDefaultTheme } from "@/lib/db/queries/themes";
 import { generateCSSVariables } from "@/lib/themes/css-generator";
 import { getUserAppsWithConfig, updateAppBranding, updateAppConfig, updateDrawerSections, updateUserAppBranding } from "@/lib/db/queries/apps";
@@ -14,8 +16,9 @@ import { hasPIN, hasActivePINSession, createPIN, changePIN, endPINSession } from
 import { db, ensureSchema } from "@/db";
 import { userSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { resolveTitle } from "@youeye/branding/appearance";
 
-const SUPPORTED_LOCALES = ["en", "ru", "es", "de", "fr"];
+import { locales as SUPPORTED_LOCALES, resolvePreferredLocale } from "@/i18n/config";
 
 function validateToken(request: NextRequest): boolean {
   const provided = request.headers.get("X-UI-Bridge-Token");
@@ -128,7 +131,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
   const path = (await context.params).path.join("/");
 
   if (path === "onboarding") {
-    return NextResponse.json({ completed: await hasCompletedOnboarding(user.id) });
+    return NextResponse.json({ completed: await hasCompletedOnboarding(user.id), timeline: await getTimelineCollection(user.id), has_pin: await hasPIN(user.id) });
+  }
+  if (path === "timeline/collection") {
+    try { return NextResponse.json(await getTimelineCollection(user.id)); }
+    catch { return NextResponse.json({ error: "Collection state is unknown" }, { status: 503 }); }
   }
 
   if (path === "profile") {
@@ -162,11 +169,12 @@ export async function GET(request: NextRequest, context: RouteContext) {
       getUserNotifications(user.id, 20),
     ]);
 
+    const title = resolveTitle(branding, wordartOverride);
     return NextResponse.json({
       branding: {
-        site_name: branding.site_name,
-        site_name_style: wordartOverride ?? branding.site_name_style,
-        logo_url: branding.logo_url,
+        site_name: title.name,
+        site_name_style: title.style,
+        logo_url: branding.site_name_style?.showHeaderLogo === true ? branding.logo_url : null,
         favicon_url: branding.favicon_url,
         accent_color: branding.accent_color,
       },
@@ -246,7 +254,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const language = typeof settings.language === "string" && SUPPORTED_LOCALES.includes(settings.language)
       ? settings.language
       : null;
-    return NextResponse.json({ language });
+    const systemLanguage = await getSystemLanguage();
+    return NextResponse.json({ language, systemLanguage, locale: resolvePreferredLocale(language, systemLanguage) }, { headers: { "Cache-Control": "private, no-store" } });
   }
 
   if (path === "wordart") {
@@ -311,13 +320,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
   if (path.startsWith("permissions/app/")) {
     const appId = decodeURIComponent(path.slice("permissions/app/".length));
     const permissions = await getAppPermissions(user.id, appId);
+    const { t } = await getUserTranslator(user.id);
     return NextResponse.json({
       app_id: appId,
       permissions: permissions.map((permission) => ({
         id: `${appId}:${permission.permission}`,
         appId,
         permission: permission.permission,
-        descriptor: describePermission(permission.permission),
+        descriptor: describePermission(permission.permission, t),
         granted: permission.granted,
         grantType: permission.grant_type,
         grantedAt: permission.granted_at,
@@ -492,9 +502,16 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const path = (await context.params).path.join("/");
   const body = await request.json().catch(() => ({}));
 
-  if (path === "onboarding/complete") {
-    await completeOnboarding(auth.user.id);
-    return NextResponse.json({ completed: true });
+  if (path === "onboarding/complete" || path === "timeline/collection") {
+    try {
+      const timeline = await setTimelineCollection(auth.user.id, {
+        enabled: body.enabled, expected_revision: body.expected_revision, request_id: body.request_id,
+        complete: path === "onboarding/complete",
+      });
+      return NextResponse.json({ ...timeline, ...(path === "onboarding/complete" ? { completed: true } : {}) });
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof TimelineCollectionError ? error.code : "Preference was not saved" }, { status: 409 });
+    }
   }
 
   if (path === "pin/create") {
@@ -508,8 +525,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
 
   if (path === "pin/change") {
-    const success = await changePIN(auth.user.id, body.current_pin, body.new_pin);
-    return NextResponse.json({ success }, { status: success ? 200 : 400 });
+    try {
+      const success = await changePIN(auth.user.id, body.current_pin, body.new_pin);
+      return NextResponse.json({ success }, { status: success ? 200 : 400 });
+    } catch {
+      return NextResponse.json({ error: "The encryption secret was not changed. Existing access is preserved." }, { status: 400 });
+    }
   }
 
   return NextResponse.json({ error: "Not found" }, { status: 404 });

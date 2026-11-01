@@ -22,3 +22,11 @@ test('isolated managed clients use the same logical authority on any bridge', ()
   assert.equal(getAppInternalIdentityBase('youeye-app-search'), 'http://id.youeye:3002');
   assert.equal(getAppInternalIdentityBase('youeye-ui'), null);
 });
+
+test('identity landing uses configured dashboard authority, including a custom UI label', () => {
+  assert.equal(identityConfigFromSettings({ domain: 'first.test', subdomains: { identity: 'auth' } }).dashboardUrl, 'https://first.test/');
+  assert.equal(identityConfigFromSettings({ domain: 'next.test', subdomains: { identity: 'id', ui: 'home' } }).dashboardUrl, 'https://home.next.test/');
+  for (const ui of ['evil.test', '//evil.test', 'home/elsewhere', 'auth']) {
+    assert.throws(() => identityConfigFromSettings({ domain: 'first.test', subdomains: { identity: 'auth', ui } }));
+  }
+});

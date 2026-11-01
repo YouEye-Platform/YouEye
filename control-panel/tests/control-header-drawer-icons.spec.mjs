@@ -30,7 +30,7 @@ test("Control header hosts the UI-served drawer and launcher", () => {
   assert.match(header, /youeye:overlay-command/);
   assert.match(header, /command === "open-launcher"/);
   assert.doesNotMatch(header, /action === "open-launcher"/);
-  assert.match(header, /<iframe[\s\S]*title=\{`YouEye \$\{kind\}`\}/);
+  assert.match(header, /<iframe[\s\S]*title=\{translateInterface\("m17755da34536"/);
   assert.doesNotMatch(header, /apps\/drawer/);
   assert.doesNotMatch(header, /editDrawer|GripVertical|Hidden apps|persistDrawerPrefs|displayIcon/);
 });

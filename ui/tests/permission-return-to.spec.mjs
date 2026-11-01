@@ -19,7 +19,7 @@ test('permission approval carries a safe return_to back to the requesting app', 
   assert.match(helper, /params\.set\("return_to", safeReturnTo\)/);
   assert.match(route, /return_to/);
   assert.match(route, /const safeGrantType/);
-  assert.match(route, /buildPermissionApproval\(targetAppId, requested, safeGrantType, request, safeReturnTo\)/);
+  assert.match(route, /buildPermissionApproval\(targetAppId, requested, safeGrantType, request, safeReturnTo, t\)/);
   assert.match(page, /return_to\?: string/);
   assert.match(page, /returnTo=\{params\.return_to\}/);
   assert.match(form, /window\.location\.assign\(returnTo\)/);

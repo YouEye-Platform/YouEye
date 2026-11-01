@@ -1,10 +1,11 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
 const root = process.env.CONTROL_PANEL_ROOT || path.resolve(import.meta.dirname, '..');
-const source = fs.readFileSync(path.join(root, 'src/components/settings-shell/health-client.tsx'), 'utf8');
+const source = englishInterfaceSource(fs.readFileSync(path.join(root, 'src/components/settings-shell/health-client.tsx'), 'utf8'));
 
 test('Health follows the shared Settings hierarchy and neutral surfaces', () => {
   assert.match(source, /<PageHeader/);
@@ -16,7 +17,9 @@ test('Health follows the shared Settings hierarchy and neutral surfaces', () => 
 test('Health uses calm status dot and word labels with human service categories', () => {
   assert.match(source, /Check soon/);
   assert.match(source, /Needs attention/);
-  assert.match(source, /Apps and connections/);
+  assert.match(source, /translateInterface\(sourceName\(issue.source\)\)/);
+  const en = JSON.parse(fs.readFileSync(path.join(root, "messages/en.json"), "utf8"));
+  assert.equal(en.interface.m95b958ec1144, "Apps and connections");
   assert.doesNotMatch(source, /Durable repair registry|Badge variant="outline">\{issue\.source\}/);
 });
 

@@ -17,9 +17,9 @@ import {
   getTimelineCounts,
   createTimelineEntry,
   createHybridTimelineEntry,
-  queuePendingEvent,
   processPendingEvents,
 } from "@/lib/db/queries/timeline";
+import { getTimelineCollection, TimelineCollectionError } from "@/lib/db/queries/timeline-collection";
 import type { TimelineEntryData } from "@/lib/db/queries/timeline";
 import { checkPermission } from "@/lib/db/queries/permissions";
 import { getAppMetaMap } from "@/lib/db/queries/app-management";
@@ -127,9 +127,10 @@ export async function GET(request: Request) {
  * Checks timeline:write permission. Apps must receive explicit user approval.
  *
  * If the user has an active PIN session, encrypts immediately.
- * Otherwise, queues the event for encryption on next PIN unlock.
+ * Otherwise, encrypts immediately with the public key; plaintext is never queued.
  */
 export async function POST(request: NextRequest) {
+  try {
   // Try service auth first (app-to-app)
   const serviceUser = await resolveServiceAuth(request);
   const appId = request.headers.get("x-youeye-app");
@@ -162,6 +163,8 @@ export async function POST(request: NextRequest) {
     userId = session.userId;
   }
 
+  const consent = await getTimelineCollection(userId);
+  if (!consent.enabled) return NextResponse.json({ collected: false, reason: "collection_off" });
   const body = await request.json();
 
   // Validate required fields
@@ -207,7 +210,8 @@ export async function POST(request: NextRequest) {
         userId,
         collection as "history" | "future" | "imported",
         entryData,
-        encryptionKey
+        encryptionKey,
+        body.collection_revision
       );
 
       return NextResponse.json({ id: entryId, queued: false }, { status: 201 });
@@ -220,33 +224,21 @@ export async function POST(request: NextRequest) {
         userId,
         collection as "history" | "future" | "imported",
         entryData,
-        publicKey
+        publicKey,
+        body.collection_revision
       );
 
       return NextResponse.json({ id: entryId, queued: false }, { status: 201 });
     }
   }
 
-  // No PIN set up at all — queue unencrypted for later
-  const payload = {
-    entry_type,
-    title,
-    timestamp,
-    embed_path: body.embed_path ?? undefined,
-    info_card: body.info_card ?? undefined,
-    tags: body.tags ?? {},
-    data: body.data ?? {},
-  };
-
-  const pendingId = await queuePendingEvent(
-    userId,
-    effectiveAppId,
-    collection,
-    payload
-  );
-
-  return NextResponse.json(
-    { id: pendingId, queued: true },
-    { status: 202 }
-  );
+  // Never queue plaintext when the encryption key is unavailable.
+  return NextResponse.json({ error: "Timeline encryption is unavailable", code: "key_required" }, { status: 409 });
+  } catch (error) {
+    if (error instanceof TimelineCollectionError) {
+      if (error.code === "collection_off") return NextResponse.json({ collected: false, reason: error.code });
+      return NextResponse.json({ error: error.code }, { status: 409 });
+    }
+    return NextResponse.json({ error: "Timeline collection is unavailable" }, { status: 503 });
+  }
 }

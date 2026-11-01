@@ -11,6 +11,10 @@
  */
 
 export interface SiteNameStyle {
+  /** Editable MyTitle v1 title and sticker. Absent on legacy appearances. */
+  mytitle?: import('@youeye/branding').Design;
+  mytitleRevision?: string;
+  showHeaderLogo?: boolean;
   fontFamily: string;
   fontSize: string;
   fontWeight: number;

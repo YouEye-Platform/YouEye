@@ -1,3 +1,4 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -15,7 +16,7 @@ const controlPanelRoot = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirn
 const repoRoot = join(controlPanelRoot, '..');
 
 function read(relativePath: string): string {
-  return readFileSync(join(controlPanelRoot, relativePath), 'utf8');
+  return relativePath.endsWith(".tsx") ? englishInterfaceSource(readFileSync(join(controlPanelRoot, relativePath), "utf8")) : readFileSync(join(controlPanelRoot, relativePath), "utf8");
 }
 
 const engine = read('src/lib/reconfigure/index.ts');

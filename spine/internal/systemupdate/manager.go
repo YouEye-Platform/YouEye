@@ -801,23 +801,13 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 	if err := m.downloadSourceAtMost(ctx, options.SignatureSource, signaturePath+".part", signaturePath, maxSignatureBytes); err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, fmt.Errorf("download system update signature: %w", err)
 	}
-	verified, err := VerifyManifest(manifestPath, signaturePath, m.config.TrustKeyPath)
+	verified, coreDigest, err := m.verifyHostManifest(manifestPath, signaturePath, options.Core)
 	if err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
-	coreDigest := ""
 	if options.Core != nil {
-		signature, err := os.ReadFile(signaturePath)
-		if err != nil {
-			return VerifiedManifest{}, Layout{}, state, Journal{}, err
-		}
-		r, digest, err := m.verifyCoreHost(*options.Core, verified, signature)
-		if err != nil {
-			return VerifiedManifest{}, Layout{}, state, Journal{}, err
-		}
-		coreDigest = digest
 		bound, err := m.CoreHostOptions(*options.Core)
-		if err != nil || options.ManifestSource != bound.ManifestSource || options.SignatureSource != bound.SignatureSource || options.ReleaseTag != r.Tag {
+		if err != nil || options.ManifestSource != bound.ManifestSource || options.SignatureSource != bound.SignatureSource || options.ReleaseTag != bound.ReleaseTag {
 			return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("host source differs from frozen core selection")
 		}
 	}
@@ -943,15 +933,12 @@ func (m *Manager) current() (appliance.Manifest, appliance.StateRecord, string, 
 
 func (m *Manager) loadTransactionManifest(journal Journal) (Manifest, error) {
 	manifestPath := filepath.Join(m.transactionDir(journal.TransactionID), "system-update-manifest.json")
-	verified, err := VerifyManifest(manifestPath, manifestPath+".sig", m.config.TrustKeyPath)
+	verified, err := m.verifyTransactionManifest(journal, manifestPath)
 	if err != nil && journal.Phase == PhaseHealthy && errors.Is(err, os.ErrNotExist) {
 		manifestPath = m.config.HealthyManifestPath
-		verified, err = VerifyManifest(manifestPath, manifestPath+".sig", m.config.TrustKeyPath)
+		verified, err = m.verifyTransactionManifest(journal, manifestPath)
 	}
 	if err != nil {
-		return Manifest{}, err
-	}
-	if err := m.checkHostCore(journal, verified, manifestPath+".sig"); err != nil {
 		return Manifest{}, err
 	}
 	manifest := verified.Manifest
@@ -969,7 +956,7 @@ func (m *Manager) persistHealthyUpdateProof(journal Journal) error {
 		return err
 	}
 	manifestPath := filepath.Join(m.transactionDir(journal.TransactionID), "system-update-manifest.json")
-	verified, err := VerifyManifest(manifestPath, manifestPath+".sig", m.config.TrustKeyPath)
+	verified, err := m.verifyTransactionManifest(journal, manifestPath)
 	if err != nil {
 		return err
 	}

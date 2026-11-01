@@ -40,7 +40,7 @@ const RETIRED_PUBLIC_404_ROUTES = [
 ];
 
 /** Static resource patterns to skip */
-const STATIC_PATTERNS = ["/_next/", "/favicon.ico", "/icon", "/apple-icon", "/icons/", "/branding/", "/user-assets/", "/fonts/", "/sw.js", "/serwist-", "/manifest.webmanifest"];
+const STATIC_PATTERNS = ["/_next/", "/favicon.ico", "/icon", "/apple-icon", "/icons/", "/branding/", "/user-assets/", "/fonts/", "/mytitle/fonts/", "/onboarding-fonts/", "/sw.js", "/serwist-", "/manifest.webmanifest"];
 
 function getJWTSecret(): Uint8Array | null {
   const secret = process.env.JWT_SECRET;

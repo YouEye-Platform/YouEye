@@ -1,5 +1,8 @@
 "use client";
 
+import { PageHeader } from "./page-header";
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { KeyRound, Loader2, Shapes, Upload, X } from "lucide-react";
 import { uiSettingsApi } from "./api-base";
@@ -10,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { ProfileIconPicker } from "./profile-icon-picker";
 import { IDENTITY_PASSWORD_MAX_LENGTH, IDENTITY_PASSWORD_MIN_LENGTH, validateIdentityPassword } from "@/lib/identity/password-policy";
+import { useRef as useInterfaceTranslationRef } from "react";
 
 interface ProfileClientProps {
   userId?: string;
@@ -52,6 +56,10 @@ const NATIVE_CONTROL =
   "w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50";
 
 export function ProfileClient({ userId, username, name, email, isAdmin }: ProfileClientProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+  const interfaceTranslationRef = useInterfaceTranslationRef(translateInterface);
+  interfaceTranslationRef.current = translateInterface;
+
   const [account, setAccount] = useState<AccountProfile | null>(null);
   const [local, setLocal] = useState<LocalProfile>({
     bio: "",
@@ -107,7 +115,7 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
           if (!accountData?.avatarUrl) setAvatarUrl(localData.image || null);
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load profile");
+        if (!cancelled) setError(interfaceTranslationRef.current("m92907d8c7089"));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -167,14 +175,14 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
           body: JSON.stringify({ bio: local.bio, timezone: local.timezone }),
         }),
       ]);
-      if (!accountRes.ok) throw new Error((await accountRes.json().catch(() => ({}))).error || "Account save failed");
-      if (!localRes.ok) throw new Error((await localRes.json().catch(() => ({}))).error || "Profile save failed");
+      if (!accountRes.ok) throw new Error((await accountRes.json().catch(() => ({}))).error || translateInterface("maf651c36a34f"));
+      if (!localRes.ok) throw new Error((await localRes.json().catch(() => ({}))).error || translateInterface("m75eb4fadd0bd"));
       const updated = await accountRes.json();
       setAccount(updated);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      setError(translateInterface("m53ad6f999b1f"));
     } finally {
       setSaving(false);
     }
@@ -188,11 +196,11 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
       const formData = new FormData();
       formData.append("file", file);
       const res = await fetch("/api/user/avatar", { method: "POST", body: formData });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Avatar upload failed");
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || translateInterface("m41350c4cfc97"));
       setAvatarUrl(preview);
       broadcastAvatarUpdate(preview);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Avatar upload failed");
+      setError(translateInterface("m41350c4cfc97"));
     } finally {
       setAvatarUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -204,11 +212,11 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
     setError("");
     try {
       const res = await fetch("/api/user/avatar", { method: "DELETE" });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Avatar removal failed");
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || translateInterface("m551cf24672df"));
       setAvatarUrl(null);
       broadcastAvatarUpdate(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Avatar removal failed");
+      setError(translateInterface("m551cf24672df"));
     } finally {
       setAvatarUploading(false);
     }
@@ -225,14 +233,14 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
         body: JSON.stringify({ presetId }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || "Profile icon update failed");
+      if (!res.ok) throw new Error(body.error || translateInterface("m211280022dea"));
       if (body.url) {
         setAvatarUrl(body.url);
         broadcastAvatarUpdate(body.url);
       }
       setIconPickerOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Profile icon update failed");
+      setError(translateInterface("m211280022dea"));
     } finally {
       setAvatarUploading(false);
     }
@@ -250,24 +258,24 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
     setPasswordMessage("");
     const policyError = validateIdentityPassword(newPassword);
     if (policyError) return setPasswordError(policyError);
-    if (newPassword !== repeatPassword) return setPasswordError("Passwords do not match");
+    if (newPassword !== repeatPassword) return setPasswordError(translateInterface("mb6eb82cd3300"));
     setPasswordBusy(true);
     try {
       const csrfRes = await fetch("/settings/api/auth/csrf", { cache: "no-store" });
       const csrfBody = await csrfRes.json().catch(() => ({}));
-      if (!csrfRes.ok || !csrfBody.csrfToken) throw new Error("Could not prepare a protected request");
+      if (!csrfRes.ok || !csrfBody.csrfToken) throw new Error(translateInterface("mfdd8ed13bfe2"));
       const res = await fetch("/settings/api/user/password", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfBody.csrfToken },
         body: JSON.stringify({ currentPassword, newPassword, repeatPassword }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || "Password change failed");
+      if (!res.ok) throw new Error(body.error || translateInterface("m79a493be1607"));
       resetPasswordForm();
       setPasswordOpen(false);
-      setPasswordMessage("Password changed. Your current session stays signed in.");
+      setPasswordMessage(translateInterface("me86128d643be"));
     } catch (err) {
-      setPasswordError(err instanceof Error ? err.message : "Password change failed");
+      setPasswordError(err instanceof Error ? err.message : translateInterface("m79a493be1607"));
     } finally {
       setPasswordBusy(false);
     }
@@ -279,16 +287,16 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
     try {
       const csrfRes = await fetch("/settings/api/auth/csrf", { cache: "no-store" });
       const csrf = await csrfRes.json().catch(() => ({}));
-      if (!csrfRes.ok || !csrf.csrfToken) throw new Error("Could not prepare a protected request");
+      if (!csrfRes.ok || !csrf.csrfToken) throw new Error(translateInterface("mfdd8ed13bfe2"));
       const res = await fetch("/settings/api/identity/sign-out-everywhere", {
         method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf.csrfToken },
         body: JSON.stringify({ password: everywherePassword }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || "Sign out failed");
+      if (!res.ok) throw new Error(body.error || translateInterface("m84fdb64b9bb0"));
       window.location.assign("/settings/login");
     } catch (error) {
-      setEverywhereError(error instanceof Error ? error.message : "Sign out failed");
+      setEverywhereError(error instanceof Error ? error.message : translateInterface("m84fdb64b9bb0"));
       setEverywhereBusy(false);
     }
   }
@@ -322,10 +330,7 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Profile</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Your account on this server</p>
-      </div>
+      <PageHeader title={translateInterface("md696a35bdd18")} description={translateInterface("mb127e1008b08")} />
 
       {/* Identity card */}
       <Card className="gap-0 py-0">
@@ -345,7 +350,7 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
           </div>
           <div className="min-w-0 flex-1">
             <p className="truncate text-[17px] font-bold leading-tight">{fullName}</p>
-            <p className="mt-0.5 text-sm text-muted-foreground">{isAdmin ? "Administrator" : "User"}</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">{isAdmin ? translateInterface("me7d3e769f3f5") : translateInterface("mb512d97e7cbf")}</p>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
             <Button
@@ -355,8 +360,7 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
               disabled={avatarUploading}
               onClick={() => setIconPickerOpen(true)}
             >
-              <Shapes className="size-4" /> Choose icon
-            </Button>
+              <Shapes className="size-4" /> {translateInterface("m1ae4fec7b2da")}</Button>
             <Button
               type="button"
               variant="secondary"
@@ -364,12 +368,10 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
               disabled={avatarUploading}
               onClick={() => fileInputRef.current?.click()}
             >
-              <Upload className="size-4" /> Upload photo
-            </Button>
+              <Upload className="size-4" /> {translateInterface("m32258ba63e80")}</Button>
             {avatarUrl && (
               <Button type="button" variant="ghost" size="sm" disabled={avatarUploading} onClick={removeAvatar}>
-                Remove
-              </Button>
+                {translateInterface("mc3812fc4acb8")}</Button>
             )}
             <input
               ref={fileInputRef}
@@ -395,26 +397,26 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
       {/* Details card */}
       <Card className="gap-0 py-0">
         <div className="space-y-4 p-5">
-          <h2 className="text-[15px] font-semibold">Details</h2>
+          <h2 className="text-[15px] font-semibold">{translateInterface("m45989de49fb7")}</h2>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block space-y-1.5">
-              <span className={FIELD_LABEL}>First name</span>
+              <span className={FIELD_LABEL}>{translateInterface("m702ef921ed1d")}</span>
               <Input value={firstName} onChange={(event) => setFirstName(event.target.value)} />
             </label>
             <label className="block space-y-1.5">
-              <span className={FIELD_LABEL}>Last name</span>
+              <span className={FIELD_LABEL}>{translateInterface("m7b4888049459")}</span>
               <Input value={lastName} onChange={(event) => setLastName(event.target.value)} />
             </label>
           </div>
 
           <label className="block space-y-1.5">
-            <span className={FIELD_LABEL}>Username</span>
+            <span className={FIELD_LABEL}>{translateInterface("me3b89e9d33f8")}</span>
             <Input value={account?.username || username} disabled className="bg-muted text-muted-foreground" />
           </label>
 
           <label className="block space-y-1.5">
-            <span className={FIELD_LABEL}>Email</span>
+            <span className={FIELD_LABEL}>{translateInterface("m969ccbd3cf63")}</span>
             <Input
               value={account?.email || email || ""}
               disabled
@@ -424,19 +426,19 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
           </label>
 
           <label className="block space-y-1.5">
-            <span className={FIELD_LABEL}>Bio</span>
+            <span className={FIELD_LABEL}>{translateInterface("m3933b1802161")}</span>
             <textarea
               value={local.bio}
               onChange={(event) => setLocal((current) => ({ ...current, bio: event.target.value }))}
               rows={3}
-              placeholder="A line about you (shown on your profile)"
+              placeholder={translateInterface("m05502c5ded28")}
               className={cn(NATIVE_CONTROL, "min-h-20 resize-y")}
             />
           </label>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block space-y-1.5">
-              <span className={FIELD_LABEL}>Timezone</span>
+              <span className={FIELD_LABEL}>{translateInterface("m4ceca1d52ced")}</span>
               <select
                 value={local.timezone}
                 onChange={(event) => setLocal((current) => ({ ...current, timezone: event.target.value }))}
@@ -454,30 +456,29 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
           <div className="flex items-center gap-3 pt-1">
             <Button onClick={save} disabled={saving}>
               {saving && <Loader2 className="size-4 animate-spin" />}
-              Save changes
-            </Button>
-            {saved && <span className="text-sm text-green-600 dark:text-green-500">Saved</span>}
+              {translateInterface("mdd0ae7a5cbcf")}</Button>
+            {saved && <span className="text-sm text-green-600 dark:text-green-500">{translateInterface("mb5c120b316c2")}</span>}
             {error && <span className="text-sm text-destructive">{error}</span>}
           </div>
 
-          <p className="text-xs text-muted-foreground">User ID: {local.userId || userId || "—"}</p>
+          <p className="text-xs text-muted-foreground">{translateInterface("m2dbd28b1ad53")}{local.userId || userId || "—"}</p>
         </div>
       </Card>
 
       <Card className="gap-0 py-0">
         <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="flex items-center gap-2 text-[15px] font-semibold"><KeyRound className="size-4" /> Security</h2>
-            <p className="mt-1 text-[13px] text-muted-foreground">Change the password you use to sign in to this server.</p>
+            <h2 className="flex items-center gap-2 text-[15px] font-semibold"><KeyRound className="size-4" /> {translateInterface("m8f6fb4eb7f42")}</h2>
+            <p className="mt-1 text-[13px] text-muted-foreground">{translateInterface("m65176f60cb2b")}</p>
           </div>
-          <Button type="button" variant="outline" onClick={() => { resetPasswordForm(); setPasswordOpen(true); }}>Change password</Button>
+          <Button type="button" variant="outline" onClick={() => { resetPasswordForm(); setPasswordOpen(true); }}>{translateInterface("m3f9c991f63a9")}</Button>
         </div>
         <div className="flex flex-col gap-3 border-t p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 className="text-sm font-semibold">Sign out everywhere</h3>
-            <p className="mt-1 text-[13px] text-muted-foreground">End your YouEye ID sign-ins on every device. Connected apps may keep their own sessions and need a separate sign-out.</p>
+            <h3 className="text-sm font-semibold">{translateInterface("maf180fca9025")}</h3>
+            <p className="mt-1 text-[13px] text-muted-foreground">{translateInterface("m3f467574a62d")}</p>
           </div>
-          <Button type="button" variant="outline" onClick={() => { setEverywherePassword(""); setEverywhereError(""); setEverywhereOpen(true); }}>Sign out everywhere</Button>
+          <Button type="button" variant="outline" onClick={() => { setEverywherePassword(""); setEverywhereError(""); setEverywhereOpen(true); }}>{translateInterface("maf180fca9025")}</Button>
         </div>
         {passwordMessage && <p className="border-t px-5 py-3 text-sm text-primary">{passwordMessage}</p>}
       </Card>
@@ -485,11 +486,11 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
       {everywhereOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md space-y-4 rounded-xl border bg-card p-5 shadow-lg" role="dialog" aria-modal="true" aria-labelledby="sign-out-everywhere-title">
-            <h3 id="sign-out-everywhere-title" className="text-lg font-semibold">Sign out everywhere?</h3>
-            <p className="text-sm text-muted-foreground">This ends YouEye sessions on all your devices. Some external apps keep their own session and may need a separate sign-out.</p>
-            <label className="block space-y-1.5"><span className={FIELD_LABEL}>Current password</span><Input type="password" autoComplete="current-password" value={everywherePassword} onChange={event => setEverywherePassword(event.target.value)} disabled={everywhereBusy} /></label>
+            <h3 id="sign-out-everywhere-title" className="text-lg font-semibold">{translateInterface("mbb01934e466b")}</h3>
+            <p className="text-sm text-muted-foreground">{translateInterface("mb6fa5869d488")}</p>
+            <label className="block space-y-1.5"><span className={FIELD_LABEL}>{translateInterface("m72ed2bd767ce")}</span><Input type="password" autoComplete="current-password" value={everywherePassword} onChange={event => setEverywherePassword(event.target.value)} disabled={everywhereBusy} /></label>
             {everywhereError && <p className="text-sm text-destructive">{everywhereError}</p>}
-            <div className="flex justify-end gap-2"><Button variant="outline" disabled={everywhereBusy} onClick={() => setEverywhereOpen(false)}>Cancel</Button><Button disabled={everywhereBusy || !everywherePassword} onClick={() => void signOutEverywhere()}>{everywhereBusy && <Loader2 className="size-4 animate-spin" />} Sign out everywhere</Button></div>
+            <div className="flex justify-end gap-2"><Button variant="outline" disabled={everywhereBusy} onClick={() => setEverywhereOpen(false)}>{translateInterface("m19766ed6ccb2")}</Button><Button disabled={everywhereBusy || !everywherePassword} onClick={() => void signOutEverywhere()}>{everywhereBusy && <Loader2 className="size-4 animate-spin" />} {" "}{translateInterface("maf180fca9025")}</Button></div>
           </div>
         </div>
       )}
@@ -499,29 +500,28 @@ export function ProfileClient({ userId, username, name, email, isAdmin }: Profil
           <div className="w-full max-w-md space-y-4 rounded-xl border bg-card p-5 shadow-lg" role="dialog" aria-modal="true" aria-labelledby="change-password-title">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 id="change-password-title" className="text-[19px] font-semibold">Change password</h3>
-                <p className="mt-1 text-[13px] text-muted-foreground">Your current session stays signed in. Other sessions expire normally.</p>
+                <h3 id="change-password-title" className="text-[19px] font-semibold">{translateInterface("m3f9c991f63a9")}</h3>
+                <p className="mt-1 text-[13px] text-muted-foreground">{translateInterface("me0673a903b84")}</p>
               </div>
-              <Button type="button" variant="ghost" size="icon-sm" onClick={() => setPasswordOpen(false)} disabled={passwordBusy} aria-label="Close"><X className="size-4" /></Button>
+              <Button type="button" variant="ghost" size="icon-sm" onClick={() => setPasswordOpen(false)} disabled={passwordBusy} aria-label={translateInterface("m7d9eb7acb13e")}><X className="size-4" /></Button>
             </div>
             <label className="block space-y-1.5">
-              <span className={FIELD_LABEL}>Current password</span>
+              <span className={FIELD_LABEL}>{translateInterface("m72ed2bd767ce")}</span>
               <Input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} disabled={passwordBusy} />
             </label>
             <label className="block space-y-1.5">
-              <span className={FIELD_LABEL}>New password</span>
+              <span className={FIELD_LABEL}>{translateInterface("m3dd9df4441fb")}</span>
               <Input type="password" autoComplete="new-password" minLength={IDENTITY_PASSWORD_MIN_LENGTH} maxLength={IDENTITY_PASSWORD_MAX_LENGTH} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} disabled={passwordBusy} />
             </label>
             <label className="block space-y-1.5">
-              <span className={FIELD_LABEL}>Repeat new password</span>
+              <span className={FIELD_LABEL}>{translateInterface("m0c89ec93844f")}</span>
               <Input type="password" autoComplete="new-password" minLength={IDENTITY_PASSWORD_MIN_LENGTH} maxLength={IDENTITY_PASSWORD_MAX_LENGTH} value={repeatPassword} onChange={(event) => setRepeatPassword(event.target.value)} disabled={passwordBusy} />
             </label>
             {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
             <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => setPasswordOpen(false)} disabled={passwordBusy}>Cancel</Button>
+              <Button type="button" variant="outline" onClick={() => setPasswordOpen(false)} disabled={passwordBusy}>{translateInterface("m19766ed6ccb2")}</Button>
               <Button type="button" onClick={changePassword} disabled={passwordBusy || !currentPassword || !newPassword || !repeatPassword}>
-                {passwordBusy && <Loader2 className="size-4 animate-spin" />} Change password
-              </Button>
+                {passwordBusy && <Loader2 className="size-4 animate-spin" />} {" "}{translateInterface("m3f9c991f63a9")}</Button>
             </div>
           </div>
         </div>

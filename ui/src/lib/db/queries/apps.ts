@@ -1,3 +1,4 @@
+import { validateStudioStyle } from "@/lib/studio-style";
 /**
  * Apps & App Drawer Queries
  *
@@ -336,7 +337,7 @@ export async function updateAppBranding(
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (data.brandingWordart !== undefined) {
     updates.brandingWordart = data.brandingWordart
-      ? (data.brandingWordart as unknown as Record<string, unknown>)
+      ? (validateStudioStyle(data.brandingWordart) as unknown as Record<string, unknown>)
       : null;
   }
   if (data.headerDisplayMode !== undefined) {
@@ -373,7 +374,7 @@ export async function updateUserAppBranding(
   const updates: Record<string, unknown> = {};
   if (data.brandingWordart !== undefined) {
     updates.brandingWordart = data.brandingWordart
-      ? (data.brandingWordart as unknown as Record<string, unknown>)
+      ? (validateStudioStyle(data.brandingWordart) as unknown as Record<string, unknown>)
       : null;
   }
   if (data.headerDisplayMode !== undefined) {

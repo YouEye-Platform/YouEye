@@ -14,8 +14,11 @@ const PERSONAL_PREFIXES = [
 ];
 
 export function allowedPointerManagementPath(path: string) {
-  if (!path.startsWith('/api/') || /[\\#]/.test(path) || /%2e|%2f|%5c/i.test(path)
-    || path.split('?')[0].split('/').some(value => value === '.' || value === '..')) return false;
+  // Model identifiers may contain slashes in query values. Apply traversal
+  // checks to the route, while keeping fragments and raw backslashes forbidden.
+  const route = path.split('?')[0];
+  if (!path.startsWith('/api/') || /[\\#]/.test(path) || /%2e|%2f|%5c/i.test(route)
+    || route.split('/').some(value => value === '.' || value === '..')) return false;
   let pathname: string;
   try {
     pathname = new URL(path, 'http://pointer.internal').pathname;
@@ -24,4 +27,3 @@ export function allowedPointerManagementPath(path: string) {
   }
   return PERSONAL_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
-

@@ -1,3 +1,4 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -6,7 +7,7 @@ import assert from 'node:assert/strict';
 const repoRoot = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..');
 
 function read(path) {
-  return readFileSync(join(repoRoot, path), 'utf8');
+  return path.endsWith(".tsx") ? englishInterfaceSource(readFileSync(join(repoRoot, path), "utf8")) : readFileSync(join(repoRoot, path), "utf8");
 }
 
 test('root Market page exposes combined catalog filters', () => {

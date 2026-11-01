@@ -14,11 +14,21 @@ checksum signature, provenance and SBOM remain unchanged and independently
 verifiable. Source/catalog products bind their original source archive instead.
 Pointer binds its managed-package build contract; it is not a Market app.
 
+Legacy build adoption can add paired `asset_source` and `asset_tag` fields for
+the exact repository/tag carrying its newly signed portable attestation. When
+omitted, assets retain the original build source/tag. Both fields and every
+asset digest remain inside the signed build document; they do not change its
+original source, commit, version or tag. Adoption is recorded when verified,
+without inventing a historical build signature or exposing executor metadata.
+The original signed native proof is retained independently. Archive bytes remain
+unchanged; new attestation documents and their signatures are new metadata.
+
 `product-release.json` records product version, channel, source, branch, tag,
 sequence and release signer. It embeds the original build document and signature
 as canonical base64. Its detached signature authenticates the release label;
-it does not replace the original build signature. Public wrappers require a
-publication-safe original build from the same public repository. The strict
+it does not replace the original build signature. A signed release may select
+an unchanged build from another channel or repository, including Dev. The
+original build identity and independently trusted signature stay intact. The strict
 bounded readers reject duplicate/unknown fields, incomplete signatures,
 unsupported authority, changed bytes and mismatched selected product/source/tag.
 Package-manager versions remain immutable build identity.
@@ -36,8 +46,8 @@ public key independently of the legacy image/recovery key file. Original members
 still resolve their own source, branch and role authority; owner overrides and
 revocations take precedence over every built-in key.
 
-Private wrappers can deliver an original public-ready blob through a
-`blob-<sha256>` asset on that exact private release. Transport does not change the
+Promoted releases deliver blobs from another original repository through a
+`blob-<sha256>` asset on that exact selected release. Transport does not change the
 original source URL, expected hash, size or signing authority. Foreign redirects
 remain forbidden. Discovery must distinguish legacy releases from an advertised
 product release: partial or invalid new metadata never falls back to legacy.

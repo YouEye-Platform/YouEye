@@ -45,6 +45,14 @@ func TestCoreInstallerKeepsReusedHostAuthoritySeparateFromAssembly(t *testing.T)
 	if _, err = applianceReleaseAnchor(release); err == nil {
 		t.Fatal("private host accepted in public group")
 	}
+	core.Channel = "stable"
+	core.Members[0].Source = "https://build.example.test/owner/YouEye"
+	core.Members[0].BuildVersion = "0.5.38-dev.1"
+	release.sourceProvider = "github"
+	got, err = applianceReleaseAnchor(release)
+	if err != nil || !bytes.Equal(got, embeddedApplianceDevelopmentTrust) {
+		t.Fatal("Stable selection replaced its original Dev member's signing key", err)
+	}
 }
 
 func TestPublicApplianceUsesEmbeddedChannelAnchor(t *testing.T) {

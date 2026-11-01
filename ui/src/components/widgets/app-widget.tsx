@@ -1,5 +1,8 @@
 "use client";
 
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 /**
  * App Widget — Plan 1 Workstream E5.
  *
@@ -30,6 +33,8 @@ interface WidgetSurface {
 }
 
 export function AppWidget({ settings }: AppWidgetProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [embedUrl, setEmbedUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -39,7 +44,7 @@ export function AppWidget({ settings }: AppWidgetProps) {
 
   useEffect(() => {
     if (!appId || !widgetId) {
-      setError("Widget not configured");
+      setError(translateInterface("mddd22ce6fc47"));
       setLoading(false);
       return;
     }
@@ -59,20 +64,20 @@ export function AppWidget({ settings }: AppWidgetProps) {
             item.surface_id === widgetId
         );
         if (!surface?.app_url || !surface.embed_path) {
-          setError("Widget not found");
+          setError(translateInterface("mce2fa0d974db"));
           return;
         }
 
         const url = new URL(surface.embed_path, surface.app_url).toString();
         if (!url.startsWith("https://") && !url.startsWith("http://")) {
-          setError("Invalid app URL");
+          setError(translateInterface("m4ef86e93324a"));
           return;
         }
 
         setEmbedUrl(url);
       })
       .catch((e) => {
-        setError(e instanceof Error ? e.message : "Failed to load widget");
+        setError(translateInterface("m606622c8aed7"));
       })
       .finally(() => setLoading(false));
   }, [appId, widgetId]);
@@ -101,8 +106,8 @@ export function AppWidget({ settings }: AppWidgetProps) {
       kind="widget"
       fill
       timeout={5000}
-      title={`${appId} widget`}
-      fallback={errorView("This widget couldn't load")}
+      title={translateInterface("m55403f68eb28", { value0: String(appId) })}
+      fallback={errorView(translateInterface("m5721644b8ec7"))}
       className="h-full w-full"
     />
   );

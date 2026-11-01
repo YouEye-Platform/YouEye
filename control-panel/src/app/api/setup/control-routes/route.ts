@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
+import { withPlatformLifecycle } from '@/lib/market/update-admission';
 import { settingsService } from '@/lib/settings';
 import {
   checkHealth,
@@ -33,6 +34,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    return await withPlatformLifecycle(async () => {
     const healthy = await checkHealth();
     if (!healthy) {
       return NextResponse.json(
@@ -57,6 +59,7 @@ export async function POST(request: NextRequest) {
       success: true,
       domain,
       routes: ['/settings', '/market', '/v1', '/v1beta', 'app-grant-token-deny'],
+    });
     });
   } catch (error) {
     console.error('[Setup/ControlRoutes] Failed to repair root control routes:', error);

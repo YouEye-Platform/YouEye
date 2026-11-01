@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { listInstalledApps } from '@/lib/market/metadata';
 import { backupApp } from './app-backup';
@@ -8,9 +9,9 @@ import { spineClient } from '@/lib/spine/client';
 import type { BackupEventCallback } from './types';
 import { BACKUP_ROOT } from './workspace';
 import { readCurrentBackupSourceIdentity, type BackupSourceIdentity } from './compatibility';
+import { AppUpdateExecutorLock } from '@/lib/market/update-executor-lock';
 
 const SETS_ROOT = path.join(BACKUP_ROOT, 'sets');
-const LOCK_PATH = path.join(BACKUP_ROOT, '.operation.lock');
 const RESTORE_STATUS_ROOT = path.join(BACKUP_ROOT, '.restore-status');
 const BACKUP_ID = /^backup-\d{8}T\d{6}Z-[0-9a-f]{8}$/;
 const RESTORE_OPERATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -89,13 +90,33 @@ export async function writeRestoreStatus(record: RestoreStatusRecord): Promise<v
   await (await import('node:fs/promises')).rename(temporary, destination);
 }
 
-export async function readRestoreStatus(operationId: string): Promise<RestoreStatusRecord | null> {
+export async function readRestoreStatus(operationId: string, options: { strict?: boolean } = {}): Promise<RestoreStatusRecord | null> {
   validateRestoreOperationId(operationId);
   try {
-    const record = JSON.parse(await readFile(path.join(RESTORE_STATUS_ROOT, `${operationId}.json`), 'utf8')) as RestoreStatusRecord;
-    if (record.schema !== 'youeye.backup.restore-status.v1' || record.operationId !== operationId) return null;
+    const filename = path.join(RESTORE_STATUS_ROOT, `${operationId}.json`);
+    let text: string;
+    if (options.strict) {
+      const directory = await lstat(RESTORE_STATUS_ROOT);
+      if (!directory.isDirectory() || directory.uid !== process.geteuid?.() || (directory.mode & 0o777) !== 0o700) {
+        throw new Error('Restore status is unavailable');
+      }
+      const file = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const info = await file.stat();
+        if (!info.isFile() || info.uid !== process.geteuid?.() || (info.mode & 0o777) !== 0o600
+          || info.nlink !== 1 || info.size < 1 || info.size > 1024 * 1024) throw new Error('Restore status is unavailable');
+        text = await file.readFile('utf8');
+      } finally { await file.close(); }
+    } else {
+      text = await readFile(filename, 'utf8');
+    }
+    const record = JSON.parse(text) as RestoreStatusRecord;
+    if (record.schema !== 'youeye.backup.restore-status.v1' || record.operationId !== operationId
+      || !BACKUP_ID.test(record.backupId) || !['running', 'completed', 'failed'].includes(record.status)
+      || typeof record.message !== 'string') throw new Error('Restore status is unavailable');
     return record;
-  } catch {
+  } catch (error) {
+    if (options.strict && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     return null;
   }
 }
@@ -117,29 +138,23 @@ async function writeRecord(root: string, record: BackupSetRecord) {
   await (await import('node:fs/promises')).rename(temporary, destination);
 }
 
-async function acquireOperationLock(operation: string) {
-  await mkdir(BACKUP_ROOT, { recursive: true, mode: 0o700 });
-  let handle;
+async function acquireOperationLock(directory = BACKUP_ROOT) {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  // Preserve old lock evidence for an operator; never steal it after a timeout.
+  // New executions retain a kernel lease, released automatically on process loss.
+  const lock = AppUpdateExecutorLock.acquire(path.join(directory, '.operation.flock'));
   try {
-    handle = await open(LOCK_PATH, 'wx', 0o600);
-  } catch {
     try {
-      const existing = JSON.parse(await readFile(LOCK_PATH, 'utf8')) as { startedAt?: string };
-      const started = Date.parse(existing.startedAt || '');
-      if (!Number.isFinite(started) || Date.now() - started < 24 * 60 * 60 * 1000) {
-        throw new Error('active');
-      }
-      await rm(LOCK_PATH, { force: true });
-      handle = await open(LOCK_PATH, 'wx', 0o600);
-    } catch {
-      throw new Error('Another backup or restore operation is already running.');
+      await lstat(path.join(directory, '.operation.lock'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return async () => { lock.release(); };
+      throw error;
     }
+    throw new Error('An earlier backup or restore requires operator reconciliation.');
+  } catch (error) {
+    lock.release();
+    throw error;
   }
-  await handle.writeFile(`${JSON.stringify({ operation, pid: process.pid, startedAt: new Date().toISOString() })}\n`);
-  return async () => {
-    await handle.close().catch(() => undefined);
-    await rm(LOCK_PATH, { force: true }).catch(() => undefined);
-  };
 }
 
 export async function createPlatformBackup(input: unknown | CreatePlatformBackupOptions, onEvent: BackupEventCallback): Promise<BackupSetRecord> {
@@ -152,7 +167,7 @@ export async function createPlatformBackup(input: unknown | CreatePlatformBackup
 	const useStoredPassphrase = options.useStoredPassphrase === true;
 	const passphrase = useStoredPassphrase ? undefined : validateBackupPassphrase(options.passphrase);
   const source = await readCurrentBackupSourceIdentity();
-	const release = await acquireOperationLock('create');
+	const release = await acquireOperationLock();
   const createdAt = new Date();
   const id = `backup-${createdAt.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')}-${randomBytes(4).toString('hex')}`;
   const root = backupSetPath(id);
@@ -230,8 +245,8 @@ export async function createPlatformBackup(input: unknown | CreatePlatformBackup
   }
 }
 
-export async function withRestoreLock<T>(operation: () => Promise<T>): Promise<T> {
-  const release = await acquireOperationLock('restore');
+export async function withRestoreLock<T>(operation: () => Promise<T>, directory = BACKUP_ROOT): Promise<T> {
+  const release = await acquireOperationLock(directory);
   try {
     return await operation();
   } finally {

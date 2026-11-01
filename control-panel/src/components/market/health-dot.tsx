@@ -1,4 +1,8 @@
 'use client';
+import {useLocale} from "next-intl";
+
+import {useTranslations as useInterfaceTranslations} from "next-intl";
+
 
 interface HealthDotProps {
   healthStatus?: 'healthy' | 'unhealthy' | 'unknown';
@@ -6,13 +10,24 @@ interface HealthDotProps {
   className?: string;
 }
 
-const CONFIG: Record<string, { color: string; pulse: boolean; tooltip: string }> = {
-  healthy: { color: 'bg-green-500', pulse: false, tooltip: 'Healthy' },
-  unhealthy: { color: 'bg-red-500', pulse: true, tooltip: 'Unhealthy — app not responding' },
-  unknown: { color: 'bg-gray-300', pulse: false, tooltip: 'Health unknown' },
-};
+
 
 export function HealthDot({ healthStatus, healthCheckedAt, className = '' }: HealthDotProps) {
+ const translateInterface = useInterfaceTranslations("interface");
+  const locale = useLocale();
+
+const CONFIG: Record<string, { color: string; pulse: boolean; tooltip: string }> = {
+  healthy: { color: 'bg-green-500', pulse: false, tooltip: translateInterface("m7f1e323b6272") },
+  unhealthy: { color: 'bg-red-500', pulse: true, tooltip: translateInterface("m19d0d2cbe249") },
+  unknown: { color: 'bg-gray-300', pulse: false, tooltip: translateInterface("m6a5465ac1dd5") },
+};
+
+function formatTimeAgo(date: Date): string {
+  const minutes = Math.round((date.getTime() - Date.now()) / 60000);
+  if (!Number.isFinite(minutes)) return "";
+  return new Intl.RelativeTimeFormat(locale, {numeric: "auto"}).format(Math.abs(minutes) < 60 ? minutes : Math.round(minutes / 60), Math.abs(minutes) < 60 ? "minute" : "hour");
+}
+
   if (!healthStatus || healthStatus === 'unknown') return null;
 
   const cfg = CONFIG[healthStatus] ?? CONFIG.unknown;
@@ -24,7 +39,7 @@ export function HealthDot({ healthStatus, healthCheckedAt, className = '' }: Hea
   return (
     <span
       className={`relative inline-flex ${className}`}
-      title={`${cfg.tooltip}${timeAgo ? ` — checked ${timeAgo}` : ''}`}
+      title={timeAgo ? translateInterface("m7a10fa0f811f", {status: cfg.tooltip, time: timeAgo}) : cfg.tooltip}
     >
       {cfg.pulse && (
         <span
@@ -34,13 +49,4 @@ export function HealthDot({ healthStatus, healthCheckedAt, className = '' }: Hea
       <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${cfg.color}`} />
     </span>
   );
-}
-
-function formatTimeAgo(date: Date): string {
-  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ago`;
 }

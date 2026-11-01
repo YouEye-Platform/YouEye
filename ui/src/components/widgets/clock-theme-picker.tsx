@@ -6,6 +6,8 @@
  */
 
 "use client";
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
 
 import { useState, useMemo, type CSSProperties } from "react";
 import { cn } from "@/lib/utils";
@@ -31,6 +33,8 @@ function ThemeThumbnail({
   isSelected: boolean;
   onClick: () => void;
 }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const timeStyle = useMemo((): CSSProperties => {
     const { time } = theme;
     const style: CSSProperties = {
@@ -100,8 +104,7 @@ function ThemeThumbnail({
         12:34
       </div>
       <div className="relative z-10" style={dateStyle}>
-        Thursday
-      </div>
+        {translateInterface("mfc2662062ffd")}</div>
 
       {isSelected && (
         <div className="absolute top-1 right-1 w-3 h-3 rounded-full bg-primary flex items-center justify-center">
@@ -124,6 +127,8 @@ export function ClockThemePicker({
   selectedThemeId,
   onSelect,
 }: ClockThemePickerProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [activeCategory, setActiveCategory] = useState<ClockCategory>(() => {
     const selected = CLOCK_PRESETS.find((p) => p.id === selectedThemeId);
     return selected?.category ?? "classic";
@@ -137,8 +142,7 @@ export function ClockThemePicker({
   return (
     <div className="space-y-3">
       <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-        Clock Theme
-      </div>
+        {translateInterface("md5690416736d")}</div>
 
       <div className="flex gap-1 overflow-x-auto pb-1">
         {CLOCK_CATEGORIES.map((cat) => (

@@ -10,6 +10,9 @@ const read = (filename: string) => readFileSync(path.join(root, filename), 'utf8
 
 test('personal Pointer management paths reject traversal, private lifecycle and inference', () => {
   for (const path of ['/api/providers', '/api/connections/codex/accounts', '/api/groups/fixture', '/api/sources/settings', '/api/admin/settings']) assert.equal(allowedPointerManagementPath(path), true);
+  assert.equal(allowedPointerManagementPath('/api/stats/summary?days=30&model=model%2Fexample'), true);
+  assert.equal(allowedPointerManagementPath('/api/catalog/detail?slug=example%2Fwith%2Edots'), true);
+  for (const path of ['/api/stats/model%2Fexample?days=30', '/api/stats/%2e%2e/auth?model=safe', '/api/stats/../auth?model=%2Fsafe', '/api/auth/login?next=%2Fapi%2Fstats', '/api/stats?model=x#fragment']) assert.equal(allowedPointerManagementPath(path), false);
   for (const path of ['/v1/models', '/api/platform/v1/installations', '/api/auth/login', '//evil.test/api/providers', '/api/providers/../platform', '/api/providers/%2e%2e/keys', '/api/providersx']) assert.equal(allowedPointerManagementPath(path), false);
 });
 

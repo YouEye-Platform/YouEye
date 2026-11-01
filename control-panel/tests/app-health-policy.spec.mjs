@@ -1,10 +1,11 @@
+import {englishInterfaceSource} from './helpers/localized-source.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
 const root = process.env.CONTROL_PANEL_ROOT || path.resolve(import.meta.dirname, '..');
-const ui = fs.readFileSync(path.join(root, 'src/components/settings-shell/apps-client.tsx'), 'utf8');
+const ui = englishInterfaceSource(fs.readFileSync(path.join(root, 'src/components/settings-shell/apps-client.tsx'), 'utf8'));
 const route = fs.readFileSync(path.join(root, 'src/app/api/apps/[name]/health-policy/route.ts'), 'utf8');
 const prober = fs.readFileSync(path.join(root, 'src/lib/market/app-prober.ts'), 'utf8');
 

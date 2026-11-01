@@ -1,4 +1,6 @@
 'use client';
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
 
 import { useState } from 'react';
 import { Shield, ShieldCheck, ShieldOff, Loader2 } from 'lucide-react';
@@ -21,6 +23,8 @@ export function ForwardAuthToggle({
   forwardAuthEnabled,
   onToggled,
 }: ForwardAuthToggleProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [toggling, setToggling] = useState(false);
   const [enabled, setEnabled] = useState(forwardAuthEnabled);
 
@@ -31,10 +35,9 @@ export function ForwardAuthToggle({
           <ShieldCheck className="h-4 w-4 text-blue-600" />
         </div>
         <div>
-          <p className="text-xs text-gray-400">SSO Protection</p>
+          <p className="text-xs text-gray-400">{translateInterface("mff41930abc97")}</p>
           <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-            OAuth2 (native)
-          </Badge>
+            {translateInterface("m2a5fac72d24b")}</Badge>
         </div>
       </div>
     );
@@ -70,9 +73,9 @@ export function ForwardAuthToggle({
         )}
       </div>
       <div className="flex-1">
-        <p className="text-xs text-gray-400">SSO Protection</p>
+        <p className="text-xs text-gray-400">{translateInterface("mff41930abc97")}</p>
         <p className="text-sm font-medium text-gray-700">
-          {enabled ? 'Forward-auth enabled' : 'No SSO protection'}
+          {enabled ? translateInterface("mf3baaccb5d08") : translateInterface("m534f37cfd65a")}
         </p>
       </div>
       <button
@@ -106,22 +109,24 @@ export function SSOIndicator({
   hasNativeSSO: boolean;
   forwardAuthEnabled?: boolean;
 }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   if (hasNativeSSO) {
     return (
-      <span title="OAuth2 SSO (native)">
+      <span title={translateInterface("ma713e803ae63")}>
         <Shield className="h-3.5 w-3.5 text-blue-500" />
       </span>
     );
   }
   if (forwardAuthEnabled) {
     return (
-      <span title="Forward-auth SSO enabled">
+      <span title={translateInterface("m8b20c433e24c")}>
         <ShieldCheck className="h-3.5 w-3.5 text-green-500" />
       </span>
     );
   }
   return (
-    <span title="No SSO protection">
+    <span title={translateInterface("m534f37cfd65a")}>
       <ShieldOff className="h-3.5 w-3.5 text-gray-300" />
     </span>
   );

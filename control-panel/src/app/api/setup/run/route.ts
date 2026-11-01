@@ -13,9 +13,13 @@
  */
 
 import { NextRequest } from 'next/server';
+import { withSetupMutation } from '@/lib/setup/lifecycle';
+import { assertProvisioningStepsComplete } from '@/lib/setup/readiness';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { settingsService } from '@/lib/settings';
 import { spineClient } from '@/lib/spine/client';
+import { designSchema } from '@youeye/branding';
+import { syncSetupBranding } from '@/lib/ui/setup-branding';
 import { getContainerIP } from '@/lib/incus/container-ip';
 import * as caddy from '@/lib/caddy/client';
 import { recordSetupRouteResult } from '@/lib/caddy/setup-result';
@@ -88,6 +92,7 @@ interface SetupRequest {
   domain: string;
   subdomains: Record<string, string>;
   site_name_style?: Record<string, unknown>;
+  branding_revision?: string | null;
   icon_config?: Record<string, unknown>;
   identity_name?: string;
   /** TLS mode chosen during setup (youeye-names, letsencrypt, selfsigned, upload) */
@@ -192,6 +197,12 @@ export async function POST(request: NextRequest) {
   }
 
   const body: SetupRequest = await request.json();
+  if (body.site_name_style?.mytitle !== undefined) {
+    const design = designSchema.safeParse(body.site_name_style.mytitle);
+    if (!design.success || design.data.name !== body.site_name) return new Response('Invalid title and sticker', { status: 400 });
+    if (body.branding_revision !== null && (typeof body.branding_revision !== 'string' || !/^[a-f0-9]{64}$/.test(body.branding_revision))) return new Response('An appearance revision is required', { status: 400 });
+    body.site_name_style.mytitle = design.data;
+  }
   // Sanitize domain: strip trailing dots (e.g. "potemk." → "potemk")
   // Trailing dots produce invalid service URLs like "https://control.potemk."
   if (body.domain) {
@@ -204,16 +215,29 @@ export async function POST(request: NextRequest) {
     return new Response('Another browser is currently applying setup changes. Wait for it to finish, then reload.', { status: 409 });
   }
 
+  let connected = true;
   const stream = new ReadableStream({
     async start(controller) {
       function send(data: Record<string, unknown>) {
-        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`));
+        if (!connected) return;
+        try { controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`)); }
+        catch { connected = false; }
+      }
+      function finish() {
+        if (!connected) return;
+        try {
+          controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+          controller.close();
+        } catch { /* A disconnected reader does not cancel retained setup work. */ }
+        connected = false;
       }
 
       function stepUpdate(step: string, status: string, message?: string) {
         send({ step, status, message });
       }
 
+      try {
+      await withSetupMutation(leaseOwnerId, 'setup', `setup:${leaseOwnerId}`, async (settle) => {
       // Load persisted step state to know what's already done
       const completedSteps = await getSetupSteps();
 
@@ -938,6 +962,9 @@ export async function POST(request: NextRequest) {
 
                 // Write site_name to UI database (idempotent via ON CONFLICT)
                 try {
+                  if (body.site_name_style?.mytitle) {
+                    await syncSetupBranding(body.site_name, body.site_name_style, body.branding_revision!);
+                  } else {
                   const { execShell } = await import('@/lib/incus/server');
                   const siteName = (body.site_name || 'YouEye').replace(/"/g, '\\"');
                   const sqlCmd = `INSERT INTO system_settings (key, value, updated_at) VALUES ('site_name', '"${siteName}"'::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();`;
@@ -987,7 +1014,9 @@ export async function POST(request: NextRequest) {
                       { timeout: 10000 }
                     );
                   }
+                  }
                 } catch (e) {
+                  if (body.site_name_style?.mytitle) throw e;
                   console.error('Failed to write site_name to UI database:', e);
                 }
 
@@ -1008,19 +1037,20 @@ export async function POST(request: NextRequest) {
         }
 
         // ── Step 6: Finalize ─────────────────────────────────────────
+        // A retry of one failed step must not skip this completion gate.
+        if (hasError) {
+          const message = 'Setup needs attention before finishing. Fix the failed step and try again.';
+          await saveStepState('finalize', 'error');
+          stepUpdate('finalize', 'error', message);
+          send({ error: message, complete: false, hasErrors: true });
+          await releaseSetupOperation(leaseOwnerId, leaseSessionId);
+          finish();
+          return;
+        }
+        assertProvisioningStepsComplete({ ...await getSetupSteps() });
         if (shouldRunStep('finalize')) {
           await heartbeatSetupOperation(leaseOwnerId, leaseSessionId);
           stepUpdate('finalize', 'running');
-          if (hasError) {
-            const message = 'Setup needs attention before finishing. Fix the failed step and try again.';
-            await saveStepState('finalize', 'error');
-            stepUpdate('finalize', 'error', message);
-            send({ error: message, complete: false, hasErrors: true });
-            await releaseSetupOperation(leaseOwnerId, leaseSessionId);
-            controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
-            controller.close();
-            return;
-          }
 
           await settingsService.setRaw({
             setup_completed: true,
@@ -1036,9 +1066,9 @@ export async function POST(request: NextRequest) {
 
         await markApplianceSetupComplete(leaseOwnerId, leaseSessionId);
         await spineClient.restartControl(5);
+        settle();
 
         send({ complete: true, hasErrors: hasError });
-        controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error';
         send({ error: message });
@@ -1046,8 +1076,15 @@ export async function POST(request: NextRequest) {
         await releaseSetupOperation(leaseOwnerId, leaseSessionId).catch(() => {});
       }
 
-      controller.close();
+      finish();
+      });
+      } catch {
+        await releaseSetupOperation(leaseOwnerId, leaseSessionId).catch(() => {});
+        send({ error: 'Setup is blocked by retained lifecycle or System state. Reconcile the existing operation and retry.', complete: false, hasErrors: true });
+        finish();
+      }
     },
+    cancel() { connected = false; },
   });
 
   return new Response(stream, {

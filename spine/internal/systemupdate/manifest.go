@@ -130,6 +130,12 @@ func verifyManifestWithOwnerPolicy(manifestPath, signaturePath, trustKeyPath str
 	if err != nil {
 		return VerifiedManifest{}, err
 	}
+	return verifyManifestWithKey(raw, manifest, signaturePath, key, publisher)
+}
+
+// verifyManifestWithKey retains the same document, key-ID and signature checks
+// for legacy and core-owned hosts. Callers must resolve current authority first.
+func verifyManifestWithKey(raw []byte, manifest Manifest, signaturePath string, key ed25519.PublicKey, publisher string) (VerifiedManifest, error) {
 	keyID, err := publicKeyID(key)
 	if err != nil {
 		return VerifiedManifest{}, err

@@ -1,3 +1,4 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -7,7 +8,7 @@ import { AppManifestSchema } from '../src/lib/market/schema';
 const repoRoot = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..');
 
 function read(path: string): string {
-  return readFileSync(join(repoRoot, path), 'utf8');
+  return path.endsWith(".tsx") ? englishInterfaceSource(readFileSync(join(repoRoot, path), "utf8")) : readFileSync(join(repoRoot, path), "utf8");
 }
 
 test('Market app manifests support unified app surfaces', () => {

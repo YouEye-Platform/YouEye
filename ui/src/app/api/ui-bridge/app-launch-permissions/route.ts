@@ -1,3 +1,4 @@
+import { getUserTranslator } from "@/i18n/user-translator";
 /**
  * UI Bridge — App launch permission preview/grant endpoint.
  *
@@ -64,6 +65,7 @@ function collectConnectionPermissions(connections: Record<string, unknown> | nul
 }
 
 async function permissionState(userId: string, appId: string) {
+  const { t } = await getUserTranslator(userId);
   const app = await getApp(appId);
   if (!app) {
     return { error: NextResponse.json({ error: `App "${appId}" not found` }, { status: 404 }) };
@@ -87,9 +89,9 @@ async function permissionState(userId: string, appId: string) {
     appId,
     required,
     missing,
-    permissions: missing.map((permission) => describePermission(permission)),
-    granted: checks.filter((check) => check.decision === true).map((check) => describePermission(check.permission)),
-    denied: denied.map((permission) => describePermission(permission)),
+    permissions: missing.map((permission) => describePermission(permission, t)),
+    granted: checks.filter((check) => check.decision === true).map((check) => describePermission(check.permission, t)),
+    denied: denied.map((permission) => describePermission(permission, t)),
   };
 }
 
@@ -145,7 +147,9 @@ async function consentDisplay(user: NonNullable<Awaited<ReturnType<typeof resolv
     }
   }
 
+  const { locale } = await getUserTranslator(user.id);
   return {
+    locale,
     app: {
       id: app?.id ?? appId,
       name: app?.customName ?? app?.name ?? appId,
@@ -198,6 +202,7 @@ export async function POST(request: NextRequest) {
   }
   const userId = user.id;
 
+  const { t } = await getUserTranslator(userId);
   const before = await permissionState(userId, appId);
   if ("error" in before) return before.error;
 
@@ -220,7 +225,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     success: true,
     app_id: appId,
-    required_permissions: after.required.map((permission) => describePermission(permission)),
+    required_permissions: after.required.map((permission) => describePermission(permission, t)),
     missing_permissions: after.missing,
     permissions: after.permissions,
     granted_permissions: after.granted,

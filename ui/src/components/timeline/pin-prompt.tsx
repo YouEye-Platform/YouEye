@@ -6,7 +6,10 @@
  */
 
 "use client";
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 
+
+import { validTimelineSecret } from "../../../../shared/timeline-secret";
 import { useState } from "react";
 import { Lock, Eye, EyeOff, Shield, KeyRound } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -20,6 +23,8 @@ interface PINPromptProps {
 }
 
 export function PINPrompt({ mode, onSuccess, onCancel, embedded }: PINPromptProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
   const [showPin, setShowPin] = useState(false);
@@ -33,8 +38,8 @@ export function PINPrompt({ mode, onSuccess, onCancel, embedded }: PINPromptProp
     setError("");
 
     if (mode === "create") {
-      if (pin.length < 4) {
-        setError(t('pinMinLength'));
+      if (!validTimelineSecret(pin)) {
+        setError(translateInterface("mbf545b6cf399"));
         return;
       }
       if (pin !== confirmPin) {
@@ -55,7 +60,7 @@ export function PINPrompt({ mode, onSuccess, onCancel, embedded }: PINPromptProp
 
       if (!res.ok) {
         const data = await res.json();
-        setError(data.error || "Failed");
+        setError(data.error || translateInterface("m031a8f0f659d"));
         return;
       }
 
@@ -85,11 +90,12 @@ export function PINPrompt({ mode, onSuccess, onCancel, embedded }: PINPromptProp
               : "w-full pl-10 pr-10 py-2.5 bg-muted rounded-lg border-0 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             }
             autoFocus
-            autoComplete="off"
+            autoComplete={mode === "create" ? "new-password" : "current-password"}
           />
           <button
             type="button"
             onClick={() => setShowPin(!showPin)}
+            aria-label={showPin ? translateInterface("me5473c418858") : translateInterface("medb8d11e4810")}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
           >
             {showPin ? (
@@ -117,12 +123,13 @@ export function PINPrompt({ mode, onSuccess, onCancel, embedded }: PINPromptProp
                 ? "w-full pl-10 pr-4 py-2.5 bg-muted border border-border rounded-xl text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 : "w-full pl-10 pr-4 py-2.5 bg-muted rounded-lg border-0 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               }
-              autoComplete="off"
+              autoComplete={mode === "create" ? "new-password" : "current-password"}
             />
           </div>
         </div>
       )}
 
+      <p className="text-xs text-muted-foreground">{translateInterface("mbf545b6cf399")}</p>
       {error && (
         <p className="text-sm text-center text-red-500">{error}</p>
       )}
@@ -142,7 +149,7 @@ export function PINPrompt({ mode, onSuccess, onCancel, embedded }: PINPromptProp
         )}
         <button
           type="submit"
-          disabled={loading || pin.length < 4}
+          disabled={loading || !validTimelineSecret(pin)}
           className={embedded
             ? "flex-1 py-2.5 text-sm rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-medium transition-colors disabled:opacity-50"
             : "flex-1 py-2.5 text-sm rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"

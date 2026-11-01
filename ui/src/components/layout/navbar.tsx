@@ -1,3 +1,4 @@
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 /**
  * Navbar — Top navigation bar
  */
@@ -6,7 +7,7 @@ import { Clock, Home, LayoutDashboard } from "lucide-react";
 import { UserMenu } from "./user-menu";
 import { NotificationBell } from "./notification-bell";
 import { DrawerAndLauncher } from "./drawer-and-launcher";
-import { SiteName } from "./site-name";
+import { HeaderBrand } from "./header-brand";
 import { MobileAccountSheet } from "./mobile-account-sheet";
 import { Button } from "@/components/ui/button";
 import type { SiteNameStyle } from "@/lib/db/queries/branding";
@@ -19,6 +20,7 @@ interface NavbarProps {
   siteName?: string;
   siteNameStyle?: SiteNameStyle | null;
   logoUrl?: string | null;
+  showLogo?: boolean;
 }
 
 export function Navbar({
@@ -28,22 +30,22 @@ export function Navbar({
   siteName = "YouEye",
   siteNameStyle = null,
   logoUrl = null,
+  showLogo = false,
 }: NavbarProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   return (
     <>
       <header className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-border/40 bg-background/95 px-4 backdrop-blur-md">
         <div className="flex items-center gap-3">
           <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-            {logoUrl && (
-              <img src={logoUrl} alt="" className="w-6 h-6 object-contain" />
-            )}
-            <SiteName name={siteName} style={siteNameStyle} />
+            <HeaderBrand initial={{ site_name: siteName, site_name_style: siteNameStyle, logo_url: showLogo ? logoUrl : null }} />
           </Link>
         </div>
 
         <div className="ye-mobile-shell-desktop flex items-center gap-1">
           <Button variant="ghost" size="icon" className="h-9 w-9" asChild>
-            <Link href="/" title="Home">
+            <Link href="/" title={translateInterface("m3a78695388b3")}>
               <Home className="h-4 w-4" />
             </Link>
           </Button>
@@ -58,18 +60,18 @@ export function Navbar({
           <Link
             href="/"
             className="inline-flex h-12 min-w-12 items-center justify-center gap-2 rounded-2xl px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title="Dashboard"
+            title={translateInterface("m67b696468610")}
           >
             <LayoutDashboard className="size-4" />
-            <span className="max-[420px]:hidden">Dashboard</span>
+            <span className="max-[420px]:hidden">{translateInterface("m67b696468610")}</span>
           </Link>
           <Link
             href="/timeline"
             className="inline-flex h-12 min-w-12 items-center justify-center gap-2 rounded-2xl px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title="Timeline"
+            title={translateInterface("m9dcff98e275f")}
           >
             <Clock className="size-4" />
-            <span className="max-[420px]:hidden">Timeline</span>
+            <span className="max-[420px]:hidden">{translateInterface("m9dcff98e275f")}</span>
           </Link>
         </nav>
         <MobileAccountSheet username={username} email={email} isAdmin={isAdmin} />

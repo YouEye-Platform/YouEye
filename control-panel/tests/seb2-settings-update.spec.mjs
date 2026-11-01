@@ -1,10 +1,11 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const root = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..');
-const read = (path) => readFileSync(join(root, path), 'utf8');
+const read = (path) => englishInterfaceSource(readFileSync(join(root, path), 'utf8'));
 
 test('onboarding is CP-owned and uses the authenticated UI bridge', () => {
   const onboarding = read('src/components/onboarding/onboarding-client.tsx');

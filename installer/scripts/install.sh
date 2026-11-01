@@ -514,14 +514,21 @@ def scoped_url(url, source, tag, name, exact_name=True):
     return bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,199}', name or '') and isinstance(url, str) and url.startswith(prefix) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,199}', url[len(prefix):]) and (not exact_name or url == prefix + name))
 
 
+def repository(value):
+    if not isinstance(value, str): return False
+    parsed = urlparse(value)
+    parts = parsed.path.lstrip('/').split('/')
+    return bool(parsed.scheme == 'https' and parsed.hostname and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment and len(parts) == 2 and parsed.path == '/' + '/'.join(parts) and all(re.fullmatch(r'[A-Za-z0-9_.-]+', p) and p not in {'.', '..'} for p in parts))
+
+
 def select_core(provider, api, channel, selected_branch, exact, pages, destination, cache, policy, development_key):
     parsed = urlparse(api)
     parts = parsed.path.strip('/').split('/')
     source = ('https://github.com/' + '/'.join(parts[1:3])) if provider == 'github' else parsed.scheme + '://' + parsed.netloc + '/' + '/'.join(parts[3:5])
     wanted = 'main' if channel == 'stable' else 'dev' if channel == 'development' else selected_branch if channel == 'branch' else ''
-    def key_for(raw_branch):
-        if source != OFFICIAL:
-            if provider == 'github': raise ValueError('Public repository authority is not provisioned')
+    def key_for(raw_branch, authority_source=source):
+        if authority_source != OFFICIAL:
+            if urlparse(authority_source).hostname == 'github.com': raise ValueError('Public repository authority is not provisioned')
             return development_key, 'development'
         scope = {'main':'stable', 'beta':'beta'}.get(raw_branch)
         key = policy.get('keys', {}).get(scope)
@@ -569,12 +576,12 @@ def select_core(provider, api, channel, selected_branch, exact, pages, destinati
         if len(members) != len(ROLES) or {m.get('role') for m in members} != ROLES: raise ValueError('Incomplete release membership')
         by_role = {m['role']:m for m in members}
         for m in members:
-            if m.get('source') != source or not branch(m.get('branch')) or not version(m.get('build_version')) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,199}', m.get('tag', '')) or not COMMIT.fullmatch(m.get('source_commit', '')) or not HASH.fullmatch(m.get('key_id', '')): raise ValueError('Invalid original member identity')
+            if not repository(m.get('source')) or not branch(m.get('branch')) or not version(m.get('build_version')) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,199}', m.get('tag', '')) or not COMMIT.fullmatch(m.get('source_commit', '')) or not HASH.fullmatch(m.get('key_id', '')): raise ValueError('Invalid original member identity')
             for field in ['artifact', 'checksums', 'signature', 'provenance', 'sbom', *[f for f in ['document_signature', 'release_lock'] if f in m]]:
                 blob = m.get(field, {})
-                if not scoped_url(blob.get('url'), source, m['tag'], blob.get('name'), False) or not HASH.fullmatch(blob.get('sha256', '')) or type(blob.get('size_bytes')) is not int or not 0 < blob['size_bytes'] <= 1 << 50: raise ValueError('Invalid signed member blob')
+                if not scoped_url(blob.get('url'), m['source'], m['tag'], blob.get('name'), False) or not HASH.fullmatch(blob.get('sha256', '')) or type(blob.get('size_bytes')) is not int or not 0 < blob['size_bytes'] <= 1 << 50: raise ValueError('Invalid signed member blob')
         host = by_role['appliance']
-        member_key, member_trust = key_for(host['branch'])
+        member_key, member_trust = key_for(host['branch'], host['source'])
         # The host's original member authority may be Stable inside a Beta assembly.
         if hashlib.sha256(subprocess.check_output(['openssl','pkey','-pubin','-outform','DER'], input=member_key.encode(), stderr=subprocess.DEVNULL)).hexdigest() != host['key_id']: raise ValueError('Original host authority changed')
         for role in ['installer', 'media', 'system-update', 'system-root', 'system-a-uki', 'system-b-uki', 'system-updater', 'internal-recovery', 'recovery-uki', 'update-bootstrap']:
@@ -583,9 +590,9 @@ def select_core(provider, api, channel, selected_branch, exact, pages, destinati
         sequence = manifest['sequence']
         if sequence in sequences and sequences[sequence] != digest: raise ValueError('Conflicting complete release sequence')
         sequences[sequence] = digest
-        if selected is None or sequence > selected[0]['sequence']: selected = (manifest, raw, signature, by_role, member_trust)
+        if selected is None or sequence > selected[0]['sequence']: selected = (manifest, raw, signature, by_role, member_trust, assets)
     if selected is None: return False
-    manifest, raw, signature, members, trust = selected
+    manifest, raw, signature, members, trust, selected_assets = selected
     floor = Path(cache) / ('core-track-' + hashlib.sha256((source + '\0' + manifest['branch']).encode()).hexdigest() + '.json')
     if floor.exists() or floor.is_symlink():
         st = floor.lstat()
@@ -607,7 +614,14 @@ def select_core(provider, api, channel, selected_branch, exact, pages, destinati
         try: os.fsync(fd)
         finally: os.close(fd)
     host = members['appliance']
-    selection = [host['tag'], host['checksums']['url'], host['signature']['url'], members['installer']['artifact']['url'], trust, host['artifact']['url'], host['provenance']['url'], host.get('release_lock', {}).get('url', '-'), source if trust == 'development' and host['branch'] == 'main' else '-']
+    def transport(blob):
+        if not blob: return '-'
+        name = 'blob-' + blob['sha256']
+        mirror = selected_assets.get(name, {}).get('browser_download_url')
+        if scoped_url(mirror, source, manifest['tag'], name): return mirror
+        if host['source'] != source: raise ValueError('Promoted release is missing its original payload mirror')
+        return blob['url']
+    selection = [host['tag'], transport(host['checksums']), transport(host['signature']), transport(members['installer']['artifact']), trust, transport(host['artifact']), transport(host['provenance']), transport(host.get('release_lock')), host['source'] if trust == 'development' and host['branch'] == 'main' else '-']
     Path(destination).write_text('\n'.join(selection) + '\n')
     Path(destination + '.core').write_text(json.dumps({'manifest':manifest, 'members':members, 'manifest_sha256':hashlib.sha256(raw).hexdigest()}))
     return True

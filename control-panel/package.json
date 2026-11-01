@@ -1,16 +1,18 @@
 {
   "name": "ye-controlpanel",
-  "version": "0.5.64",
+  "version": "0.5.65-alpha.4",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "typecheck": "tsc --noEmit --pretty false",
-    "build": "pnpm run typecheck && node scripts/build-production.js",
+    "build": "pnpm run i18n:check && pnpm run typecheck && node scripts/build-production.js",
     "postbuild": "node scripts/bundle-node-runtime.mjs",
     "start": "next start",
     "lint": "eslint",
     "test": "CONTROL_PANEL_ROOT=\"$PWD\" node --import tsx --test tests/*.ts tests/*.mjs",
-    "audit:unused": "pnpm dlx knip@6.34.0 --production"
+    "audit:unused": "pnpm dlx knip@6.34.0 --production",
+    "test:independent-copy": "bun test tests/independent-copy/inventory.test.ts tests/independent-copy/journal.test.ts tests/independent-copy/admission.test.ts tests/independent-copy/source-history.test.ts && bun test tests/independent-copy/app-runtime.test.ts && bun test tests/independent-copy/platform.test.ts",
+    "i18n:check": "node scripts/check-i18n-source.mjs && node scripts/check-i18n.mjs"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "1.3.1",
@@ -33,7 +35,8 @@
     "tw-animate-css": "1.4.0",
     "yaml": "2.9.1",
     "zod": "4.6.7",
-    "postgres": "3.4.9"
+    "postgres": "3.4.9",
+    "@youeye/branding": "workspace:*"
   },
   "devDependencies": {
     "@serwist/next": "9.5.13",

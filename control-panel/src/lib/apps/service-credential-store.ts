@@ -271,6 +271,17 @@ export class AppServiceCredentialStore {
     });
   }
 
+  /** Read-only native copy inventory. Atomic protected records are observed
+   * without opening mutation admission during a source lifecycle reservation. */
+  async observeCopyStatus(appId: string): Promise<AppCredentialStatusView | null> {
+    await requireDirectory(this.directory);
+    const current = await this.read(appId);
+    if (!current) return null;
+    const { verifierHash: _hash, ...projection } = current.projection;
+    return { ...projection, operationId: current.operationId, operationKind: current.operationKind,
+      publishedRevision: current.publishedRevision, pendingPublications: current.publications.length };
+  }
+
   async status(appId: string): Promise<AppCredentialStatusView | null> {
     return this.locked(appId, async () => {
       const current = await this.read(appId);

@@ -1,3 +1,4 @@
+import { getUserTranslator } from "@/i18n/user-translator";
 /**
  * App Launch Requirements API
  *
@@ -173,6 +174,7 @@ export async function GET(
   ].sort();
   const requiredPreferences = collectLaunchPreferences(manifest).filter((preference) => preference.required);
   const userId = (session?.userId ?? serviceUser?.id)!;
+  const { t } = await getUserTranslator(userId);
   const [checks, allUserSettings] = await Promise.all([
     Promise.all(
     required.map(async (permission) => ({
@@ -197,7 +199,7 @@ export async function GET(
     );
     const returnTo = request.nextUrl.searchParams.get("return_to");
     const approval = missing.length > 0
-      ? buildPermissionApproval(grantAppId, missing, "persistent", request, returnTo)
+      ? buildPermissionApproval(grantAppId, missing, "persistent", request, returnTo, t)
       : { success: false, approval_required: false };
     return NextResponse.json(
       {
@@ -206,11 +208,11 @@ export async function GET(
         first_launch_complete: false,
         app_id: grantAppId,
         manifest_app_id: app.id,
-        required_permissions: required.map((permission) => describePermission(permission)),
+        required_permissions: required.map((permission) => describePermission(permission, t)),
         granted_permissions: checks
           .filter((check) => check.decision === true)
-          .map((check) => describePermission(check.permission)),
-        denied_permissions: denied.map((permission) => describePermission(permission)),
+          .map((check) => describePermission(check.permission, t)),
+        denied_permissions: denied.map((permission) => describePermission(permission, t)),
       },
       { status: 202 }
     );
@@ -221,11 +223,11 @@ export async function GET(
     first_launch_complete: true,
     app_id: grantAppId,
     manifest_app_id: app.id,
-    required_permissions: required.map((permission) => describePermission(permission)),
+    required_permissions: required.map((permission) => describePermission(permission, t)),
     granted_permissions: checks
       .filter((check) => check.decision === true)
-      .map((check) => describePermission(check.permission)),
-    denied_permissions: denied.map((permission) => describePermission(permission)),
+      .map((check) => describePermission(check.permission, t)),
+    denied_permissions: denied.map((permission) => describePermission(permission, t)),
     missing_permissions: [],
     preferences_required: false,
     required_preferences: requiredPreferences,

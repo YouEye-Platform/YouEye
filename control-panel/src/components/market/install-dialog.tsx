@@ -1,5 +1,12 @@
 'use client';
+import {useLocale} from "next-intl";
 
+
+
+
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useState, useEffect } from 'react';
 import { X, Key, Type, Globe, Eye, EyeOff, ChevronDown, ChevronRight, Settings2, Wifi, Plug, ShieldCheck, ShieldOff, Sparkles, HardDrive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -46,11 +53,7 @@ type StorageLocation = {
   totalBytes: number | null;
 };
 
-function formatBytes(value: number | null): string {
-  if (value === null) return 'Space unavailable';
-  if (value < 1024 ** 3) return `${Math.round(value / 1024 ** 2)} MB available`;
-  return `${(value / 1024 ** 3).toFixed(value < 10 * 1024 ** 3 ? 1 : 0)} GB available`;
-}
+
 
 /** Slugify a string for use as subdomain: lowercase, replace spaces/special chars with hyphens */
 function slugify(s: string): string {
@@ -75,6 +78,15 @@ function defaultAccountLogin(app: MarketApp): boolean {
 }
 
 export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onClose }: InstallDialogProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+  const locale = useLocale();
+function formatBytes(value: number | null): string {
+  if (value === null) return translateInterface("m77b235a4e47f");
+  if (value < 1024 ** 3) return translateInterface("m0cb4031e7c01", {amount: new Intl.NumberFormat(locale).format(Math.round(value / 1024 ** 2))});
+  return translateInterface("m9e3fa5262cda", {amount: new Intl.NumberFormat(locale, {maximumFractionDigits: value < 10 * 1024 ** 3 ? 1 : 0}).format(value / 1024 ** 3)});
+}
+
+
   const t = useTranslations('market');
   const tc = useTranslations('common');
   const [retainedData, setRetainedData] = useState<{ retained: boolean; canAdopt?: boolean; version?: string }>();
@@ -83,7 +95,7 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
     let cancelled = false;
     fetch(`/api/market/app/${encodeURIComponent(app.id)}/retained`)
       .then(async response => {
-        if (!response.ok) throw new Error('Retained ownership status unavailable');
+        if (!response.ok) throw new Error(translateInterface("m3a5222eebc95"));
         return response.json();
       }).then(data => { if (!cancelled) setRetainedData(data); })
       .catch(() => { if (!cancelled) setRetainedData({ retained: true, canAdopt: false }); });
@@ -161,7 +173,7 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
     fetch('/api/market/ai/groups', { cache: 'no-store' })
       .then(async (response) => {
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || 'AI model groups are unavailable');
+        if (!response.ok) throw new Error(payload.error || translateInterface("m05b6b93500f0"));
         return payload as { groups: AIGroup[]; defaultGroupId: string | null };
       })
       .then((payload) => {
@@ -171,7 +183,7 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
         setAIGroupsError('');
       })
       .catch((error) => {
-        if (!cancelled) setAIGroupsError(error instanceof Error ? error.message : 'AI model groups are unavailable');
+        if (!cancelled) setAIGroupsError(error instanceof Error ? error.message : translateInterface("m05b6b93500f0"));
       })
       .finally(() => { if (!cancelled) setAIGroupsLoading(false); });
     return () => { cancelled = true; };
@@ -182,7 +194,7 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
     fetch('/api/market/storage/locations', { cache: 'no-store' })
       .then(async (response) => {
         const payload = await response.json() as { locations?: StorageLocation[]; defaultPool?: string; error?: string };
-        if (!response.ok || !payload.locations?.length) throw new Error(payload.error || 'Storage locations are unavailable');
+        if (!response.ok || !payload.locations?.length) throw new Error(payload.error || translateInterface("mcd3adbb05399"));
         return payload;
       })
       .then((payload) => {
@@ -192,7 +204,7 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
         setStorageError('');
       })
       .catch((error) => {
-        if (!cancelled) setStorageError(error instanceof Error ? error.message : 'Storage locations are unavailable');
+        if (!cancelled) setStorageError(error instanceof Error ? error.message : translateInterface("mcd3adbb05399"));
       })
       .finally(() => { if (!cancelled) setStorageLoading(false); });
     return () => { cancelled = true; };
@@ -212,30 +224,30 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
   const advancedParams = params.filter((p) => !p.required);
 
   const validateParam = (param: ParamDef, value: string): string | null => {
-    if (param.required && !value.trim()) return `${param.label} is required`;
+    if (param.required && !value.trim()) return translateInterface("mca8766082649", {label: param.label});
     if (!value.trim()) return null; // Optional and empty is fine
 
     if (param.validation?.pattern) {
       try {
         const regex = new RegExp(param.validation.pattern);
         if (!regex.test(value)) {
-          return param.validation.message || `Invalid format for ${param.label}`;
+          return param.validation.message || translateInterface("m465227e8bdef", {label: param.label});
         }
       } catch { /* invalid regex — skip */ }
     }
     if (param.type === 'number') {
       const num = Number(value);
-      if (isNaN(num)) return `${param.label} must be a number`;
+      if (isNaN(num)) return translateInterface("m46dd98e69cc0", {label: param.label});
       if (param.validation?.min !== undefined && num < param.validation.min) {
-        return `${param.label} must be at least ${param.validation.min}`;
+        return translateInterface("mf512cb029af2", {label: param.label, minimum: param.validation.min});
       }
       if (param.validation?.max !== undefined && num > param.validation.max) {
-        return `${param.label} must be at most ${param.validation.max}`;
+        return translateInterface("m3005f810a1dc", {label: param.label, maximum: param.validation.max});
       }
     }
     if (param.type === 'select' && param.choices) {
       if (!param.choices.some((c) => c.value === value)) {
-        return `Invalid selection for ${param.label}`;
+        return translateInterface("m7be41a67e3e6", {label: param.label});
       }
     }
     return null;
@@ -345,12 +357,12 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800 shrink-0">
           <div>
             <h2 className="text-lg font-semibold">{t('install')} {app.name}</h2>
-            <p className="mt-1 text-sm text-gray-500">Choose the name, address, and access options for this install.</p>
+            <p className="mt-1 text-sm text-gray-500">{translateInterface("m6ebd2f3388ea")}</p>
           </div>
           <button
             onClick={onClose}
             className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-600"
-            aria-label="Close"
+            aria-label={translateInterface("m7d9eb7acb13e")}
           >
             <X className="h-5 w-5" />
           </button>
@@ -360,42 +372,39 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
         <form onSubmit={handleSubmit} className="p-6 space-y-6 overflow-y-auto">
           {retainedData?.retained && (
             <Alert>
-              <AlertTitle>Retained app data</AlertTitle>
+              <AlertTitle>{translateInterface("m9d7821eaa7d7")}</AlertTitle>
               <AlertDescription>
-                <p>The original data owners and household grants will be preserved. Adopt version {retainedData.version || 'original'} before updating.</p>
+                <p>{translateInterface("m502211a79754", {version: retainedData.version || translateInterface("ma191bf55dd89")})}</p>
                 {retainedData.canAdopt ? (
                   <label className="mt-3 flex items-center gap-2">
                     <input type="checkbox" checked={adoptRetainedData} onChange={event => setAdoptRetainedData(event.target.checked)} />
-                    Reinstall this app using its retained data
-                  </label>
-                ) : <p className="mt-2">The active app owner must adopt this data. Unresolved ownership needs recovery.</p>}
+                    {translateInterface("mc6c504da789d")}</label>
+                ) : <p className="mt-2">{translateInterface("mb6d7676c3f6f")}</p>}
               </AlertDescription>
             </Alert>
           )}
           {isDirectEntry && (
             <Alert>
               <ShieldOff className="h-4 w-4" />
-              <AlertTitle>Review this app before installing</AlertTitle>
+              <AlertTitle>{translateInterface("m9bb143fefd58")}</AlertTitle>
               <AlertDescription>
-                <p>You added this app directly. YouEye checked its manifest and install package for safety, but has not verified who published it.</p>
+                <p>{translateInterface("m0831254a1909")}</p>
                 <label className="mt-2 flex cursor-pointer items-center gap-2 text-foreground">
                   <Switch checked={directSourceAccepted} onCheckedChange={setDirectSourceAccepted} />
-                  I trust this source and want to install it
-                </label>
+                  {translateInterface("m1dbfa29a7696")}</label>
               </AlertDescription>
             </Alert>
           )}
           <section className="space-y-4">
             <div>
-              <h3 className="text-sm font-semibold text-gray-900">Basics</h3>
-              <p className="mt-1 text-sm text-gray-500">Set how the app appears and where it will open.</p>
+              <h3 className="text-sm font-semibold text-gray-900">{translateInterface("m8fdd2ee8475e")}</h3>
+              <p className="mt-1 text-sm text-gray-500">{translateInterface("m329fb0a6938f")}</p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="displayName" className="flex items-center gap-1.5">
                   <Type className="h-3.5 w-3.5 text-gray-500" />
-                  Display name
-                </Label>
+                  {translateInterface("m2b7f6a84de91")}</Label>
                 <Input
                   id="displayName"
                   value={displayName}
@@ -403,7 +412,7 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
                   placeholder={app.name}
                   required
                 />
-                <p className="text-xs text-gray-400">Shown in the app drawer.</p>
+                <p className="text-xs text-gray-400">{translateInterface("m97d84663c998")}</p>
               </div>
 
               <div className="space-y-2">
@@ -423,12 +432,12 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
                     className="flex-1"
                     required
                     pattern="[a-z0-9-]+"
-                    title="Lowercase letters, numbers, and hyphens only"
+                    title={translateInterface("mc8b461e5a53f")}
                   />
                   <span className="text-sm text-gray-400 whitespace-nowrap">.{domain}</span>
                 </div>
                 <p className="text-xs text-gray-400">
-                  Opens at <span className="font-mono text-gray-600 dark:text-gray-300">{fullUrl}</span>
+                  {translateInterface("m08a626105319")}<span className="font-mono text-gray-600 dark:text-gray-300">{fullUrl}</span>
                 </p>
               </div>
             </div>
@@ -439,14 +448,13 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
               <div>
                 <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <HardDrive className="size-4 text-primary" />
-                  Storage location
-                </h3>
-                <p className="mt-1 text-sm text-muted-foreground">Choose where this app keeps its files.</p>
+                  {translateInterface("ma59e289477fe")}</h3>
+                <p className="mt-1 text-sm text-muted-foreground">{translateInterface("mb610c62d2252")}</p>
               </div>
               <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
                 <Select value={storagePool} onValueChange={setStoragePool} disabled={storageLoading}>
-                  <SelectTrigger aria-label="Storage location">
-                    <SelectValue placeholder="Choose storage" />
+                  <SelectTrigger aria-label={translateInterface("ma59e289477fe")}>
+                    <SelectValue placeholder={translateInterface("mcaece0c6a771")} />
                   </SelectTrigger>
                   <SelectContent>
                     {storageLocations.map((location) => (
@@ -463,7 +471,7 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
                   className="h-auto px-0 text-primary hover:bg-transparent hover:text-primary/80"
                   onClick={() => setShowStorageAdvanced((value) => !value)}
                 >
-                  {showStorageAdvanced ? 'Hide advanced placement' : 'Advanced placement'}
+                  {showStorageAdvanced ? translateInterface("mdbde3782f540") : translateInterface("mf74b747f16b9")}
                 </Button>
                 {showStorageAdvanced && (
                   <div className="grid gap-3 border-t pt-3 sm:grid-cols-3">
@@ -493,8 +501,8 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
 
           <section className="space-y-3">
             <div>
-              <h3 className="text-sm font-semibold text-gray-900">Access</h3>
-              <p className="mt-1 text-sm text-gray-500">Protect this app with account login.</p>
+              <h3 className="text-sm font-semibold text-gray-900">{translateInterface("mec5ba0abb717")}</h3>
+              <p className="mt-1 text-sm text-gray-500">{translateInterface("m727abb1e0536")}</p>
             </div>
             <div className="flex items-center justify-between gap-4 rounded-lg border border-gray-200 bg-gray-50/60 p-4">
               <div className="flex items-start gap-3">
@@ -503,17 +511,17 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
                 </div>
                 <div>
                   <p className="text-sm font-medium text-gray-900">
-                    {(app.supportsSSO || loginIntegration) ? 'Sign in with YouEye ID' : `Only ${siteName} users`}
+                    {(app.supportsSSO || loginIntegration) ? translateInterface("m9696eb03a395") : translateInterface("m659fff76f687", { value0: String(siteName) })}
                   </p>
                   <p className="mt-1 text-xs text-gray-500">
                     {(app.supportsSSO || loginIntegration)
-                      ? `Users sign in to this app with their ${siteName} ID account.`
+                      ? translateInterface("m58ce1fed0ab1", { value0: String(siteName) })
                       : app.forwardAuth === 'disabled'
-                        ? 'This app cannot be gated — it does not support account login.'
-                        : `Require a ${siteName} account before anyone can open this app.`}
+                        ? translateInterface("mf87c41b17f22")
+                        : translateInterface("meb2a62b44094", { value0: String(siteName) })}
                   </p>
                   <p className="mt-1 text-xs text-gray-400">
-                    Default from manifest: {accountLoginDefault ? 'On' : 'Off'}
+                    {translateInterface("me3904ac31cbf")}{accountLoginDefault ? translateInterface("m130011756125") : translateInterface("mca7981b46ecf")}
                   </p>
                 </div>
               </div>
@@ -539,10 +547,9 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
           {showForwardAuthGate && (
             <section className="space-y-3">
               <div>
-                <h3 className="text-sm font-semibold text-gray-900">Extra account gate</h3>
+                <h3 className="text-sm font-semibold text-gray-900">{translateInterface("m5409213a3a49")}</h3>
                 <p className="mt-1 text-sm text-gray-500">
-                  This app signs in with {siteName} ID. You can also require a {siteName} account
-                  before the app even loads — an optional extra gate. Most apps don&apos;t need it.
+                  {translateInterface("m8ab486d9fa85", {site: siteName})}
                 </p>
               </div>
               <div className="flex items-center justify-between gap-4 rounded-lg border border-gray-200 bg-gray-50/60 p-4">
@@ -551,12 +558,11 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
                     {forwardAuthGate ? <ShieldCheck className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-gray-900">Only {siteName} users</p>
+                    <p className="text-sm font-medium text-gray-900">{translateInterface("mc664ff9c2740", {site: siteName})}</p>
                     <p className="mt-1 text-xs text-gray-500">
-                      Only people with a {siteName} account can open this app — a sign-in gate at the
-                      reverse proxy, on top of the app&apos;s own sign-in.
+                      {translateInterface("m59829f8776db", {site: siteName})}
                     </p>
-                    <p className="mt-1 text-xs text-gray-400">Default: Off</p>
+                    <p className="mt-1 text-xs text-gray-400">{translateInterface("m092f0f6c78e1")}</p>
                   </div>
                 </div>
                 <button
@@ -584,53 +590,52 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
                 <div>
                   <h3 className="flex items-center gap-2 text-sm font-semibold">
                     <Sparkles className="size-4 text-primary" />
-                    AI models
-                  </h3>
+                    {translateInterface("m35b8cb8439d7")}</h3>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Use models from your AI Settings so {app.name} works immediately.
+                    {translateInterface("m8504669be16b", {app: app.name})}
                   </p>
                 </div>
                 <Switch
                   checked={useAISettings}
                   onCheckedChange={setUseAISettings}
-                  aria-label="Use AI Settings"
+                  aria-label={translateInterface("m18ff0c26ee4a")}
                 />
               </div>
               <div className="rounded-lg border bg-muted/30 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-medium">Use AI Settings</p>
+                    <p className="text-sm font-medium">{translateInterface("m18ff0c26ee4a")}</p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {useAISettings
-                        ? `A separate AI instance will be created for ${app.name}.`
-                        : `You’ll configure AI providers inside ${app.name} after installation.`}
+                        ? translateInterface("md1a34cdcce56", { value0: String(app.name) })
+                        : translateInterface("m2f3bac5071c5", { value0: String(app.name) })}
                     </p>
                   </div>
                   <Badge variant={useAISettings ? 'default' : 'secondary'}>
-                    {useAISettings ? 'On' : 'Off'}
+                    {useAISettings ? translateInterface("m130011756125") : translateInterface("mca7981b46ecf")}
                   </Badge>
                 </div>
                 {useAISettings && (
                   <div className="mt-4 space-y-2">
-                    <Label htmlFor="ai-model-group">Model group</Label>
+                    <Label htmlFor="ai-model-group">{translateInterface("madb24ff365bd")}</Label>
                     <Select value={aiGroupId} onValueChange={setAIGroupId} disabled={aiGroupsLoading}>
                       <SelectTrigger id="ai-model-group">
-                        <SelectValue placeholder={aiGroupsLoading ? 'Loading model groups…' : 'Choose a model group'} />
+                        <SelectValue placeholder={aiGroupsLoading ? translateInterface("m2f1fe94eeb19") : translateInterface("m0c7e5871a4e6")} />
                       </SelectTrigger>
                       <SelectContent>
                         {aiGroups.map((group) => (
                           <SelectItem key={group.id} value={group.id} disabled={group.status === 'empty'}>
-                            {group.name}{group.isDefault ? ' · Default' : ''} · {group.enabledModelCount} model{group.enabledModelCount === 1 ? '' : 's'}
+                            {translateInterface("m0b7c0ace70d0", {group: group.name, count: group.enabledModelCount})}{group.isDefault ? translateInterface("m2a7e0b7b2062") : ""}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                     {aiGroupsError && <Alert variant="destructive">{aiGroupsError}</Alert>}
                     {aiGroups.find((group) => group.id === aiGroupId)?.unavailableRouteCount ? (
-                      <Alert variant="destructive">Some routes in this group need a provider connection.</Alert>
+                      <Alert variant="destructive">{translateInterface("m8b198f2376e2")}</Alert>
                     ) : null}
                     <p className="text-xs text-muted-foreground">
-                      You can still add other providers inside {app.name}. The initial model is the group&apos;s <code>default</code> alias.
+                      {translateInterface("m6da71dfecc65", {app: app.name})}
                     </p>
                   </div>
                 )}
@@ -667,8 +672,7 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
                   <ChevronRight className="h-4 w-4 text-gray-400" />
                 )}
                 <Settings2 className="h-3.5 w-3.5 text-gray-400" />
-                Advanced Options
-                <span className="text-xs text-gray-400 ml-auto">
+                {translateInterface("mdfa2817fb222")}<span className="text-xs text-gray-400 ml-auto">
                   ({advancedParams.length})
                 </span>
               </button>
@@ -696,8 +700,7 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
             <div className="space-y-3">
               <Label className="flex items-center gap-1.5">
                 <Plug className="h-3.5 w-3.5 text-gray-500" />
-                Integrations
-              </Label>
+                {translateInterface("m090512d93fcc")}</Label>
               <div className="space-y-2">
                 {app.integrations!.filter((integration) => integration.id !== loginIntegration?.id).map(integration => (
                   <div
@@ -740,15 +743,14 @@ export function InstallDialog({ app, domain, siteName = 'YouEye', onInstall, onC
           <div className="space-y-2">
             <Label className="flex items-center gap-1.5">
               <Wifi className="h-3.5 w-3.5 text-gray-500" />
-              Internet &amp; LAN Access
-            </Label>
+              {translateInterface("m06b77df118c5")}</Label>
             <div className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-800 p-3">
               <div>
-                <p className="text-sm font-medium">Allow Internet &amp; LAN Access</p>
+                <p className="text-sm font-medium">{translateInterface("m605a35f5d0ad")}</p>
                 <p className="text-xs text-gray-400">
                   {connections?.internet?.hosts?.length
-                    ? `Uses: ${connections.internet.hosts.join(', ')}`
-                    : 'Allow this app to make outbound network requests'}
+                    ? translateInterface("m8261ce959353", { value0: String(connections.internet.hosts.join(', ')) })
+                    : translateInterface("m5deb703324dd")}
                 </p>
               </div>
               <button
@@ -798,6 +800,8 @@ interface ParamFieldProps {
 }
 
 function ParamField({ param, value, onChange, error, showPassword, onTogglePassword }: ParamFieldProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const paramType = param.type ?? 'string';
   const iconClass = 'h-3.5 w-3.5 text-gray-500';
 
@@ -830,7 +834,7 @@ function ParamField({ param, value, onChange, error, showPassword, onTogglePassw
         /* Select: dropdown */
         <Select value={value} onValueChange={onChange}>
           <SelectTrigger id={`param-${param.name}`}>
-            <SelectValue placeholder={`Select ${param.label}`} />
+            <SelectValue placeholder={translateInterface("mb4b262ae0516", { value0: String(param.label) })} />
           </SelectTrigger>
           <SelectContent>
             {param.choices.map((choice) => (
@@ -848,7 +852,7 @@ function ParamField({ param, value, onChange, error, showPassword, onTogglePassw
             type={showPassword ? 'text' : 'password'}
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            placeholder={`Enter ${param.label}`}
+            placeholder={translateInterface("m594ad365a4f8", { value0: String(param.label) })}
             className="font-mono text-sm pr-10"
             required={param.required}
           />
@@ -871,7 +875,7 @@ function ParamField({ param, value, onChange, error, showPassword, onTogglePassw
           type="number"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder={`Enter ${param.label}`}
+          placeholder={translateInterface("m594ad365a4f8", { value0: String(param.label) })}
           className="font-mono text-sm"
           required={param.required}
           min={param.validation?.min}
@@ -884,7 +888,7 @@ function ParamField({ param, value, onChange, error, showPassword, onTogglePassw
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder={`Enter ${param.label}`}
+          placeholder={translateInterface("m594ad365a4f8", { value0: String(param.label) })}
           className="text-sm"
           required={param.required}
         />

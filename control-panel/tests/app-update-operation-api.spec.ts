@@ -21,6 +21,7 @@ function load(path: string, dependencies: Record<string, unknown>, suffix = ''):
   }).outputText;
   const exports = {};
   new Function('require', 'exports', output)((name: string) => {
+    if (name === 'next-intl') return {useTranslations: () => (key: string) => JSON.parse(readFileSync(join(root, 'messages/en.json'), 'utf8')).interface[key]};
     if (!(name in dependencies)) throw new Error(`Unexpected test dependency: ${name}`);
     return dependencies[name];
   }, exports);
@@ -360,6 +361,7 @@ function uiFixture(op: ReturnType<typeof operation> | null, updateAvailable = fa
     '@/components/ui/switch': {},
     '@/components/setup/WordArtPickerInline': {},
     './api-base': {},
+    './page-header': { PageHeader: stub },
     './update-channels': {},
   };
   const client = load('src/components/settings-shell/apps-client.tsx', dependencies, '\nexport { AdminAppSections };');

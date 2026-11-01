@@ -1,5 +1,9 @@
 "use client";
 
+
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import Link from "next/link";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -26,6 +30,7 @@ import { SiteName } from "@/components/control-surface/site-name";
 import { MobileAccountSheet } from "@/components/control-surface/mobile-account-sheet";
 import { applyThemeMode, THEME_MODE_EVENT, type ThemeMode } from "@/lib/theme";
 import type { SiteNameStyle } from "@/lib/wordart-presets";
+import { subscribeAppearanceChanges } from "@youeye/branding/appearance-events";
 
 interface ControlHeaderProps {
   username: string;
@@ -104,6 +109,8 @@ function PlatformOverlayFrame({
   mode: "light" | "dark";
   isAdmin: boolean;
 }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [mounted, setMounted] = useState(active || preload);
   const [loaded, setLoaded] = useState(false);
@@ -146,7 +153,7 @@ function PlatformOverlayFrame({
         active && loaded ? "pointer-events-auto" : "pointer-events-none"
       }`}
       style={{ colorScheme: mode, opacity: active && loaded ? 1 : 0 }}
-      title={`YouEye ${kind}`}
+      title={translateInterface("m17755da34536", { value0: kind === "drawer" ? translateInterface("m6880ed028305") : kind === "launcher" ? translateInterface("mf290ead4af85") : translateInterface("m788011833a5a") })}
       sandbox={EMBED_SANDBOX}
       allow="clipboard-read; clipboard-write"
       onLoad={() => {
@@ -159,17 +166,22 @@ function PlatformOverlayFrame({
 }
 
 export function ControlHeader({ username, isAdmin, hasUserContext = true }: ControlHeaderProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [config, setConfig] = useState<HeaderConfig | null>(null);
   const [platformOverlay, setPlatformOverlay] = useState<PlatformOverlayKind | null>(null);
   const [prewarmOverlays, setPrewarmOverlays] = useState(false);
   const [embedMode, setEmbedMode] = useState<"light" | "dark">("light");
   const [systemPref, setSystemPref] = useState<"light" | "dark">("light");
   const saveThemeTimeout = useRef<NodeJS.Timeout | null>(null);
+  const configRequest = useRef(0);
 
   const loadConfig = useCallback(async () => {
+    const request = ++configRequest.current;
     if (!hasUserContext) {
       const res = await fetch("/api/setup/config", { cache: "no-store" });
       const data = res.ok ? await res.json() : {};
+      if (request !== configRequest.current) return;
       setConfig({
         branding: {
           site_name: data.site_name || "YouEye",
@@ -193,11 +205,14 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
     const res = await fetch(bridgeApi("header/config"), { cache: "no-store" });
     if (!res.ok) return;
     const data = await res.json();
-    setConfig(data);
+    if (request === configRequest.current) setConfig(data);
   }, [hasUserContext, isAdmin, username]);
 
   useEffect(() => {
-    loadConfig().catch(() => {});
+    const refresh = () => { void loadConfig().catch(() => {}); };
+    refresh();
+    const unsubscribe = subscribeAppearanceChanges(refresh);
+    return () => { unsubscribe(); configRequest.current++; };
   }, [loadConfig]);
 
   useEffect(() => {
@@ -354,9 +369,9 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
   }
 
   const THEME_MODES: { mode: ThemeMode; Icon: typeof Sun; label: string }[] = [
-    { mode: "light", Icon: Sun, label: "Light" },
-    { mode: "dark", Icon: Moon, label: "Dark" },
-    { mode: "system", Icon: Monitor, label: "Auto" },
+    { mode: "light", Icon: Sun, label: translateInterface("mdbcd5e7bb7a0") },
+    { mode: "dark", Icon: Moon, label: translateInterface("m60acc53f13a5") },
+    { mode: "system", Icon: Monitor, label: translateInterface("m0286249762f7") },
   ];
 
   return (
@@ -371,7 +386,7 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
 
         <div className="ye-mobile-shell-desktop flex items-center gap-1">
           <Button variant="ghost" size="icon" className="h-9 w-9" asChild>
-            <Link href="/" title="Home">
+            <Link href="/" title={translateInterface("m3a78695388b3")}>
               <Home className="h-4 w-4" />
             </Link>
           </Button>
@@ -381,7 +396,7 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
               variant="ghost"
               size="icon"
               className="h-9 w-9"
-              aria-label="Apps"
+              aria-label={translateInterface("m89dd748442c1")}
               disabled={!uiBaseUrl}
               onFocus={warmPlatformOverlays}
               onClick={() => openPlatformOverlay("drawer")}
@@ -394,7 +409,7 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
           {hasUserContext && (
             <button
               className="relative inline-flex h-9 w-9 items-center justify-center rounded-md transition-colors hover:bg-accent disabled:opacity-50"
-              aria-label="Notifications"
+              aria-label={translateInterface("m788011833a5a")}
               disabled={!uiBaseUrl}
               onFocus={warmPlatformOverlays}
               onClick={() => openPlatformOverlay("notifications")}
@@ -468,7 +483,7 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
                 <AvatarFallback className="text-xl">{initials(displayName)}</AvatarFallback>
               </Avatar>
               <div className="flex items-center gap-1.5 text-base font-medium">
-                <span>Hi, {firstName}!</span>
+                <span>{translateInterface("m48e1645a3bf4", {name: firstName})}</span>
                 {headerIsAdmin && <Shield className="size-3.5 text-primary" />}
               </div>
             </div>
@@ -483,8 +498,7 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
                     className="flex w-full items-center gap-3 px-4 py-3 text-sm hover:bg-accent transition-colors"
                   >
                     <Clock className="size-4 text-muted-foreground" />
-                    Timeline
-                  </button>
+                    {translateInterface("m9dcff98e275f")}</button>
                   <div className="border-t" />
                 </>
               )}
@@ -494,16 +508,14 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
                 className="flex w-full items-center gap-3 px-4 py-3 text-sm hover:bg-accent transition-colors"
               >
                 <Settings className="size-4 text-muted-foreground" />
-                Settings
-              </button>
+                {translateInterface("m74a883a037bc")}</button>
               {hasUserContext && (
                 <>
                   <div className="border-t" />
                   <div className="flex items-center justify-between gap-3 px-4 py-2.5">
                     <span className="flex items-center gap-3 text-sm">
                       <Sun className="size-4 text-muted-foreground" />
-                      Theme
-                    </span>
+                      {translateInterface("mefb52e7172b7")}</span>
                     <div className="inline-flex rounded-lg border bg-background p-0.5">
                       {THEME_MODES.map(({ mode, Icon, label }) => {
                         const active = themeMode === mode;
@@ -536,8 +548,7 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
                 className="flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
               >
                 <LogOut className="size-4" />
-                Sign out
-              </button>
+                {translateInterface("m48f0d3d397d4")}</button>
             </div>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -549,19 +560,19 @@ export function ControlHeader({ username, isAdmin, hasUserContext = true }: Cont
           <Link
             href="/settings"
             className="inline-flex h-12 min-w-12 items-center justify-center gap-2 rounded-2xl px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title="Settings"
+            title={translateInterface("m74a883a037bc")}
           >
             <Settings className="size-4" />
-            <span className="max-[420px]:hidden">Settings</span>
+            <span className="max-[420px]:hidden">{translateInterface("m74a883a037bc")}</span>
           </Link>
           {hasUserContext && (
             <Link
               href="/market"
               className="inline-flex h-12 min-w-12 items-center justify-center gap-2 rounded-2xl px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              title="Market"
+              title={translateInterface("m5238d9bd03d5")}
             >
               <Package className="size-4" />
-              <span className="max-[420px]:hidden">Market</span>
+              <span className="max-[420px]:hidden">{translateInterface("m5238d9bd03d5")}</span>
             </Link>
           )}
         </nav>

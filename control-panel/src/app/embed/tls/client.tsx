@@ -1,5 +1,10 @@
 "use client";
 
+import {useLocale} from "next-intl";
+
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useEffect, useState, useCallback } from "react";
 
 interface TLSStatus {
@@ -108,6 +113,10 @@ const styles = `
 `;
 
 export function TlsEmbedClient() {
+  const locale = useLocale();
+
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [status, setStatus] = useState<TLSStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -147,12 +156,12 @@ export function TlsEmbedClient() {
         setAcmeDomain(data.cert.domains[0].replace(/^\*\./, ""));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
+      setError(translateInterface("m3d2301d732a7"));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [translateInterface]);
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
 
@@ -164,7 +173,7 @@ export function TlsEmbedClient() {
   }, [status, acmeDomain]);
 
   const handleStartAcme = async () => {
-    if (!acmeDomain.trim()) { setError("Domain is required"); return; }
+    if (!acmeDomain.trim()) { setError(translateInterface("m025f3d105c5c")); return; }
     setAcmeLoading(true);
     setError("");
     try {
@@ -174,12 +183,12 @@ export function TlsEmbedClient() {
         body: JSON.stringify({ domain: acmeDomain.trim(), includeWildcard: acmeWildcard }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to start order");
+      if (!res.ok) throw new Error(data.error || translateInterface("m2f673d027cb1"));
       setAcmeOrderId(data.orderId);
       setAcmeChallenges(data.challenges);
       setAcmeStep("records");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to start ACME order");
+      setError(translateInterface("mc1b00659ebeb"));
     } finally {
       setAcmeLoading(false);
     }
@@ -196,12 +205,12 @@ export function TlsEmbedClient() {
         body: JSON.stringify({ orderId: acmeOrderId }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Verification failed");
+      if (!res.ok) throw new Error(data.error || translateInterface("mf0f2383f8af8"));
       setAcmeStep("done");
-      setSuccess(data.message || "Certificate issued successfully!");
+      setSuccess(data.message || translateInterface("m26b80c3c27f9"));
       fetchStatus();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ACME verification failed");
+      setError(translateInterface("m9cb66c320c50"));
       setAcmeStep("records");
     } finally {
       setAcmeLoading(false);
@@ -210,7 +219,7 @@ export function TlsEmbedClient() {
 
   const handleUpload = async () => {
     if (!uploadCert.trim() || !uploadKey.trim()) {
-      setError("Certificate and private key are required");
+      setError(translateInterface("m6e1528a08a73"));
       return;
     }
     setUploadLoading(true);
@@ -226,15 +235,15 @@ export function TlsEmbedClient() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Upload failed");
-      setSuccess(data.message || "Certificate uploaded!");
+      if (!res.ok) throw new Error(data.error || translateInterface("m6efc5d27f30b"));
+      setSuccess(data.message || translateInterface("mae8524ccf5dc"));
       setView("status");
       setUploadCert("");
       setUploadKey("");
       setUploadChain("");
       fetchStatus();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
+      setError(translateInterface("m6efc5d27f30b"));
     } finally {
       setUploadLoading(false);
     }
@@ -246,12 +255,12 @@ export function TlsEmbedClient() {
     try {
       const res = await fetch("/api/tls/status", { method: "DELETE" });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Revert failed");
-      setSuccess(data.message || "Reverted to self-signed");
+      if (!res.ok) throw new Error(data.error || translateInterface("m6ee282348d7c"));
+      setSuccess(data.message || translateInterface("mf820d9da0b90"));
       setShowRevert(false);
       fetchStatus();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Revert failed");
+      setError(translateInterface("m6ee282348d7c"));
     } finally {
       setReverting(false);
     }
@@ -297,15 +306,14 @@ export function TlsEmbedClient() {
       <div className="embed-header">
         <div>
           <div className="embed-title" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            TLS Certificates
-            <span className="embed-badge" style={{ color: modeColor, borderColor: `color-mix(in srgb, ${modeColor} 40%, transparent)` }}>
+            {translateInterface("maff037d4fc15")}<span className="embed-badge" style={{ color: modeColor, borderColor: `color-mix(in srgb, ${modeColor} 40%, transparent)` }}>
               {modeLabel}
             </span>
           </div>
-          <div className="embed-subtitle">Manage HTTPS certificates for your server</div>
+          <div className="embed-subtitle">{translateInterface("m147c93ae09fe")}</div>
         </div>
         <button className="embed-btn" onClick={() => { setRefreshing(true); fetchStatus(); }} disabled={refreshing}>
-          {refreshing ? "..." : "Refresh"}
+          {refreshing ? "..." : translateInterface("m0e9161011702")}
         </button>
       </div>
 
@@ -315,8 +323,8 @@ export function TlsEmbedClient() {
       {status?.expiryWarning && status.cert?.expiresAt && (
         <div className="tls-alert tls-alert-warn">
           <div>
-            <strong>Certificate expires soon</strong>
-            <div style={{ marginTop: 2 }}>Expires: {new Date(status.cert.expiresAt).toLocaleDateString()}. Renew to avoid browser warnings.</div>
+            <strong>{translateInterface("m5f5c32cc9753")}</strong>
+            <div style={{ marginTop: 2 }}>{translateInterface("m8353d67bd934")}{" "}{new Date(status.cert.expiresAt).toLocaleDateString(locale)}. {translateInterface("m63de71afc9c7")}</div>
           </div>
         </div>
       )}
@@ -330,12 +338,11 @@ export function TlsEmbedClient() {
               <>
                 <div className="embed-card-title">
                   <span style={{ color: "var(--embed-success)" }}>&#128274;</span>
-                  Active Certificate
-                </div>
+                  {translateInterface("m1ce41b83b068")}</div>
                 <div className="tls-grid-info">
-                  <span className="embed-muted">Issuer:</span>
+                  <span className="embed-muted">{translateInterface("m7930901f3c02")}</span>
                   <span className="embed-value">{status.cert.issuer}</span>
-                  <span className="embed-muted">Domains:</span>
+                  <span className="embed-muted">{translateInterface("mc989877eb709")}</span>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                     {status.cert.domains.map((d) => (
                       <span key={d} className="embed-badge embed-mono" style={{ fontSize: 11 }}>{d}</span>
@@ -343,14 +350,14 @@ export function TlsEmbedClient() {
                   </div>
                   {status.cert.expiresAt && (
                     <>
-                      <span className="embed-muted">Expires:</span>
-                      <span className="embed-value">{new Date(status.cert.expiresAt).toLocaleDateString()}</span>
+                      <span className="embed-muted">{translateInterface("m8353d67bd934")}</span>
+                      <span className="embed-value">{new Date(status.cert.expiresAt).toLocaleDateString(locale)}</span>
                     </>
                   )}
                   {status.cert.issuedAt && (
                     <>
-                      <span className="embed-muted">Issued:</span>
-                      <span>{new Date(status.cert.issuedAt).toLocaleDateString()}</span>
+                      <span className="embed-muted">{translateInterface("m2b7dcdb1716b")}</span>
+                      <span>{new Date(status.cert.issuedAt).toLocaleDateString(locale)}</span>
                     </>
                   )}
                 </div>
@@ -359,12 +366,9 @@ export function TlsEmbedClient() {
               <>
                 <div className="embed-card-title">
                   <span>&#128274;</span>
-                  Self-Signed (Internal CA)
-                </div>
+                  {translateInterface("m835da8135cf3")}</div>
                 <div className="embed-muted" style={{ fontSize: 13 }}>
-                  Using Caddy&apos;s internal CA. Browsers will show &quot;connection not secure&quot; warnings.
-                  Get a real certificate or download the CA cert below to trust it.
-                </div>
+                  {translateInterface("ma663083e1e2b")}</div>
               </>
             )}
           </div>
@@ -375,34 +379,33 @@ export function TlsEmbedClient() {
               className="tls-btn-primary"
               onClick={() => { setView("acme"); setAcmeStep("domain"); setError(""); setSuccess(""); }}
             >
-              {status?.mode === "acme" ? "Renew Certificate" : "Get Let's Encrypt Cert"}
+              {status?.mode === "acme" ? translateInterface("m3bcbc096dc74") : translateInterface("m07e839232f04")}
             </button>
             <button
               className="embed-btn"
               onClick={() => { setView("upload"); setError(""); setSuccess(""); }}
             >
-              Upload Custom Cert
-            </button>
+              {translateInterface("m3bf168da3ad5")}</button>
           </div>
 
           {/* Downloads */}
           <hr className="tls-divider" />
-          <div className="embed-card-title" style={{ marginBottom: 8 }}>Downloads</div>
+          <div className="embed-card-title" style={{ marginBottom: 8 }}>{translateInterface("md5fdc1af021e")}</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {status?.hasExternalCert && (
               <>
-                <button className="embed-btn" onClick={() => handleDownload("zip")} style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}>&#128230; Download Keys (ZIP)</button>
-                <button className="embed-btn" onClick={() => handleDownload("cert")}>&#128196; Certificate</button>
-                <button className="embed-btn" onClick={() => handleDownload("key")}>&#128273; Private Key</button>
-                <button className="embed-btn" onClick={() => handleDownload("bundle")}>&#128230; Bundle (JSON)</button>
+                <button className="embed-btn" onClick={() => handleDownload("zip")} style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}>&#128230; {translateInterface("m804e7816254a")}</button>
+                <button className="embed-btn" onClick={() => handleDownload("cert")}>&#128196; {translateInterface("m2a93a8a442e3")}</button>
+                <button className="embed-btn" onClick={() => handleDownload("key")}>&#128273; {translateInterface("m477bf990a2b3")}</button>
+                <button className="embed-btn" onClick={() => handleDownload("bundle")}>&#128230; {translateInterface("mefdb4951bd3c")}</button>
               </>
             )}
-            <button className="embed-btn" onClick={() => handleDownload("ca")}>&#128737; CA Cert (Trust)</button>
+            <button className="embed-btn" onClick={() => handleDownload("ca")}>&#128737; {translateInterface("mf1bff5f5ecc2")}</button>
           </div>
           <div className="embed-muted" style={{ fontSize: 12, marginTop: 6 }}>
             {status?.hasExternalCert
-              ? "Download your certificate and private key as a ZIP archive, or individually."
-              : "Download the CA certificate to trust self-signed certs in your browser/OS."}
+              ? translateInterface("ma62502117021")
+              : translateInterface("mdb5198eb86c0")}
           </div>
 
           {/* Revert */}
@@ -411,17 +414,14 @@ export function TlsEmbedClient() {
               <hr className="tls-divider" />
               {showRevert ? (
                 <div className="tls-alert tls-alert-warn" style={{ flexDirection: "column" }}>
-                  <strong>Revert to self-signed certificates?</strong>
+                  <strong>{translateInterface("m56b7e3a9c9a2")}</strong>
                   <div style={{ fontSize: 12, marginTop: 4 }}>
-                    This will remove the current certificate and switch back to Caddy&apos;s internal CA.
-                    Browsers will show security warnings again.
-                  </div>
+                    {translateInterface("mcb8b1cb24ac4")}</div>
                   <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                     <button className="tls-btn-danger" onClick={handleRevert} disabled={reverting}>
                       {reverting && <span className="tls-spinner" />}
-                      Yes, Revert
-                    </button>
-                    <button className="embed-btn" onClick={() => setShowRevert(false)}>Cancel</button>
+                      {translateInterface("m4a30ea7978d0")}</button>
+                    <button className="embed-btn" onClick={() => setShowRevert(false)}>{translateInterface("m19766ed6ccb2")}</button>
                   </div>
                 </div>
               ) : (
@@ -430,8 +430,7 @@ export function TlsEmbedClient() {
                   style={{ color: "var(--embed-text-muted)", fontSize: 12 }}
                   onClick={() => setShowRevert(true)}
                 >
-                  Revert to self-signed certificates
-                </button>
+                  {translateInterface("m2f586608e495")}</button>
               )}
             </>
           )}
@@ -444,16 +443,14 @@ export function TlsEmbedClient() {
           {acmeStep === "domain" && (
             <>
               <div className="tls-alert tls-alert-info" style={{ flexDirection: "column" }}>
-                <strong>How it works</strong>
+                <strong>{translateInterface("m9c870aa6e5e9")}</strong>
                 <div style={{ marginTop: 4, opacity: 0.85 }}>
-                  We&apos;ll request a certificate from Let&apos;s Encrypt. You&apos;ll need to create DNS TXT
-                  records at your domain provider to prove ownership. Works with any DNS provider.
-                </div>
+                  {translateInterface("m380027883d18")}</div>
               </div>
 
               <div className="embed-card">
                 <div style={{ marginBottom: 12 }}>
-                  <label className="tls-label">Domain</label>
+                  <label className="tls-label">{translateInterface("m79fa33618d8e")}</label>
                   <input
                     className="tls-input"
                     value={acmeDomain}
@@ -468,16 +465,15 @@ export function TlsEmbedClient() {
                     checked={acmeWildcard}
                     onChange={(e) => setAcmeWildcard(e.target.checked)}
                   />
-                  Include wildcard (*.{acmeDomain || "example.com"})
+                  {translateInterface("m839a9fa3868f", {domain: acmeDomain || "example.com"})}
                 </label>
               </div>
 
               <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                 <button className="tls-btn-primary" onClick={handleStartAcme} disabled={acmeLoading || !acmeDomain.trim()}>
                   {acmeLoading && <span className="tls-spinner" />}
-                  Request Certificate
-                </button>
-                <button className="embed-btn" onClick={() => { setView("status"); setError(""); }}>Cancel</button>
+                  {translateInterface("m6cc6d341a437")}</button>
+                <button className="embed-btn" onClick={() => { setView("status"); setError(""); }}>{translateInterface("m19766ed6ccb2")}</button>
               </div>
             </>
           )}
@@ -485,11 +481,9 @@ export function TlsEmbedClient() {
           {acmeStep === "records" && (
             <>
               <div className="tls-alert tls-alert-warn" style={{ flexDirection: "column" }}>
-                <strong>Create these DNS TXT records</strong>
+                <strong>{translateInterface("m445521d814f4")}</strong>
                 <div style={{ marginTop: 4, opacity: 0.85 }}>
-                  Go to your DNS provider and create the TXT records below. Both records use the same name
-                  but different values. Wait a few minutes for DNS propagation before verifying.
-                </div>
+                  {translateInterface("mac13c5005bbe")}</div>
               </div>
 
               {acmeChallenges.map((ch, i) => (
@@ -498,16 +492,16 @@ export function TlsEmbedClient() {
                     <span className="embed-badge embed-mono" style={{ fontSize: 11 }}>{ch.domain}</span>
                   </div>
                   <div className="tls-grid-info">
-                    <span className="embed-muted">Type:</span>
+                    <span className="embed-muted">{translateInterface("m6cc5ad2e47e3")}</span>
                     <span className="embed-mono embed-value">TXT</span>
-                    <span className="embed-muted">Name:</span>
+                    <span className="embed-muted">{translateInterface("m2683cad48a14")}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                       <span className="tls-code" style={{ flex: 1 }}>{ch.txtName}</span>
                       <button className="tls-copy-btn" onClick={() => copyText(ch.txtName, i * 2)}>
                         {copiedIndex === i * 2 ? "\u2713" : "\u2398"}
                       </button>
                     </div>
-                    <span className="embed-muted">Value:</span>
+                    <span className="embed-muted">{translateInterface("m224a3369a5c9")}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                       <span className="tls-code" style={{ flex: 1 }}>{ch.txtValue}</span>
                       <button className="tls-copy-btn" onClick={() => copyText(ch.txtValue, i * 2 + 1)}>
@@ -521,9 +515,8 @@ export function TlsEmbedClient() {
               <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                 <button className="tls-btn-primary" onClick={handleVerifyAcme} disabled={acmeLoading}>
                   {acmeLoading && <span className="tls-spinner" />}
-                  Verify &amp; Issue Certificate
-                </button>
-                <button className="embed-btn" onClick={() => { setView("status"); setAcmeStep("domain"); setError(""); }}>Cancel</button>
+                  {translateInterface("m31ca065bcea0")}</button>
+                <button className="embed-btn" onClick={() => { setView("status"); setAcmeStep("domain"); setError(""); }}>{translateInterface("m19766ed6ccb2")}</button>
               </div>
             </>
           )}
@@ -531,25 +524,23 @@ export function TlsEmbedClient() {
           {acmeStep === "verifying" && (
             <div style={{ textAlign: "center", padding: "40px 0" }}>
               <div className="tls-spinner" style={{ width: 32, height: 32, borderWidth: 3, marginBottom: 12 }} />
-              <div style={{ fontSize: 14 }}>Verifying DNS records and issuing certificate...</div>
-              <div className="embed-muted" style={{ fontSize: 12, marginTop: 4 }}>This may take up to 60 seconds</div>
+              <div style={{ fontSize: 14 }}>{translateInterface("m4cbac8317690")}</div>
+              <div className="embed-muted" style={{ fontSize: 12, marginTop: 4 }}>{translateInterface("m9fba4a2b677a")}</div>
             </div>
           )}
 
           {acmeStep === "done" && (
             <div style={{ textAlign: "center", padding: "32px 0" }}>
               <div style={{ fontSize: 48, marginBottom: 8 }}>&#128994;</div>
-              <div style={{ fontSize: 16, fontWeight: 600 }}>Certificate Issued!</div>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>{translateInterface("mef62371032e6")}</div>
               <div className="embed-muted" style={{ fontSize: 13, marginTop: 4 }}>
-                Your site is now using a trusted Let&apos;s Encrypt certificate. No more browser warnings.
-              </div>
+                {translateInterface("m6e65cac27aa0")}</div>
               <button
                 className="tls-btn-primary"
                 style={{ marginTop: 16 }}
                 onClick={() => { setView("status"); setAcmeStep("domain"); setSuccess(""); }}
               >
-                Done
-              </button>
+                {translateInterface("m11a6767d5674")}</button>
             </div>
           )}
         </>
@@ -559,12 +550,11 @@ export function TlsEmbedClient() {
       {view === "upload" && (
         <>
           <div className="tls-alert tls-alert-info">
-            Upload a PEM-encoded certificate and private key. Optionally include the CA chain.
-          </div>
+            {translateInterface("mc2334e188834")}</div>
 
           <div className="embed-card">
             <div style={{ marginBottom: 12 }}>
-              <label className="tls-label">Certificate (PEM)</label>
+              <label className="tls-label">{translateInterface("m294125f6aa9a")}</label>
               <div style={{ display: "flex", gap: 6 }}>
                 <textarea
                   className="tls-textarea"
@@ -580,7 +570,7 @@ export function TlsEmbedClient() {
             </div>
 
             <div style={{ marginBottom: 12 }}>
-              <label className="tls-label">Private Key (PEM)</label>
+              <label className="tls-label">{translateInterface("m8c1f7dceb586")}</label>
               <div style={{ display: "flex", gap: 6 }}>
                 <textarea
                   className="tls-textarea"
@@ -600,8 +590,7 @@ export function TlsEmbedClient() {
               style={{ fontSize: 12, marginBottom: showChain ? 8 : 0 }}
               onClick={() => setShowChain(!showChain)}
             >
-              {showChain ? "\u25BC" : "\u25B6"} CA Chain (optional)
-            </button>
+              {showChain ? "\u25BC" : "\u25B6"} {translateInterface("m719ac07a0200")}</button>
 
             {showChain && (
               <div style={{ marginTop: 8 }}>
@@ -625,9 +614,8 @@ export function TlsEmbedClient() {
           <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
             <button className="tls-btn-primary" onClick={handleUpload} disabled={uploadLoading || !uploadCert.trim() || !uploadKey.trim()}>
               {uploadLoading && <span className="tls-spinner" />}
-              Upload &amp; Apply
-            </button>
-            <button className="embed-btn" onClick={() => { setView("status"); setError(""); }}>Cancel</button>
+              {translateInterface("me95bc9836710")}</button>
+            <button className="embed-btn" onClick={() => { setView("status"); setError(""); }}>{translateInterface("m19766ed6ccb2")}</button>
           </div>
         </>
       )}

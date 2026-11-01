@@ -67,6 +67,7 @@ const PUBLIC_ROUTES_EXACT = [
 ];
 
 const IDENTITY_SERVICE_ROUTES = [
+  '/',
   '/identity/login',
   '/identity/handoff',
   '/identity/session/check',
@@ -105,6 +106,8 @@ const STATIC_PATTERNS = [
   '/offline.html',
   '/swe-worker-',
   '/fonts/',
+  '/mytitle/fonts/',
+  '/onboarding-fonts/',
 ];
 
 /**

@@ -12,17 +12,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
 import { startOrder, verifyAndFinalize } from '@/lib/acme/client';
 import * as caddy from '@/lib/caddy/client';
+import { withTlsMutation } from '@/lib/acme/mutation';
 
 /** Reject with timeout after ms — safety net around ACME calls */
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
     promise,
     new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(
+      timer = setTimeout(() => reject(new Error(
         `${label} timed out after ${Math.round(ms / 1000)}s — Let's Encrypt may be slow or rate-limiting. Try again later.`
       )), ms)
     ),
-  ]);
+  ]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -55,7 +57,8 @@ export async function POST(request: NextRequest) {
 
     console.log(`[TLS/ACME] Starting order for ${domain} (wildcard: ${includeWildcard})`);
 
-    const result = await withTimeout(startOrder(domain, includeWildcard), 30_000, 'ACME order creation');
+    // Keep admission inside the actual work, even if HTTP waiting times out.
+    const result = await withTimeout(withTlsMutation(session.authMethod, () => startOrder(domain, includeWildcard)), 30_000, 'ACME order creation');
 
     return NextResponse.json({
       orderId: result.orderId,
@@ -96,10 +99,11 @@ export async function PUT(request: NextRequest) {
 
     console.log(`[TLS/ACME] Verifying order ${orderId}`);
 
-    const result = await withTimeout(verifyAndFinalize(orderId), 60_000, 'ACME verification');
-
-    // Load the certificate into Caddy
-    await caddy.loadExternalCert(result.certificate, result.privateKey, result.domains);
+    const result = await withTimeout(withTlsMutation(session.authMethod, async () => {
+      const issued = await verifyAndFinalize(orderId);
+      await caddy.loadExternalCert(issued.certificate, issued.privateKey, issued.domains);
+      return issued;
+    }), 60_000, 'ACME verification');
 
     console.log(`[TLS/ACME] Certificate issued and loaded for: ${result.domains.join(', ')}`);
 

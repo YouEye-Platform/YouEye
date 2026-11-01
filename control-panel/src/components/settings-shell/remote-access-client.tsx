@@ -1,5 +1,9 @@
 "use client";
 
+
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 import { KeyRound, Loader2, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -9,10 +13,16 @@ import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/settings-shell/page-header";
 import type { SpineRemoteAccessKey, SpineRemoteAccessKeysResponse } from "@/lib/spine/client";
 
+
+
+
+
+export function RemoteAccessClient() {
+  const translateInterface = useInterfaceTranslations("interface");
 function friendlyType(key: SpineRemoteAccessKey) {
   if (key.type === "ssh-ed25519") return "Ed25519";
-  if (key.type.startsWith("sk-ssh-ed25519")) return "Security key (Ed25519)";
-  if (key.type.startsWith("sk-ecdsa")) return "Security key (ECDSA)";
+  if (key.type.startsWith("sk-ssh-ed25519")) return translateInterface("mac798a639cfa");
+  if (key.type.startsWith("sk-ecdsa")) return translateInterface("mdde020273d5f");
   if (key.type === "ssh-rsa") return `RSA ${key.bits ?? ""}`.trim();
   if (key.type.startsWith("ecdsa-")) return "ECDSA";
   return key.type;
@@ -21,11 +31,11 @@ function friendlyType(key: SpineRemoteAccessKey) {
 async function csrfToken() {
   const response = await fetch("/settings/api/auth/csrf", { cache: "no-store" });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok || typeof body.csrfToken !== "string") throw new Error("Could not start a protected settings action.");
+  if (!response.ok || typeof body.csrfToken !== "string") throw new Error(translateInterface("m8467ce88cef6"));
   return body.csrfToken as string;
 }
 
-export function RemoteAccessClient() {
+
   const [data, setData] = useState<SpineRemoteAccessKeysResponse | null>(null);
   const [publicKey, setPublicKey] = useState("");
   const [loading, setLoading] = useState(true);
@@ -40,14 +50,14 @@ export function RemoteAccessClient() {
     try {
       const response = await fetch("/settings/api/appliance/remote-access/keys", { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error || "SSH settings are unavailable.");
+      if (!response.ok) throw new Error(body.error || translateInterface("m54a1c1f44de0"));
       setData(body as SpineRemoteAccessKeysResponse);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "SSH settings are unavailable.");
+      setError(translateInterface("m54a1c1f44de0"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [translateInterface]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -64,12 +74,12 @@ export function RemoteAccessClient() {
         body: JSON.stringify({ public_key: publicKey.trim() }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error || "The SSH key could not be added.");
+      if (!response.ok) throw new Error(body.error || translateInterface("m24330987199f"));
       setPublicKey("");
-      setMessage("SSH key added.");
+      setMessage(translateInterface("mf9ca5e9225e4"));
       await load();
     } catch (addError) {
-      setError(addError instanceof Error ? addError.message : "The SSH key could not be added.");
+      setError(translateInterface("m24330987199f"));
     } finally {
       setBusy(false);
     }
@@ -89,12 +99,12 @@ export function RemoteAccessClient() {
         body: JSON.stringify({ confirm_last_key: finalKey }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error || "The SSH key could not be deleted.");
+      if (!response.ok) throw new Error(body.error || translateInterface("me9cd7a777f35"));
       setDeleteKey(null);
-      setMessage(finalKey ? "The final SSH key was deleted. New root SSH sessions are disabled." : "SSH key deleted.");
+      setMessage(finalKey ? translateInterface("m65efca0655b9") : translateInterface("m108848a5e566"));
       await load();
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "The SSH key could not be deleted.");
+      setError(translateInterface("me9cd7a777f35"));
     } finally {
       setBusy(false);
     }
@@ -105,44 +115,43 @@ export function RemoteAccessClient() {
 
   return (
     <div>
-      <PageHeader title="SSH" description="Root SSH access for appliance administration." />
+      <PageHeader title="SSH" description={translateInterface("m6e0eb9894352")} />
 
       <section className="border-b pb-6">
         <div className="flex items-start gap-3">
           <ShieldCheck className="mt-0.5 size-5 text-primary" />
           <div>
-            <h2 className="text-[15px] font-semibold">Public keys only</h2>
-            <p className="mt-1 text-sm text-muted-foreground">The root password is locked. Existing SSH sessions stay connected when a key is removed.</p>
+            <h2 className="text-[15px] font-semibold">{translateInterface("m5fd65928ccc2")}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{translateInterface("m68f3f9d4e3a0")}</p>
           </div>
         </div>
       </section>
 
       <section className="border-b py-6">
-        <h2 className="text-[15px] font-semibold">Add a key</h2>
+        <h2 className="text-[15px] font-semibold">{translateInterface("m2feab16f91f2")}</h2>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
           <Input
             value={publicKey}
             onChange={(event) => setPublicKey(event.target.value)}
             placeholder="ssh-ed25519 AAAA... name@computer"
-            aria-label="SSH public key"
+            aria-label={translateInterface("mc9be6a369e1a")}
             autoComplete="off"
             spellCheck={false}
             disabled={busy}
           />
           <Button onClick={() => void addKey()} disabled={busy || !publicKey.trim()} className="shrink-0">
             {busy ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-            Add key
-          </Button>
+            {translateInterface("m12626d65b219")}</Button>
         </div>
-        <p className="mt-2 text-xs text-muted-foreground">Ed25519 is recommended. Hardware-backed Ed25519 or ECDSA and RSA 3072-bit or stronger are also accepted.</p>
+        <p className="mt-2 text-xs text-muted-foreground">{translateInterface("mfd03a1cb79c5")}</p>
       </section>
 
       <section className="py-6">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-[15px] font-semibold">Authorised keys</h2>
-          <Button variant="ghost" size="icon" onClick={() => void load()} disabled={loading} title="Refresh keys">
+          <h2 className="text-[15px] font-semibold">{translateInterface("mc553364703dc")}</h2>
+          <Button variant="ghost" size="icon" onClick={() => void load()} disabled={loading} title={translateInterface("mcf0f17fe58d9")}>
             <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
-            <span className="sr-only">Refresh keys</span>
+            <span className="sr-only">{translateInterface("mcf0f17fe58d9")}</span>
           </Button>
         </div>
 
@@ -150,11 +159,10 @@ export function RemoteAccessClient() {
         {message && <Alert className="mt-4"><AlertDescription>{message}</AlertDescription></Alert>}
 
         {loading && !data ? (
-          <div className="mt-5 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading keys</div>
+          <div className="mt-5 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{translateInterface("m54e6709b3335")}</div>
         ) : keys.length === 0 ? (
           <div className="mt-5 flex items-center gap-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-            <KeyRound className="size-4" />New root SSH sessions are disabled.
-          </div>
+            <KeyRound className="size-4" />{translateInterface("m10df51da2d9b")}</div>
         ) : (
           <div className="mt-4 divide-y rounded-md border">
             {keys.map((key) => (
@@ -167,9 +175,9 @@ export function RemoteAccessClient() {
                     <span className="break-all">{key.fingerprint}</span>
                   </div>
                 </div>
-                <Button variant="ghost" size="icon" onClick={() => setDeleteKey(key)} disabled={busy} title="Delete key">
+                <Button variant="ghost" size="icon" onClick={() => setDeleteKey(key)} disabled={busy} title={translateInterface("m6758f1d9b9b4")}>
                   <Trash2 className="size-4" />
-                  <span className="sr-only">Delete {key.comment || key.fingerprint}</span>
+                  <span className="sr-only">{translateInterface("me2d0a54968ea")}{" "}{key.comment || key.fingerprint}</span>
                 </Button>
               </div>
             ))}
@@ -179,11 +187,11 @@ export function RemoteAccessClient() {
 
       <ConfirmDialog
         open={deleteKey !== null}
-        title={deletingFinalKey ? "Disable new root SSH access?" : "Delete this SSH key?"}
+        title={deletingFinalKey ? translateInterface("md9bbe1782312") : translateInterface("m0df8fdc3064a")}
         description={deletingFinalKey
-          ? "This is the final authorised key. Current sessions remain connected, but no new root SSH session can start until another key is added from Settings or Recovery."
-          : `New SSH sessions using ${deleteKey?.comment || deleteKey?.fingerprint || "this key"} will be denied.`}
-        confirmLabel={deletingFinalKey ? "Delete final key" : "Delete key"}
+          ? translateInterface("m9783fc11fa03")
+          : translateInterface("mebe7d794e58a", { value0: String(deleteKey?.comment || deleteKey?.fingerprint || translateInterface("mc9e64db2715f")) })}
+        confirmLabel={deletingFinalKey ? translateInterface("mf016bbf3772b") : translateInterface("m6758f1d9b9b4")}
         confirmDisabled={busy}
         destructive
         onConfirm={() => void removeKey()}

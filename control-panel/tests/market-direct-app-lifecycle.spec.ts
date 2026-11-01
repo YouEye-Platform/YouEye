@@ -1,10 +1,12 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 
 async function source(path: string) {
-  return readFile(join(process.cwd(), path), 'utf8');
+  const text = await readFile(join(process.cwd(), path), 'utf8');
+  return path.endsWith('.tsx') ? englishInterfaceSource(text) : text;
 }
 
 test('direct manifests become instance-local Market entries and open the normal detail page', async () => {

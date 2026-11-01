@@ -101,3 +101,59 @@ func TestInstallationPinsDoNotOverwriteOwnerChoice(t *testing.T) {
 		t.Fatal("owner pin reclassified as bootstrap")
 	}
 }
+
+func TestInstallationSelectionRebindsReusedMemberBranch(t *testing.T) {
+	old := channels.ConfigPath
+	t.Cleanup(func() { channels.ConfigPath = old })
+	channels.ConfigPath = filepath.Join(t.TempDir(), "youeye.yaml")
+	source := "https://forge.example.test/owner/YouEye"
+	member := appliance.ComponentRelease{Branch: "dev", Tag: "youeye-v1.0.0-dev.6", ArtifactSHA256: strings.Repeat("a", 64)}
+	manifest := appliance.Manifest{ReleaseSet: &appliance.ReleaseSet{Schema: "youeye.release-set.v2", Source: source, Branch: "Team/Feature", ControlPanel: member, UI: member}}
+	for _, tc := range []struct {
+		name, origin, source string
+		fallback             []string
+		wantError            bool
+	}{
+		{"installation seed", "installation", source, []string{}, false},
+		{"owner branch", "", source, []string{}, true},
+		{"different source", "installation", "https://other.example.test/owner/YouEye", []string{}, true},
+		{"fallback", "installation", source, []string{"main"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ch := channels.Channel{Source: tc.source, Branch: "Team/Feature", PinOrigin: tc.origin, Fallback: tc.fallback}
+			if tc.origin != "" {
+				ch.Tag, ch.ArtifactSHA256 = member.Tag, member.ArtifactSHA256
+			}
+			if err := (&channels.Config{Control: ch, UI: ch}).Save(); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(channels.ConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = pinDeploymentServices(manifest)
+			if (err != nil) != tc.wantError {
+				t.Fatalf("selection error = %v, wantError %v", err, tc.wantError)
+			}
+			if tc.wantError {
+				after, err := os.ReadFile(channels.ConfigPath)
+				if err != nil || string(after) != string(before) {
+					t.Fatal("rejected selection changed configuration")
+				}
+				return
+			}
+			got, err := channels.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, pin := range []channels.Channel{got.Control, got.UI} {
+				if pin.Source != source || pin.Branch != member.Branch || pin.Tag != member.Tag || pin.ArtifactSHA256 != member.ArtifactSHA256 || pin.PinOrigin != "installation" || pin.Fallback == nil || len(pin.Fallback) != 0 {
+					t.Fatalf("incorrect member pin: %+v", pin)
+				}
+			}
+			if err := pinDeploymentServices(manifest); err != nil {
+				t.Fatalf("resume: %v", err)
+			}
+		})
+	}
+}

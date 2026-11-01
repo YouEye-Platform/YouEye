@@ -17,37 +17,8 @@ import (
 )
 
 func TestCoreInitializeRequiresFreshNativeEvidenceAndPreservesMachineBinding(t *testing.T) {
-	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, _, err := releasecache.ParseCoreRelease(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	key, private, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	der, _ := x509.MarshalPKIXPublicKey(key)
-	oldSource := r.Source
-	r.Source, r.SignerSHA256 = "https://forge.example/owner/YouEye", checksum(der)
-	for i := range r.Members {
-		member := &r.Members[i]
-		member.Source, member.KeyID = r.Source, r.SignerSHA256
-		for _, b := range []*releasecache.CoreBlob{&member.Artifact, &member.Checksums, &member.Signature, &member.Provenance, &member.SBOM, member.DocumentSignature, member.ReleaseLock} {
-			if b != nil {
-				b.URL = strings.Replace(b.URL, oldSource, r.Source, 1)
-			}
-		}
-	}
-	raw, _ = json.Marshal(r)
-	selection := CoreHostSelection{Raw: raw, Signature: ed25519.Sign(private, raw)}
-	root := t.TempDir()
-	trust := filepath.Join(root, "key.pub")
-	if err := os.WriteFile(trust, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), 0600); err != nil {
-		t.Fatal(err)
-	}
+	selection, root, trust := signedCopyFixture(t)
+	raw := selection.Raw
 	m := CoreManager{Root: filepath.Join(root, "state"), Executor: &coreTestExecutor{}}
 	machine := CoreMachineIdentity{InstallIDRef: "install:fixture", DeviceIDRef: "device:fixture", ParentDiskID: "disk:fixture", StatePartUUID: "state", DataPartUUID: "data"}
 	fail := true
@@ -92,4 +63,41 @@ func TestCoreInitializeRequiresFreshNativeEvidenceAndPreservesMachineBinding(t *
 		t.Fatal("missing retained input was treated as an uninitialized install")
 	}
 
+}
+
+func signedCopyFixture(t *testing.T) (CoreHostSelection, string, string) {
+	t.Helper()
+	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, _, err := releasecache.ParseCoreRelease(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, _ := x509.MarshalPKIXPublicKey(key)
+	oldSource := r.Source
+	r.Source, r.SignerSHA256 = "https://forge.example/owner/YouEye", checksum(der)
+	for i := range r.Members {
+		member := &r.Members[i]
+		member.Source, member.KeyID = r.Source, r.SignerSHA256
+		for _, b := range []*releasecache.CoreBlob{&member.Artifact, &member.Checksums, &member.Signature, &member.Provenance, &member.SBOM, member.DocumentSignature, member.ReleaseLock} {
+			if b != nil {
+				b.URL = strings.Replace(b.URL, oldSource, r.Source, 1)
+			}
+		}
+	}
+	raw, _ = json.Marshal(r)
+	selection := CoreHostSelection{Raw: raw, Signature: ed25519.Sign(private, raw)}
+	root := t.TempDir()
+	trust := filepath.Join(root, "key.pub")
+	if err := os.WriteFile(trust, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	return selection, root, trust
 }

@@ -1,4 +1,6 @@
 "use client";
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
 
 import { type ReactNode, useEffect } from "react";
 
@@ -29,6 +31,8 @@ export function EmbedOverlayShell({
   panelClassName: string;
   onClose?: () => void;
 }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   useEffect(() => {
     document.documentElement.dataset.youeyeOverlayEmbed = "true";
     document.body.dataset.youeyeOverlayEmbed = "true";
@@ -42,7 +46,7 @@ export function EmbedOverlayShell({
     <div data-youeye-overlay-embed className="fixed inset-0 bg-transparent text-foreground">
       <button
         type="button"
-        aria-label="Close overlay"
+        aria-label={translateInterface("m7fe936c30723")}
         className="absolute inset-0 block h-full w-full cursor-default bg-transparent"
         onClick={onClose}
       />

@@ -37,6 +37,23 @@ key, or server IP. The popup returns no Turnstile response, context, cdata, or
 provider secret. Proofs remain in browser memory only, are exact-purpose and
 exact-binding checked, and are acknowledged only after local acceptance.
 
+The popup transport requires the ready/init handshake before accepting a result,
+validates finite expiry values and accepts at most one result per attempt.
+Closing it early reports a retry error while retaining the wizard's choices.
+Leaving the route cancels the listener and prevents late results from beginning
+local acceptance. An already-started registration request must be reconciled
+through its server result; cancelling presentation cannot undo it.
+
+The first check registers an installation; the later check authorizes its
+selected address claim. Neither a successful puzzle nor a returned proof means
+the address/certificate is already provisioned or reachable from the browser.
+The service supplies generated options; a display name never requests a DNS label.
+
+Embedded verification is not enabled by this client. It requires an agreed
+service capability, parent admission, CSP and message protocol plus real
+browser/provider acceptance. The existing exact-origin top-level popup remains
+the supported transport.
+
 ## Signed request contract
 
 All install-authenticated requests sign seven newline-separated fields:

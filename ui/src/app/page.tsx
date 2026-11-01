@@ -15,6 +15,7 @@ import { WidgetGrid } from "@/components/dashboard/widget-grid";
 import { Navbar } from "@/components/layout/navbar";
 import { FontPreloadLink } from "@/components/layout/font-preload";
 import { redirect } from "next/navigation";
+import { resolveTitle } from "@youeye/branding/appearance";
 
 export default async function HomePage() {
   const session = await getSession();
@@ -36,7 +37,8 @@ export default async function HomePage() {
   const greetingName = user?.firstName || session.name || session.username;
 
   // Preload the font being used for the site name
-  const activeStyle = wordartOverride ?? branding.site_name_style;
+  const title = resolveTitle(branding, wordartOverride);
+  const activeStyle = title.style;
   const fontFamily = activeStyle?.fontFamily ?? "Inter";
 
   return (
@@ -46,9 +48,10 @@ export default async function HomePage() {
         username={session.name || session.username}
         email={session.email}
         isAdmin={session.isAdmin}
-        siteName={branding.site_name}
-        siteNameStyle={wordartOverride ?? branding.site_name_style}
+        siteName={title.name}
+        siteNameStyle={title.style}
         logoUrl={branding.logo_url}
+        showLogo={branding.site_name_style?.showHeaderLogo === true}
       />
       <main className="relative h-[calc(100vh-3.5rem)] overflow-hidden">
         <WidgetGrid

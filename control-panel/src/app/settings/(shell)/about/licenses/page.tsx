@@ -1,3 +1,4 @@
+import { getTranslations as getInterfaceTranslations } from "next-intl/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
@@ -24,6 +25,8 @@ const COMPONENTS: Array<{ name: string; license: string }> = [
 ];
 
 export default async function LicensesPage() {
+  const translateInterface = await getInterfaceTranslations("interface");
+
   const session = await getSession();
   if (!session?.isAdmin) redirect("/settings");
 
@@ -33,11 +36,10 @@ export default async function LicensesPage() {
         href="/settings/about"
         className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        <ArrowLeft className="h-4 w-4" /> About
-      </Link>
+        <ArrowLeft className="h-4 w-4" /> {" "}{translateInterface("m4efca0d10c5f")}</Link>
       <PageHeader
-        title="Open source licenses"
-        description="YouEye is built on open-source software. Major components and their licenses are listed below."
+        title={translateInterface("m1a1b83db3be8")}
+        description={translateInterface("m9f59b1b1bba4")}
       />
       <section className="overflow-hidden rounded-xl border bg-card">
         {COMPONENTS.map((c, i) => (

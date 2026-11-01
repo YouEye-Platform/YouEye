@@ -1,0 +1,9 @@
+.mytitle-brand { display: inline-block; vertical-align: middle; max-width: 100%; }
+.mytitle-brand-title, .mytitle-brand-logo { width: var(--mytitle-width, auto); }
+.mytitle-brand-icon { width: 2.5rem; height: 2.5rem; }
+.mytitle-brand svg { display: block; width: 100%; height: auto; max-height: inherit; }
+.mytitle-brand-title svg { width: var(--mytitle-width, auto); height: var(--mytitle-height, 2.25rem); max-width: 100%; }
+.mytitle-brand .mytitle-dark { display: none; }
+.dark .mytitle-brand .mytitle-dark { display: block; }
+.dark .mytitle-brand .mytitle-light { display: none; }
+.mytitle-brand .font-error { display: block; font: inherit; }

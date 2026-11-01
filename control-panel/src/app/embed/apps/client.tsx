@@ -1,5 +1,8 @@
 "use client";
 
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import {
@@ -69,19 +72,9 @@ const STATUS_COLORS: Record<string, string> = {
   unknown: "var(--embed-text-muted)",
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  running: "Running",
-  stopped: "Stopped",
-  partial: "Partial",
-  "not-installed": "Not installed",
-  unknown: "Unknown",
-};
 
-const CATEGORY_LABELS: Record<string, string> = {
-  system: "System",
-  infrastructure: "Infrastructure",
-  user: "Apps",
-};
+
+
 
 const SELF_DESTRUCTIVE = new Set(["control-panel", "youeye-ui"]);
 
@@ -93,6 +86,13 @@ const COMPONENT_MAP: Record<string, string> = {
 };
 
 export function AppsEmbedClient() {
+  const translateInterface = useInterfaceTranslations("interface");
+const CATEGORY_LABELS: Record<string, string> = {
+  system: translateInterface("m6725e7bbcd28"),
+  infrastructure: "Infrastructure",
+  user: translateInterface("m89dd748442c1"),
+};
+
   const searchParams = useSearchParams();
   const section = searchParams.get("section") as "updates" | "system" | null;
 
@@ -115,13 +115,13 @@ export function AppsEmbedClient() {
       const json = await res.json();
       setApps(json.apps ?? []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
+      setError(translateInterface("m3d2301d732a7"));
     } finally {
       setLoading(false);
       setChecking(false);
       window.parent.postMessage({ type: "youeye-embed-check-complete" }, "*");
     }
-  }, []);
+  }, [translateInterface]);
 
   // Listen for parent UI to trigger a refresh (Check for Updates button is in UI)
   useEffect(() => {
@@ -184,7 +184,7 @@ export function AppsEmbedClient() {
     if (SELF_DESTRUCTIVE.has(appId)) {
       const action = appId === "control-panel" ? "control-restarting" : "ui-restarting";
       window.parent.postMessage({ type: "youeye-embed-action", action }, "*");
-      setRestartOverlay(appId === "control-panel" ? "Control Panel" : "YouEye UI");
+      setRestartOverlay(appId === "control-panel" ? translateInterface("m46bb10c98663") : "YouEye UI");
     }
 
     // Start polling BEFORE the POST so intermediate progress states are visible
@@ -296,11 +296,11 @@ export function AppsEmbedClient() {
       {/* Header */}
       <div className="embed-header">
         <div>
-          <div className="embed-title">Apps &amp; Updates</div>
-          <div className="embed-subtitle">All installed apps and services with version info</div>
+          <div className="embed-title">{translateInterface("m249109ea38d5")}</div>
+          <div className="embed-subtitle">{translateInterface("m34d78d683aaf")}</div>
         </div>
         <button className="embed-btn" onClick={() => { setChecking(true); fetchApps(true); }} disabled={checking}>
-          {checking ? "Checking..." : "Check for Updates"}
+          {checking ? translateInterface("m2e5f79bb94a8") : translateInterface("m9ed79ee9b212")}
         </button>
       </div>
 
@@ -309,7 +309,7 @@ export function AppsEmbedClient() {
         <div style={{ marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
             <span style={{ color: "var(--embed-warning)", fontSize: 13, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Updates Available ({appsWithUpdates.length})
+              {translateInterface("mb167f4d4f7a6", {count: appsWithUpdates.length})}
             </span>
           </div>
           {appsWithUpdates.map(app => (
@@ -345,6 +345,8 @@ export function AppsEmbedClient() {
 }
 
 function RestartOverlay({ name }: { name: string }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   return (
     <div style={{
       position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
@@ -352,11 +354,9 @@ function RestartOverlay({ name }: { name: string }) {
     }}>
       <div className="embed-card" style={{ textAlign: "center", maxWidth: 360, padding: 32 }}>
         <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>
-          {name} is restarting...
-        </div>
+          {name} {translateInterface("m591716c68e00")}</div>
         <div className="embed-muted" style={{ fontSize: 13 }}>
-          The page will reload automatically when the service is back online.
-        </div>
+          {translateInterface("m75ce772aeb78")}</div>
         <div style={{ marginTop: 16 }}>
           <div className="embed-skeleton" style={{ height: 4, width: "100%", borderRadius: 2 }} />
         </div>
@@ -399,6 +399,16 @@ function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit }
   onCancelConfirm: () => void;
   onEdit: (app: AppInfo) => void;
 }) {
+  const translateInterface = useInterfaceTranslations("interface");
+const STATUS_LABELS: Record<string, string> = {
+  running: translateInterface("mf4ccae29e1bb"),
+  stopped: translateInterface("m1a4f630ac1b6"),
+  partial: translateInterface("ma4d50fb85403"),
+  "not-installed": translateInterface("md177cdc09a4e"),
+  unknown: translateInterface("mb764cdc0eab7"),
+};
+
+
   const component = COMPONENT_MAP[app.id] || app.id;
   const ps = statuses.get(component);
   const isUpdating = ps && !["idle", "completed", "failed"].includes(ps.status);
@@ -423,7 +433,7 @@ function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit }
             <span style={{ fontWeight: 500, fontSize: 13 }}>{app.displayName}</span>
             {app.version && <span className="embed-muted" style={{ fontSize: 12 }}>v{app.version}</span>}
             <span className="embed-badge" style={{ fontSize: 10 }}>
-              {app.integration === "native" ? "native" : "community"}
+              {app.integration === "native" ? translateInterface("mbef32d2c315a") : translateInterface("mf354ee99e2bc")}
             </span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
@@ -439,11 +449,11 @@ function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit }
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
           {app.category === "user" && (
             <button className="embed-btn" style={{ padding: "3px 8px", fontSize: 12 }}
-              onClick={() => onEdit(app)}>Edit</button>
+              onClick={() => onEdit(app)}>{translateInterface("m464c4ffd019e")}</button>
           )}
           {app.updateAvailable && !isUpdating && (
             <span style={{ fontSize: 12, color: "var(--embed-warning)", display: "flex", alignItems: "center", gap: 4 }}>
-              {app.updateInfo || "Update available"}
+              {app.updateInfo || translateInterface("mff8b555d818f")}
             </span>
           )}
           {app.updateAvailable && (
@@ -452,7 +462,7 @@ function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit }
               borderColor: "var(--embed-primary)", color: "var(--embed-primary)",
             }}
               onClick={() => onUpdate(app.id)} disabled={!!isUpdating}>
-              {isUpdating ? "..." : "Update"}
+              {isUpdating ? "..." : translateInterface("mc1c1009d3f37")}
             </button>
           )}
         </div>
@@ -468,13 +478,13 @@ function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit }
           <div style={{ display: "flex", alignItems: "start", gap: 8 }}>
             <div>
               <div style={{ color: "var(--embed-warning)", fontWeight: 500, marginBottom: 4 }}>
-                This will restart {app.displayName}. The page may become temporarily unavailable.
+                {translateInterface("ma988433e6feb", {app: app.displayName})}
               </div>
               <div style={{ display: "flex", gap: 6 }}>
                 <button className="embed-btn" style={{ padding: "3px 10px", fontSize: 12, borderColor: "var(--embed-danger)", color: "var(--embed-danger)" }}
-                  onClick={() => onUpdate(app.id)}>Continue</button>
+                  onClick={() => onUpdate(app.id)}>{translateInterface("m31fbef162594")}</button>
                 <button className="embed-btn" style={{ padding: "3px 10px", fontSize: 12 }}
-                  onClick={onCancelConfirm}>Cancel</button>
+                  onClick={onCancelConfirm}>{translateInterface("m19766ed6ccb2")}</button>
               </div>
             </div>
           </div>
@@ -488,6 +498,7 @@ function AppCard({ app, statuses, confirmId, onUpdate, onCancelConfirm, onEdit }
 }
 
 function InlineProgress({ status }: { status: UpdateStatus }) {
+  const translateInterface = useInterfaceTranslations("interface");
   const isActive = !["completed", "failed"].includes(status.status);
   const isCompleted = status.status === "completed";
   const isFailed = status.status === "failed";
@@ -508,7 +519,7 @@ function InlineProgress({ status }: { status: UpdateStatus }) {
       )}
       {isCompleted && status.version_after && (
         <div style={{ fontSize: 12, color: "var(--embed-success)", marginTop: 2, fontWeight: 500 }}>
-          Updated to v{status.version_after}
+          {translateInterface("m399e78837381", {version: status.version_after})}
         </div>
       )}
       {isFailed && status.error && (
@@ -521,6 +532,8 @@ function InlineProgress({ status }: { status: UpdateStatus }) {
 function EditAppDialog({ app, onSaved, onClose }: {
   app: AppInfo; onSaved: () => void; onClose: () => void;
 }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [name, setName] = useState(app.displayName);
   const [subdomain, setSubdomain] = useState("");
   const [showSubdomain, setShowSubdomain] = useState(false);
@@ -543,7 +556,7 @@ function EditAppDialog({ app, onSaved, onClose }: {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: "Failed" }));
-        setError(data.error || "Failed to save");
+        setError(data.error || translateInterface("m2c07997249ab"));
         return;
       }
       onSaved();
@@ -560,10 +573,10 @@ function EditAppDialog({ app, onSaved, onClose }: {
       background: "rgba(0,0,0,0.5)", zIndex: 100,
     }} onClick={onClose}>
       <div className="embed-card" style={{ maxWidth: 400, width: "90%" }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 12 }}>Edit {app.displayName}</div>
+        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 12 }}>{translateInterface("m464c4ffd019e")}{" "}{app.displayName}</div>
 
         <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Display Name</div>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>{translateInterface("m18d67c992b71")}</div>
           <input type="text" value={name} onChange={e => setName(e.target.value)}
             placeholder={app.displayName}
             style={{
@@ -576,12 +589,12 @@ function EditAppDialog({ app, onSaved, onClose }: {
         <div style={{ marginBottom: 12 }}>
           <button type="button" onClick={() => setShowSubdomain(!showSubdomain)}
             style={{ fontSize: 13, color: "var(--embed-primary)", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-            {showSubdomain ? "Hide subdomain change" : "Change subdomain..."}
+            {showSubdomain ? translateInterface("mdf434c7e2c0c") : translateInterface("md6c9523b993a")}
           </button>
           {showSubdomain && (
             <div style={{ marginTop: 8 }}>
               <input type="text" value={subdomain} onChange={e => setSubdomain(e.target.value)}
-                placeholder="new-subdomain"
+                placeholder={translateInterface("m60db1aed98bb")}
                 style={{
                   width: "100%", padding: "6px 10px", fontSize: 13, borderRadius: 6,
                   border: "1px solid var(--embed-border)", background: "var(--embed-bg)",
@@ -593,8 +606,7 @@ function EditAppDialog({ app, onSaved, onClose }: {
                 border: "1px solid color-mix(in srgb, var(--embed-warning) 20%, transparent)",
                 color: "var(--embed-warning)",
               }}>
-                This will update routing, sign-in redirects, and all bookmark URLs.
-              </div>
+                {translateInterface("m0a52078ee0f3")}</div>
             </div>
           )}
         </div>
@@ -602,10 +614,10 @@ function EditAppDialog({ app, onSaved, onClose }: {
         {error && <div style={{ fontSize: 13, color: "var(--embed-danger)", marginBottom: 8 }}>{error}</div>}
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <button className="embed-btn" onClick={onClose}>Cancel</button>
+          <button className="embed-btn" onClick={onClose}>{translateInterface("m19766ed6ccb2")}</button>
           <button className="embed-btn" style={{ borderColor: "var(--embed-primary)", color: "var(--embed-primary)" }}
             onClick={handleSave} disabled={saving}>
-            {saving ? "Saving..." : "Save"}
+            {saving ? translateInterface("mdc85af8f2b1d") : translateInterface("m1509f561f241")}
           </button>
         </div>
       </div>

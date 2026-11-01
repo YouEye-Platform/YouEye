@@ -11,3 +11,9 @@ export function safeLoginReturnTo(value: string | null, fallback: string, allowe
     return fallback;
   }
 }
+
+/** Prefer a valid submitted return, then the original URL, then the dashboard. */
+export function selectLoginReturnTo(formValue: string | null, queryValue: string | null, fallback: string, allowedOrigins: Iterable<string>): string {
+  const origins = Array.from(allowedOrigins);
+  return safeLoginReturnTo(formValue, safeLoginReturnTo(queryValue, fallback, origins), origins);
+}

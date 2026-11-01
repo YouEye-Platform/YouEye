@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getBranding, updateBranding, setBrandingAsset } from "@/lib/db/queries/branding";
+import { getBranding, updateBranding, setBrandingAsset, BrandingConflictError } from "@/lib/db/queries/branding";
 import { getBridgeToken } from "@/lib/admin/bridge-client";
 
 function validateToken(request: NextRequest): boolean {
@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const branding = await getBranding();
-  return NextResponse.json(branding);
+  return NextResponse.json(branding, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function PUT(request: NextRequest) {
@@ -29,10 +29,11 @@ export async function PUT(request: NextRequest) {
       site_name_style: body.site_name_style,
       accent_color: body.accent_color,
       icon_config: body.icon_config,
+      expected_revision: body.expected_revision,
     });
 
     // Auto-render icon if in letter mode
-    if (body.icon_config?.mode === "letter" && updated.site_name_style) {
+    if (body.icon_config?.mode === "letter" && updated.site_name_style && !updated.site_name_style.mytitle) {
       try {
         const { renderIconPNGs } = await import("@/lib/icon-renderer");
         await renderIconPNGs(body.icon_config, updated.site_name, updated.site_name_style);
@@ -41,15 +42,16 @@ export async function PUT(request: NextRequest) {
       }
     }
 
-    if (body.logo_url !== undefined) {
+    if (body.logo_url !== undefined && !updated.site_name_style?.mytitle) {
       await setBrandingAsset("logo", body.logo_url);
     }
-    if (body.favicon_url !== undefined) {
+    if (body.favicon_url !== undefined && !updated.site_name_style?.mytitle) {
       await setBrandingAsset("favicon", body.favicon_url);
     }
 
     return NextResponse.json(updated);
-  } catch {
+  } catch (error) {
+    if (error instanceof BrandingConflictError) return NextResponse.json({ error: error.message }, { status: 409 });
     return NextResponse.json({ error: "Invalid branding data" }, { status: 400 });
   }
 }

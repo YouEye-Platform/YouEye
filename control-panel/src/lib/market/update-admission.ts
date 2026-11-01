@@ -46,6 +46,56 @@ export class AppLifecycleAdmissionError extends Error {
   }
 }
 
+interface IndependentCopyRequest {request_id:string;source_hardware:string;destination_hardware:string;source_receipt_sha256:string;manifest_sha256:string}
+const copyContextKey=Symbol.for('youeye.independent-copy-admission');
+const copyGlobal=globalThis as typeof globalThis & {[copyContextKey]?:AsyncLocalStorage<string>};
+const copyContext=copyGlobal[copyContextKey]??=new AsyncLocalStorage<string>();
+function copyRequestBinding(request:IndependentCopyRequest){
+ const hardware=/^smbios:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+ if(!request||!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(request.request_id)||!hardware.test(request.source_hardware)||!hardware.test(request.destination_hardware)||request.source_hardware===request.destination_hardware||!/^[a-f0-9]{64}$/.test(request.source_receipt_sha256)||!/^[a-f0-9]{64}$/.test(request.manifest_sha256))throw new AppLifecycleAdmissionError('Invalid independent copy reservation');
+ return [request.request_id,request.source_hardware,request.destination_hardware,request.source_receipt_sha256,request.manifest_sha256].join('|');
+}
+function readIndependentCopyReservation(directory:string):{role:'source'|'destination';binding:string}|null{
+ let fd:number;
+ try{fd=openSync(path.join(directory,'copy-reservation.json'),constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return null;throw new AppLifecycleAdmissionError('Copy lifecycle reservation is unreadable');}
+ try{
+  const stat=fstatSync(fd);
+  if(!stat.isFile()||stat.uid!==process.geteuid?.()||(stat.mode&0o777)!==0o600||stat.size>4096)throw new AppLifecycleAdmissionError('Copy lifecycle reservation is insecure');
+  let record:any;try{record=JSON.parse(readFileSync(fd,'utf8'));}catch{throw new AppLifecycleAdmissionError('Copy lifecycle reservation is invalid');}
+  if(record.schema!=='youeye.copy-lifecycle.v1'||!['source','destination'].includes(record.role))throw new AppLifecycleAdmissionError('Copy lifecycle reservation is invalid');
+  return {role:record.role,binding:copyRequestBinding(record.request)};
+ }finally{closeSync(fd);}
+}
+export function assertIndependentCopyLifecycle(request:IndependentCopyRequest){
+ const binding=copyRequestBinding(request),reservation=readIndependentCopyReservation(appUpdateJournalStore().directory);
+ if(copyContext.getStore()!==binding||reservation?.role!=='destination'||reservation.binding!==binding)throw new AppLifecycleAdmissionError('Exact native copy lifecycle context required');
+}
+
+/** Background/native integrations settle before the source is frozen. Only
+ * the exact destination coordinator may use them while a copy owns admission. */
+export async function withIndependentCopyExclusion<T>(work:()=>Promise<T>):Promise<T>{
+ const directory=appUpdateJournalStore().directory;
+ const lock=AppUpdateExecutorLock.acquire(path.join(directory,'core-lifecycle.flock'),'shared');
+ try{
+  const reservation=readIndependentCopyReservation(directory);
+  if(reservation&&(reservation.role!=='destination'||reservation.binding!==copyContext.getStore()))throw new AppLifecycleAdmissionError('An independent copy owns this integration');
+  return await work();
+ }finally{lock.release();}
+}
+
+/** Native destination coordinator only. HTTP callers must first prove native
+ * CLI authority and actual machine identity. Ordinary writers never enter this
+ * context; their existing per-app and container locks remain in effect. */
+export async function withIndependentCopyLifecycle<T>(request:IndependentCopyRequest,work:()=>Promise<T>):Promise<T>{
+ const directory=appUpdateJournalStore().directory;
+ const lock=AppUpdateExecutorLock.acquire(path.join(directory,'core-lifecycle.flock'),'shared');
+ try{
+  const reservation=readIndependentCopyReservation(directory),binding=copyRequestBinding(request);
+  if(reservation?.role!=='destination'||reservation.binding!==binding)throw new AppLifecycleAdmissionError('Native destination copy reservation required');
+  return await copyContext.run(binding,()=>withCoreLifecycle(directory,work));
+ }finally{lock.release();}
+}
+
 /** Shared with the host coordinator. Process death never removes a reservation. */
 async function withCoreLifecycle<T>(directory: string, work: () => T | Promise<T>): Promise<T> {
   const key = path.resolve(directory);
@@ -66,6 +116,8 @@ async function withCoreLifecycle<T>(directory: string, work: () => T | Promise<T
   scope.set(key, entry);
   const admittedWork = () => coreContext.run(scope, work);
   try {
+    const copy=readIndependentCopyReservation(directory);
+    if(copy&&(copy.role!=='destination'||copy.binding!==copyContext.getStore()))throw new AppLifecycleAdmissionError('An independent copy owns the platform lifecycle');
     let fd: number;
     try { fd = openSync(path.join(directory, 'core-reservation.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
     catch (error) {
@@ -88,6 +140,11 @@ async function withCoreLifecycle<T>(directory: string, work: () => T | Promise<T
       throw new AppLifecycleAdmissionError('A System update owns the platform lifecycle; complete its update or recovery first');
     } finally { closeSync(fd); }
   } finally { entry.active = false; lock.release(); }
+}
+
+/** Shared with native System activation; retain through the complete operation. */
+export function withPlatformLifecycle<T>(work: () => T | Promise<T>, directory = appUpdateJournalStore().directory): Promise<T> {
+  return withCoreLifecycle(directory, work);
 }
 
 export function appUpdateJournalStore(directory?: string): AppUpdateJournalStore {

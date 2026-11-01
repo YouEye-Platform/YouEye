@@ -286,6 +286,12 @@ func runHostIPMigrationWithLifecycle(opts hostIPMigrationOptions, lifecycle syst
 	}
 	defer unlock()
 
+	copyLease, err := (systemupdate.CoreLifecycleBarrier{Root: systemupdate.CoreAppLifecycleRoot}).AdmitOutsideCopy()
+	if err != nil {
+		return hostIPMigrationResult{}, err
+	}
+	defer copyLease()
+
 	result := hostIPMigrationResult{}
 
 	current := util.GetPrimaryIP()

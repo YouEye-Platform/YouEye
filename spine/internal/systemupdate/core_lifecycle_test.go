@@ -119,3 +119,27 @@ func TestNativeSharedAdmissionAndRetainedMaintenance(t *testing.T) {
 		t.Fatal("native backup entered durable core hold")
 	}
 }
+
+func TestCoreLifecycleRejectsInterruptedSetupOrRestore(t *testing.T) {
+	m, _, target := coreJournalFixture(t)
+	j := prepareCoreFixture(t, m, target)
+	b := CoreLifecycleBarrier{Root: t.TempDir()}
+	if err := os.Chmod(b.Root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(b.Root, "setup-operation.json")
+	for _, payload := range []string{`{"schema":"youeye.setup-lifecycle/1","operation":"setup:fixture"}`, `{damaged`, `{}`} {
+		if err := os.WriteFile(marker, []byte(payload), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := b.Begin(j); err == nil {
+			t.Fatal("System checkpoint bypassed retained setup state")
+		}
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Begin(j); err != nil {
+		t.Fatal("settled setup did not reopen System admission", err)
+	}
+}

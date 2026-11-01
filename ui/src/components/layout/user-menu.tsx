@@ -1,3 +1,6 @@
+"use client";
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 /**
  * User Menu — Plan 1 Workstream E4 (D14-revised, toned down 2026-06-15).
  *
@@ -8,7 +11,7 @@
  * Privacy · About footer. Mirrored on CP (control-header) and native (Canvas).
  */
 
-"use client";
+
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -31,6 +34,8 @@ interface UserMenuProps {
 type ThemeMode = "light" | "dark" | "system";
 
 export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const router = useRouter();
   const t = useTranslations("nav");
   const { theme, setTheme } = useTheme();
@@ -119,7 +124,7 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
             <AvatarFallback className="text-xl">{initials}</AvatarFallback>
           </Avatar>
           <div className="flex items-center gap-1.5 text-base font-medium">
-            <span>Hi, {firstName}!</span>
+            <span>{translateInterface("m48e1645a3bf4", { name: firstName })}</span>
             {isAdmin && <Shield className="size-3.5 text-primary" />}
           </div>
         </div>
@@ -147,8 +152,7 @@ export function UserMenu({ username, email, isAdmin }: UserMenuProps) {
           <div className="flex items-center justify-between gap-3 px-4 py-2.5">
             <span className="flex items-center gap-3 text-sm">
               <Sun className="size-4 text-muted-foreground" />
-              Theme
-            </span>
+              {translateInterface("mefb52e7172b7")}</span>
             <div className="inline-flex rounded-lg border bg-background p-0.5">
               {THEMES.map(({ mode, Icon, label }) => {
                 const active = (theme ?? "system") === mode;

@@ -12,11 +12,28 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getSession } from '@/lib/auth/session';
+import { withReadySetupWork } from '@/lib/setup/readiness';
+import { settingsService } from '@/lib/settings';
 import { cookies } from 'next/headers';
+import { spineClient } from '@/lib/spine/client';
 
-const SUPPORTED_LOCALES = ['en', 'ru', 'es', 'de', 'fr'];
+import { locales as SUPPORTED_LOCALES } from "@/i18n/config";
 
 export async function POST(request: NextRequest) {
+  const session = await getSession();
+  if (!session?.isAdmin) {
+    return NextResponse.json({ error: 'Administrator access required' }, { status: 403 });
+  }
+  // Onboarding must never provide an alternate path around the normal
+  // authenticated personal/instance preference APIs after setup.
+  try {
+    if ((await spineClient.getConfig()).setup_completed === true) {
+      return NextResponse.json({ error: 'Setup already completed' }, { status: 403 });
+    }
+  } catch {
+    return NextResponse.json({ error: 'Setup status is temporarily unavailable' }, { status: 503 });
+  }
   try {
     const body = await request.json();
     const lang = body.language;
@@ -41,32 +58,9 @@ export async function POST(request: NextRequest) {
 
     // Try to persist to youeye.yaml via Spine
     try {
-      const http = await import('http');
-      await new Promise<void>((resolve) => {
-        const payload = JSON.stringify({ language: lang });
-        const req = http.request(
-          {
-            socketPath: '/var/run/youeye/youeye.sock',
-            path: '/api/config',
-            method: 'PATCH',
-            headers: {
-              'Content-Type': 'application/json',
-              'Content-Length': Buffer.byteLength(payload),
-            },
-          },
-          (res) => {
-            res.resume();
-            res.on('end', () => resolve());
-          }
-        );
-        req.on('error', () => resolve());
-        req.setTimeout(3000, () => {
-          req.destroy();
-          resolve();
-        });
-        req.write(payload);
-        req.end();
-      });
+      if ((await getSession())?.isAdmin) {
+        await withReadySetupWork(() => settingsService.setRaw({ language: lang }));
+      }
     } catch {
       // Spine not reachable during early setup — cookie is enough
     }

@@ -7,6 +7,8 @@
  * advanced customization sliders.
  */
 "use client";
+import { useLocale, useTranslations as useInterfaceTranslations } from "next-intl";
+
 
 import { useState, useCallback } from "react";
 import { useTheme } from "next-themes";
@@ -48,6 +50,9 @@ export function BackgroundSettingsDialog({
   config,
   onConfigChange,
 }: BackgroundSettingsDialogProps) {
+  const locale = useLocale();
+  const translateInterface = useInterfaceTranslations("interface");
+
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
   const [localConfig, setLocalConfig] = useState<BackgroundConfig>(config);
@@ -172,8 +177,7 @@ export function BackgroundSettingsDialog({
               {/* Gradient presets */}
               <div className="mt-4">
                 <label className="text-sm font-medium text-foreground/70 mb-2 block">
-                  Gradients
-                </label>
+                  {translateInterface("mab64614fdfe4")}</label>
                 <div className="grid grid-cols-5 gap-2">
                   {GRADIENT_BACKGROUND_PRESETS.map((gp) => (
                     <button
@@ -300,7 +304,7 @@ export function BackgroundSettingsDialog({
                     <div className="flex justify-between text-sm mb-1">
                       <span>{t('speed')}</span>
                       <span className="text-foreground/50">
-                        {customization.speed.toFixed(1)}x
+                        {customization.speed.toLocaleString(locale, {minimumFractionDigits: 1, maximumFractionDigits: 1})}x
                       </span>
                     </div>
                     <Slider
@@ -317,7 +321,7 @@ export function BackgroundSettingsDialog({
                     <div className="flex justify-between text-sm mb-1">
                       <span>{t('scale')}</span>
                       <span className="text-foreground/50">
-                        {customization.scale.toFixed(1)}x
+                        {customization.scale.toLocaleString(locale, {minimumFractionDigits: 1, maximumFractionDigits: 1})}x
                       </span>
                     </div>
                     <Slider
@@ -334,7 +338,7 @@ export function BackgroundSettingsDialog({
                     <div className="flex justify-between text-sm mb-1">
                       <span>{t('intensity')}</span>
                       <span className="text-foreground/50">
-                        {customization.intensity.toFixed(1)}x
+                        {customization.intensity.toLocaleString(locale, {minimumFractionDigits: 1, maximumFractionDigits: 1})}x
                       </span>
                     </div>
                     <Slider
@@ -351,7 +355,7 @@ export function BackgroundSettingsDialog({
                     <div className="flex justify-between text-sm mb-1">
                       <span>{t('cursorReactivity')}</span>
                       <span className="text-foreground/50">
-                        {customization.reactivity.toFixed(1)}x
+                        {customization.reactivity.toLocaleString(locale, {minimumFractionDigits: 1, maximumFractionDigits: 1})}x
                       </span>
                     </div>
                     <Slider

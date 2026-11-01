@@ -1,3 +1,5 @@
+import { mergeMessages } from "../../../shared/message-catalog";
+import english from "../../messages/en.json";
 /**
  * next-intl request configuration for YE-UI
  *
@@ -14,25 +16,17 @@
 import { getRequestConfig } from "next-intl/server";
 import { resolvePreferredLocale, defaultLocale } from "./config";
 
-/** Cached system language with TTL */
-let cachedSystemLang: { value: string; expiresAt: number } | null = null;
-const CACHE_TTL_MS = 60_000;
 
 /**
  * Get system language from local database.
  * Cached in memory with 60s TTL for performance.
  */
 async function fetchSystemLanguage(): Promise<string> {
-  const now = Date.now();
-  if (cachedSystemLang && now < cachedSystemLang.expiresAt) {
-    return cachedSystemLang.value;
-  }
 
   try {
     // Dynamic import to avoid circular deps and build-time issues
     const { getSystemLanguage } = await import("@/lib/db/queries/settings");
     const lang = await getSystemLanguage();
-    cachedSystemLang = { value: lang, expiresAt: now + CACHE_TTL_MS };
     return lang;
   } catch {
     // Database not available during build — use default
@@ -79,6 +73,6 @@ export default getRequestConfig(async () => {
 
   return {
     locale,
-    messages,
+    messages: mergeMessages(english, messages),
   };
 });

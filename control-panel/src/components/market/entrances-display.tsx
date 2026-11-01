@@ -1,4 +1,6 @@
 'use client';
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
 
 import { Globe, Server, Lock, Unlock, EyeOff } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -19,14 +21,16 @@ interface EntrancesDisplayProps {
   domain?: string;
 }
 
-const AUTH_BADGE: Record<string, { label: string; className: string; Icon: typeof Lock }> = {
-  private: { label: 'SSO Required', className: 'bg-green-50 text-green-700 border-green-200', Icon: Lock },
-  public: { label: 'Public', className: 'bg-amber-50 text-amber-700 border-amber-200', Icon: Unlock },
-  internal: { label: 'Internal Only', className: 'bg-gray-50 text-gray-500 border-gray-200', Icon: EyeOff },
-  none: { label: 'No Auth', className: 'bg-gray-50 text-gray-400 border-gray-100', Icon: Unlock },
+const AUTH_BADGE: Record<string, { labelKey: string; className: string; Icon: typeof Lock }> = {
+  private: { labelKey: "m0128c0b64fc7", className: 'bg-green-50 text-green-700 border-green-200', Icon: Lock },
+  public: { labelKey: "m591935b15b1c", className: 'bg-amber-50 text-amber-700 border-amber-200', Icon: Unlock },
+  internal: { labelKey: "mf1bd1a602a29", className: 'bg-gray-50 text-gray-500 border-gray-200', Icon: EyeOff },
+  none: { labelKey: "mca179d59812e", className: 'bg-gray-50 text-gray-400 border-gray-100', Icon: Unlock },
 };
 
 export function EntrancesDisplay({ entrances, subdomain, domain }: EntrancesDisplayProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   if (!entrances.length) return null;
 
   const baseUrl = subdomain && domain ? `https://${subdomain}.${domain}` : null;
@@ -36,8 +40,7 @@ export function EntrancesDisplay({ entrances, subdomain, domain }: EntrancesDisp
       <div className="flex items-center gap-2 mb-3">
         <Server className="h-4 w-4 text-gray-400" />
         <p className="text-xs text-gray-400 uppercase tracking-wide font-medium">
-          Access Points
-        </p>
+          {translateInterface("mef1b90fba342")}</p>
       </div>
       <div className="space-y-2.5">
         {entrances.map((entrance) => {
@@ -68,7 +71,7 @@ export function EntrancesDisplay({ entrances, subdomain, domain }: EntrancesDisp
               </div>
               <Badge variant="outline" className={`shrink-0 text-[10px] ${auth.className}`}>
                 <AuthIcon className="h-2.5 w-2.5" />
-                {auth.label}
+                {translateInterface(auth.labelKey)}
               </Badge>
             </div>
           );

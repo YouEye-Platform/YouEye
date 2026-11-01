@@ -10,7 +10,7 @@ function read(path: string): string {
 
 test('E4: account menu is the owner-approved structured panel', () => {
   const src = read('src/components/layout/user-menu.tsx');
-  assert.match(src, /Hi, \{firstName\}!/);
+  assert.match(src, /translateInterface\("m48e1645a3bf4", \{ name: firstName \}\)/);
   assert.doesNotMatch(src, />Manage your account</);
   assert.doesNotMatch(src, />About this server</);
   assert.match(src, /size-\[76px\]/); // big avatar

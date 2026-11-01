@@ -1,5 +1,8 @@
 'use client';
 
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
+
 import { useState } from 'react';
 import {
   Loader2, Upload, ShieldCheck,
@@ -18,6 +21,8 @@ interface Props {
 // This component only handles the certificate upload flow.
 
 export default function SetupTls({ domain, onComplete, onBack }: Props) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const t = useTranslations('setup');
   const [certPem, setCertPem] = useState('');
   const [keyPem, setKeyPem] = useState('');
@@ -57,10 +62,10 @@ export default function SetupTls({ domain, onComplete, onBack }: Props) {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      if (!res.ok) throw new Error(data.error || translateInterface("m6efc5d27f30b"));
       setDone(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Upload failed');
+      setError(translateInterface("m6efc5d27f30b"));
     } finally {
       setLoading(false);
     }

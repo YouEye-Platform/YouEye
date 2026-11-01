@@ -15,6 +15,9 @@
 
 "use client";
 
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
+
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Bell, Check } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -37,6 +40,8 @@ export function NotificationBell({
   mode?: "light" | "dark";
   onUnreadCountChange?: (count: number) => void;
 }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [open, setOpen] = useState(false);
   const [overlayMode, setOverlayMode] = useState<"light" | "dark">("light");
   const [prewarm, setPrewarm] = useState(false);
@@ -130,7 +135,7 @@ export function NotificationBell({
           const res = await fetch("/api/v1/notifications", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ type: "info", title: `Installing ${appName}...`, message: "Installation in progress", app_id: appId }),
+            body: JSON.stringify({ type: "info", title: translateInterface("mb73a0cdd95b8", { value0: String(appName) }), message: translateInterface("me840f9876043"), app_id: appId }),
           });
           if (res.ok) {
             const notif = await res.json();
@@ -150,7 +155,7 @@ export function NotificationBell({
           await fetch("/api/v1/notifications", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ type: error ? "error" : "success", title: error ? `${appName} install failed` : `${appName} installed`, message: error || null, app_id: appId }),
+            body: JSON.stringify({ type: error ? "error" : "success", title: error ? translateInterface("mbeb615ae57ba", { value0: String(appName) }) : translateInterface("mdff25660bd09", { value0: String(appName) }), message: error || null, app_id: appId }),
           });
           fetchNotifications();
         } catch { /* best effort */ }

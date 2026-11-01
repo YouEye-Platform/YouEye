@@ -1,3 +1,7 @@
+import { createTranslator } from "next-intl";
+import { resolvePreferredLocale, localeDirection } from "@/i18n/config";
+import english from "../../../../../messages/en.json";
+import { mergeMessages } from "../../../../../../shared/message-catalog";
 import { NextRequest, NextResponse } from 'next/server';
 import { createAuthCode, getAppConsent, getClient, upsertAppConsent, IdentityGrantInvalidated, type IdentityClient, type IdentityUser } from '@/lib/identity/store';
 import { getIdentityConfig } from '@/lib/identity/config';
@@ -45,6 +49,7 @@ interface RuntimePermission {
 }
 
 interface ConsentDisplay {
+  locale?: string;
   app?: {
     id?: string;
     name?: string;
@@ -285,7 +290,7 @@ function accountAvatar(display: ConsentDisplay['user'] | undefined, accountLabel
   return `<div class="avatar">${escapeHtml(initials(accountLabel))}</div>`;
 }
 
-function consentHtml(params: {
+async function consentHtml(params: {
   client: IdentityClient;
   user: IdentityUser;
   scope: string;
@@ -295,6 +300,10 @@ function consentHtml(params: {
   display?: ConsentDisplay;
   uiExternalUrl?: string | null;
 }) {
+  const raw = await settingsService.getRaw().catch(() => null);
+  const locale = resolvePreferredLocale(params.display?.locale, raw?.language);
+  const selected = (await import(`../../../../../messages/${locale}.json`)).default;
+  const t = createTranslator({ locale, messages: { interface: mergeMessages(english, selected).interface as Record<string, string> }, namespace: "interface" });
   const scopes = scopeList(params.scope);
   const appName = params.display?.app?.name || params.client.name || params.client.client_id;
   const runtimeRows = (params.runtimePermissions ?? []).map((permission) => {
@@ -308,28 +317,27 @@ function consentHtml(params: {
     </label>`;
   }).join('');
   const runtimeSection = runtimeRows
-    ? `<section class="extra-access"><p>${escapeHtml(appName)} also wants to:</p><div class="runtime-list">${runtimeRows}</div></section>`
+    ? `<section class="extra-access"><p>${escapeHtml(t("mc6d74d241c4d", { app: appName }))}</p><div class="runtime-list">${runtimeRows}</div></section>`
     : '';
   const accountLabel = params.user.name || params.user.username;
   const accountEmail = params.user.email || params.user.username;
-  const shares = [
-    scopes.includes('profile') ? 'name' : null,
-    scopes.includes('email') ? 'email address' : null,
-  ].filter(Boolean) as string[];
-  const shareText = shares.length > 0
-    ? `${params.providerName} will share your ${shares.join(' and ')} with ${appName}.`
-    : `${params.providerName} will let ${appName} confirm this is your account.`;
+  const sharing = scopes.includes('profile') && scopes.includes('email')
+    ? t("m1a46470ba5c2", { provider: params.providerName, app: appName })
+    : scopes.includes('profile') ? t("m51381d8252e5", { provider: params.providerName, app: appName })
+    : scopes.includes('email') ? t("md3cf87836f75", { provider: params.providerName, app: appName })
+    : t("m04440bb24dff", { provider: params.providerName, app: appName });
+  const shareText = sharing;
   const appFontLink = absoluteAssetUrl(params.display?.app?.branding_font_url, params.uiExternalUrl ?? null);
   const appBrandMarkup = appBrand(params.display?.app, appName, params.uiExternalUrl ?? null);
 
   return new Response(`<!doctype html>
-<html lang="en">
+<html lang="${escapeHtml(locale)}" dir="${localeDirection(locale)}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   ${identityFaviconLinks()}
   ${appFontLink ? `<link rel="stylesheet" href="${escapeHtml(appFontLink)}" />` : ''}
-  <title>Allow ${escapeHtml(appName)}?</title>
+  <title>${escapeHtml(t("m910aa8eb5048", { app: appName }))}</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -453,7 +461,7 @@ function consentHtml(params: {
   <main>
     ${appBrandMarkup}
     <div class="intro">
-      <h1>Sign in to ${escapeHtml(appName)}</h1>
+      <h1>${escapeHtml(t("md703bd279af3", { app: appName }))}</h1>
     </div>
     <div class="account">
       ${accountAvatar(params.display?.user, accountLabel, params.uiExternalUrl ?? null)}
@@ -464,13 +472,13 @@ function consentHtml(params: {
     </div>
     <div class="copy">
       <p>${escapeHtml(shareText)}</p>
-      <p>You can revoke access later in app settings.</p>
+      <p>${escapeHtml(t("mdb2d9c7b6fae"))}</p>
     </div>
     <form method="post" action="/application/o/authorize?${escapeHtml(params.query)}">
       ${runtimeSection}
       <div class="actions">
-        <button class="deny" type="submit" name="decision" value="deny">Cancel</button>
-        <button class="approve" type="submit" name="decision" value="approve">Continue</button>
+        <button class="deny" type="submit" name="decision" value="deny">${escapeHtml(t("m19766ed6ccb2"))}</button>
+        <button class="approve" type="submit" name="decision" value="approve">${escapeHtml(t("m31fbef162594"))}</button>
       </div>
     </form>
   </main>

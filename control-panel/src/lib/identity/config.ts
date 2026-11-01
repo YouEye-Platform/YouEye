@@ -14,6 +14,7 @@ export interface IdentityConfig {
   domain: string;
   subdomain: string;
   externalUrl: string;
+  dashboardUrl: string;
   internalUrl: string;
   containerName: string;
   port: number;
@@ -44,10 +45,15 @@ export async function getIdentityConfig(): Promise<IdentityConfig> {
   return identityConfigFromSettings(raw);
 }
 
-export function identityConfigFromSettings(raw: { domain?: unknown; subdomains?: { identity?: unknown } }): IdentityConfig {
+export function identityConfigFromSettings(raw: { domain?: unknown; subdomains?: { identity?: unknown; ui?: unknown } }): IdentityConfig {
   const domain = normalizeDomain(raw.domain);
   const subdomain = normalizeSubdomain(raw.subdomains?.identity);
   const host = `${subdomain}.${domain}`;
+  const uiLabel = raw.subdomains?.ui;
+  const uiSubdomain = uiLabel === undefined || uiLabel === null || uiLabel === ''
+    ? '' : normalizeSubdomain(uiLabel);
+  const dashboardHost = uiSubdomain ? `${uiSubdomain}.${domain}` : domain;
+  if (dashboardHost === host) throw new Error('Dashboard and identity hostnames must be different.');
   const containerName = 'youeye-control';
   const port = 3001;
 
@@ -55,6 +61,7 @@ export function identityConfigFromSettings(raw: { domain?: unknown; subdomains?:
     domain,
     subdomain,
     externalUrl: `https://${host}`,
+    dashboardUrl: `https://${dashboardHost}/`,
     internalUrl: `http://${containerName}.${CONTAINER_DOMAIN}:${port}`,
     containerName,
     port,

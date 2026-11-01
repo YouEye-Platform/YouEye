@@ -1,5 +1,11 @@
 "use client";
 
+
+
+
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowRightLeft,
@@ -55,19 +61,9 @@ interface ComponentEntry {
 type ChannelsResponse = { components: Record<string, ComponentEntry> };
 
 // Human names per copy rules — core services get product names, never component names.
-const COMPONENT_LABELS: Record<string, string> = {
-  default: "Default (all components)",
-  system: "YouEye System",
-  spine: "System core",
-  control: "Server interface",
-  ui: "Dashboard",
-};
 
-function labelFor(id: string): string {
-  if (COMPONENT_LABELS[id]) return COMPONENT_LABELS[id];
-  if (id.startsWith("app:")) return id.slice("app:".length);
-  return id;
-}
+
+
 
 // Fixed display order for core components; apps follow, alphabetically.
 const CORE_ORDER = ["default", "system", "spine", "control", "ui"];
@@ -148,6 +144,22 @@ function VersionCell({ label, value }: { label: string; value: VersionRef }) {
 }
 
 export function UpdateChannels({ appliance = false, componentId }: { appliance?: boolean; componentId?: string }) {
+  const translateInterface = useInterfaceTranslations("interface");
+const COMPONENT_LABELS: Record<string, string> = {
+  default: translateInterface("m6d8b5ac054d6"),
+  system: translateInterface("m2a1ec4ff37ff"),
+  spine: translateInterface("m6a81c94a4745"),
+  control: translateInterface("m0d6a16e62a51"),
+  ui: translateInterface("m67b696468610"),
+};
+
+function labelFor(id: string): string {
+  if (COMPONENT_LABELS[id]) return COMPONENT_LABELS[id];
+  if (id.startsWith("app:")) return id.slice("app:".length);
+  return id;
+}
+
+
   const [data, setData] = useState<ChannelsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -162,7 +174,7 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
     try {
       const res = await fetch("/settings/api/updates/channels");
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error || "Failed to load update channels");
+      if (!res.ok) throw new Error(body.error || translateInterface("m4629a02438be"));
       setData(body as ChannelsResponse);
       // Seed row editor state from the fetched overrides (derived, no flash).
       const seeded: Record<string, RowState> = {};
@@ -171,11 +183,11 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
       }
       setRows(seeded);
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Failed to load update channels");
+      setLoadError(err instanceof Error ? err.message : translateInterface("m4629a02438be"));
     } finally {
       setLoading(false);
     }
-  }, [componentId]);
+  }, [componentId, translateInterface]);
 
   useEffect(() => {
     void load();
@@ -224,11 +236,11 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
         body: JSON.stringify(payload),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || "Failed to save channel");
-      patchRow(id, { saving: false, message: "Saved" });
+      if (!res.ok) throw new Error(body.error || translateInterface("m47cd80f434cc"));
+      patchRow(id, { saving: false, message: translateInterface("mb5c120b316c2") });
       await load();
     } catch (err) {
-      patchRow(id, { saving: false, error: err instanceof Error ? err.message : "Failed to save channel" });
+      patchRow(id, { saving: false, error: err instanceof Error ? err.message : translateInterface("m47cd80f434cc") });
     }
   }
 
@@ -242,10 +254,10 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
         body: JSON.stringify({ [id]: null }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || "Failed to reset channel");
+      if (!res.ok) throw new Error(body.error || translateInterface("m141451f7fd52"));
       await load();
     } catch (err) {
-      patchRow(id, { saving: false, error: err instanceof Error ? err.message : "Failed to reset channel" });
+      patchRow(id, { saving: false, error: err instanceof Error ? err.message : translateInterface("m141451f7fd52") });
     }
   }
 
@@ -265,11 +277,11 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
         body: JSON.stringify({ confirm_switch: true }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || "Switch failed");
+      if (!res.ok) throw new Error(body.error || translateInterface("ma78caba8b7ef"));
       setSwitchTarget(null);
       await load();
     } catch (err) {
-      patchRow(switchTarget.id, { error: err instanceof Error ? err.message : "Switch failed" });
+      patchRow(switchTarget.id, { error: err instanceof Error ? err.message : translateInterface("ma78caba8b7ef") });
     } finally {
       setSwitching(false);
     }
@@ -281,10 +293,10 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
         <div>
           <h3 className="flex items-center gap-2 text-[15px] font-semibold">
             <GitBranch className="h-4 w-4" />
-            {componentId ? "Update channel" : "Update channels"}
+            {componentId ? translateInterface("md4fc42307306") : translateInterface("m4e0c4a0aa248")}
           </h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            {componentId ? "Choose the repository and release branch used when this product checks for updates." : "Choose which branch the Server interface, Dashboard, and native apps install from, and how they fall back."}
+            {componentId ? translateInterface("m940ecd90bdb4") : translateInterface("mbae1c928c41c")}
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
@@ -313,7 +325,7 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
                       type="button"
                       className="text-muted-foreground hover:text-foreground"
                       onClick={() => patchRow(id, { expanded: !row.expanded })}
-                      aria-label={row.expanded ? "Collapse" : "Expand"}
+                      aria-label={row.expanded ? translateInterface("mbe6eb1fc3b05") : translateInterface("m07548c2c6511")}
                     >
                       {row.expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                     </button>
@@ -330,13 +342,11 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
                         <div className="mt-0.5 flex items-center gap-2 text-[12px] text-muted-foreground">
                           {entry.update_available && !entry.switch_pending && (
                             <span className="flex items-center gap-1 text-green-600 dark:text-green-500">
-                              Update available
-                            </span>
+                              {translateInterface("mff8b555d818f")}</span>
                           )}
                           {entry.switch_pending && (
                             <span className="flex items-center gap-1 text-amber-600 dark:text-amber-500">
-                              <ArrowRightLeft className="h-3 w-3" /> Switch pending
-                            </span>
+                              <ArrowRightLeft className="h-3 w-3" /> {translateInterface("m0e9df043cadf")}</span>
                           )}
                         </div>
                       )}
@@ -344,8 +354,8 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
                   </div>
 
                   <div className="flex items-center gap-6">
-                    {id !== "default" && <VersionCell label="Installed" value={entry.installed} />}
-                    {id !== "default" && <VersionCell label="Candidate" value={entry.candidate} />}
+                    {id !== "default" && <VersionCell label={translateInterface("mf8b32f4e92bd")} value={entry.installed} />}
+                    {id !== "default" && <VersionCell label={translateInterface("mb2452d1eba32")} value={entry.candidate} />}
                     {id !== "system" && entry.switch_pending && entry.candidate.version && (
                       <Button
                         size="sm"
@@ -355,7 +365,7 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
                         }
                       >
                         <ArrowRightLeft className="mr-1 h-3.5 w-3.5" />
-                        Switch to {formatVersion(entry.candidate.version)}
+                        {translateInterface("m71b71bcf2818")}{formatVersion(entry.candidate.version)}
                         {entry.candidate.branch ? ` (${entry.candidate.branch})` : ""}
                       </Button>
                     )}
@@ -366,21 +376,21 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
                   <div className="mt-3 space-y-3 border-t pt-3">
                     <div className="grid gap-3 md:grid-cols-2">
                       <div className="space-y-1.5">
-                        <Label htmlFor={`source-${id}`}>Repo URL</Label>
+                        <Label htmlFor={`source-${id}`}>{translateInterface("mde5c1d1e3353")}</Label>
                         <Input
                           id={`source-${id}`}
                           value={row.source}
-                          placeholder={`inherit (${entry.channel.source})`}
+                          placeholder={translateInterface("m9edaf387d33b", { value0: String(entry.channel.source) })}
                           onChange={(e) => patchRow(id, { source: e.target.value })}
                           disabled={row.saving}
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label htmlFor={`branch-${id}`}>Release branch / channel</Label>
+                        <Label htmlFor={`branch-${id}`}>{translateInterface("m3e0a287758a7")}</Label>
                         <Input
                           id={`branch-${id}`}
                           value={row.branch}
-                          placeholder={id === "default" ? "main" : `inherit (${entry.channel.branch})`}
+                          placeholder={id === "default" ? "main" : translateInterface("m9edaf387d33b", { value0: String(entry.channel.branch) })}
                           onChange={(e) => patchRow(id, { branch: e.target.value })}
                           disabled={row.saving}
                         />
@@ -388,35 +398,35 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
                     </div>
 
                     <details className="text-[13px]">
-                      <summary className="cursor-pointer text-muted-foreground">Advanced</summary>
+                      <summary className="cursor-pointer text-muted-foreground">{translateInterface("m9f088dbebd6c")}</summary>
                       <div className="mt-2 grid gap-3 md:grid-cols-2">
                         <div className="space-y-1.5 md:col-span-2">
-                          <Label>Fallback branches</Label>
+                          <Label>{translateInterface("m8af3a2cae712")}</Label>
                           <div className="flex flex-wrap gap-1.5">
                             {(["default", "custom", "disabled"] as FallbackMode[]).map((mode) => (
                               <Button key={mode} type="button" size="sm" variant={row.fallbackMode === mode ? "default" : "outline"} onClick={() => patchRow(id, { fallbackMode: mode })} disabled={row.saving}>
-                                {mode === "default" ? "Default (main)" : mode === "custom" ? "Custom chain" : "Disabled"}
+                                {mode === "default" ? translateInterface("m0bbc7109e6cd") : mode === "custom" ? translateInterface("ma913ec01bd04") : translateInterface("m75081b593d15")}
                               </Button>
                             ))}
                           </div>
                           {row.fallbackMode === "custom" && <Input className="mt-1.5" value={row.fallbackChain} placeholder="main, dev" onChange={(e) => patchRow(id, { fallbackChain: e.target.value })} disabled={row.saving} />}
                         </div>
                         <div className="space-y-1.5">
-                          <Label htmlFor={`tag-${id}`}>Exact release tag</Label>
+                          <Label htmlFor={`tag-${id}`}>{translateInterface("m8c1894f16c3b")}</Label>
                           <Input
                             id={`tag-${id}`}
                             value={row.tag}
-                            placeholder="Optional"
+                            placeholder={translateInterface("m59be71333c96")}
                             onChange={(e) => patchRow(id, { tag: e.target.value })}
                             disabled={row.saving}
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label htmlFor={`digest-${id}`}>Artifact SHA-256</Label>
+                          <Label htmlFor={`digest-${id}`}>{translateInterface("m6dde0ae26cb0")}</Label>
                           <Input
                             id={`digest-${id}`}
                             value={row.artifactSHA256}
-                            placeholder="Optional exact digest"
+                            placeholder={translateInterface("m91ed372c1de3")}
                             className="font-mono"
                             onChange={(e) => patchRow(id, { artifactSHA256: e.target.value.toLowerCase() })}
                             disabled={row.saving}
@@ -428,9 +438,8 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
                     <div className="flex items-center gap-3">
                       <Button size="sm" onClick={() => void saveRow(id)} disabled={row.saving}>
                         {row.saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                        Save
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={() => void resetRow(id)} disabled={row.saving || !entry.override}>Reset to default</Button>
+                        {translateInterface("m1509f561f241")}</Button>
+                      <Button size="sm" variant="outline" onClick={() => void resetRow(id)} disabled={row.saving || !entry.override}>{translateInterface("mbc5b45ae7b60")}</Button>
                       {row.message && <span className="text-[13px] text-muted-foreground">{row.message}</span>}
                       {row.error && <span className="text-[13px] text-destructive">{row.error}</span>}
                     </div>
@@ -444,23 +453,13 @@ export function UpdateChannels({ appliance = false, componentId }: { appliance?:
 
       <ConfirmDialog
         open={!!switchTarget}
-        title="Switch update channel?"
+        title={translateInterface("mafad80debe2e")}
         description={
           switchTarget
-            ? `This installs ${labelFor(switchTarget.id)} ${switchTarget.candidate.version ? formatVersion(switchTarget.candidate.version) : ""}` +
-              `${switchTarget.candidate.branch ? ` from branch "${switchTarget.candidate.branch}"` : ""}` +
-              `${
-                switchTarget.installed.version
-                  ? `, replacing the installed ${formatVersion(switchTarget.installed.version)}${
-                      switchTarget.installed.branch && switchTarget.installed.branch !== "main"
-                        ? ` (${switchTarget.installed.branch})`
-                        : ""
-                    }.`
-                  : "."
-              } This can be a downgrade — the new version may be numerically lower than what you have now.`
+            ? translateInterface("md8939907445b", {component: labelFor(switchTarget.id), candidate: switchTarget.candidate.version ? formatVersion(switchTarget.candidate.version) : "—", branch: switchTarget.candidate.branch || "—", installed: switchTarget.installed.version ? formatVersion(switchTarget.installed.version) + (switchTarget.installed.branch ? " (" + switchTarget.installed.branch + ")" : "") : "—"})
             : undefined
         }
-        confirmLabel={switching ? "Switching…" : "Switch channel"}
+        confirmLabel={switching ? translateInterface("mb7b9fbf8df28") : translateInterface("m716970972267")}
         confirmDisabled={switching}
         onConfirm={() => void confirmSwitch()}
         onCancel={() => (switching ? undefined : setSwitchTarget(null))}

@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { describePermission } from "./descriptors";
+import { describePermission, type PermissionTranslator } from "./descriptors";
 
 export function normalizePermissionAppId(appId: string): string {
   return appId.replace(/^ye-/, "");
@@ -41,7 +41,8 @@ export function buildPermissionApproval(
   permissions: string[],
   grantType?: unknown,
   request?: Request | NextRequest,
-  returnTo?: unknown
+  returnTo?: unknown,
+  translate?: PermissionTranslator
 ) {
   const params = new URLSearchParams();
   params.set("app_id", appId);
@@ -58,7 +59,7 @@ export function buildPermissionApproval(
     approval_required: true,
     app_id: appId,
     requested: permissions,
-    permissions: permissions.map((permission) => describePermission(permission)),
+    permissions: permissions.map((permission) => describePermission(permission, translate)),
     approval_url: approvalPath,
     approval_url_absolute: base ? `${base}${approvalPath}` : approvalPath,
     return_to: safeReturnTo,

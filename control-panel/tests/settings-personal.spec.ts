@@ -1,3 +1,4 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -6,8 +7,9 @@ import assert from 'node:assert/strict';
 // Source-regression checks for Plan 1 Workstream C2 (Settings Personal pages).
 // Run anywhere: CONTROL_PANEL_ROOT="$PWD" node --import tsx --test tests/settings-personal.spec.ts
 const repoRoot = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..');
+const navigation = JSON.parse(readFileSync(join(repoRoot, 'messages/en.json'), 'utf8')).settingsNavigation;
 function read(path: string): string {
-  return readFileSync(join(repoRoot, path), 'utf8');
+  return path.endsWith(".tsx") ? englishInterfaceSource(readFileSync(join(repoRoot, path), "utf8")) : readFileSync(join(repoRoot, path), "utf8");
 }
 
 test('C2: settings nav has Personal + Administration section labels (Admin renamed)', () => {
@@ -26,8 +28,10 @@ test('C2: active nav item uses the soft-blue accent, not shadcn gray bg-accent',
 
 test('C2: nav uses People (not Users) and Market is not in Settings (D9)', () => {
   const shell = read('src/components/settings-shell/settings-shell.tsx');
-  assert.match(shell, /label:\s*"People"/);
-  assert.doesNotMatch(shell, /label:\s*"Market"/);
+  assert.match(shell, /\{ id: "users", icon: Users, href: "\/settings\/users" \}/);
+  assert.match(shell, /navigation\(section\.id\)/);
+  assert.equal(navigation.users, 'People');
+  assert.equal(navigation.market, undefined);
   assert.doesNotMatch(shell, /href:\s*"\/settings\/market"/);
 });
 
@@ -65,7 +69,8 @@ test('C2: Profile exposes real password management and no fabricated join date (
 
 test('C2: Appearance header is the page H1 with the mockup subtitle; WordArt picker kept (D7)', () => {
   const appearance = read('src/components/settings-shell/appearance-client.tsx');
-  assert.match(appearance, /<h1 className="text-2xl font-bold tracking-tight">Appearance<\/h1>/);
+  assert.match(appearance, /<PageHeader title="Appearance" description="Make this server yours — wordmark, themes, and wallpaper" \/>/);
+  assert.match(read('src/components/settings-shell/page-header.tsx'), /<h1[^>]*>\{title\}<\/h1>/);
   assert.match(appearance, /Make this server yours/);
   // D7: the WordArt picker remains (BrandingTabs renders it).
   assert.match(appearance, /BrandingTabs/);
@@ -73,7 +78,7 @@ test('C2: Appearance header is the page H1 with the mockup subtitle; WordArt pic
 
 test('C2: Language rebuilt to the two-card layout (Your language + Server default), not tabs', () => {
   const lang = read('src/components/settings-shell/language-client.tsx');
-  assert.match(lang, /<h1 className="text-2xl font-bold tracking-tight">Language<\/h1>/);
+  assert.match(lang, /<PageHeader title="Language"/);
   assert.match(lang, /Your language/);
   assert.match(lang, /Server default/);
   assert.match(lang, /from "@\/components\/ui\/card"/);
@@ -87,7 +92,7 @@ test('C2: Language rebuilt to the two-card layout (Your language + Server defaul
 
 test('C2: People page — complete user list + explicit person form + real Manage flow', () => {
   const people = read('src/components/settings-shell/users-client.tsx');
-  assert.match(people, /<h1 className="text-2xl font-bold tracking-tight">People<\/h1>/);
+  assert.match(people, /<PageHeader title="People"/);
   assert.match(people, /Who can sign in to this server/);
   assert.match(people, /Add person/);
   assert.match(people, /First name/);
@@ -107,7 +112,7 @@ test('C2: People page — complete user list + explicit person form + real Manag
 
 test('C2: System page — stat row + human-named Platform + live usage + preserved update flow', () => {
   const sys = read('src/components/settings-shell/system-client.tsx');
-  assert.match(sys, /<h1 className="text-2xl font-bold tracking-tight">System<\/h1>/);
+  assert.match(sys, /<PageHeader title="System"/);
   assert.match(sys, /Your server at a glance/);
   assert.match(sys, /from "@\/components\/ui\/card"/);
   // Human service names (D4 / skill copy rule — never raw component names as titles).

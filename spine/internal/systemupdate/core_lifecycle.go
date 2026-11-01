@@ -109,6 +109,11 @@ func (b CoreLifecycleBarrier) AdmitOrdinary() (func(), error) {
 	if err != nil {
 		return nil, err
 	}
+	_, copyErr := b.ReadCopy()
+	if !errors.Is(copyErr, os.ErrNotExist) {
+		release()
+		return nil, fmt.Errorf("independent copy owns the platform lifecycle")
+	}
 	_, err = b.Read()
 	if !errors.Is(err, os.ErrNotExist) {
 		release()
@@ -170,6 +175,9 @@ func (b CoreLifecycleBarrier) begin(ctx context.Context, j CoreJournal, wait boo
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if _, err := b.ReadCopy(); !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("independent copy owns the platform lifecycle")
+	}
 	want := CoreLifecycleReservation{Schema: "youeye.core-lifecycle.v1", RequestID: j.RequestID, ManifestSHA256: j.ManifestSHA256}
 	old, err := b.Read()
 	if err == nil {
@@ -181,38 +189,8 @@ func (b CoreLifecycleBarrier) begin(ctx context.Context, j CoreJournal, wait boo
 	if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := b.checkNativeMaintenance(); err != nil {
+	if err := b.checkQuiescent(); err != nil {
 		return err
-	}
-	// No app process may be active now. Unfinished durable receipts still
-	// reserve their data, even after a crash released every OS lock.
-	entries, err := os.ReadDir(filepath.Join(b.Root, "operations"))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-		raw, err := ReadCoreState(filepath.Join(b.Root, "operations", entry.Name()), 4<<20)
-		if err != nil {
-			return err
-		}
-		var record struct {
-			Schema          string `json:"schema"`
-			Phase           string `json:"phase"`
-			CleanupComplete bool   `json:"cleanupComplete"`
-			Commit          *struct {
-				VerifiedAt string `json:"verifiedAt"`
-			} `json:"commit"`
-			RollbackVerifiedAt string `json:"rollbackVerifiedAt"`
-		}
-		if err := json.Unmarshal(raw, &record); err != nil {
-			return err
-		}
-		if record.Schema != "youeye.app-update.v1" || !record.CleanupComplete || record.Phase != "cleanup" || ((record.Commit == nil || record.Commit.VerifiedAt == "") && record.RollbackVerifiedAt == "") {
-			return fmt.Errorf("unfinished app update must complete recovery before System activation")
-		}
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -225,6 +203,14 @@ func (b CoreLifecycleBarrier) begin(ctx context.Context, j CoreJournal, wait boo
 }
 
 func (b CoreLifecycleBarrier) checkNativeMaintenance() error {
+	// Browser setup/restore holds shared admission while live. A process loss
+	// leaves this protected operation marker until that exact work settles.
+	if _, err := ReadCoreState(filepath.Join(b.Root, "setup-operation.json"), 4096); err == nil {
+		return fmt.Errorf("unfinished setup or restore must be reconciled before System activation")
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("setup lifecycle state is unreadable: %w", err)
+	}
+
 	// Interrupted container changes remain owned after their process disappears.
 	dir := filepath.Join(filepath.Dir(b.Root), "container-maintenance", "operations")
 	entries, err := os.ReadDir(dir)
@@ -311,4 +297,41 @@ func (b CoreLifecycleBarrier) releaseCompleted(m CoreManager, requestID string, 
 		return err
 	}
 	return syncDirectory(b.Root)
+}
+
+func (b CoreLifecycleBarrier) checkQuiescent() error {
+	if err := b.checkNativeMaintenance(); err != nil {
+		return err
+	}
+	// No app process may be active now. Unfinished durable receipts still
+	// reserve their data, even after a crash released every OS lock.
+	entries, err := os.ReadDir(filepath.Join(b.Root, "operations"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		raw, err := ReadCoreState(filepath.Join(b.Root, "operations", entry.Name()), 4<<20)
+		if err != nil {
+			return err
+		}
+		var record struct {
+			Schema          string `json:"schema"`
+			Phase           string `json:"phase"`
+			CleanupComplete bool   `json:"cleanupComplete"`
+			Commit          *struct {
+				VerifiedAt string `json:"verifiedAt"`
+			} `json:"commit"`
+			RollbackVerifiedAt string `json:"rollbackVerifiedAt"`
+		}
+		if err := json.Unmarshal(raw, &record); err != nil {
+			return err
+		}
+		if record.Schema != "youeye.app-update.v1" || !record.CleanupComplete || record.Phase != "cleanup" || ((record.Commit == nil || record.Commit.VerifiedAt == "") && record.RollbackVerifiedAt == "") {
+			return fmt.Errorf("unfinished app update must complete recovery before System activation")
+		}
+	}
+	return nil
 }

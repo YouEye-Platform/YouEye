@@ -152,7 +152,8 @@ var coreAssetName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$`)
 // CoreMemberChannel retains the original public payload's authority even when
 // a newer signed group selects it from the other public branch. The assembly
 // signature selects exact bytes; it does not turn a Beta signature into Stable
-// signing authority or permit private/feature bytes in a public selection.
+// signing authority. A selected release may retain any independently trusted
+// original member, including a development build.
 func CoreMemberChannel(member CoreMember, assemblyChannel string) (string, error) {
 	if member.Source != "https://github.com/YouEye-Platform/YouEye" {
 		return assemblyChannel, nil
@@ -231,9 +232,6 @@ func (r CoreRelease) Validate() error {
 			return err
 		}
 		if r.Channel == "stable" || r.Channel == "beta" {
-			if member.Source != r.Source {
-				return fmt.Errorf("public core selection references another source")
-			}
 			if _, err := CoreMemberChannel(member, r.Channel); err != nil {
 				return err
 			}

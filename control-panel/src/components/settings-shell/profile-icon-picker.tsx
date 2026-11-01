@@ -1,5 +1,8 @@
 "use client";
 
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
+
 import { useMemo, useState } from "react";
 import Image from "next/image";
 import { Check, Loader2, X } from "lucide-react";
@@ -21,19 +24,21 @@ export function ProfileIconPicker({
   onChoose: (id: string) => void;
   onClose?: () => void;
 }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [category, setCategory] = useState<ProfileIconCategory>("Animals");
   const presets = useMemo(() => PROFILE_ICON_PRESETS.filter((preset) => preset.category === category), [category]);
 
   return (
-    <div className="space-y-4" aria-label="Profile icon presets">
+    <div className="space-y-4" aria-label={translateInterface("m21f389e92d68")}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-[15px] font-semibold">Choose a picture</h3>
-          <p className="mt-1 text-[13px] text-muted-foreground">96 colourful avatars, ready to make your account feel like yours.</p>
+          <h3 className="text-[15px] font-semibold">{translateInterface("m2132f6046063")}</h3>
+          <p className="mt-1 text-[13px] text-muted-foreground">{translateInterface("m947b6c47e1c2")}</p>
         </div>
-        {onClose && <Button type="button" variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close icon picker"><X className="size-4" /></Button>}
+        {onClose && <Button type="button" variant="ghost" size="icon-sm" onClick={onClose} aria-label={translateInterface("me220b82cb44c")}><X className="size-4" /></Button>}
       </div>
-      <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Icon categories">
+      <div className="flex flex-wrap gap-1.5" role="tablist" aria-label={translateInterface("me6aaf207ce03")}>
         {PROFILE_ICON_CATEGORIES.map((item) => (
           <Button
             key={item}
@@ -59,7 +64,7 @@ export function ProfileIconPicker({
               className={`group relative h-14 rounded-xl p-0 ${selected ? "border-primary bg-primary/10 ring-2 ring-primary/20" : "bg-card hover:bg-accent/60"}`}
               disabled={busy}
               onClick={() => onChoose(preset.id)}
-              aria-label={`Use ${preset.label} avatar`}
+              aria-label={translateInterface("mf57211d44c81", { value0: String(preset.label) })}
               aria-pressed={selected}
               title={preset.label}
             >

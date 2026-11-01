@@ -357,7 +357,10 @@ func pinDeploymentServices(manifest appliance.Manifest) error {
 			}
 			continue
 		}
-		if ch.Source != "" && !sameReleaseSource(ch.Source, manifest.ReleaseSet.Source) || ch.Branch != "" && ch.Branch != manifest.ReleaseSet.ComponentBranch(c) || len(ch.Fallback) > 0 {
+		// A verified complete selection may reuse a member from a different
+		// branch than the legacy image seed. Installation owns that seed;
+		// explicit owner channels, source boundaries and fallback remain guarded.
+		if ch.Source != "" && !sameReleaseSource(ch.Source, manifest.ReleaseSet.Source) || ch.PinOrigin != "installation" && ch.Branch != "" && ch.Branch != manifest.ReleaseSet.ComponentBranch(c) || len(ch.Fallback) > 0 {
 			return fmt.Errorf("%s owner channel conflicts with installation selection", name)
 		}
 		if err = config.SetChannel(name, channels.Channel{Source: manifest.ReleaseSet.Source, Branch: manifest.ReleaseSet.ComponentBranch(c), PinOrigin: "installation", Tag: c.Tag, ArtifactSHA256: c.ArtifactSHA256, Fallback: []string{}}); err != nil {

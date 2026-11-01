@@ -1,3 +1,4 @@
+import {getTranslations} from "next-intl/server";
 /**
  * Embed Layout — wraps all /embed/* pages.
  * Used when CP pages are iframed into YE-UI settings.
@@ -17,9 +18,10 @@ import type { Metadata } from "next";
 import "./embed-globals.css";
 import { EmbedShell } from "./embed-shell";
 
-export const metadata: Metadata = {
-  title: "YouEye Embed",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const translateInterface = await getTranslations("interface");
+  return { title: translateInterface("mb93be2feae1c") };
+}
 
 export default function EmbedLayout({
   children,

@@ -92,6 +92,24 @@ func (m CoreManager) now() string {
 }
 
 func (m CoreManager) lockCore() (func(), error) {
+	unlock, err := m.lockCoreRaw()
+	if err != nil {
+		return nil, err
+	}
+	if m.Root == CoreStatePath {
+		if _, err := (CoreLifecycleBarrier{Root: CoreAppLifecycleRoot}).ReadCopy(); !errors.Is(err, os.ErrNotExist) {
+			unlock()
+			return nil, fmt.Errorf("independent copy owns the platform lifecycle")
+		}
+	}
+	copy, err := m.readCopy()
+	if (err == nil && copy.Phase != "committed") || (err != nil && !errors.Is(err, os.ErrNotExist)) {
+		unlock()
+		return nil, fmt.Errorf("independent copy preparation owns this installation")
+	}
+	return unlock, nil
+}
+func (m CoreManager) lockCoreRaw() (func(), error) {
 	if !filepath.IsAbs(m.Root) {
 		return nil, fmt.Errorf("core updater requires an absolute protected state directory")
 	}

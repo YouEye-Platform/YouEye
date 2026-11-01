@@ -314,10 +314,9 @@ export const timelineEntries = pgTable("timeline_entries", {
 });
 
 /**
- * Pending timeline events — temporary unencrypted storage.
- * When apps emit timeline events and the user has no active PIN session,
- * events are queued here. On next timeline load with active PIN,
- * pending events are encrypted and moved to timelineEntries.
+ * Legacy pending timeline events. New writers never store plaintext here.
+ * Unfenced legacy payloads are discarded at consent transitions or unlock,
+ * because their collection interval cannot be established.
  */
 export const pendingTimelineEvents = pgTable("pending_timeline_events", {
   id: uuid("id").primaryKey().defaultRandom(),

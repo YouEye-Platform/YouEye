@@ -5,7 +5,8 @@
  * Each user has their own set of widgets with positions, sizes, and settings.
  */
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import { z } from "zod";
 import { db, ensureSchema } from "@/db";
 import { widgets } from "@/db/schema";
 
@@ -62,6 +63,17 @@ export interface WidgetData {
   order: number;
 }
 
+const widgetLayoutSchema = z.array(z.object({
+  widgetType: z.string().min(1),
+  appId: z.string().nullable().optional(),
+  positionX: z.number().finite(),
+  positionY: z.number().finite(),
+  width: z.number().finite(),
+  height: z.number().finite(),
+  settings: z.record(z.string(), z.unknown()).optional(),
+  order: z.number().int().optional(),
+}));
+
 /** Get all widgets for a user. Returns defaults if user has none. */
 export async function getUserWidgets(userId: string): Promise<WidgetData[]> {
   await ensureSchema();
@@ -102,17 +114,17 @@ export async function saveUserWidgets(
     order?: number;
   }>
 ): Promise<WidgetData[]> {
+  // Validate the complete replacement before touching the saved layout.
+  const replacement = widgetLayoutSchema.parse(widgetData);
   await ensureSchema();
-  // Delete all existing widgets for user
-  await db.delete(widgets).where(eq(widgets.userId, userId));
+  return db.transaction(async (tx) => {
+    // Serialize replacements even when this account currently has no rows.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`youeye:widgets:${userId}`}, 0))`);
+    await tx.delete(widgets).where(eq(widgets.userId, userId));
+    if (replacement.length === 0) return [];
 
-  if (widgetData.length === 0) return [];
-
-  // Insert new widgets
-  const created = await db
-    .insert(widgets)
-    .values(
-      widgetData.map((w, i) => ({
+    const created = await tx.insert(widgets).values(
+      replacement.map((w, i) => ({
         userId,
         widgetType: w.widgetType,
         appId: w.appId ?? null,
@@ -122,11 +134,10 @@ export async function saveUserWidgets(
         height: w.height,
         settings: w.settings ?? {},
         order: w.order ?? i,
-      }))
-    )
-    .returning();
-
-  return created.map(toWidgetData);
+      })),
+    ).returning();
+    return created.map(toWidgetData);
+  });
 }
 
 /** Map a database widget row to the client-facing shape */

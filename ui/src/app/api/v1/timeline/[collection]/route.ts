@@ -8,12 +8,14 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getActiveDerivedKey, hasPIN } from "@/lib/crypto/pin-session";
 import { createTimelineEntry } from "@/lib/db/queries/timeline";
+import { getTimelineCollection, TimelineCollectionError } from "@/lib/db/queries/timeline-collection";
 import type { TimelineEntryData } from "@/lib/db/queries/timeline";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ collection: string }> }
 ) {
+  try {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -27,6 +29,9 @@ export async function POST(
       { status: 400 }
     );
   }
+
+  const consent = await getTimelineCollection(session.userId);
+  if (!consent.enabled) return NextResponse.json({ collected: false, reason: "collection_off" });
 
   // Require active PIN session
   const pinExists = await hasPIN(session.userId);
@@ -74,8 +79,13 @@ export async function POST(
     session.userId,
     collection as "history" | "future" | "imported",
     entryData,
-    encryptionKey
+    encryptionKey,
+    body.collection_revision
   );
 
   return NextResponse.json({ id: entryId }, { status: 201 });
+  } catch (error) {
+    if (error instanceof TimelineCollectionError) return NextResponse.json({ error: error.code }, { status: 409 });
+    return NextResponse.json({ error: "Timeline collection is unavailable" }, { status: 503 });
+  }
 }

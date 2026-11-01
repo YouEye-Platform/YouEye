@@ -1,5 +1,9 @@
 "use client";
 
+
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useEffect, useState, useCallback } from "react";
 
 interface Bridge {
@@ -52,6 +56,8 @@ interface TypeWant {
 }
 
 export function AppNetworkClient({ appId }: { appId: string }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [bridges, setBridges] = useState<Bridge[]>([]);
   const [grants, setGrants] = useState<InternetGrant[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -246,8 +252,7 @@ export function AppNetworkClient({ appId }: { appId: string }) {
       {typeWants.length > 0 && (
         <div style={{ marginBottom: 20 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--embed-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-            Service Providers
-          </div>
+            {translateInterface("m72e4d2e8f4b3")}</div>
 
           {typeWants.map((tw) => (
             <div key={tw.type} style={{ marginBottom: 12 }}>
@@ -262,8 +267,7 @@ export function AppNetworkClient({ appId }: { appId: string }) {
 
               {tw.providers.length === 0 ? (
                 <div className="embed-muted" style={{ fontSize: 12, padding: "8px 14px", textAlign: "center", border: "1px dashed var(--embed-border)", borderRadius: 6 }}>
-                  No providers installed. Install a compatible app from Market.
-                </div>
+                  {translateInterface("me2d7b995759e")}</div>
               ) : (
                 tw.providers.map((p) => {
                   const isConnected = tw.connectedProvider === p.appId;
@@ -301,15 +305,14 @@ export function AppNetworkClient({ appId }: { appId: string }) {
                         {isConnected ? (
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <span style={{ color: "var(--embed-success)", fontSize: 11, fontWeight: 500 }}>
-                              Connected
-                            </span>
+                              {translateInterface("m22965568d22a")}</span>
                             <button
                               className="embed-btn"
                               style={{ padding: "2px 8px", fontSize: 11, color: "var(--embed-danger)" }}
                               onClick={() => handleDisconnectProvider(p.appId)}
                               disabled={!!switching}
                             >
-                              {isSwitching ? "..." : "Disconnect"}
+                              {isSwitching ? "..." : translateInterface("macfc5be785a9")}
                             </button>
                           </div>
                         ) : (
@@ -322,7 +325,7 @@ export function AppNetworkClient({ appId }: { appId: string }) {
                             onClick={() => handleConnectProvider(p.appId, tw.connectedProvider)}
                             disabled={!!switching}
                           >
-                            {isSwitching ? "..." : tw.connectedProvider ? "Switch" : "Connect"}
+                            {isSwitching ? "..." : tw.connectedProvider ? translateInterface("m39921a740bf2") : translateInterface("m1a2303ede074")}
                           </button>
                         )}
                       </div>
@@ -339,7 +342,7 @@ export function AppNetworkClient({ appId }: { appId: string }) {
       {pendingSuggestions.length > 0 && (
         <div style={{ marginBottom: 20 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--embed-warning)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-            Pending Connections ({pendingSuggestions.length})
+            {translateInterface("m1bc2a0bef626", {count: pendingSuggestions.length})}
           </div>
           {pendingSuggestions.map((s) => (
             <div key={s.id} className="embed-card" style={{
@@ -350,7 +353,7 @@ export function AppNetworkClient({ appId }: { appId: string }) {
                 <span style={{ fontSize: 13 }}>
                   <strong>{s.fromAppName}</strong>
                   {" \u2192 "}
-                  <strong>{s.type === "internet" ? "Internet" : (s.targetAppName || "?")}</strong>
+                  <strong>{s.type === "internet" ? translateInterface("m57e8a431deec") : (s.targetAppName || "?")}</strong>
                 </span>
                 {s.type === "internet" && s.hosts && (
                   <span className="embed-muted" style={{ fontSize: 12 }}>
@@ -370,15 +373,15 @@ export function AppNetworkClient({ appId }: { appId: string }) {
                     }}
                     title={
                       s.scope === "service"
-                        ? "Server-wide connection — one approval applies to everyone"
-                        : "Per-user connection — each user enables it for themselves"
+                        ? translateInterface("m287ff2d5346e")
+                        : translateInterface("m6f90797e1749")
                     }
                   >
-                    {s.scope === "service" ? "Server-wide" : "Per-user"}
+                    {s.scope === "service" ? translateInterface("mabbf608bcd7f") : translateInterface("ma6bb6180e1bf")}
                   </span>
                 )}
                 {s.targetInstalled === false && (
-                  <span style={{ fontSize: 11, color: "var(--embed-warning)" }}>not installed</span>
+                  <span style={{ fontSize: 11, color: "var(--embed-warning)" }}>{translateInterface("me9363f76e114")}</span>
                 )}
                 <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
                   <button
@@ -387,15 +390,14 @@ export function AppNetworkClient({ appId }: { appId: string }) {
                     onClick={() => handleApproveSuggestion(s)}
                     disabled={approving === s.id}
                   >
-                    {approving === s.id ? "..." : "\u2713 Approve"}
+                    {approving === s.id ? "..." : translateInterface("mcabacdedc37c")}
                   </button>
                   <button
                     className="embed-btn"
                     style={{ padding: "2px 8px", fontSize: 11 }}
                     onClick={() => handleDismissSuggestion(s.id)}
                   >
-                    Dismiss
-                  </button>
+                    {translateInterface("m48845bff334a")}</button>
                 </div>
               </div>
             </div>
@@ -406,13 +408,11 @@ export function AppNetworkClient({ appId }: { appId: string }) {
       {/* Bridges (manual, non-provider) */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--embed-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-          App Connections (Bridges)
-        </div>
+          {translateInterface("m9d8ec2697f23")}</div>
 
         {manualOutgoing.length === 0 && incoming.length === 0 && (
           <div className="embed-muted" style={{ fontSize: 13, marginBottom: 12, padding: "12px 0", textAlign: "center" }}>
-            No bridges configured for this app.
-          </div>
+            {translateInterface("m3998a5ee48e2")}</div>
         )}
 
         {manualOutgoing.map((b) => (
@@ -425,25 +425,24 @@ export function AppNetworkClient({ appId }: { appId: string }) {
                 </span>
               </span>
               <span style={{ color: b.active ? "var(--embed-success)" : "var(--embed-warning)", fontSize: 11 }}>
-                {b.active ? "active" : "pending"}
+                {b.active ? translateInterface("m96879611650f") : translateInterface("m62a2fed3d6e0")}
               </span>
               <button className="embed-btn" style={{ padding: "2px 8px", fontSize: 11 }}
                 onClick={() => handleToggleDirection(b.id)}>
-                {b.direction === "one-way" ? "Both ways" : "One-way"}
+                {b.direction === "one-way" ? translateInterface("m843f1d33ff4b") : translateInterface("me38352f64711")}
               </button>
               <button className="embed-btn" style={{ padding: "2px 8px", fontSize: 11, color: "var(--embed-danger)" }}
                 onClick={() => handleRemoveBridge(b.id)}>
-                Remove
-              </button>
+                {translateInterface("mc3812fc4acb8")}</button>
             </div>
           </div>
         ))}
 
         {incoming.map((b) => (
           <div key={b.id} className="embed-card embed-muted" style={{ marginBottom: 6, padding: "8px 14px" }}>
-            <span style={{ fontSize: 13 }}>{"\u2190"} {b.from} can reach this app</span>
+            <span style={{ fontSize: 13 }}>{"\u2190"} {b.from} {translateInterface("m9b41866a002d")}</span>
             <span style={{ float: "right", color: b.active ? "var(--embed-success)" : "var(--embed-warning)", fontSize: 11 }}>
-              {b.active ? "active" : "pending"}
+              {b.active ? translateInterface("m96879611650f") : translateInterface("m62a2fed3d6e0")}
             </span>
           </div>
         ))}
@@ -451,7 +450,7 @@ export function AppNetworkClient({ appId }: { appId: string }) {
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
           <input
             type="text"
-            placeholder="App ID to bridge to..."
+            placeholder={translateInterface("m062f7a7af23f")}
             value={newTarget}
             onChange={(e) => setNewTarget(e.target.value)}
             style={{
@@ -464,36 +463,33 @@ export function AppNetworkClient({ appId }: { appId: string }) {
               fontSize: 13,
             }}
           />
-          <button className="embed-btn" onClick={handleAddBridge}>+ Add</button>
+          <button className="embed-btn" onClick={handleAddBridge}>{translateInterface("mc007258c23b0")}</button>
         </div>
       </div>
 
       {/* Internet Grants */}
       <div>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--embed-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-          Internet Access
-        </div>
+          {translateInterface("mf1c3464b34de")}</div>
 
         {activeGrants.length === 0 ? (
           <div className="embed-muted" style={{ fontSize: 13, padding: "12px 0", textAlign: "center" }}>
-            No internet access granted for this app.
-          </div>
+            {translateInterface("m9b54995069b4")}</div>
         ) : (
           activeGrants.map((g) => (
             <div key={g.id} className="embed-card" style={{ marginBottom: 6, padding: "8px 14px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ flex: 1, fontSize: 13 }}>
                   {g.blanket
-                    ? "All internet access"
-                    : `${g.hosts.length} host${g.hosts.length !== 1 ? "s" : ""}: ${g.hosts.join(", ")}`}
+                    ? translateInterface("mc90739c68640")
+                    : translateInterface("m08ed687ced59", {count: g.hosts.length, hosts: g.hosts.join(", ")})}
                 </span>
                 <button
                   className="embed-btn"
                   style={{ padding: "2px 8px", fontSize: 11, color: "var(--embed-danger)" }}
                   onClick={() => handleRevokeGrant(g.id)}
                 >
-                  Revoke
-                </button>
+                  {translateInterface("m87e6d00bbf53")}</button>
               </div>
             </div>
           ))

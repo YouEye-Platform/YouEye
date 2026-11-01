@@ -155,6 +155,12 @@ export async function renderIconPNGs(
 export async function getRenderedIcon(
   size: IconSize
 ): Promise<Buffer | null> {
+  const { getBranding } = await import("@/lib/db/queries/branding");
+  const revision = (await getBranding()).site_name_style?.mytitleRevision;
+  if (revision && /^[a-f0-9]{64}$/.test(revision)) {
+    try { return await readFile(join(BRANDING_DIR, `mytitle-${revision}-${size}.png`)); }
+    catch { return null; }
+  }
   const filepath = join(BRANDING_DIR, `icon-${size}.png`);
   try {
     return await readFile(filepath);

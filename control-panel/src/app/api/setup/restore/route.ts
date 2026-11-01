@@ -4,19 +4,23 @@
  * POST /api/setup/restore — Execute a full platform restore from backup.
  * Streams progress via Server-Sent Events.
  *
- * Only available when setup_completed is false (during initial setup).
- * Calls fullRestore() from the backup restore module and relays events.
- * On completion, marks setup as complete via spineClient.patchConfig.
+ * New work requires incomplete setup. Exact-operation recovery remains available
+ * through completion persistence, restart acknowledgement and a lost SSE reply.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import path from 'node:path';
-import { realpath, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { getSession, verifyCSRFToken } from '@/lib/auth';
-import { spineClient } from '@/lib/spine/client';
+import { spineClient, SpineAPIError } from '@/lib/spine/client';
+import { withSetupMutation } from '@/lib/setup/lifecycle';
 import { fullRestore } from '@/lib/backup/full-restore';
-import { recoveryImportErrorMessage, validateBackupPassphrase, validateRestoreOperationId,
-  readRestoreStatus, writeRestoreStatus, withRestoreLock, type RestoreStatusRecord } from '@/lib/backup/platform-backup';
+import { validateBackupPassphrase, validateRestoreOperationId,
+  readRestoreStatus, withRestoreLock } from '@/lib/backup/platform-backup';
+import { assertSameSetupRestore, runSetupRestore, SetupRestoreError, SetupRestoreStore,
+  setupRestoreTargetIdentity, type SetupRestoreIdentity } from '@/lib/setup/restore-recovery';
+import { importFreshSetupRestoreSource } from '@/lib/setup/restore-source';
+
+const restoreStore = new SetupRestoreStore();
 
 interface RestoreRequest {
   mediaId?: string;
@@ -24,6 +28,7 @@ interface RestoreRequest {
   appIds?: string[];
   passphrase: string;
   operationId: string;
+  action?: 'start' | 'resume';
 }
 
 export async function GET(request: NextRequest) {
@@ -35,11 +40,27 @@ export async function GET(request: NextRequest) {
     let operationId: string;
     try { operationId = validateRestoreOperationId(request.nextUrl.searchParams.get('operationId')); }
     catch { return NextResponse.json({ error: 'Invalid restore status request' }, { status: 400 }); }
-    const status = await readRestoreStatus(operationId);
-    if (!status || !session.setupSessionId || status.setupSessionId !== session.setupSessionId) {
+    try {
+      const retained = await restoreStore.readStatus(operationId);
+      const record = retained?.record;
+      if (record && record.identity.ownerId === session.setupOwnerId
+        && record.identity.sessionId === session.setupSessionId
+        && record.identity.target === setupRestoreTargetIdentity(await readFile('/var/lib/youeye/config/cli-token', 'utf8'))) {
+        return NextResponse.json(retained.status, { headers: { 'Cache-Control': 'no-store' } });
+      }
+      // Legacy receipts have no bound source/step evidence. They remain
+      // inspectable by their session, but cannot authorize replay or settlement.
+      const status = !record ? await readRestoreStatus(operationId, { strict: true }) : null;
+      if (status?.setupSessionId === session.setupSessionId) {
+        return NextResponse.json({ operationId, status: 'failed', phase: 'legacy', active: false,
+          recovery: 'operator-required', messageCode: 'restore-needs-reconciliation',
+          message: 'Restore needs operator reconciliation before continuing.' },
+        { headers: { 'Cache-Control': 'no-store' } });
+      }
       return NextResponse.json({ error: 'Restore operation not found' }, { status: 404 });
+    } catch {
+      return NextResponse.json({ error: 'Restore status is temporarily unavailable', code: 'state-unavailable' }, { status: 503 });
     }
-    return NextResponse.json({ status: status.status, message: status.message }, { headers: { 'Cache-Control': 'no-store' } });
   }
   try {
     const media = await spineClient.getBackupMedia().catch(() => ({ media: [] }));
@@ -69,21 +90,15 @@ export async function POST(request: NextRequest) {
   if (!(await verifyCSRFToken(request.headers.get('X-CSRF-Token') ?? ''))) {
     return new Response('Invalid CSRF token', { status: 403 });
   }
-  // Guard: only available during initial setup
-  try {
-    const config = await spineClient.getConfig();
-    if (config.setup_completed === true) {
-      return new Response('Setup already completed — restore is only available during initial setup', { status: 403 });
-    }
-  } catch {
-    return new Response('Setup status is temporarily unavailable', { status: 503 });
-  }
-
   let body: RestoreRequest;
   try {
     body = await request.json();
   } catch {
     return new Response('Invalid request body', { status: 400 });
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+    || (body.action !== undefined && body.action !== 'start' && body.action !== 'resume')) {
+    return new Response('Invalid restore action', { status: 400 });
   }
 
   try {
@@ -93,27 +108,58 @@ export async function POST(request: NextRequest) {
     return new Response(error instanceof Error ? error.message : 'Invalid recovery key', { status: 400 });
   }
   if (!Array.isArray(body.appIds)
+    || body.appIds.length > 1000
     || body.appIds.some(appId => typeof appId !== 'string' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(appId))
     || new Set(body.appIds).size !== body.appIds.length) {
     return new Response('appIds must be an array', { status: 400 });
   }
 
-  if (typeof body.mediaId !== 'string' || typeof body.backupId !== 'string') {
+  if (typeof body.mediaId !== 'string' || !body.mediaId || body.mediaId.length > 256
+    || typeof body.backupId !== 'string' || !/^backup-\d{8}T\d{6}Z-[0-9a-f]{8}$/.test(body.backupId)) {
     return new Response('An attached backup drive and recovery point are required', { status: 400 });
   }
-  async function importRecoveryPoint(): Promise<string> {
-    let backupPath: string;
-    try {
-      const imported = await spineClient.importBackupSet({
-        media_id: body.mediaId!, backup_id: body.backupId!, passphrase: body.passphrase,
-      });
-      backupPath = await realpath(imported.backup_path);
-    } catch (error) { throw new Error(recoveryImportErrorMessage(error)); }
-    const root = await realpath('/var/lib/youeye/backups');
-    if (!backupPath.startsWith(`${root}${path.sep}`) || !(await stat(backupPath)).isDirectory()) {
-      throw new Error('Backup path must be a directory under the protected YouEye backup root');
+  let identity: SetupRestoreIdentity;
+  try {
+    identity = { operationId: body.operationId, ownerId: session.setupOwnerId, sessionId: session.setupSessionId,
+      mediaId: body.mediaId, backupId: body.backupId, appIds: body.appIds,
+      target: setupRestoreTargetIdentity(await readFile('/var/lib/youeye/config/cli-token', 'utf8')) };
+    const retained = await restoreStore.readStatus(body.operationId);
+    if (retained) {
+      assertSameSetupRestore(retained.record.identity, identity);
+      if (retained.status.active) throw new SetupRestoreError('operation-active');
+      if (body.action !== 'resume') throw new SetupRestoreError('resume-required');
+      if (retained.status.recovery === 'operator-required') throw new SetupRestoreError('operator-required');
+    } else {
+      if (await readRestoreStatus(body.operationId, { strict: true })) throw new SetupRestoreError('operator-required');
+      if (body.action === 'resume') throw new SetupRestoreError('operation-missing');
+      if ((await spineClient.getConfig()).setup_completed === true) {
+        return new Response('Setup already completed — restore is only available during initial setup', { status: 403 });
+      }
     }
-    return backupPath;
+  } catch (error) {
+    const code = error instanceof SetupRestoreError ? error.code : 'state-unavailable';
+    return NextResponse.json({ error: 'The restore request needs reconciliation before continuing.', code },
+      { status: code === 'state-unavailable' ? 503 : 409 });
+  }
+  let backupPath: string;
+  async function importRecoveryPoint(expectedSource?: string): Promise<string> {
+    const fresh = await importFreshSetupRestoreSource({
+      backupId: body.backupId!, appIds: body.appIds!, expectedSource,
+      importBackup: async () => {
+        try {
+          return (await spineClient.importBackupSet({
+            media_id: body.mediaId!, backup_id: body.backupId!, passphrase: body.passphrase,
+          })).backup_path;
+        } catch (error) {
+          // Only a native error response proves its invocation finished. A
+          // transport failure leaves import intent for operator reconciliation.
+          if (error instanceof SpineAPIError) throw new SetupRestoreError('import-failed');
+          throw error;
+        }
+      },
+    });
+    backupPath = fresh.backupPath;
+    return fresh.source;
   }
 
   const stream = new ReadableStream({
@@ -124,61 +170,39 @@ export async function POST(request: NextRequest) {
         try { controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`)); } catch { connected = false; }
       }
 
-      let started = false;
-      const startedAt = new Date().toISOString();
-      const status: RestoreStatusRecord = {
-        schema: 'youeye.backup.restore-status.v1', operationId: body.operationId,
-        backupId: body.backupId!, status: 'running', message: 'Restoring your platform…',
-        startedAt, updatedAt: startedAt, setupSessionId: session.setupSessionId,
-      };
       try {
-        await withRestoreLock(async () => {
-          if (await readRestoreStatus(body.operationId)) throw new Error('Restore operation already exists. Check its status.');
-          await writeRestoreStatus(status);
-          started = true;
-          const backupPath = await importRecoveryPoint();
-          await fullRestore(
-            {
-              backupPath,
-              passphrase: body.passphrase,
-              appIds: body.appIds,
-              setupMode: true,
-            },
-            (event) => {
-              send({
-                step: event.step,
-                totalSteps: event.totalSteps,
-                status: event.status,
-                stage: event.stage,
-                message: event.message,
-                detail: event.detail,
-                progress: event.progress,
-              });
-            },
-          );
-
-          // Setup stays incomplete until every restore gate succeeds.
-          await spineClient.patchConfig({ setup_completed: true });
-          const completedAt = new Date().toISOString();
-          await writeRestoreStatus({ ...status, status: 'completed', message: 'Restore complete. Sign in with a restored account.', updatedAt: completedAt, completedAt });
-          // Core-client reconciliation persists SSO with restart=false so this
-          // restore can finish. Reload that environment only after all gates
-          // and the durable result, as the ordinary core-restore path does.
-          await spineClient.restartControl(5);
+        await withSetupMutation(session.setupOwnerId!, 'restore', body.operationId, async (settle) => {
+          await withRestoreLock(async () => {
+            await runSetupRestore(identity, body.action ?? 'start', {
+              store: restoreStore, importSource: importRecoveryPoint, settle,
+              setupCompleted: async () => (await spineClient.getConfig()).setup_completed === true,
+              completeSetup: async () => { await spineClient.patchConfig({ setup_completed: true }); },
+              restartControl: async () => { await spineClient.restartControl(5); },
+              restore: async (checkpoint) => {
+                await fullRestore({
+                  backupPath, passphrase: body.passphrase, appIds: body.appIds,
+                  setupMode: true, setupRecovery: checkpoint,
+                }, (event) => {
+                  // Driver errors and details can contain secrets.
+                  send({
+                    step: event.step, totalSteps: event.totalSteps, status: event.status,
+                    stage: event.stage, progress: event.progress,
+                    message: event.status === 'error' ? 'Restore step failed.' : 'Restoring your platform…',
+                  });
+                });
+              },
+            });
+          });
         });
 
         send({ complete: true });
         if (connected) {
           try { controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n')); } catch { connected = false; }
         }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unknown error';
-        if (started) {
-          const completedAt = new Date().toISOString();
-          await writeRestoreStatus({ ...status, status: 'failed', message: 'Restore failed. Review the failure before trying again.', updatedAt: completedAt, completedAt }).catch(() => undefined);
-        }
-        send({ error: message });
-        console.error('[restore] Full restore failed:', err);
+      } catch (error) {
+        send({ error: 'Restore did not complete. Read its status before continuing.',
+          code: error instanceof SetupRestoreError ? error.code
+            : error instanceof Error && error.message === 'App update executor lock is busy' ? 'operation-active' : 'restore-failed' });
       }
 
       if (connected) {

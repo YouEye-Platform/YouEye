@@ -7,12 +7,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { getUserSettings } from "@/lib/db/queries/settings";
+import { getSystemLanguage, getUserSettings } from "@/lib/db/queries/settings";
 import { eq } from "drizzle-orm";
 import { db, ensureSchema } from "@/db";
 import { userSettings } from "@/db/schema";
 
-const SUPPORTED_LOCALES = ["en", "ru", "es", "de", "fr"];
+import { locales as SUPPORTED_LOCALES, resolvePreferredLocale } from "@/i18n/config";
 
 /**
  * GET — Returns the authenticated user's language preference.
@@ -30,10 +30,10 @@ export async function GET() {
     const lang = settings.language;
 
     if (typeof lang === "string" && SUPPORTED_LOCALES.includes(lang)) {
-      return NextResponse.json({ language: lang });
+      return NextResponse.json({ language: lang, locale: resolvePreferredLocale(lang, await getSystemLanguage()) }, { headers: { "Cache-Control": "private, no-store" } });
     }
 
-    return NextResponse.json({ language: null });
+    return NextResponse.json({ language: null, locale: resolvePreferredLocale(null, await getSystemLanguage()) }, { headers: { "Cache-Control": "private, no-store" } });
   } catch {
     return NextResponse.json({ language: null });
   }

@@ -1,3 +1,6 @@
+"use client";
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 /**
  * Timeline Entry Detail View
  *
@@ -5,7 +8,7 @@
  * including a full-size app-declared info card with "Open in app" action.
  */
 
-"use client";
+
 
 import {
   Film,
@@ -70,6 +73,8 @@ export function TimelineEntryDetail({
   entry,
   onBack,
 }: TimelineEntryDetailProps) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const t = useTranslations("timeline");
   const Icon = TYPE_ICONS[entry.entry.entry_type] ?? Package;
 
@@ -106,7 +111,7 @@ export function TimelineEntryDetail({
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
-        {t("backToTimeline") ?? "Back to timeline"}
+        {t("backToTimeline") ?? translateInterface("m4bcc8ebc1ddb")}
       </button>
 
       {/* Full-size Info Card */}
@@ -152,14 +157,14 @@ export function TimelineEntryDetail({
           className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
         >
           <ExternalLink className="h-4 w-4" />
-          Open in {appName}
+          {translateInterface("mf30fd61ae722", { app: appName })}
         </a>
       )}
 
       {/* Tags */}
       {tags.length > 0 && (
         <div>
-          <h3 className="text-sm font-medium mb-2">{t("tags") ?? "Tags"}</h3>
+          <h3 className="text-sm font-medium mb-2">{t("tags") ?? translateInterface("m1331275bc537")}</h3>
           <div className="flex flex-wrap gap-1.5">
             {tags.map(([key, value]) => (
               <span
@@ -178,7 +183,7 @@ export function TimelineEntryDetail({
       {Object.keys(entry.entry.data).length > 0 && (
         <div>
           <h3 className="text-sm font-medium mb-2">
-            {t("rawData") ?? "Entry Data"}
+            {t("rawData") ?? translateInterface("mdf6c2b7bec57")}
           </h3>
           <div className="p-4 bg-muted rounded-lg">
             <pre className="text-xs text-muted-foreground overflow-x-auto whitespace-pre-wrap">

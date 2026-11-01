@@ -7,6 +7,7 @@ import { releaseArtifactTrust } from './verify';
 export type ProductBuild = {
   schema: 'youeye.product-build.v1'; product: string; kind: 'native' | 'source' | 'catalog';
   build_version: string; source: string; branch: string; source_commit: string; tag: string;
+  asset_source?: string; asset_tag?: string;
   input_sha256: string; contract_sha256: string; signer_sha256: string; primary: string; assets: CoreBlob[];
 };
 export type ProductRelease = {
@@ -56,14 +57,17 @@ function channel(source: string, branch: string, version: string): string {
 }
 export function parseProductBuild(raw: Buffer): ProductBuild {
   const b = document(raw) as ProductBuild;
-  fields(b,['schema','product','kind','build_version','source','branch','source_commit','tag','input_sha256','contract_sha256','signer_sha256','primary','assets']);
+  fields(b,['schema','product','kind','build_version','source','branch','source_commit','tag','asset_source','asset_tag','input_sha256','contract_sha256','signer_sha256','primary','assets']);
   if (b.schema !== 'youeye.product-build.v1' || !products.has(b.product) || !parseReleaseVersion(b.build_version) || canonicalTrustRepository(b.source) !== b.source || !validTrustBranch(b.branch) || !/^[0-9a-f]{40}$/.test(b.source_commit) || !hash(b.input_sha256) || !hash(b.contract_sha256) || !hash(b.signer_sha256) || b.tag !== productTag(b.product,b.branch,b.build_version) || !['native','source','catalog'].includes(b.kind)) throw new Error('Invalid immutable product build');
   channel(b.source,b.branch,b.build_version);
+  if ((b.asset_source === undefined) !== (b.asset_tag === undefined)) throw new Error('Product asset source and tag must be paired');
+  if (b.asset_source !== undefined && (canonicalTrustRepository(b.asset_source) !== b.asset_source || !validTrustBranch(b.asset_tag!))) throw new Error('Invalid product asset location');
+  const assetSource = b.asset_source ?? b.source, assetTag = b.asset_tag ?? b.tag;
   if (!Array.isArray(b.assets) || !b.assets.length || b.assets.length > 32) throw new Error('Invalid product asset set');
   const names = new Set<string>();
   for (const a of b.assets) {
     fields(a,['name','url','sha256','size_bytes']);
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(a.name) || names.has(a.name) || !hash(a.sha256) || !Number.isSafeInteger(a.size_bytes) || a.size_bytes <= 0 || a.url !== `${b.source}/releases/download/${b.tag}/${a.name}`) throw new Error('Invalid original product asset');
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(a.name) || names.has(a.name) || !hash(a.sha256) || !Number.isSafeInteger(a.size_bytes) || a.size_bytes <= 0 || a.url !== `${assetSource}/releases/download/${encodeURIComponent(assetTag)}/${a.name}`) throw new Error('Invalid original product asset');
     names.add(a.name);
   }
   if (!names.has(b.primary)) throw new Error('Missing primary product artifact');
@@ -83,7 +87,7 @@ export function parseProductRelease(raw: Buffer) {
   const buildRaw = base64(r.build_manifest_base64,1024*1024), buildSignature = base64(r.build_signature_base64,64);
   if (buildSignature.length !== 64) throw new Error('Invalid original build signature');
   const build = parseProductBuild(buildRaw);
-  if (build.product !== r.product || ['stable','beta'].includes(r.channel) && build.source !== r.source) throw new Error('Product release references a private or foreign build');
+  if (build.product !== r.product) throw new Error('Product release references another product');
   return {release:r,build,buildRaw,buildSignature};
 }
 export function verifyProductRelease(raw: Buffer, signature: Buffer, expected: {product: string; source: string; tag: string; scope?: TrustScope}): VerifiedProductRelease {
@@ -99,7 +103,7 @@ export function verifyProductRelease(raw: Buffer, signature: Buffer, expected: {
 export class ProductAssetNotFound extends Error {}
 export function productBlobTransportURL(selected: VerifiedProductRelease, blob: CoreBlob, mirror = false): string {
   if (!selected.build.assets.some(a => a.url === blob.url && a.sha256 === blob.sha256 && a.size_bytes === blob.size_bytes && a.name === blob.name)) throw new Error('Foreign product transport blob');
-  if (mirror || new URL(selected.release.source).hostname !== 'github.com' && new URL(blob.url).hostname === 'github.com') return `${selected.release.source}/releases/download/${selected.release.tag}/blob-${blob.sha256}`;
+  if (mirror || selected.release.source !== selected.build.source) return `${selected.release.source}/releases/download/${selected.release.tag}/blob-${blob.sha256}`;
   return blob.url;
 }
 export function identicalProductPayloads(before: VerifiedProductRelease, after: VerifiedProductRelease): boolean {

@@ -1,5 +1,6 @@
 "use client";
 
+import { Brand } from "@youeye/branding/brand";
 import { useEffect } from "react";
 import { CHARACTER_SHAPE_PRESETS, type SiteNameStyle } from "@/lib/wordart-presets";
 
@@ -104,6 +105,8 @@ export function SiteName({ name, style, className, as: Tag = "span" }: SiteNameP
   const charShape = s.charShapeId
     ? CHARACTER_SHAPE_PRESETS.find((preset) => preset.id === s.charShapeId) ?? null
     : null;
+
+  if (s.mytitle) return <Tag className={className}><Brand design={s.mytitle} name={name} /></Tag>;
 
   if (charShape) {
     const intensity = s.charShapeIntensity ?? 1;

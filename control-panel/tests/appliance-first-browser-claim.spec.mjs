@@ -1,10 +1,11 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const root = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..');
-const read = (path) => readFileSync(join(root, path), 'utf8');
+const read = (path) => englishInterfaceSource(readFileSync(join(root, path), 'utf8'));
 
 test('first-browser claim has one atomic owner slot and no domain dependency', () => {
   const store = read('src/lib/identity/store.ts');
@@ -122,13 +123,14 @@ test('YouEye ID uses one 8-256 password policy across claim, stores, compatibili
   assert.match(client, /X-CSRF-Token/);
 });
 
-test('claimed onboarding offers signed system update, packaged continuation, and protected backup restore', () => {
+test('managed onboarding uses automatic readiness and retains protected backup restore and separate signed-update controls', () => {
   const setup = read('src/app/setup/page.tsx');
   const update = read('src/components/setup/SetupApplianceUpdate.tsx');
   const restore = read('src/app/api/setup/restore/route.ts');
 
-  assert.match(setup, /SetupApplianceUpdate/);
-  assert.match(setup, /goToStep\(-1\)/);
+  assert.match(setup, /SetupReadiness/);
+  assert.doesNotMatch(setup, /SetupApplianceUpdate/);
+  assert.match(setup, /handleReady = useCallback\(\(\) => goToStep\(-1\)/);
   assert.match(setup, /SetupRestore/);
   assert.match(update, /Continue with packaged version/);
   assert.match(update, /Update now/);
@@ -139,8 +141,10 @@ test('claimed onboarding offers signed system update, packaged continuation, and
   assert.match(restore, /session\?\.isAdmin/);
   assert.match(restore, /session\.setupOwnerId/);
   assert.match(restore, /verifyCSRFToken/);
-  assert.match(restore, /realpath/);
-  assert.match(restore, /\/var\/lib\/youeye\/backups/);
+  assert.match(restore, /importFreshSetupRestoreSource/);
+  const source = read('src/lib/setup/restore-source.ts');
+  assert.match(source, /realpath/);
+  assert.match(source, /\/var\/lib\/youeye\/backups/);
 });
 
 test('first-user onboarding is Control Panel-native and has no avatar iframe', () => {

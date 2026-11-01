@@ -6,9 +6,33 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
 )
+
+func TestProductAdoptionAssetLocationPreservesBuildIdentity(t *testing.T) {
+	b := ProductBuild{Schema: "youeye.product-build.v1", Product: "canvas", Kind: "source", BuildVersion: "0.5.8-dev.1", Source: "https://build.example.test/owner/Canvas", Branch: "dev", SourceCommit: strings.Repeat("a", 40), Tag: "dev-v0.5.8-dev.1", InputSHA256: strings.Repeat("b", 64), ContractSHA256: strings.Repeat("c", 64), SignerSHA256: strings.Repeat("d", 64), Primary: "source.tar.gz", AssetSource: "https://release.example.test/owner/Canvas", AssetTag: "release/alpha-v0.5.8-alpha.1"}
+	b.Assets = []CoreBlob{{Name: b.Primary, URL: b.AssetSource + "/releases/download/" + url.PathEscape(b.AssetTag) + "/" + b.Primary, SHA256: strings.Repeat("e", 64), SizeBytes: 42}}
+	raw, _ := json.Marshal(b)
+	got, _, err := ParseProductBuild(raw)
+	if err != nil || got.Source != b.Source || got.Tag != b.Tag || got.BuildVersion != b.BuildVersion {
+		t.Fatal("adoption changed original build identity", err)
+	}
+	for _, mutate := range []func(*ProductBuild){
+		func(v *ProductBuild) { v.AssetSource = "" },
+		func(v *ProductBuild) { v.AssetTag = "" },
+		func(v *ProductBuild) { v.AssetSource += "?token=invalid" },
+		func(v *ProductBuild) { v.AssetTag = "../foreign" },
+		func(v *ProductBuild) { v.AssetTag = "other-tag" },
+	} {
+		invalid := b
+		mutate(&invalid)
+		if invalid.Validate() == nil {
+			t.Fatal("accepted incomplete or substituted asset location")
+		}
+	}
+}
 
 func TestProductPromotionPreservesOriginalBuildAuthority(t *testing.T) {
 	public, private, _ := ed25519.GenerateKey(rand.Reader)
@@ -47,12 +71,16 @@ func TestProductPromotionPreservesOriginalBuildAuthority(t *testing.T) {
 				}
 			}
 			b.Source = "https://private.example.test/owner/" + product
+			b.Branch, b.BuildVersion = "dev", "0.5.40-dev.1"
+			b.Tag = ProductTag(product, b.Branch, b.BuildVersion)
 			b.Assets[0].URL = b.Source + "/releases/download/" + b.Tag + "/" + b.Primary
 			buildRaw, _ = json.Marshal(b)
 			r.BuildManifestBase64 = base64.StdEncoding.EncodeToString(buildRaw)
 			r.BuildSignatureBase64 = base64.StdEncoding.EncodeToString(ed25519.Sign(private, buildRaw))
-			if r.Validate() == nil {
-				t.Fatal("Stable wrapper laundered a private build")
+			raw, _ := json.Marshal(r)
+			_, original, _, err := VerifyProductRelease(raw, ed25519.Sign(releasePrivate, raw), releasePublic, public)
+			if err != nil || original.Source != b.Source || original.BuildVersion != b.BuildVersion || original.Assets[0] != b.Assets[0] {
+				t.Fatal("selected Stable release did not preserve its signed Dev build", err)
 			}
 		})
 	}

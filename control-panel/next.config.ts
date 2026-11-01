@@ -13,6 +13,7 @@ const withSerwist = withSerwistInit({
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  transpilePackages: ['@youeye/branding'],
   // Preserve encoded OIDC redirect_uri values before the proxy middleware.
   // Next's default URL normalization rewrites 127.0.0.1 to localhost even
   // inside an encoded query value, breaking exact registered URI matching.

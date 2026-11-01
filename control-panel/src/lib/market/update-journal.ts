@@ -14,7 +14,7 @@ import path from 'node:path';
 import { AppUpdateExecutorLock, withAppUpdateExecutorLock } from './update-executor-lock';
 
 export const APP_UPDATE_SCHEMA = 'youeye.app-update.v1';
-const DEFAULT_DIRECTORY = '/var/lib/youeye/state/app-updates';
+export const DEFAULT_DIRECTORY = '/var/lib/youeye/state/app-updates';
 const MAX_RECORD_BYTES = 1024 * 1024;
 const identifier = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 const digest = /^[a-f0-9]{64}$/;

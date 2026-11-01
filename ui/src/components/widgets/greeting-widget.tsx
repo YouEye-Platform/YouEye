@@ -8,6 +8,8 @@
 
 "use client";
 
+import { Brand } from "@youeye/branding/brand";
+
 import { useEffect, useState, useMemo, type CSSProperties } from "react";
 import { useTranslations } from "next-intl";
 import { getGreetingPreset, type GreetingPreset } from "@/lib/greeting-presets";
@@ -17,6 +19,7 @@ interface GreetingWidgetProps {
   settings?: {
     name?: string;
     greetingPreset?: string;
+    mytitle?: unknown;
   };
 }
 
@@ -89,6 +92,8 @@ export function GreetingWidget({ settings }: GreetingWidgetProps) {
   const style = useMemo(() => buildPresetStyle(preset), [preset]);
 
   const greeting = t(greetingKey);
+
+  if (settings?.mytitle) return <div className="flex h-full items-center justify-center"><Brand design={settings.mytitle} name={`${greeting}, ${name}`} className="greeting-studio-title" /></div>;
 
   // Terminal format: "> Good morning, name_" with blinking cursor
   if (preset.terminalFormat) {

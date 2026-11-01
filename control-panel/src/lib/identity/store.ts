@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'crypto';
 import { platformCommand } from '@/lib/postgres/platform';
 import { requireIdentityPassword } from './password-policy';
+import { ADMISSION_COPY_SCHEMA_SQL } from '@/lib/copy/admission-schema';
 import { ADMISSION_SCHEMA_SQL } from '@/lib/admission/schema';
 import { runCoreSchemaOnce } from '@/lib/updates/core-schema';
 
@@ -290,6 +291,13 @@ async function initializeIdentitySchema(): Promise<void> {
       RETURN NEXT;
     END;
     $rotation$;
+    CREATE TABLE IF NOT EXISTS identity_copy_preparations (
+      request_id text PRIMARY KEY,
+      fingerprint text NOT NULL,
+      source_hardware text NOT NULL,
+      destination_hardware text NOT NULL,
+      prepared_at timestamptz NOT NULL DEFAULT now()
+    );
     CREATE TABLE IF NOT EXISTS identity_secrets (
       purpose text PRIMARY KEY,
       secret text NOT NULL,
@@ -322,6 +330,7 @@ async function initializeIdentitySchema(): Promise<void> {
     INSERT INTO identity_appliance_claim (singleton) VALUES (true)
     ON CONFLICT (singleton) DO NOTHING;
     ${ADMISSION_SCHEMA_SQL}
+    ${ADMISSION_COPY_SCHEMA_SQL}
     COMMIT;
   `);
 }

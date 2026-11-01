@@ -116,16 +116,17 @@ test('LXD repair awaits stop and delete before the idempotent deploy check', () 
     'utf8',
   );
   const repair = source.slice(
-    source.indexOf('export async function redeployLXDContainer'),
+    source.indexOf('async function removeLXDContainer'),
     source.indexOf('/** Wait for an async Incus operation.'),
   );
 
   const stopWait = repair.indexOf('await waitForLXDOperation(stopped.operation, 60)');
   const deleteRequest = repair.indexOf("'DELETE'");
   const deleteWait = repair.indexOf('await waitForLXDOperation(deleted.operation, 60)');
-  const redeploy = repair.lastIndexOf('return deployLXDContainer');
+  const redeploy = source.slice(source.indexOf('export async function redeployLXDContainer'), source.indexOf('export async function deployPointerLXDContainer'));
+  assert.match(redeploy, /await removeLXDContainer\(spec\);\s*return deployLXDContainer/);
 
   assert.ok(stopWait >= 0 && stopWait < deleteRequest);
-  assert.ok(deleteRequest < deleteWait && deleteWait < redeploy);
+  assert.ok(deleteRequest < deleteWait);
   assert.match(repair, /instance still exists after delete operation/);
 });

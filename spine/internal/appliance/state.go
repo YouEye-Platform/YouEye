@@ -456,6 +456,15 @@ func EnsureDataSchema(state StateRecord, m Manifest) (DataSchemaRecord, error) {
 	return rec, nil
 }
 
+// WriteDataSchemaAtomic updates a verified native lifecycle ownership record;
+// it does not initialize or migrate any user data.
+func WriteDataSchemaAtomic(path string, record DataSchemaRecord) error {
+	if record.SchemaVersion < 1 || strings.TrimSpace(record.InstallIDRef) == "" {
+		return errors.New("data schema version and install reference are required")
+	}
+	return writeJSONAtomic(path, record, 0600)
+}
+
 func WriteStateAtomic(path string, state StateRecord) error {
 	if err := state.Validate(); err != nil {
 		return err

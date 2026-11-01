@@ -1,3 +1,4 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -6,7 +7,7 @@ import assert from 'node:assert/strict';
 const controlRoot = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..');
 
 function readControl(path: string): string {
-  return readFileSync(join(controlRoot, path), 'utf8');
+  return path.endsWith(".tsx") ? englishInterfaceSource(readFileSync(join(controlRoot, path), "utf8")) : readFileSync(join(controlRoot, path), "utf8");
 }
 
 test('settings system page surfaces Market system update plans safely', () => {
@@ -26,7 +27,7 @@ test('settings system page surfaces Market system update plans safely', () => {
   assert.match(client, /Database image changes require an explicit maintenance window/);
   assert.match(client, /Dry Run/);
   assert.match(client, /Adopt\/Recreate/);
-  assert.match(client, /Type \{confirmPlan\.containerName\} to continue/);
+  assert.match(client, /Type(?:\{" "\})?\s*\{confirmPlan\.containerName\} to continue/);
   assert.match(client, /I have a maintenance window/);
 
   assert.match(api, /planSystemUpdates/);

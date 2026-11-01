@@ -1,3 +1,4 @@
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 /**
  * Offline Fallback Page — Control Panel
  *
@@ -6,6 +7,8 @@
  */
 
 export default function OfflinePage() {
+  const translateInterface = useInterfaceTranslations("interface");
+
   return (
     <div
       style={{
@@ -36,15 +39,11 @@ export default function OfflinePage() {
           color: "#fff",
         }}
       >
-        Control
-      </div>
+        {translateInterface("m32d7e8208247")}</div>
       <h1 style={{ fontSize: "1.5rem", fontWeight: 600, margin: "0 0 0.5rem" }}>
-        You&apos;re offline
-      </h1>
+        {translateInterface("m050be7950a63")}</h1>
       <p style={{ color: "#6b7280", maxWidth: 320, lineHeight: 1.5 }}>
-        The Control Panel requires a network connection. This page will reload
-        automatically when connectivity is restored.
-      </p>
+        {translateInterface("mc8bbc24999c8")}</p>
       <script
         dangerouslySetInnerHTML={{
           __html: `window.addEventListener('online', () => location.reload())`,

@@ -1,9 +1,8 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Loader2, CheckCircle2, XCircle, RotateCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { FUNNY_LOADING_MESSAGES } from '@/lib/wordart-presets';
 import { useTranslations } from 'next-intl';
 
 type StepStatus = 'pending' | 'running' | 'done' | 'error';
@@ -19,6 +18,8 @@ interface Props {
   steps: SetupStep[];
   isComplete: boolean;
   isRestarting?: boolean;
+  isChecking?: boolean;
+  statusOnlyRetry?: boolean;
   error: string;
   onRetry: () => void;
   onComplete: () => void;
@@ -28,36 +29,22 @@ export default function SetupProvisioning({
   steps,
   isComplete,
   isRestarting = false,
+  isChecking = false,
+  statusOnlyRetry = false,
   error,
   onRetry,
   onComplete,
 }: Props) {
   const t = useTranslations('setup');
-  const [funnyMessage, setFunnyMessage] = useState(FUNNY_LOADING_MESSAGES[0]);
-  const [messageIndex, setMessageIndex] = useState(0);
   const hasCompleted = useRef(false);
 
-  // Cycle funny messages every 2.5 seconds
+  // Only the actual completion receipt initiates the connection readback.
   useEffect(() => {
-    if (isComplete || error) return;
-    const interval = setInterval(() => {
-      setMessageIndex(prev => {
-        const next = (prev + 1) % FUNNY_LOADING_MESSAGES.length;
-        setFunnyMessage(FUNNY_LOADING_MESSAGES[next]);
-        return next;
-      });
-    }, 2500);
-    return () => clearInterval(interval);
-  }, [isComplete, error]);
-
-  // Auto-advance on completion
-  useEffect(() => {
-    if (isComplete && !hasCompleted.current) {
+    if (isComplete && !error && !hasCompleted.current) {
       hasCompleted.current = true;
-      const timer = setTimeout(onComplete, 1500);
-      return () => clearTimeout(timer);
+      onComplete();
     }
-  }, [isComplete, onComplete]);
+  }, [isComplete, error, onComplete]);
 
   // Calculate progress
   const completedSteps = steps.filter(s => s.status === 'done').length;
@@ -72,39 +59,19 @@ export default function SetupProvisioning({
       </div>
 
       {/* Spinner / Status */}
-      <div className="flex flex-col items-center gap-6 animate-in fade-in zoom-in-95 duration-500 delay-100">
-        {isComplete ? (
-          <div className="animate-in zoom-in-50 duration-300">
-            <CheckCircle2 className="h-20 w-20 text-green-500" />
-          </div>
-        ) : error ? (
-          <div className="animate-in zoom-in-50 duration-300">
-            <XCircle className="h-20 w-20 text-red-500" />
-          </div>
-        ) : (
-          <div className="relative">
-            <div className="w-24 h-24 rounded-full border-4 border-muted animate-spin border-t-primary" />
-            <div className="absolute inset-0 flex items-center justify-center">
-              <span className="text-sm font-bold text-foreground">{Math.round(progress)}%</span>
-            </div>
-          </div>
-        )}
-
-        {/* Funny message or status */}
-        <div className="h-8 flex items-center justify-center">
-          {isComplete ? (
-            <p className="text-green-600 font-medium animate-in fade-in duration-300">
+      <div className="flex flex-col items-center gap-6">
+        <div role={error ? 'alert' : 'status'} className="flex items-center gap-2">
+          {error ? <XCircle aria-hidden="true" className="h-5 w-5 shrink-0 text-destructive" />
+            : isComplete && !isRestarting ? <CheckCircle2 aria-hidden="true" className="h-5 w-5 shrink-0 text-primary" />
+              : <Loader2 aria-hidden="true" className="h-5 w-5 shrink-0 animate-spin motion-reduce:animate-none" />}
+          {isComplete && !error ? (
+            <p className="text-foreground font-medium">
               {isRestarting ? t('restartingServerInterface') : t('allDone')}
             </p>
           ) : error ? (
-            <p className="text-red-600 text-sm">{error}</p>
+            <p className="text-destructive text-sm">{error}</p>
           ) : (
-            <p
-              key={messageIndex}
-              className="text-muted-foreground text-sm animate-in fade-in slide-in-from-bottom-2 duration-300"
-            >
-              {funnyMessage}
-            </p>
+            <p className="text-muted-foreground text-sm">{isChecking ? t('checkingSetupStatus') : steps.find(step => step.status === 'running')?.label || t('settingUpHome')}</p>
           )}
         </div>
 
@@ -112,8 +79,8 @@ export default function SetupProvisioning({
         <div className="w-full max-w-xs">
           <div className="h-2 rounded-full bg-muted overflow-hidden">
             <div
-              className={`h-full rounded-full transition-all duration-500 ease-out ${
-                error ? 'bg-red-400' : isComplete ? 'bg-green-500' : 'bg-primary'
+              className={`h-full rounded-full transition-all duration-500 ease-out motion-reduce:transition-none ${
+                error ? 'bg-destructive' : 'bg-primary'
               }`}
               style={{ width: `${progress}%` }}
             />
@@ -122,6 +89,17 @@ export default function SetupProvisioning({
             {completedSteps} / {totalSteps} {t('stepsComplete')}
           </p>
         </div>
+        <ol className="w-full space-y-2 text-left text-sm">
+          {steps.map(step => <li key={step.id} className="rounded-lg border bg-card px-3 py-2">
+            <div className="flex items-center gap-2">
+              {step.status === 'done' ? <CheckCircle2 aria-hidden="true" className="h-4 w-4 text-primary" />
+                : step.status === 'error' ? <XCircle aria-hidden="true" className="h-4 w-4 text-destructive" />
+                  : step.status === 'running' ? <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <span aria-hidden="true" className="h-4 w-4 rounded-full border" />}
+              <span>{step.label}</span><span className="sr-only">: {step.status}</span>
+            </div>
+            {step.message && <p className="mt-1 break-words text-xs text-muted-foreground">{step.message}</p>}
+          </li>)}
+        </ol>
       </div>
 
       {/* Error retry */}
@@ -129,7 +107,7 @@ export default function SetupProvisioning({
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
           <Button onClick={onRetry} variant="outline" className="gap-2">
             <RotateCw className="h-4 w-4" />
-            {t('tryAgain')}
+            {statusOnlyRetry ? t('checkSetupStatus') : t('tryAgain')}
           </Button>
         </div>
       )}

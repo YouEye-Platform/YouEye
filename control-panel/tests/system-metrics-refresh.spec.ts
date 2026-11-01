@@ -29,6 +29,10 @@ test('System cards refresh without loading flashes, overlapping requests or time
       return { ok: true, async json() { return {}; } };
     },
     require(id: string) {
+      if (id === 'next-intl') return {
+        useLocale: () => 'en',
+        useTranslations: () => (key: string) => JSON.parse(readFileSync('messages/en.json', 'utf8')).interface[key],
+      };
       if (id === 'react') return {
         useState(initial: unknown) { return [initial, (value: unknown) => changes.push(value)]; },
         useRef(value: unknown) { return { current: value }; },
@@ -58,7 +62,8 @@ test('System cards refresh without loading flashes, overlapping requests or time
   assert.equal(timers.size, 1);
   slow = false; failed = true;
   await tick();
-  assert.ok(changes.includes('test connection interrupted'));
+  const messages = JSON.parse(readFileSync('messages/en.json', 'utf8')).interface;
+  assert.ok(changes.includes(messages.m0d5b1c282a63), 'failed refresh displays a stable localized error');
   failed = false; changes.length = 0;
   await tick();
   assert.ok(changes.includes(''), 'next success clears the visible error');

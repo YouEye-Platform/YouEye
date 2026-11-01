@@ -6,7 +6,7 @@
 
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { createPIN } from "@/lib/crypto/pin-session";
+import { createPIN, validTimelineSecret } from "@/lib/crypto/pin-session";
 
 export async function POST(request: Request) {
   const session = await getSession();
@@ -17,9 +17,9 @@ export async function POST(request: Request) {
   const body = await request.json();
   const { pin } = body;
 
-  if (!pin || typeof pin !== "string" || pin.length < 4) {
+  if (!validTimelineSecret(pin)) {
     return NextResponse.json(
-      { error: "PIN must be at least 4 characters" },
+      { error: "Use an exact secret of 4–1024 UTF-16 units" },
       { status: 400 }
     );
   }

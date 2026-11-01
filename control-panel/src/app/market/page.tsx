@@ -1,5 +1,10 @@
 'use client';
 
+
+
+
+
+import { useTranslations as useInterfaceTranslations } from "next-intl";
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import * as LucideIcons from 'lucide-react';
@@ -64,10 +69,12 @@ function MarketIcon({ app, size = 44, tile }: { app: MarketApp; size?: number; t
 // Health-at-a-glance dot. Not-installed → muted. Installed → coloured by health:
 // green healthy, red unhealthy, amber unknown (so a broken app stands out on its card).
 function StatusDot({ status, health }: { status?: string; health?: string }) {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const installed = !!status && status !== 'not-installed';
   if (!installed) return <span className="inline-block size-2 shrink-0 rounded-full bg-muted-foreground/30" />;
   const color = health === 'unhealthy' ? 'bg-red-500' : health === 'unknown' ? 'bg-amber-500' : 'bg-green-500';
-  const title = health === 'unhealthy' ? 'Unhealthy' : health === 'unknown' ? 'Health unknown' : 'Healthy';
+  const title = health === 'unhealthy' ? translateInterface("m317b1fbc1e13") : health === 'unknown' ? translateInterface("m6a5465ac1dd5") : translateInterface("m7f1e323b6272");
   return <span title={title} className={`inline-block size-2 shrink-0 rounded-full ${color}`} />;
 }
 
@@ -80,6 +87,8 @@ type Section = 'apps' | 'installed' | 'updates' | 'integrations' | 'added';
 /* ─────────────────────────── page ─────────────────────────── */
 
 export default function MarketPage() {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const [apps, setApps] = useState<MarketApp[]>([]);
   const [categoryDefs, setCategoryDefs] = useState<MarketCategory[]>([]);
   const [curation, setCuration] = useState<MarketCuration | null>(null);
@@ -101,7 +110,7 @@ export default function MarketPage() {
   const fetchCatalog = useCallback(async () => {
     try {
       const res = await fetch('/api/market/catalog');
-      if (!res.ok) throw new Error('Failed to load the Market catalog');
+      if (!res.ok) throw new Error(translateInterface("m8888c9ac53d1"));
       const data = await res.json();
       setApps(data.apps || []);
       setCatalogWarnings(Array.isArray(data.warnings) ? data.warnings.map((warning: { message: string }) => warning.message) : []);
@@ -114,9 +123,9 @@ export default function MarketPage() {
       setError(null);
     } catch (err) {
       console.error('[Market] catalog load failed', err);
-      setError(err instanceof Error ? err.message : 'Failed to load the Market catalog');
+      setError(translateInterface("m8888c9ac53d1"));
     }
-  }, []);
+  }, [translateInterface]);
 
   const fetchStatuses = useCallback(async () => {
     try {
@@ -165,20 +174,20 @@ export default function MarketPage() {
           try {
             const evt = JSON.parse(line);
             if (evt.message && evt.message !== 'done') setBundleMsg(evt.message);
-            if (evt.status === 'error') setBundleMsg(evt.message || 'Install failed');
+            if (evt.status === 'error') setBundleMsg(evt.message || translateInterface("m33b4717bdc2f"));
           } catch {
             /* ignore partial frame */
           }
         }
       }
-      setBundleMsg('Done — wired and ready.');
+      setBundleMsg(translateInterface("m256c43047177"));
       await Promise.all([fetchStatuses(), fetchCatalog()]);
     } catch (err) {
       setBundleMsg(`Failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setTimeout(() => setInstallingBundle(null), 2500);
     }
-  }, [fetchStatuses, fetchCatalog]);
+  }, [fetchStatuses, fetchCatalog, translateInterface]);
 
   useEffect(() => {
     setLoading(true);
@@ -263,7 +272,7 @@ export default function MarketPage() {
   const spotlightApps = curation?.spotlight?.apps?.length
     ? resolveIds(curation.spotlight.apps)
     : dedupe(nativeApps);
-  const spotlightTitle = curation?.spotlight?.title || 'Built for your server';
+  const spotlightTitle = curation?.spotlight?.title || translateInterface("m0fffd883a159");
   const collectionStrips = (curation?.collections ?? [])
     .map((c) => ({ id: c.id, label: c.label, apps: resolveIds(c.apps) }))
     .filter((c) => c.apps.length > 0);
@@ -324,16 +333,16 @@ export default function MarketPage() {
       {/* Hero */}
       <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border bg-gradient-to-br from-primary/[0.06] to-transparent p-8">
         <div>
-          <h1 className="text-[26px] font-bold tracking-tight">Market</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Apps for your server. Install with one click — everything runs at home.</p>
+          <h1 className="text-[26px] font-bold tracking-tight">{translateInterface("m5238d9bd03d5")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{translateInterface("m0ee0f0fef9c7")}</p>
         </div>
         <div className="relative w-full max-w-xs">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search apps"
-            aria-label="Search apps"
+            placeholder={translateInterface("ma10a36fa1098")}
+            aria-label={translateInterface("ma10a36fa1098")}
             className="h-10 rounded-full pl-9 pr-4"
           />
         </div>
@@ -347,7 +356,7 @@ export default function MarketPage() {
 
       {catalogWarnings.length > 0 && (
         <div role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm">
-          <p>Some Market items could not be loaded. Available apps are shown below.</p>
+          <p>{translateInterface("m190601e77afe")}</p>
           <ul className="mt-2 list-disc pl-5">
             {catalogWarnings.map((warning, index) => <li key={index}>{warning}</li>)}
           </ul>
@@ -357,28 +366,22 @@ export default function MarketPage() {
       {/* Pill bar */}
       <nav className="flex flex-wrap items-center gap-2">
         <button type="button" className={pill(section === 'apps')} onClick={() => setSection('apps')}>
-          <Grid3x3 className="h-3.5 w-3.5" /> All apps
-        </button>
+          <Grid3x3 className="h-3.5 w-3.5" /> {" "}{translateInterface("m01bed311e7d0")}</button>
         <button type="button" className={pill(section === 'installed')} onClick={() => setSection('installed')}>
-          <Check className="h-3.5 w-3.5" /> Installed
-          {counts.installed > 0 && <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[11px]">{counts.installed}</span>}
+          <Check className="h-3.5 w-3.5" /> {" "}{translateInterface("mf8b32f4e92bd")}{counts.installed > 0 && <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[11px]">{counts.installed}</span>}
         </button>
         <button type="button" className={pill(section === 'updates')} onClick={() => setSection('updates')}>
-          <Download className="h-3.5 w-3.5" /> Updates
-          {counts.updates > 0 && <span className="ml-0.5 rounded-full bg-primary/15 px-1.5 text-[11px] text-primary">{counts.updates}</span>}
+          <Download className="h-3.5 w-3.5" /> {" "}{translateInterface("m22e2bada8f1c")}{counts.updates > 0 && <span className="ml-0.5 rounded-full bg-primary/15 px-1.5 text-[11px] text-primary">{counts.updates}</span>}
         </button>
         <button type="button" className={pill(section === 'integrations')} onClick={() => setSection('integrations')}>
-          <Sparkles className="h-3.5 w-3.5" /> Integrations
-        </button>
+          <Sparkles className="h-3.5 w-3.5" /> {translateInterface("m090512d93fcc")}</button>
         <button type="button" className={pill(section === 'added')} onClick={() => setSection('added')}>
-          <Plus className="h-3.5 w-3.5" /> Added
-          {counts.added > 0 && <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[11px]">{counts.added}</span>}
+          <Plus className="h-3.5 w-3.5" /> {translateInterface("m6b02e0d363a4")}{counts.added > 0 && <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[11px]">{counts.added}</span>}
         </button>
 
         {usedCategories.length > 0 && <span className="mx-1 h-5 w-px bg-border" />}
         <button type="button" className={pill(categoryFilter === 'all')} onClick={() => setCategoryFilter('all')}>
-          All
-        </button>
+          {translateInterface("ma52ace420f21")}</button>
         {usedCategories.map((cat) => {
           const CatIcon = lucideByName(catIconName(cat));
           return (
@@ -391,7 +394,7 @@ export default function MarketPage() {
           <button
             type="button"
             onClick={() => setTagFilter(null)}
-            title="Clear tag filter"
+            title={translateInterface("m58f0f5967b9e")}
             className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-[13px] font-medium text-primary"
           >
             #{tagFilter} <span className="text-[15px] leading-none">×</span>
@@ -399,8 +402,7 @@ export default function MarketPage() {
         )}
 
         <Link href="/market/sources" className={`${pill(false)} ml-auto`}>
-          <Store className="h-3.5 w-3.5" /> Sources
-          {sourceCount > 0 && <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[11px]">{sourceCount}</span>}
+          <Store className="h-3.5 w-3.5" /> {translateInterface("mcaf85b0888d7")}{sourceCount > 0 && <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[11px]">{sourceCount}</span>}
         </Link>
       </nav>
 
@@ -428,8 +430,8 @@ export default function MarketPage() {
       {showingStrips && bundleCards.length > 0 && (
         <section className="space-y-3">
           <div className="flex items-baseline gap-2">
-            <h2 className="text-[17px] font-bold tracking-tight">Bundles</h2>
-            <span className="text-[12.5px] text-muted-foreground">Curated stacks that install and wire together</span>
+            <h2 className="text-[17px] font-bold tracking-tight">{translateInterface("mff042b6ded4e")}</h2>
+            <span className="text-[12.5px] text-muted-foreground">{translateInterface("m303e7cf98fb4")}</span>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
             {bundleCards.map((b) => {
@@ -464,7 +466,7 @@ export default function MarketPage() {
                       className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-1.5 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
                     >
                       {installingBundle === b.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                      {installingBundle === b.id ? 'Installing…' : 'Install bundle'}
+                      {installingBundle === b.id ? translateInterface("m530bcc355f0a") : translateInterface("me860b43c8a66")}
                     </button>
                     {installingBundle === b.id && bundleMsg && (
                       <span className="truncate text-[12px] text-muted-foreground">{bundleMsg}</span>
@@ -494,7 +496,7 @@ export default function MarketPage() {
                   <div className="truncate text-[12.5px] text-muted-foreground">{app.description || app.sourceName || '—'}</div>
                 </div>
                 {hasUpdate(app) ? (
-                  <span className="text-[11px] font-medium text-primary">Update</span>
+                  <span className="text-[11px] font-medium text-primary">{translateInterface("mc1c1009d3f37")}</span>
                 ) : (
                   <StatusDot status={statusOf(app)} health={healthOf(app)} />
                 )}
@@ -508,7 +510,7 @@ export default function MarketPage() {
       {section === 'apps' && categoryFilter === 'all' && featured && (
         <section className="grid overflow-hidden rounded-2xl border md:grid-cols-2">
           <div className="flex flex-col justify-center gap-2.5 p-8">
-            <div className="text-[12px] font-semibold uppercase tracking-wider text-primary">Featured</div>
+            <div className="text-[12px] font-semibold uppercase tracking-wider text-primary">{translateInterface("mc533cafab69e")}</div>
             <h3 className="text-[22px] font-bold tracking-tight">{featured.name}</h3>
             <p className="text-sm text-muted-foreground">{featured.description}</p>
             <div className="pt-1">
@@ -516,7 +518,7 @@ export default function MarketPage() {
                 href={variantHref(featured)}
                 className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90"
               >
-                {isInstalled(featured) ? `Open ${featured.name}` : `Install ${featured.name}`}
+                {isInstalled(featured) ? translateInterface("m3dfbdb809ebf", { value0: String(featured.name) }) : translateInterface("mfa4031f94844", { value0: String(featured.name) })}
               </Link>
             </div>
           </div>
@@ -530,7 +532,7 @@ export default function MarketPage() {
       {Object.keys(byCategory).length === 0 ? (
         <div className="rounded-xl border bg-card py-16 text-center text-muted-foreground">
           <Store className="mx-auto mb-3 h-10 w-10 opacity-40" />
-          <p className="text-sm">{apps.length === 0 ? 'No apps in the catalog yet.' : 'Nothing matches your search or filters.'}</p>
+          <p className="text-sm">{apps.length === 0 ? translateInterface("mc0d5412c5745") : translateInterface("mecb17af93f66")}</p>
         </div>
       ) : (
         Object.entries(byCategory)
@@ -553,7 +555,7 @@ export default function MarketPage() {
                     <div className="truncate text-[12.5px] text-muted-foreground">{app.description || app.sourceName || '—'}</div>
                   </div>
                   {hasUpdate(app) ? (
-                    <span className="text-[11px] font-medium text-primary">Update</span>
+                    <span className="text-[11px] font-medium text-primary">{translateInterface("mc1c1009d3f37")}</span>
                   ) : (
                     <StatusDot status={statusOf(app)} health={healthOf(app)} />
                   )}
@@ -565,7 +567,7 @@ export default function MarketPage() {
       )}
 
       <div className="text-center text-[12.5px] text-muted-foreground">
-        {sourceCount} {sourceCount === 1 ? 'market' : 'markets'} connected · <Link href="/market/sources" className="text-primary hover:underline">Manage sources</Link>
+        {translateInterface("connectedMarkets", {count: sourceCount})}<Link href="/market/sources" className="text-primary hover:underline">{translateInterface("mb00d1920b294")}</Link>
       </div>
     </div>
   );

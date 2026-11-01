@@ -25,7 +25,9 @@ test('service worker deletes old app-owned runtime caches during activation', ()
 
 test('private network responses have no persistent fallback', () => {
   assert.match(sw, /new NetworkOnly/);
-  assert.match(sw, /cache: "no-store"/);
+  assert.match(sw, /requestWillFetch: \(\{ request \}\) => privateNetworkRequest\(request\)/);
+  assert.match(sw, /privateNetworkRequest\(request\)/);
+  assert.match(readFileSync(join(root, "src/lib/pwa-cache-policy.ts"), "utf8"), /cache: "no-store"/);
   assert.doesNotMatch(sw, /new NetworkFirst|new StaleWhileRevalidate|\.\.\.defaultCache/);
   assert.match(sw, /isPublicPrecache/);
 });

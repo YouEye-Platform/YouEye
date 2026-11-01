@@ -117,6 +117,37 @@ func TestCoreReleaseRejectsAmbiguousJSON(t *testing.T) {
 	}
 }
 
+func TestCorePromotedSelectionRetainsDevelopmentMembers(t *testing.T) {
+	r := coreFixture()
+	original := "https://build.example.test/owner/YouEye"
+	for i := range r.Members {
+		m := &r.Members[i]
+		m.Source, m.Branch, m.BuildVersion = original, "dev", "0.5.38-dev.1"
+		m.Tag = "youeye-v" + m.BuildVersion
+		blobs := []*CoreBlob{&m.Artifact, &m.Checksums, &m.Signature, &m.Provenance, &m.SBOM}
+		if m.DocumentSignature != nil {
+			blobs = append(blobs, m.DocumentSignature)
+		}
+		if m.ReleaseLock != nil {
+			blobs = append(blobs, m.ReleaseLock)
+		}
+		for _, b := range blobs {
+			b.URL = original + "/releases/download/" + m.Tag + "/" + b.Name
+		}
+	}
+	if err := r.Validate(); err != nil {
+		t.Fatal("Stable selection rejected original Dev membership", err)
+	}
+	blob := r.Members[0].Artifact
+	url, err := CoreBlobTransportURL(r, blob)
+	if err != nil || url != r.Source+"/releases/download/"+r.Tag+"/blob-"+blob.SHA256 {
+		t.Fatal("promoted payload depended on private original transport", url, err)
+	}
+	if r.Members[0].Source != original || r.Members[0].BuildVersion != "0.5.38-dev.1" {
+		t.Fatal("transport relabeled original build identity")
+	}
+}
+
 func TestSharedCoreProtocolFixture(t *testing.T) {
 	raw, err := os.ReadFile("testdata/core-release-v1.json")
 	if err != nil {

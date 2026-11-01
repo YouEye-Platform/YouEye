@@ -11,7 +11,7 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const override = await getUserWordartOverride(session.userId);
-  return NextResponse.json({ wordart: override });
+  return NextResponse.json({ wordart: override }, { headers: { "Cache-Control": "private, no-store" } });
 }
 
 export async function PUT(request: NextRequest) {

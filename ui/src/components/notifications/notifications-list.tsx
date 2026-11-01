@@ -6,6 +6,9 @@
 
 "use client";
 
+import { useTranslations as useInterfaceTranslations } from "next-intl";
+
+
 import { useState, useEffect, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { Bell, Check, Search, Trash2, Loader2 } from "lucide-react";
@@ -22,6 +25,8 @@ type FilterRead = "all" | "unread" | "read";
 const PAGE_SIZE = 50;
 
 export function NotificationsList() {
+  const translateInterface = useInterfaceTranslations("interface");
+
   const t = useTranslations("notifications");
 
   const [notifications, setNotifications] = useState<NotificationData[]>([]);
@@ -118,10 +123,10 @@ export function NotificationsList() {
 
   const typeButtons: { value: FilterType; label: string }[] = [
     { value: "all", label: t("filterAll") },
-    { value: "info", label: "Info" },
-    { value: "success", label: "Success" },
-    { value: "warning", label: "Warning" },
-    { value: "error", label: "Error" },
+    { value: "info", label: translateInterface("m170322a32f3c") },
+    { value: "success", label: translateInterface("mc88a0b907419") },
+    { value: "warning", label: translateInterface("me981ddae45d8") },
+    { value: "error", label: translateInterface("m54a0e8c17ebb") },
   ];
 
   const readButtons: { value: FilterRead; label: string }[] = [

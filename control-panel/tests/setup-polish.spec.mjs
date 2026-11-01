@@ -1,3 +1,4 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -6,13 +7,15 @@ import assert from 'node:assert/strict';
 const root = process.env.CONTROL_PANEL_ROOT || join(import.meta.dirname, '..');
 
 function read(path) {
-  return readFileSync(join(root, path), 'utf8');
+  const source = readFileSync(join(root, path), 'utf8');
+  return path.endsWith('/login-form.tsx') ? englishInterfaceSource(source) : source;
 }
 
 test('setup completion persists and reuses the selected TLS path', () => {
   const run = read('src/app/api/setup/run/route.ts');
   const setup = read('src/app/setup/page.tsx');
   const provisioning = read('src/components/setup/SetupProvisioning.tsx');
+  const progress = read('src/lib/setup/progress.mjs');
   const complete = read('src/app/setup-complete/page.tsx');
   const settings = read('src/lib/settings/service.ts');
 
@@ -22,9 +25,9 @@ test('setup completion persists and reuses the selected TLS path', () => {
   assert.match(setup, /router\.replace\(SETUP_COMPLETE_PATH\)/);
   assert.match(setup, /isRestarting=\{setupRestarting\}/);
   assert.doesNotMatch(setup, /\/setup-complete\?tls=/);
-  assert.match(setup, /let streamHasError = false/);
-  assert.match(setup, /event\.complete === true/);
-  assert.match(setup, /event\.hasErrors \|\| streamHasError/);
+  assert.match(setup, /followSetupProgress/);
+  assert.match(progress, /event\.complete === true && !failure/);
+  assert.match(progress, /if \(failure\) throw new SetupProgressError/);
   assert.doesNotMatch(setup, /data === '\[DONE\]'\) \{\s*setSetupComplete\(true\)/);
   assert.match(run, /if \(hasError\) \{/);
   assert.match(run, /Setup needs attention before finishing/);

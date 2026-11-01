@@ -66,6 +66,30 @@ System slots must not restore revoked grants from an older image. Do not delete
 or replace this file when deploying a component. Public keys are not secrets;
 write access changes authority and must remain restricted.
 
+## Signed System assembly authority
+
+A selected signed System assembly binds the exact host manifest, detached
+signature and payloads. Its assembly signer does not grant host signing authority.
+The host member independently resolves its current publisher for the exact
+repository, raw branch and `appliance` scope. Provisioned Development authority
+remains independent of the immutable image's public signing key.
+
+Core-owned staging, retained-manifest readback and healthy-proof creation use
+that same member authority. Readback requires the protected retained signed
+assembly and its journal-bound digest, including when the host document comes
+from the durable healthy proof. Missing, changed or unsafe assembly state and
+wrong, partial, missing or revoked signatures fail closed. An owner grant for
+another repository, differently cased branch, or component scope cannot authorize
+the host. Legacy updates without a selected assembly retain their existing
+filesystem/publisher authority.
+
+This correction changes the target reader; it does not repair an older installed
+reader before that reader authenticates its replacement. An affected installation
+still needs a supported signed bootstrap whose source, channel and original role
+envelope its current reader can verify. A new candidate alone is insufficient.
+Keep the normal paired recovery checks and current revocations; do not replace
+installed verifier files or enroll a downloaded key to bypass that boundary.
+
 ## Control Panel and native apps
 
 The administrator-only `/api/settings/update-trust` GET/PUT endpoint manages the

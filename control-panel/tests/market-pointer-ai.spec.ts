@@ -1,3 +1,4 @@
+import { englishInterfaceSource } from "./helpers/localized-source.mjs";
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -6,7 +7,7 @@ import { parse as parseYaml } from 'yaml';
 import { AppManifestSchema } from '../src/lib/market/schema';
 
 const root = process.env.CONTROL_PANEL_ROOT || path.join(import.meta.dirname, '..');
-const read = (filename: string) => readFileSync(path.join(root, filename), 'utf8');
+const read = (filename: string) => englishInterfaceSource(readFileSync(path.join(root, filename), 'utf8'));
 
 test('Market AI provisioning is actor-routed, one-time delivered, and rollback-safe', () => {
   const engine = read('src/lib/market/engine.ts');

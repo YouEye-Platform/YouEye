@@ -1,6 +1,7 @@
 package systemupdate
 
 import (
+	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
@@ -55,6 +56,79 @@ func (m *Manager) withCoreTransport(selection *CoreHostSelection) (*Manager, err
 	return &bound, nil
 }
 
+// verifyHostManifest uses core authority only for an authenticated core-owned
+// request. The assembly selects bytes; its signer never replaces host authority.
+func (m *Manager) verifyHostManifest(manifestPath, signaturePath string, selection *CoreHostSelection) (VerifiedManifest, string, error) {
+	if selection == nil {
+		verified, err := VerifyManifest(manifestPath, signaturePath, m.config.TrustKeyPath)
+		return verified, "", err
+	}
+	r, _, err := VerifyCoreSelection(selection.Raw, selection.Signature, m.config.TrustKeyPath)
+	if err != nil {
+		return VerifiedManifest{}, "", err
+	}
+	var host releasecache.CoreMember
+	for _, member := range r.Members {
+		if member.Role == "system-update" {
+			host = member
+			break
+		}
+	}
+	if host.Role == "" {
+		return VerifiedManifest{}, "", fmt.Errorf("core assembly has no host update")
+	}
+	key, err := CoreMemberKey(host, r.Channel, m.config.TrustKeyPath)
+	if err != nil {
+		return VerifiedManifest{}, "", err
+	}
+	grant, err := coreTrustLookup(host.Source, host.Branch, "appliance")
+	if err != nil {
+		return VerifiedManifest{}, "", err
+	}
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return VerifiedManifest{}, "", fmt.Errorf("read system update manifest: %w", err)
+	}
+	manifest, err := ParseManifest(raw)
+	if err != nil {
+		return VerifiedManifest{}, "", err
+	}
+	publisher := ""
+	if grant != nil {
+		if manifest.Trust.Class != TrustClassDev {
+			return VerifiedManifest{}, "", errors.New("owner-built system images must use the development channel")
+		}
+		publisher = grant.Publisher
+	} else {
+		channel, err := releasecache.CoreMemberChannel(host, r.Channel)
+		if err != nil {
+			return VerifiedManifest{}, "", err
+		}
+		class := TrustClassDev
+		if host.Source == releasecache.OfficialRepository && (channel == "stable" || channel == "beta") {
+			class = channel
+		}
+		if manifest.Trust.Class != class {
+			return VerifiedManifest{}, "", errors.New("host manifest trust class differs from core member authority")
+		}
+	}
+	verified, err := verifyManifestWithKey(raw, manifest, signaturePath, key, publisher)
+	if err != nil {
+		return VerifiedManifest{}, "", err
+	}
+	// Membership binds the actual detached-signature file as well as every
+	// payload and the host's full SPKI fingerprint, source and raw branch.
+	signature, err := os.ReadFile(signaturePath)
+	if err != nil {
+		return VerifiedManifest{}, "", err
+	}
+	_, digest, err := m.verifyCoreHost(*selection, verified, signature)
+	if err != nil {
+		return VerifiedManifest{}, "", err
+	}
+	return verified, digest, nil
+}
+
 func (m *Manager) verifyCoreHost(selection CoreHostSelection, verified VerifiedManifest, signature []byte) (releasecache.CoreRelease, string, error) {
 	r, digest, err := VerifyCoreSelection(selection.Raw, selection.Signature, m.config.TrustKeyPath)
 	if err != nil {
@@ -82,6 +156,9 @@ func (m *Manager) verifyCoreHost(selection CoreHostSelection, verified VerifiedM
 	if err != nil || host.KeyID != fmt.Sprintf("%x", sha256.Sum256(der)) {
 		return r, "", fmt.Errorf("host signing authority differs from core membership")
 	}
+	if len(signature) != ed25519.SignatureSize || !ed25519.Verify(key, verified.Raw, signature) {
+		return r, "", fmt.Errorf("host document signature is not valid for current core member authority")
+	}
 	for _, artifact := range manifest.Artifacts {
 		member, ok := members[artifact.Role]
 		if !ok || member.Artifact.Name != artifact.Path || member.Artifact.SHA256 != artifact.SHA256 || member.Artifact.SizeBytes != artifact.SizeBytes ||
@@ -108,27 +185,29 @@ func (m *Manager) hostArtifactSource(options SourceOptions, artifact Artifact) (
 	return "", fmt.Errorf("host artifact lacks exact core membership")
 }
 
-func (m *Manager) loadHostCore(journal Journal, verified VerifiedManifest, signature []byte) error {
+// verifyTransactionManifest requires the protected saved assembly before using
+// core authority, then rechecks today's policy and the durable envelope digest.
+func (m *Manager) verifyTransactionManifest(journal Journal, manifestPath string) (VerifiedManifest, error) {
 	if journal.CoreManifestSHA256 == "" {
-		return nil
+		return VerifyManifest(manifestPath, manifestPath+".sig", m.config.TrustKeyPath)
 	}
 	dir := m.transactionDir(journal.TransactionID)
 	raw, err := ReadCoreState(filepath.Join(dir, "core-release.json"), 1<<20)
 	if err != nil {
-		return err
+		return VerifiedManifest{}, err
 	}
 	sig, err := ReadCoreState(filepath.Join(dir, "core-release.json.sig"), 64)
 	if err != nil {
-		return err
+		return VerifiedManifest{}, err
 	}
-	_, digest, err := m.verifyCoreHost(CoreHostSelection{Raw: raw, Signature: sig}, verified, signature)
+	verified, digest, err := m.verifyHostManifest(manifestPath, manifestPath+".sig", &CoreHostSelection{Raw: raw, Signature: sig})
 	if err != nil {
-		return err
+		return VerifiedManifest{}, err
 	}
 	if digest != journal.CoreManifestSHA256 {
-		return fmt.Errorf("host core membership differs from durable journal")
+		return VerifiedManifest{}, fmt.Errorf("host core membership differs from durable journal")
 	}
-	return nil
+	return verified, nil
 }
 
 func (m *Manager) persistHostCore(dir string, selection *CoreHostSelection) error {
@@ -139,17 +218,6 @@ func (m *Manager) persistHostCore(dir string, selection *CoreHostSelection) erro
 		return err
 	}
 	return atomicWrite(filepath.Join(dir, "core-release.json.sig"), selection.Signature, 0600)
-}
-
-func (m *Manager) checkHostCore(journal Journal, verified VerifiedManifest, signaturePath string) error {
-	if journal.CoreManifestSHA256 == "" {
-		return nil
-	}
-	signature, err := os.ReadFile(signaturePath)
-	if err != nil {
-		return err
-	}
-	return m.loadHostCore(journal, verified, signature)
 }
 
 // CheckCoreHostCommit prevents independent boot-health machinery from blessing

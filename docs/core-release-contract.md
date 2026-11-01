@@ -9,6 +9,12 @@ Each blob has its original signed filename, exact HTTPS release-asset URL,
 byte size and SHA-256. Publication aliases can distinguish CP and UI's
 `standalone.tar` without rewriting either member's signed checksum document.
 
+A signed Alpha or Stable selection may reuse Dev members. It retains their
+original build versions, source and signing keys. Cross-repository transport
+uses hash-addressed assets on the selected release, so installation does not
+depend on reaching the original build repository. Both the selection signature
+and original member signatures remain required.
+
 The manifest lists Installer, media, appliance metadata, the host update
 manifest, System root, both
 System UKIs, System updater, internal Recovery, Recovery UKI, update bootstrap,

@@ -83,7 +83,6 @@ export function parseCoreRelease(raw: Buffer): CoreRelease {
     fields(m, ['role','build_version','source','branch','source_commit','tag','input_sha256','key_id','depends_on','artifact','checksums','signature','provenance','sbom','document_signature','release_lock']);
     if (!ROLES.includes(m.role) || seen.has(m.role) || !parseReleaseVersion(m.build_version) || canonicalTrustRepository(m.source) !== m.source || !validCoreBranch(m.branch) || !commit(m.source_commit) || !hash(m.input_sha256) || !hash(m.key_id) || !m.tag) throw new Error('Invalid core member');
     if (['stable','beta'].includes(r.channel)) {
-      if (m.source !== r.source) throw new Error('Public core member source differs');
       coreMemberChannel(m, r.channel);
     }
     const blob = (b: CoreBlob) => {
@@ -159,7 +158,7 @@ export function selectedCoreArtifact(url: string, digest: string | undefined, ro
 export function coreBlobTransportURL(release: CoreRelease, blob: CoreBlob, mirror = false): string {
   const members = release.members.flatMap(m => [m.artifact,m.checksums,m.signature,m.provenance,m.sbom,...(m.document_signature ? [m.document_signature] : []),...(m.release_lock ? [m.release_lock] : [])]);
   if (!members.some(b => b.url === blob.url && b.name === blob.name && b.sha256 === blob.sha256 && b.size_bytes === blob.size_bytes)) throw new Error('Transport blob is outside authenticated core membership');
-  if (mirror || new URL(release.source).hostname !== 'github.com' && new URL(blob.url).hostname === 'github.com') return `${release.source}/releases/download/${release.tag}/blob-${blob.sha256}`;
+  if (mirror || !blob.url.startsWith(`${release.source}/releases/download/`)) return `${release.source}/releases/download/${release.tag}/blob-${blob.sha256}`;
   return blob.url;
 }
 export function selectedCoreTransportURL(url: string, mirror = false): string {

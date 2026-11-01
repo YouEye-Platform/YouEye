@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // CoreBlobTransportURL separates delivery from the original signed identity.
-// A private assembly may mirror public-ready members at hash-named assets on
-// that exact private release. The caller must authenticate the assembly first;
+// A promoted assembly mirrors original members at hash-named assets on
+// that exact selected release. The caller must authenticate the assembly first;
 // every downloaded blob still requires its original hash and scoped signature.
-// Public assemblies always retain their original public URLs.
 func CoreBlobTransportURL(r CoreRelease, b CoreBlob) (string, error) {
 	if err := r.Validate(); err != nil {
 		return "", err
@@ -33,9 +33,7 @@ func CoreBlobTransportURL(r CoreRelease, b CoreBlob) (string, error) {
 	if !found {
 		return "", fmt.Errorf("transport blob is outside the authenticated assembly")
 	}
-	origin, _ := url.Parse(r.Source)
-	artifact, _ := url.Parse(b.URL)
-	if origin.Host != "github.com" && artifact.Host == "github.com" {
+	if !strings.HasPrefix(b.URL, r.Source+"/releases/download/") {
 		return r.Source + "/releases/download/" + r.Tag + "/blob-" + b.SHA256, nil
 	}
 	return b.URL, nil

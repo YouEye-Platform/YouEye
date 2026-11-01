@@ -95,6 +95,53 @@
       "license": "MIT AND LicenseRef-Node-Bundled-Dependencies",
       "notice": "control-panel/scripts/node-LICENSE.txt",
       "review": "upstream-release-checksums-and-complete-bundled-notices-retained"
+    },
+    {
+      "id": "mytitle-studio",
+      "kind": "vendored-source-and-assets",
+      "paths": [
+        "packages/branding",
+        "control-panel/public/mytitle",
+        "ui/public/mytitle",
+        "legal/mytitle"
+      ],
+      "upstream": "MyTitle",
+      "version": "23cb46f6ff839622db75304d70d4aae18fcc1269",
+      "license": "MIT AND ISC AND OFL-1.1 AND Apache-2.0",
+      "notices": [
+        "legal/mytitle/LICENSE",
+        "legal/mytitle/LICENSES.md",
+        "legal/mytitle/THIRD_PARTY_NOTICES.txt"
+      ],
+      "review": "pinned-code-font-catalogue-and-per-font-notices; asset SHA-256 inventory in legal/mytitle/provenance.json"
+    },
+    {
+      "id": "branding-opentype-vendor",
+      "kind": "vendored-source",
+      "paths": [
+        "packages/branding/vendor/opentype"
+      ],
+      "upstream": "https://github.com/opentypejs/opentype.js",
+      "version": "1.3.4; @types/opentype.js 1.3.8",
+      "license": "MIT",
+      "notices": [
+        "packages/branding/vendor/opentype/LICENSE",
+        "packages/branding/vendor/opentype/TYPES-LICENSE"
+      ],
+      "review": "exact upstream ESM hash retained in legal/mytitle/provenance.json; declaration default export adapter"
+    },
+    {
+      "id": "onboarding-ibm-plex",
+      "kind": "webfonts",
+      "paths": [
+        "control-panel/public/onboarding-fonts",
+        "ui/public/onboarding-fonts"
+      ],
+      "upstream": "https://github.com/IBM/plex",
+      "version": "71f558992315a12ca1f06a2215d57962a1992162",
+      "license": "OFL-1.1",
+      "notice": "control-panel/public/onboarding-fonts/LICENSE.txt",
+      "review": "unmodified complete WOFF2 distributions and SHA-256 inventory retained beside assets"
     }
   ]
 }
