@@ -1,0 +1,22 @@
+[Unit]
+Description=YouEye local appliance status console
+After=systemd-networkd.service youeye-appliance-state.service youeye-development-overlay.service
+Wants=systemd-networkd.service
+ConditionPathExists=/usr/lib/youeye/appliance-release
+Conflicts=getty@tty1.service serial-getty@ttyS0.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/youeye-installer console --console-kind physical
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

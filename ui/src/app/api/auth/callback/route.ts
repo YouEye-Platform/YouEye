@@ -1,0 +1,180 @@
+/**
+ * OAuth2 Callback Route
+ *
+ * GET /api/auth/callback?code=...&state=...
+ * Exchanges the authorization code for tokens, fetches user info,
+ * upserts the user in the database, and creates a JWT session.
+ *
+ * CRITICAL: All cookies must be set directly on the NextResponse object.
+ * Using cookies() from next/headers writes to an implicit response context
+ * that does NOT merge into NextResponse.redirect() — causing cookies to be
+ * silently dropped. This was the root cause of the "Invalid state" error.
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import { oauthTransactionName, readOAuthTransaction } from "../../../../../../shared/oauth-transaction";
+import {
+  exchangeCodeForToken,
+  fetchUserInfo,
+  isSSOConfigured,
+  createSession,
+  generateCSRFToken,
+} from "@/lib/auth";
+import { upsertUser } from "@/lib/db/queries/users";
+import { verifyIdentityToken } from "@/lib/auth/id-token";
+
+const SESSION_DURATION = 60 * 60 * 24 * 30; // ID session sets the earlier idle limit
+
+function hasAdminClaim(groups: string[], isAdminClaim?: boolean): boolean {
+  return isAdminClaim === true || groups.includes("admin");
+}
+
+export async function GET(request: NextRequest) {
+  if (!isSSOConfigured()) {
+    return NextResponse.json({ error: "SSO not configured" }, { status: 503 });
+  }
+
+  // Determine external base URL for redirects
+  const externalUrl = process.env.UI_EXTERNAL_URL;
+  let baseUrl: string;
+  if (externalUrl) {
+    baseUrl = externalUrl;
+  } else {
+    const host = request.headers.get("host") || "";
+    const proto = request.headers.get("x-forwarded-proto") || "http";
+    baseUrl = `${proto}://${host}`;
+  }
+
+  // Respect SECURE_COOKIES env var (consistent with sso/route.ts)
+  const useSecure = process.env.SECURE_COOKIES !== "false";
+
+  const code = request.nextUrl.searchParams.get("code");
+  const state = request.nextUrl.searchParams.get("state");
+  const errorParam = request.nextUrl.searchParams.get("error");
+  const transactionName = oauthTransactionName("ui", state);
+  const returnTo = readOAuthTransaction(transactionName ? request.cookies.get(transactionName)?.value : undefined, state);
+
+  // Handle identity provider errors
+  if (errorParam) {
+    const desc =
+      request.nextUrl.searchParams.get("error_description") || errorParam;
+    console.error(`OAuth2 error: ${desc}`);
+    const response = NextResponse.redirect(
+      new URL(`/login?error=${encodeURIComponent(desc)}`, baseUrl)
+    );
+    if (transactionName) response.cookies.delete(transactionName);
+    return response;
+  }
+
+  if (!code || !state) {
+    const response = NextResponse.redirect(
+      new URL("/login?error=Missing+code+or+state", baseUrl)
+    );
+    if (transactionName) response.cookies.delete(transactionName);
+    return response;
+  }
+
+  // The cookie is scoped to this exact client/attempt, including its return path.
+  if (returnTo === null) {
+    console.error("OAuth2 state mismatch");
+    const response = NextResponse.redirect(
+      new URL("/login?error=Invalid+state", baseUrl)
+    );
+    if (transactionName) response.cookies.delete(transactionName);
+    return response;
+  }
+
+  try {
+    const redirectUri = `${baseUrl}/api/auth/callback`;
+
+    // Exchange code for access token
+    const tokenData = await exchangeCodeForToken(code, redirectUri);
+
+    // Fetch user profile from identity provider
+    const userInfo = await fetchUserInfo(tokenData.access_token);
+    const identityUrl = process.env.IDENTITY_URL || '';
+    const clientId = process.env.IDENTITY_CLIENT_ID || '';
+    if (!tokenData.id_token || !identityUrl || !clientId) throw new Error('Missing ID token or provider configuration');
+    // The registered issuer can be pinned through a domain rename. Read the
+    // provider's current discovery contract instead of rebuilding it from the
+    // browser URL, which may now point at a different host.
+    const discoveryBase = process.env.IDENTITY_INTERNAL_URL || identityUrl;
+    const discoveryResponse = await fetch(`${discoveryBase}/application/o/${encodeURIComponent(clientId)}/.well-known/openid-configuration`, {
+      cache: "no-store", signal: AbortSignal.timeout(5000),
+    });
+    if (!discoveryResponse.ok) throw new Error("Identity discovery unavailable");
+    const discovery = await discoveryResponse.json() as { issuer?: string; jwks_uri?: string };
+    const { payload: idClaims } = await verifyIdentityToken(tokenData.id_token, discovery, clientId, discoveryBase);
+    if (idClaims.token_use !== 'id' || typeof idClaims.sid !== 'string' || idClaims.sub !== userInfo.sub) {
+      throw new Error('Identity session is missing or mismatched');
+    }
+
+    const username = userInfo.preferred_username || userInfo.sub;
+    const groups = userInfo.groups || [];
+    const isAdmin = hasAdminClaim(groups, (userInfo as { is_admin?: boolean }).is_admin);
+
+    // Upsert user in database (sync name fields from identity provider)
+    const firstName = userInfo.given_name || null;
+    const lastName = userInfo.family_name || null;
+    const user = await upsertUser({
+      identityId: userInfo.sub,
+      username,
+      name: userInfo.name || username,
+      email: userInfo.email || "",
+      isAdmin,
+      firstName,
+      lastName,
+    });
+
+    // Create JWT session
+    const sessionToken = await createSession({
+      userId: user.id,
+      identityId: userInfo.sub,
+      identitySessionId: idClaims.sid,
+      username,
+      name: userInfo.name || username,
+      email: userInfo.email || "",
+      isAdmin: user.isAdmin ?? isAdmin,
+      groups,
+    });
+
+    const csrfToken = generateCSRFToken();
+
+    console.log(`SSO login: "${username}" (admin: ${user.isAdmin})`);
+
+    // Set ALL cookies directly on the redirect response.
+    // Do NOT use setSessionCookies() — it writes to the implicit response
+    // context via cookies() which won't merge into NextResponse.redirect().
+    const response = NextResponse.redirect(new URL(returnTo, baseUrl));
+
+    response.cookies.set("ye-ui-session", sessionToken, {
+      httpOnly: true,
+      secure: useSecure,
+      sameSite: "lax",
+      maxAge: SESSION_DURATION,
+      path: "/",
+    });
+
+    response.cookies.set("ye-ui-csrf", csrfToken, {
+      httpOnly: false,
+      secure: useSecure,
+      sameSite: "lax",
+      maxAge: SESSION_DURATION,
+      path: "/",
+    });
+
+    // Consume only this login attempt; parallel client transactions remain valid.
+    if (transactionName) response.cookies.delete(transactionName);
+
+    return response;
+  } catch (error) {
+    console.error("OAuth2 callback error:", error);
+    const msg =
+      error instanceof Error ? error.message : "Authentication failed";
+    const response = NextResponse.redirect(
+      new URL(`/login?error=${encodeURIComponent(msg)}`, baseUrl)
+    );
+    if (transactionName) response.cookies.delete(transactionName);
+    return response;
+  }
+}

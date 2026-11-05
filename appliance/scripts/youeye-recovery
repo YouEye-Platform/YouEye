@@ -1,0 +1,414 @@
+#!/bin/bash
+set -u
+
+export PATH="${YOUEYE_RECOVERY_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+
+set_slot_once() {
+    slot=$1
+    bootctl set-oneshot "youeye-system-${slot}.conf"
+}
+
+recovery_request_dir=${YOUEYE_RECOVERY_REQUEST_DIR:-/var/lib/youeye-state/recovery}
+
+show_recovery_request() {
+    request="$recovery_request_dir/request.json"
+    result="$recovery_request_dir/last-result.json"
+    if [ -s "$request" ]; then
+        printf '\nPending recovery operation:\n'
+        jq -r '"  " + .operation + " (" + .stage + ") requested " + .requested_at' "$request" 2>/dev/null || printf '  Invalid request metadata\n'
+    elif [ -s "$result" ]; then
+        printf '\nLast recovery operation:\n'
+        jq -r '"  " + .operation + " (" + .stage + ") completed " + .completed_at' "$result" 2>/dev/null || printf '  Invalid result metadata\n'
+    else
+        printf '\nNo reset operation is pending.\n'
+    fi
+}
+
+queue_recovery_request() (
+    set -euo pipefail
+    operation=$1
+    case "$operation" in
+        reset-platform|factory-reset) ;;
+        *) return 2 ;;
+    esac
+    install -d -m 0700 "$recovery_request_dir"
+    if [ -e "$recovery_request_dir/request.json" ]; then
+        printf '\nA recovery operation is already pending. Reboot to apply it.\n' >&2
+        return 1
+    fi
+    tmp="$recovery_request_dir/request.json.tmp"
+    transaction_id="$(tr -d '-' < /proc/sys/kernel/random/uuid)"
+    jq -n --arg operation "$operation" --arg transaction_id "$transaction_id" \
+        --arg requested_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{schema:"youeye.appliance.recovery.v1",transaction_id:$transaction_id,operation:$operation,stage:"queued",requested_at:$requested_at}' > "$tmp"
+    chmod 0600 "$tmp"
+    sync -f "$tmp"
+    mv -f "$tmp" "$recovery_request_dir/request.json"
+    sync -f "$recovery_request_dir"
+)
+
+confirm_recovery_request() {
+    operation=$1
+    case "$operation" in
+        reset-platform)
+            printf '\nThis rebuilds the platform containers from the packaged release set.\n'
+            printf 'Accounts, configuration, applications, and all persistent YE-DATA content are preserved.\n'
+            ;;
+        factory-reset)
+            printf '\nThis permanently removes all platform containers, accounts, applications, and YE-DATA content.\n'
+            printf 'The signed System, Recovery, boot files, disk layout, and device identity remain installed.\n'
+            ;;
+    esac
+    read -r -p 'Are you sure? [y/N]: ' answer
+    case "$answer" in
+        y|Y|yes|YES|Yes)
+            if queue_recovery_request "$operation"; then
+                printf '\nRecovery operation queued. Reboot to apply it before normal services start.\n'
+            else
+                printf '\nRecovery operation was not queued.\n' >&2
+            fi
+            ;;
+        *) printf '\nCancelled. No persistent state was changed.\n' ;;
+    esac
+}
+
+export_support_evidence() (
+    set -euo pipefail
+
+    labels=${YOUEYE_RECOVERY_SUPPORT_LABELS:-"YOUEYE-SUP YOUEYE-SUPPORT"}
+    support_mount=${YOUEYE_RECOVERY_SUPPORT_MOUNT:-/run/youeye-recovery-support}
+    youeye=${YOUEYE_RECOVERY_YOUEYE:-/usr/local/bin/youeye}
+    source=
+    selected_label=
+
+    for label in $labels; do
+        mapfile -t matches < <(blkid -o device -t "LABEL=$label" 2>/dev/null || true)
+        if [ "${#matches[@]}" -gt 1 ]; then
+            printf '\nMore than one filesystem is labelled %s; remove duplicates and retry.\n' "$label" >&2
+            return 1
+        fi
+        if [ "${#matches[@]}" -eq 1 ]; then
+            source=${matches[0]}
+            selected_label=$label
+            break
+        fi
+    done
+    if [ -z "$source" ]; then
+        printf '\nNo support filesystem labelled YOUEYE-SUP or YOUEYE-SUPPORT was found.\n'
+        return 1
+    fi
+
+    partlabel="$(blkid -s PARTLABEL -o value "$source" 2>/dev/null || true)"
+    case "$partlabel" in
+        YE-ESP|YE-RECOVERY|YE-SYSTEM-A|YE-SYSTEM-B|YE-STATE|YE-DATA)
+            printf '\nRefusing support export to protected appliance partition %s.\n' "$partlabel" >&2
+            return 1
+            ;;
+    esac
+    fstype="$(blkid -s TYPE -o value "$source" 2>/dev/null || true)"
+    case "$fstype" in
+        vfat|ext4|exfat) ;;
+        *)
+            printf '\nSupport media must use FAT32, ext4, or exFAT (found %s).\n' "${fstype:-unknown}" >&2
+            return 1
+            ;;
+    esac
+
+    destination="$(findmnt -rn -o TARGET -S "$source" | head -n 1 || true)"
+    mounted_here=0
+    if [ -z "$destination" ]; then
+        install -d -m 0700 "$support_mount"
+        mount_options=rw,nodev,nosuid,noexec
+        case "$fstype" in
+            vfat|exfat) mount_options=$mount_options,umask=0077 ;;
+        esac
+        if ! mount -t "$fstype" -o "$mount_options" "$source" "$support_mount"; then
+            printf '\nCould not mount %s support media read-write.\n' "$selected_label" >&2
+            return 1
+        fi
+        destination=$support_mount
+        mounted_here=1
+        trap 'umount "$support_mount" 2>/dev/null || true' EXIT
+    else
+        existing_options="$(findmnt -rn -o OPTIONS -S "$source" | head -n 1 || true)"
+        for required in rw nodev nosuid noexec; do
+            case ",$existing_options," in
+                *",$required,"*) ;;
+                *)
+                    printf '\nMounted support media is missing the required %s option.\n' "$required" >&2
+                    return 1
+                    ;;
+            esac
+        done
+        case "$fstype" in
+            vfat|exfat)
+                case ",$existing_options," in
+                    *",umask=0077,"*|*",fmask=0177,"*) ;;
+                    *)
+                        printf '\nMounted FAT support media does not enforce private file permissions.\n' >&2
+                        return 1
+                        ;;
+                esac
+                ;;
+        esac
+    fi
+    if [ ! -w "$destination" ]; then
+        printf '\nSupport media is not writable.\n' >&2
+        return 1
+    fi
+
+    umask 077
+    output="$destination/youeye-support-$(date -u +%Y%m%dT%H%M%SZ).txt"
+    {
+        printf 'YouEye recovery evidence\nGenerated: %s\n\n' "$(date -u +%FT%TZ)"
+        "$youeye" appliance health --profile=recovery || true
+        printf '\nDisks\n'
+        lsblk -o NAME,PATH,SIZE,MODEL,SERIAL,RO,RM,FSTYPE,LABEL,PARTLABEL,MOUNTPOINTS
+        printf '\nBoot entries\n'
+        bootctl list || true
+        printf '\nFailed units\n'
+        systemctl --failed --no-pager || true
+    } > "$output"
+    chmod 0600 "$output" 2>/dev/null || true
+    test -s "$output"
+    sync -f "$output"
+    sync -f "$destination"
+    if [ "$mounted_here" -eq 1 ]; then
+        umount "$support_mount"
+        trap - EXIT
+    fi
+    printf '\nSupport evidence written to %s on %s media.\n' "$(basename "$output")" "$selected_label"
+)
+
+repair_boot() (
+    set -euo pipefail
+
+    state=${YOUEYE_RECOVERY_INSTALLER_STATE:-/var/lib/youeye-state/installer}
+    backup=$state/boot
+    manifest=$state/appliance-manifest.json
+    signature=$state/appliance-manifest.json.sig
+	trust_key=${YOUEYE_RECOVERY_TRUST_KEY:-/usr/share/youeye/appliance-development.pub}
+	appliance_state=${YOUEYE_RECOVERY_APPLIANCE_STATE:-/var/lib/youeye-state/appliance-state.json}
+	update_boot=${YOUEYE_RECOVERY_UPDATE_BOOT:-/var/lib/youeye-state/system-update/boot}
+    esp_device="${YOUEYE_RECOVERY_ESP_DEVICE:-$(findfs PARTLABEL=YE-ESP)}"
+    esp_mount=${YOUEYE_RECOVERY_ESP_MOUNT:-/run/youeye-recovery-esp}
+
+    if ! openssl pkeyutl -verify -pubin -inkey "$trust_key" -rawin \
+        -in "$manifest" -sigfile "$signature" >/dev/null; then
+        return 1
+    fi
+
+    verify_boot_asset() {
+        role=$1
+        path=$2
+        if ! expected="$(jq -er --arg role "$role" \
+            '[.artifacts[] | select(.role == $role) | .sha256] | if length == 1 then .[0] else error("missing or duplicate role") end' \
+            "$manifest")"; then
+            return 1
+        fi
+        case "$expected" in
+            ''|*[!0-9a-f]*) return 1 ;;
+        esac
+        [ "${#expected}" -eq 64 ] || return 1
+        actual="$(sha256sum "$path" | cut -d ' ' -f 1)"
+        [ "$actual" = "$expected" ] || return 1
+    }
+
+    verify_boot_asset system-a-uki "$backup/system-a.efi" || return 1
+	verify_boot_asset system-b-uki "$backup/system-b.efi" || return 1
+	verify_boot_asset recovery-uki "$backup/recovery.efi" || return 1
+	recovery_version=$(jq -er '.recovery_version' "$manifest") || return 1
+	factory_image_version=$(jq -er '.image_version' "$manifest") || return 1
+
+	select_slot_asset() {
+		slot=$1
+		baseline_path=$2
+		baseline_version=$3
+		if [ ! -e "$appliance_state" ]; then
+			printf '%s\t%s\n' "$baseline_path" "$baseline_version"
+			return 0
+		fi
+		jq -e '
+			.schema_version >= 2 and
+			(.slots.current == "A" or .slots.current == "B")
+		' "$appliance_state" >/dev/null || return 1
+		record=$(jq -r --arg slot "${slot^^}" '
+			if ((.transaction.stage == "staged" or .transaction.stage == "pending-reboot" or .transaction.stage == "trial") and .slots.candidate == $slot) then
+				.slots.candidate_image_version
+			elif .slots.current == $slot then
+				.slots.current_image_version
+			elif .slots.previous == $slot then
+				.slots.previous_image_version
+			else empty end
+		' "$appliance_state") || return 1
+		if [ -z "$record" ]; then
+			printf '%s\t%s\n' "$baseline_path" "$baseline_version"
+			return 0
+		fi
+		image_version=$record
+		if [ "$image_version" = "$factory_image_version" ]; then
+			printf '%s\t%s-%s\n' "$baseline_path" "$image_version" "$slot"
+			return 0
+		fi
+		candidate_dir="$update_boot/$slot/$image_version"
+		candidate_manifest="$candidate_dir/manifest.json"
+		candidate_signature="$candidate_manifest.sig"
+		candidate_asset="$candidate_dir/system.efi"
+		openssl pkeyutl -verify -pubin -inkey "$trust_key" -rawin \
+			-in "$candidate_manifest" -sigfile "$candidate_signature" >/dev/null || return 1
+		role="system-${slot}-uki"
+		expected=$(jq -er --arg role "$role" --arg version "$image_version" \
+			--arg recovery "$recovery_version" '
+			if .schema != "youeye.system-update.v1" or
+			   .target_image_version != $version or
+			   .recovery_version != $recovery then error("update identity mismatch") else
+			   [.artifacts[] | select(.role == $role) | .sha256] |
+			   if length == 1 then .[0] else error("missing or duplicate role") end
+			end
+		' "$candidate_manifest") || return 1
+		case "$expected" in ''|*[!0-9a-f]*) return 1 ;; esac
+		[ "${#expected}" -eq 64 ] || return 1
+		[ "$(sha256sum "$candidate_asset" | cut -d ' ' -f 1)" = "$expected" ] || return 1
+		printf '%s\t%s-%s\n' "$candidate_asset" "$image_version" "$slot"
+	}
+
+	selection_a=$(mktemp)
+	selection_b=$(mktemp)
+	trap 'rm -f "$selection_a" "$selection_b"; umount "$esp_mount" 2>/dev/null || true' EXIT
+	select_slot_asset a "$backup/system-a.efi" 1-a > "$selection_a" || return 1
+	select_slot_asset b "$backup/system-b.efi" 0-b > "$selection_b" || return 1
+	IFS=$'\t' read -r system_a version_a < "$selection_a"
+	IFS=$'\t' read -r system_b version_b < "$selection_b"
+
+    install -d -m 0700 "$esp_mount"
+    umount "$esp_mount" 2>/dev/null || true
+    mount -t vfat -o rw,nodev,nosuid,noexec,umask=0077 "$esp_device" "$esp_mount"
+
+    bootctl --esp-path="$esp_mount" --no-variables install
+    install -d -m 0755 "$esp_mount/EFI/YouEye" "$esp_mount/loader/entries"
+    rm -f \
+        "$esp_mount/EFI/Linux/youeye-system-a.efi" \
+        "$esp_mount/EFI/Linux/youeye-system-b.efi" \
+        "$esp_mount/EFI/Linux/youeye-recovery.efi"
+    find "$esp_mount/loader/entries" -maxdepth 1 -type f \
+        \( -name 'youeye-system-a*.conf' -o -name 'youeye-system-b*.conf' \) \
+        -delete
+	install -m 0644 "$system_a" "$esp_mount/EFI/YouEye/youeye-system-a.efi"
+	install -m 0644 "$system_b" "$esp_mount/EFI/YouEye/youeye-system-b.efi"
+    install -m 0644 "$backup/recovery.efi" "$esp_mount/EFI/YouEye/youeye-recovery.efi"
+
+	cat > "$esp_mount/loader/loader.conf" <<'EOF'
+timeout 3
+editor no
+auto-entries no
+auto-firmware yes
+EOF
+	cat > "$esp_mount/loader/entries/youeye-system-a+3-0.conf" <<EOF
+title YouEye System A
+sort-key youeye-system
+version $version_a
+efi /EFI/YouEye/youeye-system-a.efi
+EOF
+	cat > "$esp_mount/loader/entries/youeye-system-b+3-0.conf" <<EOF
+title YouEye System B
+sort-key youeye-system
+version $version_b
+efi /EFI/YouEye/youeye-system-b.efi
+EOF
+    cat > "$esp_mount/loader/entries/youeye-recovery.conf" <<'EOF'
+title YouEye Recovery
+sort-key zz-youeye-recovery
+version 1
+efi /EFI/YouEye/youeye-recovery.efi
+EOF
+    printf 'type1\n' > "$esp_mount/loader/entries.srel"
+
+	cmp -s "$system_a" "$esp_mount/EFI/YouEye/youeye-system-a.efi"
+	cmp -s "$system_b" "$esp_mount/EFI/YouEye/youeye-system-b.efi"
+    cmp -s "$backup/recovery.efi" "$esp_mount/EFI/YouEye/youeye-recovery.efi"
+    bootctl --esp-path="$esp_mount" set-default ""
+    bootctl --esp-path="$esp_mount" set-oneshot ""
+    sync -f "$esp_mount"
+)
+
+if [ "${1:-}" = --repair-boot ]; then
+    repair_boot
+    exit $?
+fi
+if [ "${1:-}" = --export-support ]; then
+    export_support_evidence
+    exit $?
+fi
+while true; do
+    clear
+    printf '%s\n' \
+        'YouEye Recovery' \
+        '===============' \
+        '' \
+        '1. Show offline Recovery diagnostics' \
+        '2. Show disk and boot entries' \
+        '3. Boot System A once' \
+        '4. Boot System B once' \
+        '5. Repair systemd-boot files' \
+        '6. Export support evidence to YOUEYE-SUP media' \
+        '7. Show pending reset status' \
+        '8. Reset platform and preserve application data' \
+        '9. Factory reset all platform data' \
+        '10. Reboot' \
+        '11. Power off' \
+        ''
+    printf 'YOUEYE_RECOVERY_CONSOLE_READY\n' > /dev/ttyS0
+    read -r -p 'Select: ' choice
+    case "$choice" in
+        1)
+            /usr/local/bin/youeye appliance health --profile=recovery || true
+            ;;
+        2)
+            lsblk -o NAME,PATH,SIZE,MODEL,SERIAL,RO,RM,FSTYPE,LABEL,PARTLABEL,MOUNTPOINTS
+            printf '\nBoot entries:\n'
+            bootctl list || true
+            ;;
+        3)
+            set_slot_once a && systemctl reboot
+            ;;
+        4)
+            set_slot_once b && systemctl reboot
+            ;;
+        5)
+            repair_boot
+            repair_status=$?
+            if [ "$repair_status" -eq 0 ]; then
+                printf '\nVerified boot assets and boot manager repaired.\n'
+            else
+                printf '\nBoot repair failed; no unverified asset was installed.\n' >&2
+            fi
+            ;;
+        6)
+            export_support_evidence
+            export_status=$?
+            if [ "$export_status" -ne 0 ]; then
+                printf '\nSupport evidence was not exported.\n' >&2
+            fi
+            ;;
+        7)
+            show_recovery_request
+            ;;
+        8)
+            confirm_recovery_request reset-platform
+            ;;
+        9)
+            confirm_recovery_request factory-reset
+            ;;
+        10)
+            systemctl reboot
+            ;;
+        11)
+            systemctl poweroff
+            ;;
+        *)
+            printf '\nUnknown selection.\n'
+            ;;
+    esac
+    printf '\n'
+    read -r -p 'Press Enter to continue...' _
+done

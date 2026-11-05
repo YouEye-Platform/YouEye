@@ -1,0 +1,82 @@
+/**
+ * Identity User Detail API
+ * GET /api/apps/identity/users/[id] — Get user
+ * PATCH /api/apps/identity/users/[id] — Update user
+ * DELETE /api/apps/identity/users/[id] — Delete user
+ *
+ * The URL is kept for compatibility with the current Settings UI. During the
+ * It is backed by the provider-neutral identity layer.
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { deleteUser, getUser, updateUser } from '@/lib/identity/provider';
+import { getSession, verifyCSRFToken } from '@/lib/auth';
+import { reconcileAdmissionProjections, admissionReconciliationState } from '@/lib/admission/projection';
+
+interface RouteParams {
+  params: Promise<{ id: string }>;
+}
+
+export async function GET(request: NextRequest, { params }: RouteParams) {
+  const session = await getSession();
+  if (!session?.isAdmin) {
+	return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+  }
+
+  try {
+    const { id } = await params;
+    const user = await getUser(id);
+    return NextResponse.json(user);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: NextRequest, { params }: RouteParams) {
+  const session = await getSession();
+  if (!session?.isAdmin) {
+	return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+  }
+	const csrf = request.headers.get('X-CSRF-Token');
+	if (!csrf || !(await verifyCSRFToken(csrf))) return NextResponse.json({ error: 'Invalid CSRF token' }, { status: 403 });
+
+  try {
+    const { id } = await params;
+    const body = await request.json();
+    const user = await updateUser(id, {
+      firstName: typeof body.firstName === 'string' ? body.firstName.trim() : undefined,
+      lastName: typeof body.lastName === 'string' ? body.lastName.trim() : undefined,
+      email: typeof body.email === 'string' ? body.email.trim() : undefined,
+      groups: Array.isArray(body.groups) ? body.groups : undefined,
+      isAdmin: typeof body.isAdmin === 'boolean' ? body.isAdmin : typeof body.is_superuser === 'boolean' ? body.is_superuser : undefined,
+      is_active: typeof body.is_active === 'boolean' ? body.is_active : undefined,
+    });
+    await reconcileAdmissionProjections().catch(() => undefined);
+    const admissionReconciliation = await admissionReconciliationState();
+    return NextResponse.json({ ...user, admissionReconciliation }, { status: admissionReconciliation === 'pending' ? 202 : 200 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest, { params }: RouteParams) {
+  const session = await getSession();
+  if (!session?.isAdmin) {
+	return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+  }
+	const csrf = request.headers.get('X-CSRF-Token');
+	if (!csrf || !(await verifyCSRFToken(csrf))) return NextResponse.json({ error: 'Invalid CSRF token' }, { status: 403 });
+
+  try {
+    const { id } = await params;
+    await deleteUser(id);
+    await reconcileAdmissionProjections().catch(() => undefined);
+    const admissionReconciliation = await admissionReconciliationState();
+    return NextResponse.json({ status: 'deleted', admissionReconciliation }, { status: admissionReconciliation === 'pending' ? 202 : 200 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

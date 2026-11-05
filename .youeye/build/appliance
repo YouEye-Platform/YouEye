@@ -1,0 +1,24 @@
+#!/bin/bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+. "$script_dir/lib.sh"
+youeye_prepare_contract
+
+export HOME="$YOUEYE_WORK_DIR/home"
+export XDG_CACHE_HOME="$YOUEYE_WORK_DIR/cache"
+export GOPATH="$YOUEYE_WORK_DIR/go"
+export GOMODCACHE="${YOUEYE_GOMODCACHE:-$YOUEYE_WORK_DIR/go-mod-cache}"
+export GOCACHE="${YOUEYE_GOCACHE:-$YOUEYE_WORK_DIR/go-build-cache}"
+install -d -m 0755 "$HOME" "$XDG_CACHE_HOME" "$GOPATH" "$GOMODCACHE" "$GOCACHE"
+
+export APPLIANCE_BUILD_MODE=unsigned
+export LIVE_BUILD_APT_PROXY="${LIVE_BUILD_APT_PROXY:-http://127.0.0.1:3142}"
+if ! curl -fsS --max-time 5 "$LIVE_BUILD_APT_PROXY/acng-report.html" >/dev/null; then
+    printf 'The builder-local APT cache is unavailable at %s.\n' "$LIVE_BUILD_APT_PROXY" >&2
+    exit 1
+fi
+export OUTPUT_DIR="$YOUEYE_OUTPUT_DIR"
+export SOURCE_DIR="$YOUEYE_SOURCE_DIR"
+export WORK_DIR="$YOUEYE_WORK_DIR/appliance"
+exec "$YOUEYE_SOURCE_DIR/appliance/build/build-appliance.sh"

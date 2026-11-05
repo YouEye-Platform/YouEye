@@ -1,0 +1,101 @@
+import {afterAll,beforeAll,expect,mock,test} from 'bun:test';
+import {createHash} from 'node:crypto';
+const enabled=process.env.YOUEYE_COPY_DB_FIXTURE==='1';
+const run=enabled?test:test.skip;
+let db:any,copy:any;
+const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const request={requestId:'copy-fixture',sourceHardware:'smbios:11111111-1111-1111-1111-111111111111',destinationHardware:'smbios:22222222-2222-2222-2222-222222222222',sourceReceiptSHA256:'a'.repeat(64),manifestSHA256:'b'.repeat(64),clientIds:['youeye-control','public-test']};
+beforeAll(async()=>{
+ if(!enabled)return;
+ if(!process.env.DATABASE_URL?.includes('/crew_environment_fixture'))throw Error('Disposable fixture database required');
+ db=new Bun.SQL(process.env.DATABASE_URL!);
+ mock.module('../../src/lib/market/update-admission',()=>({assertIndependentCopyLifecycle:()=>{}}));
+ mock.module('../../src/lib/identity/store',()=>({ensureIdentitySchema:async()=>{},withIdentityAppLifecycle:(work:any)=>work(),identityRows:(query:string)=>db.unsafe(query),identityCommand:async(query:string)=>{const connection=await db.reserve();try{return await connection.unsafe(query).simple();}catch(error:any){await connection.unsafe('ROLLBACK').simple();throw error;}finally{connection.release();}},identitySql:(value:string)=>"'"+value.replaceAll("'","''")+"'",identitySqlJson:(value:unknown)=>"'"+JSON.stringify(value).replaceAll("'","''")+"'::jsonb"}));
+ await db.unsafe(`
+ CREATE TABLE identity_users(id uuid PRIMARY KEY,username text,password_hash text,groups jsonb);
+ CREATE TABLE identity_clients(client_id text PRIMARY KEY,client_secret text,updated_at timestamptz);
+ CREATE TABLE identity_copy_preparations(request_id text PRIMARY KEY,fingerprint text,source_hardware text,destination_hardware text,prepared_at timestamptz DEFAULT now());
+ CREATE TABLE identity_sessions(id text,revoked_at timestamptz);
+ CREATE TABLE identity_refresh_families(id text,revoked_at timestamptz);
+ CREATE TABLE identity_refresh_tokens(token_hash text,revoked_at timestamptz);
+ CREATE TABLE identity_auth_codes(code text,used_at timestamptz);
+ CREATE TABLE identity_setup_handoffs(code_hash text,used_at timestamptz);
+ CREATE TABLE identity_appliance_claim(owner_user_id uuid,operation_session_id text,operation_expires_at timestamptz);
+ CREATE TABLE identity_logout_deliveries(id text,delivered_at timestamptz);
+ CREATE TABLE identity_revoked_before(user_id uuid PRIMARY KEY,revoked_before timestamptz);
+ CREATE TABLE identity_secrets(purpose text PRIMARY KEY,secret text,created_at timestamptz DEFAULT now());
+ INSERT INTO identity_users VALUES('11111111-1111-1111-1111-111111111111','fixture-user','fixture-password-hash','["fixture-group"]');
+ INSERT INTO identity_clients VALUES('youeye-control','fixture-client-secret',now()),('public-test','',now());
+ INSERT INTO identity_sessions VALUES('fixture-session',null);
+ INSERT INTO identity_refresh_families VALUES('fixture-family',null);
+ INSERT INTO identity_refresh_tokens VALUES('fixture-refresh',null);
+ INSERT INTO identity_auth_codes VALUES('fixture-code',null);
+ INSERT INTO identity_setup_handoffs VALUES('fixture-handoff',null);
+ INSERT INTO identity_appliance_claim VALUES('11111111-1111-1111-1111-111111111111','fixture-operation',now());
+ INSERT INTO identity_logout_deliveries VALUES('fixture-logout',null);
+ INSERT INTO identity_secrets(purpose,secret) VALUES('jwt','fixture-old-signing'),('oauth-rs256-private-key','fixture-old-key'),('oauth-rs256-retired:fixture','fixture-retired-key');
+ `);
+ copy=await import('../../src/lib/identity/copy');
+});
+afterAll(async()=>{if(enabled)await db.close();});
+run('copy authority changes atomically while local user identities, passwords and groups remain identical',async()=>{
+ const before=digest(await db`select * from identity_users order by id`);
+ expect((await copy.prepareIndependentIdentity(request)).state).toBe('authority-prepared');
+ expect(digest(await db`select * from identity_users order by id`)).toBe(before);
+ for(const table of ['identity_sessions','identity_refresh_families','identity_refresh_tokens'])expect(Number((await db.unsafe(`select count(*) as n from ${table} where revoked_at is null`))[0].n)).toBe(0);
+ expect(Number((await db`select count(*) as n from identity_auth_codes where used_at is null`)[0].n)).toBe(0);
+ expect(Number((await db`select count(*) as n from identity_logout_deliveries where delivered_at is null`)[0].n)).toBe(0);
+ expect(Number((await db`select count(*) as n from identity_setup_handoffs where used_at is null`)[0].n)).toBe(0);
+ expect((await db`select operation_session_id is null and operation_expires_at is null and owner_user_id='11111111-1111-1111-1111-111111111111' as preserved from identity_appliance_claim`)[0].preserved).toBe(true);
+ const keys=await db`select purpose,secret from identity_secrets order by purpose`;
+ expect(keys.length).toBe(2);expect(keys.every((row:any)=>!row.secret.startsWith('fixture-'))).toBe(true);
+ expect((await db`select client_secret='' as empty from identity_clients where client_id='public-test'`)[0].empty).toBe(true);
+ expect((await db`select client_secret<>'fixture-client-secret' as rotated from identity_clients where client_id='youeye-control'`)[0].rotated).toBe(true);
+ const accepted=digest(keys);
+ await copy.prepareIndependentIdentity(request);
+ expect(digest(await db`select purpose,secret from identity_secrets order by purpose`)).toBe(accepted);
+ await expect(copy.prepareIndependentIdentity({...request,destinationHardware:'smbios:33333333-3333-3333-3333-333333333333'})).rejects.toThrow('conflict');
+});
+run('changed client inventory refuses the whole copy step without rotating or revoking new state',async()=>{
+ const before=digest(await db`select purpose,secret from identity_secrets order by purpose`);
+ await db`insert into identity_clients values('unhandled-external','fixture-external',now())`;
+ await expect(copy.prepareIndependentIdentity({...request,requestId:'copy-drift'})).rejects.toThrow('reconciliation');
+ expect(digest(await db`select purpose,secret from identity_secrets order by purpose`)).toBe(before);
+ expect(Number((await db`select count(*) as n from identity_copy_preparations where request_id='copy-drift'`)[0].n)).toBe(0);
+});
+run('native copy rebinds app installation atomically while ordinary identity changes remain forbidden',async()=>{
+ const {ADMISSION_SCHEMA_SQL}=await import('../../src/lib/admission/schema');
+ const {ADMISSION_COPY_SCHEMA_SQL}=await import('../../src/lib/copy/admission-schema');
+ await db.unsafe(`
+ ALTER TABLE identity_users ADD COLUMN is_active boolean DEFAULT true,ADD COLUMN is_admin boolean DEFAULT true;
+ ALTER TABLE identity_refresh_tokens ADD COLUMN client_id text,ADD COLUMN user_id uuid;
+ ALTER TABLE identity_auth_codes ADD COLUMN client_id text,ADD COLUMN user_id uuid;
+ CREATE TABLE identity_session_clients(client_id text,user_id uuid,session_id uuid);
+ DELETE FROM identity_clients WHERE client_id<>'youeye-control';
+ INSERT INTO identity_clients VALUES('youeye-ui','fixture-ui-secret',now()),('youeye-app-notes','fixture-app-secret',now());
+ ${ADMISSION_SCHEMA_SQL}
+ ${ADMISSION_COPY_SCHEMA_SQL}
+ INSERT INTO admission_policies(installation_id,app_id,owner_id,mode,user_ids,state)
+ VALUES('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','notes','11111111-1111-1111-1111-111111111111','users','["11111111-1111-1111-1111-111111111111"]','ready');
+ INSERT INTO admission_clients VALUES('youeye-app-notes','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',false);
+ INSERT INTO admission_user_data_contracts VALUES('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+ `).simple();
+ const app={appId:'notes',installationId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',clientId:'youeye-app-notes',manifestSHA256:'c'.repeat(64),containers:['app-notes'],desiredState:'running' as const};
+ const req={...request,requestId:'copy-admission',clientIds:['youeye-control','youeye-ui','youeye-app-notes']};
+ await copy.prepareIndependentIdentity(req);
+ const {prepareIndependentAdmission}=await import('../../src/lib/copy/admission');
+ const users=digest(await db`select * from identity_users order by id`);
+ const policyBefore=(await db`select owner_id,mode,user_ids,group_ids,public_access from admission_policies where app_id='notes'`)[0];
+ await expect((async()=>{await db`update admission_policies set installation_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',revision=revision+1 where app_id='notes'`;})()).rejects.toThrow();
+ const bindings=await prepareIndependentAdmission(req,[app]);
+ expect(bindings).toHaveLength(1);expect(bindings[0].source_installation_id).toBe(app.installationId);expect(bindings[0].destination_installation_id).not.toBe(app.installationId);
+ expect((await db`select owner_id,mode,user_ids,group_ids,public_access from admission_policies where app_id='notes'`)[0]).toEqual(policyBefore);
+ expect(digest(await db`select * from identity_users order by id`)).toBe(users);
+ expect((await db`select state from admission_policies where app_id='notes'`)[0].state).toBe('pending');
+ const resources=await db`select installation_id::text,declaration from admission_resources`;
+ expect(resources.length).toBeGreaterThan(0);
+ expect(resources.every((r:any)=>r.installation_id===bindings[0].destination_installation_id&&r.declaration.installationId===r.installation_id)).toBe(true);
+ expect(await prepareIndependentAdmission(req,[app])).toEqual(bindings);
+ await expect((async()=>{await db`update admission_policies set installation_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',revision=revision+1 where app_id='notes'`;})()).rejects.toThrow();
+ await expect(prepareIndependentAdmission(req,[{...app,installationId:'cccccccc-cccc-4ccc-8ccc-cccccccccccc'}])).rejects.toThrow('reconciliation');
+});

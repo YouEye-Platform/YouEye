@@ -1,0 +1,128 @@
+#!/bin/sh
+set -eu
+
+release=${YOUEYE_CONSOLE_RELEASE:-/usr/lib/youeye/appliance-release}
+state=${YOUEYE_CONSOLE_STATE:-/var/lib/youeye-state/appliance-state.json}
+first_deploy=${YOUEYE_CONSOLE_FIRST_DEPLOY:-/var/lib/youeye-state/first-deploy/progress.json}
+first_complete=${YOUEYE_CONSOLE_FIRST_COMPLETE:-/var/lib/youeye-state/first-deploy/complete}
+update=${YOUEYE_CONSOLE_UPDATE:-/var/lib/youeye-state/system-update/journal.json}
+development=${YOUEYE_CONSOLE_DEVELOPMENT:-/var/lib/youeye-state/bootstrap/development-access-status.json}
+config=${YOUEYE_CONSOLE_CONFIG:-/var/lib/youeye/config/youeye.yaml}
+authorized_keys=${YOUEYE_CONSOLE_AUTHORIZED_KEYS:-/root/.ssh/authorized_keys}
+cmdline=${YOUEYE_CONSOLE_CMDLINE:-/proc/cmdline}
+tty_paths=${YOUEYE_CONSOLE_TTYS:-/dev/tty1 /dev/ttyS0}
+refresh=${YOUEYE_CONSOLE_REFRESH_SECONDS:-2}
+runtime_dir=${YOUEYE_CONSOLE_RUNTIME_DIR:-/run}
+
+json_value() {
+    path=$1
+    query=$2
+    jq -r "$query // empty" "$path" 2>/dev/null || true
+}
+
+primary_ip() {
+    ip -4 route get 1.1.1.1 2>/dev/null \
+        | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
+}
+
+safe_text() {
+    printf '%s' "$1" | tr -cd 'A-Za-z0-9 ._:/@()[]+-' | cut -c1-62
+}
+
+render() {
+    ip_address=$(primary_ip)
+    [ -n "$ip_address" ] || ip_address=$(hostname -I 2>/dev/null | awk '{print $1}')
+    case "$ip_address" in *[!0-9.]*) ip_address=starting ;; esac
+
+    image=$(json_value "$release" '.image_version')
+    slot=$(tr ' ' '\n' < "$cmdline" 2>/dev/null | sed -n 's/^root=PARTLABEL=YE-SYSTEM-\([AB]\)$/\1/p' | head -n 1 || true)
+    [ -n "$slot" ] || slot=$(tr ' ' '\n' < "$cmdline" 2>/dev/null | sed -n 's/^youeye.system_slot=\([AB]\)$/\1/p' | head -n 1 || true)
+    [ -n "$slot" ] || slot=$(json_value "$state" '.slots.current')
+    [ -n "$slot" ] || slot='?'
+
+    stage=$(json_value "$first_deploy" '.stage')
+    detail=$(json_value "$first_deploy" '.detail')
+    update_phase=$(json_value "$update" '.phase')
+    developer_console=$(json_value "$development" '.local_root_console_effective')
+    password_ssh=$(json_value "$development" '.root_password_ssh_effective')
+    setup_completed=$(awk '/^[[:space:]]*setup_completed:/ {print $2; exit}' "$config" 2>/dev/null || true)
+    domain=$(awk '/^[[:space:]]*domain:/ {sub(/^[[:space:]]*domain:[[:space:]]*/, ""); print; exit}' "$config" 2>/dev/null | tr -d "\"'" || true)
+    case "$domain" in *[!A-Za-z0-9.-]*) domain= ;; esac
+
+    status='Starting appliance services'
+    status_color='\033[33m'
+    if [ "$stage" = needs_attention ]; then
+        status='Needs attention - open Recovery for diagnostics'
+        status_color='\033[31m'
+    elif [ -e "$first_complete" ]; then
+        if [ "$setup_completed" = true ]; then
+            status='Online'
+            status_color='\033[32m'
+        else
+            status='Ready for first setup'
+            status_color='\033[36m'
+        fi
+    elif [ -n "$stage" ]; then
+        status="Installing platform: ${detail:-$stage}"
+    fi
+    case "$update_phase" in
+        downloading|writing|staged|pending-reboot|trial)
+            status="System update: $update_phase"
+            status_color='\033[35m'
+            ;;
+        failed|rolled-back)
+            status="System update: $update_phase - current slot remains available"
+            status_color='\033[33m'
+            ;;
+    esac
+
+    status=$(safe_text "$status")
+    screen=$(mktemp "$runtime_dir/youeye-console.XXXXXX")
+    {
+        printf '\033[2J\033[H\033[1;35m'
+        printf ' __   __          _____            \n'
+        printf ' \\ \\ / /__  _   _| ____|_   _  ___ \n'
+        printf '  \\ V / _ \\| | | |  _| | | | |/ _ \\ \n'
+        printf '   | | (_) | |_| | |___| |_| |  __/\n'
+        printf '   |_|\\___/ \\__, |_____|\\__, |\\___|\n'
+        printf '             |___/       |___/      \033[0m\n'
+        printf '\n'
+        printf '  %b%-62s\033[0m\n' "$status_color" "$status"
+        printf '\n'
+        printf '  Setup     https://%-45s\n' "$ip_address"
+        if [ "$setup_completed" = true ] && [ -n "$domain" ]; then
+            printf '  Server    https://%-45s\n' "$domain"
+        fi
+        printf '  System    slot %-2s  image %-36s\n' "$slot" "${image:-unknown}"
+        if [ -s "$authorized_keys" ] && [ "$password_ssh" = true ]; then
+            printf '  Root SSH  ssh root@%-35s key or local password\n' "$ip_address"
+        elif [ -s "$authorized_keys" ]; then
+            printf '  Root SSH  ssh root@%-35s public key only\n' "$ip_address"
+        elif [ "$password_ssh" = true ]; then
+            printf '  Root SSH  ssh root@%-35s local password\n' "$ip_address"
+        else
+            printf '  Root SSH  disabled\n'
+        fi
+        printf '\n'
+        if [ "$developer_console" = true ]; then
+            printf '  Developer console enabled - press Ctrl+Alt+F2 to sign in as root.\n'
+        fi
+        printf '  Recovery  choose YouEye Recovery from the UEFI boot menu\n'
+        printf '  Refresh   every %ss\n' "$refresh"
+    } > "$screen"
+
+    for tty in $tty_paths; do
+        if [ -w "$tty" ]; then
+            cat "$screen" > "$tty" 2>/dev/null || true
+        fi
+    done
+    rm -f "$screen"
+}
+
+case "$refresh" in ''|*[!0-9]*) exit 2 ;; esac
+[ "$refresh" -gt 0 ] || exit 2
+
+while :; do
+    render
+    sleep "$refresh"
+done

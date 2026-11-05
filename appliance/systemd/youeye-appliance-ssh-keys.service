@@ -1,0 +1,14 @@
+[Unit]
+Description=YouEye managed root SSH keys
+Requires=youeye-appliance-state.service
+After=youeye-appliance-state.service
+Before=ssh.service
+ConditionPathExists=/usr/lib/youeye/appliance-release
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/youeye appliance ssh-key reconcile
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

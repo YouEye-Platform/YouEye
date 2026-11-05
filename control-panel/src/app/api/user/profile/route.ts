@@ -1,0 +1,133 @@
+/**
+ * User Self-Profile API
+ *
+ * GET  /api/user/profile — Get current user's profile from the identity provider
+ * PATCH /api/user/profile — Update current user's own name in the identity provider
+ *
+ * This endpoint is available to ALL authenticated users (not admin-only).
+ * Users can only modify their own profile — the username comes from the
+ * session JWT, not from the request body.
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import { getSession } from "@/lib/auth/session";
+import { listUsers, updateUser } from "@/lib/identity/provider";
+import { getContainerIP } from "@/lib/incus/container-ip";
+import { readFile } from "fs/promises";
+
+const BRIDGE_TOKEN_PATH = "/etc/youeye/ui-bridge-token";
+
+/**
+ * Find an identity user by their username (exact match).
+ */
+async function findIdentityUser(username: string) {
+  const result = await listUsers({ search: username, page_size: 10 });
+  return result.results?.find((u) => u.username === username) ?? null;
+}
+
+export async function GET() {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const user = await findIdentityUser(session.username);
+    if (!user) {
+      return NextResponse.json({ error: "User not found in the identity provider" }, { status: 404 });
+    }
+
+    return NextResponse.json({
+      username: user.username,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      isAdmin: session.isAdmin,
+    });
+  } catch (error) {
+    console.error("Failed to fetch user profile:", error);
+    return NextResponse.json({ error: "Failed to fetch profile" }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let body: { firstName?: string; lastName?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  // Validate: only firstName and lastName are allowed
+  const firstName = typeof body.firstName === "string" ? body.firstName.trim() : undefined;
+  const lastName = typeof body.lastName === "string" ? body.lastName.trim() : undefined;
+
+  if (firstName === undefined && lastName === undefined) {
+    return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
+  }
+
+  try {
+    const user = await findIdentityUser(session.username);
+    if (!user) {
+      return NextResponse.json({ error: "User not found in the identity provider" }, { status: 404 });
+    }
+
+    const newFirst = firstName !== undefined ? firstName : user.firstName;
+    const newLast = lastName !== undefined ? lastName : user.lastName;
+    if (!newFirst) return NextResponse.json({ error: "First name is required" }, { status: 400 });
+
+    await updateUser(String(user.pk), { firstName: newFirst, lastName: newLast });
+
+    // Push name change to UI via bridge (server-to-server, non-fatal)
+    pushNameToUI(session.username, String(user.pk), newFirst, newLast).catch((err) =>
+      console.warn("[Profile] Bridge name push failed (non-fatal):", err instanceof Error ? err.message : err)
+    );
+
+    return NextResponse.json({
+      username: user.username,
+      firstName: newFirst,
+      lastName: newLast,
+      email: user.email,
+      isAdmin: session.isAdmin,
+    });
+  } catch (error) {
+    console.error("Failed to update user profile:", error);
+    return NextResponse.json({ error: "Failed to update profile" }, { status: 500 });
+  }
+}
+
+/**
+ * Push name change to YE-UI via bridge so it persists in the UI database.
+ * Non-fatal: if the bridge push fails, the postMessage client-side path
+ * is the primary sync mechanism for names.
+ */
+async function pushNameToUI(
+  username: string,
+  identityId: string,
+  firstName: string,
+  lastName: string
+): Promise<void> {
+  const token = (await readFile(BRIDGE_TOKEN_PATH, "utf-8")).trim();
+  const uiIP = await getContainerIP("youeye-ui");
+  if (!uiIP || !token) return;
+
+  const res = await fetch(`http://${uiIP}:3000/api/ui-bridge/user-profile`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-UI-Bridge-Token": token,
+    },
+    body: JSON.stringify({ username, identityId, firstName, lastName }),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.warn(`[Profile] Bridge push failed: ${res.status} ${text}`);
+  }
+}

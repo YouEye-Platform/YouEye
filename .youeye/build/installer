@@ -1,0 +1,28 @@
+#!/bin/bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+. "$script_dir/lib.sh"
+youeye_prepare_contract
+for command in go tar sha256sum; do youeye_require_command "$command"; done
+
+root="$YOUEYE_WORK_DIR/installer-overlay"
+output="$YOUEYE_OUTPUT_DIR/installer-runtime-overlay.tar"
+rm -rf -- "$root" "$output"
+install -d -m 0755 "$root/bin" "$root/libexec" "$root/share/doc/youeye-installer"
+install -m 0644 "$YOUEYE_SOURCE_DIR/LICENSE" "$root/share/doc/youeye-installer/LICENSE"
+install -m 0644 "$YOUEYE_SOURCE_DIR/TRADEMARK.md" "$root/share/doc/youeye-installer/TRADEMARK.md"
+install -m 0644 "$YOUEYE_SOURCE_DIR/THIRD_PARTY_NOTICES.txt" "$root/share/doc/youeye-installer/THIRD_PARTY_NOTICES.txt"
+export GOCACHE="${YOUEYE_GOCACHE:-$YOUEYE_WORK_DIR/go-build-cache}"
+export GOMODCACHE="${YOUEYE_GOMODCACHE:-$YOUEYE_WORK_DIR/go-mod-cache}"
+install -d -m 0755 "$GOCACHE" "$GOMODCACHE"
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$YOUEYE_SOURCE_DIR/installer" build \
+    -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o "$root/bin/youeye-installer" .
+install -m 0755 "$YOUEYE_SOURCE_DIR/appliance/scripts/youeye-apply-development-access" \
+    "$root/libexec/youeye-apply-development-access"
+install -m 0755 "$YOUEYE_SOURCE_DIR/appliance/scripts/youeye-apply-development-overlay" \
+    "$root/libexec/youeye-apply-development-overlay"
+tar --sort=name --format=posix --numeric-owner --owner=0 --group=0 \
+    --mtime="@$SOURCE_DATE_EPOCH" --pax-option=delete=atime,delete=ctime \
+    -C "$root" -cf "$output" .
+sha256sum "$output"

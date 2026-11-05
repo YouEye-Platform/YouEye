@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: app
+integration: basic
+version: 1.0.0
+metadata:
+  id: session-fail-health
+  name: Session Health Failure
+  description: Session-only deterministic health failure after container creation.
+  icon: heart-pulse
+  category: development
+  defaultSubdomain: session-fail-health
+database:
+  mode: none
+containers:
+  - name: web
+    type: oci
+    primary: true
+    image: docker.io/library/nginx:1.27.4-alpine
+    port: 81
+    healthCheck:
+      type: http
+      path: /
+      timeout: 10000
+      retries: 1
+internet:
+  hosts: []
+entrances:
+  - name: web
+    port: 81
+    container: web
+    authLevel: none

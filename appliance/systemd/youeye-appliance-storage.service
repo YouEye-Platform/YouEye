@@ -1,0 +1,15 @@
+[Unit]
+Description=YouEye appliance persistent data and Incus state
+DefaultDependencies=no
+Requires=youeye-appliance-state.service
+After=youeye-appliance-state.service local-fs.target
+Before=incus.socket incus-user.socket incus.service youeye.service
+ConditionPathExists=/usr/lib/youeye/appliance-release
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/youeye appliance prepare --phase=storage
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=Validate the running YouEye appliance slot and bless counted boots
+Requires=youeye-appliance-storage.service youeye-appliance-incus-sockets.service
+Wants=network-online.target incus.service incus-startup.service youeye.service
+After=network-online.target youeye-appliance-storage.service youeye-appliance-incus-sockets.service youeye.service youeye-first-deploy.service
+ConditionPathExists=/usr/lib/youeye/appliance-release
+StartLimitIntervalSec=180
+StartLimitBurst=36
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/youeye-appliance-bless
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

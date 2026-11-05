@@ -1,0 +1,441 @@
+/**
+ * Unified Apps API
+ *
+ * GET /api/apps/unified
+ *
+ * Returns every YouEye service in a single response with:
+ *  - Static definition (from definitions.ts)
+ *  - Live container status (from Incus)
+ *  - Version info for Spine-managed components (from Spine API)
+ *  - OCI update availability (from digest cache)
+ */
+
+import { NextResponse } from 'next/server';
+import { getSession } from '@/lib/auth';
+import { incusRequest } from '@/lib/incus/server';
+import { spineClient } from '@/lib/spine/client';
+import { APP_DEFINITIONS } from '@/lib/apps/definitions';
+import {
+  getAllCachedUpdates,
+  getLastCheckedAt,
+  isCheckInProgress,
+} from '@/lib/apps/update-cache';
+import {
+  checkLxdAppUpdate,
+  type LxdUpdateResult,
+} from '@/lib/apps/lxd-updates';
+import { listInstalledApps } from '@/lib/market/metadata';
+import { getAllInstalledApps } from '@/lib/market/installed-apps';
+import { fetchManifest } from '@/lib/market/catalog';
+import { planSystemUpdates, type SystemUpdatePlan } from '@/lib/infrastructure/system-updater';
+import { componentUpdatePresentation } from '@/lib/updates/presentation';
+
+// ─── Response types ───────────────────────────────────────────────────────────
+
+export interface ContainerInfo {
+  name: string;
+  status: string; // running | stopped | frozen | error | not-found
+  canControl: boolean;
+  ip?: string;
+}
+
+export interface UnifiedApp {
+  id: string;
+  displayName: string;
+  description: string;
+  icon: string;
+  category: 'system' | 'infrastructure' | 'user';
+  type: string;
+  containers: ContainerInfo[];
+  updatedBy: 'control-panel' | 'spine';
+  /** Version string when available */
+  version?: string;
+  /** Overall status derived from container states */
+  status: 'running' | 'stopped' | 'partial' | 'not-installed' | 'unknown';
+  /** False when an installed user app was intentionally turned off */
+  enabled?: boolean;
+  desiredState?: 'running' | 'stopped';
+  serviceCredentialState?: 'pending' | 'ready' | 'revoked';
+  databaseMode?: 'shared' | 'own' | 'none';
+  /** OCI update available */
+  updateAvailable: boolean;
+  /** Human-readable update info */
+  updateInfo?: string;
+  /** True when updates are tracked via the Market system manifests (Caddy/Pi-Hole/Postgres) */
+  systemManaged?: boolean;
+  /** Links to existing management pages */
+  managementLinks?: Array<{ label: string; href: string }>;
+  /** Health check status for Market-installed/native apps */
+  healthStatus?: 'healthy' | 'unhealthy' | 'unknown';
+  appHealthState?: 'starting' | 'running' | 'unhealthy' | 'crash-looping' | 'unknown' | 'maintenance';
+  failingLevel?: 'L1' | 'L2' | 'L3';
+  healthDetail?: string | null;
+  autoRestart?: boolean;
+  /** Per-app release channel key. Omitted for external and infrastructure apps. */
+  updateChannelKey?: string;
+  /** Last health check timestamp */
+  healthCheckedAt?: string | null;
+}
+
+export interface UnifiedAppsResponse {
+  apps: UnifiedApp[];
+  lastCheckedAt: string | null;
+  checkInProgress: boolean;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Derive an aggregate status from individual container statuses */
+function aggregateStatus(
+  containerStatuses: string[]
+): 'running' | 'stopped' | 'partial' | 'not-installed' | 'unknown' {
+  if (containerStatuses.length === 0) return 'unknown';
+
+  const running = containerStatuses.filter((s) => s === 'running').length;
+  const total = containerStatuses.length;
+
+  if (running === total) return 'running';
+  if (running === 0) {
+    if (containerStatuses.every((s) => s === 'not-found')) return 'not-installed';
+    return 'stopped';
+  }
+  return 'partial';
+}
+
+/** Get the global IPv4 address from container state network info */
+function extractIP(stateMetadata: Record<string, unknown>): string | undefined {
+  const network = stateMetadata.network as Record<string, unknown> | undefined;
+  if (!network) return undefined;
+
+  const eth0 = network.eth0 as {
+    addresses?: Array<{ family: string; address: string; scope: string }>;
+  } | undefined;
+  if (!eth0?.addresses) return undefined;
+
+  for (const addr of eth0.addresses) {
+    if (addr.family === 'inet' && addr.scope === 'global') return addr.address;
+  }
+  return undefined;
+}
+
+// ─── Handler ──────────────────────────────────────────────────────────────────
+
+export async function GET() {
+  try {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Parallel data fetches
+    const [instancesResp, spineStatus, spineUpdates, marketInstalled, dbInstalledApps, systemPlansResult] = await Promise.allSettled([
+      incusRequest<string[]>('GET', '/1.0/instances'),
+      spineClient.status(),
+      spineClient.checkUpdates(),
+      listInstalledApps(),
+      getAllInstalledApps(),
+      planSystemUpdates(),
+    ]);
+
+    const instancePaths =
+      instancesResp.status === 'fulfilled' ? instancesResp.value.metadata ?? [] : [];
+    const existingNames = new Set(
+      instancePaths.map((p: string) => p.split('/').pop() ?? '')
+    );
+
+    const status = spineStatus.status === 'fulfilled' ? spineStatus.value : null;
+    const updates = spineUpdates.status === 'fulfilled' ? spineUpdates.value : null;
+    const installed = marketInstalled.status === 'fulfilled' ? marketInstalled.value : [];
+    const dbApps = dbInstalledApps.status === 'fulfilled' ? dbInstalledApps.value : [];
+    const dbAppsMap = new Map(dbApps.map((a) => [a.appId, a]));
+
+    // System apps (Caddy/Pi-Hole/Postgres) are tracked via the Market system
+    // manifests, not the moving-tag OCI checker. Degrade gracefully if the
+    // market source is unreachable — never 500 the Apps page.
+    const systemPlanById = new Map<string, SystemUpdatePlan>();
+    if (systemPlansResult.status === 'fulfilled') {
+      for (const p of systemPlansResult.value) systemPlanById.set(p.id, p);
+    } else {
+      console.error('[/api/apps/unified] system update plan failed (degrading):', systemPlansResult.reason);
+    }
+
+    // Fetch state for every known container in parallel
+    const allContainerNames = APP_DEFINITIONS.flatMap((a) =>
+      a.containers.map((c) => c.name)
+    );
+
+    const stateResults = await Promise.allSettled(
+      allContainerNames.map(async (name) => {
+        if (!existingNames.has(name)) return { name, status: 'not-found' as const };
+        try {
+          const resp = await incusRequest<Record<string, unknown>>(
+            'GET',
+            `/1.0/instances/${name}/state`
+          );
+          const meta = resp.metadata ?? {};
+          return {
+            name,
+            status: ((meta.status as string) ?? 'unknown').toLowerCase(),
+            ip: extractIP(meta),
+          };
+        } catch {
+          return { name, status: 'unknown' as const };
+        }
+      })
+    );
+
+    const containerStateMap = new Map<
+      string,
+      { name: string; status: string; ip?: string }
+    >();
+    for (const r of stateResults) {
+      if (r.status === 'fulfilled') {
+        containerStateMap.set(r.value.name, r.value);
+      }
+    }
+
+    // Build update info from cache
+    const ociUpdates = getAllCachedUpdates();
+
+    // Fetch LXD app version + update info in parallel
+    const lxdApps = APP_DEFINITIONS.filter(
+      (d) => d.lxdConfig && d.containers.length > 0
+    );
+    const lxdResults = await Promise.allSettled(
+      lxdApps.map((d) => checkLxdAppUpdate(d))
+    );
+    const lxdUpdates = new Map<string, LxdUpdateResult>();
+    lxdResults.forEach((r, i) => {
+      if (r.status === 'fulfilled') {
+        lxdUpdates.set(lxdApps[i].id, r.value);
+      }
+    });
+
+    // Build the unified list
+    const apps: UnifiedApp[] = APP_DEFINITIONS.map((def) => {
+      const installedApp = dbAppsMap.get(def.id);
+      // Container info
+      const containers: ContainerInfo[] = def.containers.map((c) => {
+        const state = containerStateMap.get(c.name);
+        return {
+          name: c.name,
+          status: state?.status ?? 'not-found',
+          canControl: c.canControl,
+          ip: state?.ip,
+        };
+      });
+
+      const containerStatuses = containers.map((c) => c.status);
+
+      // Version info for Spine-managed components
+      let version: string | undefined;
+      if (def.id === 'spine' && status) version = status.spine?.version;
+      if (def.id === 'incus' && status) version = status.incus?.version;
+      if (def.id === 'control-panel' && status) version = status.control_panel?.version;
+
+      // Update info
+      let updateAvailable = false;
+      let updateInfo: string | undefined;
+
+      // LXD app version + update detection (generic for any app with lxdConfig)
+      const lxdResult = lxdUpdates.get(def.id);
+      if (lxdResult) {
+        if (lxdResult.installedVersion) {
+          version = lxdResult.installedVersion;
+        }
+        if (lxdResult.hasUpdate && lxdResult.installedVersion && lxdResult.latestVersion) {
+          updateAvailable = true;
+          updateInfo = `${lxdResult.installedVersion} → ${lxdResult.latestVersion}`;
+        }
+      }
+
+      // Spine-managed update detection
+      if (def.updatedBy === 'spine' && updates) {
+        if (def.id === 'spine' && updates.spine) {
+          const presentation = componentUpdatePresentation(updates.spine);
+          updateAvailable = presentation.available;
+          updateInfo = presentation.available ? `${presentation.current} → ${presentation.candidate}` : undefined;
+        }
+        if (def.id === 'control-panel' && updates.control) {
+          const presentation = componentUpdatePresentation(updates.control);
+          updateAvailable = presentation.available;
+          updateInfo = presentation.available ? `${presentation.current} → ${presentation.candidate}` : undefined;
+        }
+        if (def.id === 'incus' && updates.incus?.upgradeable) {
+          updateAvailable = true;
+          updateInfo = 'System package upgrade available';
+        }
+        if (def.id === 'host-system' && updates.system && updates.system.upgradeable_count > 0) {
+          updateAvailable = true;
+          updateInfo = `${updates.system.upgradeable_count} packages upgradeable`;
+        }
+      }
+
+      // Market system apps (Caddy/Pi-Hole/Postgres): version + update come from
+      // the Market system manifest plan (pinned), never the moving-tag checker.
+      const systemPlan = def.marketSystemId ? systemPlanById.get(def.marketSystemId) : undefined;
+      if (systemPlan) {
+        version = systemPlan.currentVersion ?? systemPlan.recordedVersion ?? version;
+        updateAvailable = systemPlan.updateAvailable && systemPlan.trackingStatus === 'tracked';
+        updateInfo = updateAvailable
+          ? `${systemPlan.currentVersion ?? '?'} → ${systemPlan.desiredVersion}`
+          : undefined;
+      }
+
+      // OCI update detection from digest cache (only for non-LXD, non-system apps)
+      if (def.updatedBy === 'control-panel' && !lxdResult && !def.marketSystemId) {
+        const ociResult = ociUpdates.get(def.id);
+        if (ociResult?.hasUpdate) {
+          updateAvailable = true;
+          updateInfo = 'New image available';
+        }
+      }
+
+      return {
+        id: def.id,
+        displayName: def.displayName,
+        description: def.description,
+        icon: def.icon,
+        category: def.category,
+        type: def.type,
+        containers,
+        updatedBy: def.updatedBy,
+        version,
+        status: def.containers.length > 0 ? aggregateStatus(containerStatuses) : 'running',
+        enabled: true,
+        desiredState: 'running',
+        updateAvailable,
+        updateInfo,
+        systemManaged: !!def.marketSystemId,
+        managementLinks: def.managementLinks,
+        healthStatus: installedApp?.healthStatus,
+        appHealthState: installedApp?.appHealthState,
+        failingLevel: installedApp?.failingLevel,
+        healthDetail: installedApp?.healthDetail ?? null,
+        healthCheckedAt: installedApp?.healthCheckedAt ?? null,
+        updateChannelKey:
+          def.releaseChannelKey ? def.releaseChannelKey
+          : def.id === 'spine' && status?.runtime?.kind === 'mutable-host' ? 'spine'
+          : def.id === 'control-panel' ? 'control'
+          : def.id === 'ui' ? 'ui'
+          : undefined,
+      };
+    });
+
+    // ── Market-installed apps: merge installed apps not in APP_DEFINITIONS ──────
+    const definedContainers = new Set(
+      apps.flatMap((a) => a.containers.map((c) => c.name))
+    );
+
+    const filteredMarket = installed.filter((meta) => {
+      const names = meta.containers.map((c: any) =>
+        typeof c === 'string' ? c : c.containerName
+      );
+      return !names.some((n: string) => definedContainers.has(n));
+    });
+
+    // Fetch container state for Market-installed containers (not yet in containerStateMap)
+    const marketContainerNames = filteredMarket.flatMap((meta) =>
+      meta.containers.map((c: any) => typeof c === 'string' ? c : c.containerName)
+    );
+    const marketStateResults = await Promise.allSettled(
+      marketContainerNames.map(async (name) => {
+        if (!existingNames.has(name)) return { name, status: 'not-found' as const };
+        try {
+          const resp = await incusRequest<Record<string, unknown>>(
+            'GET',
+            `/1.0/instances/${name}/state`
+          );
+          const meta = resp.metadata ?? {};
+          return {
+            name,
+            status: ((meta.status as string) ?? 'unknown').toLowerCase(),
+            ip: extractIP(meta),
+          };
+        } catch {
+          return { name, status: 'unknown' as const };
+        }
+      })
+    );
+    for (const r of marketStateResults) {
+      if (r.status === 'fulfilled') {
+        containerStateMap.set(r.value.name, r.value);
+      }
+    }
+
+    // Best-effort manifest lookup for display names / icons
+    const manifestResults = await Promise.allSettled(
+      filteredMarket.map((meta) => fetchManifest(meta.appId))
+    );
+
+    const marketApps: UnifiedApp[] = filteredMarket.map((meta, i) => {
+      const dbEntry = dbAppsMap.get(meta.appId);
+      const catV = dbEntry?.catalogVersion;
+      const insV = dbEntry?.installedVersion;
+      // The shared Market checker has already classified the exact recorded
+      // source versus native channel and projected update/switch state. Do not
+      // manufacture a different answer from version numbers alone here: after
+      // a Market-source change, a numerically newer manifest is not actionable
+      // until the installed app is explicitly switched to that source.
+      const marketUpdate = dbEntry?.updateAvailable === true;
+      const manifest = manifestResults[i].status === 'fulfilled'
+        ? manifestResults[i].value
+        : null;
+
+      const containers: ContainerInfo[] = meta.containers.map((c: any) => {
+        const name = typeof c === 'string' ? c : c.containerName;
+        const state = containerStateMap.get(name);
+        return {
+          name,
+          status: state?.status ?? 'not-found',
+          canControl: true,
+          ip: state?.ip,
+        };
+      });
+
+      const containerStatuses = containers.map((c) => c.status);
+      const enabled = meta.enabled !== false && meta.desiredState !== 'stopped';
+      const status = enabled ? aggregateStatus(containerStatuses) : 'stopped';
+
+      return {
+        id: meta.appId,
+        displayName: manifest?.metadata.name || meta.appId,
+        description: manifest?.metadata.description || 'Market app',
+        icon: manifest?.metadata.iconUrl || manifest?.metadata.icon || 'Package',
+        category: 'user' as const,
+        type: 'docker-lxd',
+        containers,
+        updatedBy: 'control-panel' as const,
+        version: dbEntry?.installedVersion ?? undefined,
+        status,
+        enabled,
+        desiredState: enabled ? 'running' as const : 'stopped' as const,
+        serviceCredentialState: meta.serviceCredentialState,
+        databaseMode: meta.databaseMode ?? 'none',
+        updateAvailable: marketUpdate,
+        updateInfo: marketUpdate && catV ? `${insV} → ${catV}` : undefined,
+        healthStatus: dbEntry?.healthStatus,
+        appHealthState: dbEntry?.appHealthState,
+        failingLevel: dbEntry?.failingLevel,
+        healthDetail: dbEntry?.healthDetail ?? null,
+        healthCheckedAt: dbEntry?.healthCheckedAt ?? null,
+        autoRestart: meta.autoRestart !== false,
+        updateChannelKey: manifest?.integration === 'native' ? `app:${meta.appId}` : undefined,
+      };
+    });
+
+    const response: UnifiedAppsResponse = {
+      apps: [...apps, ...marketApps],
+      lastCheckedAt: getLastCheckedAt(),
+      checkInProgress: isCheckInProgress(),
+    };
+
+    return NextResponse.json(response);
+  } catch (error) {
+    console.error('[/api/apps/unified] Error:', error);
+    return NextResponse.json(
+      { error: 'Failed to load apps', details: error instanceof Error ? error.message : 'Unknown' },
+      { status: 500 }
+    );
+  }
+}

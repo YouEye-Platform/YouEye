@@ -1,0 +1,261 @@
+{
+  "schema": "youeye.screenshot-inventory.v1",
+  "items": [
+    {
+      "path": "screenshot.png",
+      "sha256": "6b32b273a55541f7eb7db4f6afdb8f8c1741964c552f6410d7e11e034d5a55d2",
+      "bytes": 264504,
+      "source": "YouEye product capture",
+      "introduced_commit": "eaeb53ac02a5b980f3a77d52a47f561046fc487b",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/apps/cinema/home.png",
+      "sha256": "dbccf285e9868ae9a01713b834ee50a02db002dbf5f81cbdcd39feb13eee37c9",
+      "bytes": 1553537,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/apps/notes/home.png",
+      "sha256": "7b52a11dc78e611116ae9af4b4d62d8f64c853100a6d10c2cc5e98ff96a266bd",
+      "bytes": 35182,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/apps/search/home.png",
+      "sha256": "dd1187caeefe789c081bdd03e617aff0fce6f0e78a2c8d2583853fd7019e31e8",
+      "bytes": 39546,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/apps/search/results.png",
+      "sha256": "706f65dfbaf55ad04afbb8b697dc43ca007ae008cece1e047f8e1c8571a162a6",
+      "bytes": 196747,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/apps/translate/home.png",
+      "sha256": "04afe6985a425bd7e8b3d4dcdf1eafee29891cfae6c0b12a0ffa67d1c0c9525a",
+      "bytes": 36043,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/apps/weather/home.png",
+      "sha256": "92deddd277d0e5bca4dfa298a7a310e566b666c1e26f897b9b1798e1290d6a6e",
+      "bytes": 115238,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/apps/wiki/article.png",
+      "sha256": "fc89981f9275153b9fce159f9572409b3d6e773f98a6e45489b7605cbf8b99e2",
+      "bytes": 202704,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/apps/wiki/home.png",
+      "sha256": "adc7ce896c828e2744bb79c4dded8678eb0ef9c32c0dd15a5dc8f43dcd42c8c5",
+      "bytes": 231855,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/apps/wiki/search.png",
+      "sha256": "94d54ee42e1a48d08f513f3052635a5f54c672ff3bfbaa757b6d570acdb0d40e",
+      "bytes": 232415,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/control-panel/apps.png",
+      "sha256": "868a99ec5dce3838e167578d4c25fe3e10fa36a11a218a4ea10ff319bb7bf652",
+      "bytes": 145319,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/control-panel/cp-settings.png",
+      "sha256": "d7b9cde39f6c2f93dd4aa60a007237f081f1b69ecf474e3c477bc57ea9a2a0a8",
+      "bytes": 92862,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/control-panel/dashboard.png",
+      "sha256": "fe0599eb177c76de59deac8e8742cc1e7fb6fa3d7d93919c4e002c4d722e1502",
+      "bytes": 102153,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/control-panel/dns.png",
+      "sha256": "647d66c7259bb119fd393703c9b5b2471e152aaa722fe887065b0a2fda8c102d",
+      "bytes": 82645,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/control-panel/health.png",
+      "sha256": "fc0862da9c92927ff48fb143ae2fc4280b008bc89575ea0151cb440cab8fd308",
+      "bytes": 94731,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/control-panel/market.png",
+      "sha256": "d34f24d5e11e4d8e01a0fa9c466fdc0844392c881b0abe3a689c1e8687fdc188",
+      "bytes": 152758,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/control-panel/people.png",
+      "sha256": "572f9f8cf6c1ba4590322f080b0df5b9a0da098a128c33a76867289e62838663",
+      "bytes": 53987,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/control-panel/proxy.png",
+      "sha256": "9ab996daa0dfb7633c189747049a0326d0dbfc8a3faa24c5da88e47aab44bc22",
+      "bytes": 126271,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/homepage/app-drawer.png",
+      "sha256": "5ed48c8150b0e9c47660da08f033c05db2fbc61257ab882dc617e8fa99491b82",
+      "bytes": 350857,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/homepage/dashboard-animated.gif",
+      "sha256": "21024571f0155ae280822a0620cbf0435f968c999f7d111e38b1bba75a2b7c48",
+      "bytes": 2335717,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/homepage/dashboard.png",
+      "sha256": "a31722ff27372ddf417c52af1ed25f405ee4ce25c8d9b0938d76021c2dc84062",
+      "bytes": 354467,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/homepage/edit-mode.png",
+      "sha256": "c36623b827978b967f754c27b9e729c1c9671dd31a367311c6dbc341b4933643",
+      "bytes": 392021,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/homepage/notifications.png",
+      "sha256": "9da841069993b1044443ee43344626b0d611a52bcc1699303750813288a1c62f",
+      "bytes": 348121,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/homepage/user-menu.png",
+      "sha256": "021a2b7489774a9dcd42ebdd8557e2078b5ba3246763cb35e77341fc3f0532c9",
+      "bytes": 348495,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/settings/app-market.png",
+      "sha256": "770aed8fb668581e7e6b2b52090b98b7eb2c93c877f667df41e062b202d61e46",
+      "bytes": 177391,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/settings/appearance.png",
+      "sha256": "e637844fbb8d3836bf25a13b22f866d0e2a555da0236241077d18ce2d9cc0d66",
+      "bytes": 99142,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/settings/apps.png",
+      "sha256": "5d1ff63566a1203697610d394d0d1aae74e9caa3dccf24dc7a56c0b361a63aa9",
+      "bytes": 106602,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/settings/language.png",
+      "sha256": "0c14d76da809c8c232c71476561b5bef0b3732d0d870601c1fdee4324c17a2e5",
+      "bytes": 55391,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/settings/network.png",
+      "sha256": "ad37161e199e325fffb869e6d5c27feeca4a15115304670c69ea7a9fba30ca4e",
+      "bytes": 86931,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/settings/profile.png",
+      "sha256": "1cf4cf017b0b5e15f489eb198a94efa2ebd2099e64aa0786d625886299a66754",
+      "bytes": 76187,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/settings/system.png",
+      "sha256": "c55981a6aea9861c18be66582a0338dd82b693dce5c8a4b39d4b3b0a7beb6bbd",
+      "bytes": 162280,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    },
+    {
+      "path": "docs/assets/screenshots/settings/users.png",
+      "sha256": "dba123a6481f6082529de0df59d853e51593e8c48db1e2dbf8d69f888ceb8e7d",
+      "bytes": 51948,
+      "source": "YouEye product capture",
+      "introduced_commit": "19f01b167d9c95ed688db5cc7d2d29d0d5cb1274",
+      "privacy_review": "removed-from-public-source"
+    }
+  ]
+}

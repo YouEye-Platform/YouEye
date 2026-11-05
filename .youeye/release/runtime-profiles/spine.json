@@ -1,0 +1,27 @@
+{
+  "schema": "youeye.runtime-profile-contract.v1",
+  "component": "spine",
+  "consumers": [
+    {
+      "id": "core-selection",
+      "public_trust_input": "spine/internal/systemupdate/public-release-trust.json",
+      "implementation_inputs": [
+        "spine/internal/systemupdate/core_selection.go",
+        "spine/internal/systemupdate/public_release_trust.go",
+        "spine/internal/systemupdate/core_metadata_v2.go",
+        "releasecache/core_metadata_v2.go",
+        "spine/internal/updatetrust/policy.go",
+        "spine/internal/releases/core.go",
+        "spine/internal/cmd/core_services.go",
+        "spine/internal/cmd/appliance_release_set.go",
+        "spine/internal/cmd/appliance_health.go",
+        "spine/internal/cmd/core_installed_health.go",
+        "spine/internal/cmd/core_installed_reader.go",
+        "spine/internal/cmd/core_bootstrap.go",
+        "spine/internal/cmd/development_spine_candidate.go",
+        "spine/internal/systemupdate/spine_candidate.go"
+      ],
+      "capabilities": ["core-release-v1", "core-metadata-pair-v2"]
+    }
+  ]
+}

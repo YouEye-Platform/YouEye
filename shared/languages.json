@@ -1,0 +1,7 @@
+[
+  { "code": "en", "native": "English", "english": "English", "direction": "ltr" },
+  { "code": "ru", "native": "Русский", "english": "Russian", "direction": "ltr" },
+  { "code": "es", "native": "Español", "english": "Spanish", "direction": "ltr" },
+  { "code": "de", "native": "Deutsch", "english": "German", "direction": "ltr" },
+  { "code": "fr", "native": "Français", "english": "French", "direction": "ltr" }
+]

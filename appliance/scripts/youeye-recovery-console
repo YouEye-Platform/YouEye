@@ -1,0 +1,7 @@
+#!/bin/bash
+set -o pipefail
+
+# Recovery remains an interactive tty1 application. Mirror its complete output
+# to the serial console so automated acceptance and remote support can observe
+# the same session without moving kernel or systemd chatter onto tty1.
+/usr/local/libexec/youeye-recovery 2>&1 | tee /dev/ttyS0

@@ -1,0 +1,53 @@
+#!/bin/sh
+set -eu
+
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "${1:-}" in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+. /scripts/functions
+. /usr/lib/youeye/initramfs/youeye-network-state
+. /usr/lib/youeye/initramfs/youeye-state-migration
+
+state_device=""
+for _ in $(seq 1 100); do
+    state_device="$(findfs LABEL=YE-STATE 2>/dev/null || true)"
+    [ -n "$state_device" ] && break
+    sleep 0.1
+done
+
+if [ -z "$state_device" ]; then
+    panic "YouEye State partition was not found"
+fi
+
+state_root=/root/var/lib/youeye-state
+mkdir -p "$state_root"
+mount -t ext4 -o rw,nodev,nosuid "$state_device" "$state_root"
+
+migrate_youeye_network_state "$state_root/etc/systemd/network/20-youeye.network"
+if ! migrate_youeye_state_file "$state_root/etc/shadow" /root/etc/shadow 0640; then
+    panic "YouEye persistent shadow state could not be migrated"
+fi
+
+bind_state() {
+    source=$1
+    target=$2
+    if [ ! -e "$source" ]; then
+        panic "YouEye persistent state source $source is missing"
+    fi
+    mount -o bind "$source" "$target"
+}
+
+bind_state "$state_root/etc/machine-id" /root/etc/machine-id
+bind_state "$state_root/etc/hostid" /root/etc/hostid
+bind_state "$state_root/etc/shadow" /root/etc/shadow
+bind_state "$state_root/etc/ssh" /root/etc/ssh
+bind_state "$state_root/etc/systemd/network" /root/etc/systemd/network
+bind_state "$state_root/root" /root/root
+bind_state "$state_root/var/lib/systemd" /root/var/lib/systemd
+bind_state "$state_root/var/log" /root/var/log

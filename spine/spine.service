@@ -1,0 +1,14 @@
+[Unit]
+Description=YouEye Spine API Server
+After=network.target incus.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/spine api serve
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

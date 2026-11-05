@@ -1,0 +1,266 @@
+#!/bin/sh
+set -eu
+
+# Transport names can differ from the original name in signed checksums.
+core_spine_url_valid() {
+	case "$1" in
+		"https://github.com/YouEye-Platform/YouEye/releases/download/$2/$3"|"https://github.com/YouEye-Platform/YouEye/releases/download/$2/spine-$3") return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+# A promoted public release may own the original bytes before the build tag is
+# published. Only an actual 404 permits its exact authenticated hash mirror.
+core_fetch_file() (
+	fetch_url=$1; fetch_path=$2; fetch_limit=$3; fetch_mirror=${4:-}
+	if fetch_status=$(curl --fail --silent --show-error --location --max-redirs 5 --max-time 180 \
+		--proto '=https' --proto-redir '=https' --tlsv1.2 --max-filesize "$fetch_limit" \
+		--write-out '%{http_code}' --output "$fetch_path" "$fetch_url"); then
+		return 0
+	fi
+	[ "$fetch_status" = 404 ] && [ -n "$fetch_mirror" ] || return 1
+	curl --fail --silent --show-error --location --max-redirs 5 --max-time 180 \
+		--proto '=https' --proto-redir '=https' --tlsv1.2 --max-filesize "$fetch_limit" \
+		--output "$fetch_path" "$fetch_mirror"
+)
+
+# Called only after the original role-signed checksum envelope was verified.
+# Reject duplicate fields as well as unknown markers before any downloaded code.
+core_metadata_capability() {
+	python3 - "$1" <<'CORE_METADATA_CAPABILITY'
+import json, sys
+def pairs(items):
+    result = {}
+    for key, value in items:
+        if key in result: raise ValueError('Duplicate signed provenance field')
+        result[key] = value
+    return result
+with open(sys.argv[1], encoding='utf-8') as source:
+    provenance = json.load(source, object_pairs_hook=pairs,
+                           parse_constant=lambda value: (_ for _ in ()).throw(ValueError('Non-finite provenance number')))
+if not isinstance(provenance, dict): raise ValueError('Original provenance must be an object')
+if 'core_metadata' not in provenance:
+    print('legacy')
+elif provenance['core_metadata'] == 'paired-v2':
+    print('paired-v2')
+else:
+    raise ValueError('Unsupported signed metadata capability')
+CORE_METADATA_CAPABILITY
+}
+
+# The public Core bridge is separate from the legacy Plan 1 development image
+# transition below. It never replaces the baked executable or an installed cache.
+core_bootstrap() (
+	[ "$(id -u)" = 0 ] || { printf 'Core bootstrap requires root.\n' >&2; exit 1; }
+	[ "$#" -ge 1 ] || exit 2
+	core_url=$1; shift
+	inputs=; activate=false
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+			--inputs) [ "$#" -ge 2 ] || exit 2; inputs=$2; shift 2 ;;
+			--activate) activate=true; shift ;;
+			*) exit 2 ;;
+		esac
+	done
+	case "$core_url" in
+		https://github.com/YouEye-Platform/YouEye/releases/download/youeye-v*/core-release.json) ;;
+		*) printf 'Core bootstrap requires an exact official Stable manifest URL.\n' >&2; exit 2 ;;
+	esac
+	case "$core_url" in *'?'*|*'#'*|*'%'*) exit 2 ;; esac
+	umask 077
+	work=$(mktemp -d /tmp/youeye-core-bootstrap.XXXXXX)
+	stage=
+	trap 'if [ -n "$stage" ]; then rm -f -- "$stage"; fi; rm -rf -- "$work"' EXIT
+	protected() {
+		test ! -L "$1" && test "$(stat -c %u "$1")" = 0 && test $((0$(stat -c %a "$1") & 0022)) = 0
+	}
+	if [ -n "$inputs" ]; then test -d "$inputs"; protected "$inputs"; fi
+	fetch_input() {
+		input_url=$1; input_name=$2; input_limit=$3; input_mirror=${4:-}
+		if [ -n "$inputs" ]; then
+			test -f "$inputs/$input_name"; protected "$inputs/$input_name"
+			test "$(stat -c %s "$inputs/$input_name")" -le "$input_limit"
+			cp -- "$inputs/$input_name" "$work/$input_name"
+		else
+			core_fetch_file "$input_url" "$work/$input_name" "$input_limit" "$input_mirror"
+		fi
+		test "$(stat -c %s "$work/$input_name")" -le "$input_limit"
+	}
+	fetch_input "$core_url" core-release.json 1048576
+	fetch_input "$core_url.sig" core-release.json.sig 64
+	# The installed reader parses current owner trust before any downloaded code
+	# executes. A revoked/overridden scope never falls back to a baked key.
+	/usr/local/bin/youeye update-trust show > "$work/owner-trust.json"
+	test "$(stat -c %s "$work/owner-trust.json")" -le 1048576
+	select_key() {
+		key_scope=$1
+		jq --arg scope "$key_scope" '[.grants[]? | select(.repository == "https://github.com/YouEye-Platform/YouEye" and .branch == "main" and .scope == $scope)]' "$work/owner-trust.json" > "$work/grants.json"
+		count=$(jq 'length' "$work/grants.json")
+		if [ "$count" = 0 ]; then
+			cp /usr/share/youeye/appliance-development.pub "$work/$key_scope.pub"
+		else
+			[ "$count" = 1 ] && jq -e '.[0].revoked == false' "$work/grants.json" >/dev/null
+			jq -er '.[0].public_key' "$work/grants.json" > "$work/$key_scope.pub"
+		fi
+	}
+	select_key appliance
+	openssl pkeyutl -verify -pubin -inkey "$work/appliance.pub" -rawin \
+		-in "$work/core-release.json" -sigfile "$work/core-release.json.sig" >/dev/null
+	jq -e '.schema == "youeye.core-release.v1" and .source == "https://github.com/YouEye-Platform/YouEye" and .branch == "main" and .channel == "stable" and ([.members[] | select(.role == "spine")] | length == 1)' "$work/core-release.json" >/dev/null
+	tag=$(jq -er '.tag' "$work/core-release.json")
+	[ "$core_url" = "https://github.com/YouEye-Platform/YouEye/releases/download/$tag/core-release.json" ]
+	jq '.members[] | select(.role == "spine")' "$work/core-release.json" > "$work/member.json"
+	jq -e '.source == "https://github.com/YouEye-Platform/YouEye" and .branch == "main"' "$work/member.json" >/dev/null
+	select_key spine
+	key_digest=$(openssl pkey -pubin -in "$work/spine.pub" -outform DER | sha256sum | awk '{print $1}')
+	[ "$key_digest" = "$(jq -er '.key_id' "$work/member.json")" ]
+	member_tag=$(jq -er '.tag | select(test("^(youeye|spine)-v[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$work/member.json")
+	for field in artifact checksums signature provenance sbom; do
+		jq -e --arg f "$field" '.[$f] | (.name | test("^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")) and (.sha256 | test("^[0-9a-f]{64}$")) and (.size_bytes > 0 and .size_bytes <= 134217728)' "$work/member.json" >/dev/null
+		name=$(jq -er --arg f "$field" '.[$f].name' "$work/member.json")
+		url=$(jq -er --arg f "$field" '.[$f].url' "$work/member.json")
+		core_spine_url_valid "$url" "$member_tag" "$name"
+		size=$(jq -er --arg f "$field" '.[$f].size_bytes' "$work/member.json")
+		mirror="${core_url%/*}/blob-$(jq -er --arg f "$field" '.[$f].sha256' "$work/member.json")"
+		fetch_input "$url" "$field" "$size" "$mirror"
+		[ "$(stat -c %s "$work/$field")" = "$size" ]
+		[ "$(sha256sum "$work/$field" | awk '{print $1}')" = "$(jq -er --arg f "$field" '.[$f].sha256' "$work/member.json")" ]
+	done
+	openssl pkeyutl -verify -pubin -inkey "$work/spine.pub" -rawin -in "$work/checksums" -sigfile "$work/signature" >/dev/null
+	for field in artifact provenance sbom; do
+		name=$(jq -er --arg f "$field" '.[$f].name' "$work/member.json")
+		[ "$(awk -v name="$name" '$2==name {count++; digest=$1} END {if(count==1) print digest}' "$work/checksums")" = "$(jq -er --arg f "$field" '.[$f].sha256' "$work/member.json")" ]
+	done
+	metadata_capability=$(core_metadata_capability "$work/provenance")
+	metadata_advertised=false
+	if [ -n "$inputs" ]; then
+		for name in core-release-v2.json core-release-v2.json.sig core-compatibility.json core-compatibility.json.sig; do
+			if [ -e "$inputs/$name" ] || [ -L "$inputs/$name" ]; then metadata_advertised=true; fi
+		done
+	fi
+	artifact_sha=$(jq -er '.artifact.sha256' "$work/member.json")
+	manifest_sha=$(sha256sum "$work/core-release.json" | awk '{print $1}')
+	root=/var/lib/youeye-state/core-update
+	for directory in "$root" "$root/bootstrap" "$root/bootstrap/$artifact_sha"; do
+		if [ ! -e "$directory" ]; then mkdir -m 0700 "$directory"; fi
+		test -d "$directory"; protected "$directory"
+	done
+	binary=$root/bootstrap/$artifact_sha/youeye
+	for field in artifact checksums signature provenance sbom; do
+		file=$root/bootstrap/$artifact_sha/$field
+		if [ "$field" = artifact ]; then file=$binary; fi
+		if [ -e "$file" ]; then
+			test -f "$file"; protected "$file"
+			[ "$(sha256sum "$file" | awk '{print $1}')" = "$(jq -er --arg f "$field" '.[$f].sha256' "$work/member.json")" ]
+		else
+			stage=$(mktemp "$root/bootstrap/$artifact_sha/.pending.XXXXXX")
+			cp "$work/$field" "$stage"; chmod 0700 "$stage"; sync -f "$stage"
+			ln "$stage" "$file"; rm "$stage"; stage=
+			sync -f "$root/bootstrap/$artifact_sha"
+		fi
+	done
+	if [ "$metadata_capability" = paired-v2 ] || [ "$metadata_advertised" = true ]; then
+		# This trusted native reader authenticates both signed representations and
+		# all current original role authorities before bootstrap can create work.
+		# A required/partial offline bundle cannot fall back to a network legacy read.
+		set -- update core verify-metadata --manifest "$work/core-release.json" --signature "$work/core-release.json.sig"
+		if [ -n "$inputs" ]; then set -- "$@" --inputs "$inputs"; fi
+		"$binary" "$@"
+	fi
+	# Same request is retained across interruption. Normal scoped authority,
+	# machine identity, compatibility and paired recovery checks still run.
+	set -- update core bootstrap --request "stable-bootstrap-$manifest_sha" --manifest-sha256 "$manifest_sha"
+	if [ "$activate" = true ]; then set -- "$@" --activate; fi
+	"$binary" "$@"
+)
+
+if [ "${1:-}" = --core ]; then
+	shift
+	core_bootstrap "$@"
+	exit $?
+fi
+
+usage() {
+	printf 'Usage: %s <https-manifest-url> [https-signature-url] [--activate]\n       %s --core <https-core-manifest-url> [--inputs protected-directory] [--activate]\n' "$0" "$0" >&2
+	exit 2
+}
+
+[ "$#" -ge 1 ] && [ "$#" -le 3 ] || usage
+manifest_url=$1
+shift
+signature_url="${manifest_url}.sig"
+activate=false
+if [ "$#" -gt 0 ] && [ "$1" != "--activate" ]; then
+	signature_url=$1
+	shift
+fi
+if [ "$#" -gt 0 ]; then
+	[ "$1" = "--activate" ] || usage
+	activate=true
+	shift
+fi
+[ "$#" -eq 0 ] || usage
+
+for source in "$manifest_url" "$signature_url"; do
+	case "$source" in
+		https://*) ;;
+		*) printf 'The Plan 1 bootstrap accepts public HTTPS artifact URLs only.\n' >&2; exit 2 ;;
+	esac
+	case "$source" in
+		*'?'*|*'#'*) printf 'Query and fragment artifact URLs are not accepted.\n' >&2; exit 2 ;;
+	esac
+done
+
+trust_key=/usr/share/youeye/appliance-development.pub
+cache=/var/lib/youeye/system-update/bootstrap
+install -d -m 0700 "$cache"
+manifest=$cache/system-update-manifest.json
+signature=$manifest.sig
+
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+	--output "$manifest.tmp" "$manifest_url"
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+	--output "$signature.tmp" "$signature_url"
+openssl pkeyutl -verify -pubin -inkey "$trust_key" -rawin \
+	-in "$manifest.tmp" -sigfile "$signature.tmp" >/dev/null 2>&1 || {
+	printf 'The system update manifest signature is invalid.\n' >&2
+	exit 1
+}
+
+jq -e '
+	.schema == "youeye.system-update.v1" and
+	.artifact_kind == "development" and
+	([.artifacts[] | select(.role == "system-updater")] | length == 1)
+' "$manifest.tmp" >/dev/null
+updater_path=$(jq -r '.artifacts[] | select(.role == "system-updater") | .path' "$manifest.tmp")
+updater_sha=$(jq -r '.artifacts[] | select(.role == "system-updater") | .sha256' "$manifest.tmp")
+updater_size=$(jq -r '.artifacts[] | select(.role == "system-updater") | .size_bytes' "$manifest.tmp")
+case "$updater_path" in
+	""|*/*|*..*) printf 'The signed updater path is unsafe.\n' >&2; exit 1 ;;
+esac
+if [ "${#updater_sha}" -ne 64 ]; then
+	printf 'The signed updater digest is invalid.\n' >&2
+	exit 1
+fi
+case "$updater_sha" in
+	*[!0-9a-f]*) printf 'The signed updater digest is invalid.\n' >&2; exit 1 ;;
+esac
+
+base_url=${manifest_url%/*}
+updater=$cache/youeye-system-updater
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+	--output "$updater.tmp" "$base_url/$updater_path"
+test "$(stat -c %s "$updater.tmp")" = "$updater_size"
+printf '%s  %s\n' "$updater_sha" "$updater.tmp" | sha256sum --check --status
+chmod 0755 "$updater.tmp"
+mv -f "$manifest.tmp" "$manifest"
+mv -f "$signature.tmp" "$signature"
+mv -f "$updater.tmp" "$updater"
+sync -f "$cache"
+
+"$updater" update system stage --bootstrap-plan1 --manifest "$manifest_url" --signature "$signature_url"
+if [ "$activate" = true ]; then
+	exec "$updater" update system activate --bootstrap-plan1 --reboot
+fi
+
+printf 'The signed update is staged. Activate it with:\n  %s update system activate --bootstrap-plan1 --reboot\n' "$updater"

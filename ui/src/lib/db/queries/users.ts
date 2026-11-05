@@ -1,0 +1,232 @@
+/**
+ * User Database Queries
+ *
+ * Functions for creating and finding users in the database.
+ * Users are upserted on each SSO login to keep profiles in sync with the
+ * configured identity provider.
+ */
+
+import { eq } from "drizzle-orm";
+import { db, ensureSchema } from "@/db";
+import { users, identityDeletions } from "@/db/schema";
+import { isUuid } from '../../../../../shared/admission';
+import { decideProfileBinding } from '../../../../../shared/profile-binding';
+
+/** Find a user by their identity provider subject ID */
+export async function findUserByIdentityId(identityId: string) {
+  await ensureSchema();
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.identityId, identityId))
+    .limit(1);
+  return result[0] ?? null;
+}
+
+/** Find a user by email address. Used for identity-provider migrations. */
+export async function findUserByEmail(email: string) {
+  await ensureSchema();
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1);
+  return result[0] ?? null;
+}
+
+/** Find a user by username. Used by the CP -> UI settings bridge. */
+export async function findUserByUsername(username: string) {
+  await ensureSchema();
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.username, username))
+    .limit(1);
+  return result[0] ?? null;
+}
+
+/**
+ * Resolve the UI profile mirror used by the Control Panel bridge, creating the
+ * smallest valid row when an identity has not opened UI yet. The normal SSO
+ * upsert later attaches the identity subject and fills the profile fields while
+ * preserving settings and assets already written through the bridge.
+ */
+export async function ensureBridgeUser(username: string, identityId: string) {
+  if (!isUuid(identityId)) throw new Error('Verified identity UUID is required');
+  await ensureSchema();
+  if ((await db.select().from(identityDeletions)).some(t => t.identityId === identityId)) throw new Error('Deleted identity');
+  const existing = await findUserByIdentityId(identityId);
+  if (existing) return existing;
+
+  await ensureSchema();
+  const inserted = await db
+    .insert(users)
+    .values({ username, name: username, identityId })
+    .onConflictDoNothing({ target: users.identityId })
+    .returning();
+  if (inserted[0]) return inserted[0];
+
+  const raced = await findUserByIdentityId(identityId);
+  if (!raced) throw new Error("Unable to create UI profile mirror");
+  return raced;
+}
+
+type ExistingUser = NonNullable<
+  Awaited<ReturnType<typeof findUserByIdentityId>>
+>;
+
+async function updateUserFromSSO(
+  existing: ExistingUser,
+  data: {
+    identityId: string;
+    username: string;
+    name: string;
+    email: string;
+    image?: string;
+    isAdmin: boolean;
+    firstName?: string | null;
+    lastName?: string | null;
+  }
+) {
+  if (existing.identityId !== data.identityId) throw new Error('Identity UUID mapping is immutable');
+  const preservedAdmin = data.isAdmin;
+  const updateFields: Record<string, unknown> = {
+    identityId: data.identityId,
+    username: data.username,
+    name: data.name,
+    email: data.email,
+    isAdmin: preservedAdmin,
+    updatedAt: new Date(),
+  };
+  // Only overwrite image if explicitly provided — prevents login from
+  // clobbering avatars saved via bridge or client-side upload.
+  if (data.image !== undefined) updateFields.image = data.image;
+  // Sync firstName/lastName from the identity provider if provided.
+  if (data.firstName !== undefined) updateFields.firstName = data.firstName;
+  if (data.lastName !== undefined) updateFields.lastName = data.lastName;
+
+  await db
+    .update(users)
+    .set(updateFields)
+    .where(eq(users.id, existing.id));
+
+  return { ...existing, ...data, isAdmin: preservedAdmin, id: existing.id };
+}
+
+/**
+ * Upsert a user on SSO login.
+ * Creates the user if they don't exist, updates their profile if they do.
+ * UUID subjects are immutable. Recreated display labels never adopt old data.
+ */
+export async function upsertUser(data: {
+  identityId: string;
+  username: string;
+  name: string;
+  email: string;
+  image?: string;
+  isAdmin: boolean;
+  firstName?: string | null;
+  lastName?: string | null;
+}) {
+  await ensureSchema();
+  const deletedIds = (await db.select().from(identityDeletions)).map(t => t.identityId);
+  const existing = await findUserByIdentityId(data.identityId);
+
+  if (existing) {
+    decideProfileBinding(data.identityId, existing, [], deletedIds);
+    return updateUserFromSSO(existing, data);
+  }
+
+  const conflicts = [data.username ? await findUserByUsername(data.username) : null,
+    data.email ? await findUserByEmail(data.email) : null].filter((user): user is ExistingUser => Boolean(user));
+  const binding = decideProfileBinding(data.identityId, null, conflicts, deletedIds);
+  for (const profileId of binding.releaseLabelIds) {
+    // Keep the historical UUID and all private content; release labels only.
+    await db.update(users).set({ username: null, email: null, isAdmin: false }).where(eq(users.id, profileId));
+  }
+
+  const [newUser] = await db
+    .insert(users)
+    .values({
+      identityId: data.identityId,
+      username: data.username,
+      name: data.name,
+      firstName: data.firstName ?? null,
+      lastName: data.lastName ?? null,
+      email: data.email,
+      image: data.image,
+      isAdmin: data.isAdmin,
+    })
+    .returning();
+
+  return newUser;
+}
+
+/** Find a user by their internal UUID */
+export async function findUserById(id: string) {
+  await ensureSchema();
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, id))
+    .limit(1);
+  return result[0] ?? null;
+}
+
+/** Get all admin users */
+export async function getAdminUsers() {
+  await ensureSchema();
+  return db
+    .select({
+      id: users.id,
+      username: users.username,
+      name: users.name,
+      email: users.email,
+      isAdmin: users.isAdmin,
+    })
+    .from(users)
+    .where(eq(users.isAdmin, true));
+}
+
+/** Check if a user has completed onboarding */
+export async function hasCompletedOnboarding(userId: string): Promise<boolean> {
+  await ensureSchema();
+  const result = await db
+    .select({ onboardingCompleted: users.onboardingCompleted })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return result[0]?.onboardingCompleted ?? false;
+}
+
+/** Mark a user's onboarding as completed */
+export async function completeOnboarding(userId: string) {
+  await ensureSchema();
+  await db
+    .update(users)
+    .set({ onboardingCompleted: true, updatedAt: new Date() })
+    .where(eq(users.id, userId));
+}
+
+/** Update a user's profile fields (bio, timezone, firstName, lastName, name) */
+export async function updateUserProfile(
+  userId: string,
+  data: {
+    firstName?: string | null;
+    lastName?: string | null;
+    bio?: string | null;
+    timezone?: string | null;
+    name?: string;
+  }
+) {
+  await ensureSchema();
+  const [updated] = await db
+    .update(users)
+    .set({
+      ...data,
+      updatedAt: new Date(),
+    })
+    .where(eq(users.id, userId))
+    .returning();
+  return updated;
+}

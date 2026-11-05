@@ -1,0 +1,615 @@
+{
+  "upstream": "MyTitle",
+  "commit": "23cb46f6ff839622db75304d70d4aae18fcc1269",
+  "renderer": "lib/render.ts",
+  "dataVersion": 1,
+  "assets": [
+    {
+      "path": "public/fonts/abrilfatface-LICENSE.txt",
+      "sha256": "d9186bdd2fe2c3cea09c402a1f0054fa106b8a2c573c6f14f30427c39d16794b",
+      "bytes": 4413
+    },
+    {
+      "path": "public/fonts/abrilfatface.ttf",
+      "sha256": "5971d4a3758a922a9fedc7f6fb825a96341a2e718c45a4b2c9a6b417c8c4dbe9",
+      "bytes": 67364
+    },
+    {
+      "path": "public/fonts/alfaslabone-LICENSE.txt",
+      "sha256": "6cb8a5e3f60a5b23d1e5fff9b6fa860f0e5d4055a67bb262497c1e8d8fc13b05",
+      "bytes": 4429
+    },
+    {
+      "path": "public/fonts/alfaslabone.ttf",
+      "sha256": "28664afa698a3393bd5a29eec750230a0645c5301d62200e5f2d3a027fb2299d",
+      "bytes": 97376
+    },
+    {
+      "path": "public/fonts/amaticsc-LICENSE.txt",
+      "sha256": "2ff08e0a2a5027dcc53abd0d5affba0b42511065df2b8a9aa926f66994972ab8",
+      "bytes": 4389
+    },
+    {
+      "path": "public/fonts/amaticsc.ttf",
+      "sha256": "513a76f96d39a5366bd27c258674aaea35ee51c42b8f3060387f74649ee8c8aa",
+      "bytes": 151624
+    },
+    {
+      "path": "public/fonts/archivoblack-LICENSE.txt",
+      "sha256": "4cafdbbd100af37a23805af09b7068e4daafb4516dc3d6d52436f4a9d7b4c0d3",
+      "bytes": 4398
+    },
+    {
+      "path": "public/fonts/archivoblack.ttf",
+      "sha256": "dd9a89a019b4849f66ab75455fe7bdf931311042cbb0f0f97acc061539703180",
+      "bytes": 90988
+    },
+    {
+      "path": "public/fonts/audiowide-LICENSE.txt",
+      "sha256": "187ff9f7308f41117a5bfd0a0974bc8503882e488d15ac721dd4b7734904357b",
+      "bytes": 4429
+    },
+    {
+      "path": "public/fonts/audiowide.ttf",
+      "sha256": "c7c0f2b0f6fad8c623e31772ce79f94a4edb9321ffce9fce978ea892d20ae730",
+      "bytes": 69916
+    },
+    {
+      "path": "public/fonts/badscript-LICENSE.txt",
+      "sha256": "09639f2ef3211727426c057fef42c5b663e7eb7a431fe225d8391fd7dd3ba01f",
+      "bytes": 4389
+    },
+    {
+      "path": "public/fonts/badscript.ttf",
+      "sha256": "40ec737eee65ec4efbc24ae636fa31d7d84d1ccca83ab54cd555edb72cb3eaf0",
+      "bytes": 184216
+    },
+    {
+      "path": "public/fonts/bangers-LICENSE.txt",
+      "sha256": "01f0dea3bc499f7fcc471577fe3a8d7df6e74e6b456d2228b767a239740811ae",
+      "bytes": 4387
+    },
+    {
+      "path": "public/fonts/bangers.ttf",
+      "sha256": "4160a7311de9342674cce9160cde9fcbb30f48190397d86ff1b70b455af65824",
+      "bytes": 93148
+    },
+    {
+      "path": "public/fonts/bebasneue-LICENSE.txt",
+      "sha256": "1ad713665104ebc1ad80176b6b14f2d7dbc91aeed4180855a9514bb350b52e31",
+      "bytes": 4336
+    },
+    {
+      "path": "public/fonts/bebasneue.ttf",
+      "sha256": "08e4623805102d819f58601e46e345648846075e363b2ceb23313c2d1c83ec73",
+      "bytes": 61400
+    },
+    {
+      "path": "public/fonts/blackopsone-LICENSE.txt",
+      "sha256": "95d8e44344d4bf7ab6b30cd97d445012dae38b66d3990e252e767c3f7ce6461c",
+      "bytes": 4410
+    },
+    {
+      "path": "public/fonts/blackopsone.ttf",
+      "sha256": "282a825b5f294377387e3969f765408157dbea8da0f5d0aae68c6bc704b145b3",
+      "bytes": 166532
+    },
+    {
+      "path": "public/fonts/bungee-LICENSE.txt",
+      "sha256": "3222aa4c0c12b78dcfd5e52879d7983a3b37e72c9cab4f95e4bbfbab9e3d91da",
+      "bytes": 4379
+    },
+    {
+      "path": "public/fonts/bungee.ttf",
+      "sha256": "c4f5361ce120af3e6b9156d0bf379fa19cda2ea0cd18ac01fd99596c6bf66e3f",
+      "bytes": 118996
+    },
+    {
+      "path": "public/fonts/caveat-LICENSE.txt",
+      "sha256": "163a2b400e16916ad3196296c946c526d0efce6baf22a2164269ffc62fb9f671",
+      "bytes": 4384
+    },
+    {
+      "path": "public/fonts/caveat.ttf",
+      "sha256": "0bdb6b660482d31531b3945849fba5916b3ef8695da7024a9e6b9ee3c4157988",
+      "bytes": 403648
+    },
+    {
+      "path": "public/fonts/cinzel-LICENSE.txt",
+      "sha256": "f5a242cf68ad6ebd0603b3359a74c593ca080318a681035be5296ba2c6b04ae6",
+      "bytes": 4382
+    },
+    {
+      "path": "public/fonts/cinzel.ttf",
+      "sha256": "f4d83d34d1f6c741193e4acf4b3dff9531e5a67b6aa65228d00a7db72a4e0f34",
+      "bytes": 125468
+    },
+    {
+      "path": "public/fonts/comfortaa-LICENSE.txt",
+      "sha256": "c89ab37b152eaa07dc5e8d100d6ffb968226a0c4988bdff16a97e73174e9c77c",
+      "bytes": 4425
+    },
+    {
+      "path": "public/fonts/comfortaa.ttf",
+      "sha256": "0fc3f45dc48b614db9c39181502544b37217ecbf8bee2fb35886992bc96c5bd3",
+      "bytes": 201756
+    },
+    {
+      "path": "public/fonts/creepster-LICENSE.txt",
+      "sha256": "53159f8c89ddf82b766b3f70b890a069d60468f8cd2d9751bdd5ba67f9ee2afa",
+      "bytes": 4398
+    },
+    {
+      "path": "public/fonts/creepster.ttf",
+      "sha256": "402aeb734586c74aecd3dbdc454589b1fb12e2e1c71f782fd019ae68066d9f44",
+      "bytes": 62724
+    },
+    {
+      "path": "public/fonts/dancingscript-LICENSE.txt",
+      "sha256": "c02c0002d3bbd41a16933c162888c400469c7029f1362ca9d60d5ed20ea7d157",
+      "bytes": 4442
+    },
+    {
+      "path": "public/fonts/dancingscript.ttf",
+      "sha256": "21808625578fe8d8cd10cb684be546dca077b27cd03a53a2f1ec11dc743c924c",
+      "bytes": 133636
+    },
+    {
+      "path": "public/fonts/dmserifdisplay-LICENSE.txt",
+      "sha256": "aa49c876a28d8c0b0a3027d6c25b9c607eee8c0fb96165011d42a6ace1408fe1",
+      "bytes": 4512
+    },
+    {
+      "path": "public/fonts/dmserifdisplay.ttf",
+      "sha256": "df74c0ac387baeaeb0fe4f2324e1668e6a3ed8c09cd9796fe162c71753e19e45",
+      "bytes": 71208
+    },
+    {
+      "path": "public/fonts/fredoka-LICENSE.txt",
+      "sha256": "9bbd4f5f107895d5a213579b73821fadd05105241cf4360e86050199fcfd6034",
+      "bytes": 4387
+    },
+    {
+      "path": "public/fonts/fredoka.ttf",
+      "sha256": "2ba02e68b152868aef9ba28e24b3648c7d457fe6f25c761f2c2c53fb61a73fc8",
+      "bytes": 159184
+    },
+    {
+      "path": "public/fonts/gaegu-LICENSE.txt",
+      "sha256": "7cca72da90fc090a774e5d0a72ffb19a9e1bcebbd7a397196a0edcc67f453ced",
+      "bytes": 4343
+    },
+    {
+      "path": "public/fonts/gaegu.ttf",
+      "sha256": "aa52c98336f7c62e2896fc8b12b56a75d5b476d88a2f104b0980f4f7ce0adfc3",
+      "bytes": 3165816
+    },
+    {
+      "path": "public/fonts/greatvibes-LICENSE.txt",
+      "sha256": "b7dd64242f4bfa1e1e89023a44b7e8f5137224ac6fbc871453a40b9975179d31",
+      "bytes": 4399
+    },
+    {
+      "path": "public/fonts/greatvibes.ttf",
+      "sha256": "8d509802186f1b51572531ecf313e8098f9a5bfdfaca93f0c9b34467f9982d15",
+      "bytes": 457588
+    },
+    {
+      "path": "public/fonts/lobster-LICENSE.txt",
+      "sha256": "73e006e6fc23df5f07e0976d78d49c94aece9ce90cdb2522279a6d79eaa7bbd3",
+      "bytes": 4429
+    },
+    {
+      "path": "public/fonts/lobster.ttf",
+      "sha256": "d6568e697fd50cedc0be04d8aae4127fe95add607e7bff954ca88604be80c205",
+      "bytes": 406076
+    },
+    {
+      "path": "public/fonts/luckiestguy-LICENSE.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358
+    },
+    {
+      "path": "public/fonts/luckiestguy.ttf",
+      "sha256": "cfbdd68a039f92df51cf3721506af6242e64594c6325fe0bedbeff3fe385d980",
+      "bytes": 73320
+    },
+    {
+      "path": "public/fonts/manifest.json",
+      "sha256": "ff640b2b232b5a4770385adf9590dfe9419a73ad442c8635807d1d5f9096f46c",
+      "bytes": 14512
+    },
+    {
+      "path": "public/fonts/marckscript-LICENSE.txt",
+      "sha256": "8f81049ee2c9d2e7da046d8c36e9596228113b442cf131be3385eb48ed3d97a3",
+      "bytes": 4419
+    },
+    {
+      "path": "public/fonts/marckscript.ttf",
+      "sha256": "504de8cc6f919163bc9afb67b9bc208d258230c5e8d00cb82ec52474f9fafc3b",
+      "bytes": 83664
+    },
+    {
+      "path": "public/fonts/mashanzheng-LICENSE.txt",
+      "sha256": "54107539e415cc21d97752b7b1738c3d152451863f65e2c4e51556d3ceab1ab9",
+      "bytes": 4396
+    },
+    {
+      "path": "public/fonts/mashanzheng.ttf",
+      "sha256": "6d2546bb189c732a8ca29af9e22457b152387d158aa459e4ac2ce1e51788b7fb",
+      "bytes": 5857936
+    },
+    {
+      "path": "public/fonts/monoton-LICENSE.txt",
+      "sha256": "2a3456a3ffad8912efb68f0655adab6c241df21a0f6ab1f60f0ca055935508d6",
+      "bytes": 4400
+    },
+    {
+      "path": "public/fonts/monoton.ttf",
+      "sha256": "951c4cea65ffede784a7c9672feec5d329a7e1e12216c42d53ecf36c90d04dea",
+      "bytes": 51604
+    },
+    {
+      "path": "public/fonts/montserrat-LICENSE.txt",
+      "sha256": "861d64229728cd65a98d119612c12769582574d1a092f0b63c8b0fd474e7065f",
+      "bytes": 4400
+    },
+    {
+      "path": "public/fonts/montserrat.ttf",
+      "sha256": "0f7b311b2f3279e4eef9b2f968bcdbab6e28f4daeb1f049f4f278a902bcd82f7",
+      "bytes": 744936
+    },
+    {
+      "path": "public/fonts/notosans-LICENSE.txt",
+      "sha256": "e2e177a32561584d4fc13aaa3cd8e53758a12910f013fe9ca125419111722029",
+      "bytes": 4395
+    },
+    {
+      "path": "public/fonts/notosans.ttf",
+      "sha256": "bfb7bb691513f12e734dc346c03a03f784912432d7e3fa8e56efcf906fe86b3d",
+      "bytes": 2049096
+    },
+    {
+      "path": "public/fonts/notoserif-LICENSE.txt",
+      "sha256": "e2e177a32561584d4fc13aaa3cd8e53758a12910f013fe9ca125419111722029",
+      "bytes": 4395
+    },
+    {
+      "path": "public/fonts/notoserif.ttf",
+      "sha256": "4d8e6761424656867019081a1a01336f3cb086982682698714054fc33f782713",
+      "bytes": 1887192
+    },
+    {
+      "path": "public/fonts/orbitron-LICENSE.txt",
+      "sha256": "dd6fdb6716fd179d1fe891759efb3f9200753fdf6abf513b55b712c4ae16e512",
+      "bytes": 4425
+    },
+    {
+      "path": "public/fonts/orbitron.ttf",
+      "sha256": "f42db2dd16e642258e35782916eceb1dcdbea06fb958d77ad71dc5963587e8fd",
+      "bytes": 38576
+    },
+    {
+      "path": "public/fonts/oswald-LICENSE.txt",
+      "sha256": "0b2472b17e950b9967818f169f2618b091c0c259d250d2dd8208961c7f5700e1",
+      "bytes": 4389
+    },
+    {
+      "path": "public/fonts/oswald.ttf",
+      "sha256": "5b38c246e255a12f5712d640d56bcced0472466fc68983d2d0410ec0457c2817",
+      "bytes": 172088
+    },
+    {
+      "path": "public/fonts/pacifico-LICENSE.txt",
+      "sha256": "e1b964e3f56697598c46363a8864f0a7b883c86a0c01a9a6a4e90e6949d60ba2",
+      "bytes": 4388
+    },
+    {
+      "path": "public/fonts/pacifico.ttf",
+      "sha256": "5b6c0d5334a7bf77dea52b975c5a0c408878c0f7115ed5b6fb151f634b7bf701",
+      "bytes": 329380
+    },
+    {
+      "path": "public/fonts/permanentmarker-LICENSE.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358
+    },
+    {
+      "path": "public/fonts/permanentmarker.ttf",
+      "sha256": "28f82c8a7943cb8e9d599f8554da1d4fc75dbcf69b9885ad6c0611d20c6946c5",
+      "bytes": 74632
+    },
+    {
+      "path": "public/fonts/philosopher-LICENSE.txt",
+      "sha256": "bc884dc1c5a18df27e250d7d4c1e5574234215017161290a1010bfcdba880b9a",
+      "bytes": 4392
+    },
+    {
+      "path": "public/fonts/philosopher.ttf",
+      "sha256": "e1cba0b5003b5694f1d6cc0fbe629f78362ad38a9ffd4d0cb7abfd9698a575ed",
+      "bytes": 111676
+    },
+    {
+      "path": "public/fonts/playfairdisplay-LICENSE.txt",
+      "sha256": "0bb2b43ffd21233963b5d0c0eb6f1abffa776ec53c56131b5818708f2730ffd6",
+      "bytes": 4448
+    },
+    {
+      "path": "public/fonts/playfairdisplay.ttf",
+      "sha256": "c40f2293766a503bc70cce9e512ef844a4ccb7cbcde792fe2ea31d191917d8d6",
+      "bytes": 300724
+    },
+    {
+      "path": "public/fonts/pressstart2p-LICENSE.txt",
+      "sha256": "172c7cfc7e60165cab231417c0bbd73809b72a8e8e1e89ac9538607c5293a780",
+      "bytes": 4413
+    },
+    {
+      "path": "public/fonts/pressstart2p.ttf",
+      "sha256": "034c77f1f05ec89421e4a63f0e3a4ca1ecf852cc6d2bf611f126f275728e017d",
+      "bytes": 118204
+    },
+    {
+      "path": "public/fonts/quicksand-LICENSE.txt",
+      "sha256": "b4578833b5c1ce3a9a811df806760ba4e98566c3b52689808fa1290f946450fc",
+      "bytes": 4444
+    },
+    {
+      "path": "public/fonts/quicksand.ttf",
+      "sha256": "39c9b64223561f56aaff6062a6f04063c4fc86809ad6768722c06614d977e1cc",
+      "bytes": 124824
+    },
+    {
+      "path": "public/fonts/righteous-LICENSE.txt",
+      "sha256": "1f1862dce9044038c2d8904280985be1be2f000d87c04117873a180c380c8362",
+      "bytes": 4431
+    },
+    {
+      "path": "public/fonts/righteous.ttf",
+      "sha256": "2ffb3fe5c27d7e6571210b800448c4e234e651b46c6b4426c1bb567e5341348a",
+      "bytes": 43104
+    },
+    {
+      "path": "public/fonts/rubik-LICENSE.txt",
+      "sha256": "3cb6a6084f5d942a8f3b5fda0f6a90dde18d7f7f1798886f4043d18f8c1a811e",
+      "bytes": 4383
+    },
+    {
+      "path": "public/fonts/rubik.ttf",
+      "sha256": "1b3a7437ba2af80e465e773ed60c5036d1ba6ace492d89046dbcf18fb31e4e88",
+      "bytes": 359804
+    },
+    {
+      "path": "public/fonts/rubikglitch-LICENSE.txt",
+      "sha256": "06bb7498d30e1504baafc7d8c560574d6ad587f557d8a4293cb56814c36a2851",
+      "bytes": 4405
+    },
+    {
+      "path": "public/fonts/rubikglitch.ttf",
+      "sha256": "260245012483d56956269100ebece747aa95b4b67e5a9411a81a36e91f55e653",
+      "bytes": 407304
+    },
+    {
+      "path": "public/fonts/rubikmonoone-LICENSE.txt",
+      "sha256": "d6174970d2dcef4a915eecd034fdd027d1744e19a993b85ea9bd60bc047c6c87",
+      "bytes": 4368
+    },
+    {
+      "path": "public/fonts/rubikmonoone.ttf",
+      "sha256": "b22624b6a36e543e942106edfccd198c50b57b65b924bfe02a6f0a5699429e6b",
+      "bytes": 141088
+    },
+    {
+      "path": "public/fonts/rubikmoonrocks-LICENSE.txt",
+      "sha256": "06bb7498d30e1504baafc7d8c560574d6ad587f557d8a4293cb56814c36a2851",
+      "bytes": 4405
+    },
+    {
+      "path": "public/fonts/rubikmoonrocks.ttf",
+      "sha256": "39ff4d96b906e8cc2fd7a350aa13620d5eff18d776fedb5c98c12cbf6e1f2c1e",
+      "bytes": 403712
+    },
+    {
+      "path": "public/fonts/russoone-LICENSE.txt",
+      "sha256": "d391b94070ab7aee254ca62df17ac3718fe5709e0d8b3c9a947dbd234f510d4f",
+      "bytes": 4389
+    },
+    {
+      "path": "public/fonts/russoone.ttf",
+      "sha256": "bc0abcc660bd8b7ad3000ecb2898a27c58a29a50f7ec81652fa12e75148d09df",
+      "bytes": 39124
+    },
+    {
+      "path": "public/fonts/satisfy-LICENSE.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358
+    },
+    {
+      "path": "public/fonts/satisfy.ttf",
+      "sha256": "55bb141a0a23a32278d5fa7fd2e853824faa173b94774660ebeddb106be07c80",
+      "bytes": 47928
+    },
+    {
+      "path": "public/fonts/spacegrotesk-LICENSE.txt",
+      "sha256": "18a4de52385f6b988782639d5d0cc1326e5a8c2de9a7f01d7b20d9aedcc60943",
+      "bytes": 4401
+    },
+    {
+      "path": "public/fonts/spacegrotesk.ttf",
+      "sha256": "acad6de1fc93436f5c0f1f4137751ef04f1aea3063e7036535970ffcfbd79f72",
+      "bytes": 136676
+    },
+    {
+      "path": "public/fonts/specialelite-LICENSE.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358
+    },
+    {
+      "path": "public/fonts/specialelite.ttf",
+      "sha256": "a776fcb4ceb8bdf03e2967688ebdad42680de5b91a7e62c17e718ae212d14bc4",
+      "bytes": 166180
+    },
+    {
+      "path": "public/fonts/unbounded-LICENSE.txt",
+      "sha256": "0ffe0a13450d66fcb678824aac041cdc41a3423f153b778feff2167624e67bb2",
+      "bytes": 4391
+    },
+    {
+      "path": "public/fonts/unbounded.ttf",
+      "sha256": "323b511be380c8d474ef030686b71aedde501f8d9cd46da558b7c40454372c3f",
+      "bytes": 778272
+    },
+    {
+      "path": "public/fonts/vollkorn-LICENSE.txt",
+      "sha256": "6eec46ffaff7111951d415cf6ea316c9cc6d9c371ed4ae07f3bd39c85a38ec32",
+      "bytes": 4396
+    },
+    {
+      "path": "public/fonts/vollkorn.ttf",
+      "sha256": "4ebef434f76f80286204840354a84db79a0dc3c87deeeb791e015b70b2ade49d",
+      "bytes": 577864
+    },
+    {
+      "path": "public/fonts/vt323-LICENSE.txt",
+      "sha256": "27d9af34210253e7ca1251fbace86c6f65b40031d6ce1a75493a1b2093631298",
+      "bytes": 4367
+    },
+    {
+      "path": "public/fonts/vt323.ttf",
+      "sha256": "cf4de751ada78ceac033dbe16a687742939995b77bc2a052ae17a4957958594d",
+      "bytes": 153116
+    },
+    {
+      "path": "public/fonts/yesevaone-LICENSE.txt",
+      "sha256": "36d7d2c80f70535a822509f16e0719c15994bdc2e0de5f601bb3aa63281070db",
+      "bytes": 4404
+    },
+    {
+      "path": "public/fonts/yesevaone.ttf",
+      "sha256": "88362b33820f0011e163e67b1d570fecd442aa8c05eaac89d5162f9c40d9dac3",
+      "bytes": 108016
+    },
+    {
+      "path": "public/fonts/zenmarugothic-LICENSE.txt",
+      "sha256": "9e20355e619c79b80faa607a8fd137d07dd6e33535d1a29ac27116dfbf88b696",
+      "bytes": 4401
+    },
+    {
+      "path": "public/fonts/zenmarugothic.ttf",
+      "sha256": "a0c0b53543e0993ae2225e629c833f3d51495ad31720694ff112ce4ce11111ef",
+      "bytes": 3832756
+    }
+  ],
+  "sourceFiles": [
+    {
+      "path": "src/ComparisonStudio.tsx",
+      "sha256": "82cd444eed0b5c15167f309ccdfafa4a22ac2da9ac644dea2c84d8fcb695552b"
+    },
+    {
+      "path": "src/IconPicker.tsx",
+      "sha256": "e48f6fbc9edff5badf2564deed805a7fb888fa7230bc6b6d89e169b277286186"
+    },
+    {
+      "path": "src/comparison.css",
+      "sha256": "cbc1aafba5912aa9abbbf844c8d3f1ea4e7af078ee9a80112a9b3e6fd86fa8af"
+    },
+    {
+      "path": "src/components.tsx",
+      "sha256": "cf933bc413edd7ab19f679e4040e7bdaf36915450ad018aaf59cd9f3e265b4a9"
+    },
+    {
+      "path": "src/creative/CreativeStudio.tsx",
+      "sha256": "0b52aff1b4e12f8ea501b663c576b780cf70384e3f2a5ab09492c827f84fa643"
+    },
+    {
+      "path": "src/creative/IconExperiments.tsx",
+      "sha256": "d85c0f63c9a0506c796cc84c5127499f95c3c81deec763a2ec66c0b3cced79bd"
+    },
+    {
+      "path": "src/creative/TitleBuilder.tsx",
+      "sha256": "c4b3b170390eb961cc3cdfe03bac5f83aa11ae34ead8f7be2062e993e7a9f56f"
+    },
+    {
+      "path": "src/creative/creative.css",
+      "sha256": "07442bcde9457493d2cafef5176433008198de052cd14d9c1344cbf4800b88d6"
+    },
+    {
+      "path": "src/creative/data.ts",
+      "sha256": "190442f2f38f25269945b9077fe317cfa8f2b83641598dcfc88c0172f49835c2"
+    },
+    {
+      "path": "src/creative/server-names.ts",
+      "sha256": "b9eb0fcd154fbf408b3d376cf02a168b62d21c5dea9a1f802ba717a5f5c360c0"
+    },
+    {
+      "path": "src/creative/shared.tsx",
+      "sha256": "67f4e85614d6a4b90db6abde7996446407f8d01570264774d8c091d2240f55e4"
+    },
+    {
+      "path": "src/creative/starter.ts",
+      "sha256": "ac74786dec38c74983bb8d1a311c3a99e2c53f3b43a877d9aafbed6de34254d4"
+    },
+    {
+      "path": "src/creative/title-builder.css",
+      "sha256": "5899cd15ae7a41088f0585003833e38bd317a7890121dbc8251cbdc13ae3201c"
+    },
+    {
+      "path": "src/lib/coverage.ts",
+      "sha256": "ee5ad0d03ed8c2e0628e40782e6db96f74e4f9f0670a705f1848d5da700fe985"
+    },
+    {
+      "path": "src/lib/design.ts",
+      "sha256": "e0b58bef165810158a0f111d4ad5fbfb81401eea90025dd169b4aa824834ab31"
+    },
+    {
+      "path": "src/lib/export.ts",
+      "sha256": "cc84bcf78e56677c40885d8de311e2aed64661520ebf417deb4c52f7798c99a5"
+    },
+    {
+      "path": "src/lib/font-coverage.json",
+      "sha256": "5e56dc9a900117563854871e3134de9d4c87e437458bc357913e1d71b0eb09ee"
+    },
+    {
+      "path": "src/lib/fonts.ts",
+      "sha256": "5e4934a3e2866227f4a2efea1fbcb49e4aeb7f656c46b05548adf8a0ac411cc2"
+    },
+    {
+      "path": "src/lib/history.ts",
+      "sha256": "92103547cfae498044328f690658e0649105164f0f5d109c90f987d087dc62e5"
+    },
+    {
+      "path": "src/lib/icon-styles.ts",
+      "sha256": "444a0b19460f80df2dff072263b6eb49ad2195d5084494d21032aa7cd99f75c2"
+    },
+    {
+      "path": "src/lib/icons.json",
+      "sha256": "f20ea57dda30cca7bd38d754465569a5cf06111778caf9f732f8e28f7392de5e"
+    },
+    {
+      "path": "src/lib/render.test.ts",
+      "sha256": "035c2977c5f79fb4ad43715841cac812ef3080f415b7827ee854d5828c7fc4e6"
+    },
+    {
+      "path": "src/lib/render.ts",
+      "sha256": "c221c935c1e8e62b10249a5a739ad477842594c121c1adc827ea87dbfa70a25c"
+    },
+    {
+      "path": "src/styles.css",
+      "sha256": "908d82a2f5fbded18237c2b91b5a508cb192e34daa16a7f5d984cba2afa26727"
+    }
+  ],
+  "integration": "Shared renderer, schema and catalogue; local font URLs, server font registration, validated registry symbols, scoped CSS and application adapters.",
+  "vendoredDependencies": [
+    {
+      "package": "opentype.js",
+      "version": "1.3.4",
+      "source": "https://registry.npmjs.org/opentype.js/-/opentype.js-1.3.4.tgz",
+      "distributedFile": "dist/opentype.module.js",
+      "localFile": "packages/branding/vendor/opentype/index.js",
+      "sha256": "8d79d17388114a29d74681dfaed84068b1d7d9b4e39a9544fb6406d25579ad8f",
+      "licence": "MIT",
+      "notice": "packages/branding/vendor/opentype/LICENSE",
+      "adaptations": "Unmodified ESM distribution; package browser fs=false retained. TypeScript declarations from @types/opentype.js 1.3.8 with default-export declaration added; TYPES-LICENSE retained."
+    }
+  ]
+}

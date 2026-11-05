@@ -1,0 +1,102 @@
+# Control Panel
+
+Orchestration engine for the YouEye platform.
+
+The Control Panel is a Next.js application that runs inside an Incus container and manages all platform infrastructure: database, YouEye ID, reverse proxy, DNS, the user-facing UI, native apps, and Market-installed apps.
+
+## What Control Panel Does
+
+- **Setup Wizard**: Guided first-run configuration (domain, DNS, SSO, services)
+- **Dashboard**: System health monitoring with service status and resource usage
+- **App Management**: Install, update, start, stop, and remove apps (native and Market-installed)
+- **Reverse Proxy**: Caddy route management with automatic TLS
+- **DNS**: Pi-Hole configuration, blocklists, local DNS records
+- **SSO**: YouEye ID integration for single sign-on across all apps
+- **Updates**: Check and apply updates for all platform components
+- **Backups**: Multi-container backup engine with scheduling
+
+## Architecture
+
+Control Panel runs as a standalone Next.js app inside the `youeye-control` Incus container. It communicates with other services via:
+
+- **Incus socket**: Container lifecycle management (create, start, stop, exec)
+- **Spine socket**: Privileged host operations (PAM auth, system updates)
+- **Bridge network**: Direct API calls to containers (Caddy, Pi-Hole, YouEye ID, PostgreSQL)
+- **UI Bridge API**: One-way push endpoints for the UI (`/api/ui-bridge/*`)
+
+The UI bridge is one-way: Control Panel pushes data to the UI. The UI never calls back to Control Panel.
+
+### Managed proxy reconciliation
+
+Startup waits for the configured authenticated Incus API before reconciling app
+ownership and managed proxy routes. Managed containers require a usable IPv4
+address; discovery failures retain existing routes instead of saving a DNS
+fallback. Explicit external hostname upstreams remain supported.
+
+Settings, Market, their support route, and Pointer inference use one reconciliation
+operation. It resolves required addresses before an atomic Caddy configuration
+replacement, protects writes with the observed configuration revision, and checks
+read-back and proxy responses using the installed TLS trust. Failed verification
+attempts an exact conditional rollback and reports any unverified recovery.
+Required setup route failures keep setup incomplete and retryable. Exhausted
+startup attempts appear in System Health with a repair action. Administrators can
+also use the authenticated, CSRF-protected `POST /api/setup/control-routes` repair
+endpoint. The separate identity process does not start platform reconciliation.
+
+## Development
+
+```bash
+pnpm install
+pnpm dev
+```
+
+Runs on `http://localhost:3000` in development mode.
+
+### Building
+
+```bash
+pnpm build
+```
+
+The standalone output is in `.next/standalone/control-panel/`.
+
+### Creating a Release Tarball
+
+```bash
+cd .next/standalone/control-panel
+cp -r ../../static .next/static
+cp -r ../../../public ./public
+tar -cf standalone.tar .
+```
+
+The tarball must be created from inside the component subdirectory with `server.js` at the root level. Use `tar -cf` (uncompressed), not `tar -czf`.
+
+The current main-promotion candidate for this component is
+`0.5.22.0.1`; publish it as `cp-v0.5.22.0.1` only from the exact
+accepted main commit.
+
+## Key API Routes
+
+| Route | Description |
+|-------|-------------|
+| `/api/auth/login` | PAM authentication via Spine |
+| `/api/apps/unified` | Unified app listing (native + Market-installed) |
+| `/api/apps/install` | Install an app from Market |
+| `/api/caddy/*` | Caddy reverse proxy management |
+| `/api/pihole/*` | Pi-Hole DNS management |
+| `/api/deploy/*` | Setup wizard deployment steps |
+| `/api/updates` | Check for available updates |
+| `/api/ui-bridge/*` | Data push endpoints for the UI |
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | 3000 | HTTP server port |
+| `NODE_ENV` | production | Node environment |
+| `DATABASE_URL` | — | PostgreSQL connection string |
+| `CONTROL_EXTERNAL_URL` | — | Public-facing URL for this instance |
+
+## License
+
+[Business Source License 1.1](../LICENSE) — converts to AGPL-3.0 on 2030-05-15.

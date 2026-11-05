@@ -1,0 +1,106 @@
+/**
+ * OAuth2 Callback Route
+ *
+ * GET /api/auth/callback?code=...&state=... - Exchanges code for token, creates session
+ *
+ * After creating the session, redirects to the path stored in the oauth-redirect
+ * cookie (set by /api/auth/sso?redirect=...), or falls back to "/".
+ * This enables the silent SSO flow for CP embeds.
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { oauthTransactionName, readOAuthTransaction } from '../../../../../../shared/oauth-transaction';
+import {
+  exchangeCodeForToken,
+  fetchUserInfo,
+  isSSOConfigured,
+} from '@/lib/auth/oauth';
+import {
+  createSession,
+  setSessionCookies,
+  generateCSRFToken,
+} from '@/lib/auth/session';
+import { isSettingsPath, getSettingsPublicUrl } from '@/lib/settings-public-path';
+import { verifyClientIdToken } from '@/lib/identity/tokens';
+import { getOAuthConfig } from '@/lib/auth/oauth';
+
+function hasAdminClaim(groups: string[], isAdminClaim?: boolean): boolean {
+  return isAdminClaim === true || groups.includes('admin');
+}
+
+export async function GET(request: NextRequest) {
+  if (!isSSOConfigured()) {
+    return NextResponse.json({ error: 'SSO not configured' }, { status: 503 });
+  }
+
+  // Determine the external base URL for all redirects.
+  const settingsFlow = isSettingsPath(request.nextUrl.pathname);
+  const controlUrl = settingsFlow ? getSettingsPublicUrl(request) : process.env.CONTROL_EXTERNAL_URL;
+  let baseUrl: string;
+  if (controlUrl) {
+    baseUrl = controlUrl;
+  } else {
+    const host = request.headers.get('host') || '';
+    const proto = request.headers.get('x-forwarded-proto') || 'http';
+    baseUrl = `${proto}://${host}`;
+  }
+
+  const code = request.nextUrl.searchParams.get('code');
+  const state = request.nextUrl.searchParams.get('state');
+  const errorParam = request.nextUrl.searchParams.get('error');
+  const loginPath = settingsFlow ? '/settings/login' : '/login';
+  const transactionName = oauthTransactionName('cp', state);
+  const postLoginRedirect = readOAuthTransaction(transactionName ? request.cookies.get(transactionName)?.value : undefined, state);
+  const redirectResponse = (url: URL) => {
+    const response = NextResponse.redirect(url);
+    if (transactionName) response.cookies.delete(transactionName);
+    return response;
+  };
+
+  // Handle identity provider errors
+  if (errorParam) {
+    const desc = request.nextUrl.searchParams.get('error_description') || errorParam;
+    console.error(`OAuth2 error: ${desc}`);
+    return redirectResponse(new URL(`${loginPath}?error=${encodeURIComponent(desc)}`, baseUrl));
+  }
+
+  if (!code || !state) {
+    return redirectResponse(new URL(`${loginPath}?error=Missing+code+or+state`, baseUrl));
+  }
+
+  if (postLoginRedirect === null) {
+    console.error('OAuth2 state mismatch');
+    return redirectResponse(new URL(`${loginPath}?error=Invalid+state`, baseUrl));
+  }
+
+  try {
+    const redirectUri = `${baseUrl}/api/auth/callback`;
+
+    // Exchange code for token
+    const tokenData = await exchangeCodeForToken(code, redirectUri);
+
+    // Fetch user info
+    const userInfo = await fetchUserInfo(tokenData.access_token);
+
+    const username = userInfo.preferred_username || userInfo.sub;
+    const groups = userInfo.groups || [];
+    const isAdmin = hasAdminClaim(groups, userInfo.is_admin);
+
+    // Create session
+    const identityClaims = tokenData.id_token ? await verifyClientIdToken(tokenData.id_token, getOAuthConfig().clientId) : null;
+    if (!identityClaims?.sid || identityClaims.sub !== userInfo.sub) throw new Error('Identity session is missing or mismatched');
+    const sessionToken = await createSession(username, isAdmin, groups, 'sso',
+      { userId: identityClaims.sub, sessionId: identityClaims.sid });
+    const csrfToken = generateCSRFToken();
+    await setSessionCookies(sessionToken, csrfToken, { request });
+
+    console.log(`SSO login successful for "${username}" (admin: ${isAdmin})`);
+
+    // Redirect to the post-login destination (embed page or dashboard)
+    return redirectResponse(new URL(postLoginRedirect, baseUrl));
+  } catch (error) {
+    console.error('OAuth2 callback error:', error);
+    const msg = error instanceof Error ? error.message : 'Authentication failed';
+    return redirectResponse(new URL(`${loginPath}?error=${encodeURIComponent(msg)}`, baseUrl));
+  }
+}

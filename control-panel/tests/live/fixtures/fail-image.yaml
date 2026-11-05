@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: app
+integration: basic
+version: 1.0.0
+metadata:
+  id: session-fail-image
+  name: Session Image Failure
+  description: Session-only deterministic image failure after network reservation.
+  icon: triangle-alert
+  category: development
+  defaultSubdomain: session-fail-image
+database:
+  mode: none
+containers:
+  - name: web
+    type: oci
+    primary: true
+    image: docker.io/library/youeye-session-image-does-not-exist:never
+    port: 80
+internet:
+  hosts: []
+entrances:
+  - name: web
+    port: 80
+    container: web
+    authLevel: none

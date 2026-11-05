@@ -1,0 +1,71 @@
+import { settingsService } from '@/lib/settings';
+import { CONTAINER_DOMAIN } from '@/lib/market/constants';
+/** Public/browser authority follows portable server configuration, never a template pin.
+ * User subjects and signing secrets belong to the identity store and are retained.
+ * Strict public clients must explicitly migrate their issuer after a URL change.
+ */
+export async function getIdentityIssuerOrigin(): Promise<string | null> {
+  const raw = await settingsService.getRaw();
+  if (!raw.domain || !raw.subdomains?.identity) return null;
+  return identityConfigFromSettings(raw).issuer;
+}
+
+export interface IdentityConfig {
+  domain: string;
+  subdomain: string;
+  externalUrl: string;
+  dashboardUrl: string;
+  internalUrl: string;
+  containerName: string;
+  port: number;
+  issuer: string;
+  cookieDomain: string;
+}
+
+function normalizeSubdomain(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error('Identity provider subdomain is not configured. Set subdomains.identity in setup or repair config.');
+  }
+  const subdomain = value.trim().replace(/^\.+|\.+$/g, '');
+  if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(subdomain)) {
+    throw new Error(`Invalid identity provider subdomain "${value}". Use a single DNS label.`);
+  }
+  return subdomain;
+}
+
+function normalizeDomain(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error('Platform domain is not configured. The identity provider cannot derive its issuer.');
+  }
+  return value.trim().replace(/\.+$/g, '');
+}
+
+export async function getIdentityConfig(): Promise<IdentityConfig> {
+  const raw = await settingsService.getRaw();
+  return identityConfigFromSettings(raw);
+}
+
+export function identityConfigFromSettings(raw: { domain?: unknown; subdomains?: { identity?: unknown; ui?: unknown } }): IdentityConfig {
+  const domain = normalizeDomain(raw.domain);
+  const subdomain = normalizeSubdomain(raw.subdomains?.identity);
+  const host = `${subdomain}.${domain}`;
+  const uiLabel = raw.subdomains?.ui;
+  const uiSubdomain = uiLabel === undefined || uiLabel === null || uiLabel === ''
+    ? '' : normalizeSubdomain(uiLabel);
+  const dashboardHost = uiSubdomain ? `${uiSubdomain}.${domain}` : domain;
+  if (dashboardHost === host) throw new Error('Dashboard and identity hostnames must be different.');
+  const containerName = 'youeye-control';
+  const port = 3001;
+
+  return {
+    domain,
+    subdomain,
+    externalUrl: `https://${host}`,
+    dashboardUrl: `https://${dashboardHost}/`,
+    internalUrl: `http://${containerName}.${CONTAINER_DOMAIN}:${port}`,
+    containerName,
+    port,
+    issuer: `https://${host}`,
+    cookieDomain: `.${domain}`,
+  };
+}

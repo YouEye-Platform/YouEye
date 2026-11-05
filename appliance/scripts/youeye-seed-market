@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+
+templates=${YOUEYE_MARKET_TEMPLATE_DIR:-/usr/lib/youeye/market}
+state=${YOUEYE_MARKET_STATE_DIR:-/var/lib/youeye}
+
+if [ -e "$state/market-source.json" ] || [ -e "$state/market-sources.json" ]; then
+    exit 0
+fi
+
+single="$templates/market-source.json"
+multiple="$templates/market-sources.json"
+jq -e '.id == "official" and (.repo_url | startswith("https://")) and (.branch | type == "string") and (.branch | length > 0)' "$single" >/dev/null
+jq -e '.resolved_commit | test("^[0-9a-f]{40}$")' "$single" >/dev/null
+jq -e '.bootstrap_commit == .resolved_commit' "$single" >/dev/null
+jq -e '.active_sources | length == 1' "$multiple" >/dev/null
+jq -e --slurpfile single "$single" \
+    '.active_sources[0] == $single[0]' \
+    "$multiple" >/dev/null
+
+install -d -m 0700 "$state"
+install -m 0600 "$multiple" "$state/market-sources.json.tmp"
+mv -f "$state/market-sources.json.tmp" "$state/market-sources.json"
+install -m 0600 "$single" "$state/market-source.json.tmp"
+mv -f "$state/market-source.json.tmp" "$state/market-source.json"
+sync -f "$state"

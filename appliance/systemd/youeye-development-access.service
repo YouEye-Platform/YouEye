@@ -1,0 +1,15 @@
+[Unit]
+Description=YouEye development access policy
+Requires=youeye-appliance-state.service
+After=youeye-appliance-state.service youeye-development-overlay.service network-online.target
+Wants=network-online.target
+Before=ssh.service
+ConditionPathExists=/usr/lib/youeye/appliance-release
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/youeye-apply-development-access
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

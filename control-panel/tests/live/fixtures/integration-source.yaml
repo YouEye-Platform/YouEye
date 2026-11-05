@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: app
+integration: basic
+version: 1.0.0
+metadata:
+  id: session-source
+  name: Session Source
+  description: Session-only explicit integration consumer fixture.
+  icon: network
+  category: development
+  defaultSubdomain: session-source
+database:
+  mode: none
+containers:
+  - name: web
+    type: oci
+    primary: true
+    image: docker.io/library/nginx:1.27.4-alpine
+    port: 80
+    healthCheck:
+      type: http
+      path: /
+      timeout: 60000
+      retries: 3
+wants:
+  - appId: session-target
+    name: Session target
+    description: Explicit Session-only HTTP connection.
+    defaultPort: 80
+    scope: service
+    proxy:
+      paths: [/]
+      methods: [GET]
+internet:
+  hosts: []
+entrances:
+  - name: web
+    port: 80
+    container: web
+    authLevel: none

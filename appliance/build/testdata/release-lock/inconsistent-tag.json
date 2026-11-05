@@ -1,0 +1,36 @@
+{
+  "schema": "youeye.appliance.release-lock.v1",
+  "image": {
+    "version": "0.5.6.0.2.19",
+    "minimum_current_version": "0.5.6",
+    "release_source": "https://github.com/YouEye-Platform/YouEye",
+    "release_branch": "dev",
+    "debian_snapshot": "20260805T142647Z"
+  },
+  "market": {
+    "source": "https://github.com/YouEye-Platform/Market",
+    "branch": "main",
+    "commit": "e99014c715e158663fab0001d1c061c3a9add4fa"
+  },
+  "components": {
+    "spine": {
+      "version": "0.5.17.0.2.13",
+      "tag": "spine-dev-v0.5.17.0.2.13",
+      "source_commit": "e7befe40fc6de83e7b86b424b19a41425eca57d4",
+      "source_date_epoch": 1788934628,
+      "artifact_sha256": "dd85a58ebdab0465e7fec1ed57cc23822564bd105f33790c659debd3dbc2f355"
+    },
+    "control_panel": {
+      "version": "0.5.23.0.0.43",
+      "tag": "cp-dev-v0.0.0",
+      "source_commit": "37e9f6ddeec3d32fa4780217652e6b854278f507",
+      "artifact_sha256": "64414674ec719b5643d43956968ef65500182c50da28e305b635b3795acddda7"
+    },
+    "ui": {
+      "version": "0.5.3.0.2.5",
+      "tag": "ui-dev-v0.5.3.0.2.5",
+      "source_commit": "37e9f6ddeec3d32fa4780217652e6b854278f507",
+      "artifact_sha256": "35d42e3c8a423ccec94f4d42d855d9c805c2eb15145e2b01d1c05fca989c7fa3"
+    }
+  }
+}

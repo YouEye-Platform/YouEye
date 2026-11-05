@@ -1,0 +1,62 @@
+import type { NextConfig } from "next";
+import createNextIntlPlugin from "next-intl/plugin";
+import withSerwistInit from "@serwist/next";
+
+const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
+
+const withSerwist = withSerwistInit({
+  swSrc: "src/app/sw.ts",
+  swDest: "public/sw.js",
+  cacheOnNavigation: false,
+  disable: process.env.NODE_ENV === "development",
+});
+
+const nextConfig: NextConfig = {
+  output: 'standalone',
+  transpilePackages: ['@youeye/branding'],
+  // Preserve encoded OIDC redirect_uri values before the proxy middleware.
+  // Next's default URL normalization rewrites 127.0.0.1 to localhost even
+  // inside an encoded query value, breaking exact registered URI matching.
+  skipProxyUrlNormalize: true,
+  reactCompiler: true,
+  generateBuildId: async () => {
+    const buildId = process.env.YOUEYE_BUILD_ID;
+    if (!buildId || !/^[0-9a-f]{40}$/.test(buildId)) {
+      throw new Error('YOUEYE_BUILD_ID must be the exact 40-character source commit');
+    }
+    return buildId;
+  },
+  // Allow remote images from GitHub (Market icons)
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'raw.githubusercontent.com',
+      },
+      {
+        protocol: 'https',
+        hostname: 'github.com',
+      },
+    ],
+  },
+
+  // Static security headers only — dynamic CSP (frame-ancestors) is set in middleware
+  // because next.config headers are baked at build time and can't read runtime env vars.
+  async headers() {
+    const commonHeaders = [
+      { key: 'X-Content-Type-Options', value: 'nosniff' },
+      { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+      { key: 'X-XSS-Protection', value: '1; mode=block' },
+      { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+    ];
+
+    return [
+      {
+        source: '/:path*',
+        headers: commonHeaders,
+      },
+    ];
+  },
+};
+
+export default withSerwist(withNextIntl(nextConfig));

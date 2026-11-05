@@ -1,0 +1,15 @@
+[Unit]
+Description=Keep YouEye Web setup private until first deployment is healthy
+Requires=youeye-appliance-state.service
+After=youeye-appliance-state.service
+Before=incus.service incus-startup.service youeye.service youeye-first-deploy.service
+ConditionPathExists=/usr/lib/youeye/appliance-release
+ConditionPathExists=!/var/lib/youeye-state/first-deploy/complete
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/youeye-setup-gate close
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

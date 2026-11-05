@@ -1,0 +1,12 @@
+{
+  "name": "@youeye/opentype-vendor",
+  "version": "1.3.4",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "browser": {
+    "fs": false
+  },
+  "license": "MIT"
+}

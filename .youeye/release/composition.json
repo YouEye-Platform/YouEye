@@ -1,0 +1,5 @@
+{
+  "schema": "youeye.composition.v1",
+  "release_set": "youeye.release-set.v2",
+  "spine_input": "verified-release-file"
+}

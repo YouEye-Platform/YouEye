@@ -1,0 +1,22 @@
+[Unit]
+Description=YouEye serial appliance status and recovery console
+After=systemd-networkd.service youeye-appliance-state.service youeye-development-overlay.service
+Wants=systemd-networkd.service
+ConditionPathExists=/usr/lib/youeye/appliance-release
+ConditionPathExists=/dev/ttyS0
+Conflicts=serial-getty@ttyS0.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/youeye-installer console --console-kind serial
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/ttyS0
+TTYReset=yes
+TTYVHangup=yes
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

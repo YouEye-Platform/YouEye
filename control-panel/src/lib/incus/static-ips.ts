@@ -1,0 +1,115 @@
+/**
+ * Static IP management for system containers on incusbr0.
+ *
+ * System containers get deterministic IPs in the .10–.19 range of whatever
+ * /24 subnet Incus auto-assigns to incusbr0. This eliminates the failure
+ * mode where proxy devices (baked at install time with a system container's
+ * DHCP IP) break silently when the system container restarts with a new IP.
+ *
+ * These offsets MUST match spine/internal/incus/static_ips.go.
+ */
+
+import { incusRequest } from './server';
+import { isUsableIPv4 } from './ipv4';
+
+/** Static IP offsets within the incusbr0 /24 subnet. */
+export const SYSTEM_IP_OFFSETS: Record<string, number> = {
+  'youeye-postgres': 10,
+  'youeye-caddy': 13,
+  'youeye-pihole': 14,
+  'youeye-ui': 15,
+  'youeye-control': 16,
+  'youeye-pointer': 17,
+};
+
+/** Cached subnet base to avoid repeated API calls. */
+let cachedSubnetBase: string | null = null;
+
+/**
+ * Read the incusbr0 bridge configuration and extract the subnet base
+ * (e.g., "10.75.26" from "10.75.26.1/24").
+ */
+export async function getSubnetBase(): Promise<string> {
+  if (cachedSubnetBase) return cachedSubnetBase;
+
+  const resp = await incusRequest<{
+    config: Record<string, string>;
+  }>('GET', '/1.0/networks/incusbr0');
+
+  const addr = resp.metadata?.config?.['ipv4.address'];
+  if (!addr) throw new Error('Cannot read incusbr0 ipv4.address');
+
+  // Parse "10.75.26.1/24" → "10.75.26"
+  const ip = addr.split('/')[0];
+  const parts = ip.split('.');
+  if (!isUsableIPv4(ip) || addr.split('/')[1] !== '24') {
+    throw new Error('Invalid incusbr0 IPv4 subnet for static address discovery');
+  }
+
+  cachedSubnetBase = parts.slice(0, 3).join('.');
+  return cachedSubnetBase;
+}
+
+/**
+ * Get the static IP for a system container.
+ * Returns null if the container is not a known system container.
+ */
+export async function getSystemStaticIP(containerName: string): Promise<string | null> {
+  const offset = SYSTEM_IP_OFFSETS[containerName];
+  if (offset === undefined) return null;
+
+  const base = await getSubnetBase();
+  return `${base}.${offset}`;
+}
+
+/**
+ * Apply a static IP device override to a system container via the Incus API.
+ * Must be called AFTER container creation but BEFORE starting it.
+ * The container inherits eth0 from the default profile; this override
+ * adds ipv4.address to pin it to a deterministic IP.
+ */
+async function applyVerifiedPatch(route: string, body: unknown): Promise<void> {
+  const response = await incusRequest('PATCH', route, body);
+  if (response.type === 'error' || response.error) {
+    throw new Error(`Static network configuration rejected: ${response.error || 'Incus error'}`);
+  }
+  if (response.type === 'async') {
+    if (!response.operation) throw new Error('Static network configuration has no operation receipt');
+    const settled = await incusRequest<{ status?: string; err?: string }>(
+      'GET', `${response.operation}/wait?timeout=60`, undefined, { timeout: 90_000 },
+    );
+    if (settled.type === 'error' || settled.metadata?.status !== 'Success') {
+      throw new Error(`Static network configuration rejected: ${settled.error || settled.metadata?.err || 'terminal success not observed'}`);
+    }
+  }
+}
+
+export async function applyStaticIP(containerName: string): Promise<void> {
+  const ip = await getSystemStaticIP(containerName);
+  if (!ip) return; // Not a system container — no static IP needed
+
+  await applyVerifiedPatch(`/1.0/instances/${containerName}`, {
+    devices: {
+      eth0: {
+        type: 'nic',
+        network: 'incusbr0',
+        name: 'eth0',
+        'ipv4.address': ip,
+      },
+    },
+  });
+
+  // Static leases do not create dnsmasq lease records. Reconcile explicit
+  // system host records here as well as in Spine so a newly introduced core
+  // service is resolvable immediately on an existing appliance update.
+  const base = await getSubnetBase();
+  const rawDnsmasq = Object.entries(SYSTEM_IP_OFFSETS)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, offset]) => `host-record=${name}.youeye,${base}.${offset}`)
+    .join('\n');
+  await applyVerifiedPatch('/1.0/networks/incusbr0', {
+    config: { 'raw.dnsmasq': rawDnsmasq },
+  });
+
+  console.log(`[static-ips] Assigned ${ip} to ${containerName}`);
+}

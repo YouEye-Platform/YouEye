@@ -1,0 +1,52 @@
+import {expect,mock,test} from 'bun:test';
+import {copyPlatformDigest} from '../../src/lib/copy/platform-inventory';
+import {independentIdentityRequest} from '../../src/lib/copy/request';
+
+let saved:any=null,identityReceipt='',domain='source.example.test',namesFingerprint='source-public',pending:any=null;
+let removed=0,clearCalls=0,reconfigurations=0;
+const bundle:any={fqdn:'copy.example.test',name:'copy',identity:{fingerprint:'copy-public'},service:{id:'fixture'},consent:{termsVersion:null,certificateTransparencyAcceptedAt:null},certificate:{provider:null}};
+mock.module('node:fs/promises',()=>({lstat:async()=>({isFile:()=>true,isSymbolicLink:()=>false}),unlink:async()=>{removed++;}}));
+mock.module('../../src/lib/market/update-admission',()=>({withIndependentCopyLifecycle:async(_r:any,work:any)=>work()}));
+mock.module('../../src/lib/copy/journal',()=>({withCopyJournal:async(_id:any,_component:any,work:any)=>work({read:async()=>saved&&structuredClone(saved),write:async(value:any)=>{saved=structuredClone(value);}})}));
+mock.module('../../src/lib/identity/copy',()=>({prepareIndependentIdentity:async(request:any)=>{identityReceipt=independentIdentityRequest(request).fingerprint;}}));
+mock.module('../../src/lib/copy/verify',()=>({verifyIndependentPlatformServices:async()=>({domain,certificateFingerprint:'new-certificate'})}));
+mock.module('../../src/lib/copy/source-history',()=>({retainIndependentSourceHistory:()=>{}}));
+mock.module('../../src/lib/copy/admission',()=>({prepareIndependentAdmission:async()=>[]}));
+mock.module('../../src/lib/copy/app-runtime',()=>({prepareIndependentApp:async()=>{throw Error('No app fixture expected');}}));
+mock.module('../../src/lib/market/frozen-manifest',()=>({readFrozenUpdateManifest:async()=>{throw Error('No app fixture expected');}}));
+mock.module('../../src/lib/market/metadata',()=>({readInstallMetadata:async()=>{throw Error('No app fixture expected');}}));
+mock.module('../../src/lib/settings',()=>({settingsService:{getRaw:async()=>({domain}),setRaw:async()=>{}}}));
+mock.module('../../src/lib/acme/storage',()=>({tlsStorage:{revertToInternal:async()=>{clearCalls++;},getCert:async()=>({certPem:'fixture',keyPem:'fixture'})}}));
+mock.module('../../src/lib/caddy/client',()=>({removeExternalCert:async()=>{}}));
+mock.module('../../src/lib/youeye-names/bundle',()=>({parseNamesBundle:(value:any)=>value,applyBundleIdentity:async(value:any)=>{namesFingerprint=value.identity.fingerprint;},NAMES_IMPORT_FILE_PATH:'/fixture/import'}));
+mock.module('../../src/lib/youeye-names/identity',()=>({validateStoredIdentity:(identity:any)=>({identity}),getStoredInstallIdentity:async()=>({fingerprint:namesFingerprint})}));
+mock.module('../../src/lib/youeye-names/state',()=>({NAMES_LIFECYCLE_FILE_PATH:'/fixture/lifecycle',writeNamesLifecycleState:async()=>{}}));
+mock.module('../../src/lib/youeye-names/certificate',()=>({validateCertificateMaterial:()=>({fingerprint:'new-certificate',issuedAt:'fixture',expiresAt:'fixture'})}));
+mock.module('../../src/lib/identity/store',()=>({identityRows:async()=>identityReceipt?[{fingerprint:identityReceipt}]:[],identitySql:(value:any)=>String(value)}));
+mock.module('../../src/lib/reconfigure/journal',()=>({readReconfigureJournal:async()=>pending}));
+mock.module('../../src/lib/reconfigure',()=>({reconfigure:async(request:any)=>{
+ reconfigurations++;domain=request.domain;pending={phase:'applying'};
+ await request.beforeRestart();
+ if(reconfigurations===1)throw Error('lost native acknowledgement');
+ pending={phase:'restart-scheduled'};return {newUrl:`https://${domain}`};
+}}));
+const {prepareIndependentPlatform}=await import('../../src/lib/copy/platform');
+
+test('platform copy retains its domain disposition across interruption and waits for real restart settlement',async()=>{
+ const request={request_id:'platform-copy',source_hardware:'smbios:11111111-1111-1111-1111-111111111111',destination_hardware:'smbios:22222222-2222-2222-2222-222222222222',source_receipt_sha256:'a'.repeat(64),manifest_sha256:'b'.repeat(64)};
+ const source={schema:'youeye.copy-platform-inventory.v1',sourceDomain:domain,apps:[],clientIds:['youeye-control','youeye-ui'],pointer:'local-data-without-provider-authority',names:{fingerprint:'source-public',fqdn:domain}};
+ const inventory={...source,sha256:copyPlatformDigest(source)};
+ await expect(prepareIndependentPlatform(request,inventory,bundle,'apps')).rejects.toThrow('first');
+ expect((await prepareIndependentPlatform(request,inventory,bundle,'identity')).phase).toBe('identity-prepared');
+ await expect(prepareIndependentPlatform(request,inventory,bundle,'domain')).rejects.toThrow('lost native acknowledgement');
+ expect(clearCalls).toBe(1);expect(removed).toBe(7);
+ expect((await prepareIndependentPlatform(request,inventory,bundle,'domain')).phase).toBe('domain-restart-pending');
+ expect(clearCalls).toBe(1);expect(removed).toBe(7);
+ await expect(prepareIndependentPlatform(request,inventory,{...bundle,fqdn:'different.example.test'},'domain')).rejects.toThrow('differs');
+ await expect(prepareIndependentPlatform(request,inventory,bundle,'apps')).rejects.toThrow('restart');
+ pending=null;
+ expect((await prepareIndependentPlatform(request,inventory,bundle,'domain')).phase).toBe('domain-prepared');
+ expect(reconfigurations).toBe(2);
+ expect((await prepareIndependentPlatform(request,inventory,bundle,'apps')).phase).toBe('apps-prepared');
+ expect((await prepareIndependentPlatform(request,inventory,bundle,'verify')).quarantineRequired).toBe(true);
+});
