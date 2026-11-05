@@ -57,20 +57,20 @@ func convergeFreshCore(ctx context.Context, policyPath string, resumeOnly bool) 
 		return out, err
 	}
 	root := filepath.Dir(policyPath)
-	raw, err := systemupdate.ReadCoreState(filepath.Join(root, "core-release.json"), 1<<20)
+	baseline, err := systemupdate.ReadCoreBootstrapSelection(root, systemupdate.CoreDevelopmentTrustPath)
 	if err != nil {
 		return out, err
 	}
-	sig, err := systemupdate.ReadCoreState(filepath.Join(root, "core-release.json.sig"), 64)
+	baseline, _, err = systemupdate.EnsureCoreMetadata(ctx, baseline, systemupdate.CoreDevelopmentTrustPath, "/var/lib/youeye/cache/core-update", runtime.Cache.Client, "")
 	if err != nil {
 		return out, err
 	}
-	frozen, selection, err := m.FreezeFirstBoot(ctx, policy, systemupdate.CoreHostSelection{Raw: raw, Signature: sig}, systemupdate.CoreDevelopmentTrustPath, func(ctx context.Context) (systemupdate.CoreHostSelection, error) {
+	frozen, selection, err := m.FreezeFirstBoot(ctx, policy, baseline, systemupdate.CoreDevelopmentTrustPath, func(ctx context.Context) (systemupdate.CoreHostSelection, error) {
 		current, err := currentCoreSelection()
 		if err != nil {
 			return systemupdate.CoreHostSelection{}, err
 		}
-		selected, _, _, err := systemupdate.ResolveCoreRelease(ctx, runtime.Cache.Client, current, systemupdate.CoreDevelopmentTrustPath)
+		selected, _, _, err := systemupdate.ResolveCoreReleaseWithMetadata(ctx, runtime.Cache.Client, current, systemupdate.CoreDevelopmentTrustPath, "/var/lib/youeye/cache/core-update")
 		return selected, err
 	})
 	if err != nil {

@@ -64,17 +64,18 @@ type applianceReleaseAsset struct {
 }
 
 type applianceRelease struct {
-	core             *releasecache.CoreRelease
-	coreRaw          []byte
-	coreSignature    []byte
-	coreSHA256       string
-	sourceProvider   string
-	sourceRepository string
-	TagName          string                  `json:"tag_name"`
-	Draft            bool                    `json:"draft"`
-	Prerelease       bool                    `json:"prerelease"`
-	PublishedAt      time.Time               `json:"published_at"`
-	Assets           []applianceReleaseAsset `json:"assets"`
+	core              *releasecache.CoreRelease
+	coreRaw           []byte
+	coreSignature     []byte
+	coreSHA256        string
+	coreMetadataProof []byte
+	sourceProvider    string
+	sourceRepository  string
+	TagName           string                  `json:"tag_name"`
+	Draft             bool                    `json:"draft"`
+	Prerelease        bool                    `json:"prerelease"`
+	PublishedAt       time.Time               `json:"published_at"`
+	Assets            []applianceReleaseAsset `json:"assets"`
 }
 
 type verifiedApplianceRelease struct {
@@ -381,6 +382,11 @@ func findApplianceReleaseAsset(release applianceRelease, name string) (appliance
 
 func downloadVerifiedApplianceRelease(ctx context.Context, client *http.Client, release applianceRelease, cacheRoot, exactISOSHA string) (verifiedApplianceRelease, error) {
 	if release.core != nil {
+		// Recheck the retained proof against this Installer's current anchors at
+		// the payload boundary, even for a caller supplying an in-memory release.
+		if err := verifyInstallerCoreProof(release.coreRaw, release.coreSignature, release.coreMetadataProof); err != nil {
+			return verifiedApplianceRelease{}, fmt.Errorf("core metadata rejected before download: %w", err)
+		}
 		trust := embeddedApplianceDevelopmentTrust
 		var err error
 		if release.sourceProvider == "github" {
@@ -397,6 +403,7 @@ func downloadVerifiedApplianceRelease(ctx context.Context, client *http.Client, 
 		if err != nil || digest != release.coreSHA256 {
 			return verifiedApplianceRelease{}, fmt.Errorf("core transport requires the original authenticated selection")
 		}
+		release.core = &r
 		copy := *client
 		transport, err := releasecache.CoreTransport(client.Transport, r)
 		if err != nil {

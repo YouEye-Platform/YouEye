@@ -1,5 +1,16 @@
 # Core release identity
 
+First deployment reads service identity directly from the authenticated frozen
+Core selection. The immutable image's legacy single-source release set remains
+unchanged when CP or UI was built by another source. Installation reconciles only
+its exact image-owned seeds into the original member source, branch, tag and
+artifact pins; conflicting owner choices stop before the configuration is saved.
+Discovery, original checksum-envelope downloads and first-deploy health recheck
+current role authority, including revocation, and preserve the selected assembly's
+authorized delivery mirrors. Installed provenance retains the original service
+source. A separately bound development or production reader is observed apart
+from the canonical baked executable and never becomes installed membership.
+
 The source contract for new installations is `youeye.core-release.v1` in
 `releasecache/core_release.go`. Its complete signed membership is immutable.
 `X.Y.Z[-token.N]` is the assembly version; each member records the original
@@ -472,6 +483,44 @@ No host executable, owner trust, channel choice, app data or recovery guarantee
 is replaced by the bootstrap path. Runtime acceptance must include the actual
 old-reader transition and interrupted continuation; source tests alone do not
 establish compatibility.
+
+### Deferred API reader bridge
+
+For an administrator-managed temporary API adapter, `api serve` accepts the
+paired flags `--core-reader <protected-original-Spine-path>` and
+`--core-reader-manifest-sha256 <exact-Stable-manifest-digest>`. The reader must
+occupy its ordinary content-addressed `core-update/bootstrap/<artifact-sha>/youeye`
+path, with its original `checksums`, `signature`, `provenance`, `sbom`, and
+`core-release.json` / `core-release.json.sig` alongside it. Provision the API
+adapter's public trust anchors through its normal build contract. An adapter
+without the required authority cannot use downloaded keys to supply it.
+
+Startup verifies the exact official Stable selection and original Stable Spine
+envelope using current scoped owner trust, including revocations. It creates no
+System transaction, bootstrap registration, boot continuation override or native
+update action. Check resolves the live selected source and rejects a release
+whose digest differs from the explicitly selected bridge. Original signed
+payloads and the installed release receipt remain unchanged. A source-built API
+adapter is not relabeled as the installed signed Spine: a fresh membership scan
+may report it unverified until the normal bootstrap is registered.
+
+Only the owner's ordinary Stage request prepares a native transaction. After
+current-request admission, the adapter registers the original signed reader,
+installs the ordinary boot continuation, and starts the existing idempotent
+native control runner with that signed coordinator. Native actions never use
+the locally built API adapter as their executable. Repeated deliveries retain
+their request and command identities; a stale target or failed registration
+cannot fall through to the incompatible baked coordinator. Resume cannot
+create the initial reader registration in place of a retained Stage delivery.
+
+Use an owned runtime-only API service override for this temporary adapter;
+never replace the immutable host executable or edit the System journal. Before
+the owner stages, removing that override or rebooting restores the baked API
+and leaves the update unstaged. After Stage, the existing signed bootstrap's
+interruption, cancellation, paired recovery and exact-request re-entry rules
+apply. Retire the API override after the selected installed host can provide
+its own compatible service. Source checks and a successful discovery do not
+constitute installed-update or recovery acceptance.
 
 Private repository main uses Alpha; public main uses Stable. Raw branch identity
 is preserved independently of the suffix. First boot with require-current stays

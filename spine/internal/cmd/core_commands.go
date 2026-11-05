@@ -45,7 +45,7 @@ func installCoreCommands(parent *cobra.Command) {
 		if err != nil {
 			return err
 		}
-		_, release, digest, err := systemupdate.ResolveCoreRelease(cmd.Context(), systemupdate.ReleaseHTTPClient(), selection, systemupdate.CoreDevelopmentTrustPath)
+		_, release, digest, err := systemupdate.ResolveCoreReleaseWithMetadata(cmd.Context(), systemupdate.ReleaseHTTPClient(), selection, systemupdate.CoreDevelopmentTrustPath, "/var/lib/youeye/cache/core-update")
 		if err != nil {
 			return err
 		}

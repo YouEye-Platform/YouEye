@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { stripTypeScriptTypes } from 'node:module';
 import { runInNewContext } from 'node:vm';
 import test from 'node:test';
 import { followSetupProgress, readSetupProgress, setupProgressStatus, SetupProgressError } from '../src/lib/setup/progress.mjs';
@@ -108,21 +109,128 @@ test('server refusal, authentication loss and malformed status are never complet
   assert.throws(() => setupProgressStatus({ setup_completed: true, setup_steps: { dns: 'unknown' } }, { setupCompleted: true }, false));
 });
 
-function statusRoute(state) {
+const settingsSource = stripTypeScriptTypes(readFileSync(new URL('../src/lib/settings/service.ts', import.meta.url), 'utf8'))
+  .replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
+
+function statusRoute(state, realSettings = false) {
   // This route has no TypeScript-only syntax; exercise its actual GET with the
   // same retained setup session, isolated readers and the real status derivation.
   const source = readFileSync(new URL('../src/app/api/setup/status/route.ts', import.meta.url), 'utf8')
     .replace(/^import .*;\n/gm, '').replace(/^export const dynamic.*;\n/gm, '').replace('export async function GET', 'async function GET');
-  let reads = 0;
+  const calls = { native: 0, claim: 0, marker: 0 };
+  const spineClient = { getConfig: async () => {
+    calls.native++;
+    if (state.nativeFailure) throw new Error('synthetic-protected-native-error');
+    return structuredClone(state.config);
+  } };
+  const settingsService = realSettings ? runInNewContext(`${settingsSource}\nsettingsService`, {
+    spineClient,
+    Date: { now: () => 1_000 },
+    existsSync: () => false,
+    readFileSync: () => assert.fail('status must not fall back to local configuration'),
+    parse: () => assert.fail('status must not parse fallback configuration'),
+  }) : { getRaw: () => spineClient.getConfig() };
   const get = runInNewContext(`${source}\nGET`, {
-    NextResponse: Response, setupProgressStatus,
+    NextResponse: Response, setupProgressStatus, spineClient,
     getSession: async () => state.session,
-    settingsService: { getRaw: async () => { reads++; return state.config; } },
-    getApplianceClaimStatus: async () => state.claim,
-    hasRetainedSetupOperation: () => { if (state.damaged) throw new Error('Unsafe marker'); return state.retained; },
+    settingsService,
+    getApplianceClaimStatus: async () => {
+      calls.claim++;
+      if (state.claimFailure) throw new Error('synthetic-protected-claim-error');
+      return state.claim;
+    },
+    hasRetainedSetupOperation: () => {
+      calls.marker++;
+      if (state.damaged) throw new Error('synthetic-protected-marker-error');
+      return state.retained;
+    },
   });
-  return { get, reads: () => reads };
+  return { get, reads: () => calls.native, calls, settingsService };
 }
+
+function failedSetup() {
+  return {
+    session: { isAdmin: true, authMethod: 'setup' },
+    config: {
+      setup_completed: false,
+      setup_steps: { config: 'done', caddy: 'error', ai: 'error', dns: 'done', sso_control: 'done', sso_ui: 'done', finalize: 'error' },
+      unrelated_private_setting: 'synthetic-protected-setting',
+    },
+    claim: { setupCompleted: false }, retained: true,
+  };
+}
+
+test('actual setup status preserves native errors across cold and warm typed settings cache', async () => {
+  const state = failedSetup();
+  const before = structuredClone(state);
+  const route = statusRoute(state, true);
+  // Exercise the actual typed-cache loss, rather than mocking its result.
+  assert.deepEqual((await route.settingsService.getRaw()).setup_steps, state.config.setup_steps);
+  assert.equal((await route.settingsService.getRaw()).setup_steps, undefined);
+  for (let read = 0; read < 2; read++) {
+    const response = await route.get();
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    const status = await response.json();
+    assert.deepEqual(status, { state: 'error', steps: state.config.setup_steps });
+    assert.equal(JSON.stringify(status).includes('synthetic-protected-setting'), false);
+  }
+  assert.deepEqual(state, before, 'status must not mutate retained work');
+  assert.equal(route.reads(), 3, 'each status read must reach native config despite the warm typed cache');
+});
+
+test('actual setup status reads fresh native work after getAll warms the typed cache', async () => {
+  const state = failedSetup();
+  const route = statusRoute(state, true);
+  await route.settingsService.getAll();
+  state.config.setup_steps.caddy = 'done';
+  state.config.setup_steps.ai = 'done';
+  state.config.setup_steps.finalize = 'error';
+  const response = await route.get();
+  assert.deepEqual(await response.json(), { state: 'error', steps: state.config.setup_steps });
+  assert.equal(route.reads(), 2);
+});
+
+test('actual setup status fails closed when fresh native config is unavailable despite a warm cache', async () => {
+  const state = failedSetup();
+  const route = statusRoute(state, true);
+  await route.settingsService.getAll();
+  state.nativeFailure = true;
+  const response = await route.get();
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get('Cache-Control'), 'no-store');
+  assert.deepEqual(await response.json(), { error: 'Setup progress is unavailable' });
+  assert.equal(route.reads(), 2);
+});
+
+test('actual setup status requires config, owner completion and settled retained work', async () => {
+  const state = { session: { isAdmin: true, authMethod: 'setup' }, config: { setup_completed: false, setup_steps: { finalize: 'done' } }, claim: { setupCompleted: false }, retained: true };
+  const route = statusRoute(state);
+  assert.equal((await (await route.get()).json()).state, 'pending');
+  state.config.setup_completed = true;
+  assert.equal((await (await route.get()).json()).state, 'pending');
+  state.claim.setupCompleted = true;
+  assert.equal((await (await route.get()).json()).state, 'pending');
+  state.retained = false;
+  assert.equal((await (await route.get()).json()).state, 'complete');
+});
+
+test('actual setup status rejects damaged steps, claim and marker without leaking details', async () => {
+  for (const mutation of [
+    { config: { setup_completed: true, setup_steps: null } },
+    { config: { setup_completed: true, setup_steps: [] } },
+    { config: { setup_completed: true, setup_steps: { caddy: 'unknown' } } },
+    { claimFailure: true }, { damaged: true },
+  ]) {
+    const state = { ...failedSetup(), ...mutation };
+    const before = structuredClone(state);
+    const response = await statusRoute(state).get();
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    assert.deepEqual(await response.json(), { error: 'Setup progress is unavailable' });
+    assert.deepEqual(state, before);
+  }
+});
 
 test('the retained setup session reads settled status after claim completion without another handshake', async () => {
   const state = { session: { isAdmin: true, authMethod: 'setup' }, config: { setup_completed: true, setup_steps: { finalize: 'done' } }, claim: { setupCompleted: true }, retained: false };
@@ -142,6 +250,7 @@ test('status reads require the existing administrator session and do not read or
     const route = statusRoute({ session });
     assert.equal((await route.get()).status, 401);
     assert.equal(route.reads(), 0);
+    assert.deepEqual(route.calls, { native: 0, claim: 0, marker: 0 });
   }
 });
 

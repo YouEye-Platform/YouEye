@@ -24,7 +24,10 @@ func TestCoreBootstrapRetainsExactSignedCoordinatorAndRejectsSubstitution(t *tes
 	publicReleaseTrustJSON, _ = json.Marshal(map[string]any{"schema": "youeye.public-trust.v1", "keys": map[string]string{"stable": string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))}})
 	t.Cleanup(func() { publicReleaseTrustJSON = previousTrust })
 	target.SignerSHA256 = checksum(der)
-	parts := map[string][]byte{"youeye": []byte("signed coordinator fixture"), "provenance": []byte("original provenance"), "sbom": []byte("original sbom")}
+	for i := range target.Members {
+		target.Members[i].KeyID = target.SignerSHA256
+	}
+	parts := map[string][]byte{"youeye": []byte("signed coordinator fixture"), "provenance": []byte(`{"fixture":"original provenance"}`), "sbom": []byte("original sbom")}
 	var member *releasecache.CoreMember
 	for i := range target.Members {
 		if target.Members[i].Role == "spine" {

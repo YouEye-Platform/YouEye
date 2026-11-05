@@ -136,14 +136,18 @@ func newCoreHostTrustFixture(t *testing.T) *coreHostTrustFixture {
 	c.signSelection(t)
 	f.manager.config.HTTPClient = &http.Client{Transport: signedRedirectTransport(func(req *http.Request) (*http.Response, error) {
 		var data []byte
+		matches := func(blob releasecache.CoreBlob) bool {
+			delivery, err := releasecache.CoreBlobTransportURL(c.release, blob)
+			return err == nil && (blob.URL == req.URL.String() || delivery == req.URL.String())
+		}
 		for _, m := range c.release.Members {
-			if m.Artifact.URL == req.URL.String() {
+			if matches(m.Artifact) {
 				data = f.files[m.Artifact.Name]
 				if m.Role == "system-update" {
 					data = c.hostRaw
 				}
 			}
-			if m.Role == "system-update" && m.DocumentSignature.URL == req.URL.String() {
+			if m.Role == "system-update" && matches(*m.DocumentSignature) {
 				data = c.hostSignature
 			}
 		}
@@ -193,11 +197,8 @@ func (c *coreHostTrustFixture) signSelection(t *testing.T) {
 	if err := c.release.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal(c.release)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.selection = CoreHostSelection{Raw: raw, Signature: ed25519.Sign(c.assemblyPrivate, raw)}
+	files := metadataFixtureEnvelope(t, &c.release, c.hostPrivate, false)
+	c.selection = metadataFixtureSelection(t, c.release, c.assemblyPrivate, c.hostPrivate, files)
 }
 
 func (c *coreHostTrustFixture) verify() (VerifiedManifest, string, error) {
@@ -260,6 +261,9 @@ func TestCoreHostTrustDevelopmentStagesReadbackAndProofWithPublicImageAnchor(t *
 	c.policy.Grants = append(c.policy.Grants, updatetrust.Grant{Publisher: "Owner host",
 		Repository: c.f.update.ReleaseSet.Source, Branch: "dev", Scope: "appliance",
 		PublicKey: string(coreDevelopmentTrustPEM)})
+	for _, scope := range []string{"cp", "ui", "spine"} {
+		c.policy.Grants = append(c.policy.Grants, updatetrust.Grant{Publisher: "Owner standalone", Repository: c.f.update.ReleaseSet.Source, Branch: "dev", Scope: scope, PublicKey: string(coreDevelopmentTrustPEM)})
+	}
 	// The legacy path must continue rejecting a Development document against
 	// a mismatched immutable image key; core authority must not change it.
 	empty := updatetrust.Policy{Schema: updatetrust.Schema}
@@ -280,7 +284,11 @@ func TestCoreHostTrustDevelopmentStagesReadbackAndProofWithPublicImageAnchor(t *
 	}
 	// Revocation is current policy, even when the same key remains provisioned
 	// and every staged byte and signed envelope is still unchanged.
-	c.policy.Grants[len(c.policy.Grants)-1].Revoked = true
+	for i := range c.policy.Grants {
+		if c.policy.Grants[i].Repository == c.f.update.ReleaseSet.Source && c.policy.Grants[i].Scope == "appliance" {
+			c.policy.Grants[i].Revoked = true
+		}
+	}
 	if _, err := c.f.manager.loadTransactionManifest(j); err == nil {
 		t.Fatal("readback fell back to provisioned trust after revocation")
 	}

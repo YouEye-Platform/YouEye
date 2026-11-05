@@ -30,20 +30,21 @@ type appliancePayloadAsset struct {
 }
 
 type applianceImageAssets struct {
-	Operation       string
-	RootPayload     appliancePayloadAsset
-	RecoveryPayload appliancePayloadAsset
-	SystemAUKIPath  string
-	SystemBUKIPath  string
-	RecoveryUKIPath string
-	ManifestPath    string
-	SignaturePath   string
-	ManifestSHA256  string
-	ImageVersion    string
-	TransactionID   string
-	Network         applianceAnswerNetwork
-	AnswerPath      string
-	AuthorizedKeys  []string
+	Operation             string
+	RootPayload           appliancePayloadAsset
+	RecoveryPayload       appliancePayloadAsset
+	SystemAUKIPath        string
+	SystemBUKIPath        string
+	RecoveryUKIPath       string
+	ManifestPath          string
+	SignaturePath         string
+	ManifestSHA256        string
+	ImageVersion          string
+	TransactionID         string
+	Network               applianceAnswerNetwork
+	AnswerPath            string
+	CoreMetadataProofPath string
+	AuthorizedKeys        []string
 }
 
 const (
@@ -347,7 +348,8 @@ gateway="$7"
 dns="$8"
 adapter_mac="$9"
 answer="${10}"
-shift 10
+core_metadata="${11}"
+shift 11
 
 install -d -m 0700 "$state_root/installer" "$state_root/bootstrap" "$state_root/root/.ssh"
 install -d -m 0755 "$state_root/etc/ssh" "$state_root/etc/systemd/network"
@@ -419,6 +421,11 @@ if jq -e '.schema == "youeye.appliance.answer.v5"' "$answer" >/dev/null 2>&1; th
     chmod 0600 "$state_root/bootstrap/$file.tmp"
     mv -f "$state_root/bootstrap/$file.tmp" "$state_root/bootstrap/$file"
   done
+  test -f "$core_metadata" && test ! -L "$core_metadata"
+  test "$(stat -c '%u:%a:%h' "$core_metadata")" = 0:600:1
+  test "$(stat -c %s "$core_metadata")" -le 8388608
+  install -m 0600 "$core_metadata" "$state_root/bootstrap/core-metadata.json.tmp"
+  mv -f "$state_root/bootstrap/core-metadata.json.tmp" "$state_root/bootstrap/core-metadata.json"
 fi
 sync -f "$state_root/bootstrap"
 # Optional transport cache from the same answer medium. Artifact signatures and
@@ -461,6 +468,7 @@ fi`
 		assets.Network.Address, assets.Network.Gateway, assets.Network.DNS,
 		assets.Network.AdapterMAC,
 		assets.AnswerPath,
+		assets.CoreMetadataProofPath,
 	}
 	return append(args, assets.AuthorizedKeys...)
 }

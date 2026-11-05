@@ -52,4 +52,17 @@ esac
             self.assertNotEqual(self.shell('core_fetch_file origin "$1" 100',str(root/"out"),env=env).returncode,0)
             self.assertEqual(log.read_text().splitlines(),["origin"])
 
+    def test_only_the_authenticated_known_capability_can_require_the_new_reader(self):
+        with tempfile.TemporaryDirectory() as directory:
+            provenance=Path(directory)/"provenance.json"
+            for text, capability in [('{}','legacy'), ('{"core_metadata":"paired-v2"}','paired-v2')]:
+                provenance.write_text(text)
+                result=self.shell('core_metadata_capability "$1"',str(provenance))
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(result.stdout.strip(),capability)
+            for text in ['{"core_metadata":"unknown"}', '{"core_metadata":null}', '{"core_metadata":false}',
+                         '{"core_metadata":"paired-v2","core_metadata":""}', '{"nested":{"x":1,"x":2}}']:
+                provenance.write_text(text)
+                self.assertNotEqual(self.shell('core_metadata_capability "$1"',str(provenance)).returncode,0)
+
 if __name__ == "__main__": unittest.main()

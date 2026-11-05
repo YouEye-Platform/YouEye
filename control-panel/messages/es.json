@@ -355,7 +355,23 @@
     "intensity": "Intensidad",
     "checkingSetupStatus": "Comprobando el estado de la configuración…",
     "setupStatusUnknown": "La configuración puede seguir en curso. Comprueba su estado antes de volver a iniciarla.",
-    "checkSetupStatus": "Comprobar estado"
+    "checkSetupStatus": "Comprobar estado",
+    "verifiedNames": {
+      "explanation": "Una sola comprobación verifica esta instalación y la dirección elegida. Complétala aquí o abre la página de verificación si no se carga.",
+      "waiting": "Conectando con la verificación…",
+      "challenge": "Completa la comprobación de verificación.",
+      "blocked": "La verificación puede estar bloqueada aquí. Abre la página de verificación para continuar.",
+      "expired": "La verificación ha caducado. Vuelve a intentarlo; se conserva la dirección elegida.",
+      "failed": "No se pudo iniciar la verificación. Se conservan tus opciones; vuelve a intentarlo.",
+      "frameTitle": "Verificar tu dirección de YouEye",
+      "openPage": "Abrir página de verificación",
+      "manualFallback": "Introducir un código de verificación manualmente",
+      "pasteHelp": "Abre la página, completa la comprobación y copia aquí su código de verificación. El código caduca en unos minutos.",
+      "verificationCode": "Código de verificación",
+      "invalidCode": "Este código no corresponde a la comprobación actual o ha caducado. Vuelve a intentarlo.",
+      "useCode": "Usar código de verificación",
+      "retry": "Iniciar una nueva comprobación"
+    }
   },
   "setupComplete": {
     "title": "Configuración completada",

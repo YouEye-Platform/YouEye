@@ -88,8 +88,8 @@ func TestCoreCacheRequiresCapacityAndCompleteScopedBytes(t *testing.T) {
 	if _, _, err := c.Stage(context.Background(), selection); err == nil || requests != 0 {
 		t.Fatal("downloaded without complete capacity", requests, err)
 	}
-	// A true no-op uses already accepted installed identity and needs no download.
-	if _, digest, err := c.StageUpdate(context.Background(), selection, r); err != nil || digest != checksum(raw) || requests != 0 {
+	// A no-op authenticates only the three bounded original Spine documents.
+	if _, digest, err := c.StageUpdate(context.Background(), selection, r); err != nil || digest != checksum(raw) || requests != 3 {
 		t.Fatal("no-op downloaded", digest, err, requests)
 	}
 	c.AvailableBytes = func(string) (uint64, error) { return 1 << 30, nil }
@@ -97,7 +97,7 @@ func TestCoreCacheRequiresCapacityAndCompleteScopedBytes(t *testing.T) {
 	fresh.Root = filepath.Join(root, "fresh-public")
 	freshRequests := 0
 	fresh.Client = &http.Client{Transport: signedRedirectTransport(func(req *http.Request) (*http.Response, error) {
-		if !strings.Contains(req.URL.Path, "/cp-") && !strings.Contains(req.URL.Path, "/ui-") {
+		if !strings.Contains(req.URL.Path, "/spine-") && !strings.Contains(req.URL.Path, "/cp-") && !strings.Contains(req.URL.Path, "/ui-") {
 			t.Fatal("fresh service evidence downloaded host/media payload", req.URL.Path)
 		}
 		freshRequests++
@@ -120,7 +120,7 @@ func TestCoreCacheRequiresCapacityAndCompleteScopedBytes(t *testing.T) {
 	serviceOnly := c
 	serviceOnly.Root = filepath.Join(root, "service-only")
 	serviceOnly.Client = &http.Client{Transport: signedRedirectTransport(func(req *http.Request) (*http.Response, error) {
-		if !strings.Contains(req.URL.Path, "/cp-") {
+		if !strings.Contains(req.URL.Path, "/spine-") && !strings.Contains(req.URL.Path, "/cp-") {
 			t.Fatal("service update fetched an unchanged role", req.URL.Path)
 		}
 		data, ok := files[req.URL.String()]

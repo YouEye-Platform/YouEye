@@ -17,10 +17,21 @@ import (
 // selection. Original names and source URLs remain in the signed manifest;
 // deduplication changes neither provenance nor role signing authority.
 type CoreArtifactCache struct {
-	Root           string
-	TrustKeyPath   string
-	Client         *http.Client
+	Root         string
+	TrustKeyPath string
+	// Client serves metadata and, unless ArtifactClient is supplied, payloads.
+	Client *http.Client
+	// ArtifactClient separates bulk payload budgets without changing an explicit
+	// caller's Client timeout. Redirect and signed-byte checks still apply.
+	ArtifactClient *http.Client
 	AvailableBytes func(string) (uint64, error)
+}
+
+// NewRuntimeCoreArtifactCache supplies the clients used by installed native
+// updates and the signed candidate's cold service verification. Discovery keeps
+// its short budget; bulk bodies follow the operation context instead.
+func NewRuntimeCoreArtifactCache(root, trustKeyPath string) CoreArtifactCache {
+	return CoreArtifactCache{Root: root, TrustKeyPath: trustKeyPath, Client: ReleaseHTTPClient(), ArtifactClient: DefaultConfig().HTTPClient}
 }
 
 func (c CoreArtifactCache) Path(blob releasecache.CoreBlob) (string, error) {
@@ -73,6 +84,12 @@ func (c CoreArtifactCache) StageFreshServices(ctx context.Context, selection Cor
 	return c.stage(ctx, selection, map[string]bool{"cp": true, "ui": true})
 }
 
+// StageReader authenticates the complete selection and all role authorities,
+// but downloads only the original Spine envelope. It creates no update intent.
+func (c CoreArtifactCache) StageReader(ctx context.Context, selection CoreHostSelection) (releasecache.CoreRelease, string, error) {
+	return c.stage(ctx, selection, map[string]bool{"spine": true})
+}
+
 // StageUpdate downloads only changed standalone services and required host
 // documents. Native A/B staging owns host payload downloads; Installer/media
 // artifacts are not needed for updating an already installed appliance.
@@ -108,7 +125,8 @@ func (c CoreArtifactCache) stage(ctx context.Context, selection CoreHostSelectio
 		}
 	}
 	if roles != nil && len(roles) == 0 {
-		return r, digest, nil
+		_, _, err = EnsureCoreMetadata(ctx, selection, c.TrustKeyPath, c.Root, c.Client, "")
+		return r, digest, err
 	}
 	if !filepath.IsAbs(c.Root) {
 		return r, "", fmt.Errorf("protected core cache root required")
@@ -168,7 +186,14 @@ func (c CoreArtifactCache) stage(ctx context.Context, selection CoreHostSelectio
 	if free < required {
 		return r, "", fmt.Errorf("complete core staging requires %d available bytes; found %d", required, free)
 	}
-	client := CoreArtifactHTTPClient(c.Client)
+	if _, _, err = EnsureCoreMetadata(ctx, selection, c.TrustKeyPath, c.Root, c.Client, ""); err != nil {
+		return r, "", err
+	}
+	artifactClient := c.ArtifactClient
+	if artifactClient == nil {
+		artifactClient = c.Client
+	}
+	client := CoreArtifactHTTPClient(artifactClient)
 	transport, err := releasecache.CoreTransport(client.Transport, r)
 	if err != nil {
 		return r, "", err

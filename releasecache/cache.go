@@ -145,7 +145,7 @@ func (t transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	var f *os.File
 	var n int64
 	e := error(os.ErrNotExist)
-	if live, _ := req.Context().Value(liveDiscoveryKey{}).(bool); !live {
+	if live, _ := req.Context().Value(liveDiscoveryKey{}).(bool); !live && !uncachedVerification(req.Context()) {
 		f, n, e = Open(Root(), req.URL.String())
 	}
 	if os.IsNotExist(e) {

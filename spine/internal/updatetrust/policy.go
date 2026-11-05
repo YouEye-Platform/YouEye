@@ -20,7 +20,10 @@ import (
 	"strings"
 )
 
-const Path = "/var/lib/youeye-state/update-trust.json"
+// Path is fixed for the installed host; package tests use an isolated policy.
+// It is not configurable through an environment variable or downloaded input.
+var Path = "/var/lib/youeye-state/update-trust.json"
+
 const Schema = "youeye.owner-update-trust.v1"
 
 type Grant struct {

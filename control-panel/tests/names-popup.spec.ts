@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { webcrypto } from 'node:crypto';
 import { runNamesEnrollment } from '../src/lib/youeye-names/popup';
 
 function fixture() {
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const originalCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
   const originalFetch = globalThis.fetch;
   const messages: Array<{ message: Record<string, unknown>; origin: string }> = [];
   const listeners = new Set<(event: MessageEvent) => void>();
   let destination = '';
+  // HTTP ancestors retain getRandomValues, but expose neither UUID nor subtle.
+  Object.defineProperty(globalThis, 'crypto', {configurable:true,value:{getRandomValues:webcrypto.getRandomValues.bind(webcrypto)}});
   const popup = {
     closed: false,
     close() { this.closed = true; },
@@ -43,6 +47,8 @@ function fixture() {
     },
     restore() {
       globalThis.fetch = originalFetch;
+      if (originalCrypto) Object.defineProperty(globalThis, 'crypto', originalCrypto);
+      else Reflect.deleteProperty(globalThis, 'crypto');
       if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
       else Reflect.deleteProperty(globalThis, 'window');
     },

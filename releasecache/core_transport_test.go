@@ -51,6 +51,9 @@ func TestCorePrivateMirrorKeepsIdentityAndStripsOriginCredentials(t *testing.T) 
 	if request.URL.String() != original.URL || request.Header.Get("Authorization") == "" || r.Members[0].Artifact != original {
 		t.Fatal("mutated original identity/request")
 	}
+	if response.Request != request {
+		t.Fatal("mirror response lost the original signed request identity")
+	}
 	if _, err := CoreBlobTransportURL(r, CoreBlob{}); err == nil {
 		t.Fatal("foreign blob obtained mirror authority")
 	}
@@ -58,6 +61,44 @@ func TestCorePrivateMirrorKeepsIdentityAndStripsOriginCredentials(t *testing.T) 
 	u, err := CoreBlobTransportURL(public, public.Members[0].Artifact)
 	if err != nil || u != public.Members[0].Artifact.URL {
 		t.Fatal("public identity remapped", err)
+	}
+}
+
+func TestCoreMirrorDeliveryBoundsAndRedactedErrors(t *testing.T) {
+	for _, test := range []struct {
+		name, destination string
+	}{
+		{"foreign", "https://foreign.invalid/asset"},
+		{"downgrade", "http://release-assets.githubusercontent.com/asset"},
+		{"userinfo", "https://user:secret@release-assets.githubusercontent.com/asset"},
+		{"fragment", "https://release-assets.githubusercontent.com/asset#fragment"},
+		{"unexpected-port", "https://release-assets.githubusercontent.com:444/asset"},
+		{"origin-query", "https://github.com/asset?secret=fixture"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			r := coreFixture()
+			r.Members[0].Source = "https://forge.example/owner/YouEye"
+			for _, blob := range []*CoreBlob{&r.Members[0].Artifact, &r.Members[0].Checksums, &r.Members[0].Signature, &r.Members[0].Provenance, &r.Members[0].SBOM} {
+				blob.URL = r.Members[0].Source + "/releases/download/" + r.Members[0].Tag + "/" + blob.Name
+			}
+			calls := 0
+			base := distributionRT(func(req *http.Request) (*http.Response, error) {
+				calls++
+				return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{test.destination}}, Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
+			})
+			transport, err := CoreTransport(base, r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request, _ := http.NewRequest(http.MethodGet, r.Members[0].Artifact.URL, nil)
+			_, err = transport.RoundTrip(request)
+			if err == nil || calls != 1 {
+				t.Fatal("unsafe redirect followed", calls, err)
+			}
+			if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "fixture") {
+				t.Fatal("error disclosed transport URL state")
+			}
+		})
 	}
 }
 

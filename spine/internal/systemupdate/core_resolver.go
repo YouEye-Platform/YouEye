@@ -152,7 +152,15 @@ func ResolveCoreRelease(ctx context.Context, client *http.Client, selection Core
 			}
 			sequences[r.Sequence] = hash
 			if best.Sequence == 0 || r.Sequence > best.Sequence {
-				best, digest, selected = r, hash, CoreHostSelection{Raw: raw, Signature: sig}
+				advertised := false
+				for _, asset := range candidate.Assets {
+					for _, name := range releasecache.CoreMetadataAssetNames {
+						if asset.Name == name {
+							advertised = true
+						}
+					}
+				}
+				best, digest, selected = r, hash, CoreHostSelection{Raw: raw, Signature: sig, MetadataAdvertised: advertised}
 			}
 		}
 		if best.Sequence != 0 {

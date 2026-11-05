@@ -1,9 +1,11 @@
 package container
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -75,6 +77,15 @@ func stageCoreSelection(containerName string) error {
 	if release == nil {
 		return nil
 	}
+	selection, err := coreSelectionForHandoff(context.Background(), systemupdate.CoreBootstrapPath, systemupdate.CoreDevelopmentTrustPath, "/var/lib/youeye/cache/core-update", systemupdate.ReleaseHTTPClient())
+	if err != nil {
+		return err
+	}
+	_, actual, err := systemupdate.VerifyCoreSelection(selection.Raw, selection.Signature, systemupdate.CoreDevelopmentTrustPath)
+	if err != nil || actual != digest {
+		return fmt.Errorf("selected core changed before CP handoff")
+	}
+	// No container mutation precedes authenticated complete metadata.
 	root := "/var/lib/youeye-state/core-selection"
 	if err := util.RunIncusExec(containerName, "mkdir", "-p", root); err != nil {
 		return err
@@ -82,8 +93,13 @@ func stageCoreSelection(containerName string) error {
 	if err := util.RunIncusExec(containerName, "chmod", "0700", root); err != nil {
 		return err
 	}
-	for _, name := range []string{"core-release.json", "core-release.json.sig"} {
-		if _, err := util.RunCmdCapture("incus", "file", "push", filepath.Join(systemupdate.CoreBootstrapPath, name), containerName+root+"/"+name); err != nil {
+	inputs, err := retainCoreHandoffInputs(selection)
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(inputs)
+	for _, name := range []string{"core-release.json", "core-release.json.sig", systemupdate.CoreMetadataProofName} {
+		if _, err := util.RunCmdCapture("incus", "file", "push", filepath.Join(inputs, name), containerName+root+"/"+name); err != nil {
 			return err
 		}
 		if err := util.RunIncusExec(containerName, "chmod", "0600", root+"/"+name); err != nil {
@@ -130,4 +146,27 @@ func stageCoreSelection(containerName string) error {
  mv "$staged" "$target"
  sync -f /etc/youeye`
 	return util.RunIncusExec(containerName, "sh", "-c", script)
+}
+
+func coreSelectionForHandoff(ctx context.Context, root, trustPath, cacheRoot string, client *http.Client) (systemupdate.CoreHostSelection, error) {
+	selection, err := systemupdate.ReadCoreBootstrapSelection(root, trustPath)
+	if err != nil {
+		return selection, err
+	}
+	selection, _, err = systemupdate.EnsureCoreMetadata(ctx, selection, trustPath, cacheRoot, client, "")
+	return selection, err
+}
+
+func retainCoreHandoffInputs(selection systemupdate.CoreHostSelection) (string, error) {
+	root, err := os.MkdirTemp("", "youeye-core-handoff-*")
+	if err != nil {
+		return "", err
+	}
+	for name, raw := range map[string][]byte{"core-release.json": selection.Raw, "core-release.json.sig": selection.Signature, systemupdate.CoreMetadataProofName: selection.MetadataProof} {
+		if err = os.WriteFile(filepath.Join(root, name), raw, 0600); err != nil {
+			os.RemoveAll(root)
+			return "", err
+		}
+	}
+	return root, nil
 }

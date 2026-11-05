@@ -8,7 +8,7 @@ import (
 )
 
 func TestCoreServiceSelectionPartialPairAndLostReceipt(t *testing.T) {
-	for _, mode := range []string{"normal", "partial-pair", "lost-receipt", "foreign"} {
+	for _, mode := range []string{"normal", "partial-pair", "lost-receipt", "foreign", "foreign-proof", "missing-paired-proof"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			dir := filepath.Join(root, "var/lib/youeye-state/core-selection")
@@ -16,7 +16,15 @@ func TestCoreServiceSelectionPartialPairAndLostReceipt(t *testing.T) {
 				t.Fatal(err)
 			}
 			old := CoreHostSelection{Raw: []byte("old signed manifest"), Signature: []byte("old signature")}
-			next := CoreHostSelection{Raw: []byte("new signed manifest"), Signature: []byte("new signature")}
+			next := CoreHostSelection{Raw: []byte("new signed manifest"), Signature: []byte("new signature"), MetadataProof: []byte(`{"documents":{"canonical":"eQ=="}}`)}
+			if mode == "missing-paired-proof" {
+				old.MetadataProof = []byte(`{"documents":{"canonical":"eA=="}}`)
+			}
+			if mode == "foreign-proof" {
+				if err := os.WriteFile(filepath.Join(dir, CoreMetadataProofName), []byte("foreign proof"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			r := CoreServiceStage{Role: "cp", Phase: "reused", StageName: ".youeye-core-fixture", ManifestSHA256: checksum(next.Raw)}
 			raw := old.Raw
 			if mode == "partial-pair" {
@@ -48,7 +56,7 @@ func TestCoreServiceSelectionPartialPairAndLostReceipt(t *testing.T) {
 				return nil
 			}
 			err = installCoreServiceSelection(rootFile, &r, old, next, save)
-			if mode == "foreign" {
+			if mode == "foreign" || mode == "foreign-proof" || mode == "missing-paired-proof" {
 				if err == nil {
 					t.Fatal("overwrote foreign selection")
 				}
@@ -67,6 +75,10 @@ func TestCoreServiceSelectionPartialPairAndLostReceipt(t *testing.T) {
 			actual, err := os.ReadFile(filepath.Join(dir, "core-release.json"))
 			if err != nil || string(actual) != string(next.Raw) {
 				t.Fatal("wrong manifest", err)
+			}
+			proof, err := os.ReadFile(filepath.Join(dir, CoreMetadataProofName))
+			if err != nil || string(proof) != string(next.MetadataProof) {
+				t.Fatal("wrong metadata proof", err)
 			}
 			sig, err := os.ReadFile(filepath.Join(dir, "core-release.json.sig"))
 			if err != nil || string(sig) != string(next.Signature) {

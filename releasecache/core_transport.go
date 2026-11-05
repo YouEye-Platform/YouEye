@@ -1,6 +1,7 @@
 package releasecache
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -107,8 +108,7 @@ func (t coreTransport) RoundTrip(request *http.Request) (*http.Response, error) 
 	forwarded.Header.Del("Proxy-Authorization")
 	forwarded.Header.Del("Cookie")
 	client := &http.Client{Transport: t.base, CheckRedirect: func(next *http.Request, via []*http.Request) error {
-		githubAsset := u.Host == "github.com" && next.URL.Host == "release-assets.githubusercontent.com"
-		if len(via) >= 5 || next.URL.Scheme != "https" || (next.URL.Host != u.Host && !githubAsset) || next.URL.User != nil || next.URL.Fragment != "" {
+		if len(via) >= 5 || validateCoreMirrorResponseURL(next.URL, u) != nil {
 			return fmt.Errorf("core mirror redirected outside its source")
 		}
 		next.Header.Del("Authorization")
@@ -116,5 +116,35 @@ func (t coreTransport) RoundTrip(request *http.Request) (*http.Response, error) 
 		next.Header.Del("Cookie")
 		return nil
 	}}
-	return client.Do(forwarded)
+	response, err := client.Do(forwarded)
+	if err != nil {
+		// A CDN's signed query is transport state, including on failed hops.
+		// Do not include that URL in an error returned to the native journal.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			return nil, urlErr.Err
+		}
+		return nil, err
+	}
+	if response.Request == nil || validateCoreMirrorResponseURL(response.Request.URL, u) != nil {
+		response.Body.Close()
+		return nil, fmt.Errorf("core mirror returned an untrusted response URL")
+	}
+	// The inner client has checked every delivery hop against the authenticated
+	// mirror, including GitHub's CDN query. Preserve the signed request identity
+	// for the outer native downloader rather than presenting the CDN as a new
+	// source. Exact size/hash and original role signatures remain mandatory.
+	response.Request = request
+	return response, nil
+}
+
+func validateCoreMirrorResponseURL(target, origin *url.URL) error {
+	if target == nil || target.Scheme != "https" || target.User != nil || target.Fragment != "" || target.Opaque != "" {
+		return fmt.Errorf("invalid core mirror URL")
+	}
+	githubAsset := origin.Host == "github.com" && (target.Host == "release-assets.githubusercontent.com" || target.Host == "objects.githubusercontent.com")
+	if target.Host != origin.Host && !githubAsset || target.RawQuery != "" && !githubAsset {
+		return fmt.Errorf("core mirror URL differs from its admitted delivery source")
+	}
+	return nil
 }

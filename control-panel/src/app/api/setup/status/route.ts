@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { getApplianceClaimStatus } from '@/lib/identity/store';
-import { settingsService } from '@/lib/settings';
+import { spineClient } from '@/lib/spine/client';
 import { hasRetainedSetupOperation } from '@/lib/setup/lifecycle';
 import { setupProgressStatus } from '@/lib/setup/progress.mjs';
 
@@ -13,7 +13,9 @@ export async function GET() {
     return NextResponse.json({ error: 'Administrator access required' }, { status: 401 });
   }
   try {
-    const [config, claim] = await Promise.all([settingsService.getRaw(), getApplianceClaimStatus()]);
+    // Completion evidence must include fresh retained steps, which the typed
+    // settings cache does not preserve when reconstructing a raw response.
+    const [config, claim] = await Promise.all([spineClient.getConfig(), getApplianceClaimStatus()]);
     return NextResponse.json(setupProgressStatus(config, claim, hasRetainedSetupOperation()), {
       headers: { 'Cache-Control': 'no-store' },
     });

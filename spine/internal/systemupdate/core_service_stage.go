@@ -240,15 +240,11 @@ func (s NativeCoreServices) Stage(ctx context.Context, request, role string) (Co
 		return stage, e
 	}
 	if role == "cp" {
-		baselineRaw, e := ReadCoreState(filepath.Join(m.Root, "targets", j.Previous.ManifestSHA256+".json"), 1<<20)
+		baseline, _, e := m.Selection(j.Previous.ManifestSHA256, s.Cache.TrustKeyPath)
 		if e != nil {
 			return stage, e
 		}
-		baselineSig, e := ReadCoreState(filepath.Join(m.Root, "targets", j.Previous.ManifestSHA256+".json.sig"), 64)
-		if e != nil {
-			return stage, e
-		}
-		if e = installCoreServiceSelection(root, &stage, CoreHostSelection{Raw: baselineRaw, Signature: baselineSig}, selection, s.saveStage); e != nil {
+		if e = installCoreServiceSelection(root, &stage, baseline, selection, s.saveStage); e != nil {
 			return stage, e
 		}
 	}

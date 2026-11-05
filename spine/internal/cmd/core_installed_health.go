@@ -9,11 +9,13 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 )
 
+var coreInstalledHealthStateRoot = systemupdate.CoreStatePath
+
 // A fresh initialized core can converge before the first-setup gate opens.
 // Its signed selection and static indexes supersede legacy per-component pins;
 // the immutable host marker still has to match its own retained build identity.
 func addCoreInstalledHealthChecks(image appliance.Manifest, add func(string, string, string)) bool {
-	m := systemupdate.CoreManager{Root: systemupdate.CoreStatePath}
+	m := systemupdate.CoreManager{Root: coreInstalledHealthStateRoot}
 	receipt, err := m.ReadReceipt()
 	if errors.Is(err, os.ErrNotExist) {
 		return false

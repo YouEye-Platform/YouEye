@@ -50,31 +50,100 @@ func (m CoreManager) verifyBootstrap(b CoreBootstrap, trust string) (string, err
 	if err != nil || j.RequestID != b.RequestID || j.ManifestSHA256 != b.ManifestSHA256 || !j.RestartRequired || j.NoOp || j.MetadataOnly {
 		return "", fmt.Errorf("bootstrap differs from the retained host transition")
 	}
-	_, target, err := m.Selection(b.ManifestSHA256, trust)
+	selection, target, err := m.Selection(b.ManifestSHA256, trust)
 	if err != nil {
 		return "", err
 	}
+	file, err := m.verifyBootstrapMember(target, b.ArtifactSHA256, trust)
+	if err != nil {
+		return "", err
+	}
+	if err = VerifyCoreBootstrapMetadata(selection, trust, filepath.Dir(file)); err != nil {
+		return "", err
+	}
+	return file, nil
+}
+
+// VerifyBootstrapReader verifies a protected, original signed Stable reader
+// without preparing an update or retaining coordinator/transaction state. The
+// API bridge calls it again before accepting the owner's first stage action.
+func (m CoreManager) VerifyBootstrapReader(executable, digest, trust string) error {
+	if !validSHA256(digest) {
+		return fmt.Errorf("exact reader manifest digest required")
+	}
+	artifact := filepath.Base(filepath.Dir(executable))
+	file, err := m.BootstrapBinaryPath(artifact)
+	if err != nil || executable != file {
+		return fmt.Errorf("reader must use its protected content-addressed path")
+	}
+	if err := m.verifyBootstrapDirectories(file); err != nil {
+		return err
+	}
+	raw, err := ReadCoreState(filepath.Join(filepath.Dir(file), "core-release.json"), 1<<20)
+	if err != nil {
+		return err
+	}
+	signature, err := ReadCoreState(filepath.Join(filepath.Dir(file), "core-release.json.sig"), 64)
+	if err != nil {
+		return err
+	}
+	target, actual, err := VerifyCoreSelection(raw, signature, trust)
+	if err != nil {
+		return err
+	}
+	if actual != digest || target.Source != releasecache.OfficialRepository || target.Branch != "main" || target.Channel != "stable" {
+		return fmt.Errorf("reader requires the exact official Stable selection")
+	}
 	member, err := coreServiceMember(target, "spine")
-	if err != nil || member.Artifact.SHA256 != b.ArtifactSHA256 {
+	if err != nil || member.Source != releasecache.OfficialRepository || member.Branch != "main" {
+		return fmt.Errorf("reader requires an original Stable Spine")
+	}
+	channel, err := releasecache.CoreMemberChannel(member, target.Channel)
+	if err != nil || channel != "stable" {
+		return fmt.Errorf("reader requires an original Stable Spine")
+	}
+	if err = VerifyCoreBootstrapMetadata(CoreHostSelection{Raw: raw, Signature: signature}, trust, filepath.Dir(file)); err != nil {
+		return err
+	}
+	verified, err := m.verifyBootstrapMember(target, artifact, trust)
+	if err != nil {
+		return err
+	}
+	if verified != executable {
+		return fmt.Errorf("reader differs from the signed Spine")
+	}
+	return nil
+}
+
+func (m CoreManager) verifyBootstrapDirectories(file string) error {
+	for _, directory := range []string{m.Root, filepath.Join(m.Root, "bootstrap"), filepath.Dir(file)} {
+		s, err := os.Lstat(directory)
+		if err != nil {
+			return err
+		}
+		st, ok := s.Sys().(*syscall.Stat_t)
+		if !ok || !s.IsDir() || s.Mode().Perm()&0022 != 0 || int(st.Uid) != os.Geteuid() {
+			return fmt.Errorf("unsafe bootstrap directory")
+		}
+	}
+	return nil
+}
+
+func (m CoreManager) verifyBootstrapMember(target releasecache.CoreRelease, artifact, trust string) (string, error) {
+	member, err := coreServiceMember(target, "spine")
+	if err != nil || member.Artifact.SHA256 != artifact {
 		return "", fmt.Errorf("bootstrap is not the signed target Spine")
 	}
 	key, err := CoreMemberKey(member, target.Channel, trust)
 	if err != nil {
 		return "", err
 	}
-	file, err := m.BootstrapBinaryPath(b.ArtifactSHA256)
+	file, err := m.BootstrapBinaryPath(artifact)
 	if err != nil {
 		return "", err
 	}
-	for _, directory := range []string{m.Root, filepath.Join(m.Root, "bootstrap"), filepath.Dir(file)} {
-		s, err := os.Lstat(directory)
-		if err != nil {
-			return "", err
-		}
-		st, ok := s.Sys().(*syscall.Stat_t)
-		if !ok || !s.IsDir() || s.Mode().Perm()&0022 != 0 || int(st.Uid) != os.Geteuid() {
-			return "", fmt.Errorf("unsafe bootstrap directory")
-		}
+	if err := m.verifyBootstrapDirectories(file); err != nil {
+		return "", err
 	}
 	err = releasecache.VerifyCoreMember(member, key, func(blob releasecache.CoreBlob) (io.ReadCloser, error) {
 		name := map[string]string{member.Artifact.URL: "youeye", member.Checksums.URL: "checksums", member.Signature.URL: "signature", member.Provenance.URL: "provenance", member.SBOM.URL: "sbom"}[blob.URL]

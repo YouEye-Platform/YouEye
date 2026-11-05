@@ -329,11 +329,14 @@ func collectApplianceHealth(profile string) applianceHealthResult {
 }
 
 type installedReleaseIdentity struct {
+	Source         string
 	Version        string
 	Tag            string
 	Branch         string
 	ArtifactSHA256 string
 }
+
+var firstDeployPackageVersion = containerPackageVersion
 
 type firstDeployReleaseComponent struct {
 	name      string
@@ -341,13 +344,44 @@ type firstDeployReleaseComponent struct {
 	appDir    string
 	expected  appliance.ComponentRelease
 	key       string
+	source    string
+	branch    string
 }
 
 func firstDeployReleaseComponents(releaseSet appliance.ReleaseSet) []firstDeployReleaseComponent {
 	return []firstDeployReleaseComponent{
-		{name: "Server interface", container: "youeye-control", appDir: "/opt/app", expected: releaseSet.ControlPanel, key: "control"},
-		{name: "YouEye interface", container: "youeye-ui", appDir: "/opt/youeye-ui", expected: releaseSet.UI, key: "ui"},
+		{name: "Server interface", container: "youeye-control", appDir: "/opt/app", expected: releaseSet.ControlPanel, key: "control", branch: releaseSet.ComponentBranch(releaseSet.ControlPanel)},
+		{name: "YouEye interface", container: "youeye-ui", appDir: "/opt/youeye-ui", expected: releaseSet.UI, key: "ui", branch: releaseSet.ComponentBranch(releaseSet.UI)},
 	}
+}
+
+func firstDeploymentServiceComponents(image appliance.Manifest) (appliance.Manifest, []firstDeployReleaseComponent, error) {
+	policy, err := systemupdate.LoadReleasePolicy(deploymentPolicyPath)
+	if err == nil && policy.CoreManifestSHA256 != "" {
+		r, _, err := coreDeploymentSelection(image, policy)
+		if err != nil {
+			return image, nil, err
+		}
+		components := firstDeployReleaseComponents(*image.ReleaseSet)
+		for i := range components {
+			for _, member := range r.Members {
+				if member.Role != "cp" && member.Role != "ui" || member.Role == "cp" && components[i].key != "control" || member.Role == "ui" && components[i].key != "ui" {
+					continue
+				}
+				components[i].source, components[i].branch = member.Source, member.Branch
+				components[i].expected = appliance.ComponentRelease{Version: member.BuildVersion, Branch: member.Branch, Tag: member.Tag, SourceCommit: member.SourceCommit, ArtifactSHA256: member.Artifact.SHA256}
+			}
+		}
+		return image, components, nil
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return image, nil, err
+	}
+	selected, err := pinnedDeploymentManifest(image)
+	if err != nil || selected.ReleaseSet == nil {
+		return selected, nil, err
+	}
+	return selected, firstDeployReleaseComponents(*selected.ReleaseSet), nil
 }
 
 func validateInstalledReleaseIdentity(name string, expected appliance.ComponentRelease, expectedBranch string, installed installedReleaseIdentity) error {
@@ -370,7 +404,7 @@ func addFirstDeployReleaseSetChecks(manifest appliance.Manifest, add func(string
 	if addCoreInstalledHealthChecks(manifest, add) {
 		return
 	}
-	selected, err := pinnedDeploymentManifest(manifest)
+	selected, components, err := firstDeploymentServiceComponents(manifest)
 	if err != nil {
 		add("first-deploy service selection", "fail", err.Error())
 		return
@@ -381,26 +415,32 @@ func addFirstDeployReleaseSetChecks(manifest appliance.Manifest, add func(string
 		return
 	}
 	releaseSet := *manifest.ReleaseSet
-	executable, err := os.Executable()
+	reader, err := readCoreInstalledReader()
 	if err != nil {
 		add("System core provenance", "fail", "the running System core identity is unavailable")
-	} else if digest, digestErr := fileSHA256(executable); digestErr != nil || Version != releaseSet.Spine.Version || digest != releaseSet.Spine.ArtifactSHA256 {
+	} else if digest, digestErr := fileSHA256(reader.Executable); digestErr != nil || !reader.Bound && Version != releaseSet.Spine.Version || digest != releaseSet.Spine.ArtifactSHA256 {
 		add("System core provenance", "fail", "the running System core does not match the selected signed bundle")
 	} else {
-		add("System core provenance", "pass", "the running System core version and digest match the selected signed bundle")
+		add("System core provenance", "pass", "the canonical baked System core matches its signed bundle")
+		if reader.Bound {
+			add("System reader binding", "pass", "the separate "+reader.ReaderClass+" reader has an exact active binding")
+		}
 	}
-	for _, component := range firstDeployReleaseComponents(releaseSet) {
-		version := containerPackageVersion(component.container, component.appDir)
+	for _, component := range components {
+		version := firstDeployPackageVersion(component.container, component.appDir)
 		provenance, ok := update.GetProvenance(component.key)
 		installed := installedReleaseIdentity{Version: version}
 		if ok {
+			installed.Source = provenance.Source
 			installed.Tag = provenance.Tag
 			installed.Branch = provenance.Branch
 			installed.ArtifactSHA256 = provenance.ArtifactSHA256
 		}
 		if !ok {
 			add(component.name+" provenance", "fail", "installed release provenance is missing")
-		} else if err := validateInstalledReleaseIdentity(component.name, component.expected, releaseSet.ComponentBranch(component.expected), installed); err != nil {
+		} else if component.source != "" && installed.Source != component.source {
+			add(component.name+" provenance", "fail", "installed service source differs from its authenticated original Core member")
+		} else if err := validateInstalledReleaseIdentity(component.name, component.expected, component.branch, installed); err != nil {
 			add(component.name+" provenance", "fail", err.Error())
 		} else {
 			add(component.name+" provenance", "pass", "the installed version, tag, branch, and digest match the selected signed bundle")

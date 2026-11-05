@@ -45,16 +45,16 @@ func initializeInstalledCore(ctx context.Context, policyPath string) error {
 		return fmt.Errorf("fresh core initialization requires an installed new-format selection")
 	}
 	root := filepath.Dir(policyPath)
-	raw, err := systemupdate.ReadCoreState(filepath.Join(root, "core-release.json"), 1<<20)
+	selection, err := systemupdate.ReadCoreBootstrapSelection(root, systemupdate.CoreDevelopmentTrustPath)
 	if err != nil {
 		return err
 	}
-	sig, err := systemupdate.ReadCoreState(filepath.Join(root, "core-release.json.sig"), 64)
+	selection, _, err = systemupdate.EnsureCoreMetadata(ctx, selection, systemupdate.CoreDevelopmentTrustPath, "/var/lib/youeye/cache/core-update", systemupdate.ReleaseHTTPClient(), "")
 	if err != nil {
 		return err
 	}
 	m := systemupdate.CoreManager{Root: systemupdate.CoreStatePath}
-	receipt, err := m.Initialize(ctx, systemupdate.CoreHostSelection{Raw: raw, Signature: sig}, policy.CoreManifestSHA256, systemupdate.CoreDevelopmentTrustPath,
+	receipt, err := m.Initialize(ctx, selection, policy.CoreManifestSHA256, systemupdate.CoreDevelopmentTrustPath,
 		func(ctx context.Context, release releasecache.CoreRelease) (systemupdate.CoreMachineIdentity, string, error) {
 			if err := ctx.Err(); err != nil {
 				return systemupdate.CoreMachineIdentity{}, "", err
@@ -74,7 +74,7 @@ func initializeInstalledCore(ctx context.Context, policyPath string) error {
 			if err := verifyDeploymentCompletion(hostIP); err != nil {
 				return systemupdate.CoreMachineIdentity{}, "", err
 			}
-			if err := verifyFreshCorePayloads(ctx, m, systemupdate.CoreHostSelection{Raw: raw, Signature: sig}); err != nil {
+			if err := verifyFreshCorePayloads(ctx, m, selection); err != nil {
 				return systemupdate.CoreMachineIdentity{}, "", err
 			}
 			machine, err := installedCoreMachine()

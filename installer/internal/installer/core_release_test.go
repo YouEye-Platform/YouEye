@@ -28,6 +28,7 @@ func TestCoreInstallerDiscoveryPreservesBranchAndExactAnswerBytes(t *testing.T) 
 	embeddedApplianceDevelopmentTrust = pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
 	t.Cleanup(func() { embeddedApplianceDevelopmentTrust = prior })
 	var manifestRaw, signature []byte
+	metadata := map[string][]byte{}
 	var release applianceRelease
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -42,7 +43,11 @@ func TestCoreInstallerDiscoveryPreservesBranchAndExactAnswerBytes(t *testing.T) 
 		case strings.HasSuffix(r.URL.Path, "/core-release.json.sig"):
 			w.Write(signature)
 		default:
-			http.NotFound(w, r)
+			if raw, ok := metadata[r.URL.Path]; ok {
+				w.Write(raw)
+			} else {
+				http.NotFound(w, r)
+			}
 		}
 	}))
 	defer server.Close()
@@ -69,6 +74,7 @@ func TestCoreInstallerDiscoveryPreservesBranchAndExactAnswerBytes(t *testing.T) 
 		}
 		core.Members = append(core.Members, member)
 	}
+	installTestSpineMetadata(&core, private, false, metadata)
 	manifestRaw, _ = json.MarshalIndent(core, "", "  ")
 	manifestRaw = append(manifestRaw, '\n')
 	signature = ed25519.Sign(private, manifestRaw)

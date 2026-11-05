@@ -38,6 +38,7 @@ import {
 import { tlsStorage } from '@/lib/acme/storage';
 import {
   claimName,
+  registerVerifiedSetup,
   getCertificateTerms,
   getCurrentCertificate,
   getLease,
@@ -110,6 +111,8 @@ interface SetupRequest {
   yen_ct_accepted?: boolean;
   /** One-use, memory-only proof bound to the exact selected name and server IP. */
   yen_human_verification_proof?: string;
+  /** Short-lived human-verified setup session; never persisted in setup state. */
+  yen_verified_setup_session?: string;
   /** If set, only run this specific step (retry mode) */
   retry_step?: string;
 }
@@ -567,13 +570,16 @@ export async function POST(request: NextRequest) {
                   ) {
                     throw new Error('Review and accept the current YouEye Names certificate notice before continuing.');
                   }
-                  if (
+                  const setupSession=body.yen_verified_setup_session;
+                  if (setupSession !== undefined && (typeof setupSession!=='string' || setupSession.length<64 || setupSession.length>8192 || body.yen_human_verification_proof)) throw new Error('Invalid setup verification session.');
+                  if (!setupSession && (
                     typeof body.yen_human_verification_proof !== 'string' ||
                     body.yen_human_verification_proof.length < 20 ||
                     body.yen_human_verification_proof.length > 512
-                  ) {
+                  )) {
                     throw new Error('Complete the final YouEye Names verification before starting setup.');
                   }
+                  if (setupSession) await registerVerifiedSetup(setupSession);
                   // Claim (tolerate a lease we already own from a prior attempt).
                   try {
                     await claimName(
@@ -581,6 +587,7 @@ export async function POST(request: NextRequest) {
                       ip,
                       importedIdentity,
                       body.yen_human_verification_proof,
+                      setupSession,
                     );
                   } catch (claimErr) {
                     if (

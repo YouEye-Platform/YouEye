@@ -14,45 +14,73 @@ and must never be derived from each other.
    `canProceedNow=true` is an amber warning; paused, blocked, malformed, or
    unreachable service state blocks only a new Names setup and leaves the BYO,
    self-signed, and uploaded-certificate choices available.
-3. “Get a secure address” opens the service enrollment page in an explicit
-   popup. The exact-origin v1 handoff returns one short-lived proof bound to the
-   installation fingerprint. Control Panel consumes it during registration,
-   then loads three non-committing previews.
-4. Immediately before provisioning, a second popup proof is bound to the exact
-   installation fingerprint, selected name, and Spine-reported private/VPN IP.
-   It is consumed only by the lease claim.
-5. Control Panel stores a protected schema-v2 provisioning record before the
+3. With the `verified-setup-v1` capability, “Get a secure address” loads
+   non-committing generated choices using anonymous, signed setup contexts.
+   No install registration, human decision, lease, DNS or certificate is created
+   by preview. The final human challenge is requested only for the selected name.
+4. Immediately before provisioning, a dedicated Names iframe verifies one
+   bounded setup session. Its signed context binds the broker identity/origin,
+   install fingerprint, exact chosen name, Spine-reported private/VPN IP, exact
+   browser parent origin and random attempt channel. Registration and claim
+   share this one decision; the Turnstile response is never reused for a second
+   domain action. The session expires after at most five minutes and is kept
+   only in browser/request memory.
+5. Control Panel registers using `verifiedSetupSession`, even when the key is
+   already registered or cached, then signs the exact name/IP claim using that
+   same session. It stores a protected schema-v2 provisioning record before the
    certificate request. The TLS key and CSR remain local in mode-`0600` state;
-   the broker receives only the CSR. Retry or restart reuses the same key/CSR
-   and the broker's idempotent job rather than starting a second order.
+   retry or restart reuses the same key/CSR and idempotent certificate job.
 6. Certificate retrieval waits up to ten minutes to cover the service's DNS
    propagation envelope. Root/wildcard SANs, local key, broker fingerprint,
-   provider metadata, and dates are validated before Caddy activation and
-   atomic certificate persistence.
+   provider metadata and dates are validated before Caddy activation.
 7. A first heartbeat is attempted immediately. Six-hour maintenance continues
-   heartbeat, IP-only DNS updates, renewal, and provisioning recovery.
+   heartbeat, IP-only DNS updates, renewal and provisioning recovery.
 
-The browser popup never receives the installation private key, TLS private
-key, or server IP. The popup returns no Turnstile response, context, cdata, or
-provider secret. Proofs remain in browser memory only, are exact-purpose and
-exact-binding checked, and are acknowledged only after local acceptance.
+## Verification transport and compatibility
 
-The popup transport requires the ready/init handshake before accepting a result,
-validates finite expiry values and accepts at most one result per attempt.
-Closing it early reports a retry error while retaining the wizard's choices.
-Leaving the route cancels the listener and prevents late results from beginning
-local acceptance. An already-started registration request must be reconciled
-through its server result; cancelling presentation cannot undo it.
+Names must be deployed before clients enable its discovered capability. Services
+without it retain the existing registration popup followed by a separate exact
+claim proof. Legacy v1 clients remain supported by the upgraded service. Saved
+identity/name/certificate bundles retain their existing authenticated reuse path;
+requesting a new setup grant is not a substitute for recovering an owned name.
 
-The first check registers an installation; the later check authorizes its
-selected address claim. Neither a successful puzzle nor a returned proof means
-the address/certificate is already provisioned or reachable from the browser.
-The service supplies generated options; a display name never requests a DNS label.
+The new iframe uses `/enroll/embedded` and only its signed admitted parent in
+CSP `frame-ancestors`. The ordinary `/enroll` remains unframeable. The parent
+captures the exact local browser origin, and its API checks that origin against
+actual request Host rather than a caller-provided origin or forwarded-host guess.
+The iframe is sandboxed and uses no-referrer. The selected broker's HTTPS origin,
+exact Window, version, random channel, init/result shape, fingerprint, name, IP
+and finite bounded expiry must match. A result is acknowledged only after
+retaining it in the current in-memory attempt. Cancel, Back, unmount, superseding
+choices and expiry remove listeners and prevent stale results from starting
+provisioning. Names API redirects fail closed, and a mismatched registration
+fingerprint never becomes cached authority.
 
-Embedded verification is not enabled by this client. It requires an agreed
-service capability, parent admission, CSP and message protocol plus real
-browser/provider acceptance. The existing exact-origin top-level popup remains
-the supported transport.
+HTTP LAN setup uses `crypto.getRandomValues` for standard UUID v4 attempt and
+restore/onboarding operation IDs; there is no insecure randomness fallback.
+The service's signed frame admission pins the exact context and canonical
+public key after server-side authentication/fingerprint checks. The frame
+compares exact init values instead of depending on `crypto.subtle`, which is
+unavailable below an HTTP ancestor even when the frame itself uses HTTPS.
+Admission URLs contain bounded public key/name/LAN-IP metadata, never a provider
+response or setup credential; do not log URL queries. If the browser/provider
+still prevents embedding, the standalone and manual paths remain available.
+
+If embedded verification cannot load, the visible standalone action opens
+`/enroll/setup` using the same signed context/channel. If browser isolation or
+popup blocking prevents automatic return, its short-lived code can be pasted
+into the current attempt. It must contain that attempt's exact context; the
+broker still validates its issued digest, expiry and install signature. No
+private install key, TLS key, provider secret or Turnstile response reaches
+Control Panel browser code. The new result includes the exact private/VPN IP
+binding; it is not written to browser persistent storage or diagnostics.
+
+Neither a successful verification nor an accepted session means the lease,
+certificate or browser connection is ready. Real browser/provider acceptance
+must cover the iframe, standalone return, manual fallback, legacy flow and saved
+bundle reuse separately. Source tests and service health do not prove those
+installed journeys. The broker's ephemeral session schema must exist in both
+PostgreSQL and D1 and must stay outside portable rollback data snapshots.
 
 ## Signed request contract
 

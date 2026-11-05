@@ -355,7 +355,23 @@
     "intensity": "Intensity",
     "checkingSetupStatus": "Checking setup status…",
     "setupStatusUnknown": "Setup may still be running. Check its status before trying setup again.",
-    "checkSetupStatus": "Check setup status"
+    "checkSetupStatus": "Check setup status",
+    "verifiedNames": {
+      "explanation": "One check verifies this installation and your chosen address. Complete it here, or open the verification page if it does not load.",
+      "waiting": "Connecting to verification…",
+      "challenge": "Complete the verification check.",
+      "blocked": "Verification may be blocked here. Open the verification page to continue.",
+      "expired": "Verification expired. Try again to keep your chosen address.",
+      "failed": "Could not start verification. Your choices are kept; try again.",
+      "frameTitle": "Verify your YouEye address",
+      "openPage": "Open verification page",
+      "manualFallback": "Return a verification code manually",
+      "pasteHelp": "Open the page, complete the check, and copy its verification code here. The code expires in a few minutes.",
+      "verificationCode": "Verification code",
+      "invalidCode": "This code does not match the current check or has expired. Try again.",
+      "useCode": "Use verification code",
+      "retry": "Start a new check"
+    }
   },
   "setupComplete": {
     "title": "Setup Complete",

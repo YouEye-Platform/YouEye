@@ -222,6 +222,12 @@ func verifyRecoveredCoreSelection(root *os.File, selection CoreHostSelection) er
 			return fmt.Errorf("restored CP selection is not the exact previous signed pair")
 		}
 	}
+	if len(selection.MetadataProof) > 0 {
+		actual, e := readCoreContainerStateAtLimit(dir, CoreMetadataProofName, CoreMetadataProofMaxBytes)
+		if !(errors.Is(e, syscall.ENOENT) && coreLegacyMetadataAbsence(selection)) && (e != nil || !bytes.Equal(actual, selection.MetadataProof)) {
+			return fmt.Errorf("restored CP metadata proof differs from retained selection")
+		}
+	}
 	return nil
 }
 

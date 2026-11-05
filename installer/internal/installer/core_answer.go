@@ -2,6 +2,7 @@ package installer
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -10,13 +11,14 @@ import (
 
 // Base64 preserves the exact signed bytes across answer JSON formatting.
 type coreAnswerSelection struct {
-	ManifestBase64  string `json:"manifest_base64"`
-	SignatureBase64 string `json:"signature_base64"`
-	ManifestSHA256  string `json:"manifest_sha256"`
+	ManifestBase64  string          `json:"manifest_base64"`
+	SignatureBase64 string          `json:"signature_base64"`
+	ManifestSHA256  string          `json:"manifest_sha256"`
+	MetadataProof   json.RawMessage `json:"metadata_proof,omitempty"`
 }
 
 func coreAnswerFromRelease(release applianceRelease) *coreAnswerSelection {
-	return &coreAnswerSelection{ManifestBase64: base64.StdEncoding.EncodeToString(release.coreRaw), SignatureBase64: base64.StdEncoding.EncodeToString(release.coreSignature), ManifestSHA256: release.coreSHA256}
+	return &coreAnswerSelection{ManifestBase64: base64.StdEncoding.EncodeToString(release.coreRaw), SignatureBase64: base64.StdEncoding.EncodeToString(release.coreSignature), ManifestSHA256: release.coreSHA256, MetadataProof: release.coreMetadataProof}
 }
 
 func validateCoreAnswer(answer applianceAnswer) error {
@@ -65,6 +67,13 @@ func validateCoreAnswer(answer applianceAnswer) error {
 	}
 	if _, _, err := releasecache.VerifyCoreRelease(raw, sig, key); err != nil {
 		return err
+	}
+	// Older frozen v5 answers have no inline proof. They are completed in a
+	// separate runtime sidecar before downloads or disk changes, never rewritten.
+	if len(c.MetadataProof) > 0 {
+		if err := verifyInstallerCoreProof(raw, sig, c.MetadataProof); err != nil {
+			return err
+		}
 	}
 	if policy.Mode == "exact" && policy.ExactTag != r.Tag {
 		return fmt.Errorf("core answer differs from exact release policy")

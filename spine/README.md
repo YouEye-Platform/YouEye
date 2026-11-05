@@ -23,6 +23,11 @@ For source development, `go build ./cmd/youeye` builds a local binary. Running
 `youeye deploy` is an appliance lifecycle operation and must not be treated as
 a replacement for the image installer.
 
+For signed standalone reader and native command testing before a full image,
+see [Spine candidate testing](../docs/spine-candidate-testing.md). Its explicit
+development binding preserves installed System identity and final appliance
+acceptance requirements.
+
 ## CLI Commands
 
 ```bash

@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/youeye-platform/YouEye/releasecache"
 	"github.com/youeye-platform/YouEye/spine/internal/channels"
@@ -20,8 +22,15 @@ import (
 var coreSelectionRoot = systemupdate.CoreBootstrapPath
 var coreDevelopmentKeyPath = systemupdate.CoreDevelopmentTrustPath
 
+func readSelectedCore(ctx context.Context) (releasecache.CoreRelease, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	_, release, _, err := systemupdate.ReadAuthenticatedCoreSelection(ctx, coreSelectionRoot, coreDevelopmentKeyPath, filepath.Join("/var/lib/youeye/cache", "core-update"), nil)
+	return release, err
+}
+
 func selectedCoreMember(source, branch, tag, digest, role string) (releasecache.CoreMember, releasecache.CoreRelease, error) {
-	r, _, err := systemupdate.ReadCoreSelection(coreSelectionRoot, coreDevelopmentKeyPath)
+	r, err := readSelectedCore(context.Background())
 	if err != nil {
 		return releasecache.CoreMember{}, r, err
 	}
@@ -47,7 +56,7 @@ func coreCandidate(cfg *config.Config, eff channels.Channel, role string) (Candi
 // when publication has namespaced filenames. The artifact is streamed locally;
 // exact bounded metadata is read through the same protected cache transport.
 func VerifySelectedCoreArtifact(ctx context.Context, client *http.Client, artifactURL, artifactPath, expectedDigest, role string) error {
-	r, _, err := systemupdate.ReadCoreSelection(coreSelectionRoot, coreDevelopmentKeyPath)
+	r, err := readSelectedCore(ctx)
 	if err != nil {
 		return err
 	}
@@ -101,7 +110,7 @@ func (t selectedCoreTransport) RoundTrip(request *http.Request) (*http.Response,
 	if len(parts) != 6 || parts[2] != "releases" || parts[3] != "download" || !canonicalCoreTag(parts[4]) {
 		return t.base.RoundTrip(request)
 	}
-	r, _, err := systemupdate.ReadCoreSelection(coreSelectionRoot, coreDevelopmentKeyPath)
+	r, err := readSelectedCore(request.Context())
 	if err != nil {
 		return nil, err
 	}

@@ -117,7 +117,7 @@ func (a NativeCoreAuthority) verify(ctx context.Context, j CoreJournal, recovery
 	if recovery {
 		r, digest = j.Previous.Release, j.Previous.ManifestSHA256
 	}
-	_, verified, err := m.Selection(digest, a.TrustKeyPath)
+	selectionProof, verified, err := m.Selection(digest, a.TrustKeyPath)
 	if err != nil {
 		return err
 	}
@@ -127,6 +127,28 @@ func (a NativeCoreAuthority) verify(ctx context.Context, j CoreJournal, recovery
 	for _, member := range r.Members {
 		if err = CheckCoreMemberAuthority(member, r.Channel, a.TrustKeyPath); err != nil {
 			return err
+		}
+	}
+	// Authenticate and retain both directions before effects. The exact signed
+	// legacy digest and journal remain unchanged; offline recovery uses this proof.
+	selectionProof, _, err = EnsureCoreMetadata(ctx, selectionProof, a.TrustKeyPath, filepath.Join(a.Checkpoint.DataRoot, "cache", "core-update"), a.Client, "")
+	if err != nil {
+		return err
+	}
+	if err = m.retainSelection(selectionProof, digest); err != nil {
+		return err
+	}
+	if !recovery {
+		previous, _, e := m.Selection(j.Previous.ManifestSHA256, a.TrustKeyPath)
+		if e != nil {
+			return e
+		}
+		previous, _, e = EnsureCoreMetadata(ctx, previous, a.TrustKeyPath, filepath.Join(a.Checkpoint.DataRoot, "cache", "core-update"), a.Client, "")
+		if e != nil {
+			return e
+		}
+		if e = m.retainSelection(previous, j.Previous.ManifestSHA256); e != nil {
+			return e
 		}
 	}
 	state, err := appliance.LoadState(a.Checkpoint.StatePath)
@@ -160,7 +182,7 @@ func (a NativeCoreAuthority) AuthorizeTarget(ctx context.Context, j CoreJournal,
 		if offline {
 			return nil
 		}
-		_, selected, digest, err := ResolveCoreRelease(ctx, a.Client, selection, a.TrustKeyPath)
+		_, selected, digest, err := ResolveCoreReleaseWithMetadata(ctx, a.Client, selection, a.TrustKeyPath, filepath.Join(a.Checkpoint.DataRoot, "cache", "core-update"))
 		if err != nil {
 			return err
 		}

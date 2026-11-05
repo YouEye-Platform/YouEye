@@ -6,7 +6,7 @@ import { parseReleaseVersion, parseVersionStrict } from '../version';
 
 import { RELEASE_DEVELOPMENT_TRUST } from './development-trust';
 export { RELEASE_DEVELOPMENT_TRUST } from './development-trust';
-import { selectedCoreArtifact, verifyCoreArtifactBuffer, coreArtifactVerificationShell } from './core-release';
+import { selectedCoreArtifact, verifyCoreArtifactBuffer, coreArtifactVerificationShell, verifyCoreMetadataForOperation } from './core-release';
 
 type PublicTrustPolicy = { schema: string; keys: Record<string, string> };
 
@@ -114,7 +114,7 @@ function shellQuote(value: string): string {
 
 export function signedReleaseVerificationShell(artifactURL: string, artifactPath: string, expectedDigest?: string, scope?: TrustScope): string {
 	const core = selectedCoreArtifact(artifactURL, expectedDigest, scope);
-	if (core) return coreArtifactVerificationShell(core, artifactPath);
+	if (core) throw new Error('Selected Core shell requires asynchronous metadata preflight');
   const base = new URL('./', artifactURL).toString();
   const trust = releaseArtifactTrust(artifactURL, publicTrustPolicy, scope);
   const encodedTrust = Buffer.from(trust.pem).toString('base64');
@@ -139,4 +139,12 @@ test "$(sha256sum "$verify_dir/published.pub" | awk '{print $1}')" = "$(awk -v n
 rm -rf -- "$verify_dir"
 trap - EXIT
 `;
+}
+
+/** Actual container callers await this before receiving any executable shell. */
+export async function preparedSignedReleaseVerificationShell(artifactURL: string, artifactPath: string, expectedDigest?: string, scope?: TrustScope): Promise<string> {
+  const core = selectedCoreArtifact(artifactURL, expectedDigest, scope);
+  if (!core) return signedReleaseVerificationShell(artifactURL, artifactPath, expectedDigest, scope);
+  await verifyCoreMetadataForOperation(core);
+  return coreArtifactVerificationShell(core, artifactPath);
 }

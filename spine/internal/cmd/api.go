@@ -16,6 +16,8 @@ var apiCmd = &cobra.Command{
 	Short: "Manage API server",
 }
 
+var coreAPIReaderExecutable, coreAPIReaderManifestSHA256 string
+
 var apiServeCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start the API server",
@@ -33,11 +35,20 @@ var apiStopCmd = &cobra.Command{
 }
 
 func init() {
+	apiServeCmd.Flags().StringVar(&coreAPIReaderExecutable, "core-reader", "", "protected original signed Stable Spine for a temporary API reader bridge")
+	apiServeCmd.Flags().StringVar(&coreAPIReaderManifestSHA256, "core-reader-manifest-sha256", "", "exact official Stable manifest for the temporary reader bridge")
 	apiCmd.AddCommand(apiServeCmd)
 	apiCmd.AddCommand(apiStopCmd)
 }
 
 func startAPIServer() error {
+	// Validate current owner trust and the complete original signed envelope
+	// before creating sockets or starting background work. This is read-only:
+	// no transaction, bootstrap registration or boot override is created here.
+	reader, err := newCoreAPIReaderBridge(coreAPIReaderExecutable, coreAPIReaderManifestSHA256)
+	if err != nil {
+		return err
+	}
 	fmt.Println("Starting Spine API server...")
 
 	// Get config
@@ -89,7 +100,7 @@ func startAPIServer() error {
 
 	// Start server with config
 	server := api.NewServer(Version, cfg)
-	server.SetCoreUpdateOperations(coreAPIOperations{})
+	server.SetCoreUpdateOperations(coreAPIOperations{reader: reader})
 	return server.ListenAndServe()
 }
 

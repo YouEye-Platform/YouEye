@@ -51,7 +51,7 @@ interface NamesDisclosure {
 
 interface NamesReadinessView {
   reachable: boolean;
-  service?: { managedZone: string };
+  service?: { managedZone: string; capabilities?: string[] };
   readiness?: {
     installation: {
       canProceedNow: boolean;
@@ -103,6 +103,7 @@ interface Props {
   yenCtAccepted: boolean;
   setYenCtAccepted: (v: boolean) => void;
   setYenReusing?: (v: boolean) => void;
+  setYenVerifiedSetup?: (v: boolean) => void;
   byoDomain: string;
   setByoDomain: (v: string) => void;
   byoProviderToken: string;
@@ -156,6 +157,7 @@ export default function SetupServerName({
   yenTermsVersion, setYenTermsVersion,
   yenCtAccepted, setYenCtAccepted,
   setYenReusing,
+  setYenVerifiedSetup,
   byoDomain, setByoDomain,
   byoProviderToken, setByoProviderToken,
   onNext, onBack,
@@ -199,9 +201,10 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
   const [yenDisclosure, setYenDisclosure] = useState<NamesDisclosure | null>(null);
   const [yenReadiness, setYenReadiness] = useState<NamesReadinessView | null>(null);
   const [yenRegistered, setYenRegistered] = useState(false);
+  const previewRequest = useRef<AbortController | null>(null);
   const enrollment = useRef<AbortController | null>(null);
-  useEffect(() => () => enrollment.current?.abort(), []);
-  useEffect(() => { if (tlsChoice !== 'youeye-names') enrollment.current?.abort(); }, [tlsChoice]);
+  useEffect(() => () => {enrollment.current?.abort();previewRequest.current?.abort();}, []);
+  useEffect(() => { if (tlsChoice !== 'youeye-names') {enrollment.current?.abort();previewRequest.current?.abort();setYenLoading(false);} }, [tlsChoice]);
   // Reuse: a bundle staged by the installer (--names-bundle) locks the address.
   const [reusing, setReusing] = useState(false);
 
@@ -232,38 +235,47 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
   }, [siteName, identityEdited, setIdentityName]);
 
   const fetchPreviews = useCallback(async () => {
+    previewRequest.current?.abort();
+    const request=new AbortController();previewRequest.current=request;
     setYenLoading(true);
     setYenError('');
     try {
-      const csrfRes = await fetch('/api/auth/csrf');
+      const csrfRes = await fetch('/api/auth/csrf',{signal:request.signal});
       const { csrfToken } = await csrfRes.json();
       const res = await fetch('/api/tls/youeye-names/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({ count: 3 }),
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.any([request.signal,AbortSignal.timeout(30_000)]),
       });
       const data = await res.json();
+      if(request.signal.aborted)return;
       if (!res.ok) throw new Error(data.error || t('yenError'));
+      setYenVerifiedSetup?.(data.verificationMode==='verified_setup');
       const opts: NamePreview[] = (data.previews || []).filter((p: NamePreview) => p.available);
       if (!opts.length) throw new Error(t('yenError'));
       setYenOptions(opts);
       setYenIndex(0);
     } catch (e) {
+      if(request.signal.aborted)return;
       setYenError(
         e instanceof Error
           ? (e.name === 'TimeoutError' ? t('yenError') : e.message)
           : t('yenError'),
       );
     } finally {
-      setYenLoading(false);
+      if(previewRequest.current===request) {previewRequest.current=null;if(!request.signal.aborted)setYenLoading(false);}
     }
-  }, [t]);
+  }, [t,setYenVerifiedSetup]);
 
   const startNamesEnrollment = useCallback(async () => {
     if (enrollment.current) return;
     if (yenReadiness?.readiness && !yenReadiness.readiness.installation.canProceedNow) {
       setYenError(translateInterface("m4d5af7674ab8"));
+      return;
+    }
+    if(yenReadiness?.service?.capabilities?.includes('verified-setup-v1')) {
+      await fetchPreviews();
       return;
     }
     setYenLoading(true);
@@ -360,7 +372,7 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
   }, [currentYen, setYenFqdn, setYenName]);
 
   const refreshYen = () => {
-    if (yenRegistered) void fetchPreviews();
+    if (yenRegistered || yenReadiness?.service?.capabilities?.includes('verified-setup-v1')) void fetchPreviews();
     else void startNamesEnrollment();
   };
 
@@ -665,7 +677,7 @@ async function readSetupJson(response: Response, fallback: string): Promise<Reco
               <Button
                 type="button"
                 onClick={() => void startNamesEnrollment()}
-                disabled={yenReadiness?.readiness?.installation.canProceedNow === false || yenReadiness?.reachable === false}
+                disabled={!yenReadiness?.reachable || yenReadiness.readiness?.installation.canProceedNow === false}
                 className="w-full gap-2"
               >
                 <ShieldCheck className="h-4 w-4" /> {translateInterface("m22ad1156ddcb")}</Button>

@@ -355,7 +355,23 @@
     "intensity": "Intensité",
     "checkingSetupStatus": "Vérification de la configuration…",
     "setupStatusUnknown": "La configuration est peut-être encore en cours. Vérifiez son état avant de la relancer.",
-    "checkSetupStatus": "Vérifier la configuration"
+    "checkSetupStatus": "Vérifier la configuration",
+    "verifiedNames": {
+      "explanation": "Une seule vérification confirme cette installation et l’adresse choisie. Effectuez-la ici ou ouvrez la page de vérification si elle ne se charge pas.",
+      "waiting": "Connexion à la vérification…",
+      "challenge": "Effectuez la vérification.",
+      "blocked": "La vérification est peut-être bloquée ici. Ouvrez la page de vérification pour continuer.",
+      "expired": "La vérification a expiré. Réessayez ; l’adresse choisie est conservée.",
+      "failed": "Impossible de lancer la vérification. Vos choix sont conservés ; réessayez.",
+      "frameTitle": "Vérifier votre adresse YouEye",
+      "openPage": "Ouvrir la page de vérification",
+      "manualFallback": "Saisir un code de vérification manuellement",
+      "pasteHelp": "Ouvrez la page, effectuez la vérification, puis copiez son code ici. Le code expire dans quelques minutes.",
+      "verificationCode": "Code de vérification",
+      "invalidCode": "Ce code ne correspond pas à la vérification actuelle ou a expiré. Réessayez.",
+      "useCode": "Utiliser le code de vérification",
+      "retry": "Lancer une nouvelle vérification"
+    }
   },
   "setupComplete": {
     "title": "Configuration terminée",

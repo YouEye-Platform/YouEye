@@ -34,7 +34,13 @@ func (m CoreManager) retainSelection(selection CoreHostSelection, digest string)
 	if err := atomicWrite(filepath.Join(m.Root, "targets", digest+".json"), selection.Raw, 0600); err != nil {
 		return err
 	}
-	return atomicWrite(filepath.Join(m.Root, "targets", digest+".json.sig"), selection.Signature, 0600)
+	if err := atomicWrite(filepath.Join(m.Root, "targets", digest+".json.sig"), selection.Signature, 0600); err != nil {
+		return err
+	}
+	if len(selection.MetadataProof) > 0 {
+		return atomicWrite(filepath.Join(m.Root, "targets", digest+".metadata.json"), selection.MetadataProof, 0600)
+	}
+	return nil
 }
 
 func (m CoreManager) Selection(digest string, trustKeyPath string) (CoreHostSelection, releasecache.CoreRelease, error) {
@@ -57,6 +63,15 @@ func (m CoreManager) Selection(digest string, trustKeyPath string) (CoreHostSele
 	}
 	if actual != digest {
 		return s, r, fmt.Errorf("retained core selection digest changed")
+	}
+	proof, proofErr := ReadCoreState(filepath.Join(m.Root, "targets", digest+".metadata.json"), CoreMetadataProofMaxBytes)
+	if proofErr == nil {
+		s.MetadataProof = proof
+		if _, err = VerifyCoreSelectionMetadata(s, trustKeyPath); err != nil {
+			return s, r, err
+		}
+	} else if !errors.Is(proofErr, os.ErrNotExist) {
+		return s, r, proofErr
 	}
 	return s, r, nil
 }

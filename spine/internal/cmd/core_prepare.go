@@ -26,7 +26,7 @@ func prepareCoreRequest(ctx context.Context, m systemupdate.CoreManager, request
 	if err != nil {
 		return j, err
 	}
-	selected, _, actual, err := systemupdate.ResolveCoreRelease(ctx, systemupdate.ReleaseHTTPClient(), policy, systemupdate.CoreDevelopmentTrustPath)
+	selected, _, actual, err := systemupdate.ResolveCoreReleaseWithMetadata(ctx, systemupdate.ReleaseHTTPClient(), policy, systemupdate.CoreDevelopmentTrustPath, "/var/lib/youeye/cache/core-update")
 	if err != nil {
 		return j, err
 	}

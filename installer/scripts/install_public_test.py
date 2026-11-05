@@ -223,6 +223,12 @@ print('200',end='')
         (self.root/"core-release.json.sig").write_bytes(self.sign(raw, "stable"))
         releases = json.loads((self.root/"index.json").read_bytes())
         mirrors = {"blob-" + blob["sha256"] for member in manifest["members"] for field in ["artifact", "checksums", "signature", "provenance", "sbom", "document_signature", "release_lock"] if (blob := member.get(field))}
+        # A real promoted release stores these immutable mirrored metadata
+        # bytes, which the new reader authenticates before selecting Installer.
+        for member in manifest["members"]:
+            for field in ["artifact", "checksums", "signature", "provenance", "sbom", "document_signature", "release_lock"]:
+                if blob := member.get(field):
+                    (self.root/("blob-"+blob["sha256"])).write_bytes((self.root/blob["name"]).read_bytes())
         releases[0]["assets"] += [{"name":name,"browser_download_url":manifest["source"]+"/releases/download/"+manifest["tag"]+"/"+name} for name in mirrors]
         (self.root/"index.json").write_bytes(encoded(releases))
         spec = importlib.util.spec_from_file_location("core_bootstrap", ROOT/"releasecache/core_bootstrap.py")
@@ -253,6 +259,38 @@ print('200',end='')
         same_cache.mkdir()
         self.assertTrue(module.select_core("github", "https://api.github.com/repos/YouEye-Platform/YouEye/releases", "stable", "main", "", [self.root/"index.json"], str(destination), str(same_cache), {"keys":self.keys}, self.keys["stable"]))
         self.assertTrue(all("/youeye-v0.5.9/blob-" in destination.read_text().splitlines()[i] for i in [1,2,3,5,6,7]))
+
+    def test_signed_marker_requires_complete_pair_before_sequence_or_installer_selection(self):
+        self.core_fixture()
+        spec = importlib.util.spec_from_file_location("core_bootstrap", ROOT/"releasecache/core_bootstrap.py")
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        module.fetch = lambda url, limit: (self.root/url.rsplit('/',1)[-1]).read_bytes()
+        manifest=json.loads((self.root/'core-release.json').read_bytes())
+        spine=next(member for member in manifest['members'] if member['role']=='spine')
+        provenance=encoded({'core_metadata':'paired-v2'})
+        for field,name,data in [('provenance','spine-provenance.json',provenance)]:
+            (self.root/name).write_bytes(data)
+            spine[field]={'name':name,'url':spine['source']+'/releases/download/'+spine['tag']+'/'+name,'sha256':digest(data),'size_bytes':len(data)}
+        sums=''.join(blob['sha256']+'  '+blob['name']+'\n' for blob in [spine['artifact'],spine['provenance'],spine['sbom']]).encode()
+        for field,name,data in [('checksums','spine-SHA256SUMS',sums),('signature','spine-SHA256SUMS.sig',self.sign(sums,'stable'))]:
+            (self.root/name).write_bytes(data)
+            spine[field]={'name':name,'url':spine['source']+'/releases/download/'+spine['tag']+'/'+name,'sha256':digest(data),'size_bytes':len(data)}
+        raw=encoded(manifest)
+        (self.root/'core-release.json').write_bytes(raw);(self.root/'core-release.json.sig').write_bytes(self.sign(raw,'stable'))
+        cache=self.root/'paired-cache'; cache.mkdir(); destination=self.root/'paired-selection'
+        def select(): return module.select_core('github','https://api.github.com/repos/YouEye-Platform/YouEye/releases','stable','main','',[self.root/'index.json'],str(destination),str(cache),{'keys':self.keys},self.keys['stable'])
+        with self.assertRaisesRegex(ValueError,'Required canonical'): select()
+        self.assertFalse(destination.exists()); self.assertEqual(list(cache.iterdir()),[])
+        canonical=module.metadata_json(module.metadata_from_execution(manifest))
+        pair=module.metadata_json({'schema':'youeye.core-metadata-pair.v1','source_id':digest(manifest['source'].encode()),'branch':manifest['branch'],'sequence':manifest['sequence'],'execution_manifest_sha256':digest(raw),'canonical_manifest_sha256':digest(canonical),'normalized_identity_sha256':digest(canonical),'signer_sha256':manifest['signer_sha256']})
+        releases=json.loads((self.root/'index.json').read_bytes())
+        for name,data in zip(module.METADATA_ASSETS,[canonical,self.sign(canonical,'stable'),pair,self.sign(pair,'stable')]):
+            (self.root/name).write_bytes(data)
+            releases[0]['assets'].append({'name':name,'browser_download_url':manifest['source']+'/releases/download/'+manifest['tag']+'/'+name})
+        (self.root/'index.json').write_bytes(encoded(releases))
+        self.assertTrue(select())
+        receipt=json.loads(Path(str(destination)+'.core').read_text())
+        self.assertEqual(receipt['manifest_sha256'],digest(raw)); self.assertEqual(receipt['metadata_schema'],'youeye.core-metadata.v2')
 
     def test_distribution_bootstrap_without_github_api(self):
         self.fixture("stable", "valid")

@@ -22,7 +22,7 @@ import {
   infrastructureChannelSource,
   type ResolvedInfrastructureRelease,
 } from './release-resolver';
-import { signedReleaseVerificationShell, verifySignedReleaseArtifactBuffer } from '@/lib/releases/verify';
+import { preparedSignedReleaseVerificationShell, verifySignedReleaseArtifactBuffer } from '@/lib/releases/verify';
 import { effectiveChannel } from '@/lib/updates/channels';
 import { verifyInstalledProductReceipt } from '@/lib/releases/product-release';
 import {
@@ -453,6 +453,12 @@ async function installNodeAndApp(
   const trustScope = spec.name === 'ui' ? 'ui' : 'app';
   const selectedCore = spec.name === 'ui' ? selectedCoreArtifact(releaseURL, artifactSHA256, 'ui') : null;
   const digestPath = selectedCore ? '/etc/youeye/core-artifact-sha256' : `${spec.appDir}/.youeye-artifact-sha256`;
+  const cachedRelease = marketArtifact ? null : await cachedReleaseBytes(releaseURL);
+  if (cachedRelease) await verifySignedReleaseArtifactBuffer(releaseURL, cachedRelease, 'standalone.tar', artifactSHA256, trustScope);
+  const releaseVerification = !marketArtifact && !cachedRelease
+    ? await preparedSignedReleaseVerificationShell(releaseURL, '/tmp/app.tar', artifactSHA256, trustScope)
+    : '';
+
   if (selectedCore) {
     const directory = await execShell(cn, 'mkdir -p /etc/youeye && chmod 0700 /etc/youeye', { timeout: 10_000 });
     if (directory.exitCode !== 0) throw new Error('Cannot prepare protected core component identity');
@@ -486,9 +492,7 @@ async function installNodeAndApp(
     await incusUploadFile(cn, '/tmp/app.tar', bytes, { timeout: 300_000, mode: '0600' });
   }
 
-  const cachedRelease = marketArtifact ? null : await cachedReleaseBytes(releaseURL);
   if (cachedRelease) {
-    await verifySignedReleaseArtifactBuffer(releaseURL, cachedRelease, 'standalone.tar', artifactSHA256, trustScope);
     await incusUploadFile(cn, '/tmp/app.tar', cachedRelease, { timeout: 300_000, mode: '0600' });
   }
   const artifactPreparation = cachedRelease
@@ -504,7 +508,7 @@ async function installNodeAndApp(
       ${selectedCoreDownloadShell(releaseURL, '/tmp/app.tar')}
     }
     retry 3 5 download_selected_release
-    ${signedReleaseVerificationShell(releaseURL, '/tmp/app.tar', artifactSHA256, trustScope)}
+    ${releaseVerification}
     `;
 
   const downloadScript = `

@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { recoverableRestoreSelection, waitForSetupRestoreStatus, type SetupRestoreSelection } from './restore-status';
+import { randomBrowserUUID } from '@/lib/browser-random';
 
 type StepStatus = 'pending' | 'running' | 'done' | 'error';
 
@@ -141,7 +142,7 @@ export default function SetupRestore({ onComplete, onBack }: Props) {
       const csrfResponse = await fetch('/api/auth/csrf', { cache: 'no-store' });
       const csrfBody = await csrfResponse.json().catch(() => ({}));
       if (!csrfResponse.ok || typeof csrfBody.csrfToken !== 'string') throw new Error(translateInterface("ma40ce2df5560"));
-      const id = resuming ? operationId.current! : operationId.current ?? crypto.randomUUID();
+      const id = resuming ? operationId.current! : operationId.current ?? randomBrowserUUID();
       operationId.current = id;
       sessionStorage.setItem('youeye-setup-restore-operation', id);
       submitted = true;

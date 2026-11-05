@@ -24,6 +24,30 @@ core_fetch_file() (
 		--output "$fetch_path" "$fetch_mirror"
 )
 
+# Called only after the original role-signed checksum envelope was verified.
+# Reject duplicate fields as well as unknown markers before any downloaded code.
+core_metadata_capability() {
+	python3 - "$1" <<'CORE_METADATA_CAPABILITY'
+import json, sys
+def pairs(items):
+    result = {}
+    for key, value in items:
+        if key in result: raise ValueError('Duplicate signed provenance field')
+        result[key] = value
+    return result
+with open(sys.argv[1], encoding='utf-8') as source:
+    provenance = json.load(source, object_pairs_hook=pairs,
+                           parse_constant=lambda value: (_ for _ in ()).throw(ValueError('Non-finite provenance number')))
+if not isinstance(provenance, dict): raise ValueError('Original provenance must be an object')
+if 'core_metadata' not in provenance:
+    print('legacy')
+elif provenance['core_metadata'] == 'paired-v2':
+    print('paired-v2')
+else:
+    raise ValueError('Unsupported signed metadata capability')
+CORE_METADATA_CAPABILITY
+}
+
 # The public Core bridge is separate from the legacy Plan 1 development image
 # transition below. It never replaces the baked executable or an installed cache.
 core_bootstrap() (
@@ -107,6 +131,13 @@ core_bootstrap() (
 		name=$(jq -er --arg f "$field" '.[$f].name' "$work/member.json")
 		[ "$(awk -v name="$name" '$2==name {count++; digest=$1} END {if(count==1) print digest}' "$work/checksums")" = "$(jq -er --arg f "$field" '.[$f].sha256' "$work/member.json")" ]
 	done
+	metadata_capability=$(core_metadata_capability "$work/provenance")
+	metadata_advertised=false
+	if [ -n "$inputs" ]; then
+		for name in core-release-v2.json core-release-v2.json.sig core-compatibility.json core-compatibility.json.sig; do
+			if [ -e "$inputs/$name" ] || [ -L "$inputs/$name" ]; then metadata_advertised=true; fi
+		done
+	fi
 	artifact_sha=$(jq -er '.artifact.sha256' "$work/member.json")
 	manifest_sha=$(sha256sum "$work/core-release.json" | awk '{print $1}')
 	root=/var/lib/youeye-state/core-update
@@ -128,6 +159,14 @@ core_bootstrap() (
 			sync -f "$root/bootstrap/$artifact_sha"
 		fi
 	done
+	if [ "$metadata_capability" = paired-v2 ] || [ "$metadata_advertised" = true ]; then
+		# This trusted native reader authenticates both signed representations and
+		# all current original role authorities before bootstrap can create work.
+		# A required/partial offline bundle cannot fall back to a network legacy read.
+		set -- update core verify-metadata --manifest "$work/core-release.json" --signature "$work/core-release.json.sig"
+		if [ -n "$inputs" ]; then set -- "$@" --inputs "$inputs"; fi
+		"$binary" "$@"
+	fi
 	# Same request is retained across interruption. Normal scoped authority,
 	# machine identity, compatibility and paired recovery checks still run.
 	set -- update core bootstrap --request "stable-bootstrap-$manifest_sha" --manifest-sha256 "$manifest_sha"

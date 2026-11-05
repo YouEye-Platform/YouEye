@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/channels"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 	"github.com/youeye-platform/YouEye/spine/internal/releases"
+	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 )
 
 var applianceExecutablePath = os.Executable
@@ -20,6 +22,13 @@ func verifyApplianceReleaseSet(manifest appliance.Manifest, cfg *config.Config) 
 	releaseSet := manifest.ReleaseSet
 	if releaseSet == nil {
 		return nil
+	}
+	policy, policyErr := systemupdate.LoadReleasePolicy(deploymentPolicyPath)
+	if policyErr == nil && policy.CoreManifestSHA256 != "" {
+		return verifyCoreDeploymentReleaseSet(manifest, cfg, policy)
+	}
+	if policyErr != nil && !errors.Is(policyErr, os.ErrNotExist) {
+		return policyErr
 	}
 	if Version != releaseSet.Spine.Version {
 		return fmt.Errorf("appliance release set Spine version %s does not match baked binary %s", releaseSet.Spine.Version, Version)

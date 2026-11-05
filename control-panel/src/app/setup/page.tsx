@@ -96,6 +96,9 @@ export default function SetupPage() {
   const [yenTermsVersion, setYenTermsVersion] = useState('');
   const [yenCtAccepted, setYenCtAccepted] = useState(false);
   const [yenClaimProof, setYenClaimProof] = useState('');
+  const [yenVerifiedSetup,setYenVerifiedSetup]=useState(false);
+  const [yenSetupSession,setYenSetupSession]=useState('');
+  useEffect(()=>{setYenClaimProof('');setYenSetupSession('');},[yenName,tlsChoice]);
   const [yenReusing, setYenReusing] = useState(false);
   const [byoDomain, setByoDomain] = useState('');
   const [byoProviderToken, setByoProviderToken] = useState('');
@@ -357,7 +360,8 @@ export default function SetupPage() {
           yen_name: tlsChoice === 'youeye-names' ? yenName : undefined,
           yen_terms_version: tlsChoice === 'youeye-names' ? yenTermsVersion : undefined,
           yen_ct_accepted: tlsChoice === 'youeye-names' ? yenCtAccepted : undefined,
-          yen_human_verification_proof: tlsChoice === 'youeye-names' && !yenReusing ? yenClaimProof : undefined,
+          yen_human_verification_proof: tlsChoice === 'youeye-names' && !yenReusing && !yenVerifiedSetup ? yenClaimProof : undefined,
+          yen_verified_setup_session: tlsChoice === 'youeye-names' && !yenReusing && yenVerifiedSetup ? yenSetupSession : undefined,
           byo_dns_provider: tlsChoice === 'byo-provider'
             ? { provider: 'cloudflare', token: byoProviderToken }
             : undefined,
@@ -369,7 +373,7 @@ export default function SetupPage() {
     } finally {
       setupRequestInFlight.current = false;
     }
-  }, [siteName, domain, subdomains, nameStyle, brandingRevision, iconConfig, identityName, selectedLanguage, tlsChoice, yenName, yenTermsVersion, yenCtAccepted, yenClaimProof, yenReusing, byoProviderToken, t, setupProgressOptions, recordSetupCompletion, recordSetupFailure]);
+  }, [siteName, domain, subdomains, nameStyle, brandingRevision, iconConfig, identityName, selectedLanguage, tlsChoice, yenName, yenTermsVersion, yenCtAccepted, yenClaimProof, yenSetupSession, yenVerifiedSetup, yenReusing, byoProviderToken, t, setupProgressOptions, recordSetupCompletion, recordSetupFailure]);
 
   // Start provisioning when we enter step 4
   const provisioningStarted = useRef(false);
@@ -459,6 +463,7 @@ export default function SetupPage() {
             yenCtAccepted={yenCtAccepted}
             setYenCtAccepted={setYenCtAccepted}
             setYenReusing={setYenReusing}
+            setYenVerifiedSetup={setYenVerifiedSetup}
             byoDomain={byoDomain}
             setByoDomain={setByoDomain}
             byoProviderToken={byoProviderToken}
@@ -495,7 +500,8 @@ export default function SetupPage() {
           <SetupNamesVerification
             name={yenName}
             fqdn={yenFqdn}
-            onVerified={(proof) => { setYenClaimProof(proof); goToStep(4); }}
+            useVerifiedSetup={yenVerifiedSetup}
+            onVerified={(proof,kind) => { if(kind==='verified_setup')setYenSetupSession(proof);else setYenClaimProof(proof); goToStep(4); }}
             onBack={() => goToStep(2, 'back')}
           />
         )}

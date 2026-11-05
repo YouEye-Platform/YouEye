@@ -115,21 +115,31 @@ func installApplianceWithRunner(cfg installConfig, ch chan<- engineMsg, runner a
 		}
 		defer os.Remove(answerPath)
 	}
+	proofPath := ""
+	if input.CoreRelease != nil {
+		proofPath, err = writeCoreMetadataSidecar(input.CoreMetadataProof)
+		if err != nil {
+			sendErr(ch, err)
+			return
+		}
+		defer os.Remove(proofPath)
+	}
 	assets := applianceImageAssets{
-		Operation:       "erase-install",
-		RootPayload:     appliancePayloadFromVerified(root),
-		RecoveryPayload: appliancePayloadFromVerified(recovery),
-		SystemAUKIPath:  systemAUKI.Path,
-		SystemBUKIPath:  systemBUKI.Path,
-		RecoveryUKIPath: recoveryUKI.Path,
-		ManifestPath:    cfg.ApplianceManifestPath,
-		SignaturePath:   cfg.ApplianceSignaturePath,
-		ManifestSHA256:  bundle.ManifestSHA256,
-		ImageVersion:    bundle.Manifest.ImageVersion,
-		TransactionID:   input.TransactionID,
-		Network:         input.Network,
-		AnswerPath:      answerPath,
-		AuthorizedKeys:  input.AuthorizedKeys,
+		Operation:             "erase-install",
+		RootPayload:           appliancePayloadFromVerified(root),
+		RecoveryPayload:       appliancePayloadFromVerified(recovery),
+		SystemAUKIPath:        systemAUKI.Path,
+		SystemBUKIPath:        systemBUKI.Path,
+		RecoveryUKIPath:       recoveryUKI.Path,
+		ManifestPath:          cfg.ApplianceManifestPath,
+		SignaturePath:         cfg.ApplianceSignaturePath,
+		ManifestSHA256:        bundle.ManifestSHA256,
+		ImageVersion:          bundle.Manifest.ImageVersion,
+		TransactionID:         input.TransactionID,
+		Network:               input.Network,
+		AnswerPath:            answerPath,
+		CoreMetadataProofPath: proofPath,
+		AuthorizedKeys:        input.AuthorizedKeys,
 	}
 	if preserving {
 		assets.Operation = "preserve-reinstall"
@@ -204,6 +214,7 @@ func installApplianceWithRunner(cfg installConfig, ch chan<- engineMsg, runner a
 type applianceInstallInput struct {
 	ReleaseCacheSHA256 string
 	CoreRelease        *coreAnswerSelection
+	CoreMetadataProof  []byte
 	Operation          string
 	TransactionID      string
 	TargetSerial       string

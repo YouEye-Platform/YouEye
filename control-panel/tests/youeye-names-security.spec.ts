@@ -2,15 +2,17 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test, { before } from 'node:test';
+import test, { after, before } from 'node:test';
 
 const testRoot = mkdtempSync(path.join(tmpdir(), 'youeye-names-security-'));
 process.env.YOUEYE_NAMES_DATA_DIR = path.join(testRoot, 'state');
 process.env.YOUEYE_NAMES_URL = 'https://names.test';
 process.env.YOUEYE_NAMES_EXPECTED_SERVICE_ID = 'youeye-names-official';
+process.env.YOUEYE_APP_UPDATE_JOURNAL_DIR = path.join(testRoot, 'app-updates');
+after(() => rmSync(testRoot, { recursive: true, force: true }));
 
 let identityModule: typeof import('../src/lib/youeye-names/identity');
 let certificateModule: typeof import('../src/lib/youeye-names/certificate');
@@ -261,6 +263,88 @@ test('proof-of-work runs in a worker and returns a valid bounded nonce', async (
   assert.equal(digest[1] >> 6, 0);
 });
 
+async function certificateRequestFixture<T>(
+  status: string,
+  run: (fixture: { request: () => ReturnType<typeof clientModule.requestCertificate>; bodies: unknown[] }) => Promise<T>,
+  requestId: string | null = 'existing-certificate-reference',
+): Promise<T> {
+  clientModule.resetBrokerRegistrationCache();
+  const identity = await identityModule.getInstallIdentity();
+  const identityBefore = structuredClone(identity);
+  const originalFetch = globalThis.fetch;
+  const bodies: unknown[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith('/v1/service-info')) return Response.json({ ok: true, service: {
+      id: 'youeye-names-official', canonicalOrigin: 'https://names.test', managedZone: 'ui.bingo',
+      apiVersion: 'v1', environment: 'development',
+      capabilities: ['install-signatures', 'lease-lifecycle', 'certificate-lifecycle'],
+      certificateTermsVersion: 'accepted-terms', privacyNoticeVersion: 'privacy-v1',
+    } });
+    if (url.endsWith('/v1/installs/register')) return Response.json({ ok: true, install: { fingerprint: identity.fingerprint } });
+    assert.equal(url, 'https://names.test/v1/leases/quiet-forest/certificates/request');
+    assert.equal(init?.method, 'POST');
+    assert.equal(new Headers(init?.headers).get('x-youeye-install-fingerprint'), identity.fingerprint);
+    assert.match(String(new Headers(init?.headers).get('x-youeye-signature')), /^[A-Za-z0-9_-]+$/);
+    bodies.push(JSON.parse(String(init?.body)));
+    return Response.json({ ok: true, idempotent: true, ...(requestId ? { requestId } : {}), job: {
+      id: 'original-certificate-job', type: 'initial_issue', status, provider: 'google-public-ca',
+      csrPem: 'synthetic-original-csr-material', privateKeyPem: 'synthetic-private-key-material',
+      error: 'synthetic-provider-diagnostic', proof: 'synthetic-provider-proof',
+    } }, { status: 202 });
+  };
+  try {
+    return await run({ bodies, request: () => clientModule.requestCertificate(
+      'quiet-forest', 'synthetic-original-csr-material', 'accepted-terms', true, identity,
+    ) });
+  } finally {
+    globalThis.fetch = originalFetch;
+    clientModule.resetBrokerRegistrationCache();
+    assert.deepEqual(identity, identityBefore);
+  }
+}
+
+test('certificate request immediately reports an existing terminal failed job safely', async () => {
+  await certificateRequestFixture('failed', async ({ request, bodies }) => {
+    await assert.rejects(request(), (error: unknown) => {
+      assert.ok(error instanceof clientModule.NamesBrokerError);
+      assert.equal(error.status, 409);
+      assert.equal(error.code, 'certificate_request_failed');
+      assert.equal(error.requestId, 'existing-certificate-reference');
+      const message = clientModule.namesErrorMessage(error);
+      assert.match(message, /address and setup are saved/);
+      assert.match(message, /recover the existing certificate request/);
+      assert.match(message, /Reference: existing-certificate-reference$/);
+      assert.doesNotMatch(message + JSON.stringify(error), /synthetic-|csrPem|privateKeyPem|original-certificate-job/);
+      return true;
+    });
+    assert.deepEqual(bodies, [{ csrPem: 'synthetic-original-csr-material', termsVersion: 'accepted-terms', certificateTransparencyAccepted: true }]);
+  });
+});
+
+test('certificate request preserves every active or issued response and the original request body', async () => {
+  for (const status of ['queued', 'running', 'retry_wait', 'issued']) {
+    await certificateRequestFixture(status, async ({ request, bodies }) => {
+      assert.deepEqual(await request(), { id: 'original-certificate-job', type: 'initial_issue', status, provider: 'google-public-ca' });
+      assert.deepEqual(bodies, [{ csrPem: 'synthetic-original-csr-material', termsVersion: 'accepted-terms', certificateTransparencyAccepted: true }]);
+    });
+  }
+});
+
+test('certificate request terminal failure remains actionable without a broker request ID', async () => {
+  await certificateRequestFixture('failed', async ({ request, bodies }) => {
+    await assert.rejects(request(), (error: unknown) => {
+      assert.ok(error instanceof clientModule.NamesBrokerError);
+      assert.equal(error.code, 'certificate_request_failed');
+      assert.equal(error.requestId, undefined);
+      assert.match(clientModule.namesErrorMessage(error), /address and setup are saved/);
+      assert.doesNotMatch(clientModule.namesErrorMessage(error), /Reference:|undefined|synthetic-/);
+      return true;
+    });
+    assert.equal(bodies.length, 1);
+  }, null);
+});
+
 test('broker registration challenge and signed preview use validated contracts', async () => {
   clientModule.resetBrokerRegistrationCache();
   const originalFetch = globalThis.fetch;
@@ -315,6 +399,65 @@ test('broker registration challenge and signed preview use validated contracts',
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('fresh setup previews need no registration and each verified session advances its own registration', async () => {
+  clientModule.resetBrokerRegistrationCache();
+  const originalFetch=globalThis.fetch;
+  const registrations:Array<Record<string,unknown>>=[];
+  const challenges:Array<Record<string,unknown>>=[];
+  const claims:Array<Record<string,unknown>>=[];
+  const identity=await identityModule.getInstallIdentity();
+  globalThis.fetch=async(input,init)=>{
+    const url=String(input);
+    if(url.endsWith('/v1/service-info'))return Response.json({ok:true,service:{id:'youeye-names-official',canonicalOrigin:'https://names.test',managedZone:'ui.bingo',apiVersion:'v1',environment:'development',capabilities:['install-signatures','lease-lifecycle','certificate-lifecycle','verified-setup-v1'],certificateTermsVersion:'2026-08-20',privacyNoticeVersion:'2026-08-30'}});
+    const body=JSON.parse(String(init?.body));
+    if(url.endsWith('/v1/human-verification/challenges')){
+      challenges.push(body);assert.equal(body.purpose,'verified_setup');assert.equal(body.publicKey,identity.publicKeyRaw);
+      const name=body.name || `preview-${challenges.length}`;
+      return Response.json({ok:true,siteKey:'public-site-key',action:'youeye_names_enrollment',cData:'bound-cdata',context:'bound-context'.repeat(5),name,expiresAt:new Date(Date.now()+60000).toISOString(),embeddedEnrollmentUrl:'https://names.test/enroll/embedded?admission=parent-grant',enrollmentUrl:'https://names.test/enroll/setup?admission=parent-grant#context=bound-context'});
+    }
+    if(url.endsWith('/v1/installs/register')){
+      registrations.push(body);return Response.json({ok:true,idempotent:true,install:{fingerprint:identity.fingerprint}});
+    }
+    if(url.endsWith('/v1/leases/claim')){
+      claims.push(body);const headers=new Headers(init?.headers);
+      assert.equal(headers.get('x-youeye-service-origin'),'https://names.test');
+      assert.match(String(headers.get('x-youeye-signature')),/^[A-Za-z0-9_-]+$/);
+      const timestamp=new Date().toISOString();
+      return Response.json({ok:true,lease:{name:body.name,installFingerprint:identity.fingerprint,status:'pending_certificate',currentIp:body.currentIp,createdAt:timestamp,updatedAt:timestamp,lastHeartbeatAt:null,certificateFingerprint:null,certificateExpiresAt:null}});
+    }
+    throw new Error('unexpected_names_route');
+  };
+  try{
+    const previews=await clientModule.previewFreshSetupNames({count:3,currentIp:'192.168.1.50',parentOrigin:'https://192.168.1.50'});
+    assert.equal(previews.length,3);assert.equal(challenges.length,3);assert.equal(registrations.length,0);assert.equal(claims.length,0);
+    // Ordinary registration can already be cached from an earlier operation.
+    await clientModule.registerInstall('legacy-registration-proof-value');
+    const first='synthetic-setup-session-credential'.repeat(3);
+    const second='different-setup-session-credential'.repeat(3);
+    await clientModule.registerVerifiedSetup(first);await clientModule.registerVerifiedSetup(first);await clientModule.registerVerifiedSetup(second);
+    assert.equal(registrations.length,3);
+    assert.equal(registrations[1].verifiedSetupSession,first);assert.equal(registrations[2].verifiedSetupSession,second);
+    assert.equal(registrations[1].humanVerificationProof,undefined);
+    await clientModule.claimName(previews[0].name,'192.168.1.50',undefined,undefined,second);
+    assert.equal(claims.length,1);assert.equal(claims[0].verifiedSetupSession,second);assert.equal(claims[0].humanVerificationProof,undefined);
+    assert.equal(registrations.length,3);
+  }finally{globalThis.fetch=originalFetch;clientModule.resetBrokerRegistrationCache();}
+});
+
+test('a mismatched registration identity never becomes a cached signed authority',async()=>{
+  clientModule.resetBrokerRegistrationCache();const originalFetch=globalThis.fetch;let signedCalls=0;
+  globalThis.fetch=async(input)=>{
+    const url=String(input);
+    if(url.endsWith('/v1/service-info'))return Response.json({ok:true,service:{id:'youeye-names-official',canonicalOrigin:'https://names.test',managedZone:'ui.bingo',apiVersion:'v1',environment:'development',capabilities:['install-signatures','lease-lifecycle','certificate-lifecycle'],certificateTermsVersion:'2026-08-20',privacyNoticeVersion:'2026-08-30'}});
+    if(url.endsWith('/v1/installs/register'))return Response.json({ok:true,install:{fingerprint:'wrong-install-fingerprint-value-1234567890'}});
+    signedCalls++;throw new Error('unexpected_signed_request');
+  };
+  try{
+    await assert.rejects(clientModule.registerVerifiedSetup('synthetic-setup-session-credential'.repeat(3)),{code:'broker_registration_identity_mismatch'});
+    await assert.rejects(clientModule.previewNames(1),{code:'broker_registration_identity_mismatch'});assert.equal(signedCalls,0);
+  }finally{globalThis.fetch=originalFetch;clientModule.resetBrokerRegistrationCache();}
 });
 
 test('registration and exact-name claim use separate bound human-verification challenges', async () => {

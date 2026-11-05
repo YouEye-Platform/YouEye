@@ -27,14 +27,21 @@ func installCoreServiceSelection(root *os.File, r *CoreServiceStage, previous, n
 	}
 	defer dir.Close()
 	type part struct {
-		name     string
-		old, new []byte
-		limit    int64
+		name        string
+		old, new    []byte
+		limit       int64
+		optionalOld bool
 	}
-	parts := []part{{"core-release.json", previous.Raw, next.Raw, 1 << 20}, {"core-release.json.sig", previous.Signature, next.Signature, 64}}
+	parts := []part{{"core-release.json", previous.Raw, next.Raw, 1 << 20, false}, {"core-release.json.sig", previous.Signature, next.Signature, 64, false}}
+	if len(next.MetadataProof) > 0 {
+		parts = append(parts, part{CoreMetadataProofName, previous.MetadataProof, next.MetadataProof, CoreMetadataProofMaxBytes, coreLegacyMetadataAbsence(previous)})
+	}
 	for _, p := range parts {
 		actual, err := readCoreContainerStateAtLimit(dir, p.name, p.limit)
 		if err != nil {
+			if errors.Is(err, unix.ENOENT) && p.optionalOld && r.SelectionState != "installed" {
+				continue
+			}
 			return err
 		}
 		isNew := bytes.Equal(actual, p.new)

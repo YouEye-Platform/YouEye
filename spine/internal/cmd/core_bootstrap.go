@@ -186,16 +186,9 @@ func init() {
 	coreUpdateCmd.AddCommand(command)
 }
 
-// The temporary reader is not the installed service. During a retained
-// bootstrap, observe the canonical baked executable against the running image.
+// Temporary readers retain their explicit runtime binding. Installed membership
+// always observes the canonical baked executable against the immutable image.
 func coreInstalledExecutable() (string, bool, error) {
-	p, err := (systemupdate.CoreManager{Root: systemupdate.CoreStatePath}).BootstrapExecutable(systemupdate.CoreDevelopmentTrustPath)
-	if err != nil {
-		return "", false, err
-	}
-	if p != "" {
-		return "/usr/local/bin/youeye", true, nil
-	}
-	p, err = os.Executable()
-	return p, false, err
+	reader, err := readCoreInstalledReader()
+	return reader.Executable, reader.Bound, err
 }

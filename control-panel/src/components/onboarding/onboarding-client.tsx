@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProfileIconPicker } from "@/components/settings-shell/profile-icon-picker";
 import { useRef as useInterfaceTranslationRef } from "react";
+import { randomBrowserUUID } from "@/lib/browser-random";
 
 type Step = "welcome" | "icon" | "timeline" | "review" | "done";
 type Snapshot = { completed: boolean; has_pin: boolean; timeline: { configured: boolean; enabled: boolean; revision: string | null } };
@@ -94,8 +95,8 @@ export function OnboardingClient({ username }: { username: string }) {
   async function finish() {
     if (!snapshot || choice === null || busy || navigationPending) return;
     setBusy(true); setError("");
-    requestId.current ||= crypto.randomUUID();
     try {
+      requestId.current ||= randomBrowserUUID();
       if (choice && !snapshot.has_pin) {
         if (!validTimelineSecret(pin) || pin !== repeatPin) throw new Error(translateInterface("mb99458a52a21"));
         const res = await fetch("/api/ui-settings/pin/create", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin }) });

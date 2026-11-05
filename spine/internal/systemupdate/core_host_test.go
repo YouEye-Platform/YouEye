@@ -108,8 +108,9 @@ func testCoreHostStages(t *testing.T, blobOnly bool) {
 		}
 		responses = mirrored
 	}
-	raw, _ = json.Marshal(r)
-	selection := CoreHostSelection{Raw: raw, Signature: ed25519.Sign(key, raw)}
+	metadataFiles := metadataFixtureEnvelope(t, &r, key, false)
+	selection := metadataFixtureSelection(t, r, key, key, metadataFiles)
+	raw = selection.Raw
 	options, err := f.manager.CoreHostOptions(selection)
 	if err != nil {
 		t.Fatal(err)

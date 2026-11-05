@@ -1,6 +1,7 @@
 package systemupdate
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/x509"
@@ -16,8 +17,10 @@ import (
 // CoreHostSelection carries the exact signed assembly, never a caller supplied
 // artifact URL override. The host verifies its independent signing authority.
 type CoreHostSelection struct {
-	Raw       []byte
-	Signature []byte
+	Raw                []byte
+	Signature          []byte
+	MetadataProof      []byte
+	MetadataAdvertised bool
 }
 
 func (m *Manager) CoreHostOptions(selection CoreHostSelection) (SourceOptions, error) {
@@ -37,10 +40,15 @@ func (m *Manager) CoreHostOptions(selection CoreHostSelection) (SourceOptions, e
 
 // Keep delivery scoped to this invocation's authenticated selection. Never
 // mutate a shared client's transport or teach a legacy request these aliases.
-func (m *Manager) withCoreTransport(selection *CoreHostSelection) (*Manager, error) {
+func (m *Manager) withCoreTransport(ctx context.Context, selection *CoreHostSelection) (*Manager, error) {
 	if selection == nil {
 		return m, nil
 	}
+	verified, _, err := EnsureCoreMetadata(ctx, *selection, m.config.TrustKeyPath, "", m.config.HTTPClient, "")
+	if err != nil {
+		return nil, err
+	}
+	*selection = verified
 	r, _, err := VerifyCoreSelection(selection.Raw, selection.Signature, m.config.TrustKeyPath)
 	if err != nil {
 		return nil, err
@@ -200,7 +208,21 @@ func (m *Manager) verifyTransactionManifest(journal Journal, manifestPath string
 	if err != nil {
 		return VerifiedManifest{}, err
 	}
-	verified, digest, err := m.verifyHostManifest(manifestPath, manifestPath+".sig", &CoreHostSelection{Raw: raw, Signature: sig})
+	selection := CoreHostSelection{Raw: raw, Signature: sig}
+	proof, e := ReadCoreState(filepath.Join(dir, CoreMetadataProofName), CoreMetadataProofMaxBytes)
+	if e == nil {
+		selection.MetadataProof = proof
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return VerifiedManifest{}, e
+	}
+	selection, _, err = EnsureCoreMetadata(context.Background(), selection, m.config.TrustKeyPath, "", m.config.HTTPClient, "")
+	if err != nil {
+		return VerifiedManifest{}, err
+	}
+	if err = atomicWrite(filepath.Join(dir, CoreMetadataProofName), selection.MetadataProof, 0600); err != nil {
+		return VerifiedManifest{}, err
+	}
+	verified, digest, err := m.verifyHostManifest(manifestPath, manifestPath+".sig", &selection)
 	if err != nil {
 		return VerifiedManifest{}, err
 	}
@@ -217,7 +239,13 @@ func (m *Manager) persistHostCore(dir string, selection *CoreHostSelection) erro
 	if err := atomicWrite(filepath.Join(dir, "core-release.json"), selection.Raw, 0600); err != nil {
 		return err
 	}
-	return atomicWrite(filepath.Join(dir, "core-release.json.sig"), selection.Signature, 0600)
+	if err := atomicWrite(filepath.Join(dir, "core-release.json.sig"), selection.Signature, 0600); err != nil {
+		return err
+	}
+	if len(selection.MetadataProof) > 0 {
+		return atomicWrite(filepath.Join(dir, CoreMetadataProofName), selection.MetadataProof, 0600)
+	}
+	return nil
 }
 
 // CheckCoreHostCommit prevents independent boot-health machinery from blessing

@@ -355,7 +355,23 @@
     "intensity": "Intensität",
     "checkingSetupStatus": "Einrichtungsstatus wird geprüft…",
     "setupStatusUnknown": "Die Einrichtung läuft möglicherweise noch. Prüfe den Status, bevor du sie erneut startest.",
-    "checkSetupStatus": "Einrichtungsstatus prüfen"
+    "checkSetupStatus": "Einrichtungsstatus prüfen",
+    "verifiedNames": {
+      "explanation": "Eine Prüfung bestätigt diese Installation und deine gewählte Adresse. Schließe sie hier ab oder öffne die Prüfseite, wenn sie nicht lädt.",
+      "waiting": "Verbindung zur Prüfung wird hergestellt…",
+      "challenge": "Schließe die Sicherheitsprüfung ab.",
+      "blocked": "Die Prüfung ist hier möglicherweise blockiert. Öffne die Prüfseite, um fortzufahren.",
+      "expired": "Die Prüfung ist abgelaufen. Versuche es erneut; deine gewählte Adresse bleibt erhalten.",
+      "failed": "Die Prüfung konnte nicht gestartet werden. Deine Auswahl bleibt erhalten. Versuche es erneut.",
+      "frameTitle": "Deine YouEye-Adresse bestätigen",
+      "openPage": "Prüfseite öffnen",
+      "manualFallback": "Bestätigungscode manuell übertragen",
+      "pasteHelp": "Öffne die Seite, schließe die Prüfung ab und füge den Bestätigungscode hier ein. Der Code läuft nach wenigen Minuten ab.",
+      "verificationCode": "Bestätigungscode",
+      "invalidCode": "Dieser Code passt nicht zur aktuellen Prüfung oder ist abgelaufen. Versuche es erneut.",
+      "useCode": "Bestätigungscode verwenden",
+      "retry": "Neue Prüfung starten"
+    }
   },
   "setupComplete": {
     "title": "Einrichtung abgeschlossen",

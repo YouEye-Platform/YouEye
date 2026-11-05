@@ -251,6 +251,13 @@ if $composition; then
     spine_input="${YOUEYE_COMPOSITION_SPINE_FILE:?Composition requires a verified released Spine binary}"
     [[ -f $spine_input && ! -L $spine_input ]] || { echo "Invalid composition Spine input" >&2; exit 1; }
     install -m 0755 -- "$spine_input" "$bin_dir/youeye"
+elif [[ -n ${YOUEYE_VERIFIED_SPINE_FILE:-} ]]; then
+    # The release coordinator authenticates the retained candidate envelope and
+    # binds the lock before entering this isolated unsigned builder. The exact
+    # signed lock digest below applies equally to reused and rebuilt binaries.
+    spine_input="$YOUEYE_VERIFIED_SPINE_FILE"
+    [[ $spine_input == /* && -f $spine_input && ! -L $spine_input ]] || { echo "Invalid verified Spine input" >&2; exit 1; }
+    install -m 0755 -- "$spine_input" "$bin_dir/youeye"
 else
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$source_dir/spine" build \
     -trimpath -buildvcs=false \

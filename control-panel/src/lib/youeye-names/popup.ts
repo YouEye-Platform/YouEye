@@ -1,5 +1,7 @@
 'use client';
 
+import { randomBrowserUUID } from '../browser-random';
+
 export type NamesEnrollmentPurpose = 'install_register' | 'lease_claim';
 
 type Challenge = {
@@ -79,7 +81,7 @@ export async function runNamesEnrollment(
   input: { name?: string; signal?: AbortSignal; accept: (proof: string) => Promise<void> | void },
 ): Promise<void> {
   if (input.signal?.aborted) throw new Error('Verification was cancelled.');
-  const sessionId = crypto.randomUUID();
+  const sessionId = randomBrowserUUID();
   const popup = window.open('about:blank', `youeye-names-${sessionId}`, 'popup,width=520,height=720,resizable=yes,scrollbars=yes');
   if (!popup) throw new Error('Verification was blocked. Allow popups for this YouEye address and try again.');
 

@@ -85,6 +85,9 @@ func defaultDevelopmentAccessPolicy() developmentAccessPolicy {
 
 func parseApplianceAnswer(raw []byte) (applianceAnswer, error) {
 	var answer applianceAnswer
+	if len(raw) > 18<<20 {
+		return answer, fmt.Errorf("appliance answer exceeds bounded signed selection limit")
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&answer); err != nil {

@@ -1,0 +1,36 @@
+{
+  "schema": "youeye.runtime-profile-contract.v1",
+  "component": "appliance",
+  "consumers": [
+    {
+      "id": "installer-core-selection",
+      "public_trust_input": "installer/internal/installer/public-release-trust.json",
+      "implementation_inputs": [
+        "installer/internal/installer/core_release.go",
+        "installer/internal/installer/core_metadata.go",
+        "installer/internal/installer/core_answer.go",
+        "installer/internal/installer/core_install_input.go",
+        "installer/internal/installer/public_release_trust.go",
+        "installer/internal/installer/proxmox_appliance_release.go",
+        "installer/internal/installer/provider_appliance.go",
+        "installer/internal/installer/appliance_commands.go",
+        "installer/internal/installer/appliance_answer.go",
+        "releasecache/core_release.go",
+        "releasecache/core_metadata_v2.go",
+        "releasecache/core_transport.go",
+        "releasecache/cache.go",
+        "releasecache/distribution.go",
+        "installer/scripts/install.sh",
+        "installer/scripts/embed-public-trust.py",
+        "installer/internal/installer/appliance-development.pub",
+        "releasecache/core_bootstrap.py",
+        "releasecache/distribution.py",
+        "releasecache/distribution-policy.json"
+      ],
+      "capabilities": [
+        "core-release-v1",
+        "core-metadata-pair-v2"
+      ]
+    }
+  ]
+}

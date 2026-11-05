@@ -202,6 +202,8 @@ export function namesErrorMessage(error: unknown): string {
     request_quarantined: 'YouEye Names has paused requests from this device.',
     admission_paused: 'New YouEye Names registrations are temporarily paused.',
     certificate_not_ready: 'Your secure certificate is still being prepared.',
+    certificate_request_failed:
+      'Certificate issuance failed. Your YouEye Names address and setup are saved. Contact support to recover the existing certificate request.',
     certificate_terms_version_required:
       'The YouEye Names certificate terms have changed. Please review them again.',
     install_already_has_active_lease:
@@ -296,7 +298,7 @@ async function fetchWithDeadline(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetch(url, { ...init, redirect: 'error', signal: controller.signal });
   } catch {
     if (controller.signal.aborted) {
       throw new NamesBrokerError({ status: 504, code: 'broker_request_timeout' });
@@ -425,17 +427,20 @@ async function ensureRegistered(
   identity: InstallIdentity,
   service: NamesService,
   humanVerificationProof?: string,
+  verifiedSetupSession?: string,
 ): Promise<void> {
-  const key = `${service.id}\0${service.canonicalOrigin}\0${identity.fingerprint}`;
+  const baseKey = `${service.id}\0${service.canonicalOrigin}\0${identity.fingerprint}`;
+  const key = verifiedSetupSession ? `${baseKey}\0setup\0${crypto.createHash("sha256").update(verifiedSetupSession).digest("hex")}` : baseKey;
   const existing = registrations.get(key);
   if (existing) return existing;
   const registration = withProof(async (proof) => {
     const body = {
       publicKey: identity.publicKeyRaw,
       ...(humanVerificationProof ? { humanVerificationProof } : {}),
+      ...(verifiedSetupSession ? { verifiedSetupSession } : {}),
       ...(proof ? { proof } : {}),
     };
-    await requestJson({
+    const registered = await requestJson({
       makeRequest: () =>
         fetchWithDeadline(`${service.canonicalOrigin}/v1/installs/register`, {
           method: 'POST',
@@ -450,10 +455,12 @@ async function ensureRegistered(
       }),
       retryable: true,
     });
+    if(registered.install.fingerprint!==identity.fingerprint) throw new NamesBrokerError({status:502,code:'broker_registration_identity_mismatch'});
   });
   registrations.set(key, registration);
   try {
     await registration;
+    registrations.set(baseKey, Promise.resolve());
   } catch (error) {
     registrations.delete(key);
     throw error;
@@ -628,6 +635,52 @@ export async function registerInstall(humanVerificationProof: string): Promise<v
   await ensureRegistered(identity, service, humanVerificationProof);
 }
 
+/** The setup credential is ephemeral and must advance this exact session even
+ * when ordinary registration is already cached for the key. */
+export async function registerVerifiedSetup(verifiedSetupSession: string): Promise<void> {
+  if (verifiedSetupSession.length < 64 || verifiedSetupSession.length > 8192) throw new Error('youeye_names_setup_session_invalid');
+  const [service, identity] = await Promise.all([discoverNamesService(), getInstallIdentity()]);
+  await ensureRegistered(identity, service, undefined, verifiedSetupSession);
+}
+
+const verifiedSetupChallengeSchema = humanVerificationChallengeResponseSchema.extend({
+  name: z.string().min(1).max(63), embeddedEnrollmentUrl: z.string().url(),
+});
+
+export async function createVerifiedSetupChallenge(input: { name?: string; currentIp: string; parentOrigin: string; sessionId: string }): Promise<import('./verified-setup-contract').VerifiedSetupChallenge> {
+  const [service, identity] = await Promise.all([discoverNamesService(), getInstallIdentity()]);
+  if (!service.capabilities.includes('verified-setup-v1')) throw new NamesBrokerError({status:409,code:'verified_setup_unsupported'});
+  const response = await requestJson({
+    makeRequest: () => fetchWithDeadline(`${service.canonicalOrigin}/v1/human-verification/challenges`, {
+      method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({purpose:'verified_setup',publicKey:identity.publicKeyRaw,...input}),
+    }), schema:verifiedSetupChallengeSchema,retryable:true,
+  });
+  const challenge = {purpose:'verified_setup' as const,serviceOrigin:service.canonicalOrigin,
+    enrollmentUrl:response.enrollmentUrl,embeddedEnrollmentUrl:response.embeddedEnrollmentUrl,
+    context:response.context,cdata:response.cData,publicKey:identity.publicKeyRaw,
+    installFingerprint:identity.fingerprint,name:response.name,currentIp:input.currentIp,
+    parentOrigin:input.parentOrigin,sessionId:input.sessionId,expiresAt:response.expiresAt};
+  const { validVerifiedSetupChallenge } = await import('./verified-setup-contract');
+  if ((input.name && response.name!==input.name) || !validVerifiedSetupChallenge(challenge,input.parentOrigin,input.sessionId)) throw new NamesBrokerError({status:502,code:'broker_setup_binding_mismatch'});
+  return challenge;
+}
+
+/** Anonymous signed contexts preview names without creating an install or
+ * spending human verification. A new final context binds the chosen name. */
+export async function previewFreshSetupNames(input: { count?: number; name?: string; currentIp: string; parentOrigin: string }): Promise<NamePreview[]> {
+  const service = await discoverNamesService();
+  const count = input.name ? 1 : Math.min(Math.max(input.count ?? 1,1),5);
+  const previews: NamePreview[] = [];
+  for (let attempt=0;previews.length<count && attempt<count*3;attempt++) {
+    const challenge = await createVerifiedSetupChallenge({name:input.name,currentIp:input.currentIp,parentOrigin:input.parentOrigin,sessionId:crypto.randomBytes(24).toString('base64url')});
+    const fqdn = `${challenge.name}.${service.managedZone}`;
+    validateManagedName(service,challenge.name,fqdn,`*.${fqdn}`);
+    if (!previews.some(item=>item.name===challenge.name)) previews.push({name:challenge.name,fqdn,wildcardFqdn:`*.${fqdn}`,available:true});
+  }
+  return previews;
+}
+
 /** Generated options are non-committing: no lease, DNS, or certificate work. */
 export async function previewNames(count: number): Promise<NamePreview[]> {
   const service = await discoverNamesService();
@@ -676,11 +729,12 @@ export async function claimName(
   currentIp: string,
   identity?: InstallIdentity,
   humanVerificationProof?: string,
+  verifiedSetupSession?: string,
 ): Promise<NamesLease> {
   const response = await signedJson({
     method: 'POST',
     path: '/v1/leases/claim',
-    body: { name, currentIp, ...(humanVerificationProof ? { humanVerificationProof } : {}) },
+    body: { name, currentIp, ...(humanVerificationProof ? { humanVerificationProof } : {}), ...(verifiedSetupSession ? { verifiedSetupSession } : {}) },
     schema: z.object({
       ok: z.literal(true),
       requestId: requestIdSchema,
@@ -758,6 +812,13 @@ export async function requestCertificate(
     }),
     identity,
   });
+  if (response.job.status === 'failed') {
+    throw new NamesBrokerError({
+      status: 409,
+      code: 'certificate_request_failed',
+      requestId: response.requestId,
+    });
+  }
   return response.job;
 }
 

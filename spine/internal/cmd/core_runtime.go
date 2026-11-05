@@ -45,7 +45,13 @@ func installedCoreRuntime() (systemupdate.NativeCoreRuntime, error) {
 		return r, err
 	}
 	if coordinator == "" {
-		coordinator = "/usr/local/bin/youeye"
+		coordinator, err = (systemupdate.SpineCandidateManager{}).TestExecutable()
+		if err != nil {
+			return r, err
+		}
+		if coordinator == "" {
+			coordinator = "/usr/local/bin/youeye"
+		}
 	}
 	checkpoint := systemupdate.NativeCoreCheckpoint{Root: systemupdate.CoreStatePath, DataRoot: "/var/lib/youeye", StatePath: appliance.StatePath, Bridge: cfg.Deployment.Incus.Network,
 		IngressPorts: []uint16{80, 443, uint16(cfg.Deployment.ControlPanel.Port), 3001},
@@ -66,7 +72,7 @@ func installedCoreRuntime() (systemupdate.NativeCoreRuntime, error) {
 			}
 			return "", fmt.Errorf("host address is not assigned")
 		}}
-	cache := systemupdate.CoreArtifactCache{Root: filepath.Join(checkpoint.DataRoot, "cache", "core-update"), TrustKeyPath: systemupdate.CoreDevelopmentTrustPath, Client: systemupdate.ReleaseHTTPClient()}
+	cache := systemupdate.NewRuntimeCoreArtifactCache(filepath.Join(checkpoint.DataRoot, "cache", "core-update"), systemupdate.CoreDevelopmentTrustPath)
 	services := systemupdate.NativeCoreServices{Checkpoint: checkpoint, Cache: cache, CPAppDir: cfg.Deployment.ControlPanel.AppDir, UIAppDir: cfg.Deployment.UI.AppDir, CPPort: cfg.Deployment.ControlPanel.Port}
 	authority := systemupdate.NativeCoreAuthority{FirstBootPolicyPath: filepath.Join(systemupdate.CoreBootstrapPath, "release-policy.json"), FirstBootCompletePath: "/var/lib/youeye-state/first-deploy/complete", Checkpoint: checkpoint, TrustKeyPath: cache.TrustKeyPath, Client: cache.Client, CurrentSelection: currentCoreSelection}
 	host := systemupdate.NewDefault()

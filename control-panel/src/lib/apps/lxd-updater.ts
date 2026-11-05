@@ -43,7 +43,8 @@ import { settingsService } from '@/lib/settings';
 import { isNewer, sortVersionsDesc } from '@/lib/version';
 import { buildReleasesAPIURL, getReleaseAssetDownloadURL, getReleaseSource, type ReleaseAsset } from './release-source';
 import { injectCaddyRootCA } from '@/lib/market/caddy-ca';
-import { signedReleaseVerificationShell } from '@/lib/releases/verify';
+import { selectedCoreDownloadShell } from '@/lib/releases/core-release';
+import { preparedSignedReleaseVerificationShell } from '@/lib/releases/verify';
 import { recordCoreProvenance } from '@/lib/updates/provenance';
 import { withAppLifecycle } from '@/lib/market/update-admission';
 import { configurePointerService } from '@/lib/pointer/lifecycle';
@@ -287,6 +288,12 @@ async function updateLXDAppUnderLifecycle(
   const releaseIsCurrent = !override
     && (currentVersion === release.version || (currentVersion !== 'unknown' && !isNewer(release.version, currentVersion)));
 
+  // Metadata readiness is read-only and must settle before a new rollback
+  // point, payload download or container mutation is created.
+  const releaseVerification = !pointerSelection && !releaseIsCurrent
+    ? await preparedSignedReleaseVerificationShell(release.downloadURL, '/tmp/update.tar', release.artifactSHA256, appDef.id === 'ui' ? 'ui' : 'app')
+    : '';
+
   // 5. Create snapshot before any trust, package, service, or file mutation.
   emit({ stage: 'snapshot', message: `Creating snapshot of ${containerName}`, container: containerName, progress: 15 });
   await createSnapshot(containerName, SNAPSHOT_NAME);
@@ -329,11 +336,11 @@ async function updateLXDAppUnderLifecycle(
     } else {
       const downloadResult = await execShell(
         containerName,
-        `curl -sSL "${release.downloadURL}" -o /tmp/update.tar`,
+        selectedCoreDownloadShell(release.downloadURL, '/tmp/update.tar'),
         { timeout: 300_000 }
       );
       if (downloadResult.exitCode !== 0) throw new Error(`Download failed: ${downloadResult.stderr}`);
-      const signatureResult = await execShell(containerName, signedReleaseVerificationShell(release.downloadURL, '/tmp/update.tar', release.artifactSHA256, appDef.id === 'ui' ? 'ui' : 'app'), { timeout: 300_000 });
+      const signatureResult = await execShell(containerName, releaseVerification, { timeout: 300_000 });
       if (signatureResult.exitCode !== 0) throw new Error(`Signed release verification failed: ${signatureResult.stderr}`);
     }
     emit({ stage: 'rebuilding', message: 'Release signature and artifact digest verified', container: containerName, progress: 30 });

@@ -6,6 +6,7 @@ import { loadOwnerTrust, canonicalTrustRepository, validTrustBranch, type TrustS
 import { RELEASE_DEVELOPMENT_TRUST } from './development-trust';
 import { releaseCacheFetch } from './cache';
 import publicTrust from '../../../../spine/internal/systemupdate/public-release-trust.json';
+import { CORE_METADATA_ASSETS, metadataSourceBindings, parseCoreMetadataProof, spineMetadataRequired, verifyCoreMetadataProof, type CoreMetadataProof } from './core-metadata';
 
 export type CoreBlob = { name: string; url: string; sha256: string; size_bytes: number };
 export type CoreMember = {
@@ -42,7 +43,7 @@ function fields(value: unknown, allowed: string[]) {
 }
 // Signed JSON must have one interpretation in both the Go host and this reader.
 // Parse tokens before JSON.parse to reject duplicates at every nesting level.
-export function uniqueJSON(raw: string) {
+export function uniqueJSON(raw: string, integerNumbers = false) {
   let pos = 0;
   const ws = () => { while (/\s/.test(raw[pos] ?? '') && pos < raw.length) pos++; };
   const string = () => {
@@ -62,13 +63,15 @@ export function uniqueJSON(raw: string) {
     }
     if (kind === '"') { string(); return; }
     const token = /^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/.exec(raw.slice(pos));
-    if (!token) throw new Error('Invalid core JSON'); pos += token[0].length;
+    if (!token) throw new Error('Invalid core JSON');
+    if (integerNumbers && /^-?\d/.test(token[0]) && /[.eE]/.test(token[0])) throw new Error('Core integer requires an integer JSON token');
+    pos += token[0].length;
   };
   value(0); ws(); if (pos !== raw.length) throw new Error('Trailing core JSON');
 }
 export function parseCoreRelease(raw: Buffer): CoreRelease {
   if (!raw.length || raw.length > 1024 * 1024) throw new Error('Core manifest size is invalid');
-  uniqueJSON(raw.toString('utf8'));
+  uniqueJSON(raw.toString('utf8'), true);
   const r = JSON.parse(raw.toString('utf8')) as CoreRelease;
   fields(r, ['schema','version','tag','source','branch','source_commit','channel','sequence','previous_manifest_sha256','minimum_reader','signer_sha256','compatibility','members']);
   const v = parseReleaseVersion(r.version);
@@ -81,7 +84,7 @@ export function parseCoreRelease(raw: Buffer): CoreRelease {
   const seen = new Set<string>();
   for (const m of r.members) {
     fields(m, ['role','build_version','source','branch','source_commit','tag','input_sha256','key_id','depends_on','artifact','checksums','signature','provenance','sbom','document_signature','release_lock']);
-    if (!ROLES.includes(m.role) || seen.has(m.role) || !parseReleaseVersion(m.build_version) || canonicalTrustRepository(m.source) !== m.source || !validCoreBranch(m.branch) || !commit(m.source_commit) || !hash(m.input_sha256) || !hash(m.key_id) || !m.tag) throw new Error('Invalid core member');
+    if (!ROLES.includes(m.role) || seen.has(m.role) || !parseReleaseVersion(m.build_version) || canonicalTrustRepository(m.source) !== m.source || !validCoreBranch(m.branch) || !commit(m.source_commit) || !hash(m.input_sha256) || !hash(m.key_id) || typeof m.tag !== 'string' || !m.tag) throw new Error('Invalid core member');
     if (['stable','beta'].includes(r.channel)) {
       coreMemberChannel(m, r.channel);
     }
@@ -89,7 +92,7 @@ export function parseCoreRelease(raw: Buffer): CoreRelease {
       fields(b, ['name','url','sha256','size_bytes']);
       const prefix = `${m.source}/releases/download/${encodeURIComponent(m.tag)}/`;
       const u = new URL(b.url), name = decodeURIComponent(b.url.slice(prefix.length));
-      if (!asset(b.name) || !hash(b.sha256) || !Number.isSafeInteger(b.size_bytes) || b.size_bytes <= 0 || !b.url.startsWith(prefix) || u.username || u.password || u.search || u.hash || !name || name === '.' || name === '..' || /[/\\\x00]/.test(name)) throw new Error('Invalid exact core blob');
+      if (!asset(b.name) || !hash(b.sha256) || !Number.isSafeInteger(b.size_bytes) || b.size_bytes <= 0 || !b.url.startsWith(prefix) || u.username || u.password || u.search || u.hash || /[\\\x00]/.test(decodeURIComponent(u.pathname)) || !name || name === '.' || name === '..' || /[/\\\x00]/.test(name)) throw new Error('Invalid exact core blob');
     };
     [m.artifact,m.checksums,m.signature,m.provenance,m.sbom].forEach(blob);
     if (['appliance','system-update'].includes(m.role)) { if (!m.document_signature) throw new Error('Missing host document signature'); blob(m.document_signature); }
@@ -132,8 +135,15 @@ export function loadSelectedCoreDocument(root = '/var/lib/youeye-state/core-sele
       return bytes.subarray(0, count);
     } finally { closeSync(fd); }
   };
-  const raw = read('core-release.json', 1024*1024);
-  return { release: verifyCoreRelease(raw, read('core-release.json.sig', 64)), manifestSHA256: sha(raw) };
+  const raw = read('core-release.json', 1024*1024), signature = read('core-release.json.sig', 64);
+  const release = verifyCoreRelease(raw, signature);
+  let metadataProof: CoreMetadataProof | undefined;
+  try { metadataProof = parseCoreMetadataProof(read('core-metadata.json', 8*1024*1024)); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  const metadataFacts = metadataProof ? verifyCoreMetadataProof(raw, signature, metadataProof,
+    roleKey(release.source, release.branch, release.channel, 'assembly'),
+    member => roleKey(member.source, member.branch, coreMemberChannel(member, release.channel), member.role)) : undefined;
+  return { release, raw, signature, metadataProof, metadataFacts, manifestSHA256: sha(raw) };
 }
 export function loadSelectedCore(root = '/var/lib/youeye-state/core-selection'): CoreRelease {
   return loadSelectedCoreDocument(root).release;
@@ -148,12 +158,20 @@ export function selectedCoreRole(role: 'cp' | 'ui', root?: string) {
 }
 export function selectedCoreArtifact(url: string, digest: string | undefined, role: TrustScope | undefined, root?: string) {
   const tag = decodeURIComponent(new URL(url).pathname.split('/')[5] ?? '');
-  if (!canonicalCoreTag(tag)) return null;
-  const { release: r, manifestSHA256 } = loadSelectedCoreDocument(root), m = r.members.find(m => m.role === role);
-  if (!m || m.artifact.url !== url || !digest || m.artifact.sha256 !== digest) throw new Error('Artifact differs from frozen core selection');
+  const canonical = canonicalCoreTag(tag);
+  if (!canonical && !['cp','ui'].includes(role ?? '')) return null;
+  let document: ReturnType<typeof loadSelectedCoreDocument>;
+  try { document = loadSelectedCoreDocument(root); }
+  catch (error) { if (!canonical && (error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+  const { release: r, manifestSHA256 } = document, m = r.members.find(m => m.role === role);
+  if (!m || m.artifact.url !== url) {
+    if (!canonical) return null;
+    throw new Error('Artifact differs from frozen core selection');
+  }
+  if (!digest || m.artifact.sha256 !== digest) throw new Error('Artifact differs from frozen core selection');
   const key = roleKey(m.source,m.branch,coreMemberChannel(m,r.channel),m.role);
   if (keyHash(key) !== m.key_id) throw new Error('Core role authority differs');
-  return { release:r, member:m, key, manifestSHA256 };
+  return { ...document, release:r, member:m, key, manifestSHA256 };
 }
 export function coreBlobTransportURL(release: CoreRelease, blob: CoreBlob, mirror = false): string {
   const members = release.members.flatMap(m => [m.artifact,m.checksums,m.signature,m.provenance,m.sbom,...(m.document_signature ? [m.document_signature] : []),...(m.release_lock ? [m.release_lock] : [])]);
@@ -161,10 +179,12 @@ export function coreBlobTransportURL(release: CoreRelease, blob: CoreBlob, mirro
   if (mirror || !blob.url.startsWith(`${release.source}/releases/download/`)) return `${release.source}/releases/download/${release.tag}/blob-${blob.sha256}`;
   return blob.url;
 }
-export function selectedCoreTransportURL(url: string, mirror = false): string {
+export function selectedCoreTransportURL(url: string, mirror = false, root?: string): string {
   const parts = new URL(url).pathname.split('/').filter(Boolean);
-  if (parts.length !== 6 || parts[2] !== 'releases' || parts[3] !== 'download' || !canonicalCoreTag(parts[4])) return url;
-  const release = loadSelectedCore();
+  if (parts.length !== 6 || parts[2] !== 'releases' || parts[3] !== 'download') return url;
+  let release: CoreRelease;
+  try { release = loadSelectedCore(root); }
+  catch (error) { if (!canonicalCoreTag(parts[4]) && (error as NodeJS.ErrnoException).code === 'ENOENT') return url; throw error; }
   for (const member of release.members) {
     for (const blob of [member.artifact,member.checksums,member.signature,member.provenance,member.sbom,member.document_signature,member.release_lock]) {
       if (blob?.url === url) return coreBlobTransportURL(release,blob,mirror);
@@ -172,9 +192,9 @@ export function selectedCoreTransportURL(url: string, mirror = false): string {
   }
   return url;
 }
-async function metadata(b: CoreBlob): Promise<Buffer> {
+async function metadata(b: CoreBlob, fetchMetadata = releaseCacheFetch): Promise<Buffer> {
   if (b.size_bytes > 1024*1024) throw new Error('Core metadata exceeds limit');
-  const response = await releaseCacheFetch(b.url, {signal:AbortSignal.timeout(30_000)});
+  const response = await fetchMetadata(b.url, {signal:AbortSignal.timeout(30_000)});
   if (!response.ok || !response.body) throw new Error('Core metadata unavailable');
   const reader = response.body.getReader(), chunks: Uint8Array[] = []; let length = 0;
   try { while (true) { const {done,value} = await reader.read(); if (done) break; length += value.length; if (length > b.size_bytes) throw new Error('Oversized core metadata'); chunks.push(value); } } finally { await reader.cancel(); }
@@ -182,7 +202,37 @@ async function metadata(b: CoreBlob): Promise<Buffer> {
   if (raw.length !== b.size_bytes || sha(raw) !== b.sha256) throw new Error('Exact core metadata differs');
   return raw;
 }
+/** A missing local sidecar is an old installation, not proof of old metadata.
+ * Read authenticated Spine capability before any artifact is installed. */
+export async function verifyCoreMetadataForOperation(selected: NonNullable<ReturnType<typeof selectedCoreArtifact>>, fetchMetadata = releaseCacheFetch) {
+  const { release, raw, signature } = selected;
+  const assemblyKey = roleKey(release.source, release.branch, release.channel, 'assembly');
+  const currentRoleKey = (member: CoreMember) => roleKey(member.source, member.branch, coreMemberChannel(member, release.channel), member.role);
+  if (selected.metadataProof) return verifyCoreMetadataProof(raw, signature, selected.metadataProof, assemblyKey, currentRoleKey);
+  for (const member of release.members) if (keyHash(currentRoleKey(member)) !== member.key_id) throw new Error('Current metadata role authority differs');
+  const spine = release.members.find(member => member.role === 'spine')!;
+  const [checksums, spineSignature, provenance] = await Promise.all([metadata(spine.checksums, fetchMetadata), metadata(spine.signature, fetchMetadata), metadata(spine.provenance, fetchMetadata)]);
+  const required = spineMetadataRequired(spine, currentRoleKey(spine), checksums, spineSignature, provenance);
+  const readDocument = async (name: string, limit: number): Promise<Buffer | null> => {
+    const response = await fetchMetadata(`${release.source}/releases/download/${release.tag}/${name}`, {signal:AbortSignal.timeout(30_000)});
+    if (response.status === 404) return null;
+    if (!response.ok || !response.body) throw new Error('Canonical metadata unavailable');
+    const reader = response.body.getReader(), chunks: Uint8Array[] = []; let length = 0;
+    try { while (true) { const {done,value} = await reader.read(); if(done)break; length+=value.length; if(length>limit)throw new Error('Oversized canonical metadata'); chunks.push(value); } } finally { await reader.cancel(); }
+    if (!length) throw new Error('Empty advertised canonical metadata');
+    return Buffer.concat(chunks);
+  };
+  const parts = await Promise.all(CORE_METADATA_ASSETS.map((name,index)=>readDocument(name,index%2 ? 64 : 1024*1024)));
+  const present = parts.filter(part=>part!==null).length;
+  if ((present!==0 && present!==4) || required && present!==4) throw new Error('Required or partial canonical metadata unavailable');
+  const encoded = parts.map(part=>part?.toString('base64') ?? null);
+  const proof: CoreMetadataProof = {schema:'youeye.core-metadata-proof.v1',execution_manifest_sha256:sha(raw),advertised:present>0,
+    spine_checksums:checksums.toString('base64'),spine_signature:spineSignature.toString('base64'),spine_provenance:provenance.toString('base64'),
+    documents:{canonical:encoded[0],canonical_signature:encoded[1],pair:encoded[2],pair_signature:encoded[3]},bindings:present ? metadataSourceBindings(release) : null};
+  return verifyCoreMetadataProof(raw, signature, proof, assemblyKey, currentRoleKey);
+}
 export async function verifyCoreArtifactBuffer(selected: NonNullable<ReturnType<typeof selectedCoreArtifact>>, bytes: Buffer) {
+  await verifyCoreMetadataForOperation(selected);
   const { member:m, key } = selected;
   if (bytes.length !== m.artifact.size_bytes || sha(bytes) !== m.artifact.sha256) throw new Error('Core artifact differs');
   const sums = await metadata(m.checksums), sig = await metadata(m.signature);

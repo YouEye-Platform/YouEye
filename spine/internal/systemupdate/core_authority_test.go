@@ -50,6 +50,7 @@ func TestNativeCoreAuthorityRechecksLivePolicyAndPreservesFrozenContinuation(t *
 			}
 		}
 	}
+	metadataFiles := metadataFixtureEnvelope(t, &r, private, false)
 	raw, _ = json.Marshal(r)
 	digest := checksum(raw)
 	sig := ed25519.Sign(private, raw)
@@ -82,7 +83,9 @@ func TestNativeCoreAuthorityRechecksLivePolicyAndPreservesFrozenContinuation(t *
 			return nil, fmt.Errorf("fixture offline")
 		}
 		data := raw
-		if strings.Contains(req.URL.Path, "/api/v1/repos/") {
+		if metadata, ok := metadataFiles[req.URL.String()]; ok {
+			data = metadata
+		} else if strings.Contains(req.URL.Path, "/api/v1/repos/") {
 			data, _ = json.Marshal([]release{{TagName: r.Tag, Assets: []releaseAsset{{Name: "core-release.json", BrowserDownloadURL: manifestURL}, {Name: "core-release.json.sig", BrowserDownloadURL: manifestURL + ".sig"}}}})
 			if req.URL.Query().Get("page") != "1" {
 				data = []byte("[]")

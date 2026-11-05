@@ -138,6 +138,10 @@ func resolveCoreApplianceRelease(ctx context.Context, client *http.Client, provi
 		candidate.coreRaw = raw
 		candidate.coreSignature = signature
 		candidate.coreSHA256 = digest
+		candidate.coreMetadataProof, err = fetchInstallerCoreProof(ctx, client, raw, signature, coreMetadataAdvertised(candidate.Assets))
+		if err != nil {
+			return selected, true, fmt.Errorf("core metadata rejected before media selection: %w", err)
+		}
 		candidate.sourceProvider = provider
 		candidate.sourceRepository = source
 		// Normalize only the names used by the existing image verifier. The
