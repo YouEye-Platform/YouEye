@@ -42,13 +42,13 @@ test('direct entries install through the normal engine and remain removable only
   assert.doesNotMatch(detailPage, /app\.integration === 'native' \? 'YouEye \(official\)'/);
 });
 
-test('Market preflight precedes app-network mutation and core LXD keeps mandatory signatures', async () => {
+test('Market preflight precedes app-network mutation and core LXD keeps mandatory digest checks', async () => {
   const engine = await source('src/lib/market/engine.ts');
   const deployer = await source('src/lib/infrastructure/lxd-deployer.ts');
   const stage = engine.indexOf('stageMarketNativeArtifacts(manifest, config,');
   const mutate = engine.indexOf('createAppNetwork(appId');
   assert.ok(stage >= 0 && mutate > stage, 'native artifact staging must happen before app network creation');
   assert.match(deployer, /export async function deployMarketLXDContainer/);
-  assert.match(deployer, /signedReleaseVerificationShell\(releaseURL/);
+  assert.match(deployer, /releaseArtifactVerificationShell\(releaseURL/);
   assert.doesNotMatch(deployer, /skipVerification/);
 });

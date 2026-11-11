@@ -264,27 +264,20 @@ func (m CoreManager) LoadPayloadIndex(digest string) (CorePayloadIndex, error) {
 	return index, index.Validate()
 }
 
-// IndexCachedCoreMember uses only the exact authenticated media/cache bytes.
-// It does not silently download a replacement when fresh installation media is
-// incomplete. The complete role envelope is checked before deriving file truth.
-func IndexCachedCoreMember(member releasecache.CoreMember, channel, trustPath, cacheRoot string) (CorePayloadIndex, error) {
+// IndexCachedCoreMember uses only the exact accepted media/cache bytes. It
+// does not silently download a replacement when fresh installation media is
+// incomplete. The artifact digest and size are checked before deriving file truth.
+func IndexCachedCoreMember(member releasecache.CoreMember, cacheRoot string) (CorePayloadIndex, error) {
 	if member.Role != "cp" && member.Role != "ui" {
 		return CorePayloadIndex{}, fmt.Errorf("standalone core member required")
-	}
-	key, err := CoreMemberKey(member, channel, trustPath)
-	if err != nil {
-		return CorePayloadIndex{}, err
-	}
-	if err := releasecache.VerifyCoreMember(member, key, func(blob releasecache.CoreBlob) (io.ReadCloser, error) {
-		f, _, err := releasecache.Open(cacheRoot, blob.URL)
-		return f, err
-	}); err != nil {
-		return CorePayloadIndex{}, err
 	}
 	f, _, err := releasecache.Open(cacheRoot, member.Artifact.URL)
 	if err != nil {
 		return CorePayloadIndex{}, err
 	}
 	defer f.Close()
+	if err := verifyFile(f.Name(), member.Artifact.SizeBytes, member.Artifact.SHA256); err != nil {
+		return CorePayloadIndex{}, err
+	}
 	return IndexCorePayload(f.Name(), member.Artifact.SHA256)
 }

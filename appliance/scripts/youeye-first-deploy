@@ -49,7 +49,7 @@ write_progress() {
     [ "$percent" -ge "$previous_percent" ] || percent=$previous_percent
     tmp="${journal}.tmp"
     jq -n \
-        --arg schema youeye.appliance.progress.v2 \
+        --arg schema youeye.installer.progress.v1 \
         --arg stage "$stage" \
         --arg detail "$detail" \
         --arg state "$state" \
@@ -85,7 +85,7 @@ core_policy=false
 core_initialized=false
 if [ -e "$core_required" ] && ! jq -e '.core_manifest_sha256 | type == "string" and length == 64' "$release_policy" >/dev/null 2>&1; then
     current_stage=core_selection
-    printf '%s\n' 'This appliance requires its signed complete System selection; recover the original v5 installer answer before retrying.' >&2
+    printf '%s\n' 'This appliance requires its complete System selection; recover the original v5 installer answer before retrying.' >&2
     exit 1
 fi
 if jq -e '.core_manifest_sha256 | type == "string" and length > 0' "$release_policy" >/dev/null 2>&1; then
@@ -108,13 +108,13 @@ fi
 
 if [ "$core_initialized" != true ]; then
 current_stage=release_convergence
-write_progress release_convergence "Resolving and verifying one signed platform bundle" 18
+write_progress release_convergence "Verifying the installed System release" 18
 convergence="$state_dir/convergence.json"
 "$youeye" update system converge --policy "$release_policy" --reboot --json > "${convergence}.tmp"
 chmod 0600 "${convergence}.tmp"
 mv -f "${convergence}.tmp" "$convergence"
 if jq -e '.reboot_requested == true' "$convergence" >/dev/null; then
-    write_progress system_restart "A newer signed System was written to the inactive slot; restarting to continue" 28
+    write_progress system_restart "A newer System was written to the inactive slot; restarting to continue" 28
     trap - EXIT
     exit 0
 fi
@@ -137,7 +137,7 @@ if [ -n "$control_state" ]; then
     installed_control_version=$($incus exec youeye-control -- cat /opt/app/package.json 2>/dev/null | jq -r '.version // empty' || true)
     if [ "$core_policy" != true ] && [ -n "$installed_control_version" ] && [ "$installed_control_version" != "$sealed_control_version" ]; then
         current_stage=updating_control
-        write_progress server_interface "Converging preserved Server interface on the signed sealed release" 48
+        write_progress server_interface "Converging preserved Server interface on the sealed release" 48
         "$youeye" update control --yes
     fi
     if "$incus" exec youeye-control -- sh -c \

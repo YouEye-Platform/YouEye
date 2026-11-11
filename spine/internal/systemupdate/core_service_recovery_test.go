@@ -49,14 +49,14 @@ func TestRecoveredUnitsObserveLostStartWithoutRepeatingIt(t *testing.T) {
 	}
 }
 
-func TestRecoveredCPSelectionRequiresBothOriginalSignedFiles(t *testing.T) {
+func TestRecoveredCPSelectionRequiresExactOriginalRelease(t *testing.T) {
 	rootPath := t.TempDir()
 	dir := filepath.Join(rootPath, "var/lib/youeye-state/core-selection")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	selection := CoreHostSelection{Raw: []byte(`{"fixture":"previous signed release"}`), Signature: []byte(strings.Repeat("s", 64))}
-	for name, raw := range map[string][]byte{"core-release.json": selection.Raw, "core-release.json.sig": selection.Signature} {
+	selection := CoreHostSelection{Raw: []byte(`{"fixture":"previous release"}`)}
+	for name, raw := range map[string][]byte{"core-release.json": selection.Raw} {
 		if err := os.WriteFile(filepath.Join(dir, name), raw, 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -69,10 +69,10 @@ func TestRecoveredCPSelectionRequiresBothOriginalSignedFiles(t *testing.T) {
 	if err = verifyRecoveredCoreSelection(root, selection); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(dir, "core-release.json.sig"), []byte(strings.Repeat("x", 64)), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(dir, "core-release.json"), []byte(`{"fixture":"another release"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err = verifyRecoveredCoreSelection(root, selection); err == nil {
-		t.Fatal("mixed historical/new signature pair accepted")
+		t.Fatal("changed historical release accepted")
 	}
 }

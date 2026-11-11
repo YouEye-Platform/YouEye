@@ -5,9 +5,7 @@ package releasecache
 // service-only release therefore never relabels its unchanged host image.
 import (
 	"bytes"
-	"crypto/ed25519"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -21,6 +19,11 @@ import (
 const CoreReleaseSchema = "youeye.core-release.v1"
 const CoreReleaseReader = 1
 
+// CoreReleaseAuthority is the only accepted trust model: the exact document
+// digest (recorded in protected State by the installer, or fetched over HTTPS
+// for an update) binds every member artifact by sha256 and size.
+const CoreReleaseAuthority = "digest"
+
 type CoreRelease struct {
 	Schema                 string            `json:"schema"`
 	Version                string            `json:"version"`
@@ -32,7 +35,7 @@ type CoreRelease struct {
 	Sequence               uint64            `json:"sequence"`
 	PreviousManifestSHA256 string            `json:"previous_manifest_sha256,omitempty"`
 	MinimumReader          int               `json:"minimum_reader"`
-	SignerSHA256           string            `json:"signer_sha256"`
+	Authority              string            `json:"authority"`
 	Compatibility          CoreCompatibility `json:"compatibility"`
 	Members                []CoreMember      `json:"members"`
 }
@@ -47,30 +50,27 @@ type CoreCompatibility struct {
 }
 
 type CoreBlob struct {
-	Name      string `json:"name"` // Original name inside the signed checksum set.
+	Name      string `json:"name"` // Exact release asset name.
 	URL       string `json:"url"`
 	SHA256    string `json:"sha256"`
 	SizeBytes int64  `json:"size_bytes"`
 }
 
 type CoreMember struct {
-	Role              string    `json:"role"`
-	BuildVersion      string    `json:"build_version"`
-	Source            string    `json:"source"`
-	Branch            string    `json:"branch"`
-	SourceCommit      string    `json:"source_commit"`
-	Tag               string    `json:"tag"`
-	InputSHA256       string    `json:"input_sha256"`
-	Artifact          CoreBlob  `json:"artifact"`
-	Checksums         CoreBlob  `json:"checksums"`
-	Signature         CoreBlob  `json:"signature"`
-	DocumentSignature *CoreBlob `json:"document_signature,omitempty"`
-	ReleaseLock       *CoreBlob `json:"release_lock,omitempty"`
-	Provenance        CoreBlob  `json:"provenance"`
-	SBOM              CoreBlob  `json:"sbom"`
-	KeyID             string    `json:"key_id"`
-	DependsOn         []string  `json:"depends_on"`
+	Role         string    `json:"role"`
+	BuildVersion string    `json:"build_version"`
+	Source       string    `json:"source"`
+	Branch       string    `json:"branch"`
+	SourceCommit string    `json:"source_commit"`
+	Tag          string    `json:"tag"`
+	InputSHA256  string    `json:"input_sha256"`
+	Artifact     CoreBlob  `json:"artifact"`
+	BuildInputs  *CoreBlob `json:"build_inputs,omitempty"`
+	DependsOn    []string  `json:"depends_on,omitempty"`
 }
+
+var installationCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
+var installationHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 var coreVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.([1-9][0-9]*))?$`)
 
@@ -124,7 +124,7 @@ func coreSource(value string) (*url.URL, error) {
 
 func (blob CoreBlob) validate(source, tag string) error {
 	if !coreAssetName.MatchString(blob.Name) || blob.Name == "." || blob.Name == ".." {
-		return fmt.Errorf("core blob requires its original signed asset name")
+		return fmt.Errorf("core blob requires its exact asset name")
 	}
 	if !installationHash.MatchString(blob.SHA256) || blob.SizeBytes <= 0 {
 		return fmt.Errorf("core blob requires exact digest and size")
@@ -149,11 +149,9 @@ func (blob CoreBlob) validate(source, tag string) error {
 
 var coreAssetName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$`)
 
-// CoreMemberChannel retains the original public payload's authority even when
-// a newer signed group selects it from the other public branch. The assembly
-// signature selects exact bytes; it does not turn a Beta signature into Stable
-// signing authority. A selected release may retain any independently trusted
-// original member, including a development build.
+// CoreMemberChannel retains the original public payload's channel even when a
+// newer release selects it from the other public branch. A selected release may
+// retain any original member, including a development build.
 func CoreMemberChannel(member CoreMember, assemblyChannel string) (string, error) {
 	if member.Source != "https://github.com/YouEye-Platform/YouEye" {
 		return assemblyChannel, nil
@@ -178,8 +176,8 @@ func (r CoreRelease) Validate() error {
 	if _, err := coreSource(r.Source); err != nil {
 		return err
 	}
-	if !installationHash.MatchString(r.SignerSHA256) {
-		return fmt.Errorf("core manifest signer identity is required")
+	if r.Authority != CoreReleaseAuthority {
+		return fmt.Errorf("unsupported core release authority")
 	}
 	if !ValidCoreBranch(r.Branch) || !installationCommit.MatchString(r.SourceCommit) || r.Sequence == 0 || r.Sequence > 9007199254740991 {
 		return fmt.Errorf("core release provenance is incomplete")
@@ -225,7 +223,7 @@ func (r CoreRelease) Validate() error {
 			return fmt.Errorf("unknown or duplicate core role %q", member.Role)
 		}
 		required[member.Role] = true
-		if !ValidCoreVersion(member.BuildVersion) || !installationCommit.MatchString(member.SourceCommit) || !installationHash.MatchString(member.InputSHA256) || !installationHash.MatchString(member.KeyID) || !ValidCoreBranch(member.Branch) || member.Tag == "" {
+		if !ValidCoreVersion(member.BuildVersion) || !installationCommit.MatchString(member.SourceCommit) || !installationHash.MatchString(member.InputSHA256) || !ValidCoreBranch(member.Branch) || member.Tag == "" {
 			return fmt.Errorf("incomplete %s provenance", member.Role)
 		}
 		if _, err := coreSource(member.Source); err != nil {
@@ -236,30 +234,18 @@ func (r CoreRelease) Validate() error {
 				return err
 			}
 		}
-		for _, blob := range []CoreBlob{member.Artifact, member.Checksums, member.Signature, member.Provenance, member.SBOM} {
-			if err := blob.validate(member.Source, member.Tag); err != nil {
-				return fmt.Errorf("%s: %w", member.Role, err)
-			}
-		}
-		if member.Role == "appliance" || member.Role == "system-update" {
-			if member.DocumentSignature == nil {
-				return fmt.Errorf("host manifest detached signature is required")
-			}
-			if err := member.DocumentSignature.validate(member.Source, member.Tag); err != nil {
-				return err
-			}
-		} else if member.DocumentSignature != nil {
-			return fmt.Errorf("unexpected member document signature")
+		if err := member.Artifact.validate(member.Source, member.Tag); err != nil {
+			return fmt.Errorf("%s: %w", member.Role, err)
 		}
 		if member.Role == "appliance" {
-			if member.ReleaseLock == nil {
-				return fmt.Errorf("appliance resolved release lock is required")
+			if member.BuildInputs == nil {
+				return fmt.Errorf("appliance build inputs are required")
 			}
-			if err := member.ReleaseLock.validate(member.Source, member.Tag); err != nil {
+			if err := member.BuildInputs.validate(member.Source, member.Tag); err != nil {
 				return err
 			}
-		} else if member.ReleaseLock != nil {
-			return fmt.Errorf("unexpected resolved release lock")
+		} else if member.BuildInputs != nil {
+			return fmt.Errorf("unexpected build inputs")
 		}
 	}
 	for role, present := range required {
@@ -267,7 +253,7 @@ func (r CoreRelease) Validate() error {
 			return fmt.Errorf("missing core role %s", role)
 		}
 	}
-	// A deterministic topological graph is part of the signed contract. All
+	// A deterministic topological graph is part of the release contract. All
 	// dependencies must be present, unique and earlier in the flat selection.
 	seen := map[string]bool{}
 	for _, member := range r.Members {
@@ -306,6 +292,14 @@ func ParseCoreRelease(raw []byte) (CoreRelease, string, error) {
 	if err := d.Decode(&extra); err != io.EOF {
 		return release, "", fmt.Errorf("trailing core release JSON")
 	}
+	// An empty depends_on list and an absent one mean the same thing. Keep one
+	// in-memory form (nil) so a release survives JSON round trips through
+	// receipts and journals (which omit empty lists) and still compares equal.
+	for i := range release.Members {
+		if len(release.Members[i].DependsOn) == 0 {
+			release.Members[i].DependsOn = nil
+		}
+	}
 	if err := release.Validate(); err != nil {
 		return release, "", err
 	}
@@ -314,8 +308,8 @@ func ParseCoreRelease(raw []byte) (CoreRelease, string, error) {
 }
 
 // Reject duplicate object keys (including nested objects) before decoding into
-// structs. Different runtimes must never authenticate different interpretations
-// of the same signed manifest. Token traversal also bounds nesting.
+// structs. Different runtimes must never accept different interpretations of
+// the same digest-bound document. Token traversal also bounds nesting.
 func uniqueCoreJSON(raw []byte) error {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	var value func(int) error
@@ -366,27 +360,4 @@ func uniqueCoreJSON(raw []byte) error {
 		return fmt.Errorf("trailing core JSON")
 	}
 	return nil
-}
-
-// VerifyCoreRelease accepts only a key already resolved from the caller's
-// scoped trust policy. It authenticates assembly membership, not permission to
-// install each role. Host and CP must additionally verify their role's artifact
-// signatures and current authority before staging and again before activation.
-func VerifyCoreRelease(raw, signature []byte, key ed25519.PublicKey) (CoreRelease, string, error) {
-	release, digest, err := ParseCoreRelease(raw)
-	if err != nil {
-		return release, "", err
-	}
-	if len(key) != ed25519.PublicKeySize || len(signature) != ed25519.SignatureSize || !ed25519.Verify(key, raw, signature) {
-		return release, "", fmt.Errorf("core release signature rejected")
-	}
-	der, err := x509.MarshalPKIXPublicKey(key)
-	if err != nil {
-		return release, "", err
-	}
-	fingerprint := sha256.Sum256(der)
-	if release.SignerSHA256 != hex.EncodeToString(fingerprint[:]) {
-		return release, "", fmt.Errorf("core release signer identity mismatch")
-	}
-	return release, digest, nil
 }

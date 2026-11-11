@@ -84,7 +84,7 @@ func (m CoreManager) saveCopy(j CoreCopyJournal) error {
 // destination. verify must inspect actual hardware, signed static membership,
 // partition/data ownership and independent current service identity/health.
 // It must not return success based on these request fields alone.
-func (m CoreManager) VerifyIndependentCopy(ctx context.Context, request CoreCopyRequest, trustKeyPath string, verify func(context.Context, CoreReceipt, CoreCopyRequest) (CoreMachineIdentity, string, error)) (CoreReceipt, error) {
+func (m CoreManager) VerifyIndependentCopy(ctx context.Context, request CoreCopyRequest, verify func(context.Context, CoreReceipt, CoreCopyRequest) (CoreMachineIdentity, string, error)) (CoreReceipt, error) {
 	if err := request.Validate(); err != nil {
 		return CoreReceipt{}, err
 	}
@@ -96,7 +96,7 @@ func (m CoreManager) VerifyIndependentCopy(ctx context.Context, request CoreCopy
 		return CoreReceipt{}, err
 	}
 	defer unlock()
-	j, err := m.beginCopyLocked(request, trustKeyPath)
+	j, err := m.beginCopyLocked(request)
 	if err != nil {
 		return CoreReceipt{}, err
 	}
@@ -191,7 +191,7 @@ func (m CoreManager) IndependentCopyReceipt(request CoreCopyRequest) (CoreReceip
 // BeginIndependentCopy freezes the copy request before destination preparation.
 // Callers must retain quarantine and the platform lifecycle reservation until
 // VerifyIndependentCopy and the service identity coordinator have completed.
-func (m CoreManager) BeginIndependentCopy(request CoreCopyRequest, trustKeyPath string, observeHardware func() (string, error)) error {
+func (m CoreManager) BeginIndependentCopy(request CoreCopyRequest, observeHardware func() (string, error)) error {
 	if err := request.Validate(); err != nil {
 		return err
 	}
@@ -210,10 +210,10 @@ func (m CoreManager) BeginIndependentCopy(request CoreCopyRequest, trustKeyPath 
 		return err
 	}
 	defer unlock()
-	_, err = m.beginCopyLocked(request, trustKeyPath)
+	_, err = m.beginCopyLocked(request)
 	return err
 }
-func (m CoreManager) beginCopyLocked(request CoreCopyRequest, trustKeyPath string) (CoreCopyJournal, error) {
+func (m CoreManager) beginCopyLocked(request CoreCopyRequest) (CoreCopyJournal, error) {
 	j, err := m.readCopy()
 	if err == nil && j.Request != request {
 		// A later cold copy may inherit a completed copy receipt. Keep that
@@ -264,7 +264,7 @@ func (m CoreManager) beginCopyLocked(request CoreCopyRequest, trustKeyPath strin
 	} else if err != nil {
 		return CoreCopyJournal{}, err
 	}
-	_, release, err := m.Selection(request.ManifestSHA256, trustKeyPath)
+	_, release, err := m.Selection(request.ManifestSHA256)
 	if err != nil {
 		return CoreCopyJournal{}, err
 	}

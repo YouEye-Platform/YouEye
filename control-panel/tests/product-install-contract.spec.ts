@@ -9,7 +9,7 @@ import { parseMarketRepoURL } from '../src/lib/market/source';
 import type { InstallConfig } from '../src/lib/market/types';
 import type { VerifiedProductRelease } from '../src/lib/releases/product-release';
 
-test('signed native contract permits exact public catalog projection but refuses changed installer semantics', async () => {
+test('product native contract permits exact public catalog projection but refuses changed installer semantics', async () => {
   const raw = fixtureManifest('shared', '1.0.0');
   raw.metadata.id = 'notes';
   raw.metadata.iconUrl = 'assets/icon.svg';
@@ -17,7 +17,7 @@ test('signed native contract permits exact public catalog projection but refuses
   raw.integration = 'native';
   raw.containers[0] = {...raw.containers[0],type:'lxd',source:{repo:'potemsla/YE-App-Notes'}};
   const contract = Buffer.from(JSON.stringify(raw));
-  // The caller has already verified both signatures. Exercise the real parser
+  // The caller has already accepted the release document. Exercise the real parser
   // and catalog transforms at the installer boundary, not a hand-built clone.
   const selected = {build:{build_version:'1.0.0',contract_sha256:createHash('sha256').update(contract).digest('hex')},
     release:{product:'notes',version:'1.0.1'}} as VerifiedProductRelease;

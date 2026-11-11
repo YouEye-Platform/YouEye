@@ -25,7 +25,7 @@ func TestCoreMirrorColdDownloadThroughSignedGitHubCDN(t *testing.T) {
 			continue
 		}
 		member.Source = originalSource
-		for _, blob := range []*releasecache.CoreBlob{&member.Artifact, &member.Checksums, &member.Signature, &member.Provenance, &member.SBOM} {
+		for _, blob := range []*releasecache.CoreBlob{&member.Artifact} {
 			blob.URL = originalSource + "/releases/download/" + member.Tag + "/" + blob.Name
 		}
 		member.Artifact.SHA256 = checksum(payload)

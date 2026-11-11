@@ -19,8 +19,6 @@
   "[\"src/components/market/install-from-url-dialog.tsx\",\"app\"]": 1,
   "[\"src/components/market/install-from-url-dialog.tsx\",\"SSO\"]": 1,
   "[\"src/components/onboarding/onboarding-client.tsx\",\"PIN\"]": 1,
-  "[\"src/components/settings-shell/appliance-system-update.tsx\",\"appliance-dev-v<version>\"]": 1,
-  "[\"src/components/settings-shell/appliance-system-update.tsx\",\"feature-branch\"]": 1,
   "[\"src/components/settings-shell/apps-client.tsx\",\"app\"]": 1,
   "[\"src/components/settings-shell/apps-client.tsx\",\"default\"]": 1,
   "[\"src/components/settings-shell/apps-client.tsx\",\"https://...\"]": 1,

@@ -16,6 +16,7 @@ Welcome to the YouEye platform documentation. These guides cover installation, d
 | [Setup readiness](setup-readiness.md) | Automatic managed readiness and retained setup/restore lifecycle exclusion |
 | [Control Panel](control-panel.md) | Infrastructure management, health monitoring, and DNS |
 | [Architecture](architecture.md) | System design, security model, and component overview |
+| [Development](development.md) | Toolchains, building, publishing a release, test installs |
 | [App Service Credentials](app-service-credentials.md) | Development credential foundation, bridge contract, and remaining runtime integration |
 | [Telemetry](telemetry.md) | Anonymous usage tracking for beta testing (temporary) |
 

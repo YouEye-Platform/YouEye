@@ -277,7 +277,7 @@ func TestPreserveReinstallReconcilesUpdateHistoryOnlyAfterVerifiedInstall(t *tes
 		t.Fatal(err)
 	}
 	sha := validSHA256()
-	// The script must reject an install journal whose signed manifest digest
+	// The script must reject an install journal whose manifest digest
 	// cannot be read back from State, even if the old updater journal exists.
 	write := func(path, body string) {
 		t.Helper()
@@ -295,7 +295,7 @@ func TestPreserveReinstallReconcilesUpdateHistoryOnlyAfterVerifiedInstall(t *tes
 		return exec.Command("sh", "-c", preserveSystemUpdateReconcileScript(), "youeye-preserve-update-history", root, transaction, sha, image).Run()
 	}
 	if err := run(); err == nil {
-		t.Fatal("accepted mismatched signed manifest digest")
+		t.Fatal("accepted mismatched manifest digest")
 	}
 	if _, err := os.Stat(filepath.Join(updates, "journal.json")); err != nil {
 		t.Fatal("old journal moved before verification:", err)
@@ -348,7 +348,6 @@ func validCommandAssets() applianceImageAssets {
 		SystemBUKIPath:  "/artifacts/system-b.efi",
 		RecoveryUKIPath: "/artifacts/recovery.efi",
 		ManifestPath:    "/artifacts/appliance-manifest.json",
-		SignaturePath:   "/artifacts/appliance-manifest.json.sig",
 		ManifestSHA256:  validSHA256(),
 		ImageVersion:    "0.6.0-dev.1",
 		TransactionID:   "0123456789abcdef0123456789abcdef",

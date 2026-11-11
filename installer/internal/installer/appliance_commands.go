@@ -30,21 +30,19 @@ type appliancePayloadAsset struct {
 }
 
 type applianceImageAssets struct {
-	Operation             string
-	RootPayload           appliancePayloadAsset
-	RecoveryPayload       appliancePayloadAsset
-	SystemAUKIPath        string
-	SystemBUKIPath        string
-	RecoveryUKIPath       string
-	ManifestPath          string
-	SignaturePath         string
-	ManifestSHA256        string
-	ImageVersion          string
-	TransactionID         string
-	Network               applianceAnswerNetwork
-	AnswerPath            string
-	CoreMetadataProofPath string
-	AuthorizedKeys        []string
+	Operation       string
+	RootPayload     appliancePayloadAsset
+	RecoveryPayload appliancePayloadAsset
+	SystemAUKIPath  string
+	SystemBUKIPath  string
+	RecoveryUKIPath string
+	ManifestPath    string
+	ManifestSHA256  string
+	ImageVersion    string
+	TransactionID   string
+	Network         applianceAnswerNetwork
+	AnswerPath      string
+	AuthorizedKeys  []string
 }
 
 const (
@@ -74,7 +72,6 @@ func applianceCommandPlan(plan applianceInstallPlan, assets applianceImageAssets
 		"System B UKI": assets.SystemBUKIPath,
 		"Recovery UKI": assets.RecoveryUKIPath,
 		"manifest":     assets.ManifestPath,
-		"signature":    assets.SignaturePath,
 	} {
 		if strings.TrimSpace(path) == "" {
 			return nil, fmt.Errorf("%s path is required", name)
@@ -114,7 +111,6 @@ func applianceCommandPlan(plan applianceInstallPlan, assets applianceImageAssets
 		{Stage: stageVerifyInputs, Name: "test", Args: []string{"-e", assets.SystemBUKIPath}},
 		{Stage: stageVerifyInputs, Name: "test", Args: []string{"-e", assets.RecoveryUKIPath}},
 		{Stage: stageVerifyInputs, Name: "test", Args: []string{"-e", assets.ManifestPath}},
-		{Stage: stageVerifyInputs, Name: "test", Args: []string{"-e", assets.SignaturePath}},
 		{Stage: stagePartitionTarget, Name: "sgdisk", Args: []string{"--zap-all", target}},
 		{Stage: stagePartitionTarget, Name: "sgdisk", Args: []string{
 			"--new=1:2048:+1024M", "--typecode=1:EF00", "--change-name=1:YE-ESP",
@@ -220,7 +216,7 @@ jq -e --argjson state_schema "$state_schema" --argjson data_schema "$data_schema
 [ -s "$mountpoint/etc/machine-id" ]
 [ -s "$mountpoint/etc/systemd/network/20-youeye.network" ]`
 	updateState := `set -eu
-state_root="$1"; manifest="$2"; signature="$3"; image="$4"; recovery="$5"
+state_root="$1"; manifest="$2"; image="$3"; recovery="$4"
 path="$state_root/appliance-state.json"; tmp="$path.tmp"
 jq --arg image "$image" --arg recovery "$recovery" '
   .slots = {current:"A",current_image_version:$image} |
@@ -228,7 +224,6 @@ jq --arg image "$image" --arg recovery "$recovery" '
 ' "$path" > "$tmp"
 chmod 0600 "$tmp"; sync -f "$tmp"; mv -f "$tmp" "$path"
 install -m 0644 "$manifest" "$state_root/installer/appliance-manifest.json"
-install -m 0644 "$signature" "$state_root/installer/appliance-manifest.json.sig"
 sync -f "$state_root/installer"; sync -f "$state_root"`
 	commands := []applianceCommand{
 		{Stage: stageVerifyInputs, Name: "test", Args: []string{"-e", assets.RootPayload.Path}},
@@ -251,7 +246,7 @@ sync -f "$state_root/installer"; sync -f "$state_root"`
 		payloadWriteCommand(stageWriteRecovery, assets.RecoveryPayload, recovery),
 		payloadReadbackCommand(stageWriteRecovery, assets.RecoveryPayload, recovery),
 		installJournalCommand(stageWriteRecovery, plan, assets),
-		{Stage: stageInitializeState, Name: "sh", Args: []string{"-c", updateState, "youeye-preserve-state-update", stateMount, assets.ManifestPath, assets.SignaturePath, assets.ImageVersion, manifest.RecoveryVersion}},
+		{Stage: stageInitializeState, Name: "sh", Args: []string{"-c", updateState, "youeye-preserve-state-update", stateMount, assets.ManifestPath, assets.ImageVersion, manifest.RecoveryVersion}},
 		installJournalCommand(stageInitializeState, plan, assets),
 		{Stage: stageInstallBootAssets, Name: "mkdir", Args: []string{"-p", espMount}},
 		{Stage: stageInstallBootAssets, Name: "mount", Args: []string{"-t", "vfat", "-o", "rw,nodev,nosuid,noexec,umask=0077", esp, espMount}},
@@ -341,15 +336,13 @@ func applianceStateInitArgs(assets applianceImageAssets) []string {
 source_root="$1"
 state_root="$2"
 manifest="$3"
-signature="$4"
-network_mode="$5"
-address="$6"
-gateway="$7"
-dns="$8"
-adapter_mac="$9"
-answer="${10}"
-core_metadata="${11}"
-shift 11
+network_mode="$4"
+address="$5"
+gateway="$6"
+dns="$7"
+adapter_mac="$8"
+answer="$9"
+shift 9
 
 install -d -m 0700 "$state_root/installer" "$state_root/bootstrap" "$state_root/root/.ssh"
 install -d -m 0755 "$state_root/etc/ssh" "$state_root/etc/systemd/network"
@@ -361,7 +354,6 @@ cp -a "$source_root/var/log/." "$state_root/var/log/"
 rm -f "$state_root/etc/ssh/ssh_host_"*
 ssh-keygen -A -f "$state_root"
 install -m 0644 "$manifest" "$state_root/installer/appliance-manifest.json"
-install -m 0644 "$signature" "$state_root/installer/appliance-manifest.json.sig"
 tr -d '-' < /proc/sys/kernel/random/uuid > "$state_root/etc/machine-id"
 printf '\n' >> "$state_root/etc/machine-id"
 openssl rand 4 > "$state_root/etc/hostid"
@@ -398,13 +390,9 @@ chmod 0644 "$state_root/etc/systemd/network/20-youeye.network"
 
 # Persist desired bootstrap policy outside the sealed System slots. The answer
 # file is protected and the password hash is never copied through argv or logs.
-if jq -e '.schema == "youeye.appliance.answer.v3" or .schema == "youeye.appliance.answer.v4" or .schema == "youeye.appliance.answer.v5"' "$answer" >/dev/null 2>&1; then
-  jq -e '.release_policy' "$answer" > "$state_root/bootstrap/release-policy.json.tmp"
-  jq -e '.development_access' "$answer" > "$state_root/bootstrap/development-access.json.tmp"
-else
-  jq -n '{schema:"youeye.release-policy.v1",provider:"github",mode:"track",track:"stable",freshness:"require-current"}' > "$state_root/bootstrap/release-policy.json.tmp"
-  jq -n '{schema:"youeye.development-access.v1",local_root_console:false,root_password_ssh:false}' > "$state_root/bootstrap/development-access.json.tmp"
-fi
+jq -e '.schema == "youeye.appliance.answer.v1"' "$answer" >/dev/null
+jq -e '.release_policy' "$answer" > "$state_root/bootstrap/release-policy.json.tmp"
+jq -e '.development_access' "$answer" > "$state_root/bootstrap/development-access.json.tmp"
 jq -n --arg mode "$network_mode" --arg adapter_mac "$adapter_mac" --arg address "$address" --arg gateway "$gateway" --arg dns "$dns" '
   {schema:"youeye.network-profile.v1",id:"primary",kind:"ethernet",ipv4:{mode:$mode}}
   + if $adapter_mac != "" then {adapter_mac:$adapter_mac} else {} end
@@ -414,21 +402,15 @@ for file in release-policy development-access network-profile; do
   chmod 0600 "$state_root/bootstrap/$file.json.tmp"
   mv -f "$state_root/bootstrap/$file.json.tmp" "$state_root/bootstrap/$file.json"
 done
-if jq -e '.schema == "youeye.appliance.answer.v5"' "$answer" >/dev/null 2>&1; then
+if jq -e '.core_release != null' "$answer" >/dev/null 2>&1; then
   jq -er '.core_release.manifest_base64' "$answer" | base64 -d > "$state_root/bootstrap/core-release.json.tmp"
-  jq -er '.core_release.signature_base64' "$answer" | base64 -d > "$state_root/bootstrap/core-release.json.sig.tmp"
-  for file in core-release.json core-release.json.sig; do
-    chmod 0600 "$state_root/bootstrap/$file.tmp"
-    mv -f "$state_root/bootstrap/$file.tmp" "$state_root/bootstrap/$file"
-  done
-  test -f "$core_metadata" && test ! -L "$core_metadata"
-  test "$(stat -c '%u:%a:%h' "$core_metadata")" = 0:600:1
-  test "$(stat -c %s "$core_metadata")" -le 8388608
-  install -m 0600 "$core_metadata" "$state_root/bootstrap/core-metadata.json.tmp"
-  mv -f "$state_root/bootstrap/core-metadata.json.tmp" "$state_root/bootstrap/core-metadata.json"
+  # The release policy records this exact digest; Spine accepts nothing else.
+  test "$(sha256sum "$state_root/bootstrap/core-release.json.tmp" | awk '{print $1}')" = "$(jq -er '.release_policy.core_manifest_sha256' "$answer")"
+  chmod 0600 "$state_root/bootstrap/core-release.json.tmp"
+  mv -f "$state_root/bootstrap/core-release.json.tmp" "$state_root/bootstrap/core-release.json"
 fi
 sync -f "$state_root/bootstrap"
-# Optional transport cache from the same answer medium. Artifact signatures and
+# Optional transport cache from the same answer medium. Artifact digests and
 # sealed component pins remain mandatory when these bytes are consumed.
 cache_digest=$(jq -r '.release_cache_sha256 // empty' "$answer")
 if [ -n "$cache_digest" ]; then
@@ -464,11 +446,10 @@ fi`
 	}
 	args := []string{
 		"-c", script, "youeye-state-init", systemMount, stateMount,
-		assets.ManifestPath, assets.SignaturePath, mode,
+		assets.ManifestPath, mode,
 		assets.Network.Address, assets.Network.Gateway, assets.Network.DNS,
 		assets.Network.AdapterMAC,
 		assets.AnswerPath,
-		assets.CoreMetadataProofPath,
 	}
 	return append(args, assets.AuthorizedKeys...)
 }
@@ -489,14 +470,14 @@ printf '%s  %s\n' "$manifest_sha" "$manifest" | sha256sum -c - >/dev/null
 jq -e --arg image "$image" '.slots.current == "A" and .slots.current_image_version == $image and .transaction == {}' "$state" >/dev/null
 updates="$state_root/system-update"
 history="$updates/history/preserve-reinstall-$transaction"
-if [ -e "$updates/journal.json" ] || [ -e "$updates/healthy-manifest.json" ] || [ -e "$updates/healthy-manifest.json.sig" ]; then
+if [ -e "$updates/journal.json" ] || [ -e "$updates/healthy-manifest.json" ]; then
   mkdir -m 0700 -p "$history"
-  for file in journal.json healthy-manifest.json healthy-manifest.json.sig; do
+  for file in journal.json healthy-manifest.json; do
     if [ -e "$updates/$file" ]; then
       test ! -e "$history/$file"
     fi
   done
-  for file in healthy-manifest.json healthy-manifest.json.sig journal.json; do
+  for file in healthy-manifest.json journal.json; do
     if [ -e "$updates/$file" ]; then
       mv "$updates/$file" "$history/$file"
     fi

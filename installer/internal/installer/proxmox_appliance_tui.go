@@ -74,7 +74,7 @@ var proxmoxAdvancedFields = []proxmoxFormField{
 	{Label: "Branch", Kind: "input", InputKey: "branch", Page: 3},
 	{Label: "Freshness", Kind: "freshness", Page: 3},
 	{Label: "Exact tag", Kind: "input", InputKey: "tag", Page: 3},
-	{Label: "ISO SHA-256", Kind: "input", InputKey: "digest", Page: 3},
+	{Label: "core-release.json SHA-256", Kind: "input", InputKey: "digest", Page: 3},
 	{Label: "Continue", Kind: "continue", Page: 3},
 	{Label: "Host SSH keys", Kind: "ssh-toggle", Page: 4},
 	{Label: "Extra SSH keys", Kind: "input", InputKey: "keys", Page: 4},
@@ -179,7 +179,7 @@ func (m proxmoxApplianceModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.config.ReleasesAPI = defaultApplianceReleasesAPI
 					m.config.ReleaseBranch = ""
 					m.config.ReleaseTag = ""
-					m.config.ISOSHA256 = ""
+					m.config.CoreManifestSHA256 = ""
 					for _, key := range []string{"branch", "tag", "digest"} {
 						input := m.inputs[key]
 						input.SetValue("")
@@ -188,7 +188,7 @@ func (m proxmoxApplianceModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.opts.ApplianceRepository != "" {
 						selected := proxmoxApplianceConfigFromOptions(m.opts, m.inventory)
 						m.config.RepositoryURL, m.config.ReleaseProvider, m.config.ReleasesAPI = selected.RepositoryURL, selected.ReleaseProvider, selected.ReleasesAPI
-						m.config.Channel, m.config.ReleaseBranch, m.config.ReleaseTag, m.config.ISOSHA256 = selected.Channel, selected.ReleaseBranch, selected.ReleaseTag, selected.ISOSHA256
+						m.config.Channel, m.config.ReleaseBranch, m.config.ReleaseTag, m.config.CoreManifestSHA256 = selected.Channel, selected.ReleaseBranch, selected.ReleaseTag, selected.CoreManifestSHA256
 					}
 					m.config.Freshness = "require-current"
 					m.config.EraseConfirmed = false
@@ -257,7 +257,7 @@ func (m proxmoxApplianceModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.config.EraseConfirmed = true
 				m.err = nil
 				m.phase = proxmoxPhaseProgress
-				m.stage = "Starting signed installation"
+				m.stage = "Starting installation"
 				m.progressCh = startProxmoxApplianceProvision(m.config, m.inventory)
 				return m, tea.Batch(listenProxmoxProgress(m.progressCh), m.game.Init())
 			}
@@ -317,7 +317,7 @@ func (m *proxmoxApplianceModel) initAdvancedInputs() {
 		"target-size": strconv.Itoa(m.config.TargetDiskGiB),
 		"address":     m.config.Network.Address, "gateway": m.config.Network.Gateway, "dns": m.config.Network.DNS,
 		"releases-api": repositoryInputValue(m.config.ReleaseProvider, m.config.ReleasesAPI),
-		"branch":       m.config.ReleaseBranch, "tag": m.config.ReleaseTag, "digest": m.config.ISOSHA256, "keys": m.config.SSHKeysPath,
+		"branch":       m.config.ReleaseBranch, "tag": m.config.ReleaseTag, "digest": m.config.CoreManifestSHA256, "keys": m.config.SSHKeysPath,
 		"root-password": "", "root-password-confirm": "",
 	}
 	for key, value := range values {
@@ -487,16 +487,19 @@ func (m *proxmoxApplianceModel) validateAdvancedPage() error {
 		}
 		switch m.config.Channel {
 		case "stable", "development":
-			if m.config.ReleaseBranch != "" || m.config.ReleaseTag != "" || m.config.ISOSHA256 != "" {
-				return fmt.Errorf("this track cannot include branch or Exact fields")
+			if m.config.ReleaseBranch != "" || !validTrackPin(m.config.ReleaseTag, m.config.CoreManifestSHA256) {
+				return fmt.Errorf("this track cannot include a branch, and a pinned release needs its tag and core-release.json SHA-256")
 			}
 		case "branch":
 			if !validApplianceReleaseBranch(m.config.ReleaseBranch) {
-				return fmt.Errorf("enter a safe signed release branch")
+				return fmt.Errorf("enter a safe release branch")
+			}
+			if !validTrackPin(m.config.ReleaseTag, m.config.CoreManifestSHA256) {
+				return fmt.Errorf("a pinned release needs its tag and core-release.json SHA-256")
 			}
 		case "exact":
-			if !validExactApplianceReleaseTag(m.config.ReleaseTag) || !validSHA256Hex(m.config.ISOSHA256) {
-				return fmt.Errorf("Exact requires a valid release tag and lowercase manifest SHA-256")
+			if !validCoreTag(m.config.ReleaseTag) || !validSHA256Hex(m.config.CoreManifestSHA256) {
+				return fmt.Errorf("Exact requires a youeye-v release tag and the lowercase core-release.json SHA-256")
 			}
 		default:
 			return fmt.Errorf("select Stable, Development, branch, or Exact")
@@ -632,7 +635,7 @@ func (m *proxmoxApplianceModel) applyAdvancedInputs() error {
 	}
 	m.config.ReleaseTag = strings.TrimSpace(m.inputs["tag"].Value())
 	m.config.ReleaseBranch = strings.TrimSpace(m.inputs["branch"].Value())
-	m.config.ISOSHA256 = strings.ToLower(strings.TrimSpace(m.inputs["digest"].Value()))
+	m.config.CoreManifestSHA256 = strings.ToLower(strings.TrimSpace(m.inputs["digest"].Value()))
 	m.config.SSHKeysPath = strings.TrimSpace(m.inputs["keys"].Value())
 	return nil
 }
@@ -788,7 +791,7 @@ func (m *proxmoxApplianceModel) cycleAdvancedSelection(kind string, forward bool
 			m.inputs["branch"] = branch
 		}
 		if m.config.Channel != "exact" {
-			m.config.ReleaseTag, m.config.ISOSHA256 = "", ""
+			m.config.ReleaseTag, m.config.CoreManifestSHA256 = "", ""
 			for _, key := range []string{"tag", "digest"} {
 				input := m.inputs[key]
 				input.SetValue("")
@@ -829,7 +832,7 @@ func (m proxmoxApplianceModel) advancedFieldValue(field proxmoxFormField) string
 		if m.config.Freshness == "prefer-current" {
 			return "Use media if current release is temporarily unavailable"
 		}
-		return "Require current signed release"
+		return "Require current release"
 	case "ssh-toggle":
 		if m.config.ImportHostSSHKeys {
 			return "Import"
@@ -850,7 +853,7 @@ func (m proxmoxApplianceModel) advancedFieldValue(field proxmoxFormField) string
 	case "software-summary":
 		return "Official GitHub"
 	case "software-track-summary":
-		return "Latest signed Stable bundle"
+		return "Latest Stable release"
 	case "advanced-route":
 		return "Open Advanced software options"
 	}
@@ -966,7 +969,7 @@ func (m proxmoxApplianceModel) reviewView() string {
 		fmt.Sprintf("Release track      %s", strings.Title(m.config.Channel)),
 	}
 	if m.config.Channel == "branch" {
-		rows = append(rows, fmt.Sprintf("Signed branch      %s", m.config.ReleaseBranch))
+		rows = append(rows, fmt.Sprintf("Release branch     %s", m.config.ReleaseBranch))
 	}
 	if m.config.Channel == "exact" {
 		rows = append(rows, fmt.Sprintf("Exact release      %s", m.config.ReleaseTag))
@@ -1032,7 +1035,7 @@ func (m proxmoxApplianceModel) centeredPanel(title, detail string) string {
 	return theme.BoxAccent.Render(strings.Join([]string{theme.Title.Render(title), "", theme.Body.Render(detail)}, "\n"))
 }
 
-// RunProxmoxAppliance launches the signed appliance host provisioner TUI.
+// RunProxmoxAppliance launches the appliance host provisioner TUI.
 func RunProxmoxAppliance(opts CLIOptions) error {
 	program := tea.NewProgram(newProxmoxApplianceModel(opts), tea.WithAltScreen())
 	if _, err := program.Run(); err != nil {

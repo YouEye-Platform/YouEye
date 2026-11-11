@@ -13,7 +13,7 @@ import (
 )
 
 var coreUpdatePolicyPath string
-var coreUpdateCmd = &cobra.Command{Use: "core", Short: "Manage one complete signed YouEye System release"}
+var coreUpdateCmd = &cobra.Command{Use: "core", Short: "Manage one complete YouEye System release"}
 var coreInitializeCmd = &cobra.Command{
 	Use: "initialize", Hidden: true, Short: "Record the exact fresh installed release after native health verification",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -45,22 +45,18 @@ func initializeInstalledCore(ctx context.Context, policyPath string) error {
 		return fmt.Errorf("fresh core initialization requires an installed new-format selection")
 	}
 	root := filepath.Dir(policyPath)
-	selection, err := systemupdate.ReadCoreBootstrapSelection(root, systemupdate.CoreDevelopmentTrustPath)
-	if err != nil {
-		return err
-	}
-	selection, _, err = systemupdate.EnsureCoreMetadata(ctx, selection, systemupdate.CoreDevelopmentTrustPath, "/var/lib/youeye/cache/core-update", systemupdate.ReleaseHTTPClient(), "")
+	selection, _, _, err := systemupdate.ReadAcceptedCoreSelection(root)
 	if err != nil {
 		return err
 	}
 	m := systemupdate.CoreManager{Root: systemupdate.CoreStatePath}
-	receipt, err := m.Initialize(ctx, selection, policy.CoreManifestSHA256, systemupdate.CoreDevelopmentTrustPath,
+	receipt, err := m.Initialize(ctx, selection, policy.CoreManifestSHA256,
 		func(ctx context.Context, release releasecache.CoreRelease) (systemupdate.CoreMachineIdentity, string, error) {
 			if err := ctx.Err(); err != nil {
 				return systemupdate.CoreMachineIdentity{}, "", err
 			}
 			if _, err := systemupdate.VerifyCoreInstalledMedia(policy, root, appliance.ManifestPath,
-				"/var/lib/youeye-state/installer/appliance-manifest.json", "/var/lib/youeye-state/installer/appliance-manifest.json.sig", systemupdate.CoreDevelopmentTrustPath); err != nil {
+				"/var/lib/youeye-state/installer/appliance-manifest.json"); err != nil {
 				return systemupdate.CoreMachineIdentity{}, "", err
 			}
 			health := collectApplianceHealth("operational")
@@ -89,7 +85,7 @@ func initializeInstalledCore(ctx context.Context, policyPath string) error {
 
 func verifyFreshCorePayloads(ctx context.Context, m systemupdate.CoreManager, selection systemupdate.CoreHostSelection) error {
 	configuration := GetConfig()
-	cache := systemupdate.CoreArtifactCache{Root: "/var/lib/youeye/cache/core-update", TrustKeyPath: systemupdate.CoreDevelopmentTrustPath}
+	cache := systemupdate.CoreArtifactCache{Root: "/var/lib/youeye/cache/core-update"}
 	release, _, err := cache.StageFreshServices(ctx, selection)
 	if err != nil {
 		return fmt.Errorf("retain fresh service verification inputs: %w", err)
@@ -98,7 +94,7 @@ func verifyFreshCorePayloads(ctx context.Context, m systemupdate.CoreManager, se
 		if member.Role != "cp" && member.Role != "ui" {
 			continue
 		}
-		index, err := cache.IndexMember(member, release.Channel)
+		index, err := cache.IndexMember(member)
 		if err != nil {
 			return fmt.Errorf("derive %s installed payload identity: %w", member.Role, err)
 		}

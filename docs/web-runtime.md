@@ -31,7 +31,7 @@ Node executable and complete upstream licence in `.youeye-runtime`, with a
 manifest of the reviewed hashes. `server.js` remains the service entrypoint;
 it starts the bundled runtime before application code and forwards termination
 signals. Updating or recovering an application switches its runtime with its
-signed payload. No guest-wide Node replacement is required. Docker builds use
+digest-bound payload. No guest-wide Node replacement is required. Docker builds use
 the same pinned upstream runtime and frozen pnpm lockfile.
 
 ## Private data and offline behavior
@@ -113,7 +113,7 @@ Alex owns review of these holds on the next Web patch, or by 2026-11-19:
 These are conditional applicability findings, not a zero-advisory claim.
 Recheck resolved graphs and production tracing after dependency changes. The
 remaining reported counts must accompany release evidence, including the
-separate browser, authentication, signed update and recovery results.
+separate browser, authentication, update and recovery results.
 
 Private network requests set `cache: no-store` on a cloned Request while explicitly
 preserving its referrer and referrer policy. Do not put this option in Serwist's

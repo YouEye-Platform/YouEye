@@ -3,8 +3,6 @@ package systemupdate
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,15 +28,8 @@ func TestCoreHostStagesHashNamedReleaseWithoutTransportCache(t *testing.T) {
 func testCoreHostStages(t *testing.T, blobOnly bool) {
 	f := newManagerFixture(t)
 	f.manager.config.CoreStatePath = filepath.Join(f.dir, "core")
-	keyRaw, err := os.ReadFile(filepath.Join(filepath.Dir(f.manifestPath), "trust.key"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	key := ed25519.PrivateKey(keyRaw)
-	der, _ := x509.MarshalPKIXPublicKey(key.Public())
-	keyID := checksum(der)
 	source := "https://forge.example/owner/YouEye"
-	// Re-sign the host fixture under a development source. The current image
+	// Rewrite the host fixture under a development source. The current image
 	// retains the same selected source, so no source transition is implicit.
 	current, _ := os.ReadFile(f.manager.config.CurrentManifestPath)
 	current = bytes.ReplaceAll(current, []byte(releasecache.OfficialRepository), []byte(source))
@@ -49,13 +40,9 @@ func testCoreHostStages(t *testing.T, blobOnly bool) {
 		t.Fatal(err)
 	}
 	f.update.ReleaseSet.Source = source
-	f.update.Trust.KeyID, _ = publicKeyID(key.Public().(ed25519.PublicKey))
 	hostRaw, _ := json.Marshal(f.update)
-	hostSig := ed25519.Sign(key, hostRaw)
-	for name, raw := range map[string][]byte{f.manifestPath: hostRaw, f.signaturePath: hostSig} {
-		if err := os.WriteFile(name, raw, 0600); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(f.manifestPath, hostRaw, 0600); err != nil {
+		t.Fatal(err)
 	}
 	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
 	if err != nil {
@@ -66,28 +53,26 @@ func testCoreHostStages(t *testing.T, blobOnly bool) {
 		t.Fatal(err)
 	}
 	r.Source, r.Branch, r.Channel, r.Version, r.Tag = source, "dev", "dev", "0.6.0-dev.28", "youeye-v0.6.0-dev.28"
-	r.SignerSHA256 = keyID
 	responses := map[string][]byte{}
 	for i := range r.Members {
 		m := &r.Members[i]
-		m.Source, m.Branch, m.SourceCommit, m.KeyID = source, "dev", targetCommit, keyID
+		m.Source, m.Branch, m.SourceCommit = source, "dev", targetCommit
 		m.Tag, m.BuildVersion = "youeye-v0.6.0-dev.27", "0.6.0-dev.27"
 		if m.Role == "system-update" {
 			m.Artifact.Name, m.Artifact.SHA256, m.Artifact.SizeBytes = "system-update-manifest.json", checksum(hostRaw), int64(len(hostRaw))
-			m.DocumentSignature.Name, m.DocumentSignature.SHA256, m.DocumentSignature.SizeBytes = "system-update-manifest.json.sig", checksum(hostSig), int64(len(hostSig))
 		}
 		for _, a := range f.update.Artifacts {
 			if a.Role == m.Role {
 				m.Artifact.Name, m.Artifact.SHA256, m.Artifact.SizeBytes = a.Path, a.SHA256, a.SizeBytes
 			}
 		}
-		for _, b := range []*releasecache.CoreBlob{&m.Artifact, &m.Checksums, &m.Signature, &m.Provenance, &m.SBOM, m.DocumentSignature, m.ReleaseLock} {
+		for _, b := range []*releasecache.CoreBlob{&m.Artifact, m.BuildInputs} {
 			if b != nil {
 				b.URL = source + "/releases/download/" + m.Tag + "/appliance-" + b.Name
 			}
 		}
 		if m.Role == "system-update" {
-			responses[m.Artifact.URL], responses[m.DocumentSignature.URL] = hostRaw, hostSig
+			responses[m.Artifact.URL] = hostRaw
 		}
 		if data, ok := f.files[m.Artifact.Name]; ok {
 			responses[m.Artifact.URL] = data
@@ -96,11 +81,7 @@ func testCoreHostStages(t *testing.T, blobOnly bool) {
 	if blobOnly {
 		mirrored := map[string][]byte{}
 		for _, member := range r.Members {
-			blobs := []releasecache.CoreBlob{member.Artifact}
-			if member.DocumentSignature != nil {
-				blobs = append(blobs, *member.DocumentSignature)
-			}
-			for _, blob := range blobs {
+			for _, blob := range []releasecache.CoreBlob{member.Artifact} {
 				if data, ok := responses[blob.URL]; ok {
 					mirrored[r.Source+"/releases/download/"+r.Tag+"/blob-"+blob.SHA256] = data
 				}
@@ -108,9 +89,8 @@ func testCoreHostStages(t *testing.T, blobOnly bool) {
 		}
 		responses = mirrored
 	}
-	metadataFiles := metadataFixtureEnvelope(t, &r, key, false)
-	selection := metadataFixtureSelection(t, r, key, key, metadataFiles)
-	raw = selection.Raw
+	raw, _ = json.Marshal(r)
+	selection := CoreHostSelection{Raw: raw}
 	options, err := f.manager.CoreHostOptions(selection)
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +126,7 @@ func testCoreHostStages(t *testing.T, blobOnly bool) {
 	changed := r
 	changed.Sequence++
 	changedRaw, _ := json.Marshal(changed)
-	changedOptions, err := f.manager.CoreHostOptions(CoreHostSelection{Raw: changedRaw, Signature: ed25519.Sign(key, changedRaw)})
+	changedOptions, err := f.manager.CoreHostOptions(CoreHostSelection{Raw: changedRaw})
 	if err != nil {
 		t.Fatal(err)
 	}

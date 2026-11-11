@@ -88,7 +88,7 @@ func (s NativeCoreServices) Stage(ctx context.Context, request, role string) (Co
 	if err != nil || !reflect.DeepEqual(current, j.Previous) {
 		return empty, fmt.Errorf("installed core commitment changed")
 	}
-	selection, _, err := m.Selection(j.ManifestSHA256, s.Cache.TrustKeyPath)
+	selection, _, err := m.Selection(j.ManifestSHA256)
 	if err != nil {
 		return empty, err
 	}
@@ -240,7 +240,7 @@ func (s NativeCoreServices) Stage(ctx context.Context, request, role string) (Co
 		return stage, e
 	}
 	if role == "cp" {
-		baseline, _, e := m.Selection(j.Previous.ManifestSHA256, s.Cache.TrustKeyPath)
+		baseline, _, e := m.Selection(j.Previous.ManifestSHA256)
 		if e != nil {
 			return stage, e
 		}

@@ -63,7 +63,7 @@ case "$operation" in
                 control) key=control_panel ;;
                 ui) key=ui ;;
             esac
-            branch=$(jq -er --arg key "$key" 'if .release_set.schema == "youeye.release-set.v2" then .release_set[$key].branch else .release_set.branch end' "$sealed_release")
+            branch=$default_branch
             if [ "$component" = spine ] && ! jq -e '.release_set.spine.tag // "" | length > 0' "$sealed_release" >/dev/null; then
                 "$youeye" channel set spine --source "$source" --branch "$branch" --tag '' --fallback none
             else

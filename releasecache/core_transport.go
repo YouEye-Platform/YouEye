@@ -8,23 +8,17 @@ import (
 	"strings"
 )
 
-// CoreBlobTransportURL separates delivery from the original signed identity.
-// A promoted assembly mirrors original members at hash-named assets on
-// that exact selected release. The caller must authenticate the assembly first;
-// every downloaded blob still requires its original hash and scoped signature.
+// CoreBlobTransportURL separates delivery from the original identity. A
+// promoted release mirrors original members at hash-named assets on that exact
+// selected release. The caller must accept the release digest first; every
+// downloaded blob still requires its exact sha256 and size.
 func CoreBlobTransportURL(r CoreRelease, b CoreBlob) (string, error) {
 	if err := r.Validate(); err != nil {
 		return "", err
 	}
 	found := false
 	for _, m := range r.Members {
-		blobs := []CoreBlob{m.Artifact, m.Checksums, m.Signature, m.Provenance, m.SBOM}
-		if m.DocumentSignature != nil {
-			blobs = append(blobs, *m.DocumentSignature)
-		}
-		if m.ReleaseLock != nil {
-			blobs = append(blobs, *m.ReleaseLock)
-		}
+		blobs := m.Blobs()
 		for _, candidate := range blobs {
 			if candidate == b {
 				found = true
@@ -41,7 +35,7 @@ func CoreBlobTransportURL(r CoreRelease, b CoreBlob) (string, error) {
 }
 
 // CoreTransport preserves canonical request identity at the cache boundary.
-// Requests outside signed membership are unchanged. Only the explicit private
+// Requests outside release membership are unchanged. Only the explicit private
 // mirror hop strips origin credentials; normal redirect policy remains active.
 func CoreTransport(base http.RoundTripper, r CoreRelease) (http.RoundTripper, error) {
 	if err := r.Validate(); err != nil {
@@ -50,13 +44,7 @@ func CoreTransport(base http.RoundTripper, r CoreRelease) (http.RoundTripper, er
 	urls := map[string]string{}
 	mirrors := map[string]string{}
 	for _, m := range r.Members {
-		blobs := []CoreBlob{m.Artifact, m.Checksums, m.Signature, m.Provenance, m.SBOM}
-		if m.DocumentSignature != nil {
-			blobs = append(blobs, *m.DocumentSignature)
-		}
-		if m.ReleaseLock != nil {
-			blobs = append(blobs, *m.ReleaseLock)
-		}
+		blobs := m.Blobs()
 		for _, b := range blobs {
 			transport, err := CoreBlobTransportURL(r, b)
 			if err != nil {
@@ -64,7 +52,7 @@ func CoreTransport(base http.RoundTripper, r CoreRelease) (http.RoundTripper, er
 			}
 			urls[b.URL] = transport
 			// Public wrappers can carry public-ready bytes before their original
-			// build tag is published. The hash remains the signed authority;
+			// build tag is published. The hash remains the authority;
 			// this alternate delivery never changes membership or provenance.
 			mirrors[b.URL] = r.Source + "/releases/download/" + r.Tag + "/blob-" + b.SHA256
 		}
@@ -131,9 +119,9 @@ func (t coreTransport) RoundTrip(request *http.Request) (*http.Response, error) 
 		return nil, fmt.Errorf("core mirror returned an untrusted response URL")
 	}
 	// The inner client has checked every delivery hop against the authenticated
-	// mirror, including GitHub's CDN query. Preserve the signed request identity
+	// mirror, including GitHub's CDN query. Preserve the original request identity
 	// for the outer native downloader rather than presenting the CDN as a new
-	// source. Exact size/hash and original role signatures remain mandatory.
+	// source. Exact size and hash remain mandatory.
 	response.Request = request
 	return response, nil
 }
@@ -147,4 +135,13 @@ func validateCoreMirrorResponseURL(target, origin *url.URL) error {
 		return fmt.Errorf("core mirror URL differs from its admitted delivery source")
 	}
 	return nil
+}
+
+// Blobs lists every digest-bound blob of a member.
+func (m CoreMember) Blobs() []CoreBlob {
+	blobs := []CoreBlob{m.Artifact}
+	if m.BuildInputs != nil {
+		blobs = append(blobs, *m.BuildInputs)
+	}
+	return blobs
 }

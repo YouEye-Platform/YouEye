@@ -2,11 +2,7 @@ package systemupdate
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"net"
 	"os"
@@ -19,7 +15,7 @@ import (
 	"github.com/youeye-platform/YouEye/releasecache"
 )
 
-func TestCoreFirstBootFreezesSignedTargetAcrossRestartAndPolicyChanges(t *testing.T) {
+func TestCoreFirstBootFreezesTargetAcrossRestartAndPolicyChanges(t *testing.T) {
 	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
 	if err != nil {
 		t.Fatal(err)
@@ -28,14 +24,12 @@ func TestCoreFirstBootFreezesSignedTargetAcrossRestartAndPolicyChanges(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	public, key, _ := ed25519.GenerateKey(rand.Reader)
-	der, _ := x509.MarshalPKIXPublicKey(public)
 	oldSource := release.Source
-	release.Source, release.SignerSHA256 = "https://forge.example/owner/YouEye", checksum(der)
+	release.Source = "https://forge.example/owner/YouEye"
 	for i := range release.Members {
 		member := &release.Members[i]
-		member.Source, member.KeyID = release.Source, release.SignerSHA256
-		for _, blob := range []*releasecache.CoreBlob{&member.Artifact, &member.Checksums, &member.Signature, &member.Provenance, &member.SBOM, member.DocumentSignature, member.ReleaseLock} {
+		member.Source = release.Source
+		for _, blob := range []*releasecache.CoreBlob{&member.Artifact, member.BuildInputs} {
 			if blob != nil {
 				blob.URL = strings.Replace(blob.URL, oldSource, release.Source, 1)
 			}
@@ -43,14 +37,9 @@ func TestCoreFirstBootFreezesSignedTargetAcrossRestartAndPolicyChanges(t *testin
 	}
 	sign := func(r releasecache.CoreRelease) CoreHostSelection {
 		raw, _ := json.Marshal(r)
-		return CoreHostSelection{Raw: raw, Signature: ed25519.Sign(key, raw)}
+		return CoreHostSelection{Raw: raw}
 	}
 	baseline := sign(release)
-	root := t.TempDir()
-	trust := filepath.Join(root, "key.pub")
-	if err := os.WriteFile(trust, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), 0600); err != nil {
-		t.Fatal(err)
-	}
 	machine := CoreMachineIdentity{InstallIDRef: "install:fixture", DeviceIDRef: "device:fixture", ParentDiskID: "disk:fixture", StatePartUUID: "state", DataPartUUID: "data"}
 	policy := ReleasePolicy{Schema: ReleasePolicySchema, Provider: "custom", ReleasesAPI: "https://forge.example/api/v1/repos/owner/YouEye/releases", Mode: "track", Track: "branch", Branch: release.Branch, CoreManifestSHA256: checksum(baseline.Raw), Freshness: "require-current"}
 	target := release
@@ -59,7 +48,7 @@ func TestCoreFirstBootFreezesSignedTargetAcrossRestartAndPolicyChanges(t *testin
 	selected := sign(target)
 	initManager := func() CoreManager {
 		m := CoreManager{Root: filepath.Join(t.TempDir(), "core")}
-		if _, err := m.Initialize(context.Background(), baseline, checksum(baseline.Raw), trust, func(context.Context, releasecache.CoreRelease) (CoreMachineIdentity, string, error) {
+		if _, err := m.Initialize(context.Background(), baseline, checksum(baseline.Raw), func(context.Context, releasecache.CoreRelease) (CoreMachineIdentity, string, error) {
 			return machine, "verified fixture baseline", nil
 		}); err != nil {
 			t.Fatal(err)
@@ -69,11 +58,11 @@ func TestCoreFirstBootFreezesSignedTargetAcrossRestartAndPolicyChanges(t *testin
 	m := initManager()
 	calls := 0
 	resolve := func(context.Context) (CoreHostSelection, error) { calls++; return selected, nil }
-	frozen, first, err := m.FreezeFirstBoot(context.Background(), policy, baseline, trust, resolve)
+	frozen, first, err := m.FreezeFirstBoot(context.Background(), policy, baseline, resolve)
 	if err != nil || !reflect.DeepEqual(first, selected) || frozen.ManifestSHA256 != checksum(selected.Raw) || calls != 1 {
 		t.Fatal(frozen, err, calls)
 	}
-	again, second, err := m.FreezeFirstBoot(context.Background(), policy, baseline, trust, func(context.Context) (CoreHostSelection, error) {
+	again, second, err := m.FreezeFirstBoot(context.Background(), policy, baseline, func(context.Context) (CoreHostSelection, error) {
 		t.Error("resolved a newer head after restart")
 		return CoreHostSelection{}, fmt.Errorf("offline")
 	})
@@ -82,7 +71,7 @@ func TestCoreFirstBootFreezesSignedTargetAcrossRestartAndPolicyChanges(t *testin
 	}
 	changed := policy
 	changed.Freshness = "prefer-current"
-	if _, _, err = m.FreezeFirstBoot(context.Background(), changed, baseline, trust, resolve); err == nil {
+	if _, _, err = m.FreezeFirstBoot(context.Background(), changed, baseline, resolve); err == nil {
 		t.Fatal("changed frozen policy admitted")
 	}
 	current, _ := m.ReadReceipt()
@@ -91,10 +80,10 @@ func TestCoreFirstBootFreezesSignedTargetAcrossRestartAndPolicyChanges(t *testin
 	if err = atomicWrite(filepath.Join(m.Root, "committed.json"), encoded, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = m.FreezeFirstBoot(context.Background(), policy, baseline, trust, resolve); err == nil {
+	if _, _, err = m.FreezeFirstBoot(context.Background(), policy, baseline, resolve); err == nil {
 		t.Fatal("changed machine admitted")
 	}
-	for _, mutation := range []string{"same-sequence", "older", "branch", "source", "signature"} {
+	for _, mutation := range []string{"same-sequence", "older", "branch", "source", "malformed"} {
 		t.Run(mutation, func(t *testing.T) {
 			m := initManager()
 			r := target
@@ -109,10 +98,10 @@ func TestCoreFirstBootFreezesSignedTargetAcrossRestartAndPolicyChanges(t *testin
 				r.Source = "https://forge.example/another/YouEye"
 			}
 			candidate := sign(r)
-			if mutation == "signature" {
-				candidate.Signature[0] ^= 1
+			if mutation == "malformed" {
+				candidate.Raw[0] ^= 1
 			}
-			if _, _, err := m.FreezeFirstBoot(context.Background(), policy, baseline, trust, func(context.Context) (CoreHostSelection, error) { return candidate, nil }); err == nil {
+			if _, _, err := m.FreezeFirstBoot(context.Background(), policy, baseline, func(context.Context) (CoreHostSelection, error) { return candidate, nil }); err == nil {
 				t.Fatal("unsafe initial target admitted")
 			}
 			if _, err := os.Stat(filepath.Join(m.Root, "first-boot.json")); !os.IsNotExist(err) {
@@ -125,7 +114,7 @@ func TestCoreFirstBootFreezesSignedTargetAcrossRestartAndPolicyChanges(t *testin
 			pref := policy
 			pref.Freshness = "prefer-current"
 			m := initManager()
-			frozen, selected, err := m.FreezeFirstBoot(context.Background(), pref, baseline, trust, func(context.Context) (CoreHostSelection, error) { return CoreHostSelection{}, cause })
+			frozen, selected, err := m.FreezeFirstBoot(context.Background(), pref, baseline, func(context.Context) (CoreHostSelection, error) { return CoreHostSelection{}, cause })
 			allowed := coreDiscoveryUnavailable(cause)
 			if !allowed {
 				if err == nil {
@@ -160,7 +149,7 @@ func TestCoreFirstBootFreezesSignedTargetAcrossRestartAndPolicyChanges(t *testin
 				t.Fatal("exposed installation bypassed freshness", ok, err)
 			}
 			required := policy
-			if _, _, err := initManager().FreezeFirstBoot(context.Background(), required, baseline, trust, func(context.Context) (CoreHostSelection, error) { return CoreHostSelection{}, cause }); err == nil {
+			if _, _, err := initManager().FreezeFirstBoot(context.Background(), required, baseline, func(context.Context) (CoreHostSelection, error) { return CoreHostSelection{}, cause }); err == nil {
 				t.Fatal("required discovery silently fell back")
 			}
 		})
@@ -168,7 +157,7 @@ func TestCoreFirstBootFreezesSignedTargetAcrossRestartAndPolicyChanges(t *testin
 	exact := policy
 	exact.Mode, exact.Track, exact.Branch, exact.ExactTag, exact.ManifestSHA256 = "exact", "", "", release.Tag, strings.Repeat("e", 64)
 	m = initManager()
-	exactRecord, exactSelected, err := m.FreezeFirstBoot(context.Background(), exact, baseline, trust, func(context.Context) (CoreHostSelection, error) {
+	exactRecord, exactSelected, err := m.FreezeFirstBoot(context.Background(), exact, baseline, func(context.Context) (CoreHostSelection, error) {
 		t.Error("exact installation queried a head")
 		return selected, nil
 	})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -65,12 +66,15 @@ func TestCoreInstalledObservationNeverTurnsReceiptIntoFreshProof(t *testing.T) {
 	}
 }
 
-func TestCoreObservationRequiresSignedAuthorityBeforeNativeScan(t *testing.T) {
+func TestCoreObservationRequiresRetainedDigestBeforeNativeScan(t *testing.T) {
 	m, _, _ := coreJournalFixture(t)
 	receipt, _ := m.ReadReceipt()
+	if err := os.WriteFile(filepath.Join(m.Root, "targets", receipt.ManifestSHA256+".json"), []byte(`{"changed":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	calls := 0
 	s := NativeCoreServices{Checkpoint: NativeCoreCheckpoint{Root: m.Root, MachineObservation: func() (CoreMachineIdentity, error) { calls++; return receipt.Machine, nil }}}
 	if err := s.VerifyInstalled(context.Background(), receipt, func(context.Context, CoreReceipt) error { calls++; return nil }); err == nil || calls != 0 {
-		t.Fatal("unsigned retained JSON supplied fresh proof", err, calls)
+		t.Fatal("changed retained JSON supplied fresh proof", err, calls)
 	}
 }

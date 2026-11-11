@@ -196,8 +196,7 @@ test('whole-server recovery removes omitted app registrations and keeps setup ga
 
 test('setup-only protected actions use the setup CSRF endpoint', () => {
   const restore = read('src/components/setup/SetupRestore.tsx');
-  const update = read('src/components/setup/SetupApplianceUpdate.tsx');
-  for (const component of [restore, update]) {
+  for (const component of [restore]) {
     assert.match(component, /fetch\('\/api\/auth\/csrf'/);
     assert.doesNotMatch(component, /fetch\('\/settings\/api\/auth\/csrf'/);
   }

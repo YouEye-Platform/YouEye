@@ -5,8 +5,8 @@ import "context"
 type uncachedVerificationKey struct{}
 
 // UncachedVerification is an explicit development diagnostic context. It
-// bypasses frozen installation objects while preserving signed discovery,
-// original URLs, authorized mirror mapping and all ordinary signature checks.
+// bypasses frozen installation objects while preserving discovery, original
+// URLs, authorized mirror mapping and all ordinary digest checks.
 func UncachedVerification(ctx context.Context) context.Context {
 	return context.WithValue(ctx, uncachedVerificationKey{}, true)
 }

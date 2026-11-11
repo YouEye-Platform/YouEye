@@ -3,7 +3,6 @@ package systemupdate
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,24 +13,23 @@ import (
 )
 
 // CoreArtifactCache is a protected content-addressed stage for a complete
-// selection. Original names and source URLs remain in the signed manifest;
-// deduplication changes neither provenance nor role signing authority.
+// selection. Original names and source URLs remain in the release document;
+// deduplication changes neither identity nor digest binding.
 type CoreArtifactCache struct {
-	Root         string
-	TrustKeyPath string
+	Root string
 	// Client serves metadata and, unless ArtifactClient is supplied, payloads.
 	Client *http.Client
 	// ArtifactClient separates bulk payload budgets without changing an explicit
-	// caller's Client timeout. Redirect and signed-byte checks still apply.
+	// caller's Client timeout. Redirect and digest checks still apply.
 	ArtifactClient *http.Client
 	AvailableBytes func(string) (uint64, error)
 }
 
 // NewRuntimeCoreArtifactCache supplies the clients used by installed native
-// updates and the signed candidate's cold service verification. Discovery keeps
-// its short budget; bulk bodies follow the operation context instead.
-func NewRuntimeCoreArtifactCache(root, trustKeyPath string) CoreArtifactCache {
-	return CoreArtifactCache{Root: root, TrustKeyPath: trustKeyPath, Client: ReleaseHTTPClient(), ArtifactClient: DefaultConfig().HTTPClient}
+// updates and cold service verification. Discovery keeps its short budget;
+// bulk bodies follow the operation context instead.
+func NewRuntimeCoreArtifactCache(root string) CoreArtifactCache {
+	return CoreArtifactCache{Root: root, Client: ReleaseHTTPClient(), ArtifactClient: DefaultConfig().HTTPClient}
 }
 
 func (c CoreArtifactCache) Path(blob releasecache.CoreBlob) (string, error) {
@@ -64,28 +62,21 @@ func (c CoreArtifactCache) cached(blob releasecache.CoreBlob) (bool, error) {
 }
 
 func coreMemberBlobs(m releasecache.CoreMember) []releasecache.CoreBlob {
-	out := []releasecache.CoreBlob{m.Artifact, m.Checksums, m.Signature, m.Provenance, m.SBOM}
-	if m.DocumentSignature != nil {
-		out = append(out, *m.DocumentSignature)
-	}
-	if m.ReleaseLock != nil {
-		out = append(out, *m.ReleaseLock)
-	}
-	return out
+	return m.Blobs()
 }
 
 func (c CoreArtifactCache) Stage(ctx context.Context, selection CoreHostSelection) (releasecache.CoreRelease, string, error) {
 	return c.stage(ctx, selection, nil)
 }
 
-// StageFreshServices retains the signed service envelopes needed to verify a
+// StageFreshServices retains the service artifacts needed to verify a
 // fresh public deployment. Installer and host payloads are already on the media.
 func (c CoreArtifactCache) StageFreshServices(ctx context.Context, selection CoreHostSelection) (releasecache.CoreRelease, string, error) {
 	return c.stage(ctx, selection, map[string]bool{"cp": true, "ui": true})
 }
 
-// StageReader authenticates the complete selection and all role authorities,
-// but downloads only the original Spine envelope. It creates no update intent.
+// StageReader checks the complete selection but downloads only the Spine
+// artifact. It creates no update intent.
 func (c CoreArtifactCache) StageReader(ctx context.Context, selection CoreHostSelection) (releasecache.CoreRelease, string, error) {
 	return c.stage(ctx, selection, map[string]bool{"spine": true})
 }
@@ -94,7 +85,7 @@ func (c CoreArtifactCache) StageReader(ctx context.Context, selection CoreHostSe
 // documents. Native A/B staging owns host payload downloads; Installer/media
 // artifacts are not needed for updating an already installed appliance.
 func (c CoreArtifactCache) StageUpdate(ctx context.Context, selection CoreHostSelection, previous releasecache.CoreRelease) (releasecache.CoreRelease, string, error) {
-	target, _, err := VerifyCoreSelection(selection.Raw, selection.Signature, c.TrustKeyPath)
+	target, _, err := releasecache.ParseCoreRelease(selection.Raw)
 	if err != nil {
 		return target, "", err
 	}
@@ -115,18 +106,12 @@ func (c CoreArtifactCache) StageUpdate(ctx context.Context, selection CoreHostSe
 }
 
 func (c CoreArtifactCache) stage(ctx context.Context, selection CoreHostSelection, roles map[string]bool) (releasecache.CoreRelease, string, error) {
-	r, digest, err := VerifyCoreSelection(selection.Raw, selection.Signature, c.TrustKeyPath)
+	r, digest, err := releasecache.ParseCoreRelease(selection.Raw)
 	if err != nil {
 		return r, "", err
 	}
-	for _, member := range r.Members {
-		if err := CheckCoreMemberAuthority(member, r.Channel, c.TrustKeyPath); err != nil {
-			return r, "", err
-		}
-	}
 	if roles != nil && len(roles) == 0 {
-		_, _, err = EnsureCoreMetadata(ctx, selection, c.TrustKeyPath, c.Root, c.Client, "")
-		return r, digest, err
+		return r, digest, nil
 	}
 	if !filepath.IsAbs(c.Root) {
 		return r, "", fmt.Errorf("protected core cache root required")
@@ -149,10 +134,6 @@ func (c CoreArtifactCache) stage(ctx context.Context, selection CoreHostSelectio
 	for _, m := range r.Members {
 		if roles != nil && !roles[m.Role] {
 			continue
-		}
-		// Resolve every current authority before downloading any payload.
-		if _, err := CoreMemberKey(m, r.Channel, c.TrustKeyPath); err != nil {
-			return r, "", err
 		}
 		for _, b := range coreMemberBlobs(m) {
 			if old, ok := unique[b.SHA256]; ok {
@@ -186,9 +167,6 @@ func (c CoreArtifactCache) stage(ctx context.Context, selection CoreHostSelectio
 	if free < required {
 		return r, "", fmt.Errorf("complete core staging requires %d available bytes; found %d", required, free)
 	}
-	if _, _, err = EnsureCoreMetadata(ctx, selection, c.TrustKeyPath, c.Root, c.Client, ""); err != nil {
-		return r, "", err
-	}
 	artifactClient := c.ArtifactClient
 	if artifactClient == nil {
 		artifactClient = c.Client
@@ -206,39 +184,22 @@ func (c CoreArtifactCache) stage(ctx context.Context, selection CoreHostSelectio
 			return r, "", fmt.Errorf("stage %s: %w", b.Name, err)
 		}
 	}
-	for _, m := range r.Members {
-		if roles != nil && !roles[m.Role] {
-			continue
-		}
-		key, err := CoreMemberKey(m, r.Channel, c.TrustKeyPath)
-		if err != nil {
-			return r, "", err
-		}
-		if err := releasecache.VerifyCoreMember(m, key, func(blob releasecache.CoreBlob) (io.ReadCloser, error) {
-			path, err := c.Path(blob)
-			if err != nil {
-				return nil, err
-			}
-			return os.Open(path)
-		}); err != nil {
-			return r, "", fmt.Errorf("verify core role %s: %w", m.Role, err)
+	for _, b := range unique {
+		if present, err := c.cached(b); err != nil || !present {
+			return r, "", fmt.Errorf("verify core blob %s: digest/size check failed", b.Name)
 		}
 	}
 	return r, digest, nil
 }
 
-// IndexMember rechecks current scoped authority and the complete role envelope
-// before returning file truth for a cached standalone service member.
-func (c CoreArtifactCache) IndexMember(member releasecache.CoreMember, channel string) (CorePayloadIndex, error) {
+// IndexMember rechecks the cached artifact digest before returning file truth
+// for a cached standalone service member.
+func (c CoreArtifactCache) IndexMember(member releasecache.CoreMember) (CorePayloadIndex, error) {
 	if member.Role != "cp" && member.Role != "ui" {
 		return CorePayloadIndex{}, fmt.Errorf("standalone core member required")
 	}
-	key, err := CoreMemberKey(member, channel, c.TrustKeyPath)
-	if err != nil {
-		return CorePayloadIndex{}, err
-	}
-	if err = releasecache.VerifyCoreMember(member, key, func(blob releasecache.CoreBlob) (io.ReadCloser, error) { return c.open(blob) }); err != nil {
-		return CorePayloadIndex{}, err
+	if present, err := c.cached(member.Artifact); err != nil || !present {
+		return CorePayloadIndex{}, fmt.Errorf("cached %s artifact failed digest/size verification", member.Role)
 	}
 	file, err := c.open(member.Artifact)
 	if err != nil {
@@ -283,11 +244,8 @@ func (c CoreArtifactCache) IndexSelected(m CoreManager, j CoreJournal, role stri
 	if err != nil {
 		return CorePayloadIndex{}, err
 	}
-	if err = CheckCoreMemberAuthority(member, j.Target.Channel, c.TrustKeyPath); err != nil {
-		return CorePayloadIndex{}, err
-	}
 	if reflect.DeepEqual(member, previous) {
 		return m.LoadPayloadIndex(member.Artifact.SHA256)
 	}
-	return c.IndexMember(member, j.Target.Channel)
+	return c.IndexMember(member)
 }

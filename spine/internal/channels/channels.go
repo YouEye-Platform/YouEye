@@ -42,7 +42,6 @@ var mu sync.Mutex
 // Component identifiers.
 const (
 	ComponentDefault = "default"
-	ComponentSystem  = "system"
 	ComponentSpine   = "spine"
 	ComponentControl = "control"
 	ComponentUI      = "ui"
@@ -139,9 +138,10 @@ func (ch *Channel) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Config is the parsed release_channels block.
+// Config is the parsed release_channels block. The System (complete core)
+// update source is not a channel: it comes only from the installer-recorded
+// release policy in protected State.
 type Config struct {
-	System  Channel            `yaml:"system,omitempty" json:"system,omitempty"`
 	Default Channel            `yaml:"default,omitempty" json:"default,omitempty"`
 	Spine   Channel            `yaml:"spine,omitempty" json:"spine,omitempty"`
 	Control Channel            `yaml:"control,omitempty" json:"control,omitempty"`
@@ -205,8 +205,6 @@ func (c *Config) override(component string) (Channel, bool) {
 	switch component {
 	case ComponentDefault:
 		return c.Default, true
-	case ComponentSystem:
-		return c.System, true
 	case ComponentSpine:
 		return c.Spine, true
 	case ComponentControl:
@@ -295,11 +293,6 @@ func (c *Config) SetChannel(component string, ch Channel) error {
 	switch component {
 	case ComponentDefault:
 		c.Default = ch
-	case ComponentSystem:
-		if err := ValidateSystemChannel(ch); err != nil {
-			return err
-		}
-		c.System = ch
 	case ComponentSpine:
 		c.Spine = ch
 	case ComponentControl:
@@ -326,8 +319,6 @@ func (c *Config) ResetChannel(component string) error {
 	switch component {
 	case ComponentDefault:
 		c.Default = Channel{Branch: "main", Fallback: []string{"main"}}
-	case ComponentSystem:
-		c.System = Channel{}
 	case ComponentSpine:
 		c.Spine = Channel{}
 	case ComponentControl:
@@ -347,7 +338,6 @@ func (c *Config) ResetChannel(component string) error {
 
 // ResetAll clears every override and returns the default channel to main.
 func (c *Config) ResetAll() {
-	c.System = Channel{}
 	c.Default = Channel{Branch: "main", Fallback: []string{"main"}}
 	c.Spine = Channel{}
 	c.Control = Channel{}
@@ -360,9 +350,6 @@ func (c *Config) ResetAll() {
 // override (excludes "default"), sorted app ids appended as "app:<id>".
 func (c *Config) ConfiguredComponents() []string {
 	var out []string
-	if !c.System.IsZero() {
-		out = append(out, ComponentSystem)
-	}
 	if !c.Spine.IsZero() {
 		out = append(out, ComponentSpine)
 	}
@@ -535,29 +522,13 @@ func NormalizeBranch(branch string) (string, error) {
 	return branch, nil
 }
 
-// The System channel selects a complete assembly, never a component tag.
-func ValidateSystemChannel(ch Channel) error {
-	if err := ValidateChannel(ch); err != nil {
-		return err
-	}
-	if ch.Source != "" {
-		if _, err := releasecache.ParseRepositorySource(ch.Source); err != nil {
-			return err
-		}
-	}
-	if ch.Tag != "" && (!strings.HasPrefix(ch.Tag, "youeye-v") || !releasecache.ValidCoreVersion(strings.TrimPrefix(ch.Tag, "youeye-v")) || len(ch.ArtifactSHA256) != 64) {
-		return fmt.Errorf("System pin requires a canonical core tag and its manifest digest")
-	}
-	return nil
-}
-
 func validateSource(source string) error {
 	u, err := url.Parse(source)
 	if err != nil {
 		return fmt.Errorf("invalid source URL %q: %w", source, err)
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("source URL %q must be http(s)", source)
+	if u.Scheme != "https" {
+		return fmt.Errorf("source URL %q must use https", source)
 	}
 	if u.Host == "" {
 		return fmt.Errorf("source URL %q is missing a host", source)

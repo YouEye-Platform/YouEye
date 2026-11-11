@@ -1,6 +1,5 @@
-import { ownerReleaseGrant } from '@/lib/releases/owner-trust';
 import { execFile } from 'node:child_process';
-import { createHash, createPublicKey } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
@@ -11,7 +10,6 @@ import {
   selectInfrastructureStandaloneRelease,
 } from '@/lib/infrastructure/release-resolver';
 import type { ReleaseAsset, ReleaseSource } from '@/lib/apps/release-source';
-import { releaseArtifactTrust, verifySignedReleaseArtifactBuffer } from '@/lib/releases/verify';
 import { getReleaseAssetDownloadURL } from '@/lib/apps/release-source';
 import { ProductAssetNotFound, loadProductRelease, loadProductBlob, productReceipt, type InstalledProductReceipt, type VerifiedProductRelease } from '@/lib/releases/product-release';
 import { releaseCacheFetch } from '@/lib/releases/cache';
@@ -23,17 +21,12 @@ const MAX_ARTIFACT_BYTES = 256 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 100_000;
 const MAX_ARCHIVE_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 2 * 1024 * 1024 * 1024;
-const SIGNATURE_ASSETS = new Set([
-  'SHA256SUMS',
-  'SHA256SUMS.sig',
-  'provenance.json',
-  'sbom.spdx.json',
-]);
-const SIGNATURE_INDICATORS = new Set(['release-development.pub', 'release-public.pub', 'SHA256SUMS.sig']);
 
-export type MarketNativeSignature =
-  | { status: 'unsigned' }
-  | { status: 'verified-development' | 'verified-stable' | 'verified-beta' | 'verified-custom'; keyId: string };
+/** How the staged archive was bound: by its product release digests, or by the
+ * manifest selection (its pinned `artifactSHA256` when present) over HTTPS. */
+export type MarketNativeVerification =
+  | { status: 'manifest' }
+  | { status: 'product-release'; releaseSHA256: string };
 
 export interface StagedMarketNativeArtifact {
   containerName: string;
@@ -44,7 +37,7 @@ export interface StagedMarketNativeArtifact {
   artifactName: 'standalone.tar';
   artifactSHA256: string;
   artifactBytes: number;
-  signature: MarketNativeSignature;
+  verification: MarketNativeVerification;
   productRelease?: InstalledProductReceipt;
   runtimeUUID?: string;
 }
@@ -61,19 +54,6 @@ export interface MarketNativeStageOptions {
 
 export class MarketNativeArtifactPolicyError extends Error {
   override name = 'MarketNativeArtifactPolicyError';
-}
-
-export function classifyMarketNativeSignatureAssets(assetNames: Iterable<string>): 'unsigned' | 'complete' {
-  const advertised = new Set(assetNames);
-  const claimsSignature = [...SIGNATURE_INDICATORS].some((name) => advertised.has(name));
-  if (!claimsSignature) return 'unsigned';
-  const keys = ['release-development.pub', 'release-public.pub'].filter(name => advertised.has(name));
-  if (keys.length > 1) throw new MarketNativeArtifactPolicyError('Native app release advertises conflicting signing keys');
-  const present = [...SIGNATURE_ASSETS].filter((name) => advertised.has(name));
-  if (keys.length !== 1 || present.length !== SIGNATURE_ASSETS.size) {
-    throw new MarketNativeArtifactPolicyError('Native app release advertises an incomplete signature bundle');
-  }
-  return 'complete';
 }
 
 function releaseSourceFromMarket(source: MarketSource): ReleaseSource {
@@ -240,7 +220,7 @@ export async function downloadMarketProductBlob(selected: VerifiedProductRelease
 }
 
 /** Compare installer semantics after the same bounded catalog presentation mapping.
- * The original signed bytes and build version remain the authority; a catalog
+ * The original contract bytes and build version remain the authority; a catalog
  * may resolve image paths and the known public repository projection only.
  */
 export async function verifyMarketProductInstallContract(
@@ -256,7 +236,7 @@ export async function verifyMarketProductInstallContract(
     throw new MarketNativeArtifactPolicyError('Product installer contract build identity differs');
   }
   if (!await sameMarketInstallContract(original, manifest, config, source)) {
-    throw new MarketNativeArtifactPolicyError('Selected application manifest differs from signed product contract');
+    throw new MarketNativeArtifactPolicyError('Selected application manifest differs from the product contract');
   }
 }
 
@@ -379,7 +359,7 @@ export async function inspectMarketNativeArchive(path: string, requiredEntrypoin
   }
 }
 
-/** Shared signed native archive staging for Market apps and managed Pointer. */
+/** Shared digest-bound native archive staging for Market apps and managed Pointer. */
 export async function stageVerifiedProductArtifact(directory: string, containerName: string, assembly: VerifiedProductRelease, expectedDigest?: string): Promise<StagedMarketNativeArtifact> {
   if (assembly.build.kind !== 'native' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(containerName)) throw new MarketNativeArtifactPolicyError('Invalid native product staging identity');
   const load = (name: string, maximum = 1024*1024) => downloadMarketProductBlob(assembly,name,maximum);
@@ -387,16 +367,16 @@ export async function stageVerifiedProductArtifact(directory: string, containerN
     const contract = await load('pointer-build-contract.json');
     if (createHash('sha256').update(contract).digest('hex') !== assembly.build.contract_sha256) throw new MarketNativeArtifactPolicyError('Pointer build contract differs');
   }
+  const primary = assembly.build.assets.find(a => a.name === 'standalone.tar');
+  if (!primary) throw new MarketNativeArtifactPolicyError('Native product release has no standalone.tar');
+  if (expectedDigest && expectedDigest !== primary.sha256) throw new MarketNativeArtifactPolicyError('Native app artifact does not match the manifest SHA-256');
   const bytes = await load('standalone.tar',MAX_ARTIFACT_BYTES);
-  const originalURL = assembly.build.assets.find(a => a.name === 'standalone.tar')!.url;
-  await verifySignedReleaseArtifactBuffer(originalURL,bytes,'standalone.tar',expectedDigest,'app',name => load(name));
-  const trust = releaseArtifactTrust(originalURL,undefined,'app');
   const artifactPath = join(directory,`${containerName}.standalone.tar`);
   await writeFile(artifactPath,bytes,{mode:0o600});
   await inspectMarketNativeArchive(artifactPath,'server.js');
   return {containerName,path:artifactPath,tag:assembly.release.tag,version:assembly.release.version,
     sourceRepo:assembly.release.source,artifactName:'standalone.tar',artifactSHA256:createHash('sha256').update(bytes).digest('hex'),
-    artifactBytes:bytes.length,signature:{status:`verified-${trust.class}`,keyId:assembly.build.signer_sha256},productRelease:productReceipt(assembly)};
+    artifactBytes:bytes.length,verification:{status:'product-release',releaseSHA256:assembly.manifestSHA256},productRelease:productReceipt(assembly)};
 }
 
 export async function stageMarketNativeArtifact(
@@ -438,27 +418,8 @@ export async function stageMarketNativeArtifact(
     if (assembly.release.version !== selected.version || assembly.build.kind !== 'native') throw new MarketNativeArtifactPolicyError('Product selection differs from requested native app');
     return stageVerifiedProductArtifact(directory,container.name,assembly,container.source.artifactSHA256?.toLowerCase());
   }
-  const signatureClassification = classifyMarketNativeSignatureAssets(release.assets.map((asset) => asset.name));
-  const publisherGrant = ownerReleaseGrant(selected.url, 'app');
-  if (publisherGrant && signatureClassification !== 'complete') throw new MarketNativeArtifactPolicyError('This app source requires its enrolled publisher signature');
-  const tarAsset = release.assets.find((asset) => asset.name === 'standalone.tar');
-  if (!tarAsset) throw new Error('Selected native app release has no standalone.tar asset');
-  const assetTransport = (name: string) => selectedReleaseAssetTransport(
-    resolvedRepo.source, release.assets, selected.tag, selected.url, name,
-  );
-  const artifactURL = assetTransport('standalone.tar');
-
-  let trust: ReturnType<typeof releaseArtifactTrust> | undefined;
-  if (signatureClassification === 'complete') {
-    try {
-      trust = releaseArtifactTrust(selected.url, undefined, 'app');
-      if (!release.assets.some(asset => asset.name === trust!.name)) {
-        throw new Error('Signature bundle does not match selected source authority');
-      }
-    } catch (cause) {
-      throw new MarketNativeArtifactPolicyError('Native app signing authority is not supported for this source and channel', { cause });
-    }
-  }
+  if (!release.assets.some((asset) => asset.name === 'standalone.tar')) throw new Error('Selected native app release has no standalone.tar asset');
+  const artifactURL = transport('standalone.tar');
   let bytes: Buffer;
   try { bytes = await downloadMarketNativeArtifact(artifactURL); }
   catch (cause) {
@@ -469,16 +430,6 @@ export async function stageMarketNativeArtifact(
   const expectedDigest = container.source.artifactSHA256?.toLowerCase();
   if (expectedDigest && expectedDigest !== artifactSHA256) {
     throw new MarketNativeArtifactPolicyError('Native app artifact does not match the manifest SHA-256');
-  }
-
-  let signature: MarketNativeSignature = { status: 'unsigned' };
-  if (signatureClassification === 'complete') {
-    try {
-      await verifySignedReleaseArtifactBuffer(selected.url, bytes, 'standalone.tar', expectedDigest, 'app',
-        name => downloadMarketNativeArtifact(assetTransport(name), releaseCacheFetch, 1024 * 1024));
-    }
-    catch (cause) { throw new MarketNativeArtifactPolicyError('Native app signature or checksum verification failed', { cause }); }
-    signature = { status: `verified-${trust!.class}`, keyId: publisherGrant ? createHash('sha256').update(createPublicKey(publisherGrant.public_key).export({type:'spki',format:'der'})).digest('hex') : `youeye-${trust!.class}-v1` };
   }
 
   const artifactPath = join(directory, `${container.name}.standalone.tar`);
@@ -493,7 +444,7 @@ export async function stageMarketNativeArtifact(
     artifactName: 'standalone.tar',
     artifactSHA256,
     artifactBytes: bytes.byteLength,
-    signature,
+    verification: { status: 'manifest' },
   };
 }
 

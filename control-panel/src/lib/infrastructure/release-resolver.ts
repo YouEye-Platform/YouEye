@@ -106,7 +106,6 @@ export function selectInfrastructureStandaloneRelease(
 
     if (!parseVersionStrict(version)) continue;
     const asset = release.assets?.find((candidate) => candidate.name === 'product-release.json')
-      || release.assets?.find((candidate) => candidate.name === 'product-release.json.sig')
       || release.assets?.find((candidate) => candidate.name === 'standalone.tar');
     if (!asset) continue;
     const url = getReleaseAssetDownloadURL(source, asset, release.tag_name);
@@ -138,7 +137,7 @@ export async function resolveInfrastructureStandaloneRelease(
   return resolved;
 }
 
-/** Resolve one immutable signed release identity without branch fallback. */
+/** Resolve one immutable digest-pinned release identity without branch fallback. */
 export function selectExactInfrastructureStandaloneRelease(
   source: ReleaseSource,
   releases: InfrastructureRelease[],
@@ -170,18 +169,18 @@ export async function resolveExactInfrastructureStandaloneRelease(
     const selection = loadSelectedCore();
     const repository = `${source.base_url.replace(/\/$/, '')}/${source.organization}/${repo}`;
     const member = selection.members.find(m => m.role === 'ui' && m.source === repository && m.tag === exactTag && m.artifact.sha256 === artifactSHA256);
-    if (!member || member.artifact.name !== 'standalone.tar') throw new Error('UI channel differs from frozen core selection');
+    if (!member) throw new Error('UI channel differs from frozen core selection');
     return {tag: member.tag, version: member.build_version, url: member.artifact.url, artifactSHA256};
   }
-  // Exact tag plus digest already identifies the artifact. Signature and digest
-  // verification remain mandatory at download; API discovery adds no trust.
+  // Exact tag plus digest already identifies the artifact. Digest verification
+  // remains mandatory at download; API discovery adds no trust.
   const direct = `${source.base_url.replace(/\/$/, '')}/${encodeURIComponent(source.organization)}/${encodeURIComponent(repo)}/releases/download/${encodeURIComponent(exactTag)}/standalone.tar`;
   const resolved = selectExactInfrastructureStandaloneRelease(source, [{
     tag_name: exactTag, assets: [{ name: 'standalone.tar', browser_download_url: direct }],
   }], exactTag, artifactSHA256);
   void fetchImpl;
   if (!resolved) {
-    throw new Error(`Exact signed standalone release ${exactTag} was not found or did not match its configured identity`);
+    throw new Error(`Exact standalone release ${exactTag} was not found or did not match its configured identity`);
   }
   return resolved;
 }

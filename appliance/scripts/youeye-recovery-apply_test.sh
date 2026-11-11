@@ -45,22 +45,6 @@ test ! -e "$tmp/request/request.json"
 test ! -e "$tmp/first"
 jq -e '.schema == "youeye.appliance.recovery.v1" and .operation == "reset-platform" and .stage == "complete"' "$tmp/request/last-result.json" >/dev/null
 
-# A v2 image can bind Spine to a scoped branch and exact scoped release tag.
-jq '.release_set.schema="youeye.release-set.v2" |
-    .release_set.spine={"branch":"agent/sebastian/session","tag":"spine-agent/sebastian/session-v1.0.0","artifact_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} |
-    .release_set.control_panel.branch="dev" | .release_set.ui.branch="dev"' \
-    "$tmp/sealed-release.json" > "$tmp/sealed-v2.json"
-mv "$tmp/sealed-v2.json" "$tmp/sealed-release.json"
-: > "$tmp/calls"
-mkdir -p "$tmp/first"
-write_request reset-platform
-TEST_CALLS="$tmp/calls" YOUEYE_RECOVERY_REQUEST_DIR="$tmp/request" \
-YOUEYE_RECOVERY_FIRST_DEPLOY="$tmp/first" YOUEYE_RECOVERY_YOUEYE="$tmp/bin/youeye" \
-YOUEYE_RECOVERY_SEALED_RELEASE="$tmp/sealed-release.json" "$script"
-grep -Fxq 'channel set spine --source https://example.test/YouEye --branch agent/sebastian/session --tag spine-agent/sebastian/session-v1.0.0 --artifact-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --fallback none' "$tmp/calls"
-grep -Fxq 'channel set control --source https://example.test/YouEye --branch dev --tag cp-v0.5.29 --artifact-sha256 be902615e28df357e13c2f244397cade46709da4f3b3452f7a9d8f8d86057d92 --fallback none' "$tmp/calls"
-test ! -e "$tmp/first"
-
 mkdir -p "$tmp/first"
 : > "$tmp/calls"
 write_request factory-reset

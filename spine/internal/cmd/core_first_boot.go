@@ -57,27 +57,23 @@ func convergeFreshCore(ctx context.Context, policyPath string, resumeOnly bool) 
 		return out, err
 	}
 	root := filepath.Dir(policyPath)
-	baseline, err := systemupdate.ReadCoreBootstrapSelection(root, systemupdate.CoreDevelopmentTrustPath)
+	baseline, _, _, err := systemupdate.ReadAcceptedCoreSelection(root)
 	if err != nil {
 		return out, err
 	}
-	baseline, _, err = systemupdate.EnsureCoreMetadata(ctx, baseline, systemupdate.CoreDevelopmentTrustPath, "/var/lib/youeye/cache/core-update", runtime.Cache.Client, "")
-	if err != nil {
-		return out, err
-	}
-	frozen, selection, err := m.FreezeFirstBoot(ctx, policy, baseline, systemupdate.CoreDevelopmentTrustPath, func(ctx context.Context) (systemupdate.CoreHostSelection, error) {
+	frozen, selection, err := m.FreezeFirstBoot(ctx, policy, baseline, func(ctx context.Context) (systemupdate.CoreHostSelection, error) {
 		current, err := currentCoreSelection()
 		if err != nil {
 			return systemupdate.CoreHostSelection{}, err
 		}
-		selected, _, _, err := systemupdate.ResolveCoreReleaseWithMetadata(ctx, runtime.Cache.Client, current, systemupdate.CoreDevelopmentTrustPath, "/var/lib/youeye/cache/core-update")
+		selected, _, _, err := systemupdate.ResolveCoreRelease(ctx, runtime.Cache.Client, current)
 		return selected, err
 	})
 	if err != nil {
 		return out, err
 	}
 	out.RequestID, out.ManifestSHA256 = frozen.RequestID, frozen.ManifestSHA256
-	if _, err = m.PrepareSigned(ctx, frozen.RequestID, selection, frozen.ManifestSHA256, systemupdate.CoreDevelopmentTrustPath); err != nil {
+	if _, err = m.PrepareSelected(ctx, frozen.RequestID, selection, frozen.ManifestSHA256); err != nil {
 		return out, err
 	}
 	journal, err := continueCoreRequest(ctx, runtime, frozen.RequestID, true, false, false)

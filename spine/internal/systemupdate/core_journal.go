@@ -293,7 +293,7 @@ func (m CoreManager) ReadReceipt() (CoreReceipt, error) {
 	}
 	r, digest, err := releasecache.ParseCoreRelease(frozen)
 	if err != nil || digest != receipt.ManifestSHA256 || !reflect.DeepEqual(r, receipt.Release) {
-		return receipt, fmt.Errorf("committed core receipt differs from retained signed selection")
+		return receipt, fmt.Errorf("committed core receipt differs from retained selection")
 	}
 	return receipt, nil
 }

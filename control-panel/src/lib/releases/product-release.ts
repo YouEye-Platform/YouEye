@@ -1,32 +1,39 @@
-import { createHash, createPublicKey, verify } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { parseReleaseVersion } from '../version';
-import { canonicalTrustRepository, validTrustBranch, type TrustScope } from './owner-trust';
-import { uniqueJSON, type CoreBlob } from './core-release';
-import { releaseArtifactTrust } from './verify';
+import { canonicalReleaseRepository, uniqueJSON, validReleaseBranch, type CoreBlob } from './core-release';
+
+/**
+ * Unsigned product release documents (`youeye.product-release.v1`, authority
+ * `digest`). The release document is fetched over HTTPS from the selected
+ * release; it embeds the immutable build document, which binds every asset by
+ * SHA-256 and size. The accepted document's own SHA-256 is the installed
+ * identity and the replay-floor key.
+ */
 
 export type ProductBuild = {
   schema: 'youeye.product-build.v1'; product: string; kind: 'native' | 'source' | 'catalog';
   build_version: string; source: string; branch: string; source_commit: string; tag: string;
   asset_source?: string; asset_tag?: string;
-  input_sha256: string; contract_sha256: string; signer_sha256: string; primary: string; assets: CoreBlob[];
+  input_sha256: string; contract_sha256: string; primary: string; assets: CoreBlob[];
 };
 export type ProductRelease = {
   schema: 'youeye.product-release.v1'; product: string; version: string; source: string; branch: string;
   tag: string; channel: string; sequence: number; previous_manifest_sha256?: string; minimum_reader: 1;
-  signer_sha256: string; build_manifest_base64: string; build_signature_base64: string;
+  authority: 'digest'; build_manifest_base64: string;
 };
 export type VerifiedProductRelease = {
-  release: ProductRelease; build: ProductBuild; manifestSHA256: string; raw: Buffer; signature: Buffer;
+  release: ProductRelease; build: ProductBuild; manifestSHA256: string; raw: Buffer;
 };
-/** Exact signed bytes, persisted with the protected install record. */
+export type ProductReleaseExpectation = {product: string; source: string; tag: string};
+/** Exact accepted bytes, persisted with the protected install record. */
 export type InstalledProductReceipt = {
-  manifestBase64: string; signatureBase64: string; manifestSHA256: string;
+  manifestBase64: string; manifestSHA256: string;
 };
 export function productReceipt(selected: VerifiedProductRelease): InstalledProductReceipt {
-  return {manifestBase64:selected.raw.toString('base64'), signatureBase64:selected.signature.toString('base64'), manifestSHA256:selected.manifestSHA256};
+  return {manifestBase64:selected.raw.toString('base64'), manifestSHA256:selected.manifestSHA256};
 }
-export function verifyInstalledProductReceipt(receipt: InstalledProductReceipt, expected: Parameters<typeof verifyProductRelease>[2]): VerifiedProductRelease {
-  const selected = verifyProductRelease(base64(receipt.manifestBase64,1024*1024),base64(receipt.signatureBase64,64),expected);
+export function verifyInstalledProductReceipt(receipt: InstalledProductReceipt, expected: ProductReleaseExpectation): VerifiedProductRelease {
+  const selected = verifyProductRelease(base64(receipt.manifestBase64,1024*1024),expected);
   if (selected.manifestSHA256 !== receipt.manifestSHA256) throw new Error('Installed product receipt digest differs');
   return selected;
 }
@@ -57,11 +64,11 @@ function channel(source: string, branch: string, version: string): string {
 }
 export function parseProductBuild(raw: Buffer): ProductBuild {
   const b = document(raw) as ProductBuild;
-  fields(b,['schema','product','kind','build_version','source','branch','source_commit','tag','asset_source','asset_tag','input_sha256','contract_sha256','signer_sha256','primary','assets']);
-  if (b.schema !== 'youeye.product-build.v1' || !products.has(b.product) || !parseReleaseVersion(b.build_version) || canonicalTrustRepository(b.source) !== b.source || !validTrustBranch(b.branch) || !/^[0-9a-f]{40}$/.test(b.source_commit) || !hash(b.input_sha256) || !hash(b.contract_sha256) || !hash(b.signer_sha256) || b.tag !== productTag(b.product,b.branch,b.build_version) || !['native','source','catalog'].includes(b.kind)) throw new Error('Invalid immutable product build');
+  fields(b,['schema','product','kind','build_version','source','branch','source_commit','tag','asset_source','asset_tag','input_sha256','contract_sha256','primary','assets']);
+  if (b.schema !== 'youeye.product-build.v1' || !products.has(b.product) || !parseReleaseVersion(b.build_version) || canonicalReleaseRepository(b.source) !== b.source || !validReleaseBranch(b.branch) || !/^[0-9a-f]{40}$/.test(b.source_commit) || !hash(b.input_sha256) || !hash(b.contract_sha256) || b.tag !== productTag(b.product,b.branch,b.build_version) || !['native','source','catalog'].includes(b.kind)) throw new Error('Invalid immutable product build');
   channel(b.source,b.branch,b.build_version);
   if ((b.asset_source === undefined) !== (b.asset_tag === undefined)) throw new Error('Product asset source and tag must be paired');
-  if (b.asset_source !== undefined && (canonicalTrustRepository(b.asset_source) !== b.asset_source || !validTrustBranch(b.asset_tag!))) throw new Error('Invalid product asset location');
+  if (b.asset_source !== undefined && (canonicalReleaseRepository(b.asset_source) !== b.asset_source || !validReleaseBranch(b.asset_tag!))) throw new Error('Invalid product asset location');
   const assetSource = b.asset_source ?? b.source, assetTag = b.asset_tag ?? b.tag;
   if (!Array.isArray(b.assets) || !b.assets.length || b.assets.length > 32) throw new Error('Invalid product asset set');
   const names = new Set<string>();
@@ -71,7 +78,7 @@ export function parseProductBuild(raw: Buffer): ProductBuild {
     names.add(a.name);
   }
   if (!names.has(b.primary)) throw new Error('Missing primary product artifact');
-  if (b.kind === 'native' && (b.primary !== 'standalone.tar' || ['standalone.tar','SHA256SUMS','SHA256SUMS.sig','provenance.json','sbom.spdx.json'].some(n => !names.has(n)))) throw new Error('Incomplete native product envelope');
+  if (b.kind === 'native' && b.primary !== 'standalone.tar') throw new Error('Native product primary must be standalone.tar');
   return b;
 }
 function base64(value: string, maximum: number): Buffer {
@@ -82,23 +89,17 @@ function base64(value: string, maximum: number): Buffer {
 }
 export function parseProductRelease(raw: Buffer) {
   const r = document(raw) as ProductRelease;
-  fields(r,['schema','product','version','source','branch','tag','channel','sequence','previous_manifest_sha256','minimum_reader','signer_sha256','build_manifest_base64','build_signature_base64']);
-  if (r.schema !== 'youeye.product-release.v1' || !products.has(r.product) || !parseReleaseVersion(r.version) || canonicalTrustRepository(r.source) !== r.source || !validTrustBranch(r.branch) || r.tag !== productTag(r.product,r.branch,r.version) || r.minimum_reader !== 1 || !Number.isSafeInteger(r.sequence) || r.sequence < 1 || !hash(r.signer_sha256) || r.previous_manifest_sha256 !== undefined && !hash(r.previous_manifest_sha256) || channel(r.source,r.branch,r.version) !== r.channel) throw new Error('Invalid product release identity');
-  const buildRaw = base64(r.build_manifest_base64,1024*1024), buildSignature = base64(r.build_signature_base64,64);
-  if (buildSignature.length !== 64) throw new Error('Invalid original build signature');
-  const build = parseProductBuild(buildRaw);
+  fields(r,['schema','product','version','source','branch','tag','channel','sequence','previous_manifest_sha256','minimum_reader','authority','build_manifest_base64']);
+  if (r.schema !== 'youeye.product-release.v1' || r.authority !== 'digest' || !products.has(r.product) || !parseReleaseVersion(r.version) || canonicalReleaseRepository(r.source) !== r.source || !validReleaseBranch(r.branch) || r.tag !== productTag(r.product,r.branch,r.version) || r.minimum_reader !== 1 || !Number.isSafeInteger(r.sequence) || r.sequence < 1 || r.previous_manifest_sha256 !== undefined && !hash(r.previous_manifest_sha256) || channel(r.source,r.branch,r.version) !== r.channel) throw new Error('Invalid product release identity');
+  const build = parseProductBuild(base64(r.build_manifest_base64,1024*1024));
   if (build.product !== r.product) throw new Error('Product release references another product');
-  return {release:r,build,buildRaw,buildSignature};
+  return {release:r,build};
 }
-export function verifyProductRelease(raw: Buffer, signature: Buffer, expected: {product: string; source: string; tag: string; scope?: TrustScope}): VerifiedProductRelease {
-  const {release:r,build,buildRaw,buildSignature} = parseProductRelease(raw);
+/** Bind the document to the selected source and tag; assets are bound by its build digests. */
+export function verifyProductRelease(raw: Buffer, expected: ProductReleaseExpectation): VerifiedProductRelease {
+  const {release:r,build} = parseProductRelease(raw);
   if (r.product !== expected.product || r.source !== expected.source || r.tag !== expected.tag) throw new Error('Product release differs from selected source/tag');
-  for (const [bytes,sig,source,tag,signer] of [[raw,signature,r.source,r.tag,r.signer_sha256],[buildRaw,buildSignature,build.source,build.tag,build.signer_sha256]] as const) {
-    const trust = releaseArtifactTrust(`${source}/releases/download/${tag}/product-release.json`,undefined,expected.scope || 'app');
-    const key = createPublicKey(trust.pem);
-    if (digest(key.export({type:'spki',format:'der'})) !== signer || sig.length !== 64 || !verify(null,bytes,key,sig)) throw new Error('Product release/build signature rejected');
-  }
-  return {release:r,build,manifestSHA256:digest(raw),raw,signature};
+  return {release:r,build,manifestSHA256:digest(raw),raw};
 }
 export class ProductAssetNotFound extends Error {}
 export function productBlobTransportURL(selected: VerifiedProductRelease, blob: CoreBlob, mirror = false): string {
@@ -107,7 +108,7 @@ export function productBlobTransportURL(selected: VerifiedProductRelease, blob: 
   return blob.url;
 }
 export function identicalProductPayloads(before: VerifiedProductRelease, after: VerifiedProductRelease): boolean {
-  return before.release.product === after.release.product && before.release.build_manifest_base64 === after.release.build_manifest_base64 && before.release.build_signature_base64 === after.release.build_signature_base64;
+  return before.release.product === after.release.product && before.release.build_manifest_base64 === after.release.build_manifest_base64;
 }
 
 export function installedProductProjection(selected: VerifiedProductRelease) {
@@ -128,14 +129,13 @@ export function acceptProductSequence(floors: ProductSequenceFloors | undefined,
 
 /** The resolver supplies only the selected release's validated asset transport. */
 export async function loadProductRelease(
-  assetNames: string[], expected: Parameters<typeof verifyProductRelease>[2],
+  assetNames: string[], expected: ProductReleaseExpectation,
   load: (name: string, maximumBytes: number) => Promise<Buffer>,
 ): Promise<VerifiedProductRelease | null> {
-  const names = ['product-release.json','product-release.json.sig'];
-  if (!names.some(name => assetNames.includes(name))) return null;
-  if (names.some(name => assetNames.filter(n => n === name).length !== 1)) throw new Error('Incomplete product release signature');
-  const [raw,signature] = await Promise.all([load(names[0],1024*1024),load(names[1],64)]);
-  return verifyProductRelease(raw,signature,expected);
+  const count = assetNames.filter(name => name === 'product-release.json').length;
+  if (!count) return null;
+  if (count !== 1) throw new Error('Ambiguous product release document');
+  return verifyProductRelease(await load('product-release.json',1024*1024),expected);
 }
 
 export async function loadProductBlob(selected: VerifiedProductRelease, name: string,
@@ -149,6 +149,6 @@ export async function loadProductBlob(selected: VerifiedProductRelease, name: st
     if (!(error instanceof ProductAssetNotFound) || primary === mirror) throw error;
     bytes = await load(mirror,blob.size_bytes);
   }
-  if (bytes.length !== blob.size_bytes || digest(bytes) !== blob.sha256) throw new Error('Product artifact differs from signed original build');
+  if (bytes.length !== blob.size_bytes || digest(bytes) !== blob.sha256) throw new Error('Product artifact differs from its original build digest');
   return bytes;
 }

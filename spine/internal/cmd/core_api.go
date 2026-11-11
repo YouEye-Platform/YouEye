@@ -26,22 +26,13 @@ func (o coreAPIOperations) Check(ctx context.Context) (api.CoreUpdateCandidate, 
 	if err != nil {
 		return out, err
 	}
-	selected, release, digest, err := systemupdate.ResolveCoreReleaseWithMetadata(ctx, runtime.Cache.Client, policy, systemupdate.CoreDevelopmentTrustPath, runtime.Cache.Root)
+	_, release, digest, err := systemupdate.ResolveCoreRelease(ctx, runtime.Cache.Client, policy)
 	if err != nil {
 		return out, err
 	}
 	if o.reader != nil {
 		if err := o.reader.verify(digest); err != nil {
 			return out, err
-		}
-	} else {
-		ready, acquireErr := acquireCoreReader(ctx, runtime, selected, release, digest, installed)
-		err = acquireErr
-		if err != nil {
-			return out, err
-		}
-		if ready != nil {
-			out.ReaderReady = &api.CoreReaderReadySummary{State: ready.State, Version: ready.Version, ManifestSHA256: ready.ManifestSHA256, ArtifactSHA256: ready.ArtifactSHA256, MachineBound: true}
 		}
 	}
 	out.Release, out.ManifestSHA256 = release, digest
@@ -65,21 +56,7 @@ func (o coreAPIOperations) Check(ctx context.Context) (api.CoreUpdateCandidate, 
 }
 func (o coreAPIOperations) Submit(ctx context.Context, action string, request api.CoreUpdateRequest) (api.CoreUpdateActionResult, error) {
 	var out api.CoreUpdateActionResult
-	if o.reader == nil {
-		managedCoreAPISubmit.Lock()
-		defer managedCoreAPISubmit.Unlock()
-	}
 	reader := o.reader
-	if action == "stage" {
-		var err error
-		reader, err = o.stageReader(ctx, systemupdate.CoreManager{Root: systemupdate.CoreStatePath}, request.ManifestSHA256, request.RequestID)
-		if err != nil {
-			return out, err
-		}
-		if reader != nil && reader.managedLease != nil {
-			defer reader.managedLease()
-		}
-	}
 	if reader != nil {
 		// Serialize this adapter's stage/register/cancel boundary. Native journal
 		// and command locks still own cross-process admission and no-replay.
@@ -137,7 +114,7 @@ func (o coreAPIOperations) Submit(ctx context.Context, action string, request ap
 	if reader != nil {
 		bound, err := reader.bindStage(action, current, m.TransactionComplete(current),
 			func(request, digest, executable string) (string, error) {
-				return m.RegisterBootstrap(request, digest, executable, systemupdate.CoreDevelopmentTrustPath)
+				return m.RegisterBootstrap(request, digest, executable)
 			}, writeCoreBootstrapOverride)
 		if err != nil {
 			return out, err
@@ -151,7 +128,7 @@ func (o coreAPIOperations) Submit(ctx context.Context, action string, request ap
 			}
 		}
 		if !m.TransactionComplete(current) && !coreAPIReaderTerminal(current) && runtime.Runner.Executable != reader.executable {
-			return out, fmt.Errorf("the signed reader must be registered by the retained Stage request before continuation")
+			return out, fmt.Errorf("the selected reader must be registered by the retained Stage request before continuation")
 		}
 	}
 	runner := systemupdate.CoreControlRunner{Root: runtime.Root, Executable: runtime.Runner.Executable}

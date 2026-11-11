@@ -369,7 +369,7 @@ func firstDeploymentServiceComponents(image appliance.Manifest) (appliance.Manif
 					continue
 				}
 				components[i].source, components[i].branch = member.Source, member.Branch
-				components[i].expected = appliance.ComponentRelease{Version: member.BuildVersion, Branch: member.Branch, Tag: member.Tag, SourceCommit: member.SourceCommit, ArtifactSHA256: member.Artifact.SHA256}
+				components[i].expected = appliance.ComponentRelease{Version: member.BuildVersion, Tag: member.Tag, SourceCommit: member.SourceCommit, ArtifactSHA256: member.Artifact.SHA256}
 			}
 		}
 		return image, components, nil
@@ -395,7 +395,7 @@ func validateInstalledReleaseIdentity(name string, expected appliance.ComponentR
 		return fmt.Errorf("%s branch %q does not match selected bundle branch %q", name, installed.Branch, expectedBranch)
 	}
 	if strings.ToLower(strings.TrimSpace(installed.ArtifactSHA256)) != expected.ArtifactSHA256 {
-		return fmt.Errorf("%s artifact digest does not match the selected signed bundle", name)
+		return fmt.Errorf("%s artifact digest does not match the selected bundle", name)
 	}
 	return nil
 }
@@ -411,7 +411,7 @@ func addFirstDeployReleaseSetChecks(manifest appliance.Manifest, add func(string
 	}
 	manifest = selected
 	if manifest.ReleaseSet == nil {
-		add("first-deploy release identity", "fail", "the sealed System has no exact signed release set")
+		add("first-deploy release identity", "fail", "the sealed System has no exact release set")
 		return
 	}
 	releaseSet := *manifest.ReleaseSet
@@ -419,9 +419,9 @@ func addFirstDeployReleaseSetChecks(manifest appliance.Manifest, add func(string
 	if err != nil {
 		add("System core provenance", "fail", "the running System core identity is unavailable")
 	} else if digest, digestErr := fileSHA256(reader.Executable); digestErr != nil || !reader.Bound && Version != releaseSet.Spine.Version || digest != releaseSet.Spine.ArtifactSHA256 {
-		add("System core provenance", "fail", "the running System core does not match the selected signed bundle")
+		add("System core provenance", "fail", "the running System core does not match the selected bundle")
 	} else {
-		add("System core provenance", "pass", "the canonical baked System core matches its signed bundle")
+		add("System core provenance", "pass", "the canonical baked System core matches its bundle")
 		if reader.Bound {
 			add("System reader binding", "pass", "the separate "+reader.ReaderClass+" reader has an exact active binding")
 		}
@@ -443,7 +443,7 @@ func addFirstDeployReleaseSetChecks(manifest appliance.Manifest, add func(string
 		} else if err := validateInstalledReleaseIdentity(component.name, component.expected, component.branch, installed); err != nil {
 			add(component.name+" provenance", "fail", err.Error())
 		} else {
-			add(component.name+" provenance", "pass", "the installed version, tag, branch, and digest match the selected signed bundle")
+			add(component.name+" provenance", "pass", "the installed version, tag, branch, and digest match the selected bundle")
 		}
 	}
 }

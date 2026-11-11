@@ -21,9 +21,9 @@ type StoredCatalog = {
 export type AcceptedCatalog = { selected: VerifiedProductRelease; snapshot: CatalogSnapshot; catalog: string; floors: ProductSequenceFloors };
 const sourceKey = (source: MarketSource) => sha(`${source.repo_url}\0${source.branch}`);
 
-/** Relative dependencies belong to the authenticated build's repository host,
+/** Relative dependencies belong to the accepted build's repository host,
  * not the host carrying a later release label. Catalog-local files still use
- * the selected transport and their exact signed content hashes.
+ * the selected transport and their exact snapshot content hashes.
  */
 export function catalogDependencySource(source: MarketSource, accepted: AcceptedCatalog | null): MarketSource {
   if (!accepted || accepted.selected.build.source === source.repo_url) return source;
@@ -39,7 +39,7 @@ export async function resolveCatalogDependencySource(source: MarketSource): Prom
 
 export function verifyCatalogSnapshot(selected: VerifiedProductRelease, raw: Buffer): CatalogSnapshot {
   if (selected.release.product !== 'market' || selected.build.kind !== 'catalog'
-    || raw.length > 1024 * 1024 || sha(raw) !== selected.build.contract_sha256) throw new Error('Market snapshot differs from signed build');
+    || raw.length > 1024 * 1024 || sha(raw) !== selected.build.contract_sha256) throw new Error('Market snapshot differs from its build digest');
   uniqueJSON(raw.toString('utf8'));
   const snapshot = JSON.parse(raw.toString('utf8')) as CatalogSnapshot;
   if (snapshot.apiVersion !== 'youeye.market/catalog-snapshot/v1' || !/^sha256:[0-9a-f]{64}$/.test(snapshot.catalog?.sha256)
@@ -57,7 +57,7 @@ export function verifyCatalogSnapshot(selected: VerifiedProductRelease, raw: Buf
 
 export function verifyCatalogFile(snapshot: CatalogSnapshot, filename: string, bytes: string | Buffer): void {
   const file = snapshot.content.files.find(f => f.path === filename);
-  if (!file || file.sha256 !== `sha256:${sha(bytes)}`) throw new Error('Market file differs from signed catalog snapshot');
+  if (!file || file.sha256 !== `sha256:${sha(bytes)}`) throw new Error('Market file differs from the accepted catalog snapshot');
 }
 
 export async function readAcceptedCatalog(source: MarketSource, directory = DIRECTORY): Promise<AcceptedCatalog | null> {
@@ -82,7 +82,7 @@ export async function readAcceptedCatalog(source: MarketSource, directory = DIRE
 
 /** One durable file commits the accepted label, catalog bytes and replay floor. */
 export async function acceptCatalogRelease(source: MarketSource, selected: VerifiedProductRelease, snapshotBytes: Buffer, catalog: string, directory = DIRECTORY): Promise<void> {
-  // Recheck trust at adoption, not just discovery (including revocation).
+  // Recheck the exact document at adoption, not just discovery.
   selected = verifyInstalledProductReceipt(productReceipt(selected), {product:'market',source:source.repo_url,tag:selected.release.tag});
   if (selected.release.branch !== source.branch) throw new Error('Market release belongs to another channel');
   const snapshot = verifyCatalogSnapshot(selected, snapshotBytes);
@@ -108,7 +108,7 @@ export async function discoverCatalogRelease(source: MarketSource): Promise<Veri
   const releases = await listInfrastructureReleases(source,source.repository);
   const candidate = selectInfrastructureStandaloneRelease(source,releases,'catalog',source.branch);
   if (!candidate) {
-    if (await readAcceptedCatalog(source)) throw new Error('Signed Market channel no longer advertises its release');
+    if (await readAcceptedCatalog(source)) throw new Error('Market release channel no longer advertises its release');
     return null; // Legacy/custom catalogs retain their existing Git path.
   }
   const selected = await resolveMarketProductRelease('market',source.repo_url,candidate.tag);

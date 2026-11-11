@@ -118,6 +118,7 @@ func (l *authRateLimiter) cleanup() {
 type Server struct {
 	coreUpdateOperations CoreUpdateOperations
 	coreStatePath        string
+	coreBootstrapPath    string
 	version              string
 	socketPath           string
 	mux                  *http.ServeMux
@@ -128,7 +129,6 @@ type Server struct {
 	remoteAccess         remoteAccessService
 	developmentAccess    developmentAccessService
 	networkStatus        networkStatusService
-	releaseHTTP          *http.Client
 
 	// Status cache — avoids shelling out on every request
 	statusMu     sync.Mutex
@@ -157,7 +157,6 @@ func NewServer(version string, cfg *config.Config) *Server {
 		remoteAccess:      remoteaccess.NewDefault(),
 		developmentAccess: developmentaccess.NewDefault(),
 		networkStatus:     networkstatus.NewDefault(),
-		releaseHTTP:       systemupdate.ReleaseHTTPClient(),
 	}
 	s.setupRoutes()
 	return s
@@ -254,9 +253,6 @@ func (s *Server) setupRoutes() {
 		s.mux.HandleFunc("/api/appliance/core-update/"+action, s.handleCoreUpdateAction(action))
 	}
 	s.mux.HandleFunc("/api/appliance/system-update/status", s.handleSystemUpdateStatus)
-	s.mux.HandleFunc("/api/appliance/system-update/check", s.handleSystemUpdateCheck)
-	s.mux.HandleFunc("/api/appliance/system-update/stage", s.handleSystemUpdateStage)
-	s.mux.HandleFunc("/api/appliance/system-update/activate", s.handleSystemUpdateActivate)
 	s.mux.HandleFunc("/api/appliance/remote-access/keys", s.handleRemoteAccessKeys)
 	s.mux.HandleFunc("/api/appliance/remote-access/keys/", s.handleRemoteAccessKey)
 	s.mux.HandleFunc("/api/appliance/development-access", s.handleDevelopmentAccess)
@@ -848,15 +844,14 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the candidate through the control channel (may differ from
-	// getLatestRelease when a per-component source/branch is set).
+	// Resolve the candidate through the control channel. Without a resolved
+	// candidate there is no digest to bind the download, so fail closed.
 	cpCand, cpErr := releases.ResolveComponent(s.cfg, channels.ComponentControl, s.cfg.Releases.Repositories.ControlPanel, s.cfg.Releases.Repositories.ControlPanelTagPrefix)
-	latestVersion := ""
-	if cpErr == nil {
-		latestVersion = cpCand.Version
-	} else {
-		latestVersion = s.getLatestRelease(s.cfg.Releases.Repositories.ControlPanel, s.cfg.Releases.Repositories.ControlPanelTagPrefix)
+	if cpErr != nil {
+		errorResponse(w, fmt.Sprintf("could not resolve a verifiable Control Panel release: %v", cpErr), http.StatusConflict)
+		return
 	}
+	latestVersion := cpCand.Version
 
 	if latestVersion == "" || latestVersion == "unknown" {
 		errorResponse(w, "could not determine latest version", http.StatusInternalServerError)
@@ -886,19 +881,8 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get download URL from the resolved candidate (honors the control channel
-	// source), falling back to the default-channel asset resolver.
-	var downloadURL string
-	if cpErr == nil {
-		downloadURL = releases.BuildCandidateDownloadURL(s.cfg, cpCand, s.cfg.Releases.Repositories.ControlPanel, "standalone.tar")
-	} else {
-		url, err := s.getAssetDownloadURL(s.cfg.Releases.Repositories.ControlPanel, "standalone.tar", s.cfg.Releases.Repositories.ControlPanelTagPrefix)
-		if err != nil {
-			errorResponse(w, fmt.Sprintf("failed to get download URL: %v", err), http.StatusInternalServerError)
-			return
-		}
-		downloadURL = url
-	}
+	// Get download URL from the resolved candidate (honors the control channel source).
+	downloadURL := releases.BuildCandidateDownloadURL(s.cfg, cpCand, s.cfg.Releases.Repositories.ControlPanel, "standalone.tar")
 	fmt.Printf("Downloading from %s...\n", downloadURL)
 
 	update.Emit("control", update.StatusDownloading, 20, fmt.Sprintf("Downloading %s...", latestVersion))
@@ -939,12 +923,10 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, fmt.Sprintf("failed to finish download: %v", closeErr), http.StatusInternalServerError)
 		return
 	}
-	if cpErr == nil {
-		if err := releases.VerifySignedReleaseArtifact(dlClient, downloadURL, tmpFile.Name(), cpCand.ArtifactSHA256, "cp"); err != nil {
-			update.Fail("control", currentVersion, err.Error())
-			errorResponse(w, err.Error(), http.StatusConflict)
-			return
-		}
+	if err := releases.VerifyReleaseArtifact(downloadURL, tmpFile.Name(), cpCand.ArtifactSHA256, "cp"); err != nil {
+		update.Fail("control", currentVersion, err.Error())
+		errorResponse(w, err.Error(), http.StatusConflict)
+		return
 	}
 
 	update.Emit("control", update.StatusInstalling, 40, "Stopping Control Panel...")
@@ -1035,16 +1017,14 @@ func (s *Server) handleUpdateControl(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record channel provenance for the installed release.
-	if cpErr == nil {
-		if err := update.WriteProvenance(channels.ComponentControl, update.ProvenanceEntry{
-			Version:        latestVersion,
-			Tag:            cpCand.Tag,
-			Branch:         cpCand.Branch,
-			Source:         cpCand.Source,
-			ArtifactSHA256: cpCand.ArtifactSHA256,
-		}); err != nil {
-			fmt.Printf("Warning: could not record provenance: %v\n", err)
-		}
+	if err := update.WriteProvenance(channels.ComponentControl, update.ProvenanceEntry{
+		Version:        latestVersion,
+		Tag:            cpCand.Tag,
+		Branch:         cpCand.Branch,
+		Source:         cpCand.Source,
+		ArtifactSHA256: cpCand.ArtifactSHA256,
+	}); err != nil {
+		fmt.Printf("Warning: could not record provenance: %v\n", err)
 	}
 
 	jsonResponse(w, map[string]string{
@@ -1474,12 +1454,6 @@ func getOSRelease() string {
 // releases package, respecting the configured release branch.
 func (s *Server) getLatestRelease(repo, tagPrefix string) string {
 	return releases.GetLatestVersionForBranch(s.cfg, repo, releases.ReadReleaseBranch(), tagPrefix)
-}
-
-// getAssetDownloadURL gets the download URL for a specific asset from a release,
-// filtered by the configured release branch (with fallback to main).
-func (s *Server) getAssetDownloadURL(repo, assetName, tagPrefix string) (string, error) {
-	return releases.GetAssetURLForBranch(s.cfg, repo, assetName, tagPrefix)
 }
 
 // getControlVersion gets the current Control Panel version from container

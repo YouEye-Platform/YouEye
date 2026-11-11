@@ -78,11 +78,9 @@ func TestCoreMirrorDeliveryBoundsAndRedactedErrors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			r := coreFixture()
 			r.Members[0].Source = "https://forge.example/owner/YouEye"
-			for _, blob := range []*CoreBlob{&r.Members[0].Artifact, &r.Members[0].Checksums, &r.Members[0].Signature, &r.Members[0].Provenance, &r.Members[0].SBOM} {
-				blob.URL = r.Members[0].Source + "/releases/download/" + r.Members[0].Tag + "/" + blob.Name
-			}
+			r.Members[0].Artifact.URL = r.Members[0].Source + "/releases/download/" + r.Members[0].Tag + "/" + r.Members[0].Artifact.Name
 			calls := 0
-			base := distributionRT(func(req *http.Request) (*http.Response, error) {
+			base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				calls++
 				return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{test.destination}}, Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
 			})
@@ -128,7 +126,7 @@ func TestCorePublicWrapperUsesHashMirrorOnlyWhenOriginalAbsent(t *testing.T) {
 	mirror := r.Source + "/releases/download/" + r.Tag + "/blob-" + original.SHA256
 	for _, status := range []int{http.StatusOK, http.StatusNotFound, http.StatusForbidden} {
 		var seen []string
-		base := distributionRT(func(req *http.Request) (*http.Response, error) {
+		base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			seen = append(seen, req.URL.String())
 			code := status
 			if req.URL.String() == mirror {
@@ -162,3 +160,7 @@ func TestCorePublicWrapperUsesHashMirrorOnlyWhenOriginalAbsent(t *testing.T) {
 		}
 	}
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

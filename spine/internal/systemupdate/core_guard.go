@@ -16,5 +16,5 @@ func RequireLegacyUpdateAllowed(root string) error {
 	if err != nil {
 		return fmt.Errorf("installed core receipt requires recovery: %w", err)
 	}
-	return fmt.Errorf("this installation uses one signed System release; update the complete core selection")
+	return fmt.Errorf("this installation uses one complete System release; update the complete core selection")
 }

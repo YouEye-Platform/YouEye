@@ -26,12 +26,12 @@ func prepareCoreRequest(ctx context.Context, m systemupdate.CoreManager, request
 	if err != nil {
 		return j, err
 	}
-	selected, _, actual, err := systemupdate.ResolveCoreReleaseWithMetadata(ctx, systemupdate.ReleaseHTTPClient(), policy, systemupdate.CoreDevelopmentTrustPath, "/var/lib/youeye/cache/core-update")
+	selected, _, actual, err := systemupdate.ResolveCoreRelease(ctx, systemupdate.ReleaseHTTPClient(), policy)
 	if err != nil {
 		return j, err
 	}
 	if actual != digest {
 		return j, fmt.Errorf("System selection changed; review its exact new digest")
 	}
-	return m.PrepareSigned(ctx, request, selected, digest, systemupdate.CoreDevelopmentTrustPath)
+	return m.PrepareSelected(ctx, request, selected, digest)
 }

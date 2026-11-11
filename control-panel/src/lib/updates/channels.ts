@@ -9,8 +9,9 @@ import { releaseCacheFetch } from '../releases/cache';
  * Spine is the SOLE WRITER of youeye.yaml. This module READS the config (via the
  * settings service, which goes through Spine's GET /api/config with a local-file
  * fallback) and resolves the effective channel + candidate release for the
- * components CP itself manages (ui + native apps). All writes go through
- * spineClient.patchConfig — never a direct yaml write.
+ * components CP itself manages (ui + native apps). Only app channels are
+ * writable, through spineClient.patchConfig — never a direct yaml write. Core
+ * channels and the System update source are host-owned.
  *
  * Candidate resolution mirrors spine's GetLatestTagForBranch generalized to a
  * configurable fallback chain:
@@ -51,11 +52,21 @@ export interface EffectiveChannel {
   artifact_sha256?: string;
 }
 
-export const CORE_COMPONENTS = ['system', 'default', 'spine', 'control', 'ui'] as const;
+/** Host-owned channels: readable by the Control Panel, never writable. */
+export const CORE_COMPONENTS = ['default', 'spine', 'control', 'ui'] as const;
 export type CoreComponent = (typeof CORE_COMPONENTS)[number];
 
 /** Component id prefix for native apps: "app:<id>". */
 export const APP_PREFIX = 'app:';
+
+/**
+ * Whether a release channel is host-owned. The Control Panel may display these
+ * but never write them: "system" is the installer-recorded release policy and
+ * the core channels pin what the host installs.
+ */
+export function isHostOwnedChannel(id: string): boolean {
+  return id === 'system' || (CORE_COMPONENTS as readonly string[]).includes(id);
+}
 
 /** Default repo the platform ships from when no source is configured anywhere. */
 export const DEFAULT_CORE_REPO_URL = 'https://github.com/YouEye-Platform/YouEye';
@@ -103,8 +114,7 @@ export function normalizeReleaseChannels(rc: unknown): ReleaseChannelsConfig | n
     for (const [key, val] of Object.entries(override)) {
       if (!val || typeof val !== 'object') continue;
       const ch = val as Channel;
-      if (key === 'system') out.system = ch;
-      else if (key === 'default') out.default = ch;
+      if (key === 'default') out.default = ch;
       else if (key === 'spine') out.spine = ch;
       else if (key === 'control') out.control = ch;
       else if (key === 'ui') out.ui = ch;
@@ -149,8 +159,6 @@ function pickOverride(cfg: ReleaseChannelsConfig, component: string): Channel | 
   switch (component) {
     case 'default':
       return cfg.default;
-    case 'system':
-      return cfg.system;
     case 'spine':
       return cfg.spine;
     case 'control':

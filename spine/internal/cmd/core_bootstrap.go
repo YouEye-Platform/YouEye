@@ -94,7 +94,7 @@ func writeCoreBootstrapOverrideFile(path, executable string) error {
 
 func finishCoreBootstrap(ctx context.Context, request string) error {
 	m := systemupdate.CoreManager{Root: systemupdate.CoreStatePath}
-	executable, err := m.BootstrapExecutable(systemupdate.CoreDevelopmentTrustPath)
+	executable, err := m.BootstrapExecutable()
 	if err != nil || executable == "" {
 		return err
 	}
@@ -138,7 +138,7 @@ func removeCoreBootstrapOverrideFile(path, executable string) error {
 func init() {
 	var request, digest string
 	var activate bool
-	command := &cobra.Command{Use: "bootstrap", Args: cobra.NoArgs, Short: "Use the signed target coordinator for an older installed System reader", RunE: func(cmd *cobra.Command, _ []string) error {
+	command := &cobra.Command{Use: "bootstrap", Args: cobra.NoArgs, Short: "Use the target release's coordinator for an older installed System reader", RunE: func(cmd *cobra.Command, _ []string) error {
 		if request == "" || digest == "" {
 			return fmt.Errorf("exact --request and --manifest-sha256 required")
 		}
@@ -161,7 +161,7 @@ func init() {
 		if err != nil {
 			return err
 		}
-		executable, err = m.RegisterBootstrap(request, digest, executable, systemupdate.CoreDevelopmentTrustPath)
+		executable, err = m.RegisterBootstrap(request, digest, executable)
 		if err != nil {
 			return err
 		}

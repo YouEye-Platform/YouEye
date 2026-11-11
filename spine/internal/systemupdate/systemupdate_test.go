@@ -2,10 +2,7 @@ package systemupdate
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -88,30 +85,16 @@ func testUpdateManifest(files map[string][]byte) Manifest {
 		StateSchemaMin: 2, StateSchemaMax: 2, DataSchemaMin: 1, DataSchemaMax: 1, RecoveryVersion: "1",
 		MinimumCurrentImageVersion: "0.6.0-dev.26",
 		RootSlotSizeBytes:          RootSlotBytes, BootAttempts: BootAttempts, HealthProfile: "operational",
-		ArtifactKind: "development", Trust: Trust{Class: TrustClassDev, KeyID: "test-key"},
-		Rollback:   RollbackContract{Supported: true, StateSchemaMin: 2, StateSchemaMax: 2, DataSchemaMin: 1, DataSchemaMax: 1, PreserveState: true, PreserveData: true, PreserveRecovery: true},
-		ReleaseSet: testReleaseSet(targetCommit), Artifacts: artifacts, SourceDateEpoch: 1,
+		ArtifactKind: "development",
+		Rollback:     RollbackContract{Supported: true, StateSchemaMin: 2, StateSchemaMax: 2, DataSchemaMin: 1, DataSchemaMax: 1, PreserveState: true, PreserveData: true, PreserveRecovery: true},
+		ReleaseSet:   testReleaseSet(targetCommit), Artifacts: artifacts, SourceDateEpoch: 1,
 	}
 }
 
-func writeSignedBundle(t *testing.T, dir string, manifest Manifest, files map[string][]byte) (string, string) {
-	return writeSignedBundleWithTrustID(t, dir, manifest, files, false)
-}
-
-func writeSignedBundleWithTrustID(t *testing.T, dir string, manifest Manifest, files map[string][]byte, preserveTrustID bool) (string, string) {
+func writeBundle(t *testing.T, dir string, manifest Manifest, files map[string][]byte) string {
 	t.Helper()
 	for name, data := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !preserveTrustID {
-		manifest.Trust.KeyID, err = publicKeyID(publicKey)
-		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -123,31 +106,20 @@ func writeSignedBundleWithTrustID(t *testing.T, dir string, manifest Manifest, f
 	if err := os.WriteFile(manifestPath, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	signaturePath := manifestPath + ".sig"
-	if err := os.WriteFile(signaturePath, ed25519.Sign(privateKey, raw), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "trust.pub"), []byte(base64.StdEncoding.EncodeToString(publicKey)), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "trust.key"), privateKey, 0600); err != nil {
-		t.Fatal(err)
-	}
-	return manifestPath, signaturePath
+	return manifestPath
 }
 
 type managerFixture struct {
-	manager       *Manager
-	dir           string
-	manifestPath  string
-	signaturePath string
-	files         map[string][]byte
-	update        Manifest
-	runs          [][]string
-	writes        []string
-	bootInstalls  int
-	bootCreates   int
-	bootRemoves   int
+	manager      *Manager
+	dir          string
+	manifestPath string
+	files        map[string][]byte
+	update       Manifest
+	runs         [][]string
+	writes       []string
+	bootInstalls int
+	bootCreates  int
+	bootRemoves  int
 }
 
 func newManagerFixture(t *testing.T) *managerFixture {
@@ -162,7 +134,7 @@ func newManagerFixture(t *testing.T) *managerFixture {
 		"system-b.efi": []byte("uki-b"), "youeye-system-updater-linux-amd64": []byte("updater"),
 	}
 	update := testUpdateManifest(files)
-	manifestPath, signaturePath := writeSignedBundle(t, bundleDir, update, files)
+	manifestPath := writeBundle(t, bundleDir, update, files)
 	currentPath := filepath.Join(dir, "appliance-release")
 	currentRaw, _ := json.Marshal(testApplianceManifest("0.6.0-dev.26", baselineCommit))
 	if err := os.WriteFile(currentPath, currentRaw, 0444); err != nil {
@@ -179,7 +151,7 @@ func newManagerFixture(t *testing.T) *managerFixture {
 	if err := os.WriteFile(filepath.Join(dir, "boot-id"), []byte("initial-boot"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	f := &managerFixture{dir: dir, manifestPath: manifestPath, signaturePath: signaturePath, files: files, update: update}
+	f := &managerFixture{dir: dir, manifestPath: manifestPath, files: files, update: update}
 	journalPath := filepath.Join(dir, "state", "system-update", "journal.json")
 	cacheDir := filepath.Join(dir, "data", "system-update")
 	layout := Layout{
@@ -195,7 +167,7 @@ func newManagerFixture(t *testing.T) *managerFixture {
 	config := Config{
 		CurrentManifestPath: currentPath, StatePath: statePath,
 		JournalPath: journalPath, HealthyManifestPath: filepath.Join(dir, "state", "system-update", "healthy-manifest.json"), ConvergencePath: filepath.Join(dir, "state", "first-deploy", "convergence-intent.json"), CacheDir: cacheDir,
-		TrustKeyPath: filepath.Join(bundleDir, "trust.pub"), KernelCmdlinePath: cmdlinePath, ESPMountpoint: filepath.Join(dir, "efi"),
+		KernelCmdlinePath: cmdlinePath, ESPMountpoint: filepath.Join(dir, "efi"),
 		BootIDPath: filepath.Join(dir, "boot-id"),
 		Now:        func() time.Time { return time.Unix(100, 0) },
 		DiscoverLayout: func(active string) (Layout, error) {
@@ -217,7 +189,7 @@ func newManagerFixture(t *testing.T) *managerFixture {
 		VerifyTarget:     func(context.Context, string, Manifest) error { return nil },
 		VerifyStagedRoot: func(context.Context, string, Artifact) error { return nil },
 		VerifyBootAssets: func(context.Context, Layout, Manifest) error { return nil },
-		InstallBootAssets: func(context.Context, Layout, Manifest, string, string, string) error {
+		InstallBootAssets: func(context.Context, Layout, Manifest, string, string) error {
 			f.bootInstalls++
 			journal, err := loadJournal(journalPath)
 			if err != nil {
@@ -228,8 +200,7 @@ func newManagerFixture(t *testing.T) *managerFixture {
 				return err
 			}
 			for source, destination := range map[string]string{
-				f.manifestPath:  filepath.Join(transactionDir, "system-update-manifest.json"),
-				f.signaturePath: filepath.Join(transactionDir, "system-update-manifest.json.sig"),
+				f.manifestPath: filepath.Join(transactionDir, "system-update-manifest.json"),
 			} {
 				raw, err := os.ReadFile(source)
 				if err != nil {
@@ -249,14 +220,15 @@ func newManagerFixture(t *testing.T) *managerFixture {
 	return f
 }
 
+// sourceOptions is an exact host-only request: without a core release the
+// manifest must be bound by its SHA-256.
 func (f *managerFixture) sourceOptions() SourceOptions {
-	return SourceOptions{ManifestSource: f.manifestPath, SignatureSource: f.signaturePath}
-}
-
-func (f *managerFixture) bootstrapSourceOptions() SourceOptions {
-	options := f.sourceOptions()
-	options.Bootstrap = true
-	return options
+	raw, err := os.ReadFile(f.manifestPath)
+	if err != nil {
+		panic(err)
+	}
+	digest := sha256.Sum256(raw)
+	return SourceOptions{ManifestSource: f.manifestPath, ExpectedManifestSHA256: hex.EncodeToString(digest[:])}
 }
 
 func (f *managerFixture) setCurrentManifest(t *testing.T, manifest appliance.Manifest) {
@@ -299,15 +271,16 @@ func (f *managerFixture) bootTarget(t *testing.T) {
 	}
 }
 
-func TestManifestStrictSignatureCompatibilityAndOrdering(t *testing.T) {
+func TestManifestStrictDigestCompatibilityAndOrdering(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string][]byte{
 		"system-root.img.zst": []byte("root"), "system-a.efi": []byte("a"), "system-b.efi": []byte("b"),
 		"youeye-system-updater-linux-amd64": []byte("updater"),
 	}
 	manifest := testUpdateManifest(files)
-	manifestPath, signaturePath := writeSignedBundle(t, dir, manifest, files)
-	verified, err := VerifyManifest(manifestPath, signaturePath, filepath.Join(dir, "trust.pub"))
+	manifestPath := writeBundle(t, dir, manifest, files)
+	raw, _ := os.ReadFile(manifestPath)
+	verified, err := VerifyManifest(manifestPath, checksum(raw))
 	if err != nil || verified.Manifest.TargetImageVersion != "0.6.0-dev.27" {
 		t.Fatalf("verified=%+v err=%v", verified, err)
 	}
@@ -324,18 +297,13 @@ func TestManifestStrictSignatureCompatibilityAndOrdering(t *testing.T) {
 	if err := testOnly.ValidateCurrent(testApplianceManifest("0.6.0-dev.26", baselineCommit), testState(), false); err == nil {
 		t.Fatal("test image did not require explicit confirmation")
 	}
-	raw, _ := os.ReadFile(manifestPath)
+	expected := checksum(raw)
 	raw[0] ^= 1
 	if err := os.WriteFile(manifestPath, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := VerifyManifest(manifestPath, signaturePath, filepath.Join(dir, "trust.pub")); err == nil {
-		t.Fatal("corrupt manifest signature was accepted")
-	}
-	mismatchDir := t.TempDir()
-	mismatchManifest, mismatchSignature := writeSignedBundleWithTrustID(t, mismatchDir, manifest, files, true)
-	if _, err := VerifyManifest(mismatchManifest, mismatchSignature, filepath.Join(mismatchDir, "trust.pub")); err == nil {
-		t.Fatal("signed manifest with a false trust key ID was accepted")
+	if _, err := VerifyManifest(manifestPath, expected); err == nil || !strings.Contains(err.Error(), "digest mismatch") {
+		t.Fatal("tampered manifest was accepted", err)
 	}
 }
 
@@ -346,13 +314,21 @@ func TestDiscoverEnforcesExactManifestDigest(t *testing.T) {
 	if _, err := fixture.manager.Discover(context.Background(), options); err == nil || !strings.Contains(err.Error(), "manifest digest mismatch") {
 		t.Fatalf("digest mismatch result = %v", err)
 	}
+	options.ExpectedManifestSHA256 = ""
+	for name, run := range map[string]func(context.Context, SourceOptions) (Status, error){"discover": fixture.manager.Discover, "stage": fixture.manager.Stage} {
+		if _, err := run(context.Background(), options); err == nil || !strings.Contains(err.Error(), "exact manifest SHA-256") {
+			t.Fatalf("%s accepted a host update without core release or digest: %v", name, err)
+		}
+	}
+	if len(fixture.writes) != 0 {
+		t.Fatal("unbound request wrote a slot")
+	}
 }
 
 func TestConvergenceAllowsCurrentSignedTargetWithoutWritingInactiveSlot(t *testing.T) {
 	fixture := newManagerFixture(t)
 	fixture.update.TargetImageVersion = "0.6.0-dev.26"
-	manifestPath, signaturePath := writeSignedBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
-	fixture.manifestPath, fixture.signaturePath = manifestPath, signaturePath
+	fixture.manifestPath = writeBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
 	options := fixture.sourceOptions()
 	options.AllowCurrent = true
 	status, err := fixture.manager.Stage(context.Background(), options)
@@ -361,166 +337,6 @@ func TestConvergenceAllowsCurrentSignedTargetWithoutWritingInactiveSlot(t *testi
 	}
 	if status.State != PhaseHealthy || status.RunningImage != "0.6.0-dev.26" || len(fixture.writes) != 0 || fixture.bootInstalls != 0 {
 		t.Fatalf("current convergence mutated inactive System: status=%+v writes=%v installs=%d", status, fixture.writes, fixture.bootInstalls)
-	}
-}
-
-func TestConvergencePersistsFinalSignedIdentityBeforeActivation(t *testing.T) {
-	fixture := newManagerFixture(t)
-	options := fixture.sourceOptions()
-	options.AllowCurrent = true
-	options.Channel = "development"
-	options.ReleaseTag = "appliance-dev-v" + fixture.update.TargetImageVersion
-	options.ExpectedReleaseBranch = "dev"
-	result, err := fixture.manager.Converge(context.Background(), []SourceOptions{options}, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Action != "system-restart" || result.TargetImage != fixture.update.TargetImageVersion {
-		t.Fatalf("unexpected convergence result: %+v", result)
-	}
-	intent, err := loadConvergenceIntent(fixture.manager.config.ConvergencePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if intent.SelectedTag != options.ReleaseTag || intent.ManifestSHA256 != result.ManifestSHA256 || intent.TargetImage != result.TargetImage || intent.ReleaseBranch != "dev" {
-		t.Fatalf("final signed identity was not frozen before activation: %+v", intent)
-	}
-}
-
-func TestExactFirstBootAcceptsDurablyHealthySignedPostInstallUpdate(t *testing.T) {
-	fixture := newManagerFixture(t)
-	verified, err := VerifyManifest(fixture.manifestPath, fixture.signaturePath, fixture.manager.config.TrustKeyPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseline := testApplianceManifest("0.6.0-dev.26", baselineCommit)
-	media := exactBundleManifest{
-		Schema: "youeye.appliance.manifest.v1", ImageVersion: baseline.ImageVersion,
-		SourceCommit: baseline.SourceCommit, Trust: verified.Manifest.Trust, ReleaseSet: *baseline.ReleaseSet,
-	}
-	mediaRaw, _ := json.Marshal(media)
-	mediaPath := filepath.Join(fixture.dir, "installed-appliance-manifest.json")
-	privateKey, err := os.ReadFile(filepath.Join(filepath.Dir(fixture.manager.config.TrustKeyPath), "trust.key"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(mediaPath, mediaRaw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(mediaPath+".sig", ed25519.Sign(ed25519.PrivateKey(privateKey), mediaRaw), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	mediaDigest := sha256.Sum256(mediaRaw)
-	policy := ReleasePolicy{
-		Schema: ReleasePolicySchema, Provider: "github", Mode: "exact", Freshness: "require-current",
-		ExactTag: exactTagForReleaseSet(media.ReleaseSet.Branch, media.ImageVersion), ManifestSHA256: hex.EncodeToString(mediaDigest[:]),
-	}
-	options := fixture.sourceOptions()
-	options.Channel = "development"
-	options.ReleaseTag = exactTagForReleaseSet(verified.Manifest.ReleaseSet.Branch, verified.Manifest.TargetImageVersion)
-	if _, err := fixture.manager.Stage(context.Background(), options); err != nil {
-		t.Fatal(err)
-	}
-	journal, err := loadJournal(fixture.manager.config.JournalPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	transactionDir := fixture.manager.transactionDir(journal.TransactionID)
-	if err := os.MkdirAll(transactionDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for source, destination := range map[string]string{
-		fixture.manifestPath:  filepath.Join(transactionDir, "system-update-manifest.json"),
-		fixture.signaturePath: filepath.Join(transactionDir, "system-update-manifest.json.sig"),
-	} {
-		raw, readErr := os.ReadFile(source)
-		if readErr != nil || os.WriteFile(destination, raw, 0o600) != nil {
-			t.Fatalf("copy signed transaction source=%s readErr=%v", source, readErr)
-		}
-	}
-	if _, err := fixture.manager.Activate(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
-	fixture.bootTarget(t)
-	if _, err := fixture.manager.Reconcile(context.Background(), ReconcileOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	target := testApplianceManifest(verified.Manifest.TargetImageVersion, verified.Manifest.SourceCommit)
-	if _, err := appliance.CommitHealthySlot(fixture.manager.config.StatePath, target, "root=PARTLABEL=YE-SYSTEM-B ro"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.manager.MarkHealthy(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(fixture.manager.config.HealthyManifestPath); err != nil {
-		t.Fatalf("durable healthy manifest missing: %v", err)
-	}
-	if _, err := os.Stat(fixture.manager.config.HealthyManifestPath + ".sig"); err != nil {
-		t.Fatalf("durable healthy signature missing: %v", err)
-	}
-	if err := os.RemoveAll(transactionDir); err != nil {
-		t.Fatal(err)
-	}
-	result, err := fixture.manager.VerifyHealthyPromotedExact(policy, mediaPath, mediaPath+".sig")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Action != "exact-updated-current" || result.CurrentImage != verified.Manifest.TargetImageVersion || result.SelectedTag != options.ReleaseTag {
-		t.Fatalf("promoted exact result=%+v", result)
-	}
-	if err := os.WriteFile(fixture.manager.config.HealthyManifestPath+".sig", []byte("invalid"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.manager.VerifyHealthyPromotedExact(policy, mediaPath, mediaPath+".sig"); err == nil {
-		t.Fatal("corrupt promoted update signature was accepted")
-	}
-}
-
-func TestConvergenceCompletesPinnedFinalBundleAfterBridgeRestart(t *testing.T) {
-	fixture := newManagerFixture(t)
-	current := testApplianceManifest(fixture.update.TargetImageVersion, fixture.update.SourceCommit)
-	currentRaw, err := json.Marshal(current)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(fixture.manager.config.CurrentManifestPath, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(fixture.manager.config.CurrentManifestPath, currentRaw, 0o444); err != nil {
-		t.Fatal(err)
-	}
-	state := testState()
-	state.Slots.CurrentImageVersion = fixture.update.TargetImageVersion
-	if err := appliance.WriteStateAtomic(fixture.manager.config.StatePath, state); err != nil {
-		t.Fatal(err)
-	}
-	manifestRaw, err := os.ReadFile(fixture.manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(manifestRaw)
-	selectedTag := "appliance-dev-v" + fixture.update.TargetImageVersion
-	intent := convergenceIntent{
-		Schema: convergenceIntentSchema, SelectedTag: selectedTag,
-		ManifestSHA256: hex.EncodeToString(digest[:]), TargetImage: fixture.update.TargetImageVersion,
-		ReleaseBranch: "dev", Bridges: []string{"appliance-dev-v0.6.0-dev.26"}, UpdatedAt: fixture.manager.now(),
-	}
-	if err := writeConvergenceIntent(fixture.manager.config.ConvergencePath, intent); err != nil {
-		t.Fatal(err)
-	}
-	options := fixture.sourceOptions()
-	options.AllowCurrent = true
-	options.ReleaseTag = selectedTag
-	options.ExpectedReleaseBranch = "dev"
-	result, err := fixture.manager.Converge(context.Background(), []SourceOptions{options}, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Action != "current" || result.SelectedTag != selectedTag || !result.Bridge {
-		t.Fatalf("unexpected post-bridge convergence result: %+v", result)
-	}
-	if _, err := os.Stat(fixture.manager.config.ConvergencePath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("completed final convergence intent was not removed: %v", err)
 	}
 }
 
@@ -534,7 +350,7 @@ func TestBridgeRequirementIsTypedButOtherIntegrityFailuresAreNot(t *testing.T) {
 	if !BridgeRequired(err) {
 		t.Fatalf("minimum-current mismatch was not typed as bridge-required: %v", err)
 	}
-	manifest.Trust.Class = "invalid"
+	manifest.ArtifactKind = "invalid"
 	if err := manifest.Validate(); err == nil || BridgeRequired(err) {
 		t.Fatalf("integrity failure could incorrectly trigger bridge fallback: %v", err)
 	}
@@ -680,108 +496,6 @@ func TestStageWritesOnlyInactiveThenActivationArmsCountedTrial(t *testing.T) {
 	if !reflect.DeepEqual(f.runs, wantRuns) {
 		t.Fatalf("boot calls=%v want=%v", f.runs, wantRuns)
 	}
-}
-
-func TestPlan1BootstrapAuthenticatesBeforeMutationAndPreservesFallbackState(t *testing.T) {
-	t.Run("wrong executable", func(t *testing.T) {
-		f := newManagerFixture(t)
-		f.setCurrentManifest(t, testPlan1Manifest())
-		if err := os.WriteFile(filepath.Join(filepath.Dir(f.manifestPath), "youeye-system-updater-linux-amd64"), []byte("wrong"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := f.manager.Stage(context.Background(), f.bootstrapSourceOptions()); err == nil {
-			t.Fatal("unsigned bootstrap executable was accepted")
-		}
-		if len(f.writes) != 0 || f.bootInstalls != 0 {
-			t.Fatalf("bootstrap rejection mutated target: writes=%v installs=%d", f.writes, f.bootInstalls)
-		}
-		state, err := appliance.LoadState(f.manager.config.StatePath)
-		if err != nil || state.Slots.Candidate != "" || state.Transaction != (appliance.TransactionState{}) {
-			t.Fatalf("bootstrap rejection changed State: %+v err=%v", state, err)
-		}
-		if _, err := os.Stat(f.manager.config.JournalPath); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("bootstrap rejection created journal: %v", err)
-		}
-	})
-
-	t.Run("stage activate bless", func(t *testing.T) {
-		f := newManagerFixture(t)
-		f.setCurrentManifest(t, testPlan1Manifest())
-		if _, err := f.manager.Stage(context.Background(), f.sourceOptions()); err == nil {
-			t.Fatal("Plan 1 image staged without bootstrap authorization")
-		}
-		staged, err := f.manager.Stage(context.Background(), f.bootstrapSourceOptions())
-		if err != nil || staged.State != PhaseStaged {
-			t.Fatalf("staged=%+v err=%v", staged, err)
-		}
-		state, err := appliance.LoadState(f.manager.config.StatePath)
-		if err != nil || !state.Transaction.Plan1Compatible() || state.Transaction.Stage != PhaseStaged {
-			t.Fatalf("fallback State=%+v err=%v", state, err)
-		}
-		if _, err := f.manager.Activate(context.Background(), false); err == nil {
-			t.Fatal("Plan 1 transaction activated without bootstrap authorization")
-		}
-		pending, err := f.manager.ActivateBootstrap(context.Background(), false)
-		if err != nil || pending.State != PhasePending {
-			t.Fatalf("pending=%+v err=%v", pending, err)
-		}
-		state, err = appliance.LoadState(f.manager.config.StatePath)
-		if err != nil || !state.Transaction.Plan1Compatible() || state.Transaction.Stage != PhasePending {
-			t.Fatalf("pending fallback State=%+v err=%v", state, err)
-		}
-
-		f.bootTarget(t)
-		trial, err := f.manager.Reconcile(context.Background(), ReconcileOptions{})
-		if err != nil || trial.Status.State != PhaseTrial {
-			t.Fatalf("trial=%+v err=%v", trial, err)
-		}
-		state, err = appliance.LoadState(f.manager.config.StatePath)
-		if err != nil || !state.Transaction.Plan1Compatible() || state.Transaction.Stage != PhaseTrial {
-			t.Fatalf("trial fallback State=%+v err=%v", state, err)
-		}
-		target := testApplianceManifest("0.6.0-dev.27", targetCommit)
-		if _, err := appliance.CommitHealthySlot(f.manager.config.StatePath, target, "root=PARTLABEL=YE-SYSTEM-B ro"); err != nil {
-			t.Fatal(err)
-		}
-		healthy, err := f.manager.MarkHealthy(context.Background())
-		if err != nil || healthy.State != PhaseHealthy || healthy.CurrentImage != "0.6.0-dev.27" {
-			t.Fatalf("healthy=%+v err=%v", healthy, err)
-		}
-	})
-
-	t.Run("failed candidate leaves Plan 1-readable fallback", func(t *testing.T) {
-		f := newManagerFixture(t)
-		f.setCurrentManifest(t, testPlan1Manifest())
-		if _, err := f.manager.Stage(context.Background(), f.bootstrapSourceOptions()); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := f.manager.ActivateBootstrap(context.Background(), false); err != nil {
-			t.Fatal(err)
-		}
-		f.bootTarget(t)
-		if _, err := f.manager.Reconcile(context.Background(), ReconcileOptions{}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := f.manager.Reconcile(context.Background(), ReconcileOptions{HealthFailed: true}); err != nil {
-			t.Fatal(err)
-		}
-		f.setCurrentManifest(t, testPlan1Manifest())
-		if err := os.WriteFile(f.manager.config.KernelCmdlinePath, []byte("root=PARTLABEL=YE-SYSTEM-A ro"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		state, err := appliance.LoadState(f.manager.config.StatePath)
-		if err != nil || !state.Transaction.Plan1Compatible() {
-			t.Fatalf("failed fallback State=%+v err=%v", state, err)
-		}
-		rolledBack, err := f.manager.Reconcile(context.Background(), ReconcileOptions{})
-		if err != nil || rolledBack.Status.State != PhaseRollback || !rolledBack.Status.RolledBack {
-			t.Fatalf("rollback=%+v err=%v", rolledBack, err)
-		}
-		state, err = appliance.LoadState(f.manager.config.StatePath)
-		if err != nil || state.Slots.Candidate != "" || state.Transaction != (appliance.TransactionState{}) {
-			t.Fatalf("rollback State=%+v err=%v", state, err)
-		}
-	})
 }
 
 func TestInterruptedWriteRetriesAndConverges(t *testing.T) {
@@ -961,7 +675,7 @@ func TestDiscoverInstalledReleaseIsNoOpAndStageStillRejectsReplay(t *testing.T) 
 	fixture.update.TargetImageVersion = "0.6.0-dev.26"
 	fixture.update.SourceCommit = baselineCommit
 	fixture.update.ReleaseSet = testReleaseSet(baselineCommit)
-	fixture.manifestPath, fixture.signaturePath = writeSignedBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
+	fixture.manifestPath = writeBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
 	status, err := fixture.manager.Discover(context.Background(), fixture.sourceOptions())
 	if err != nil {
 		t.Fatal(err)
@@ -980,7 +694,7 @@ func TestDiscoverInstalledReleaseIsNoOpAndStageStillRejectsReplay(t *testing.T) 
 func TestDiscoverRejectsSameVersionDifferentSignedIdentity(t *testing.T) {
 	fixture := newManagerFixture(t)
 	fixture.update.TargetImageVersion = "0.6.0-dev.26"
-	fixture.manifestPath, fixture.signaturePath = writeSignedBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
+	fixture.manifestPath = writeBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
 	if _, err := fixture.manager.Discover(context.Background(), fixture.sourceOptions()); err == nil || !strings.Contains(err.Error(), "installed identity") {
 		t.Fatalf("same-version replacement result: %v", err)
 	}
@@ -991,7 +705,7 @@ func TestDiscoverInstalledReleaseStillChecksRequestedBranch(t *testing.T) {
 	fixture.update.TargetImageVersion = "0.6.0-dev.26"
 	fixture.update.SourceCommit = baselineCommit
 	fixture.update.ReleaseSet = testReleaseSet(baselineCommit)
-	fixture.manifestPath, fixture.signaturePath = writeSignedBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
+	fixture.manifestPath = writeBundle(t, filepath.Dir(fixture.manifestPath), fixture.update, fixture.files)
 	options := fixture.sourceOptions()
 	options.ExpectedReleaseBranch = "main"
 	if _, err := fixture.manager.Discover(context.Background(), options); err == nil || !strings.Contains(err.Error(), "requested branch") {

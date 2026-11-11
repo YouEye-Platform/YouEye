@@ -48,7 +48,7 @@ var (
 
 const proxmoxDurableReadinessScript = `set -eu
 test -e /var/lib/youeye-state/first-deploy/complete
-jq -e '(.schema == "youeye.installer.progress.v1" or .schema == "youeye.appliance.progress.v1" or .schema == "youeye.appliance.progress.v2") and .operation == "first-deploy" and .stage == "complete"' /var/lib/youeye-state/first-deploy/progress.json >/dev/null
+jq -e '.schema == "youeye.installer.progress.v1" and .operation == "first-deploy" and .stage == "complete"' /var/lib/youeye-state/first-deploy/progress.json >/dev/null
 jq -e '.status == "healthy" and .exit_code == 0' /var/lib/youeye-state/first-deploy/health.json >/dev/null
 test "$(jq -r '.boot_id' /var/lib/youeye-state/boot/last-bless.json)" = "$(cat /proc/sys/kernel/random/boot_id)"
 jq -e '.schema == "youeye.appliance.boot-bless.v1" and .status == "healthy"' /var/lib/youeye-state/boot/last-bless.json >/dev/null
@@ -331,21 +331,9 @@ func validateProxmoxApplianceConfig(config proxmoxApplianceConfig, inventory pro
 		Schema: applianceAnswerSchema, Operation: "erase-install", EraseConfirmed: true, TransactionID: "00000000000000000000000000000000", TargetSerial: "TARGET", Network: config.Network,
 		ReleasePolicy: config.releasePolicy(strings.Repeat("0", 64)), Development: config.developmentPolicy(),
 	}
-	if config.CoreManifestSHA256 != "" {
-		if config.Channel != "exact" || !validCoreTag(config.ReleaseTag) || !validSHA256Hex(config.CoreManifestSHA256) {
-			return fmt.Errorf("core digest requires an exact canonical tag and lowercase SHA-256")
-		}
-		if err := validateApplianceReleasePolicy(answer.ReleasePolicy); err != nil {
-			return err
-		}
-		// Signed selection is checked after discovery; this preflight answer
-		// checks the remaining network and development-access fields.
-		answer.ReleasePolicy.CoreManifestSHA256 = ""
-		answer.ReleasePolicy.ServiceSelection = "sealed"
-	}
-	if validCoreTag(config.ReleaseTag) && config.CoreManifestSHA256 == "" {
-		return fmt.Errorf("exact core installation requires its manifest SHA-256")
-	}
+	// The core selection is checked after discovery; this preflight answer
+	// checks the remaining policy, network and development-access fields.
+	answer.ReleasePolicy.CoreManifestSHA256 = ""
 	if err := validateApplianceAnswer(answer); err != nil {
 		return err
 	}
@@ -354,16 +342,16 @@ func validateProxmoxApplianceConfig(config proxmoxApplianceConfig, inventory pro
 	}
 	switch config.Channel {
 	case "stable", "development", "dev":
-		if config.ReleaseBranch != "" || config.ReleaseTag != "" || config.ISOSHA256 != "" {
-			return fmt.Errorf("channel selection cannot include an exact tag or ISO digest")
+		if config.ReleaseBranch != "" || config.ISOSHA256 != "" || !validTrackPin(config.ReleaseTag, config.CoreManifestSHA256) {
+			return fmt.Errorf("channel selection can only pin one release by its youeye-v tag together with its core-release.json SHA-256")
 		}
 	case "branch":
-		if !validApplianceReleaseBranch(config.ReleaseBranch) || config.ReleaseTag != "" || config.ISOSHA256 != "" {
-			return fmt.Errorf("branch selection requires a safe signed release branch and cannot include an exact identity")
+		if !validApplianceReleaseBranch(config.ReleaseBranch) || config.ISOSHA256 != "" || !validTrackPin(config.ReleaseTag, config.CoreManifestSHA256) {
+			return fmt.Errorf("branch selection requires a safe release branch and can only pin one release by its tag together with its core-release.json SHA-256")
 		}
 	case "exact":
-		if config.ReleaseBranch != "" || !validExactApplianceReleaseTag(config.ReleaseTag) || !validSHA256Hex(config.ISOSHA256) {
-			return fmt.Errorf("exact selection requires an exact release tag and lowercase ISO SHA-256")
+		if config.ReleaseBranch != "" || !validCoreTag(config.ReleaseTag) || !validSHA256Hex(config.CoreManifestSHA256) || config.ISOSHA256 != "" && !validSHA256Hex(config.ISOSHA256) {
+			return fmt.Errorf("exact selection requires a youeye-v release tag and the lowercase core-release.json SHA-256")
 		}
 	default:
 		return fmt.Errorf("appliance channel must be stable, development, branch, or exact")
@@ -372,6 +360,15 @@ func validateProxmoxApplianceConfig(config proxmoxApplianceConfig, inventory pro
 		return err
 	}
 	return nil
+}
+
+// validTrackPin reports whether a tracking selection carries either no pin or
+// one exact release named by its youeye-v tag and core-release.json SHA-256.
+func validTrackPin(tag, digest string) bool {
+	if tag == "" && digest == "" {
+		return true
+	}
+	return validCoreTag(tag) && validSHA256Hex(digest)
 }
 
 func containsString(values []string, value string) bool {
@@ -406,40 +403,32 @@ func provisionProxmoxAppliance(ctx context.Context, config proxmoxApplianceConfi
 		return fmt.Errorf("no compatible SSH public key was found; choose no SSH-key import explicitly or provide a supported key")
 	}
 	emitProxmoxProgress(progress, "Check SSH keys", fmt.Sprintf("%d compatible key(s); %d restricted or invalid entry/entries will be skipped", len(keyPreflight.Accepted), keyPreflight.RejectedTotal()), 0.02)
-	emitProxmoxProgress(progress, "Resolve signed appliance", "Selecting one exact release without channel fallback", 0.03)
+	emitProxmoxProgress(progress, "Resolve release", "Selecting one exact release without channel fallback", 0.03)
 	selection := config.Channel
 	if config.Channel == "branch" {
 		selection = "branch:" + config.ReleaseBranch
+	}
+	if config.ReleaseTag != "" {
+		// A pinned track installs exactly the release the bootstrap verified
+		// (never a newer head) and still records the track for updates.
+		selection = "exact"
 	}
 	release, err := resolveApplianceRelease(ctx, client, config.ReleaseProvider, config.ReleasesAPI, selection, config.ReleaseTag)
 	if err != nil {
 		return err
 	}
-	if config.CoreManifestSHA256 != "" && (release.core == nil || release.coreSHA256 != config.CoreManifestSHA256) {
-		return fmt.Errorf("selected core manifest differs from the exact requested digest")
+	if config.CoreManifestSHA256 != "" && release.coreSHA256 != config.CoreManifestSHA256 {
+		return fmt.Errorf("selected core-release.json differs from the exact requested digest")
 	}
-	emitProxmoxProgress(progress, "Verify signed appliance", "Downloading signed metadata for "+release.TagName, 0.08)
+	emitProxmoxProgress(progress, "Verify release", "Downloading the image manifest and ISO for "+release.TagName, 0.08)
 	verified, err := downloadVerifiedApplianceRelease(ctx, client, release, config.CacheRoot, config.ISOSHA256)
 	if err != nil {
 		return err
 	}
-	expectedBranch := ""
-	switch config.Channel {
-	case "stable":
-		expectedBranch = "main"
-	case "development", "dev":
-		expectedBranch = "dev"
-	case "branch":
-		expectedBranch = config.ReleaseBranch
+	if config.Channel != "exact" && release.core.Branch != coreTrackBranch(config.Channel, config.ReleaseBranch) {
+		return fmt.Errorf("release branch %q does not match requested track %q", release.core.Branch, config.Channel)
 	}
-	selectedBranch := verified.Manifest.ReleaseSet.Branch
-	if release.core != nil {
-		selectedBranch = release.core.Branch
-	}
-	if expectedBranch != "" && selectedBranch != expectedBranch {
-		return fmt.Errorf("signed appliance provenance branch %q does not match requested track %q", selectedBranch, expectedBranch)
-	}
-	emitProxmoxProgress(progress, "Verify signed appliance", "Manifest, checksums, and ISO verified for "+verified.Manifest.ImageVersion, 0.35)
+	emitProxmoxProgress(progress, "Verify release", "Manifest and ISO verified by SHA-256 for "+verified.Manifest.ImageVersion, 0.35)
 
 	keyFinal, err := loadProxmoxAuthorizedKeys(config)
 	if err != nil {
@@ -474,14 +463,11 @@ func provisionProxmoxAppliance(ctx context.Context, config proxmoxApplianceConfi
 		Network: config.Network, ReleasePolicy: config.releasePolicy(verified.ManifestSHA), Development: config.developmentPolicy(),
 		AuthorizedKeys: keyFinal.Accepted,
 	}
-	if release.core != nil {
-		if config.Operation != "create" {
-			return fmt.Errorf("new core releases require a fresh installation")
-		}
-		answer.Schema = applianceAnswerCoreSchema
-		answer.CoreRelease = coreAnswerFromRelease(release)
-		answer.ReleasePolicy.CoreManifestSHA256 = release.coreSHA256
+	if config.Operation != "create" {
+		return fmt.Errorf("core releases require a fresh installation")
 	}
+	answer.CoreRelease = coreAnswerFromRelease(release)
+	answer.ReleasePolicy.CoreManifestSHA256 = release.coreSHA256
 	if err := validateApplianceAnswer(answer); err != nil {
 		return err
 	}
@@ -527,7 +513,7 @@ func provisionProxmoxAppliance(ctx context.Context, config proxmoxApplianceConfi
 		return fmt.Errorf("start YouEye Installer VM: %w", err)
 	}
 
-	emitProxmoxProgress(progress, "Run ISO installer", "The signed ISO now owns discovery, validation, and disk writes", 0.55)
+	emitProxmoxProgress(progress, "Run ISO installer", "The verified ISO now owns discovery, validation, and disk writes", 0.55)
 	installCtx, cancelInstall := context.WithTimeout(ctx, proxmoxInstallTimeout)
 	defer cancelInstall()
 	serial := make(chan applianceProgressRecord, 16)
@@ -587,9 +573,6 @@ func writeApplianceAnswerISO(destination string, answer applianceAnswer) error {
 		}
 		digest := sha256.Sum256(guestIndex)
 		answer.ReleaseCacheSHA256 = hex.EncodeToString(digest[:])
-		if answer.CoreRelease == nil {
-			answer.Schema = applianceAnswerCacheSchema
-		}
 	} else if !os.IsNotExist(e) {
 		return e
 	}
@@ -789,7 +772,7 @@ func createProxmoxApplianceVM(config proxmoxApplianceConfig, targetSerial, isoVo
 }
 
 func proxmoxApplianceDescription(releaseTag string) string {
-	return fmt.Sprintf("YouEye signed appliance %s; one-drive ISO install.", releaseTag)
+	return fmt.Sprintf("YouEye appliance %s; one-drive ISO install.", releaseTag)
 }
 
 func attachProxmoxApplianceMedia(vmid int, isoVolume, answerVolume, releaseTag string, runner proxmoxCommandRunner) error {
@@ -854,7 +837,7 @@ func inspectCompatibleProxmoxApplianceVM(vmid int, runner proxmoxCommandRunner) 
 }
 
 func parseProxmoxRecordedRelease(description string) string {
-	const prefix = "YouEye signed appliance "
+	const prefix = "YouEye appliance "
 	description = strings.TrimSpace(description)
 	if !strings.HasPrefix(description, prefix) {
 		return ""
@@ -982,7 +965,7 @@ func decodeApplianceProgressLine(line []byte) (applianceProgressRecord, bool) {
 		line = line[start:]
 		var record applianceProgressRecord
 		if json.NewDecoder(bytes.NewReader(line)).Decode(&record) == nil &&
-			(record.Schema == "youeye.installer.progress.v1" || record.Schema == "youeye.appliance.progress.v1" || record.Schema == "youeye.appliance.progress.v2") {
+			record.Schema == "youeye.installer.progress.v1" {
 			return record, true
 		}
 		line = line[1:]
@@ -1038,7 +1021,7 @@ func waitForProxmoxInstaller(ctx context.Context, vmid int, runner proxmoxComman
 					}
 					grace.Stop()
 				}
-				emitProxmoxProgress(progress, "Verify installer completion", "Installer powered off after its signed terminal success record", 0.89)
+				emitProxmoxProgress(progress, "Verify installer completion", "Installer powered off after its terminal success record", 0.89)
 				return nil
 			}
 		}
@@ -1162,7 +1145,7 @@ func readProxmoxGuestProgress(vmid int, runner proxmoxCommandRunner) (proxmoxGue
 	var record proxmoxGuestProgress
 	decoder := json.NewDecoder(strings.NewReader(result.OutData))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&record); err != nil || record.Schema != "youeye.appliance.progress.v2" || record.Operation != "first-deploy" ||
+	if err := decoder.Decode(&record); err != nil || record.Schema != "youeye.installer.progress.v1" || record.Operation != "first-deploy" ||
 		record.Percent < 0 || record.Percent > 100 || record.Attempt < 1 || len(record.Stage) > 64 || len(record.Detail) > 256 ||
 		!regexp.MustCompile(`^[a-z][a-z0-9_]*$`).MatchString(record.Stage) || !validProxmoxGuestProgressState(record.State) {
 		return proxmoxGuestProgress{}, false
@@ -1193,7 +1176,7 @@ func terminalProxmoxGuestProgressError(vmid int, progress proxmoxGuestProgress) 
 
 func friendlyGuestProgressStage(stage string) string {
 	labels := map[string]string{
-		"network": "Check wired network", "release_convergence": "Verify signed platform bundle",
+		"network": "Check wired network", "release_convergence": "Verify platform release",
 		"system_restart": "Restart into updated System", "market_seed": "Prepare Market",
 		"storage": "Prepare storage", "incus": "Start Incus", "system_core": "Start System core",
 		"server_interface": "Install Server interface", "database": "Prepare Database",

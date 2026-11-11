@@ -120,7 +120,7 @@ func newApplianceWizardModel(cfg installConfig, runner applianceCommandRunner) a
 
 func (w applianceWizardModel) Init() tea.Cmd {
 	return func() tea.Msg {
-		bundle, err := verifyApplianceBundle(w.config.ApplianceManifestPath, w.config.ApplianceSignaturePath, w.config.ApplianceTrustKeyPath)
+		bundle, err := verifyApplianceBundle(w.config.ApplianceManifestPath)
 		if err != nil {
 			return applianceWizardLoadedMsg{err: err}
 		}
@@ -146,9 +146,9 @@ func (w applianceWizardModel) Init() tea.Cmd {
 			if len(nonBlankSignatures(disk.Signatures)) == 0 {
 				continue
 			}
-			identity, identityErr := inspectInstalledApplianceIdentity(w.runner, disk, w.config.ApplianceTrustKeyPath)
+			identity, identityErr := inspectInstalledApplianceIdentity(w.runner, disk)
 			if identityErr != nil {
-				warnings[disk.Path] = "Existing YouEye metadata is unreadable or untrusted; full erase remains available."
+				warnings[disk.Path] = "Existing YouEye metadata is unreadable; full erase remains available."
 				continue
 			}
 			if identity != nil {
@@ -701,7 +701,7 @@ func (w applianceWizardModel) preserveEligibility() error {
 	}
 	installed, ok := w.installed[target.Path]
 	if !ok {
-		return fmt.Errorf("preserve reinstall requires a trusted existing YouEye installation")
+		return fmt.Errorf("preserve reinstall requires a readable existing YouEye installation")
 	}
 	if err := ordering.RequireUpgradeIdentity(installed.ImageVersion, w.bundle.Manifest.ImageVersion); err != nil {
 		return fmt.Errorf("preserve reinstall is unavailable: %w", err)
@@ -787,7 +787,7 @@ func (w applianceWizardModel) View() string {
 		hint = "Ctrl+C exits without changing disks"
 	case w.stage == applianceWizardLoading:
 		title = "YouEye Installer"
-		body = theme.Body.Render("Verifying the signed release and discovering target disks...")
+		body = theme.Body.Render("Verifying the release and discovering target disks...")
 		hint = "No target disk has been changed"
 	case w.stage == applianceWizardTarget:
 		title, step = "Choose installation drive", "Step 1"
@@ -885,7 +885,7 @@ func (w applianceWizardModel) diskListView(cursor int) string {
 			rows = append(rows, theme.Dim.Render("    Blank disk"))
 		}
 		if installed, ok := w.installed[disk.Path]; ok {
-			rows = append(rows, theme.Dim.Render(fmt.Sprintf("    Trusted YouEye: %s", installed.ImageVersion)))
+			rows = append(rows, theme.Dim.Render(fmt.Sprintf("    Installed YouEye: %s", installed.ImageVersion)))
 		}
 		if warning := w.identityWarnings[disk.Path]; warning != "" {
 			rows = append(rows, theme.Danger.Render("    "+shortApplianceText(warning, 58)))
@@ -922,9 +922,9 @@ func (w applianceWizardModel) networkView() string {
 func (w applianceWizardModel) releaseView() string {
 	labels := []struct{ title, detail string }{
 		{"Latest Stable", "Recommended public release track"},
-		{"Latest Development", "Newest signed development release"},
-		{"Signed branch track", "Latest signed release associated with a named branch"},
-		{"Exact signed release", "Immutable tag and signed appliance-manifest digest; no fallback"},
+		{"Latest Development", "Newest development prerelease"},
+		{"Branch track", "Latest release associated with a named branch"},
+		{"Exact release", "Immutable youeye-v tag and appliance-manifest digest; no fallback"},
 	}
 	rows := []string{
 		fmt.Sprintf("  Release source  %s  (Left/Right)", releaseProviderLabel(w.releaseProvider)),
@@ -1004,7 +1004,7 @@ func (w applianceWizardModel) reviewView() string {
 	rows := []string{
 		fmt.Sprintf("Image:       %s", w.bundle.Manifest.ImageVersion),
 		fmt.Sprintf("Source:      %s", shortApplianceText(w.bundle.Manifest.SourceCommit, 40)),
-		fmt.Sprintf("Trust:       %s", w.bundle.Manifest.Trust.Class),
+		fmt.Sprintf("Release:     %s", shortApplianceText(w.bundle.Manifest.ReleaseSet.Source+" "+w.bundle.Manifest.ReleaseSet.Branch, 48)),
 		"",
 		fmt.Sprintf("Drive:       %s  %s  serial %s", target.Path, formatBytes(target.SizeBytes), shortApplianceText(target.Serial, 24)),
 		"",
@@ -1026,9 +1026,9 @@ func (w applianceWizardModel) reviewView() string {
 		rows = append(rows, "Operation: Full erase and fresh install")
 	}
 	if installed, ok := w.installed[target.Path]; ok {
-		rows = append(rows, fmt.Sprintf("Existing: Trusted YouEye %s", installed.ImageVersion))
+		rows = append(rows, fmt.Sprintf("Existing: YouEye %s", installed.ImageVersion))
 	} else if warning := w.identityWarnings[target.Path]; warning != "" {
-		rows = append(rows, "Existing: Untrusted or unreadable YouEye metadata")
+		rows = append(rows, "Existing: unreadable YouEye metadata")
 	}
 	if w.isPreserveReinstall() {
 		rows = append(rows, "", theme.Danger.Render("System A/B, Recovery, and boot assets will be replaced. State and YE-DATA will remain."))

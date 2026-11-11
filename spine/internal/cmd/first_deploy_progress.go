@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const firstDeployProgressSchema = "youeye.appliance.progress.v2"
+const firstDeployProgressSchema = "youeye.installer.progress.v1"
 
 type firstDeployProgressRecord struct {
 	Schema    string `json:"schema"`

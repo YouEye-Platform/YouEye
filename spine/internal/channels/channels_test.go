@@ -206,6 +206,9 @@ func TestValidateChannel(t *testing.T) {
 		{Fallback: []string{"main", "dev"}},
 		{}, // empty is fine
 	}
+	if err := ValidateChannel(Channel{Source: "http://forge.example/apps/Notes"}); err == nil {
+		t.Error("plain-HTTP source was accepted")
+	}
 	for _, ch := range good {
 		if err := ValidateChannel(ch); err != nil {
 			t.Errorf("ValidateChannel(%+v) unexpected error: %v", ch, err)
@@ -276,46 +279,24 @@ func TestValidateChannelRequiresTagForDigest(t *testing.T) {
 	}
 }
 
-func TestSystemChannelPreservesRawRefFallbackAndIndependentApps(t *testing.T) {
-	withConfigFile(t, "")
+func TestSystemIsNotAChannel(t *testing.T) {
+	// A retained system block from an older configuration is ignored: the
+	// System update source is owned by the installer-recorded release policy.
+	withConfigFile(t, "release_channels:\n  system: { source: https://forge.example/attacker/YouEye, branch: evil }\n  apps:\n    notes: { source: https://forge.example/apps/Notes, branch: Agent/Notes, fallback: [] }\n")
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := c.SetChannel("system", Channel{Branch: "main"}); err == nil {
+		t.Fatal("System channel accepted")
+	}
 	app := Channel{Source: "https://forge.example/apps/Notes", Branch: "Agent/Notes", Fallback: []string{}}
-	if err := c.SetChannel("app:notes", app); err != nil {
-		t.Fatal(err)
-	}
-	system := Channel{Source: "https://forge.example/owner/YouEye", Branch: "Team/Fix", Fallback: []string{}, Tag: "youeye-v0.5.38-worker-abcd.10", ArtifactSHA256: strings.Repeat("a", 64)}
-	if err := c.SetChannel(ComponentSystem, system); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Save(); err != nil {
-		t.Fatal(err)
-	}
-	c, err = Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := c.Effective(ComponentSystem, testCfg()); !reflect.DeepEqual(got, system) {
-		t.Fatal(got, system)
-	}
 	if got := c.Effective("app:notes", testCfg()); !reflect.DeepEqual(got, app) {
 		t.Fatal(got, app)
 	}
-	for _, bad := range []Channel{
-		{Tag: "cp-v0.5.38", ArtifactSHA256: strings.Repeat("a", 64)},
-		{Tag: "youeye-v0.5.38"},
-		{Source: "http://forge.example/owner/YouEye"},
-	} {
-		if err := c.SetChannel(ComponentSystem, bad); err == nil {
-			t.Fatal("invalid System selection", bad)
+	for _, component := range c.ConfiguredComponents() {
+		if component == "system" {
+			t.Fatal("System listed as a configured channel")
 		}
-	}
-	if err := c.ResetChannel(ComponentSystem); err != nil {
-		t.Fatal(err)
-	}
-	if !c.System.IsZero() || !reflect.DeepEqual(c.Apps["notes"], app) {
-		t.Fatal(c)
 	}
 }

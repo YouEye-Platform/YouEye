@@ -14,7 +14,7 @@ support; source tests alone do not establish a usable end-to-end capability.
 ## Core receipt
 
 `CoreCopyRequest` binds an immutable request ID, distinct source/destination SMBIOS
-identities, the exact source receipt digest and signed System manifest digest.
+identities, the exact source receipt digest and System core-release.json digest.
 `BeginIndependentCopy` requires actual destination hardware observation and freezes
 that request before identity preparation. Incomplete native System transactions
 and conflicting copy journals deny admission.
@@ -29,7 +29,7 @@ User files, user/group UUIDs, passwords, grants, schema versions and System slot
 are not rewritten by this primitive.
 
 `VerifyIndependentCopy` requires a native read-only callback proving the actual
-destination hardware, partitions, signed static membership, independent service
+destination hardware, partitions, digest-bound static membership, independent service
 identity and operational health. It preserves the installed release and sequence.
 Only verified completion writes the destination's committed receipt. Source-bound
 update journals and request receipts move to inert provenance. Repeated copies
@@ -65,7 +65,7 @@ capacity. Cleanup is a separate exact-identity action.
 
 ## Focused acceptance
 
-Tests cover signed membership, refusal of source identity, immutable retries,
+Tests cover digest-bound membership, refusal of source identity, immutable retries,
 interrupted paired state/data writes and inert source journals. Operational
 acceptance additionally copies a disposable lab containing sample data, observes
 independent identity/SSH and simultaneous basic authenticated health on source
@@ -90,7 +90,7 @@ Source recovery restores only its original running/boot intent. Automatic host
 convergence cannot enter a retained copy reservation.
 
 The hidden `prepare-host` phase requires the inherited quiesced inventory and
-exact signed Spine/host membership. It imports and mounts only existing copied
+exact digest-bound Spine/host membership. It imports and mounts only existing copied
 datasets; missing datasets or different mountpoints require recovery. It adopts
 the destination reservation, stops inherited writers and prepares paired
 installation/data ownership plus machine and SSH identity. Its result explicitly
@@ -163,7 +163,7 @@ quarantine; `prepare-verify` is an intermediate platform receipt, not final nati
 acceptance or permission to release networking.
 
 The hidden `commit` command verifies current paired identity, a later kernel
-boot, loaded service credentials, signed installed members, operational health,
+boot, loaded service credentials, digest-bound installed members, operational health,
 local DNS and the certificate actually served for the independent Names domain.
 The platform verifier observes the live signing key, OAuth configuration and app
 credential generation. It then commits the copy receipt and releases the native

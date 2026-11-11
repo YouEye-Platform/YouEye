@@ -10,19 +10,15 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"regexp"
 	"strings"
 
 	"golang.org/x/crypto/ssh"
 )
 
 const (
-	applianceAnswerCoreSchema   = "youeye.appliance.answer.v5"
-	applianceAnswerCacheSchema  = "youeye.appliance.answer.v4"
-	applianceAnswerSchema       = "youeye.appliance.answer.v3"
-	applianceAnswerLegacySchema = "youeye.appliance.answer.v2"
-	releasePolicySchema         = "youeye.release-policy.v1"
-	developmentAccessSchema     = "youeye.development-access.v1"
+	applianceAnswerSchema   = "youeye.appliance.answer.v1"
+	releasePolicySchema     = "youeye.release-policy.v1"
+	developmentAccessSchema = "youeye.development-access.v1"
 )
 
 type applianceAnswer struct {
@@ -48,7 +44,7 @@ type applianceAnswerNetwork struct {
 }
 
 // applianceReleasePolicy is persisted on YE-STATE and consumed by the sealed
-// first-boot bootstrap. A branch identifies a signed release track; it never
+// first-boot bootstrap. A branch identifies a release track; it never
 // authorizes a mutable branch archive or raw source checkout.
 type applianceReleasePolicy struct {
 	CoreManifestSHA256 string `json:"core_manifest_sha256,omitempty"`
@@ -86,7 +82,7 @@ func defaultDevelopmentAccessPolicy() developmentAccessPolicy {
 func parseApplianceAnswer(raw []byte) (applianceAnswer, error) {
 	var answer applianceAnswer
 	if len(raw) > 18<<20 {
-		return answer, fmt.Errorf("appliance answer exceeds bounded signed selection limit")
+		return answer, fmt.Errorf("appliance answer exceeds bounded selection limit")
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -104,14 +100,14 @@ func parseApplianceAnswer(raw []byte) (applianceAnswer, error) {
 }
 
 func validateApplianceAnswer(answer applianceAnswer) error {
-	if answer.Schema != applianceAnswerCoreSchema && answer.Schema != applianceAnswerCacheSchema && answer.Schema != applianceAnswerSchema && answer.Schema != applianceAnswerLegacySchema {
+	if answer.Schema != applianceAnswerSchema {
 		return fmt.Errorf("unsupported appliance answer schema %q", answer.Schema)
 	}
 	if answer.Operation != "erase-install" && answer.Operation != "preserve-reinstall" && answer.Operation != "resume" && answer.Operation != "cancel" {
 		return fmt.Errorf("unsupported appliance answer operation %q", answer.Operation)
 	}
-	if answer.ReleaseCacheSHA256 != "" && ((answer.Schema != applianceAnswerCacheSchema && answer.Schema != applianceAnswerCoreSchema) || !validSHA256Hex(answer.ReleaseCacheSHA256)) {
-		return fmt.Errorf("release cache requires schema v4 and an exact digest")
+	if answer.ReleaseCacheSHA256 != "" && !validSHA256Hex(answer.ReleaseCacheSHA256) {
+		return fmt.Errorf("release cache requires an exact digest")
 	}
 	if answer.Operation != "cancel" && !validApplianceTransactionID(answer.TransactionID) {
 		return fmt.Errorf("appliance answer transaction_id must be 32 lowercase hexadecimal characters")
@@ -131,20 +127,16 @@ func validateApplianceAnswer(answer applianceAnswer) error {
 	if answer.Network.AdapterMAC != "" && !validEthernetMAC(answer.Network.AdapterMAC) {
 		return fmt.Errorf("appliance answer adapter_mac must be a unicast Ethernet MAC address")
 	}
-	if answer.Schema == applianceAnswerSchema || answer.Schema == applianceAnswerCacheSchema || answer.Schema == applianceAnswerCoreSchema {
-		if err := validateApplianceReleasePolicy(answer.ReleasePolicy); err != nil {
-			return err
-		}
-		if err := validateDevelopmentAccessPolicy(answer.Development); err != nil {
-			return err
-		}
+	if err := validateApplianceReleasePolicy(answer.ReleasePolicy); err != nil {
+		return err
 	}
-	if answer.Schema == applianceAnswerCoreSchema {
+	if err := validateDevelopmentAccessPolicy(answer.Development); err != nil {
+		return err
+	}
+	if answer.CoreRelease != nil || answer.ReleasePolicy.CoreManifestSHA256 != "" {
 		if err := validateCoreAnswer(answer); err != nil {
 			return err
 		}
-	} else if answer.CoreRelease != nil || answer.ReleasePolicy.CoreManifestSHA256 != "" {
-		return fmt.Errorf("core selection requires answer schema v5")
 	}
 	switch strings.ToLower(strings.TrimSpace(answer.Network.Mode)) {
 	case "dhcp":
@@ -196,9 +188,6 @@ func validateApplianceReleasePolicy(policy applianceReleasePolicy) error {
 	if policy.CoreManifestSHA256 != "" && !validSHA256Hex(policy.CoreManifestSHA256) {
 		return fmt.Errorf("core manifest digest must be exact lowercase SHA-256")
 	}
-	if policy.ServiceSelection == "current" && policy.CoreManifestSHA256 == "" && policy.Provider != "github" && !(policy.Provider == "custom" && ((policy.Mode == "track" && (policy.Track == "stable" || policy.Track == "branch" && policy.Branch == "main")) || (policy.Mode == "exact" && regexp.MustCompile(`^appliance-v[0-9]+(\.[0-9]+){2,}$`).MatchString(policy.ExactTag)))) {
-		return fmt.Errorf("current service selection requires GitHub or explicitly selected repository main")
-	}
 	if policy.Freshness != "require-current" && policy.Freshness != "prefer-current" {
 		return fmt.Errorf("release policy freshness must be require-current or prefer-current")
 	}
@@ -220,8 +209,8 @@ func validateApplianceReleasePolicy(policy applianceReleasePolicy) error {
 			return fmt.Errorf("release policy track must be stable, development, or branch")
 		}
 	case "exact":
-		if policy.Track != "" || policy.Branch != "" || !validExactApplianceReleaseTag(policy.ExactTag) || !validSHA256Hex(policy.ManifestSHA256) {
-			return fmt.Errorf("exact release policy requires an appliance tag and lowercase manifest SHA-256")
+		if policy.Track != "" || policy.Branch != "" || !validCoreTag(policy.ExactTag) || !validSHA256Hex(policy.ManifestSHA256) {
+			return fmt.Errorf("exact release policy requires a youeye-v release tag and lowercase manifest SHA-256")
 		}
 	default:
 		return fmt.Errorf("release policy mode must be track or exact")
@@ -258,28 +247,6 @@ func validYescryptHash(value string) bool {
 	}
 	parts := strings.Split(value, "$")
 	return len(parts) == 5 && parts[1] == "y" && parts[2] != "" && parts[3] != "" && parts[4] != ""
-}
-
-func validExactApplianceReleaseTag(value string) bool {
-	if validCoreTag(value) {
-		return true
-	}
-	if !strings.HasPrefix(value, "appliance-") || len(value) > 180 || strings.ContainsAny(value, "\\%\x00") {
-		return false
-	}
-	if _, ok := parseApplianceReleaseTag(value, "appliance-v"); ok {
-		return true
-	}
-	if _, ok := parseApplianceReleaseTag(value, "appliance-dev-v"); ok {
-		return true
-	}
-	marker := strings.LastIndex(value, "-v")
-	if marker <= len("appliance-") {
-		return false
-	}
-	branch := value[len("appliance-"):marker]
-	_, versionOK := parseApplianceReleaseTag(value, "appliance-"+branch+"-v")
-	return versionOK && validApplianceReleaseBranch(branch)
 }
 
 func validateApplianceAuthorizedKey(value string) error {

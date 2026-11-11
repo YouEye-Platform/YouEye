@@ -40,7 +40,7 @@ func coreHostRecoveryFixture(t *testing.T) (*managerFixture, CoreManager, CoreJo
 				m.Tag = "youeye-v0.6.0"
 				m.Artifact.SHA256 = strings.Repeat("a", 64)
 			}
-			for _, b := range []*releasecache.CoreBlob{&m.Artifact, &m.Checksums, &m.Signature, &m.Provenance, &m.SBOM, m.DocumentSignature, m.ReleaseLock} {
+			for _, b := range []*releasecache.CoreBlob{&m.Artifact, m.BuildInputs} {
 				if b != nil {
 					b.URL = source + "/releases/download/" + m.Tag + "/" + b.Name
 				}

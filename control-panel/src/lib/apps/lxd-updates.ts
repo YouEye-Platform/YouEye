@@ -142,7 +142,7 @@ export async function getLxdAppVersion(
  * Get the latest release version for an LXD app from the configured release source.
  * Branch-aware: checks for branch-prefixed tags first, then falls back to main.
  *
- * Uses the protected cache and signed release distribution in the CP process.
+ * Uses the protected release cache in the CP process.
  */
 export async function getLxdAppLatestVersion(
   giteaRepo: string,
@@ -152,7 +152,7 @@ export async function getLxdAppLatestVersion(
   const releaseSource = await getReleaseSource();
   const releasesURL = buildReleasesAPIURL(releaseSource, giteaRepo);
 
-  // The process owns protected local-cache and signed-distribution transport.
+  // The process owns protected local-cache transport.
   // A container curl would bypass both and consume public GitHub API quota.
   const response = await releaseCacheFetch(releasesURL, { signal: AbortSignal.timeout(15_000) });
   if (!response.ok) throw new Error(`Release discovery returned HTTP ${response.status}`);

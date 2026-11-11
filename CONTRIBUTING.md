@@ -68,5 +68,5 @@ existing branch/merge workflow remains in effect.
 
 Installer, appliance, Spine, Control Panel/YouEye ID and UI share one YouEye
 release sequence. Unchanged payloads retain their original build versions and
-signed provenance within the complete release manifest. Pointer, native apps,
+digest-bound provenance within the complete release manifest. Pointer, native apps,
 Canvas and Market retain independent product versions.

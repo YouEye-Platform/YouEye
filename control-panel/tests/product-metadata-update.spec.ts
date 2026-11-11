@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import policy from '../../spine/internal/systemupdate/public-release-trust.json';
 import { AppUpdateJournalStore } from '../src/lib/market/update-journal';
 import { AppUpdateTransaction } from '../src/lib/market/update-transaction';
 import { ReleaseMetadataUpdateProvider, updateIdenticalProductRelease, type ReleaseMetadataIO } from '../src/lib/market/update-release-metadata';
@@ -14,27 +13,24 @@ import type { InstalledApp } from '../src/lib/market/installed-apps';
 
 const hash = (raw: Buffer | string) => createHash('sha256').update(raw).digest('hex');
 test('release-only adoption and ambiguous publication recovery use the durable journal', async t => {
-  const key = generateKeyPairSync('ed25519'), previousKeys = policy.keys;
-  policy.keys = {...previousKeys,stable:key.publicKey.export({type:'spki',format:'pem'}).toString()};
-  const source = 'https://github.com/YouEye-Platform/Notes', signer = hash(key.publicKey.export({type:'spki',format:'der'}));
-  const build: ProductBuild = {schema:'youeye.product-build.v1',product:'notes',kind:'native',build_version:'1.0.0',source,branch:'main',source_commit:'a'.repeat(40),tag:'v1.0.0',input_sha256:'b'.repeat(64),contract_sha256:'c'.repeat(64),signer_sha256:signer,primary:'standalone.tar',assets:[]};
-  build.assets = ['standalone.tar','SHA256SUMS','SHA256SUMS.sig','provenance.json','sbom.spdx.json'].map(name => ({name,url:`${source}/releases/download/v1.0.0/${name}`,sha256:hash(name),size_bytes:name.length}));
+  const source = 'https://github.com/YouEye-Platform/Notes';
+  const build: ProductBuild = {schema:'youeye.product-build.v1',product:'notes',kind:'native',build_version:'1.0.0',source,branch:'main',source_commit:'a'.repeat(40),tag:'v1.0.0',input_sha256:'b'.repeat(64),contract_sha256:'c'.repeat(64),primary:'standalone.tar',assets:[]};
+  build.assets = ['standalone.tar'].map(name => ({name,url:`${source}/releases/download/v1.0.0/${name}`,sha256:hash(name),size_bytes:name.length}));
   const buildRaw = Buffer.from(JSON.stringify(build));
   function release(version: string, sequence: number) {
-    const r: ProductRelease = {schema:'youeye.product-release.v1',product:'notes',version,source,branch:'main',tag:`v${version}`,channel:'stable',sequence,minimum_reader:1,signer_sha256:signer,build_manifest_base64:buildRaw.toString('base64'),build_signature_base64:sign(null,buildRaw,key.privateKey).toString('base64')};
-    const raw = Buffer.from(JSON.stringify(r));
-    return verifyProductRelease(raw,sign(null,raw,key.privateKey),{product:'notes',source,tag:r.tag});
+    const r: ProductRelease = {schema:'youeye.product-release.v1',product:'notes',version,source,branch:'main',tag:`v${version}`,channel:'stable',sequence,minimum_reader:1,authority:'digest',build_manifest_base64:buildRaw.toString('base64')};
+    return verifyProductRelease(Buffer.from(JSON.stringify(r)),{product:'notes',source,tag:r.tag});
   }
   const old = release('1.0.0',1), selected = release('1.0.1',2);
   const oldManifest = {metadata:{id:'notes'},version:'1.0.0',containers:[{name:'server',type:'lxd'}]} as AppManifest;
   const manifest = {...oldManifest,version:'1.0.1'};
-  try {
+  {
     for (const fault of ['none','projection','manifest','metadata','provenance','verification']) await t.test(fault,async () => {
       const root = mkdtempSync(path.join(tmpdir(),'ye-product-adoption-'));
       const store = new AppUpdateJournalStore(root);
       const before = {appId:'notes',installedVersion:'1.0.0',serviceCredentialState:'ready',domain:'old.test',
         containers:[{name:'server',containerName:'app-notes',type:'lxd'}],
-        nativeArtifacts:[{containerName:'server',sourceRepo:source,releaseTag:'v1.0.0',version:'1.0.0',artifactName:'standalone.tar',sha256:hash('standalone.tar'),bytes:14,signature:'verified',productRelease:productReceipt(old),runtimeUUID:'12345678-1234-1234-1234-123456789012'}],
+        nativeArtifacts:[{containerName:'server',sourceRepo:source,releaseTag:'v1.0.0',version:'1.0.0',artifactName:'standalone.tar',sha256:hash('standalone.tar'),bytes:14,verification:'product-release',productReleaseSHA256:old.manifestSHA256,productRelease:productReceipt(old),runtimeUUID:'12345678-1234-1234-1234-123456789012'}],
         productReleaseFloors:acceptProductSequence(undefined,old)} as InstallMetadata;
       let metadata = structuredClone(before);
       const installed = {installedVersion:'1.0.0',installedTag:'v1.0.0',installedBranch:'main',channelSource:source,updateAvailable:true, catalogVersion:'1.0.1', switchPending:false, candidateVersion:'1.0.1', candidateBranch:'main',candidateTag:'v1.0.1'} as InstalledApp;
@@ -93,5 +89,5 @@ test('release-only adoption and ambiguous publication recovery use the durable j
         assert.equal(store.read(id).cleanupComplete,true);
       } finally { rmSync(root,{recursive:true,force:true}); }
     });
-  } finally { policy.keys = previousKeys; }
+  }
 });

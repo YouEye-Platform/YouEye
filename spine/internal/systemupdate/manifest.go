@@ -1,16 +1,12 @@
-// Package systemupdate implements signed transactional updates for sealed
-// YouEye appliance System slots.
+// Package systemupdate implements digest-bound transactional updates for
+// sealed YouEye appliance System slots.
 package systemupdate
 
 import (
 	"bytes"
-	"crypto/ed25519"
 	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -21,12 +17,10 @@ import (
 
 	"github.com/youeye-platform/YouEye/appliance/ordering"
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
-	"github.com/youeye-platform/YouEye/spine/internal/updatetrust"
 )
 
 const (
 	ManifestSchema = "youeye.system-update.v1"
-	TrustClassDev  = "development"
 	RootSlotBytes  = int64(8 * 1024 * 1024 * 1024)
 	BootAttempts   = 3
 )
@@ -50,16 +44,10 @@ type Manifest struct {
 	BootAttempts               int                  `json:"boot_attempts"`
 	HealthProfile              string               `json:"health_profile"`
 	ArtifactKind               string               `json:"artifact_kind"`
-	Trust                      Trust                `json:"trust"`
 	Rollback                   RollbackContract     `json:"rollback"`
 	ReleaseSet                 appliance.ReleaseSet `json:"release_set"`
 	Artifacts                  []Artifact           `json:"artifacts"`
 	SourceDateEpoch            int64                `json:"source_date_epoch"`
-}
-
-type Trust struct {
-	Class string `json:"class"`
-	KeyID string `json:"key_id"`
 }
 
 type RollbackContract struct {
@@ -84,74 +72,28 @@ type Artifact struct {
 }
 
 type VerifiedManifest struct {
-	Manifest  Manifest
-	Publisher string `json:"publisher,omitempty"`
-	Raw       []byte
-	SHA256    string
+	Manifest Manifest
+	Raw      []byte
+	SHA256   string
 }
 
-func VerifyManifest(manifestPath, signaturePath, trustKeyPath string) (VerifiedManifest, error) {
-	policy, err := updatetrust.Load(updatetrust.Path)
-	if err != nil {
-		return VerifiedManifest{}, err
-	}
-	return verifyManifestWithOwnerPolicy(manifestPath, signaturePath, trustKeyPath, policy)
-}
-
-func verifyManifestWithOwnerPolicy(manifestPath, signaturePath, trustKeyPath string, policy updatetrust.Policy) (VerifiedManifest, error) {
-	if err := policy.Validate(); err != nil {
-		return VerifiedManifest{}, err
-	}
+// VerifyManifest reads a system update manifest. A non-empty expected digest
+// binds it to the accepted core release member (or an exact owner pin).
+func VerifyManifest(manifestPath, expectedSHA256 string) (VerifiedManifest, error) {
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return VerifiedManifest{}, fmt.Errorf("read system update manifest: %w", err)
+	}
+	digest := sha256.Sum256(raw)
+	actual := hex.EncodeToString(digest[:])
+	if expectedSHA256 != "" && actual != expectedSHA256 {
+		return VerifiedManifest{}, fmt.Errorf("system update manifest digest mismatch: got %s, expected %s", actual, expectedSHA256)
 	}
 	manifest, err := ParseManifest(raw)
 	if err != nil {
 		return VerifiedManifest{}, err
 	}
-	grant, err := policy.Lookup(manifest.ReleaseSet.Source, manifest.ReleaseSet.Branch, "appliance")
-	if err != nil {
-		return VerifiedManifest{}, err
-	}
-	var key ed25519.PublicKey
-	publisher := ""
-	if grant != nil {
-		if manifest.Trust.Class != TrustClassDev {
-			return VerifiedManifest{}, errors.New("owner-built system images must use the development channel")
-		}
-		key, err = updatetrust.Key(grant.PublicKey)
-		publisher = grant.Publisher
-	} else if manifest.Trust.Class != TrustClassDev {
-		key, err = publicReleaseKey(manifest.Trust.Class)
-	} else {
-		key, err = readPublicKey(trustKeyPath)
-	}
-	if err != nil {
-		return VerifiedManifest{}, err
-	}
-	return verifyManifestWithKey(raw, manifest, signaturePath, key, publisher)
-}
-
-// verifyManifestWithKey retains the same document, key-ID and signature checks
-// for legacy and core-owned hosts. Callers must resolve current authority first.
-func verifyManifestWithKey(raw []byte, manifest Manifest, signaturePath string, key ed25519.PublicKey, publisher string) (VerifiedManifest, error) {
-	keyID, err := publicKeyID(key)
-	if err != nil {
-		return VerifiedManifest{}, err
-	}
-	if manifest.Trust.KeyID != keyID {
-		return VerifiedManifest{}, errors.New("system update manifest trust key ID does not match the installed trust anchor")
-	}
-	signature, err := readSignature(signaturePath)
-	if err != nil {
-		return VerifiedManifest{}, err
-	}
-	if !ed25519.Verify(key, raw, signature) {
-		return VerifiedManifest{}, errors.New("system update manifest signature is not valid")
-	}
-	digest := sha256.Sum256(raw)
-	return VerifiedManifest{Manifest: manifest, Publisher: publisher, Raw: raw, SHA256: hex.EncodeToString(digest[:])}, nil
+	return VerifiedManifest{Manifest: manifest, Raw: raw, SHA256: actual}, nil
 }
 
 func ParseManifest(raw []byte) (Manifest, error) {
@@ -180,7 +122,6 @@ func (m Manifest) Validate() error {
 		"firmware_mode": m.FirmwareMode, "hardware_profile": m.HardwareProfile,
 		"recovery_version": m.RecoveryVersion, "minimum_current_image_version": m.MinimumCurrentImageVersion,
 		"health_profile": m.HealthProfile, "artifact_kind": m.ArtifactKind,
-		"trust.class": m.Trust.Class, "trust.key_id": m.Trust.KeyID,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("system update manifest %s is required", name)
@@ -207,27 +148,17 @@ func (m Manifest) Validate() error {
 	if m.BootAttempts != BootAttempts || m.HealthProfile != "operational" {
 		return errors.New("system update requires three boot attempts and the operational health profile")
 	}
-	if m.SourceDateEpoch <= 0 || (m.Trust.Class != TrustClassDev && m.Trust.Class != "beta" && m.Trust.Class != "stable") {
-		return errors.New("system update provenance or trust class is invalid")
+	if m.SourceDateEpoch <= 0 {
+		return errors.New("system update source_date_epoch is invalid")
 	}
-	if m.ArtifactKind != m.Trust.Class && !(m.Trust.Class == TrustClassDev && m.ArtifactKind == "test") {
+	switch m.ArtifactKind {
+	case "development", "test", "beta", "stable":
+	default:
 		return fmt.Errorf("unsupported system update artifact kind %q", m.ArtifactKind)
 	}
 	if !m.Rollback.Supported || !m.Rollback.PreserveState || !m.Rollback.PreserveData || !m.Rollback.PreserveRecovery ||
 		!validRange(m.Rollback.StateSchemaMin, m.Rollback.StateSchemaMax) || !validRange(m.Rollback.DataSchemaMin, m.Rollback.DataSchemaMax) {
 		return errors.New("system update rollback contract is incomplete")
-	}
-	if m.ReleaseSet.Schema != "" && m.Trust.Class != TrustClassDev {
-		return errors.New("component composition requires development trust")
-	}
-	if m.Trust.Class != TrustClassDev {
-		branch := "main"
-		if m.Trust.Class == "beta" {
-			branch = "beta"
-		}
-		if m.ReleaseSet.Branch != branch || !strings.HasPrefix(m.ReleaseSet.Source, "https://github.com/") {
-			return errors.New("public system update trust must match its GitHub release source and branch")
-		}
 	}
 	if err := validateReleaseSet(m.ReleaseSet); err != nil {
 		return err
@@ -355,57 +286,6 @@ func validateReleaseSet(set appliance.ReleaseSet) error {
 		}
 	}
 	return nil
-}
-
-func readPublicKey(path string) (ed25519.PublicKey, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read system update trust key: %w", err)
-	}
-	trimmed := bytes.TrimSpace(raw)
-	if block, _ := pem.Decode(trimmed); block != nil {
-		parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("parse system update trust key: %w", err)
-		}
-		key, ok := parsed.(ed25519.PublicKey)
-		if !ok {
-			return nil, errors.New("system update trust key is not Ed25519")
-		}
-		return key, nil
-	}
-	for _, decode := range []func(string) ([]byte, error){hex.DecodeString, base64.StdEncoding.DecodeString} {
-		if decoded, err := decode(string(trimmed)); err == nil && len(decoded) == ed25519.PublicKeySize {
-			return ed25519.PublicKey(decoded), nil
-		}
-	}
-	return nil, errors.New("system update trust key has unsupported encoding")
-}
-
-func publicKeyID(key ed25519.PublicKey) (string, error) {
-	der, err := x509.MarshalPKIXPublicKey(key)
-	if err != nil {
-		return "", fmt.Errorf("encode system update trust key: %w", err)
-	}
-	digest := sha256.Sum256(der)
-	return hex.EncodeToString(digest[:8]), nil
-}
-
-func readSignature(path string) ([]byte, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read system update signature: %w", err)
-	}
-	if len(raw) == ed25519.SignatureSize {
-		return raw, nil
-	}
-	trimmed := strings.TrimSpace(string(raw))
-	for _, decode := range []func(string) ([]byte, error){hex.DecodeString, base64.StdEncoding.DecodeString} {
-		if decoded, err := decode(trimmed); err == nil && len(decoded) == ed25519.SignatureSize {
-			return decoded, nil
-		}
-	}
-	return nil, errors.New("system update signature has unsupported encoding")
 }
 
 func requireEOF(dec *json.Decoder) error {

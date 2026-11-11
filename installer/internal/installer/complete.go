@@ -29,7 +29,7 @@ func (model completeModel) View() string {
 		"",
 		theme.Selected.Render("  Remove the installer media, then reboot."),
 		"",
-		theme.Dim.Render("  First boot installs the exact signed platform release set."),
+		theme.Dim.Render("  First boot installs the exact platform release set."),
 		theme.Dim.Render("  Web setup appears only after durable health checks pass."),
 		theme.Dim.Render("  Local root login requires the password you configured."),
 		theme.Dim.Render("  Password SSH is available only if you enabled its local-subnet option."),

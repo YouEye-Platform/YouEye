@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-func TestVerifyApplianceBundleRequiresSignatureAndEveryArtifactIdentity(t *testing.T) {
+func TestVerifyApplianceBundleRequiresEveryArtifactIdentity(t *testing.T) {
 	bundle := writeTestApplianceBundle(t)
-	verified, err := verifyApplianceBundle(bundle.manifestPath, bundle.signaturePath, bundle.trustKeyPath)
+	verified, err := verifyApplianceBundle(bundle.manifestPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,11 +21,15 @@ func TestVerifyApplianceBundleRequiresSignatureAndEveryArtifactIdentity(t *testi
 		t.Fatalf("roles=%v want %v", got, wantRoles)
 	}
 
-	if err := os.WriteFile(bundle.signaturePath, make([]byte, 64), 0600); err != nil {
+	raw, err := os.ReadFile(bundle.manifestPath)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verifyApplianceBundle(bundle.manifestPath, bundle.signaturePath, bundle.trustKeyPath); err == nil || !strings.Contains(err.Error(), "signature") {
-		t.Fatalf("expected signature rejection, got %v", err)
+	if err := os.WriteFile(bundle.manifestPath, []byte(strings.Replace(string(raw), `"schema"`, `"trust": {}, "schema"`, 1)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyApplianceBundle(bundle.manifestPath); err == nil {
+		t.Fatal("manifest with a removed trust key was accepted")
 	}
 }
 
@@ -35,7 +39,7 @@ func TestVerifyApplianceBundleRejectsCorruptPayload(t *testing.T) {
 	if err := os.WriteFile(rootPath, []byte("corrupt payload!\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verifyApplianceBundle(bundle.manifestPath, bundle.signaturePath, bundle.trustKeyPath); err == nil || !strings.Contains(err.Error(), "artifact system-root") {
+	if _, err := verifyApplianceBundle(bundle.manifestPath); err == nil || !strings.Contains(err.Error(), "artifact system-root") {
 		t.Fatalf("expected corrupt payload rejection, got %v", err)
 	}
 }
@@ -135,45 +139,10 @@ func TestValidateApplianceManifestRequiresThirtyTwoGiBTargetContract(t *testing.
 		t.Fatal(err)
 	}
 	if manifest.DiskLayout.TargetMinGiB != 32 {
-		t.Fatalf("signed target minimum = %d GiB, want 32 GiB", manifest.DiskLayout.TargetMinGiB)
+		t.Fatalf("target minimum = %d GiB, want 32 GiB", manifest.DiskLayout.TargetMinGiB)
 	}
 	manifest.DiskLayout.TargetMinGiB = 96
 	if err := validateApplianceBundleManifest(manifest); err == nil || !strings.Contains(err.Error(), "disk layout") {
-		t.Fatalf("obsolete 96 GiB signed contract was accepted: %v", err)
-	}
-}
-
-func TestCompositionManifestRequiresExplicitOriginalComponentBranches(t *testing.T) {
-	bundle := writeTestApplianceBundle(t)
-	raw, err := os.ReadFile(bundle.manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, err := parseApplianceBundleManifest(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m.ReleaseSet.Schema = "youeye.release-set.v2"
-	m.ReleaseSet.Spine.Branch = "dev"
-	m.ReleaseSet.Spine.Tag = "spine-dev-v" + m.ReleaseSet.Spine.Version
-	m.ReleaseSet.ControlPanel.Branch = "patch-fix"
-	m.ReleaseSet.ControlPanel.Tag = "cp-patch-fix-v" + m.ReleaseSet.ControlPanel.Version
-	m.ReleaseSet.UI.Branch = "main"
-	m.ReleaseSet.UI.Tag = "ui-v" + m.ReleaseSet.UI.Version
-	if err = validateApplianceBundleManifest(m); err != nil {
-		t.Fatal(err)
-	}
-	for _, change := range []func(*applianceBundleManifest){
-		func(v *applianceBundleManifest) { v.ReleaseSet.Schema = "" },
-		func(v *applianceBundleManifest) { v.ReleaseSet.Schema = "unknown" },
-		func(v *applianceBundleManifest) { v.ReleaseSet.ControlPanel.Branch = "dev" },
-		func(v *applianceBundleManifest) { v.ReleaseSet.UI.Branch = "" },
-		func(v *applianceBundleManifest) { v.Trust.Class = "stable" },
-	} {
-		bad := m
-		change(&bad)
-		if validateApplianceBundleManifest(bad) == nil {
-			t.Fatal("invalid or cross-trust composition accepted")
-		}
+		t.Fatalf("obsolete 96 GiB contract was accepted: %v", err)
 	}
 }

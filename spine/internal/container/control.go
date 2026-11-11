@@ -76,7 +76,7 @@ func DeployControlPanel(cfg *config.Config) error {
 		// reset. Never give that bundle the newly selected release provenance.
 		if status, manifest, detectErr := appliance.Detect(); detectErr == nil && status.Kind == appliance.RuntimeApplianceImage && manifest != nil && manifest.ReleaseSet != nil {
 			installedVersion := GetInstalledVersion(containerName, appDir)
-			if err := verifyExistingControlVersion(installedVersion, *manifest, systemupdate.CoreBootstrapPath, systemupdate.CoreDevelopmentTrustPath); err != nil {
+			if err := verifyExistingControlVersion(installedVersion, *manifest, systemupdate.CoreBootstrapPath); err != nil {
 				return err
 			}
 		}
@@ -600,8 +600,8 @@ func DeployControlPanelApp(cfg *config.Config) error {
 	}
 	util.LogSuccess(fmt.Sprintf("Downloaded %.2f MB", float64(written)/1024/1024))
 	defer os.Remove(tmpFile)
-	if err := releases.VerifySignedReleaseArtifact(client, downloadURL, tmpFile, effectiveChannel.ArtifactSHA256, "cp"); err != nil {
-		return fmt.Errorf("verify signed Control Panel release artifact: %w", err)
+	if err := releases.VerifyReleaseArtifact(downloadURL, tmpFile, effectiveChannel.ArtifactSHA256, "cp"); err != nil {
+		return fmt.Errorf("verify Control Panel release artifact: %w", err)
 	}
 
 	// Deploy to container

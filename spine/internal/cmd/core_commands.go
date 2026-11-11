@@ -37,7 +37,7 @@ func installCoreCommands(parent *cobra.Command) {
 		}
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}})
-	parent.AddCommand(&cobra.Command{Use: "check", Args: cobra.NoArgs, Short: "Resolve the current signed complete System selection", RunE: func(cmd *cobra.Command, _ []string) error {
+	parent.AddCommand(&cobra.Command{Use: "check", Args: cobra.NoArgs, Short: "Resolve the current complete System selection", RunE: func(cmd *cobra.Command, _ []string) error {
 		if _, err := installedCoreRuntime(); err != nil {
 			return err
 		}
@@ -45,7 +45,7 @@ func installCoreCommands(parent *cobra.Command) {
 		if err != nil {
 			return err
 		}
-		_, release, digest, err := systemupdate.ResolveCoreReleaseWithMetadata(cmd.Context(), systemupdate.ReleaseHTTPClient(), selection, systemupdate.CoreDevelopmentTrustPath, "/var/lib/youeye/cache/core-update")
+		_, release, digest, err := systemupdate.ResolveCoreRelease(cmd.Context(), systemupdate.ReleaseHTTPClient(), selection)
 		if err != nil {
 			return err
 		}
@@ -111,7 +111,7 @@ func installCoreCommands(parent *cobra.Command) {
 		}}
 		command.Flags().StringVar(&request, "request", "", "stable idempotency identity for this update")
 		if action == "stage" {
-			command.Flags().StringVar(&digest, "manifest-sha256", "", "reviewed signed System manifest SHA-256")
+			command.Flags().StringVar(&digest, "manifest-sha256", "", "reviewed System core-release.json SHA-256")
 		}
 		if action != "cancel" {
 			command.Flags().BoolVar(&once, "once", false, "perform one reconciliation pass")

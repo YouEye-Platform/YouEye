@@ -153,7 +153,7 @@ func (b CoreLifecycleBarrier) ReleaseCopy(request CoreCopyRequest, role string, 
 // ReserveIndependentCopySource follows the same core -> app lock order as native
 // System activation. It freezes admission only after the exact signed source
 // receipt, actual hardware and all retained native transactions are settled.
-func (m CoreManager) ReserveIndependentCopySource(request CoreCopyRequest, trustKeyPath string, b CoreLifecycleBarrier, observeHardware func() (string, error)) error {
+func (m CoreManager) ReserveIndependentCopySource(request CoreCopyRequest, b CoreLifecycleBarrier, observeHardware func() (string, error)) error {
 	if request.Validate() != nil || observeHardware == nil {
 		return fmt.Errorf("exact native source copy request required")
 	}
@@ -166,7 +166,7 @@ func (m CoreManager) ReserveIndependentCopySource(request CoreCopyRequest, trust
 	if err != nil || CoreReceiptDigest(receipt) != request.SourceReceiptSHA256 || receipt.ManifestSHA256 != request.ManifestSHA256 {
 		return fmt.Errorf("copy source receipt changed")
 	}
-	if _, _, err = m.Selection(request.ManifestSHA256, trustKeyPath); err != nil {
+	if _, _, err = m.Selection(request.ManifestSHA256); err != nil {
 		return err
 	}
 	if j, err := m.Read(); err == nil {
@@ -185,7 +185,7 @@ func (m CoreManager) ReserveIndependentCopySource(request CoreCopyRequest, trust
 	}
 	return b.BeginCopy(request, "source", observeHardware)
 }
-func (m CoreManager) AdmitIndependentCopyDestination(request CoreCopyRequest, trustKeyPath string, b CoreLifecycleBarrier, observeHardware func() (string, error)) error {
+func (m CoreManager) AdmitIndependentCopyDestination(request CoreCopyRequest, b CoreLifecycleBarrier, observeHardware func() (string, error)) error {
 	if request.Validate() != nil || observeHardware == nil {
 		return fmt.Errorf("exact native destination copy request required")
 	}
@@ -198,6 +198,6 @@ func (m CoreManager) AdmitIndependentCopyDestination(request CoreCopyRequest, tr
 		return err
 	}
 	// A failed membership check retains quarantine/lifecycle ownership for repair.
-	_, err = m.beginCopyLocked(request, trustKeyPath)
+	_, err = m.beginCopyLocked(request)
 	return err
 }

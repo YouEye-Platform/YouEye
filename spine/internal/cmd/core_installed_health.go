@@ -21,7 +21,7 @@ func addCoreInstalledHealthChecks(image appliance.Manifest, add func(string, str
 		return false
 	}
 	fail := func() {
-		add("installed core membership", "fail", "signed installed core payloads require reconciliation")
+		add("installed core membership", "fail", "installed core payloads require reconciliation")
 	}
 	if err != nil {
 		fail()
@@ -40,7 +40,7 @@ func addCoreInstalledHealthChecks(image appliance.Manifest, add func(string, str
 			}
 		}
 	}
-	_, release, err := m.Selection(digest, systemupdate.CoreDevelopmentTrustPath)
+	_, release, err := m.Selection(digest)
 	if err != nil || systemupdate.BindCoreImage(release, image) != nil {
 		fail()
 		return true
@@ -60,10 +60,6 @@ func addCoreInstalledHealthChecks(image appliance.Manifest, add func(string, str
 		if member.Role != "cp" && member.Role != "ui" {
 			continue
 		}
-		if systemupdate.CheckCoreMemberAuthority(member, release.Channel, systemupdate.CoreDevelopmentTrustPath) != nil {
-			fail()
-			return true
-		}
 		index, err := m.LoadPayloadIndex(member.Artifact.SHA256)
 		if err != nil {
 			fail()
@@ -78,6 +74,6 @@ func addCoreInstalledHealthChecks(image appliance.Manifest, add func(string, str
 			return true
 		}
 	}
-	add("installed core membership", "pass", "signed core selection matches immutable host, baked Spine and exact CP/UI static payloads")
+	add("installed core membership", "pass", "accepted core selection matches immutable host, baked Spine and exact CP/UI static payloads")
 	return true
 }

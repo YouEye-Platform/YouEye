@@ -1,21 +1,15 @@
-# Private Forgejo main releases
+# Private Forgejo releases
 
-The release controller may promote accepted development source to a private
-Forgejo main release. Component and appliance tags use five-position numeric
-versions. Canvas source templates and Market snapshots follow their own release
-contracts.
+A private Forgejo repository can publish the same System releases as GitHub:
+a `youeye-v<version>` release whose `core-release.json` lists every artifact by
+exact URL, SHA-256 and size (see [core release identity](core-release-contract.md)).
+The document's `source` is the Forgejo repository, so its blob URLs sit under
+`<source>/releases/download/<tag>/`; the artifact bytes are identical to the
+GitHub release.
 
-The Installer verifies a five-position `appliance-v` release with the existing
-private development trust anchor only when discovery explicitly selected a
-Forgejo provider. Its signed appliance manifest must identify the same selected
-repository and the main branch. Provider-returned JSON cannot set that trust
-context. Public GitHub Stable retains a separate trust boundary.
-
-A release promotion publishes artifacts; it does not install them. Existing
-installations still use the supported update command and exact-source checks.
-Versions embedded in components, the appliance release lock, checksums and
-signatures must agree. Published releases are immutable.
-
-Appliance release locks use unqualified component tags on main (`spine-v…`,
-`cp-v…`, `ui-v…`). Dev and feature branches retain the branch in each tag.
-The appliance build entry uses the shared release-lock validator for this check.
+Forgejo is only ever selected explicitly, for example
+`install.sh --repository https://<host>/<owner>/YouEye --channel dev`. Private
+`main` releases use the `alpha` channel token; `dev` releases use `-dev.N`.
+Publishing a release does not install it. Existing installations update through
+the normal update command, which checks the selected source, raw branch and
+sequence. Published releases are immutable.

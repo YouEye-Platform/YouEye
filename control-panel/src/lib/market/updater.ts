@@ -269,7 +269,7 @@ async function updateLXDContainer(
   const resolvedDir = appDir;
 
   step++;
-  emit(onEvent, step, totalSteps, 'success', `Preflight accepted v${artifact.version} (${artifact.signature.status === 'unsigned' ? 'manifest-authorized' : 'verified release'})`);
+  emit(onEvent, step, totalSteps, 'success', `Preflight accepted v${artifact.version} (${artifact.verification.status === 'manifest' ? 'manifest-authorized' : 'product release digest'})`);
 
   step++;
   emit(onEvent, step, totalSteps, 'running', `Staging preflighted v${artifact.version} bytes...`);
@@ -742,8 +742,8 @@ async function updateMarketAppLocked(
       artifactName: artifact.artifactName,
       sha256: artifact.artifactSHA256,
       bytes: artifact.artifactBytes,
-      signature: artifact.signature.status,
-      signatureKeyId: artifact.signature.status !== 'unsigned' ? artifact.signature.keyId : undefined,
+      verification: artifact.verification.status,
+      productReleaseSHA256: artifact.verification.status === 'product-release' ? artifact.verification.releaseSHA256 : undefined,
     }));
     installMeta.containers = installMeta.containers.map((container) => {
       const spec = containerSpecs.find((candidate) => candidate.name === container.name);

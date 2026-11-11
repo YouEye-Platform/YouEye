@@ -15,6 +15,6 @@ export async function readCoreUpdateStatus(): Promise<CoreUpdateStatus> {
 export async function assertIndependentCoreUpdate(component: string): Promise<void> {
   if (!['spine', 'control', 'ui', 'system', 'host-system'].includes(component)) return;
   if ((await readCoreUpdateStatus()).managed) {
-    throw new Error('This installation uses one signed System release; update the complete core selection.');
+    throw new Error('This installation uses one complete System release; update the complete core selection.');
   }
 }

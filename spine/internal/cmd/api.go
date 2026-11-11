@@ -35,7 +35,7 @@ var apiStopCmd = &cobra.Command{
 }
 
 func init() {
-	apiServeCmd.Flags().StringVar(&coreAPIReaderExecutable, "core-reader", "", "protected original signed Stable Spine for a temporary API reader bridge")
+	apiServeCmd.Flags().StringVar(&coreAPIReaderExecutable, "core-reader", "", "protected original Stable Spine for a temporary API reader bridge")
 	apiServeCmd.Flags().StringVar(&coreAPIReaderManifestSHA256, "core-reader-manifest-sha256", "", "exact official Stable manifest for the temporary reader bridge")
 	apiCmd.AddCommand(apiServeCmd)
 	apiCmd.AddCommand(apiStopCmd)

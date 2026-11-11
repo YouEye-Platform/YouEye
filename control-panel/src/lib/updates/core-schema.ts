@@ -40,7 +40,7 @@ export async function coreSchemaComponent(role: 'cp' | 'ui', path = '/etc/youeye
       try { await lstat(path); } catch (probe) {
         if ((probe as NodeJS.ErrnoException).code === 'ENOENT') {
           const indicators = [join(dirname(path), 'core-artifact-sha256')];
-          if (path === '/etc/youeye/core-component.json' && role === 'cp') indicators.push('/var/lib/youeye-state/core-selection/core-release.json', '/var/lib/youeye-state/core-selection/core-release.json.sig');
+          if (path === '/etc/youeye/core-component.json' && role === 'cp') indicators.push('/var/lib/youeye-state/core-selection/core-release.json');
           for (const indicator of indicators) {
             try { await lstat(indicator); }
             catch (missing) { if ((missing as NodeJS.ErrnoException).code === 'ENOENT') continue; throw new Error('Core installation identity unavailable'); }
@@ -59,7 +59,7 @@ export async function coreSchemaComponent(role: 'cp' | 'ui', path = '/etc/youeye
 
 /**
  * New-format CP/ID processes share one durable schema attempt; UI uses the same
- * contract in its own data mount. Native code installs the exact signed payload
+ * contract in its own data mount. Native code installs the exact digest-bound payload
  * identity before starting services. Only a completed matching receipt permits
  * another process/restart to skip initialization. Unknown effects never retry.
  * Legacy installations keep their existing schema initialization behavior.

@@ -41,7 +41,7 @@ func (s NativeCoreServices) Health(ctx context.Context, request string, recovery
 	if err != nil || !reflect.DeepEqual(receipt, j.Previous) {
 		return "", fmt.Errorf("core health receipt advanced")
 	}
-	if _, _, err = m.Selection(digest, s.Cache.TrustKeyPath); err != nil {
+	if _, _, err = m.Selection(digest); err != nil {
 		return "", err
 	}
 	if !j.NoOp && !j.MetadataOnly {
@@ -92,9 +92,6 @@ func (s NativeCoreServices) Health(ctx context.Context, request string, recovery
 	for _, role := range []string{"cp", "ui"} {
 		member, err := coreServiceMember(release, role)
 		if err != nil {
-			return "", err
-		}
-		if err = CheckCoreMemberAuthority(member, release.Channel, s.Cache.TrustKeyPath); err != nil {
 			return "", err
 		}
 		container, appDir, path := "youeye-control", s.CPAppDir, "/api/appliance/core-component"

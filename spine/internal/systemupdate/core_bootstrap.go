@@ -2,6 +2,7 @@ package systemupdate
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,9 +14,9 @@ import (
 	"github.com/youeye-platform/YouEye/releasecache"
 )
 
-// CoreBootstrap retains a signed coordinator outside both immutable host slots.
-// Its authority is the exact target's original Spine member, never a downloaded
-// key or an arbitrary executable path. It uses the normal paired transaction.
+// CoreBootstrap retains a coordinator outside both immutable host slots. Its
+// identity is the exact target's Spine member digest, never an arbitrary
+// executable path. It uses the normal paired transaction.
 type CoreBootstrap struct {
 	Schema         string `json:"schema"`
 	RequestID      string `json:"request_id"`
@@ -45,29 +46,22 @@ func (m CoreManager) readBootstrap() (CoreBootstrap, error) {
 	}
 	return b, nil
 }
-func (m CoreManager) verifyBootstrap(b CoreBootstrap, trust string) (string, error) {
+func (m CoreManager) verifyBootstrap(b CoreBootstrap) (string, error) {
 	j, err := m.Read()
 	if err != nil || j.RequestID != b.RequestID || j.ManifestSHA256 != b.ManifestSHA256 || !j.RestartRequired || j.NoOp || j.MetadataOnly {
 		return "", fmt.Errorf("bootstrap differs from the retained host transition")
 	}
-	selection, target, err := m.Selection(b.ManifestSHA256, trust)
+	_, target, err := m.Selection(b.ManifestSHA256)
 	if err != nil {
 		return "", err
 	}
-	file, err := m.verifyBootstrapMember(target, b.ArtifactSHA256, trust)
-	if err != nil {
-		return "", err
-	}
-	if err = VerifyCoreBootstrapMetadata(selection, trust, filepath.Dir(file)); err != nil {
-		return "", err
-	}
-	return file, nil
+	return m.verifyBootstrapMember(target, b.ArtifactSHA256)
 }
 
-// VerifyBootstrapReader verifies a protected, original signed Stable reader
+// VerifyBootstrapReader verifies a protected, digest-bound Stable reader
 // without preparing an update or retaining coordinator/transaction state. The
 // API bridge calls it again before accepting the owner's first stage action.
-func (m CoreManager) VerifyBootstrapReader(executable, digest, trust string) error {
+func (m CoreManager) VerifyBootstrapReader(executable, digest string) error {
 	if !validSHA256(digest) {
 		return fmt.Errorf("exact reader manifest digest required")
 	}
@@ -83,11 +77,7 @@ func (m CoreManager) VerifyBootstrapReader(executable, digest, trust string) err
 	if err != nil {
 		return err
 	}
-	signature, err := ReadCoreState(filepath.Join(filepath.Dir(file), "core-release.json.sig"), 64)
-	if err != nil {
-		return err
-	}
-	target, actual, err := VerifyCoreSelection(raw, signature, trust)
+	target, actual, err := releasecache.ParseCoreRelease(raw)
 	if err != nil {
 		return err
 	}
@@ -102,15 +92,12 @@ func (m CoreManager) VerifyBootstrapReader(executable, digest, trust string) err
 	if err != nil || channel != "stable" {
 		return fmt.Errorf("reader requires an original Stable Spine")
 	}
-	if err = VerifyCoreBootstrapMetadata(CoreHostSelection{Raw: raw, Signature: signature}, trust, filepath.Dir(file)); err != nil {
-		return err
-	}
-	verified, err := m.verifyBootstrapMember(target, artifact, trust)
+	verified, err := m.verifyBootstrapMember(target, artifact)
 	if err != nil {
 		return err
 	}
 	if verified != executable {
-		return fmt.Errorf("reader differs from the signed Spine")
+		return fmt.Errorf("reader differs from the selected Spine")
 	}
 	return nil
 }
@@ -129,14 +116,10 @@ func (m CoreManager) verifyBootstrapDirectories(file string) error {
 	return nil
 }
 
-func (m CoreManager) verifyBootstrapMember(target releasecache.CoreRelease, artifact, trust string) (string, error) {
+func (m CoreManager) verifyBootstrapMember(target releasecache.CoreRelease, artifact string) (string, error) {
 	member, err := coreServiceMember(target, "spine")
 	if err != nil || member.Artifact.SHA256 != artifact {
-		return "", fmt.Errorf("bootstrap is not the signed target Spine")
-	}
-	key, err := CoreMemberKey(member, target.Channel, trust)
-	if err != nil {
-		return "", err
+		return "", fmt.Errorf("bootstrap is not the target Spine")
 	}
 	file, err := m.BootstrapBinaryPath(artifact)
 	if err != nil {
@@ -145,26 +128,19 @@ func (m CoreManager) verifyBootstrapMember(target releasecache.CoreRelease, arti
 	if err := m.verifyBootstrapDirectories(file); err != nil {
 		return "", err
 	}
-	err = releasecache.VerifyCoreMember(member, key, func(blob releasecache.CoreBlob) (io.ReadCloser, error) {
-		name := map[string]string{member.Artifact.URL: "youeye", member.Checksums.URL: "checksums", member.Signature.URL: "signature", member.Provenance.URL: "provenance", member.SBOM.URL: "sbom"}[blob.URL]
-		if name == "" {
-			return nil, fmt.Errorf("unexpected bootstrap envelope input")
-		}
-		raw, err := ReadCoreState(filepath.Join(filepath.Dir(file), name), 128<<20)
-		if err != nil {
-			return nil, err
-		}
-		return io.NopCloser(bytes.NewReader(raw)), nil
-	})
+	raw, err := ReadCoreState(file, 128<<20)
 	if err != nil {
-		return "", fmt.Errorf("retained bootstrap envelope failed: %w", err)
+		return "", err
+	}
+	if int64(len(raw)) != member.Artifact.SizeBytes || fmt.Sprintf("%x", sha256.Sum256(raw)) != member.Artifact.SHA256 {
+		return "", fmt.Errorf("retained bootstrap Spine failed digest/size verification")
 	}
 	return file, nil
 }
 
 // BootstrapExecutable rechecks retained authority on every invocation, including
 // after rollback. Absence selects the ordinary installed coordinator.
-func (m CoreManager) BootstrapExecutable(trust string) (string, error) {
+func (m CoreManager) BootstrapExecutable() (string, error) {
 	b, err := m.readBootstrap()
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
@@ -172,12 +148,12 @@ func (m CoreManager) BootstrapExecutable(trust string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return m.verifyBootstrap(b, trust)
+	return m.verifyBootstrap(b)
 }
 
 // RegisterBootstrap is allowed before the first action only. Repeating exactly
 // the accepted request reconciles its record rather than replacing a live runner.
-func (m CoreManager) RegisterBootstrap(request, digest, executable, trust string) (string, error) {
+func (m CoreManager) RegisterBootstrap(request, digest, executable string) (string, error) {
 	unlock, err := m.lockCore()
 	if err != nil {
 		return "", err
@@ -192,7 +168,7 @@ func (m CoreManager) RegisterBootstrap(request, digest, executable, trust string
 		return "", err
 	}
 	b := CoreBootstrap{"youeye.core-bootstrap.v1", request, digest, member.Artifact.SHA256}
-	file, err := m.verifyBootstrap(b, trust)
+	file, err := m.verifyBootstrap(b)
 	if err != nil {
 		return "", err
 	}

@@ -1,5 +1,0 @@
-export const RELEASE_DEVELOPMENT_TRUST = `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAha3Qt2DxI8tDarUb24mmRRekCa1acvk/ttqyJ14y1OE=
------END PUBLIC KEY-----
-`;
-

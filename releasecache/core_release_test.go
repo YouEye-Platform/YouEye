@@ -1,20 +1,16 @@
 package releasecache
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
 
 func coreFixture() CoreRelease {
 	source := "https://github.com/YouEye-Platform/YouEye"
-	r := CoreRelease{Schema: CoreReleaseSchema, Version: "0.5.38", Tag: "youeye-v0.5.38", Source: source, Branch: "main", SourceCommit: strings.Repeat("a", 40), Channel: "stable", Sequence: 2, PreviousManifestSHA256: strings.Repeat("c", 64), MinimumReader: 1, SignerSHA256: strings.Repeat("d", 64), Compatibility: CoreCompatibility{StateMin: 1, StateMax: 1, DataMin: 1, DataMax: 1, MinimumRelease: "0.5.37", Capabilities: []string{"core-release-v1"}}}
+	r := CoreRelease{Schema: CoreReleaseSchema, Version: "0.5.38", Tag: "youeye-v0.5.38", Source: source, Branch: "main", SourceCommit: strings.Repeat("a", 40), Channel: "stable", Sequence: 2, PreviousManifestSHA256: strings.Repeat("c", 64), MinimumReader: 1, Authority: CoreReleaseAuthority, Compatibility: CoreCompatibility{StateMin: 1, StateMax: 1, DataMin: 1, DataMax: 1, MinimumRelease: "0.5.37", Capabilities: []string{"core-release-v1"}}}
 	for _, role := range []string{"installer", "media", "appliance", "system-update", "system-root", "system-a-uki", "system-b-uki", "system-updater", "internal-recovery", "recovery-uki", "update-bootstrap", "spine", "cp", "ui"} {
 		version := "0.5.37"
 		if role == "cp" {
@@ -24,14 +20,10 @@ func coreFixture() CoreRelease {
 		blob := func(name string) CoreBlob {
 			return CoreBlob{Name: name, URL: source + "/releases/download/" + tag + "/" + name, SHA256: strings.Repeat("b", 64), SizeBytes: 42}
 		}
-		member := CoreMember{Role: role, BuildVersion: version, Source: source, Branch: "main", SourceCommit: r.SourceCommit, Tag: tag, InputSHA256: strings.Repeat("e", 64), Artifact: blob(role + ".tar"), Checksums: blob("SHA256SUMS"), Signature: blob("SHA256SUMS.sig"), Provenance: blob("provenance.json"), SBOM: blob("sbom.spdx.json"), KeyID: r.SignerSHA256}
-		if role == "appliance" || role == "system-update" {
-			signature := blob(role + ".json.sig")
-			member.DocumentSignature = &signature
-		}
+		member := CoreMember{Role: role, BuildVersion: version, Source: source, Branch: "main", SourceCommit: r.SourceCommit, Tag: tag, InputSHA256: strings.Repeat("e", 64), Artifact: blob(role + ".tar")}
 		if role == "appliance" {
-			lock := blob("release-lock.json")
-			member.ReleaseLock = &lock
+			inputs := blob("build-inputs.json")
+			member.BuildInputs = &inputs
 		}
 		if role == "cp" {
 			member.DependsOn = []string{"spine"}
@@ -75,11 +67,9 @@ func TestCorePublicReuseKeepsOriginalBranchAuthority(t *testing.T) {
 	m := &r.Members[len(r.Members)-1]
 	oldTag := m.Tag
 	m.BuildVersion, m.Tag, m.Branch = "0.5.38-beta.2", "youeye-v0.5.38-beta.2", "beta"
-	for _, blob := range []*CoreBlob{&m.Artifact, &m.Checksums, &m.Signature, &m.Provenance, &m.SBOM} {
-		blob.URL = strings.Replace(blob.URL, oldTag, m.Tag, 1)
-	}
+	m.Artifact.URL = strings.Replace(m.Artifact.URL, oldTag, m.Tag, 1)
 	if err := r.Validate(); err != nil {
-		t.Fatal("Stable signed selection rejected exact Beta member", err)
+		t.Fatal("Stable selection rejected exact Beta member", err)
 	}
 	if channel, err := CoreMemberChannel(*m, r.Channel); err != nil || channel != "beta" {
 		t.Fatal(channel, err)
@@ -102,7 +92,7 @@ func TestCoreReleaseRejectsAmbiguousJSON(t *testing.T) {
 		strings.Replace(string(raw), `"role":"installer"`, `"role":"cp","role":"installer"`, 1),
 	} {
 		if _, _, err := ParseCoreRelease([]byte(raw)); err == nil {
-			t.Fatal("duplicate signed keys accepted")
+			t.Fatal("duplicate keys accepted")
 		}
 	}
 	for _, branch := range []string{"Team/Fix", "main", "f-feature-12"} {
@@ -124,12 +114,9 @@ func TestCorePromotedSelectionRetainsDevelopmentMembers(t *testing.T) {
 		m := &r.Members[i]
 		m.Source, m.Branch, m.BuildVersion = original, "dev", "0.5.38-dev.1"
 		m.Tag = "youeye-v" + m.BuildVersion
-		blobs := []*CoreBlob{&m.Artifact, &m.Checksums, &m.Signature, &m.Provenance, &m.SBOM}
-		if m.DocumentSignature != nil {
-			blobs = append(blobs, m.DocumentSignature)
-		}
-		if m.ReleaseLock != nil {
-			blobs = append(blobs, m.ReleaseLock)
+		blobs := []*CoreBlob{&m.Artifact}
+		if m.BuildInputs != nil {
+			blobs = append(blobs, m.BuildInputs)
 		}
 		for _, b := range blobs {
 			b.URL = original + "/releases/download/" + m.Tag + "/" + b.Name
@@ -174,7 +161,11 @@ func TestCoreReleaseRejectsIncompleteOrUnsafeMembership(t *testing.T) {
 			r.Members[0].Artifact.URL = r.Source + "/releases/download/youeye-v0.5.37/%2e%2e%2fsecret"
 		},
 		"unknown reader":     func(r *CoreRelease) { r.MinimumReader++ },
-		"missing signature":  func(r *CoreRelease) { r.Members[0].Signature = CoreBlob{} },
+		"missing artifact":   func(r *CoreRelease) { r.Members[0].Artifact = CoreBlob{} },
+		"missing authority":  func(r *CoreRelease) { r.Authority = "" },
+		"signed authority":   func(r *CoreRelease) { r.Authority = "ed25519" },
+		"missing inputs":     func(r *CoreRelease) { r.Members[2].BuildInputs = nil },
+		"stray inputs":       func(r *CoreRelease) { r.Members[0].BuildInputs = r.Members[2].BuildInputs },
 		"public private mix": func(r *CoreRelease) { r.Members[0].Branch = "dev" },
 		"cyclic graph":       func(r *CoreRelease) { r.Members[0].DependsOn = []string{"ui"} },
 		"missing dependency": func(r *CoreRelease) { r.Members[len(r.Members)-1].DependsOn = nil },
@@ -191,27 +182,49 @@ func TestCoreReleaseRejectsIncompleteOrUnsafeMembership(t *testing.T) {
 	}
 }
 
-func TestCoreReleaseSignatureBindsMembership(t *testing.T) {
-	public, private, err := ed25519.GenerateKey(rand.Reader)
+func TestCoreReleaseRejectsRemovedSignatureFields(t *testing.T) {
+	raw, _ := json.Marshal(coreFixture())
+	for _, raw := range []string{
+		strings.Replace(string(raw), `"authority":"digest"`, `"authority":"digest","signature":{}`, 1),
+		strings.Replace(string(raw), `"role":"installer"`, `"role":"installer","key_id":"`+strings.Repeat("d", 64)+`"`, 1),
+	} {
+		if _, _, err := ParseCoreRelease([]byte(raw)); err == nil {
+			t.Fatal("unknown signing field accepted")
+		}
+	}
+}
+
+// An explicit empty depends_on and an omitted one must parse to the same value,
+// so a release round-tripped through a receipt (omitempty) still DeepEquals.
+func TestCoreReleaseEmptyDependsOnSurvivesJSONRoundTrip(t *testing.T) {
+	raw, err := os.ReadFile("testdata/core-release-v1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	der, _ := x509.MarshalPKIXPublicKey(public)
-	digest := sha256.Sum256(der)
-	r := coreFixture()
-	r.SignerSHA256 = hex.EncodeToString(digest[:])
-	raw, _ := json.Marshal(r)
-	signature := ed25519.Sign(private, raw)
-	if _, _, err := VerifyCoreRelease(raw, signature, public); err != nil {
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	r.Members[0].Artifact.SHA256 = strings.Repeat("f", 64)
-	tampered, _ := json.Marshal(r)
-	if _, _, err := VerifyCoreRelease(tampered, signature, public); err == nil {
-		t.Fatal("accepted changed referenced bytes")
+	for _, m := range doc["members"].([]any) {
+		member := m.(map[string]any)
+		if _, ok := member["depends_on"]; !ok {
+			member["depends_on"] = []any{}
+		}
 	}
-	other, _, _ := ed25519.GenerateKey(rand.Reader)
-	if _, _, err := VerifyCoreRelease(raw, signature, other); err == nil {
-		t.Fatal("accepted wrong authority")
+	withEmpty, _ := json.Marshal(doc)
+	parsed, _, err := ParseCoreRelease(withEmpty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTripped CoreRelease
+	if err := json.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(parsed, roundTripped) {
+		t.Fatal("core release with empty depends_on changed across a JSON round trip")
 	}
 }

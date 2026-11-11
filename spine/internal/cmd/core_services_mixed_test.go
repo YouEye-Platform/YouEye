@@ -2,12 +2,8 @@ package cmd
 
 import (
 	"bytes"
-	"context"
-	"crypto/ed25519"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,23 +17,20 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"github.com/youeye-platform/YouEye/spine/internal/update"
-	"github.com/youeye-platform/YouEye/spine/internal/updatetrust"
 )
 
 type mixedCoreDeploymentFixture struct {
-	image               appliance.Manifest
-	release             releasecache.CoreRelease
-	policy              systemupdate.ReleasePolicy
-	root, binary        string
-	stable, development ed25519.PrivateKey
-	trust               updatetrust.Policy
+	image        appliance.Manifest
+	release      releasecache.CoreRelease
+	policy       systemupdate.ReleasePolicy
+	root, binary string
 }
 
 func mixedCoreHash(raw []byte) string { return fmt.Sprintf("%x", sha256.Sum256(raw)) }
 
 func newMixedCoreDeploymentFixture(t *testing.T) *mixedCoreDeploymentFixture {
 	t.Helper()
-	f := &mixedCoreDeploymentFixture{root: t.TempDir(), stable: ed25519.NewKeyFromSeed(bytes.Repeat([]byte{71}, 32)), development: ed25519.NewKeyFromSeed(bytes.Repeat([]byte{72}, 32))}
+	f := &mixedCoreDeploymentFixture{root: t.TempDir()}
 	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
 	if err != nil {
 		t.Fatal(err)
@@ -46,24 +39,12 @@ func newMixedCoreDeploymentFixture(t *testing.T) *mixedCoreDeploymentFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keyText := func(key ed25519.PrivateKey) string {
-		der, _ := x509.MarshalPKIXPublicKey(key.Public())
-		return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
-	}
-	keyID := func(key ed25519.PrivateKey) string {
-		der, _ := x509.MarshalPKIXPublicKey(key.Public())
-		return mixedCoreHash(der)
-	}
 	f.release.Version, f.release.Tag = "0.5.65", "youeye-v0.5.65"
-	f.release.SignerSHA256 = keyID(f.stable)
-	f.trust = updatetrust.Policy{Schema: updatetrust.Schema}
-	f.trust.Grants = append(f.trust.Grants, updatetrust.Grant{Publisher: "Fixture Stable", Repository: f.release.Source, Branch: "main", Scope: "appliance", PublicKey: keyText(f.stable)}, updatetrust.Grant{Publisher: "Fixture Stable", Repository: f.release.Source, Branch: "main", Scope: "spine", PublicKey: keyText(f.stable)})
 	for i := range f.release.Members {
 		m := &f.release.Members[i]
-		m.BuildVersion, m.Tag, m.KeyID = "0.5.65", "youeye-v0.5.65", keyID(f.stable)
+		m.BuildVersion, m.Tag = "0.5.65", "youeye-v0.5.65"
 		if m.Role == "cp" || m.Role == "ui" {
 			m.Source = "https://forge.example.test/team/YouEye"
-			m.KeyID = keyID(f.development)
 			if m.Role == "cp" {
 				m.BuildVersion = "0.5.65-alpha.4"
 			} else {
@@ -71,9 +52,8 @@ func newMixedCoreDeploymentFixture(t *testing.T) *mixedCoreDeploymentFixture {
 				m.Branch = "dev"
 			}
 			m.Tag = "youeye-v" + m.BuildVersion
-			f.trust.Grants = append(f.trust.Grants, updatetrust.Grant{Publisher: "Fixture original builder", Repository: m.Source, Branch: m.Branch, Scope: m.Role, PublicKey: keyText(f.development)})
 		}
-		for _, b := range []*releasecache.CoreBlob{&m.Artifact, &m.Checksums, &m.Signature, &m.Provenance, &m.SBOM, m.DocumentSignature, m.ReleaseLock} {
+		for _, b := range []*releasecache.CoreBlob{&m.Artifact, m.BuildInputs} {
 			if b != nil {
 				b.URL = m.Source + "/releases/download/" + m.Tag + "/" + b.Name
 			}
@@ -90,25 +70,21 @@ func newMixedCoreDeploymentFixture(t *testing.T) *mixedCoreDeploymentFixture {
 			m.Artifact.SHA256, m.Artifact.SizeBytes = mixedCoreHash(payload), int64(len(payload))
 		}
 	}
-	oldPolicy, oldTrust, oldChannels, oldExecutable, oldCfg, oldVersion, oldReader := deploymentPolicyPath, updatetrust.Path, channels.ConfigPath, applianceExecutablePath, cfg, Version, coreInstalledReaderHost
+	oldPolicy, oldChannels, oldExecutable, oldCfg, oldVersion, oldReader := deploymentPolicyPath, channels.ConfigPath, applianceExecutablePath, cfg, Version, coreInstalledReaderHost
 	t.Cleanup(func() {
-		deploymentPolicyPath, updatetrust.Path, channels.ConfigPath, applianceExecutablePath, cfg, Version = oldPolicy, oldTrust, oldChannels, oldExecutable, oldCfg, oldVersion
+		deploymentPolicyPath, channels.ConfigPath, applianceExecutablePath, cfg, Version = oldPolicy, oldChannels, oldExecutable, oldCfg, oldVersion
 		coreInstalledReaderHost = oldReader
 	})
 	deploymentPolicyPath = filepath.Join(f.root, "release-policy.json")
-	updatetrust.Path = filepath.Join(f.root, "update-trust.json")
 	channels.ConfigPath = filepath.Join(f.root, "youeye.yaml")
 	applianceExecutablePath = func() (string, error) { return f.binary, nil }
 	coreInstalledReaderHost = func() coreInstalledReaderObserver {
-		return coreInstalledReaderObserver{Root: f.root, Owner: uint32(os.Geteuid()), CurrentExecutable: func() (string, error) { return coreBakedExecutable, nil }, CurrentSHA256: func() (string, error) { raw, e := os.ReadFile(f.binary); return mixedCoreHash(raw), e }, APISHA256: func(context.Context) (string, error) { raw, e := os.ReadFile(f.binary); return mixedCoreHash(raw), e }}
+		return coreInstalledReaderObserver{Root: f.root, Owner: uint32(os.Geteuid()), CurrentExecutable: func() (string, error) { return coreBakedExecutable, nil }, CurrentSHA256: func() (string, error) { raw, e := os.ReadFile(f.binary); return mixedCoreHash(raw), e }}
 	}
 	cfg = config.Default()
 	cfg.Releases.RepoURL = f.release.Source
 	Version = "0.5.65"
 	if err := (&channels.Config{Default: channels.Channel{Source: f.release.Source, Branch: "main", Fallback: []string{}}}).Save(); err != nil {
-		t.Fatal(err)
-	}
-	if err := updatetrust.Save(updatetrust.Path, f.trust); err != nil {
 		t.Fatal(err)
 	}
 	f.writeSelection(t)
@@ -118,58 +94,26 @@ func newMixedCoreDeploymentFixture(t *testing.T) *mixedCoreDeploymentFixture {
 func (f *mixedCoreDeploymentFixture) writeSelection(t *testing.T) {
 	t.Helper()
 	var spine releasecache.CoreMember
-	var provenance, checksums, signature []byte
-	for i := range f.release.Members {
-		m := &f.release.Members[i]
-		if m.Role != "spine" {
-			continue
+	for _, m := range f.release.Members {
+		if m.Role == "spine" {
+			spine = m
 		}
-		provenance = []byte(`{"schema":"youeye.release.provenance.v1","core_metadata":"paired-v2","source_commit":"` + m.SourceCommit + `"}`)
-		m.Provenance.SHA256, m.Provenance.SizeBytes = mixedCoreHash(provenance), int64(len(provenance))
-		checksums = []byte(fmt.Sprintf("%s  %s\n%s  %s\n%s  %s\n", m.Artifact.SHA256, m.Artifact.Name, m.Provenance.SHA256, m.Provenance.Name, m.SBOM.SHA256, m.SBOM.Name))
-		signature = ed25519.Sign(f.stable, checksums)
-		m.Checksums.SHA256, m.Checksums.SizeBytes = mixedCoreHash(checksums), int64(len(checksums))
-		m.Signature.SHA256, m.Signature.SizeBytes = mixedCoreHash(signature), 64
-		spine = *m
 	}
 	raw, err := json.Marshal(f.release)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sig := ed25519.Sign(f.stable, raw)
-	canonical, err := releasecache.EncodeCoreMetadataV2(f.release)
-	if err != nil {
+	if err := os.WriteFile(filepath.Join(f.root, "core-release.json"), raw, 0600); err != nil {
 		t.Fatal(err)
-	}
-	pair, err := releasecache.EncodeCoreMetadataPair(raw, canonical)
-	if err != nil {
-		t.Fatal(err)
-	}
-	docs := releasecache.CoreMetadataDocuments{Canonical: canonical, CanonicalSignature: ed25519.Sign(f.stable, canonical), Pair: pair, PairSignature: ed25519.Sign(f.stable, pair)}
-	facts, err := releasecache.VerifyCoreMetadataBundle(raw, sig, docs, f.stable.Public().(ed25519.PublicKey), func(m releasecache.CoreMember) (ed25519.PublicKey, error) {
-		if m.Role == "cp" || m.Role == "ui" {
-			return f.development.Public().(ed25519.PublicKey), nil
-		}
-		return f.stable.Public().(ed25519.PublicKey), nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	proof := releasecache.CoreMetadataProof{Schema: "youeye.core-metadata-proof.v1", ExecutionManifestSHA256: mixedCoreHash(raw), Advertised: true, SpineChecksums: checksums, SpineSignature: signature, SpineProvenance: provenance, Documents: docs, Bindings: facts.Bindings}
-	proofRaw, _ := json.Marshal(proof)
-	for name, data := range map[string][]byte{"core-release.json": raw, "core-release.json.sig": sig, "core-metadata.json": proofRaw} {
-		if err := os.WriteFile(filepath.Join(f.root, name), data, 0600); err != nil {
-			t.Fatal(err)
-		}
 	}
 	f.policy = systemupdate.ReleasePolicy{Schema: systemupdate.ReleasePolicySchema, Provider: "github", Mode: "exact", ExactTag: f.release.Tag, ManifestSHA256: strings.Repeat("b", 64), CoreManifestSHA256: mixedCoreHash(raw), Freshness: "require-current"}
 	policyRaw, _ := json.Marshal(f.policy)
 	if err := os.WriteFile(deploymentPolicyPath, policyRaw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	f.image = appliance.Manifest{ImageVersion: "0.5.65", SourceCommit: f.release.SourceCommit, ReleaseSet: &appliance.ReleaseSet{Schema: "youeye.release-set.v2", Source: f.release.Source, Branch: "main", Fallback: []string{}, Spine: appliance.ComponentRelease{Version: spine.BuildVersion, Branch: spine.Branch, Tag: spine.Tag, SourceCommit: spine.SourceCommit, ArtifactSHA256: spine.Artifact.SHA256}}}
+	f.image = appliance.Manifest{ImageVersion: "0.5.65", SourceCommit: f.release.SourceCommit, ReleaseSet: &appliance.ReleaseSet{Source: f.release.Source, Branch: "main", Fallback: []string{}, Spine: appliance.ComponentRelease{Version: spine.BuildVersion, Tag: spine.Tag, SourceCommit: spine.SourceCommit, ArtifactSHA256: spine.Artifact.SHA256}}}
 	for _, m := range f.release.Members {
-		c := appliance.ComponentRelease{Version: m.BuildVersion, Branch: m.Branch, Tag: m.Tag, SourceCommit: m.SourceCommit, ArtifactSHA256: m.Artifact.SHA256}
+		c := appliance.ComponentRelease{Version: m.BuildVersion, Tag: m.Tag, SourceCommit: m.SourceCommit, ArtifactSHA256: m.Artifact.SHA256}
 		if m.Role == "cp" {
 			f.image.ReleaseSet.ControlPanel = c
 		}
@@ -179,7 +123,7 @@ func (f *mixedCoreDeploymentFixture) writeSelection(t *testing.T) {
 	}
 }
 
-func TestMixedSignedCoreFirstDeploymentPreservesOriginalServiceSources(t *testing.T) {
+func TestMixedCoreFirstDeploymentPreservesOriginalServiceSources(t *testing.T) {
 	f := newMixedCoreDeploymentFixture(t)
 	// Match the image's actual installation-owned seeds before reconciliation.
 	c, err := channels.Load()
@@ -207,7 +151,7 @@ func TestMixedSignedCoreFirstDeploymentPreservesOriginalServiceSources(t *testin
 		t.Fatal("sealed image was rewritten")
 	}
 	if !reflect.DeepEqual(selected, f.image) {
-		t.Fatal("signed Core was projected into a misleading image release set")
+		t.Fatal("Core was projected into a misleading image release set")
 	}
 	ch, err := channels.Load()
 	if err != nil {
@@ -231,96 +175,32 @@ func TestMixedSignedCoreFirstDeploymentPreservesOriginalServiceSources(t *testin
 	}
 }
 
-func TestMixedCoreDeploymentRejectsChangedProofAndCurrentAuthorityBeforePins(t *testing.T) {
-	for _, name := range []string{"signature", "paired proof", "missing pair", "revoked CP", "changed UI authority", "foreign unsigned source", "signed foreign source without role grant", "malformed policy", "foreign host role revoked"} {
+func TestMixedCoreDeploymentRejectsChangedSelectionBeforePins(t *testing.T) {
+	for _, name := range []string{"changed document", "foreign source", "missing document"} {
 		t.Run(name, func(t *testing.T) {
 			f := newMixedCoreDeploymentFixture(t)
+			p := filepath.Join(f.root, "core-release.json")
 			switch name {
-			case "signature":
-				p := filepath.Join(f.root, "core-release.json.sig")
+			case "changed document":
 				raw, _ := os.ReadFile(p)
-				raw[0] ^= 1
+				raw = bytes.Replace(raw, []byte(`"sequence":2`), []byte(`"sequence":3`), 1)
 				if err := os.WriteFile(p, raw, 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "paired proof", "missing pair":
-				p := filepath.Join(f.root, "core-metadata.json")
-				raw, _ := os.ReadFile(p)
-				var proof releasecache.CoreMetadataProof
-				if err := json.Unmarshal(raw, &proof); err != nil {
-					t.Fatal(err)
-				}
-				if name == "paired proof" {
-					proof.Documents.PairSignature[0] ^= 1
-				} else {
-					proof.Documents.Pair = nil
-				}
-				raw, _ = json.Marshal(proof)
-				if err := os.WriteFile(p, raw, 0600); err != nil {
-					t.Fatal(err)
-				}
-			case "revoked CP", "changed UI authority":
-				for i := range f.trust.Grants {
-					g := &f.trust.Grants[i]
-					if name == "revoked CP" && g.Scope == "cp" {
-						g.Revoked = true
-					}
-					if name == "changed UI authority" && g.Scope == "ui" {
-						g.PublicKey = f.trust.Grants[0].PublicKey
-					}
-				}
-				if err := updatetrust.Save(updatetrust.Path, f.trust); err != nil {
-					t.Fatal(err)
-				}
-			case "foreign unsigned source":
-				p := filepath.Join(f.root, "core-release.json")
+			case "foreign source":
 				raw, _ := os.ReadFile(p)
 				raw = bytes.ReplaceAll(raw, []byte("https://forge.example.test/team/YouEye"), []byte("https://foreign.example.test/team/YouEye"))
 				if err := os.WriteFile(p, raw, 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "signed foreign source without role grant":
-				for i := range f.release.Members {
-					m := &f.release.Members[i]
-					if m.Role != "cp" {
-						continue
-					}
-					m.Source = "https://github.com/foreign-publisher/YouEye"
-					for _, b := range []*releasecache.CoreBlob{&m.Artifact, &m.Checksums, &m.Signature, &m.Provenance, &m.SBOM} {
-						b.URL = m.Source + "/releases/download/" + m.Tag + "/" + b.Name
-					}
-				}
-				// Assembly/pair signatures are genuine, but neither can enroll
-				// a publisher for a different member repository and scope.
-				f.writeSelection(t)
-			case "malformed policy":
-				if err := os.WriteFile(updatetrust.Path, []byte(`{"schema":"unknown"}`), 0600); err != nil {
-					t.Fatal(err)
-				}
-			case "foreign host role revoked":
-				for i := range f.release.Members {
-					m := &f.release.Members[i]
-					if m.Role != "system-root" {
-						continue
-					}
-					m.Source = "https://host-builder.example.test/team/YouEye"
-					for _, b := range []*releasecache.CoreBlob{&m.Artifact, &m.Checksums, &m.Signature, &m.Provenance, &m.SBOM} {
-						b.URL = m.Source + "/releases/download/" + m.Tag + "/" + b.Name
-					}
-				}
-				f.trust.Grants = append(f.trust.Grants, updatetrust.Grant{Publisher: "Fixture host", Repository: "https://host-builder.example.test/team/YouEye", Branch: "main", Scope: "appliance", PublicKey: f.trust.Grants[0].PublicKey})
-				if err := updatetrust.Save(updatetrust.Path, f.trust); err != nil {
-					t.Fatal(err)
-				}
-				f.writeSelection(t)
-				f.trust.Grants[len(f.trust.Grants)-1].Revoked = true
-				if err := updatetrust.Save(updatetrust.Path, f.trust); err != nil {
+			case "missing document":
+				if err := os.Remove(p); err != nil {
 					t.Fatal(err)
 				}
 			}
 			before, _ := os.ReadFile(channels.ConfigPath)
 			if _, err := selectApplianceServices(f.image); err == nil {
-				t.Fatal("invalid selection or authority admitted")
+				t.Fatal("changed selection admitted")
 			}
 			after, _ := os.ReadFile(channels.ConfigPath)
 			if !bytes.Equal(before, after) {
@@ -331,7 +211,7 @@ func TestMixedCoreDeploymentRejectsChangedProofAndCurrentAuthorityBeforePins(t *
 }
 
 func TestMixedCoreDeploymentPreservesOwnerChoicesAndRejectsTupleDrift(t *testing.T) {
-	for _, name := range []string{"foreign owner source with same pin", "owner branch", "owner fallback", "foreign installation seed", "owner System conflict"} {
+	for _, name := range []string{"foreign owner source with same pin", "owner branch", "owner fallback", "foreign installation seed"} {
 		t.Run(name, func(t *testing.T) {
 			f := newMixedCoreDeploymentFixture(t)
 			c, err := channels.Load()
@@ -341,15 +221,13 @@ func TestMixedCoreDeploymentPreservesOwnerChoicesAndRejectsTupleDrift(t *testing
 			cp := f.image.ReleaseSet.ControlPanel
 			switch name {
 			case "foreign owner source with same pin":
-				c.Control = channels.Channel{Source: f.release.Source, Branch: cp.Branch, Tag: cp.Tag, ArtifactSHA256: cp.ArtifactSHA256, Fallback: []string{}}
+				c.Control = channels.Channel{Source: f.release.Source, Branch: "main", Tag: cp.Tag, ArtifactSHA256: cp.ArtifactSHA256, Fallback: []string{}}
 			case "owner branch":
 				c.Control = channels.Channel{Branch: "Owner/Choice"}
 			case "owner fallback":
 				c.Control = channels.Channel{Fallback: []string{"Owner/Fallback"}}
 			case "foreign installation seed":
-				c.Control = channels.Channel{Source: "https://foreign.example.test/team/YouEye", Branch: cp.Branch, Tag: cp.Tag, ArtifactSHA256: cp.ArtifactSHA256, PinOrigin: "installation", Fallback: []string{}}
-			case "owner System conflict":
-				c.System = channels.Channel{Source: "https://owner.example.test/team/YouEye", Branch: "main", Fallback: []string{}}
+				c.Control = channels.Channel{Source: "https://foreign.example.test/team/YouEye", Branch: "main", Tag: cp.Tag, ArtifactSHA256: cp.ArtifactSHA256, PinOrigin: "installation", Fallback: []string{}}
 			}
 			if err = c.Save(); err != nil {
 				t.Fatal(err)
@@ -364,7 +242,7 @@ func TestMixedCoreDeploymentPreservesOwnerChoicesAndRejectsTupleDrift(t *testing
 			}
 		})
 	}
-	for _, name := range []string{"source", "branch", "tag", "hash", "fallback", "revoked after selection"} {
+	for _, name := range []string{"source", "branch", "tag", "hash", "fallback"} {
 		t.Run(name, func(t *testing.T) {
 			f := newMixedCoreDeploymentFixture(t)
 			if _, err := selectApplianceServices(f.image); err != nil {
@@ -385,17 +263,12 @@ func TestMixedCoreDeploymentPreservesOwnerChoicesAndRejectsTupleDrift(t *testing
 				c.UI.ArtifactSHA256 = strings.Repeat("f", 64)
 			case "fallback":
 				c.UI.Fallback = []string{"main"}
-			case "revoked after selection":
-				f.trust.Grants[len(f.trust.Grants)-1].Revoked = true
-				if err := updatetrust.Save(updatetrust.Path, f.trust); err != nil {
-					t.Fatal(err)
-				}
 			}
 			if err = c.Save(); err != nil {
 				t.Fatal(err)
 			}
 			if err = verifyApplianceReleaseSet(f.image, GetConfig()); err == nil {
-				t.Fatal("changed tuple or authority accepted")
+				t.Fatal("changed tuple accepted")
 			}
 		})
 	}

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, verifyCSRFToken } from '@/lib/auth/session';
-import { assertIndependentCoreUpdate, readCoreUpdateStatus } from '@/lib/updates/core-guard';
+import { readCoreUpdateStatus } from '@/lib/updates/core-guard';
 import { spineClient } from '@/lib/spine/client';
 import { settingsService } from '@/lib/settings';
 import {
@@ -8,6 +8,7 @@ import {
   resolveCandidate,
   getReleaseChannelsConfig,
   APP_PREFIX,
+  isHostOwnedChannel,
   type Channel,
   type EffectiveChannel,
 } from '@/lib/updates/channels';
@@ -23,8 +24,11 @@ import { checkLxdAppUpdate } from '@/lib/apps/lxd-updates';
  *
  * Per-component release-channel management. GET returns the effective channel,
  * the raw override (or null), installed/candidate refs, and update/switch flags
- * for every component: default, spine, control, ui, and each installed native
- * app ("app:<id>"). PUT proxies channel edits to Spine (single writer) via
+ * for every component: default, system (core installations), spine, control,
+ * ui, and each installed native app ("app:<id>"). Core channels and the System
+ * update source are host-owned and read-only; the System source is the
+ * installer-recorded release policy reported by Spine. PUT accepts only app
+ * channels and proxies them to Spine (single writer) via
  * patchConfig({ release_channels: … }).
  */
 
@@ -82,9 +86,16 @@ export async function GET() {
       try { candidate = await spineClient.checkCoreUpdate(); }
       catch { /* A discovery outage must not manufacture a candidate. */ }
       const switchPending = !!candidate && !!installed && candidate.release.branch !== installed.branch;
+      const selection = coreStatus.selection;
       components.system = {
-        channel: await effectiveChannel('system', { config }),
-        override: pickOverrideRaw(raw, 'system'),
+        channel: {
+          source: selection?.source ?? installed?.source ?? '',
+          branch: selection?.branch ?? installed?.branch ?? '',
+          fallback: [],
+          ...(selection?.tag ? { tag: selection.tag } : {}),
+          ...(selection?.manifest_sha256 ? { artifact_sha256: selection.manifest_sha256 } : {}),
+        },
+        override: null,
         installed: { version: installed?.version ?? null, branch: installed?.branch ?? null, tag: installed?.tag ?? null },
         candidate: { version: candidate?.release.version ?? null, branch: candidate?.release.branch ?? null, tag: candidate?.release.tag ?? null },
         update_available: !!candidate && candidate.manifest_sha256 !== coreStatus.installed?.manifest_sha256 && !switchPending,
@@ -252,11 +263,13 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Body must be a map of component -> channel|null' }, { status: 400 });
   }
 
-  // Validate component ids + channel shapes before proxying to Spine.
-  const validComponent = (id: string) =>
-    id === 'default' || id === 'system' || id === 'spine' || id === 'control' || id === 'ui' || id.startsWith(APP_PREFIX);
+  // Validate component ids + channel shapes before proxying to Spine. Only app
+  // channels are writable; the host owns core channels and the System source.
   for (const [id, ch] of Object.entries(body)) {
-    if (!validComponent(id)) {
+    if (isHostOwnedChannel(id)) {
+      return NextResponse.json({ error: `The "${id}" release channel is owned by the host and cannot be changed here` }, { status: 400 });
+    }
+    if (!id.startsWith(APP_PREFIX) || id.length === APP_PREFIX.length) {
       return NextResponse.json({ error: `Unknown component "${id}"` }, { status: 400 });
     }
     if (ch !== null) {
@@ -282,9 +295,6 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
-    for (const component of ['spine', 'control', 'ui']) {
-      if (Object.hasOwn(body, component)) await assertIndependentCoreUpdate(component);
-    }
     // Spine is the single writer — proxy through patchConfig. null clears the
     // component's override (spine merges per-component).
     await settingsService.setReleaseChannels(body);

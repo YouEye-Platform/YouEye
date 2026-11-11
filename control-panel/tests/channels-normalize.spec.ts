@@ -74,3 +74,21 @@ test('explicit app channel source + branch override the app-repo base', async ()
   assert.equal(ch.branch, 'f-verchan');
   assert.deepEqual(ch.fallback, ['main']);
 });
+
+// ── Host-owned channels (the Control Panel must not choose what the host installs) ──
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { isHostOwnedChannel } from '../src/lib/updates/channels';
+
+test('System and core channels are host-owned; app channels stay writable', () => {
+  for (const id of ['system', 'default', 'spine', 'control', 'ui']) assert.equal(isHostOwnedChannel(id), true, id);
+  for (const id of ['app:wiki', 'app:pointer']) assert.equal(isHostOwnedChannel(id), false, id);
+  const root = join(import.meta.dirname, '..');
+  const route = readFileSync(join(root, 'src/app/api/updates/channels/route.ts'), 'utf8');
+  assert.match(route, /isHostOwnedChannel\(id\)/);
+  assert.doesNotMatch(route, /effectiveChannel\('system'/);
+  assert.match(route, /coreStatus\.selection/);
+  const editor = readFileSync(join(root, 'src/components/settings-shell/update-channels.tsx'), 'utf8');
+  assert.match(editor, /const editable = id\.startsWith\("app:"\)/);
+  assert.match(editor, /row\.expanded && editable/);
+});

@@ -208,6 +208,8 @@ interface SpineUpdateStatus {
 export interface CoreUpdateStatus {
   schema: 'youeye.core-status.v1';
   managed: boolean;
+  /** Read-only System update source from the installer-recorded release policy. */
+  selection?: { source: string; branch: string; tag?: string; manifest_sha256?: string };
   installed?: {
     manifest_sha256: string;
     release: { version: string; tag: string; source: string; branch: string; sequence: number };
@@ -228,41 +230,6 @@ export type CoreUpdateAction = 'stage' | 'activate' | 'resume' | 'recover' | 'ca
 export interface CoreUpdateActionResult {
   request_id: string; manifest_sha256: string; phase: string;
   control: { request_id: string; command_id: string; state: string };
-}
-
-export interface ApplianceSystemUpdateStatus {
-  schema: 'youeye.system-update.v1';
-  state: 'healthy' | 'available' | 'downloading' | 'writing' | 'staged' | 'pending-reboot' | 'trial' | 'failed' | 'rolled-back';
-  current_image: string;
-  running_image: string;
-  target_image?: string;
-  active_slot: string;
-  candidate_slot?: string;
-  previous_slot?: string;
-  transaction_id?: string;
-  manifest_sha256?: string;
-  downloaded_bytes?: Record<string, number>;
-  trial_failures?: number;
-  boot_attempts?: number;
-  reboot_required: boolean;
-  rolled_back: boolean;
-  error_code?: string;
-  error?: string;
-  channel?: string;
-  release_tag?: string;
-  release_notes?: string;
-  required_cache_bytes?: number;
-  available_cache_bytes?: number;
-  updated_at?: string;
-}
-
-export interface ApplianceSystemUpdateSelection {
-  repository_url: string;
-  channel: 'stable' | 'development' | 'branch' | 'exact';
-  branch?: string;
-  exact_tag?: string;
-  manifest_sha256?: string;
-  replace_failed?: boolean;
 }
 
 /** Channel-aware per-component fields Spine adds to /api/updates/check. */
@@ -540,58 +507,6 @@ export class SpineClient {
 
   async submitCoreUpdate(action: CoreUpdateAction, request: CoreUpdateRequest): Promise<CoreUpdateActionResult> {
     return this.request(`/api/appliance/core-update/${action}`, 'POST', { ...request });
-  }
-
-  async getApplianceSystemUpdateStatus(): Promise<ApplianceSystemUpdateStatus> {
-    return this.request('/api/appliance/system-update/status');
-  }
-
-  async checkApplianceSystemUpdate(selection: ApplianceSystemUpdateSelection): Promise<ApplianceSystemUpdateStatus> {
-    return this.requestApplianceSystemUpdateSource('/api/appliance/system-update/check', selection);
-  }
-
-  async stageApplianceSystemUpdate(selection: ApplianceSystemUpdateSelection): Promise<ApplianceSystemUpdateStatus> {
-    return this.requestApplianceSystemUpdateSource('/api/appliance/system-update/stage', selection, 6 * 60 * 60 * 1000);
-  }
-
-  private async requestApplianceSystemUpdateSource(
-    path: string,
-    selection: ApplianceSystemUpdateSelection,
-    timeoutMs: number = 60000,
-  ): Promise<ApplianceSystemUpdateStatus> {
-    try {
-      return await this.request(
-        path,
-        'POST',
-        selection as unknown as Record<string, unknown>,
-        timeoutMs,
-      );
-    } catch (error) {
-      // The immediately preceding Spine API accepts exact tag + digest requests,
-      // but rejects the newer provider fields as unknown JSON. Only exact mode is
-      // safe to bridge: the required manifest digest keeps the artifact identity
-      // immutable even when that Spine uses its sealed-in release endpoint.
-      if (
-        error instanceof SpineAPIError
-        && error.statusCode === 400
-        && error.message === 'a valid manifest request is required'
-        && selection.channel === 'exact'
-        && typeof selection.exact_tag === 'string'
-        && typeof selection.manifest_sha256 === 'string'
-      ) {
-        return this.request(path, 'POST', {
-          channel: 'exact',
-          exact_tag: selection.exact_tag,
-          manifest_sha256: selection.manifest_sha256,
-          ...(selection.replace_failed === true ? { replace_failed: true } : {}),
-        }, timeoutMs);
-      }
-      throw error;
-    }
-  }
-
-  async activateApplianceSystemUpdate(reboot: boolean): Promise<ApplianceSystemUpdateStatus> {
-    return this.request('/api/appliance/system-update/activate', 'POST', { reboot });
   }
 
   async addRemoteAccessKey(publicKey: string): Promise<SpineRemoteAccessKey> {

@@ -10,8 +10,8 @@ trap 'rm -rf -- "$work"' EXIT
 templates="$work/templates"
 state="$work/state"
 mkdir -p "$templates"
-commit=$(jq -er '.market.commit' "$root/appliance/release-lock.json")
-repo=$(jq -er '.market.source' "$root/appliance/release-lock.json")
+commit=$(jq -er '.market.commit' "$root/appliance/build/testdata/build-inputs.json")
+repo=$(jq -er '.market.source' "$root/appliance/build/testdata/build-inputs.json")
 jq -S -n --arg repo "$repo" --arg commit "$commit" \
     '{id:"official",name:"Official YouEye Market",repo_url:$repo,branch:"main",resolved_commit:$commit,bootstrap_commit:$commit,enabled:true,priority:0,trust:"official"}' \
     > "$templates/market-source.json"

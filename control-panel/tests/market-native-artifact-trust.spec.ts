@@ -7,33 +7,11 @@ import { promisify } from 'node:util';
 import test from 'node:test';
 
 import {
-  classifyMarketNativeSignatureAssets,
   inspectMarketNativeArchive,
   downloadMarketNativeArtifact,
 } from '../src/lib/market/native-artifact';
 
 const execFileAsync = promisify(execFile);
-const completeSignatureSet = [
-  'release-development.pub',
-  'SHA256SUMS',
-  'SHA256SUMS.sig',
-  'provenance.json',
-  'sbom.spdx.json',
-];
-
-test('Market-native release classification accepts absence and complete evidence only', () => {
-  assert.equal(classifyMarketNativeSignatureAssets(['standalone.tar']), 'unsigned');
-  assert.equal(
-    classifyMarketNativeSignatureAssets(['standalone.tar', 'SHA256SUMS', 'provenance.json', 'sbom.spdx.json']),
-    'unsigned',
-  );
-  assert.equal(classifyMarketNativeSignatureAssets(['standalone.tar', ...completeSignatureSet]), 'complete');
-  assert.throws(
-    () => classifyMarketNativeSignatureAssets(['standalone.tar', 'SHA256SUMS.sig']),
-    /incomplete signature bundle/,
-  );
-});
-
 test('Market-native archive inspection accepts a regular server.js payload', async () => {
   const root = await mkdtemp(join(tmpdir(), 'youeye-native-valid-'));
   try {
@@ -98,15 +76,6 @@ test('Market-native archive inspection rejects escaping links, hard links and mi
   }
 });
 
-
-test('public signature evidence is complete only with one authority and all required metadata', () => {
-  const publicSet = completeSignatureSet.map(name => name === 'release-development.pub' ? 'release-public.pub' : name);
-  assert.equal(classifyMarketNativeSignatureAssets(publicSet), 'complete');
-  for (const missing of publicSet) {
-    assert.throws(() => classifyMarketNativeSignatureAssets(publicSet.filter(name => name !== missing)), /incomplete signature bundle/);
-  }
-  assert.throws(() => classifyMarketNativeSignatureAssets([...publicSet, 'release-development.pub']), /conflicting signing keys/);
-});
 
 test('native downloads allow GitHub release CDN and private same-origin redirects only', async () => {
   const source = 'https://github.com/YouEye-Platform/Search/releases/download/v0.5.1/standalone.tar';

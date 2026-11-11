@@ -47,14 +47,10 @@ func (s NativeCoreServices) StartHeldContainer(ctx context.Context, request, rol
 	if !active {
 		return fmt.Errorf("native component boot is not authorized")
 	}
-	if _, _, err = m.Selection(j.ManifestSHA256, s.Cache.TrustKeyPath); err != nil {
+	if _, _, err = m.Selection(j.ManifestSHA256); err != nil {
 		return err
 	}
-	member, err := coreServiceMember(j.Target, role)
-	if err != nil {
-		return err
-	}
-	if err = CheckCoreMemberAuthority(member, j.Target.Channel, s.Cache.TrustKeyPath); err != nil {
+	if _, err := coreServiceMember(j.Target, role); err != nil {
 		return err
 	}
 	return s.startHeldContainer(ctx, j, role, nativeReadCoreContainerFile)

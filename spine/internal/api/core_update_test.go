@@ -74,6 +74,25 @@ func TestCoreStatusDoesNotExposeRawMachineIdentityOrImplyFreshObservation(t *tes
 	if !strings.Contains(w.Body.String(), `"machine_bound":true`) || !strings.Contains(w.Body.String(), `"payload_observation":"not-observed"`) {
 		t.Fatal(w.Body.String())
 	}
+	if strings.Contains(w.Body.String(), `"selection"`) {
+		t.Fatal("selection reported without an accepted release policy", w.Body.String())
+	}
+	// The read-only System source comes from the installer-recorded policy.
+	s.coreBootstrapPath = t.TempDir()
+	policy, _ := json.Marshal(systemupdate.ReleasePolicy{Schema: systemupdate.ReleasePolicySchema, Provider: "github", Mode: "track", Track: "stable", CoreManifestSHA256: digest, Freshness: "require-current"})
+	for name, data := range map[string][]byte{"core-release.json": raw, "release-policy.json": policy} {
+		if err := os.WriteFile(filepath.Join(s.coreBootstrapPath, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w = httptest.NewRecorder()
+	s.handleCoreUpdateStatus(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	var status struct {
+		Selection map[string]string `json:"selection"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil || status.Selection["source"] != release.Source || status.Selection["branch"] != release.Branch || status.Selection["tag"] != "" {
+		t.Fatal("policy selection not reported", w.Body.String(), err)
+	}
 	w = httptest.NewRecorder()
 	s.handleCoreUpdateStatus(w, httptest.NewRequest(http.MethodGet, "/?observe=1", nil))
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"payload_observation":"unverified"`) || strings.Contains(w.Body.String(), "private-") || strings.Contains(w.Body.String(), "protected-evidence") {

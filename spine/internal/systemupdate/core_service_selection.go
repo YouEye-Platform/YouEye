@@ -13,7 +13,7 @@ import (
 // CP needs the complete current selection even when its own payload is reused.
 // Both files remain behind the service hold until this pair is verified. A
 // crash between their atomic renames leaves a recorded, reconcilable partial
-// pair; it cannot expose an unsigned or silently re-resolved selection.
+// pair; it cannot expose an unverified or silently re-resolved selection.
 func installCoreServiceSelection(root *os.File, r *CoreServiceStage, previous, next CoreHostSelection, save func(CoreServiceStage) error) error {
 	if r.Role != "cp" || (r.Phase != "swapped" && r.Phase != "reused") || fmt.Sprintf("%x", sha256.Sum256(next.Raw)) != r.ManifestSHA256 {
 		return fmt.Errorf("verified CP core selection required")
@@ -32,10 +32,7 @@ func installCoreServiceSelection(root *os.File, r *CoreServiceStage, previous, n
 		limit       int64
 		optionalOld bool
 	}
-	parts := []part{{"core-release.json", previous.Raw, next.Raw, 1 << 20, false}, {"core-release.json.sig", previous.Signature, next.Signature, 64, false}}
-	if len(next.MetadataProof) > 0 {
-		parts = append(parts, part{CoreMetadataProofName, previous.MetadataProof, next.MetadataProof, CoreMetadataProofMaxBytes, coreLegacyMetadataAbsence(previous)})
-	}
+	parts := []part{{"core-release.json", previous.Raw, next.Raw, 1 << 20, false}}
 	for _, p := range parts {
 		actual, err := readCoreContainerStateAtLimit(dir, p.name, p.limit)
 		if err != nil {

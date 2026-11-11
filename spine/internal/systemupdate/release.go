@@ -10,11 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"path"
-	"sort"
 	"strings"
 	"time"
-
-	"github.com/youeye-platform/YouEye/appliance/ordering"
 )
 
 const (
@@ -24,24 +21,6 @@ const (
 	releaseCompatiblePageSize = 50
 	releaseMaxPages           = 200
 )
-
-type ReleaseSelection struct {
-	Provider       string
-	Channel        string
-	Branch         string
-	ExactTag       string
-	ManifestSHA256 string
-	ReleasesAPI    string
-}
-
-type ReleaseMetadata struct {
-	Provider     string `json:"provider"`
-	Channel      string `json:"channel"`
-	Tag          string `json:"tag"`
-	ReleaseNotes string `json:"release_notes,omitempty"`
-	ManifestURL  string `json:"manifest_url"`
-	SignatureURL string `json:"signature_url"`
-}
 
 type releaseAsset struct {
 	Name               string `json:"name"`
@@ -74,102 +53,6 @@ func ReleaseHTTPClient() *http.Client {
 			return nil
 		},
 	}
-}
-
-func ResolveRelease(ctx context.Context, client *http.Client, selection ReleaseSelection) (SourceOptions, ReleaseMetadata, error) {
-	options, metadata, err := ResolveReleaseCandidates(ctx, client, selection)
-	if err != nil {
-		return SourceOptions{}, ReleaseMetadata{}, err
-	}
-	return options[0], metadata[0], nil
-}
-
-// ResolveReleaseCandidates returns safe release-scoped signed-manifest
-// sources in newest-publication order. Exact mode always returns one. Track
-// convergence may inspect later candidates only when a verified target says a
-// signed bridge is required; signature or digest failures never fall through.
-func ResolveReleaseCandidates(ctx context.Context, client *http.Client, selection ReleaseSelection) ([]SourceOptions, []ReleaseMetadata, error) {
-	channel := strings.ToLower(strings.TrimSpace(selection.Channel))
-	if channel == "" {
-		channel = "stable"
-	}
-	if channel == "dev" {
-		channel = "development"
-	}
-	if channel != "stable" && channel != "development" && channel != "branch" && channel != "exact" {
-		return nil, nil, fmt.Errorf("unsupported appliance channel %q", channel)
-	}
-	branch := strings.TrimSpace(selection.Branch)
-	if channel == "exact" {
-		if !validExactReleaseTag(selection.ExactTag) {
-			return nil, nil, errors.New("exact selection requires a valid appliance release tag")
-		}
-		digest := strings.ToLower(strings.TrimSpace(selection.ManifestSHA256))
-		if len(digest) != 64 || !isLowerHex(digest) {
-			return nil, nil, errors.New("exact selection requires a 64-character lowercase manifest SHA-256")
-		}
-		if branch != "" {
-			return nil, nil, errors.New("exact selection cannot include a branch")
-		}
-	} else if strings.TrimSpace(selection.ExactTag) != "" || strings.TrimSpace(selection.ManifestSHA256) != "" {
-		return nil, nil, errors.New("tracking selections cannot include an exact tag or digest")
-	}
-	if channel == "branch" {
-		if !validReleaseBranch(branch) {
-			return nil, nil, errors.New("branch selection requires a safe signed release branch")
-		}
-	} else if branch != "" {
-		return nil, nil, errors.New("only the branch track can include a branch")
-	}
-
-	provider, apiURL, err := normalizeReleaseSource(selection.Provider, selection.ReleasesAPI)
-	if err != nil {
-		return nil, nil, err
-	}
-	if client == nil {
-		client = ReleaseHTTPClient()
-	}
-	releases, err := fetchReleases(ctx, client, provider, apiURL)
-	if err != nil {
-		return nil, nil, err
-	}
-	selected, err := selectReleaseCandidates(releases, channel, strings.TrimSpace(selection.ExactTag), branch)
-	if err != nil {
-		return nil, nil, err
-	}
-	options := make([]SourceOptions, 0, len(selected))
-	metadata := make([]ReleaseMetadata, 0, len(selected))
-	for _, candidate := range selected {
-		manifestURL, err := releaseAssetURL(provider, apiURL, candidate, "system-update-manifest.json")
-		if err != nil {
-			return nil, nil, err
-		}
-		signatureURL, err := releaseAssetURL(provider, apiURL, candidate, "system-update-manifest.json.sig")
-		if err != nil {
-			return nil, nil, err
-		}
-		meta := ReleaseMetadata{
-			Provider: provider, Channel: channel, Tag: candidate.TagName, ReleaseNotes: strings.TrimSpace(candidate.Body),
-			ManifestURL: manifestURL, SignatureURL: signatureURL,
-		}
-		expectedBranch := ""
-		switch channel {
-		case "stable":
-			expectedBranch = "main"
-		case "development":
-			expectedBranch = "dev"
-		case "branch":
-			expectedBranch = branch
-		}
-		options = append(options, SourceOptions{
-			ManifestSource: manifestURL, SignatureSource: signatureURL,
-			ExpectedManifestSHA256: strings.ToLower(strings.TrimSpace(selection.ManifestSHA256)),
-			Channel:                channel, ReleaseTag: candidate.TagName, ReleaseNotes: meta.ReleaseNotes,
-			ExpectedReleaseBranch: expectedBranch,
-		})
-		metadata = append(metadata, meta)
-	}
-	return options, metadata, nil
 }
 
 func normalizeReleaseSource(provider, raw string) (string, *url.URL, error) {
@@ -263,91 +146,6 @@ func fetchReleases(ctx context.Context, client *http.Client, provider string, ap
 		}
 	}
 	return nil, errors.New("appliance release discovery did not terminate")
-}
-
-func selectRelease(releases []release, channel, exactTag string) (release, error) {
-	selected, err := selectReleaseCandidates(releases, channel, exactTag, "")
-	if err != nil {
-		return release{}, err
-	}
-	return selected[0], nil
-}
-
-func selectReleaseCandidates(releases []release, channel, exactTag, branch string) ([]release, error) {
-	if channel == "exact" {
-		for _, candidate := range releases {
-			if candidate.TagName == exactTag && validExactRelease(candidate) {
-				return []release{candidate}, nil
-			}
-		}
-		return nil, fmt.Errorf("exact appliance release %q was not found", exactTag)
-	}
-	type candidate struct {
-		release release
-		version ordering.Version
-	}
-	prefix := "appliance-v"
-	if channel == "development" {
-		prefix = "appliance-dev-v"
-	} else if channel == "branch" {
-		prefix = "appliance-" + branch + "-v"
-	}
-	var candidates []candidate
-	for _, item := range releases {
-		if item.Draft || item.PublishedAt.IsZero() || !strings.HasPrefix(item.TagName, prefix) {
-			continue
-		}
-		version, err := ordering.ParseVersion(strings.TrimPrefix(item.TagName, prefix))
-		if err != nil || (channel == "stable" && (len(version.Pre) != 0 || item.Prerelease)) {
-			continue
-		}
-		candidates = append(candidates, candidate{release: item, version: version})
-	}
-	if len(candidates) == 0 {
-		return nil, fmt.Errorf("no %s appliance release was found", channel)
-	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if !candidates[i].release.PublishedAt.Equal(candidates[j].release.PublishedAt) {
-			return candidates[i].release.PublishedAt.After(candidates[j].release.PublishedAt)
-		}
-		return ordering.CompareVersion(candidates[i].version, candidates[j].version) > 0
-	})
-	selected := make([]release, len(candidates))
-	for index := range candidates {
-		selected[index] = candidates[index].release
-	}
-	return selected, nil
-}
-
-func validExactRelease(candidate release) bool {
-	if candidate.Draft || candidate.PublishedAt.IsZero() {
-		return false
-	}
-	if version, ok := parseReleaseTag(candidate.TagName, "appliance-v"); ok {
-		return len(version.Pre) == 0 && !candidate.Prerelease
-	}
-	if _, ok := parseReleaseTag(candidate.TagName, "appliance-dev-v"); ok {
-		return true
-	}
-	marker := strings.LastIndex(candidate.TagName, "-v")
-	if !strings.HasPrefix(candidate.TagName, "appliance-") || marker <= len("appliance-") {
-		return false
-	}
-	branch := candidate.TagName[len("appliance-"):marker]
-	_, ok := parseReleaseTag(candidate.TagName, "appliance-"+branch+"-v")
-	return ok && validReleaseBranch(branch)
-}
-
-func parseReleaseTag(tag, prefix string) (ordering.Version, bool) {
-	if !strings.HasPrefix(tag, prefix) {
-		return ordering.Version{}, false
-	}
-	version, err := ordering.ParseVersion(strings.TrimPrefix(tag, prefix))
-	return version, err == nil
-}
-
-func validExactReleaseTag(tag string) bool {
-	return validExactRelease(release{TagName: tag, PublishedAt: time.Unix(1, 0)})
 }
 
 func validReleaseBranch(branch string) bool {

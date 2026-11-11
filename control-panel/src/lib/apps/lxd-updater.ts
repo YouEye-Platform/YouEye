@@ -44,7 +44,7 @@ import { isNewer, sortVersionsDesc } from '@/lib/version';
 import { buildReleasesAPIURL, getReleaseAssetDownloadURL, getReleaseSource, type ReleaseAsset } from './release-source';
 import { injectCaddyRootCA } from '@/lib/market/caddy-ca';
 import { selectedCoreDownloadShell } from '@/lib/releases/core-release';
-import { preparedSignedReleaseVerificationShell } from '@/lib/releases/verify';
+import { releaseArtifactVerificationShell } from '@/lib/releases/artifact';
 import { recordCoreProvenance } from '@/lib/updates/provenance';
 import { withAppLifecycle } from '@/lib/market/update-admission';
 import { configurePointerService } from '@/lib/pointer/lifecycle';
@@ -248,7 +248,7 @@ async function updateLXDAppUnderLifecycle(
         emit({stage:'completed',message:`${appDef.displayName} release label updated to v${override.version}`,progress:100});
         return;
       }
-    } else if (pointerBefore?.installed) throw new Error('Installed Pointer requires signed product metadata');
+    } else if (pointerBefore?.installed) throw new Error('Installed Pointer requires product release metadata');
   }
 
   // 1. Resolve real app directory
@@ -288,10 +288,10 @@ async function updateLXDAppUnderLifecycle(
   const releaseIsCurrent = !override
     && (currentVersion === release.version || (currentVersion !== 'unknown' && !isNewer(release.version, currentVersion)));
 
-  // Metadata readiness is read-only and must settle before a new rollback
-  // point, payload download or container mutation is created.
+  // The digest check is fixed before a new rollback point, payload download
+  // or container mutation is created.
   const releaseVerification = !pointerSelection && !releaseIsCurrent
-    ? await preparedSignedReleaseVerificationShell(release.downloadURL, '/tmp/update.tar', release.artifactSHA256, appDef.id === 'ui' ? 'ui' : 'app')
+    ? releaseArtifactVerificationShell(release.downloadURL, '/tmp/update.tar', release.artifactSHA256, appDef.id === 'ui' ? 'ui' : undefined)
     : '';
 
   // 5. Create snapshot before any trust, package, service, or file mutation.
@@ -340,10 +340,10 @@ async function updateLXDAppUnderLifecycle(
         { timeout: 300_000 }
       );
       if (downloadResult.exitCode !== 0) throw new Error(`Download failed: ${downloadResult.stderr}`);
-      const signatureResult = await execShell(containerName, releaseVerification, { timeout: 300_000 });
-      if (signatureResult.exitCode !== 0) throw new Error(`Signed release verification failed: ${signatureResult.stderr}`);
+      const verificationResult = await execShell(containerName, releaseVerification, { timeout: 300_000 });
+      if (verificationResult.exitCode !== 0) throw new Error(`Release digest verification failed: ${verificationResult.stderr}`);
     }
-    emit({ stage: 'rebuilding', message: 'Release signature and artifact digest verified', container: containerName, progress: 30 });
+    emit({ stage: 'rebuilding', message: 'Release artifact digest verified', container: containerName, progress: 30 });
 
     // 8. Upgrade base OS packages
     emit({ stage: 'rebuilding', message: 'Upgrading system packages...', container: containerName, progress: 35 });

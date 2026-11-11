@@ -2,7 +2,6 @@ package installer
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -23,10 +22,10 @@ func prepareCoreInstallInput(ctx context.Context, input applianceInstallInput, b
 	}
 	if input.CoreRelease == nil {
 		if input.ReleaseCacheSHA256 != "" {
-			return input, fmt.Errorf("new media requires a v5 answer binding its existing transport cache to the complete System selection")
+			return input, fmt.Errorf("new media requires an answer binding its existing transport cache to the complete System selection")
 		}
 		if input.Operation == "resume" {
-			return input, fmt.Errorf("resume requires the original signed System answer; supply the retained v5 answer")
+			return input, fmt.Errorf("resume requires the original System answer; supply the retained answer")
 		}
 		policy := input.ReleasePolicy
 		channel := policy.Track
@@ -40,7 +39,7 @@ func prepareCoreInstallInput(ctx context.Context, input applianceInstallInput, b
 			return input, err
 		}
 		if release.core == nil {
-			return input, fmt.Errorf("this media requires a complete signed System release; supply a v5 answer or select a published System release")
+			return input, fmt.Errorf("this media requires a complete System release; supply an answer or select a published System release")
 		}
 		input.CoreRelease = coreAnswerFromRelease(release)
 		input.ReleasePolicy.CoreManifestSHA256 = release.coreSHA256
@@ -55,24 +54,7 @@ func prepareCoreInstallInput(ctx context.Context, input applianceInstallInput, b
 	if err := validateCoreAnswer(answer); err != nil {
 		return input, err
 	}
-	raw, _ := base64.StdEncoding.Strict().DecodeString(input.CoreRelease.ManifestBase64)
-	signature, _ := base64.StdEncoding.Strict().DecodeString(input.CoreRelease.SignatureBase64)
-	proof := input.CoreMetadataProof
-	if len(proof) == 0 {
-		proof = input.CoreRelease.MetadataProof
-	}
-	if len(proof) == 0 {
-		var err error
-		proof, err = fetchInstallerCoreProof(ctx, client, raw, signature, false)
-		if err != nil {
-			return input, fmt.Errorf("acquire original System metadata proof: %w", err)
-		}
-	}
-	if err := verifyInstallerCoreProof(raw, signature, proof); err != nil {
-		return input, err
-	}
-	input.CoreMetadataProof = proof
-	release, _, err := releasecache.ParseCoreRelease(raw)
+	release, _, err := decodeCoreAnswer(input.CoreRelease)
 	if err != nil {
 		return input, err
 	}
@@ -90,7 +72,7 @@ func bindCoreInstallBundle(release releasecache.CoreRelease, bundle verifiedAppl
 		switch member.Role {
 		case "appliance":
 			if member.Artifact.SHA256 != bundle.ManifestSHA256 || member.BuildVersion != bundle.Manifest.ImageVersion || member.SourceCommit != bundle.Manifest.SourceCommit || member.Source != bundle.Manifest.ReleaseSet.Source || member.Branch != bundle.Manifest.ReleaseSet.Branch {
-				return fmt.Errorf("selected System does not contain this signed appliance media; use its matching ISO or an exact selection that contains this media")
+				return fmt.Errorf("selected System does not contain this appliance media; use its matching ISO or an exact selection that contains this media")
 			}
 		case "spine":
 			spine := bundle.Manifest.ReleaseSet.Spine
@@ -106,20 +88,17 @@ func bindCoreInstallBundle(release releasecache.CoreRelease, bundle verifiedAppl
 }
 
 // Retain selection at the first resumable checkpoint, before writing System A.
-// Only signed public metadata and transaction identity are retained here; the
+// Only the public release document and transaction identity are retained; the
 // original answer may also contain credentials and stays on its own medium.
 func retainCoreInstallSelectionCommand(assets applianceImageAssets) applianceCommand {
 	return applianceCommand{Stage: stageInitializeJournal, Name: "sh", Args: []string{"-c", `set -eu
-answer="$1"; state_root="$2"; manifest="$3"; proof="$4"
-if jq -e '.schema == "youeye.appliance.answer.v5"' "$answer" >/dev/null; then
+answer="$1"; state_root="$2"; manifest="$3"
+if jq -e '.schema == "youeye.appliance.answer.v1" and .core_release != null' "$answer" >/dev/null; then
  install -d -m 0700 "$state_root/installer"
  path="$state_root/installer/core-selection.json"
- test -f "$proof" && test ! -L "$proof"
- test "$(stat -c '%u:%a:%h' "$proof")" = 0:600:1
- test "$(stat -c %s "$proof")" -le 8388608
- jq --arg manifest "$manifest" --slurpfile proof "$proof" '{transaction_id,target_serial,release_policy,core_release:(.core_release | del(.metadata_proof)),manifest_sha256:$manifest,core_metadata_proof:$proof[0]}' "$answer" > "$path.tmp"
+ jq --arg manifest "$manifest" '{transaction_id,target_serial,release_policy,core_release,manifest_sha256:$manifest}' "$answer" > "$path.tmp"
  chmod 0600 "$path.tmp"; sync -f "$path.tmp"; mv -f "$path.tmp" "$path"; sync -f "$state_root/installer"
-fi`, "youeye-retain-core-selection", assets.AnswerPath, stateMount, assets.ManifestSHA256, assets.CoreMetadataProofPath}}
+fi`, "youeye-retain-core-selection", assets.AnswerPath, stateMount, assets.ManifestSHA256}}
 }
 
 func restoreCoreInstallSelection(runner applianceCommandRunner, disk applianceDisk, input applianceInstallInput, manifest string) (applianceInstallInput, error) {
@@ -134,37 +113,23 @@ path="$mountpoint/installer/core-selection.json"
 [ "$(stat -c %s "$path")" -le 18874368 ]
 cat "$path"`, "youeye-read-core-selection", partitionPath(disk.Path, 5), "/run/youeye-appliance/resume-state")
 	if err != nil {
-		return input, fmt.Errorf("original signed System selection unavailable; supply the original v5 answer: %w", err)
+		return input, fmt.Errorf("original System selection unavailable; supply the original answer: %w", err)
 	}
 	var saved struct {
-		TransactionID     string                 `json:"transaction_id"`
-		TargetSerial      string                 `json:"target_serial"`
-		ManifestSHA256    string                 `json:"manifest_sha256"`
-		ReleasePolicy     applianceReleasePolicy `json:"release_policy"`
-		CoreRelease       *coreAnswerSelection   `json:"core_release"`
-		CoreMetadataProof json.RawMessage        `json:"core_metadata_proof"`
+		TransactionID  string                 `json:"transaction_id"`
+		TargetSerial   string                 `json:"target_serial"`
+		ManifestSHA256 string                 `json:"manifest_sha256"`
+		ReleasePolicy  applianceReleasePolicy `json:"release_policy"`
+		CoreRelease    *coreAnswerSelection   `json:"core_release"`
 	}
-	if len(raw) > 18<<20 || json.Unmarshal([]byte(raw), &saved) != nil || len(saved.CoreMetadataProof) > coreMetadataProofMaxBytes || saved.TransactionID != input.TransactionID || !strings.EqualFold(saved.TargetSerial, disk.Serial) || saved.ManifestSHA256 != manifest || saved.CoreRelease == nil {
+	if len(raw) > 18<<20 || json.Unmarshal([]byte(raw), &saved) != nil || saved.TransactionID != input.TransactionID || !strings.EqualFold(saved.TargetSerial, disk.Serial) || saved.ManifestSHA256 != manifest || saved.CoreRelease == nil {
 		return input, fmt.Errorf("retained System selection differs from this installation transaction")
 	}
 	if err := validateCoreAnswer(applianceAnswer{CoreRelease: saved.CoreRelease, ReleasePolicy: saved.ReleasePolicy}); err != nil {
 		return input, err
 	}
-	if len(saved.CoreMetadataProof) > 0 {
-		execution, e1 := base64.StdEncoding.Strict().DecodeString(saved.CoreRelease.ManifestBase64)
-		signature, e2 := base64.StdEncoding.Strict().DecodeString(saved.CoreRelease.SignatureBase64)
-		if e1 != nil || e2 != nil {
-			return input, fmt.Errorf("retained System selection encoding differs")
-		}
-		if err := verifyInstallerCoreProof(execution, signature, saved.CoreMetadataProof); err != nil {
-			return input, err
-		}
-		input.CoreMetadataProof = saved.CoreMetadataProof
-	}
 	if input.CoreRelease != nil {
-		// Formatting or placement of a separately authenticated proof is not the
-		// transaction identity. The original three signed-selection fields are.
-		if input.CoreRelease.ManifestBase64 != saved.CoreRelease.ManifestBase64 || input.CoreRelease.SignatureBase64 != saved.CoreRelease.SignatureBase64 || input.CoreRelease.ManifestSHA256 != saved.CoreRelease.ManifestSHA256 || !reflect.DeepEqual(input.ReleasePolicy, saved.ReleasePolicy) {
+		if input.CoreRelease.ManifestBase64 != saved.CoreRelease.ManifestBase64 || input.CoreRelease.ManifestSHA256 != saved.CoreRelease.ManifestSHA256 || !reflect.DeepEqual(input.ReleasePolicy, saved.ReleasePolicy) {
 			return input, fmt.Errorf("resume answer changed the frozen System selection")
 		}
 		return input, nil

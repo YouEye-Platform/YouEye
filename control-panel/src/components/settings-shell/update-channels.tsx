@@ -317,6 +317,9 @@ function labelFor(id: string): string {
             const row = rows[id];
             if (!row) return null;
             const branchLabel = entry.channel.branch;
+            // Core channels and the System source are owned by the host (the
+            // installer-recorded release policy); only app channels are editable.
+            const editable = id.startsWith("app:");
             return (
               <div key={id} className="p-3.5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -372,7 +375,26 @@ function labelFor(id: string): string {
                   </div>
                 </div>
 
-                {row.expanded && (
+                {row.expanded && !editable && (
+                  <div className="mt-3 grid gap-3 border-t pt-3 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{translateInterface("mde5c1d1e3353")}</div>
+                      <div className="break-all font-mono text-[13px]">{entry.channel.source || "—"}</div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{translateInterface("m3e0a287758a7")}</div>
+                      <div className="font-mono text-[13px]">{entry.channel.branch || "—"}</div>
+                    </div>
+                    {entry.channel.tag && (
+                      <div className="space-y-1.5">
+                        <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{translateInterface("m8c1894f16c3b")}</div>
+                        <div className="font-mono text-[13px]">{entry.channel.tag}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {row.expanded && editable && (
                   <div className="mt-3 space-y-3 border-t pt-3">
                     <div className="grid gap-3 md:grid-cols-2">
                       <div className="space-y-1.5">

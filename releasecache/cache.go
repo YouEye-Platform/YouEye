@@ -1,9 +1,8 @@
-// Package releasecache provides optional exact-URL transport for staged signed
+// Package releasecache provides optional exact-URL transport for staged
 // releases. It never changes source identity, trust or artifact verification.
 package releasecache
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -126,7 +125,7 @@ type transport struct{ next http.RoundTripper }
 type liveDiscoveryKey struct{}
 
 // LiveDiscovery bypasses the frozen installation cache for mutable discovery.
-// Signed distribution verification and ordinary network errors remain effective.
+// Ordinary network errors remain effective.
 // Apply this only to discovery requests; exact artifact reads still use the cache.
 func LiveDiscovery(ctx context.Context) context.Context {
 	return context.WithValue(ctx, liveDiscoveryKey{}, true)
@@ -149,13 +148,6 @@ func (t transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		f, n, e = Open(Root(), req.URL.String())
 	}
 	if os.IsNotExist(e) {
-		data, handled, err := DistributionBytes(req.Context(), t.next, DistributionPolicyFromSource(), req.URL.String())
-		if err != nil {
-			return nil, err
-		}
-		if handled {
-			return &http.Response{StatusCode: 200, Status: "200 OK", Header: http.Header{"Content-Type": []string{"application/json"}, "X-YouEye-Release-Transport": []string{"signed-distribution"}}, Body: io.NopCloser(bytes.NewReader(data)), ContentLength: int64(len(data)), Request: req}, nil
-		}
 		return t.next.RoundTrip(req)
 	}
 	if e != nil {

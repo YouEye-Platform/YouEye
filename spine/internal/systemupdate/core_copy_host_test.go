@@ -10,10 +10,10 @@ import (
 )
 
 func TestIndependentCopyHostIdentityAndCredentials(t *testing.T) {
-	selection, root, trust := signedCopyFixture(t)
+	selection, root := copyFixture(t)
 	m := CoreManager{Root: filepath.Join(root, "core")}
 	source := CoreMachineIdentity{InstallIDRef: "install:source", DeviceIDRef: "device:source", ParentDiskID: "disk:source", StatePartUUID: "state", DataPartUUID: "data"}
-	receipt, err := m.Initialize(context.Background(), selection, checksum(selection.Raw), trust, func(context.Context, releasecache.CoreRelease) (CoreMachineIdentity, string, error) {
+	receipt, err := m.Initialize(context.Background(), selection, checksum(selection.Raw), func(context.Context, releasecache.CoreRelease) (CoreMachineIdentity, string, error) {
 		return source, "fixture", nil
 	})
 	if err != nil {
@@ -44,7 +44,7 @@ func TestIndependentCopyHostIdentityAndCredentials(t *testing.T) {
 	if _, err = m.PrepareIndependentCopyHost(request, guest, observe); err == nil {
 		t.Fatal("host preparation lacked native admission")
 	}
-	if err = m.BeginIndependentCopy(request, trust, observe); err != nil {
+	if err = m.BeginIndependentCopy(request, observe); err != nil {
 		t.Fatal(err)
 	}
 	first, err := m.PrepareIndependentCopyHost(request, guest, observe)

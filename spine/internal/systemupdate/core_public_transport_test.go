@@ -8,26 +8,17 @@ import (
 	"time"
 )
 
-// Opt-in transport acceptance uses public anchors exported from an independently
-// pinned public source commit. It never changes the installed trust policy.
+// Opt-in transport acceptance against an exact pinned public release.
 func TestCorePublicTransportIntegration(t *testing.T) {
-	trustPath := os.Getenv("YOUEYE_TEST_PUBLIC_TRUST")
-	if trustPath == "" {
-		t.Skip("requires explicit pinned public trust, tag and manifest digest")
+	if os.Getenv("YOUEYE_TEST_CORE_TAG") == "" {
+		t.Skip("requires an explicit pinned tag and manifest digest")
 	}
-	trust, err := os.ReadFile(trustPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	prior := publicReleaseTrustJSON
-	publicReleaseTrustJSON = trust
-	t.Cleanup(func() { publicReleaseTrustJSON = prior })
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	selection, release, digest, err := ResolveCoreRelease(ctx, nil, CoreReleaseSelection{
 		Source: "https://github.com/YouEye-Platform/YouEye", Branch: "main",
 		Tag: os.Getenv("YOUEYE_TEST_CORE_TAG"), ManifestSHA256: os.Getenv("YOUEYE_TEST_CORE_SHA256"),
-	}, "")
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +30,7 @@ func TestCorePublicTransportIntegration(t *testing.T) {
 		if member.Role != "cp" && member.Role != "ui" {
 			continue
 		}
-		index, err := cache.IndexMember(member, release.Channel)
+		index, err := cache.IndexMember(member)
 		if err != nil {
 			t.Fatal(member.Role, err)
 		}

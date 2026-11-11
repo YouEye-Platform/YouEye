@@ -34,7 +34,7 @@ func (coreAPIOperations) ObserveInstalled(ctx context.Context, receipt systemupd
 			}
 			digest, err := fileSHA256(executable)
 			if err != nil || image.ReleaseSet == nil || digest != image.ReleaseSet.Spine.ArtifactSHA256 || !bootstrap && Version != image.ReleaseSet.Spine.Version {
-				return fmt.Errorf("running Spine differs from signed member")
+				return fmt.Errorf("running Spine differs from its release member")
 			}
 			return nil
 		})

@@ -94,7 +94,7 @@ make_fixture "$partial"
 run_fixture "$partial" FAKE_CONTROL_COMPLETE=0
 grep -Fxq deploy "$partial/commands"
 grep -Fq '"stage": "complete"' "$partial/state/progress.json"
-jq -e '.schema == "youeye.appliance.progress.v2" and .percent == 100 and .state == "complete"' "$partial/state/progress.json" >/dev/null
+jq -e '.schema == "youeye.installer.progress.v1" and .percent == 100 and .state == "complete"' "$partial/state/progress.json" >/dev/null
 
 complete="$tmp/complete"
 make_fixture "$complete"

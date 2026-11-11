@@ -65,7 +65,7 @@ func (s NativeCoreServices) Schema(ctx context.Context, request, role string, be
 	if err != nil || !reflect.DeepEqual(current, j.Previous) {
 		return CoreActionObservation{}, fmt.Errorf("core schema commitment changed")
 	}
-	if _, _, err = m.Selection(j.ManifestSHA256, s.Cache.TrustKeyPath); err != nil {
+	if _, _, err = m.Selection(j.ManifestSHA256); err != nil {
 		return CoreActionObservation{}, err
 	}
 	record, err := s.Checkpoint.Read(j)
@@ -86,9 +86,6 @@ func (s NativeCoreServices) Schema(ctx context.Context, request, role string, be
 	member, err := coreServiceMember(j.Target, role)
 	if err != nil || member.Artifact.SHA256 != stage.ArtifactSHA256 {
 		return CoreActionObservation{}, fmt.Errorf("core schema target differs")
-	}
-	if err = CheckCoreMemberAuthority(member, j.Target.Channel, s.Cache.TrustKeyPath); err != nil {
-		return CoreActionObservation{}, err
 	}
 
 	name, port, path := "youeye-control", 3000, "/api/appliance/core-component"

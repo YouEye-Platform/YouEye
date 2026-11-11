@@ -41,7 +41,7 @@ var applianceCopyReserveCommand = &cobra.Command{Use: "reserve-source", Args: co
 	}
 	manager := systemupdate.CoreManager{Root: systemupdate.CoreStatePath}
 	barrier := systemupdate.CoreLifecycleBarrier{Root: systemupdate.CoreAppLifecycleRoot}
-	if err = manager.ReserveIndependentCopySource(request, systemupdate.CoreDevelopmentTrustPath, barrier, copyHardware); err != nil {
+	if err = manager.ReserveIndependentCopySource(request, barrier, copyHardware); err != nil {
 		return err
 	}
 	// Inventory is repeated inside the durable lifecycle reservation. A failure

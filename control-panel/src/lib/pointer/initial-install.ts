@@ -43,13 +43,13 @@ export async function installPointerRelease(
       }
       floors = acceptProductSequence(before.floors, selected);
       artifact = await io.stage(selected);
-      if (!artifact.productRelease || artifact.signature.status === 'unsigned'
+      if (!artifact.productRelease || artifact.verification.status !== 'product-release'
         || artifact.containerName !== 'youeye-pointer' || artifact.artifactSHA256 !== primary.sha256
         || artifact.sourceRepo !== r.source || artifact.tag !== r.tag || artifact.version !== r.version) {
         throw new Error('Pointer staged runtime differs from verified product release');
       }
     } else {
-      if (before.installed) throw new Error('Installed Pointer requires signed product metadata');
+      if (before.installed) throw new Error('Installed Pointer requires product release metadata');
       if (new URL(release.url).pathname.split('/').at(-1) !== 'standalone.tar') {
         throw new Error('Pointer release descriptor cannot be installed as a runtime archive');
       }

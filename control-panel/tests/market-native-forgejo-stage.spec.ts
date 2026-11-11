@@ -1,49 +1,34 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import { stageMarketNativeArtifact } from '../src/lib/market/native-artifact';
-import { OWNER_TRUST_PATH, OWNER_TRUST_SCHEMA } from '../src/lib/releases/owner-trust';
 import { ContainerSchema } from '../src/lib/market/schema';
 import { parseMarketRepoURL } from '../src/lib/market/source';
 
-test('Forgejo signed native staging uses exact release attachments without relaxing publisher trust', async t => {
+const sha = (b: Buffer | string) => createHash('sha256').update(b).digest('hex');
+
+test('Forgejo native staging uses exact release attachments with no signature files', async () => {
   const root = await mkdtemp(join(tmpdir(), 'native-forgejo-stage-'));
-  const originalRead = fs.readFileSync;
   const originalFetch = globalThis.fetch;
-  const pair = generateKeyPairSync('ed25519');
-  const key = pair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
   const repo = 'https://forge.example/alice/App';
-  let revoked = false;
-  t.mock.method(fs, 'readFileSync', ((path: unknown, ...args: unknown[]) => {
-    if (path === OWNER_TRUST_PATH) return Buffer.from(JSON.stringify({ schema: OWNER_TRUST_SCHEMA, grants: [
-      { publisher: 'Test', repository: repo, branch: 'main', scope: 'app', public_key: key, revoked },
-    ] }));
-    return (originalRead as (...args: unknown[]) => unknown)(path, ...args);
-  }) as typeof originalRead);
-  syncBuiltinESMExports();
   try {
     await mkdir(join(root, 'payload'));
     await writeFile(join(root, 'payload/server.js'), 'console.log("ready")');
     await promisify(execFile)('tar', ['-cf', join(root, 'fixture.tar'), '-C', join(root, 'payload'), '.']);
     const bytes = await readFile(join(root, 'fixture.tar'));
-    const sha = (b: Buffer | string) => createHash('sha256').update(b).digest('hex');
-    const sums = Buffer.from(`${sha(bytes)}  standalone.tar\n${sha(key)}  release-development.pub\n${'a'.repeat(64)}  provenance.json\n${'b'.repeat(64)}  sbom.spdx.json\n`);
-    const contents = new Map<string, Buffer>([
-      ['standalone.tar', bytes], ['release-development.pub', Buffer.from(key)],
-      ['SHA256SUMS', sums], ['SHA256SUMS.sig', sign(null, sums, pair.privateKey)],
-      ['provenance.json', Buffer.from('{}')], ['sbom.spdx.json', Buffer.from('{}')],
-    ]);
     const base = `${repo}/releases/download/v1.2.3/`;
+    const build = {schema:'youeye.product-build.v1',product:'notes',kind:'native',build_version:'1.2.3',source:repo,branch:'main',source_commit:'a'.repeat(40),tag:'v1.2.3',input_sha256:'b'.repeat(64),contract_sha256:'c'.repeat(64),primary:'standalone.tar',
+      assets:[{name:'standalone.tar',url:base+'standalone.tar',sha256:sha(bytes),size_bytes:bytes.length}]};
+    const productRelease = Buffer.from(JSON.stringify({schema:'youeye.product-release.v1',product:'notes',version:'1.2.3',source:repo,branch:'main',tag:'v1.2.3',channel:'feature',sequence:1,minimum_reader:1,authority:'digest',build_manifest_base64:Buffer.from(JSON.stringify(build)).toString('base64')}));
+    const contents = new Map<string, Buffer>([['standalone.tar', bytes], ['product-release.json', productRelease]]);
     const validAssets = [...contents.keys()].map((name, i) => ({ name, browser_download_url: base + name,
       uuid: `12345678-1234-1234-1234-${String(i).padStart(12, '0')}` }));
-    let assets = structuredClone(validAssets);
+    let assets = validAssets.filter(a => a.name === 'standalone.tar');
     const calls: string[] = [];
     let redirect = '';
     globalThis.fetch = async input => {
@@ -56,42 +41,45 @@ test('Forgejo signed native staging uses exact release attachments without relax
         if (redirect) return new Response(null, { status: 302, headers: { location: redirect } });
         return new Response(new Uint8Array(contents.get(asset.name)!));
       }
-      if (url.startsWith(base)) return new Response('<html>Repository</html>', { headers: { 'content-type': 'text/html' } });
+      // Product blobs use their canonical build URL (the private-mirror blob
+      // path is covered in product-release.spec.ts).
+      if (url.startsWith(base) && contents.has(url.slice(base.length))) return new Response(new Uint8Array(contents.get(url.slice(base.length))!));
       throw new Error('Unexpected request ' + url);
     };
-    const container = ContainerSchema.parse({ name: 'main', type: 'lxd', image: 'debian/12', source: { repo: 'alice/App' }, port: 3000 });
     const source = parseMarketRepoURL('https://forge.example/alice/Market');
-    const stage = () => stageMarketNativeArtifact(root, container, source);
-    assert.equal((await stage()).signature.status, 'verified-custom');
-    assert.equal(calls.some(url => url.startsWith(base)), false);
-    assert.equal(calls.filter(url => url.includes('/attachments/')).length, 4);
+    const container = (artifactSHA256?: string) => ContainerSchema.parse({ name: 'main', type: 'lxd', image: 'debian/12', source: { repo: 'alice/App', ...(artifactSHA256 ? { artifactSHA256 } : {}) }, port: 3000 });
+    const stage = (artifactSHA256?: string, product?: string) => stageMarketNativeArtifact(root, container(artifactSHA256), source, undefined, product);
+
+    // A bare standalone.tar is enough; it is authorized by the manifest selection.
+    const plain = await stage();
+    assert.deepEqual(plain.verification, { status: 'manifest' });
+    assert.equal(plain.artifactSHA256, sha(bytes));
+    assert.equal(calls.some(url => url.startsWith(base)), false, 'plain staging uses exact attachments');
+    // Only the release listing and the archive attachment are requested.
+    assert.ok(calls.every(url => url.startsWith('https://forge.example/api/v1/') || url === `https://forge.example/attachments/${validAssets[0].uuid}`));
+    assert.equal((await stage(sha(bytes))).artifactSHA256, sha(bytes));
+    await assert.rejects(stage('f'.repeat(64)), /manifest SHA-256/);
     contents.set('standalone.tar', Buffer.from('tampered'));
-    await assert.rejects(stage(), /signature or checksum/); contents.set('standalone.tar', bytes);
-    const goodSignature = contents.get('SHA256SUMS.sig')!;
-    contents.set('SHA256SUMS.sig', Buffer.alloc(64));
-    await assert.rejects(stage(), /signature or checksum/); contents.set('SHA256SUMS.sig', goodSignature);
-    contents.set('release-development.pub', Buffer.from('untrusted'));
-    await assert.rejects(stage(), /signature or checksum/); contents.set('release-development.pub', Buffer.from(key));
-    assets[2].browser_download_url = base.replace('/App/', '/Other/') + assets[2].name;
-    await assert.rejects(stage(), /signature or checksum/); assets = structuredClone(validAssets);
-    assets[2].browser_download_url = base.replace('/v1.2.3/', '/v1.2.2/') + assets[2].name;
-    await assert.rejects(stage(), /signature or checksum/); assets = structuredClone(validAssets);
-    assets.push({ ...assets[0] }); await assert.rejects(stage(), /ambiguous/); assets = structuredClone(validAssets);
-    assets[0].uuid = '../outside'; await assert.rejects(stage(), /attachment identity/); assets = structuredClone(validAssets);
-    contents.set('SHA256SUMS', Buffer.alloc(1024 * 1024 + 1));
-    await assert.rejects(stage(), /signature or checksum/); contents.set('SHA256SUMS', sums);
+    await assert.rejects(stage(sha(bytes)), /manifest SHA-256/);
+    contents.set('standalone.tar', bytes);
+    assets = [...assets, { ...assets[0] }]; await assert.rejects(stage(), /ambiguous/); assets = validAssets.filter(a => a.name === 'standalone.tar');
+    assets = [{ ...assets[0], uuid: '../outside' }]; await assert.rejects(stage(), /attachment identity/); assets = validAssets.filter(a => a.name === 'standalone.tar');
     redirect = 'https://attacker.example/asset';
     await assert.rejects(stage(), /outside its release source/); redirect = '';
-    revoked = true; await assert.rejects(stage(), /revoked/); revoked = false;
-    assets = validAssets.filter(a => a.name !== 'SHA256SUMS.sig');
-    await assert.rejects(stage(), /incomplete signature bundle/);
-    assets = validAssets.filter(a => a.name === 'standalone.tar');
-    await assert.rejects(stage(), /requires its enrolled publisher signature/);
-    t.mock.restoreAll(); syncBuiltinESMExports();
-    assert.equal((await stage()).signature.status, 'unsigned');
+
+    // An unsigned product release binds the archive by its build digest.
+    assets = structuredClone(validAssets);
+    const product = await stage(undefined, 'notes');
+    assert.equal(product.verification.status, 'product-release');
+    assert.equal(product.verification.status === 'product-release' && product.verification.releaseSHA256, sha(productRelease));
+    assert.equal(product.productRelease?.manifestSHA256, sha(productRelease));
+    await assert.rejects(stage('f'.repeat(64), 'notes'), /manifest SHA-256/);
+    contents.set('standalone.tar', Buffer.from('tampered'));
+    await assert.rejects(stage(undefined, 'notes'), /differs/);
+    contents.set('standalone.tar', bytes);
+    await assert.rejects(stage(undefined, 'wiki'), /differs/);
   } finally {
     globalThis.fetch = originalFetch;
-    t.mock.restoreAll(); syncBuiltinESMExports();
     await rm(root, { recursive: true, force: true });
   }
 });

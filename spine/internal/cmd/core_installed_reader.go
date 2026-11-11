@@ -1,17 +1,13 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -20,12 +16,6 @@ import (
 )
 
 const coreBakedExecutable = "/usr/local/bin/youeye"
-const coreQuickSpineDropIn = "/run/systemd/system/youeye.service.d/90-youeye-development-spine.conf"
-const coreQuickSpineRoot = "/var/lib/youeye-state/development-overlays/artifacts"
-
-var coreQuickSpineID = regexp.MustCompile(`^devart-b-[A-Za-z0-9._-]{1,120}$`)
-var coreReaderDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
-var coreReaderCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type coreInstalledReaderObservation struct {
 	Executable  string
@@ -40,7 +30,6 @@ type coreInstalledReaderObserver struct {
 	Owner             uint32
 	CurrentExecutable func() (string, error)
 	CurrentSHA256     func() (string, error)
-	APISHA256         func(context.Context) (string, error)
 }
 
 func (o coreInstalledReaderObserver) path(logical string) string {
@@ -136,54 +125,12 @@ func (o coreInstalledReaderObserver) hash(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-type coreQuickSpineMarker struct {
-	Schema       string `json:"schema"`
-	Component    string `json:"component"`
-	State        string `json:"state"`
-	Unsigned     bool   `json:"unsigned"`
-	ArtifactID   string `json:"artifact_id"`
-	SourceCommit string `json:"source_commit"`
-	SHA256       string `json:"sha256"`
-}
-
-func parseCoreQuickSpineMarker(raw []byte) (coreQuickSpineMarker, error) {
-	var marker coreQuickSpineMarker
-	// This producer emits one flat object. Duplicate keys, even equal ones, are
-	// ambiguous retained admission rather than a reason to choose a last value.
-	d := json.NewDecoder(bytes.NewReader(raw))
-	first, err := d.Token()
-	if err != nil || first != json.Delim('{') {
-		return marker, fmt.Errorf("invalid quick reader marker")
-	}
-	seen := map[string]bool{}
-	for d.More() {
-		key, err := d.Token()
-		name, ok := key.(string)
-		if err != nil || !ok || seen[name] {
-			return marker, fmt.Errorf("ambiguous quick reader marker")
-		}
-		seen[name] = true
-		if err := d.Decode(new(json.RawMessage)); err != nil {
-			return marker, fmt.Errorf("invalid quick reader marker")
-		}
-	}
-	if _, err := d.Token(); err != nil || d.Decode(new(any)) != io.EOF {
-		return marker, fmt.Errorf("invalid quick reader marker")
-	}
-	d = json.NewDecoder(bytes.NewReader(raw))
-	d.DisallowUnknownFields()
-	if d.Decode(&marker) != nil || marker.Schema != "youeye.development-overlay-runtime.v1" || marker.Component != "spine" || marker.State != "active" || !marker.Unsigned || !coreQuickSpineID.MatchString(marker.ArtifactID) || strings.Contains(marker.ArtifactID, "..") || !coreReaderCommit.MatchString(marker.SourceCommit) || !coreReaderDigest.MatchString(marker.SHA256) {
-		return marker, fmt.Errorf("invalid quick reader marker")
-	}
-	return marker, nil
-}
-
 func observeCoreInstalledReader(ctx context.Context, o coreInstalledReaderObserver) (coreInstalledReaderObservation, error) {
 	var empty coreInstalledReaderObservation
 	if ctx.Err() != nil {
 		return empty, ctx.Err()
 	}
-	if !filepath.IsAbs(o.Root) || filepath.Clean(o.Root) != o.Root || o.CurrentExecutable == nil || o.CurrentSHA256 == nil || o.APISHA256 == nil {
+	if !filepath.IsAbs(o.Root) || filepath.Clean(o.Root) != o.Root || o.CurrentExecutable == nil || o.CurrentSHA256 == nil {
 		return empty, fmt.Errorf("complete installed reader observation required")
 	}
 	self, err := o.CurrentExecutable()
@@ -217,9 +164,9 @@ func observeCoreInstalledReader(ctx context.Context, o coreInstalledReaderObserv
 		return coreInstalledReaderObservation{Executable: coreBakedExecutable, ReaderClass: class, Bound: true}, nil
 	}
 	manager := systemupdate.CoreManager{Root: o.path(systemupdate.CoreStatePath)}
-	// Production registration is authenticated first. Corrupt retained production
-	// state cannot fall back to a test reader or its marker.
-	bootstrap, err := manager.BootstrapExecutable(systemupdate.CoreDevelopmentTrustPath)
+	// A registered production coordinator is verified first. Corrupt retained
+	// state cannot fall back to the baked reader.
+	bootstrap, err := manager.BootstrapExecutable()
 	if err != nil {
 		return empty, err
 	}
@@ -228,9 +175,9 @@ func observeCoreInstalledReader(ctx context.Context, o coreInstalledReaderObserv
 		if err != nil {
 			return empty, err
 		}
-		// A valid production coordinator takes precedence over retained test
-		// state. Its authority belongs only to this exact registered self; an
-		// unrelated external executable cannot inherit it through equal bytes.
+		// A valid production coordinator belongs only to this exact registered
+		// self; an unrelated external executable cannot inherit it through
+		// equal bytes.
 		if self != path && self != coreBakedExecutable {
 			return empty, fmt.Errorf("executing reader differs from registered production coordinator")
 		}
@@ -240,95 +187,11 @@ func observeCoreInstalledReader(ctx context.Context, o coreInstalledReaderObserv
 		}
 		return finish(path, digest, "production-bootstrap")
 	}
-	marker, markerErr := o.read(spineCandidateOverlay)
-	if markerErr != nil && !errors.Is(markerErr, os.ErrNotExist) {
-		return empty, markerErr
-	}
-	quickDropIn, quickErr := o.read(coreQuickSpineDropIn)
-	if quickErr != nil && !errors.Is(quickErr, os.ErrNotExist) {
-		return empty, quickErr
-	}
-	candidateDropIn, candidateErr := o.read(spineCandidateDropIn)
-	if candidateErr != nil && !errors.Is(candidateErr, os.ErrNotExist) {
-		return empty, candidateErr
-	}
-	candidate := systemupdate.SpineCandidateManager{Root: o.path(systemupdate.SpineCandidateRoot), CoreRoot: manager.Root}
-	_, bindingErr := candidate.ReadBinding()
-	if bindingErr != nil && !errors.Is(bindingErr, os.ErrNotExist) {
-		return empty, bindingErr
-	}
-	if bindingErr == nil {
-		if quickErr == nil {
-			return empty, fmt.Errorf("signed and unsigned reader bindings conflict")
-		}
-		b, err := candidate.VerifyBindingContext(ctx)
-		if err != nil {
-			return empty, err
-		}
-		path, err := o.logical(filepath.Join(b.Root, systemupdate.SpineCandidateArtifact))
-		if err != nil {
-			return empty, err
-		}
-		if markerErr != nil || !bytes.Equal(marker, candidateOverlayBytes(b)) || candidateErr != nil || !bytes.Equal(candidateDropIn, candidateOverride(path)) {
-			return empty, fmt.Errorf("signed candidate runtime evidence differs")
-		}
-		digest, err := o.hash(path)
-		if err != nil || digest != b.ArtifactSHA256 {
-			return empty, fmt.Errorf("signed candidate payload differs")
-		}
-		apiHash, err := o.APISHA256(ctx)
-		if err != nil || apiHash != digest {
-			return empty, fmt.Errorf("actual API differs from signed candidate")
-		}
-		after, err := candidate.VerifyBindingContext(ctx)
-		if err != nil || after != b {
-			return empty, fmt.Errorf("signed candidate binding changed")
-		}
-		return finish(path, digest, "signed-candidate")
-	}
-	if markerErr == nil {
-		if candidateErr == nil {
-			return empty, fmt.Errorf("orphan signed candidate override")
-		}
-		m, err := parseCoreQuickSpineMarker(marker)
-		if err != nil {
-			return empty, err
-		}
-		path := filepath.Join(coreQuickSpineRoot, m.ArtifactID, "youeye")
-		want := []byte("[Service]\nExecStart=\nExecStart=" + path + " api serve\n")
-		if quickErr != nil || !bytes.Equal(quickDropIn, want) {
-			return empty, fmt.Errorf("quick reader API override differs")
-		}
-		digest, err := o.hash(path)
-		if err != nil || digest != m.SHA256 {
-			return empty, fmt.Errorf("quick reader payload differs")
-		}
-		apiHash, err := o.APISHA256(ctx)
-		if err != nil || apiHash != digest {
-			return empty, fmt.Errorf("actual API differs from quick reader")
-		}
-		afterMarker, err := o.read(spineCandidateOverlay)
-		if err != nil || !bytes.Equal(marker, afterMarker) {
-			return empty, fmt.Errorf("quick reader marker changed")
-		}
-		afterDropIn, err := o.read(coreQuickSpineDropIn)
-		if err != nil || !bytes.Equal(quickDropIn, afterDropIn) {
-			return empty, fmt.Errorf("quick reader API override changed")
-		}
-		afterDigest, err := o.hash(path)
-		if err != nil || afterDigest != digest {
-			return empty, fmt.Errorf("quick reader payload changed")
-		}
-		return finish(path, digest, "unsigned-development")
-	}
-	if quickErr == nil || candidateErr == nil {
-		return empty, fmt.Errorf("reader override has no protected binding")
-	}
 	return finish(coreBakedExecutable, "", "baked")
 }
 
 var coreInstalledReaderHost = func() coreInstalledReaderObserver {
-	return coreInstalledReaderObserver{Root: "/", Owner: 0, CurrentExecutable: os.Executable, CurrentSHA256: func() (string, error) { return fileSHA256("/proc/self/exe") }, APISHA256: candidateAPIHash}
+	return coreInstalledReaderObserver{Root: "/", Owner: 0, CurrentExecutable: os.Executable, CurrentSHA256: func() (string, error) { return fileSHA256("/proc/self/exe") }}
 }
 
 func readCoreInstalledReader() (coreInstalledReaderObservation, error) {

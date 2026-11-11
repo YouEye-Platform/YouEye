@@ -1,11 +1,9 @@
 package container
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 
@@ -16,13 +14,10 @@ import (
 )
 
 // A missing legacy selection is allowed; incomplete new-format state is not.
-func optionalCoreSelection(root, trustPath string) (*releasecache.CoreRelease, string, error) {
-	release, digest, err := systemupdate.ReadCoreSelection(root, trustPath)
+func optionalCoreSelection(root string) (*releasecache.CoreRelease, string, error) {
+	release, digest, err := systemupdate.ReadCoreSelection(root)
 	if os.IsNotExist(err) {
 		if _, statErr := os.Lstat(filepath.Join(root, "core-release.json")); os.IsNotExist(statErr) {
-			if _, sigErr := os.Lstat(filepath.Join(root, "core-release.json.sig")); !os.IsNotExist(sigErr) {
-				return nil, "", fmt.Errorf("selected core manifest is missing")
-			}
 			policy, policyErr := systemupdate.LoadReleasePolicy(filepath.Join(root, "release-policy.json"))
 			if policyErr != nil && !errors.Is(policyErr, os.ErrNotExist) {
 				return nil, "", policyErr
@@ -41,12 +36,12 @@ func optionalCoreSelection(root, trustPath string) (*releasecache.CoreRelease, s
 
 // Reconciliation uses the selected CP payload's build version, not the shared
 // assembly version or the CP version recorded by reused installation media.
-// The immutable host and baked Spine must still match that signed selection.
-func verifyExistingControlVersion(installed string, image appliance.Manifest, root, trustPath string) error {
+// The immutable host and baked Spine must still match that selection.
+func verifyExistingControlVersion(installed string, image appliance.Manifest, root string) error {
 	if image.ReleaseSet == nil {
 		return fmt.Errorf("Control Panel reconciliation requires sealed image provenance")
 	}
-	selected, _, err := optionalCoreSelection(root, trustPath)
+	selected, _, err := optionalCoreSelection(root)
 	if err != nil {
 		return err
 	}
@@ -63,29 +58,29 @@ func verifyExistingControlVersion(installed string, image appliance.Manifest, ro
 		}
 	}
 	if expected == "" || installed != expected {
-		return fmt.Errorf("existing Control Panel version %q does not match selected release member %q; update the Control Panel through its signed channel before resuming deployment", installed, expected)
+		return fmt.Errorf("existing Control Panel version %q does not match selected release member %q; update the Control Panel through its release channel before resuming deployment", installed, expected)
 	}
 	return nil
 }
 
-// Carry exact signed bytes to CP for its independent UI-role verification.
+// Carry the exact accepted bytes to CP for its UI-role digest verification.
 func stageCoreSelection(containerName string) error {
-	release, digest, err := optionalCoreSelection(systemupdate.CoreBootstrapPath, systemupdate.CoreDevelopmentTrustPath)
+	release, digest, err := optionalCoreSelection(systemupdate.CoreBootstrapPath)
 	if err != nil {
 		return fmt.Errorf("verify core selection before CP handoff: %w", err)
 	}
 	if release == nil {
 		return nil
 	}
-	selection, err := coreSelectionForHandoff(context.Background(), systemupdate.CoreBootstrapPath, systemupdate.CoreDevelopmentTrustPath, "/var/lib/youeye/cache/core-update", systemupdate.ReleaseHTTPClient())
+	selection, err := systemupdate.ReadCoreBootstrapSelection(systemupdate.CoreBootstrapPath)
 	if err != nil {
 		return err
 	}
-	_, actual, err := systemupdate.VerifyCoreSelection(selection.Raw, selection.Signature, systemupdate.CoreDevelopmentTrustPath)
+	_, actual, err := releasecache.ParseCoreRelease(selection.Raw)
 	if err != nil || actual != digest {
 		return fmt.Errorf("selected core changed before CP handoff")
 	}
-	// No container mutation precedes authenticated complete metadata.
+	// No container mutation precedes the digest check above.
 	root := "/var/lib/youeye-state/core-selection"
 	if err := util.RunIncusExec(containerName, "mkdir", "-p", root); err != nil {
 		return err
@@ -98,7 +93,7 @@ func stageCoreSelection(containerName string) error {
 		return err
 	}
 	defer os.RemoveAll(inputs)
-	for _, name := range []string{"core-release.json", "core-release.json.sig", systemupdate.CoreMetadataProofName} {
+	for _, name := range []string{"core-release.json"} {
 		if _, err := util.RunCmdCapture("incus", "file", "push", filepath.Join(inputs, name), containerName+root+"/"+name); err != nil {
 			return err
 		}
@@ -148,21 +143,12 @@ func stageCoreSelection(containerName string) error {
 	return util.RunIncusExec(containerName, "sh", "-c", script)
 }
 
-func coreSelectionForHandoff(ctx context.Context, root, trustPath, cacheRoot string, client *http.Client) (systemupdate.CoreHostSelection, error) {
-	selection, err := systemupdate.ReadCoreBootstrapSelection(root, trustPath)
-	if err != nil {
-		return selection, err
-	}
-	selection, _, err = systemupdate.EnsureCoreMetadata(ctx, selection, trustPath, cacheRoot, client, "")
-	return selection, err
-}
-
 func retainCoreHandoffInputs(selection systemupdate.CoreHostSelection) (string, error) {
 	root, err := os.MkdirTemp("", "youeye-core-handoff-*")
 	if err != nil {
 		return "", err
 	}
-	for name, raw := range map[string][]byte{"core-release.json": selection.Raw, "core-release.json.sig": selection.Signature, systemupdate.CoreMetadataProofName: selection.MetadataProof} {
+	for name, raw := range map[string][]byte{"core-release.json": selection.Raw} {
 		if err = os.WriteFile(filepath.Join(root, name), raw, 0600); err != nil {
 			os.RemoveAll(root)
 			return "", err

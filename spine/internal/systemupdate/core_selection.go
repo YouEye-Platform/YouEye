@@ -1,10 +1,7 @@
 package systemupdate
 
 import (
-	"crypto/ed25519"
 	"crypto/sha256"
-	"crypto/x509"
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,60 +13,10 @@ import (
 
 	"github.com/youeye-platform/YouEye/releasecache"
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
-	"github.com/youeye-platform/YouEye/spine/internal/updatetrust"
 )
 
 const CoreBootstrapPath = "/var/lib/youeye-state/bootstrap"
 const CoreStatePath = "/var/lib/youeye-state/core-update"
-const CoreDevelopmentTrustPath = "/usr/share/youeye/appliance-development.pub"
-
-// The legacy filesystem anchor belongs to the immutable image and recovery.
-// On a public-built image it is the public signer, not the Alpha publisher.
-// Core selection uses the provisioned development publisher independently.
-//
-//go:embed release-development.pub
-var coreDevelopmentTrustPEM []byte
-
-var coreTrustLookup = updatetrust.Lookup
-
-// CoreRoleKey resolves current authority for the exact source, raw branch and
-// role. Assembly authority never grants a CP publisher permission to sign host
-// bytes. A revoked enrollment is an error and cannot fall back to baked trust.
-func CoreRoleKey(source, branch, channel, role, developmentKeyPath string) (ed25519.PublicKey, error) {
-	scope := "appliance"
-	switch role {
-	case "cp", "ui", "spine":
-		scope = role
-	case "assembly", "installer", "media", "appliance", "system-update", "system-root", "system-a-uki", "system-b-uki", "system-updater", "internal-recovery", "recovery-uki", "update-bootstrap":
-	default:
-		return nil, fmt.Errorf("unknown core authority scope")
-	}
-	grant, err := coreTrustLookup(source, branch, scope)
-	if err != nil {
-		return nil, err
-	}
-	if grant != nil {
-		return updatetrust.Key(grant.PublicKey)
-	}
-	if strings.HasPrefix(source, "https://github.com/") {
-		if source != releasecache.OfficialRepository || (channel != "stable" && channel != "beta") || (channel == "stable" && branch != "main") || (channel == "beta" && branch != "beta") {
-			return nil, fmt.Errorf("core source has no provisioned public authority")
-		}
-		return publicReleaseKey(channel)
-	}
-	if developmentKeyPath == CoreDevelopmentTrustPath {
-		return updatetrust.Key(string(coreDevelopmentTrustPEM))
-	}
-	return readPublicKey(developmentKeyPath)
-}
-
-func CoreMemberKey(member releasecache.CoreMember, assemblyChannel, developmentKeyPath string) (ed25519.PublicKey, error) {
-	channel, err := releasecache.CoreMemberChannel(member, assemblyChannel)
-	if err != nil {
-		return nil, err
-	}
-	return CoreRoleKey(member.Source, member.Branch, channel, member.Role, developmentKeyPath)
-}
 
 // ReadCoreState accepts only bounded, protected, regular state files. It never
 // treats a malformed or unreadable selected manifest as a legacy installation.
@@ -101,28 +48,88 @@ func ReadCoreState(path string, limit int64) ([]byte, error) {
 	return raw, nil
 }
 
-func VerifyCoreSelection(raw, signature []byte, developmentKeyPath string) (releasecache.CoreRelease, string, error) {
-	r, _, err := releasecache.ParseCoreRelease(raw)
-	if err != nil {
-		return r, "", err
-	}
-	key, err := CoreRoleKey(r.Source, r.Branch, r.Channel, "assembly", developmentKeyPath)
-	if err != nil {
-		return r, "", err
-	}
-	return releasecache.VerifyCoreRelease(raw, signature, key)
+// ReadCoreSelection reads the protected installer-recorded core release and
+// binds it to the exact digest in the release policy stored beside it. That
+// digest, fetched over HTTPS and recorded by the installer, is the root of
+// trust for every member artifact.
+func ReadCoreSelection(root string) (releasecache.CoreRelease, string, error) {
+	_, r, digest, err := ReadAcceptedCoreSelection(root)
+	return r, digest, err
 }
 
-func ReadCoreSelection(root, developmentKeyPath string) (releasecache.CoreRelease, string, error) {
+// ReadCoreBootstrapSelection reads the installer-recorded bytes without a
+// policy binding. Callers must compare its digest with an accepted record.
+func ReadCoreBootstrapSelection(root string) (CoreHostSelection, error) {
 	raw, err := ReadCoreState(filepath.Join(root, "core-release.json"), 1<<20)
 	if err != nil {
-		return releasecache.CoreRelease{}, "", err
+		return CoreHostSelection{}, err
 	}
-	sig, err := ReadCoreState(filepath.Join(root, "core-release.json.sig"), ed25519.SignatureSize)
+	if _, _, err := releasecache.ParseCoreRelease(raw); err != nil {
+		return CoreHostSelection{}, err
+	}
+	return CoreHostSelection{Raw: raw}, nil
+}
+
+// ReadAcceptedCoreSelection reads the installer-recorded release and requires
+// its digest to equal the protected release policy's core_manifest_sha256.
+func ReadAcceptedCoreSelection(root string) (CoreHostSelection, releasecache.CoreRelease, string, error) {
+	selection, err := ReadCoreBootstrapSelection(root)
 	if err != nil {
-		return releasecache.CoreRelease{}, "", err
+		return selection, releasecache.CoreRelease{}, "", err
 	}
-	return VerifyCoreSelection(raw, sig, developmentKeyPath)
+	r, digest, err := releasecache.ParseCoreRelease(selection.Raw)
+	if err != nil {
+		return selection, r, "", err
+	}
+	policy, err := LoadReleasePolicy(filepath.Join(root, "release-policy.json"))
+	if err != nil {
+		return selection, r, "", err
+	}
+	if policy.CoreManifestSHA256 != digest {
+		return selection, r, "", fmt.Errorf("core selection differs from the accepted release digest")
+	}
+	return selection, r, digest, nil
+}
+
+// PolicyCoreSelection derives the System update selection from the protected
+// installer-recorded release policy and the release document it accepted. The
+// host owns this choice: no configuration writable through the Spine API (and
+// so by the Control Panel) participates. A track follows its recorded source
+// and raw branch without fallback; an exact installation stays on its digest.
+func PolicyCoreSelection(root string) (CoreReleaseSelection, error) {
+	policy, err := LoadReleasePolicy(filepath.Join(root, "release-policy.json"))
+	if err != nil {
+		return CoreReleaseSelection{}, err
+	}
+	_, r, digest, err := ReadAcceptedCoreSelection(root)
+	if err != nil {
+		return CoreReleaseSelection{}, err
+	}
+	if err = ValidateCorePolicy(policy, r, digest); err != nil {
+		return CoreReleaseSelection{}, err
+	}
+	selection := CoreReleaseSelection{Source: r.Source, Branch: r.Branch, Fallback: []string{}}
+	if policy.Mode == "exact" {
+		selection.Tag, selection.ManifestSHA256 = r.Tag, digest
+	}
+	return selection, nil
+}
+
+// policyCoreSource maps the recorded provider and releases API back to the
+// repository URL every core release document of that source carries.
+func policyCoreSource(policy ReleasePolicy) (string, error) {
+	_, api, err := normalizeReleaseSource(policy.Provider, policy.ReleasesAPI)
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Split(strings.Trim(api.Path, "/"), "/")
+	if policy.Provider == "github" && len(parts) == 4 {
+		return "https://github.com/" + parts[1] + "/" + parts[2], nil
+	}
+	if policy.Provider == "custom" && len(parts) == 6 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "repos" {
+		return api.Scheme + "://" + api.Host + "/" + parts[3] + "/" + parts[4], nil
+	}
+	return "", fmt.Errorf("release policy does not name a repository")
 }
 
 func ValidateCorePolicy(policy ReleasePolicy, r releasecache.CoreRelease, digest string) error {
@@ -132,19 +139,8 @@ func ValidateCorePolicy(policy ReleasePolicy, r releasecache.CoreRelease, digest
 	if policy.CoreManifestSHA256 != digest {
 		return fmt.Errorf("core selection differs from frozen release policy")
 	}
-	_, api, err := normalizeReleaseSource(policy.Provider, policy.ReleasesAPI)
-	if err != nil {
-		return err
-	}
-	parts := strings.Split(strings.Trim(api.Path, "/"), "/")
-	source := ""
-	if policy.Provider == "github" && len(parts) == 4 {
-		source = "https://github.com/" + parts[1] + "/" + parts[2]
-	}
-	if policy.Provider == "custom" && len(parts) == 6 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "repos" {
-		source = api.Scheme + "://" + api.Host + "/" + parts[3] + "/" + parts[4]
-	}
-	if source == "" || r.Source != source {
+	source, err := policyCoreSource(policy)
+	if err != nil || r.Source != source {
 		return fmt.Errorf("core selection differs from selected repository")
 	}
 	if policy.Mode == "exact" {
@@ -189,10 +185,10 @@ func BindCoreImage(r releasecache.CoreRelease, image appliance.Manifest) error {
 }
 
 // VerifyCoreInstalledMedia is the exact fresh-media gate, before service
-// deployment. It checks the signed bundle and running immutable image against
-// the selected assembly without claiming that CP/UI are already installed.
-func VerifyCoreInstalledMedia(policy ReleasePolicy, root, imagePath, bundlePath, bundleSignaturePath, developmentKeyPath string) (ConvergenceResult, error) {
-	r, digest, err := ReadCoreSelection(root, developmentKeyPath)
+// deployment. It checks the digest-bound bundle and running immutable image
+// against the selected release without claiming that CP/UI are installed.
+func VerifyCoreInstalledMedia(policy ReleasePolicy, root, imagePath, bundlePath string) (ConvergenceResult, error) {
+	r, digest, err := ReadCoreSelection(root)
 	if err != nil {
 		return ConvergenceResult{}, err
 	}
@@ -222,20 +218,7 @@ func VerifyCoreInstalledMedia(policy ReleasePolicy, root, imagePath, bundlePath,
 	}
 	bundleDigest := fmt.Sprintf("%x", sha256.Sum256(bundleRaw))
 	if member.Artifact.SHA256 != bundleDigest || member.Artifact.SizeBytes != int64(len(bundleRaw)) || policy.Mode == "exact" && policy.ManifestSHA256 != bundleDigest {
-		return ConvergenceResult{}, fmt.Errorf("core selection differs from installed signed bundle")
-	}
-	sig, err := ReadCoreState(bundleSignaturePath, ed25519.SignatureSize)
-	if err != nil {
-		return ConvergenceResult{}, err
-	}
-	key, err := CoreMemberKey(member, r.Channel, developmentKeyPath)
-	if err != nil {
-		return ConvergenceResult{}, err
-	}
-	der, err := x509.MarshalPKIXPublicKey(key)
-	id := fmt.Sprintf("%x", sha256.Sum256(der))
-	if err != nil || member.KeyID != id || member.DocumentSignature == nil || member.DocumentSignature.SizeBytes != int64(len(sig)) || member.DocumentSignature.SHA256 != fmt.Sprintf("%x", sha256.Sum256(sig)) || !ed25519.Verify(key, bundleRaw, sig) {
-		return ConvergenceResult{}, fmt.Errorf("installed bundle role signature rejected")
+		return ConvergenceResult{}, fmt.Errorf("core selection differs from installed bundle")
 	}
 	var bundle exactBundleManifest
 	if json.Unmarshal(bundleRaw, &bundle) != nil || bundle.Schema != "youeye.appliance.manifest.v1" || bundle.ImageVersion != image.ImageVersion || bundle.SourceCommit != image.SourceCommit || !reflect.DeepEqual(bundle.ReleaseSet, *image.ReleaseSet) {
@@ -243,21 +226,4 @@ func VerifyCoreInstalledMedia(policy ReleasePolicy, root, imagePath, bundlePath,
 	}
 	status := Status{Schema: StatusSchema, State: PhaseHealthy, CurrentImage: image.ImageVersion, RunningImage: image.ImageVersion, TargetImage: image.ImageVersion}
 	return ConvergenceResult{Schema: "youeye.first-boot-convergence.v1", Action: "core-media-current", SelectedTag: r.Tag, ManifestSHA256: digest, CurrentImage: image.ImageVersion, TargetImage: image.ImageVersion, Status: status}, nil
-}
-
-// CheckCoreMemberAuthority checks revocation/current role identity without
-// re-downloading payloads whose complete envelope was already verified at stage.
-func CheckCoreMemberAuthority(member releasecache.CoreMember, channel, trustPath string) error {
-	key, err := CoreMemberKey(member, channel, trustPath)
-	if err != nil {
-		return err
-	}
-	der, err := x509.MarshalPKIXPublicKey(key)
-	if err != nil {
-		return err
-	}
-	if fmt.Sprintf("%x", sha256.Sum256(der)) != member.KeyID {
-		return fmt.Errorf("current core role authority differs from staged member")
-	}
-	return nil
 }

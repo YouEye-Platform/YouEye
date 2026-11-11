@@ -47,7 +47,7 @@ func (m CoreManager) retainSequence(r releasecache.CoreRelease, digest string, r
 		}
 		if r.Sequence == old.Sequence {
 			if digest != old.ManifestSHA256 {
-				return fmt.Errorf("signed core source-track sequence conflicts")
+				return fmt.Errorf("core source-track sequence conflicts")
 			}
 			return nil
 		}

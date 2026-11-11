@@ -2,13 +2,9 @@ package installer
 
 import (
 	"bytes"
-	"crypto/ed25519"
 	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"os"
@@ -22,7 +18,6 @@ import (
 
 const (
 	applianceBundleSchema        = "youeye.appliance.manifest.v1"
-	applianceTrustDev            = "development"
 	applianceStateSchema         = 2
 	applianceDataSchema          = 1
 	applianceKernelCompatibility = ">=6.12"
@@ -49,7 +44,6 @@ type applianceBundleManifest struct {
 	ZFSFeatureProfile   string                    `json:"zfs_feature_profile"`
 	IncusCompatibility  string                    `json:"incus_compatibility"`
 	RecoveryVersion     string                    `json:"recovery_version"`
-	Trust               applianceManifestTrust    `json:"trust"`
 	ReleaseSet          applianceManifestReleases `json:"release_set"`
 	Artifacts           []applianceManifestAsset  `json:"artifacts"`
 	SourceDateEpoch     int64                     `json:"source_date_epoch"`
@@ -64,13 +58,7 @@ type applianceManifestLayout struct {
 	StateGiB     int64 `json:"state_gib"`
 }
 
-type applianceManifestTrust struct {
-	Class string `json:"class"`
-	KeyID string `json:"key_id"`
-}
-
 type applianceManifestReleases struct {
-	Schema       string                     `json:"schema,omitempty"`
 	Source       string                     `json:"source"`
 	Branch       string                     `json:"branch"`
 	Fallback     []string                   `json:"fallback"`
@@ -80,7 +68,6 @@ type applianceManifestReleases struct {
 }
 
 type applianceManifestComponent struct {
-	Branch         string `json:"branch,omitempty"`
 	Version        string `json:"version"`
 	Tag            string `json:"tag,omitempty"`
 	SourceCommit   string `json:"source_commit"`
@@ -108,7 +95,10 @@ type verifiedApplianceAsset struct {
 	Path     string
 }
 
-func verifyApplianceBundle(manifestPath, signaturePath, trustKeyPath string) (verifiedApplianceBundle, error) {
+// verifyApplianceBundle reads the image manifest from the boot medium and
+// checks every artifact it names by size and sha256. The manifest itself is
+// bound by digest to the accepted core release when one is selected.
+func verifyApplianceBundle(manifestPath string) (verifiedApplianceBundle, error) {
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return verifiedApplianceBundle{}, fmt.Errorf("read appliance manifest: %w", err)
@@ -116,24 +106,6 @@ func verifyApplianceBundle(manifestPath, signaturePath, trustKeyPath string) (ve
 	manifest, err := parseApplianceBundleManifest(raw)
 	if err != nil {
 		return verifiedApplianceBundle{}, err
-	}
-	publicKey, err := readEd25519PublicKey(trustKeyPath)
-	if manifest.Trust.Class != applianceTrustDev {
-		anchor, anchorErr := publicReleaseAnchor(manifest.Trust.Class)
-		if anchorErr != nil {
-			return verifiedApplianceBundle{}, anchorErr
-		}
-		publicKey, err = parseEd25519PublicKey(anchor)
-	}
-	if err != nil {
-		return verifiedApplianceBundle{}, err
-	}
-	signature, err := readEd25519Signature(signaturePath)
-	if err != nil {
-		return verifiedApplianceBundle{}, err
-	}
-	if !ed25519.Verify(publicKey, raw, signature) {
-		return verifiedApplianceBundle{}, fmt.Errorf("appliance manifest signature is not valid")
 	}
 
 	base := filepath.Dir(manifestPath)
@@ -187,8 +159,6 @@ func validateApplianceBundleManifest(manifest applianceBundleManifest) error {
 		"zfs_feature_profile":  manifest.ZFSFeatureProfile,
 		"incus_compatibility":  manifest.IncusCompatibility,
 		"recovery_version":     manifest.RecoveryVersion,
-		"trust.class":          manifest.Trust.Class,
-		"trust.key_id":         manifest.Trust.KeyID,
 		"release_set.source":   manifest.ReleaseSet.Source,
 		"release_set.branch":   manifest.ReleaseSet.Branch,
 	} {
@@ -229,54 +199,17 @@ func validateApplianceBundleManifest(manifest applianceBundleManifest) error {
 		manifest.RecoveryVersion != applianceRecoveryVersion {
 		return fmt.Errorf("appliance manifest runtime compatibility is not supported by this installer")
 	}
-	if manifest.Trust.Class != applianceTrustDev && manifest.Trust.Class != "beta" && manifest.Trust.Class != "stable" {
-		return fmt.Errorf("unsupported appliance trust class %q", manifest.Trust.Class)
-	}
-	if manifest.Trust.Class != applianceTrustDev {
-		branch := "main"
-		if manifest.Trust.Class == "beta" {
-			branch = "beta"
-		}
-		if manifest.ReleaseSet.Branch != branch || !strings.HasPrefix(manifest.ReleaseSet.Source, "https://github.com/") {
-			return fmt.Errorf("public appliance trust must match its GitHub release source and branch")
-		}
-	}
 	if len(manifest.ReleaseSet.Fallback) != 0 {
 		return fmt.Errorf("appliance release_set fallback must be empty")
 	}
 	if !validApplianceReleaseBranch(manifest.ReleaseSet.Branch) {
 		return fmt.Errorf("appliance release_set branch is invalid")
 	}
-	if manifest.ReleaseSet.Schema != "" && manifest.ReleaseSet.Schema != "youeye.release-set.v2" {
-		return fmt.Errorf("unsupported release-set schema")
-	}
-	if manifest.ReleaseSet.Schema != "" && manifest.Trust.Class != applianceTrustDev {
-		return fmt.Errorf("component composition requires development trust")
-	}
 	for name, component := range map[string]applianceManifestComponent{
 		"spine":         manifest.ReleaseSet.Spine,
 		"control_panel": manifest.ReleaseSet.ControlPanel,
 		"ui":            manifest.ReleaseSet.UI,
 	} {
-		if manifest.ReleaseSet.Schema == "" && component.Branch != "" {
-			return fmt.Errorf("component branches require release-set v2")
-		}
-		if manifest.ReleaseSet.Schema != "" {
-			if !validApplianceReleaseBranch(component.Branch) {
-				return fmt.Errorf("invalid component branch")
-			}
-			prefix := name
-			if name == "control_panel" {
-				prefix = "cp"
-			}
-			want := prefix + "-v" + component.Version
-			if component.Branch != "main" {
-				want = prefix + "-" + component.Branch + "-v" + component.Version
-			}
-			if component.Tag != want {
-				return fmt.Errorf("composition component tag does not match its original branch and version")
-			}
-		}
 		if err := validateManifestComponent(name, component); err != nil {
 			return err
 		}
@@ -404,59 +337,6 @@ func verifyFileIdentity(path string, size int64, wantSHA string) error {
 		return fmt.Errorf("sha256 mismatch: got %s, want %s", got, wantSHA)
 	}
 	return nil
-}
-
-func readEd25519PublicKey(path string) (ed25519.PublicKey, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read appliance trust key: %w", err)
-	}
-	return parseEd25519PublicKey(raw)
-}
-
-func parseEd25519PublicKey(raw []byte) (ed25519.PublicKey, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if block, _ := pem.Decode(trimmed); block != nil {
-		parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("parse appliance trust key: %w", err)
-		}
-		key, ok := parsed.(ed25519.PublicKey)
-		if !ok {
-			return nil, fmt.Errorf("appliance trust key is not Ed25519")
-		}
-		return key, nil
-	}
-	for _, decode := range []func(string) ([]byte, error){hex.DecodeString, base64.StdEncoding.DecodeString} {
-		if decoded, err := decode(string(trimmed)); err == nil && len(decoded) == ed25519.PublicKeySize {
-			return ed25519.PublicKey(decoded), nil
-		}
-	}
-	if len(trimmed) == ed25519.PublicKeySize {
-		return ed25519.PublicKey(append([]byte(nil), trimmed...)), nil
-	}
-	return nil, fmt.Errorf("appliance trust key has unsupported encoding")
-}
-
-func readEd25519Signature(path string) ([]byte, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read appliance manifest signature: %w", err)
-	}
-	return parseEd25519Signature(raw)
-}
-
-func parseEd25519Signature(raw []byte) ([]byte, error) {
-	if len(raw) == ed25519.SignatureSize {
-		return raw, nil
-	}
-	trimmed := strings.TrimSpace(string(raw))
-	for _, decode := range []func(string) ([]byte, error){hex.DecodeString, base64.StdEncoding.DecodeString} {
-		if decoded, err := decode(trimmed); err == nil && len(decoded) == ed25519.SignatureSize {
-			return decoded, nil
-		}
-	}
-	return nil, fmt.Errorf("appliance manifest signature has unsupported encoding")
 }
 
 func validSHA256Hex(value string) bool { return len(value) == 64 && isLowerHex(value) }

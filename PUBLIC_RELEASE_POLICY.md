@@ -21,7 +21,7 @@ Planning, worker handoffs, build receipts, deployment evidence, and private envi
 
 ## Source and release defaults
 
-Public builds default to the YouEye GitHub repositories. Development, beta, Forgejo, and custom HTTPS sources remain explicit opt-in configuration and must preserve signed release, same-origin, checksum, and exact-source verification.
+Public builds default to the YouEye GitHub repositories. Development, beta, Forgejo, and custom HTTPS sources remain explicit opt-in configuration and must preserve digest-bound release (`core-release.json` SHA-256 over HTTPS), same-origin, checksum, and exact-source verification. Releases are unsigned until signing returns before the first public release.
 
 Stable trust and Stable publication are separate protected operations. Development trust must never be relabeled as Stable trust.
 

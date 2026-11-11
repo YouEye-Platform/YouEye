@@ -8,21 +8,19 @@ import (
 	"path/filepath"
 
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
-	"github.com/youeye-platform/YouEye/spine/internal/channels"
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"github.com/youeye-platform/YouEye/spine/internal/util"
 )
 
+// coreSelectionRoot holds the installer-recorded release policy. Tests point it
+// at a fixture.
+var coreSelectionRoot = systemupdate.CoreBootstrapPath
+
+// currentCoreSelection is the host-owned System update source: the protected
+// installer-recorded release policy. youeye.yaml release channels (writable by
+// the Control Panel through the Spine API) never participate.
 func currentCoreSelection() (systemupdate.CoreReleaseSelection, error) {
-	c, err := channels.Load()
-	if err != nil {
-		return systemupdate.CoreReleaseSelection{}, err
-	}
-	channel := c.Effective(channels.ComponentSystem, GetConfig())
-	if err = channels.ValidateSystemChannel(channel); err != nil {
-		return systemupdate.CoreReleaseSelection{}, err
-	}
-	return systemupdate.CoreReleaseSelection{Source: channel.Source, Branch: channel.Branch, Fallback: channel.Fallback, Tag: channel.Tag, ManifestSHA256: channel.ArtifactSHA256}, nil
+	return systemupdate.PolicyCoreSelection(coreSelectionRoot)
 }
 
 func installedCoreRuntime() (systemupdate.NativeCoreRuntime, error) {
@@ -30,7 +28,7 @@ func installedCoreRuntime() (systemupdate.NativeCoreRuntime, error) {
 	if os.Geteuid() != 0 {
 		return r, fmt.Errorf("native core operation requires root")
 	}
-	if err := requireImageUpdate(false); err != nil {
+	if err := requireImageUpdate(); err != nil {
 		return r, err
 	}
 	cfg := GetConfig()
@@ -40,18 +38,12 @@ func installedCoreRuntime() (systemupdate.NativeCoreRuntime, error) {
 	if cfg.Deployment.ControlPanel.Port < 1 || cfg.Deployment.ControlPanel.Port > 65535 {
 		return r, fmt.Errorf("invalid installed CP port")
 	}
-	coordinator, err := (systemupdate.CoreManager{Root: systemupdate.CoreStatePath}).BootstrapExecutable(systemupdate.CoreDevelopmentTrustPath)
+	coordinator, err := (systemupdate.CoreManager{Root: systemupdate.CoreStatePath}).BootstrapExecutable()
 	if err != nil {
 		return r, err
 	}
 	if coordinator == "" {
-		coordinator, err = (systemupdate.SpineCandidateManager{}).TestExecutable()
-		if err != nil {
-			return r, err
-		}
-		if coordinator == "" {
-			coordinator = "/usr/local/bin/youeye"
-		}
+		coordinator = "/usr/local/bin/youeye"
 	}
 	checkpoint := systemupdate.NativeCoreCheckpoint{Root: systemupdate.CoreStatePath, DataRoot: "/var/lib/youeye", StatePath: appliance.StatePath, Bridge: cfg.Deployment.Incus.Network,
 		IngressPorts: []uint16{80, 443, uint16(cfg.Deployment.ControlPanel.Port), 3001},
@@ -72,9 +64,9 @@ func installedCoreRuntime() (systemupdate.NativeCoreRuntime, error) {
 			}
 			return "", fmt.Errorf("host address is not assigned")
 		}}
-	cache := systemupdate.NewRuntimeCoreArtifactCache(filepath.Join(checkpoint.DataRoot, "cache", "core-update"), systemupdate.CoreDevelopmentTrustPath)
+	cache := systemupdate.NewRuntimeCoreArtifactCache(filepath.Join(checkpoint.DataRoot, "cache", "core-update"))
 	services := systemupdate.NativeCoreServices{Checkpoint: checkpoint, Cache: cache, CPAppDir: cfg.Deployment.ControlPanel.AppDir, UIAppDir: cfg.Deployment.UI.AppDir, CPPort: cfg.Deployment.ControlPanel.Port}
-	authority := systemupdate.NativeCoreAuthority{FirstBootPolicyPath: filepath.Join(systemupdate.CoreBootstrapPath, "release-policy.json"), FirstBootCompletePath: "/var/lib/youeye-state/first-deploy/complete", Checkpoint: checkpoint, TrustKeyPath: cache.TrustKeyPath, Client: cache.Client, CurrentSelection: currentCoreSelection}
+	authority := systemupdate.NativeCoreAuthority{FirstBootPolicyPath: filepath.Join(systemupdate.CoreBootstrapPath, "release-policy.json"), FirstBootCompletePath: "/var/lib/youeye-state/first-deploy/complete", Checkpoint: checkpoint, Client: cache.Client, CurrentSelection: currentCoreSelection}
 	host := systemupdate.NewDefault()
 	r = systemupdate.NativeCoreRuntime{Root: checkpoint.Root, Host: host, Cache: cache, Services: services, Checkpoint: checkpoint,
 		Runner: systemupdate.CoreSystemdRunner{Root: checkpoint.Root, Executable: coordinator}, AuthorizeTarget: authority.AuthorizeTarget, AuthorizePrevious: authority.AuthorizePrevious,

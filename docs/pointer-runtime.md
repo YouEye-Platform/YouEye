@@ -67,7 +67,7 @@ Existing-service reconciliation applies current managed configuration after a
 Control Panel update. Registered LXD updates share lifecycle exclusion with
 backup and restore; static update requests require administrator access and CSRF
 validation. Pointer refreshes its managed environment from the installed release
-before restart so its reported build identity follows the signed payload.
+before restart so its reported build identity follows the installed payload.
 
 Identity activity changes and deletion acquire all affected app lifecycle gates
 before changing Pointer's actor state. Disable closes Pointer first; activation
@@ -93,9 +93,10 @@ not establish media, embedding, semantic-search or token-count support.
 Infrastructure deployment resolves each component’s effective repository together
 with its selected branch, exact tag and artifact digest. An explicit UI or
 `app:pointer` publisher override must not be combined with the global core
-repository. Pointer’s default repository is its own app source. Signed artifact
-verification keeps the embedded publisher identity and configured digest; public
-GitHub defaults and signing-channel checks remain effective.
+repository. Pointer’s default repository is its own app source. Artifact
+verification uses the configured SHA-256 digest over HTTPS; releases are
+unsigned until signing returns before the first public release, and public
+GitHub defaults remain effective.
 
 Re-enabling an existing managed AI connection reapplies the current manifest AI environment with its existing protected credential before activation. This converges utility-model mappings without replacing the app instance or key; a missing protected credential requires recovery. Retained-data adoption still requires the exact original manifest digest.
 

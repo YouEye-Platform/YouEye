@@ -27,7 +27,7 @@ func (s *Server) buildChannelsView(c *channels.Config) channelsView {
 		Override:  map[string]*channels.Channel{},
 	}
 
-	components := []string{channels.ComponentDefault, channels.ComponentSystem, channels.ComponentSpine, channels.ComponentControl, channels.ComponentUI}
+	components := []string{channels.ComponentDefault, channels.ComponentSpine, channels.ComponentControl, channels.ComponentUI}
 	for _, comp := range components {
 		view.Effective[comp] = c.Effective(comp, s.cfg)
 	}
@@ -41,10 +41,6 @@ func (s *Server) buildChannelsView(c *channels.Config) channelsView {
 	// Raw override map: default always present; core overrides only when set.
 	def := c.Default
 	view.Override[channels.ComponentDefault] = &def
-	if !c.System.IsZero() {
-		v := c.System
-		view.Override[channels.ComponentSystem] = &v
-	}
 	if !c.Spine.IsZero() {
 		v := c.Spine
 		view.Override[channels.ComponentSpine] = &v
@@ -64,10 +60,10 @@ func (s *Server) buildChannelsView(c *channels.Config) channelsView {
 	return view
 }
 
-// applyChannelsPatch applies a {"<component>": {…} | null} patch to the channels
-// config, validating each entry. A null value clears the override (resets to
-// default for core components / removes app overrides). Returns the number of
-// components changed.
+// applyChannelsPatch applies a {"app:<id>": {…} | null} patch to the channels
+// config, validating each entry. A null value removes the app override. Core
+// channels (default, spine, control, ui) and the System selection are owned by
+// the host and are never writable through this API.
 func applyChannelsPatch(c *channels.Config, patch map[string]interface{}) error {
 	for comp, raw := range patch {
 		normalized, err := normalizeAPIComponent(comp)
@@ -159,12 +155,19 @@ func channelFromMap(obj map[string]interface{}) (channels.Channel, error) {
 	return ch, nil
 }
 
+// hostOwnedChannels names the release channels the Control Panel can read but
+// never change. "system" is not a channel at all; it is refused explicitly so
+// an old Control Panel gets a clear answer.
+var hostOwnedChannels = map[string]bool{
+	"system": true, channels.ComponentDefault: true, channels.ComponentSpine: true,
+	channels.ComponentControl: true, channels.ComponentUI: true,
+}
+
 func normalizeAPIComponent(component string) (string, error) {
-	switch component {
-	case channels.ComponentSystem, channels.ComponentDefault, channels.ComponentSpine, channels.ComponentControl, channels.ComponentUI:
-		return component, nil
+	if hostOwnedChannels[component] {
+		return "", fmt.Errorf("release channel %q is owned by the host and cannot be changed here", component)
 	}
-	if len(component) > len(channels.AppPrefix) && component[:len(channels.AppPrefix)] == channels.AppPrefix {
+	if appID, ok := strings.CutPrefix(component, channels.AppPrefix); ok && appID != "" {
 		return component, nil
 	}
 	return "", fmt.Errorf("unknown component %q", component)

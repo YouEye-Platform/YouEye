@@ -123,21 +123,16 @@ test('YouEye ID uses one 8-256 password policy across claim, stores, compatibili
   assert.match(client, /X-CSRF-Token/);
 });
 
-test('managed onboarding uses automatic readiness and retains protected backup restore and separate signed-update controls', () => {
+test('managed onboarding uses automatic readiness and retains protected backup restore', () => {
   const setup = read('src/app/setup/page.tsx');
-  const update = read('src/components/setup/SetupApplianceUpdate.tsx');
   const restore = read('src/app/api/setup/restore/route.ts');
 
   assert.match(setup, /SetupReadiness/);
   assert.doesNotMatch(setup, /SetupApplianceUpdate/);
   assert.match(setup, /handleReady = useCallback\(\(\) => goToStep\(-1\)/);
   assert.match(setup, /SetupRestore/);
-  assert.match(update, /Continue with packaged version/);
-  assert.match(update, /Update now/);
-  assert.match(update, /system-update\/source/);
-  assert.match(update, /JSON\.stringify\(source\)/);
-  assert.match(update, /system-update\/stage/);
-  assert.match(update, /system-update\/activate/);
+  // Setup never selects or stages a host System; that source is host-owned.
+  assert.equal(existsSync(join(root, 'src/components/setup/SetupApplianceUpdate.tsx')), false);
   assert.match(restore, /session\?\.isAdmin/);
   assert.match(restore, /session\.setupOwnerId/);
   assert.match(restore, /verifyCSRFToken/);

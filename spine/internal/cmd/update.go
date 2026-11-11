@@ -125,7 +125,7 @@ var updateIncusCmd = &cobra.Command{
 
 var updateSystemCmd = &cobra.Command{
 	Use:   "system",
-	Short: "Update the host system or signed appliance image",
+	Short: "Update the host system or appliance image",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return updateSystem()
 	},
@@ -284,10 +284,10 @@ func updateSelf() error {
 		os.Remove(tmpFile)
 		return fmt.Errorf("failed to download: %w", err)
 	}
-	if err := releases.VerifySignedReleaseArtifact(dlClient, downloadURL, tmpFile, cand.ArtifactSHA256, "spine"); err != nil {
+	if err := releases.VerifyReleaseArtifact(downloadURL, tmpFile, cand.ArtifactSHA256, "spine"); err != nil {
 		os.Remove(tmpFile)
-		update.Fail("spine", Version, "release signature verification failed")
-		return fmt.Errorf("verify signed Spine release: %w", err)
+		update.Fail("spine", Version, "release checksum verification failed")
+		return fmt.Errorf("verify Spine release: %w", err)
 	}
 
 	// Make executable
@@ -644,8 +644,8 @@ func updateControl() error {
 	if err != nil {
 		return fmt.Errorf("failed to download: %w", err)
 	}
-	if err := releases.VerifySignedReleaseArtifact(cpDlClient, downloadURL, tmpFile, controlChannel.ArtifactSHA256, "cp"); err != nil {
-		return fmt.Errorf("verify signed Control Panel release artifact: %w", err)
+	if err := releases.VerifyReleaseArtifact(downloadURL, tmpFile, controlChannel.ArtifactSHA256, "cp"); err != nil {
+		return fmt.Errorf("verify Control Panel release artifact: %w", err)
 	}
 
 	fmt.Println("Stopping Control Panel...")

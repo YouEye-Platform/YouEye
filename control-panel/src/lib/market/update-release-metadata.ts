@@ -140,7 +140,7 @@ export async function updateIdenticalProductRelease(
   const oldManifest = await io.manifest(before.appId, installedVersion);
   if (!await sameMarketInstallContract(manifest, oldManifest, before)) throw new Error('Identical product payload has a different install contract');
   // Keep the already accepted catalog presentation/source projection when only
-  // the release label changes. Its exact original signed contract is unchanged.
+  // the release label changes. Its exact original build contract is unchanged.
   manifest = {...oldManifest, version:selected.release.version};
   const projections = artifacts.map(a => {
     const container = before.containers.find(c => c.name === a.containerName);

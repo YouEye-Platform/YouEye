@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
-	"time"
 
 	"github.com/youeye-platform/YouEye/releasecache"
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
@@ -12,8 +10,6 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 )
-
-var coreServiceTrustPath = systemupdate.CoreDevelopmentTrustPath
 
 func coreDeploymentManifest(image appliance.Manifest, policy systemupdate.ReleasePolicy) (appliance.Manifest, error) {
 	_, _, err := coreDeploymentSelection(image, policy)
@@ -23,9 +19,7 @@ func coreDeploymentManifest(image appliance.Manifest, policy systemupdate.Releas
 }
 
 func coreDeploymentSelection(image appliance.Manifest, policy systemupdate.ReleasePolicy) (releasecache.CoreRelease, string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	_, r, digest, err := systemupdate.ReadAuthenticatedCoreSelection(ctx, filepath.Dir(deploymentPolicyPath), coreServiceTrustPath, "/var/lib/youeye/cache/core-update", nil)
+	_, r, digest, err := systemupdate.ReadAcceptedCoreSelection(filepath.Dir(deploymentPolicyPath))
 	if err != nil {
 		return r, digest, err
 	}
@@ -77,7 +71,7 @@ func pinCoreDeploymentServices(config *channels.Config, image appliance.Manifest
 }
 
 func selectCoreServices(image appliance.Manifest, policy systemupdate.ReleasePolicy) (appliance.Manifest, error) {
-	r, digest, err := coreDeploymentSelection(image, policy)
+	r, _, err := coreDeploymentSelection(image, policy)
 	if err != nil {
 		return image, err
 	}
@@ -91,42 +85,7 @@ func selectCoreServices(image appliance.Manifest, policy systemupdate.ReleasePol
 	if err := pinCoreDeploymentServices(config, image, r); err != nil {
 		return image, err
 	}
-	if err := setInitialSystemChannel(config, r, digest, policy); err != nil {
-		return image, err
-	}
 	return image, config.Save()
-}
-
-func initializeSystemChannel(r releasecache.CoreRelease, digest string, policy systemupdate.ReleasePolicy) error {
-	c, err := channels.Load()
-	if err != nil {
-		return err
-	}
-	if err := setInitialSystemChannel(c, r, digest, policy); err != nil {
-		return err
-	}
-	return c.Save()
-}
-
-func setInitialSystemChannel(c *channels.Config, r releasecache.CoreRelease, digest string, policy systemupdate.ReleasePolicy) error {
-	if !c.System.IsZero() {
-		effective := c.Effective(channels.ComponentSystem, GetConfig())
-		if err := channels.ValidateSystemChannel(effective); err != nil {
-			return err
-		}
-		if effective.Source != r.Source || effective.Branch != r.Branch || effective.Tag != "" && (effective.Tag != r.Tag || effective.ArtifactSHA256 != digest) {
-			return fmt.Errorf("retained System source/pin differs from frozen installation selection")
-		}
-		return nil
-	}
-	ch := channels.Channel{Source: r.Source, Branch: r.Branch, Fallback: c.Effective(channels.ComponentDefault, GetConfig()).Fallback}
-	if policy.Mode == "exact" {
-		ch.Tag, ch.ArtifactSHA256, ch.PinOrigin = r.Tag, digest, "installation"
-	}
-	if err := c.SetChannel(channels.ComponentSystem, ch); err != nil {
-		return err
-	}
-	return nil
 }
 
 func verifyCoreDeploymentReleaseSet(image appliance.Manifest, cfg *config.Config, policy systemupdate.ReleasePolicy) error {

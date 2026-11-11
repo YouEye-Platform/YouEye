@@ -76,8 +76,6 @@ export async function register() {
     startVersionChecker();
     const { startHealthChecker } = await import("@/lib/market/health-checker");
     startHealthChecker();
-    const { startSystemUpdateChecker } = await import("@/lib/appliance/system-update-checker");
-    startSystemUpdateChecker();
     const { startBackupScheduler } = await import("@/lib/backup/scheduler");
     startBackupScheduler();
     const { reconcileInstalledAdmission } = await import('@/lib/admission/lifecycle');

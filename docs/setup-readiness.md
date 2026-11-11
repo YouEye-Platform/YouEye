@@ -84,4 +84,4 @@ Scoped IBM Plex font assets include their source revision, hashes and licence.
 Focused tests cover receipt mismatch/damage/unfinished state, asynchronous lock
 contention, retained-operation resume and native System refusal. These source
 tests do not prove first deployment, physical restore, browser origin trust or
-signed update/recovery acceptance.
+digest-bound update/recovery acceptance.

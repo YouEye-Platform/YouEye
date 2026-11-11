@@ -94,7 +94,7 @@ func TestInstallJournalMatchRequiresSameTransactionIdentity(t *testing.T) {
 	}
 	bundle.Manifest.ImageVersion = "0.6.0-dev.2"
 	if journal.matches(bundle, target, journal.TransactionID) {
-		t.Fatal("different signed image version matched the completed journal")
+		t.Fatal("different image version matched the completed journal")
 	}
 }
 

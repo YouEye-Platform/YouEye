@@ -14,6 +14,18 @@ import (
 
 var ErrNoCoreRelease = errors.New("no complete core release on the selected source branch")
 
+// errCoreMetadataNotFound is a definite absence of a listed release document.
+var errCoreMetadataNotFound = errors.New("core release document not found")
+
+func releaseHasAsset(r release, name string) bool {
+	for _, asset := range r.Assets {
+		if asset.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 type CoreReleaseSelection struct {
 	Source         string
 	Branch         string
@@ -22,10 +34,11 @@ type CoreReleaseSelection struct {
 	ManifestSHA256 string
 }
 
-// ResolveCoreRelease selects one complete signed assembly. Raw branch names,
-// ordered fallback and exact pins remain independent of suffix tokens. Signed
-// sequence selects the track head; provider timestamps never decide authority.
-func ResolveCoreRelease(ctx context.Context, client *http.Client, selection CoreReleaseSelection, trustKeyPath string) (CoreHostSelection, releasecache.CoreRelease, string, error) {
+// ResolveCoreRelease selects one complete release document over HTTPS. Raw
+// branch names, ordered fallback and exact pins remain independent of suffix
+// tokens. Document sequence selects the track head; provider timestamps never
+// decide. An exact pin is bound by its manifest digest.
+func ResolveCoreRelease(ctx context.Context, client *http.Client, selection CoreReleaseSelection) (CoreHostSelection, releasecache.CoreRelease, string, error) {
 	var empty CoreHostSelection
 	source, err := releasecache.ParseRepositorySource(selection.Source)
 	if err != nil {
@@ -59,7 +72,7 @@ func ResolveCoreRelease(ctx context.Context, client *http.Client, selection Core
 	discoveryCtx := ctx
 	if selection.Tag == "" {
 		// Following a track requires current discovery, never the list frozen
-		// into installation media. Keep the ordinary signed distribution path.
+		// into installation media.
 		discoveryCtx = releasecache.LiveDiscovery(ctx)
 	}
 	releases, err := fetchReleases(discoveryCtx, client, source.Adapter, api)
@@ -90,7 +103,7 @@ func ResolveCoreRelease(ctx context.Context, client *http.Client, selection Core
 				continue
 			}
 			// Only these branches have a reserved public/development token. Other
-			// branches must be resolved by their signed raw identity.
+			// branches must be resolved by their raw document identity.
 			version := strings.TrimPrefix(candidate.TagName, "youeye-v")
 			if branch == "main" && ((source.Adapter == "github" && strings.Contains(version, "-")) || (source.Adapter != "github" && !strings.Contains(version, "-alpha."))) {
 				continue
@@ -98,21 +111,37 @@ func ResolveCoreRelease(ctx context.Context, client *http.Client, selection Core
 			if (branch == "dev" || branch == "beta" || branch == "alpha") && !strings.Contains(version, "-"+branch+".") {
 				continue
 			}
-			manifestURL, err := releaseAssetURL(source.Adapter, api, candidate, "core-release.json")
-			if err != nil {
-				return empty, best, "", err
+			// Older releases on the same track may predate the current document
+			// format (e.g. signed 0.5.x releases) or lack core-release.json. They
+			// are not candidates; skipping them cannot promote anything, because
+			// only documents that parse are compared by sequence. Only such
+			// definite absence or invalidity is skipped: a transport, server or
+			// rate-limit failure is returned so discovery is reported unavailable
+			// instead of silently selecting an older release. An exact pin's
+			// document must always be readable.
+			if !releaseHasAsset(candidate, "core-release.json") {
+				if selection.Tag != "" {
+					return empty, best, "", fmt.Errorf("core release %s is missing core-release.json", candidate.TagName)
+				}
+				continue
 			}
-			signatureURL, err := releaseAssetURL(source.Adapter, api, candidate, "core-release.json.sig")
+			manifestURL, err := releaseAssetURL(source.Adapter, api, candidate, "core-release.json")
 			if err != nil {
 				return empty, best, "", err
 			}
 			raw, err := readCoreMetadata(ctx, client, manifestURL, 1<<20)
 			if err != nil {
+				if selection.Tag == "" && errors.Is(err, errCoreMetadataNotFound) {
+					continue
+				}
 				return empty, best, "", err
 			}
-			parsed, _, err := releasecache.ParseCoreRelease(raw)
+			parsed, hash, err := releasecache.ParseCoreRelease(raw)
 			if err != nil {
-				return empty, best, "", err
+				if selection.Tag != "" {
+					return empty, best, "", err
+				}
+				continue
 			}
 			if parsed.Source != source.URL || parsed.Tag != candidate.TagName {
 				return empty, best, "", fmt.Errorf("core release differs from selected repository/tag")
@@ -136,31 +165,16 @@ func ResolveCoreRelease(ctx context.Context, client *http.Client, selection Core
 			if parsed.Channel == "stable" && candidate.Prerelease {
 				return empty, best, "", fmt.Errorf("Stable core is advertised as a prerelease")
 			}
-			sig, err := readCoreMetadata(ctx, client, signatureURL, 64)
-			if err != nil {
-				return empty, best, "", err
-			}
-			r, hash, err := VerifyCoreSelection(raw, sig, trustKeyPath)
-			if err != nil {
-				return empty, best, "", err
-			}
+			r := parsed
 			if selection.Tag != "" && hash != selection.ManifestSHA256 {
 				return empty, best, "", fmt.Errorf("exact core pin digest mismatch")
 			}
 			if previous, ok := sequences[r.Sequence]; ok && previous != hash {
-				return empty, best, "", fmt.Errorf("conflicting signed core sequence on selected track")
+				return empty, best, "", fmt.Errorf("conflicting core sequence on selected track")
 			}
 			sequences[r.Sequence] = hash
 			if best.Sequence == 0 || r.Sequence > best.Sequence {
-				advertised := false
-				for _, asset := range candidate.Assets {
-					for _, name := range releasecache.CoreMetadataAssetNames {
-						if asset.Name == name {
-							advertised = true
-						}
-					}
-				}
-				best, digest, selected = r, hash, CoreHostSelection{Raw: raw, Signature: sig, MetadataAdvertised: advertised}
+				best, digest, selected = r, hash, CoreHostSelection{Raw: raw}
 			}
 		}
 		if best.Sequence != 0 {
@@ -187,6 +201,9 @@ func readCoreMetadata(ctx context.Context, client *http.Client, source string, l
 		return nil, err
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("%w (HTTP 404)", errCoreMetadataNotFound)
+	}
 	if response.StatusCode != http.StatusOK || response.ContentLength > limit {
 		return nil, fmt.Errorf("exact core metadata unavailable or oversized (HTTP %d)", response.StatusCode)
 	}

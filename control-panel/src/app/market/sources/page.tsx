@@ -50,7 +50,7 @@ export default function MarketSourcesPage() {
         fetch('/api/market/catalog'),
         fetch('/api/domain'),
       ]);
-      // Catalog refresh accepts its signed release before rendering that label.
+      // Catalog refresh accepts its release document before rendering that label.
       const srcRes = await fetch('/api/market/source');
       if (srcRes.ok) {
         const d = await srcRes.json();

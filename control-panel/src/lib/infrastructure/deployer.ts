@@ -215,7 +215,7 @@ async function restoreUIBridgeAuthority(required: boolean): Promise<void> {
  * Exact bootstrap channels are immutable release identities. A healthy UI
  * container without the matching durable provenance may be the residue of an
  * interrupted older deployment, so it must be replaced from the configured
- * signed artifact instead of being relabelled as current.
+ * digest-pinned artifact instead of being relabelled as current.
  */
 async function exactUIProvenanceMatchesConfiguredSource(): Promise<boolean | null> {
   const channel = await effectiveChannel('ui');
@@ -313,7 +313,7 @@ export async function configurePointerForPlatform(
   if (exists && !provenance) {
     // A pre-fix bootstrap may have created the container, then failed before
     // managed configuration and provenance committed. Recreate only that
-    // unproven runtime from the exact signed channel; its database and secrets
+    // unproven runtime from the exact pinned channel; its database and secrets
     // remain in persistent platform storage.
     await deployPointerContainerFromConfiguredSource(true);
   } else if (exists) {
@@ -457,7 +457,7 @@ async function _deployInfrastructureInner(
   try {
     let provenanceRepaired = false;
     if ((await exactUIProvenanceMatchesConfiguredSource()) === false) {
-      emit(onEvent, 4, 'running', 'Replacing YouEye UI to restore exact signed provenance...');
+      emit(onEvent, 4, 'running', 'Replacing YouEye UI to restore its exact pinned release...');
       await deployUIContainerFromConfiguredSource(true);
       provenanceRepaired = true;
     }
@@ -743,7 +743,7 @@ export async function reconcileInfrastructure(
     try {
       let provenanceRepaired = false;
       if ((await exactUIProvenanceMatchesConfiguredSource()) === false) {
-        remit(5, 'running', 'YouEye UI provenance does not match the exact signed bundle; recreating the deployment container...');
+        remit(5, 'running', 'YouEye UI provenance does not match the exact pinned release; recreating the deployment container...');
         await deployUIContainerFromConfiguredSource(true);
         provenanceRepaired = true;
       }

@@ -71,7 +71,7 @@ var applianceCopyCommitCommand = &cobra.Command{Use: "commit", Args: cobra.NoArg
 			return err
 		}
 	}
-	receipt, err := m.VerifyIndependentCopy(ctx, request, systemupdate.CoreDevelopmentTrustPath, func(ctx context.Context, source systemupdate.CoreReceipt, request systemupdate.CoreCopyRequest) (systemupdate.CoreMachineIdentity, string, error) {
+	receipt, err := m.VerifyIndependentCopy(ctx, request, func(ctx context.Context, source systemupdate.CoreReceipt, request systemupdate.CoreCopyRequest) (systemupdate.CoreMachineIdentity, string, error) {
 		fail := func(e error) (systemupdate.CoreMachineIdentity, string, error) {
 			return systemupdate.CoreMachineIdentity{}, "", e
 		}
@@ -111,7 +111,7 @@ var applianceCopyCommitCommand = &cobra.Command{Use: "commit", Args: cobra.NoArg
 		if e = waitForPiholeHealthy(30 * time.Second); e != nil {
 			return fail(fmt.Errorf("copy DNS service credential failed"))
 		}
-		return machine, "independent host/boot/SSH identity; signed host, Spine, CP and UI bytes; paired persistent data; loaded platform credentials; live independent signing/TLS/app authority and local DNS; operational health", nil
+		return machine, "independent host/boot/SSH identity; digest-bound host, Spine, CP and UI bytes; paired persistent data; loaded platform credentials; live independent signing/TLS/app authority and local DNS; operational health", nil
 	})
 	if err != nil {
 		return err
@@ -139,7 +139,7 @@ func verifyCopySignedHost(ctx context.Context, receipt systemupdate.CoreReceipt)
 	}
 	digest, err := fileSHA256(executable)
 	if err != nil || manifest.ReleaseSet == nil || digest != manifest.ReleaseSet.Spine.ArtifactSHA256 || Version != manifest.ReleaseSet.Spine.Version {
-		return fmt.Errorf("copy Spine differs from signed installed member")
+		return fmt.Errorf("copy Spine differs from installed member")
 	}
 	return nil
 }

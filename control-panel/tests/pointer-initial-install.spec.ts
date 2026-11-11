@@ -1,29 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import publicPolicy from '../../spine/internal/systemupdate/public-release-trust.json';
+import { createHash } from 'node:crypto';
 import { acceptProductSequence, productReceipt, verifyProductRelease, type ProductBuild, type ProductRelease } from '../src/lib/releases/product-release';
 import { installPointerRelease, type PointerInitialInstallIO } from '../src/lib/pointer/initial-install';
 import type { PointerReleaseState } from '../src/lib/pointer/release-metadata';
 
 const sha = (raw: Buffer | string) => createHash('sha256').update(raw).digest('hex');
 test('initial Pointer installation authenticates descriptor payloads before effects and accepts only healthy installed identity', async t => {
-  const key = generateKeyPairSync('ed25519'), previous = publicPolicy.keys;
-  publicPolicy.keys = {...previous, stable:key.publicKey.export({type:'spki',format:'pem'}).toString()};
-  try {
+  {
     const source = 'https://github.com/YouEye-Platform/Pointer';
-    const signer = sha(key.publicKey.export({type:'spki',format:'der'}));
     const build: ProductBuild = {schema:'youeye.product-build.v1', product:'pointer', kind:'native', build_version:'0.5.11',
-      source, branch:'main', source_commit:'a'.repeat(40), tag:'v0.5.11', input_sha256:'b'.repeat(64), contract_sha256:'c'.repeat(64), signer_sha256:signer,
-      primary:'standalone.tar', assets:['standalone.tar','SHA256SUMS','SHA256SUMS.sig','provenance.json','sbom.spdx.json'].map(name =>
+      source, branch:'main', source_commit:'a'.repeat(40), tag:'v0.5.11', input_sha256:'b'.repeat(64), contract_sha256:'c'.repeat(64),
+      primary:'standalone.tar', assets:['standalone.tar','pointer-build-contract.json'].map(name =>
         ({name,url:`${source}/releases/download/v0.5.11/${name}`,sha256:sha(name),size_bytes:name.length}))};
     const buildRaw = Buffer.from(JSON.stringify(build));
     const release: ProductRelease = {schema:'youeye.product-release.v1',product:'pointer',version:'0.5.12',source,branch:'main',tag:'v0.5.12',channel:'stable',sequence:12,minimum_reader:1,
-      signer_sha256:signer,build_manifest_base64:buildRaw.toString('base64'),build_signature_base64:sign(null,buildRaw,key.privateKey).toString('base64')};
+      authority:'digest',build_manifest_base64:buildRaw.toString('base64')};
     const raw = Buffer.from(JSON.stringify(release));
-    const selected = verifyProductRelease(raw,sign(null,raw,key.privateKey),{product:'pointer',source,tag:release.tag});
+    const selected = verifyProductRelease(raw,{product:'pointer',source,tag:release.tag});
     const descriptor = {tag:'v0.5.12',version:'0.5.12',url:`${source}/releases/download/v0.5.12/product-release.json`};
-    for (const mode of ['product','legacy','missing-metadata','invalid-signature','wrong-pin','wrong-channel','rollback','stage-failure','wrong-archive','unsigned','failed-health','projection-failure','installed-downgrade']) {
+    for (const mode of ['product','legacy','missing-metadata','invalid-release','wrong-pin','wrong-channel','rollback','stage-failure','wrong-archive','manifest-only','failed-health','projection-failure','installed-downgrade']) {
       await t.test(mode, async () => {
         const effects: string[] = [];
         let saved: PointerReleaseState | undefined;
@@ -34,7 +30,7 @@ test('initial Pointer installation authenticates descriptor payloads before effe
           read:async () => before,
           resolve:async () => {
             effects.push('resolve');
-            if (mode === 'invalid-signature') throw new Error('Product signature rejected');
+            if (mode === 'invalid-release') throw new Error('Product release differs from selected source/tag');
             return ['legacy','missing-metadata','installed-downgrade'].includes(mode) ? null : selected;
           },
           stage:async () => {
@@ -42,7 +38,7 @@ test('initial Pointer installation authenticates descriptor payloads before effe
             if (mode === 'stage-failure') throw new Error('Corrupt payload');
             return {containerName:'youeye-pointer',path:'/owned/verified.tar',tag:release.tag,version:release.version,sourceRepo:source,
               artifactName:'standalone.tar',artifactSHA256:mode === 'wrong-archive' ? 'f'.repeat(64) : sha('standalone.tar'),artifactBytes:14,
-              signature:mode === 'unsigned' ? {status:'unsigned'} : {status:'verified-stable',keyId:signer},productRelease:productReceipt(selected)};
+              verification:mode === 'manifest-only' ? {status:'manifest'} : {status:'product-release',releaseSHA256:selected.manifestSHA256},productRelease:productReceipt(selected)};
           },
           deploy:async artifact => {effects.push('deploy'); assert.equal(!!artifact, mode !== 'legacy'); if (artifact) assert.equal(artifact.artifactName,'standalone.tar');},
           configure:async () => {effects.push('configure');},
@@ -74,5 +70,5 @@ test('initial Pointer installation authenticates descriptor payloads before effe
         }
       });
     }
-  } finally {publicPolicy.keys=previous;}
+  }
 });

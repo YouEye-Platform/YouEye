@@ -35,7 +35,7 @@ func (s NativeCoreServices) RecoverServices(ctx context.Context, request string,
 	if err != nil || !reflect.DeepEqual(receipt, j.Previous) {
 		return "", fmt.Errorf("previous installed receipt changed")
 	}
-	selection, _, err := m.Selection(j.Previous.ManifestSHA256, s.Cache.TrustKeyPath)
+	selection, _, err := m.Selection(j.Previous.ManifestSHA256)
 	if err != nil {
 		return "", err
 	}
@@ -68,9 +68,6 @@ func (s NativeCoreServices) recoverService(ctx context.Context, j CoreJournal, r
 	}
 	member, err := coreServiceMember(j.Previous.Release, role)
 	if err != nil {
-		return err
-	}
-	if err = CheckCoreMemberAuthority(member, j.Previous.Release.Channel, s.Cache.TrustKeyPath); err != nil {
 		return err
 	}
 	var c CoreCheckpointContainer
@@ -212,21 +209,9 @@ func verifyRecoveredCoreSelection(root *os.File, selection CoreHostSelection) er
 		return err
 	}
 	defer dir.Close()
-	for _, part := range []struct {
-		name  string
-		raw   []byte
-		limit int64
-	}{{"core-release.json", selection.Raw, 1 << 20}, {"core-release.json.sig", selection.Signature, 64}} {
-		actual, err := readCoreContainerStateAtLimit(dir, part.name, part.limit)
-		if err != nil || !bytes.Equal(actual, part.raw) {
-			return fmt.Errorf("restored CP selection is not the exact previous signed pair")
-		}
-	}
-	if len(selection.MetadataProof) > 0 {
-		actual, e := readCoreContainerStateAtLimit(dir, CoreMetadataProofName, CoreMetadataProofMaxBytes)
-		if !(errors.Is(e, syscall.ENOENT) && coreLegacyMetadataAbsence(selection)) && (e != nil || !bytes.Equal(actual, selection.MetadataProof)) {
-			return fmt.Errorf("restored CP metadata proof differs from retained selection")
-		}
+	actual, err := readCoreContainerStateAtLimit(dir, "core-release.json", 1<<20)
+	if err != nil || !bytes.Equal(actual, selection.Raw) {
+		return fmt.Errorf("restored CP selection is not the exact previous release")
 	}
 	return nil
 }

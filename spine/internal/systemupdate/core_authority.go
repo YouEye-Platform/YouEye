@@ -14,17 +14,18 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 )
 
-// NativeCoreAuthority reads live machine, channel and scoped trust policy for
-// every action. Discovery can veto a staged selection, but never replace it.
+// NativeCoreAuthority reads the live machine and the installer-recorded release
+// policy for every action. CurrentSelection must be host-owned (never derived
+// from Control Panel writable configuration). Discovery can veto a staged
+// selection, but never replace it.
 // After checkpoint intent, continuation uses the frozen selection: a newer
 // published head is not permission to change an in-flight data transaction.
 type NativeCoreAuthority struct {
 	Checkpoint            NativeCoreCheckpoint
-	TrustKeyPath          string
 	Client                *http.Client
 	FirstBootPolicyPath   string
 	FirstBootCompletePath string
-	CurrentSelection      func() (CoreReleaseSelection, error)
+	CurrentSelection      func() (CoreReleaseSelection, error) // host-owned release policy
 }
 
 func coreBeforeCheckpoint(j CoreJournal) bool {
@@ -36,9 +37,9 @@ func coreBeforeCheckpoint(j CoreJournal) bool {
 	return true
 }
 
-func validateCoreChannelSelection(selection CoreReleaseSelection, r releasecache.CoreRelease, digest string) error {
+func validateCorePolicySelection(selection CoreReleaseSelection, r releasecache.CoreRelease, digest string) error {
 	if selection.Source != r.Source || !releasecache.ValidCoreBranch(selection.Branch) {
-		return fmt.Errorf("selected System source changed")
+		return fmt.Errorf("release source differs from the installer-recorded System source")
 	}
 	if selection.Tag != "" {
 		if selection.Tag != r.Tag || selection.ManifestSHA256 != digest || selection.Branch != r.Branch {
@@ -117,37 +118,15 @@ func (a NativeCoreAuthority) verify(ctx context.Context, j CoreJournal, recovery
 	if recovery {
 		r, digest = j.Previous.Release, j.Previous.ManifestSHA256
 	}
-	selectionProof, verified, err := m.Selection(digest, a.TrustKeyPath)
+	_, verified, err := m.Selection(digest)
 	if err != nil {
 		return err
 	}
 	if !reflect.DeepEqual(verified, r) {
-		return fmt.Errorf("frozen signed core differs from coordinator")
-	}
-	for _, member := range r.Members {
-		if err = CheckCoreMemberAuthority(member, r.Channel, a.TrustKeyPath); err != nil {
-			return err
-		}
-	}
-	// Authenticate and retain both directions before effects. The exact signed
-	// legacy digest and journal remain unchanged; offline recovery uses this proof.
-	selectionProof, _, err = EnsureCoreMetadata(ctx, selectionProof, a.TrustKeyPath, filepath.Join(a.Checkpoint.DataRoot, "cache", "core-update"), a.Client, "")
-	if err != nil {
-		return err
-	}
-	if err = m.retainSelection(selectionProof, digest); err != nil {
-		return err
+		return fmt.Errorf("frozen core release differs from coordinator")
 	}
 	if !recovery {
-		previous, _, e := m.Selection(j.Previous.ManifestSHA256, a.TrustKeyPath)
-		if e != nil {
-			return e
-		}
-		previous, _, e = EnsureCoreMetadata(ctx, previous, a.TrustKeyPath, filepath.Join(a.Checkpoint.DataRoot, "cache", "core-update"), a.Client, "")
-		if e != nil {
-			return e
-		}
-		if e = m.retainSelection(previous, j.Previous.ManifestSHA256); e != nil {
+		if _, _, e := m.Selection(j.Previous.ManifestSHA256); e != nil {
 			return e
 		}
 	}
@@ -169,7 +148,7 @@ func (a NativeCoreAuthority) AuthorizeTarget(ctx context.Context, j CoreJournal,
 	if err != nil {
 		return err
 	}
-	if err = validateCoreChannelSelection(selection, j.Target, j.ManifestSHA256); err != nil {
+	if err = validateCorePolicySelection(selection, j.Target, j.ManifestSHA256); err != nil {
 		return err
 	}
 	// A request waiting for restart must still be the policy-selected release
@@ -182,7 +161,7 @@ func (a NativeCoreAuthority) AuthorizeTarget(ctx context.Context, j CoreJournal,
 		if offline {
 			return nil
 		}
-		_, selected, digest, err := ResolveCoreReleaseWithMetadata(ctx, a.Client, selection, a.TrustKeyPath, filepath.Join(a.Checkpoint.DataRoot, "cache", "core-update"))
+		_, selected, digest, err := ResolveCoreRelease(ctx, a.Client, selection)
 		if err != nil {
 			return err
 		}
@@ -194,8 +173,7 @@ func (a NativeCoreAuthority) AuthorizeTarget(ctx context.Context, j CoreJournal,
 }
 
 // Current channel changes do not implicitly prohibit recovery to the retained
-// previous release. Its independent authority, compatibility and machine must
-// still pass; revoked previous keys never fall back to the failed target.
+// previous release. Its digest, compatibility and machine must still pass.
 func (a NativeCoreAuthority) AuthorizePrevious(ctx context.Context, j CoreJournal) error {
 	return a.verify(ctx, j, true)
 }

@@ -50,7 +50,7 @@ func applianceStageIndex(stage applianceWriteStage) int {
 
 func applianceWriteOperations(plan applianceInstallPlan) []applianceWriteOperation {
 	return []applianceWriteOperation{
-		{Stage: stageVerifyInputs, Description: "verify seed, manifest, signature, compatibility, disk sizing, and confirmation", Destructive: false},
+		{Stage: stageVerifyInputs, Description: "verify seed, manifest digests, compatibility, disk sizing, and confirmation", Destructive: false},
 		{Stage: stagePartitionTarget, Target: plan.TargetDiskPath, Description: "create the ESP, Recovery, System A/B, State, and YE-DATA partitions on one GPT drive", Destructive: true},
 		{Stage: stageFormatState, Target: "YE-STATE", Description: "format state as ext4", Destructive: true},
 		{Stage: stageInitializeJournal, Target: "YE-STATE", Description: "start the durable resumable install journal", Destructive: true},

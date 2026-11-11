@@ -1,121 +1,100 @@
 # Core release identity
 
-First deployment reads service identity directly from the authenticated frozen
-Core selection. The immutable image's legacy single-source release set remains
-unchanged when CP or UI was built by another source. Installation reconciles only
-its exact image-owned seeds into the original member source, branch, tag and
-artifact pins; conflicting owner choices stop before the configuration is saved.
-Discovery, original checksum-envelope downloads and first-deploy health recheck
-current role authority, including revocation, and preserve the selected assembly's
-authorized delivery mirrors. Installed provenance retains the original service
-source. A separately bound development or production reader is observed apart
-from the canonical baked executable and never becomes installed membership.
+Releases are unsigned for now. Integrity comes from SHA-256 plus HTTPS with
+normal certificate checks. Signing returns before the first public release; the `authority` field marks
+where it will attach.
 
-The source contract for new installations is `youeye.core-release.v1` in
-`releasecache/core_release.go`. Its complete signed membership is immutable.
-`X.Y.Z[-token.N]` is the assembly version; each member records the original
-build version, repository, exact branch, source commit, input fingerprint,
-release tag, artifact, checksum set, detached signature, provenance and SBOM.
-Each blob has its original signed filename, exact HTTPS release-asset URL,
-byte size and SHA-256. Publication aliases can distinguish CP and UI's
-`standalone.tar` without rewriting either member's signed checksum document.
+## The release document
 
-A signed Alpha or Stable selection may reuse Dev members. It retains their
-original build versions, source and signing keys. Cross-repository transport
-uses hash-addressed assets on the selected release, so installation does not
-depend on reaching the original build repository. Both the selection signature
-and original member signatures remain required.
+The System release document is `youeye.core-release.v1`, published as the
+release asset `core-release.json` (reader: `releasecache/core_release.go`,
+writer: `scripts/assemble-core-release.py`). Top level: `schema`, `version`,
+`tag` (`youeye-v<version>`), `source`, `branch`, `source_commit`, `channel`
+(`dev`, `alpha`, `beta`, `stable` or `feature`), `sequence`, optional
+`previous_manifest_sha256`, `minimum_reader` (1), `authority` (only `"digest"`
+is accepted), `compatibility` and `members`.
 
-The manifest lists Installer, media, appliance metadata, the host update
-manifest, System root, both
-System UKIs, System updater, internal Recovery, Recovery UKI, update bootstrap,
-Spine, CP/YouEye ID and UI. Membership is flat. No `latest` URL, recursive
-parent lookup or substitute blob is permitted. An older manifest digest is
-lineage evidence, not an instruction to inherit unspecified members.
-Appliance and host update manifests retain their explicit document signatures
-as well as the signed checksum-set references.
-The appliance also pins the exact resolved release lock; its digest must match
-the signed provenance's `resolved_lock_sha256`, including on detached media.
+Exactly 14 roles are required: `installer`, `media`, `appliance`,
+`system-update`, `system-root`, `system-a-uki`, `system-b-uki`,
+`system-updater`, `internal-recovery`, `recovery-uki`, `update-bootstrap`,
+`spine`, `cp` and `ui`. Each member records `role`, `build_version`, `source`,
+`branch`, `source_commit`, `tag`, `input_sha256`, optional `depends_on` and an
+`artifact` blob (`name`, `url`, `sha256`, `size_bytes`). The `appliance` member
+also has a `build_inputs` blob (`build-inputs.json`); no other role may. Every
+blob URL must be exactly `<member source>/releases/download/<member tag>/<name>`.
+Unknown fields, duplicate JSON keys (at any depth), unknown or duplicate roles,
+missing members, cycles and malformed identities fail before any effect. CP
+depends on Spine and UI on CP.
 
-The assembly's `youeye-v<version>` tag and source commit identify the release
-selection. Unchanged members retain their earlier build identity and exact
-original URLs. Consequently, the committed System release can advance without
-changing the immutable image marker. Installer and media can be reused only
-when their readers and declared compatibility support the complete selection.
+A release may reuse members built earlier or elsewhere; they keep their original
+build version, source, branch, tag and URL. When the original asset is not
+reachable (HTTP 404 only), the hash-named mirror
+`<release source>/releases/download/<release tag>/blob-<sha256>` on the selected
+release is used. Mirrors never change identity, and size and SHA-256 are always
+checked.
 
-Versions retain three numeric positions. Prerelease counters are positive,
-numeric and bounded to JavaScript's exact integer range. Tokens are lowercase
-ASCII with interior hyphens. Git branch names remain case-sensitive and are
-not authorization tokens. Source/channel policy precedes ordering. Historical
-numeric-depth identities remain readable but do not define new allocations.
+## Root of trust
 
-The signed dependency order puts Spine before CP and CP before UI. A manifest
-requires an explicit reader capability and persistent State/Data compatibility
-ranges. Unknown readers, missing members, duplicate roles, cycles, malformed
-identities and mismatched artifact source/tag paths fail before effects.
-Duplicate JSON object keys are rejected at every level so Go and TypeScript
-cannot interpret the same signed bytes differently.
+`ParseCoreRelease` validates structure and returns the exact-byte SHA-256. That
+digest is the root of trust:
 
-`ParseCoreRelease` validates structure and computes the exact-byte digest;
-parsing alone establishes no trust. `VerifyCoreRelease` additionally checks
-the detached Ed25519 signature against an already trusted, scoped key and its
-SPKI fingerprint. Each host/CP authority must independently validate the
-selected role's artifact signatures and current policy. An assembly signature
-does not let a service publisher replace the host. Activation must revalidate
-revocation and source policy without changing the frozen membership.
+- The installer fetches `core-release.json` over HTTPS, and records its exact
+  digest as `core_manifest_sha256` in the protected State release policy
+  (`/var/lib/youeye-state/bootstrap/release-policy.json`) beside the bytes
+  (`bootstrap/core-release.json`). Spine reads that selection only when the
+  digest matches (`ReadAcceptedCoreSelection`).
+- An update resolves a newer document over HTTPS from the same source and raw
+  branch (or an exact tag plus digest pin), then freezes its digest in the
+  update journal and the protected `targets/<digest>.json` copy.
+- Everything below is bound by SHA-256 and size: member artifacts, the
+  `appliance-manifest.json` and `system-update-manifest.json` image manifests
+  (the `appliance` and `system-update` member artifacts), and the image payloads
+  listed in those manifests. Neither image manifest has a `trust` key.
 
-`VerifyCoreMember` checks the separately scoped role key, exact blob bytes,
-signed checksum names and host document signatures. It streams payloads and
-bounds metadata. The host journal stages before awaiting an owner-selected
-restart, then captures paired rollback state at activation. Capturing State
-and Data when staging starts would lose intervening owner changes on rollback.
-Accepted request IDs remain bound to their original manifest after later
-transactions finish. Reading or retrying an old ID returns its retained receipt
-and cannot replay an old migration against newer installed state.
+Version ordering, `minimum_release`, the sequence floor per source/branch and
+the State/Data compatibility ranges still apply.
 
-Fresh answer media uses `youeye.appliance.answer.v5` to carry the exact manifest
-and signature bytes, encoded without JSON reformatting. Its release policy binds
-the separate core-manifest digest as well as the image-manifest digest. Spine
-checks the running immutable image separately from CP/UI member selection, and
-hands the signed selection to CP for its own role verification. Original signed
-checksum filenames remain authoritative even when remote assets are namespaced.
+## Installer answer and installed State
+
+Answer media uses `youeye.appliance.answer.v1`, the only accepted answer schema.
+Its fields are `schema`, `operation`, `transaction_id`, `target_serial`,
+`erase_confirmed`, `network`, `release_policy`, `development_access`, optional
+`authorized_keys`, optional `release_cache_sha256` and optional `core_release`
+(`manifest_base64`, `manifest_sha256`). `core_release` carries the exact
+`core-release.json` bytes, base64-encoded so JSON reformatting cannot change
+them; `release_policy.core_manifest_sha256` must equal its digest. There are no
+signature fields. Installer progress uses `youeye.installer.progress.v1` for both
+the installer and first deployment.
+
+The installed State receives `bootstrap/core-release.json`,
+`bootstrap/release-policy.json` and `installer/appliance-manifest.json`. No
+detached signature file is written. Spine checks the running immutable image separately
+from CP/UI member selection; the installed appliance manifest must equal the
+`appliance` member artifact digest. The CP container receives only
+`/var/lib/youeye-state/core-selection/core-release.json`.
 
 New media carries a `core-selection-required` capability marker. Interactive,
-seeded and answer-file installs freeze and authenticate the complete selection
-before disk writes. The selected assembly must contain the exact verified image
-and baked Spine; image version alone is not sufficient. New media cannot fall
-back to legacy appliance discovery. Existing v4 transport-cache answers require
-a matching v5 selection on new media; they are never silently rewritten with a
-new cache identity.
+seeded and answer-file installs freeze the complete selection before disk
+writes, by digest. The selected release must contain the exact image manifest
+and baked Spine; image version alone is not sufficient.
 
-The first resumable checkpoint retains signed selection bytes and their policy
-under protected State storage, bound to the original transaction, disk serial
-and image digest. Resume authenticates that retained selection instead of
-following a moving channel. A supplied resume answer cannot change it. Missing
-retained evidence requires the original installation inputs and recovery; it
-does not authorize choosing another release.
+## Updates
 
-Public first deployment stages only the exact CP/UI verification envelopes in
-the protected content-addressed cache. It verifies the original role signatures
-before deriving installed file indexes. No private transport cache is required.
-Existing corrupt blobs fail closed; missing blobs use constrained HTTPS artifact
-retrieval. Official GitHub asset redirects are bounded and cross-origin requests
-strip authorization and cookies. API discovery retains its separate policy.
+First deployment stages only the CP/UI artifacts in the protected
+content-addressed cache and checks their digests before deriving installed file
+indexes. Existing corrupt blobs fail closed; missing blobs use constrained HTTPS
+retrieval. GitHub release downloads may redirect only to
+`objects.githubusercontent.com` or `release-assets.githubusercontent.com`;
+cross-origin hops strip authorization and cookies.
 
-A new signed assembly with identical complete members, dependency graph and
-compatibility contract uses a metadata-only transaction. It verifies current
-policy, signing authority, sequence, installed files and authenticated service
-health, then commits the accepted release receipt. It does not download payloads,
-replace services, run migrations, capture a checkpoint or restart the host.
-The exact-digest no-op remains distinct. Changed members or compatibility take
-the normal update path, and interrupted receipt commits reconcile under the
-original request identity.
-
-Host staging uses the assembly's exact aliased URLs and checks original signed
-payload names against the independently verified host manifest. Its durable host
-journal binds the assembly digest; activation rereads its protected signed bytes.
-Boot blessing and host commitment require the coordinator's checkpoint and service
-acceptance steps. An already committed host may be reused by later service releases.
+A new release with identical members, dependency graph and compatibility uses a
+metadata-only transaction: it checks sequence, installed files and service
+health, then commits the release receipt without downloading payloads. Changed
+members take the normal update path. Host staging downloads the
+`system-update-manifest.json` member, requires its digest to equal the member,
+and requires every host payload in it to equal the corresponding member. The
+durable host journal binds the release digest; activation re-reads the
+protected copy.
 
 Native action intent is persisted before execution. Action IDs bind the target
 manifest permanently, with process boot/start identity and retained results.
@@ -126,7 +105,7 @@ working directories and isolated roots remain rejected.
 An uncertain action cannot become absent merely because its process disappeared;
 only the native operation's exact retained evidence can establish completion.
 Track discovery bypasses the frozen installation transport cache and still uses
-the selected provider or verified signed distribution. An explicit tag and
+the selected provider or verified distribution. An explicit tag and
 manifest digest may resolve an unpublished candidate from protected media. If
 that exact tag is absent from the snapshot, discovery checks the live source;
 it never silently substitutes the installed release. Network or verification
@@ -137,7 +116,7 @@ while identical blobs share protected content-addressed storage.
 
 The first shared installed receipt binds installation/device/disk/partition
 identities, exact retained selection and native deployment evidence. First boot
-records it after signed media, service membership, static installed file checks,
+records it after media, service membership, static installed file checks,
 operational health and bridge/CLI credential binding checks. This initial setup receipt does not claim later
 administrator/user acceptance or a completed update/recovery test. A no-op update
 revalidates members and health without checkpointing or applying migrations.
@@ -161,11 +140,18 @@ Saved configuration takes precedence. It creates no user, OAuth client or
 session secret: the setup wizard retains that work. The UI startup hook owns
 the once-only schema receipt; bootstrap does not run a parallel SQL schema.
 
-The System channel stores the assembly source, case-sensitive raw branch,
-ordered fallback chain and optional exact manifest pin. Independent application
-channels remain separate. Initialization preserves owner pins; CP/UI member pins
-stay frozen when System follows a track. Discovery uses signed sequence within
-the selected branch, rejects conflicting sequences and never ranks by timestamps.
+The System selection is not a release channel. It is derived only from the
+protected installer-recorded `release-policy.json` and the `core-release.json`
+it accepted: the same source, the case-sensitive raw branch of the recorded
+track (no fallback), or the exact tag and digest for an exact installation. The
+Spine API refuses writes to the core channels (`default`, `spine`, `control`,
+`ui`) and to `system`, so the Control Panel can read but never choose what the
+host installs; only `app:<id>` channels are writable there. Initialization
+preserves owner pins; CP/UI member pins stay frozen when System follows a track.
+Discovery uses sequence within the selected branch, rejects conflicting
+sequences and never ranks by timestamps. A release that lacks
+`core-release.json`, returns HTTP 404 for it, or whose document does not parse
+is skipped; any other error stops discovery.
 
 Core checkpoint admission shares a kernel read/write lock with ordinary app,
 container and inventory work. Active operations must settle, and unfinished app
@@ -229,10 +215,10 @@ host recovery or commitment. Read-only observation cannot begin pending substeps
 Sanitized diagnostics distinguish restored-service, platform-power and
 authenticated-health failures; missing evidence remains unfinished recovery.
 
-CP/UI static file indexes derive from exact role-authenticated archive bytes.
+CP/UI static file indexes derive from exact role-archive bytes.
 Native observation checks all files, links, modes and added paths rather than
 trusting package version labels. Runtime environment files and Next's cache are
-outside the signed code identity. New UI installations place uploaded branding,
+outside the code identity. New UI installations place uploaded branding,
 user images and avatars in mounted `/var/lib/youeye/ui-data`, included in core
 backup. Image URLs are preserved by data-serving routes. This changes fresh
 installation inputs; it does not move files on existing owner machines.
@@ -311,7 +297,7 @@ Paired recovery restores SQL first, portable UI data second and only the two cor
 service roots last. Live `config`, `control`, UI environment and independent
 Pointer paths remain authoritative: old secrets, selected sources and lifecycle
 journals are not copied over them. Compatibility with those retained bindings is
-part of the later authenticated health gate; incompatible state remains held for
+part of the later health gate; incompatible state remains held for
 recovery. UI data restoration verifies the exact held snapshot tree and current
 mount coverage, rejects links/devices/nested mounts, checks capacity and hashes
 its result. An interrupted idempotent file copy may reconcile under the same
@@ -327,7 +313,7 @@ does not become a false migration failure. Historical full restore has a separat
 explicit attempt. Authenticated component endpoints expose bounded status and
 accept only the native marker's exact identity. Missing selected markers cannot
 fall back to legacy initialization. Fresh UI mount creation and generated digest
-metadata placement preserve the exact signed application-file index.
+metadata placement preserve the exact application-file index.
 
 The core checkpoint may retain a Pointer archive for paired evidence, but core
 rollback does not restore that independently managed database. Current Pointer
@@ -359,7 +345,7 @@ restoring original power policy and opening the owned ingress/lifecycle holds.
 Host recovery requires the actual previous immutable boot after paired service
 and data restoration. A reboot acknowledgement alone cannot establish recovery.
 
-Fresh tracked installations initialize their signed media baseline behind the
+Fresh tracked installations initialize their media baseline behind the
 closed setup gate, then freeze one current complete selection and use the same
 paired core transaction. The protected first-boot record binds the original
 installation policy, baseline digest, target digest, request ID and machine.
@@ -376,7 +362,7 @@ channel. A new explicit Resume reconciles the same graph. Unknown native effects
 remain needs-attention with their original started intent. Completion in the UI
 requires both the accepted shared receipt and released maintenance holds.
 
-Managed installations expose one System channel and update control. Pointer and
+Managed installations expose one read-only System source and one update control. Pointer and
 native apps retain their independent channel controls. An old host's missing core
 endpoint permits legacy behavior only when selected core identity is positively
 absent; damaged or unavailable evidence fails closed. Browser delivery identity
@@ -397,16 +383,12 @@ pending and exact native preparation children have settled. The retained activat
 intent is preserved. Checkpointed requests still require paired
 recovery; unknown or foreign native ownership keeps cancellation unfinished.
 
-The piped Installer bootstrap first looks for a complete canonical release. It
-verifies the assembly signature, reader capability, source/raw branch, scoped
-original host authority and Installer checksum/member hash before execution.
-Aliased publication filenames keep their original signed checksum names. A Beta
-assembly may reuse its independently verified Stable Installer/media. Exact
-bootstrap passes the complete manifest digest to the native Installer. Protected
-per-track signed sequence floors survive retries; public catalog expiry and
-anti-replay checks remain in the existing distribution reader. Historical v1
-installation/component records remain available to old readers; a canonical core
-record does not become an independent component upgrade for them.
+The piped Installer bootstrap (`installer/scripts/install.sh`) selects one
+`youeye-v` release by channel, checks that its `core-release.json` names the
+selected source, tag and branch, and runs the `installer` member only after its
+SHA-256 and size match. Exact bootstrap passes the tag and the
+`core-release.json` digest to the native Installer, which refuses any other
+document. See `docs/release-distribution.md` for the channel rules.
 
 ### Stable reader bootstrap
 
@@ -423,31 +405,24 @@ Unknown/malformed observations fail immediately. Timeout retains maintenance and
 the checkpoint; `youeye update core resume --request <original-request-id>`
 reconciles the same completed request without reapplying its committed payload.
 
-The signed `youeye-system-update-bootstrap --core <exact-core-manifest-url>`
-bridge supports an installed complete Core whose old reader cannot retrieve
-the new public release. The separate legacy Plan 1 development mode remains
-unchanged. The Core bridge requires the official Stable assembly and an original
-Stable Spine envelope; it reads the installed owner's current scoped trust,
-honors revocation/overrides, and verifies both assembly and original role
-signatures before executing downloaded code. `--inputs` accepts a protected
-offline directory containing `core-release.json`, `core-release.json.sig`,
-`artifact`, `checksums`, `signature`, `provenance` and `sbom`; it preserves the
-original public source identities and all checks. It does not import or patch
-an installation candidate cache.
+`youeye-system-update-bootstrap --core <https-core-release-url> --sha256 <digest>
+[--inputs <protected-dir>] [--activate]` supports an installed Core whose old
+reader cannot process a newer release. It fetches `core-release.json` over HTTPS
+(the URL must be `<source>/releases/download/<tag>/core-release.json` for the
+document's own source and tag), requires `authority: "digest"`, downloads only
+the `spine` member artifact (or its `blob-<sha256>` mirror on HTTP 404), checks
+its size and SHA-256 and retains it with the exact document under
+`/var/lib/youeye-state/core-update/bootstrap/<artifact-sha256>/`. `--sha256` is
+required and must equal the document digest; without it nothing is fetched. `--inputs` reads the same two files from a
+protected offline directory. It then runs
+`update core bootstrap --request stable-bootstrap-<digest> --manifest-sha256 <digest>`.
 
-Spine transport accepts the signed original filename or its published `spine-`
-prefix under the exact signed Stable build tag. For promoted releases whose
-original build tag is unpublished, only HTTP 404 permits the selected assembly's
-`blob-<sha256>` mirror. Permission errors, transport failures and wrong bytes do
-not trigger that fallback; both original signatures and exact sizes/hashes remain
-mandatory.
-
-The exact binary and original envelope remain in a protected content-addressed
+The exact binary and document remain in a protected content-addressed
 State directory. A retained bootstrap record binds them to one normal paired
 update request. The current boot receives one owned drop-in under `/run/systemd/system`,
 pointing to this coordinator without writing the immutable `/etc` tree. The
 protected coordinator and journal survive reboot; the runtime drop-in does not.
-A compatible target host uses its baked reader to continue the retained signed
+A compatible target host uses its baked reader to continue the retained
 coordinator. Boot continuation waits for Incus's completed readiness check,
 including its autostart containers. Host-IP startup and steady-state maintenance
 take the ordinary shared lifecycle lease, so they cannot restart held containers
@@ -471,15 +446,15 @@ requires its originally running power state, unchanged UUID, exact recovery
 ownership and disabled autostart. Other unexpected starts, originally stopped
 containers and forward-update startup still fail closed; final authenticated
 health and all paired recovery checks remain required.
-Every invocation rechecks the signed target and original role envelope. Host
+Every invocation rechecks the target and original Spine artifact. Host
 health observes the canonical baked executable against the running image,
 separately from the temporary coordinator. Staging alone does not activate;
 `--activate` requests the ordinary counted host transition.
 
 After verified commit, rollback or cancellation, cleanup removes only that
-exact boot override and retires the bootstrap record. The binary/envelope stay
+exact boot override and retires the bootstrap record. The binary/artifact stay
 until no process needs them and ordinary retention can remove that exact set.
-No host executable, owner trust, channel choice, app data or recovery guarantee
+No host executable, channel choice, app data or recovery guarantee
 is replaced by the bootstrap path. Runtime acceptance must include the actual
 old-reader transition and interrupted continuation; source tests alone do not
 establish compatibility.
@@ -487,27 +462,19 @@ establish compatibility.
 ### Deferred API reader bridge
 
 For an administrator-managed temporary API adapter, `api serve` accepts the
-paired flags `--core-reader <protected-original-Spine-path>` and
+paired flags `--core-reader <protected-Spine-path>` and
 `--core-reader-manifest-sha256 <exact-Stable-manifest-digest>`. The reader must
 occupy its ordinary content-addressed `core-update/bootstrap/<artifact-sha>/youeye`
-path, with its original `checksums`, `signature`, `provenance`, `sbom`, and
-`core-release.json` / `core-release.json.sig` alongside it. Provision the API
-adapter's public trust anchors through its normal build contract. An adapter
-without the required authority cannot use downloaded keys to supply it.
-
-Startup verifies the exact official Stable selection and original Stable Spine
-envelope using current scoped owner trust, including revocations. It creates no
-System transaction, bootstrap registration, boot continuation override or native
-update action. Check resolves the live selected source and rejects a release
-whose digest differs from the explicitly selected bridge. Original signed
-payloads and the installed release receipt remain unchanged. A source-built API
-adapter is not relabeled as the installed signed Spine: a fresh membership scan
-may report it unverified until the normal bootstrap is registered.
+path with the exact `core-release.json` beside it. Startup checks the official
+Stable selection and the reader's SHA-256 and size against its `spine` member.
+It creates no System transaction, bootstrap registration, boot continuation
+override or native update action. Check resolves the live selected source and
+rejects a release whose digest differs from the explicitly selected bridge.
 
 Only the owner's ordinary Stage request prepares a native transaction. After
-current-request admission, the adapter registers the original signed reader,
+current-request admission, the adapter registers the original reader,
 installs the ordinary boot continuation, and starts the existing idempotent
-native control runner with that signed coordinator. Native actions never use
+native control runner with that coordinator. Native actions never use
 the locally built API adapter as their executable. Repeated deliveries retain
 their request and command identities; a stale target or failed registration
 cannot fall through to the incompatible baked coordinator. Resume cannot
@@ -516,7 +483,7 @@ create the initial reader registration in place of a retained Stage delivery.
 Use an owned runtime-only API service override for this temporary adapter;
 never replace the immutable host executable or edit the System journal. Before
 the owner stages, removing that override or rebooting restores the baked API
-and leaves the update unstaged. After Stage, the existing signed bootstrap's
+and leaves the update unstaged. After Stage, the existing bootstrap's
 interruption, cancellation, paired recovery and exact-request re-entry rules
 apply. Retire the API override after the selected installed host can provide
 its own compatible service. Source checks and a successful discovery do not
@@ -525,17 +492,17 @@ constitute installed-update or recovery acceptance.
 Private repository main uses Alpha; public main uses Stable. Raw branch identity
 is preserved independently of the suffix. First boot with require-current stays
 closed when current discovery is unavailable. An explicit prefer-current policy
-may retain only its signed media baseline on a positively identified DNS/network
-unavailability error. It does not fall back on invalid/revoked signatures,
-expired metadata, bad clocks, malformed responses or missing releases. The
+may retain only its media baseline on a positively identified DNS/network
+unavailability error. It does not fall back on digest mismatches,
+bad clocks, malformed responses or missing releases. The
 protected fallback record is bound to policy, machine and exact baseline; it
 permits only a no-op fresh convergence while setup remains closed. Exposed
 installations and effectful updates retain normal current-policy checks.
 
-Installed updates download changed service envelopes and required host documents.
+Installed updates download changed service artifacts and required host documents.
 Native A/B staging owns host payload downloads; it does not fetch Installer/ISO
-artifacts as part of an installed update. Identical signed service members reuse
-retained authenticated file indexes and verify the actual live files. Their
+artifacts as part of an installed update. Identical service members reuse
+retained file indexes and verify the actual live files. Their
 completed schema markers remain unchanged. A fresh baseline no-op can therefore
 validate locally without downloading the complete media again.
 
@@ -550,7 +517,7 @@ without changing it; a new effectful request cannot select that older release.
 `youeye update core observe` and the explicit API request
 `GET /api/appliance/core-update/status?observe=1` produce bounded fresh membership
 evidence. Ordinary status polling only reads retained state. The observer checks
-current signed authority, actual partition/machine identity, immutable host and
+current authority, actual partition/machine identity, immutable host and
 baked Spine, and host-observed CP/UI static bytes plus completed schema markers.
 It brackets the scan with exact receipt and transaction reads and returns
 `unverified` or `pending` when those checks cannot establish current membership.
@@ -558,14 +525,12 @@ It never creates users, sessions, migrations, update jobs or installation receip
 
 The API exposes sanitized original member identities and the shared version,
 digest and sequence, never raw machine binding or protected acceptance evidence.
-This is payload membership evidence; full authenticated operational acceptance
+This is payload membership evidence; full operational acceptance
 remains a separate release gate.
 
-The appliance release-lock reader accepts canonical short versions and exact
-`youeye-v<version>` member tags, preserving the original case of the branch.
-Detached locks retain original per-member versions and hashes; retained legacy
-locks remain readable. The build entry uses this same validator before any
-image work, and the Train input adapter emits the shared product tag.
+The appliance build-inputs reader (`youeye.build-inputs.v1`) accepts canonical
+versions and exact `youeye-v<version>` component tags, preserving the original
+case of the branch. The build entry validates it before any image work.
 
 Fresh Control Panel reconciliation compares the installed bundle with the verified selected CP member, while binding the running image and baked Spine independently. Reused media may describe an older CP payload; that media label is not the service target. Missing or invalid selected state fails closed, and legacy media without a core selection retains its sealed-version check.
 
@@ -578,19 +543,19 @@ of `/manifest.webmanifest/route`. CP and UI use the same layout. A normal browse
 or PWA manifest request can populate it on an otherwise unchanged installation.
 
 Installed verification permits only these two non-executable regular data files
-and their four directory ancestors, and only when the signed payload index
+and their four directory ancestors, and only when the payload index
 contains `.next/server/app/manifest.webmanifest/route.js` as a regular file.
 It rejects links, multiply linked files, special mode bits, other owners/routes,
-other suffixes and added executable files. Signed entries always retain their
-original byte, type, mode and link checks. Signed archives must not contain this
+other suffixes and added executable files. entries always retain their
+original byte, type, mode and link checks. archives must not contain this
 runtime cache. Other Next response-cache layouts require an explicit review;
 there is no general `.next/server` exemption.
 
 The authoritative host scanner opens directories through anchored descriptors
 without following links. It tolerates disappearance of these exact runtime data
-paths during concurrent requests; missing signed paths still fail. The Go fixture
+paths during concurrent requests; missing paths still fail. The Go fixture
 verifier uses the same scanner, and the Node reference enforces the same narrow
-layout and file rules. Runtime cache bytes are mutable data, not signed payload
+layout and file rules. Runtime cache bytes are mutable data, not payload
 identity. No cache clearing, runtime relocation or guest-wide dependency change
 is required by this repair.
 
@@ -605,8 +570,8 @@ and unknown effects retain their existing uncertainty and reconciliation rules.
 An affected installed reader still rejects this cache before target activation.
 Use the existing verified Stable reader bootstrap described above when that old
 reader is selected. Merely installing a target verifier cannot repair the old
-preparation step. The exact signed target and original Spine envelope, retained
-request, scoped owner trust and paired recovery rules remain mandatory. A held
+preparation step. The exact target and original Spine artifact, retained
+request and paired recovery rules remain mandatory. A held
 Stable target needs the administrator-provided baseline-plus-target test transport;
 changing its hostname is not a compatibility fixture. Source tests do not establish
 an installed old-reader transition, owner acceptance, or public release.
@@ -615,14 +580,14 @@ an installed old-reader transition, owner acceptance, or public release.
 ### DNS address restoration during a held update
 
 The native health coordinator refreshes the two installed Pi-hole TCP/UDP port
-53 listen addresses to the currently assigned host address before restoring its
+53 listen addresses to the currently ashost address before restoring its
 original running state. This narrow operation requires the frozen container UUID,
 exact lifecycle hold, stopped instance, installed proxy contract and settled
 provider operations. It preserves all other device fields and the ordinary
 host-migration fence. Originally stopped instances remain stopped.
 
 Host address detection uses the kernel's route-selected IPv4 source, checked
-against the assigned addresses of its up interface. Managed app/container bridges
+against the asaddresses of its up interface. Managed app/container bridges
 and tunnels cannot supply the LAN address; an ordinary host bridge can when the
 route explicitly selects it. Without routing evidence, only one unambiguous
 address on an eligible LAN interface is accepted. Slow DHCP retries remain
@@ -639,9 +604,9 @@ when the resulting power state is unknown. The original power receipt remains;
 this does not rerun migrations, restore data again or release maintenance early.
 
 Host staging binds its downloader to the verified complete core selection. Exact
-signed original member URLs may resolve to the publisher's hash-named asset after
+original member URLs may resolve to the publisher's hash-named asset after
 an original-URL 404, using the same bounded transport as member verification.
-Source identity, checksum, signature, redirect and non-404 failure checks remain.
+Source identity, checksum, redirect and non-404 failure checks remain.
 
 If a host reboots during incomplete recovery, explicit continuation first proves
 that the original recovery child has settled and that the host boot identity has

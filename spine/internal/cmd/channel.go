@@ -11,7 +11,6 @@ import (
 	"github.com/youeye-platform/YouEye/spine/internal/channels"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
 	"github.com/youeye-platform/YouEye/spine/internal/releases"
-	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"github.com/youeye-platform/YouEye/spine/internal/update"
 	"github.com/youeye-platform/YouEye/spine/internal/version"
 )
@@ -20,7 +19,8 @@ var channelCmd = &cobra.Command{
 	Use:   "channel",
 	Short: "Manage per-component release channels",
 	Long: `Manage the release channel (repo + branch + fallback chain) each component
-installs from. Components: system, default, spine, control, ui, and app:<id> for native apps.
+installs from. Components: default, spine, control, ui, and app:<id> for native apps.
+The System update source is fixed by the installer-recorded release policy.
 
 The "default" channel is inherited by any component without an override. Each
 override merges per-field onto the default. The fallback chain is resolved in the
@@ -96,8 +96,10 @@ func init() {
 // normalizeComponent validates and normalizes a component id.
 func normalizeComponent(component string) (string, error) {
 	switch component {
-	case channels.ComponentSystem, channels.ComponentDefault, channels.ComponentSpine, channels.ComponentControl, channels.ComponentUI:
+	case channels.ComponentDefault, channels.ComponentSpine, channels.ComponentControl, channels.ComponentUI:
 		return component, nil
+	case "system":
+		return "", fmt.Errorf("the System update source is the installer-recorded release policy, not a channel")
 	}
 	if strings.HasPrefix(component, channels.AppPrefix) {
 		id := strings.TrimPrefix(component, channels.AppPrefix)
@@ -106,7 +108,7 @@ func normalizeComponent(component string) (string, error) {
 		}
 		return component, nil
 	}
-	return "", fmt.Errorf("unknown component %q (want: system, default, spine, control, ui, or app:<id>)", component)
+	return "", fmt.Errorf("unknown component %q (want: default, spine, control, ui, or app:<id>)", component)
 }
 
 func channelSet(cmd *cobra.Command, component string) error {
@@ -167,8 +169,6 @@ func channelSet(cmd *cobra.Command, component string) error {
 // currentOverride returns the raw override for a component (for merge-preserving set).
 func currentOverride(c *channels.Config, component string) (channels.Channel, bool) {
 	switch component {
-	case channels.ComponentSystem:
-		return c.System, true
 	case channels.ComponentDefault:
 		return c.Default, true
 	case channels.ComponentSpine:
@@ -264,12 +264,6 @@ func componentMeta(cfg *config.Config, component string) (repo, tagPrefix string
 // installedVersion returns the live installed version for a core component,
 // preferring provenance and falling back to a live read where available.
 func installedVersion(component string) (ver, branch string) {
-	if component == channels.ComponentSystem {
-		if receipt, err := (systemupdate.CoreManager{Root: systemupdate.CoreStatePath}).ReadReceipt(); err == nil {
-			return receipt.Release.Version, receipt.Release.Branch
-		}
-		return "unknown", ""
-	}
 	if entry, ok := update.GetProvenance(component); ok {
 		return entry.Version, entry.Branch
 	}
@@ -291,9 +285,6 @@ func channelList() error {
 
 	// Always show the core components + default, then any configured apps.
 	rows := []string{channels.ComponentDefault, channels.ComponentSpine, channels.ComponentControl, channels.ComponentUI}
-	if !cfgCh.System.IsZero() {
-		rows = append([]string{channels.ComponentSystem}, rows...)
-	}
 	for _, id := range cfgCh.ConfiguredComponents() {
 		if strings.HasPrefix(id, channels.AppPrefix) {
 			rows = append(rows, id)

@@ -45,19 +45,15 @@ func (e *coreTestExecutor) Observe(_ context.Context, _ CoreJournal, s CoreStep)
 func coreJournalFixture(t *testing.T) (CoreManager, *coreTestExecutor, releasecache.CoreRelease) {
 	t.Helper()
 	source := "https://github.com/YouEye-Platform/YouEye"
-	r := releasecache.CoreRelease{Schema: releasecache.CoreReleaseSchema, Version: "0.5.37", Tag: "youeye-v0.5.37", Source: source, Branch: "main", SourceCommit: strings.Repeat("a", 40), Channel: "stable", Sequence: 1, MinimumReader: 1, SignerSHA256: strings.Repeat("b", 64), Compatibility: releasecache.CoreCompatibility{StateMin: 1, StateMax: 1, DataMin: 1, DataMax: 1, MinimumRelease: "0.5.37", Capabilities: []string{"core-release-v1"}}}
+	r := releasecache.CoreRelease{Schema: releasecache.CoreReleaseSchema, Version: "0.5.37", Tag: "youeye-v0.5.37", Source: source, Branch: "main", SourceCommit: strings.Repeat("a", 40), Channel: "stable", Sequence: 1, MinimumReader: 1, Authority: releasecache.CoreReleaseAuthority, Compatibility: releasecache.CoreCompatibility{StateMin: 1, StateMax: 1, DataMin: 1, DataMax: 1, MinimumRelease: "0.5.37", Capabilities: []string{"core-release-v1"}}}
 	for _, role := range []string{"installer", "media", "appliance", "system-update", "system-root", "system-a-uki", "system-b-uki", "system-updater", "internal-recovery", "recovery-uki", "update-bootstrap", "spine", "cp", "ui"} {
 		blob := func(name string) releasecache.CoreBlob {
 			return releasecache.CoreBlob{Name: name, URL: source + "/releases/download/youeye-v0.5.37/" + name, SHA256: strings.Repeat("c", 64), SizeBytes: 42}
 		}
-		member := releasecache.CoreMember{Role: role, BuildVersion: r.Version, Source: source, Branch: "main", SourceCommit: r.SourceCommit, Tag: r.Tag, InputSHA256: strings.Repeat("d", 64), Artifact: blob(role + ".tar"), Checksums: blob("SHA256SUMS"), Signature: blob("SHA256SUMS.sig"), Provenance: blob("provenance.json"), SBOM: blob("sbom.json"), KeyID: r.SignerSHA256}
-		if role == "appliance" || role == "system-update" {
-			signature := blob(role + ".json.sig")
-			member.DocumentSignature = &signature
-		}
+		member := releasecache.CoreMember{Role: role, BuildVersion: r.Version, Source: source, Branch: "main", SourceCommit: r.SourceCommit, Tag: r.Tag, InputSHA256: strings.Repeat("d", 64), Artifact: blob(role + ".tar")}
 		if role == "appliance" {
-			lock := blob("release-lock.json")
-			member.ReleaseLock = &lock
+			inputs := blob("build-inputs.json")
+			member.BuildInputs = &inputs
 		}
 		if role == "cp" {
 			member.DependsOn = []string{"spine"}

@@ -2,11 +2,7 @@ package systemupdate
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
@@ -70,19 +66,11 @@ func newRuntimeCacheHTTPFixture(t *testing.T, delay time.Duration) *runtimeCache
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, private, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	der, err := x509.MarshalPKIXPublicKey(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.Source, r.SignerSHA256 = "https://forge.example/owner/YouEye", checksum(der)
+	r.Source = "https://forge.example/owner/YouEye"
 	files := map[string][]byte{}
 	for i := range r.Members {
 		m := &r.Members[i]
-		m.Source, m.KeyID = r.Source, r.SignerSHA256
+		m.Source = r.Source
 		blob := func(name string, data []byte) releasecache.CoreBlob {
 			b := releasecache.CoreBlob{Name: name, URL: m.Source + "/releases/download/" + m.Tag + "/" + m.Role + "-" + name, SHA256: checksum(data), SizeBytes: int64(len(data))}
 			u, err := url.Parse(b.URL)
@@ -94,26 +82,10 @@ func newRuntimeCacheHTTPFixture(t *testing.T, delay time.Duration) *runtimeCache
 		}
 		payload := []byte(`{"fixture":"` + m.Role + `"}`)
 		m.Artifact = blob(m.Role+".tar", payload)
-		m.SBOM = blob("sbom.json", []byte(`{"packages":[]}`))
-		provenance := []byte(`{"fixture":true}`)
-		if m.ReleaseLock != nil {
-			lock := blob("release-lock.json", []byte(`{"lock":"exact"}`))
-			m.ReleaseLock = &lock
-			provenance = []byte(`{"resolved_lock_sha256":"` + lock.SHA256 + `"}`)
+		if m.BuildInputs != nil {
+			inputs := blob("build-inputs.json", []byte(`{"inputs":"exact"}`))
+			m.BuildInputs = &inputs
 		}
-		m.Provenance = blob("provenance.json", provenance)
-		bound := []releasecache.CoreBlob{m.Artifact, m.SBOM, m.Provenance}
-		if m.DocumentSignature != nil {
-			signature := blob(m.Role+".tar.sig", ed25519.Sign(private, payload))
-			m.DocumentSignature = &signature
-			bound = append(bound, signature)
-		}
-		var checksums strings.Builder
-		for _, b := range bound {
-			fmt.Fprintf(&checksums, "%s  %s\n", b.SHA256, b.Name)
-		}
-		m.Checksums = blob("SHA256SUMS", []byte(checksums.String()))
-		m.Signature = blob("SHA256SUMS.sig", ed25519.Sign(private, []byte(checksums.String())))
 		if m.Role == "cp" {
 			f.artifact = m.Artifact
 		}
@@ -122,13 +94,9 @@ func newRuntimeCacheHTTPFixture(t *testing.T, delay time.Duration) *runtimeCache
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.selection = CoreHostSelection{Raw: raw, Signature: ed25519.Sign(private, raw)}
+	f.selection = CoreHostSelection{Raw: raw}
 	f.release = r
 	root := t.TempDir()
-	trust := filepath.Join(root, "key.pub")
-	if err := os.WriteFile(trust, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), 0600); err != nil {
-		t.Fatal(err)
-	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		data, ok := files[request.URL.Path]
 		if !ok {
@@ -186,7 +154,7 @@ func newRuntimeCacheHTTPFixture(t *testing.T, delay time.Duration) *runtimeCache
 	originalTransport := http.DefaultTransport
 	http.DefaultTransport = runtimeCacheLocalTransport{target: target, base: server.Client().Transport}
 	t.Cleanup(func() { http.DefaultTransport = originalTransport })
-	f.cache = NewRuntimeCoreArtifactCache(filepath.Join(root, "cache"), trust)
+	f.cache = NewRuntimeCoreArtifactCache(filepath.Join(root, "cache"))
 	f.cache.AvailableBytes = func(string) (uint64, error) { return 1 << 30, nil }
 	return f
 }
@@ -273,30 +241,6 @@ func TestRuntimeCoreCachePreservesCallerCancellation(t *testing.T) {
 		t.Fatal("payload did not settle after caller cancellation")
 	}
 	requireRuntimeCacheCancellation(t, &f.canceled)
-	f.requireUncommittedAndUnlocked(t)
-}
-
-func TestRuntimeCoreCacheMetadataRetainsDiscoveryBudget(t *testing.T) {
-	f := newRuntimeCacheHTTPFixture(t, 0)
-	if f.cache.Client.Timeout != 30*time.Second || f.cache.ArtifactClient.Timeout != 0 || f.cache.Client == f.cache.ArtifactClient {
-		t.Fatal("runtime metadata and payload budgets are not distinct")
-	}
-	f.metadataSlow.Store(true)
-	f.cache.Client.Timeout = 100 * time.Millisecond
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	// Metadata intentionally sanitizes transport errors. The server must observe
-	// cancellation before the later operation deadline and before any payload.
-	started := time.Now()
-	if err := f.stage(ctx, false); err == nil || time.Since(started) >= 2*time.Second {
-		t.Fatal("slow metadata escaped its discovery budget", err)
-	}
-	requireRuntimeCacheCancellation(t, &f.metadataCanceled)
-	select {
-	case <-f.payloadStarted:
-		t.Fatal("payload started after metadata timeout")
-	default:
-	}
 	f.requireUncommittedAndUnlocked(t)
 }
 

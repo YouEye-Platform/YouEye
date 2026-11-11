@@ -7,80 +7,54 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source_dir="${SOURCE_DIR:-$(cd -- "$script_dir/../.." && pwd)}"
 output_dir="${OUTPUT_DIR:-$source_dir/dist/appliance}"
 work_dir="${WORK_DIR:-$source_dir/.build/appliance}"
-release_lock="${RELEASE_LOCK_PATH:-$source_dir/appliance/release-lock.json}"
-release_lock_source_mode="${RELEASE_LOCK_SOURCE_MODE:-public}"
-# A separately supplied lock is the supported explicit source override. Keep
-# the repository default public, including aliases/symlinks to that same file.
-# An explicit mode always wins; all modes still validate exact release identity.
-if [[ -n ${RELEASE_LOCK_PATH:-} && ! $release_lock -ef $source_dir/appliance/release-lock.json ]]; then
-    release_lock_source_mode="${RELEASE_LOCK_SOURCE_MODE:-custom}"
-fi
-# shellcheck source=release-lock.sh
-. "$script_dir/release-lock.sh"
-if ! release_lock_validate "$release_lock" "$release_lock_source_mode"; then
-    printf 'RELEASE_LOCK_PATH must name a valid YouEye appliance release lock: %s\n' "$release_lock_error" >&2
+build_inputs="${BUILD_INPUTS_PATH:-$source_dir/appliance/build-inputs.json}"
+# shellcheck source=build-inputs.sh
+. "$script_dir/build-inputs.sh"
+if ! build_inputs_validate "$build_inputs"; then
+    printf 'BUILD_INPUTS_PATH must name valid youeye.build-inputs.v1 appliance build inputs: %s\n' "$build_inputs_error" >&2
     exit 1
 fi
-lock_value() { jq -er "$1" "$release_lock"; }
-snapshot="$(lock_value '.image.debian_snapshot')"
-release_source="$(lock_value '.image.release_source')"
-release_branch="$(lock_value '.image.release_branch')"
-composition=false
-[[ $(lock_value '.schema') != youeye.appliance.release-lock.v2 ]] || composition=true
-spine_branch="$(jq -r '.components.spine.branch // .image.release_branch' "$release_lock")"
-cp_branch="$(jq -r '.components.control_panel.branch // .image.release_branch' "$release_lock")"
-ui_branch="$(jq -r '.components.ui.branch // .image.release_branch' "$release_lock")"
-apply_composition_manifest() {
-    $composition || return 0
-    local file=$1
-    jq -S --arg spine "$spine_branch" --arg cp "$cp_branch" --arg ui "$ui_branch" '
-      .release_set.schema="youeye.release-set.v2" |
-      .release_set.spine.branch=$spine | .release_set.control_panel.branch=$cp | .release_set.ui.branch=$ui
-    ' "$file" > "$file.composition"
-    mv -- "$file.composition" "$file"
-}
-image_version="$(lock_value '.image.version')"
-minimum_current_image_version="$(lock_value '.image.minimum_current_version')"
-market_source="$(lock_value '.market.source')"
-market_branch="$(lock_value '.market.branch')"
-market_source_commit="$(lock_value '.market.commit')"
-spine_version="$(lock_value '.components.spine.version')"
-spine_tag="$(lock_value '.components.spine.tag')"
-spine_commit="$(lock_value '.components.spine.source_commit')"
-spine_source_date_epoch="$(lock_value '.components.spine.source_date_epoch')"
-spine_expected_sha256="$(lock_value '.components.spine.artifact_sha256')"
-cp_version="$(lock_value '.components.control_panel.version')"
-cp_tag="$(lock_value '.components.control_panel.tag')"
-cp_commit="$(lock_value '.components.control_panel.source_commit')"
-cp_sha256="$(lock_value '.components.control_panel.artifact_sha256')"
-ui_version="$(lock_value '.components.ui.version')"
-ui_tag="$(lock_value '.components.ui.tag')"
-ui_commit="$(lock_value '.components.ui.source_commit')"
-ui_sha256="$(lock_value '.components.ui.artifact_sha256')"
-build_mode="${APPLIANCE_BUILD_MODE:-signed}"
-signing_key="${APPLIANCE_SIGNING_KEY_FILE:-}"
-signing_public_key="${APPLIANCE_SIGNING_PUBLIC_KEY_FILE:-$source_dir/installer/internal/installer/appliance-development.pub}"
+input_value() { jq -er "$1" "$build_inputs"; }
+snapshot="$(input_value '.debian_snapshot')"
+release_source="$(input_value '.release_source')"
+release_branch="$(input_value '.release_branch')"
+image_version="$(input_value '.version')"
+minimum_current_image_version="$(input_value '.minimum_current_version')"
+market_source="$(input_value '.market.source')"
+market_branch="$(input_value '.market.branch')"
+market_source_commit="$(input_value '.market.commit')"
+spine_version="$(input_value '.components.spine.version')"
+spine_tag="$(input_value '.components.spine.tag')"
+spine_commit="$(input_value '.components.spine.source_commit')"
+spine_source_date_epoch="$(input_value '.components.spine.source_date_epoch')"
+spine_expected_sha256="$(input_value '.components.spine.artifact_sha256')"
+cp_version="$(input_value '.components.control_panel.version')"
+cp_tag="$(input_value '.components.control_panel.tag')"
+cp_commit="$(input_value '.components.control_panel.source_commit')"
+cp_sha256="$(input_value '.components.control_panel.artifact_sha256')"
+ui_version="$(input_value '.components.ui.version')"
+ui_tag="$(input_value '.components.ui.tag')"
+ui_commit="$(input_value '.components.ui.source_commit')"
+ui_sha256="$(input_value '.components.ui.artifact_sha256')"
 live_build_attempts="${LIVE_BUILD_ATTEMPTS:-3}"
 live_build_apt_proxy="${LIVE_BUILD_APT_PROXY:-}"
-trust_class="${APPLIANCE_TRUST_CLASS:-development}"
-if [[ $trust_class != development && $trust_class != beta && $trust_class != stable ]]; then echo "Invalid appliance trust class" >&2; exit 1; fi
-if $composition && [[ $trust_class != development ]]; then echo "Composition requires development trust" >&2; exit 1; fi
-if [[ $trust_class != development ]]; then
-    signing_public_key="$source_dir/installer/internal/installer/appliance-public.pub"
-    python3 "$source_dir/installer/scripts/embed-public-trust.py" --source "$source_dir" --check --require "$trust_class"
-    release_lock_validate_public_recipe "$release_lock" "$source_dir/appliance/release-recipe.json" || { echo "$release_lock_error" >&2; exit 1; }
-    [[ $release_branch == beta && $trust_class == beta || $release_branch == main && $trust_class == stable ]] || { echo "Public trust/branch mismatch" >&2; exit 1; }
-fi
-artifact_kind="${ARTIFACT_KIND:-$trust_class}"
+# The image channel follows the version suffix: no suffix is stable, -beta.N is
+# beta and every other suffix is a development build. ARTIFACT_KIND=test marks a
+# development build as test-only.
+case "$image_version" in
+    *-beta.*) release_kind=beta ;;
+    *-*) release_kind=development ;;
+    *) release_kind=stable ;;
+esac
+artifact_kind="${ARTIFACT_KIND:-$release_kind}"
 test_fault="${APPLIANCE_TEST_FAULT:-none}"
 
 for source in "$release_source" "$market_source"; do
     if [[ $source != https://* || $source == *'?'* || $source == *'#'* ]]; then
-        printf 'Release-lock sources must use credential-free HTTPS repository URLs.\n' >&2
+        printf 'Build-input sources must use credential-free HTTPS repository URLs.\n' >&2
         exit 1
     fi
 done
-# Branch/tag identity was checked by release_lock_validate above.
 
 
 for path in "$output_dir" "$work_dir"; do
@@ -93,18 +67,6 @@ if [[ $EUID -ne 0 ]]; then
     printf 'build-appliance.sh must run as root (use sudo with the required environment).\n' >&2
     exit 1
 fi
-if [[ $build_mode != signed && $build_mode != unsigned ]]; then
-    printf 'APPLIANCE_BUILD_MODE must be signed or unsigned.\n' >&2
-    exit 1
-fi
-if [[ $build_mode == signed && ( -z $signing_key || ! -f $signing_key ) ]]; then
-    printf 'APPLIANCE_SIGNING_KEY_FILE must name a protected Ed25519 private key for signed builds.\n' >&2
-    exit 1
-fi
-if [[ ! -f $signing_public_key ]]; then
-    printf 'APPLIANCE_SIGNING_PUBLIC_KEY_FILE must name the public Ed25519 trust anchor.\n' >&2
-    exit 1
-fi
 if [[ ! $live_build_attempts =~ ^[1-9][0-9]*$ ]]; then
     printf 'LIVE_BUILD_ATTEMPTS must be a positive integer.\n' >&2
     exit 1
@@ -113,8 +75,8 @@ if [[ -n $live_build_apt_proxy && ! $live_build_apt_proxy =~ ^http://(127\.0\.0\
     printf 'LIVE_BUILD_APT_PROXY must be an uncredentialed builder-local HTTP endpoint.\n' >&2
     exit 1
 fi
-if [[ $artifact_kind != "$trust_class" && ! ( $trust_class == development && $artifact_kind == test ) ]]; then
-	printf 'ARTIFACT_KIND must be development or test.\n' >&2
+if [[ $artifact_kind != "$release_kind" && ! ( $release_kind == development && $artifact_kind == test ) ]]; then
+	printf 'ARTIFACT_KIND may only mark a development version as test.\n' >&2
 	exit 1
 fi
 if [[ $test_fault != none && $test_fault != system-health ]]; then
@@ -126,42 +88,42 @@ if [[ $test_fault != none && $artifact_kind != test ]]; then
 	exit 1
 fi
 if [[ $market_source != https://* || $market_source == *'?'* || $market_source == *'#'* ]]; then
-	printf 'MARKET_SOURCE must be an HTTPS repository URL without a query or fragment.\n' >&2
+	printf 'market.source must be an HTTPS repository URL without a query or fragment.\n' >&2
 	exit 1
 fi
 if [[ ! $market_source_commit =~ ^[0-9a-f]{40}$ ]]; then
-	printf 'MARKET_SOURCE_COMMIT must be a full lowercase Git commit.\n' >&2
+	printf 'market.commit must be a full lowercase Git commit.\n' >&2
 	exit 1
 fi
 if [[ ! $spine_commit =~ ^[0-9a-f]{40}$ ]]; then
-    printf 'SPINE_COMMIT must be the exact signed Spine release commit.\n' >&2
+    printf 'components.spine.source_commit must be the exact Spine release commit.\n' >&2
     exit 1
 fi
 if [[ ! $spine_source_date_epoch =~ ^[1-9][0-9]*$ ]]; then
-    printf 'SPINE_SOURCE_DATE_EPOCH must be the exact signed Spine source epoch.\n' >&2
+    printf 'components.spine.source_date_epoch must be the exact Spine source epoch.\n' >&2
     exit 1
 fi
 if [[ ! $spine_expected_sha256 =~ ^[0-9a-f]{64}$ ]]; then
-	printf 'SPINE_SHA256 must be the exact signed Spine binary SHA-256.\n' >&2
+	printf 'components.spine.artifact_sha256 must be the exact Spine binary SHA-256.\n' >&2
 	exit 1
 fi
 if [[ ! $cp_commit =~ ^[0-9a-f]{40}$ ]]; then
-	printf 'CP_COMMIT must be the exact signed Control Panel release commit.\n' >&2
+	printf 'components.control_panel.source_commit must be the exact Control Panel release commit.\n' >&2
 	exit 1
 fi
 if [[ ! $cp_sha256 =~ ^[0-9a-f]{64}$ ]]; then
-	printf 'CP_SHA256 must be the exact signed Control Panel standalone.tar SHA-256.\n' >&2
+	printf 'components.control_panel.artifact_sha256 must be the exact Control Panel cp-standalone.tar SHA-256.\n' >&2
 	exit 1
 fi
 if [[ ! $ui_commit =~ ^[0-9a-f]{40}$ ]]; then
-	printf 'UI_COMMIT must be the exact signed UI release commit.\n' >&2
+	printf 'components.ui.source_commit must be the exact UI release commit.\n' >&2
 	exit 1
 fi
 if [[ ! $ui_sha256 =~ ^[0-9a-f]{64}$ ]]; then
-	printf 'UI_SHA256 must be the exact signed UI standalone.tar SHA-256.\n' >&2
+	printf 'components.ui.artifact_sha256 must be the exact UI ui-standalone.tar SHA-256.\n' >&2
 	exit 1
 fi
-for command in git go mmdebstrap lb ukify openssl jq tar mkfs.ext4 debugfs modinfo zstd sha256sum xorriso; do
+for command in git go mmdebstrap lb ukify jq tar mkfs.ext4 debugfs modinfo zstd sha256sum xorriso; do
     if ! command -v "$command" >/dev/null 2>&1; then
         printf 'Required build command is missing: %s\n' "$command" >&2
         exit 1
@@ -194,13 +156,9 @@ if [[ ! $source_date_epoch =~ ^[1-9][0-9]*$ ]]; then
 fi
 export SOURCE_DATE_EPOCH="$source_date_epoch"
 build_id="appliance-${source_commit:0:12}-${source_date_epoch}"
-if $composition; then
-    composition_digest="$(sha256sum "$release_lock" | awk '{print $1}')"
-    build_id="${build_id}-composition-${composition_digest:0:12}"
-fi
 source_spine_version="$(sed -n 's/^var Version = "\([^"]*\)"/\1/p' "$source_dir/spine/internal/cmd/root.go")"
-if ! $composition && [[ -z $source_spine_version || $source_spine_version != "$spine_version" ]]; then
-    printf 'Source Spine version must match the exact signed Spine release identity.\n' >&2
+if [[ -z $source_spine_version || $source_spine_version != "$spine_version" ]]; then
+    printf 'Source Spine version must match the build-input Spine version.\n' >&2
     exit 1
 fi
 
@@ -245,18 +203,13 @@ trap 'exit 143' TERM
 rm -rf "$work_dir" "$live_dir"
 install -d -m 0755 "$output_dir" "$rootfs" "$artifacts" "$live_dir" "$bin_dir"
 
-printf '[1/8] Building exact source binaries\n'
+printf '[1/7] Building exact source binaries\n'
 export GOCACHE="$work_dir/go-cache"
-if $composition; then
-    spine_input="${YOUEYE_COMPOSITION_SPINE_FILE:?Composition requires a verified released Spine binary}"
-    [[ -f $spine_input && ! -L $spine_input ]] || { echo "Invalid composition Spine input" >&2; exit 1; }
-    install -m 0755 -- "$spine_input" "$bin_dir/youeye"
-elif [[ -n ${YOUEYE_VERIFIED_SPINE_FILE:-} ]]; then
-    # The release coordinator authenticates the retained candidate envelope and
-    # binds the lock before entering this isolated unsigned builder. The exact
-    # signed lock digest below applies equally to reused and rebuilt binaries.
-    spine_input="$YOUEYE_VERIFIED_SPINE_FILE"
-    [[ $spine_input == /* && -f $spine_input && ! -L $spine_input ]] || { echo "Invalid verified Spine input" >&2; exit 1; }
+if [[ -n ${YOUEYE_SPINE_FILE:-} ]]; then
+    # A prebuilt Spine release binary may be reused. The sha256 check against the
+    # build inputs below applies equally to reused and rebuilt binaries.
+    spine_input="$YOUEYE_SPINE_FILE"
+    [[ $spine_input == /* && -f $spine_input && ! -L $spine_input ]] || { echo "Invalid YOUEYE_SPINE_FILE input" >&2; exit 1; }
     install -m 0755 -- "$spine_input" "$bin_dir/youeye"
 else
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$source_dir/spine" build \
@@ -273,25 +226,7 @@ if [[ $spine_sha256 != "$spine_expected_sha256" ]]; then
     exit 1
 fi
 
-printf '[2/8] Deriving public development trust material\n'
-if [[ $build_mode == signed ]]; then
-    openssl pkey -in "$signing_key" -pubout -out "$artifacts/appliance-development.pub" 2>/dev/null
-else
-    install -m 0644 "$signing_public_key" "$artifacts/appliance-development.pub"
-fi
-expected_anchor="$source_dir/installer/internal/installer/appliance-development.pub"
-if [[ $trust_class != development ]]; then
-    expected_anchor="$source_dir/installer/internal/installer/appliance-public.pub"
-    jq -er --arg class "$trust_class" '.keys[$class]' "$source_dir/installer/internal/installer/public-release-trust.json" > "$work_dir/embedded-public-anchor.pub"
-    cmp -s <(sed '/^[[:space:]]*$/d' "$expected_anchor") <(sed '/^[[:space:]]*$/d' "$work_dir/embedded-public-anchor.pub") || { echo "Public anchor differs from Installer policy" >&2; exit 1; }
-fi
-if ! cmp -s "$artifacts/appliance-development.pub" "$expected_anchor"; then
-    printf '%s\n' 'Refusing appliance signer that does not match the installer development trust anchor.' >&2
-    exit 1
-fi
-key_id="$(openssl pkey -pubin -in "$artifacts/appliance-development.pub" -outform DER 2>/dev/null | sha256sum | cut -c1-16)"
-
-printf '[3/8] Bootstrapping Debian 13 root from snapshot %s\n' "$snapshot"
+printf '[2/7] Bootstrapping Debian 13 root from snapshot %s\n' "$snapshot"
 cat > "$work_dir/youeye-dkms.conf" <<'EOF'
 # Secure Boot is deferred. Avoid per-build MOK generation and signatures so
 # the development image is reproducible; production signing has its own trust design.
@@ -326,10 +261,9 @@ while IFS= read -r -d '' module; do
 done < <(find "$rootfs/usr/lib/modules" -path '*/updates/dkms/*.ko*' -type f -print0)
 find "$rootfs/var/lib/dkms" -type f -name '*.log' -delete
 
-printf '[4/8] Sealing appliance runtime and exact release channels\n'
+printf '[3/7] Sealing appliance runtime and exact release channels\n'
 install -D -m 0755 "$bin_dir/youeye" "$rootfs/usr/local/bin/youeye"
 install -D -m 0755 "$bin_dir/youeye-installer" "$rootfs/usr/local/bin/youeye-installer"
-install -D -m 0644 "$artifacts/appliance-development.pub" "$rootfs/usr/share/youeye/appliance-development.pub"
 install -D -m 0644 "$source_dir/LICENSE" "$rootfs/usr/share/doc/youeye/LICENSE"
 install -D -m 0644 "$source_dir/TRADEMARK.md" "$rootfs/usr/share/doc/youeye/TRADEMARK.md"
 install -D -m 0644 "$source_dir/THIRD_PARTY_NOTICES.txt" "$rootfs/usr/share/doc/youeye/THIRD_PARTY_NOTICES.txt"
@@ -436,7 +370,6 @@ jq -S -n \
         control_panel:{version:$cp_version,tag:$cp_tag,source_commit:$cp_commit,artifact_sha256:$cp_sha256},
         ui:{version:$ui_version,tag:$ui_tag,source_commit:$ui_commit,artifact_sha256:$ui_sha256}}
     }' > "$rootfs/usr/lib/youeye/appliance-release"
-apply_composition_manifest "$rootfs/usr/lib/youeye/appliance-release"
 chmod 0444 "$rootfs/usr/lib/youeye/appliance-release"
 install -d -m 0755 "$rootfs/usr/share/youeye"
 printf '%s\n' 'youeye.core-release.v1' > "$rootfs/usr/share/youeye/core-selection-required"
@@ -461,18 +394,18 @@ release_channels:
     fallback: []
   spine:
     source: $release_source
-    branch: $spine_branch
+    branch: $release_branch
     fallback: []
   control:
     source: $release_source
-    branch: $cp_branch
+    branch: $release_branch
     pin_origin: installation
     tag: $cp_tag
     artifact_sha256: $cp_sha256
     fallback: []
   ui:
     source: $release_source
-    branch: $ui_branch
+    branch: $release_branch
     pin_origin: installation
     tag: $ui_tag
     artifact_sha256: $ui_sha256
@@ -518,7 +451,7 @@ chroot "$rootfs" update-initramfs -u -k all
 
 find "$rootfs" -xdev -print0 | xargs -0 touch --no-dereference --date="@$source_date_epoch"
 
-printf '[5/8] Creating fixed-size System and Recovery images\n'
+printf '[4/7] Creating fixed-size System and Recovery images\n'
 make_ext4_image() {
     local image=$1
     local size=$2
@@ -566,7 +499,7 @@ make_ext4_image "$artifacts/internal-recovery.img" 4G YE-RECOVERY-IMG "$recovery
 zstd -q -T1 -10 --long=27 -f "$artifacts/system-root.img" -o "$artifacts/system-root.img.zst"
 zstd -q -T1 -10 --long=27 -f "$artifacts/internal-recovery.img" -o "$artifacts/internal-recovery.img.zst"
 
-printf '[6/8] Building A, B, and Recovery UKIs\n'
+printf '[5/7] Building A, B, and Recovery UKIs\n'
 kernel="$(find "$rootfs/boot" -maxdepth 1 -type f -name 'vmlinuz-*' | sort -V | tail -n 1)"
 initrd="${kernel/vmlinuz-/initrd.img-}"
 kernel_version="${kernel##*/vmlinuz-}"
@@ -595,7 +528,7 @@ done
 mv "$artifacts/a.efi" "$artifacts/system-a.efi"
 mv "$artifacts/b.efi" "$artifacts/system-b.efi"
 
-printf '[7/8] Preparing appliance release payload\n'
+printf '[6/7] Preparing appliance release payload\n'
 install -m 0755 "$bin_dir/youeye" "$artifacts/youeye-system-updater-linux-amd64"
 install -m 0755 "$source_dir/appliance/scripts/youeye-system-update-bootstrap" "$artifacts/youeye-system-update-bootstrap"
 asset_record() {
@@ -617,24 +550,23 @@ asset_record() {
     fi
 }
 
-if [[ $build_mode == signed ]]; then
-    jq -s '.' \
-        <(asset_record system-root system-root.img.zst zstd) \
-        <(asset_record internal-recovery internal-recovery.img.zst zstd) \
-        <(asset_record system-a-uki system-a.efi) \
-        <(asset_record system-b-uki system-b.efi) \
-        <(asset_record recovery-uki recovery.efi) > "$work_dir/assets.json"
+jq -s '.' \
+    <(asset_record system-root system-root.img.zst zstd) \
+    <(asset_record internal-recovery internal-recovery.img.zst zstd) \
+    <(asset_record system-a-uki system-a.efi) \
+    <(asset_record system-b-uki system-b.efi) \
+    <(asset_record recovery-uki recovery.efi) > "$work_dir/assets.json"
 
-    jq -s '.' \
-        <(asset_record system-root system-root.img.zst zstd) \
-        <(asset_record system-a-uki system-a.efi) \
-        <(asset_record system-b-uki system-b.efi) \
-        <(asset_record system-updater youeye-system-updater-linux-amd64) > "$work_dir/system-update-assets.json"
+jq -s '.' \
+    <(asset_record system-root system-root.img.zst zstd) \
+    <(asset_record system-a-uki system-a.efi) \
+    <(asset_record system-b-uki system-b.efi) \
+    <(asset_record system-updater youeye-system-updater-linux-amd64) > "$work_dir/system-update-assets.json"
 
-    jq -S -n \
+jq -S -n \
     --slurpfile artifacts "$work_dir/assets.json" \
     --arg image_version "$image_version" --arg build_id "$build_id" \
-    --arg source_commit "$source_commit" --arg key_id "$key_id" --arg trust_class "$trust_class" \
+    --arg source_commit "$source_commit" \
     --arg release_source "$release_source" --arg release_branch "$release_branch" \
     --arg spine_version "$spine_version" --arg spine_tag "$spine_tag" --arg spine_commit "$spine_commit" --arg spine_sha256 "$spine_sha256" \
     --arg cp_version "$cp_version" --arg cp_tag "$cp_tag" --arg cp_commit "$cp_commit" --arg cp_sha256 "$cp_sha256" \
@@ -646,19 +578,16 @@ if [[ $build_mode == signed ]]; then
       state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1,
       kernel_compatibility:">=6.12",zfs_compatibility:">=2.3",zfs_feature_profile:"openzfs-2.2",
       incus_compatibility:">=7.0",recovery_version:"1",
-      trust:{class:$trust_class,key_id:$key_id},
       release_set:{source:$release_source,branch:$release_branch,fallback:[],
         spine:{version:$spine_version,tag:$spine_tag,source_commit:$spine_commit,artifact_sha256:$spine_sha256},
         control_panel:{version:$cp_version,tag:$cp_tag,source_commit:$cp_commit,artifact_sha256:$cp_sha256},
         ui:{version:$ui_version,tag:$ui_tag,source_commit:$ui_commit,artifact_sha256:$ui_sha256}},
       artifacts:$artifacts[0],source_date_epoch:$source_date_epoch}' > "$artifacts/appliance-manifest.json"
-apply_composition_manifest "$artifacts/appliance-manifest.json"
-    openssl pkeyutl -sign -rawin -inkey "$signing_key" -in "$artifacts/appliance-manifest.json" -out "$artifacts/appliance-manifest.json.sig" 2>/dev/null
 
-    jq -S -n \
+jq -S -n \
 	--slurpfile artifacts "$work_dir/system-update-assets.json" \
 	--arg target_image_version "$image_version" \
-	--arg build_id "$build_id" --arg source_commit "$source_commit" --arg key_id "$key_id" --arg trust_class "$trust_class" \
+	--arg build_id "$build_id" --arg source_commit "$source_commit" \
 	--arg minimum_current_image_version "$minimum_current_image_version" \
 	--arg artifact_kind "$artifact_kind" \
 	--arg release_source "$release_source" --arg release_branch "$release_branch" \
@@ -673,7 +602,6 @@ apply_composition_manifest "$artifacts/appliance-manifest.json"
 	  recovery_version:"1",minimum_current_image_version:$minimum_current_image_version,
 	  root_slot_size_bytes:8589934592,
 	  boot_attempts:3,health_profile:"operational",artifact_kind:$artifact_kind,
-	  trust:{class:$trust_class,key_id:$key_id},
 	  rollback:{supported:true,state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1,
 	    preserve_state:true,preserve_data:true,preserve_recovery:true},
 	  release_set:{source:$release_source,branch:$release_branch,fallback:[],
@@ -681,23 +609,11 @@ apply_composition_manifest "$artifacts/appliance-manifest.json"
 	    control_panel:{version:$cp_version,tag:$cp_tag,source_commit:$cp_commit,artifact_sha256:$cp_sha256},
 	    ui:{version:$ui_version,tag:$ui_tag,source_commit:$ui_commit,artifact_sha256:$ui_sha256}},
 	  artifacts:$artifacts[0],source_date_epoch:$source_date_epoch}' > "$artifacts/system-update-manifest.json"
-apply_composition_manifest "$artifacts/system-update-manifest.json"
-    openssl pkeyutl -sign -rawin -inkey "$signing_key" -in "$artifacts/system-update-manifest.json" -out "$artifacts/system-update-manifest.json.sig" 2>/dev/null
 
-    dpkg-query --root="$rootfs" -W -f='${Package}\t${Version}\t${Architecture}\n' | jq -R -s \
-        --arg created "$(date -u -d "@$source_date_epoch" +%FT%TZ)" \
-        --arg namespace "https://youeye.local/spdx/$build_id" \
-        '{spdxVersion:"SPDX-2.3",dataLicense:"CC0-1.0",SPDXID:"SPDXRef-DOCUMENT",name:"YouEye Appliance",documentNamespace:$namespace,creationInfo:{created:$created,creators:["Tool: youeye-appliance-v1"]},packages:(split("\n")|map(select(length>0)|split("\t")|{name:.[0],SPDXID:("SPDXRef-Package-"+(.[0]|gsub("[^A-Za-z0-9.-]";"-"))),versionInfo:.[1],downloadLocation:"NOASSERTION",filesAnalyzed:false,licenseConcluded:"NOASSERTION",licenseDeclared:"NOASSERTION",supplier:"Organization: Debian"}))}' > "$artifacts/sbom.spdx.json"
-    jq -S -n --arg build_id "$build_id" --arg source_commit "$source_commit" --arg snapshot "$snapshot" --arg recipe youeye-appliance-v1 \
-        --arg market_source "$market_source" --arg market_source_commit "$market_source_commit" --argjson source_date_epoch "$source_date_epoch" \
-        '{schema:"youeye.appliance.provenance.v1",build_id:$build_id,source_commit:$source_commit,recipe:$recipe,debian_snapshot:$snapshot,
-          market:{source:$market_source,source_commit:$market_source_commit},source_date_epoch:$source_date_epoch,
-          builder:{architecture:"amd64",trust:"development"}}' > "$artifacts/provenance.json"
-else
-    printf 'Unsigned build: manifests, SBOM, provenance, checksums, and signatures are delegated to Infra validation.\n'
-fi
 
-printf '[8/8] Building hybrid UEFI installer ISO\n'
+install -m 0644 "$build_inputs" "$artifacts/build-inputs.json"
+
+printf '[7/7] Building hybrid UEFI installer ISO\n'
 cd "$live_dir"
 configure_live_build() {
     local apt_options='--yes -o Acquire::Check-Valid-Until=false -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::http::Pipeline-Depth=0 -o Acquire::https::Timeout=30'
@@ -785,7 +701,6 @@ rm -f /var/cache/apt/pkgcache.bin /var/cache/apt/srcpkgcache.bin
 EOF
 chmod 0755 config/hooks/live/9999-youeye-reproducible-cache.hook.chroot
 install -m 0755 "$bin_dir/youeye-installer" config/includes.chroot/usr/local/bin/youeye-installer
-install -m 0644 "$artifacts/appliance-development.pub" config/includes.chroot/usr/share/youeye/appliance-development.pub
 install -m 0444 "$rootfs/usr/share/youeye/core-selection-required" config/includes.chroot/usr/share/youeye/core-selection-required
 cat > config/includes.chroot/usr/local/libexec/youeye-live-installer <<'EOF'
 #!/bin/bash
@@ -940,39 +855,19 @@ install -m 0755 "$bin_dir/youeye-installer" "$artifacts/youeye-installer-linux-a
 
 rm -rf "$output_dir"
 install -d -m 0755 "$output_dir"
-if [[ $build_mode == signed ]]; then
-    (
-        cd "$artifacts"
-        sha256sum appliance-development.pub appliance-manifest.json appliance-manifest.json.sig \
-            internal-recovery.img.zst provenance.json recovery.efi sbom.spdx.json \
-            system-a.efi system-b.efi system-root.img.zst system-update-manifest.json system-update-manifest.json.sig \
-            youeye-appliance-amd64.iso youeye-installer-linux-amd64 youeye-system-update-bootstrap \
-            youeye-system-updater-linux-amd64 > SHA256SUMS
-    )
-    openssl pkeyutl -sign -rawin -inkey "$signing_key" -in "$artifacts/SHA256SUMS" -out "$artifacts/SHA256SUMS.sig" 2>/dev/null
-    install -m 0644 \
-        "$artifacts/appliance-development.pub" "$artifacts/appliance-manifest.json" "$artifacts/appliance-manifest.json.sig" \
-        "$artifacts/internal-recovery.img.zst" "$artifacts/provenance.json" "$artifacts/recovery.efi" \
-        "$artifacts/sbom.spdx.json" "$artifacts/SHA256SUMS" "$artifacts/SHA256SUMS.sig" \
-        "$artifacts/system-a.efi" "$artifacts/system-b.efi" "$artifacts/system-root.img.zst" \
-        "$artifacts/system-update-manifest.json" "$artifacts/system-update-manifest.json.sig" \
-        "$artifacts/youeye-appliance-amd64.iso" "$output_dir/"
-else
-    install -m 0644 \
-        "$artifacts/internal-recovery.img.zst" "$artifacts/recovery.efi" \
-        "$artifacts/system-a.efi" "$artifacts/system-b.efi" "$artifacts/system-root.img.zst" \
-        "$artifacts/youeye-appliance-amd64.iso" "$output_dir/"
-fi
+install -m 0644 \
+    "$artifacts/appliance-manifest.json" "$artifacts/build-inputs.json" \
+    "$artifacts/internal-recovery.img.zst" "$artifacts/recovery.efi" \
+    "$artifacts/system-a.efi" "$artifacts/system-b.efi" "$artifacts/system-root.img.zst" \
+    "$artifacts/system-update-manifest.json" "$artifacts/youeye-appliance-amd64.iso" "$output_dir/"
 install -m 0755 "$artifacts/youeye-installer-linux-amd64" "$output_dir/youeye-installer-linux-amd64"
 install -m 0755 "$artifacts/youeye-system-update-bootstrap" "$output_dir/youeye-system-update-bootstrap"
 install -m 0755 "$artifacts/youeye-system-updater-linux-amd64" "$output_dir/youeye-system-updater-linux-amd64"
 
-if [[ $build_mode == unsigned ]]; then
-    output_count="$(find "$output_dir" -maxdepth 1 -type f -printf . | wc -c)"
-    if [[ $output_count -ne 9 ]]; then
-        printf 'Unsigned appliance build must emit exactly nine regular files; found %s.\n' "$output_count" >&2
-        exit 1
-    fi
+output_count="$(find "$output_dir" -maxdepth 1 -type f -printf . | wc -c)"
+if [[ $output_count -ne 12 ]]; then
+    printf 'Appliance build must emit exactly twelve regular files; found %s.\n' "$output_count" >&2
+    exit 1
 fi
-printf '%s build complete: %s\n' "$build_mode" "$output_dir"
+printf 'Appliance build complete: %s\n' "$output_dir"
 sha256sum "$output_dir/youeye-appliance-amd64.iso"

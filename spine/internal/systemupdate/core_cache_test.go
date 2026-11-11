@@ -3,11 +3,7 @@ package systemupdate
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,7 +15,7 @@ import (
 	"github.com/youeye-platform/YouEye/releasecache"
 )
 
-func TestCoreCacheRequiresCapacityAndCompleteScopedBytes(t *testing.T) {
+func TestCoreCacheRequiresCapacityAndCompleteDigestBoundBytes(t *testing.T) {
 	raw, err := os.ReadFile("../../../releasecache/testdata/core-release-v1.json")
 	if err != nil {
 		t.Fatal(err)
@@ -28,53 +24,31 @@ func TestCoreCacheRequiresCapacityAndCompleteScopedBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, private, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	der, _ := x509.MarshalPKIXPublicKey(key)
-	r.Source, r.SignerSHA256 = "https://forge.example/owner/YouEye", checksum(der)
+	r.Source = "https://forge.example/owner/YouEye"
 	files := map[string][]byte{}
 	for i := range r.Members {
 		m := &r.Members[i]
-		m.Source, m.KeyID = r.Source, r.SignerSHA256
+		m.Source = r.Source
 		blob := func(name string, data []byte) releasecache.CoreBlob {
 			b := releasecache.CoreBlob{Name: name, URL: m.Source + "/releases/download/" + m.Tag + "/" + m.Role + "-" + name, SHA256: checksum(data), SizeBytes: int64(len(data))}
 			files[b.URL] = data
 			return b
 		}
 		artifact := []byte(`{"fixture":"` + m.Role + `"}`)
+		if m.Role == "system-a-uki" || m.Role == "system-b-uki" {
+			artifact = []byte(`{"fixture":"shared uki"}`)
+		}
 		m.Artifact = blob(m.Role+".tar", artifact)
-		m.SBOM = blob("sbom.json", []byte(`{"packages":[]}`))
-		provenance := []byte(`{"fixture":true}`)
-		if m.ReleaseLock != nil {
-			lock := blob("release-lock.json", []byte(`{"lock":"exact"}`))
-			m.ReleaseLock = &lock
-			provenance = []byte(`{"resolved_lock_sha256":"` + lock.SHA256 + `"}`)
+		if m.BuildInputs != nil {
+			inputs := blob("build-inputs.json", []byte(`{"inputs":"exact"}`))
+			m.BuildInputs = &inputs
 		}
-		m.Provenance = blob("provenance.json", provenance)
-		bound := []releasecache.CoreBlob{m.Artifact, m.SBOM, m.Provenance}
-		if m.DocumentSignature != nil {
-			sig := blob(m.Role+".tar.sig", ed25519.Sign(private, artifact))
-			m.DocumentSignature = &sig
-			bound = append(bound, sig)
-		}
-		checksums := ""
-		for _, b := range bound {
-			checksums += fmt.Sprintf("%s  %s\n", b.SHA256, b.Name)
-		}
-		m.Checksums = blob("SHA256SUMS", []byte(checksums))
-		m.Signature = blob("SHA256SUMS.sig", ed25519.Sign(private, []byte(checksums)))
 	}
 	raw, _ = json.Marshal(r)
-	selection := CoreHostSelection{Raw: raw, Signature: ed25519.Sign(private, raw)}
+	selection := CoreHostSelection{Raw: raw}
 	root := t.TempDir()
-	trust := filepath.Join(root, "key.pub")
-	if err := os.WriteFile(trust, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), 0600); err != nil {
-		t.Fatal(err)
-	}
 	requests := 0
-	c := CoreArtifactCache{Root: filepath.Join(root, "cache"), TrustKeyPath: trust,
+	c := CoreArtifactCache{Root: filepath.Join(root, "cache"),
 		AvailableBytes: func(string) (uint64, error) { return 1, nil },
 		Client: &http.Client{Transport: signedRedirectTransport(func(req *http.Request) (*http.Response, error) {
 			requests++
@@ -88,8 +62,8 @@ func TestCoreCacheRequiresCapacityAndCompleteScopedBytes(t *testing.T) {
 	if _, _, err := c.Stage(context.Background(), selection); err == nil || requests != 0 {
 		t.Fatal("downloaded without complete capacity", requests, err)
 	}
-	// A no-op authenticates only the three bounded original Spine documents.
-	if _, digest, err := c.StageUpdate(context.Background(), selection, r); err != nil || digest != checksum(raw) || requests != 3 {
+	// A no-op downloads nothing.
+	if _, digest, err := c.StageUpdate(context.Background(), selection, r); err != nil || digest != checksum(raw) || requests != 0 {
 		t.Fatal("no-op downloaded", digest, err, requests)
 	}
 	c.AvailableBytes = func(string) (uint64, error) { return 1 << 30, nil }

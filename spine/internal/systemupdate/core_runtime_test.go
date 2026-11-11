@@ -100,7 +100,7 @@ func TestCoreRuntimeRecoversUnappliedCheckpointWithoutRestoringDatabases(t *test
 
 func TestCoreNativeRecoverySeesHostCommitDespiteLostCoordinatorAcknowledgement(t *testing.T) {
 	f := newManagerFixture(t)
-	if _, err := f.manager.Stage(context.Background(), SourceOptions{ManifestSource: f.manifestPath, SignatureSource: f.signaturePath}); err != nil {
+	if _, err := f.manager.Stage(context.Background(), f.sourceOptions()); err != nil {
 		t.Fatal(err)
 	}
 	host, err := loadJournal(f.manager.config.JournalPath)

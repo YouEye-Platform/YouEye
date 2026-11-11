@@ -20,6 +20,13 @@ func (s *Server) coreRoot() string {
 	return systemupdate.CoreStatePath
 }
 
+func (s *Server) coreSelectionRoot() string {
+	if s.coreBootstrapPath != "" {
+		return s.coreBootstrapPath
+	}
+	return systemupdate.CoreBootstrapPath
+}
+
 func (s *Server) handleCoreUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		errorResponse(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -41,6 +48,11 @@ func (s *Server) handleCoreUpdateStatus(w http.ResponseWriter, r *http.Request) 
 		"release": map[string]any{"version": receipt.Release.Version, "tag": receipt.Release.Tag,
 			"source": receipt.Release.Source, "branch": receipt.Release.Branch, "sequence": receipt.Release.Sequence, "source_commit": receipt.Release.SourceCommit},
 	}}
+	// The System update source is read-only here: it is the installer-recorded
+	// release policy, never a setting the Control Panel can change.
+	if selection, err := systemupdate.PolicyCoreSelection(s.coreSelectionRoot()); err == nil {
+		out["selection"] = map[string]any{"source": selection.Source, "branch": selection.Branch, "tag": selection.Tag, "manifest_sha256": selection.ManifestSHA256}
+	}
 	installed := out["installed"].(map[string]any)
 	members := []map[string]string{}
 	for _, member := range receipt.Release.Members {

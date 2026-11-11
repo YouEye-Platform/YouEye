@@ -73,7 +73,7 @@ test('Pointer is a managed core service with isolated listeners, database, secre
   assert.match(lifecycle, /'\{ :'/);
   assert.match(lifecycle, /\/etc\/youeye-pointer\.env/);
   assert.match(lifecycle, /\/opt\/pointer\/bun/);
-  assert.match(lxdDeployer, /signed release artifact/);
+  assert.match(lxdDeployer, /digest-verified release artifact/);
   assert.match(lxdDeployer, /test -x .*appDir.*\/bun/);
   assert.doesNotMatch(lxdDeployer, /bun\.sh\/install/);
   assert.match(definitions, /giteaRepo: 'Pointer'/);

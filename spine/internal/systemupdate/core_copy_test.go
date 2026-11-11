@@ -10,10 +10,10 @@ import (
 )
 
 func TestIndependentCopyPreservesSignedMembershipAndRejectsSourceIdentity(t *testing.T) {
-	selection, root, trust := signedCopyFixture(t)
+	selection, root := copyFixture(t)
 	m := CoreManager{Root: filepath.Join(root, "state"), Executor: &coreTestExecutor{}}
 	source := CoreMachineIdentity{InstallIDRef: "install:source", DeviceIDRef: "device:source", ParentDiskID: "disk:source", StatePartUUID: "state", DataPartUUID: "data"}
-	receipt, err := m.Initialize(context.Background(), selection, checksum(selection.Raw), trust, func(context.Context, releasecache.CoreRelease) (CoreMachineIdentity, string, error) {
+	receipt, err := m.Initialize(context.Background(), selection, checksum(selection.Raw), func(context.Context, releasecache.CoreRelease) (CoreMachineIdentity, string, error) {
 		return source, "native source acceptance", nil
 	})
 	if err != nil {
@@ -24,7 +24,7 @@ func TestIndependentCopyPreservesSignedMembershipAndRejectsSourceIdentity(t *tes
 	verifier := func(context.Context, CoreReceipt, CoreCopyRequest) (CoreMachineIdentity, string, error) {
 		return machine, "native independent destination health", nil
 	}
-	if _, err = m.VerifyIndependentCopy(context.Background(), request, trust, verifier); err == nil {
+	if _, err = m.VerifyIndependentCopy(context.Background(), request, verifier); err == nil {
 		t.Fatal("copy retained source identity")
 	}
 	if _, err = m.Prepare(context.Background(), "ordinary-update", selection.Raw, request.ManifestSHA256); err == nil {
@@ -35,24 +35,24 @@ func TestIndependentCopyPreservesSignedMembershipAndRejectsSourceIdentity(t *tes
 	}
 	machine.InstallIDRef = "install:destination"
 	machine.DeviceIDRef = "device:destination"
-	if _, err = m.VerifyIndependentCopy(context.Background(), request, trust, func(context.Context, CoreReceipt, CoreCopyRequest) (CoreMachineIdentity, string, error) {
+	if _, err = m.VerifyIndependentCopy(context.Background(), request, func(context.Context, CoreReceipt, CoreCopyRequest) (CoreMachineIdentity, string, error) {
 		return machine, "", fmt.Errorf("service preparation incomplete")
 	}); err == nil {
 		t.Fatal("failed service acceptance committed copy")
 	}
-	accepted, err := m.VerifyIndependentCopy(context.Background(), request, trust, verifier)
+	accepted, err := m.VerifyIndependentCopy(context.Background(), request, verifier)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if accepted.ManifestSHA256 != receipt.ManifestSHA256 || accepted.Release.Sequence != receipt.Release.Sequence || accepted.Machine != machine {
 		t.Fatal("copy changed signed release or lost destination identity")
 	}
-	again, err := m.VerifyIndependentCopy(context.Background(), request, trust, verifier)
+	again, err := m.VerifyIndependentCopy(context.Background(), request, verifier)
 	if err != nil || again.AcceptedAt != accepted.AcceptedAt {
 		t.Fatal("copy retry changed receipt", err)
 	}
 	request.DestinationHardware = "smbios:33333333-3333-3333-3333-333333333333"
-	if _, err = m.VerifyIndependentCopy(context.Background(), request, trust, verifier); err == nil {
+	if _, err = m.VerifyIndependentCopy(context.Background(), request, verifier); err == nil {
 		t.Fatal("copy request changed destination")
 	}
 	if _, err = os.Stat(filepath.Join(m.Root, "copy.json")); err != nil {
@@ -76,7 +76,7 @@ func TestIndependentCopyPreservesSignedMembershipAndRejectsSourceIdentity(t *tes
 	request = CoreCopyRequest{RequestID: "copy-second", SourceHardware: "smbios:22222222-2222-2222-2222-222222222222", DestinationHardware: "smbios:33333333-3333-3333-3333-333333333333", SourceReceiptSHA256: CoreReceiptDigest(accepted), ManifestSHA256: accepted.ManifestSHA256}
 	machine.InstallIDRef = "install:second"
 	machine.DeviceIDRef = "device:second"
-	if _, err = m.VerifyIndependentCopy(context.Background(), request, trust, verifier); err != nil {
+	if _, err = m.VerifyIndependentCopy(context.Background(), request, verifier); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = os.Stat(filepath.Join(m.Root, "copy-history", "copy-fixture.json")); err != nil {
@@ -89,7 +89,7 @@ func TestIndependentCopyPreservesSignedMembershipAndRejectsSourceIdentity(t *tes
 		t.Fatal("inherited requests not retained inertly", err)
 	}
 
-	if _, err = m.Initialize(context.Background(), selection, checksum(selection.Raw), trust, func(context.Context, releasecache.CoreRelease) (CoreMachineIdentity, string, error) {
+	if _, err = m.Initialize(context.Background(), selection, checksum(selection.Raw), func(context.Context, releasecache.CoreRelease) (CoreMachineIdentity, string, error) {
 		return source, "source", nil
 	}); err == nil {
 		t.Fatal("fresh initialization rebound independent copy")

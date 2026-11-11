@@ -10,12 +10,11 @@ import (
 
 // The bridge is an explicitly selected API adapter, not an installed payload or
 // update coordinator. It keeps all transaction effects behind the owner's
-// ordinary Stage request and hands native actions to the original signed reader.
+// ordinary Stage request and hands native actions to the selected reader.
 type coreAPIReaderBridge struct {
-	managedLease func()
-	executable   string
-	digest       string
-	mu           sync.Mutex
+	executable string
+	digest     string
+	mu         sync.Mutex
 }
 
 func newCoreAPIReaderBridge(executable, digest string) (*coreAPIReaderBridge, error) {
@@ -36,7 +35,7 @@ func (b *coreAPIReaderBridge) verify(digest string) error {
 	if digest != b.digest {
 		return fmt.Errorf("System selection differs from the selected reader bridge")
 	}
-	return (systemupdate.CoreManager{Root: systemupdate.CoreStatePath}).VerifyBootstrapReader(b.executable, digest, systemupdate.CoreDevelopmentTrustPath)
+	return (systemupdate.CoreManager{Root: systemupdate.CoreStatePath}).VerifyBootstrapReader(b.executable, digest)
 }
 
 // Call only after native preparation and the current-request identity check.

@@ -11,7 +11,7 @@ func TestSystemUpdateHelpDescribesBothRuntimeKinds(t *testing.T) {
 	if !strings.Contains(updateSystemCmd.Short, "host system") {
 		t.Fatalf("system update help %q does not describe mutable hosts", updateSystemCmd.Short)
 	}
-	if !strings.Contains(updateSystemCmd.Short, "signed appliance image") {
+	if !strings.Contains(updateSystemCmd.Short, "appliance image") {
 		t.Fatalf("system update help %q does not describe sealed appliances", updateSystemCmd.Short)
 	}
 }

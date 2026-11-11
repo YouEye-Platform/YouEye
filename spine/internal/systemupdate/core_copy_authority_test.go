@@ -13,9 +13,9 @@ import (
 )
 
 func TestIndependentCopyRuntimeAuthorityRetainsGeneratedValuesAfterInterruption(t *testing.T) {
-	selection, root, trust := signedCopyFixture(t)
+	selection, root := copyFixture(t)
 	m := CoreManager{Root: filepath.Join(root, "core")}
-	receipt, err := m.Initialize(context.Background(), selection, checksum(selection.Raw), trust, func(context.Context, releasecache.CoreRelease) (CoreMachineIdentity, string, error) {
+	receipt, err := m.Initialize(context.Background(), selection, checksum(selection.Raw), func(context.Context, releasecache.CoreRelease) (CoreMachineIdentity, string, error) {
 		return CoreMachineIdentity{InstallIDRef: "install:source", DeviceIDRef: "device:source", ParentDiskID: "disk:source", StatePartUUID: "state", DataPartUUID: "data"}, "fixture", nil
 	})
 	if err != nil {
@@ -122,7 +122,7 @@ func TestIndependentCopyRuntimeAuthorityRetainsGeneratedValuesAfterInterruption(
 	if err = b.BeginCopy(request, "destination", observe); err != nil {
 		t.Fatal(err)
 	}
-	if err = m.BeginIndependentCopy(request, trust, observe); err != nil {
+	if err = m.BeginIndependentCopy(request, observe); err != nil {
 		t.Fatal(err)
 	}
 	if err = m.PrepareIndependentCopyRuntimeAuthority(context.Background(), request, b, p, observe); err == nil {

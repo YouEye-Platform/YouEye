@@ -321,17 +321,6 @@ func GetLatestVersionForBranch(cfg *config.Config, repo, branch, tagPrefix strin
 	return cand.Version
 }
 
-// GetAssetURLForBranch reads the release branch from youeye.yaml, finds the
-// latest matching release, and returns the download URL for the named asset.
-// This is the primary entry point for branch-aware asset downloads.
-//
-// Retained as a thin shim over the channel-aware resolver. It reads the default
-// channel branch (mirrored from youeye.yaml) to preserve today's behavior.
-func GetAssetURLForBranch(cfg *config.Config, repo, assetName, tagPrefix string) (string, error) {
-	branch := ReadReleaseBranch()
-	return AssetURLForChannel(cfg, legacyChannel(branch), repo, assetName, tagPrefix)
-}
-
 // AssetURLForChannel resolves the newest release for a given channel and
 // returns the download URL for the named asset. When the release list carries
 // a matching asset entry (browser_download_url) it is used verbatim; otherwise
@@ -339,12 +328,12 @@ func GetAssetURLForBranch(cfg *config.Config, repo, assetName, tagPrefix string)
 // when the API omits per-asset URLs.
 func AssetURLForChannel(cfg *config.Config, eff channels.Channel, repo, assetName, tagPrefix string) (string, error) {
 	if canonicalCoreTag(eff.Tag) {
+		// The accepted core release is authoritative for the role's artifact:
+		// its URL and digest identify the exact asset (e.g. cp-standalone.tar),
+		// so the caller's generic asset name is not compared.
 		_, member, err := coreCandidate(cfg, eff, tagPrefix)
 		if err != nil {
 			return "", err
-		}
-		if member.Artifact.Name != assetName {
-			return "", fmt.Errorf("core member asset name differs")
 		}
 		return member.Artifact.URL, nil
 	}

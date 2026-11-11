@@ -76,14 +76,9 @@ func (m CoreManager) ObserveInstalled(ctx context.Context, expected CoreReceipt,
 // never applies schema or mistakes a retained marker for the actual file bytes.
 func (s NativeCoreServices) VerifyInstalled(ctx context.Context, receipt CoreReceipt, host func(context.Context, CoreReceipt) error) error {
 	m := CoreManager{Root: s.Checkpoint.Root}
-	_, release, err := m.Selection(receipt.ManifestSHA256, s.Cache.TrustKeyPath)
+	_, release, err := m.Selection(receipt.ManifestSHA256)
 	if err != nil || !reflect.DeepEqual(release, receipt.Release) {
-		return fmt.Errorf("current signed installed selection unavailable")
-	}
-	for _, member := range release.Members {
-		if err = CheckCoreMemberAuthority(member, release.Channel, s.Cache.TrustKeyPath); err != nil {
-			return err
-		}
+		return fmt.Errorf("current installed selection unavailable")
 	}
 	machine, err := s.Checkpoint.observeMachine()
 	if err != nil || machine != receipt.Machine {

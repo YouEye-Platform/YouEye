@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
-	"github.com/youeye-platform/YouEye/spine/internal/updatetrust"
 )
 
 const (
@@ -34,7 +33,6 @@ const (
 	PhaseRollback  = "rolled-back"
 
 	maxManifestBytes    = int64(1024 * 1024)
-	maxSignatureBytes   = int64(4096)
 	updateHeadroomBytes = uint64(512 * 1024 * 1024)
 )
 
@@ -54,7 +52,6 @@ type Journal struct {
 	Error               string           `json:"error,omitempty"`
 	Channel             string           `json:"channel,omitempty"`
 	ReleaseTag          string           `json:"release_tag,omitempty"`
-	Publisher           string           `json:"publisher,omitempty"`
 	ReleaseNotes        string           `json:"release_notes,omitempty"`
 	RequiredCacheBytes  uint64           `json:"required_cache_bytes,omitempty"`
 	AvailableCacheBytes uint64           `json:"available_cache_bytes,omitempty"`
@@ -83,7 +80,6 @@ type Status struct {
 	Error               string           `json:"error,omitempty"`
 	Channel             string           `json:"channel,omitempty"`
 	ReleaseTag          string           `json:"release_tag,omitempty"`
-	Publisher           string           `json:"publisher,omitempty"`
 	ReleaseNotes        string           `json:"release_notes,omitempty"`
 	RequiredCacheBytes  uint64           `json:"required_cache_bytes,omitempty"`
 	AvailableCacheBytes uint64           `json:"available_cache_bytes,omitempty"`
@@ -93,11 +89,8 @@ type Status struct {
 type SourceOptions struct {
 	Core                   *CoreHostSelection
 	ManifestSource         string
-	SignatureSource        string
-	AllowSourceChange      bool
 	AllowTest              bool
 	ReplaceFailed          bool
-	Bootstrap              bool
 	ExpectedManifestSHA256 string
 	Channel                string
 	ReleaseTag             string
@@ -124,7 +117,6 @@ type Config struct {
 	HealthyManifestPath string
 	ConvergencePath     string
 	CacheDir            string
-	TrustKeyPath        string
 	KernelCmdlinePath   string
 	BootIDPath          string
 	ESPMountpoint       string
@@ -136,7 +128,7 @@ type Config struct {
 	VerifyTarget        func(context.Context, string, Manifest) error
 	VerifyStagedRoot    func(context.Context, string, Artifact) error
 	VerifyBootAssets    func(context.Context, Layout, Manifest) error
-	InstallBootAssets   func(context.Context, Layout, Manifest, string, string, string) error
+	InstallBootAssets   func(context.Context, Layout, Manifest, string, string) error
 	CreateBootEntry     func(Layout, Manifest) error
 	RemoveBootEntries   func(Layout) error
 	ExecutablePath      func() (string, error)
@@ -154,7 +146,6 @@ func DefaultConfig() Config {
 		HealthyManifestPath: appliance.StateMountpoint + "/system-update/healthy-manifest.json",
 		ConvergencePath:     appliance.StateMountpoint + "/first-deploy/convergence-intent.json",
 		CacheDir:            appliance.DataMountpoint + "/system-update",
-		TrustKeyPath:        "/usr/share/youeye/appliance-development.pub",
 		KernelCmdlinePath:   "/proc/cmdline",
 		BootIDPath:          "/proc/sys/kernel/random/boot_id",
 		ESPMountpoint:       "/efi",
@@ -224,9 +215,6 @@ func New(config Config) *Manager {
 	if config.CacheDir == "" {
 		config.CacheDir = defaults.CacheDir
 	}
-	if config.TrustKeyPath == "" {
-		config.TrustKeyPath = defaults.TrustKeyPath
-	}
 	if config.KernelCmdlinePath == "" {
 		config.KernelCmdlinePath = defaults.KernelCmdlinePath
 	}
@@ -292,7 +280,6 @@ func (m *Manager) Status() (Status, error) {
 	status.Channel = journal.Channel
 	status.ReleaseTag = journal.ReleaseTag
 	status.ReleaseNotes = journal.ReleaseNotes
-	status.Publisher = journal.Publisher
 	status.RequiredCacheBytes = journal.RequiredCacheBytes
 	status.AvailableCacheBytes = journal.AvailableCacheBytes
 	status.UpdatedAt = journal.UpdatedAt
@@ -304,7 +291,7 @@ func (m *Manager) Discover(ctx context.Context, options SourceOptions) (Status, 
 		copySelection := *options.Core
 		options.Core = &copySelection
 	}
-	bound, err := m.withCoreTransport(ctx, options.Core)
+	bound, err := m.withCoreTransport(options.Core)
 	if err != nil {
 		return Status{}, err
 	}
@@ -330,7 +317,7 @@ func (m *Manager) Stage(ctx context.Context, options SourceOptions) (status Stat
 		copySelection := *options.Core
 		options.Core = &copySelection
 	}
-	bound, err := m.withCoreTransport(ctx, options.Core)
+	bound, err := m.withCoreTransport(options.Core)
 	if err != nil {
 		return Status{}, err
 	}
@@ -431,10 +418,8 @@ func (m *Manager) Stage(ctx context.Context, options SourceOptions) (status Stat
 		ID: journal.TransactionID, Stage: PhaseWriting,
 		TargetImageVersion: verified.Manifest.TargetImageVersion,
 	}
-	if !options.Bootstrap {
-		state.Transaction.ManifestSHA256 = verified.SHA256
-		state.Transaction.ActiveSlot = layout.ActiveSlot
-	}
+	state.Transaction.ManifestSHA256 = verified.SHA256
+	state.Transaction.ActiveSlot = layout.ActiveSlot
 	if err := appliance.WriteStateAtomic(m.config.StatePath, state); err != nil {
 		return Status{}, err
 	}
@@ -448,8 +433,7 @@ func (m *Manager) Stage(ctx context.Context, options SourceOptions) (status Stat
 	}
 	ukiRole := "system-" + strings.ToLower(layout.InactiveSlot) + "-uki"
 	manifestPath := filepath.Join(transactionDir, "system-update-manifest.json")
-	signaturePath := manifestPath + ".sig"
-	if err := m.callInstallBootAssets(ctx, layout, verified.Manifest, artifactPaths[ukiRole], manifestPath, signaturePath); err != nil {
+	if err := m.callInstallBootAssets(ctx, layout, verified.Manifest, artifactPaths[ukiRole], manifestPath); err != nil {
 		return Status{}, err
 	}
 
@@ -468,16 +452,6 @@ func (m *Manager) Stage(ctx context.Context, options SourceOptions) (status Stat
 }
 
 func (m *Manager) Activate(ctx context.Context, reboot bool) (Status, error) {
-	return m.activate(ctx, reboot, false)
-}
-
-// ActivateBootstrap arms the first signed transition from the accepted Plan 1
-// image while keeping persistent State readable by that fallback image.
-func (m *Manager) ActivateBootstrap(ctx context.Context, reboot bool) (Status, error) {
-	return m.activate(ctx, reboot, true)
-}
-
-func (m *Manager) activate(ctx context.Context, reboot, bootstrap bool) (Status, error) {
 	unlock, err := m.lock()
 	if err != nil {
 		return Status{}, err
@@ -487,7 +461,7 @@ func (m *Manager) activate(ctx context.Context, reboot, bootstrap bool) (Status,
 	if err != nil {
 		return Status{}, err
 	}
-	if err := validateUpdateMode(current, bootstrap); err != nil {
+	if err := validateUpdateMode(current); err != nil {
 		return Status{}, err
 	}
 	journal, err := loadJournal(m.config.JournalPath)
@@ -508,15 +482,8 @@ func (m *Manager) activate(ctx context.Context, reboot, bootstrap bool) (Status,
 	if err := m.requireCoreHostStep(journal, "activate-host"); err != nil {
 		return Status{}, err
 	}
-	if bootstrap {
-		if !state.Transaction.Plan1Compatible() {
-			return Status{}, errors.New("Plan 1 bootstrap State is not fallback-compatible")
-		}
-		if err := m.verifyBootstrapExecutable(transactionManifest); err != nil {
-			return Status{}, err
-		}
-	} else if state.Transaction.Plan1Compatible() {
-		return Status{}, errors.New("Plan 1-compatible transaction requires signed bootstrap activation")
+	if state.Transaction.Plan1Compatible() {
+		return Status{}, errors.New("Plan 1-compatible transactions are no longer supported")
 	}
 	layout, err := m.config.DiscoverLayout(slot)
 	if err != nil {
@@ -622,11 +589,6 @@ func (m *Manager) Reconcile(ctx context.Context, options ReconcileOptions) (Reco
 
 	if slot == journal.CandidateSlot && current.ImageVersion == journal.TargetImage &&
 		(journal.Phase == PhasePending || journal.Phase == PhaseTrial || journal.Phase == PhaseFailed) {
-		if state.Transaction.Plan1Compatible() {
-			if err := m.verifyBootstrapJournal(state, journal); err != nil {
-				return ReconcileResult{}, err
-			}
-		}
 		if output, runErr := m.config.Run(ctx, "bootctl", "set-default", ""); runErr != nil {
 			return ReconcileResult{}, fmt.Errorf("enable counted candidate retries: %w: %s", runErr, strings.TrimSpace(string(output)))
 		}
@@ -733,36 +695,9 @@ func (m *Manager) markHealthy(ctx context.Context) (Status, error) {
 	return m.Status()
 }
 
-func (m *Manager) verifyBootstrapExecutable(manifest Manifest) error {
-	updater, ok := manifest.Artifact("system-updater")
-	if !ok {
-		return errors.New("signed transaction has no bootstrap updater artifact")
-	}
-	executable, err := m.config.ExecutablePath()
-	if err != nil {
-		return fmt.Errorf("resolve running bootstrap updater: %w", err)
-	}
-	if err := verifyFile(executable, updater.SizeBytes, updater.SHA256); err != nil {
-		return fmt.Errorf("running bootstrap updater is not the signed target updater: %w", err)
-	}
-	return nil
-}
-
-func (m *Manager) verifyBootstrapJournal(state appliance.StateRecord, journal Journal) error {
-	if state.Transaction.ID != journal.TransactionID || state.Transaction.TargetImageVersion != journal.TargetImage || state.Slots.Candidate != journal.CandidateSlot {
-		return errors.New("Plan 1-compatible State does not match the durable system update journal")
-	}
-	_, err := m.loadTransactionManifest(journal)
-	return err
-}
-
-func validateUpdateMode(current appliance.Manifest, bootstrap bool) error {
-	native := appliance.ApplianceCapabilities(current).ImageUpdate
-	if bootstrap && native {
-		return errors.New("Plan 1 bootstrap is not valid on a native system-update image")
-	}
-	if !bootstrap && !native {
-		return errors.New("this appliance predates native system updates; use the signed Plan 1 bootstrap artifact once")
+func validateUpdateMode(current appliance.Manifest) error {
+	if !appliance.ApplianceCapabilities(current).ImageUpdate {
+		return errors.New("this appliance predates native system updates; reinstall it")
 	}
 	return nil
 }
@@ -772,18 +707,20 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 		if err := RequireLegacyUpdateAllowed(m.config.CoreStatePath); err != nil {
 			return VerifiedManifest{}, Layout{}, appliance.StateRecord{}, Journal{}, err
 		}
+		// Without a complete core release nothing else binds the host
+		// artifacts, so the manifest itself must be named by its digest.
+		if !validSHA256(strings.ToLower(strings.TrimSpace(options.ExpectedManifestSHA256))) {
+			return VerifiedManifest{}, Layout{}, appliance.StateRecord{}, Journal{}, errors.New("a System update without a core release requires its exact manifest SHA-256")
+		}
 	}
 	if strings.TrimSpace(options.ManifestSource) == "" {
 		return VerifiedManifest{}, Layout{}, appliance.StateRecord{}, Journal{}, errors.New("manifest source is required")
-	}
-	if strings.TrimSpace(options.SignatureSource) == "" {
-		options.SignatureSource = options.ManifestSource + ".sig"
 	}
 	current, state, activeSlot, err := m.current()
 	if err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
-	if err := validateUpdateMode(current, options.Bootstrap); err != nil {
+	if err := validateUpdateMode(current); err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
 	if state.Slots.Current != activeSlot || state.Slots.CurrentImageVersion != current.ImageVersion {
@@ -802,35 +739,18 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
 	manifestPath := filepath.Join(incomingDir, "system-update-manifest.json")
-	signaturePath := manifestPath + ".sig"
 	if err := m.downloadSourceAtMost(ctx, options.ManifestSource, manifestPath+".part", manifestPath, maxManifestBytes); err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, fmt.Errorf("download system update manifest: %w", err)
 	}
-	if err := m.downloadSourceAtMost(ctx, options.SignatureSource, signaturePath+".part", signaturePath, maxSignatureBytes); err != nil {
-		return VerifiedManifest{}, Layout{}, state, Journal{}, fmt.Errorf("download system update signature: %w", err)
-	}
-	verified, coreDigest, err := m.verifyHostManifest(manifestPath, signaturePath, options.Core)
+	verified, coreDigest, err := m.verifyHostManifest(manifestPath, options.Core)
 	if err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
 	if options.Core != nil {
 		bound, err := m.CoreHostOptions(*options.Core)
-		if err != nil || options.ManifestSource != bound.ManifestSource || options.SignatureSource != bound.SignatureSource || options.ReleaseTag != bound.ReleaseTag {
+		if err != nil || options.ManifestSource != bound.ManifestSource || options.ReleaseTag != bound.ReleaseTag {
 			return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("host source differs from frozen core selection")
 		}
-	}
-	if verified.Publisher != "" && options.Core == nil {
-		repository, branch, scope, err := updatetrust.ReleaseIdentity(options.ManifestSource)
-		if err != nil || scope != "appliance" || repository != verified.Manifest.ReleaseSet.Source || branch != verified.Manifest.ReleaseSet.Branch {
-			return VerifiedManifest{}, Layout{}, state, Journal{}, errors.New("custom system manifest must come from its enrolled repository and channel")
-		}
-	}
-	policy, err := updatetrust.Load(updatetrust.Path)
-	if err != nil {
-		return VerifiedManifest{}, Layout{}, state, Journal{}, err
-	}
-	if err := validateOwnerSourceChange(policy, current.ReleaseSet, &verified.Manifest.ReleaseSet, options.AllowSourceChange); err != nil {
-		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
 	expectedDigest := strings.ToLower(strings.TrimSpace(options.ExpectedManifestSHA256))
 	if expectedDigest != "" {
@@ -851,12 +771,7 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
 	if expected := strings.TrimSpace(options.ExpectedReleaseBranch); expected != "" && verified.Manifest.ReleaseSet.Branch != expected {
-		return VerifiedManifest{}, Layout{}, state, Journal{}, fmt.Errorf("signed platform bundle branch %q does not match requested branch %q", verified.Manifest.ReleaseSet.Branch, expected)
-	}
-	if options.Bootstrap {
-		if err := m.verifyBootstrapExecutable(verified.Manifest); err != nil {
-			return VerifiedManifest{}, Layout{}, state, Journal{}, err
-		}
+		return VerifiedManifest{}, Layout{}, state, Journal{}, fmt.Errorf("platform bundle branch %q does not match requested branch %q", verified.Manifest.ReleaseSet.Branch, expected)
 	}
 
 	if options.discoveryOnly && verified.Manifest.TargetImageVersion == current.ImageVersion {
@@ -897,7 +812,7 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 		ActiveSlot:   activeSlot, CandidateSlot: layout.InactiveSlot, Phase: PhaseAvailable,
 		DownloadedBytes: map[string]int64{}, StartedAt: m.now(), UpdatedAt: m.now(),
 		Channel: strings.TrimSpace(options.Channel), ReleaseTag: strings.TrimSpace(options.ReleaseTag),
-		ReleaseNotes: strings.TrimSpace(options.ReleaseNotes), Publisher: verified.Publisher,
+		ReleaseNotes: strings.TrimSpace(options.ReleaseNotes),
 	}
 	transactionDir := m.transactionDir(transactionID)
 	if err := os.MkdirAll(transactionDir, 0700); err != nil {
@@ -907,9 +822,6 @@ func (m *Manager) resolve(ctx context.Context, options SourceOptions) (VerifiedM
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
 	if err := atomicCopy(manifestPath, filepath.Join(transactionDir, "system-update-manifest.json"), 0600); err != nil {
-		return VerifiedManifest{}, Layout{}, state, Journal{}, err
-	}
-	if err := atomicCopy(signaturePath, filepath.Join(transactionDir, "system-update-manifest.json.sig"), 0600); err != nil {
 		return VerifiedManifest{}, Layout{}, state, Journal{}, err
 	}
 	if err := writeJournal(m.config.JournalPath, journal); err != nil {
@@ -951,7 +863,7 @@ func (m *Manager) loadTransactionManifest(journal Journal) (Manifest, error) {
 	}
 	manifest := verified.Manifest
 	if verified.SHA256 != journal.ManifestSHA256 {
-		return Manifest{}, errors.New("staged signed manifest digest no longer matches the durable journal")
+		return Manifest{}, errors.New("staged manifest digest no longer matches the durable journal")
 	}
 	if manifest.TargetImageVersion != journal.TargetImage {
 		return Manifest{}, errors.New("staged system update manifest no longer matches the durable journal")
@@ -969,12 +881,9 @@ func (m *Manager) persistHealthyUpdateProof(journal Journal) error {
 		return err
 	}
 	if verified.SHA256 != journal.ManifestSHA256 || verified.Manifest.TargetImageVersion != journal.TargetImage {
-		return errors.New("signed System update proof does not match the durable journal")
+		return errors.New("System update proof does not match the durable journal")
 	}
-	if err := atomicCopy(manifestPath, m.config.HealthyManifestPath, 0o600); err != nil {
-		return err
-	}
-	return atomicCopy(manifestPath+".sig", m.config.HealthyManifestPath+".sig", 0o600)
+	return atomicCopy(manifestPath, m.config.HealthyManifestPath, 0o600)
 }
 
 func (m *Manager) transactionDir(id string) string { return filepath.Join(m.config.CacheDir, id) }
@@ -1056,17 +965,4 @@ func validateSystemUpdateDownloadURL(target, origin *url.URL) error {
 		candidate.RawQuery = ""
 	}
 	return validateRemoteURL(&candidate)
-}
-
-// Enrollment does not authorize silently replacing the owner's selected fork.
-func validateOwnerSourceChange(policy updatetrust.Policy, current, next *appliance.ReleaseSet, allowed bool) error {
-	if current == nil || next == nil || allowed || current.Source == next.Source && current.Branch == next.Branch {
-		return nil
-	}
-	for _, grant := range policy.Grants {
-		if grant.Scope == "appliance" && grant.Repository == current.Source && grant.Branch == current.Branch {
-			return errors.New("current custom system source cannot change implicitly; select the exact target with --switch-source")
-		}
-	}
-	return nil
 }

@@ -48,11 +48,11 @@ func (m *Manager) callVerifyBootAssets(ctx context.Context, layout Layout, manif
 	return m.verifyBootAssets(ctx, layout, manifest)
 }
 
-func (m *Manager) callInstallBootAssets(ctx context.Context, layout Layout, manifest Manifest, ukiPath, manifestPath, signaturePath string) error {
+func (m *Manager) callInstallBootAssets(ctx context.Context, layout Layout, manifest Manifest, ukiPath, manifestPath string) error {
 	if m.config.InstallBootAssets != nil {
-		return m.config.InstallBootAssets(ctx, layout, manifest, ukiPath, manifestPath, signaturePath)
+		return m.config.InstallBootAssets(ctx, layout, manifest, ukiPath, manifestPath)
 	}
-	return m.installBootAssets(ctx, layout, manifest, ukiPath, manifestPath, signaturePath)
+	return m.installBootAssets(ctx, layout, manifest, ukiPath, manifestPath)
 }
 
 func (m *Manager) callCreateBootEntry(layout Layout, manifest Manifest) error {
@@ -112,7 +112,7 @@ func (m *Manager) verifyBootAssets(ctx context.Context, layout Layout, manifest 
 	role := "system-" + slotLower + "-uki"
 	artifact, ok := manifest.Artifact(role)
 	if !ok {
-		return fmt.Errorf("signed manifest has no %s", role)
+		return fmt.Errorf("system update manifest has no %s", role)
 	}
 	espAsset := filepath.Join(m.config.ESPMountpoint, "EFI", "YouEye", "youeye-system-"+slotLower+".efi")
 	backupAsset := filepath.Join(appliance.StateMountpoint, "system-update", "boot", slotLower, manifest.TargetImageVersion, "system.efi")
@@ -146,7 +146,7 @@ func (m *Manager) verifyTargetMarker(ctx context.Context, device string, update 
 		target.FirmwareMode != update.FirmwareMode || target.DiskLayoutVersion != update.DiskLayoutVersion ||
 		target.RecoveryVersion != update.RecoveryVersion || target.ArtifactKind != update.ArtifactKind ||
 		!reflect.DeepEqual(*target.ReleaseSet, update.ReleaseSet) {
-		return errors.New("target sealed marker does not match the signed system update manifest")
+		return errors.New("target sealed marker does not match the system update manifest")
 	}
 	found := false
 	for _, action := range target.SupportedActions {
@@ -160,7 +160,7 @@ func (m *Manager) verifyTargetMarker(ctx context.Context, device string, update 
 	return nil
 }
 
-func (m *Manager) installBootAssets(ctx context.Context, layout Layout, manifest Manifest, ukiPath, manifestPath, signaturePath string) error {
+func (m *Manager) installBootAssets(ctx context.Context, layout Layout, manifest Manifest, ukiPath, manifestPath string) error {
 	entriesDir := filepath.Join(m.config.ESPMountpoint, "loader", "entries")
 	vendorDir := filepath.Join(m.config.ESPMountpoint, "EFI", "YouEye")
 	if err := os.MkdirAll(entriesDir, 0755); err != nil {
@@ -189,9 +189,6 @@ func (m *Manager) installBootAssets(ctx context.Context, layout Layout, manifest
 		return err
 	}
 	if err := atomicCopy(manifestPath, filepath.Join(backupDir, "manifest.json"), 0600); err != nil {
-		return err
-	}
-	if err := atomicCopy(signaturePath, filepath.Join(backupDir, "manifest.json.sig"), 0600); err != nil {
 		return err
 	}
 	if err := syncDirectory(entriesDir); err != nil {
@@ -396,7 +393,7 @@ func (m *Manager) downloadHTTP(ctx context.Context, source, partial string, expe
 		return copyErr
 	}
 	if expectedSize > 0 && offset+written > expectedSize {
-		return errors.New("download exceeds signed artifact size")
+		return errors.New("download exceeds the listed artifact size")
 	}
 	if syncErr != nil {
 		return syncErr

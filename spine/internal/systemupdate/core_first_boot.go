@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/youeye-platform/YouEye/releasecache"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -22,16 +23,16 @@ type CoreFirstBootSelection struct {
 }
 
 // FreezeFirstBoot starts only from a verified fresh baseline. It retains one
-// complete signed target before creating a normal core transaction. A restart
+// complete digest-bound target before creating a normal core transaction. A restart
 // never selects a newer head or replaces the installer/baseline provenance.
-func (m CoreManager) FreezeFirstBoot(ctx context.Context, policy ReleasePolicy, baseline CoreHostSelection, trust string, resolve func(context.Context) (CoreHostSelection, error)) (CoreFirstBootSelection, CoreHostSelection, error) {
+func (m CoreManager) FreezeFirstBoot(ctx context.Context, policy ReleasePolicy, baseline CoreHostSelection, resolve func(context.Context) (CoreHostSelection, error)) (CoreFirstBootSelection, CoreHostSelection, error) {
 	var record CoreFirstBootSelection
 	unlock, err := m.lockCore()
 	if err != nil {
 		return record, CoreHostSelection{}, err
 	}
 	defer unlock()
-	initial, initialDigest, err := VerifyCoreSelection(baseline.Raw, baseline.Signature, trust)
+	initial, initialDigest, err := releasecache.ParseCoreRelease(baseline.Raw)
 	if err != nil {
 		return record, CoreHostSelection{}, err
 	}
@@ -50,7 +51,7 @@ func (m CoreManager) FreezeFirstBoot(ctx context.Context, policy ReleasePolicy, 
 		if json.Unmarshal(raw, &record) != nil || record.Schema != "youeye.core-first-boot.v1" || record.PolicySHA256 != policyDigest || record.BaselineSHA256 != initialDigest || record.Machine != installed.Machine || !validSHA256(record.ManifestSHA256) || record.RequestID != coreFirstBootRequest(record) {
 			return record, CoreHostSelection{}, fmt.Errorf("first-boot selection differs from installed policy or machine")
 		}
-		selected, _, err := m.Selection(record.ManifestSHA256, trust)
+		selected, _, err := m.Selection(record.ManifestSHA256)
 		if installed.ManifestSHA256 != record.BaselineSHA256 && installed.ManifestSHA256 != record.ManifestSHA256 {
 			return record, CoreHostSelection{}, fmt.Errorf("installed release advanced outside first boot")
 		}
@@ -69,7 +70,7 @@ func (m CoreManager) FreezeFirstBoot(ctx context.Context, policy ReleasePolicy, 
 	offlineBaseline := false
 	if policy.Mode != "exact" {
 		if resolve == nil {
-			return record, CoreHostSelection{}, fmt.Errorf("tracked first boot requires current signed discovery")
+			return record, CoreHostSelection{}, fmt.Errorf("tracked first boot requires current release discovery")
 		}
 		selected, err = resolve(ctx)
 		if err != nil {
@@ -79,12 +80,12 @@ func (m CoreManager) FreezeFirstBoot(ctx context.Context, policy ReleasePolicy, 
 			selected, offlineBaseline = baseline, true
 		}
 	}
-	target, digest, err := VerifyCoreSelection(selected.Raw, selected.Signature, trust)
+	target, digest, err := releasecache.ParseCoreRelease(selected.Raw)
 	if err != nil {
 		return record, CoreHostSelection{}, err
 	}
 	if target.Source != initial.Source || target.Branch != initial.Branch || target.Sequence < initial.Sequence || (target.Sequence == initial.Sequence && digest != initialDigest) {
-		return record, CoreHostSelection{}, fmt.Errorf("fresh selection changed source/branch or rolled back signed sequence")
+		return record, CoreHostSelection{}, fmt.Errorf("fresh selection changed source/branch or rolled back the release sequence")
 	}
 	if policy.Mode == "exact" && digest != initialDigest {
 		return record, CoreHostSelection{}, fmt.Errorf("exact installation cannot converge to a different release")

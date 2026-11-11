@@ -75,7 +75,7 @@ async function configurePointerServiceUnderLifecycle(oldIssuer?: string) {
     }, timeout: 30_000 });
     if (transition.exitCode !== 0) throw new Error('Pointer identity transition rejected; retry with the exact original identity');
   }
-  // This file is inside the signed release artifact. Forward its public
+  // This file is inside the digest-verified release artifact. Forward its public
   // identity so readiness reports the deployed build instead of a dev default.
   const release = await execCommand(POINTER_CONTAINER, [
     '/bin/cat', '/opt/pointer/release-manifest.json',

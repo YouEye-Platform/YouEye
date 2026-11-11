@@ -1,37 +1,58 @@
-# Appliance build inputs
+# Appliance build
 
-The appliance builder is source-owned and runs through the versioned build
-manifest. Source identity, the exact release lock, package snapshot and executor
-build kit are inputs to independent reproducibility verification.
+`build-appliance.sh` runs as root and builds the immutable System image, the
+Recovery image, the A/B/Recovery UKIs and the hybrid UEFI installer ISO. It has a
+single mode and never signs anything.
 
-System and recovery images use Zstandard 1.5.7, level 10, one worker and a 27-bit
-long window. The source pins these parameters and rejects a different compressor
-version. Policy changes change the signed source identity and require independent
-A/B output verification. One worker avoids oversubscribing concurrent jobs.
+## Inputs
 
-Level 10 trades moderately larger downloads for shorter compression time.
-Decompressed image contents are unchanged. Reverting to the previous level 19
-policy requires a source change and a new verified release, not a runtime flag.
+The Debian snapshot and the oldest version this image may update from are pinned in
+`appliance/recipe.json`; tooling copies them into the build inputs below.
 
-## Composed development test images
+`BUILD_INPUTS_PATH` (default `appliance/build-inputs.json`, absent from source)
+names a `youeye.build-inputs.v1` file, validated by `build-inputs.sh`:
 
-Sources advertising `.youeye/release/composition.json` support an explicit
-`youeye.appliance.release-lock.v2` test lock. Each Spine, Control Panel and UI
-entry records its original release branch, tag, version, source commit and
-artifact digest. The resulting `youeye.release-set.v2` is development-only;
-existing single-branch release sets retain their original contract.
+```json
+{
+  "schema": "youeye.build-inputs.v1",
+  "version": "0.6.0-dev.1",
+  "debian_snapshot": "20260805T142647Z",
+  "minimum_current_version": "0.5.6",
+  "release_source": "https://github.com/YouEye-Platform/YouEye",
+  "release_branch": "dev",
+  "market": {"source": "https://github.com/YouEye-Platform/Market", "branch": "main", "commit": "<40 hex>"},
+  "components": {
+    "spine":         {"version": "...", "tag": "youeye-v...", "source_commit": "<40 hex>", "artifact_sha256": "<64 hex>", "source_date_epoch": 1},
+    "control_panel": {"version": "...", "tag": "youeye-v...", "source_commit": "<40 hex>", "artifact_sha256": "<64 hex>", "source_date_epoch": 1},
+    "ui":            {"version": "...", "tag": "youeye-v...", "source_commit": "<40 hex>", "artifact_sha256": "<64 hex>", "source_date_epoch": 1}
+  }
+}
+```
 
-The appliance recipe/ISO installer source and component releases are independent
-inputs. The build coordinator verifies the published component signatures and
-provides the original released Spine executable through
-`YOUEYE_COMPOSITION_SPINE_FILE`. The recipe checks its pinned digest before
-embedding it. Control Panel and UI download their original signed releases.
-An older Spine without the composition capability cannot interpret this contract
-and must be rejected before building.
+The build compiles Spine (or reuses `YOUEYE_SPINE_FILE`) and refuses to continue
+unless its sha256 equals `components.spine.artifact_sha256`. The Spine version in
+`spine/internal/cmd/root.go` must equal `components.spine.version`. Control Panel
+and UI hashes are pinned in the image so first deployment fetches exactly those
+bytes. The image channel follows the version suffix (none = stable, `-beta.N` =
+beta, otherwise development); `ARTIFACT_KIND=test` marks a development build as
+test-only. Other optional variables: `OUTPUT_DIR`, `WORK_DIR`,
+`LIVE_BUILD_APT_PROXY`, `LIVE_BUILD_ATTEMPTS`, `APPLIANCE_TEST_FAULT`.
 
-A composed image has its own test branch, image version and build identity bound
-to the complete lock digest. It is never presented as the unmodified base
-release. The host helper and ISO installer both come from the selected appliance
-builder source; component overrides do not implicitly change that source.
-Composition tests demonstrate compatibility of the selected set, not acceptance
-of an untouched public release. Public trust contexts reject this test format.
+## Outputs
+
+Exactly twelve files: `system-root.img.zst`, `internal-recovery.img.zst`,
+`system-a.efi`, `system-b.efi`, `recovery.efi`, `youeye-appliance-amd64.iso`,
+`youeye-installer-linux-amd64`, `youeye-system-updater-linux-amd64`,
+`youeye-system-update-bootstrap`, `appliance-manifest.json`
+(`youeye.appliance.manifest.v1`), `system-update-manifest.json`
+(`youeye.system-update.v1`) and `build-inputs.json`. Both manifests are unsigned
+and list their image assets by sha256 and size. The ISO carries the manifests
+and build inputs in its `appliance/` payload directory. `core-release.json`
+binds the manifests by sha256, so no detached signature exists.
+
+## Reproducibility
+
+Filesystem UUIDs, the ISO GPT GUID and all timestamps derive from the source
+commit and `SOURCE_DATE_EPOCH`. System and recovery images use Zstandard 1.5.7,
+level 10, one worker and a 27-bit long window. The source pins these parameters
+and rejects a different compressor version.

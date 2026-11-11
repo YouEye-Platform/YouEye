@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import publicPolicy from '../../spine/internal/systemupdate/public-release-trust.json';
 import { acceptCatalogRelease, catalogDependencySource, readAcceptedCatalog, verifyCatalogFile } from '../src/lib/market/catalog-release';
 import { buildMarketRawURL, parseMarketRepoURL, publicNativeManifestRepo } from '../src/lib/market/source';
 import { catalogRepoReferenceToUrl } from '../src/lib/market/update-routing';
@@ -12,21 +11,17 @@ import { verifyProductRelease, type ProductBuild, type ProductRelease } from '..
 import { selectInfrastructureStandaloneRelease } from '../src/lib/infrastructure/release-resolver';
 
 const sha = (raw: Buffer | string) => createHash('sha256').update(raw).digest('hex');
-test('Market accepts signed labels over the same catalog and retains offline bytes and replay floor', async () => {
-  const key = generateKeyPairSync('ed25519'), previous = publicPolicy.keys;
-  publicPolicy.keys = {...previous,stable:key.publicKey.export({type:'spki',format:'pem'}).toString()};
+test('Market accepts unsigned labels over the same catalog and retains offline bytes and replay floor', async () => {
   const directory = await mkdtemp(join(tmpdir(),'youeye-market-release-'));
   try {
     const source = parseMarketRepoURL('https://github.com/YouEye-Platform/Market');
     const catalog = 'apps: []\n', file = 'id: example\n';
     const snapshot = Buffer.from(JSON.stringify({apiVersion:'youeye.market/catalog-snapshot/v1',catalog:{sha256:`sha256:${sha(catalog)}`},content:{files:[{path:'catalog.yaml',sha256:`sha256:${sha(catalog)}`},{path:'apps/example.yaml',sha256:`sha256:${sha(file)}`}]}}));
-    const signer = sha(key.publicKey.export({type:'spki',format:'der'}));
-    const build: ProductBuild = {schema:'youeye.product-build.v1',product:'market',kind:'catalog',build_version:'1.2.3',source:source.repo_url,branch:'main',source_commit:'a'.repeat(40),tag:'catalog-v1.2.3',input_sha256:'b'.repeat(64),contract_sha256:sha(snapshot),signer_sha256:signer,primary:'catalog-snapshot.json',assets:[{name:'catalog-snapshot.json',url:`${source.repo_url}/releases/download/catalog-v1.2.3/catalog-snapshot.json`,sha256:sha(snapshot),size_bytes:snapshot.length}]};
+    const build: ProductBuild = {schema:'youeye.product-build.v1',product:'market',kind:'catalog',build_version:'1.2.3',source:source.repo_url,branch:'main',source_commit:'a'.repeat(40),tag:'catalog-v1.2.3',input_sha256:'b'.repeat(64),contract_sha256:sha(snapshot),primary:'catalog-snapshot.json',assets:[{name:'catalog-snapshot.json',url:`${source.repo_url}/releases/download/catalog-v1.2.3/catalog-snapshot.json`,sha256:sha(snapshot),size_bytes:snapshot.length}]};
     const buildRaw = Buffer.from(JSON.stringify(build));
     const release = (version: string, sequence: number) => {
-      const r: ProductRelease = {schema:'youeye.product-release.v1',product:'market',version,source:source.repo_url,branch:'main',tag:`catalog-v${version}`,channel:'stable',sequence,minimum_reader:1,signer_sha256:signer,build_manifest_base64:buildRaw.toString('base64'),build_signature_base64:sign(null,buildRaw,key.privateKey).toString('base64')};
-      const raw = Buffer.from(JSON.stringify(r));
-      return verifyProductRelease(raw,sign(null,raw,key.privateKey),{product:'market',source:source.repo_url,tag:r.tag});
+      const r: ProductRelease = {schema:'youeye.product-release.v1',product:'market',version,source:source.repo_url,branch:'main',tag:`catalog-v${version}`,channel:'stable',sequence,minimum_reader:1,authority:'digest',build_manifest_base64:buildRaw.toString('base64')};
+      return verifyProductRelease(Buffer.from(JSON.stringify(r)),{product:'market',source:source.repo_url,tag:r.tag});
     };
     assert.equal(await readAcceptedCatalog(source,directory),null);
     await acceptCatalogRelease(source,release('1.2.3',3),snapshot,catalog,directory);
@@ -57,10 +52,13 @@ test('Market accepts signed labels over the same catalog and retains offline byt
     await assert.rejects(acceptCatalogRelease(source,release('1.2.5',5),Buffer.from('{}'),catalog,directory),/differs/);
     assert.equal((await readAcceptedCatalog(source,directory))?.selected.release.version,'1.2.4');
     assert.equal(await readAcceptedCatalog({...source,branch:'beta'},directory),null);
-    // Offline operation still rechecks the currently trusted key.
-    publicPolicy.keys = previous;
-    await assert.rejects(readAcceptedCatalog(source,directory),/trust is not provisioned|signature/);
-  } finally { publicPolicy.keys = previous; await rm(directory,{recursive:true,force:true}); }
+    // Offline operation still rechecks the exact retained document digest.
+    const stored = (await readdir(directory)).find(name => name.endsWith('.json'))!;
+    const saved = JSON.parse(await readFile(join(directory,stored),'utf8'));
+    saved.receipt.manifestSHA256 = 'f'.repeat(64);
+    await writeFile(join(directory,stored),JSON.stringify(saved),{mode:0o600});
+    await assert.rejects(readAcceptedCatalog(source,directory),/digest differs/);
+  } finally { await rm(directory,{recursive:true,force:true}); }
 });
 
 test('catalog discovery selects private Alpha labels and excludes drafts and public Alpha', () => {

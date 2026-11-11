@@ -289,8 +289,9 @@ export interface InstallMetadata {
     artifactName: 'standalone.tar';
     sha256: string;
     bytes: number;
-    signature: 'unsigned' | 'verified-development' | 'verified-stable' | 'verified-beta' | 'verified-custom';
-    signatureKeyId?: string;
+    /** `product-release`: bound by the digests of an accepted product release document. */
+    verification: 'manifest' | 'product-release';
+    productReleaseSHA256?: string;
   }>;
   productReleaseFloors?: import('../releases/product-release').ProductSequenceFloors;
   integration: 'native' | 'basic';

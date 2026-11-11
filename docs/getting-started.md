@@ -3,7 +3,7 @@
 YouEye has one installer and one installed-system model. The
 `youeye-installer` binary supports:
 
-- `install` when booted from the signed YouEye ISO on physical hardware or a
+- `install` when booted from the YouEye ISO on physical hardware or a
   VM;
 - `proxmox` on a Proxmox VE host, where it selects and verifies that same ISO,
   provisions a Q35/OVMF VM, and waits for the installed appliance to become
@@ -29,7 +29,7 @@ persistent State, and a Data partition using the remaining capacity.
 ### Proxmox mode
 
 Run as root on a Proxmox VE host with `qm`, `pvesm`, `pvesh`, `sgdisk`,
-`curl`, `openssl`, `sha256sum`, and Python 3. The host needs one active storage
+`curl`, and Python 3. The host needs one active storage
 pool supporting VM images, one supporting ISO images, and an available network
 bridge.
 
@@ -42,26 +42,42 @@ curl -fsSL https://releases.youeye.me/install.sh | sh
 ```
 
 Run this canonical public command from the Proxmox root shell. It does not
-depend on `sudo` being installed. Public Stable uses its embedded Stable anchor;
-unprovisioned source builds fail closed and never reuse the Development key.
+depend on `sudo` being installed.
 
 Development channel from an explicitly selected repository:
 
 ```bash
 curl -fsSL https://releases.youeye.me/install.sh | \
   sh -s -- --repository https://code.example.test/example/YouEye \
-    --channel development
+    --channel dev
 ```
 
-The bootstrap defaults to the official GitHub Stable release API, paginates the
-release API derived from the selected repository URL, refuses cross-channel
-fallback, requires API-provided release download URLs, verifies the detached
-Ed25519 signature over the complete checksum set, and verifies the exact
-installer binary digest before executing it. Public releases additionally
-require the exact detached `release-lock.json`, whose digest is bound by signed
-provenance, and matching source and component identities. Alternative providers are never
-prefilled. Exact selection requires the release tag plus both Installer and ISO
-SHA-256 digests without replacing signed verification.
+Options: `--repository <https URL>` (default
+`https://github.com/YouEye-Platform/YouEye`), `--channel stable|dev|branch|exact`
+(default `stable`), `--release-branch <name>` for `branch`, and
+`--release-tag youeye-vX.Y.Z[-label.N]` plus optional `--core-manifest-sha256` for
+`exact`.
+
+The bootstrap lists releases through the GitHub API
+(`https://api.github.com/repos/<owner>/<repo>/releases`) or the Forgejo API
+(`https://<host>/api/v1/repos/<owner>/<repo>/releases`) and picks one release:
+
+- `stable`: the newest non-prerelease `youeye-vX.Y.Z*` release whose
+  `core-release.json` names branch `main`;
+- `dev`: the newest prerelease whose tag contains `-dev.` and whose document
+  names branch `dev`;
+- `branch`: the newest `youeye-v*` release built from `--release-branch`;
+- `exact`: the release named by `--release-tag`.
+
+It never falls back to another channel. It downloads that release's
+`core-release.json`, then the `installer` member's artifact
+(`youeye-installer-linux-amd64`), checks its SHA-256 and size against the
+document and runs it. The Installer resolves the same release, records the
+`core-release.json` SHA-256 in the installed release policy, and checks the image
+manifest and ISO against the digests in that document. Release signing is not
+used: integrity comes from HTTPS with normal certificate checks and SHA-256. GitHub
+downloads may redirect only to GitHub's asset hosts; other repositories may not
+redirect to another host.
 
 Quick mode creates a 4-vCPU, 8-GiB Q35/OVMF VM with one 128-GiB installation
 drive and DHCP. Advanced mode can select the VMID, name, storage pools, a
@@ -73,33 +89,23 @@ requires confirmation naming the exact target whose contents were inspected.
 
 The host helper never writes guest partitions. It attaches verified installer
 and non-secret answer media, then the booted ISO owns every destructive disk
-operation. Completion is accepted only after the ISO emits its signed terminal
+operation. Completion is accepted only after the ISO emits its terminal success
 record, the installed system boots, first deployment is durable, and the
 operational health profile passes.
 
 ## Install from ISO
 
-Download these assets from one exact `appliance-v*` or `appliance-dev-v*`
-release:
-
-- `youeye-appliance-amd64.iso`;
-- `SHA256SUMS`;
-- `SHA256SUMS.sig`.
-
-Use the channel trust anchor obtained through an independently authenticated
-path. For the current Development identity, the DER SHA-256 fingerprint is:
-
-```text
-51d5cd19886aa2cb3f541a2e90525993bf1a483063bb689838b41f1fd43cfe94
-```
-
-Verify the checksum document and ISO before writing media:
+Download `core-release.json` and `youeye-appliance-amd64.iso` from one exact
+`youeye-v*` release. Check the ISO against the `media` member of the document:
 
 ```bash
-openssl pkeyutl -verify -pubin -inkey appliance-development.pub -rawin \
-  -in SHA256SUMS -sigfile SHA256SUMS.sig
-grep -E '^[0-9a-f]{64}  youeye-appliance-amd64\.iso$' SHA256SUMS | sha256sum -c -
+expected=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next(m["artifact"]["sha256"] for m in d["members"] if m["role"] == "media"))' core-release.json)
+printf '%s  youeye-appliance-amd64.iso\n' "$expected" | sha256sum -c -
 ```
+
+The release also carries a `SHA256SUMS` file for convenience. The booted
+Installer downloads the same release's `core-release.json` over HTTPS and refuses
+to continue unless the ISO's image manifest matches its `appliance` member.
 
 Write the ISO to the exact removable device using your preferred imaging tool,
 then boot it in UEFI mode. Select the dedicated installation drive, review its
@@ -190,14 +196,14 @@ youeye update system status
 System-image updates write and read back only the inactive System slot, arm a
 bounded boot trial, and preserve State, Recovery, and Data. Failed trials return
 to the prior known-good slot. Recovery can select a slot once, verify or repair
-signed boot assets, and export support evidence without mounting the active
+boot assets, and export support evidence without mounting the active
 system read-write.
 
 ## Retired installers
 
 The mutable Debian/Ubuntu host installer, Debian-cloud Proxmox VM provider,
 Proxmox LXC provider, and two-disk guest installer are retired. They did not
-provide the signed one-drive appliance layout, independent Recovery, A/B system
+provide the one-drive appliance layout, independent Recovery, A/B system
 updates, or sealed-image integrity guarantees. The temporary `appliance`
 command, `proxmox.sh` entry point, and `--appliance-*` compatibility flags have
 completed their migration window and are removed. Use `install`, `proxmox`,

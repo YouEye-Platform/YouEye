@@ -69,20 +69,24 @@ func TestConfigGETIncludesChannels(t *testing.T) {
 	}
 }
 
-func TestConfigPATCHSetsChannel(t *testing.T) {
-	defer setupChannelConfig(t, "site_name: T\n")()
-
-	s := testServer()
-	patch := map[string]interface{}{
-		"release_channels": map[string]interface{}{
-			"spine": map[string]interface{}{"branch": "f-y", "fallback": []interface{}{}},
-		},
-	}
+func patchConfig(t *testing.T, s *Server, patch map[string]interface{}) *httptest.ResponseRecorder {
+	t.Helper()
 	body, _ := json.Marshal(patch)
 	req := httptest.NewRequest("PATCH", "/api/config", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	s.handleYouEyeConfig(w, req)
+	return w
+}
 
+func TestConfigPATCHSetsAppChannel(t *testing.T) {
+	defer setupChannelConfig(t, "site_name: T\n")()
+
+	s := testServer()
+	w := patchConfig(t, s, map[string]interface{}{
+		"release_channels": map[string]interface{}{
+			"app:wiki": map[string]interface{}{"source": "https://forge.example.test/apps/Wiki", "branch": "f-y", "fallback": []interface{}{}},
+		},
+	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
 	}
@@ -92,12 +96,12 @@ func TestConfigPATCHSetsChannel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eff := c.Effective(channels.ComponentSpine, s.cfg)
-	if eff.Branch != "f-y" {
-		t.Errorf("persisted spine branch = %q", eff.Branch)
+	eff := c.Effective("app:wiki", s.cfg)
+	if eff.Branch != "f-y" || eff.Source != "https://forge.example.test/apps/Wiki" {
+		t.Errorf("persisted app channel = %+v", eff)
 	}
 	if eff.Fallback == nil || len(eff.Fallback) != 0 {
-		t.Errorf("persisted spine fallback = %v, want disabled", eff.Fallback)
+		t.Errorf("persisted app fallback = %v, want disabled", eff.Fallback)
 	}
 	// Unrelated key preserved.
 	raw, _ := os.ReadFile(youeyeConfigPath)
@@ -106,26 +110,18 @@ func TestConfigPATCHSetsChannel(t *testing.T) {
 	}
 }
 
-func TestConfigPATCHClearsChannelWithNull(t *testing.T) {
-	defer setupChannelConfig(t, "release_channels:\n  default: { branch: main, fallback: [main] }\n  spine: { branch: f-x }\n")()
+func TestConfigPATCHClearsAppChannelWithNull(t *testing.T) {
+	defer setupChannelConfig(t, "release_channels:\n  default: { branch: main, fallback: [main] }\n  apps:\n    wiki: { branch: f-x }\n")()
 
 	s := testServer()
-	patch := map[string]interface{}{
-		"release_channels": map[string]interface{}{
-			"spine": nil,
-		},
-	}
-	body, _ := json.Marshal(patch)
-	req := httptest.NewRequest("PATCH", "/api/config", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	s.handleYouEyeConfig(w, req)
+	w := patchConfig(t, s, map[string]interface{}{"release_channels": map[string]interface{}{"app:wiki": nil}})
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
 	}
 
 	c, _ := channels.Load()
-	if !c.Spine.IsZero() {
-		t.Errorf("spine override not cleared: %+v", c.Spine)
+	if _, ok := c.Apps["wiki"]; ok {
+		t.Errorf("app override not cleared: %+v", c.Apps)
 	}
 }
 
@@ -133,17 +129,48 @@ func TestConfigPATCHRejectsBadBranch(t *testing.T) {
 	defer setupChannelConfig(t, "")()
 
 	s := testServer()
-	patch := map[string]interface{}{
+	w := patchConfig(t, s, map[string]interface{}{
 		"release_channels": map[string]interface{}{
-			"spine": map[string]interface{}{"branch": "bad branch"},
+			"app:wiki": map[string]interface{}{"branch": "bad branch"},
 		},
-	}
-	body, _ := json.Marshal(patch)
-	req := httptest.NewRequest("PATCH", "/api/config", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	s.handleYouEyeConfig(w, req)
+	})
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400 for bad branch", w.Code)
+	}
+}
+
+// The Control Panel reaches this API from its container. It must never choose
+// what the host installs: the System selection and the core channels are
+// host-owned, including exact tag/digest pins and resets.
+func TestConfigPATCHRefusesHostOwnedChannels(t *testing.T) {
+	const initial = "site_name: T\nrelease_channels:\n  default: { branch: main, fallback: [main] }\n  control: { tag: youeye-v0.6.0, artifact_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, fallback: [] }\n"
+	digest := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	for _, tc := range []struct {
+		name  string
+		patch map[string]interface{}
+	}{
+		{"system source", map[string]interface{}{"system": map[string]interface{}{"source": "https://attacker.example.test/team/YouEye", "branch": "main"}}},
+		{"system pin", map[string]interface{}{"system": map[string]interface{}{"tag": "youeye-v9.9.9", "artifact_sha256": digest}}},
+		{"system reset", map[string]interface{}{"system": nil}},
+		{"default source", map[string]interface{}{"default": map[string]interface{}{"source": "https://attacker.example.test/team/YouEye"}}},
+		{"spine branch", map[string]interface{}{"spine": map[string]interface{}{"branch": "evil"}}},
+		{"control pin", map[string]interface{}{"control": map[string]interface{}{"tag": "youeye-v9.9.9", "artifact_sha256": digest}}},
+		{"control reset", map[string]interface{}{"control": nil}},
+		{"ui source", map[string]interface{}{"ui": map[string]interface{}{"source": "https://attacker.example.test/team/YouEye"}}},
+		{"mixed with app", map[string]interface{}{"app:wiki": map[string]interface{}{"branch": "f-x"}, "system": map[string]interface{}{"branch": "evil"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer setupChannelConfig(t, initial)()
+			before, _ := os.ReadFile(youeyeConfigPath)
+			w := patchConfig(t, testServer(), map[string]interface{}{"release_channels": tc.patch})
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+			}
+			after, _ := os.ReadFile(youeyeConfigPath)
+			if !bytes.Equal(before, after) {
+				t.Fatalf("refused patch changed youeye.yaml:\n%s", after)
+			}
+		})
 	}
 }
 

@@ -2,93 +2,93 @@ package installer
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/youeye-platform/YouEye/releasecache"
 )
 
-// Base64 preserves the exact signed bytes across answer JSON formatting.
+// coreAnswerSelection carries the exact core-release.json bytes. Base64
+// preserves them across answer JSON formatting; the digest is the authority.
 type coreAnswerSelection struct {
-	ManifestBase64  string          `json:"manifest_base64"`
-	SignatureBase64 string          `json:"signature_base64"`
-	ManifestSHA256  string          `json:"manifest_sha256"`
-	MetadataProof   json.RawMessage `json:"metadata_proof,omitempty"`
+	ManifestBase64 string `json:"manifest_base64"`
+	ManifestSHA256 string `json:"manifest_sha256"`
 }
 
 func coreAnswerFromRelease(release applianceRelease) *coreAnswerSelection {
-	return &coreAnswerSelection{ManifestBase64: base64.StdEncoding.EncodeToString(release.coreRaw), SignatureBase64: base64.StdEncoding.EncodeToString(release.coreSignature), ManifestSHA256: release.coreSHA256, MetadataProof: release.coreMetadataProof}
+	return &coreAnswerSelection{ManifestBase64: base64.StdEncoding.EncodeToString(release.coreRaw), ManifestSHA256: release.coreSHA256}
+}
+
+// coreAnswerSource derives the exact repository URL from a release policy.
+func coreAnswerSource(policy applianceReleasePolicy) (string, error) {
+	provider, api, err := normalizeApplianceReleaseSource(policy.Provider, policy.ReleasesAPI)
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Split(strings.Trim(api.Path, "/"), "/")
+	if provider == "github" && len(parts) == 4 {
+		return "https://github.com/" + parts[1] + "/" + parts[2], nil
+	}
+	if provider == "custom" && len(parts) == 6 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "repos" {
+		return api.Scheme + "://" + api.Host + "/" + parts[3] + "/" + parts[4], nil
+	}
+	return "", fmt.Errorf("core release source must be an exact supported repository")
+}
+
+func decodeCoreAnswer(c *coreAnswerSelection) (releasecache.CoreRelease, []byte, error) {
+	if c == nil || len(c.ManifestBase64) > ((1<<20)+2)/3*4 || !validSHA256Hex(c.ManifestSHA256) {
+		return releasecache.CoreRelease{}, nil, fmt.Errorf("core answer requires one bounded exact selection")
+	}
+	raw, err := base64.StdEncoding.Strict().DecodeString(c.ManifestBase64)
+	if err != nil {
+		return releasecache.CoreRelease{}, nil, err
+	}
+	r, digest, err := releasecache.ParseCoreRelease(raw)
+	if err != nil {
+		return r, nil, err
+	}
+	if digest != c.ManifestSHA256 {
+		return r, nil, fmt.Errorf("core answer manifest digest differs")
+	}
+	return r, raw, nil
 }
 
 func validateCoreAnswer(answer applianceAnswer) error {
 	c := answer.CoreRelease
-	if c == nil || len(c.ManifestBase64) > ((1<<20)+2)/3*4 || len(c.SignatureBase64) != 88 || !validSHA256Hex(c.ManifestSHA256) || answer.ReleasePolicy.CoreManifestSHA256 != c.ManifestSHA256 {
-		return fmt.Errorf("core answer requires one bounded exact signed selection")
+	if c == nil || answer.ReleasePolicy.CoreManifestSHA256 != c.ManifestSHA256 {
+		return fmt.Errorf("core answer requires one exact selection bound by the release policy")
 	}
-	raw, err := base64.StdEncoding.Strict().DecodeString(c.ManifestBase64)
+	r, _, err := decodeCoreAnswer(c)
 	if err != nil {
 		return err
-	}
-	sig, err := base64.StdEncoding.Strict().DecodeString(c.SignatureBase64)
-	if err != nil {
-		return err
-	}
-	r, digest, err := releasecache.ParseCoreRelease(raw)
-	if err != nil || digest != c.ManifestSHA256 {
-		return fmt.Errorf("core answer manifest digest differs")
 	}
 	policy := answer.ReleasePolicy
-	provider, api, err := normalizeApplianceReleaseSource(policy.Provider, policy.ReleasesAPI)
+	source, err := coreAnswerSource(policy)
 	if err != nil {
 		return err
 	}
-	parts := strings.Split(strings.Trim(api.Path, "/"), "/")
-	source := ""
-	if provider == "github" && len(parts) == 4 {
-		source = "https://github.com/" + parts[1] + "/" + parts[2]
-	}
-	if provider == "custom" && len(parts) == 6 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "repos" {
-		source = api.Scheme + "://" + api.Host + "/" + parts[3] + "/" + parts[4]
-	}
-	if source == "" || r.Source != source {
+	if r.Source != source {
 		return fmt.Errorf("core answer source differs from selected repository")
-	}
-	trust := embeddedApplianceDevelopmentTrust
-	if provider == "github" {
-		trust, err = publicReleaseAnchor(r.Channel)
-		if err != nil {
-			return err
-		}
-	}
-	key, err := parseEd25519PublicKey(trust)
-	if err != nil {
-		return err
-	}
-	if _, _, err := releasecache.VerifyCoreRelease(raw, sig, key); err != nil {
-		return err
-	}
-	// Older frozen v5 answers have no inline proof. They are completed in a
-	// separate runtime sidecar before downloads or disk changes, never rewritten.
-	if len(c.MetadataProof) > 0 {
-		if err := verifyInstallerCoreProof(raw, sig, c.MetadataProof); err != nil {
-			return err
-		}
 	}
 	if policy.Mode == "exact" && policy.ExactTag != r.Tag {
 		return fmt.Errorf("core answer differs from exact release policy")
 	}
 	if policy.Mode == "track" {
-		branch := policy.Branch
-		if policy.Track == "stable" {
-			branch = "main"
-		}
-		if policy.Track == "development" {
-			branch = "dev"
-		}
-		if r.Branch != branch {
+		if branch := coreTrackBranch(policy.Track, policy.Branch); r.Branch != branch {
 			return fmt.Errorf("core answer differs from selected branch")
 		}
 	}
 	return nil
+}
+
+// coreTrackBranch maps a release track to the source branch its core release
+// documents must name. Spine applies the same rule to the recorded policy.
+func coreTrackBranch(track, branch string) string {
+	switch track {
+	case "stable":
+		return "main"
+	case "development", "dev":
+		return "dev"
+	}
+	return branch
 }

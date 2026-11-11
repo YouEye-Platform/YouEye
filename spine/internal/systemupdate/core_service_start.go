@@ -41,7 +41,7 @@ func (s NativeCoreServices) Start(ctx context.Context, request, role string) (Co
 	if err != nil || !reflect.DeepEqual(current, j.Previous) {
 		return stage, fmt.Errorf("core service commitment changed")
 	}
-	if _, _, err = m.Selection(j.ManifestSHA256, s.Cache.TrustKeyPath); err != nil {
+	if _, _, err = m.Selection(j.ManifestSHA256); err != nil {
 		return stage, err
 	}
 	machine, err := s.Checkpoint.observeMachine()
@@ -86,9 +86,6 @@ func (s NativeCoreServices) Start(ctx context.Context, request, role string) (Co
 	member, err := coreServiceMember(j.Target, role)
 	if err != nil || member.Artifact.SHA256 != stage.ArtifactSHA256 {
 		return stage, fmt.Errorf("service start target differs")
-	}
-	if err = CheckCoreMemberAuthority(member, j.Target.Channel, s.Cache.TrustKeyPath); err != nil {
-		return stage, err
 	}
 	index, err := m.LoadPayloadIndex(member.Artifact.SHA256)
 	if err != nil {

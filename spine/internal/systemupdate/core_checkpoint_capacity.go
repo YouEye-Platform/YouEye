@@ -150,7 +150,7 @@ func (s NativeCoreServices) PreflightCheckpoint(ctx context.Context, request str
 	if err != nil || !reflect.DeepEqual(receipt, j.Previous) {
 		return empty, 0, fmt.Errorf("checkpoint baseline changed")
 	}
-	if _, _, err = m.Selection(j.ManifestSHA256, s.Cache.TrustKeyPath); err != nil {
+	if _, _, err = m.Selection(j.ManifestSHA256); err != nil {
 		return empty, 0, err
 	}
 	inventory, err := s.Checkpoint.Inspect(ctx, j)

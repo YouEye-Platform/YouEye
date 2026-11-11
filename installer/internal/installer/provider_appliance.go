@@ -19,8 +19,8 @@ func installAppliance(cfg installConfig, ch chan<- engineMsg) {
 }
 
 func installApplianceWithRunner(cfg installConfig, ch chan<- engineMsg, runner applianceCommandRunner) {
-	send(ch, "Verify appliance release", "Checking manifest signature and artifact identities", 0.05)
-	bundle, err := verifyApplianceBundle(cfg.ApplianceManifestPath, cfg.ApplianceSignaturePath, cfg.ApplianceTrustKeyPath)
+	send(ch, "Verify appliance release", "Checking manifest and artifact identities", 0.05)
+	bundle, err := verifyApplianceBundle(cfg.ApplianceManifestPath)
 	if err != nil {
 		sendErr(ch, err)
 		return
@@ -115,46 +115,35 @@ func installApplianceWithRunner(cfg installConfig, ch chan<- engineMsg, runner a
 		}
 		defer os.Remove(answerPath)
 	}
-	proofPath := ""
-	if input.CoreRelease != nil {
-		proofPath, err = writeCoreMetadataSidecar(input.CoreMetadataProof)
-		if err != nil {
-			sendErr(ch, err)
-			return
-		}
-		defer os.Remove(proofPath)
-	}
 	assets := applianceImageAssets{
-		Operation:             "erase-install",
-		RootPayload:           appliancePayloadFromVerified(root),
-		RecoveryPayload:       appliancePayloadFromVerified(recovery),
-		SystemAUKIPath:        systemAUKI.Path,
-		SystemBUKIPath:        systemBUKI.Path,
-		RecoveryUKIPath:       recoveryUKI.Path,
-		ManifestPath:          cfg.ApplianceManifestPath,
-		SignaturePath:         cfg.ApplianceSignaturePath,
-		ManifestSHA256:        bundle.ManifestSHA256,
-		ImageVersion:          bundle.Manifest.ImageVersion,
-		TransactionID:         input.TransactionID,
-		Network:               input.Network,
-		AnswerPath:            answerPath,
-		CoreMetadataProofPath: proofPath,
-		AuthorizedKeys:        input.AuthorizedKeys,
+		Operation:       "erase-install",
+		RootPayload:     appliancePayloadFromVerified(root),
+		RecoveryPayload: appliancePayloadFromVerified(recovery),
+		SystemAUKIPath:  systemAUKI.Path,
+		SystemBUKIPath:  systemBUKI.Path,
+		RecoveryUKIPath: recoveryUKI.Path,
+		ManifestPath:    cfg.ApplianceManifestPath,
+		ManifestSHA256:  bundle.ManifestSHA256,
+		ImageVersion:    bundle.Manifest.ImageVersion,
+		TransactionID:   input.TransactionID,
+		Network:         input.Network,
+		AnswerPath:      answerPath,
+		AuthorizedKeys:  input.AuthorizedKeys,
 	}
 	if preserving {
 		assets.Operation = "preserve-reinstall"
 	}
 	if preserving && !resuming {
-		installed, inspectErr := inspectInstalledApplianceIdentity(runner, targetDisk, cfg.ApplianceTrustKeyPath)
+		installed, inspectErr := inspectInstalledApplianceIdentity(runner, targetDisk)
 		if inspectErr != nil || installed == nil {
 			if inspectErr == nil {
-				inspectErr = fmt.Errorf("no trusted installed appliance identity was found")
+				inspectErr = fmt.Errorf("no installed appliance identity was found")
 			}
 			sendErr(ch, fmt.Errorf("preserve reinstall preflight: %w", inspectErr))
 			return
 		}
 		if err := ordering.RequireUpgradeIdentity(installed.ImageVersion, bundle.Manifest.ImageVersion); err != nil {
-			sendErr(ch, fmt.Errorf("preserve reinstall requires a strictly newer signed appliance: %w", err))
+			sendErr(ch, fmt.Errorf("preserve reinstall requires a strictly newer appliance: %w", err))
 			return
 		}
 	}
@@ -214,7 +203,6 @@ func installApplianceWithRunner(cfg installConfig, ch chan<- engineMsg, runner a
 type applianceInstallInput struct {
 	ReleaseCacheSHA256 string
 	CoreRelease        *coreAnswerSelection
-	CoreMetadataProof  []byte
 	Operation          string
 	TransactionID      string
 	TargetSerial       string
@@ -261,9 +249,6 @@ func loadApplianceInstallInput(cfg installConfig) (applianceInstallInput, error)
 			}
 		}
 		policy, development := answer.ReleasePolicy, answer.Development
-		if answer.Schema == applianceAnswerLegacySchema {
-			policy, development = defaultApplianceReleasePolicy(), defaultDevelopmentAccessPolicy()
-		}
 		return applianceInstallInput{
 			CoreRelease: answer.CoreRelease, ReleaseCacheSHA256: answer.ReleaseCacheSHA256,
 			Operation: answer.Operation, TransactionID: answer.TransactionID,
@@ -331,10 +316,7 @@ func writeRuntimeApplianceAnswer(input applianceInstallInput, target applianceDi
 		Network: input.Network, ReleasePolicy: input.ReleasePolicy, Development: input.Development,
 		AuthorizedKeys: input.AuthorizedKeys,
 	}
-	if input.CoreRelease != nil {
-		answer.Schema = applianceAnswerCoreSchema
-		answer.CoreRelease = input.CoreRelease
-	}
+	answer.CoreRelease = input.CoreRelease
 	if err := writeApplianceAnswerFile(path, answer); err != nil {
 		os.Remove(path)
 		return "", err

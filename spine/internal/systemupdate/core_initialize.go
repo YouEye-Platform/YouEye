@@ -31,19 +31,11 @@ func (i CoreMachineIdentity) Validate() error {
 }
 
 func (m CoreManager) retainSelection(selection CoreHostSelection, digest string) error {
-	if err := atomicWrite(filepath.Join(m.Root, "targets", digest+".json"), selection.Raw, 0600); err != nil {
-		return err
-	}
-	if err := atomicWrite(filepath.Join(m.Root, "targets", digest+".json.sig"), selection.Signature, 0600); err != nil {
-		return err
-	}
-	if len(selection.MetadataProof) > 0 {
-		return atomicWrite(filepath.Join(m.Root, "targets", digest+".metadata.json"), selection.MetadataProof, 0600)
-	}
-	return nil
+	return atomicWrite(filepath.Join(m.Root, "targets", digest+".json"), selection.Raw, 0600)
 }
 
-func (m CoreManager) Selection(digest string, trustKeyPath string) (CoreHostSelection, releasecache.CoreRelease, error) {
+// Selection reads a retained release by its exact digest.
+func (m CoreManager) Selection(digest string) (CoreHostSelection, releasecache.CoreRelease, error) {
 	var s CoreHostSelection
 	if !validSHA256(digest) {
 		return s, releasecache.CoreRelease{}, fmt.Errorf("exact core digest required")
@@ -52,39 +44,26 @@ func (m CoreManager) Selection(digest string, trustKeyPath string) (CoreHostSele
 	if err != nil {
 		return s, releasecache.CoreRelease{}, err
 	}
-	sig, err := ReadCoreState(filepath.Join(m.Root, "targets", digest+".json.sig"), 64)
-	if err != nil {
-		return s, releasecache.CoreRelease{}, err
-	}
-	s = CoreHostSelection{Raw: raw, Signature: sig}
-	r, actual, err := VerifyCoreSelection(raw, sig, trustKeyPath)
+	s = CoreHostSelection{Raw: raw}
+	r, actual, err := releasecache.ParseCoreRelease(raw)
 	if err != nil {
 		return s, r, err
 	}
 	if actual != digest {
 		return s, r, fmt.Errorf("retained core selection digest changed")
 	}
-	proof, proofErr := ReadCoreState(filepath.Join(m.Root, "targets", digest+".metadata.json"), CoreMetadataProofMaxBytes)
-	if proofErr == nil {
-		s.MetadataProof = proof
-		if _, err = VerifyCoreSelectionMetadata(s, trustKeyPath); err != nil {
-			return s, r, err
-		}
-	} else if !errors.Is(proofErr, os.ErrNotExist) {
-		return s, r, proofErr
-	}
 	return s, r, nil
 }
 
-func (m CoreManager) PrepareSigned(ctx context.Context, requestID string, selection CoreHostSelection, expectedDigest, trustKeyPath string) (CoreJournal, error) {
-	_, digest, err := VerifyCoreSelection(selection.Raw, selection.Signature, trustKeyPath)
+func (m CoreManager) PrepareSelected(ctx context.Context, requestID string, selection CoreHostSelection, expectedDigest string) (CoreJournal, error) {
+	_, digest, err := releasecache.ParseCoreRelease(selection.Raw)
 	if err != nil {
 		return CoreJournal{}, err
 	}
 	if digest != expectedDigest {
 		return CoreJournal{}, fmt.Errorf("selected core digest differs from request")
 	}
-	// Immutable signed inputs may be retained before lifecycle admission. No
+	// Immutable digest-bound inputs may be retained before lifecycle admission. No
 	// executable effect occurs here, and the executor rechecks current policy.
 	if err := m.retainSelection(selection, digest); err != nil {
 		return CoreJournal{}, err
@@ -95,13 +74,13 @@ func (m CoreManager) PrepareSigned(ctx context.Context, requestID string, select
 // Initialize creates the first shared receipt only after a native verifier has
 // inspected fresh installed payloads, exact machine identity and operational
 // health. The callback is read-only; this is not an old-install migration path.
-func (m CoreManager) Initialize(ctx context.Context, selection CoreHostSelection, expectedDigest, trustKeyPath string, verifyInstalled func(context.Context, releasecache.CoreRelease) (CoreMachineIdentity, string, error)) (CoreReceipt, error) {
+func (m CoreManager) Initialize(ctx context.Context, selection CoreHostSelection, expectedDigest string, verifyInstalled func(context.Context, releasecache.CoreRelease) (CoreMachineIdentity, string, error)) (CoreReceipt, error) {
 	unlock, err := m.lockCore()
 	if err != nil {
 		return CoreReceipt{}, err
 	}
 	defer unlock()
-	r, digest, err := VerifyCoreSelection(selection.Raw, selection.Signature, trustKeyPath)
+	r, digest, err := releasecache.ParseCoreRelease(selection.Raw)
 	if err != nil {
 		return CoreReceipt{}, err
 	}

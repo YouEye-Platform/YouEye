@@ -34,7 +34,7 @@ func (r NativeCoreRuntime) Validate() error {
 		return fmt.Errorf("complete native core policy, lifecycle and health implementation required")
 	}
 	cacheRelative, err := filepath.Rel(r.Checkpoint.DataRoot, r.Cache.Root)
-	if err != nil || cacheRelative == "." || cacheRelative == ".." || strings.HasPrefix(cacheRelative, ".."+string(filepath.Separator)) || r.Checkpoint.StatePath != r.Host.config.StatePath || r.Services.Checkpoint.DataRoot != r.Checkpoint.DataRoot || r.Services.Checkpoint.StatePath != r.Checkpoint.StatePath || r.Services.Cache.TrustKeyPath != r.Cache.TrustKeyPath {
+	if err != nil || cacheRelative == "." || cacheRelative == ".." || strings.HasPrefix(cacheRelative, ".."+string(filepath.Separator)) || r.Checkpoint.StatePath != r.Host.config.StatePath || r.Services.Checkpoint.DataRoot != r.Checkpoint.DataRoot || r.Services.Checkpoint.StatePath != r.Checkpoint.StatePath {
 		return fmt.Errorf("core services must share exact installed state and Data-backed cache")
 	}
 	return nil
@@ -125,7 +125,7 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 	m := CoreManager{Root: r.Root}
 	switch s.Name {
 	case "verify-members":
-		selection, _, err := m.Selection(j.ManifestSHA256, r.Cache.TrustKeyPath)
+		selection, _, err := m.Selection(j.ManifestSHA256)
 		if err != nil {
 			return CoreActionObservation{}, err
 		}
@@ -169,7 +169,7 @@ func (r NativeCoreRuntime) execute(ctx context.Context, j CoreJournal, s CoreSte
 		}
 		return coreActionPassed("complete scoped membership/cache and previous running host/static payloads verified", nil)
 	case "stage-host":
-		selection, _, err := m.Selection(j.ManifestSHA256, r.Cache.TrustKeyPath)
+		selection, _, err := m.Selection(j.ManifestSHA256)
 		if err != nil {
 			return CoreActionObservation{}, err
 		}

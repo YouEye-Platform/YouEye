@@ -25,7 +25,7 @@ test('supported app detail screens own update source controls', () => {
   assert.match(service, /release_source/);
 });
 
-test('appliance update channels retain advanced signed branch and exact source identity', () => {
+test('System update source is shown read-only; only app channels are editable', () => {
   const channels = read('src/components/settings-shell/update-channels.tsx');
   const appliance = read('src/components/settings-shell/appliance-system-update.tsx');
 
@@ -33,23 +33,12 @@ test('appliance update channels retain advanced signed branch and exact source i
   assert.match(channels, /Repo URL/);
   assert.match(channels, /Release branch \/ channel/);
   assert.match(channels, /Artifact SHA-256/);
-  assert.match(appliance, /Stable|stable/);
-  assert.match(appliance, /Development|development/);
-  assert.match(appliance, /Signed release branch/);
-  assert.match(appliance, /Tracks only signed appliance releases published for this branch/);
-  assert.match(appliance, /Release tag/);
-  assert.match(appliance, /appliance-dev-v<version>/);
-  assert.doesNotMatch(appliance, /placeholder="appliance-dev-v\d/);
-  assert.match(appliance, /Manifest SHA-256/);
-  assert.match(appliance, /Release repository/);
-  assert.match(appliance, /Use official releases/);
-  assert.match(appliance, /Paste an HTTPS repository URL/);
-  assert.match(appliance, /Releases must be signed by a trusted authority/);
-  assert.match(appliance, /repository_url: repository\.trim\(\)/);
-  assert.doesNotMatch(appliance, /placeholder="https:\/\//);
-  assert.match(appliance, /Stable and Development metadata checks run automatically every six hours/);
-  assert.match(appliance, /downloads and restarts always wait for you/);
-  assert.match(appliance, /branch/);
+  assert.match(channels, /const editable = id\.startsWith\("app:"\)/);
+  // The Control Panel cannot choose what the host installs.
+  assert.match(appliance, /CoreSystemUpdate/);
+  assert.doesNotMatch(appliance, /repository_url|Release repository|Manifest SHA-256|system-update\/source/);
+  assert.equal(existsSync(join(root, 'src/app/api/appliance/system-update')), false);
+  assert.equal(existsSync(join(root, 'src/lib/appliance/system-update-source.ts')), false);
 });
 
 test('Settings Users can create users as user or admin', () => {

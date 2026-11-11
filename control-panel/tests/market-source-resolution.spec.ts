@@ -102,20 +102,6 @@ test('signed Market app releases require a same-origin release-scoped browser UR
   }), null);
 });
 
-test('hosted Market URLs preserve immutable identity and leave custom Git sources alone', async () => {
-  const { hostedMarketRawURL } = await import('../src/lib/market/source');
-  const source = parseMarketRepoURL(DEFAULT_MARKET_REPO_URL);
-  const commit = 'a'.repeat(40);
-  const policy = { schema: 'youeye.distribution-policy.v1', origin: 'https://releases.youeye.me', keys: {stable:'test-key'} };
-  assert.equal(hostedMarketRawURL(source,'YouEye-Platform','Market','apps/example/icon.svg',commit,policy),`https://catalog.youeye.me/v1/snapshots/${commit}/apps/example/icon.svg`);
-  for (const other of [{...source,trust:'custom' as const},{...source,base_url:'https://forge.example.test'},{...source,organization:'someone-else'}]) assert.equal(hostedMarketRawURL(other,'YouEye-Platform','Market','catalog.yaml',commit,policy),null);
-  assert.equal(hostedMarketRawURL(source,'YouEye-Platform','Pointer','youeye-app.yaml',commit,policy),null);
-  assert.equal(hostedMarketRawURL(source,'YouEye-Platform','Market','catalog.yaml','main',policy),null);
-  assert.equal(hostedMarketRawURL(source,'YouEye-Platform','Market','catalog.yaml',commit,{...policy,origin:''}),null);
-  assert.throws(()=>hostedMarketRawURL(source,'YouEye-Platform','Market','apps/../secret',commit,policy));
-});
-
-
 test('catalog refs stay scoped to their repository, including explicit native app pins', async () => {
   const { catalogEntryRef } = await import('../src/lib/market/source');
   const { CatalogEntrySchema, IntegrationCatalogEntrySchema } = await import('../src/lib/market/schema');

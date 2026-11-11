@@ -12,17 +12,9 @@ import (
 )
 
 type CoreUpdateCandidate struct {
-	ReaderReady     *CoreReaderReadySummary  `json:"reader_ready,omitempty"`
 	Release         releasecache.CoreRelease `json:"release"`
 	ManifestSHA256  string                   `json:"manifest_sha256"`
 	RestartRequired bool                     `json:"restart_required"`
-}
-type CoreReaderReadySummary struct {
-	State          string `json:"state"`
-	Version        string `json:"version"`
-	ManifestSHA256 string `json:"manifest_sha256"`
-	ArtifactSHA256 string `json:"artifact_sha256"`
-	MachineBound   bool   `json:"machine_bound"`
 }
 type CoreUpdateRequest struct {
 	RequestID      string `json:"request_id"`

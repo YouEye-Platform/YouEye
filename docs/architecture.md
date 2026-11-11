@@ -8,7 +8,7 @@ YouEye uses a layered architecture where each component has a single responsibil
 graph TD
     User[User Browser] -->|HTTPS| Caddy[Caddy Reverse Proxy]
     
-    subgraph Host["Signed YouEye appliance"]
+    subgraph Host["YouEye appliance"]
         Spine[Spine CLI]
     end
     
@@ -202,8 +202,8 @@ sequenceDiagram
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| **Spine** | Go 1.21+, Cobra, Bubble Tea | Host lifecycle and signed-release manager |
-| **Installer** | Go, Bubble Tea | Signed ISO and Proxmox installation flows |
+| **Spine** | Go 1.21+, Cobra, Bubble Tea | Host lifecycle and digest-bound release manager |
+| **Installer** | Go, Bubble Tea | ISO and Proxmox installation flows |
 | **Control Panel** | Next.js 16, TypeScript | Infrastructure orchestration |
 | **UI** | Next.js 15, Drizzle ORM, Radix UI, DND-Kit, Framer Motion | User dashboard |
 | **Native Apps** | Next.js 15 | Wiki, Search, Notes, Cinema, Weather, Translate |
@@ -218,7 +218,7 @@ sequenceDiagram
 ```
 YouEye/
 ├── installer/          # YouEye Installer binary and Proxmox bootstrap
-├── appliance/          # Signed A/B/Recovery image lifecycle
+├── appliance/          # A/B/Recovery image lifecycle
 ├── spine/              # Go CLI (Spine)
 │   ├── cmd/            # CLI entry point
 │   └── internal/       # Commands, config, release and lifecycle services
@@ -241,7 +241,7 @@ Spine manages updates for itself and the Control Panel. The Control Panel manage
 
 ```mermaid
 graph TD
-    F[Signed release provider] -->|spine-v*| Spine
+    F[Release provider] -->|spine-v*| Spine
     F -->|cp-v*| Spine
     Spine -->|deploys| CP[Control Panel]
     
@@ -256,9 +256,13 @@ graph TD
 
 Updates default to official GitHub Stable releases. An administrator may select
 an explicit Forgejo or custom HTTPS source without changing distributed build
-defaults. Each mutation requires signed checksum metadata, the exact artifact
-digest, and any configured channel digest. Missing releases do not fall back
-across channels.
+defaults. Each mutation requires the exact artifact digest and size from
+HTTPS-fetched release metadata and any configured channel digest; releases are
+unsigned until signing returns before the first public release. Missing
+releases do not fall back across channels. The complete System (host, Spine,
+Control Panel and UI) follows the source and track the Installer recorded in
+protected State; the Control Panel can read that selection but cannot change
+it.
 
 UI infrastructure reconciliation also restores the existing protected bridge authority after container recreation, and verifies its bytes and file mode before readiness. This applies when an interrupted update did not reach Spine finalization. Reconciliation never issues a replacement bridge identity; missing authority on a configured appliance remains a failed repair.
 

@@ -22,7 +22,7 @@ import {
   infrastructureChannelSource,
   type ResolvedInfrastructureRelease,
 } from './release-resolver';
-import { preparedSignedReleaseVerificationShell, verifySignedReleaseArtifactBuffer } from '@/lib/releases/verify';
+import { releaseArtifactVerificationShell, verifyReleaseArtifactBuffer } from '@/lib/releases/artifact';
 import { effectiveChannel } from '@/lib/updates/channels';
 import { verifyInstalledProductReceipt } from '@/lib/releases/product-release';
 import {
@@ -79,7 +79,7 @@ export async function deployLXDContainer(
  * inspected, classified, and digest-bound these exact bytes before it creates
  * any app-owned resources. Platform callers deliberately cannot select this
  * policy through deployLXDContainer; Pointer and stock YouEye LXD releases
- * remain signature-required there.
+ * keep their own digest-bound selection there.
  */
 export async function deployMarketLXDContainer(
   spec: LXDContainerSpec,
@@ -291,9 +291,9 @@ export async function redeployLXDContainer(
   return deployLXDContainer(spec, cfg, nicDevices);
 }
 
-/** Managed Pointer may consume only its authenticated Product archive or the
- * existing signature-required legacy archive. Market's unsigned policy is not
- * an alternative here. Validate before deleting any partial prior runtime. */
+/** Managed Pointer may consume only its digest-bound Product archive or the
+ * existing legacy archive. Market's manifest-only policy is not an
+ * alternative here. Validate before deleting any partial prior runtime. */
 export async function deployPointerLXDContainer(
   spec: LXDContainerSpec,
   cfg: LXDDeploymentConfig,
@@ -304,12 +304,12 @@ export async function deployPointerLXDContainer(
   if (spec.name !== 'pointer' || spec.containerName !== 'youeye-pointer' || spec.runtime !== 'bun'
     || cfg.releaseChannelKey !== 'app:pointer') throw new Error('Invalid managed Pointer installation');
   if (artifact) {
-    if (!artifact.productRelease || artifact.signature.status === 'unsigned'
+    if (!artifact.productRelease || artifact.verification.status !== 'product-release'
       || artifact.containerName !== spec.containerName) throw new Error('Pointer requires a verified Product archive');
     const selected = verifyInstalledProductReceipt(artifact.productRelease, {product:'pointer',source:artifact.sourceRepo,tag:release.tag});
     if (selected.release.version !== release.version || selected.build.kind !== 'native'
       || selected.build.assets.find(a => a.name === 'standalone.tar')?.sha256 !== artifact.artifactSHA256) {
-      throw new Error('Pointer archive differs from its signed selection');
+      throw new Error('Pointer archive differs from its product release selection');
     }
     await readStagedMarketNativeArtifact(artifact);
   } else if (new URL(release.url).pathname.split('/').at(-1) !== 'standalone.tar') {
@@ -450,13 +450,13 @@ async function installNodeAndApp(
   marketArtifact?: StagedMarketNativeArtifact,
 ): Promise<string> {
   const cn = spec.containerName;
-  const trustScope = spec.name === 'ui' ? 'ui' : 'app';
+  const coreRole = spec.name === 'ui' ? 'ui' as const : undefined;
   const selectedCore = spec.name === 'ui' ? selectedCoreArtifact(releaseURL, artifactSHA256, 'ui') : null;
   const digestPath = selectedCore ? '/etc/youeye/core-artifact-sha256' : `${spec.appDir}/.youeye-artifact-sha256`;
   const cachedRelease = marketArtifact ? null : await cachedReleaseBytes(releaseURL);
-  if (cachedRelease) await verifySignedReleaseArtifactBuffer(releaseURL, cachedRelease, 'standalone.tar', artifactSHA256, trustScope);
+  if (cachedRelease) verifyReleaseArtifactBuffer(releaseURL, cachedRelease, artifactSHA256, coreRole);
   const releaseVerification = !marketArtifact && !cachedRelease
-    ? await preparedSignedReleaseVerificationShell(releaseURL, '/tmp/app.tar', artifactSHA256, trustScope)
+    ? releaseArtifactVerificationShell(releaseURL, '/tmp/app.tar', artifactSHA256, coreRole)
     : '';
 
   if (selectedCore) {
@@ -474,7 +474,7 @@ async function installNodeAndApp(
   await execShell(cn, 'passwd --lock root', { timeout: 10_000 });
 
   // Node applications use the established repository install. Bun applications
-  // carry their exact runtime inside the signed release artifact so deployment
+  // carry their exact runtime inside the digest-verified release artifact so deployment
   // never executes an unpinned runtime installer from the network.
   if (spec.runtime !== 'bun') {
     await execShell(cn, `curl -fsSL https://deb.nodesource.com/setup_${spec.nodeVersion} | bash -`, {
@@ -539,7 +539,7 @@ async function installNodeAndApp(
       ls -la ${spec.appDir}
       exit 1
     fi
-    ${spec.runtime === 'bun' ? `test -x "${spec.appDir}/bun" || { echo "ERROR: signed Bun runtime is missing or not executable"; exit 1; }` : ''}
+    ${spec.runtime === 'bun' ? `test -x "${spec.appDir}/bun" || { echo "ERROR: bundled Bun runtime is missing or not executable"; exit 1; }` : ''}
     echo "App downloaded and verified successfully"
   `;
   const dlResult = await execShell(cn, downloadScript, { timeout: 300_000 });
@@ -603,7 +603,7 @@ WantedBy=multi-user.target
   const digestResult = await execShell(cn, `cat ${shellQuote(digestPath)}`, { timeout: 10_000 });
   const verifiedDigest = digestResult.stdout.trim().toLowerCase();
   if (digestResult.exitCode !== 0 || !/^[0-9a-f]{64}$/.test(verifiedDigest)) {
-    throw new Error(`Signed artifact digest was not retained for ${cn}`);
+    throw new Error(`Verified artifact digest was not retained for ${cn}`);
   }
   if (artifactSHA256 && verifiedDigest !== artifactSHA256.toLowerCase()) {
     throw new Error(`Retained artifact digest does not match the exact channel for ${cn}`);

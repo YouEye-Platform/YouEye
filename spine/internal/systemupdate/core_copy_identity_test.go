@@ -11,7 +11,7 @@ import (
 )
 
 func TestIndependentCopyIdentityPairRecoversAnInterruptedWrite(t *testing.T) {
-	selection, root, trust := signedCopyFixture(t)
+	selection, root := copyFixture(t)
 	m := CoreManager{Root: filepath.Join(root, "core")}
 	source := appliance.StateRecord{SchemaVersion: 2, Lifecycle: appliance.LifecycleConfigured, InstallIDRef: "install:source", DeviceIDRef: "device:source", DiskLayoutVersion: 3, StatePartUUID: "state", DataPartUUID: "data", ParentDiskID: "disk:source", DataSchemaVersion: 1, Slots: appliance.SlotState{Current: "A", CurrentImageVersion: "1.0.0"}, RecoveryVersion: "1"}
 	statePath, dataPath := filepath.Join(root, "state", "appliance-state.json"), filepath.Join(root, "data", ".youeye-data-schema.json")
@@ -26,7 +26,7 @@ func TestIndependentCopyIdentityPairRecoversAnInterruptedWrite(t *testing.T) {
 	if err := os.WriteFile(sample, []byte("ordinary test data"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := m.Initialize(context.Background(), selection, checksum(selection.Raw), trust, func(context.Context, releasecache.CoreRelease) (CoreMachineIdentity, string, error) {
+	receipt, err := m.Initialize(context.Background(), selection, checksum(selection.Raw), func(context.Context, releasecache.CoreRelease) (CoreMachineIdentity, string, error) {
 		return copyMachine(source), "fixture native source", nil
 	})
 	if err != nil {
@@ -38,10 +38,10 @@ func TestIndependentCopyIdentityPairRecoversAnInterruptedWrite(t *testing.T) {
 	if _, err = m.PrepareIndependentCopyIdentity(req, statePath, dataPath, observe); err == nil {
 		t.Fatal("unadmitted copy changed identity")
 	}
-	if err = m.BeginIndependentCopy(req, trust, func() (string, error) { return req.SourceHardware, nil }); err == nil {
+	if err = m.BeginIndependentCopy(req, func() (string, error) { return req.SourceHardware, nil }); err == nil {
 		t.Fatal("copy admitted on source hardware")
 	}
-	if err = m.BeginIndependentCopy(req, trust, func() (string, error) { return obs.Hardware, nil }); err != nil {
+	if err = m.BeginIndependentCopy(req, func() (string, error) { return obs.Hardware, nil }); err != nil {
 		t.Fatal(err)
 	}
 	machine, err := m.PrepareIndependentCopyIdentity(req, statePath, dataPath, observe)

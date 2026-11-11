@@ -732,8 +732,8 @@ function describeNativeArtifacts(staged: StagedMarketNativeArtifacts): InstallMe
     artifactName: artifact.artifactName,
     sha256: artifact.artifactSHA256,
     bytes: artifact.artifactBytes,
-    signature: artifact.signature.status,
-    signatureKeyId: artifact.signature.status !== 'unsigned' ? artifact.signature.keyId : undefined,
+    verification: artifact.verification.status,
+    productReleaseSHA256: artifact.verification.status === 'product-release' ? artifact.verification.releaseSHA256 : undefined,
   }));
   return artifacts.length > 0 ? artifacts : undefined;
 }

@@ -62,7 +62,7 @@ func prepareNativeCopyHost(ctx context.Context, request systemupdate.CoreCopyReq
 	if err != nil || systemupdate.CoreReceiptDigest(receipt) != request.SourceReceiptSHA256 || receipt.ManifestSHA256 != request.ManifestSHA256 || receipt.Machine.StatePartUUID != partitions.StatePartUUID || receipt.Machine.DataPartUUID != partitions.DataPartUUID {
 		return result, fmt.Errorf("copied source receipt or persistent partition identity changed")
 	}
-	_, signed, err := m.Selection(request.ManifestSHA256, systemupdate.CoreDevelopmentTrustPath)
+	_, signed, err := m.Selection(request.ManifestSHA256)
 	if err != nil {
 		return result, err
 	}
@@ -75,7 +75,7 @@ func prepareNativeCopyHost(ctx context.Context, request systemupdate.CoreCopyReq
 	}
 	digest, err := fileSHA256(executable)
 	if err != nil || manifest.ReleaseSet == nil || digest != manifest.ReleaseSet.Spine.ArtifactSHA256 || Version != manifest.ReleaseSet.Spine.Version {
-		return result, fmt.Errorf("copy preparation Spine differs from the signed installed member")
+		return result, fmt.Errorf("copy preparation Spine differs from the installed member")
 	}
 	// Import/mount only the full copy's existing datasets. Never use deploy's
 	// blank-pool fallback or initialize a missing data-schema record.
@@ -86,7 +86,7 @@ func prepareNativeCopyHost(ctx context.Context, request systemupdate.CoreCopyReq
 	if err = b.BeginCopy(request, "destination", copyHardware); err != nil {
 		return result, err
 	}
-	if err = m.BeginIndependentCopy(request, systemupdate.CoreDevelopmentTrustPath, copyHardware); err != nil {
+	if err = m.BeginIndependentCopy(request, copyHardware); err != nil {
 		return result, err
 	}
 	// Stop the host's automatic convergence loop before changing inherited

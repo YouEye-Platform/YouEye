@@ -22,7 +22,7 @@ export function verifyRetainedNativeManifestUpdate(
       || !artifacts.some(a => a.containerName === c.name)
       || !record.resources.some(r => r.kind === 'container' && r.name === c.containerName && r.ownerAppId === metadata.appId))
     || artifacts.some(a => a.version !== metadata.installedVersion || !a.releaseTag
-      || !a.sourceRepo || !a.signature?.startsWith('verified-') || !a.signatureKeyId
+      || !a.sourceRepo || a.verification !== 'product-release' || !a.productReleaseSHA256
       || a.releaseTag !== artifacts[0].releaseTag || a.sourceRepo !== artifacts[0].sourceRepo)
     || !sameDigests(record.target.artifactSHA256, artifacts.map(a => a.sha256))) {
     throw new Error('Retained native manifest recovery lacks matching committed update evidence');
