@@ -175,8 +175,8 @@ func writeTestApplianceBundle(t *testing.T) testApplianceBundle {
 		Schema: applianceBundleSchema, ImageVersion: "0.6.0-dev.1", BuildID: "test-build",
 		SourceTree: strings.Repeat("b", 40), Architecture: "amd64", FirmwareMode: "uefi",
 		DiskLayout: applianceManifestLayout{
-			Version: 3, TargetMinGiB: 32,
-			ESPGiB: 1, RecoveryGiB: 4, RootSlotGiB: 8, StateGiB: 4,
+			Version: 1, TargetMinGiB: 32,
+			ESPGiB: 1, RecoveryGiB: 4, RootSlotGiB: 6, StateGiB: 4,
 		},
 		StateSchemaMin: applianceStateSchema, StateSchemaMax: applianceStateSchema,
 		DataSchemaMin: applianceDataSchema, DataSchemaMax: applianceDataSchema,

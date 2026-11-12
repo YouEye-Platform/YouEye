@@ -23,7 +23,11 @@ func init() {
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]string{"repository": policy.Repository, "channel": policy.Channel})
+		out := map[string]string{"repository": policy.Repository, "channel": policy.Channel}
+		if receipt, err := (systemupdate.CoreManager{Root: systemupdate.CoreStatePath}).ReadReceipt(); err == nil {
+			out["installed_version"] = receipt.Release.Version
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}})
 	channelCmd.AddCommand(&cobra.Command{Use: "set <channel>", Args: cobra.ExactArgs(1), Short: "Follow another channel of the same repository", RunE: func(cmd *cobra.Command, args []string) error {
 		policy, err := setReleaseChannel(channelPolicyPath, args[0])

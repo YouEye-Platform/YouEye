@@ -127,8 +127,8 @@ func TestProxmoxAdvancedReleaseSourceDefaults(t *testing.T) {
 	if model.config.ReleaseTag != "" || model.config.CoreManifestSHA256 != "" {
 		t.Fatal("changing the channel kept a pinned release of another channel")
 	}
-	if got := estimatedProxmoxDataGiB(32); got != 7 {
-		t.Fatalf("estimated 32 GiB data capacity = %d, want 7", got)
+	if got := estimatedProxmoxDataGiB(32); got != 11 {
+		t.Fatalf("estimated 32 GiB data capacity = %d, want 11", got)
 	}
 }
 

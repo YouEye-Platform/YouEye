@@ -18,7 +18,7 @@ import (
 
 const (
 	localBootstrapRoot       = "/var/lib/youeye-state/bootstrap"
-	localNetworkApply        = "/usr/local/libexec/youeye-bootstrap-network"
+	localNetworkApply        = "/usr/local/bin/youeye boot network" // the network check ships with Spine
 	localDevelopmentApply    = "/usr/local/libexec/youeye-apply-development-access"
 	localNetworkProfileName  = "network-profile.json"
 	localDevelopmentFileName = "development-access.json"
@@ -30,8 +30,9 @@ type localApplyRunner interface {
 
 type localExecRunner struct{}
 
-func (localExecRunner) Run(name string) error {
-	command := exec.Command(name)
+func (localExecRunner) Run(commandLine string) error {
+	fields := strings.Fields(commandLine)
+	command := exec.Command(fields[0], fields[1:]...)
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
 	return command.Run()

@@ -51,7 +51,7 @@ func testState() appliance.StateRecord {
 	return appliance.StateRecord{
 		SchemaVersion: 2, Lifecycle: appliance.LifecycleConfigured,
 		InstallIDRef: "install:test", DeviceIDRef: "device:test", DiskLayoutVersion: appliance.CurrentDiskLayout,
-		StatePartUUID: "state-partuuid", DataPartUUID: "data-partuuid", ParentDiskID: "disk-v3:test",
+		StatePartUUID: "state-partuuid", DataPartUUID: "data-partuuid", ParentDiskID: "disk:test",
 		DataSchemaVersion: 1,
 		Slots:             appliance.SlotState{Current: "A", CurrentImageVersion: "0.6.0-dev.26"},
 		RecoveryVersion:   "1",

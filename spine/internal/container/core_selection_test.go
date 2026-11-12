@@ -63,9 +63,11 @@ func TestControlReconciliationUsesAcceptedSparseMember(t *testing.T) {
 			t.Fatalf("adopted mismatched CP %q", wrong)
 		}
 	}
+	// The baked Spine is only the seed; the release's Spine is selected on
+	// State, so a different baked Spine does not block reconciliation.
 	image.ReleaseSet.Spine.ArtifactSHA256 = strings.Repeat("f", 64)
-	if err := verifyExistingControlVersion(expected, image, root); err == nil {
-		t.Fatal("accepted mismatched baked Spine")
+	if err := verifyExistingControlVersion(expected, image, root); err != nil {
+		t.Fatalf("baked seed Spine blocked reconciliation: %v", err)
 	}
 	raw[len(raw)-2] ^= 1
 	if err := os.WriteFile(filepath.Join(root, "core-release.json"), raw, 0600); err != nil {

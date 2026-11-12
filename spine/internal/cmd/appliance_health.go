@@ -393,14 +393,13 @@ func addFirstDeployReleaseSetChecks(manifest appliance.Manifest, add func(string
 		add("first-deploy release identity", "fail", "the sealed System has no exact release set")
 		return
 	}
-	releaseSet := *manifest.ReleaseSet
 	reader, err := readCoreInstalledReader()
 	if err != nil {
 		add("System core provenance", "fail", "the running System core identity is unavailable")
-	} else if digest, digestErr := fileSHA256(reader.Executable); digestErr != nil || !reader.Bound && Version != releaseSet.Spine.Version || digest != releaseSet.Spine.ArtifactSHA256 {
-		add("System core provenance", "fail", "the running System core does not match the selected bundle")
+	} else if err := verifyRunningSpine(reader.Executable); err != nil {
+		add("System core provenance", "fail", err.Error())
 	} else {
-		add("System core provenance", "pass", "the canonical baked System core matches its bundle")
+		add("System core provenance", "pass", "the running Spine is the seed or the slot's selected Spine")
 		if reader.Bound {
 			add("System reader binding", "pass", "the separate "+reader.ReaderClass+" reader has an exact active binding")
 		}

@@ -10,10 +10,12 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/youeye-platform/YouEye/releasecache"
 	"github.com/youeye-platform/YouEye/spine/internal/appliance"
 	"github.com/youeye-platform/YouEye/spine/internal/config"
+	"github.com/youeye-platform/YouEye/spine/internal/spineselect"
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"github.com/youeye-platform/YouEye/spine/internal/update"
 )
@@ -23,6 +25,8 @@ type coreDeploymentFixture struct {
 	release      releasecache.CoreRelease
 	policy       systemupdate.ReleasePolicy
 	root, binary string
+	// seed is the image's baked Spine; it defaults to binary (the running one).
+	seed string
 }
 
 func coreTestHash(raw []byte) string { return fmt.Sprintf("%x", sha256.Sum256(raw)) }
@@ -56,10 +60,31 @@ func newCoreDeploymentFixture(t *testing.T) *coreDeploymentFixture {
 		}
 	}
 	oldPolicy, oldSelection, oldExecutable, oldCfg, oldVersion, oldReader := deploymentPolicyPath, coreSelectionRoot, applianceExecutablePath, cfg, Version, coreInstalledReaderHost
+	oldVerifyRunning := verifyRunningSpine
 	t.Cleanup(func() {
 		deploymentPolicyPath, coreSelectionRoot, applianceExecutablePath, cfg, Version = oldPolicy, oldSelection, oldExecutable, oldCfg, oldVersion
-		coreInstalledReaderHost = oldReader
+		coreInstalledReaderHost, verifyRunningSpine = oldReader, oldVerifyRunning
 	})
+	// The fixture binary is the seed baked into the image; the running Spine
+	// must be it or a Spine selected for the booted slot (none here).
+	verifyRunningSpine = func(executable string) error {
+		if executable == coreBakedExecutable {
+			executable = f.binary
+		}
+		digest, err := spineselect.FileDigest(executable)
+		if err != nil {
+			return err
+		}
+		seedPath := f.seed
+		if seedPath == "" {
+			seedPath = f.binary
+		}
+		seed, err := spineselect.FileDigest(seedPath)
+		if err != nil {
+			return err
+		}
+		return spineselect.Running(filepath.Join(f.root, "spine"), "A", digest, seed)
+	}
 	deploymentPolicyPath = filepath.Join(f.root, "release-policy.json")
 	coreSelectionRoot = f.root
 	applianceExecutablePath = func() (string, error) { return f.binary, nil }
@@ -111,9 +136,34 @@ func TestCoreFirstDeploymentKeepsSealedImage(t *testing.T) {
 	if _, err = selectApplianceServices(f.image); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
+	// The baked Spine is only the seed: an image whose Spine differs from the
+	// release's is accepted (the release's Spine is selected on State).
 	f.image.ReleaseSet.Spine.ArtifactSHA256 = strings.Repeat("c", 64)
+	if err = verifyApplianceReleaseSet(f.image, GetConfig()); err != nil {
+		t.Fatalf("image whose seed Spine differs from the release refused: %v", err)
+	}
+	// A running Spine that is neither the seed nor selected for the slot is refused.
+	f.seed = filepath.Join(f.root, "other-seed")
+	if err := os.WriteFile(f.seed, []byte("another seed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err = verifyApplianceReleaseSet(f.image, GetConfig()); err == nil {
-		t.Fatal("image whose Spine differs from the release accepted")
+		t.Fatal("unselected running Spine accepted")
+	}
+	raw, err := os.ReadFile(f.binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := spineselect.Entry{SHA256: coreTestHash(raw), Version: "0.6.1-rc.1", HelperContract: spineselect.HelperContract, DiskLayout: spineselect.DiskLayout}
+	spineRoot := filepath.Join(f.root, "spine")
+	if err := spineselect.Stage(spineRoot, f.binary, entry); err != nil {
+		t.Fatal(err)
+	}
+	if err := spineselect.Select(spineRoot, "A", entry, spineselect.ThisHost(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err = verifyApplianceReleaseSet(f.image, GetConfig()); err != nil {
+		t.Fatalf("Spine selected for the slot refused: %v", err)
 	}
 }
 

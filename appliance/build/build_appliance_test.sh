@@ -29,12 +29,12 @@ bash -n \
     "$root/appliance/build/build-inputs.sh" \
     "$root/appliance/build/build_inputs_test.sh" \
     "$entrypoint" \
-    "$root/appliance/scripts/youeye-first-deploy" \
-    "$root/appliance/scripts/youeye-bootstrap-network" \
+    "$root/spine/internal/boot/scripts/first-deploy.sh" \
+    "$root/spine/internal/boot/scripts/network.sh" \
     "$root/appliance/scripts/youeye-console-status" \
     "$root/appliance/scripts/youeye-apply-development-access" \
-    "$root/appliance/scripts/youeye-appliance-bless" \
-    "$root/appliance/scripts/youeye-setup-gate" \
+    "$root/spine/internal/boot/scripts/bless.sh" \
+    "$root/spine/internal/boot/scripts/setup-gate.sh" \
 	"$root/appliance/scripts/youeye-recovery" \
 	"$root/appliance/scripts/youeye-recovery-console" \
 	"$root/appliance/scripts/youeye-recovery-apply" \
@@ -125,7 +125,7 @@ for text in \
     'Refusing nondeterministic DKMS MOK material' \
     'modinfo -F signer' \
     'trixie-backports incus-base' \
-    '8G YE-SYSTEM-IMAGE' \
+    '6G YE-SYSTEM-IMAGE' \
     '4G YE-RECOVERY-IMG' \
     'system-root.img.zst' \
     'internal-recovery.img.zst' \
@@ -142,7 +142,7 @@ for text in \
 	'preserve_state:true,preserve_data:true,preserve_recovery:true' \
 	'artifact_kind:$artifact_kind,supported_actions:["recovery","image-update"]' \
     'spine:{version:$spine_version,source_tree:$spine_tree,artifact_sha256:$spine_sha256}' \
-	'disk_layout:{version:3,target_min_gib:32' \
+	'disk_layout:{version:1,target_min_gib:32' \
     'state_schema_min:2,state_schema_max:2,data_schema_min:1,data_schema_max:1' \
     'kernel_compatibility:">=6.12",zfs_compatibility:">=2.3",zfs_feature_profile:"openzfs-2.2"' \
     'incus_compatibility:">=7.0",recovery_version:"1"' \
@@ -232,20 +232,20 @@ if grep -Fq 'Restart=on-failure' "$build"; then
     fail 'failed live installs must remain stopped for inspection'
 fi
 
-require_text "$root/appliance/scripts/youeye-first-deploy" 'deploy --resume'
-require_text "$root/appliance/scripts/youeye-first-deploy" 'incus list youeye-control'
-require_text "$root/appliance/scripts/youeye-first-deploy" 'Continuing an interrupted Server interface transaction'
-require_text "$root/appliance/scripts/youeye-first-deploy" 'needs_attention'
-require_text "$root/appliance/scripts/youeye-first-deploy" 'appliance health --profile=operational --json'
-require_text "$root/appliance/scripts/youeye-first-deploy" 'youeye.installer.progress.v1'
-require_text "$root/appliance/scripts/youeye-first-deploy" 'update system converge'
-require_text "$root/appliance/scripts/youeye-first-deploy" 'YOUEYE_FIRST_DEPLOY_PROGRESS_PATH'
-require_text "$root/appliance/scripts/youeye-bootstrap-network" 'youeye.bootstrap-network.v1'
-require_text "$root/appliance/scripts/youeye-bootstrap-network" 'previous network configuration was restored'
-require_text "$root/appliance/scripts/youeye-first-deploy" '"$setup_gate" open'
+require_text "$root/spine/internal/boot/scripts/first-deploy.sh" 'deploy --resume'
+require_text "$root/spine/internal/boot/scripts/first-deploy.sh" 'incus list youeye-control'
+require_text "$root/spine/internal/boot/scripts/first-deploy.sh" 'Continuing an interrupted Server interface transaction'
+require_text "$root/spine/internal/boot/scripts/first-deploy.sh" 'needs_attention'
+require_text "$root/spine/internal/boot/scripts/first-deploy.sh" 'appliance health --profile=operational --json'
+require_text "$root/spine/internal/boot/scripts/first-deploy.sh" 'youeye.installer.progress.v1'
+require_text "$root/spine/internal/boot/scripts/first-deploy.sh" 'update system converge'
+require_text "$root/spine/internal/boot/scripts/first-deploy.sh" 'YOUEYE_FIRST_DEPLOY_PROGRESS_PATH'
+require_text "$root/spine/internal/boot/scripts/network.sh" 'youeye.bootstrap-network.v1'
+require_text "$root/spine/internal/boot/scripts/network.sh" 'previous network configuration was restored'
+require_text "$root/spine/internal/boot/scripts/first-deploy.sh" '$setup_gate open'
 require_text "$root/appliance/systemd/youeye-setup-gate.service" 'Before=incus.service incus-startup.service youeye.service youeye-first-deploy.service'
-require_text "$root/appliance/systemd/youeye-setup-gate.service" 'ExecStart=/usr/local/libexec/youeye-setup-gate close'
-require_text "$root/appliance/scripts/youeye-setup-gate" 'tcp dport { 80, 443 } drop'
+require_text "$root/appliance/systemd/youeye-setup-gate.service" 'ExecStart=/usr/local/bin/youeye boot setup-gate close'
+require_text "$root/spine/internal/boot/scripts/setup-gate.sh" 'tcp dport { 80, 443 } drop'
 require_text "$root/appliance/initramfs/youeye-state" '/root/etc/machine-id'
 require_text "$root/appliance/initramfs/youeye-state" '/root/etc/hostid'
 require_text "$root/appliance/initramfs/youeye-state" '/root/etc/shadow'
@@ -314,21 +314,21 @@ require_text "$root/appliance/systemd/youeye-appliance-bless.service" 'After=net
 if grep -Eq '^After=.*incus\.(service|socket)' "$root/appliance/systemd/youeye-appliance-bless.service"; then
     fail 'boot blessing must not wait behind a wedged Incus start or stop job'
 fi
-require_text "$root/appliance/systemd/youeye-appliance-bless.service" 'ExecStart=/usr/local/libexec/youeye-appliance-bless'
+require_text "$root/appliance/systemd/youeye-appliance-bless.service" 'ExecStart=/usr/local/bin/youeye boot bless'
 require_text "$root/appliance/systemd/youeye-appliance-bless.service" 'StartLimitIntervalSec=180'
 require_text "$root/appliance/systemd/youeye-appliance-bless.service" 'StartLimitBurst=36'
 require_text "$root/appliance/systemd/youeye-appliance-bless.service" 'Restart=on-failure'
 require_text "$root/appliance/systemd/youeye-appliance-bless.service" 'RestartSec=5s'
-require_text "$root/appliance/scripts/youeye-appliance-bless" "-name 'LoaderBootCountPath-*'"
-require_text "$root/appliance/scripts/youeye-appliance-bless" 'appliance health --profile=operational --json'
-require_text "$root/appliance/scripts/youeye-appliance-bless" 'first-deploy/complete'
-require_text "$root/appliance/scripts/youeye-appliance-bless" '/usr/lib/systemd/systemd-bless-boot'
-require_text "$root/appliance/scripts/youeye-appliance-bless" '"$bless_boot_bin" good'
-require_text "$root/appliance/scripts/youeye-appliance-bless" 'youeye.appliance.boot-bless.v1'
+require_text "$root/spine/internal/boot/scripts/bless.sh" "-name 'LoaderBootCountPath-*'"
+require_text "$root/spine/internal/boot/scripts/bless.sh" 'appliance health --profile=operational --json'
+require_text "$root/spine/internal/boot/scripts/bless.sh" 'first-deploy/complete'
+require_text "$root/spine/internal/boot/scripts/bless.sh" '/usr/lib/systemd/systemd-bless-boot'
+require_text "$root/spine/internal/boot/scripts/bless.sh" '"$bless_boot_bin" good'
+require_text "$root/spine/internal/boot/scripts/bless.sh" 'youeye.appliance.boot-bless.v1'
 require_text "$root/appliance/systemd/journald.conf.d/20-youeye-appliance.conf" 'SystemMaxUse=256M'
 require_text "$root/appliance/scripts/youeye-system-update-bootstrap" '.authority == "digest"'
 require_text "$root/appliance/scripts/youeye-system-update-bootstrap" 'update core bootstrap --request'
-for file in "$root/appliance/scripts/youeye-system-update-bootstrap" "$root/appliance/scripts/youeye-recovery" "$root/appliance/scripts/youeye-bootstrap-network"; do
+for file in "$root/appliance/scripts/youeye-system-update-bootstrap" "$root/appliance/scripts/youeye-recovery" "$root/spine/internal/boot/scripts/network.sh"; do
     if grep -Fq 'openssl pkey' "$file"; then
         fail "release signature verification remains in $file"
     fi
@@ -370,11 +370,20 @@ if grep -Eq -- '--appliance-(root-payload|internal-recovery|uki|kernel|initrd)' 
     fail 'unsigned appliance artifact override flag remains in the CLI'
 fi
 
-bash "$root/appliance/scripts/youeye-appliance-bless_test.sh"
+bash "$root/spine/internal/boot/scripts/bless_test.sh"
 bash "$root/appliance/scripts/youeye-apply-development-access_test.sh"
 bash "$root/appliance/scripts/youeye-console-status_test.sh"
 bash "$root/appliance/scripts/youeye-apply-development-overlay_test.sh"
-bash "$root/appliance/scripts/youeye-setup-gate_test.sh"
+bash "$root/spine/internal/boot/scripts/setup-gate_test.sh"
+bash "$root/spine/internal/boot/scripts/first-deploy_test.sh"
+bash "$root/spine/internal/boot/scripts/network_test.sh"
+# Boot orchestration ships with Spine (`youeye boot …`), not in the image.
+require_text "$root/appliance/systemd/youeye-first-deploy.service" 'ExecStart=/usr/local/bin/youeye boot first-deploy'
+for moved in youeye-first-deploy youeye-bootstrap-network youeye-appliance-bless youeye-setup-gate; do
+    if grep -Fq "libexec/$moved" "$build"; then
+        fail "$moved must ship with Spine, not the image"
+    fi
+done
 bash "$root/appliance/scripts/youeye-recovery_test.sh"
 bash "$root/appliance/scripts/youeye-recovery-apply_test.sh"
 for retired in "$root/installer/scripts/proxmox.sh" "$root/installer/scripts/proxmox_bootstrap_test.sh"; do

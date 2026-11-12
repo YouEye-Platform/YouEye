@@ -137,9 +137,8 @@ func verifyCopySignedHost(ctx context.Context, receipt systemupdate.CoreReceipt)
 	if err != nil {
 		return err
 	}
-	digest, err := fileSHA256(executable)
-	if err != nil || manifest.ReleaseSet == nil || digest != manifest.ReleaseSet.Spine.ArtifactSHA256 || Version != manifest.ReleaseSet.Spine.Version {
-		return fmt.Errorf("copy Spine differs from installed member")
+	if err := verifyRunningSpine(executable); err != nil {
+		return fmt.Errorf("copy Spine: %w", err)
 	}
 	return nil
 }

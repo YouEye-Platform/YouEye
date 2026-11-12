@@ -116,7 +116,7 @@ func TestCoreHostStagesAliasedPayloadsAndRetainsSelection(t *testing.T) {
 	// A durable coordinator with the same target and completed checkpoint is
 	// the only path to activation; host commitment waits for all later steps.
 	jCore := CoreJournal{Schema: CoreJournalSchema, RequestID: "fixture", Target: r, ManifestSHA256: checksum(raw), Phase: "applying", RestartRequired: true, ActivationRequested: true}
-	for _, name := range coreStepNames(true) {
+	for _, name := range coreStepNames(true, false) {
 		state, evidence := "pending", ""
 		if name == "verify-members" || name == "stage-host" || name == "checkpoint" {
 			state, evidence = "succeeded", "fixture"

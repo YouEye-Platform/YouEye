@@ -91,6 +91,8 @@ func init() {
 	rootCmd.AddCommand(uninstallCmd)
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(channelCmd)
+	rootCmd.AddCommand(spineCmd)
+	rootCmd.AddCommand(bootCmd)
 	rootCmd.AddCommand(languageCmd)
 	rootCmd.AddCommand(networkCmd)
 
@@ -127,7 +129,21 @@ var versionCmd = &cobra.Command{
 		if runtimeStatus.Kind == "appliance-image" {
 			output.StatusLine("System image", runtimeStatus.ImageVersion+" (image-managed)", "")
 		}
-		output.StatusLine("Spine", Version+" (built "+BuildDate+")", output.Cyan)
+		if runtimeStatus.Kind == "appliance-image" {
+			// `version` runs in the seed; the slot may run a selected Spine from State.
+			if report, err := readSpineStatus(); err == nil {
+				running := report.Seed.Version + " (seed, baked into the image)"
+				if report.Running.Entry != nil {
+					running = report.Running.Entry.Version + " (" + report.Running.Role + ", on State, slot " + report.Slot + ")"
+				}
+				output.StatusLine("Spine", running, output.Cyan)
+				output.StatusLine("Spine seed", report.Seed.Version, "")
+			} else {
+				output.StatusLine("Spine", Version+" (built "+BuildDate+")", output.Cyan)
+			}
+		} else {
+			output.StatusLine("Spine", Version+" (built "+BuildDate+")", output.Cyan)
+		}
 
 		// Incus version
 		incusVer := getIncusVersion()

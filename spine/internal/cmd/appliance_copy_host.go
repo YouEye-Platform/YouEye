@@ -73,9 +73,8 @@ func prepareNativeCopyHost(ctx context.Context, request systemupdate.CoreCopyReq
 	if err != nil {
 		return result, err
 	}
-	digest, err := fileSHA256(executable)
-	if err != nil || manifest.ReleaseSet == nil || digest != manifest.ReleaseSet.Spine.ArtifactSHA256 || Version != manifest.ReleaseSet.Spine.Version {
-		return result, fmt.Errorf("copy preparation Spine differs from the installed member")
+	if err := verifyRunningSpine(executable); err != nil {
+		return result, fmt.Errorf("copy preparation Spine: %w", err)
 	}
 	// Import/mount only the full copy's existing datasets. Never use deploy's
 	// blank-pool fallback or initialize a missing data-schema record.

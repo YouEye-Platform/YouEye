@@ -39,7 +39,7 @@ func validStateRecord() StateRecord {
 		DiskLayoutVersion: CurrentDiskLayout,
 		StatePartUUID:     "state-partuuid",
 		DataPartUUID:      "data-partuuid",
-		ParentDiskID:      "disk-v3:opaque",
+		ParentDiskID:      "disk:opaque",
 		DataSchemaVersion: CurrentDataSchema,
 		Slots:             SlotState{Current: "A", CurrentImageVersion: "0.1.0"},
 		RecoveryVersion:   "1",
@@ -216,7 +216,7 @@ func TestDiskReferenceIsStableAndDoesNotEmbedPartitionIDs(t *testing.T) {
 	contract.StateParentDevice = "/dev/vdz"
 	contract.DataParentDevice = "/dev/vda"
 	two := DiskReference(contract)
-	if one != two || !strings.HasPrefix(one, "disk-v3:") {
+	if one != two || !strings.HasPrefix(one, "disk:") {
 		t.Fatalf("unstable disk reference: %q %q", one, two)
 	}
 	for _, raw := range []string{contract.StatePartUUID, contract.DataPartUUID, contract.StateParentID, contract.DataParentID} {

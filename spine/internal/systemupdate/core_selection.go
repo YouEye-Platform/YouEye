@@ -123,11 +123,6 @@ func BindCoreImage(r releasecache.CoreRelease, image appliance.Manifest) error {
 			if member.BuildVersion != image.ImageVersion || member.SourceTree != image.SourceTree {
 				return fmt.Errorf("core host member differs from running immutable image")
 			}
-		case "spine":
-			c := image.ReleaseSet.Spine
-			if member.Artifact.SHA256 != c.ArtifactSHA256 || member.SourceTree != c.SourceTree || member.BuildVersion != c.Version {
-				return fmt.Errorf("core Spine member differs from baked binary")
-			}
 		}
 	}
 	return nil

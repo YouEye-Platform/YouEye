@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"path/filepath"
 
 	"github.com/youeye-platform/YouEye/releasecache"
@@ -49,9 +48,5 @@ func verifyCoreDeploymentHost(image appliance.Manifest) error {
 	if err != nil {
 		return err
 	}
-	hash, err := fileSHA256(reader.Executable)
-	if err != nil || hash != image.ReleaseSet.Spine.ArtifactSHA256 || !reader.Bound && Version != image.ReleaseSet.Spine.Version {
-		return fmt.Errorf("baked Spine differs from the selected immutable image")
-	}
-	return nil
+	return verifyRunningSpine(reader.Executable)
 }

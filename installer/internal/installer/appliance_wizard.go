@@ -981,7 +981,7 @@ func (w applianceWizardModel) reviewView() string {
 		"",
 		fmt.Sprintf("Drive:       %s  %s  serial %s", target.Path, formatBytes(target.SizeBytes), shortApplianceText(target.Serial, 24)),
 		"",
-		"Layout: 1 GiB ESP | 4 GiB Recovery | 8 GiB A | 8 GiB B | 4 GiB State",
+		"Layout: 1 GiB ESP | 4 GiB Recovery | 6 GiB A | 6 GiB B | 4 GiB State",
 		"        YE-DATA uses the remaining drive capacity",
 		"Network: " + network,
 		fmt.Sprintf("Software: %s · %s", releaseProviderLabel(w.releaseProvider), w.releasePolicySummary()),

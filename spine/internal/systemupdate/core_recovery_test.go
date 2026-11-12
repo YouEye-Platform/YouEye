@@ -111,7 +111,7 @@ func TestCoreRecoveryDoesNotRewindAfterHostCommitBeforeSharedReceipt(t *testing.
 	m, e, j := failedCoreFixture(t)
 	j.RestartRequired, j.ActivationRequested = true, true
 	j.Steps = nil
-	for _, name := range coreStepNames(true) {
+	for _, name := range coreStepNames(true, false) {
 		j.Steps = append(j.Steps, CoreStep{Name: name, RequestID: j.RequestID + "/" + name, State: "succeeded", Evidence: "durable native completion"})
 	}
 	j.Phase = "applying"

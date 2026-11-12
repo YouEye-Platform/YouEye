@@ -49,7 +49,7 @@ func startAPIServer() error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("Starting Spine API server...")
+	fmt.Printf("Starting Spine API server %s...\n", Version)
 
 	// Get config
 	cfg := GetConfig()

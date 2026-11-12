@@ -5,7 +5,7 @@
   "source_commit": "0000000000000000000000000000000000000000",
   "architecture": "amd64",
   "firmware_mode": "uefi",
-  "disk_layout_version": 3,
+  "disk_layout_version": 1,
   "state_schema_min": 2,
   "state_schema_max": 2,
   "data_schema_min": 1,

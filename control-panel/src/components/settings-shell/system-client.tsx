@@ -147,7 +147,7 @@ function StatusDot({ status }: { status: string }) {
   );
 }
 
-export function SystemClient({ cpVersion }: { cpVersion?: string }) {
+export function SystemClient({ cpVersion, spine }: { cpVersion?: string; spine?: { running: string; seed: string } }) {
   const locale = useLocale();
   const translateInterface = useInterfaceTranslations("interface");
 const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIcon }> = {
@@ -367,7 +367,8 @@ const SERVICE_META: Record<string, { name: string; desc: string; icon: LucideIco
         icon: PackageCheck,
         name: translateInterface("m996eea0a4157"),
         desc: translateInterface("mc474624e6d25"),
-        version: showVersion(data.runtime.image_version),
+        // Image version, then the Spine the slot runs (it updates without a new image).
+        version: showVersion(data.runtime.image_version) + (spine ? ` · Spine ${showVersion(spine.running)}${spine.running !== spine.seed ? ` (seed ${showVersion(spine.seed)})` : ""}` : ""),
         status: data.runtime.repair_required ? "repair-required" : "image-managed",
       };
     }

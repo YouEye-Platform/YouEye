@@ -21,7 +21,7 @@ import (
 const (
 	ManifestPath          = "/usr/lib/youeye/appliance-release"
 	ManifestSchemaVersion = 1
-	CurrentDiskLayout     = 3
+	CurrentDiskLayout     = 1
 
 	RuntimeMutableHost    = "mutable-host"
 	RuntimeApplianceImage = "appliance-image"

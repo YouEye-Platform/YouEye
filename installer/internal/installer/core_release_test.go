@@ -425,10 +425,12 @@ func TestCoreInstallerFreezesChannelSelectionAndExactAnswerBytes(t *testing.T) {
 	if _, err := prepareCoreInstallInput(t.Context(), saved, wrong, nil, true); err == nil {
 		t.Fatal("foreign media accepted")
 	}
+	// The image's seed Spine may differ from the release's Spine: first boot
+	// adopts the release's Spine onto State.
 	otherSpine := bundle
 	otherSpine.Manifest.ReleaseSet.Spine.ArtifactSHA256 = strings.Repeat("e", 64)
-	if _, err := prepareCoreInstallInput(t.Context(), saved, otherSpine, nil, true); err == nil {
-		t.Fatal("media with another baked Spine accepted")
+	if _, err := prepareCoreInstallInput(t.Context(), saved, otherSpine, nil, true); err != nil {
+		t.Fatal("media with an older seed Spine refused:", err)
 	}
 	resuming := input
 	resuming.Operation = "resume"

@@ -14,7 +14,7 @@ import (
 func TestApplianceCommandPlanOrdersVerifiedWritesBeforeBootActivation(t *testing.T) {
 	plan, err := planApplianceInstall(
 		applianceDisk{Path: "/dev/vda", Serial: "target", SizeBytes: 128 * applianceGiB},
-		validApplianceArtifacts(8*applianceGiB),
+		validApplianceArtifacts(6*applianceGiB),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -57,8 +57,8 @@ func TestApplianceCommandPlanUsesFixedLayoutAndThreeUKIs(t *testing.T) {
 	joined := commandStrings(commands)
 	for _, want := range []string{
 		"--new=2:0:+4096M",
-		"--new=3:0:+8192M",
-		"--new=4:0:+8192M",
+		"--new=3:0:+6144M",
+		"--new=4:0:+6144M",
 		"--new=5:0:+4096M",
 		"--new=6:0:0",
 		"mount -t vfat -o rw,nodev,nosuid,noexec,umask=0077 /dev/nvme0n1p1 /mnt/youeye-esp",
@@ -231,7 +231,7 @@ func TestPreserveReinstallVerifiesBeforeWritesAndNeverFormatsPersistentPartition
 		TargetDiskPath: "/dev/vda", TargetSerial: "target", RootSlotBytes: applianceRootSlotBytes,
 	}, validCommandAssets(), applianceBundleManifest{
 		StateSchemaMin: applianceStateSchema, DataSchemaMin: applianceDataSchema,
-		DiskLayout: applianceManifestLayout{Version: 3}, RecoveryVersion: applianceRecoveryVersion,
+		DiskLayout: applianceManifestLayout{Version: 1}, RecoveryVersion: applianceRecoveryVersion,
 	})
 	if err != nil {
 		t.Fatal(err)

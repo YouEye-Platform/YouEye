@@ -50,8 +50,8 @@ func addCoreInstalledHealthChecks(image appliance.Manifest, add func(string, str
 		fail()
 		return true
 	}
-	hash, err := fileSHA256(executable)
-	if err != nil || hash != image.ReleaseSet.Spine.ArtifactSHA256 || !bootstrap && Version != image.ReleaseSet.Spine.Version {
+	_ = bootstrap
+	if err := verifyRunningSpine(executable); err != nil {
 		fail()
 		return true
 	}

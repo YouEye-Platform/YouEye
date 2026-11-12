@@ -36,20 +36,24 @@ type CoreStep struct {
 }
 
 type CoreJournal struct {
-	MetadataOnly        bool                     `json:"metadata_only,omitempty"`
-	RecoverySteps       []CoreStep               `json:"recovery_steps,omitempty"`
-	NoOp                bool                     `json:"no_op,omitempty"`
-	Schema              string                   `json:"schema"`
-	RequestID           string                   `json:"request_id"`
-	ManifestSHA256      string                   `json:"manifest_sha256"`
-	Target              releasecache.CoreRelease `json:"target"`
-	Previous            CoreReceipt              `json:"previous"`
-	Phase               string                   `json:"phase"`
-	RestartRequired     bool                     `json:"restart_required"`
-	ActivationRequested bool                     `json:"activation_requested"`
-	Steps               []CoreStep               `json:"steps"`
-	Error               string                   `json:"error,omitempty"`
-	UpdatedAt           string                   `json:"updated_at"`
+	MetadataOnly    bool                     `json:"metadata_only,omitempty"`
+	RecoverySteps   []CoreStep               `json:"recovery_steps,omitempty"`
+	NoOp            bool                     `json:"no_op,omitempty"`
+	Schema          string                   `json:"schema"`
+	RequestID       string                   `json:"request_id"`
+	ManifestSHA256  string                   `json:"manifest_sha256"`
+	Target          releasecache.CoreRelease `json:"target"`
+	Previous        CoreReceipt              `json:"previous"`
+	Phase           string                   `json:"phase"`
+	RestartRequired bool                     `json:"restart_required"`
+	// SpineChanged: the release selects another Spine. Without a host change
+	// it is applied as a trial without reboot (apply-spine); with one, the new
+	// slot boots with it.
+	SpineChanged        bool       `json:"spine_changed,omitempty"`
+	ActivationRequested bool       `json:"activation_requested"`
+	Steps               []CoreStep `json:"steps"`
+	Error               string     `json:"error,omitempty"`
+	UpdatedAt           string     `json:"updated_at"`
 }
 
 // CoreActionObservation must come from the action's durable owner journal.
@@ -193,7 +197,7 @@ func (m CoreManager) readCoreJournal(path string) (CoreJournal, error) {
 	return j, nil
 }
 
-func coreStepNames(restart bool) []string {
+func coreStepNames(restart, spine bool) []string {
 	names := []string{"verify-members"}
 	if restart {
 		names = append(names, "stage-host")
@@ -203,6 +207,8 @@ func coreStepNames(restart bool) []string {
 	names = append(names, "checkpoint")
 	if restart {
 		names = append(names, "activate-host", "host-health")
+	} else if spine {
+		names = append(names, "apply-spine")
 	}
 	names = append(names, "apply-cp", "apply-ui", "authenticated-health")
 	if restart {
@@ -215,7 +221,7 @@ func coreJournalStepNames(j CoreJournal) []string {
 	if j.NoOp || j.MetadataOnly {
 		return []string{"verify-members", "authenticated-health"}
 	}
-	return coreStepNames(j.RestartRequired)
+	return coreStepNames(j.RestartRequired, j.SpineChanged)
 }
 
 // A promoted assembly may change its release/source/channel identity, but not
@@ -352,7 +358,13 @@ func (m CoreManager) Prepare(ctx context.Context, requestID string, raw []byte, 
 	}
 	j := CoreJournal{Schema: CoreJournalSchema, RequestID: requestID, ManifestSHA256: digest, Target: target, Previous: previous, Phase: "prepared", NoOp: previous.ManifestSHA256 == digest}
 	j.MetadataOnly = !j.NoOp && sameCorePayloads(previous.Release, target)
-	for _, role := range []string{"appliance", "spine", "system-root", "system-a-uki", "system-b-uki", "system-updater", "internal-recovery", "recovery-uki"} {
+	// Spine is not a host part: it lives on State per slot and changes without a reboot.
+	if before, ok := previous.Release.Member("spine"); ok {
+		if after, ok := target.Member("spine"); ok {
+			j.SpineChanged = before.Artifact.SHA256 != after.Artifact.SHA256
+		}
+	}
+	for _, role := range []string{"appliance", "system-root", "system-a-uki", "system-b-uki", "system-updater", "internal-recovery", "recovery-uki"} {
 		var before, after releasecache.CoreMember
 		for _, v := range previous.Release.Members {
 			if v.Role == role {

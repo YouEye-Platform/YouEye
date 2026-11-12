@@ -9,7 +9,7 @@ StartLimitBurst=36
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/libexec/youeye-appliance-bless
+ExecStart=/usr/local/bin/youeye boot bless
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal+console

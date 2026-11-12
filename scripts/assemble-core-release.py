@@ -7,7 +7,13 @@ bound by sha256 and size. Python 3 standard library only.
 
 Usage:
   assemble-core-release.py --version 0.6.1-rc.1 --source-tree <40 hex> \
-      --minimum-release 0.6.1-rc.1 --artifacts DIR [--sequence N] [--output DIR]
+      --minimum-release 0.6.1-rc.1 --artifacts DIR [--sequence N] [--output DIR] \
+      [--reuse PREVIOUS-core-release.json=ROLE[,ROLE…]]…
+
+--reuse keeps the named members of an earlier release of the same repository
+unchanged: same build version, tree and digests, with the blob's "release"
+naming the release that carries the file. "image" stands for every role except
+spine, cp and ui. DIR then only needs the files of the roles built fresh.
 
 DIR must contain every asset listed in ROLES under its exact name. The tool
 writes DIR/core-release.json and DIR/SHA256SUMS unless --output names another
@@ -51,6 +57,8 @@ ROLES = [
 ]
 BUILD_INPUTS = "build-inputs.json"  # bound to the appliance member
 DEPENDS_ON = {"cp": ["spine"], "ui": ["cp"]}
+# Roles built from the service sources; every other role comes from the image build.
+SERVICE_ROLES = {"spine", "cp", "ui"}
 # The persistent State/Data schema range this image line supports; it matches
 # state_schema_* and data_schema_* in the appliance manifest.
 COMPATIBILITY = {"state_min": 2, "state_max": 2, "data_min": 1, "data_max": 1}
@@ -81,6 +89,7 @@ def main():
     p.add_argument("--minimum-release", required=True)
     p.add_argument("--artifacts", required=True, type=Path, help="directory with every asset under its exact name")
     p.add_argument("--output", type=Path, help="output directory (default: --artifacts)")
+    p.add_argument("--reuse", action="append", default=[], help="PREVIOUS-core-release.json=ROLE[,ROLE…] (image = all image roles)")
     a = p.parse_args()
 
     tag = "youeye-v" + a.version
@@ -102,8 +111,33 @@ def main():
             fail(f"artifact {name} is empty")
         return {"name": name, "sha256": digest(path), "size_bytes": size}
 
+    reused = {}
+    for spec in a.reuse:
+        path, _, roles = spec.partition("=")
+        wanted = set()
+        for role in roles.split(","):
+            wanted |= {r for r, _ in ROLES if r not in SERVICE_ROLES} if role == "image" else {role}
+        if not wanted <= {r for r, _ in ROLES}:
+            fail("--reuse names an unknown role: " + roles)
+        previous = json.loads(Path(path).read_text())
+        if previous.get("schema") != SCHEMA:
+            fail("--reuse " + path + " is not a core-release.json")
+        for member in previous["members"]:
+            if member["role"] not in wanted:
+                continue
+            if member["role"] in reused:
+                fail("role " + member["role"] + " is reused twice")
+            member = json.loads(json.dumps(member))
+            for key in ("artifact", "build_inputs"):
+                if key in member:
+                    member[key].setdefault("release", previous["tag"])
+            reused[member["role"]] = member
+
     members = []
     for role, name in ROLES:
+        if role in reused:
+            members.append(reused[role])
+            continue
         artifact = blob(name)
         text = f"youeye.core-member-input.v1\n{role}\n{a.source_tree}\n{artifact['sha256']}\n"
         member = {
@@ -138,8 +172,9 @@ def main():
     temporary.write_bytes(raw)
     os.replace(temporary, output / "core-release.json")
 
-    sums = {name: digest(a.artifacts / name) for _, name in ROLES}
-    sums[BUILD_INPUTS] = digest(a.artifacts / BUILD_INPUTS)
+    sums = {name: digest(a.artifacts / name) for role, name in ROLES if role not in reused}
+    if "appliance" not in reused:
+        sums[BUILD_INPUTS] = digest(a.artifacts / BUILD_INPUTS)
     sums["core-release.json"] = hashlib.sha256(raw).hexdigest()
     lines = "".join(f"{sums[name]}  {name}\n" for name in sorted(sums))
     (output / "SHA256SUMS").write_text(lines)

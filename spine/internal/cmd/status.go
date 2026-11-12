@@ -289,7 +289,7 @@ func getControlPanelStatus(cfg *config.Config) string {
 	if strings.ToUpper(status) == "RUNNING" {
 		// Try to get version
 		verOut, err := exec.Command("incus", "exec", containerName, "--",
-			"cat", appDir+"/package.json").Output()
+			"cat", appDir+"/version.json").Output()
 		if err == nil {
 			var pkg struct {
 				Version string `json:"version"`

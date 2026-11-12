@@ -9,6 +9,10 @@ boot_id_file=${YOUEYE_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}
 first_deploy_complete=${YOUEYE_FIRST_DEPLOY_COMPLETE:-/var/lib/youeye-state/first-deploy/complete}
 reboot_bin=${YOUEYE_REBOOT_BIN:-systemctl}
 update_health_grace_attempts=${YOUEYE_UPDATE_HEALTH_GRACE_ATTEMPTS:-24}
+# Services may still be starting when this unit runs; wait for operational
+# health instead of failing the first probe (a failed bless at boot looked
+# like a failed slot).
+health_wait_seconds=${YOUEYE_BLESS_HEALTH_WAIT_SECONDS:-180}
 boot_count_path="$(find "$efivars" -maxdepth 1 -type f -name 'LoaderBootCountPath-*' -print -quit 2>/dev/null || true)"
 health="$state_dir/last-bless-health.json"
 record="$state_dir/last-bless.json"
@@ -23,6 +27,16 @@ esac
 [ "$update_health_grace_attempts" -gt 0 ] || {
 	printf 'System update health grace attempt count must be positive.\n' >&2
 	exit 1
+}
+
+# Probe operational health until it passes or the wait is over.
+wait_healthy() {
+	waited=0
+	while ! refresh_health; do
+		[ "$waited" -lt "$health_wait_seconds" ] || return 1
+		sleep 5
+		waited=$((waited + 5))
+	done
 }
 
 refresh_health() {
@@ -111,6 +125,11 @@ install -d -m 0700 "$state_dir"
 	exit 1
 }
 reconcile_update
+# During an image-update trial the grace attempts already pace the retries;
+# keep each health wait short so a bad update still rolls back quickly.
+if jq -e '.status.state == "trial"' "$update_reconcile" >/dev/null 2>&1; then
+	health_wait_seconds=${YOUEYE_BLESS_TRIAL_HEALTH_WAIT_SECONDS:-15}
+fi
 # Grouped releases own service health and paired recovery. An ordinary host
 # health result must not clear boot counters before that durable gate passes.
 "$youeye_bin" update system check-commit
@@ -126,14 +145,14 @@ if [ -z "$boot_count_path" ]; then
     # An already-blessed entry has no boot counter, but it can still be a
     # different slot from the last trial. Revalidate this boot before making
     # the durable slot record match the UKI-selected root.
-	if ! refresh_health; then
+	if ! wait_healthy; then
 		handle_health_failure
 	fi
 	finish_blessing
 	exit 0
 fi
 
-if ! refresh_health; then
+if ! wait_healthy; then
 	handle_health_failure
 fi
 write_boot_record "$pending" validated

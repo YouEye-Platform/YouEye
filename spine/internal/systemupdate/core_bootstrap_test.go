@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/youeye-platform/YouEye/releasecache"
@@ -21,6 +22,13 @@ func TestCoreBootstrapRetainsExactCoordinatorAndRejectsSubstitution(t *testing.T
 	}
 	member.BuildVersion = target.Version
 	member.Artifact = releasecache.CoreBlob{Name: "spine-linux-amd64", SHA256: checksum(binary), SizeBytes: int64(len(binary))}
+	// Spine alone is not a host transition (it is applied as a trial without
+	// a restart); the bootstrap coordinator serves host transitions only.
+	for i := range target.Members {
+		if target.Members[i].Role == "system-root" {
+			target.Members[i].Artifact.SHA256 = strings.Repeat("9", 64)
+		}
+	}
 	raw, _ := json.Marshal(target)
 	digest := checksum(raw)
 	j, err := m.PrepareSelected(context.Background(), "bootstrap-fixture", CoreHostSelection{Raw: raw}, digest)

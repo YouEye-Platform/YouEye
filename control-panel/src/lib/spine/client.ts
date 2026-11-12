@@ -436,6 +436,11 @@ export class SpineClient {
     return this.request('/api/releases/channel', 'PUT', { channel });
   }
 
+  /** The Spine the booted slot runs (selected on State, or the seed baked into the image). */
+  async getSpineStatus(): Promise<{ version: string; spine: { slot: string; seed: { version: string }; running: { role: 'trial' | 'current' | 'previous' | 'seed' } } }> {
+    return this.request('/api/spine/status');
+  }
+
   /** The channel index of the box's channel, fetched and cached by Spine. */
   async getReleaseIndex(): Promise<SpineReleaseIndex> {
     return this.request('/api/releases/index');

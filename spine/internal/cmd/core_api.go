@@ -40,7 +40,7 @@ func (o coreAPIOperations) Check(ctx context.Context) (api.CoreUpdateCandidate, 
 		out.Behind, out.Message = true, err.Error()
 		return out, nil
 	}
-	for _, role := range []string{"appliance", "spine", "system-root", "system-a-uki", "system-b-uki", "system-updater", "internal-recovery", "recovery-uki"} {
+	for _, role := range []string{"appliance", "system-root", "system-a-uki", "system-b-uki", "system-updater", "internal-recovery", "recovery-uki"} {
 		before, after := "", ""
 		for _, m := range installed.Release.Members {
 			if m.Role == role {

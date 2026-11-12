@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/youeye-platform/YouEye/spine/internal/spineselect"
 	"github.com/youeye-platform/YouEye/spine/internal/systemupdate"
 	"golang.org/x/sys/unix"
 )
@@ -145,6 +146,21 @@ func observeCoreInstalledReader(ctx context.Context, o coreInstalledReaderObserv
 		currentPath, err := o.CurrentExecutable()
 		if err != nil || currentPath != self {
 			return empty, fmt.Errorf("current reader changed during observation")
+		}
+		if strings.HasPrefix(self, spineRoot+string(filepath.Separator)) {
+			// A Spine selected for the booted slot runs from State: bind to
+			// its own bytes, checked against the slot's selection.
+			currentHash, err := o.CurrentSHA256()
+			if err != nil {
+				return empty, err
+			}
+			if err := verifyRunningSpine(self); err != nil {
+				return empty, err
+			}
+			if digest, err := spineselect.FileDigest(self); err != nil || digest != currentHash {
+				return empty, fmt.Errorf("executing Spine bytes differ from its selection")
+			}
+			return coreInstalledReaderObservation{Executable: self, ReaderClass: "selected"}, nil
 		}
 		if self == coreBakedExecutable {
 			digest, err = o.hash(coreBakedExecutable)
